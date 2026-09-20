@@ -36,7 +36,7 @@ export const DEFAULT_ALLOWED_TOOLS = ["Read", "Grep", "Glob"];
  * guard, so the journal explains the null.
  */
 export const DEFAULT_SUBAGENT_TIMEOUT_MS = 10 * 60 * 1000;
-export const MAX_SUBAGENT_TOOL_CALLS = 60;
+export const DEFAULT_MAX_SUBAGENT_TOOL_CALLS = 1000;
 export const MAX_IDENTICAL_TOOL_CALLS = 3;
 
 const SUBAGENT_PREAMBLE = `You are a subagent inside a deterministic workflow. \
@@ -159,7 +159,7 @@ function recordArgumentFragment(
   }
 }
 
-function createToolCallGuard(): {
+function createToolCallGuard(maxToolCalls: number): {
   onCall(
     id: string,
     name: string,
@@ -183,8 +183,8 @@ function createToolCallGuard(): {
       if (name && name !== "?") call.name = name;
       call.lastInput = input;
       recordArgumentFragment(call, input, rawArguments);
-      if (first && calls.size > MAX_SUBAGENT_TOOL_CALLS) {
-        return `subagent exceeded ${MAX_SUBAGENT_TOOL_CALLS} tool calls`;
+      if (first && calls.size > maxToolCalls) {
+        return `subagent exceeded ${maxToolCalls} tool calls`;
       }
       return null;
     },
@@ -219,12 +219,13 @@ interface DrainedTurn {
 async function drainTurn(
   query: SdkQuery,
   stop: (reason: string) => void,
+  maxToolCalls: number,
 ): Promise<DrainedTurn> {
   let assistantText = "";
   let resultText: string | undefined;
   let success = false;
   let error: string | undefined;
-  const guard = createToolCallGuard();
+  const guard = createToolCallGuard(maxToolCalls);
   for await (const message of query) {
     if (message.type === "assistant") assistantText += message.content ?? "";
     if (message.type === "tool_call") {
@@ -334,7 +335,14 @@ export function createSdkSpawner(
     );
 
     try {
-      const turn = await Promise.race([drainTurn(query, stop), stopped]);
+      const turn = await Promise.race([
+        drainTurn(
+          query,
+          stop,
+          options.maxToolCalls ?? DEFAULT_MAX_SUBAGENT_TOOL_CALLS,
+        ),
+        stopped,
+      ]);
       const usage = {
         durationMs: Date.now() - startedAt,
         ...(query.conversationId

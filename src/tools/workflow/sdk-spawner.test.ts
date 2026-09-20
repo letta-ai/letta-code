@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   createSdkSpawner,
   DEFAULT_ALLOWED_TOOLS,
-  MAX_SUBAGENT_TOOL_CALLS,
+  DEFAULT_MAX_SUBAGENT_TOOL_CALLS,
   parseJsonReply,
   type SdkSpawnerConfig,
 } from "./sdk-spawner.ts";
@@ -248,23 +248,39 @@ describe("createSdkSpawner", () => {
     expect(interrupted).toBe(1);
   });
 
-  test("stops a subagent that exceeds the tool-call budget", async () => {
-    const messages: SdkStreamMessage[] = [];
-    for (let i = 0; i <= MAX_SUBAGENT_TOOL_CALLS; i++) {
-      messages.push({
+  test("defaults above 60 tool calls and enforces the custom boundary", async () => {
+    const calls = (count: number): SdkStreamMessage[] =>
+      Array.from({ length: count }, (_, i) => ({
         type: "tool_call",
         toolCallId: `c${i}`,
         toolName: "Grep",
         toolInput: { q: i },
-      });
-    }
-    const outcome = await createSdkSpawner(fakeClient(messages), CONFIG)(
-      request(),
+      }));
+
+    const defaultOutcome = await createSdkSpawner(
+      fakeClient([
+        ...calls(61),
+        { type: "result", success: true, result: "done" },
+      ]),
+      CONFIG,
+    )(request(), new AbortController().signal);
+    expect(DEFAULT_MAX_SUBAGENT_TOOL_CALLS).toBe(1000);
+    expect(defaultOutcome).toMatchObject({ value: "done", failed: false });
+
+    const atBoundary = await createSdkSpawner(
+      fakeClient([
+        ...calls(2),
+        { type: "result", success: true, result: "done" },
+      ]),
+      CONFIG,
+    )(request({ maxToolCalls: 2 }), new AbortController().signal);
+    expect(atBoundary).toMatchObject({ value: "done", failed: false });
+
+    const overBoundary = await createSdkSpawner(fakeClient(calls(3)), CONFIG)(
+      request({ maxToolCalls: 2 }),
       new AbortController().signal,
     );
-    expect(outcome.error).toContain(
-      `exceeded ${MAX_SUBAGENT_TOOL_CALLS} tool calls`,
-    );
+    expect(overBoundary.error).toContain("exceeded 2 tool calls");
   });
 
   test("times out and honors abort while streaming", async () => {
@@ -450,7 +466,7 @@ describe("createSdkSpawner", () => {
   });
 
   test("counts streamed fragments as one call for the tool-call budget", async () => {
-    // Many argument fragments for a few unique ids must not trip the 60-call
+    // Many argument fragments for a few unique ids must not trip the call
     // budget, which counts calls (unique toolCallIds), not messages.
     const messages: SdkStreamMessage[] = [];
     for (let i = 0; i < 30; i++) {

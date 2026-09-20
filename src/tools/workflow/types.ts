@@ -44,6 +44,8 @@ export interface AgentCallOptions {
   systemPrompt?: string;
   /** Per-call timeout in milliseconds. */
   timeoutMs?: number;
+  /** Maximum unique tool calls for this subagent. Default 1000. */
+  maxToolCalls?: number;
 }
 
 /** A single request to run one subagent, produced by the agent() hook. */
