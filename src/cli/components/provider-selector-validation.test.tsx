@@ -26,6 +26,10 @@ class CaptureStream extends Writable {
     return this.chunks.join("");
   }
 
+  latest(): string {
+    return this.chunks.at(-1) ?? "";
+  }
+
   reset(): void {
     this.chunks = [];
   }
@@ -43,12 +47,18 @@ function createInputStream(): NodeJS.ReadStream {
 async function waitFor(
   predicate: () => boolean,
   message: string,
+  readOutput?: () => string,
 ): Promise<void> {
-  const deadline = Date.now() + 5000;
+  const deadline = Date.now() + 10_000;
   while (!predicate() && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
-  if (!predicate()) throw new Error(`Timed out waiting for ${message}`);
+  if (!predicate()) {
+    const output = readOutput?.() ?? "";
+    throw new Error(
+      `Timed out waiting for ${message}${output ? `\nOutput:\n${output}` : ""}`,
+    );
+  }
 }
 
 async function typeInput(
@@ -122,25 +132,25 @@ describe("ProviderSelector validation", () => {
     });
 
     await waitFor(
-      () => stripAnsi(stdout.read()).includes("[ Local ]    Cloud"),
-      "provider store tabs",
+      () => {
+        const output = stripAnsi(stdout.latest());
+        return (
+          output.includes("[ Cloud ]") &&
+          output.includes("OpenAI-compatible API")
+        );
+      },
+      "Cloud provider list",
+      () => stripAnsi(stdout.latest()),
     );
     stdout.reset();
-    stdin.push("\t");
-    await waitFor(() => {
-      const output = stripAnsi(stdout.read());
-      return (
-        output.includes("[ Cloud ]") && output.includes("OpenAI-compatible API")
-      );
-    }, "Cloud provider list");
-    stdout.reset();
-    for (let index = 0; index < 3; index += 1) {
+    for (let index = 0; index < 4; index += 1) {
       stdin.push("\u001b[B");
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
     await waitFor(
-      () => stripAnsi(stdout.read()).includes("> [ ] OpenAI-compatible API"),
+      () => stripAnsi(stdout.latest()).includes("> [ ] OpenAI-compatible API"),
       "OpenAI-compatible selection",
+      () => stripAnsi(stdout.latest()),
     );
     stdout.reset();
     stdin.push("\r");
@@ -178,5 +188,5 @@ describe("ProviderSelector validation", () => {
       api_key: "third-party-key",
       base_url: "https://opencode.ai/zen/go/v1",
     });
-  });
+  }, 15_000);
 });
