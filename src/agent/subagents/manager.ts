@@ -39,6 +39,7 @@ import {
 } from "@/runtime-context";
 import { getRuntimeExecutionEnv } from "@/runtime-execution-settings";
 import { settingsManager } from "@/settings-manager";
+import { getManagedCloudAgentSecretEnv } from "@/tools/secret-substitution";
 import { debugLog, debugWarn } from "@/utils/debug";
 import { getErrorMessage } from "@/utils/error";
 import { isSubagentStdoutLostError } from "@/utils/subagent-stdout-failure";
@@ -391,6 +392,7 @@ async function executeSubagent(
     };
     const childEnv = composeSubagentChildEnv({
       parentProcessEnv,
+      agentSecretEnv: getManagedCloudAgentSecretEnv(parentAgentId),
       listenerConnectionId: getRuntimeContext()?.connectionId,
       backendMode,
       localBackendStorageDir,

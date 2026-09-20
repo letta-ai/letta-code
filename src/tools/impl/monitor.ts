@@ -51,6 +51,7 @@ interface MonitorArgs {
   command?: string;
   ws?: MonitorWebSocketSource;
   secretEnv?: Record<string, string>;
+  secretRedactions?: Record<string, string>;
   parentScope?: { agentId: string; conversationId: string };
   signal?: AbortSignal;
 }
@@ -392,7 +393,7 @@ function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
   const outputFile = createBackgroundOutputFile(taskId);
   const output = new MonitorOutputWriter(outputFile);
   const scope = resolveNotificationScope(args.parentScope);
-  const secrets = args.secretEnv ?? {};
+  const secrets = args.secretRedactions ?? args.secretEnv ?? {};
   let processState: BackgroundProcess;
 
   const events = createMonitorEventStream({
