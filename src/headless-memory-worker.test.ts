@@ -15,9 +15,15 @@ import { LocalStore } from "@/backend/local/local-store";
 import { getLocalBackendMemoryFilesystemRoot } from "@/backend/local/paths";
 import { createIsolatedCliTestEnv } from "@/test-utils/test-process-env";
 
-for (const mode of ["one-shot", "bidirectional", "primary"] as const) {
+for (const mode of [
+  "one-shot",
+  "bidirectional",
+  "primary",
+  "primary-bidirectional",
+] as const) {
   test(`headless ${mode} repair runs without startup Git changes, reflection, or recursive repair`, async () => {
-    const isRepair = mode !== "primary";
+    const isRepair = mode === "one-shot" || mode === "bidirectional";
+    const bidirectional = mode.endsWith("bidirectional");
     const home = mkdtempSync(join(tmpdir(), "headless-memory-repair-"));
     try {
       const storageDir = join(home, "store");
@@ -103,7 +109,7 @@ for (const mode of ["one-shot", "bidirectional", "primary"] as const) {
                 "anthropic/claude-sonnet-4-6",
               ]
             : ["--conversation", original.id]),
-          ...(mode !== "bidirectional"
+          ...(!bidirectional
             ? ["-p", prompt]
             : ["--input-format", "stream-json"]),
           "--tools=",
@@ -115,16 +121,12 @@ for (const mode of ["one-shot", "bidirectional", "primary"] as const) {
         {
           cwd: home,
           env,
-          stdin: mode !== "bidirectional" ? "ignore" : "pipe",
+          stdin: !bidirectional ? "ignore" : "pipe",
           stdout: "pipe",
           stderr: "pipe",
         },
       );
-      if (
-        mode === "bidirectional" &&
-        child.stdin &&
-        typeof child.stdin !== "number"
-      ) {
+      if (bidirectional && child.stdin && typeof child.stdin !== "number") {
         child.stdin.write(
           `${JSON.stringify({ type: "user", message: { role: "user", content: prompt } })}\n`,
         );

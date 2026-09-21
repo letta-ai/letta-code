@@ -67,3 +67,18 @@ test("cancelling a waiting worker does not release someone else's ownership", as
   expect(await claimMemoryOperation(root)).toBeNull();
   await release?.();
 });
+
+test("a follow-up worker launched inside another operation still waits its turn", async () => {
+  const root = repository();
+  let followup: Promise<void> | undefined;
+  let ran = false;
+  await withMemoryOperation(root, async () => {
+    followup = withMemoryOperation(root, async () => {
+      ran = true;
+    });
+    await Bun.sleep(50);
+    expect(ran).toBe(false);
+  });
+  await followup;
+  expect(ran).toBe(true);
+});

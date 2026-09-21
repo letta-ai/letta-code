@@ -62,7 +62,7 @@ When delegating, provide a self-contained description of what to remember, corre
 
 ### Editing memory directly
 
-When memory is the main task, inspect Git status and read the current files before editing. If a memory worker you launched is still editing the same checkout, use TaskOutput to wait for it to finish before making direct edits, then reread the files. This wait is appropriate only because memory is now the main task.
+When memory is the main task, inspect Git status and read the current files before editing. If a memory worker you launched is still editing the same checkout, use TaskOutput to wait for it to finish before making direct edits, then reread the files. This wait is appropriate only because memory is now the main task. Direct memory file operations and shell commands also wait for other writers, including automatic repair and reflection. Use explicit memory paths, and run memory scripts from `$MEMORY_DIR`. Stage and commit in one shell call.
 
 Memory Markdown files must start with YAML frontmatter containing a non-empty `description:` field. Preserve existing frontmatter and discovery links. The MemFS pre-commit hook validates frontmatter and prevents changes to protected `read_only` files. Skill `SKILL.md` files use their own skill frontmatter format.
 

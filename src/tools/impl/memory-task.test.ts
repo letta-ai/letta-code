@@ -1,6 +1,12 @@
 import { afterEach, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -67,6 +73,7 @@ test("memory delegates immediately, exports the originating conversation and lau
     completed = resolve;
   });
   let spawned = false;
+  let transcriptPath: string | undefined;
   const result = spawnBackgroundSubagentTask({
     subagentType: "memory",
     description: "remember preference",
@@ -87,7 +94,10 @@ test("memory delegates immediately, exports the originating conversation and lau
         expect(args[8]).toBeUndefined();
         expect(args[1]).toContain(`Memory repository: ${root}`);
         expect(args[1]).toContain("Remember Bun");
-        expect(args[10]).toContain("memory-handoffs/");
+        expect(args[10]).toContain("memory-handoffs");
+        transcriptPath = args[10];
+        if (!transcriptPath) throw new Error("Missing handoff snapshot");
+        expect(existsSync(transcriptPath)).toBe(true);
         expect(args[9]).toBe("agent-parent");
         expect(args[11]).toBe("conv-origin");
         expect(args[12]?.primaryRoot).toBe(root);
@@ -138,6 +148,8 @@ test("memory delegates immediately, exports the originating conversation and lau
   expect(exports).toEqual(["conv-origin"]);
   expect(spawned, backgroundTasks.get(result.taskId)?.error).toBe(true);
   expect(notifications).toEqual([]);
+  if (!transcriptPath) throw new Error("Missing handoff snapshot");
+  expect(existsSync(transcriptPath)).toBe(false);
 });
 
 test("a failed transcript export terminates the silent task with an inspectable error", async () => {

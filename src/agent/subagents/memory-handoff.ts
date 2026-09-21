@@ -1,8 +1,24 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getBackend } from "@/backend";
 import { getTranscriptRoot } from "@/utils/transcript-paths";
+
+/** Keep the snapshot only for the lifetime of the child that can read it. */
+export async function withMemoryHandoff<T>(
+  params: Parameters<typeof prepareMemoryHandoff>[0],
+  run: (
+    handoff: Awaited<ReturnType<typeof prepareMemoryHandoff>>,
+  ) => Promise<T>,
+): Promise<T> {
+  const handoff = await prepareMemoryHandoff(params);
+  try {
+    return await run(handoff);
+  } finally {
+    if (handoff.transcriptPath)
+      await rm(handoff.transcriptPath, { force: true });
+  }
+}
 
 /** Fresh workers receive the assignment, with parent history available only on demand. */
 export async function prepareMemoryHandoff(params: {

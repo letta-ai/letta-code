@@ -70,6 +70,7 @@ import { normalizeExternalToolResultContent } from "./external-tool-content";
 import { toolFilter } from "./filter";
 import { clampToolReturnContent } from "./impl/tool-return-clamp";
 import { resolveBackendSpecificToolAssets } from "./memory-tool-assets";
+import { runMemoryTool } from "./memory-tool-operation";
 import {
   functionToolForm,
   type JsonSchema,
@@ -2405,7 +2406,6 @@ async function executeToolInner(
       let enhancedArgs = args;
       let invocationSecrets: Record<string, string> = {};
 
-      // Cancellation is internal, not part of model-facing tool schemas.
       if (options?.signal) {
         enhancedArgs = { ...enhancedArgs, signal: options.signal };
       }
@@ -2472,7 +2472,7 @@ async function executeToolInner(
         };
       }
 
-      const result = await tool.fn(enhancedArgs);
+      const result = await runMemoryTool(internalName, enhancedArgs, tool.fn);
       const duration = Date.now() - startTime;
 
       // Broadcast file content after file-mutating tools so web clients update

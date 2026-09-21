@@ -2,7 +2,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { expandFilePath } from "./file-path";
 
-function resolveCheckoutPath(path: string): string {
+export function resolveCheckoutPath(path: string): string {
   let parent = resolve(path);
   const suffix: string[] = [];
   while (true) {

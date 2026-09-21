@@ -181,7 +181,7 @@ import {
 import { getCurrentWorkingDirectory } from "./runtime-context";
 import { settingsManager, shouldPersistSessionState } from "./settings-manager";
 import { writeWireMessage, writeWireMessageAsync } from "./stream-json-writer";
-import { finishBackgroundMemoryTasks } from "./tools/impl/memory-task-lifecycle";
+import { shutdownBackgroundMemoryTasks } from "./tools/impl/memory-task-lifecycle";
 import {
   INTERACTIVE_USER_INPUT_TOOL_NAMES,
   isInteractiveApprovalTool,
@@ -1741,6 +1741,7 @@ export async function handleHeadlessCommand(
       await telemetry.flush();
     } finally {
       headlessModAdapter.dispose();
+      await shutdownBackgroundMemoryTasks(code);
       telemetry.setSessionStatsGetter(undefined);
     }
     return await flushAndExit(code);
@@ -3265,10 +3266,8 @@ export async function handleHeadlessCommand(
     await writeFinalHeadlessStdout(`${resultText}\n`);
   }
 
-  // Report all milestones at the end for latency audit
   markMilestone("HEADLESS_COMPLETE");
   reportAllMilestones();
-  await finishBackgroundMemoryTasks(agent.id, conversationId);
   await exitHeadless(0, "headless_complete");
 }
 
@@ -3322,6 +3321,7 @@ async function runBidirectionalMode(
       await telemetry.flush();
     } finally {
       headlessModAdapter.dispose();
+      await shutdownBackgroundMemoryTasks(code);
     }
     return await flushAndExit(code);
   };

@@ -1,5 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
+import { trackMemoryOperationProcess } from "@/agent/memory-operation";
 import { isUsableDirectory } from "@/helpers/usable-directory";
 import { wrapManagedWorkloadLauncher } from "@/utils/systemd-workload-scope";
 import { noteExpectedWorktreeForLauncher } from "@/websocket/listener/worktree-ownership";
@@ -510,6 +511,7 @@ export function startShellProcess(
     abortHandler();
   }
 
+  trackMemoryOperationProcess(completion, terminateProcess);
   return { process: processHandle, completion, terminate: terminateProcess };
 }
 

@@ -1,9 +1,10 @@
 import { backgroundTasks } from "./process_manager";
 
-/** Keep one-shot hosts alive after writing the primary's result. */
+/** Await child teardown before the process owning its checkout lock exits. */
 export async function finishBackgroundMemoryTasks(
-  agentId: string,
-  conversationId: string,
+  agentId?: string,
+  conversationId?: string,
+  options: { cancel?: boolean } = {},
 ): Promise<void> {
   const finished = new Set<Promise<void>>();
   for (;;) {
@@ -11,10 +12,14 @@ export async function finishBackgroundMemoryTasks(
       .filter(
         (task) =>
           task.subagentType === "memory" &&
-          task.runtimeScope?.agentId === agentId &&
-          task.runtimeScope?.conversationId === conversationId,
+          (!agentId || task.runtimeScope?.agentId === agentId) &&
+          (!conversationId ||
+            task.runtimeScope?.conversationId === conversationId),
       )
-      .map((task) => task.completion)
+      .map((task) => {
+        if (options.cancel) task.abortController?.abort();
+        return task.completion;
+      })
       .filter((completion): completion is Promise<void> =>
         Boolean(completion && !finished.has(completion)),
       );
@@ -22,4 +27,13 @@ export async function finishBackgroundMemoryTasks(
     await Promise.all(pending);
     for (const completion of pending) finished.add(completion);
   }
+}
+
+/** Controlled process exits must account for tasks from previously active conversations too. */
+export async function shutdownBackgroundMemoryTasks(
+  exitCode: number,
+): Promise<void> {
+  await finishBackgroundMemoryTasks(undefined, undefined, {
+    cancel: exitCode !== 0,
+  });
 }

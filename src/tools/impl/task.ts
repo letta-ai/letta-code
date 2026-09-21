@@ -27,7 +27,7 @@ import {
 } from "@/agent/subagents";
 import { forkParentConversation } from "@/agent/subagents/fork-conversation";
 import { spawnSubagent } from "@/agent/subagents/manager";
-import { prepareMemoryHandoff } from "@/agent/subagents/memory-handoff";
+import { withMemoryHandoff } from "@/agent/subagents/memory-handoff";
 import { runMemoryWorker } from "@/agent/subagents/memory-worker";
 import { getBackend } from "@/backend";
 import { runSubagentStopHooks } from "@/hooks";
@@ -374,6 +374,11 @@ export function startMemoryConflictRepair(
 export function spawnBackgroundSubagentTask(
   args: SpawnBackgroundSubagentTaskArgs,
 ): SpawnBackgroundSubagentTaskResult {
+  if (args.subagentType === "memory" && args.environment?.trim()) {
+    throw new Error(
+      "Memory workers must run on the current machine; omit computer.",
+    );
+  }
   assertBackgroundTaskCapacity();
 
   const {
@@ -524,24 +529,27 @@ export function spawnBackgroundSubagentTask(
             repairOnly: args.memoryRepairOnly,
             signal: abortController.signal,
           },
-          async () => {
-            const handoff = await prepareMemoryHandoff({
-              ...resolvedParentScope,
-              memoryDir: workerMemoryDir,
-              assignment: prompt,
-              repairOnly: args.memoryRepairOnly,
-            });
-            const result = await execute(
-              handoff.prompt,
-              handoff.transcriptPath,
-            );
-            // Preserve the worker identity/report even if remote sync is slow or fails.
-            appendToOutputFile(
-              outputFile,
-              `${buildTaskResultHeader(subagentType, subagentId, result)}\n\n${result.report}\n[Memory worker finished; syncing commits]\n`,
-            );
-            return result;
-          },
+          () =>
+            withMemoryHandoff(
+              {
+                ...resolvedParentScope,
+                memoryDir: workerMemoryDir,
+                assignment: prompt,
+                repairOnly: args.memoryRepairOnly,
+              },
+              async (handoff) => {
+                const result = await execute(
+                  handoff.prompt,
+                  handoff.transcriptPath,
+                );
+                // Preserve the worker identity/report even if remote sync is slow or fails.
+                appendToOutputFile(
+                  outputFile,
+                  `${buildTaskResultHeader(subagentType, subagentId, result)}\n\n${result.report}\n[Memory worker finished; syncing commits]\n`,
+                );
+                return result;
+              },
+            ),
           {
             onMemoryPushed: () => {
               emitStreamEvent(subagentId, {
@@ -839,6 +847,9 @@ export async function task(args: TaskArgs): Promise<string> {
     return `Error: Invalid subagent type "${subagent_type}"`;
   }
   if (typeof args.computer === "string" && args.computer.trim()) {
+    if (subagent_type === "memory") {
+      return "Error: Memory workers must run on the current machine; omit computer.";
+    }
     let environmentRouting = false;
     try {
       environmentRouting = getBackend().capabilities.environmentRouting;

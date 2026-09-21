@@ -13,6 +13,7 @@ import { resolveActingUserId } from "@/agent/acting-user";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { detectMemoryFormat } from "@/agent/memory-format";
+import { getMemoryOperationEnv } from "@/agent/memory-operation";
 import recallSubagentPrompt from "@/agent/prompts/recall_subagent.md";
 import recallSubagentLocalPrompt from "@/agent/prompts/recall_subagent_local.md";
 import { updateSubagent } from "@/agent/subagent-state.js";
@@ -387,6 +388,7 @@ async function executeSubagent(
         process.env,
         getRuntimeContext()?.executionSettings,
       ),
+      ...getMemoryOperationEnv(),
       USER_CWD: subagentWorkingDirectory,
     };
     const childEnv = composeSubagentChildEnv({
