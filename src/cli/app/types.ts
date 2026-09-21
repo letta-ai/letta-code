@@ -81,6 +81,7 @@ export type ActiveOverlay =
   | null;
 
 export type QueuedOverlayAction =
+  | { type: "exit" }
   | {
       type: "create_agent";
       name: string;

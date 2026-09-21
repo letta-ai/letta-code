@@ -1423,7 +1423,8 @@ export function App({
   pendingLocalSessionScopeSwitchRef.current =
     queuedOverlayAction?.type === "switch_conversation" ||
     queuedOverlayAction?.type === "switch_agent" ||
-    queuedOverlayAction?.type === "create_agent";
+    queuedOverlayAction?.type === "create_agent" ||
+    queuedOverlayAction?.type === "exit";
   if (!tuiQueueRef.current) {
     tuiQueueRef.current = createTuiQueueRuntime(setQueueDisplay);
   }
@@ -1464,7 +1465,8 @@ export function App({
     const pendingScopeSwitch =
       queuedOverlayAction?.type === "switch_conversation" ||
       queuedOverlayAction?.type === "switch_agent" ||
-      queuedOverlayAction?.type === "create_agent";
+      queuedOverlayAction?.type === "create_agent" ||
+      queuedOverlayAction?.type === "exit";
     if (
       sessionSwitchAdmissionStateRef.current === "draining" &&
       !pendingScopeSwitch
@@ -3921,6 +3923,21 @@ export function App({
   });
 
   const handleExit = useCallback(async () => {
+    // Exit is a terminal scope transition. Close admission immediately, but
+    // keep the process alive until every message already accepted by this
+    // owner has run and all turn refs have settled.
+    localSessionOwner.stopAdmission();
+    if (
+      hasAcceptedLocalSessionInput() ||
+      dequeueInFlightRef.current ||
+      abortControllerRef.current ||
+      processingConversationRef.current > 0
+    ) {
+      sessionSwitchAdmissionStateRef.current = "draining";
+      setQueuedOverlayAction({ type: "exit" });
+      return;
+    }
+
     saveLastSessionBeforeExit(conversationIdRef.current);
 
     // Run SessionEnd hooks
@@ -3955,7 +3972,6 @@ export function App({
     // A clean TUI exit must cross the same positive release boundary as a
     // scope switch. React effect cleanup is fire-and-forget and process.exit
     // can otherwise close the socket before Cloud observes the release.
-    localSessionOwner.stopAdmission();
     await localSessionOwner.release();
 
     await closeMcp();
@@ -3973,6 +3989,7 @@ export function App({
     currentModelLabel,
     currentModelProvider,
     localSessionOwner,
+    hasAcceptedLocalSessionInput,
   ]);
 
   // Queue edit: load all queued user messages into the input (joined with newlines),
@@ -4374,7 +4391,8 @@ export function App({
       (!queuedOverlayAction ||
         queuedOverlayAction.type === "switch_conversation" ||
         queuedOverlayAction.type === "switch_agent" ||
-        queuedOverlayAction.type === "create_agent") && // Drain accepted old-scope input before a scope switch
+        queuedOverlayAction.type === "create_agent" ||
+        queuedOverlayAction.type === "exit") && // Drain accepted old-scope input before a scope switch
       pendingApprovals.length === 0 &&
       !commandRunning &&
       !isExecutingTool &&
@@ -4539,7 +4557,8 @@ export function App({
         (action.type === "switch_conversation" &&
           action.conversationId !== conversationId) ||
         (action.type === "switch_agent" && action.agentId !== agentId) ||
-        action.type === "create_agent";
+        action.type === "create_agent" ||
+        action.type === "exit";
       if (changesLocalSessionScope) {
         // Close the old scope's ACK boundary before observing its queue. Any
         // input accepted first remains visible here; later delivery is rejected
@@ -4574,6 +4593,8 @@ export function App({
           commandId: action.commandId,
           backendMode: action.backendMode,
         });
+      } else if (action.type === "exit") {
+        void handleExit();
       } else if (action.type === "switch_model") {
         // Call handleModelSelect - it will see isAgentBusy() as false now
         handleModelSelect(
@@ -4677,6 +4698,7 @@ export function App({
     pendingApprovals,
     handleAgentSelect,
     handleCreateNewAgent,
+    handleExit,
     handleModelSelect,
     handleSleeptimeModeSelect,
     handleCompactionModeSelect,

@@ -581,6 +581,68 @@ describe("TUI interrupt queue lifecycle", () => {
     }
   }, 15_000);
 
+  test("clean exit settles a failing accepted remote turn before release", async () => {
+    setConfiguredBackendMode("api");
+    const lifecycle: string[] = [];
+    let ownerOptions: StartLocalSessionOwnerOptions | null = null;
+    __testSetLocalSessionOwnerStarter(async (options) => {
+      ownerOptions = options;
+      return {
+        ready: async () => true,
+        forceStop() {},
+        stopAdmission() {
+          lifecycle.push("stop");
+        },
+        resumeAdmission() {},
+        async release() {
+          expect(options.queueRuntime.length).toBe(0);
+          lifecycle.push("release");
+          return true;
+        },
+      };
+    });
+    const originalExit = process.exit;
+    process.exit = ((code?: number) => {
+      lifecycle.push(`exit:${code ?? 0}`);
+      return undefined as never;
+    }) as typeof process.exit;
+    try {
+      const rendered = await renderTestApp({
+        async execute() {
+          lifecycle.push("turn:start");
+          await sleep(75);
+          lifecycle.push("turn:finish");
+          throw new Error("expected queued exit failure");
+        },
+      });
+      await waitFor(() => ownerOptions !== null, "initial owner");
+      const owner = ownerOptions as StartLocalSessionOwnerOptions | null;
+      if (!owner) throw new Error("Missing owner options");
+      owner.queueRuntime.enqueue({
+        kind: "message",
+        source: "user",
+        content: "accepted before exit",
+        agentId: "agent-tui-interrupt-queue",
+        conversationId: rendered.conversationId,
+        noCoalesce: true,
+      } as Parameters<typeof owner.queueRuntime.enqueue>[0]);
+      owner.onQueueChanged();
+      rendered.stdin.push("\u0003");
+      await sleep(10);
+      rendered.stdin.push("\u0003");
+
+      await waitFor(() => lifecycle.includes("exit:0"), "drained clean exit");
+      expect(lifecycle.indexOf("turn:finish")).toBeLessThan(
+        lifecycle.indexOf("release"),
+      );
+      expect(lifecycle.indexOf("release")).toBeLessThan(
+        lifecycle.indexOf("exit:0"),
+      );
+    } finally {
+      process.exit = originalExit;
+    }
+  }, 15_000);
+
   test("agent creation keeps the old backend until accepted input drains", async () => {
     setConfiguredBackendMode("api");
     const ownerOptions: StartLocalSessionOwnerOptions[] = [];
