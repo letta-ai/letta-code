@@ -2,6 +2,7 @@ import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { ApprovalResult } from "@/agent/approval-execution";
 import { fetchRunErrorInfo } from "@/agent/approval-recovery";
+import { CHATGPT_PLAN_ROTATION_MAX_SWAPS_PER_TURN } from "@/agent/chatgpt-plan-rotation";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
 import { getStreamToolContextId } from "@/agent/message";
 import {
@@ -49,7 +50,6 @@ import {
 } from "./runtime";
 import { normalizeCwdAgentId } from "./scope";
 import { markAwaitingAcceptedApprovalContinuationRunId } from "./send";
-import { injectQueuedSkillContent } from "./skill-injection";
 import { emitStreamRecoveryStatusDeltas } from "./stream-recovery-status";
 import * as tp from "./teleport";
 import type { ListenerTransport } from "./transport";
@@ -71,6 +71,7 @@ import type { TurnLease } from "./turn-lifecycle";
 import { notifyTurnFinished, notifyTurnStarted } from "./turn-observers";
 import {
   prepareProviderRetryInput,
+  sendTurnRetry,
   shouldRetryPostStopTurn,
   startTurnInput,
 } from "./turn-send";
@@ -482,41 +483,25 @@ async function handleIncomingMessageInner(
           if (finishIfInterrupted(lastRunId || runtime.activeRunId)) {
             break;
           }
-          setTurnLoopStatus(runtime, turnLease, "SENDING_API_REQUEST", {
-            agent_id: agentId,
-            conversation_id: conversationId,
-          });
-          const retryInputWithSkillContent = injectQueuedSkillContent(
-            turnInput.messages,
-            { socket, runtime, agentId, conversationId },
-          );
-          const retrySendResult = await turnInputSender.send(
-            retryInputWithSkillContent,
-          );
-          turnInput = updateTurnInputMessagesPreservingOtids(
+          const retried = await sendTurnRetry({
             turnInput,
-            retryInputWithSkillContent,
-          );
-          const retryStream = turnInputSender.accept(retrySendResult);
-          if (!retryStream) {
-            return;
-          }
-          stream = retryStream;
-          pendingNormalizationInterruptedToolCallIds = [];
-          markAwaitingAcceptedApprovalContinuationRunId(
+            turnInputSender,
+            socket,
             runtime,
             turnLease,
-            turnInput.messages,
-          );
-          setTurnLoopStatus(runtime, turnLease, "PROCESSING_API_RESPONSE", {
-            agent_id: agentId,
-            conversation_id: conversationId,
+            agentId,
+            conversationId,
           });
-          turnToolContextId = getStreamToolContextId(
-            stream as Stream<LettaStreamingResponse>,
-          );
+          if (!retried.stream) {
+            return;
+          }
+          stream = retried.stream;
+          turnInput = retried.turnInput;
+          turnToolContextId = retried.turnToolContextId;
+          pendingNormalizationInterruptedToolCallIds = [];
           continue;
         }
+
         if (
           !deploymentInterrupted &&
           isEmptyResponseRetryable(
@@ -532,6 +517,7 @@ async function handleIncomingMessageInner(
             category: "empty_response",
             attempt,
           });
+
           if (attempt >= EMPTY_RESPONSE_MAX_RETRIES) {
             turnInput = updateTurnInputMessagesPreservingOtids(turnInput, [
               ...turnInput.messages,
@@ -543,6 +529,7 @@ async function handleIncomingMessageInner(
               },
             ]);
           }
+
           emitRetryDelta(socket, runtime, {
             message: `Empty LLM response, retrying (attempt ${attempt}/${EMPTY_RESPONSE_MAX_RETRIES})...`,
             reason: "llm_api_error",
@@ -553,117 +540,94 @@ async function handleIncomingMessageInner(
             agentId,
             conversationId,
           });
+
           await new Promise((resolve) => setTimeout(resolve, delayMs));
           if (turnAbortSignal.aborted) {
             throw new Error("Cancelled by user");
           }
           turnInput = refreshTurnInputOtidsForNewRequest(turnInput);
-          setTurnLoopStatus(runtime, turnLease, "SENDING_API_REQUEST", {
-            agent_id: agentId,
-            conversation_id: conversationId,
-          });
-          const retryInputWithSkillContent = injectQueuedSkillContent(
-            turnInput.messages,
-            { socket, runtime, agentId, conversationId },
-          );
-          const retrySendResult = await turnInputSender.send(
-            retryInputWithSkillContent,
-          );
-          turnInput = updateTurnInputMessagesPreservingOtids(
+          const retried = await sendTurnRetry({
             turnInput,
-            retryInputWithSkillContent,
-          );
-          const retryStream = turnInputSender.accept(retrySendResult);
-          if (!retryStream) {
-            return;
-          }
-          stream = retryStream;
-          pendingNormalizationInterruptedToolCallIds = [];
-          markAwaitingAcceptedApprovalContinuationRunId(
+            turnInputSender,
+            socket,
             runtime,
             turnLease,
-            turnInput.messages,
-          );
-          setTurnLoopStatus(runtime, turnLease, "PROCESSING_API_RESPONSE", {
-            agent_id: agentId,
-            conversation_id: conversationId,
-          });
-          turnToolContextId = getStreamToolContextId(
-            stream as Stream<LettaStreamingResponse>,
-          );
-          continue;
-        }
-
-        const modelRecovery =
-          !deploymentInterrupted && agentId
-            ? await recoverListenerModelFailure({
-                agentId,
-                conversationId,
-                error: quotaError,
-                errorDetail,
-                exhaustedProviders: chatgptExhaustedProviders,
-                chatgptPlanSwaps,
-                autoFallbackAttempted,
-                activeOverrideModel,
-                signal: turnAbortSignal,
-              })
-            : null;
-        if (modelRecovery) {
-          if (modelRecovery.kind === "plan_rotation") {
-            chatgptPlanSwaps = modelRecovery.chatgptPlanSwaps;
-            activeOverrideModel = modelRecovery.overrideModel;
-          } else {
-            autoFallbackAttempted = true;
-            activeOverrideModel = modelRecovery.overrideModel;
-            activePreparedToolContext = (
-              await setup.prepareToolContext(activeOverrideModel)
-            ).preparedToolContext;
-          }
-          emitRecoverableRetryNotice(socket, runtime, {
-            kind: "transient_provider_retry",
-            message: modelRecovery.message,
-            reason: "llm_api_error",
-            attempt: modelRecovery.attempt,
-            maxAttempts: modelRecovery.maxAttempts,
-            delayMs: 0,
-            runId: lastRunId || undefined,
             agentId,
             conversationId,
           });
-          if (turnAbortSignal.aborted) throw new Error("Cancelled by user");
-          turnInput = refreshTurnInputOtidsForNewRequest(turnInput);
-          setTurnLoopStatus(runtime, turnLease, "SENDING_API_REQUEST", {
-            agent_id: agentId,
-            conversation_id: conversationId,
-          });
-          const retryInputWithSkillContent = injectQueuedSkillContent(
-            turnInput.messages,
-            { socket, runtime, agentId, conversationId },
-          );
-          const retrySendResult = await turnInputSender.send(
-            retryInputWithSkillContent,
-          );
-          turnInput = updateTurnInputMessagesPreservingOtids(
-            turnInput,
-            retryInputWithSkillContent,
-          );
-          const retryStream = turnInputSender.accept(retrySendResult);
-          if (!retryStream) return;
-          stream = retryStream;
+          if (!retried.stream) {
+            return;
+          }
+          stream = retried.stream;
+          turnInput = retried.turnInput;
+          turnToolContextId = retried.turnToolContextId;
           pendingNormalizationInterruptedToolCallIds = [];
-          markAwaitingAcceptedApprovalContinuationRunId(
-            runtime,
-            turnLease,
-            turnInput.messages,
-          );
-          setTurnLoopStatus(runtime, turnLease, "PROCESSING_API_RESPONSE", {
-            agent_id: agentId,
-            conversation_id: conversationId,
-          });
-          turnToolContextId = getStreamToolContextId(
-            stream as Stream<LettaStreamingResponse>,
-          );
           continue;
+        }
+
+        if (!deploymentInterrupted && agentId) {
+          const recovery = await recoverListenerModelFailure({
+            agentId,
+            conversationId,
+            error: quotaError,
+            errorDetail,
+            exhaustedProviders: chatgptExhaustedProviders,
+            chatgptPlanSwaps,
+            autoFallbackAttempted,
+            activeOverrideModel,
+            signal: turnAbortSignal,
+          });
+          if (recovery) {
+            if (recovery.kind === "plan_rotation") {
+              chatgptPlanSwaps = recovery.chatgptPlanSwaps;
+            } else if (recovery.kind === "auto_fallback") {
+              autoFallbackAttempted = true;
+              activeOverrideModel = recovery.overrideModel;
+              try {
+                const refreshed = await setup.prepareToolContext(
+                  recovery.overrideModel,
+                );
+                activePreparedToolContext = refreshed.preparedToolContext;
+              } catch {
+                // Best-effort refresh; keep active context if refresh fails
+              }
+            }
+            emitRecoverableRetryNotice(socket, runtime, {
+              kind: "transient_provider_retry",
+              message: recovery.message,
+              reason: "llm_api_error",
+              attempt: recovery.kind === "plan_rotation" ? chatgptPlanSwaps : 1,
+              maxAttempts:
+                recovery.kind === "plan_rotation"
+                  ? CHATGPT_PLAN_ROTATION_MAX_SWAPS_PER_TURN
+                  : 1,
+              delayMs: 0,
+              runId: lastRunId || undefined,
+              agentId,
+              conversationId,
+            });
+            if (turnAbortSignal.aborted) {
+              throw new Error("Cancelled by user");
+            }
+            turnInput = refreshTurnInputOtidsForNewRequest(turnInput);
+            const retried = await sendTurnRetry({
+              turnInput,
+              turnInputSender,
+              socket,
+              runtime,
+              turnLease,
+              agentId,
+              conversationId,
+            });
+            if (!retried.stream) {
+              return;
+            }
+            stream = retried.stream;
+            turnInput = retried.turnInput;
+            turnToolContextId = retried.turnToolContextId;
+            pendingNormalizationInterruptedToolCallIds = [];
+            continue;
+          }
         }
         const shouldRetry = await shouldRetryPostStopTurn({
           deploymentInterrupted,
@@ -694,43 +658,23 @@ async function handleIncomingMessageInner(
               runId: lastRunId,
             });
           }
-          setTurnLoopStatus(runtime, turnLease, "SENDING_API_REQUEST", {
-            agent_id: agentId,
-            conversation_id: conversationId,
-          });
-          const retryInputWithSkillContent = deploymentInterrupted
-            ? turnInput.messages
-            : injectQueuedSkillContent(turnInput.messages, {
-                socket,
-                runtime,
-                agentId,
-                conversationId,
-              });
-          const retrySendResult = await turnInputSender.send(
-            retryInputWithSkillContent,
-          );
-          turnInput = updateTurnInputMessagesPreservingOtids(
+          const retried = await sendTurnRetry({
             turnInput,
-            retryInputWithSkillContent,
-          );
-          const retryStream = turnInputSender.accept(retrySendResult);
-          if (!retryStream) {
-            return;
-          }
-          stream = retryStream;
-          pendingNormalizationInterruptedToolCallIds = [];
-          markAwaitingAcceptedApprovalContinuationRunId(
+            turnInputSender,
+            socket,
             runtime,
             turnLease,
-            turnInput.messages,
-          );
-          setTurnLoopStatus(runtime, turnLease, "PROCESSING_API_RESPONSE", {
-            agent_id: agentId,
-            conversation_id: conversationId,
+            agentId,
+            conversationId,
+            deploymentInterrupted,
           });
-          turnToolContextId = getStreamToolContextId(
-            stream as Stream<LettaStreamingResponse>,
-          );
+          if (!retried.stream) {
+            return;
+          }
+          stream = retried.stream;
+          turnInput = retried.turnInput;
+          turnToolContextId = retried.turnToolContextId;
+          pendingNormalizationInterruptedToolCallIds = [];
           continue;
         }
 

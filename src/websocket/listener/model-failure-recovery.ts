@@ -12,6 +12,8 @@ import {
 import { getBackend } from "@/backend";
 import { settingsManager } from "@/settings-manager";
 
+export const LISTENER_TEMP_AUTO_MODEL = TEMP_QUOTA_OVERRIDE_MODEL;
+
 export interface RecoveryDependencies {
   rotatePlan: typeof rotateChatGPTPlanOnRecoverableFailure;
   supportsHostedAuto: () => boolean;
@@ -30,16 +32,11 @@ export type ListenerModelRecoveryAction =
       kind: "plan_rotation";
       message: string;
       chatgptPlanSwaps: number;
-      overrideModel: string;
-      attempt: number;
-      maxAttempts: number;
     }
   | {
       kind: "auto_fallback";
       message: string;
-      overrideModel: typeof TEMP_QUOTA_OVERRIDE_MODEL;
-      attempt: 1;
-      maxAttempts: 1;
+      overrideModel: typeof LISTENER_TEMP_AUTO_MODEL;
     };
 
 /**
@@ -61,7 +58,6 @@ export async function recoverListenerModelFailure(params: {
   dependencies?: RecoveryDependencies;
 }): Promise<ListenerModelRecoveryAction | null> {
   const dependencies = params.dependencies ?? DEFAULT_DEPENDENCIES;
-  if (params.activeOverrideModel === TEMP_QUOTA_OVERRIDE_MODEL) return null;
   const isQuotaFailure =
     parseChatGPTUsageLimitDetail(params.error) !== null ||
     isQuotaLimitErrorDetail(params.errorDetail);
@@ -84,15 +80,13 @@ export async function recoverListenerModelFailure(params: {
         kind: "plan_rotation",
         message: formatPlanRotationNotice(rotation),
         chatgptPlanSwaps: params.chatgptPlanSwaps + 1,
-        overrideModel: rotation.toHandle,
-        attempt: params.chatgptPlanSwaps + 1,
-        maxAttempts: CHATGPT_PLAN_ROTATION_MAX_SWAPS_PER_TURN,
       };
     }
   }
 
   if (
     params.autoFallbackAttempted ||
+    params.activeOverrideModel === LISTENER_TEMP_AUTO_MODEL ||
     !dependencies.autoSwapEnabled() ||
     !dependencies.supportsHostedAuto()
   ) {
@@ -104,8 +98,6 @@ export async function recoverListenerModelFailure(params: {
     message: isAuthenticationFailure
       ? "The automatically selected ChatGPT account needs to reconnect; temporarily switching to Auto and continuing..."
       : "Quota limit reached; temporarily switching to Auto and continuing...",
-    overrideModel: TEMP_QUOTA_OVERRIDE_MODEL,
-    attempt: 1,
-    maxAttempts: 1,
+    overrideModel: LISTENER_TEMP_AUTO_MODEL,
   };
 }

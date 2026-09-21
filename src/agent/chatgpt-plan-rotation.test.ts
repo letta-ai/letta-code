@@ -20,7 +20,6 @@ const FULL_DETAIL =
 
 const PRIMARY_HANDLE = "chatgpt-caren/gpt-5.2";
 const SIBLING_HANDLE = "chatgpt-jin/gpt-5.2";
-const THIRD_HANDLE = "chatgpt-mia/gpt-5.2";
 
 describe("quota-aware plan rotation over HTTP", () => {
   for (const outcome of [
@@ -344,6 +343,7 @@ describe("rotateChatGPTPlanOnQuotaLimit", () => {
     }
   });
 
+<<<<<<< HEAD
   test("skips an expired account selected by an earlier quota rotation", async () => {
     const agent = {
       id: "agent-rotation",
@@ -663,40 +663,6 @@ describe("parseChatGPTUsageLimitDetail", () => {
   });
 });
 
-describe("isChatGPTOAuthCredentialFailure", () => {
-  test("recognizes terminal refresh failures without matching transient auth errors", () => {
-    expect(
-      isChatGPTOAuthCredentialFailure({
-        error_type: "llm_authentication",
-        retryable: false,
-        detail:
-          "Failed to refresh ChatGPT OAuth token: refresh token is invalid or expired",
-      }),
-    ).toBe(true);
-    expect(
-      isChatGPTOAuthCredentialFailure({
-        error_type: "llm_authentication",
-        error_code: "invalid_grant",
-        retryable: false,
-      }),
-    ).toBe(true);
-    expect(
-      isChatGPTOAuthCredentialFailure({
-        error_type: "llm_authentication",
-        error_code: "refresh_failed",
-        retryable: true,
-        detail: "Failed to refresh ChatGPT OAuth token: service unavailable",
-      }),
-    ).toBe(false);
-    expect(
-      isChatGPTOAuthCredentialFailure({
-        error_type: "llm_authentication",
-        detail: "Anthropic API key is invalid",
-      }),
-    ).toBe(false);
-  });
-});
-
 describe("selectChatGPTQuotaFailoverHandle", () => {
   const chatgpt = (provider: string, model: string) => ({
     handle: `${provider}/${model}`,
@@ -788,11 +754,173 @@ describe("formatPlanRotationNotice", () => {
 
     expect(
       formatPlanRotationNotice({
-        fromProvider: "chatgpt-caren",
+        fromProvider: "chatgpt-ari",
         toProvider: "chatgpt-jin",
         resetsAt: null,
         failureKind: "authentication",
       }),
-    ).toBe("chatgpt-caren credentials expired — switched to chatgpt-jin");
+    ).toBe("chatgpt-ari credentials expired — switched to chatgpt-jin");
+  });
+});
+
+describe("isChatGPTOAuthCredentialFailure", () => {
+  test("matches structured llm_authentication errors with ChatGPT OAuth context", () => {
+    expect(
+      isChatGPTOAuthCredentialFailure({
+        error_type: "llm_authentication",
+        message:
+          "Failed to refresh ChatGPT OAuth token: refresh token is invalid or expired",
+      }),
+    ).toBe(true);
+
+    expect(
+      isChatGPTOAuthCredentialFailure({
+        error_type: "llm_authentication",
+        detail: "refresh token is invalid or expired",
+      }),
+    ).toBe(true);
+
+    expect(
+      isChatGPTOAuthCredentialFailure({
+        error_code: "llm_authentication",
+        message: "Failed to refresh ChatGPT OAuth token",
+      }),
+    ).toBe(true);
+
+    expect(
+      isChatGPTOAuthCredentialFailure({
+        error_type: "llm_authentication",
+      }),
+    ).toBe(true);
+  });
+
+  test("matches string, Error, and nested error representations", () => {
+    expect(
+      isChatGPTOAuthCredentialFailure(
+        "Failed to refresh ChatGPT OAuth token: refresh token is invalid or expired",
+      ),
+    ).toBe(true);
+
+    expect(
+      isChatGPTOAuthCredentialFailure(
+        new Error("refresh token is invalid or expired"),
+      ),
+    ).toBe(true);
+
+    expect(
+      isChatGPTOAuthCredentialFailure({
+        raw: {
+          error: {
+            message: "Failed to refresh ChatGPT OAuth token",
+          },
+        },
+      }),
+    ).toBe(true);
+
+    expect(
+      isChatGPTOAuthCredentialFailure({
+        error: {
+          detail: "invalid_grant: refresh token revoked",
+        },
+      }),
+    ).toBe(true);
+  });
+
+  test("rejects non-auth and unrelated provider errors", () => {
+    expect(isChatGPTOAuthCredentialFailure(null)).toBe(false);
+    expect(isChatGPTOAuthCredentialFailure(undefined)).toBe(false);
+    expect(isChatGPTOAuthCredentialFailure({})).toBe(false);
+    expect(
+      isChatGPTOAuthCredentialFailure({
+        error_type: "llm_error",
+        message: "ChatGPT rate limit exceeded",
+      }),
+    ).toBe(false);
+    expect(
+      isChatGPTOAuthCredentialFailure({
+        error_type: "llm_authentication",
+        message: "Invalid Anthropic API key provided",
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("rotateChatGPTPlanOnRecoverableFailure on authentication failure", () => {
+  test("rotates to a sibling plan on terminal OAuth credential failure", async () => {
+    const agent = {
+      id: "agent-rotation",
+      model: PRIMARY_HANDLE,
+      llm_config: { context_window: 272_000 },
+    };
+    const conversations = new Map([
+      ["conv-first", { id: "conv-first", model: PRIMARY_HANDLE }],
+    ]);
+    const backend = {
+      capabilities: { localModelCatalog: false },
+      async listModels() {
+        return [
+          {
+            handle: PRIMARY_HANDLE,
+            provider_type: "chatgpt_oauth",
+            provider_category: "byok",
+            max_context_window: 128_000,
+          },
+          {
+            handle: SIBLING_HANDLE,
+            provider_type: "chatgpt_oauth",
+            provider_category: "byok",
+            max_context_window: 128_000,
+          },
+        ];
+      },
+      async retrieveAgent() {
+        return agent;
+      },
+      async updateAgent(_agentId: string, update: Record<string, unknown>) {
+        Object.assign(agent, update);
+        return agent;
+      },
+      async retrieveConversation(conversationId: string) {
+        return conversations.get(conversationId);
+      },
+      async updateConversation(
+        conversationId: string,
+        update: Record<string, unknown>,
+      ) {
+        const conv = conversations.get(conversationId);
+        if (!conv) throw new Error("not found");
+        Object.assign(conv, update);
+        return conv;
+      },
+    };
+    __testSetBackend(backend as never);
+    clearAvailableModelsCache();
+
+    try {
+      const exhausted = new Set<string>();
+      const result = await rotateChatGPTPlanOnRecoverableFailure({
+        agentId: "agent-rotation",
+        conversationId: "conv-first",
+        currentHandle: null,
+        error: {
+          error_type: "llm_authentication",
+          message:
+            "Failed to refresh ChatGPT OAuth token: refresh token is invalid or expired",
+        },
+        exhaustedProviders: exhausted,
+      });
+
+      expect(result).not.toBeNull();
+      expect(result?.fromProvider).toBe("chatgpt-caren");
+      expect(result?.toProvider).toBe("chatgpt-jin");
+      expect(result?.toHandle).toBe(SIBLING_HANDLE);
+      expect(result?.failureKind).toBe("authentication");
+      expect(result?.resetsAt).toBeNull();
+      expect(exhausted).toContain("chatgpt-caren");
+      expect(conversations.get("conv-first")?.model).toBe(SIBLING_HANDLE);
+    } finally {
+      clearAvailableModelsCache();
+      __testSetBackend(null);
+    }
   });
 });

@@ -29,7 +29,6 @@ import {
   refreshInputOtidsForNewRequest,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   shouldAttemptApprovalRecovery,
-  TEMP_QUOTA_OVERRIDE_MODEL,
 } from "@/agent/approval-recovery";
 import { getAvailableModelHandles } from "@/agent/available-models";
 import {
@@ -126,6 +125,7 @@ import {
   ERROR_FEEDBACK_HINT,
   INTERRUPT_MESSAGE,
   LLM_API_ERROR_MAX_RETRIES,
+  TEMP_QUOTA_OVERRIDE_MODEL,
 } from "./constants";
 import { extractErrorMeta } from "./errors";
 import { appendOptimisticUserLine, createClientOtid, uid } from "./ids";

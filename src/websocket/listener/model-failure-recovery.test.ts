@@ -1,137 +1,229 @@
-import { describe, expect, mock, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import type { ChatGPTPlanRotationResult } from "@/agent/chatgpt-plan-rotation";
-import { TEMP_QUOTA_OVERRIDE_MODEL } from "@/agent/turn-recovery-policy";
 import {
+  LISTENER_TEMP_AUTO_MODEL,
   type RecoveryDependencies,
   recoverListenerModelFailure,
 } from "./model-failure-recovery";
 
-const quotaError = { error_code: "usage_limit_reached" };
-const authError = {
-  error_type: "llm_authentication",
-  retryable: false,
-  detail:
-    "Failed to refresh ChatGPT OAuth token: refresh token is invalid or expired",
-};
-
-function dependencies(
-  rotation: ChatGPTPlanRotationResult | null,
-  options: { hosted?: boolean; enabled?: boolean } = {},
-) {
-  const rotatePlan = mock(async () => rotation);
-  const value: RecoveryDependencies = {
-    rotatePlan,
-    supportsHostedAuto: () => options.hosted ?? true,
-    autoSwapEnabled: () => options.enabled ?? true,
-  };
-  return { rotatePlan, value };
-}
-
-function recover(
-  error: unknown,
-  overrides: Partial<Parameters<typeof recoverListenerModelFailure>[0]> = {},
-) {
-  return recoverListenerModelFailure({
-    agentId: "agent-1",
-    conversationId: "conv-1",
-    error,
-    errorDetail:
-      error === quotaError ? "provider says usage_limit_reached" : null,
-    exhaustedProviders: new Set(),
-    chatgptPlanSwaps: 0,
-    autoFallbackAttempted: false,
-    ...overrides,
-  });
-}
-
 describe("recoverListenerModelFailure", () => {
-  test("rotates a quota-exhausted plan before considering Auto", async () => {
-    const { rotatePlan, value } = dependencies({
-      fromProvider: "chatgpt-a",
-      toProvider: "chatgpt-b",
-      toHandle: "chatgpt-b/gpt-5.6",
+  const quotaError = {
+    error_code: "usage_limit_reached",
+  };
+  const authError = {
+    error_type: "llm_authentication",
+    message:
+      "Failed to refresh ChatGPT OAuth token: refresh token is invalid or expired",
+  };
+
+  function createMockDependencies(
+    overrides: Partial<RecoveryDependencies> = {},
+  ): RecoveryDependencies {
+    return {
+      rotatePlan: async () => null,
+      supportsHostedAuto: () => true,
+      autoSwapEnabled: () => true,
+      ...overrides,
+    };
+  }
+
+  test("rejects initial authentication failure without preceding quota rotation", async () => {
+    let rotateCalled = false;
+    const dependencies = createMockDependencies({
+      rotatePlan: async () => {
+        rotateCalled = true;
+        return null;
+      },
+    });
+
+    const result = await recoverListenerModelFailure({
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      error: authError,
+      errorDetail:
+        "Failed to refresh ChatGPT OAuth token: refresh token is invalid or expired",
+      exhaustedProviders: new Set(),
+      chatgptPlanSwaps: 0,
+      autoFallbackAttempted: false,
+      dependencies,
+    });
+
+    expect(result).toBeNull();
+    expect(rotateCalled).toBe(false);
+  });
+
+  test("rotates to a sibling plan on quota failure", async () => {
+    const mockRotation: ChatGPTPlanRotationResult = {
+      fromProvider: "chatgpt-caren",
+      toProvider: "chatgpt-jin",
+      toHandle: "chatgpt-jin/gpt-5.2",
       resetsAt: null,
       failureKind: "quota",
+    };
+    const dependencies = createMockDependencies({
+      rotatePlan: async () => mockRotation,
     });
 
-    await expect(recover(quotaError, { dependencies: value })).resolves.toEqual(
-      {
-        kind: "plan_rotation",
-        message: "chatgpt-a hit its usage limit — switched to chatgpt-b",
-        chatgptPlanSwaps: 1,
-        overrideModel: "chatgpt-b/gpt-5.6",
-        attempt: 1,
-        maxAttempts: 3,
-      },
-    );
-    expect(rotatePlan).toHaveBeenCalledTimes(1);
+    const result = await recoverListenerModelFailure({
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      error: quotaError,
+      errorDetail: null,
+      exhaustedProviders: new Set(),
+      chatgptPlanSwaps: 0,
+      autoFallbackAttempted: false,
+      dependencies,
+    });
+
+    expect(result).toEqual({
+      kind: "plan_rotation",
+      message: "chatgpt-caren hit its usage limit — switched to chatgpt-jin",
+      chatgptPlanSwaps: 1,
+    });
   });
 
-  test("does not hide an initial explicit account authentication failure", async () => {
-    const { rotatePlan, value } = dependencies(null);
-
-    await expect(
-      recover(authError, { dependencies: value }),
-    ).resolves.toBeNull();
-    expect(rotatePlan).not.toHaveBeenCalled();
-  });
-
-  test("skips an expired account after quota recovery has started", async () => {
-    const { value } = dependencies({
-      fromProvider: "chatgpt-b",
-      toProvider: "chatgpt-c",
-      toHandle: "chatgpt-c/gpt-5.6",
+  test("rotates to a sibling plan on auth failure after prior quota rotation", async () => {
+    const mockRotation: ChatGPTPlanRotationResult = {
+      fromProvider: "chatgpt-ari",
+      toProvider: "chatgpt-jin",
+      toHandle: "chatgpt-jin/gpt-5.2",
       resetsAt: null,
       failureKind: "authentication",
+    };
+    const dependencies = createMockDependencies({
+      rotatePlan: async () => mockRotation,
     });
 
-    await expect(
-      recover(authError, { chatgptPlanSwaps: 1, dependencies: value }),
-    ).resolves.toMatchObject({
+    const result = await recoverListenerModelFailure({
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      error: authError,
+      errorDetail:
+        "Failed to refresh ChatGPT OAuth token: refresh token is invalid or expired",
+      exhaustedProviders: new Set(["chatgpt-caren"]),
+      chatgptPlanSwaps: 1,
+      autoFallbackAttempted: false,
+      dependencies,
+    });
+
+    expect(result).toEqual({
       kind: "plan_rotation",
-      message: "chatgpt-b credentials expired — switched to chatgpt-c",
+      message: "chatgpt-ari credentials expired — switched to chatgpt-jin",
       chatgptPlanSwaps: 2,
-      overrideModel: "chatgpt-c/gpt-5.6",
     });
   });
 
-  test("falls back to request-scoped Auto after the recovery chain runs dry", async () => {
-    const { value } = dependencies(null);
+  test("falls back temporarily to Auto when rotated plan has expired credentials and no sibling remains", async () => {
+    const dependencies = createMockDependencies({
+      rotatePlan: async () => null,
+      supportsHostedAuto: () => true,
+      autoSwapEnabled: () => true,
+    });
 
-    await expect(
-      recover(authError, { chatgptPlanSwaps: 1, dependencies: value }),
-    ).resolves.toEqual({
+    const result = await recoverListenerModelFailure({
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      error: authError,
+      errorDetail:
+        "Failed to refresh ChatGPT OAuth token: refresh token is invalid or expired",
+      exhaustedProviders: new Set(["chatgpt-hi-letta", "chatgpt-ari"]),
+      chatgptPlanSwaps: 1,
+      autoFallbackAttempted: false,
+      dependencies,
+    });
+
+    expect(result).toEqual({
       kind: "auto_fallback",
       message:
         "The automatically selected ChatGPT account needs to reconnect; temporarily switching to Auto and continuing...",
-      overrideModel: TEMP_QUOTA_OVERRIDE_MODEL,
-      attempt: 1,
-      maxAttempts: 1,
+      overrideModel: LISTENER_TEMP_AUTO_MODEL,
     });
   });
 
-  test("does not use hosted Auto when disabled, local, attempted, or active", async () => {
-    const disabled = dependencies(null, { enabled: false }).value;
-    const local = dependencies(null, { hosted: false }).value;
+  test("falls back temporarily to Auto when quota limit is reached and no sibling remains", async () => {
+    const dependencies = createMockDependencies({
+      rotatePlan: async () => null,
+      supportsHostedAuto: () => true,
+      autoSwapEnabled: () => true,
+    });
 
-    await expect(
-      recover(quotaError, { dependencies: disabled }),
-    ).resolves.toBeNull();
-    await expect(
-      recover(quotaError, { dependencies: local }),
-    ).resolves.toBeNull();
-    await expect(
-      recover(quotaError, {
-        dependencies: dependencies(null).value,
-        autoFallbackAttempted: true,
+    const result = await recoverListenerModelFailure({
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      error: quotaError,
+      errorDetail: "usage_limit_reached",
+      exhaustedProviders: new Set(["chatgpt-hi-letta"]),
+      chatgptPlanSwaps: 0,
+      autoFallbackAttempted: false,
+      dependencies,
+    });
+
+    expect(result).toEqual({
+      kind: "auto_fallback",
+      message:
+        "Quota limit reached; temporarily switching to Auto and continuing...",
+      overrideModel: LISTENER_TEMP_AUTO_MODEL,
+    });
+  });
+
+  test("does not attempt Auto fallback if already attempted or already active", async () => {
+    const dependencies = createMockDependencies({
+      rotatePlan: async () => null,
+    });
+
+    const alreadyAttempted = await recoverListenerModelFailure({
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      error: quotaError,
+      errorDetail: "usage_limit_reached",
+      exhaustedProviders: new Set(["chatgpt-hi-letta"]),
+      chatgptPlanSwaps: 0,
+      autoFallbackAttempted: true,
+      dependencies,
+    });
+    expect(alreadyAttempted).toBeNull();
+
+    const alreadyActive = await recoverListenerModelFailure({
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      error: quotaError,
+      errorDetail: "usage_limit_reached",
+      exhaustedProviders: new Set(["chatgpt-hi-letta"]),
+      chatgptPlanSwaps: 0,
+      autoFallbackAttempted: false,
+      activeOverrideModel: LISTENER_TEMP_AUTO_MODEL,
+      dependencies,
+    });
+    expect(alreadyActive).toBeNull();
+  });
+
+  test("does not attempt Auto fallback if hosted Auto is unsupported or disabled", async () => {
+    const unsupported = await recoverListenerModelFailure({
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      error: quotaError,
+      errorDetail: "usage_limit_reached",
+      exhaustedProviders: new Set(["chatgpt-hi-letta"]),
+      chatgptPlanSwaps: 0,
+      autoFallbackAttempted: false,
+      dependencies: createMockDependencies({
+        supportsHostedAuto: () => false,
       }),
-    ).resolves.toBeNull();
-    await expect(
-      recover(authError, {
-        dependencies: dependencies(null).value,
-        chatgptPlanSwaps: 1,
-        activeOverrideModel: TEMP_QUOTA_OVERRIDE_MODEL,
+    });
+    expect(unsupported).toBeNull();
+
+    const disabled = await recoverListenerModelFailure({
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      error: quotaError,
+      errorDetail: "usage_limit_reached",
+      exhaustedProviders: new Set(["chatgpt-hi-letta"]),
+      chatgptPlanSwaps: 0,
+      autoFallbackAttempted: false,
+      dependencies: createMockDependencies({
+        autoSwapEnabled: () => false,
       }),
-    ).resolves.toBeNull();
+    });
+    expect(disabled).toBeNull();
   });
 });
