@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { tmpdir } from "node:os";
+
 import {
   getRuntimeContext,
   type RuntimeContextSnapshot,
@@ -9,6 +11,8 @@ import { createRuntime } from "@/websocket/listener/lifecycle";
 import { createConversationRuntime } from "@/websocket/listener/runtime";
 import { handleLaunchSubagentCommand } from "./subagents";
 
+const cwdA = tmpdir();
+const cwdB = process.cwd();
 const args = {
   subagent_type: "custom",
   conversation_id: "conv-worker",
@@ -23,15 +27,15 @@ describe("subagent command context", () => {
     const b = createConversationRuntime(listener, "agent-b", "conv-b");
     listener.workingDirectoryByConversation.set(
       getWorkingDirectoryScopeKey("agent-a", "conv-a"),
-      "/tmp",
+      cwdA,
     );
     listener.workingDirectoryByConversation.set(
       getWorkingDirectoryScopeKey("agent-b", "conv-b"),
-      "/",
+      cwdB,
     );
     const lease = a.turnLifecycle.begin({
       origin: "message",
-      workingDirectory: "/tmp",
+      workingDirectory: cwdA,
     });
     a.turnLifecycle.setExecutingToolCallIds(lease, ["dispatch"]);
     a.turnLifecycle.setStatus(lease, "EXECUTING_CLIENT_SIDE_TOOL");
@@ -90,13 +94,13 @@ describe("subagent command context", () => {
         agentId: "agent-a",
         conversationId: "conv-a",
         actingUserId: "user-0",
-        workingDirectory: "/tmp",
+        workingDirectory: cwdA,
       }),
       expect.objectContaining({
         agentId: "agent-b",
         conversationId: "conv-b",
         actingUserId: "user-1",
-        workingDirectory: "/",
+        workingDirectory: cwdB,
       }),
     ]);
     expect(
@@ -115,7 +119,7 @@ describe("subagent command context", () => {
     );
     const lease = parent.turnLifecycle.begin({
       origin: "message",
-      workingDirectory: "/tmp",
+      workingDirectory: cwdA,
     });
     const response = await handleLaunchSubagentCommand(
       {
