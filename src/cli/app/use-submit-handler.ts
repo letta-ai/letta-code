@@ -128,7 +128,7 @@ import {
   runUserPromptSubmitHooks,
 } from "@/hooks";
 import { createModConversationHandle } from "@/mods/conversation-handle";
-import type { QueueRuntime } from "@/queue/queue-runtime";
+import type { OwnerTurnRequest, QueueRuntime } from "@/queue/queue-runtime";
 import {
   buildSharedReminderParts,
   prependReminderPartsToContent,
@@ -253,6 +253,7 @@ type SubmitHandlerContext = {
   needsEagerApprovalCheck: boolean;
   openTrajectorySegment: () => void;
   overrideContentPartsRef: MutableRefObject<MessageCreate["content"] | null>;
+  ownerRequestRef: MutableRefObject<OwnerTurnRequest | null>;
   pendingApprovals: ApprovalRequest[];
   pendingConversationSwitchRef: MutableRefObject<ConversationSwitchContext | null>;
   pendingGitReminderRef: MutableRefObject<PendingGitReminder | null>;
@@ -502,6 +503,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     needsEagerApprovalCheck,
     openTrajectorySegment,
     overrideContentPartsRef,
+    ownerRequestRef,
     pendingApprovals,
     pendingConversationSwitchRef,
     pendingGitReminderRef,
@@ -572,14 +574,18 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       };
       const msg = message?.trim() ?? "";
       const overrideContentParts = overrideContentPartsRef.current;
+      const ownerRequest = ownerRequestRef.current;
       const hasOverrideContent = overrideContentParts !== null;
       if (overrideContentParts) {
         overrideContentPartsRef.current = null;
       }
+      ownerRequestRef.current = null;
       const { notifications: taskNotifications, cleanedText } =
         extractTaskNotificationsForDisplay(msg);
       const userTextForInput = cleanedText.trim();
-      const routedUserText = aliasBareExitCommand(userTextForInput);
+      const routedUserText = ownerRequest
+        ? ""
+        : aliasBareExitCommand(userTextForInput);
       const isSystemOnly =
         taskNotifications.length > 0 && userTextForInput.length === 0;
 
@@ -621,7 +627,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       await flushPendingReasoningEffort();
 
       // Run UserPromptSubmit hooks - can block the prompt from being processed
-      const isCommand = userTextForInput.startsWith("/");
+      const isCommand = !ownerRequest && userTextForInput.startsWith("/");
       const hookResult = isSystemOnly
         ? { blocked: false, feedback: [] as string[] }
         : await runUserPromptSubmitHooks(
@@ -3508,15 +3514,8 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         }
       }
 
-      // Build message content from display value (handles placeholders for text/images)
       const contentParts =
         overrideContentParts ?? buildMessageContentFromDisplay(msg);
-
-      // Append the optimistic user message and trigger a render immediately —
-      // before any async work (reminder building, hooks, etc.) so the user
-      // sees their message appear without delay. Ink uses React legacy mode
-      // which doesn't auto-batch async state updates, so we do this synchronously
-      // while still inside the React event handler to get a single render cycle.
       const userOtid = createClientOtid();
       const optimisticUserLineId = appendOptimisticUserLine(
         buffersRef.current,
@@ -3535,15 +3534,11 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       openTrajectorySegment();
       refreshDerived();
 
-      // Inject SessionStart hook feedback (stdout on exit 2) into first message only
       let sessionStartHookFeedback = "";
       if (sessionStartFeedbackRef.current.length > 0) {
         sessionStartHookFeedback = `${SYSTEM_REMINDER_OPEN}\n[SessionStart hook context]:\n${sessionStartFeedbackRef.current.join("\n")}\n${SYSTEM_REMINDER_CLOSE}\n\n`;
-        // Clear after injecting so it only happens once
         sessionStartFeedbackRef.current = [];
       }
-
-      // Build bash command prefix if there are cached commands
       let bashCommandPrefix = "";
       if (bashCommandCacheRef.current.length > 0) {
         bashCommandPrefix = `${SYSTEM_REMINDER_OPEN}
@@ -3554,11 +3549,9 @@ ${SYSTEM_REMINDER_CLOSE}
         for (const cmd of bashCommandCacheRef.current) {
           bashCommandPrefix += `<bash-input>${cmd.input}</bash-input>\n<bash-output>${cmd.output}</bash-output>\n`;
         }
-        // Clear the cache after building the prefix
         bashCommandCacheRef.current = [];
       }
 
-      // Build git memory sync reminder if uncommitted changes or unpushed commits
       let memoryGitReminder = "";
       const gitStatus = pendingGitReminderRef.current;
       if (gitStatus) {
@@ -3577,7 +3570,6 @@ ${syncInstructions}
 You should do this soon to avoid losing memory updates. It only takes a few seconds.
 ${SYSTEM_REMINDER_CLOSE}
 `;
-        // Clear after injecting so it doesn't repeat
         pendingGitReminderRef.current = null;
       }
 
@@ -3683,8 +3675,6 @@ ${SYSTEM_REMINDER_CLOSE}
         }
       }
 
-      // Start the conversation loop. If we have queued approval results from an interrupted
-      // client-side execution, send them first before the new user message.
       const initialInput: Array<MessageCreate | ApprovalCreate> = [];
 
       if (eagerRecoveryDenials && eagerRecoveryDenials.length > 0) {
@@ -3701,16 +3691,25 @@ ${SYSTEM_REMINDER_CLOSE}
         initialInput.push(queuedApprovalInput);
       }
 
-      initialInput.push({
-        type: "message",
-        role: "user",
-        content: messageContent as unknown as MessageCreate["content"],
-        otid: userOtid,
-      });
+      if (ownerRequest) {
+        initialInput.push(
+          ...ownerRequest.messages.map((input) =>
+            "content" in input ? { type: "message" as const, ...input } : input,
+          ),
+        );
+      } else {
+        initialInput.push({
+          type: "message",
+          role: "user",
+          content: messageContent as unknown as MessageCreate["content"],
+          otid: userOtid,
+        });
+      }
 
       await processConversation(initialInput, {
         submissionGeneration,
         transcriptStartLineIndex,
+        ownerRequest: ownerRequest ?? undefined,
       });
 
       await runPostTurnMemorySync({
@@ -3724,7 +3723,6 @@ ${SYSTEM_REMINDER_CLOSE}
         },
       });
 
-      // Clean up placeholders after submission
       clearPlaceholdersInText(msg);
 
       return { submitted: true };

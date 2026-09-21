@@ -7,8 +7,20 @@ import type {
   QueueItemSource,
 } from "@/types/protocol";
 import { isDebugEnabled } from "@/utils/debug";
+import type { IncomingMessage } from "@/websocket/listener/types";
 
 export type { QueueBlockedReason, QueueClearedReason, QueueItemKind };
+
+export type OwnerTurnRequest = Pick<
+  IncomingMessage,
+  | "messages"
+  | "imageFailureMode"
+  | "clientToolAllowlist"
+  | "clientToolset"
+  | "externalToolScopeIds"
+  | "excludeInteractiveTools"
+  | "responseFormat"
+>;
 
 // ── Item types ───────────────────────────────────────────────────
 
@@ -54,6 +66,8 @@ export type MessageQueueItem = QueueItemBase & {
    * run as its own turn so its correlated client request can settle.
    */
   noCoalesce?: boolean;
+  /** Full owner-delivered turn, retained for the TUI's existing executor. */
+  ownerRequest?: OwnerTurnRequest;
 };
 
 export type TaskNotificationQueueItem = QueueItemBase & {

@@ -193,6 +193,15 @@ export async function startLocalSessionOwner(
       conversationId: options.conversationId,
       actingUserId: incoming.actingUserId,
       noCoalesce: true,
+      ownerRequest: {
+        messages: incoming.messages,
+        imageFailureMode: incoming.imageFailureMode,
+        clientToolAllowlist: incoming.clientToolAllowlist,
+        clientToolset: incoming.clientToolset,
+        externalToolScopeIds: incoming.externalToolScopeIds,
+        excludeInteractiveTools: incoming.excludeInteractiveTools,
+        responseFormat: incoming.responseFormat,
+      },
     } as Parameters<QueueRuntime["enqueue"]>[0]);
     if (!item) return false;
     options.queueRuntime.resume(

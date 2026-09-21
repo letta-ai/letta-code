@@ -19,6 +19,7 @@ import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
 import type { ReflectionSettings } from "@/cli/helpers/memory-reminder";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import type { ExperimentId } from "@/experiments/types";
+import type { OwnerTurnRequest } from "@/queue/queue-runtime";
 import type { ToolExecutionResult } from "@/tools/manager";
 import type { ToolsetPreference } from "@/tools/toolset";
 
@@ -159,6 +160,7 @@ export type ProcessConversationOptions = {
   allowReentry?: boolean;
   submissionGeneration?: number;
   transcriptStartLineIndex?: number | null;
+  ownerRequest?: OwnerTurnRequest;
 };
 
 export type ProcessConversation = (

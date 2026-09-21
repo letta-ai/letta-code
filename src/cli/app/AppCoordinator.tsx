@@ -165,6 +165,7 @@ import {
 } from "@/providers/byok-providers";
 import type {
   MessageQueueItem,
+  OwnerTurnRequest,
   QueueRuntime,
   TaskNotificationQueueItem,
 } from "@/queue/queue-runtime";
@@ -177,10 +178,12 @@ import {
 } from "@/reminders/state";
 import {
   getCurrentWorkingDirectory,
+  getRuntimeContext,
   runWithRuntimeContext,
 } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
+import { INTERACTIVE_USER_INPUT_TOOL_NAMES } from "@/tools/interactive-policy";
 import {
   releaseToolExecutionContext,
   type ToolExecutionResult,
@@ -237,6 +240,7 @@ import {
   providerTypeFromModelSettings,
   reasoningEffortLlmConfigPatch,
 } from "./model-config";
+import { restoreConversationView } from "./restore-conversation-view";
 import { saveLastSessionBeforeExit } from "./session";
 import type {
   ActiveOverlay,
@@ -1481,9 +1485,8 @@ export function App({
     }
   }, [localSessionOwner, queuedOverlayAction]);
   const overrideContentPartsRef = useRef<MessageCreate["content"] | null>(null);
+  const ownerRequestRef = useRef<OwnerTurnRequest | null>(null);
 
-  // Set up message queue bridge for background tasks
-  // This allows non-React code (Task.ts) to add notifications to queueDisplay
   useEffect(() => {
     // Enqueue via QueueRuntime — onEnqueued callback updates queueDisplay.
     setMessageQueueAdder((message: QueuedMessage) => {
@@ -1648,7 +1651,7 @@ export function App({
     releaseToolExecutionContext(contextId);
   }, []);
   const prepareScopedToolExecutionContext = useCallback(
-    async (overrideModel?: string | null) => {
+    async (overrideModel?: string | null, ownerRequest?: OwnerTurnRequest) => {
       const workingDirectory = getCurrentWorkingDirectory();
       const desiredModel = overrideModel ?? currentModelHandle;
 
@@ -1657,6 +1660,13 @@ export function App({
           agentId: agentIdRef.current,
           conversationId: conversationIdRef.current,
           overrideModel: desiredModel,
+          actingUserId: getRuntimeContext()?.actingUserId,
+          clientToolset: ownerRequest?.clientToolset,
+          clientToolAllowlist: ownerRequest?.clientToolAllowlist,
+          externalToolScopeIds: ownerRequest?.externalToolScopeIds,
+          ...(ownerRequest?.excludeInteractiveTools
+            ? { exclude: [...INTERACTIVE_USER_INPUT_TOOL_NAMES] }
+            : {}),
           workingDirectory,
           modContext: modAdapterRef.current?.context,
           modEvents: modAdapterRef.current?.events,
@@ -4321,6 +4331,7 @@ export function App({
     needsEagerApprovalCheck,
     openTrajectorySegment,
     overrideContentPartsRef,
+    ownerRequestRef,
     pendingApprovals,
     pendingConversationSwitchRef,
     pendingGitReminderRef,
@@ -4453,6 +4464,11 @@ export function App({
 
       // Submit via normal flow — overrideContentPartsRef carries rich content parts.
       overrideContentPartsRef.current = queuedContentParts;
+      const ownerItem =
+        batch.items.length === 1 && batch.items[0]?.kind === "message"
+          ? batch.items[0]
+          : null;
+      ownerRequestRef.current = ownerItem?.ownerRequest ?? null;
       // Lock prevents re-entrant dequeue if deps churn before processConversation
       // sets abortControllerRef (which is the normal long-term gate).
       dequeueInFlightRef.current = true;
@@ -4559,8 +4575,6 @@ export function App({
   // These are actions from interactive commands (like /agents, /model) that were
   // used while the agent was busy. The change is applied after end_turn.
   useEffect(() => {
-    // finishTuiTurn bumps this after refs (processing/controller) settle; refs
-    // alone are not reactive, so this is the handoff gate's retry trigger.
     void dequeueEpoch;
     if (
       !streaming &&
@@ -4577,9 +4591,6 @@ export function App({
         action.type === "create_agent" ||
         action.type === "exit";
       if (changesLocalSessionScope) {
-        // Close the old scope's ACK boundary before observing its queue. Any
-        // input accepted first remains visible here; later delivery is rejected
-        // for Cloud to retry after the new owner is ready.
         localSessionOwner.stopAdmission();
         resumeAcceptedLocalSessionInput();
         sessionSwitchAdmissionStateRef.current = "draining";
@@ -4591,17 +4602,13 @@ export function App({
           abortControllerRef.current ||
           processingConversationRef.current > 0
         ) {
-          // Keep the switch pending. The normal dequeue path is allowed to run
-          // while this action is pending and remains bound to the old scope.
           return;
         }
         sessionSwitchAdmissionStateRef.current = "releasing";
       }
       setQueuedOverlayAction(null); // Clear immediately to prevent re-runs
 
-      // Process the queued action
       if (action.type === "switch_agent") {
-        // Call handleAgentSelect - it will see isAgentBusy() as false now
         handleAgentSelect(action.agentId, {
           conversationId: action.conversationId,
           commandId: action.commandId,
@@ -4615,7 +4622,6 @@ export function App({
       } else if (action.type === "exit") {
         void handleExit();
       } else if (action.type === "switch_model") {
-        // Call handleModelSelect - it will see isAgentBusy() as false now
         handleModelSelect(
           action.modelSelection ?? action.modelId,
           action.commandId,
@@ -4636,7 +4642,6 @@ export function App({
           phase: "running",
         });
 
-        // Execute the conversation switch asynchronously
         (async () => {
           setCommandRunning(true);
           try {
@@ -4649,9 +4654,6 @@ export function App({
                   action.conversationId,
                 );
 
-                // A clean handoff is generation guarded in Cloud. Do not make
-                // the new scope current until every accepted old-scope input
-                // has run and Cloud positively acknowledges the release.
                 await localSessionOwner.release();
                 setConversationIdAndRef(action.conversationId);
                 sessionSwitchAdmissionStateRef.current = "idle";
@@ -4666,10 +4668,19 @@ export function App({
                 };
 
                 settingsManager.persistSession(agentId, action.conversationId);
-
-                // Reset context tokens for new conversation
                 resetContextHistory(contextTrackerRef.current);
                 resetBootstrapReminderState();
+                restoreConversationView({
+                  buffers: buffersRef.current,
+                  history: resumeData.messageHistory,
+                  emittedIds: emittedIdsRef.current,
+                  hasBackfilledRef,
+                  resetDeferredToolCallCommits,
+                  resetTrajectoryBases,
+                  setLines,
+                  setStaticItems,
+                  separatorId: uid("sep"),
+                });
 
                 if (resumeData.pendingApprovals.length > 0) {
                   await recoverRestoredPendingApprovals(
@@ -4736,6 +4747,8 @@ export function App({
     commandRunner.start,
     recoverRestoredPendingApprovals,
     resetBootstrapReminderState,
+    resetDeferredToolCallCommits,
+    resetTrajectoryBases,
     hasAcceptedLocalSessionInput,
     localSessionOwner,
     setConversationAutoTitleEligibility,
@@ -4743,7 +4756,6 @@ export function App({
     queuedOverlayAction,
   ]);
 
-  // Handle escape when profile confirmation is pending
   const { handleFeedbackSubmit } = useFeedbackHandler({
     agentDescription,
     agentId,
@@ -4766,13 +4778,10 @@ export function App({
     }
   }, [commandRunner, profileConfirmPending]);
 
-  // Toggle expand/collapse for a specific tool call ID
   const handleToggleExpandedToolCall = useCallback((id: string) => {
     setExpandedToolCallId((prev) => (prev === id ? null : id));
   }, []);
 
-  // The ID of the last finished shell tool call — used for the ctrl+o hint and handler.
-  // lines is intentionally in the dep array to recompute when buffers change (buffersRef is a ref).
   // biome-ignore lint/correctness/useExhaustiveDependencies: lines triggers recompute when buffer changes
   const lastShellToolCallId = useMemo(() => {
     const order = buffersRef.current.order;
@@ -4793,17 +4802,14 @@ export function App({
     return null;
   }, [lines]);
 
-  // ctrl+o toggles the last shell tool call output
   const handleCtrlO = useCallback(() => {
     if (lastShellToolCallId) {
       handleToggleExpandedToolCall(lastShellToolCallId);
     }
   }, [lastShellToolCallId, handleToggleExpandedToolCall]);
 
-  // Handle permission mode changes from the Input component (e.g., shift+tab cycling)
   const handlePermissionModeChange = useCallback(
     (mode: PermissionMode) => {
-      // permissionMode.setMode() is called in InputRich.tsx before this callback
       setUiPermissionMode(mode);
     },
     [setUiPermissionMode],
@@ -4838,7 +4844,6 @@ export function App({
       withCommandLock,
     });
 
-  // Live area shows only in-progress items
   // biome-ignore lint/correctness/useExhaustiveDependencies: staticItems.length and deferredCommitAt are intentional triggers to recompute when items are promoted to static or deferred commits complete
   const liveItems = useMemo(() => {
     return lines.filter((ln) => {
@@ -4848,14 +4853,9 @@ export function App({
         return ln.phase === "running";
       }
       if (ln.kind === "tool_call") {
-        // Task tool_calls need special handling:
-        // - Only include if pending approval (phase: "ready" or "streaming")
-        // - Running/finished Task tools are handled by SubagentGroupDisplay
         if (ln.name && isTaskTool(ln.name)) {
-          // Only show Task tools that are awaiting approval (not running/finished)
           return ln.phase === "ready" || ln.phase === "streaming";
         }
-        // Always show other tool calls in progress
         return (
           ln.phase !== "finished" ||
           deferredToolCallCommitsRef.current.has(ln.id)

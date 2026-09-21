@@ -79,7 +79,6 @@ describe("local session owner", () => {
       }),
     });
     expect(await owner.ready()).toBe(true);
-
     queue.enqueue({
       kind: "message",
       source: "user",
@@ -119,11 +118,21 @@ describe("local session owner", () => {
         agentId: "agent-local",
         conversationId: "conv-local",
         actingUserId: "user-sender",
+        clientToolAllowlist: [],
+        clientToolset: { base: "none", include: ["Read", "Glob"] },
+        externalToolScopeIds: ["scope-1"],
+        excludeInteractiveTools: true,
+        responseFormat: { type: "json_object" },
         messages: [
           {
             role: "user",
             content: "accepted before boundary",
             client_message_id: "cm-1",
+          },
+          {
+            role: "user",
+            content: "second owner message",
+            client_message_id: "cm-2",
           },
         ],
       }),
@@ -147,7 +156,20 @@ describe("local session owner", () => {
     const batch = queue.consumeItems(queue.readyLength);
     expect(batch?.items).toMatchObject([
       { clientMessageId: "cm-scoped-paused" },
-      { clientMessageId: "cm-1", actingUserId: "user-sender" },
+      {
+        clientMessageId: "cm-1",
+        actingUserId: "user-sender",
+        ownerRequest: {
+          messages: [
+            { client_message_id: "cm-1" },
+            { client_message_id: "cm-2" },
+          ],
+          clientToolAllowlist: [],
+          externalToolScopeIds: ["scope-1"],
+          excludeInteractiveTools: true,
+          responseFormat: { type: "json_object" },
+        },
+      },
     ]);
     expect(queue.peek()).toMatchObject([
       { content: "parked local draft", paused: true },
