@@ -106,10 +106,15 @@ export function isCoalescable(kind: QueueItemKind): boolean {
   );
 }
 
+function preventsCoalescing(item: QueueItem): boolean {
+  return "noCoalesce" in item && item.noCoalesce === true;
+}
+
 function hasSameScope(a: QueueItem, b: QueueItem): boolean {
   return (
     (a.agentId ?? null) === (b.agentId ?? null) &&
-    (a.conversationId ?? null) === (b.conversationId ?? null)
+    (a.conversationId ?? null) === (b.conversationId ?? null) &&
+    (a.actingUserId ?? null) === (b.actingUserId ?? null)
   );
 }
 
@@ -309,7 +314,14 @@ export class QueueRuntime {
     if (first && isCoalescable(first.kind)) {
       for (const item of this.store) {
         if (item.paused) continue;
-        if (!isCoalescable(item.kind) || !hasSameScope(first, item)) break;
+        if (
+          !isCoalescable(item.kind) ||
+          !hasSameScope(first, item) ||
+          (batch.length > 0 &&
+            (preventsCoalescing(first) || preventsCoalescing(item)))
+        ) {
+          break;
+        }
         batch.push(item);
       }
     } else if (first) {

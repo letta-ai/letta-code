@@ -1404,6 +1404,11 @@ export function App({
     queueRuntime: tuiQueueRef.current,
     onQueueChanged: () => setDequeueEpoch((epoch) => epoch + 1),
     onAbort: () => remoteAbortRef.current(),
+    isProcessing:
+      streaming ||
+      isExecutingTool ||
+      pendingApprovals.length > 0 ||
+      commandRunning,
   });
   const overrideContentPartsRef = useRef<MessageCreate["content"] | null>(null);
 
@@ -4305,8 +4310,7 @@ export function App({
         (lastStopReasonRef.current === "end_turn" &&
           processingConversationRef.current === 0))
     ) {
-      // consumeItems(n) fires onDequeued → setQueueDisplay(prev => prev.slice(n)).
-      const batch = tuiQueueRef.current?.consumeItems(queueLen);
+      const batch = tuiQueueRef.current?.tryDequeue(null);
       if (!batch) return;
 
       // Build concatenated text for lastDequeuedMessageRef (error restoration).

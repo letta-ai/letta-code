@@ -50,8 +50,10 @@ export interface LocalSessionOwnerOptions {
    * receipts; the TUI remains the sole turn executor.
    */
   acceptInput: (incoming: IncomingMessage) => boolean;
-  /** Route Cloud cancellation through the TUI's existing interrupt path. */
+  /** Route Cloud cancellation through the outer executor's interrupt path. */
   abort: () => boolean | Promise<boolean>;
+  /** Reflect outer-executor activity at teleport admission boundaries. */
+  isProcessing?: () => boolean;
   /** Called after this runtime acknowledges an explicit computer handoff. */
   onRelinquished?: () => void;
 }

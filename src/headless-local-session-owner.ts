@@ -11,6 +11,7 @@ export interface HeadlessLocalSession {
   owner: LocalSessionOwnerHandle | null;
   turnAbortSignal: AbortSignal;
   start(): void;
+  setProcessing(active: boolean): void;
   cancel(): void;
   release(): Promise<void>;
 }
@@ -28,6 +29,7 @@ export function startHeadlessLocalSession(
   const remoteAbortController = new AbortController();
   let disposed = false;
   let started = false;
+  let processing = false;
   const session: HeadlessLocalSession = {
     queue,
     owner: null,
@@ -49,6 +51,7 @@ export function startHeadlessLocalSession(
           remoteAbortController.abort();
           return true;
         },
+        isProcessing: () => processing,
         waitForAcceptedInputs: async () => {
           if (queue.length > 0) {
             throw new Error(
@@ -68,6 +71,9 @@ export function startHeadlessLocalSession(
             error instanceof Error ? error.message : String(error),
           );
         });
+    },
+    setProcessing(active) {
+      processing = active;
     },
     cancel() {
       disposed = true;
@@ -92,7 +98,7 @@ export function takeAcceptedHeadlessInputs(
   session: HeadlessLocalSession,
 ): AcceptedHeadlessInput | null {
   session.owner?.stopAdmission();
-  const batch = session.queue.consumeItems(session.queue.readyLength);
+  const batch = session.queue.tryDequeue(null);
   if (!batch) return null;
   session.owner?.resumeAdmission();
   return {

@@ -14,9 +14,12 @@ export interface StartLocalSessionOwnerOptions {
   surfaceName: "TUI" | "headless";
   onQueueChanged: () => void;
   onAbort: () => boolean | Promise<boolean>;
+  isProcessing: () => boolean;
   /** Resolves only after every input accepted before admission stopped is safe. */
   waitForAcceptedInputs?: () => Promise<void>;
   onError?: (error: Error) => void;
+  /** Override only for deterministic retry tests. */
+  releaseRetryMs?: number;
 }
 
 export interface LocalSessionOwnerHandle {
@@ -118,49 +121,58 @@ export async function startLocalSessionOwner(
     return true;
   };
 
-  const release = async (): Promise<boolean> => {
-    if (stopped) return true;
+  let releasePromise: Promise<boolean> | null = null;
+  const release = (): Promise<boolean> => {
+    if (stopped) return Promise.resolve(true);
+    if (releasePromise) return releasePromise;
     accepting = false;
-    await options.waitForAcceptedInputs?.();
-    const runtime = ownedRuntime;
-    const transport = runtime?.transport ?? runtime?.socket;
-    if (!runtime || !transport || !isListenerTransportOpen(transport)) {
-      options.onError?.(
-        new Error("Session owner release requires a connected listener"),
-      );
-      return false;
-    }
-    const requestId = `release-${crypto.randomUUID()}`;
-    const ack = new Promise<boolean>((resolve) => {
-      const timer = setTimeout(() => {
-        releaseWaiters.delete(requestId);
-        resolve(false);
-      }, 2_000);
-      timer.unref?.();
-      releaseWaiters.set(requestId, ({ released }) => {
-        clearTimeout(timer);
-        resolve(released);
-      });
-    });
-    transport.send(
-      JSON.stringify({
-        type: "release_session_owner",
-        request_id: requestId,
-        runtime: {
-          agent_id: options.agentId,
-          conversation_id: options.conversationId,
-        },
-      }),
-    );
-    if (!(await ack)) {
-      options.onError?.(
-        new Error("Session owner release was not acknowledged"),
-      );
-      return false;
-    }
-    stopped = true;
-    dependencies.stopListener(runtime);
-    return true;
+    releasePromise = (async () => {
+      await options.waitForAcceptedInputs?.();
+      while (!stopped) {
+        const runtime = ownedRuntime;
+        const transport = runtime?.transport ?? runtime?.socket;
+        if (!runtime || !transport || !isListenerTransportOpen(transport)) {
+          options.onError?.(
+            new Error("Session owner release requires a connected listener"),
+          );
+        } else {
+          const requestId = `release-${crypto.randomUUID()}`;
+          const ack = new Promise<boolean>((resolve) => {
+            const timer = setTimeout(() => {
+              releaseWaiters.delete(requestId);
+              resolve(false);
+            }, 2_000);
+            releaseWaiters.set(requestId, ({ released }) => {
+              clearTimeout(timer);
+              resolve(released);
+            });
+          });
+          transport.send(
+            JSON.stringify({
+              type: "release_session_owner",
+              request_id: requestId,
+              runtime: {
+                agent_id: options.agentId,
+                conversation_id: options.conversationId,
+              },
+            }),
+          );
+          if (await ack) {
+            stopped = true;
+            dependencies.stopListener(runtime);
+            return true;
+          }
+          options.onError?.(
+            new Error("Session owner release was not acknowledged; retrying"),
+          );
+        }
+        await new Promise((resolve) =>
+          setTimeout(resolve, options.releaseRetryMs ?? 1_000),
+        );
+      }
+      return true;
+    })();
+    return releasePromise;
   };
 
   const connect = async (): Promise<void> => {
@@ -189,6 +201,7 @@ export async function startLocalSessionOwner(
         queueRuntime: options.queueRuntime,
         acceptInput,
         abort: options.onAbort,
+        isProcessing: options.isProcessing,
         onRelinquished: () => void release(),
       },
       onConnected: () => {},

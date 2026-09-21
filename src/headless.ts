@@ -2205,6 +2205,7 @@ export async function handleHeadlessCommand(
       if (turnAbortSignal.aborted) {
         await exitInterrupted();
       }
+      localSession.setProcessing(true);
 
       const hasApprovalContinuation = currentInput.some(
         (item) => item.type === "approval",
@@ -2552,6 +2553,7 @@ export async function handleHeadlessCommand(
 
       // Case 1: Turn ended normally
       if (stopReason === "end_turn") {
+        localSession.setProcessing(false);
         // Reset retry counters on success
         llmApiErrorRetries = 0;
         emptyResponseRetries = 0;

@@ -1,5 +1,6 @@
 import { afterEach, expect, mock, test } from "bun:test";
 import WebSocket from "ws";
+import { QueueRuntime } from "@/queue/queue-runtime";
 import type { TeleportContinuation } from "@/types/protocol_v2";
 import { openListenerConnection } from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
@@ -96,6 +97,42 @@ function inputFrame(requestId: string, clientMessageId: string): Buffer {
 
 afterEach(() => {
   setActiveRuntime(null);
+});
+
+test("local session teleport waits for the outer executor boundary", async () => {
+  const listener = createRuntime();
+  const socket = new MockSocket();
+  const onRelinquished = mock(() => {});
+  let processing = true;
+  openListenerConnection({
+    runtime: listener,
+    connectionId: "source",
+    writer: socket as never,
+    options: {
+      ...makeOptions(),
+      localSessionOwner: {
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        queueRuntime: new QueueRuntime(),
+        acceptInput: () => true,
+        abort: () => true,
+        isProcessing: () => processing,
+        onRelinquished,
+      },
+    },
+  });
+
+  requestTeleport(listener);
+  expect(socket.sent).not.toContainEqual(
+    expect.objectContaining({ type: "teleport_ready" }),
+  );
+
+  processing = false;
+  await Bun.sleep(75);
+  expect(socket.sent).toContainEqual(
+    expect.objectContaining({ type: "teleport_ready", success: true }),
+  );
+  expect(onRelinquished).toHaveBeenCalledTimes(1);
 });
 
 test("new production input waits outside a pending teleport", async () => {

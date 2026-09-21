@@ -48,7 +48,9 @@ describe("local session owner", () => {
         surfaceName: "headless",
         onQueueChanged: () => {},
         onAbort: () => true,
+        isProcessing: () => false,
         onError,
+        releaseRetryMs: 1,
         waitForAcceptedInputs: async () => {
           expect(queue.length).toBe(0);
         },
@@ -109,12 +111,10 @@ describe("local session owner", () => {
         released: false,
       }),
     });
-    expect(await rejectedRelease).toBe(false);
     expect(stopListener).not.toHaveBeenCalled();
+    while (sent.length < 2) await Bun.sleep(1);
     expect(onError).toHaveBeenCalledTimes(1);
 
-    const releasing = owner.release();
-    await Promise.resolve();
     const frame = JSON.parse(sent[1] ?? "{}") as { request_id?: string };
     expect(frame).toMatchObject({
       type: "release_session_owner",
@@ -128,7 +128,7 @@ describe("local session owner", () => {
         released: true,
       }),
     });
-    expect(await releasing).toBe(true);
+    expect(await rejectedRelease).toBe(true);
     expect(stopListener).toHaveBeenCalledTimes(1);
   });
 });

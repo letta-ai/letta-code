@@ -338,23 +338,58 @@ export function handleTeleportRequest(params: {
   pending.drainAcceptedInputs = conversationRuntime
     ? hasAcceptedInputsWaiting(conversationRuntime, true)
     : false;
-  if (!conversationRuntime?.isProcessing && !pending.drainAcceptedInputs) {
-    const connection = listener.connections.get(pending.connectionId);
+  const connection = listener.connections.get(pending.connectionId);
+  const sessionOwner = connection?.options.localSessionOwner;
+  const localOwnerMatches =
+    sessionOwner?.agentId === pending.agentId &&
+    sessionOwner.conversationId === pending.conversationId;
+  if (
+    !conversationRuntime?.isProcessing &&
+    !pending.drainAcceptedInputs &&
+    !(localOwnerMatches && sessionOwner.isProcessing?.())
+  ) {
     if (!connection || !isListenerTransportOpen(connection.writer)) {
       pendingTeleports.delete(pending.teleportId);
       return;
     }
     if (emitClaimedTeleportReady(listener, pending)) {
       pending.readyAt = Date.now();
-      const sessionOwner = connection.options.localSessionOwner;
-      if (
-        sessionOwner?.agentId === pending.agentId &&
-        sessionOwner.conversationId === pending.conversationId
-      ) {
-        sessionOwner.onRelinquished?.();
-      }
+      sessionOwner?.onRelinquished?.();
     }
+  } else if (localOwnerMatches) {
+    waitForLocalSessionTeleportBoundary(listener, pending);
   }
+}
+
+function waitForLocalSessionTeleportBoundary(
+  listener: ListenerRuntime,
+  pending: PendingTeleport,
+): void {
+  setTimeout(() => {
+    if (listener.pendingTeleports?.get(pending.teleportId) !== pending) return;
+    const connection = listener.connections.get(pending.connectionId);
+    const owner = connection?.options.localSessionOwner;
+    const runtime = getConversationRuntime(
+      listener,
+      pending.agentId,
+      pending.conversationId,
+    );
+    if (!connection || !owner || !isListenerTransportOpen(connection.writer)) {
+      listener.pendingTeleports?.delete(pending.teleportId);
+      return;
+    }
+    if (
+      owner.isProcessing?.() ||
+      (runtime && hasAcceptedInputsWaiting(runtime, true))
+    ) {
+      waitForLocalSessionTeleportBoundary(listener, pending);
+      return;
+    }
+    if (emitClaimedTeleportReady(listener, pending)) {
+      pending.readyAt = Date.now();
+      owner.onRelinquished?.();
+    }
+  }, 50);
 }
 
 export function claimPendingTeleportAtBoundary(params: {

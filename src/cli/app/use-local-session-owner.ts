@@ -11,11 +11,14 @@ export function useLocalSessionOwner(params: {
   queueRuntime: QueueRuntime;
   onQueueChanged: () => void;
   onAbort: () => boolean;
+  isProcessing: boolean;
 }): void {
   const onQueueChangedRef = useRef(params.onQueueChanged);
   const onAbortRef = useRef(params.onAbort);
+  const isProcessingRef = useRef(params.isProcessing);
   onQueueChangedRef.current = params.onQueueChanged;
   onAbortRef.current = params.onAbort;
+  isProcessingRef.current = params.isProcessing;
   useEffect(() => {
     if (
       isLocalBackendEnabled() ||
@@ -35,6 +38,7 @@ export function useLocalSessionOwner(params: {
       surfaceName: "TUI",
       onQueueChanged: () => onQueueChangedRef.current(),
       onAbort: () => onAbortRef.current(),
+      isProcessing: () => isProcessingRef.current,
       onError: (error) => debugWarn("tui-session-owner", error.message),
     })
       .then((owner) => {
