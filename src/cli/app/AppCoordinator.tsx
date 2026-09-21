@@ -94,7 +94,7 @@ import type { ExecutionPhase } from "@/cli/helpers/phase-visuals";
 import { maybeLaunchPostTurnReflection } from "@/cli/helpers/post-turn-reflection";
 import {
   buildContentFromQueueBatch,
-  toQueuedMsg,
+  consumeQueuedMessagesForContinuation,
 } from "@/cli/helpers/queued-message-parts";
 import {
   buildReflectionArenaChoiceQuestions,
@@ -163,12 +163,7 @@ import {
   isByokHandleForSelector,
   listProviders,
 } from "@/providers/byok-providers";
-import type {
-  MessageQueueItem,
-  OwnerTurnRequest,
-  QueueRuntime,
-  TaskNotificationQueueItem,
-} from "@/queue/queue-runtime";
+import type { OwnerTurnRequest, QueueRuntime } from "@/queue/queue-runtime";
 import {
   createSharedReminderState,
   enqueueCommandIoReminder,
@@ -1766,22 +1761,11 @@ export function App({
   );
 
   // Queue callbacks remove consumed display entries by item ID.
-  const consumeQueuedMessages = useCallback((): QueuedMessage[] | null => {
-    const readyItems = tuiQueueRef.current?.peekReady() ?? [];
-    const barrierIndex = readyItems.findIndex(
-      (item) => item.kind === "message" && item.noCoalesce,
-    );
-    const len = barrierIndex < 0 ? readyItems.length : barrierIndex;
-    if (len === 0) return null;
-    const batch = tuiQueueRef.current?.consumeItems(len);
-    if (!batch) return null;
-    return batch.items
-      .filter(
-        (item): item is MessageQueueItem | TaskNotificationQueueItem =>
-          item.kind === "message" || item.kind === "task_notification",
-      )
-      .map(toQueuedMsg);
-  }, []);
+  const consumeQueuedMessages = useCallback(
+    (): QueuedMessage[] | null =>
+      consumeQueuedMessagesForContinuation(tuiQueueRef.current),
+    [],
+  );
 
   // Helper to wrap async handlers that need to close overlay and lock input
   // Closes overlay and sets commandRunning before executing, releases lock in finally

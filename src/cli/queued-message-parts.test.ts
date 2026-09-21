@@ -3,8 +3,10 @@ import { allocateImage } from "@/cli/helpers/paste-registry";
 import {
   buildQueuedContentParts,
   buildQueuedUserText,
+  consumeQueuedMessagesForContinuation,
   getQueuedNotificationSummaries,
 } from "@/cli/helpers/queued-message-parts";
+import { QueueRuntime } from "@/queue/queue-runtime";
 import type { QueuedMessage } from "@/utils/message-queue-bridge";
 import { formatTaskNotification } from "@/utils/task-notifications";
 
@@ -77,6 +79,42 @@ describe("queuedMessageParts", () => {
 
     expect(getQueuedNotificationSummaries(queued)).toEqual([
       'Agent "General-purpose" completed',
+    ]);
+  });
+
+  test("continuation consumption leaves an owner turn intact", () => {
+    const queue = new QueueRuntime();
+    queue.enqueue({
+      kind: "message",
+      source: "user",
+      content: "append first",
+    } as Parameters<typeof queue.enqueue>[0]);
+    queue.enqueue({
+      kind: "message",
+      source: "user",
+      content: "owner turn",
+      noCoalesce: true,
+      ownerRequest: {
+        messages: [{ role: "user", content: "owner turn" }],
+        clientToolAllowlist: ["Read"],
+      },
+    } as Parameters<typeof queue.enqueue>[0]);
+    queue.enqueue({
+      kind: "message",
+      source: "user",
+      content: "after owner",
+    } as Parameters<typeof queue.enqueue>[0]);
+
+    expect(consumeQueuedMessagesForContinuation(queue)).toMatchObject([
+      { kind: "user", text: "append first" },
+    ]);
+    expect(queue.peek()).toMatchObject([
+      {
+        content: "owner turn",
+        noCoalesce: true,
+        ownerRequest: { clientToolAllowlist: ["Read"] },
+      },
+      { content: "after owner" },
     ]);
   });
 });

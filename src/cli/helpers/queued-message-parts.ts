@@ -2,6 +2,7 @@ import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agen
 import type {
   DequeuedBatch,
   MessageQueueItem,
+  QueueRuntime,
   TaskNotificationQueueItem,
 } from "@/queue/queue-runtime";
 import { mergeQueuedTurnInput } from "@/queue/turn-queue-runtime";
@@ -70,6 +71,25 @@ export function toQueuedMsg(
           .map((p) => p.text)
           .join("");
   return { kind: "user", text, queueItemId: item.id };
+}
+
+export function consumeQueuedMessagesForContinuation(
+  queue: QueueRuntime | null,
+): QueuedMessage[] | null {
+  const readyItems = queue?.peekReady() ?? [];
+  const barrierIndex = readyItems.findIndex(
+    (item) => item.kind === "message" && item.noCoalesce,
+  );
+  const len = barrierIndex < 0 ? readyItems.length : barrierIndex;
+  if (len === 0) return null;
+  const batch = queue?.consumeItems(len);
+  if (!batch) return null;
+  return batch.items
+    .filter(
+      (item): item is MessageQueueItem | TaskNotificationQueueItem =>
+        item.kind === "message" || item.kind === "task_notification",
+    )
+    .map(toQueuedMsg);
 }
 
 /**
