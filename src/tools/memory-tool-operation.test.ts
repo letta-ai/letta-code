@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -71,8 +72,10 @@ async function reserve() {
   return release;
 }
 
-test("the production tool dispatcher waits for memory ownership while unrelated edits proceed", async () => {
-  await loadSpecificTools(["Write"]);
+test("the production tool dispatcher waits for memory ownership while unrelated edits and memory reads proceed", async () => {
+  await loadSpecificTools(["Write", "Read"]);
+  const reference = join(memory, "reference.md");
+  writeFileSync(reference, "memory remains readable\n");
   const release = await reserve();
   const file = join(memory, "note.md");
   const pending = scope(() =>
@@ -85,6 +88,15 @@ test("the production tool dispatcher waits for memory ownership while unrelated 
     }),
   );
   expect(unrelated.status).toBe("success");
+  const read = await scope(() =>
+    executeTool(
+      "Read",
+      { file_path: reference },
+      { signal: AbortSignal.timeout(1000) },
+    ),
+  );
+  expect(read.status).toBe("success");
+  expect(JSON.stringify(read.toolReturn)).toContain("memory remains readable");
   expect(existsSync(file)).toBe(false);
   await release();
   expect((await pending).status).toBe("success");

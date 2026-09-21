@@ -32,9 +32,7 @@ export async function runMemoryTool<T>(
   const shell = /^(bash|shell|shellcommand|runshellcommand|execcommand)$/.test(
     tool,
   );
-  const file = /^(read|readfile|readlsp|write|edit|multiedit|applypatch)$/.test(
-    tool,
-  );
+  const file = /^(write|edit|multiedit|applypatch)$/.test(tool);
   const memoryTool = /^(memory|memoryapplypatch)$/.test(tool);
   if (!shell && !file && !memoryTool) return run(args);
   const env = shell ? getShellEnv() : process.env;
