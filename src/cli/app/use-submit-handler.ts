@@ -624,7 +624,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       }
 
       if (!msg && !hasOverrideContent) {
-        // Enter on an empty input resumes a queue parked by Esc (no new message).
+        // Enter on an empty input resumes a paused queue (no new message).
         const paused = tuiQueueRef.current?.pausedCount ?? 0;
         if (paused === 0) return { submitted: false };
         tuiQueueRef.current?.resume();

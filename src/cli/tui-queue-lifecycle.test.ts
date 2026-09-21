@@ -199,20 +199,21 @@ describe("queue edit clear (handleEnterQueueEditMode)", () => {
   });
 });
 
-describe("error clear", () => {
-  test("clear('error') fires onCleared with correct count", () => {
+describe("terminal error pause", () => {
+  test("pauses pending user messages without clearing them", () => {
     const { q, rec } = buildRuntime();
     enqueueUserMsg(q, "pending");
-    q.clear("error");
-    expect(rec.cleared.at(0)?.reason).toBe("error");
-    expect(rec.cleared.at(0)?.count).toBe(1);
-    expect(q.length).toBe(0);
+    q.pause();
+    expect(q.length).toBe(1);
+    expect(q.pausedCount).toBe(1);
+    expect(q.readyLength).toBe(0);
+    expect(rec.cleared).toHaveLength(0);
   });
 
-  test("clear('error') on empty queue fires with count=0", () => {
+  test("pausing an empty queue does not emit a clear", () => {
     const { q, rec } = buildRuntime();
-    q.clear("error");
-    expect(rec.cleared.at(0)?.count).toBe(0);
+    expect(q.pause()).toBe(0);
+    expect(rec.cleared).toHaveLength(0);
   });
 });
 

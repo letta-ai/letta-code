@@ -4268,7 +4268,7 @@ export function App({
   useEffect(() => {
     void dequeueEpoch; // explicit dep to satisfy exhaustive-deps lint
 
-    // Esc-parked user messages are skipped: only ready items count here.
+    // Paused user messages are skipped: only ready items count here.
     const queueLen = tuiQueueRef.current?.readyLength ?? 0;
     const hasAnythingQueued = queueLen > 0;
     if (!hasAnythingQueued && (tuiQueueRef.current?.length ?? 0) > 0) {

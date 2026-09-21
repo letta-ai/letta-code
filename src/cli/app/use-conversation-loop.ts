@@ -2636,8 +2636,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               setRestoredInput(lastDequeuedMessageRef.current);
               lastDequeuedMessageRef.current = null;
             }
-            // Clear any remaining queue on error
-            tuiQueueRef.current?.clear("error");
+            // Keep undispatched user messages paused until the user resumes.
+            tuiQueueRef.current?.pause();
 
             setStreaming(false);
             sendDesktopNotification("Stream error", "error"); // Notify user of error
@@ -2755,8 +2755,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 setRestoredInput(lastDequeuedMessageRef.current);
                 lastDequeuedMessageRef.current = null;
               }
-              // Clear any remaining queue on error
-              tuiQueueRef.current?.clear("error");
+              // Keep undispatched user messages paused until the user resumes.
+              tuiQueueRef.current?.pause();
 
               setStreaming(false);
               sendDesktopNotification();
@@ -2790,8 +2790,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             setRestoredInput(lastDequeuedMessageRef.current);
             lastDequeuedMessageRef.current = null;
           }
-          // Clear any remaining queue on error
-          tuiQueueRef.current?.clear("error");
+          // Keep undispatched user messages paused until the user resumes.
+          tuiQueueRef.current?.pause();
 
           setStreaming(false);
           sendDesktopNotification("Execution error", "error"); // Notify user of error
@@ -2836,8 +2836,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           setRestoredInput(lastDequeuedMessageRef.current);
           lastDequeuedMessageRef.current = null;
         }
-        // Clear any remaining queue on error
-        tuiQueueRef.current?.clear("error");
+        // Keep undispatched user messages paused until the user resumes.
+        tuiQueueRef.current?.pause();
 
         setStreaming(false);
         sendDesktopNotification("Processing error", "error"); // Notify user of error

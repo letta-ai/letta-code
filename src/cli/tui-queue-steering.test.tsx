@@ -8,12 +8,13 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
-import type { Stream } from "@letta-ai/letta-client/core/streaming";
+import { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { type Instance, render } from "ink";
 import stripAnsi from "strip-ansi";
 import { setAgentContext } from "@/agent/context";
 import { __testSetBackend } from "@/backend";
+import type { Backend } from "@/backend/backend";
 import {
   type BackendMode,
   resolveBackendMode,
@@ -81,6 +82,8 @@ function gate() {
   return { promise, release };
 }
 
+type TerminalFailure = "request" | "stream" | "run" | "run_lookup";
+
 class GatedApprovalExecutor implements HeadlessTurnExecutor {
   readonly inputs: HeadlessTurnExecutorInput[] = [];
   readonly approval = gate();
@@ -88,19 +91,42 @@ class GatedApprovalExecutor implements HeadlessTurnExecutor {
   endTurnEmitted = false;
   readonly submittedAfterEndTurn: boolean[] = [];
 
-  constructor(private readonly filePath: string) {}
+  constructor(
+    private readonly filePath: string,
+    private readonly failure?: TerminalFailure,
+  ) {}
 
   async execute(input: HeadlessTurnExecutorInput) {
     this.inputs.push(input);
     this.submittedAfterEndTurn.push(this.endTurnEmitted);
     const call = this.inputs.length;
-    if (call > 2) return createAssistantMessageStream();
+    if (call > 2 || (this.failure && call > 1))
+      return createAssistantMessageStream();
+    if (this.failure === "request") {
+      await this.approval.promise;
+      throw new Error("terminal queue fixture error");
+    }
     const executor = this;
     return {
       controller: new AbortController(),
       async *[Symbol.asyncIterator]() {
         if (call === 1) {
           await executor.approval.promise;
+          if (executor.failure) {
+            yield {
+              message_type: "error_message",
+              run_id: "run-queue-error-fixture",
+              message: "terminal queue fixture error",
+              detail: "terminal queue fixture error",
+              error_type: "local_backend_error",
+              retryable: false,
+            } as LettaStreamingResponse;
+            yield {
+              message_type: "stop_reason",
+              stop_reason: "error",
+            } as LettaStreamingResponse;
+            return;
+          }
           yield {
             message_type: "approval_request_message",
             tool_call: {
@@ -171,10 +197,10 @@ afterEach(async () => {
   rmSync(tempHome, { recursive: true, force: true });
 });
 
-async function renderTestApp(local = false) {
+async function renderTestApp(local = false, failure?: TerminalFailure) {
   const filePath = join(tempHome, "steering-fixture.txt");
   writeFileSync(filePath, "queue steering tool result\n");
-  const executor = new GatedApprovalExecutor(filePath);
+  const executor = new GatedApprovalExecutor(filePath, failure);
   executors.add(executor);
   // Exercise both ID paths while the injected backend keeps requests deterministic.
   const agentId = local
@@ -182,7 +208,31 @@ async function renderTestApp(local = false) {
     : "agent-tui-queue-steering";
   // Disable skill discovery, including remote shared-memory attachment lookup.
   setAgentContext(agentId, undefined, []);
-  const backend = new FakeHeadlessBackend(agentId, executor);
+  const backend: Backend = new FakeHeadlessBackend(agentId, executor);
+  if (failure === "run_lookup") {
+    backend.retrieveRun = async () => {
+      throw new Error("fixture run details unavailable");
+    };
+  }
+  if (failure === "stream") {
+    backend.streamConversationMessages = async () => {
+      throw new Error("fixture stream resume unavailable");
+    };
+    const createStream = backend.createConversationMessageStream.bind(backend);
+    backend.createConversationMessageStream = async (...args) => {
+      const stream = await createStream(...args);
+      if (executor.inputs.length !== 1) return stream;
+      return new Stream<LettaStreamingResponse>(async function* () {
+        for await (const chunk of stream) {
+          // The SDK may throw before yielding any chunk or exposing a run ID.
+          if (chunk.message_type === "error_message") {
+            throw new Error("terminal queue fixture error");
+          }
+          yield chunk;
+        }
+      }, stream.controller);
+    };
+  }
   __testSetBackend(backend);
   const agentState = await backend.retrieveAgent(agentId);
   const conversation = await backend.createConversation({ agent_id: agentId });
@@ -213,6 +263,71 @@ function expectToolResult(input: HeadlessTurnExecutorInput | undefined) {
 }
 
 describe("TUI user queue steering", () => {
+  test.each(["request", "stream", "run", "run_lookup"] as const)(
+    "terminal %s errors preserve follow-ups until explicit resume",
+    async (failure) => {
+      const { executor, stdin, stdout } = await renderTestApp(false, failure);
+      addToMessageQueue({ kind: "user", text: "first undispatched follow-up" });
+      addToMessageQueue({
+        kind: "user",
+        text: "second undispatched follow-up",
+      });
+      await waitFor(
+        () => stdout.text.includes("second undispatched follow-up"),
+        "both queued follow-ups",
+      );
+      const frameStart = stdout.text.length;
+      executor.approval.release();
+      await waitFor(
+        () => stdout.text.slice(frameStart).includes("Queue paused."),
+        "the error-paused queue",
+      );
+      const errorFrames = stdout.text.slice(frameStart);
+      expect(errorFrames).toContain("first undispatched follow-up");
+      expect(errorFrames).toContain("second undispatched follow-up");
+      if (failure === "stream") expect(errorFrames).toContain("Stream error:");
+      if (failure === "run_lookup") {
+        expect(errorFrames).toContain(
+          "Unable to fetch additional error details from server",
+        );
+      }
+      expect(executor.inputs).toHaveLength(1);
+
+      // A notification must not release the user messages parked by the error.
+      addToMessageQueue({
+        kind: "task_notification",
+        text: formatTaskNotification({
+          taskId: "error-queue-notification",
+          status: "completed",
+          summary: "notification still flows after error",
+          result: "background work finished",
+          outputFile: "/tmp/error-queue-notification.log",
+        }),
+      });
+      await waitFor(
+        () => executor.inputs.length === 2,
+        "the notification turn",
+      );
+      const notification = JSON.stringify(executor.inputs[1]?.body);
+      expect(notification).toContain("notification still flows after error");
+      expect(notification).not.toContain("undispatched follow-up");
+
+      // Enter resubmits the restored failed prompt and resumes the waiting inputs.
+      stdin.push("\r");
+      await waitFor(
+        () => executor.inputs.length === 3,
+        "the resumed user turn",
+      );
+      const resumed = JSON.stringify(executor.inputs[2]?.body);
+      expect(resumed).toContain("first undispatched follow-up");
+      expect(resumed).toContain("second undispatched follow-up");
+      expect(resumed.indexOf("first undispatched follow-up")).toBeLessThan(
+        resumed.indexOf("second undispatched follow-up"),
+      );
+    },
+    15_000,
+  );
+
   test.each([
     ["automatic approval, user only", false, false],
     ["automatic approval, notification bypass", true, false],

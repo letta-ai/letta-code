@@ -36,7 +36,7 @@ type QueueItemBase = {
   source: QueueItemSource;
   enqueuedAt: number;
   /**
-   * Parked by a user interrupt. Paused items stay visible in the queue but
+   * Parked by an interrupt or error. Paused items stay visible in the queue but
    * are skipped by every dequeue path until `resume()` clears the flag.
    * Only user-authored messages are ever paused; system-originated items
    * (task notifications, cron prompts, mod continuations) keep flowing.
@@ -401,8 +401,8 @@ export class QueueRuntime {
   // ── Pause / resume ─────────────────────────────────────────────
 
   /**
-   * Park every queued user message. Called when the user interrupts: the
-   * interrupted turn stops, and the messages the user queued behind it wait
+   * Park every queued user message after an interrupt or terminal error. The
+   * current turn stops, and the messages the user queued behind it wait
    * for an explicit resume or for the user's next message instead of
    * starting the next turn on their own. System-originated items are not
    * affected. Returns the number of items newly paused.
