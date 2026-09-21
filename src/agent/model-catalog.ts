@@ -17,6 +17,7 @@ export interface CatalogModel {
   isDefault?: boolean;
   isFeatured?: boolean;
   free?: boolean;
+  billing?: "free" | "quota" | "credits";
   updateArgs?: Record<string, unknown>;
 }
 
