@@ -12,6 +12,7 @@ describe("headless local session ownership", () => {
       resolveOwner = resolve;
     });
     const release = mock(async () => true);
+    const ready = mock(async () => true);
     const session = startHeadlessLocalSession(
       {
         enabled: true,
@@ -26,12 +27,14 @@ describe("headless local session ownership", () => {
     const started = session.start();
     expect(session.owner).toBeNull();
     resolveOwner({
-      ready: async () => true,
+      ready,
       stopAdmission() {},
       resumeAdmission() {},
       release,
     });
     expect(await started).toBe(true);
+    expect(await session.start()).toBe(true);
+    expect(ready).toHaveBeenCalledTimes(2);
     expect(session.owner).not.toBeNull();
     await session.release();
     expect(release).toHaveBeenCalledTimes(1);
@@ -55,5 +58,37 @@ describe("headless local session ownership", () => {
       actingUserId: "user-sender",
       input: [{ role: "user", content: "follow up" }],
     });
+  });
+
+  test("shutdown can cancel an owner while initial readiness is pending", async () => {
+    let rejectReady!: (error: Error) => void;
+    const readyPromise = new Promise<boolean>((_resolve, reject) => {
+      rejectReady = reject;
+    });
+    const release = mock(async () => {
+      rejectReady(new Error("claim cancelled"));
+      return true;
+    });
+    const session = startHeadlessLocalSession(
+      {
+        enabled: true,
+        agentId: "agent-local",
+        conversationId: "conv-local",
+        sigintSignal: new AbortController().signal,
+      },
+      async () => ({
+        ready: () => readyPromise,
+        stopAdmission() {},
+        resumeAdmission() {},
+        release,
+      }),
+    );
+
+    const starting = session.start().catch((error: unknown) => error);
+    await Bun.sleep(0);
+    session.cancel();
+    await session.release();
+    expect(release).toHaveBeenCalledTimes(1);
+    expect(await starting).toBeInstanceOf(Error);
   });
 });

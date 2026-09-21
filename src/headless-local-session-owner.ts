@@ -28,6 +28,7 @@ export function startHeadlessLocalSession(
   const queue = new QueueRuntime({ maxItems: Infinity });
   const remoteAbortController = new AbortController();
   let disposed = false;
+  let ownerPromise: Promise<LocalSessionOwnerHandle> | null = null;
   let startPromise: Promise<boolean> | null = null;
   let processing = false;
   const session: HeadlessLocalSession = {
@@ -39,8 +40,11 @@ export function startHeadlessLocalSession(
     ]),
     async start() {
       if (disposed || !params.enabled) return false;
-      if (startPromise) return await startPromise;
-      startPromise = startOwner({
+      if (startPromise) {
+        await startPromise;
+        return session.owner ? await session.owner.ready() : false;
+      }
+      ownerPromise = startOwner({
         agentId: params.agentId,
         conversationId: params.conversationId,
         queueRuntime: queue,
@@ -60,7 +64,8 @@ export function startHeadlessLocalSession(
           }
         },
         onError: (error) => debugWarn("local-session-owner", error.message),
-      })
+      });
+      startPromise = ownerPromise
         .then(async (owner) => {
           if (disposed) {
             void owner.release();
@@ -88,8 +93,10 @@ export function startHeadlessLocalSession(
     },
     async release() {
       disposed = true;
+      const owner =
+        session.owner ?? (await ownerPromise?.catch(() => null)) ?? null;
+      await owner?.release();
       await startPromise?.catch(() => false);
-      await session.owner?.release();
     },
   };
   return session;

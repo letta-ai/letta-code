@@ -122,6 +122,8 @@ export function useLocalSessionOwner(params: {
   return useMemo(
     () => ({
       async ready() {
+        const ownerPromise = ownerPromiseRef.current;
+        if (ownerPromise) return await (await ownerPromise).ready();
         return (await readinessRef.current?.promise) ?? false;
       },
       stopAdmission() {

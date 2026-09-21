@@ -190,6 +190,7 @@ describe("local session owner", () => {
   test("advertised ownership stays unready until a positive scoped claim", async () => {
     const sent: string[] = [];
     let capturedOptions: StartListenerOptions | undefined;
+    const stopListener = mock(() => {});
     const owner = await startLocalSessionOwner(
       {
         agentId: "agent-local",
@@ -200,6 +201,7 @@ describe("local session owner", () => {
         onAbort: () => true,
         isProcessing: () => false,
         releaseRetryMs: 1,
+        claimAckTimeoutMs: 20,
       },
       {
         getDeviceId: () => "device-local",
@@ -226,7 +228,7 @@ describe("local session owner", () => {
             },
           } as unknown as ListenerRuntime;
         },
-        stopListener: () => {},
+        stopListener,
       },
     );
     const first = JSON.parse(sent[0] ?? "{}") as { request_id?: string };
@@ -256,5 +258,31 @@ describe("local session owner", () => {
       }),
     });
     expect(await owner.ready()).toBe(true);
+
+    capturedOptions?.onDisconnected();
+    capturedOptions?.onConnected(capturedOptions.connectionId);
+    while (sent.length < 3) await Bun.sleep(1);
+    const revalidated = owner.ready().then(
+      () => "ready" as const,
+      () => "cancelled" as const,
+    );
+    const releaseAfterReconnect = owner.release();
+    await Bun.sleep(22);
+    expect(stopListener).not.toHaveBeenCalled();
+    while (sent.length < 4) await Bun.sleep(1);
+    const reconnectRetry = JSON.parse(sent[3] ?? "{}") as {
+      request_id?: string;
+    };
+    capturedOptions?.onWsEvent?.("recv", "lifecycle", {
+      type: "_ws_unparseable",
+      raw: JSON.stringify({
+        type: "session_owner_claimed",
+        request_id: reconnectRetry.request_id,
+        claimed: false,
+      }),
+    });
+    expect(await releaseAfterReconnect).toBe(true);
+    expect(await revalidated).toBe("cancelled");
+    expect(stopListener).toHaveBeenCalledTimes(1);
   });
 });

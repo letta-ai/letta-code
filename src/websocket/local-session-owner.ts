@@ -20,6 +20,8 @@ export interface StartLocalSessionOwnerOptions {
   onError?: (error: Error) => void;
   /** Override only for deterministic retry tests. */
   releaseRetryMs?: number;
+  /** Override only for deterministic claim acknowledgement tests. */
+  claimAckTimeoutMs?: number;
 }
 
 export interface LocalSessionOwnerHandle {
@@ -111,18 +113,48 @@ export async function startLocalSessionOwner(
     string,
     (result: { released: boolean }) => void
   >();
-  const claimWaiters = new Map<string, (claimed: boolean) => void>();
-  let resolveReady!: (supportedAndClaimed: boolean) => void;
-  const readyPromise = new Promise<boolean>((resolve) => {
-    resolveReady = resolve;
-  });
-  let readySettled = false;
+  const claimWaiters = new Map<
+    string,
+    (result: { received: boolean; claimed: boolean }) => void
+  >();
+  const createReadiness = () => {
+    let resolve!: (supportedAndClaimed: boolean) => void;
+    let reject!: (error: Error) => void;
+    const promise = new Promise<boolean>((resolvePromise, rejectPromise) => {
+      resolve = resolvePromise;
+      reject = rejectPromise;
+    });
+    // Cancellation can precede a consumer attaching; keep Node/Bun from
+    // reporting that intentional fail-closed rejection as unhandled.
+    void promise.catch(() => {});
+    return { promise, resolve, reject, settled: false };
+  };
+  let readiness = createReadiness();
   let connected = false;
+  let ownershipSupported = false;
+  let claimed = false;
   let claimInFlight = false;
+  let lastClaimDefinitivelyDenied = false;
+  let releaseRequested = false;
+  let retryClaimTimer: ReturnType<typeof setTimeout> | null = null;
+  let resolveReleaseClaimDisposition:
+    | ((disposition: "claimed" | "denied" | "unsupported") => void)
+    | null = null;
   const settleReady = (supportedAndClaimed: boolean): void => {
-    if (readySettled) return;
-    readySettled = true;
-    resolveReady(supportedAndClaimed);
+    if (readiness.settled) return;
+    readiness.settled = true;
+    readiness.resolve(supportedAndClaimed);
+  };
+  const stopWithoutOwnedGeneration = (): void => {
+    stopped = true;
+    if (retryClaimTimer) clearTimeout(retryClaimTimer);
+    if (!readiness.settled) {
+      readiness.settled = true;
+      readiness.reject(
+        new Error("Local session owner claim was cancelled before ownership"),
+      );
+    }
+    if (ownedRuntime) dependencies.stopListener(ownedRuntime);
   };
 
   const acceptInput = (incoming: IncomingMessage): boolean => {
@@ -154,8 +186,24 @@ export async function startLocalSessionOwner(
     if (stopped) return Promise.resolve(true);
     if (releasePromise) return releasePromise;
     accepting = false;
+    releaseRequested = true;
     releasePromise = (async () => {
-      await readyPromise;
+      const disposition = claimed
+        ? "claimed"
+        : !ownershipSupported && stopped
+          ? "unsupported"
+          : lastClaimDefinitivelyDenied && !claimInFlight
+            ? "denied"
+            : await new Promise<"claimed" | "denied" | "unsupported">(
+                (resolve) => {
+                  resolveReleaseClaimDisposition = resolve;
+                },
+              );
+      if (disposition === "denied") {
+        stopWithoutOwnedGeneration();
+        return true;
+      }
+      if (disposition === "unsupported") return true;
       if (stopped) return true;
       await options.waitForAcceptedInputs?.();
       while (!stopped) {
@@ -206,20 +254,24 @@ export async function startLocalSessionOwner(
   };
 
   const claim = async (): Promise<void> => {
-    if (stopped || readySettled || claimInFlight || !connected) return;
+    if (stopped || claimed || claimInFlight || !connected) return;
     const runtime = ownedRuntime;
     const transport = runtime?.transport ?? runtime?.socket;
     if (!transport || !isListenerTransportOpen(transport)) return;
     claimInFlight = true;
+    lastClaimDefinitivelyDenied = false;
     const requestId = `claim-${crypto.randomUUID()}`;
-    const claimed = new Promise<boolean>((resolve) => {
+    const claimResult = new Promise<{
+      received: boolean;
+      claimed: boolean;
+    }>((resolve) => {
       const timer = setTimeout(() => {
         claimWaiters.delete(requestId);
-        resolve(false);
-      }, 2_000);
-      claimWaiters.set(requestId, (accepted) => {
+        resolve({ received: false, claimed: false });
+      }, options.claimAckTimeoutMs ?? 2_000);
+      claimWaiters.set(requestId, (result) => {
         clearTimeout(timer);
-        resolve(accepted);
+        resolve(result);
       });
     });
     transport.send(
@@ -232,17 +284,29 @@ export async function startLocalSessionOwner(
         },
       }),
     );
-    const accepted = await claimed;
+    const result = await claimResult;
     claimInFlight = false;
-    if (accepted) {
+    if (result.received && result.claimed) {
+      claimed = true;
       settleReady(true);
+      resolveReleaseClaimDisposition?.("claimed");
+      resolveReleaseClaimDisposition = null;
+      return;
+    }
+    lastClaimDefinitivelyDenied = result.received;
+    if (releaseRequested && result.received) {
+      resolveReleaseClaimDisposition?.("denied");
+      resolveReleaseClaimDisposition = null;
       return;
     }
     options.onError?.(
       new Error("Session owner claim was not acknowledged; retrying"),
     );
-    if (!stopped && !readySettled) {
-      setTimeout(() => void claim(), options.releaseRetryMs ?? 1_000);
+    if (!stopped && !claimed) {
+      retryClaimTimer = setTimeout(
+        () => void claim(),
+        options.releaseRetryMs ?? 1_000,
+      );
     }
   };
 
@@ -263,8 +327,11 @@ export async function startLocalSessionOwner(
     if (!registration.supportsLocalSessionOwnership) {
       stopped = true;
       settleReady(false);
+      resolveReleaseClaimDisposition?.("unsupported");
+      resolveReleaseClaimDisposition = null;
       return;
     }
+    ownershipSupported = true;
 
     ownedRuntime = await dependencies.startListener({
       connectionId: registration.connectionId,
@@ -289,6 +356,10 @@ export async function startLocalSessionOwner(
       },
       onDisconnected: () => {
         connected = false;
+        if (claimed && !stopped) {
+          claimed = false;
+          readiness = createReadiness();
+        }
       },
       onWsEvent: (_direction, _label, event) => {
         const ack = parseOwnerAck(event);
@@ -296,7 +367,7 @@ export async function startLocalSessionOwner(
         if (ack.type === "claimed") {
           const resolve = claimWaiters.get(ack.requestId);
           claimWaiters.delete(ack.requestId);
-          resolve?.(ack.accepted);
+          resolve?.({ received: true, claimed: ack.accepted });
           return;
         }
         const resolve = releaseWaiters.get(ack.requestId);
@@ -306,6 +377,11 @@ export async function startLocalSessionOwner(
       onError: (error) => options.onError?.(error),
       onNeedsReregister: () => {
         if (stopped) return;
+        connected = false;
+        if (claimed) {
+          claimed = false;
+          readiness = createReadiness();
+        }
         void connect().catch((error: unknown) => {
           options.onError?.(
             error instanceof Error ? error : new Error(String(error)),
@@ -318,7 +394,7 @@ export async function startLocalSessionOwner(
 
   await connect();
   return {
-    ready: () => readyPromise,
+    ready: () => readiness.promise,
     stopAdmission: () => {
       accepting = false;
     },
