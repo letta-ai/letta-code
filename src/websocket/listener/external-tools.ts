@@ -1,4 +1,4 @@
-import { createSlackThreadDispatchExecutor } from "@/tools/impl/slack-thread-dispatch";
+import { createExternalAgentExecutor } from "@/tools/impl/external-agent";
 import {
   type ExternalToolDefinition,
   type ExternalToolExecutor,
@@ -101,10 +101,9 @@ function toExternalToolDefinition(
       agentId: runtime.agent_id ?? undefined,
       conversationId: runtime.conversation_id,
     },
-    ...(tool.name === "start_thread_session" &&
-    tool.execution === "slack_thread_dispatch"
+    ...(tool.execution === "agent"
       ? {
-          executor: createSlackThreadDispatchExecutor(
+          executor: createExternalAgentExecutor(
             (...args: Parameters<ExternalToolExecutor>) => {
               const executor = controllerExecutors.get(listener);
               if (!executor)

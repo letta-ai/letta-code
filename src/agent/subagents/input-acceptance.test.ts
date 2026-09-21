@@ -10,7 +10,7 @@ const receipt = {
   status: "queued" as const,
   agent_id: "agent-1",
   conversation_id: "conv-1",
-  client_message_id: "slack-thread:conv-1",
+  client_message_id: "task-initial:conv-1",
   workflow_id: "conv-queue-conv-1",
   super_run_id: "super-1",
 };

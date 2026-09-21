@@ -74,13 +74,13 @@ describe("listener runtime_start external tool bridge", () => {
     clearExternalTools();
   });
 
-  test("installs the Agent wrapper only for the explicit Slack marker and exact tool name", () => {
+  test("installs the Agent wrapper only for the explicit execution marker, independent of tool name", () => {
     const { runtime } = createMockRuntime();
     installExternalToolBridge(runtime);
     const cases = [
-      { name: "start_thread_session", marked: true, wrapped: true },
-      { name: "start_thread_session", marked: false, wrapped: false },
-      { name: "ordinary_tool", marked: true, wrapped: false },
+      { name: "review_task", marked: true, wrapped: true },
+      { name: "review_task", marked: false, wrapped: false },
+      { name: "ordinary_tool", marked: true, wrapped: true },
     ];
     for (const [index, item] of cases.entries()) {
       const conversationId = `conv-${index}`;
@@ -95,9 +95,7 @@ describe("listener runtime_start external tool bridge", () => {
                 name: item.name,
                 description: "test",
                 parameters: {},
-                ...(item.marked
-                  ? { execution: "slack_thread_dispatch" as const }
-                  : {}),
+                ...(item.marked ? { execution: "agent" as const } : {}),
               },
             ],
           },
@@ -135,16 +133,8 @@ describe("listener runtime_start external tool bridge", () => {
                 {
                   type: "text",
                   text: JSON.stringify({
-                    status: "bound",
-                    created: false,
-                    agent_id: "agent-1",
-                    conversation_id: "conv-worker",
-                    initial_client_message_id: "slack-thread:conv-worker",
-                    initial_input_receipt: {
-                      clientMessageId: "slack-thread:conv-worker",
-                      superRunId: "super-1",
-                      workflowId: "conv-queue-conv-worker",
-                    },
+                    action: "return",
+                    result: "conv-worker: New instructions were not delivered",
                   }),
                 },
               ],
@@ -162,8 +152,8 @@ describe("listener runtime_start external tool bridge", () => {
         {
           tools: [
             {
-              name: "start_thread_session",
-              execution: "slack_thread_dispatch",
+              name: "review_task",
+              execution: "agent",
               description: "dispatch",
               parameters: {},
             },
@@ -174,7 +164,7 @@ describe("listener runtime_start external tool bridge", () => {
     const prepared = await prepareToolExecutionContextForModel(
       "anthropic/claude-sonnet-4",
       {
-        clientToolAllowlist: ["start_thread_session"],
+        clientToolAllowlist: ["review_task"],
         runtimeContext: {
           connectionId: "client-1",
           agentId: "agent-1",
@@ -183,8 +173,8 @@ describe("listener runtime_start external tool bridge", () => {
       },
     );
     const response = await executeTool(
-      "start_thread_session",
-      { thread_ts: "100.1", label: "Task", computer: "work-mac" },
+      "review_task",
+      { task: "Review", computer: "work-mac" },
       {
         toolContextId: prepared.contextId,
         toolCallId: "dispatch-1",
@@ -200,9 +190,9 @@ describe("listener runtime_start external tool bridge", () => {
       runtime: { agent_id: "agent-1", conversation_id: "conv-parent" },
       tool_call_id: "dispatch-1",
       input: {
-        thread_ts: "100.1",
+        task: "Review",
         computer: "work-mac",
-        _slack_dispatch: { operation: "lookup" },
+        _agent: { phase: "prepare" },
       },
     });
   });

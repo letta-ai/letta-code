@@ -35,7 +35,7 @@ export function buildAppServerInfoResponse(
       runtime_start: true,
       runtime_workspace_sandbox: true,
       runtime_external_tools_update: true,
-      slack_thread_dispatch: options.backend === "api",
+      external_agent_tools: options.backend === "api",
       structured_outputs: options.backend === "api",
       split_channels: false,
     },

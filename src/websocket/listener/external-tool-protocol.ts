@@ -26,8 +26,7 @@ function isExternalToolDefinitionPayload(value: unknown): boolean {
     typeof value.name === "string" &&
     (value.label === undefined || typeof value.label === "string") &&
     typeof value.description === "string" &&
-    (value.execution === undefined ||
-      value.execution === "slack_thread_dispatch") &&
+    (value.execution === undefined || value.execution === "agent") &&
     isRecord(value.parameters)
   );
 }
