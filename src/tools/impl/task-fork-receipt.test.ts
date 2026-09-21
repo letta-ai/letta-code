@@ -16,6 +16,7 @@ import { setConversationId, setCurrentAgentId } from "@/agent/context";
 import {
   clearAllSubagents,
   getSnapshot as getSubagentSnapshot,
+  subscribe,
 } from "@/agent/subagent-state";
 import { clearSubagentConfigCache } from "@/agent/subagents";
 import { __testSetBackend, type Backend } from "@/backend";
@@ -24,12 +25,13 @@ import { settingsManager } from "@/settings-manager";
 import { backgroundTasks } from "./process_manager";
 
 // Keep task(), the manager, and the state store real. Stub backend/credential I/O
-// and the child process, which deliberately emits no init event and never exits.
+// and the child process, which emits no init event and exits only when requested.
 // Module mocks run in a dedicated process via isolated-unit-tests.json.
 mock.module("@/backend/api/metadata", () => ({
   getBillingTier: async () => null,
 }));
 const childInputs: Array<{ args: string[]; prompt: string }> = [];
+let processFailure: string | undefined;
 const spawnProcess = mock(
   (_command: string, args: string[], options: { signal?: AbortSignal }) => {
     const input = { args, prompt: "" };
@@ -49,6 +51,12 @@ const spawnProcess = mock(
         exitCode: number | null;
         exitSignal: NodeJS.Signals | null;
       }>((resolve) => {
+        if (processFailure) {
+          queueMicrotask(() => {
+            child.stderr.write(processFailure);
+            resolve({ exitCode: 1, exitSignal: null });
+          });
+        }
         options.signal?.addEventListener(
           "abort",
           () => resolve({ exitCode: null, exitSignal: "SIGINT" }),
@@ -81,6 +89,7 @@ beforeEach(async () => {
   );
   spawnProcess.mockClear();
   childInputs.length = 0;
+  processFailure = undefined;
   forkConversation.mockClear();
   clearSubagentConfigCache();
   __testSetBackend({
@@ -114,6 +123,50 @@ afterEach(async () => {
 });
 
 describe("prepared conversation launch", () => {
+  test.each(["custom", "general-purpose"])(
+    "%s preserves its provider-failure policy",
+    async (subagent_type) => {
+      processFailure =
+        "Provider fixture is not supported; supported providers: anthropic";
+      const terminal = Promise.withResolvers<void>();
+      const unsubscribe = subscribe(() => {
+        if (
+          getSubagentSnapshot().agents.some((agent) => agent.status === "error")
+        ) {
+          terminal.resolve();
+        }
+      });
+      try {
+        await runWithRuntimeContext({ workingDirectory: testHome }, () =>
+          launchSubagent({
+            subagent_type,
+            conversation_id: "conv-child",
+            prompt: "Worker instructions",
+            description: "Provider failure regression",
+          }),
+        );
+        await terminal.promise;
+        const [backgroundTask] = backgroundTasks.values();
+        expect(backgroundTask?.status).toBe("failed");
+        expect(backgroundTask?.error).toContain(processFailure);
+        expect(childInputs[0]?.args).toContain("conv-child");
+        if (subagent_type === "custom") {
+          expect(spawnProcess).toHaveBeenCalledTimes(1);
+          expect(childInputs[0]?.args).not.toContain("--new-agent");
+          expect(getSubagentSnapshot().agents[0]?.conversationId).toBe(
+            "conv-child",
+          );
+        } else {
+          expect(spawnProcess).toHaveBeenCalledTimes(2);
+          expect(childInputs[1]?.args).toContain("--new-agent");
+          expect(childInputs[1]?.args).toContain("anthropic/test");
+        }
+      } finally {
+        unsubscribe();
+      }
+    },
+  );
+
   test("uses the existing conversation without prompt or tool overrides and remains cancellable", async () => {
     const receipt = await runWithRuntimeContext(
       { workingDirectory: testHome },
