@@ -263,9 +263,15 @@ function expectToolResult(input: HeadlessTurnExecutorInput | undefined) {
 }
 
 describe("TUI user queue steering", () => {
-  test.each(["request", "stream", "run", "run_lookup"] as const)(
-    "terminal %s errors preserve follow-ups until explicit resume",
-    async (failure) => {
+  test.each(
+    (["request", "stream", "run", "run_lookup"] as const).flatMap((failure) =>
+      (["unchanged", "edited", "cleared", "draft"] as const).map(
+        (editor) => [failure, editor] as const,
+      ),
+    ),
+  )(
+    "terminal %s errors preserve follow-ups and retry order (%s input)",
+    async (failure, editor) => {
       const { executor, stdin, stdout } = await renderTestApp(false, failure);
       addToMessageQueue({ kind: "user", text: "first undispatched follow-up" });
       addToMessageQueue({
@@ -276,6 +282,13 @@ describe("TUI user queue steering", () => {
         () => stdout.text.includes("second undispatched follow-up"),
         "both queued follow-ups",
       );
+      if (editor === "draft") {
+        stdin.push("draft already being edited");
+        await waitFor(
+          () => stdout.text.includes("draft already being edited"),
+          "the existing draft",
+        );
+      }
       const frameStart = stdout.text.length;
       executor.approval.release();
       await waitFor(
@@ -312,13 +325,48 @@ describe("TUI user queue steering", () => {
       expect(notification).toContain("notification still flows after error");
       expect(notification).not.toContain("undispatched follow-up");
 
-      // Enter resubmits the restored failed prompt and resumes the waiting inputs.
+      if (editor === "edited") {
+        stdin.push(" retry edit");
+        await waitFor(
+          () => stdout.text.includes("retry edit"),
+          "an edited retry",
+        );
+      } else if (editor === "cleared") {
+        stdin.push("\u0003");
+        await waitFor(
+          () => stdout.text.includes("Press CTRL-C again to exit"),
+          "the cleared retry",
+        );
+        stdin.push("new input after clearing");
+        await waitFor(
+          () => stdout.text.includes("new input after clearing"),
+          "the replacement input",
+        );
+      }
+      // Retries keep their place; existing or replacement drafts remain new inputs.
       stdin.push("\r");
       await waitFor(
         () => executor.inputs.length === 3,
         "the resumed user turn",
       );
       const resumed = JSON.stringify(executor.inputs[2]?.body);
+      if (editor === "unchanged" || editor === "edited") {
+        expect(resumed).toContain("start the original turn");
+        expect(resumed.indexOf("start the original turn")).toBeLessThan(
+          resumed.indexOf("first undispatched follow-up"),
+        );
+        if (editor === "edited") expect(resumed).toContain("retry edit");
+      } else {
+        const newInput =
+          editor === "draft"
+            ? "draft already being edited"
+            : "new input after clearing";
+        expect(resumed).not.toContain("start the original turn");
+        expect(resumed).toContain(newInput);
+        expect(resumed.indexOf("second undispatched follow-up")).toBeLessThan(
+          resumed.indexOf(newInput),
+        );
+      }
       expect(resumed).toContain("first undispatched follow-up");
       expect(resumed).toContain("second undispatched follow-up");
       expect(resumed.indexOf("first undispatched follow-up")).toBeLessThan(
@@ -391,6 +439,48 @@ describe("TUI user queue steering", () => {
     },
     15_000,
   );
+
+  test("bash-mode submission and history still use the shell callback", async () => {
+    const { executor, stdin, stdout } = await renderTestApp();
+    const script = join(tempHome, "bash-history.cjs");
+    writeFileSync(
+      script,
+      `const fs = require("node:fs");
+const counter = ${JSON.stringify(join(tempHome, "bash-count"))};
+const count = fs.existsSync(counter) ? Number(fs.readFileSync(counter, "utf8")) + 1 : 1;
+fs.writeFileSync(counter, String(count));
+console.log("BASH_HISTORY_" + count);
+`,
+    );
+    const command = `node "${script}"`;
+    stdin.push("!");
+    await waitFor(() => /\n!\s*\n/.test(stdout.text), "bash mode");
+    stdin.push(command);
+    await waitFor(() => stdout.text.includes(command), "the bash draft");
+    stdin.push("\r");
+    await waitFor(
+      () => stdout.text.includes("BASH_HISTORY_1"),
+      "the shell output",
+    );
+    const frameStart = stdout.text.length;
+    stdin.push("\u001b[A");
+    await waitFor(
+      () => stdout.text.slice(frameStart).includes(command),
+      "the recalled shell command",
+    );
+    stdin.push("\r");
+    await waitFor(
+      () => stdout.text.includes("BASH_HISTORY_2"),
+      "the second shell execution",
+    );
+    expect(executor.inputs).toHaveLength(1);
+    executor.approval.release();
+    executor.completion.release();
+    await waitFor(
+      () => executor.endTurnEmitted,
+      "the original turn to finish before teardown",
+    );
+  }, 15_000);
 
   test.each([false, true])(
     "Ctrl+D steers a queued user follow-up (local=%s)",

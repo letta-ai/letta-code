@@ -12,13 +12,14 @@
  *  - Priority: interrupt_in_progress emitted when streaming also active
  *  - Approval-append (consumeQueuedMessages pattern): consumeItems fires onDequeued, not onCleared
  *  - Queue edit clear (handleEnterQueueEditMode): clear("stale_generation") → onCleared
- *  - Error clear: clear("error") → onCleared
+ *  - Terminal error: pause preserves queued user messages and retry ordering
  *  - Divergence: consumeItems(undercount) leaves length mismatch
  *  - Blocked then cleared: both events fire, queue empty
  */
 
 import { describe, expect, test } from "bun:test";
 import { getTuiBlockedReason } from "@/cli/helpers/tui-queue-adapter";
+import { createTuiQueueRuntime } from "@/cli/helpers/tui-queue-runtime";
 import type {
   DequeuedBatch,
   QueueBlockedReason,
@@ -26,6 +27,7 @@ import type {
   QueueItem,
 } from "@/queue/queue-runtime";
 import { QueueRuntime } from "@/queue/queue-runtime";
+import type { QueuedMessage } from "@/utils/message-queue-bridge";
 
 // ── Helpers ───────────────────────────────────────────────────────
 
@@ -200,6 +202,39 @@ describe("queue edit clear (handleEnterQueueEditMode)", () => {
 });
 
 describe("terminal error pause", () => {
+  test("a retry precedes paused follow-ups without losing their displayed pause state", () => {
+    let display: QueuedMessage[] = [];
+    const renders: Array<() => void> = [];
+    const snapshots: QueuedMessage[][] = [];
+    const q = createTuiQueueRuntime((update) => {
+      renders.push(() => {
+        display = typeof update === "function" ? update(display) : update;
+        snapshots.push(display);
+      });
+    });
+    enqueueUserMsg(q, "later follow-up");
+    q.pause();
+    const retry = {
+      kind: "message",
+      source: "user",
+      content: "failed prompt",
+    } as const;
+    q.enqueue(retry, true);
+    q.resume();
+    const batch = q.consumeItems(2);
+    // React may apply display updates after the queue has already drained.
+    for (const render of renders) render();
+    expect(snapshots[2]?.map((item) => item.text)).toEqual([
+      "failed prompt",
+      "later follow-up",
+    ]);
+    expect(snapshots[2]?.[1]?.paused).toBe(true);
+    expect(
+      batch?.items.map((item) => item.kind === "message" && item.content),
+    ).toEqual(["failed prompt", "later follow-up"]);
+    expect(display).toEqual([]);
+  });
+
   test("pauses pending user messages without clearing them", () => {
     const { q, rec } = buildRuntime();
     enqueueUserMsg(q, "pending");

@@ -582,7 +582,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: moved from AppCoordinator; dependencies are preserved from the original callback.
   const onSubmit = useCallback(
-    async (message?: string): Promise<{ submitted: boolean }> => {
+    async (message?: string, isRetry = false) => {
       const commandScope = {
         agentId: agentIdRef.current,
         conversationId: conversationIdRef.current,
@@ -737,11 +737,8 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           (!hasOverrideContent && (tuiQueueRef.current?.length ?? 0) > 0))
       ) {
         // Enqueue via QueueRuntime — onEnqueued callback updates queueDisplay.
-        tuiQueueRef.current?.enqueue({
-          kind: "message",
-          source: "user",
-          content: msg,
-        } as Parameters<typeof tuiQueueRef.current.enqueue>[0]);
+        const item = { kind: "message", source: "user", content: msg } as const;
+        tuiQueueRef.current?.enqueue(item, isRetry);
         if (!hasOverrideContent && !isSystemOnly) tuiQueueRef.current?.resume();
         setDequeueEpoch((e: number) => e + 1);
         return { submitted: true }; // Clears input

@@ -937,7 +937,10 @@ export function Input({
   elapsedBaseMs?: number;
   thinkingMessage: string;
   includeSystemPromptUpgradeTip?: boolean;
-  onSubmit: (message?: string) => Promise<{ submitted: boolean }>;
+  onSubmit: (
+    message?: string,
+    isRetry?: boolean,
+  ) => Promise<{ submitted: boolean }>;
   onBashSubmit?: (command: string) => Promise<void>;
   bashRunning?: boolean;
   onBashInterrupt?: () => void;
@@ -1147,15 +1150,15 @@ export function Input({
   // Track preferred column for vertical navigation (sticky column behavior)
   const [preferredColumn, setPreferredColumn] = useState<number | null>(null);
 
-  // Restore input from error (only if current value is empty)
+  const isRestoredInputRef = useRef(false);
   useEffect(() => {
-    if (restoredInput && value === "") {
-      setValue(restoredInput);
-      onRestoredInputConsumed?.();
-    } else if (restoredInput && value !== "") {
-      // Input has content, don't clobber - just consume the restored value
-      onRestoredInputConsumed?.();
-    }
+    if (restoredInput) {
+      if (value === "") {
+        isRestoredInputRef.current = true;
+        setValue(restoredInput);
+      }
+      onRestoredInputConsumed?.(); // Never overwrite an existing draft.
+    } else if (value === "") isRestoredInputRef.current = false;
   }, [restoredInput, value, onRestoredInputConsumed]);
 
   useEffect(() => {
@@ -1641,36 +1644,17 @@ export function Input({
 
     const previousValue = value;
 
-    // Handle bash mode submission
-    if (isBashMode) {
-      if (!previousValue.trim()) return;
+    // Input locking - don't accept new commands while one is running (LET-7199)
+    if (isBashMode && (!previousValue.trim() || bashRunning)) return;
 
-      // Input locking - don't accept new commands while one is running (LET-7199)
-      if (bashRunning) return;
-
-      // Add to history if not empty and not a duplicate of the last entry
-      setHistory((prev) => {
-        if (previousValue.trim() === prev[prev.length - 1]) return prev;
-        return [...prev, previousValue];
-      });
-
-      // Reset history navigation
-      setHistoryIndex(-1);
-      setTemporaryInput("");
-
-      setValue(""); // Clear immediately for responsiveness
-      // Stay in bash mode - user exits with backspace on empty input
-      if (onBashSubmit) {
-        await onBashSubmit(previousValue);
-      }
-      return;
-    }
-
-    // Add to history if not empty and not a duplicate of the last entry
+    // Both submission modes share history and input reset, but retain their
+    // existing duplicate-history comparison (trimmed only in bash mode).
     if (previousValue.trim()) {
       setHistory((prev) => {
-        if (previousValue === prev[prev.length - 1]) return prev;
-        return [...prev, previousValue];
+        const comparison = isBashMode ? previousValue.trim() : previousValue;
+        return comparison === prev[prev.length - 1]
+          ? prev
+          : [...prev, previousValue];
       });
     }
 
@@ -1678,10 +1662,17 @@ export function Input({
     setHistoryIndex(-1);
     setTemporaryInput("");
 
+    const isRetry = isRestoredInputRef.current;
     setValue(""); // Clear immediately for responsiveness
-    const result = await onSubmit(previousValue);
+    if (isBashMode) {
+      // Stay in bash mode - user exits with backspace on empty input.
+      await onBashSubmit?.(previousValue);
+      return;
+    }
+    const result = await onSubmit(previousValue, isRetry);
     // If message was NOT submitted (e.g. pending approval), restore it
     if (!result.submitted) {
+      isRestoredInputRef.current = isRetry;
       setValue(previousValue);
     }
   }, [

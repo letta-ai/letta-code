@@ -211,13 +211,17 @@ export class QueueRuntime {
   /**
    * Add an item to the queue. Returns the enqueued item (with assigned id
    * and enqueuedAt), or null if the hard ceiling was reached.
+   * `atFront` keeps an explicitly retried input ahead of waiting follow-ups.
    *
    * - If at soft limit and item is coalescable: drops oldest coalescable item.
    * - If at soft limit and item is a barrier: allows overflow (soft limit only
    *   applies to coalescable items).
    * - If at hard ceiling: rejects all item kinds, fires onDropped("buffer_limit").
    */
-  enqueue(input: Omit<QueueItem, "id" | "enqueuedAt">): QueueItem | null {
+  enqueue(
+    input: Omit<QueueItem, "id" | "enqueuedAt">,
+    atFront = false,
+  ): QueueItem | null {
     // Hard ceiling check
     if (this.store.length >= this.hardMaxItems) {
       const phantom = this.makeItem(input);
@@ -237,7 +241,7 @@ export class QueueRuntime {
         dropIdx !== -1 ? this.store.splice(dropIdx, 1)[0] : undefined;
       if (dropped !== undefined) {
         const item = this.makeItem(input);
-        this.store.push(item);
+        this.store[atFront ? "unshift" : "push"](item);
         // queueLen after: same as before (one dropped, one added)
         this.safeCallback(
           "onDropped",
@@ -251,7 +255,7 @@ export class QueueRuntime {
     }
 
     const item = this.makeItem(input);
-    this.store.push(item);
+    this.store[atFront ? "unshift" : "push"](item);
     this.safeCallback("onEnqueued", item, this.store.length);
 
     // If queue just became non-empty while blocked, blocked-epoch tracking resets
