@@ -3923,6 +3923,20 @@ export function App({
   });
 
   const handleExit = useCallback(async () => {
+    // Esc-parked, unscoped local drafts were never accepted through the Cloud
+    // owner boundary and cannot drain until a user explicitly resumes them.
+    // A requested process exit discards those local drafts rather than leaving
+    // the release action permanently blocked. Scoped owner input still drains.
+    for (const item of tuiQueueRef.current?.peek() ?? []) {
+      if (
+        item.paused &&
+        item.agentId === undefined &&
+        item.conversationId === undefined
+      ) {
+        tuiQueueRef.current?.removeItem(item.id);
+      }
+    }
+
     // Exit is a terminal scope transition. Close admission immediately, but
     // keep the process alive until every message already accepted by this
     // owner has run and all turn refs have settled.

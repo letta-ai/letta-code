@@ -643,6 +643,58 @@ describe("TUI interrupt queue lifecycle", () => {
     }
   }, 15_000);
 
+  test("clean exit discards an Esc-parked local follow-up", async () => {
+    setConfiguredBackendMode("api");
+    const lifecycle: string[] = [];
+    let ownerOptions: StartLocalSessionOwnerOptions | null = null;
+    __testSetLocalSessionOwnerStarter(async (options) => {
+      ownerOptions = options;
+      return {
+        ready: async () => true,
+        forceStop() {},
+        stopAdmission() {},
+        resumeAdmission() {},
+        async release() {
+          expect(options.queueRuntime.length).toBe(0);
+          lifecycle.push("release");
+          return true;
+        },
+      };
+    });
+    const originalExit = process.exit;
+    process.exit = ((code?: number) => {
+      lifecycle.push(`exit:${code ?? 0}`);
+      return undefined as never;
+    }) as typeof process.exit;
+    try {
+      const rendered = await renderTestApp({
+        async execute() {
+          return createAssistantMessageStream();
+        },
+      });
+      await waitFor(() => ownerOptions !== null, "initial owner");
+      const owner = ownerOptions as StartLocalSessionOwnerOptions | null;
+      if (!owner) throw new Error("Missing owner options");
+      owner.queueRuntime.enqueue({
+        kind: "message",
+        source: "user",
+        content: "park this local follow-up",
+      } as Parameters<typeof owner.queueRuntime.enqueue>[0]);
+      expect(owner.queueRuntime.pause()).toBe(1);
+      owner.onQueueChanged();
+
+      rendered.stdin.push("\u0003");
+      await sleep(10);
+      rendered.stdin.push("\u0003");
+      await waitFor(() => lifecycle.includes("exit:0"), "parked queue exit");
+      expect(lifecycle.indexOf("release")).toBeLessThan(
+        lifecycle.indexOf("exit:0"),
+      );
+    } finally {
+      process.exit = originalExit;
+    }
+  }, 15_000);
+
   test("agent creation keeps the old backend until accepted input drains", async () => {
     setConfiguredBackendMode("api");
     const ownerOptions: StartLocalSessionOwnerOptions[] = [];
