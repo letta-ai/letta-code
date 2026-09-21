@@ -1,9 +1,78 @@
 import { describe, expect, test } from "bun:test";
+import type { MemoryPostTurnSyncResult } from "@/agent/memory-git";
 import {
   formatAttachedRepositoriesPostTurnSyncReminders,
   formatAttachedRepositoryPostTurnSyncReminder,
   runPostTurnMemorySync,
 } from "./memory-git-sync";
+
+describe("post-turn memory push notification", () => {
+  test("waits for a successful push before notifying readers", async () => {
+    let finishPush!: (result: MemoryPostTurnSyncResult) => void;
+    const push = new Promise<MemoryPostTurnSyncResult>((resolve) => {
+      finishPush = resolve;
+    });
+    let notifications = 0;
+    const sync = runPostTurnMemorySync(
+      {
+        agentId: "agent-test",
+        onMemoryPushed: () => {
+          notifications++;
+        },
+      },
+      {
+        syncMemory: () => push,
+        syncAttachedRepositories: async () => ({ results: [] }),
+      },
+    );
+
+    await Promise.resolve();
+    expect(notifications).toBe(0);
+    finishPush({
+      status: "pushed",
+      summary: "Pushed",
+      memoryDir: "/tmp/memory",
+      localOnly: false,
+    });
+    await sync;
+    expect(notifications).toBe(1);
+  });
+
+  test.each(["clean", "dirty", "conflict", "push_failed", "skipped"] as const)(
+    "does not notify for %s memory, even if a shared repository was pushed",
+    async (status) => {
+      let notifications = 0;
+      await runPostTurnMemorySync(
+        {
+          agentId: "agent-test",
+          onMemoryPushed: () => {
+            notifications++;
+          },
+        },
+        {
+          syncMemory: async () => ({
+            status,
+            summary: status,
+            memoryDir: "/tmp/memory",
+            localOnly: false,
+          }),
+          syncAttachedRepositories: async () => ({
+            results: [
+              {
+                name: "shared-notes",
+                path: "/tmp/shared-notes",
+                permissions: "read_write",
+                status: "pushed",
+                summary: "Pushed",
+              },
+            ],
+          }),
+        },
+      );
+      expect(notifications).toBe(0);
+    },
+  );
+});
 
 describe("shared-memory post-turn reminders", () => {
   test("asks the agent to commit dirty shared memory", () => {
