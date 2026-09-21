@@ -1732,7 +1732,7 @@ export async function handleHeadlessCommand(
       await telemetry.flush();
     } finally {
       if (code !== 0) localSession?.cancel();
-      await localSession?.owner?.release();
+      await localSession?.release();
       headlessModAdapter.dispose();
       telemetry.setSessionStatsGetter(undefined);
     }
@@ -2096,7 +2096,7 @@ export async function handleHeadlessCommand(
 
   const responseState = createHeadlessResponseState();
   const sigintSignal = createSigintAbortSignal();
-  localSession = await startHeadlessLocalSession({
+  localSession = startHeadlessLocalSession({
     enabled:
       !ephemeralFlag &&
       !usesRemoteEnvironment &&
@@ -2113,6 +2113,7 @@ export async function handleHeadlessCommand(
       otid: randomUUID(),
     },
   ];
+  let currentActingUserId: string | undefined;
   const recoveredApprovalResults: ApprovalResult[] =
     queuedRecoveredApprovalResults ?? [];
   if (recoveredApprovalResults.length > 0) {
@@ -2262,12 +2263,14 @@ export async function handleHeadlessCommand(
           currentInput,
           {
             agentId: agent.id,
+            actingUserId: currentActingUserId,
             allowResponseStateReuse: responseState.consume(currentInput),
             preparedToolContext:
               turnToolContext.preparedToolContext.preparedToolContext,
           },
           { maxRetries: 0, signal: turnAbortSignal },
         );
+        localSession.start();
         turnToolContextId = getStreamToolContextId(stream);
       } catch (preStreamError) {
         if (turnAbortSignal.aborted) {
@@ -2600,7 +2603,8 @@ export async function handleHeadlessCommand(
 
         const acceptedInput = takeAcceptedHeadlessInputs(localSession);
         if (acceptedInput) {
-          currentInput = acceptedInput;
+          currentInput = acceptedInput.input;
+          currentActingUserId = acceptedInput.actingUserId;
           const queuedTurnStartEmission = await emitHeadlessTurnStart({
             agent,
             conversationId,

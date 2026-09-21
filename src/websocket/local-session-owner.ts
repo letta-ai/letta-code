@@ -24,8 +24,8 @@ export interface LocalSessionOwnerHandle {
   stopAdmission(): void;
   /** Reopen admission when an accepted batch starts another local turn. */
   resumeAdmission(): void;
-  /** Drain accepted work, acknowledge release, then disconnect. */
-  release(): Promise<void>;
+  /** Drain accepted work and disconnect only after positive release acknowledgement. */
+  release(): Promise<boolean>;
 }
 
 export interface LocalSessionOwnerDependencies {
@@ -110,6 +110,7 @@ export async function startLocalSessionOwner(
         userPayload.client_message_id ?? `cm-local-${crypto.randomUUID()}`,
       agentId: options.agentId,
       conversationId: options.conversationId,
+      actingUserId: incoming.actingUserId,
       noCoalesce: true,
     } as Parameters<QueueRuntime["enqueue"]>[0]);
     if (!item) return false;
@@ -117,39 +118,49 @@ export async function startLocalSessionOwner(
     return true;
   };
 
-  const release = async (): Promise<void> => {
-    if (stopped) return;
+  const release = async (): Promise<boolean> => {
+    if (stopped) return true;
     accepting = false;
     await options.waitForAcceptedInputs?.();
     const runtime = ownedRuntime;
     const transport = runtime?.transport ?? runtime?.socket;
-    if (runtime && transport && isListenerTransportOpen(transport)) {
-      const requestId = `release-${crypto.randomUUID()}`;
-      const ack = new Promise<boolean>((resolve) => {
-        const timer = setTimeout(() => {
-          releaseWaiters.delete(requestId);
-          resolve(false);
-        }, 2_000);
-        timer.unref?.();
-        releaseWaiters.set(requestId, ({ released }) => {
-          clearTimeout(timer);
-          resolve(released);
-        });
-      });
-      transport.send(
-        JSON.stringify({
-          type: "release_session_owner",
-          request_id: requestId,
-          runtime: {
-            agent_id: options.agentId,
-            conversation_id: options.conversationId,
-          },
-        }),
+    if (!runtime || !transport || !isListenerTransportOpen(transport)) {
+      options.onError?.(
+        new Error("Session owner release requires a connected listener"),
       );
-      await ack;
+      return false;
+    }
+    const requestId = `release-${crypto.randomUUID()}`;
+    const ack = new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => {
+        releaseWaiters.delete(requestId);
+        resolve(false);
+      }, 2_000);
+      timer.unref?.();
+      releaseWaiters.set(requestId, ({ released }) => {
+        clearTimeout(timer);
+        resolve(released);
+      });
+    });
+    transport.send(
+      JSON.stringify({
+        type: "release_session_owner",
+        request_id: requestId,
+        runtime: {
+          agent_id: options.agentId,
+          conversation_id: options.conversationId,
+        },
+      }),
+    );
+    if (!(await ack)) {
+      options.onError?.(
+        new Error("Session owner release was not acknowledged"),
+      );
+      return false;
     }
     stopped = true;
-    if (runtime) dependencies.stopListener(runtime);
+    dependencies.stopListener(runtime);
+    return true;
   };
 
   const connect = async (): Promise<void> => {

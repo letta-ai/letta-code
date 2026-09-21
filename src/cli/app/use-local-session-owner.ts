@@ -27,7 +27,7 @@ export function useLocalSessionOwner(params: {
     }
 
     let disposed = false;
-    let release: (() => Promise<void>) | undefined;
+    let release: (() => Promise<boolean>) | undefined;
     void startLocalSessionOwner({
       agentId: params.agentId,
       conversationId: params.conversationId || "default",

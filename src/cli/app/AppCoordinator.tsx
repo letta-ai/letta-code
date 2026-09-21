@@ -175,7 +175,10 @@ import {
   resetSharedReminderState,
   type SharedReminderState,
 } from "@/reminders/state";
-import { getCurrentWorkingDirectory } from "@/runtime-context";
+import {
+  getCurrentWorkingDirectory,
+  runWithRuntimeContext,
+} from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import {
@@ -4335,7 +4338,12 @@ export function App({
       dequeueInFlightRef.current = true;
       // Reset to immediate mode after each dequeue — defer is opt-in per batch.
       setQueueMode("immediate");
-      void onSubmitRef.current(concatenatedMessage).finally(() => {
+      const actingUserId = batch.items.find(
+        (item) => item.actingUserId,
+      )?.actingUserId;
+      void runWithRuntimeContext({ actingUserId }, () =>
+        onSubmitRef.current(concatenatedMessage),
+      ).finally(() => {
         dequeueInFlightRef.current = false;
         // If more items arrived while in-flight, bump epoch so the effect re-runs.
         if ((tuiQueueRef.current?.length ?? 0) > 0) {

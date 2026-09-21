@@ -18,6 +18,7 @@ describe("local session owner", () => {
       socket: null,
     } as unknown as ListenerRuntime;
     const stopListener = mock(() => {});
+    const onError = mock(() => {});
     const dependencies: LocalSessionOwnerDependencies = {
       getDeviceId: () => "device-local",
       resolveRegistration: async () => ({
@@ -47,6 +48,7 @@ describe("local session owner", () => {
         surfaceName: "headless",
         onQueueChanged: () => {},
         onAbort: () => true,
+        onError,
         waitForAcceptedInputs: async () => {
           expect(queue.length).toBe(0);
         },
@@ -63,6 +65,7 @@ describe("local session owner", () => {
         type: "message",
         agentId: "agent-local",
         conversationId: "conv-local",
+        actingUserId: "user-sender",
         messages: [
           {
             role: "user",
@@ -89,11 +92,30 @@ describe("local session owner", () => {
     ).toBe(false);
 
     const batch = queue.consumeItems(queue.readyLength);
-    expect(batch?.items.map((item) => item.clientMessageId)).toEqual(["cm-1"]);
+    expect(batch?.items).toMatchObject([
+      { clientMessageId: "cm-1", actingUserId: "user-sender" },
+    ]);
+
+    const rejectedRelease = owner.release();
+    await Promise.resolve();
+    const rejectedFrame = JSON.parse(sent[0] ?? "{}") as {
+      request_id?: string;
+    };
+    capturedOptions.onWsEvent?.("recv", "lifecycle", {
+      type: "_ws_unparseable",
+      raw: JSON.stringify({
+        type: "session_owner_released",
+        request_id: rejectedFrame.request_id,
+        released: false,
+      }),
+    });
+    expect(await rejectedRelease).toBe(false);
+    expect(stopListener).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledTimes(1);
 
     const releasing = owner.release();
     await Promise.resolve();
-    const frame = JSON.parse(sent[0] ?? "{}") as { request_id?: string };
+    const frame = JSON.parse(sent[1] ?? "{}") as { request_id?: string };
     expect(frame).toMatchObject({
       type: "release_session_owner",
       runtime: { agent_id: "agent-local", conversation_id: "conv-local" },
@@ -106,7 +128,7 @@ describe("local session owner", () => {
         released: true,
       }),
     });
-    await releasing;
+    expect(await releasing).toBe(true);
     expect(stopListener).toHaveBeenCalledTimes(1);
   });
 });
