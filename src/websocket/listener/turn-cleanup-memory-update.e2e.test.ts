@@ -48,7 +48,7 @@ beforeAll(async () => {
   await settingsManager.initialize();
   __testSetBackend({
     capabilities: { remoteMemfs: true, localMemfs: false },
-    listConversationMessages: async () => [],
+    listConversationMessages: async () => ({ getPaginatedItems: () => [] }),
   } as unknown as Backend);
   globalThis.fetch = (async (input) => {
     if (String(input).endsWith("/repositories")) {
@@ -238,9 +238,11 @@ test.each([false, true])(
     });
     try {
       await finishBackgroundMemoryTasks(agentId, "conv-picture");
-      expect(backgroundTasks.get(task.taskId)?.status).toBe(
-        rejectPush ? "failed" : "completed",
-      );
+      expect(sha).toHaveLength(40);
+      expect(
+        backgroundTasks.get(task.taskId)?.status,
+        backgroundTasks.get(task.taskId)?.error,
+      ).toBe(rejectPush ? "failed" : "completed");
       expect(updates).toHaveLength(rejectPush ? 0 : 1);
       if (!rejectPush) {
         expect(updates[0]).toEqual({
