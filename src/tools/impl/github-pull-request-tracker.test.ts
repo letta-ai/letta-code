@@ -229,6 +229,74 @@ describe("GitHub pull request output tracking", () => {
     ]);
   });
 
+  test.each(["retrieve", "update"] as const)(
+    "releases a cancelled %s so the next PR can update the same conversation",
+    async (stalledOperation) => {
+      const started = Promise.withResolvers<void>();
+      const stalled = Promise.withResolvers<void>();
+      const controller = new AbortController();
+      let first = true;
+      let tags: string[] = [];
+      const backend: ConversationTagBackend = {
+        retrieveConversation: async (id) => {
+          if (stalledOperation === "retrieve" && first) {
+            first = false;
+            started.resolve();
+            await stalled.promise;
+          }
+          return { id, tags: [...tags] };
+        },
+        updateConversation: async (id, body) => {
+          if (stalledOperation === "update" && first) {
+            first = false;
+            started.resolve();
+            await stalled.promise;
+          }
+          tags = Reflect.get(body, "tags") as string[];
+          return { id, tags };
+        },
+      };
+      const options = {
+        conversationId: `conv-cancel-${stalledOperation}`,
+        attributionConversationIds: [],
+        backend,
+      };
+      const firstTracker = createGitHubPullRequestOutputTracker(
+        "gh pr create --fill",
+        options,
+      );
+      firstTracker?.append(
+        "https://github.com/letta-ai/letta-code/pull/4006\n",
+        "stdout",
+      );
+      const firstFinished = firstTracker
+        ?.finish(controller.signal)
+        .catch((error: unknown) => error);
+      await started.promise;
+      const reason = new Error("caller cancelled");
+      controller.abort(reason);
+
+      const nextTracker = createGitHubPullRequestOutputTracker(
+        "gh pr create --fill",
+        options,
+      );
+      nextTracker?.append(
+        "https://github.com/letta-ai/letta-code/pull/4007\n",
+        "stdout",
+      );
+      await nextTracker?.finish();
+      expect(await firstFinished).toBe(reason);
+      expect(tags).toEqual(["github:pull-request:letta-ai:letta-code:4007"]);
+
+      // A late read must not start a stale write; a late write rejection must
+      // remain observed after its caller has returned.
+      if (stalledOperation === "retrieve") stalled.resolve();
+      else stalled.reject(new Error("late backend failure"));
+      await Bun.sleep(0);
+      expect(tags).toEqual(["github:pull-request:letta-ai:letta-code:4007"]);
+    },
+  );
+
   test("attributes a default worker's new PR to every launching conversation", async () => {
     const backend = new MultiConversationTagBackend({
       "conv-root": [],

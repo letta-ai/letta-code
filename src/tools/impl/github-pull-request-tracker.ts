@@ -317,6 +317,7 @@ async function appendConversationTags(
   const conversation = await backend.retrieveConversation(conversationId, {
     signal,
   });
+  signal?.throwIfAborted();
   const existingTags = conversationTags(conversation);
   const missingTags = tags.filter((tag) => !existingTags.includes(tag));
   if (missingTags.length === 0) {
@@ -332,6 +333,22 @@ async function appendConversationTags(
   );
 }
 
+function waitForTagUpdate(
+  update: Promise<void>,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (!signal) return update;
+  let onAbort!: () => void;
+  const stopped = new Promise<never>((_, reject) => {
+    onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
+  });
+  return Promise.race([update, stopped]).finally(() => {
+    signal.removeEventListener("abort", onAbort);
+  });
+}
+
 function queueConversationTagUpdate(
   backend: ConversationTagBackend,
   conversationId: string,
@@ -339,18 +356,21 @@ function queueConversationTagUpdate(
   signal?: AbortSignal,
 ): Promise<void> {
   const previous = conversationTagUpdateTails.get(conversationId);
-  const update = (previous ?? Promise.resolve())
-    .then(() => appendConversationTags(backend, conversationId, tags, signal))
-    .catch((error: unknown) => {
-      if (signal?.aborted) {
-        signal.throwIfAborted();
-      }
-      debugLog(
-        "github-pr-tracking",
-        `Failed to tag conversation ${conversationId}`,
-        error,
-      );
-    });
+  const update = waitForTagUpdate(
+    (previous ?? Promise.resolve()).then(() =>
+      appendConversationTags(backend, conversationId, tags, signal),
+    ),
+    signal,
+  ).catch((error: unknown) => {
+    if (signal?.aborted) {
+      signal.throwIfAborted();
+    }
+    debugLog(
+      "github-pr-tracking",
+      `Failed to tag conversation ${conversationId}`,
+      error,
+    );
+  });
   const tail = update.catch(() => {});
   conversationTagUpdateTails.set(conversationId, tail);
   void tail
