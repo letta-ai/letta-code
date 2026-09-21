@@ -34,7 +34,8 @@ helper below fetches the live index first, so you pick a URL that exists.
    The helper retrieves `https://docs.letta.com/llms.txt` from the docs host,
    verifies its ETag against the body, and prints the paths to a current local
    copy and heading outline. Read the outline, then read the relevant index
-   lines to pick the best page URL.
+   lines and their applicability labels to pick a page matching the user's
+   backend and interface (see below).
 3. **Fetch the specific page directly.** Pass the exact canonical URL from the
    index back to the same helper, for example:
 
@@ -43,7 +44,8 @@ helper below fetches the live index first, so you pick a URL that exists.
      --docs-url "https://docs.letta.com/configuration/models/index.md"
    ```
 
-   Read the returned docs path before running the helper for another URL. The
+   Read the returned docs path, including its frontmatter, before applying its
+   instructions or running the helper for another URL. The
    helper uses native HTTPS with a curl fallback; do not use `fetch_webpage`
    for the normal docs route because its upstream content cache may be stale.
    Cite the public doc URL so the user can go deeper.
@@ -52,6 +54,23 @@ helper below fetches the live index first, so you pick a URL that exists.
    fallback may be stale. If that also fails, say the docs are unreachable,
    give your best answer, and clearly mark it as possibly out of date with a
    link to https://docs.letta.com. Never silently fall back to memory.
+
+## Match documentation to the user's setup
+
+Read each page's `applies_to` frontmatter before using its instructions:
+
+```yaml
+applies_to:
+  backends: [cloud, local]
+  interfaces: [web, desktop, cli, sdk]
+```
+
+- **Backends describe agent state, not the computer running tools.** `cloud`
+  means Letta Cloud; `local` means a user-managed backend.
+- **Interfaces** refer to the user's current interface: chat.letta.com (`web`,
+  cloud-only), CLI, Desktop, or SDK.
+- Do NOT use context from files marked `status: legacy` unless providing
+  historical context.
 
 ## Inspect or change your model from the CLI
 

@@ -67,15 +67,12 @@ describe("subagent name allocation", () => {
     expect(new Set(names).size).toBe(SUBAGENT_NAMES.length);
   });
 
-  test("labels each new agent as its own parent's shadow", () => {
-    expect(allocateSubagentName("Bob")).toEndWith(" (Bob's shadow)");
-    expect(allocateSubagentName("Alice")).toEndWith(" (Alice's shadow)");
-    expect(allocateSubagentName("  Bob  ")).toEndWith(" (Bob's shadow)");
-  });
-
-  test("uses shadow when no parent name is available", () => {
-    for (const parent of [undefined, null, "", "  "]) {
-      expect(allocateSubagentName(parent)).toEndWith(" (shadow)");
+  test("does not expose the parent name in generated subagent names", () => {
+    for (const parent of ["Bob", "Alice", "  Bob  ", undefined, null, ""]) {
+      const name = allocateSubagentName(parent);
+      expect(name).not.toContain("shadow");
+      expect(name).not.toContain("Bob");
+      expect(name).not.toContain("Alice");
     }
   });
 });
@@ -90,8 +87,8 @@ describe("new agent name selection", () => {
   test("standalone subagent creation also receives a generated name", () => {
     const first = resolveCreatedAgentName(undefined, true);
     const second = resolveCreatedAgentName(undefined, true);
-    expect(first).toEndWith(" (shadow)");
-    expect(second).toEndWith(" (shadow)");
+    expect(first).not.toContain("shadow");
+    expect(second).not.toContain("shadow");
     expect(first).not.toBe(second);
   });
 

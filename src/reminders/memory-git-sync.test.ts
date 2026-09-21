@@ -1,9 +1,83 @@
 import { describe, expect, test } from "bun:test";
+import type { MemoryPostTurnSyncResult } from "@/agent/memory-git";
+import {
+  type SpawnBackgroundSubagentTaskArgs,
+  startMemoryConflictRepair,
+} from "@/tools/impl/task";
 import {
   formatAttachedRepositoriesPostTurnSyncReminders,
   formatAttachedRepositoryPostTurnSyncReminder,
   runPostTurnMemorySync,
 } from "./memory-git-sync";
+
+describe("post-turn memory push notification", () => {
+  test("waits for a successful push before notifying readers", async () => {
+    let finishPush!: (result: MemoryPostTurnSyncResult) => void;
+    const push = new Promise<MemoryPostTurnSyncResult>((resolve) => {
+      finishPush = resolve;
+    });
+    let notifications = 0;
+    const sync = runPostTurnMemorySync(
+      {
+        agentId: "agent-test",
+        onMemoryPushed: () => {
+          notifications++;
+        },
+      },
+      {
+        syncMemory: () => push,
+        syncAttachedRepositories: async () => ({ results: [] }),
+      },
+    );
+
+    await Promise.resolve();
+    expect(notifications).toBe(0);
+    finishPush({
+      status: "pushed",
+      summary: "Pushed",
+      memoryDir: "/tmp/memory",
+      localOnly: false,
+    });
+    await sync;
+    expect(notifications).toBe(1);
+  });
+
+  test.each(["clean", "dirty", "conflict", "push_failed", "skipped"] as const)(
+    "does not notify for %s memory, even if a shared repository was pushed",
+    async (status) => {
+      let notifications = 0;
+      await runPostTurnMemorySync(
+        {
+          agentId: "agent-test",
+          onMemoryPushed: () => {
+            notifications++;
+          },
+        },
+        {
+          repairConflict: () => {},
+          syncMemory: async () => ({
+            status,
+            summary: status,
+            memoryDir: "/tmp/memory",
+            localOnly: false,
+          }),
+          syncAttachedRepositories: async () => ({
+            results: [
+              {
+                name: "shared-notes",
+                path: "/tmp/shared-notes",
+                permissions: "read_write",
+                status: "pushed",
+                summary: "Pushed",
+              },
+            ],
+          }),
+        },
+      );
+      expect(notifications).toBe(0);
+    },
+  );
+});
 
 describe("shared-memory post-turn reminders", () => {
   test("asks the agent to commit dirty shared memory", () => {
@@ -113,4 +187,77 @@ describe("shared-memory post-turn reminders", () => {
     expect(memorySyncRan).toBe(false);
     expect(sharedSyncRan).toBe(true);
   });
+});
+
+const conflict: MemoryPostTurnSyncResult = {
+  status: "conflict",
+  memoryDir: "/tmp/test-memory-repair",
+  summary: "merge in progress",
+  localOnly: true,
+};
+test("post-turn conflict launches the memory task without parent reminders or a same-agent conversation", async () => {
+  const jobs: SpawnBackgroundSubagentTaskArgs[] = [];
+  const reminders: string[] = [];
+  await runPostTurnMemorySync(
+    {
+      agentId: "agent-memory-repair-test",
+      conversationId: "conv-origin",
+      enqueueReminder: (text) => {
+        reminders.push(text);
+      },
+    },
+    {
+      syncMemory: async () => conflict,
+      syncAttachedRepositories: async () => ({ results: [] }),
+      repairConflict: (params) =>
+        startMemoryConflictRepair(params, (args) => {
+          jobs.push(args);
+          return {
+            taskId: "task-repair",
+            outputFile: "/tmp/repair.log",
+            subagentId: "repair",
+          };
+        }),
+    },
+  );
+  expect(jobs).toHaveLength(1);
+  expect(jobs[0]).toMatchObject({
+    subagentType: "memory",
+    memoryRepairOnly: true,
+    parentScope: {
+      agentId: "agent-memory-repair-test",
+      conversationId: "conv-origin",
+    },
+    memoryScope: {
+      primaryRoot: conflict.memoryDir,
+      writableRoots: [conflict.memoryDir],
+    },
+  });
+  expect(jobs[0]?.existingConversationId).toBeUndefined();
+  expect(jobs[0]?.existingAgentId).toBeUndefined();
+  expect(reminders).toEqual([]);
+});
+test("dirty and failed primary memory sync do not inject repair work into the primary", async () => {
+  for (const status of ["dirty", "push_failed"] as const) {
+    const messages: string[] = [];
+    await runPostTurnMemorySync(
+      {
+        agentId: "agent-memory-repair-test",
+        enqueueReminder: (text) => {
+          messages.push(text);
+        },
+        emitWarning: (text) => {
+          messages.push(text);
+        },
+      },
+      {
+        syncMemory: async () => ({ ...conflict, status }),
+        syncAttachedRepositories: async () => ({ results: [] }),
+        repairConflict: () => {
+          throw new Error("must not launch a conflict repair");
+        },
+      },
+    );
+    expect(messages).toEqual([]);
+  }
 });

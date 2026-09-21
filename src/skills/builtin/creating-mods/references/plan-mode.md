@@ -109,7 +109,7 @@ In plan mode, you should:
 Remember: DO NOT write or edit any files except the plan file. This is a read-only exploration and planning phase.
 
 Plan file path: ${session.planFilePath}
-If using apply_patch, use this exact relative patch path: ${relativePatchPath}`;
+If using ApplyPatch, use this exact relative patch path: ${relativePatchPath}`;
 }
 
 export default function activate(letta) {
@@ -161,7 +161,7 @@ function buildActiveReminder(session, cwd) {
 Plan mode is active. The user indicated that they do not want you to execute yet -- you MUST NOT make any edits (with the exception of the plan file mentioned below), run any non-readonly tools (including changing configs or making commits), or otherwise make any changes to the system. This supersedes any other instructions you have received. Instead, you should:
 1. Answer the user's query comprehensively, using the AskUserQuestion tool if you need to ask the user clarifying questions.
 2. Write your implementation plan to the plan file. Plan file path: ${session.planFilePath}
-3. If using apply_patch, use this exact relative path in patch headers: ${relativePatchPath}
+3. If using ApplyPatch, use this exact relative path in patch headers: ${relativePatchPath}
 4. Use direct read-only tools for exploration. Do not launch coding, general-purpose, or fork subagents in plan mode; they may mutate files and should be denied. Only recall-style subagents are allowed if available.
 5. When the plan is complete, read the plan file and present the full current plan text to the user with AskUserQuestion. The question body must include the entire plan, not a summary. The question should offer at least "Approve" and "Revise" options.
 6. If the user approves, call exit_plan_mode immediately. If the user asks to revise, stay in plan mode, update the plan file, then read and present the full revised plan again.
@@ -180,26 +180,21 @@ if (letta.capabilities.events.turns) {
 
 ## Permission overlay
 
-Use a permission overlay, not `tool_start`, for policy. Normalize tool names by family; UI display names and provider-specific tool names drift (`Read`, `read`, `read_file`, `ReadFile`, `SearchFileContent`, etc.). Keep pure read-only tools separate from planning coordination tools like `AskUserQuestion` and todo/plan updates so the policy stays honest.
+Use a permission overlay, not `tool_start`, for policy. Normalize tool names by family; UI display names and provider-specific tool names drift (`Read`, `read`, `read_file`, `ReadFile`, etc.). Keep pure read-only tools separate from planning coordination tools like `AskUserQuestion` and todo/plan updates so the policy stays honest.
 
 ```ts
 const readOnlyToolNames = new Set([
   "glob",
-  "globgemini",
   "grep",
   "grepfiles",
   "list",
   "listdir",
-  "listdirectory",
   "ls",
   "notebookread",
   "read",
   "readfile",
-  "readfilegemini",
   "readlsp",
-  "readmanyfiles",
   "search",
-  "searchfilecontent",
   "searchfiles",
   "skill",
   "taskoutput",
@@ -212,7 +207,6 @@ const planningToolNames = new Set([
   "exitplanmode",
   "todowrite",
   "updateplan",
-  "writetodos",
 ]);
 
 const readOnlySubagentTypes = new Set(["recall"]);

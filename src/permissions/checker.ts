@@ -57,16 +57,6 @@ const WORKING_DIRECTORY_TOOLS_V1 = [
   "ListDir",
   "grep_files",
   "GrepFiles",
-  "read_file_gemini",
-  "ReadFileGemini",
-  "glob_gemini",
-  "GlobGemini",
-  "list_directory",
-  "ListDirectory",
-  "search_file_content",
-  "SearchFileContent",
-  "read_many_files",
-  "ReadManyFiles",
 ];
 const FILE_TOOLS_V2 = ["Read", "Write", "Edit", "Glob", "Grep", "ListDir"];
 const FILE_TOOLS_V1 = [
@@ -81,18 +71,6 @@ const FILE_TOOLS_V1 = [
   "ListDir",
   "grep_files",
   "GrepFiles",
-  "read_file_gemini",
-  "ReadFileGemini",
-  "write_file_gemini",
-  "WriteFileGemini",
-  "glob_gemini",
-  "GlobGemini",
-  "list_directory",
-  "ListDirectory",
-  "search_file_content",
-  "SearchFileContent",
-  "read_many_files",
-  "ReadManyFiles",
 ];
 
 type ToolArgs = Record<string, unknown>;
@@ -286,13 +264,13 @@ function checkPermissionForEngine(
   const permissionToolName = toolNameForPermissionCheck(toolName, toolArgs);
   const canonicalTool = canonicalToolName(permissionToolName);
   const queryTool = engine === "v2" ? canonicalTool : permissionToolName;
-  const query = buildPermissionQuery(queryTool, toolArgs, engine);
+  const query = buildPermissionQuery(queryTool, toolArgs);
   const originalQueryTool =
     engine === "v2" ? canonicalToolName(toolName) : toolName;
   const originalQuery =
     permissionToolName === toolName
       ? query
-      : buildPermissionQuery(originalQueryTool, toolArgs, engine);
+      : buildPermissionQuery(originalQueryTool, toolArgs);
   const matchesRule = (pattern: string, includeOriginal = false): boolean =>
     matchesPattern(
       permissionToolName,
@@ -666,11 +644,7 @@ function getAllowedShellPathRoots(
 /**
  * Build permission query string for a tool execution
  */
-function buildPermissionQuery(
-  toolName: string,
-  toolArgs: ToolArgs,
-  engine: PermissionEngine,
-): string {
+function buildPermissionQuery(toolName: string, toolArgs: ToolArgs): string {
   switch (toolName) {
     // File tools: "ToolName(path/to/file)"
     case "Read":
@@ -683,19 +657,7 @@ function buildPermissionQuery(
     case "ReadFile":
     case "list_dir":
     case "grep_files":
-    case "GrepFiles":
-    case "read_file_gemini":
-    case "ReadFileGemini":
-    case "write_file_gemini":
-    case "WriteFileGemini":
-    case "glob_gemini":
-    case "GlobGemini":
-    case "list_directory":
-    case "ListDirectory":
-    case "search_file_content":
-    case "SearchFileContent":
-    case "read_many_files":
-    case "ReadManyFiles": {
+    case "GrepFiles": {
       const filePath = extractFilePath(toolArgs);
       return filePath ? `${toolName}(${filePath})` : toolName;
     }
@@ -727,20 +689,6 @@ function buildPermissionQuery(
     }
     case "write_stdin":
       return "Bash(write_stdin)";
-    case "run_shell_command":
-    case "RunShellCommand": {
-      if (engine === "v1") {
-        // Legacy behavior did not normalize this alias into Bash queries.
-        return toolName;
-      }
-      const command =
-        typeof toolArgs.command === "string"
-          ? toolArgs.command
-          : Array.isArray(toolArgs.command)
-            ? toolArgs.command.join(" ")
-            : "";
-      return `Bash(${command})`;
-    }
 
     default:
       // Other tools: just the tool name
@@ -842,31 +790,16 @@ function getDefaultDecision(
     "TodoWrite",
     "TaskOutput",
     "LS",
-    // Codex toolset (snake_case) - tools that don't require approval
+    // Additional Codex tools - tools that don't require approval
     "read_file",
     "list_dir",
     "grep_files",
     "write_stdin",
-    "update_plan",
-    // Codex toolset (PascalCase) - tools that don't require approval
+    // Codex tools - tools that don't require approval
     "ReadFile",
     "ListDir",
     "GrepFiles",
     "UpdatePlan",
-    // Gemini toolset (snake_case) - tools that don't require approval
-    "read_file_gemini",
-    "list_directory",
-    "glob_gemini",
-    "search_file_content",
-    "write_todos",
-    "read_many_files",
-    // Gemini toolset (PascalCase) - tools that don't require approval
-    "ReadFileGemini",
-    "ListDirectory",
-    "GlobGemini",
-    "SearchFileContent",
-    "WriteTodos",
-    "ReadManyFiles",
     // Memory tools are constrained to the memfs repo and include their
     // own path/read_only guardrails, so allow by default.
     "memory",

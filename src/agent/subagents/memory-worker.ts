@@ -16,12 +16,6 @@ export function isMemoryWorkerSession(
   return env[MEMORY_WORKER_SESSION_ENV] === "1";
 }
 
-export function buildMemoryRepairPrompt(
-  result: MemoryPostTurnSyncResult,
-): string {
-  return `Repair only the existing Git conflict in your memory repository. Do not perform unrelated edits or reorganization. If the conflict is already resolved, stop.\n\nMemory directory: ${result.memoryDir}\nReported status: ${result.summary}`;
-}
-
 /** Called inside the existing background task, never awaited by the primary. */
 export async function runMemoryWorker(
   params: {
@@ -36,12 +30,19 @@ export async function runMemoryWorker(
     sync?: typeof syncPendingMemoryCommitsAfterTurn;
     recompile?: typeof recompileAgentSystemPrompt;
     repair?: (result: MemoryPostTurnSyncResult) => void;
+    onMemoryPushed?: () => void;
   } = {},
 ): Promise<SubagentResult> {
-  const sync = () =>
-    (deps.sync ?? syncPendingMemoryCommitsAfterTurn)(params.agentId, {
-      memoryDir: params.memoryDir,
-    });
+  const sync = async () => {
+    const result = await (deps.sync ?? syncPendingMemoryCommitsAfterTurn)(
+      params.agentId,
+      {
+        memoryDir: params.memoryDir,
+      },
+    );
+    if (result.status === "pushed") deps.onMemoryPushed?.();
+    return result;
+  };
   return withMemoryOperation(
     params.memoryDir,
     async () => {

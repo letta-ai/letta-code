@@ -8,7 +8,7 @@ import {
 } from "@/agent/max-context";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { getActiveMemoryDirectory } from "@/agent/memory-runtime";
-import { REMEMBER_PROMPT } from "@/agent/prompt-assets";
+import { requestCloudReflectionRun } from "@/agent/reflection-runs";
 import type { ConversationMessageCompactBody } from "@/backend";
 import { getBackend } from "@/backend";
 import { refreshCustomCommands } from "@/cli/commands/custom";
@@ -19,13 +19,10 @@ import {
   gatherInitGitContext,
 } from "@/cli/helpers/init-command";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
+import { parseReflectCommandArgs } from "@/cli/helpers/reflect-command";
 import { launchReflectionSubagent } from "@/cli/helpers/reflection-launcher";
 import { buildModCommandPrompt } from "@/cli/mods/command-runtime";
-import {
-  DEFAULT_SUMMARIZATION_MODEL,
-  SYSTEM_REMINDER_CLOSE,
-  SYSTEM_REMINDER_OPEN,
-} from "@/constants";
+import { DEFAULT_SUMMARIZATION_MODEL } from "@/constants";
 import { runPreCompactHooks } from "@/hooks";
 import type { ModCommand } from "@/mods/types";
 import { markPostCompactionContextRemindersPending } from "@/reminders/state";
@@ -162,15 +159,6 @@ export async function handleExecuteCommand(
         output = await handleInitCommand(socket, conversationRuntime, opts);
         break;
 
-      case "remember":
-        output = await handleRememberCommand(
-          socket,
-          conversationRuntime,
-          trimmedArgs,
-          opts,
-        );
-        break;
-
       case "compact":
         output = await handleCompactCommand(
           socket,
@@ -185,8 +173,15 @@ export async function handleExecuteCommand(
         emitDeviceStatusUpdate(socket, conversationRuntime, scope);
         break;
 
+      case "dream":
       case "reflect":
-        output = await handleReflectCommand(socket, conversationRuntime);
+      case "reflection":
+        output = await handleReflectCommand(
+          socket,
+          conversationRuntime,
+          trimmedArgs,
+          command.runtime.acting_user_id,
+        );
         break;
 
       case "context-limit":
@@ -765,61 +760,6 @@ async function handleInitCommand(
   return "Memory initialization completed";
 }
 
-/**
- * /remember — Store information from the conversation.
- *
- * Mirrors the CLI /remember logic by sending the remember system reminder
- * and optional user-provided text through the normal turn pipeline.
- */
-async function handleRememberCommand(
-  socket: WebSocket,
-  conversationRuntime: ConversationRuntime,
-  args: string | undefined,
-  opts: {
-    onStatusChange?: StartListenerOptions["onStatusChange"];
-    connectionId?: string;
-  },
-): Promise<string> {
-  const agentId = conversationRuntime.agentId;
-
-  if (!agentId) {
-    throw new Error("No agent ID available for /remember command");
-  }
-
-  const hasArgs = Boolean(args && args.length > 0);
-  const rememberReminder = hasArgs
-    ? `${SYSTEM_REMINDER_OPEN}\n${REMEMBER_PROMPT}\n${SYSTEM_REMINDER_CLOSE}`
-    : `${SYSTEM_REMINDER_OPEN}\n${REMEMBER_PROMPT}\n\nThe user did not specify what to remember. Look at the recent conversation context to identify what they likely want you to remember, or ask them to clarify.\n${SYSTEM_REMINDER_CLOSE}`;
-
-  const content = hasArgs
-    ? [
-        { type: "text" as const, text: rememberReminder },
-        { type: "text" as const, text: args as string },
-      ]
-    : [{ type: "text" as const, text: rememberReminder }];
-
-  await handleIncomingMessage(
-    {
-      type: "message",
-      agentId,
-      conversationId: conversationRuntime.conversationId,
-      messages: [
-        {
-          type: "message",
-          role: "user",
-          content,
-        },
-      ],
-    },
-    socket,
-    conversationRuntime,
-    opts.onStatusChange,
-    opts.connectionId,
-  );
-
-  return "Memory request submitted";
-}
-
 /** /context-limit — Set or reset the active scope's max context window. */
 async function handleSetMaxContextCommand(
   conversationRuntime: ConversationRuntime,
@@ -880,47 +820,64 @@ async function handleChannelsCommand(
 async function handleReflectCommand(
   socket: WebSocket,
   conversationRuntime: ConversationRuntime,
+  args = "",
+  actingUserId?: string,
 ): Promise<string> {
   const agentId = conversationRuntime.agentId;
-  if (!agentId) return "No agent ID available for reflection.";
+  if (!agentId) throw new Error("No agent ID available for reflection.");
   const conversationId = conversationRuntime.conversationId;
   const listener = conversationRuntime.listener;
-  const result = await launchReflectionSubagent({
-    agentId,
-    conversationId,
-    memfsEnabled: settingsManager.isMemfsEnabled(agentId),
-    triggerSource: "manual",
-    description: "Reflecting on conversation",
-    recompileByConversation: listener.systemPromptRecompileByConversation,
-    recompileQueuedByConversation:
-      listener.queuedSystemPromptRecompileByConversation,
-    onCompletionMessage: async (completionMessage, reflectionResult) => {
-      const reflectionAgentIdTag = reflectionResult.reflectionAgentId
-        ? `<reflection-agent-id>${escapeTaskNotificationSummary(reflectionResult.reflectionAgentId)}</reflection-agent-id>`
-        : "";
-      emitCanonicalMessageDelta(
-        socket,
-        conversationRuntime,
-        {
-          type: "message",
-          id: `user-msg-${crypto.randomUUID()}`,
-          date: new Date().toISOString(),
-          message_type: "user_message",
-          content: [
-            {
-              type: "text",
-              text: `<task-notification><summary>${escapeTaskNotificationSummary(completionMessage)}</summary>${reflectionAgentIdTag}</task-notification>`,
-            },
-          ],
-        } as StreamDelta,
-        { agent_id: agentId, conversation_id: conversationId },
-      );
+  const output = await requestCloudReflectionRun(
+    { agentId, conversationId, actingUserId },
+    args,
+  );
+  if (output !== null) return output;
+  const parsed = parseReflectCommandArgs(`/reflect ${args}`);
+  if (parsed.kind !== "single") {
+    throw new Error(
+      "The remote listener supports only the current conversation and --instruction. Use the TUI for --recent, --conversation, or --auto with Code-managed reflection.",
+    );
+  }
+  const result = await launchReflectionSubagent(
+    {
+      instruction: parsed.instruction,
+      agentId,
+      conversationId,
+      memfsEnabled: settingsManager.isMemfsEnabled(agentId),
+      triggerSource: "manual",
+      description: "Reflecting on conversation",
+      recompileByConversation: listener.systemPromptRecompileByConversation,
+      recompileQueuedByConversation:
+        listener.queuedSystemPromptRecompileByConversation,
+      onCompletionMessage: async (completionMessage, reflectionResult) => {
+        const reflectionAgentIdTag = reflectionResult.reflectionAgentId
+          ? `<reflection-agent-id>${escapeTaskNotificationSummary(reflectionResult.reflectionAgentId)}</reflection-agent-id>`
+          : "";
+        emitCanonicalMessageDelta(
+          socket,
+          conversationRuntime,
+          {
+            type: "message",
+            id: `user-msg-${crypto.randomUUID()}`,
+            date: new Date().toISOString(),
+            message_type: "user_message",
+            content: [
+              {
+                type: "text",
+                text: `<task-notification><summary>${escapeTaskNotificationSummary(completionMessage)}</summary>${reflectionAgentIdTag}</task-notification>`,
+              },
+            ],
+          } as StreamDelta,
+          { agent_id: agentId, conversation_id: conversationId },
+        );
+      },
     },
-  });
+    { isCutover: async () => false },
+  ); // Ownership was resolved with the acting user above.
   if (result.launched)
     return "Started a reflection pass for this conversation.";
   if (result.reason === "memfs_disabled") {
-    return "Reflection needs the memory filesystem to be enabled for this agent. Use /remember for a lightweight memory update instead.";
+    return "Reflection needs the memory filesystem to be enabled for this agent.";
   }
   if (result.reason === "already_active") {
     return "A reflection agent is already running for this conversation.";

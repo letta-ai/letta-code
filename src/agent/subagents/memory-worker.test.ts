@@ -257,3 +257,31 @@ test("failed remote sync preserves the worker identity and report and releases t
   expect(release).not.toBeNull();
   await release?.();
 });
+
+test("a queued repair notifies after sync pushes an already-resolved conflict without launching a worker", async () => {
+  let pushed = false;
+  let notified = false;
+  const result = await runMemoryWorker(
+    scope(true),
+    async () => {
+      throw new Error("Conflict was already resolved");
+    },
+    {
+      sync: async () => {
+        pushed = true;
+        return {
+          status: "pushed",
+          summary: "Pushed resolved conflict",
+          memoryDir: root,
+          localOnly: false,
+        };
+      },
+      onMemoryPushed: () => {
+        expect(pushed).toBe(true);
+        notified = true;
+      },
+    },
+  );
+  expect(result.success).toBe(true);
+  expect(notified).toBe(true);
+});

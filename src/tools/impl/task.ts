@@ -8,8 +8,10 @@
 import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import type { MemoryPostTurnSyncResult } from "@/agent/memory-git";
 import {
   completeSubagent,
+  emitStreamEvent,
   generateSubagentId,
   getSnapshot as getSubagentSnapshot,
   getSubagentToolCount,
@@ -21,14 +23,12 @@ import {
   discoverSubagents,
   getAllSubagentConfigs,
   type SubagentMemoryScope,
+  type SubagentResult,
 } from "@/agent/subagents";
 import { forkParentConversation } from "@/agent/subagents/fork-conversation";
 import { spawnSubagent } from "@/agent/subagents/manager";
 import { prepareMemoryHandoff } from "@/agent/subagents/memory-handoff";
-import {
-  buildMemoryRepairPrompt,
-  runMemoryWorker,
-} from "@/agent/subagents/memory-worker";
+import { runMemoryWorker } from "@/agent/subagents/memory-worker";
 import { getBackend } from "@/backend";
 import { runSubagentStopHooks } from "@/hooks";
 import {
@@ -73,18 +73,6 @@ interface TaskArgs {
 // Valid subagent_types when deploying an existing agent
 const VALID_DEPLOY_TYPES = new Set(["general-purpose"]);
 const BACKGROUND_STARTUP_POLL_MS = 50;
-
-type TaskRunResult = {
-  agentId: string;
-  conversationId?: string;
-  model?: string;
-  report: string;
-  success: boolean;
-  error?: string;
-  totalTokens?: number;
-  stepCount?: number;
-  durationMs?: number;
-};
 
 export interface SpawnBackgroundSubagentTaskArgs {
   subagentType: string;
@@ -209,7 +197,7 @@ async function resolveCompletionSummary(
 function buildTaskResultHeader(
   subagentType: string,
   subagentId: string,
-  result?: Pick<TaskRunResult, "agentId" | "conversationId">,
+  result?: Pick<SubagentResult, "agentId" | "conversationId">,
   status?: "success" | "error",
 ): string {
   return [
@@ -238,7 +226,7 @@ function writeTaskTranscriptStart(
 
 function writeTaskTranscriptResult(
   outputFile: string,
-  result: TaskRunResult,
+  result: SubagentResult,
   header: string,
 ): void {
   if (result.success) {
@@ -351,6 +339,32 @@ export async function waitForBackgroundSubagentConversationId(
 
     await sleep(BACKGROUND_STARTUP_POLL_MS);
   }
+}
+
+export function startMemoryConflictRepair(
+  params: {
+    agentId: string;
+    conversationId?: string | null;
+    result: MemoryPostTurnSyncResult;
+    actingUserId?: string;
+  },
+  spawn = spawnBackgroundSubagentTask,
+): void {
+  spawn({
+    subagentType: "memory",
+    description: "Repair memory Git conflict",
+    prompt: `Repair only the existing Git conflict in your memory repository. Do not perform unrelated edits or reorganization. If the conflict is already resolved, stop.\n\nMemory directory: ${params.result.memoryDir}\nReported status: ${params.result.summary}`,
+    parentScope: {
+      agentId: params.agentId,
+      conversationId: params.conversationId ?? "default",
+    },
+    memoryScope: {
+      primaryRoot: params.result.memoryDir,
+      writableRoots: [params.result.memoryDir],
+    },
+    memoryRepairOnly: true,
+    actingUserId: params.actingUserId,
+  });
 }
 
 /**
@@ -529,18 +543,18 @@ export function spawnBackgroundSubagentTask(
             return result;
           },
           {
+            onMemoryPushed: () => {
+              emitStreamEvent(subagentId, {
+                type: "memory_updated",
+                affected_paths: ["*"],
+                timestamp: Date.now(),
+              });
+            },
             repair: (result) => {
-              spawnBackgroundSubagentTask({
-                subagentType: "memory",
-                prompt: buildMemoryRepairPrompt(result),
-                description: "Repair memory Git conflict",
-                parentScope: resolvedParentScope,
+              startMemoryConflictRepair({
+                ...resolvedParentScope,
                 actingUserId,
-                memoryScope: {
-                  primaryRoot: result.memoryDir,
-                  writableRoots: [result.memoryDir],
-                },
-                memoryRepairOnly: true,
+                result,
               });
             },
           },
@@ -612,7 +626,7 @@ export function spawnBackgroundSubagentTask(
           fullResult,
           LIMITS.TASK_OUTPUT_CHARS,
           "Task",
-          { workingDirectory: userCwd, toolName: "Task" },
+          { workingDirectory: userCwd },
         );
 
         const defaultSummary = `Agent "${description}" ${result.success ? "completed" : "failed"}`;
@@ -876,7 +890,7 @@ export async function task(args: TaskArgs): Promise<string> {
     existingAgentId: effectiveAgentId,
     existingConversationId: effectiveConversationId,
     maxTurns: args.max_turns,
-    forkedContext: config.fork,
+    forkedContext: subagent_type !== "memory" && config.fork,
     parentScope: resolvedParentScope,
     environment:
       typeof args.computer === "string" && args.computer.trim()

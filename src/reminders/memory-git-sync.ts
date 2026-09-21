@@ -10,8 +10,8 @@ import { syncPendingMemoryCommitsAfterTurn } from "@/agent/memory-git";
 import { claimMemoryOperation } from "@/agent/memory-operation";
 import { isMemoryWorkerSession } from "@/agent/subagents/memory-worker";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
+import { startMemoryConflictRepair } from "@/tools/impl/task";
 import { debugWarn } from "@/utils/debug";
-import { startMemoryConflictRepair } from "./memory-conflict-repair";
 
 export interface RunPostTurnMemorySyncParams {
   agentId: string;
@@ -19,6 +19,7 @@ export interface RunPostTurnMemorySyncParams {
   isEnabled?: (agentId: string) => boolean;
   enqueueReminder?: (text: string) => void;
   emitWarning?: (text: string) => void | Promise<void>;
+  onMemoryPushed?: () => void;
   debugLabel?: string;
 }
 
@@ -116,6 +117,7 @@ export async function runPostTurnMemorySync(
       if (release !== null) {
         try {
           const result = await syncMemory(params.agentId);
+          if (result.status === "pushed") params.onMemoryPushed?.();
           if (result.status === "conflict") {
             (dependencies.repairConflict ?? startMemoryConflictRepair)({
               ...params,

@@ -11,11 +11,32 @@ import {
   buildClientSkillsUpdateReminder,
   invalidateClientSkillsPayloadCache,
 } from "./client-skills";
-import { sendMessageStreamWithBackend } from "./message";
+import {
+  buildConversationMessagesCreateRequestBody,
+  sendMessageStreamWithBackend,
+} from "./message";
 
 afterEach(() => invalidateClientSkillsPayloadCache());
 
 describe("sendMessageStream skill sources", () => {
+  test("forwards a request-scoped response format to the Messages API", () => {
+    const responseFormat = {
+      type: "json_schema",
+      json_schema: {
+        name: "response_schema",
+        schema: { type: "object" },
+        strict: true,
+      },
+    };
+    const body = buildConversationMessagesCreateRequestBody(
+      "conv-structured",
+      [{ type: "message", role: "user", content: "Return JSON" }],
+      { responseFormat },
+      [],
+    );
+    expect(body.response_format).toEqual(responseFormat);
+  });
+
   test("reports metadata deltas, not bodies, order changes, or the initial catalog", () => {
     const skill = {
       name: "search",

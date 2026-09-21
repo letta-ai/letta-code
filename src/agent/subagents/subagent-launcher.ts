@@ -6,6 +6,8 @@
 // lower-level backend/runtime/shell helpers and shared subagent types, never
 // back on the subagent manager, so the graph stays acyclic.
 
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
 import { type BackendMode, getLocalBackendStorageDir } from "@/backend";
 import { getLocalBackendMemoryFilesystemRoot } from "@/backend/local/paths";
@@ -24,6 +26,7 @@ import {
   SUBAGENT_LAUNCH_PROFILE_ENV,
   SUBAGENT_NAME_ENV,
 } from "@/utils/subagent-launch-marker";
+import { TRANSCRIPT_ROOT_ENV } from "@/utils/transcript-paths";
 import type { SubagentLaunchProfile, SubagentMemoryScope } from ".";
 import { MEMORY_WORKER_SESSION_ENV } from "./memory-worker";
 
@@ -165,6 +168,27 @@ export interface ComposeSubagentChildEnvOptions {
   transcriptPath?: string | null;
   /** Name reserved in the parent process, only for a newly created agent. */
   subagentName?: string;
+  /** Parent-process task ID used to isolate child background output files. */
+  subagentId?: string;
+}
+
+function resolveMemorySubagentScratchpad(
+  parentProcessEnv: NodeJS.ProcessEnv,
+  subagentId?: string,
+): string {
+  const configuredScratchpad = parentProcessEnv.LETTA_SCRATCHPAD;
+  if (configuredScratchpad?.trim()) {
+    return configuredScratchpad;
+  }
+
+  const configuredTranscriptRoot = parentProcessEnv[TRANSCRIPT_ROOT_ENV];
+  const transcriptRoot =
+    configuredTranscriptRoot?.trim() ||
+    join(parentProcessEnv.HOME?.trim() || homedir(), ".letta", "transcripts");
+  const scope = subagentId
+    ? encodeURIComponent(subagentId)
+    : crypto.randomUUID();
+  return join(transcriptRoot, "background", scope);
 }
 
 /**
@@ -239,6 +263,10 @@ export function composeSubagentChildEnv(
   // at all — their tools will surface resolution errors appropriately.
   if (launchProfile === "memory-subagent") {
     delete childEnv[LISTENER_CONNECTION_ENV];
+    childEnv.LETTA_SCRATCHPAD = resolveMemorySubagentScratchpad(
+      parentProcessEnv,
+      options.subagentId,
+    );
     const primaryRoot = memoryScope?.primaryRoot ?? inheritedPrimaryRoot;
     if (primaryRoot) {
       childEnv.MEMORY_DIR = primaryRoot;

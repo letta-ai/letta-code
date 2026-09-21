@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 import { Text, Transform, useInput } from 'ink';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 // Use a private-use sentinel while Ink/wrap-ansi measure and wrap text.
 // wrap-ansi with trim:true strips inverse ASCII spaces at line boundaries, but
@@ -54,12 +54,19 @@ export function isControlSequence(input, key) {
 function TextInput({ value: originalValue, placeholder = '', focus = true, mask, highlightPastedText = false, showCursor = true, onChange, onSubmit, externalCursorOffset, onCursorOffsetChange }) {
     const [state, setState] = useState({ cursorOffset: (originalValue || '').length, cursorWidth: 0, killBuffer: '' });
     const { cursorOffset, cursorWidth, killBuffer } = state;
+    // Latest value this input knows about: the rendered value, or the value the
+    // input handler just reported. Several input events can land in one tick (an
+    // IME commit split across stdin reads) before React flushes the effect
+    // below, so its closure's originalValue may already be older than the caret
+    // in previousState; clamping against it moved the caret backwards (#4493).
+    const latestValueRef = useRef(originalValue || '');
+    latestValueRef.current = originalValue || '';
     useEffect(() => {
         setState(previousState => {
             if (!focus || !showCursor) {
                 return previousState;
             }
-            const newValue = originalValue || '';
+            const newValue = latestValueRef.current;
             if (previousState.cursorOffset > newValue.length - 1) {
                 return { ...previousState, cursorOffset: newValue.length, cursorWidth: 0 };
             }
@@ -179,6 +186,7 @@ function TextInput({ value: originalValue, placeholder = '', focus = true, mask,
         setState(prev => ({ ...prev, cursorOffset: nextCursorOffset, cursorWidth: nextCursorWidth, killBuffer: nextKillBuffer }));
         if (typeof onCursorOffsetChange === 'function') onCursorOffsetChange(nextCursorOffset);
         if (nextValue !== originalValue) {
+            latestValueRef.current = nextValue;
             onChange(nextValue);
         }
     }, { isActive: focus });

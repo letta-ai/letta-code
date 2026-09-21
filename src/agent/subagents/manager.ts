@@ -7,6 +7,7 @@
  * - Managing parallel subagent execution
  */
 
+import { rmSync } from "node:fs";
 import { platform } from "node:os";
 import { resolveActingUserId } from "@/agent/acting-user";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
@@ -67,6 +68,7 @@ import { spawnSubagentProcess } from "./subagent-process";
 import {
   describeSubagentExit,
   type ExecutionState,
+  hasSuccessfulToolCall,
   looksLikeTruncatedStreamJson,
   parseResultFromStdout,
   processStreamEvent,
@@ -380,14 +382,15 @@ async function executeSubagent(
         memoryScope,
       },
     );
+    const parentProcessEnv: NodeJS.ProcessEnv = {
+      ...getRuntimeExecutionEnv(
+        process.env,
+        getRuntimeContext()?.executionSettings,
+      ),
+      USER_CWD: subagentWorkingDirectory,
+    };
     const childEnv = composeSubagentChildEnv({
-      parentProcessEnv: {
-        ...getRuntimeExecutionEnv(
-          process.env,
-          getRuntimeContext()?.executionSettings,
-        ),
-        USER_CWD: subagentWorkingDirectory,
-      },
+      parentProcessEnv,
       listenerConnectionId: getRuntimeContext()?.connectionId,
       backendMode,
       localBackendStorageDir,
@@ -401,6 +404,7 @@ async function executeSubagent(
       inheritedBaseUrl,
       actingUserId: actingUserIdOverride,
       transcriptPath,
+      subagentId,
       subagentName:
         existingAgentId || existingConversationId
           ? undefined
@@ -467,6 +471,7 @@ async function executeSubagent(
       enqueueReceipt: null,
       resultStats: null,
       displayedToolCalls: new Set(),
+      toolCallStatuses: new Map(),
     };
 
     // Parse child stdout manually instead of using readline. This keeps the
@@ -492,6 +497,21 @@ async function executeSubagent(
 
     // Wait for process to complete
     const { exitCode, exitSignal } = await runningProcess.completion;
+
+    if (
+      effectiveLaunchProfile === "memory-subagent" &&
+      !parentProcessEnv.LETTA_SCRATCHPAD?.trim() &&
+      childEnv.LETTA_SCRATCHPAD
+    ) {
+      try {
+        rmSync(childEnv.LETTA_SCRATCHPAD, { recursive: true, force: true });
+      } catch (error) {
+        debugWarn(
+          "subagent",
+          `Failed to clean up memory-subagent scratchpad: ${getErrorMessage(error)}`,
+        );
+      }
+    }
 
     // Ensure the trailing partial line is processed before completing.
     // Without this, late tool events can be dropped before Task marks completion.
@@ -604,12 +624,17 @@ async function executeSubagent(
 
     // Return captured result if available
     if (state.finalResult !== null) {
+      const toolFailureError =
+        type === "reflection" && !hasSuccessfulToolCall(state)
+          ? "Reflection could not complete because it did not finish a successful tool call."
+          : undefined;
+      const completionError = state.finalError ?? toolFailureError;
       return withModel({
         agentId: state.agentId || "",
         conversationId: state.conversationId || undefined,
         report: state.finalResult,
-        success: !state.finalError,
-        error: state.finalError || undefined,
+        success: !completionError,
+        error: completionError,
         totalTokens: state.resultStats?.totalTokens,
         stepCount: state.resultStats?.stepCount,
         durationMs: state.resultStats?.durationMs,
@@ -733,11 +758,7 @@ export function recallPromptForBackend(backendMode?: BackendMode): string {
 function buildForkSystemReminder(
   subagentType?: string,
   backendMode?: BackendMode,
-  memoryPrompt?: string,
 ): string {
-  if (subagentType === "memory") {
-    return `${SYSTEM_REMINDER_OPEN}\n${memoryPrompt}\n${SYSTEM_REMINDER_CLOSE}\n\n`;
-  }
   if (subagentType === "recall") {
     const recallPrompt = recallPromptForBackend(backendMode);
     return `${SYSTEM_REMINDER_OPEN}
@@ -885,11 +906,7 @@ async function spawnSubagentInContext(
         parentAgent ??
         (await getBackend().retrieveAgent(resolvedParentAgentId));
       if (forkedContext) {
-        const systemReminder = buildForkSystemReminder(
-          type,
-          backendMode,
-          config.systemPrompt,
-        );
+        const systemReminder = buildForkSystemReminder(type, backendMode);
         finalPrompt = systemReminder + prompt;
       } else if (
         shouldPrependDeploySystemReminder(
@@ -919,6 +936,7 @@ async function spawnSubagentInContext(
       conversationId: existingConversationId,
     });
     updateSubagent(subagentId, {
+      agentId: existingAgentId,
       agentURL: forkAgentURL,
       conversationId: existingConversationId,
     });

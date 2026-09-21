@@ -27,9 +27,6 @@ for (const mode of ["one-shot", "bidirectional", "primary"] as const) {
         defaultAgentModel: "anthropic/claude-sonnet-4-6",
       });
       const original = store.createConversation({ agent_id: agentId });
-      const repair = isRepair
-        ? store.forkConversation(original.id, { hidden: true })
-        : undefined;
       const memoryDir = getLocalBackendMemoryFilesystemRoot(
         agentId,
         storageDir,
@@ -97,8 +94,15 @@ for (const mode of ["one-shot", "bidirectional", "primary"] as const) {
           ...invocation,
           "--backend",
           "local",
-          "--conversation",
-          repair?.id ?? original.id,
+          ...(isRepair
+            ? [
+                "--new-agent",
+                "--system",
+                "memory",
+                "--model",
+                "anthropic/claude-sonnet-4-6",
+              ]
+            : ["--conversation", original.id]),
           ...(mode !== "bidirectional"
             ? ["-p", prompt]
             : ["--input-format", "stream-json"]),
@@ -148,26 +152,45 @@ for (const mode of ["one-shot", "bidirectional", "primary"] as const) {
           events.find(
             (event) => event.type === "system" && event.subtype === "init",
           )?.memfs_enabled,
-        ).toBe(true);
+        ).toBe(!isRepair);
       } finally {
         clearTimeout(deadline);
       }
-      // The deterministic executor leaves the conflict unresolved. A normal post-turn
-      // sync would launch another repair, so exactly two conversations proves suppression.
+      // The deterministic executor leaves the conflict unresolved. Each mode
+      // creates exactly one fresh worker, with no recursive repair or reflection.
       const after = new LocalStore(agentId, {
         storageDir,
         seedDefaultAgent: false,
       });
-      const listParams = { agent_id: agentId, include_hidden: true };
-      expect(after.listConversations(listParams).length).toBe(isRepair ? 2 : 1);
-      if (repair) {
+      expect(after.listConversations({ agent_id: agentId })).toHaveLength(1);
+      const workerIds = readdirSync(join(storageDir, "agents"))
+        .filter((file) => file.endsWith(".json"))
+        .map(
+          (file) =>
+            JSON.parse(readFileSync(join(storageDir, "agents", file), "utf8"))
+              .id as string,
+        )
+        .filter((id) => id !== agentId);
+      expect(workerIds).toHaveLength(1);
+      const workerId = workerIds[0];
+      if (!workerId) throw new Error("No memory worker created");
+      const workerStore = new LocalStore(workerId, {
+        storageDir,
+        seedDefaultAgent: false,
+      });
+      const workerMessages = JSON.stringify(
+        workerStore.listConversationMessages("default", { agent_id: workerId }),
+      );
+      expect(
+        JSON.parse(readFileSync(settingsPath, "utf8")).agents.find(
+          (a: { agentId: string }) => a.agentId === workerId,
+        )?.memfs,
+      ).toBe(false);
+      if (isRepair) {
         expect(after.listConversationMessages(original.id)).toEqual([]);
-        // Memory subagents use the one-shot launcher; bidirectional clients
-        // supply their own message content and do not get sender attribution.
+        expect(workerMessages).toContain(prompt);
+        // Bidirectional clients supply their own content without sender attribution.
         if (mode === "one-shot") {
-          const workerMessages = JSON.stringify(
-            after.listConversationMessages(repair.id),
-          );
           expect(workerMessages).toContain(
             "Your final report stays in the background task log",
           );
@@ -175,44 +198,12 @@ for (const mode of ["one-shot", "bidirectional", "primary"] as const) {
             "The sender will only see the final message",
           );
         }
-        expect(
-          after
-            .listConversationMessages(repair.id)
-            .some((message) =>
-              JSON.stringify(message.content).includes(prompt),
-            ),
-        ).toBe(true);
       } else {
-        const workerIds = readdirSync(join(storageDir, "agents"))
-          .filter((file) => file.endsWith(".json"))
-          .map(
-            (file) =>
-              JSON.parse(readFileSync(join(storageDir, "agents", file), "utf8"))
-                .id as string,
-          )
-          .filter((id) => id !== agentId);
-        expect(workerIds).toHaveLength(1);
-        const workerId = workerIds[0];
-        if (!workerId) throw new Error("No memory worker created");
-        const workerStore = new LocalStore(workerId, {
-          storageDir,
-          seedDefaultAgent: false,
-        });
-        const workerMessages = JSON.stringify(
-          workerStore.listConversationMessages("default", {
-            agent_id: workerId,
-          }),
-        );
         expect(workerMessages).toContain(
           "Repair only the existing Git conflict",
         );
         expect(workerMessages).not.toContain(prompt);
         expect(workerMessages).toContain(memoryDir);
-        expect(
-          JSON.parse(readFileSync(settingsPath, "utf8")).agents.find(
-            (a: { agentId: string }) => a.agentId === workerId,
-          )?.memfs,
-        ).toBe(false);
         const originalMessages = JSON.stringify(
           after.listConversationMessages(original.id),
         );

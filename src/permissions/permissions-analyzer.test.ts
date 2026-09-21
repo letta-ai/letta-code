@@ -739,20 +739,9 @@ test("Complex npx tsc commands strip cd and pipe suffixes when building approval
   expect(context.approveAlwaysText).not.toContain("...");
 });
 
-test("WriteFileGemini uses write-family wildcard rule", () => {
+test("ShellCommand is analyzed as Bash", () => {
   const context = analyzeApprovalContext(
-    "WriteFileGemini",
-    { file_path: "src/main.ts", content: "console.log('hi');" },
-    "/Users/test/project",
-  );
-
-  expect(context.recommendedRule).toBe("Write(**)");
-  expect(context.defaultScope).toBe("session");
-});
-
-test("run_shell_command is analyzed as Bash", () => {
-  const context = analyzeApprovalContext(
-    "run_shell_command",
+    "ShellCommand",
     { command: "curl -s http://localhost:4321/intro" },
     "/Users/test/project",
   );

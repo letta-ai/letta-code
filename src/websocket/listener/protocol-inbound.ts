@@ -1,5 +1,6 @@
 import type WebSocket from "ws";
 import type { ExperimentId } from "@/experiments/types";
+import { isToolsetPreference } from "@/tools/toolset-catalog";
 import {
   CHANNEL_ACCOUNT_CREATE_FIELDS,
   CHANNEL_ACCOUNT_UPDATE_FIELDS,
@@ -148,22 +149,10 @@ export type ServerLifecycleMessage = {
   type: "pong";
 };
 
-const TOOLSET_PREFERENCES = new Set([
-  "auto",
-  "codex",
-  "codex_snake",
-  "default",
-  "gemini",
-  "gemini_snake",
-  "letta",
-  "none",
-]);
 function isClientToolsetConfig(value: unknown): value is ClientToolsetConfig {
   if (!isObjectRecord(value)) return false;
   return (
-    (value.base === undefined ||
-      (typeof value.base === "string" &&
-        TOOLSET_PREFERENCES.has(value.base))) &&
+    (value.base === undefined || isToolsetPreference(value.base)) &&
     (value.include === undefined || isStringArray(value.include))
   );
 }
@@ -974,7 +963,7 @@ export function isUpdateToolsetCommand(
     c.type === "update_toolset" &&
     typeof c.request_id === "string" &&
     isRuntimeScope(c.runtime) &&
-    typeof c.toolset_preference === "string"
+    isToolsetPreference(c.toolset_preference)
   );
 }
 

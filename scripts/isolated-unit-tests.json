@@ -1,6 +1,21 @@
 {
   "tests": [
     {
+      "path": "src/websocket/listener/turn-cleanup-memory-update.e2e.test.ts",
+      "timeoutMs": 30000,
+      "reason": "Exercises real MemFS Git pushes and listener notifications with isolated HOME, settings, backend, auth environment, and repository-list fetch."
+    },
+    {
+      "path": "src/tools/impl/task-fork-receipt.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Replaces billing I/O and the child process while exercising real fork launch state and task receipts with process-global backend, settings, and subagent state."
+    },
+    {
+      "path": "src/tools/impl/task-computer-routing.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Mocks subagent discovery and the child-process launch boundary while exercising task() with process-global backend and subagent state."
+    },
+    {
       "path": "src/websocket/listener/turn-cleanup-shared-memory.e2e.test.ts",
       "timeoutMs": 30000,
       "reason": "Runs real Git pushes while replacing global fetch and mutating the backend, settings, auth environment, MemFS URL, and a synthetic agent mount."
@@ -70,6 +85,11 @@
       "path": "src/cli/components/provider-mod-selector-refresh.test.tsx",
       "timeoutMs": 15000,
       "reason": "Renders Ink while mutating the backend mode, backend instance, provider registry, settings singleton, and model cache."
+    },
+    {
+      "path": "src/cli/app/use-configuration-handlers.test.tsx",
+      "timeoutMs": 15000,
+      "reason": "Renders the reasoning picker while replacing the shared runtime model catalog; shared batches can retain prior catalog or Ink state."
     },
     {
       "path": "src/cli/message-search-cache-warm.test.ts",
@@ -177,11 +197,6 @@
     },
     {
       "path": "src/tools/toolset-client-tool-rule-cleanup.test.ts",
-      "timeoutMs": 15000,
-      "reason": "Uses a top-level Bun module mock for the backend client."
-    },
-    {
-      "path": "src/tools/toolset-memfs-detach.test.ts",
       "timeoutMs": 15000,
       "reason": "Uses a top-level Bun module mock for the backend client."
     },

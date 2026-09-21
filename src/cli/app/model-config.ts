@@ -1,7 +1,7 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
-import { getModelInfo, type ModelReasoningEffort } from "@/agent/model";
+import { getModelInfo, type ModelReasoningEffort, models } from "@/agent/model";
 import {
   mapModelHandleToLlmConfigPatch,
   resolveModelHandleFromLlmConfig,
@@ -115,6 +115,15 @@ export function inferReasoningEffortFromModelPreset(
   }
 
   return null;
+}
+
+export function resolveModelSelectionReasoningHandle(
+  modelHandle: string,
+  registryHandle: string,
+): string {
+  return models.some((model) => model.handle === modelHandle)
+    ? modelHandle
+    : registryHandle;
 }
 
 export function buildModelHandleFromLlmConfig(

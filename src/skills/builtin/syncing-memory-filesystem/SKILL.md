@@ -64,9 +64,8 @@ hosted remote.
 
 Do not reproduce `/memfs enable` by PATCHing agent tags or constructing a Git
 remote by hand. The enable flow also updates the system prompt mode, recompiles
-the agent, persists local settings, detaches legacy memory tools, preserves and
-adds tags, initializes the checkout, installs hooks, configures identity, and
-seeds default memory files.
+the agent, persists local settings, preserves and adds tags, initializes the
+checkout, installs hooks, configures identity, and seeds default memory files.
 
 ## Inspect a Broken Checkout
 
