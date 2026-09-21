@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { getParentConversationTag } from "@/agent/subagents/parent-conversation";
 import { type Backend, getBackend } from "@/backend";
 import {
   buildAgentSendContent,
@@ -9,6 +10,7 @@ import {
 import { enqueueConversationMessage } from "@/backend/api/conversation-enqueue";
 import { ApiRequestError } from "@/backend/api/request";
 import { getRuntimeContext } from "@/runtime-context";
+import { debugLog } from "@/utils/debug";
 
 interface SendAgentMessageArgs {
   message: string;
@@ -21,7 +23,10 @@ interface SendAgentMessageArgs {
 interface SendAgentMessageDeps {
   backend?: Pick<
     Backend,
-    "capabilities" | "retrieveConversation" | "createConversation"
+    | "capabilities"
+    | "retrieveConversation"
+    | "createConversation"
+    | "updateConversation"
   >;
   enqueue?: typeof enqueueConversationMessage;
 }
@@ -93,6 +98,33 @@ export async function send_agent_message(
       },
       signal,
     );
+    // Lazily link the target conversation back to this sender scope so Cloud
+    // can attribute the target's later activity (A2A replies, monitors) to
+    // the conversation that directs its work. Legacy subagent conversations
+    // predate the launch-time tag write, so backfill on each directed send.
+    // Fire-and-forget: a tag failure must not fail or delay the send.
+    const parentTag =
+      sender.conversationId === "default"
+        ? undefined
+        : getParentConversationTag(sender.agentId, sender.conversationId);
+    const targetConversationId = destination.conversationId;
+    if (
+      parentTag &&
+      targetConversationId !== "default" &&
+      targetConversationId !== sender.conversationId
+    ) {
+      void backend
+        .updateConversation(targetConversationId, {
+          tags_to_add: [parentTag],
+        })
+        .catch((error: unknown) => {
+          debugLog(
+            "send-agent-message",
+            `Failed to tag conversation ${targetConversationId} with ${parentTag}`,
+            error,
+          );
+        });
+    }
     return {
       content: JSON.stringify({
         ...receipt,

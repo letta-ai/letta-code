@@ -8,6 +8,7 @@ import { send_agent_message } from "./send-agent-message";
 function fixture() {
   const submissions: EnqueueConversationInput[] = [];
   const created: unknown[] = [];
+  const tagWrites: { id: string; body: { tags_to_add?: string[] } }[] = [];
   const backend = {
     capabilities: { environmentRouting: true },
     retrieveConversation: async (id: string) => ({
@@ -17,6 +18,13 @@ function fixture() {
     createConversation: async (input: unknown) => {
       created.push(input);
       return { id: "conv-new" };
+    },
+    updateConversation: async (
+      id: string,
+      body: { tags_to_add?: string[] },
+    ) => {
+      tagWrites.push({ id, body });
+      return { id };
     },
   } as unknown as Backend;
   const enqueue = async (input: EnqueueConversationInput) => {
@@ -30,7 +38,7 @@ function fixture() {
       super_run_id: "sr-1",
     };
   };
-  return { backend, enqueue, submissions, created };
+  return { backend, enqueue, submissions, created, tagWrites };
 }
 
 const caller = {
@@ -350,4 +358,82 @@ test("cancelling an in-flight submission preserves uncertain acceptance without 
   expect(outcome.status).toBe("error");
   expect(JSON.parse(outcome.content).status).toBe("acceptance_unknown");
   expect(attempts).toBe(1);
+});
+
+test("links a concrete target conversation back to the sender scope", async () => {
+  const f = fixture();
+  const result = await runWithRuntimeContext(caller, () =>
+    send_agent_message(message, f),
+  );
+  expect(result.status).toBe("success");
+  expect(f.tagWrites).toEqual([
+    {
+      id: "conv-target",
+      body: { tags_to_add: ["parent-conversation:agent-caller/conv-caller"] },
+    },
+  ]);
+});
+
+test("links an agent-only send's new conversation back to the sender scope", async () => {
+  const f = fixture();
+  const result = await runWithRuntimeContext(caller, () =>
+    send_agent_message({ agent_id: "agent-target", message: "Hi" }, f),
+  );
+  expect(result.status).toBe("success");
+  expect(f.tagWrites).toEqual([
+    {
+      id: "conv-new",
+      body: { tags_to_add: ["parent-conversation:agent-caller/conv-caller"] },
+    },
+  ]);
+});
+
+test("repeated sends append the tag atomically each time", async () => {
+  const f = fixture();
+  await runWithRuntimeContext(caller, () => send_agent_message(message, f));
+  await runWithRuntimeContext(caller, () => send_agent_message(message, f));
+  expect(f.tagWrites).toHaveLength(2);
+  for (const write of f.tagWrites) {
+    expect(write).toEqual({
+      id: "conv-target",
+      body: { tags_to_add: ["parent-conversation:agent-caller/conv-caller"] },
+    });
+  }
+});
+
+test.each(["default"])(
+  "skips the link when the sender conversation is %s",
+  async (conversationId) => {
+    const f = fixture();
+    const result = await runWithRuntimeContext(
+      { ...caller, conversationId },
+      () => send_agent_message(message, f),
+    );
+    expect(result.status).toBe("success");
+    expect(f.tagWrites).toHaveLength(0);
+  },
+);
+
+test("skips the link when the target conversation is not concrete", async () => {
+  const f = fixture();
+  const result = await runWithRuntimeContext(caller, () =>
+    send_agent_message(
+      { agent_id: "agent-target", conversation_id: "default", message: "Hi" },
+      f,
+    ),
+  );
+  expect(result.status).toBe("success");
+  expect(f.tagWrites).toHaveLength(0);
+});
+
+test("a failed link write does not fail the send", async () => {
+  const f = fixture();
+  f.backend.updateConversation = async () => {
+    throw new Error("tags unavailable");
+  };
+  const result = await runWithRuntimeContext(caller, () =>
+    send_agent_message(message, f),
+  );
+  expect(result.status).toBe("success");
+  expect(JSON.parse(result.content).status).toBe("queued");
 });
