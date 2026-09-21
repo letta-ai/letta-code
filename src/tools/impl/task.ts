@@ -899,7 +899,7 @@ export async function task(args: TaskArgs): Promise<string> {
   });
 
   if (subagent_type === "memory") {
-    return `Memory task running in background (${taskId}). Continue with your current work; no completion notification will be sent. Output file: ${outputFile}`;
+    return `Memory task running in background (${taskId}). No completion notification will be sent. Output file: ${outputFile}`;
   }
 
   await waitForBackgroundSubagentLink(subagentId, null, signal);

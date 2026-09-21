@@ -1,6 +1,6 @@
 ---
 name: memory
-description: Silently update memory, repair memory Git conflicts, or reorganize memory when requested
+description: Handle delegated memory upkeep and Git repair silently in the background
 tools: Bash, Read, Edit, Write
 model: inherit
 fork: false

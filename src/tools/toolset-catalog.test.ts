@@ -102,7 +102,7 @@ test("standard and strict modes ask; explicit denial remains effective", () => {
 });
 
 test.each(["letta", "default", "codex"] as const)(
-  "%s delegates memory through Agent without exposing direct memory tools",
+  "%s exposes Agent without dedicated memory tools",
   async (toolsetPreference) => {
     const prepared = await prepareToolExecutionContextForResolvedTarget({
       toolsetPreference,

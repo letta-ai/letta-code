@@ -169,4 +169,6 @@ Behavior notes:
 - **Risky**: Multiple agents editing the same file (conflict detection will handle it, but may lose changes)
 - **Best practice**: Partition work by file or directory boundaries for parallel execution
 
-Memory subagents (`subagent_type: "memory"`) start fresh and silently edit or repair memory in the background. Include all necessary facts, corrections, and exceptions in the assignment, quoting factual corrections and exceptions verbatim rather than broadening their scope. The parent transcript is available only as a reference if needed. Continue immediately after delegation; they do not send completion notifications. Do not wait or poll for memory tasks.
+Use memory subagents (`subagent_type: "memory"`) for incidental memory upkeep while working on another task. When memory itself is the user's main request, handle it directly with ordinary file tools and shell/Git commands, and verify completion.
+
+Memory subagents start fresh and silently edit or repair memory in the background. Include all necessary facts, corrections, and exceptions in the assignment, quoting factual corrections and exceptions verbatim rather than broadening their scope. The parent transcript is available only as a reference if needed. Continue immediately after incidental delegation; they do not send completion notifications. Do not wait or poll while working on another task. If memory becomes the main task and a worker you launched is still editing the same checkout, use TaskOutput to wait for it before making direct edits.

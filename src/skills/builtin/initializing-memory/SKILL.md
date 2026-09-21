@@ -3,7 +3,7 @@ name: initializing-memory
 description: Comprehensive guide for initializing or reorganizing agent memory. Load this skill when running /init, when the user asks you to set up your memory, or when you need guidance on creating effective memory files.
 ---
 
-When using this procedure from the primary conversation, keep research and user questions in that conversation, and delegate the memory-writing and synthesis steps to the background `memory` subagent with the collected findings and relevant worktree paths. The editing and Git instructions below are for that worker. Continue without waiting or polling; acknowledge delegation rather than claiming initialization has already completed.
+Memory initialization or reorganization is the main task here. The primary agent owns the work through completion: research, ask necessary questions, synthesize findings, edit files, commit, and verify the result before reporting success. You may delegate research, but integrate its results into memory yourself. If a memory worker you launched is still editing this checkout, wait for it to finish before making direct edits, then inspect the current files. Do not report initialization complete merely because a background task was launched.
 
 # Memory Initialization
 

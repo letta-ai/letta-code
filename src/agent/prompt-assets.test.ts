@@ -156,12 +156,21 @@ describe("buildSystemPrompt", () => {
     );
   });
 
-  test("memfs prompt delegates edits without waiting for memory", () => {
-    const result = buildSystemPrompt("letta", "memfs");
-    expect(result).toContain('subagent_type: "memory"');
-    expect(result).toContain("Continue your current work immediately");
-    expect(result).not.toContain("There are two ways to change memory");
-  });
+  test.each(["memfs", "local-memfs", "root-memfs"] as const)(
+    "%s keeps incidental upkeep in the background and primary memory work direct",
+    (mode) => {
+      const result = buildSystemPrompt("letta", mode);
+      expect(result).toContain('subagent_type: "memory"');
+      expect(result).toContain("Continue your current work immediately");
+      expect(result).toContain("**Memory upkeep during another task:**");
+      expect(result).toContain("**Memory as the main task:**");
+      expect(result).toContain("ordinary file tools and shell/Git commands");
+      expect(result).toContain("Complete and verify the requested work");
+      expect(result).toContain("git commit --author=");
+      expect(result).not.toContain("Delegate all memory changes");
+      expect(result).not.toContain("Leave memory writes and Git repair");
+    },
+  );
 
   test("memfs prompt explains shared-memory projections", () => {
     const result = buildSystemPrompt("letta", "memfs");
