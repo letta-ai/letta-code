@@ -121,20 +121,16 @@ export function safeSocketSend(
   errorType: string,
   context: string,
 ): boolean {
-  if (socket.readyState !== WebSocket.OPEN) {
-    return false;
-  }
-
+  if (socket.readyState !== WebSocket.OPEN) return false;
   try {
-    const serialized =
-      typeof payload === "string" ? payload : JSON.stringify(payload);
-    socket.send(serialized);
+    socket.send(
+      typeof payload === "string" ? payload : JSON.stringify(payload),
+    );
     return true;
   } catch (error) {
     trackListenerError(errorType, error, context);
-    if (isDebugEnabled()) {
+    if (isDebugEnabled())
       console.error(`[Listen] ${context} send failed:`, error);
-    }
     return false;
   }
 }
@@ -145,20 +141,16 @@ function safeTransportSend(
   errorType: string,
   context: string,
 ): boolean {
-  if (!isListenerTransportOpen(transport)) {
-    return false;
-  }
-
+  if (!isListenerTransportOpen(transport)) return false;
   try {
-    const serialized =
-      typeof payload === "string" ? payload : JSON.stringify(payload);
-    transport.send(serialized);
+    transport.send(
+      typeof payload === "string" ? payload : JSON.stringify(payload),
+    );
     return true;
   } catch (error) {
     trackListenerError(errorType, error, context);
-    if (isDebugEnabled()) {
+    if (isDebugEnabled())
       console.error(`[Listen] ${context} send failed:`, error);
-    }
     return false;
   }
 }
@@ -301,7 +293,10 @@ export function stopRuntime(
       "Listener runtime stopped",
     );
     clearConversationRuntimeState(conversationRuntime);
-    if (conversationRuntime.queueRuntime) {
+    if (
+      conversationRuntime.queueRuntime &&
+      !conversationRuntime.queueRuntimeOwnedExternally
+    ) {
       conversationRuntime.queuedMessagesByItemId.clear();
       conversationRuntime.queueRuntime.clear("shutdown");
     }
@@ -598,7 +593,7 @@ export async function attachOpenListenerSocket(
  */
 export async function startListenerClient(
   opts: StartListenerOptions,
-): Promise<void> {
+): Promise<ListenerRuntime> {
   // Replace any existing runtime without stale callback leakage.
   const existingRuntime = getActiveRuntime();
   if (existingRuntime) {
@@ -609,12 +604,26 @@ export async function startListenerClient(
   runtime.onWsEvent = opts.onWsEvent;
   runtime.connectionId = opts.connectionId;
   runtime.connectionName = opts.connectionName;
+  if (opts.localSessionOwner) {
+    const scopedRuntime = getOrCreateScopedRuntime(
+      runtime,
+      opts.localSessionOwner.agentId,
+      opts.localSessionOwner.conversationId,
+    );
+    // Share the TUI's authoritative queue. Incoming Cloud input is accepted by
+    // the normal listener path but consumed only by the interactive TUI loop.
+    scopedRuntime.queueRuntime = opts.localSessionOwner.queueRuntime;
+    scopedRuntime.queueRuntimeOwnedExternally = true;
+  }
   setActiveRuntime(runtime);
   telemetry.setSurface(getListenerTelemetrySurface());
   telemetry.init();
 
-  await reloadListenerModAdapter(runtime);
+  if (!opts.localSessionOwner) {
+    await reloadListenerModAdapter(runtime);
+  }
   await connectWithRetry(runtime, opts);
+  return runtime;
 }
 
 export interface StartLocalChannelListenerOptions {
@@ -728,7 +737,7 @@ async function connectWithRetry(
 
   clearRuntimeTimers(runtime);
 
-  if (attempt === 0) {
+  if (attempt === 0 && !opts.localSessionOwner) {
     await loadTools();
   }
 
@@ -845,7 +854,8 @@ async function connectWithRetry(
         processQueuedTurn,
         {
           startHeartbeat: true,
-          startCronScheduler: true,
+          startCronScheduler: !opts.localSessionOwner,
+          startProcessServices: !opts.localSessionOwner,
           streamTransport,
         },
       );
@@ -912,7 +922,7 @@ async function connectWithRetry(
       }
     }
     suspendListenerConnection(runtime, opts.connectionId);
-    killAllTerminals();
+    if (!opts.localSessionOwner) killAllTerminals();
     clearListenerWarmState(runtime);
     if (streamSocket) {
       streamSocket.removeAllListeners("message");
@@ -985,6 +995,14 @@ export function isListenerActive(): boolean {
   return runtime !== null && runtime.transport !== null;
 }
 
+/** Stop a listener only if it is still the active runtime. */
+export function stopListenerRuntime(runtime: ListenerRuntime): void {
+  if (getActiveRuntime() !== runtime) return;
+  setActiveRuntime(null);
+  telemetry.setSurface(getTerminalTelemetrySurface(!process.stdin.isTTY));
+  stopRuntime(runtime, true);
+}
+
 /**
  * Stop the active listener connection.
  */
@@ -993,7 +1011,5 @@ export function stopListenerClient(): void {
   if (!runtime) {
     return;
   }
-  setActiveRuntime(null);
-  telemetry.setSurface(getTerminalTelemetrySurface(!process.stdin.isTTY));
-  stopRuntime(runtime, true);
+  stopListenerRuntime(runtime);
 }

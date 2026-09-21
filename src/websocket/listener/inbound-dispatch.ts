@@ -3,6 +3,7 @@ import {
   enqueueInboundUserMessage,
   getInboundClientMessageId,
 } from "./inbound-queue";
+import { emitQueueUpdateIfOpen } from "./protocol-outbound";
 import {
   scheduleQueuePump,
   shouldProcessInboundMessageDirectly,
@@ -114,6 +115,30 @@ export function dispatchInboundMessageWhenReady(params: {
         )
       ) {
         acknowledgeInput({ accepted: false });
+        return;
+      }
+      const localSessionOwner = options.localSessionOwner;
+      if (
+        localSessionOwner &&
+        runtime.agentId === localSessionOwner.agentId &&
+        runtime.conversationId === localSessionOwner.conversationId
+      ) {
+        const accepted = localSessionOwner.acceptInput(
+          actingUserId && incoming.actingUserId !== actingUserId
+            ? { ...incoming, actingUserId }
+            : incoming,
+        );
+        if (accepted) {
+          rememberAcceptedInputDisposition(runtime, clientMessageId, "queued");
+          emitQueueUpdateIfOpen(runtime, {
+            agent_id: runtime.agentId,
+            conversation_id: runtime.conversationId,
+          });
+        }
+        acknowledgeInput({
+          accepted,
+          ...(accepted ? { disposition: "queued" as const } : {}),
+        });
         return;
       }
       if (

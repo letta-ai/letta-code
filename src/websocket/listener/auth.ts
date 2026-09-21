@@ -34,7 +34,7 @@ type ListenerAuthOptions = {
 };
 
 type ListenerRegistrationOptions = ListenerAuthOptions & {
-  surface?: "server" | "listen";
+  surface?: "server" | "listen" | "local-session";
 };
 
 /**

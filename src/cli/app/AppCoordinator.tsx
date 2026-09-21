@@ -49,6 +49,7 @@ import { getClient } from "@/backend/api/client";
 import { getBillingTier } from "@/backend/api/metadata";
 import { subscribePiProviderRegistry } from "@/backend/dev/pi-provider-mod-registry";
 import { useConversationTitleSync } from "@/cli/app/conversation-title-sync";
+import { useLocalSessionOwner } from "@/cli/app/use-local-session-owner";
 import {
   cancelActiveConnectOperation,
   isActiveConnectOperationCancellable,
@@ -1372,46 +1373,35 @@ export function App({
         },
       ];
     });
-    // Also show briefly in the footer placeholder area
     setFooterUpdateText(
       `New version available (${updateNotification}). Restart to update!`,
     );
     const timer = setTimeout(() => setFooterUpdateText(null), 8000);
     return () => clearTimeout(timer);
   }, [updateNotification]);
-
-  // Track committed ids to avoid duplicates
   const emittedIdsRef = useRef<Set<string>>(new Set());
-
-  // Guard to append welcome snapshot only once
   const welcomeCommittedRef = useRef(false);
-
-  // AbortController for stream cancellation
   const abortControllerRef = useRef<AbortController | null>(null);
-
-  // Track if user wants to cancel (persists across state updates)
   const userCancelledRef = useRef(false);
-
-  // Retry counter for transient LLM API errors (ref for synchronous access in loop)
+  const remoteAbortRef = useRef<() => boolean>(() => false);
   const llmApiErrorRetriesRef = useRef(0);
   const quotaAutoSwapAttemptedRef = useRef(false);
   const emptyResponseRetriesRef = useRef(0);
   const chatgptPlanSwapsRef = useRef(0);
   const chatgptExhaustedProvidersRef = useRef(new Set<string>());
-  // Retry counter for 409 "conversation busy" errors
   const conversationBusyRetriesRef = useRef(0);
-
-  // Message queue state for queueing messages during streaming
   const [queueDisplay, setQueueDisplay] = useState<QueuedMessage[]>([]);
-
-  // QueueRuntime — authoritative queue; queueDisplay is derived from its
-  // callbacks (see createTuiQueueRuntime). Lazy init; typed QueueRuntime | null.
   const tuiQueueRef = useRef<QueueRuntime | null>(null);
   if (!tuiQueueRef.current) {
     tuiQueueRef.current = createTuiQueueRuntime(setQueueDisplay);
   }
-
-  // Override content parts for queued submissions (to preserve part boundaries)
+  useLocalSessionOwner({
+    agentId,
+    conversationId,
+    queueRuntime: tuiQueueRef.current,
+    onQueueChanged: () => setDequeueEpoch((epoch) => epoch + 1),
+    onAbort: () => remoteAbortRef.current(),
+  });
   const overrideContentPartsRef = useRef<MessageCreate["content"] | null>(null);
 
   // Set up message queue bridge for background tasks
@@ -3989,6 +3979,16 @@ export function App({
     userCancelledRef,
     waitingForQueueCancelRef,
   });
+  remoteAbortRef.current = () => {
+    const hasActiveWork =
+      streaming ||
+      isExecutingTool ||
+      pendingApprovals.length > 0 ||
+      abortControllerRef.current !== null;
+    if (!hasActiveWork) return false;
+    handleInterrupt();
+    return true;
+  };
 
   // Keep ref to latest processConversation to avoid circular deps in useEffect
   const processConversationRef = useRef(processConversation);

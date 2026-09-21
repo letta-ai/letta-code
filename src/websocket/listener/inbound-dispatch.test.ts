@@ -219,6 +219,60 @@ test("direct App Server turn follows a subscribed client after origin disconnect
   expect(sendApprovalContinuation).toHaveBeenCalledTimes(1);
 });
 
+test("TUI session ownership accepts a retried input exactly once into its queue", async () => {
+  const listener = createRuntime();
+  setActiveRuntime(listener);
+  const socket = new MockSocket();
+  const scope = { agent_id: "agent-1", conversation_id: "conversation-1" };
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    scope.agent_id,
+    scope.conversation_id,
+  );
+  const acceptInput = mock(() => true);
+  const dispositions: Array<string | undefined> = [];
+  const options: StartListenerOptions = {
+    ...makeOptions("relay"),
+    localSessionOwner: {
+      agentId: scope.agent_id,
+      conversationId: scope.conversation_id,
+      queueRuntime: runtime.queueRuntime,
+      acceptInput,
+      abort: () => false,
+    },
+  };
+  const incoming = {
+    type: "message" as const,
+    agentId: scope.agent_id,
+    conversationId: scope.conversation_id,
+    messages: [
+      {
+        role: "user" as const,
+        content: "follow up",
+        client_message_id: "cm-follow-up",
+      },
+    ],
+  };
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    dispatchInboundMessageWhenReady({
+      listener,
+      runtime,
+      incoming,
+      socket: socket as never,
+      options,
+      processQueuedTurn: mock(async () => {}),
+      processIncomingMessage: mock(async () => {}),
+      trackListenerError: mock(() => {}),
+      onInputAccepted: (result) => dispositions.push(result.disposition),
+    });
+  }
+
+  await runtime.messageQueue;
+  expect(acceptInput).toHaveBeenCalledTimes(1);
+  expect(dispositions).toEqual(["queued", "queued"]);
+});
+
 test("direct remote turn follows the replacement WS pair after reconnect", async () => {
   const listener = createRuntime();
   setActiveRuntime(listener);

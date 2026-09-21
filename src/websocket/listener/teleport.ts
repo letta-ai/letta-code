@@ -346,6 +346,13 @@ export function handleTeleportRequest(params: {
     }
     if (emitClaimedTeleportReady(listener, pending)) {
       pending.readyAt = Date.now();
+      const sessionOwner = connection.options.localSessionOwner;
+      if (
+        sessionOwner?.agentId === pending.agentId &&
+        sessionOwner.conversationId === pending.conversationId
+      ) {
+        sessionOwner.onRelinquished?.();
+      }
     }
   }
 }

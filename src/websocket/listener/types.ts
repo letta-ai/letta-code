@@ -40,6 +40,22 @@ import type {
 import type { ListenerTransport } from "./transport";
 import type { TurnLifecycle } from "./turn-lifecycle";
 
+export interface LocalSessionOwnerOptions {
+  agentId: string;
+  conversationId: string;
+  queueRuntime: QueueRuntime;
+  /**
+   * Accept an already-validated Cloud input into the TUI's own submission
+   * queue. The listener retains serialization, idempotency, and acceptance
+   * receipts; the TUI remains the sole turn executor.
+   */
+  acceptInput: (incoming: IncomingMessage) => boolean;
+  /** Route Cloud cancellation through the TUI's existing interrupt path. */
+  abort: () => boolean | Promise<boolean>;
+  /** Called after this runtime acknowledges an explicit computer handoff. */
+  onRelinquished?: () => void;
+}
+
 export interface StartListenerOptions {
   connectionId: string;
   wsUrl: string;
@@ -48,6 +64,8 @@ export interface StartListenerOptions {
   deviceId: string;
   connectionName: string;
   skillsDirectory?: string;
+  /** Present only for the ordinary interactive TUI's scoped ownership relay. */
+  localSessionOwner?: LocalSessionOwnerOptions;
   onConnected: (connectionId: string) => void | Promise<void>;
   onDisconnected: () => void;
   onNeedsReregister?: () => void;
@@ -248,6 +266,8 @@ export type ConversationRuntime = {
   readonly activeRunId: string | null;
   readonly cancelRequested: boolean;
   queueRuntime: QueueRuntime;
+  /** Queue lifecycle is owned by an outer TUI/headless executor. */
+  queueRuntimeOwnedExternally: boolean;
   queuedMessagesByItemId: Map<string, IncomingMessage>;
   /** Exact send identities carried by each batch removed from the queue. */
   dequeuedClientMessageIdsByBatchId: Map<string, string[]>;

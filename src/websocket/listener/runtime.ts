@@ -288,6 +288,7 @@ export function createConversationRuntime(
       return turnLifecycle.cancelRequested;
     },
     queueRuntime: null as unknown as ConversationRuntime["queueRuntime"],
+    queueRuntimeOwnedExternally: false,
     queuedMessagesByItemId: new Map(),
     dequeuedClientMessageIdsByBatchId: new Map(),
     queuePumpActive: false,

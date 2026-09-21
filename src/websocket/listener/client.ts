@@ -511,6 +511,7 @@ export {
   startListenerClient,
   startLocalChannelListener,
   stopListenerClient,
+  stopListenerRuntime,
 } from "./lifecycle";
 export { parseServerMessage } from "./protocol-inbound";
 export { emitInterruptedStatusDelta } from "./protocol-outbound";

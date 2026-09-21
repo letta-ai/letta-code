@@ -691,16 +691,22 @@ export function createListenerMessageHandler(
           return;
         }
         try {
-          const aborted = await handleAbortMessageInput(runtime, {
-            command: parsed,
-            connectionId,
-            socket,
-            opts: {
-              onStatusChange: opts.onStatusChange,
-              connectionId: opts.connectionId,
-            },
-            processQueuedTurn,
-          });
+          const sessionOwner = opts.localSessionOwner;
+          const isOwnedLocalScope =
+            sessionOwner?.agentId === parsed.runtime.agent_id &&
+            sessionOwner.conversationId === parsed.runtime.conversation_id;
+          const aborted = isOwnedLocalScope
+            ? await sessionOwner.abort()
+            : await handleAbortMessageInput(runtime, {
+                command: parsed,
+                connectionId,
+                socket,
+                opts: {
+                  onStatusChange: opts.onStatusChange,
+                  connectionId: opts.connectionId,
+                },
+                processQueuedTurn,
+              });
           if (parsed.request_id) {
             safeSocketSend(
               socket,

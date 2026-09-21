@@ -40,9 +40,10 @@ export interface RegisterOptions {
  * Surfaces:
  * - "server": `letta server` CLI process
  * - "listen": in-app /listen command
+ * - "local-session": automatic scoped relay owned by an interactive TUI
  */
 export function deriveListenerInstanceId(
-  surface: "server" | "listen",
+  surface: "server" | "listen" | "local-session",
   connectionName: string,
 ): string {
   const nameHash = createHash("sha256")
