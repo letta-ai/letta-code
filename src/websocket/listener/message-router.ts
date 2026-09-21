@@ -584,13 +584,11 @@ export function createListenerMessageHandler(
           );
           return;
         }
-
         const scopedRuntime = getOrCreateScopedRuntime(
           runtime,
           incoming.agentId,
           incoming.conversationId,
         );
-
         const processIncomingMessageDirectly = (
           directIncoming: IncomingMessage,
         ): void => {
@@ -612,7 +610,6 @@ export function createListenerMessageHandler(
               ),
           });
         };
-
         if (shouldQueueInboundMessage(incoming)) {
           const stampedIncoming = stampInboundUserMessageOtids(incoming);
           const clientMessageId = getInboundClientMessageId(stampedIncoming);
@@ -634,13 +631,21 @@ export function createListenerMessageHandler(
             acknowledgeInput(false, "Conversation is switching computers");
             return;
           }
+          const localSessionOwner = opts.localSessionOwner;
+          if (
+            localSessionOwner &&
+            scopedRuntime.agentId === localSessionOwner.agentId &&
+            scopedRuntime.conversationId === localSessionOwner.conversationId
+          ) {
+            processIncomingMessageDirectly(stampedIncoming);
+            return;
+          }
           if (
             shouldProcessInboundMessageDirectly(scopedRuntime, stampedIncoming)
           ) {
             processIncomingMessageDirectly(stampedIncoming);
             return;
           }
-
           const enqueued = enqueueInboundUserMessage(
             scopedRuntime,
             stampedIncoming,
@@ -661,11 +666,9 @@ export function createListenerMessageHandler(
           );
           return;
         }
-
         processIncomingMessageDirectly(incoming);
         return;
       }
-
       if (parsed.type === "change_device_state") {
         await handleChangeDeviceStateInput(runtime, {
           command: parsed,
@@ -679,7 +682,6 @@ export function createListenerMessageHandler(
         });
         return;
       }
-
       if (parsed.type === "abort_message") {
         if (!isListenerRuntimeCurrent(runtime) || runtime.intentionallyClosed) {
           if (parsed.request_id) {
@@ -766,11 +768,9 @@ export function createListenerMessageHandler(
         });
         return;
       }
-
       if (fileCommandSession.handle(parsed)) {
         return;
       }
-
       if (
         handleMemfsSyncedMemoryProtocolCommand(parsed, {
           socket,
