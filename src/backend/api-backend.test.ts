@@ -330,6 +330,7 @@ describe("APIBackend", () => {
     } as ConversationCreateBody;
     const conversationUpdateBody = {
       summary: "summary",
+      tags_to_add: ["github:pull-request:letta-ai:letta-code:4000"],
     } as ConversationUpdateBody;
     const conversationRecompileBody = {
       agent_id: "agent-1",

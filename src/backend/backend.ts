@@ -100,7 +100,11 @@ export type ConversationCreateOptions = ConversationCreateParams[1];
 export type ConversationUpdateParams = Parameters<
   APIClient["conversations"]["update"]
 >;
-export type ConversationUpdateBody = ConversationUpdateParams[1];
+export type ConversationUpdateBody = ConversationUpdateParams[1] & {
+  tags?: string[] | null;
+  /** Add tags atomically without replacing existing tags. */
+  tags_to_add?: string[];
+};
 export type ConversationUpdateOptions = ConversationUpdateParams[2];
 
 export type ConversationRecompileParams = Parameters<

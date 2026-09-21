@@ -156,7 +156,7 @@ describe("shared shell process", () => {
         _conversationId: string,
         body: ConversationUpdateBody,
       ) => {
-        const tags = Reflect.get(body, "tags");
+        const tags = body.tags_to_add;
         resolveUpdateStarted(Array.isArray(tags) ? tags : []);
         await updateAllowed;
         return { id: "conv-shell", tags };
@@ -183,7 +183,6 @@ describe("shared shell process", () => {
     );
 
     await expect(updateStarted).resolves.toEqual([
-      "channel:slack",
       "github:pull-request:letta-ai:letta-code:3744",
     ]);
     const completionState = running.completion.then(() => "completed");
