@@ -150,6 +150,78 @@ describe("dequeue paths skip paused items", () => {
   });
 });
 
+describe("user queueing and steering", () => {
+  test("notifications bypass user messages at tool boundaries without consuming them", () => {
+    const q = new QueueRuntime();
+    const first = q.enqueue(userMsg("first"));
+    q.enqueue(notification("alert"));
+    const last = q.enqueue(userMsg("last"));
+    expect(q.peekReady("steering").map(textOf)).toEqual(["alert"]);
+    expect(q.consumeItems(10, "steering")?.items.map(textOf)).toEqual([
+      "alert",
+    ]);
+    expect(q.items.map((item) => item.id)).toEqual([
+      first?.id ?? "",
+      last?.id ?? "",
+    ]);
+    expect(q.consumeItems(10, "steering")).toBeNull();
+    expect(q.consumeItems(10)?.items.map(textOf)).toEqual(["first", "last"]);
+  });
+
+  test("steering selects one existing message and does not affect later arrivals", () => {
+    const q = new QueueRuntime();
+    q.enqueue(userMsg("first"));
+    const selected = q.enqueue(userMsg("selected"));
+    expect(q.steer(selected?.id ?? "")).toBe(true);
+    expect(q.steer(selected?.id ?? "")).toBe(true);
+    q.enqueue(userMsg("later"));
+    expect(q.consumeItems(10, "steering")?.items.map(textOf)).toEqual([
+      "selected",
+    ]);
+    expect(q.steer(selected?.id ?? "")).toBe(false);
+    expect(q.items.map(textOf)).toEqual(["first", "later"]);
+  });
+
+  test("steering resumes only the selected paused item; another interrupt cancels that steering", () => {
+    const q = new QueueRuntime();
+    const first = q.enqueue(userMsg("first"));
+    q.enqueue(userMsg("second"));
+    q.pause();
+    expect(q.steer(first?.id ?? "")).toBe(true);
+    expect(q.pausedCount).toBe(1);
+    expect(q.peekReady("steering").map(textOf)).toEqual(["first"]);
+    q.pause();
+    q.resume();
+    expect(q.consumeItems(10, "steering")).toBeNull();
+    expect(q.consumeItems(10)?.items.map(textOf)).toEqual(["first", "second"]);
+  });
+
+  test("request-scoped inputs remain separate turns and cannot be steered", () => {
+    const q = new QueueRuntime();
+    const item = q.enqueue({
+      ...userMsg("request"),
+      noCoalesce: true,
+    } as EnqueueInput);
+    expect(q.steer(item?.id ?? "")).toBe(false);
+    expect(q.consumeItems(1, "steering")).toBeNull();
+    expect(q.consumeItems(1)?.items.map(textOf)).toEqual(["request"]);
+  });
+
+  test("cron, subagent, and system input still steer", () => {
+    const q = new QueueRuntime();
+    q.enqueue(userMsg("user"));
+    for (const source of ["cron", "subagent", "system"] as const) {
+      q.enqueue({ kind: "message", source, content: source } as EnqueueInput);
+    }
+    expect(q.consumeItems(10, "steering")?.items.map(textOf)).toEqual([
+      "cron",
+      "subagent",
+      "system",
+    ]);
+    expect(q.items.map(textOf)).toEqual(["user"]);
+  });
+});
+
 describe("QueueRuntime.resume", () => {
   test("releases parked items in their original order ahead of later arrivals", () => {
     const q = new QueueRuntime();

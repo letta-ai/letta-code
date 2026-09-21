@@ -26,6 +26,11 @@
       "reason": "Builds Bun and Node child fixtures with Bun.build; running channel imports afterward in the same Bun process produces alias-resolution failures."
     },
     {
+      "path": "src/cli/tui-queue-steering.test.tsx",
+      "timeoutMs": 30000,
+      "reason": "Mounts the production TUI and changes process-global backend, settings, and tool context while testing queued input."
+    },
+    {
       "path": "src/cli/tui-interrupt-queue-lifecycle.test.tsx",
       "timeoutMs": 30000,
       "reason": "Mounts the production TUI, which updates process-wide agent/tool context and settings; keep its proof agent out of later permission and mod tests."

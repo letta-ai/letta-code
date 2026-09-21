@@ -2393,7 +2393,7 @@ export type WsProtocolCommand =
   | InputCommand
   | ChangeDeviceStateCommand
   | AbortMessageCommand
-  | import("./queue-update-protocol").ResumeQueueCommand
+  | import("./queue-update-protocol").QueueControlCommand
   | SyncCommand
   | RuntimeStartCommand
   | TeleportProtocol.TeleportProtocolCommand
@@ -2495,7 +2495,7 @@ export type WsProtocolMessage =
   | SubagentStateUpdateMessage
   | ExternalToolCallRequestMessage
   | AbortMessageResponseMessage
-  | import("./queue-update-protocol").ResumeQueueResponseMessage
+  | import("./queue-update-protocol").QueueControlResponseMessage
   | SyncResponseMessage
   | RuntimeExternalToolsUpdateResponseMessage
   | TerminalOutputMessage

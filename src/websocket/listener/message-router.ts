@@ -746,6 +746,7 @@ export function createListenerMessageHandler(
 
       if (
         parsed.type === "resume_queue" ||
+        parsed.type === "steer_queue_item" ||
         parsed.type === "remove_queue_item"
       ) {
         handleQueueCommand(parsed, {

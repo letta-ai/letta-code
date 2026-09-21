@@ -119,7 +119,7 @@ import {
   isGetCwdMapCommand,
   isSetBootWorkingDirectoryCommand,
 } from "./cwd-protocol-inbound";
-import { isResumeQueueCommand } from "./queue-pause-protocol-inbound";
+import { isQueueControlCommand } from "./queue-pause-protocol-inbound";
 
 export { isConnectProviderCommand } from "./connect-provider-protocol-inbound";
 
@@ -2013,7 +2013,7 @@ export function parseServerMessage(
       isInputCommand(parsed) ||
       isChangeDeviceStateCommand(parsed) ||
       isAbortMessageCommand(parsed) ||
-      isResumeQueueCommand(parsed) ||
+      isQueueControlCommand(parsed) ||
       isSyncCommand(parsed) ||
       isRuntimeStartCommand(parsed) ||
       isRuntimeExternalToolsUpdateCommand(parsed) ||

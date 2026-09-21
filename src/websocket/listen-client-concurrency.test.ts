@@ -1132,7 +1132,7 @@ describe("listen-client multi-worker concurrency", () => {
     expect(runtime.queueRuntime.length).toBe(0);
   });
 
-  test("resolveStaleApprovals injects stale denials and queued turns without replaying tools", async () => {
+  test("resolveStaleApprovals delivers notifications but leaves user follow-ups queued", async () => {
     const runtime = __listenClientTestUtils.createRuntime();
     runtime.agentId = "agent-1";
     runtime.conversationId = "conv-1";
@@ -1203,7 +1203,7 @@ describe("listen-client multi-worker concurrency", () => {
     const continuationMessages = sendMessageStreamMock.mock.calls[0]?.[1] as
       | Array<Record<string, unknown>>
       | undefined;
-    expect(continuationMessages).toHaveLength(4);
+    expect(continuationMessages).toHaveLength(3);
     expect(continuationMessages?.[0]).toEqual(
       expect.objectContaining({
         type: "approval",
@@ -1218,18 +1218,14 @@ describe("listen-client multi-worker concurrency", () => {
         otid: expect.any(String),
       }),
     );
+    expect(JSON.stringify(continuationMessages)).not.toContain("queued user");
     expect(continuationMessages?.[1]).toEqual({
-      role: "user",
-      content: "queued user",
-      otid: expect.any(String),
-    });
-    expect(continuationMessages?.[2]).toEqual({
       role: "user",
       content: "<task-notification>done</task-notification>",
       attribution: {},
       otid: expect.any(String),
     });
-    expect(continuationMessages?.[3]).toEqual({
+    expect(continuationMessages?.[2]).toEqual({
       role: "user",
       content: [
         {
@@ -1240,11 +1236,11 @@ describe("listen-client multi-worker concurrency", () => {
       otid: expect.any(String),
     });
     expect(runtime.loopStatus as string).toBe("PROCESSING_API_RESPONSE");
-    expect(runtime.queueRuntime.length).toBe(0);
-    expect(runtime.queuedMessagesByItemId.size).toBe(0);
+    expect(runtime.queueRuntime.length).toBe(1);
+    expect(runtime.queuedMessagesByItemId.size).toBe(1);
     expect(
       socket.sentPayloads.some((payload) => payload.includes("queued user")),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       socket.sentPayloads.some((payload) =>
         payload.includes("<task-notification>done</task-notification>"),

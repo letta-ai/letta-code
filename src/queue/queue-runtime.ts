@@ -54,6 +54,8 @@ export type MessageQueueItem = QueueItemBase & {
    * run as its own turn so its correlated client request can settle.
    */
   noCoalesce?: boolean;
+  /** Explicitly deliver this user message at the next tool boundary. */
+  steering?: boolean;
 };
 
 export type TaskNotificationQueueItem = QueueItemBase & {
@@ -345,10 +347,12 @@ export class QueueRuntime {
    * headless coalescing loop, listen one-message-per-turn).
    * Returns null if queue is empty or n <= 0.
    */
-  consumeItems(n: number): DequeuedBatch | null {
+  consumeItems(
+    n: number,
+    mode: "all" | "steering" = "all",
+  ): DequeuedBatch | null {
     if (this.store.length === 0 || n <= 0) return null;
-    // Paused items are skipped: the first `n` ready items are consumed.
-    const batch = this.store.filter((item) => !item.paused).slice(0, n);
+    const batch = this.peekReady(mode).slice(0, n);
     const count = batch.length;
     if (count === 0) return null;
     this.removeAll(batch);
@@ -408,6 +412,7 @@ export class QueueRuntime {
     for (const item of this.store) {
       if (item.kind === "message" && item.source === "user" && !item.paused) {
         item.paused = true;
+        delete item.steering;
         changed += 1;
       }
     }
@@ -433,6 +438,26 @@ export class QueueRuntime {
       this.safeCallback("onPauseChanged", 0, this.store.length);
     }
     return changed;
+  }
+
+  /** Deliver one queued user message at the next tool boundary. */
+  steer(itemId: string): boolean {
+    const item = this.store.find((candidate) => candidate.id === itemId);
+    if (
+      !item ||
+      item.kind !== "message" ||
+      item.source !== "user" ||
+      item.noCoalesce
+    )
+      return false;
+    if (item.steering && !item.paused) return true;
+    const wasPaused = item.paused;
+    item.steering = true;
+    delete item.paused;
+    this.resetBlockedState();
+    if (wasPaused)
+      this.safeCallback("onPauseChanged", this.pausedCount, this.store.length);
+    return true;
   }
 
   // ── Clear ──────────────────────────────────────────────────────
@@ -474,9 +499,15 @@ export class QueueRuntime {
     return this.store.slice();
   }
 
-  /** Like peek(), without paused items. Dequeue planners must use this. */
-  peekReady(): readonly QueueItem[] {
-    return this.store.filter((item) => !item.paused);
+  /** At tool boundaries, skip user messages unless explicitly steered. */
+  peekReady(mode: "all" | "steering" = "all"): readonly QueueItem[] {
+    return this.store.filter(
+      (item) =>
+        !item.paused &&
+        (mode === "all" ||
+          item.kind !== "message" ||
+          (!item.noCoalesce && (item.source !== "user" || item.steering))),
+    );
   }
 
   // ── Internals ──────────────────────────────────────────────────

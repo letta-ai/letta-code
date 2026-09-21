@@ -21,6 +21,8 @@ import type {
   RuntimeExternalToolsUpdateResponseMessage,
   RuntimeStartCommand,
   RuntimeStartResponseMessage,
+  SteerQueueItemCommand,
+  SteerQueueItemResponseMessage,
   SyncCommand,
   SyncResponseMessage,
   WsProtocolCommand,
@@ -607,6 +609,31 @@ export class AppServerClient {
         ...options,
         predicate: (message): message is ResumeQueueResponseMessage =>
           message.type === "resume_queue_response",
+      },
+    );
+  }
+
+  /** Deliver one queued user message at the next tool boundary. */
+  steerQueueItem(
+    command: Omit<SteerQueueItemCommand, "type" | "request_id"> & {
+      request_id?: string;
+    },
+    options: Omit<
+      AppServerRequestOptions<SteerQueueItemResponseMessage>,
+      "predicate"
+    > = {},
+  ): Promise<SteerQueueItemResponseMessage> {
+    return this.request(
+      {
+        type: "steer_queue_item",
+        request_id:
+          command.request_id ?? this.nextRequestId("steer-queue-item"),
+        ...command,
+      },
+      {
+        ...options,
+        predicate: (message): message is SteerQueueItemResponseMessage =>
+          message.type === "steer_queue_item_response",
       },
     );
   }

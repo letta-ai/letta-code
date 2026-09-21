@@ -887,7 +887,7 @@ async function executeRecoveredApprovalContinuation(params: {
     ]);
     let continuationBatchId = `batch-recovered-${crypto.randomUUID()}`;
     let continuationCorrelation: TurnCorrelation | undefined;
-    const consumedQueuedTurn = consumeQueuedTurn(runtime);
+    const consumedQueuedTurn = consumeQueuedTurn(runtime, "steering");
     if (consumedQueuedTurn) {
       const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
       continuationBatchId = dequeuedBatch.batchId;

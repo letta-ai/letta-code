@@ -97,78 +97,95 @@ describe("pre-stream recovery lease boundaries", () => {
     expect(runtime.queuedMessagesByItemId.size).toBe(1);
   });
 
-  test("a queued user's identity survives pre-stream approval recovery", async () => {
-    const runtime = getOrCreateScopedRuntime(
-      createRuntime(),
-      "agent-1",
-      "conv-1",
-    );
-    const turnLease = runtime.turnLifecycle.begin({
-      origin: "message",
-      workingDirectory: process.cwd(),
-      initialStatus: "WAITING_FOR_API_RESPONSE",
-    });
-    enqueueInboundUserMessage(
-      runtime,
-      {
-        type: "message",
-        agentId: "agent-1",
-        conversationId: "conv-1",
-        messages: [
-          {
-            role: "user",
-            content: "message from Charles",
-            client_message_id: "cm-charles",
+  test.each([false, true])(
+    "pre-stream approval recovery respects explicit steering (%s)",
+    async (steering) => {
+      const runtime = getOrCreateScopedRuntime(
+        createRuntime(),
+        "agent-1",
+        "conv-1",
+      );
+      const turnLease = runtime.turnLifecycle.begin({
+        origin: "message",
+        workingDirectory: process.cwd(),
+        initialStatus: "WAITING_FOR_API_RESPONSE",
+      });
+      enqueueInboundUserMessage(
+        runtime,
+        {
+          type: "message",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+          messages: [
+            {
+              role: "user",
+              content: "message from Charles",
+              client_message_id: "cm-charles",
+            },
+          ],
+        },
+        "cloud-user-charles",
+      );
+      const approval = {
+        toolCallId: "call-1",
+        toolName: "Bash",
+        toolArgs: '{"command":"pwd"}',
+      };
+      if (steering)
+        runtime.queueRuntime.steer(runtime.queueRuntime.items[0]?.id ?? "");
+      let sentActingUserId: string | undefined;
+      let sentMessages: unknown;
+
+      const result = await resolveStaleApprovals(
+        runtime,
+        createTransport(),
+        turnLease,
+        {
+          retrieveAgent: async () => ({ id: "agent-1" }) as never,
+          getResumeData: async () => ({
+            pendingApproval: approval,
+            pendingApprovals: [approval],
+            messageHistory: [],
+          }),
+          prepareToolExecutionContext: async () => createPreparedToolContext(),
+          sendApprovalContinuation: async (
+            _conversationId,
+            messages,
+            options,
+          ) => {
+            sentActingUserId = options?.actingUserId;
+            sentMessages = messages;
+            return { kind: "stream" as const, stream: {} as never };
           },
-        ],
-      },
-      "cloud-user-charles",
-    );
-    const approval = {
-      toolCallId: "call-1",
-      toolName: "Bash",
-      toolArgs: '{"command":"pwd"}',
-    };
-    let sentActingUserId: string | undefined;
-    let sentMessages: unknown;
-
-    const result = await resolveStaleApprovals(
-      runtime,
-      createTransport(),
-      turnLease,
-      {
-        retrieveAgent: async () => ({ id: "agent-1" }) as never,
-        getResumeData: async () => ({
-          pendingApproval: approval,
-          pendingApprovals: [approval],
-          messageHistory: [],
-        }),
-        prepareToolExecutionContext: async () => createPreparedToolContext(),
-        sendApprovalContinuation: async (
-          _conversationId,
-          messages,
-          options,
-        ) => {
-          sentActingUserId = options?.actingUserId;
-          sentMessages = messages;
-          return { kind: "stream" as const, stream: {} as never };
+          drainRecoveryStream: async (_stream, _socket, _runtime, params) => {
+            params.turnCorrelation?.observeRun("run-recovery");
+            return { stopReason: "end_turn", apiDurationMs: 0 } as never;
+          },
         },
-        drainRecoveryStream: async (_stream, _socket, _runtime, params) => {
-          params.turnCorrelation?.observeRun("run-recovery");
-          return { stopReason: "end_turn", apiDurationMs: 0 } as never;
-        },
-      },
-    );
+      );
 
-    expect(result?.stopReason).toBe("end_turn");
-    expect(sentActingUserId).toBeUndefined();
-    expect(JSON.stringify(sentMessages)).toContain(
-      '"attribution":{"acting_user_id":"cloud-user-charles"}',
-    );
-    expect(
-      runtime.listener.clientMessageIdsByRunIdByConversation
-        ?.get(runtime.key)
-        ?.get("run-recovery"),
-    ).toEqual(["cm-charles"]);
-  });
+      expect(result?.stopReason).toBe("end_turn");
+      expect(sentActingUserId).toBeUndefined();
+      expect(runtime.queueRuntime.length).toBe(steering ? 0 : 1);
+      if (!steering) {
+        expect(JSON.stringify(sentMessages)).not.toContain(
+          "message from Charles",
+        );
+        expect(
+          runtime.listener.clientMessageIdsByRunIdByConversation
+            ?.get(runtime.key)
+            ?.get("run-recovery"),
+        ).toBeUndefined();
+        return;
+      }
+      expect(JSON.stringify(sentMessages)).toContain(
+        '"attribution":{"acting_user_id":"cloud-user-charles"}',
+      );
+      expect(
+        runtime.listener.clientMessageIdsByRunIdByConversation
+          ?.get(runtime.key)
+          ?.get("run-recovery"),
+      ).toEqual(["cm-charles"]);
+    },
+  );
 });
