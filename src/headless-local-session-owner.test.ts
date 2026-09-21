@@ -70,6 +70,7 @@ describe("headless local session ownership", () => {
       rejectReady(new Error("claim cancelled"));
       return true;
     });
+    const forceStop = mock(() => rejectReady(new Error("claim cancelled")));
     const sigint = new AbortController();
     const session = startHeadlessLocalSession(
       {
@@ -92,9 +93,7 @@ describe("headless local session ownership", () => {
                 ),
               ])
             : readyPromise,
-        forceStop() {
-          rejectReady(new Error("claim cancelled"));
-        },
+        forceStop,
         stopAdmission() {},
         resumeAdmission() {},
         release,
@@ -105,8 +104,68 @@ describe("headless local session ownership", () => {
     await Bun.sleep(0);
     sigint.abort();
     expect(await starting).toBeInstanceOf(Error);
+    session.cancel({ force: true });
+    await session.release();
+    expect(forceStop).toHaveBeenCalledTimes(1);
+    expect(release).not.toHaveBeenCalled();
+  });
+
+  test("routine nonzero shutdown gracefully releases a claimed owner", async () => {
+    const release = mock(async () => true);
+    const forceStop = mock(() => {});
+    const session = startHeadlessLocalSession(
+      {
+        enabled: true,
+        agentId: "agent-local",
+        conversationId: "conv-local",
+        sigintSignal: new AbortController().signal,
+      },
+      async () => ({
+        ready: async () => true,
+        forceStop,
+        stopAdmission() {},
+        resumeAdmission() {},
+        release,
+      }),
+    );
+    await session.start();
     session.cancel();
     await session.release();
+    expect(forceStop).not.toHaveBeenCalled();
     expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  test("SIGINT interrupts reconnect readiness on subsequent turns", async () => {
+    const sigint = new AbortController();
+    let readyCalls = 0;
+    const session = startHeadlessLocalSession(
+      {
+        enabled: true,
+        agentId: "agent-local",
+        conversationId: "conv-local",
+        sigintSignal: sigint.signal,
+      },
+      async () => ({
+        ready: async (signal) => {
+          readyCalls += 1;
+          if (readyCalls === 1) return true;
+          return await new Promise<boolean>((_resolve, reject) =>
+            signal?.addEventListener(
+              "abort",
+              () => reject(new Error("SIGINT")),
+              { once: true },
+            ),
+          );
+        },
+        forceStop() {},
+        stopAdmission() {},
+        resumeAdmission() {},
+        release: async () => true,
+      }),
+    );
+    await session.start();
+    const reconnectReady = session.start().catch((error: unknown) => error);
+    sigint.abort();
+    expect(await reconnectReady).toBeInstanceOf(Error);
   });
 });

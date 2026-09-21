@@ -20,6 +20,22 @@ type LocalSessionOwnerStarter = (
 ) => Promise<LocalSessionOwnerHandle>;
 let testLocalSessionOwnerStarter: LocalSessionOwnerStarter | null = null;
 
+function waitForOwnerStartup<T>(
+  promise: Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted)
+    return Promise.reject(signal.reason ?? new Error("Aborted"));
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason ?? new Error("Aborted"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    void promise.then(resolve, reject).finally(() => {
+      signal.removeEventListener("abort", onAbort);
+    });
+  });
+}
+
 export function __testSetLocalSessionOwnerStarter(
   starter: LocalSessionOwnerStarter | null,
 ): void {
@@ -45,13 +61,17 @@ export function useLocalSessionOwner(params: {
     key: string;
     promise: Promise<boolean>;
     resolve: (ready: boolean) => void;
+    reject: (error: unknown) => void;
   } | null>(null);
   if (readinessRef.current?.key !== scopeKey) {
     let resolve!: (ready: boolean) => void;
-    const promise = new Promise<boolean>((settle) => {
+    let reject!: (error: unknown) => void;
+    const promise = new Promise<boolean>((settle, rejectPromise) => {
       resolve = settle;
+      reject = rejectPromise;
     });
-    readinessRef.current = { key: scopeKey, promise, resolve };
+    void promise.catch(() => {});
+    readinessRef.current = { key: scopeKey, promise, resolve, reject };
   }
   const acceptingRef = useRef(true);
   onQueueChangedRef.current = params.onQueueChanged;
@@ -103,7 +123,10 @@ export function useLocalSessionOwner(params: {
     ownerPromiseRef.current = ownerPromise;
     void ownerPromise
       .then((owner) => {
-        void owner.ready().then((ready) => readiness?.resolve(ready));
+        void owner
+          .ready()
+          .then((ready) => readiness?.resolve(ready))
+          .catch((error: unknown) => readiness?.reject(error));
         if (!acceptingRef.current) owner.stopAdmission();
         if (disposed) {
           void owner.release().catch((error: unknown) => {
@@ -139,8 +162,12 @@ export function useLocalSessionOwner(params: {
     () => ({
       async ready(signal) {
         const ownerPromise = ownerPromiseRef.current;
-        if (ownerPromise) return await (await ownerPromise).ready(signal);
-        return (await readinessRef.current?.promise) ?? false;
+        if (ownerPromise) {
+          const owner = await waitForOwnerStartup(ownerPromise, signal);
+          return await owner.ready(signal);
+        }
+        const readiness = readinessRef.current?.promise;
+        return readiness ? await waitForOwnerStartup(readiness, signal) : false;
       },
       stopAdmission() {
         acceptingRef.current = false;

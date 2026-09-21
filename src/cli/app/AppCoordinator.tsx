@@ -1422,7 +1422,8 @@ export function App({
   const pendingLocalSessionScopeSwitchRef = useRef(false);
   pendingLocalSessionScopeSwitchRef.current =
     queuedOverlayAction?.type === "switch_conversation" ||
-    queuedOverlayAction?.type === "switch_agent";
+    queuedOverlayAction?.type === "switch_agent" ||
+    queuedOverlayAction?.type === "create_agent";
   if (!tuiQueueRef.current) {
     tuiQueueRef.current = createTuiQueueRuntime(setQueueDisplay);
   }
@@ -1462,7 +1463,8 @@ export function App({
   useEffect(() => {
     const pendingScopeSwitch =
       queuedOverlayAction?.type === "switch_conversation" ||
-      queuedOverlayAction?.type === "switch_agent";
+      queuedOverlayAction?.type === "switch_agent" ||
+      queuedOverlayAction?.type === "create_agent";
     if (
       sessionSwitchAdmissionStateRef.current === "draining" &&
       !pendingScopeSwitch
@@ -3950,6 +3952,12 @@ export function App({
       // Non-critical, don't fail the exit
     }
 
+    // A clean TUI exit must cross the same positive release boundary as a
+    // scope switch. React effect cleanup is fire-and-forget and process.exit
+    // can otherwise close the socket before Cloud observes the release.
+    localSessionOwner.stopAdmission();
+    await localSessionOwner.release();
+
     await closeMcp();
     await telemetry.flush();
 
@@ -3964,6 +3972,7 @@ export function App({
     projectDirectory,
     currentModelLabel,
     currentModelProvider,
+    localSessionOwner,
   ]);
 
   // Queue edit: load all queued user messages into the input (joined with newlines),
@@ -4364,7 +4373,8 @@ export function App({
       hasAnythingQueued &&
       (!queuedOverlayAction ||
         queuedOverlayAction.type === "switch_conversation" ||
-        queuedOverlayAction.type === "switch_agent") && // Drain accepted old-scope input before a scope switch
+        queuedOverlayAction.type === "switch_agent" ||
+        queuedOverlayAction.type === "create_agent") && // Drain accepted old-scope input before a scope switch
       pendingApprovals.length === 0 &&
       !commandRunning &&
       !isExecutingTool &&
@@ -4528,7 +4538,8 @@ export function App({
       const changesLocalSessionScope =
         (action.type === "switch_conversation" &&
           action.conversationId !== conversationId) ||
-        (action.type === "switch_agent" && action.agentId !== agentId);
+        (action.type === "switch_agent" && action.agentId !== agentId) ||
+        action.type === "create_agent";
       if (changesLocalSessionScope) {
         // Close the old scope's ACK boundary before observing its queue. Any
         // input accepted first remains visible here; later delivery is rejected
@@ -4555,6 +4566,11 @@ export function App({
         // Call handleAgentSelect - it will see isAgentBusy() as false now
         handleAgentSelect(action.agentId, {
           conversationId: action.conversationId,
+          commandId: action.commandId,
+          backendMode: action.backendMode,
+        });
+      } else if (action.type === "create_agent") {
+        handleCreateNewAgent(action.name, {
           commandId: action.commandId,
           backendMode: action.backendMode,
         });
@@ -4660,6 +4676,7 @@ export function App({
     isExecutingTool,
     pendingApprovals,
     handleAgentSelect,
+    handleCreateNewAgent,
     handleModelSelect,
     handleSleeptimeModeSelect,
     handleCompactionModeSelect,

@@ -82,6 +82,12 @@ export type ActiveOverlay =
 
 export type QueuedOverlayAction =
   | {
+      type: "create_agent";
+      name: string;
+      commandId: string;
+      backendMode?: "local" | "api";
+    }
+  | {
       type: "switch_agent";
       agentId: string;
       conversationId?: string;

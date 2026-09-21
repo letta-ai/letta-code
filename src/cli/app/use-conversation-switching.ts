@@ -758,6 +758,25 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
       let releasedLocalSessionOwner = false;
 
       try {
+        // Backend selection is part of the execution scope. Close Cloud
+        // admission and drain anything already accepted before configuring a
+        // target backend for creation; otherwise old-scope input can execute
+        // through the new backend.
+        stopLocalSessionAdmission();
+        if (hasAcceptedLocalSessionInput()) {
+          setQueuedOverlayAction({
+            type: "create_agent",
+            name,
+            commandId: cmd.id,
+            backendMode: opts?.backendMode,
+          });
+          cmd.update({
+            output: `Creating agent "${name}" after accepted messages finish...`,
+            phase: "running",
+          });
+          return;
+        }
+
         if (opts?.backendMode && opts.backendMode !== previousBackendMode) {
           configureBackendMode(opts.backendMode);
           didSwitchBackend = true;
@@ -816,19 +835,6 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         const targetConversationId = "default";
         settingsManager.persistSession(agent.id, targetConversationId);
 
-        stopLocalSessionAdmission();
-        if (hasAcceptedLocalSessionInput()) {
-          setQueuedOverlayAction({
-            type: "switch_agent",
-            agentId: agent.id,
-            backendMode: opts?.backendMode,
-          });
-          cmd.finish(
-            `Created **${agent.name || agent.id}**; switch queued until accepted messages finish`,
-            true,
-          );
-          return;
-        }
         await releaseLocalSessionOwner();
         releasedLocalSessionOwner = true;
 

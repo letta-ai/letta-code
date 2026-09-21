@@ -12,8 +12,23 @@ export interface HeadlessLocalSession {
   turnAbortSignal: AbortSignal;
   start(): Promise<boolean>;
   setProcessing(active: boolean): void;
-  cancel(): void;
+  cancel(options?: { force?: boolean }): void;
   release(): Promise<void>;
+}
+
+function waitForSignal<T>(
+  promise: Promise<T>,
+  signal: AbortSignal,
+): Promise<T> {
+  if (signal.aborted)
+    return Promise.reject(signal.reason ?? new Error("Aborted"));
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason ?? new Error("Aborted"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    void promise.then(resolve, reject).finally(() => {
+      signal.removeEventListener("abort", onAbort);
+    });
+  });
 }
 
 export function startHeadlessLocalSession(
@@ -31,6 +46,8 @@ export function startHeadlessLocalSession(
   let ownerPromise: Promise<LocalSessionOwnerHandle> | null = null;
   let startPromise: Promise<boolean> | null = null;
   let processing = false;
+  let forceCancelled = false;
+  let releaseRequested = false;
   const session: HeadlessLocalSession = {
     queue,
     owner: null,
@@ -41,8 +58,10 @@ export function startHeadlessLocalSession(
     async start() {
       if (disposed || !params.enabled) return false;
       if (startPromise) {
-        await startPromise;
-        return session.owner ? await session.owner.ready() : false;
+        await waitForSignal(startPromise, params.sigintSignal);
+        return session.owner
+          ? await session.owner.ready(params.sigintSignal)
+          : false;
       }
       ownerPromise = startOwner({
         agentId: params.agentId,
@@ -68,7 +87,8 @@ export function startHeadlessLocalSession(
       startPromise = ownerPromise
         .then(async (owner) => {
           if (disposed) {
-            void owner.release();
+            if (forceCancelled) owner.forceStop();
+            else if (!releaseRequested) void owner.release();
             return false;
           }
           session.owner = owner;
@@ -81,19 +101,22 @@ export function startHeadlessLocalSession(
           );
           throw error;
         });
-      return await startPromise;
+      return await waitForSignal(startPromise, params.sigintSignal);
     },
     setProcessing(active) {
       processing = active;
     },
-    cancel() {
+    cancel(options) {
       disposed = true;
+      forceCancelled ||= options?.force === true;
       session.owner?.stopAdmission();
-      session.owner?.forceStop();
+      if (forceCancelled) session.owner?.forceStop();
       queue.clear("cancelled");
     },
     async release() {
       disposed = true;
+      releaseRequested = true;
+      if (forceCancelled) return;
       const owner =
         session.owner ?? (await ownerPromise?.catch(() => null)) ?? null;
       await owner?.release();

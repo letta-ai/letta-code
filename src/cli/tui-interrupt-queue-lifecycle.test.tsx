@@ -46,7 +46,10 @@ import {
   setMessageQueueAdder,
 } from "@/utils/message-queue-bridge";
 import { formatTaskNotification } from "@/utils/task-notifications";
-import type { StartLocalSessionOwnerOptions } from "@/websocket/local-session-owner";
+import type {
+  LocalSessionOwnerHandle,
+  StartLocalSessionOwnerOptions,
+} from "@/websocket/local-session-owner";
 
 class TuiOutputStream extends Writable {
   columns = 100;
@@ -455,6 +458,41 @@ describe("TUI interrupt queue lifecycle", () => {
     await waitFor(() => inputs.length === 1, "the next prompt after readiness");
   }, 15_000);
 
+  test("Esc cancels a prompt while owner registration is still starting", async () => {
+    setConfiguredBackendMode("api");
+    let resolveOwner!: (owner: LocalSessionOwnerHandle) => void;
+    const ownerStartup = new Promise<LocalSessionOwnerHandle>((resolve) => {
+      resolveOwner = resolve;
+    });
+    let startupRequested = false;
+    __testSetLocalSessionOwnerStarter(async () => {
+      startupRequested = true;
+      return await ownerStartup;
+    });
+    const inputs: HeadlessTurnExecutorInput[] = [];
+    const { stdin } = await renderTestApp({
+      async execute(input) {
+        inputs.push(input);
+        return createAssistantMessageStream();
+      },
+    });
+    await waitFor(() => startupRequested, "owner registration startup");
+    await typePrompt(stdin, "cancel during registration");
+    stdin.push("\u001b");
+    await sleep(100);
+    expect(inputs).toHaveLength(0);
+
+    resolveOwner({
+      ready: async () => true,
+      forceStop() {},
+      stopAdmission() {},
+      resumeAdmission() {},
+      release: async () => true,
+    });
+    await typePrompt(stdin, "run after registration");
+    await waitFor(() => inputs.length === 1, "next prompt after registration");
+  }, 15_000);
+
   test("failed prop agent lookup reopens old owner admission", async () => {
     setConfiguredBackendMode("api");
     const lifecycle: string[] = [];
@@ -501,6 +539,91 @@ describe("TUI interrupt queue lifecycle", () => {
       10_000,
     );
     expect(lifecycle).not.toContain("release");
+  }, 15_000);
+
+  test("double Ctrl-C awaits owner release before clean process exit", async () => {
+    setConfiguredBackendMode("api");
+    const lifecycle: string[] = [];
+    __testSetLocalSessionOwnerStarter(async () => ({
+      ready: async () => true,
+      forceStop() {},
+      stopAdmission() {
+        lifecycle.push("stop");
+      },
+      resumeAdmission() {},
+      async release() {
+        await sleep(50);
+        lifecycle.push("release");
+        return true;
+      },
+    }));
+    const originalExit = process.exit;
+    process.exit = ((code?: number) => {
+      lifecycle.push(`exit:${code ?? 0}`);
+      return undefined as never;
+    }) as typeof process.exit;
+    try {
+      const { stdin } = await renderTestApp({
+        async execute() {
+          return createAssistantMessageStream();
+        },
+      });
+      await sleep(200);
+      stdin.push("\u0003");
+      await sleep(100);
+      stdin.push("\u0003");
+      await waitFor(() => lifecycle.includes("exit:0"), "clean process exit");
+      expect(lifecycle.indexOf("release")).toBeLessThan(
+        lifecycle.indexOf("exit:0"),
+      );
+    } finally {
+      process.exit = originalExit;
+    }
+  }, 15_000);
+
+  test("agent creation keeps the old backend until accepted input drains", async () => {
+    setConfiguredBackendMode("api");
+    const ownerOptions: StartLocalSessionOwnerOptions[] = [];
+    __testSetLocalSessionOwnerStarter(async (options) => {
+      ownerOptions.push(options);
+      return {
+        ready: async () => true,
+        forceStop() {},
+        stopAdmission() {},
+        resumeAdmission() {},
+        release: async () => true,
+      };
+    });
+    const executionModes: BackendMode[] = [];
+    const rendered = await renderTestApp({
+      async execute() {
+        executionModes.push(resolveBackendMode());
+        return createAssistantMessageStream();
+      },
+    });
+    await waitFor(() => ownerOptions.length === 1, "initial owner");
+    await typePrompt(rendered.stdin, "/resume");
+    await sleep(300);
+    const owner = ownerOptions[0];
+    if (!owner) throw new Error("Missing owner options");
+    owner.queueRuntime.enqueue({
+      kind: "message",
+      source: "user",
+      content: "accepted before backend change",
+      agentId: "agent-tui-interrupt-queue",
+      conversationId: rendered.conversationId,
+      noCoalesce: true,
+    } as Parameters<typeof owner.queueRuntime.enqueue>[0]);
+    owner.onQueueChanged();
+    rendered.stdin.push("N");
+    await sleep(200);
+    await typePrompt(rendered.stdin, "new backend agent");
+
+    await waitFor(
+      () => executionModes.length === 1,
+      "old-scope accepted input",
+    );
+    expect(executionModes[0]).toBe("api");
   }, 15_000);
 
   test("a real Monitor survives normal completion and idle Esc", async () => {

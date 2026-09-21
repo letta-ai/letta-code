@@ -2185,7 +2185,7 @@ export async function handleHeadlessCommand(
 
   // One-shot mode wires SIGINT and remote owner cancellation into the turn.
   const exitInterrupted = async (): Promise<never> => {
-    localSession?.cancel();
+    localSession?.cancel({ force: true });
     if (outputFormat === "stream-json") {
       const errorMsg: ErrorMessage = {
         type: "error",
