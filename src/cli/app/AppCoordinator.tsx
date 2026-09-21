@@ -4669,6 +4669,8 @@ export function App({
                 settingsManager.persistSession(agentId, action.conversationId);
                 resetContextHistory(contextTrackerRef.current);
                 resetBootstrapReminderState();
+                process.stdout.write(CLEAR_SCREEN_AND_HOME);
+                setStaticRenderEpoch((epoch) => epoch + 1);
                 restoreConversationView({
                   buffers: buffersRef.current,
                   history: resumeData.messageHistory,
@@ -4878,13 +4880,11 @@ export function App({
     deferredCommitAt,
   ]);
 
-  // Subscribe to subagent state for reactive overflow detection
   const { agents: subagents } = useSyncExternalStore(
     subscribeToSubagents,
     getSubagentSnapshot,
   );
 
-  // Estimate live area height for overflow detection.
   const estimatedLiveHeight = useMemo(() => {
     // Count actual lines in live content by counting newlines
     const countLines = (text: string | undefined): number => {

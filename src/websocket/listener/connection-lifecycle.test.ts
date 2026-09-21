@@ -18,6 +18,7 @@ class MockSocket {
   readyState = WebSocket.OPEN;
   closeCalls = 0;
   removeAllListenersCalls = 0;
+  errorListenerCalls = 0;
 
   isOpen(): boolean {
     return this.readyState === WebSocket.OPEN;
@@ -31,6 +32,11 @@ class MockSocket {
 
   removeAllListeners(): this {
     this.removeAllListenersCalls += 1;
+    return this;
+  }
+
+  on(event: string, _listener: () => void): this {
+    if (event === "error") this.errorListenerCalls += 1;
     return this;
   }
 }
@@ -127,7 +133,20 @@ describe("listener connection lifecycle", () => {
     expect(runtime.connections.size).toBe(0);
     expect(socketA.removeAllListenersCalls).toBe(1);
     expect(socketB.removeAllListenersCalls).toBe(1);
+    expect(socketA.errorListenerCalls).toBe(1);
+    expect(socketB.errorListenerCalls).toBe(1);
     expect(socketA.closeCalls).toBe(1);
     expect(socketB.closeCalls).toBe(1);
+  });
+
+  test("suppressed teardown absorbs a connecting WebSocket close error", async () => {
+    const runtime = createRuntime();
+    const socket = new WebSocket("ws://127.0.0.1:1");
+    runtime.socket = socket;
+
+    closeListenerRuntimeConnections(runtime, true);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(socket.readyState >= WebSocket.CLOSING).toBe(true);
   });
 });
