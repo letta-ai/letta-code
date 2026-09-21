@@ -35,6 +35,17 @@ import type { ConversationRuntime } from "./types";
 
 type SendOptions = NonNullable<Parameters<typeof sendMessageStream>[2]>;
 
+export function resolveDynamicTurnSendOptions(params: {
+  getPreparedToolContext: () => SendOptions["preparedToolContext"];
+  getOverrideModel: () => SendOptions["overrideModel"];
+}) {
+  const overrideModel = params.getOverrideModel();
+  return {
+    preparedToolContext: params.getPreparedToolContext(),
+    ...(overrideModel ? { overrideModel } : {}),
+  };
+}
+
 /** Build request options and perform the first send; later continuations read current input state. */
 export async function startTurnInput(
   params: Omit<
@@ -43,8 +54,8 @@ export async function startTurnInput(
   > & {
     workingDirectory: string;
     permissionModeState: SendOptions["permissionModeState"];
-    preparedToolContext: SendOptions["preparedToolContext"];
-    overrideModel: SendOptions["overrideModel"];
+    getPreparedToolContext: () => SendOptions["preparedToolContext"];
+    getOverrideModel: () => SendOptions["overrideModel"];
     responseFormat?: SendOptions["responseFormat"];
     actingUserId?: string;
     getInput: () => TurnInputState;
@@ -62,14 +73,13 @@ export async function startTurnInput(
       ...(params.runtime.skillSources !== undefined
         ? { skillSources: params.runtime.skillSources }
         : {}),
-      preparedToolContext: params.preparedToolContext,
+      ...resolveDynamicTurnSendOptions(params),
       ...(params.getInput().imageFailureModesByMessageOtid
         ? {
             imageFailureModesByMessageOtid:
               params.getInput().imageFailureModesByMessageOtid,
           }
         : {}),
-      ...(params.overrideModel ? { overrideModel: params.overrideModel } : {}),
       ...(params.responseFormat
         ? { responseFormat: params.responseFormat }
         : {}),
