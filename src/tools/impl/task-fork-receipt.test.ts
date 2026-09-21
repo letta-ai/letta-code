@@ -200,6 +200,41 @@ describe("prepared conversation launch", () => {
     },
   );
 
+  test.each([undefined, "cloud", "conn-remote"])(
+    "threads initial client_message_id through a prepared child CLI (computer=%s)",
+    async (computer) => {
+      getBackend().capabilities.environmentRouting = true;
+      for (const client_message_id of ["assignment:1", undefined]) {
+        const result = await runWithRuntimeContext(
+          { workingDirectory: testHome, connectionId: "conn-parent" },
+          () =>
+            launchSubagent({
+              subagent_type: "custom",
+              conversation_id: "conv-child",
+              prompt: "Worker instructions",
+              description: "Worker",
+              computer,
+              client_message_id,
+            }),
+        );
+        if (!result.success) throw new Error(result.error);
+        const args = childInputs.at(-1)?.args ?? [];
+        if (client_message_id) {
+          expect(args[args.indexOf("--client-message-id") + 1]).toBe(
+            client_message_id,
+          );
+        } else {
+          expect(args).not.toContain("--client-message-id");
+        }
+        if (computer) {
+          expect(args[args.indexOf("--computer") + 1]).toBe(computer);
+          expect(args).toContain("--no-wait");
+        }
+        await task_stop({ task_id: result.task_id });
+      }
+    },
+  );
+
   test("uses the existing conversation without prompt or tool overrides and remains cancellable", async () => {
     const controller = new AbortController();
     const receipt = await runWithRuntimeContext(
@@ -252,6 +287,8 @@ describe("prepared conversation launch", () => {
     { conversation_id: "conv-parent" },
     { conversation_id: "conv-child", agent_id: "wrong-owner" },
     { conversation_id: "conv-child", model: "do-not-override" },
+    { conversation_id: "conv-child", client_message_id: "" },
+    { conversation_id: "conv-child", client_message_id: "  " },
   ])("rejects invalid prepared launches before spawning %j", async (input) => {
     const result = await launchSubagent({
       subagent_type: "custom",

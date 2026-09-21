@@ -18,6 +18,7 @@ const args = {
   conversation_id: "conv-worker",
   prompt: "Work",
   description: "Worker",
+  client_message_id: "assignment:initial-input",
 };
 
 describe("subagent command context", () => {
@@ -86,6 +87,7 @@ describe("subagent command context", () => {
     ) => {
       await release.promise;
       contexts.push({ ...getRuntimeContext() });
+      expect(input.client_message_id).toBe(args.client_message_id);
       expect(input.parentScope?.conversationId).toBe(
         getRuntimeContext()?.conversationId ?? undefined,
       );

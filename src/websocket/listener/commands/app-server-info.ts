@@ -34,6 +34,7 @@ export function buildAppServerInfoResponse(
       memory_management: true,
       runtime_start: true,
       launch_subagent: true,
+      launch_subagent_client_message_id: true,
       runtime_workspace_sandbox: true,
       runtime_external_tools_update: true,
       structured_outputs: options.backend === "api",
