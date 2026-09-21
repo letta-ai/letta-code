@@ -44,6 +44,10 @@ type PeersResponse = {
   peers: PeerGrant[];
 };
 
+type AgentDetailsResponse = {
+  hidden?: boolean | null;
+};
+
 export interface PermissionsReport {
   agent_id: string;
   report_scope: "configured_direct_access_only";
@@ -92,6 +96,41 @@ export function resolvePermissionsAgentId(
   );
 }
 
+async function filterVisiblePeerGrants(
+  incoming: PeerGrant[],
+  outgoing: PeerGrant[],
+  request: typeof apiRequest,
+  options: Parameters<typeof apiRequest>[3],
+): Promise<{ incoming: PeerGrant[]; outgoing: PeerGrant[] }> {
+  const peerIds = [
+    ...new Set([...incoming, ...outgoing].map((grant) => grant.agent_id)),
+  ];
+  const details = await Promise.all(
+    peerIds.map(async (peerId) => {
+      try {
+        const agent = await request<AgentDetailsResponse>(
+          "GET",
+          `/v1/agents/${encodeURIComponent(peerId)}`,
+          undefined,
+          options,
+        );
+        return [peerId, agent.hidden !== true] as const;
+      } catch {
+        // Match the Cloud UI: unresolved peer agents do not render.
+        return [peerId, false] as const;
+      }
+    }),
+  );
+  const visiblePeerIds = new Set(
+    details.filter(([, visible]) => visible).map(([peerId]) => peerId),
+  );
+
+  return {
+    incoming: incoming.filter((grant) => visiblePeerIds.has(grant.agent_id)),
+    outgoing: outgoing.filter((grant) => visiblePeerIds.has(grant.agent_id)),
+  };
+}
+
 export async function buildPermissionsReport(
   agentId: string,
   request: typeof apiRequest = apiRequest,
@@ -124,6 +163,12 @@ export async function buildPermissionsReport(
         query: { relationship: "accessible_by_agent" },
       }),
     ]);
+  const visiblePeers = await filterVisiblePeerGrants(
+    incoming.peers,
+    outgoing.peers,
+    request,
+    options,
+  );
 
   return {
     agent_id: agentId,
@@ -136,8 +181,8 @@ export async function buildPermissionsReport(
       default_role: organizationSharing.defaultRole,
     },
     explicit_shared_users: sharedUsers.users,
-    direct_incoming_peer_grants: incoming.peers,
-    direct_outgoing_peer_grants: outgoing.peers,
+    direct_incoming_peer_grants: visiblePeers.incoming,
+    direct_outgoing_peer_grants: visiblePeers.outgoing,
   };
 }
 

@@ -70,15 +70,26 @@ function makeRequest() {
     if (options.query?.relationship === "shared_with_agent") {
       return {
         sandbox_api_key_exists: true,
-        peers: [{ agent_id: "agent-source", role: "agent_peer" }],
+        peers: [
+          { agent_id: "agent-source", role: "agent_peer" },
+          { agent_id: "agent-hidden", role: "agent_peer" },
+          { agent_id: "agent-missing", role: "agent_peer" },
+        ],
       };
     }
     if (options.query?.relationship === "accessible_by_agent") {
       return {
         sandbox_api_key_exists: true,
-        peers: [{ agent_id: "agent-target", role: "agent_peer" }],
+        peers: [
+          { agent_id: "agent-target", role: "agent_peer" },
+          { agent_id: "agent-hidden", role: "agent_peer" },
+        ],
       };
     }
+    if (path.endsWith("/agent-source")) return { hidden: false };
+    if (path.endsWith("/agent-target")) return {};
+    if (path.endsWith("/agent-hidden")) return { hidden: true };
+    if (path.endsWith("/agent-missing")) throw new Error("Agent not found");
     throw new Error(`Unexpected request: ${method} ${path}`);
   };
   return { request: request as typeof apiRequest, calls };
@@ -104,7 +115,7 @@ describe("permissions subcommand", () => {
     expect(resolvePermissionsAgentId(undefined, {})).toBe("");
   });
 
-  test("requests each configured access source and forwards acting-user header", async () => {
+  test("filters hidden and unresolved peers while forwarding acting-user attribution", async () => {
     const { request, calls } = makeRequest();
 
     const report = await buildPermissionsReport(
@@ -113,14 +124,18 @@ describe("permissions subcommand", () => {
       "user-acting",
     );
 
-    expect(calls).toHaveLength(5);
-    expect(calls.map(({ method }) => method)).toEqual(Array(5).fill("GET"));
+    expect(calls).toHaveLength(9);
+    expect(calls.map(({ method }) => method)).toEqual(Array(9).fill("GET"));
     expect(calls.map(({ path }) => path)).toEqual([
       "/v1/agents/agent%2Fa/owner",
       "/v1/agents/agent%2Fa/sharing-settings",
       "/v1/agents/agent%2Fa/shared-users",
       "/v1/agents/agent%2Fa/peers",
       "/v1/agents/agent%2Fa/peers",
+      "/v1/agents/agent-source",
+      "/v1/agents/agent-hidden",
+      "/v1/agents/agent-missing",
+      "/v1/agents/agent-target",
     ]);
     expect(calls.map(({ options }) => options.query?.relationship)).toEqual([
       undefined,
@@ -128,6 +143,10 @@ describe("permissions subcommand", () => {
       undefined,
       "shared_with_agent",
       "accessible_by_agent",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
     ]);
     for (const call of calls) {
       expect(call.options.headers).toEqual({
@@ -140,6 +159,8 @@ describe("permissions subcommand", () => {
     expect(report.direct_outgoing_peer_grants).toEqual([
       { agent_id: "agent-target", role: "agent_peer" },
     ]);
+    expect(JSON.stringify(report)).not.toContain("agent-hidden");
+    expect(JSON.stringify(report)).not.toContain("agent-missing");
   });
 
   test("prints an explicit configured/direct-only JSON report", async () => {
