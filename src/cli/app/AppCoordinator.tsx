@@ -409,6 +409,10 @@ export function App({
   const [conversationSummary, setConversationSummary] = useState<string | null>(
     null,
   );
+  // Queued overlay action - executed after end_turn when user makes a selection
+  // while agent is busy (streaming/executing tools).
+  const [queuedOverlayAction, setQueuedOverlayAction] =
+    useState<QueuedOverlayAction>(null);
   // Keep a ref to the current agentId for use in callbacks that need the latest value
   const agentIdRef = useRef(agentId);
   useEffect(() => {
@@ -450,24 +454,46 @@ export function App({
   useEffect(() => {
     if (initialAgentId !== prevInitialAgentIdRef.current) {
       prevInitialAgentIdRef.current = initialAgentId;
-      agentIdRef.current = initialAgentId;
-      setAgentId(initialAgentId);
+      if (
+        agentIdRef.current &&
+        agentIdRef.current !== "loading" &&
+        initialAgentId !== "loading"
+      ) {
+        setQueuedOverlayAction({
+          type: "switch_agent",
+          agentId: initialAgentId,
+          conversationId: initialConversationId,
+        });
+      } else {
+        agentIdRef.current = initialAgentId;
+        setAgentId(initialAgentId);
+      }
     }
-  }, [initialAgentId]);
+  }, [initialAgentId, initialConversationId]);
 
   useEffect(() => {
     if (initialAgentState !== prevInitialAgentStateRef.current) {
       prevInitialAgentStateRef.current = initialAgentState;
-      setAgentState(initialAgentState);
+      if (!initialAgentState || initialAgentState.id === agentIdRef.current) {
+        setAgentState(initialAgentState);
+      }
     }
   }, [initialAgentState]);
 
   useEffect(() => {
     if (initialConversationId !== prevInitialConversationIdRef.current) {
       prevInitialConversationIdRef.current = initialConversationId;
-      setConversationIdAndRef(initialConversationId);
+      if (initialAgentId !== agentIdRef.current) return;
+      if (agentIdRef.current && agentIdRef.current !== "loading") {
+        setQueuedOverlayAction({
+          type: "switch_conversation",
+          conversationId: initialConversationId,
+        });
+      } else {
+        setConversationIdAndRef(initialConversationId);
+      }
     }
-  }, [initialConversationId, setConversationIdAndRef]);
+  }, [initialAgentId, initialConversationId, setConversationIdAndRef]);
 
   // Set agent context for tools (especially Task tool)
   useEffect(() => {
@@ -793,11 +819,6 @@ export function App({
     setModelSelectorOptions({});
     setModelReasoningPrompt(null);
   }, [activeOverlay]);
-
-  // Queued overlay action - executed after end_turn when user makes a selection
-  // while agent is busy (streaming/executing tools)
-  const [queuedOverlayAction, setQueuedOverlayAction] =
-    useState<QueuedOverlayAction>(null);
 
   // Derived: check if any selector/overlay is open (blocks queue processing and hides input)
   const anySelectorOpen = activeOverlay !== null;
@@ -1395,10 +1416,13 @@ export function App({
   const conversationBusyRetriesRef = useRef(0);
   const [queueDisplay, setQueueDisplay] = useState<QueuedMessage[]>([]);
   const tuiQueueRef = useRef<QueueRuntime | null>(null);
+  const sessionSwitchAdmissionStateRef = useRef<
+    "idle" | "draining" | "releasing"
+  >("idle");
   if (!tuiQueueRef.current) {
     tuiQueueRef.current = createTuiQueueRuntime(setQueueDisplay);
   }
-  useLocalSessionOwner({
+  const localSessionOwner = useLocalSessionOwner({
     agentId,
     conversationId,
     queueRuntime: tuiQueueRef.current,
@@ -1410,6 +1434,39 @@ export function App({
       pendingApprovals.length > 0 ||
       commandRunning,
   });
+  const hasAcceptedLocalSessionInput = useCallback(
+    () =>
+      tuiQueueRef.current
+        ?.peek()
+        .some(
+          (item) =>
+            (item.agentId === undefined && item.conversationId === undefined) ||
+            (item.agentId === agentId &&
+              item.conversationId === conversationId),
+        ) ?? false,
+    [agentId, conversationId],
+  );
+  const waitForLocalSessionTurnBoundary = useCallback(async () => {
+    while (
+      dequeueInFlightRef.current ||
+      abortControllerRef.current ||
+      processingConversationRef.current > 0
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }, []);
+  useEffect(() => {
+    const pendingScopeSwitch =
+      queuedOverlayAction?.type === "switch_conversation" ||
+      queuedOverlayAction?.type === "switch_agent";
+    if (
+      sessionSwitchAdmissionStateRef.current === "draining" &&
+      !pendingScopeSwitch
+    ) {
+      sessionSwitchAdmissionStateRef.current = "idle";
+      localSessionOwner.resumeAdmission();
+    }
+  }, [localSessionOwner, queuedOverlayAction]);
   const overrideContentPartsRef = useRef<MessageCreate["content"] | null>(null);
 
   // Set up message queue bridge for background tasks
@@ -3732,6 +3789,7 @@ export function App({
     llmApiErrorRetriesRef,
     llmConfigRef,
     maybeRunPostTurnReflection,
+    waitForLocalSessionOwnerReady: localSessionOwner.ready,
     needsEagerApprovalCheck,
     openTrajectorySegment,
     pendingInterruptRecoveryConversationIdRef,
@@ -4057,6 +4115,11 @@ export function App({
     modAdapter,
     hasBackfilledRef,
     isAgentBusy,
+    hasAcceptedLocalSessionInput,
+    stopLocalSessionAdmission: localSessionOwner.stopAdmission,
+    resumeLocalSessionAdmission: localSessionOwner.resumeAdmission,
+    waitForLocalSessionTurnBoundary,
+    releaseLocalSessionOwner: localSessionOwner.release,
     maybeCarryOverActiveConversationModel,
     pendingConversationSwitchRef,
     prepareScopedToolExecutionContext,
@@ -4293,7 +4356,9 @@ export function App({
     if (
       !streaming &&
       hasAnythingQueued &&
-      !queuedOverlayAction && // Prioritize queued model/toolset/system switches before dequeuing messages
+      (!queuedOverlayAction ||
+        queuedOverlayAction.type === "switch_conversation" ||
+        queuedOverlayAction.type === "switch_agent") && // Drain accepted old-scope input before a scope switch
       pendingApprovals.length === 0 &&
       !commandRunning &&
       !isExecutingTool &&
@@ -4446,12 +4511,37 @@ export function App({
       queuedOverlayAction !== null
     ) {
       const action = queuedOverlayAction;
+      const changesLocalSessionScope =
+        (action.type === "switch_conversation" &&
+          action.conversationId !== conversationId) ||
+        (action.type === "switch_agent" && action.agentId !== agentId);
+      if (changesLocalSessionScope) {
+        // Close the old scope's ACK boundary before observing its queue. Any
+        // input accepted first remains visible here; later delivery is rejected
+        // for Cloud to retry after the new owner is ready.
+        localSessionOwner.stopAdmission();
+        sessionSwitchAdmissionStateRef.current = "draining";
+        const oldScopeHasAcceptedInput = hasAcceptedLocalSessionInput();
+        if (
+          oldScopeHasAcceptedInput ||
+          dequeueInFlightRef.current ||
+          abortControllerRef.current ||
+          processingConversationRef.current > 0
+        ) {
+          // Keep the switch pending. The normal dequeue path is allowed to run
+          // while this action is pending and remains bound to the old scope.
+          setDequeueEpoch((epoch) => epoch + 1);
+          return;
+        }
+        sessionSwitchAdmissionStateRef.current = "releasing";
+      }
       setQueuedOverlayAction(null); // Clear immediately to prevent re-runs
 
       // Process the queued action
       if (action.type === "switch_agent") {
         // Call handleAgentSelect - it will see isAgentBusy() as false now
         handleAgentSelect(action.agentId, {
+          conversationId: action.conversationId,
           commandId: action.commandId,
           backendMode: action.backendMode,
         });
@@ -4490,7 +4580,12 @@ export function App({
                   action.conversationId,
                 );
 
+                // A clean handoff is generation guarded in Cloud. Do not make
+                // the new scope current until every accepted old-scope input
+                // has run and Cloud positively acknowledges the release.
+                await localSessionOwner.release();
                 setConversationIdAndRef(action.conversationId);
+                sessionSwitchAdmissionStateRef.current = "idle";
                 setConversationAutoTitleEligibility(false);
 
                 pendingConversationSwitchRef.current = {
@@ -4520,6 +4615,8 @@ export function App({
               }
             }
           } catch (error) {
+            sessionSwitchAdmissionStateRef.current = "idle";
+            localSessionOwner.resumeAdmission();
             cmd.fail(
               `Failed to switch conversation: ${error instanceof Error ? error.message : String(error)}`,
             );
@@ -4566,6 +4663,8 @@ export function App({
     commandRunner.start,
     recoverRestoredPendingApprovals,
     resetBootstrapReminderState,
+    hasAcceptedLocalSessionInput,
+    localSessionOwner,
     setConversationAutoTitleEligibility,
     setConversationIdAndRef,
     queuedOverlayAction,

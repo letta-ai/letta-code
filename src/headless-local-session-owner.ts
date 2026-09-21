@@ -10,7 +10,7 @@ export interface HeadlessLocalSession {
   queue: QueueRuntime;
   owner: LocalSessionOwnerHandle | null;
   turnAbortSignal: AbortSignal;
-  start(): void;
+  start(): Promise<boolean>;
   setProcessing(active: boolean): void;
   cancel(): void;
   release(): Promise<void>;
@@ -28,7 +28,7 @@ export function startHeadlessLocalSession(
   const queue = new QueueRuntime({ maxItems: Infinity });
   const remoteAbortController = new AbortController();
   let disposed = false;
-  let started = false;
+  let startPromise: Promise<boolean> | null = null;
   let processing = false;
   const session: HeadlessLocalSession = {
     queue,
@@ -37,10 +37,10 @@ export function startHeadlessLocalSession(
       params.sigintSignal,
       remoteAbortController.signal,
     ]),
-    start() {
-      if (started || disposed || !params.enabled) return;
-      started = true;
-      void startOwner({
+    async start() {
+      if (disposed || !params.enabled) return false;
+      if (startPromise) return await startPromise;
+      startPromise = startOwner({
         agentId: params.agentId,
         conversationId: params.conversationId,
         queueRuntime: queue,
@@ -61,16 +61,22 @@ export function startHeadlessLocalSession(
         },
         onError: (error) => debugWarn("local-session-owner", error.message),
       })
-        .then((owner) => {
-          if (disposed) void owner.release();
-          else session.owner = owner;
+        .then(async (owner) => {
+          if (disposed) {
+            void owner.release();
+            return false;
+          }
+          session.owner = owner;
+          return await owner.ready();
         })
         .catch((error: unknown) => {
           debugWarn(
             "local-session-owner",
             error instanceof Error ? error.message : String(error),
           );
+          throw error;
         });
+      return await startPromise;
     },
     setProcessing(active) {
       processing = active;
@@ -82,6 +88,7 @@ export function startHeadlessLocalSession(
     },
     async release() {
       disposed = true;
+      await startPromise?.catch(() => false);
       await session.owner?.release();
     },
   };

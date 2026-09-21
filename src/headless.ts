@@ -2244,6 +2244,10 @@ export async function handleHeadlessCommand(
       let stream: Awaited<ReturnType<typeof sendMessageStream>>;
       let turnToolContextId: string | null = null;
       try {
+        // Cloud must positively acknowledge this scoped local owner before the
+        // first direct run can become ACTIVE_UNATTRIBUTED. Unsupported servers
+        // resolve false immediately; advertised-but-mixed revisions fail closed.
+        await localSession.start();
         const turnToolContext = await prepareHeadlessToolExecutionContext({
           agentId: agent.id,
           conversationId,
@@ -2271,7 +2275,6 @@ export async function handleHeadlessCommand(
           },
           { maxRetries: 0, signal: turnAbortSignal },
         );
-        localSession.start();
         turnToolContextId = getStreamToolContextId(stream);
       } catch (preStreamError) {
         if (turnAbortSignal.aborted) {

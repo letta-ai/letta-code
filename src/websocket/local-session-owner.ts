@@ -23,6 +23,8 @@ export interface StartLocalSessionOwnerOptions {
 }
 
 export interface LocalSessionOwnerHandle {
+  /** Resolves true only after Cloud positively acknowledges this scope claim. */
+  ready(): Promise<boolean>;
   /** Close the ACK boundary before testing whether accepted work is drained. */
   stopAdmission(): void;
   /** Reopen admission when an accepted batch starts another local turn. */
@@ -47,27 +49,40 @@ const DEFAULT_DEPENDENCIES: LocalSessionOwnerDependencies = {
   stopListener: stopListenerRuntime,
 };
 
-function parseReleaseAck(
+function parseOwnerAck(
   event: unknown,
-): { requestId: string; released: boolean } | null {
-  if (
-    typeof event !== "object" ||
-    event === null ||
-    !("type" in event) ||
-    event.type !== "_ws_unparseable" ||
-    !("raw" in event) ||
-    typeof event.raw !== "string"
-  ) {
+):
+  | { type: "claimed"; requestId: string; accepted: boolean }
+  | { type: "released"; requestId: string; accepted: boolean }
+  | null {
+  if (typeof event !== "object" || event === null || !("type" in event))
     return null;
-  }
   try {
-    const parsed = JSON.parse(event.raw) as {
+    const parsed = (
+      event.type === "_ws_unparseable" &&
+      "raw" in event &&
+      typeof event.raw === "string"
+        ? JSON.parse(event.raw)
+        : event
+    ) as {
       type?: string;
       request_id?: string;
       released?: boolean;
     };
-    return parsed.type === "session_owner_released" && parsed.request_id
-      ? { requestId: parsed.request_id, released: parsed.released === true }
+    if (!parsed.request_id) return null;
+    if (parsed.type === "session_owner_claimed") {
+      return {
+        type: "claimed",
+        requestId: parsed.request_id,
+        accepted: (parsed as { claimed?: boolean }).claimed === true,
+      };
+    }
+    return parsed.type === "session_owner_released"
+      ? {
+          type: "released",
+          requestId: parsed.request_id,
+          accepted: parsed.released === true,
+        }
       : null;
   } catch {
     return null;
@@ -96,6 +111,19 @@ export async function startLocalSessionOwner(
     string,
     (result: { released: boolean }) => void
   >();
+  const claimWaiters = new Map<string, (claimed: boolean) => void>();
+  let resolveReady!: (supportedAndClaimed: boolean) => void;
+  const readyPromise = new Promise<boolean>((resolve) => {
+    resolveReady = resolve;
+  });
+  let readySettled = false;
+  let connected = false;
+  let claimInFlight = false;
+  const settleReady = (supportedAndClaimed: boolean): void => {
+    if (readySettled) return;
+    readySettled = true;
+    resolveReady(supportedAndClaimed);
+  };
 
   const acceptInput = (incoming: IncomingMessage): boolean => {
     if (!accepting) return false;
@@ -127,6 +155,8 @@ export async function startLocalSessionOwner(
     if (releasePromise) return releasePromise;
     accepting = false;
     releasePromise = (async () => {
+      await readyPromise;
+      if (stopped) return true;
       await options.waitForAcceptedInputs?.();
       while (!stopped) {
         const runtime = ownedRuntime;
@@ -175,6 +205,47 @@ export async function startLocalSessionOwner(
     return releasePromise;
   };
 
+  const claim = async (): Promise<void> => {
+    if (stopped || readySettled || claimInFlight || !connected) return;
+    const runtime = ownedRuntime;
+    const transport = runtime?.transport ?? runtime?.socket;
+    if (!transport || !isListenerTransportOpen(transport)) return;
+    claimInFlight = true;
+    const requestId = `claim-${crypto.randomUUID()}`;
+    const claimed = new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => {
+        claimWaiters.delete(requestId);
+        resolve(false);
+      }, 2_000);
+      claimWaiters.set(requestId, (accepted) => {
+        clearTimeout(timer);
+        resolve(accepted);
+      });
+    });
+    transport.send(
+      JSON.stringify({
+        type: "claim_session_owner",
+        request_id: requestId,
+        runtime: {
+          agent_id: options.agentId,
+          conversation_id: options.conversationId,
+        },
+      }),
+    );
+    const accepted = await claimed;
+    claimInFlight = false;
+    if (accepted) {
+      settleReady(true);
+      return;
+    }
+    options.onError?.(
+      new Error("Session owner claim was not acknowledged; retrying"),
+    );
+    if (!stopped && !readySettled) {
+      setTimeout(() => void claim(), options.releaseRetryMs ?? 1_000);
+    }
+  };
+
   const connect = async (): Promise<void> => {
     const registrationOptions = await dependencies.resolveRegistration(
       deviceId,
@@ -191,6 +262,7 @@ export async function startLocalSessionOwner(
     // normal one-shot process never waits forever for an unsupported ACK.
     if (!registration.supportsLocalSessionOwnership) {
       stopped = true;
+      settleReady(false);
       return;
     }
 
@@ -211,14 +283,25 @@ export async function startLocalSessionOwner(
         isProcessing: options.isProcessing,
         onRelinquished: () => void release(),
       },
-      onConnected: () => {},
-      onDisconnected: () => {},
+      onConnected: () => {
+        connected = true;
+        void claim();
+      },
+      onDisconnected: () => {
+        connected = false;
+      },
       onWsEvent: (_direction, _label, event) => {
-        const ack = parseReleaseAck(event);
+        const ack = parseOwnerAck(event);
         if (!ack) return;
+        if (ack.type === "claimed") {
+          const resolve = claimWaiters.get(ack.requestId);
+          claimWaiters.delete(ack.requestId);
+          resolve?.(ack.accepted);
+          return;
+        }
         const resolve = releaseWaiters.get(ack.requestId);
         releaseWaiters.delete(ack.requestId);
-        resolve?.({ released: ack.released });
+        resolve?.({ released: ack.accepted });
       },
       onError: (error) => options.onError?.(error),
       onNeedsReregister: () => {
@@ -230,10 +313,12 @@ export async function startLocalSessionOwner(
         });
       },
     });
+    if (connected) void claim();
   };
 
   await connect();
   return {
+    ready: () => readyPromise,
     stopAdmission: () => {
       accepting = false;
     },

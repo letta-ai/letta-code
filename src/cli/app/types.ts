@@ -84,6 +84,7 @@ export type QueuedOverlayAction =
   | {
       type: "switch_agent";
       agentId: string;
+      conversationId?: string;
       commandId?: string;
       backendMode?: "local" | "api";
     }

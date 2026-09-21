@@ -24,7 +24,11 @@ describe("queue ordering wiring", () => {
     expect(segment).toContain("!commandRunning");
     expect(segment).toContain("!isExecutingTool");
     expect(segment).toContain("!anySelectorOpen");
-    expect(segment).toContain("!queuedOverlayAction");
+    expect(segment).toContain("!queuedOverlayAction ||");
+    expect(segment).toContain(
+      'queuedOverlayAction.type === "switch_conversation"',
+    );
+    expect(segment).toContain('queuedOverlayAction.type === "switch_agent"');
     expect(segment).toContain("!waitingForQueueCancelRef.current");
     expect(segment).toContain("!userCancelledRef.current");
     expect(segment).toContain("!abortControllerRef.current");
@@ -120,6 +124,53 @@ describe("queue ordering wiring", () => {
     expect(segment).toContain("handleToolsetSelect(action.toolsetId");
     expect(segment).toContain('action.type === "set_experiment"');
     expect(segment).toContain("handleExperimentSelect(");
+  });
+
+  test("scope switches drain accepted input before releasing the old owner", () => {
+    const source = readAppSource();
+    const start = source.indexOf(
+      "// Process queued overlay actions when streaming ends",
+    );
+    const end = source.indexOf(
+      "// Handle escape when profile confirmation is pending",
+    );
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const segment = source.slice(start, end);
+    const stopIndex = segment.indexOf("localSessionOwner.stopAdmission()");
+    const acceptedIndex = segment.indexOf("hasAcceptedLocalSessionInput()");
+    const releaseIndex = segment.indexOf("await localSessionOwner.release()");
+    const switchIndex = segment.indexOf(
+      "setConversationIdAndRef(action.conversationId)",
+    );
+    expect(stopIndex).toBeGreaterThan(-1);
+    expect(acceptedIndex).toBeGreaterThan(stopIndex);
+    expect(segment).toContain("dequeueInFlightRef.current");
+    expect(segment).toContain("processingConversationRef.current > 0");
+    expect(releaseIndex).toBeGreaterThan(acceptedIndex);
+    expect(switchIndex).toBeGreaterThan(releaseIndex);
+    expect(segment).toContain("localSessionOwner.resumeAdmission()");
+  });
+
+  test("local runs wait for the scoped owner claim before sending", () => {
+    const loop = readFileSync(
+      new URL("./app/use-conversation-loop.ts", import.meta.url),
+      "utf-8",
+    );
+    const loopReady = loop.indexOf("await waitForLocalSessionOwnerReady()");
+    const loopTurn = loop.indexOf("const pinnedPermissionMode", loopReady);
+    expect(loopReady).toBeGreaterThan(-1);
+    expect(loopTurn).toBeGreaterThan(loopReady);
+
+    const headless = readFileSync(
+      new URL("../headless.ts", import.meta.url),
+      "utf-8",
+    );
+    const headlessReady = headless.indexOf("await localSession.start()");
+    const headlessSend = headless.indexOf("stream = await sendMessageStream(");
+    expect(headlessReady).toBeGreaterThan(-1);
+    expect(headlessSend).toBeGreaterThan(headlessReady);
   });
 
   test("busy model/toolset handlers enqueue overlay actions", () => {

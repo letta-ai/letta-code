@@ -36,6 +36,7 @@ describe("local session owner", () => {
       }),
       startListener: async (options) => {
         capturedOptions = options;
+        options.onConnected(options.connectionId);
         return fakeRuntime;
       },
       stopListener,
@@ -62,6 +63,22 @@ describe("local session owner", () => {
       throw new Error("session owner options were not attached");
     }
     const session = capturedOptions.localSessionOwner;
+    const claimFrame = JSON.parse(sent[0] ?? "{}") as {
+      request_id?: string;
+    };
+    expect(claimFrame).toMatchObject({
+      type: "claim_session_owner",
+      runtime: { agent_id: "agent-local", conversation_id: "conv-local" },
+    });
+    capturedOptions.onWsEvent?.("recv", "lifecycle", {
+      type: "_ws_unparseable",
+      raw: JSON.stringify({
+        type: "session_owner_claimed",
+        request_id: claimFrame.request_id,
+        claimed: true,
+      }),
+    });
+    expect(await owner.ready()).toBe(true);
 
     expect(
       session.acceptInput({
@@ -100,8 +117,8 @@ describe("local session owner", () => {
     ]);
 
     const rejectedRelease = owner.release();
-    await Promise.resolve();
-    const rejectedFrame = JSON.parse(sent[0] ?? "{}") as {
+    while (sent.length < 2) await Bun.sleep(1);
+    const rejectedFrame = JSON.parse(sent[1] ?? "{}") as {
       request_id?: string;
     };
     capturedOptions.onWsEvent?.("recv", "lifecycle", {
@@ -113,10 +130,10 @@ describe("local session owner", () => {
       }),
     });
     expect(stopListener).not.toHaveBeenCalled();
-    while (sent.length < 2) await Bun.sleep(1);
+    while (sent.length < 3) await Bun.sleep(1);
     expect(onError).toHaveBeenCalledTimes(1);
 
-    const frame = JSON.parse(sent[1] ?? "{}") as { request_id?: string };
+    const frame = JSON.parse(sent[2] ?? "{}") as { request_id?: string };
     expect(frame).toMatchObject({
       type: "release_session_owner",
       runtime: { agent_id: "agent-local", conversation_id: "conv-local" },
@@ -166,6 +183,78 @@ describe("local session owner", () => {
     );
 
     expect(startListener).not.toHaveBeenCalled();
+    expect(await owner.ready()).toBe(false);
     expect(await owner.release()).toBe(true);
+  });
+
+  test("advertised ownership stays unready until a positive scoped claim", async () => {
+    const sent: string[] = [];
+    let capturedOptions: StartListenerOptions | undefined;
+    const owner = await startLocalSessionOwner(
+      {
+        agentId: "agent-local",
+        conversationId: "conv-local",
+        queueRuntime: new QueueRuntime(),
+        surfaceName: "headless",
+        onQueueChanged: () => {},
+        onAbort: () => true,
+        isProcessing: () => false,
+        releaseRetryMs: 1,
+      },
+      {
+        getDeviceId: () => "device-local",
+        resolveRegistration: async () => ({
+          serverUrl: "https://api.test",
+          apiKey: "test",
+          deviceId: "device-local",
+          connectionName: "local",
+        }),
+        register: async () => ({
+          connectionId: "conn-local",
+          wsUrl: "wss://relay.test",
+          supportsSplitStatusChannels: false,
+          supportsPairedListenerGenerations: false,
+          supportsLocalSessionOwnership: true,
+        }),
+        startListener: async (options) => {
+          capturedOptions = options;
+          options.onConnected(options.connectionId);
+          return {
+            transport: {
+              isOpen: () => true,
+              send: (payload: string) => sent.push(payload),
+            },
+          } as unknown as ListenerRuntime;
+        },
+        stopListener: () => {},
+      },
+    );
+    const first = JSON.parse(sent[0] ?? "{}") as { request_id?: string };
+    capturedOptions?.onWsEvent?.("recv", "lifecycle", {
+      type: "_ws_unparseable",
+      raw: JSON.stringify({
+        type: "session_owner_claimed",
+        request_id: first.request_id,
+        claimed: false,
+      }),
+    });
+    expect(
+      await Promise.race([
+        owner.ready().then(() => "ready" as const),
+        Bun.sleep(5).then(() => "pending" as const),
+      ]),
+    ).toBe("pending");
+
+    while (sent.length < 2) await Bun.sleep(1);
+    const retry = JSON.parse(sent[1] ?? "{}") as { request_id?: string };
+    capturedOptions?.onWsEvent?.("recv", "lifecycle", {
+      type: "_ws_unparseable",
+      raw: JSON.stringify({
+        type: "session_owner_claimed",
+        request_id: retry.request_id,
+        claimed: true,
+      }),
+    });
+    expect(await owner.ready()).toBe(true);
   });
 });

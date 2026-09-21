@@ -6,7 +6,7 @@ import {
 } from "./headless-local-session-owner";
 
 describe("headless local session ownership", () => {
-  test("registration is best-effort and never blocks the initial turn", async () => {
+  test("initial turn waits for positive scoped owner readiness", async () => {
     let resolveOwner!: (owner: LocalSessionOwnerHandle) => void;
     const pendingOwner = new Promise<LocalSessionOwnerHandle>((resolve) => {
       resolveOwner = resolve;
@@ -23,14 +23,15 @@ describe("headless local session ownership", () => {
     );
 
     expect(session.owner).toBeNull();
-    session.start();
+    const started = session.start();
     expect(session.owner).toBeNull();
     resolveOwner({
+      ready: async () => true,
       stopAdmission() {},
       resumeAdmission() {},
       release,
     });
-    await Bun.sleep(0);
+    expect(await started).toBe(true);
     expect(session.owner).not.toBeNull();
     await session.release();
     expect(release).toHaveBeenCalledTimes(1);
