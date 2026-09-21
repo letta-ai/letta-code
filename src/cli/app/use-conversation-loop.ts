@@ -559,7 +559,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
       if (myGeneration !== conversationGenerationRef.current) {
         return;
       }
-
       // Guard against concurrent processConversation calls
       // This can happen if user submits two messages in quick succession
       // Uses dedicated ref (not streamingRef) since streaming may be set early for UI responsiveness
@@ -567,8 +566,9 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         return;
       }
       processingConversationRef.current += 1;
+      // An early interrupt must not target a stale prior run.
+      lastRunIdRef.current = null;
       let turnStartCancelReason: string | null = null;
-
       if (hasUserMessageInput(currentInput)) {
         const originalInput = currentInput;
         try {

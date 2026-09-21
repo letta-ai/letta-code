@@ -428,22 +428,18 @@ export function App({
     conversationIdRef.current = nextConversationId;
     setConversationId(nextConversationId);
   }, []);
-
   // Tracks the transcript start index for the current user turn across
   // approval continuations (requires_approval -> approval result round-trip).
   const pendingTranscriptStartLineIndexRef = useRef<number | null>(null);
-
   // Track the most recent run ID from streaming (for statusline display)
   const lastRunIdRef = useRef<string | null>(null);
-
+  const pendingBackendCancellationRef = useRef<Promise<void> | null>(null);
   const resumeKey = useSuspend();
-
   // Pending conversation switch context — consumed on first message after a switch
   const pendingConversationSwitchRef = useRef<
     | import("@/cli/helpers/conversation-switch-alert").ConversationSwitchContext
     | null
   >(null);
-
   // Track previous prop values to detect actual prop changes (not internal state changes)
   const prevInitialAgentIdRef = useRef(initialAgentId);
   const prevInitialAgentStateRef = useRef(initialAgentState);
@@ -4079,7 +4075,9 @@ export function App({
     interruptQueuedRef,
     interruptRequested,
     isExecutingTool,
+    lastRunIdRef,
     pendingApprovals,
+    pendingBackendCancellationRef,
     pendingInterruptRecoveryConversationIdRef,
     processingConversationRef,
     queueApprovalResults,
@@ -4418,6 +4416,7 @@ export function App({
       !anySelectorOpen && // Don't dequeue while a selector/overlay is open
       !waitingForQueueCancelRef.current && // Don't dequeue while waiting for cancel
       !userCancelledRef.current && // Don't dequeue if user just cancelled
+      !pendingBackendCancellationRef.current &&
       !abortControllerRef.current && // Don't dequeue while processConversation is still active
       !dequeueInFlightRef.current && // Don't dequeue while previous dequeue submit is still in flight
       // In defer mode, only dequeue when the agent is truly done:
@@ -4588,6 +4587,7 @@ export function App({
         if (
           oldScopeHasAcceptedInput ||
           dequeueInFlightRef.current ||
+          pendingBackendCancellationRef.current ||
           abortControllerRef.current ||
           processingConversationRef.current > 0
         ) {

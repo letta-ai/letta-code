@@ -1,15 +1,3 @@
-/**
- * Regression tests for the TUI interrupt -> queue handoff (issue #4168).
- *
- * A Monitor `task_notification` queued while a turn is active must start the
- * next turn on its own once an Esc cancellation has settled. The interrupted
- * turn's finally block owns that `cancelling -> idle` transition and wakes the
- * dequeue effect; no timer or later user prompt may be required.
- *
- * The typed-prompt case matters: a turn started from the queue bridge is woken
- * by the dequeue effect's own completion callback, which masked the bug. A
- * turn started by typing has no such callback.
- */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -734,6 +722,17 @@ describe("TUI interrupt queue lifecycle", () => {
     });
     const executor = new DelayedInterruptExecutor();
     const rendered = await renderTestApp(executor);
+    let finishBackendCancel: (() => void) | undefined;
+    const backendCancelPending = new Promise<void>((resolve) => {
+      finishBackendCancel = resolve;
+    });
+    const cancelConversation = rendered.backend.cancelConversation.bind(
+      rendered.backend,
+    );
+    rendered.backend.cancelConversation = async (id) => {
+      await backendCancelPending;
+      return cancelConversation(id);
+    };
     await waitFor(() => ownerOptions.length === 1, "initial owner");
     await typePrompt(rendered.stdin, "active turn before direct resume");
     await waitFor(() => executor.inputs.length === 1, "active turn");
@@ -763,6 +762,10 @@ describe("TUI interrupt queue lifecycle", () => {
     await typePrompt(rendered.stdin, `/resume ${secondConversation.id}`);
     expect(ownerOptions).toHaveLength(1);
     executor.settleInterruptedTurn();
+    await sleep(100);
+    expect(executor.inputs).toHaveLength(1);
+    expect(ownerOptions).toHaveLength(1);
+    finishBackendCancel?.();
     await waitFor(() => executor.inputs.length === 2, "scoped A input");
     await waitFor(() => ownerOptions.length === 2, "new conversation owner");
     expect(executor.inputs[1]?.conversationId).toBe(rendered.conversationId);
