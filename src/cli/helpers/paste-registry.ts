@@ -1,19 +1,127 @@
 // Clipboard paste registry - manages mappings from placeholders to actual content
 // Supports both large text pastes and image pastes (multi-modal)
 
+import { randomUUID } from "node:crypto";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, extname, join } from "node:path";
+
 export interface ImageEntry {
   data: string; // base64
   mediaType: string;
   filename?: string;
+  localPath: string;
 }
 
 // Text placeholder registry (for large pasted text collapsed into a placeholder)
 const textRegistry = new Map<number, string>();
 
-// Image placeholder registry (maps id -> base64 + mediaType)
+// Image placeholder registry (maps id -> stable local copy + multimodal data)
 const imageRegistry = new Map<number, ImageEntry>();
+let imageStorageDirectory: string | undefined;
+let imageStorageCleanupRegistered = false;
 
 let nextId = 1;
+
+const IMAGE_EXTENSIONS: Record<string, string> = {
+  "image/png": ".png",
+  "image/jpeg": ".jpg",
+  "image/jpg": ".jpg",
+  "image/gif": ".gif",
+  "image/webp": ".webp",
+  "image/bmp": ".bmp",
+  "image/svg+xml": ".svg",
+  "image/tiff": ".tiff",
+  "image/heic": ".heic",
+  "image/heif": ".heif",
+  "image/avif": ".avif",
+};
+
+const SAFE_IMAGE_EXTENSIONS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".bmp",
+  ".heic",
+  ".heif",
+  ".svg",
+  ".tif",
+  ".tiff",
+  ".avif",
+]);
+
+function detectedImageExtension(data: string): string | undefined {
+  const bytes = Buffer.from(data, "base64");
+  if (bytes.subarray(0, 8).equals(Buffer.from("89504e470d0a1a0a", "hex")))
+    return ".png";
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff)
+    return ".jpg";
+  if (bytes.subarray(0, 4).toString("ascii") === "GIF8") return ".gif";
+  if (
+    bytes.subarray(0, 4).toString("ascii") === "RIFF" &&
+    bytes.subarray(8, 12).toString("ascii") === "WEBP"
+  )
+    return ".webp";
+  if (bytes.subarray(0, 2).toString("ascii") === "BM") return ".bmp";
+  const tiffHeader = bytes.subarray(0, 4).toString("hex");
+  if (tiffHeader === "49492a00" || tiffHeader === "4d4d002a") return ".tiff";
+  if (bytes.subarray(4, 8).toString("ascii") === "ftyp") {
+    const brand = bytes.subarray(8, 12).toString("ascii").toLowerCase();
+    if (brand === "avif" || brand === "avis") return ".avif";
+    if (["heic", "heix", "hevc", "hevx"].includes(brand)) return ".heic";
+    if (["heif", "heim", "mif1", "msf1"].includes(brand)) return ".heif";
+  }
+  if (/^\s*(?:<\?xml[^>]*>\s*)?<svg[\s>]/i.test(bytes.toString("utf8")))
+    return ".svg";
+  return undefined;
+}
+
+function imageExtension(
+  data: string,
+  mediaType: string,
+  filename?: string,
+): string {
+  const detectedExtension = detectedImageExtension(data);
+  if (detectedExtension) return detectedExtension;
+  const mediaExtension = IMAGE_EXTENSIONS[mediaType.toLowerCase()];
+  if (mediaExtension && SAFE_IMAGE_EXTENSIONS.has(mediaExtension)) {
+    return mediaExtension;
+  }
+  const filenameExtension = extname(basename(filename ?? "")).toLowerCase();
+  return SAFE_IMAGE_EXTENSIONS.has(filenameExtension)
+    ? filenameExtension
+    : ".img";
+}
+
+function storeImage(
+  data: string,
+  mediaType: string,
+  filename?: string,
+): string {
+  if (!imageStorageDirectory) {
+    imageStorageDirectory = mkdtempSync(join(tmpdir(), "letta-code-images-"));
+    if (process.platform !== "win32") {
+      // mkdtemp normally honors 0700, but set the mode explicitly in case umask
+      // or an unusual runtime implementation created it more permissively.
+      chmodSync(imageStorageDirectory, 0o700);
+    }
+  }
+  if (!imageStorageCleanupRegistered) {
+    imageStorageCleanupRegistered = true;
+    process.once("exit", () => {
+      if (imageStorageDirectory) {
+        rmSync(imageStorageDirectory, { recursive: true, force: true });
+      }
+    });
+  }
+
+  const extension = imageExtension(data, mediaType, filename);
+  const localPath = join(imageStorageDirectory, `${randomUUID()}${extension}`);
+  writeFileSync(localPath, Buffer.from(data, "base64"), { mode: 0o600 });
+  return localPath;
+}
 
 // ---------- Text placeholders ----------
 
@@ -68,6 +176,7 @@ export function allocateImage(args: {
     data: args.data,
     mediaType: args.mediaType,
     filename: args.filename,
+    localPath: storeImage(args.data, args.mediaType, args.filename),
   });
   return id;
 }
@@ -144,6 +253,9 @@ export function buildMessageContentFromDisplay(text: string): ContentPart[] {
     const id = Number(match[1]);
     const img = getImage(id);
     if (img?.data) {
+      pushText(
+        `<system-reminder>Image available at ${JSON.stringify(img.localPath)}</system-reminder>\n`,
+      );
       parts.push({
         type: "image",
         source: {

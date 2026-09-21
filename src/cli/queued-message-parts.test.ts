@@ -44,8 +44,13 @@ describe("queuedMessageParts", () => {
 
     const parts = buildQueuedContentParts(queued);
 
+    expect(Array.isArray(parts)).toBe(true);
+    if (!Array.isArray(parts)) throw new Error("Expected content parts");
     expect(parts).toHaveLength(7);
-    expect(parts[0]).toEqual({ type: "text", text: "before " });
+    expect(parts[0]?.type).toBe("text");
+    expect(parts[0]?.type === "text" && parts[0].text).toMatch(
+      /^before <system-reminder>Image available at "\/.*\.png"<\/system-reminder>\n$/,
+    );
     expect(parts[1]).toEqual({
       type: "image",
       source: {
