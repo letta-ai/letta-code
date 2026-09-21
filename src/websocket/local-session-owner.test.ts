@@ -259,7 +259,8 @@ describe("local session owner", () => {
     });
     expect(await owner.ready()).toBe(true);
 
-    capturedOptions?.onDisconnected();
+    // Ordinary listener reconnects activate the replacement socket by calling
+    // onConnected again without first surfacing onDisconnected.
     capturedOptions?.onConnected(capturedOptions.connectionId);
     while (sent.length < 3) await Bun.sleep(1);
     const revalidated = owner.ready().then(
@@ -269,7 +270,6 @@ describe("local session owner", () => {
     const staleReconnect = JSON.parse(sent[2] ?? "{}") as {
       request_id?: string;
     };
-    capturedOptions?.onDisconnected();
     capturedOptions?.onConnected(capturedOptions.connectionId);
     capturedOptions?.onWsEvent?.("recv", "lifecycle", {
       type: "_ws_unparseable",

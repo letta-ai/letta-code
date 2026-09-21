@@ -375,6 +375,14 @@ export async function startLocalSessionOwner(
       onConnected: () => {
         connected = true;
         connectionEpoch += 1;
+        // The listener invokes onConnected again when a replacement socket
+        // becomes active; ordinary reconnects do not necessarily emit the
+        // public onDisconnected callback first. A claim belongs to its socket
+        // epoch, so never carry readiness across this boundary.
+        if (claimed && !stopped) {
+          claimed = false;
+          readiness = createReadiness();
+        }
         void claim();
       },
       onDisconnected: () => {
