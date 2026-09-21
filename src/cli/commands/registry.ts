@@ -5,6 +5,8 @@ import {
   type DreamCommandScope,
   requestCloudReflectionRun,
 } from "@/agent/reflection-runs";
+import { renderWorkflowTree } from "@/cli/helpers/workflow-display";
+import { listWorkflowExecutions } from "@/tools/workflow/execution-registry";
 import { handleMemoryRepositoryCommand } from "./memory-repository";
 import { handleSecretCommand } from "./secret";
 
@@ -551,6 +553,18 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in App.tsx to show background processes
       return "Showing background processes...";
+    },
+  },
+  "/workflows": {
+    desc: "Show workflow runs, their agents, and token usage",
+    order: 42.5,
+    noArgs: true,
+    handler: () => {
+      const executions = listWorkflowExecutions();
+      if (executions.length === 0) {
+        return "No workflow runs in this session";
+      }
+      return executions.flatMap(renderWorkflowTree).join("\n");
     },
   },
   "/exit": {
