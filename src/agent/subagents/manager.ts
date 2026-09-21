@@ -52,6 +52,7 @@ import {
 } from ".";
 import { buildSubagentPrompt } from "./context-budget";
 import { allocateSubagentName } from "./names";
+import { getParentConversationTag } from "./parent-conversation";
 import { collectRemoteTurnResult } from "./remote-turn-wait";
 import {
   composeSubagentChildEnv,
@@ -120,6 +121,7 @@ interface BuildSubagentArgsOptions {
   platform?: NodeJS.Platform;
   extraTools?: string[];
   parentAgentId?: string | null;
+  parentConversationId?: string;
   /**
    * Replace the subagent's configured persona: pass `--system-custom <text>`
    * to the child instead of `--system <type>`. Only applies to new agents.
@@ -194,6 +196,11 @@ export function buildSubagentArgs(
     if (options.parentAgentId) {
       subagentTags.push(`parent:${options.parentAgentId}`);
     }
+    const parentTag = getParentConversationTag(
+      options.parentAgentId,
+      options.parentConversationId,
+    );
+    if (parentTag) subagentTags.push(parentTag);
     args.push("--tags", subagentTags.join(","));
     // Newly spawned subagents are stateless (non-memfs). The headless
     // entrypoint derives this from LETTA_CODE_AGENT_ROLE=subagent — no CLI
@@ -342,6 +349,7 @@ async function executeSubagent(
         backendMode,
         promptTransport: "stdin",
         parentAgentId,
+        parentConversationId,
         systemPromptOverride,
         environment,
         clientMessageId,

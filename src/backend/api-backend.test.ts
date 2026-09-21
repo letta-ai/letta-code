@@ -323,7 +323,10 @@ describe("APIBackend", () => {
       // covers the cloud/self-hosted split.
       environmentRouting: expect.any(Boolean),
     });
-    const agentUpdateBody = { system: "system" } as AgentUpdateBody;
+    const agentUpdateBody = {
+      system: "system",
+      tags_to_add: ["parent-conversation:agent-parent/default"],
+    } as AgentUpdateBody;
     const agentCreateBody = { name: "new agent" } as AgentCreateBody;
     const conversationCreateBody = {
       agent_id: "agent-1",
