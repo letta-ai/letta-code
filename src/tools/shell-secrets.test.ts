@@ -71,7 +71,10 @@ describe("shell secret env extraction", () => {
   test("extracts only referenced known secrets", async () => {
     await seedSecrets();
     expect(
-      extractSecretEnvFromCommand("$API_KEY:$PASSWORD:$UNKNOWN", TEST_AGENT_ID),
+      await extractSecretEnvFromCommand(
+        "$API_KEY:$PASSWORD:$UNKNOWN",
+        TEST_AGENT_ID,
+      ),
     ).toEqual({
       API_KEY: seededSecrets.API_KEY,
       PASSWORD: seededSecrets.PASSWORD,
@@ -81,7 +84,7 @@ describe("shell secret env extraction", () => {
   test("deduplicates repeated references", async () => {
     await seedSecrets();
     expect(
-      extractSecretEnvFromCommand("$API_KEY and $API_KEY", TEST_AGENT_ID),
+      await extractSecretEnvFromCommand("$API_KEY and $API_KEY", TEST_AGENT_ID),
     ).toEqual({
       API_KEY: seededSecrets.API_KEY,
     });
@@ -89,9 +92,9 @@ describe("shell secret env extraction", () => {
 
   test("returns empty object when no secrets are referenced", async () => {
     await seedSecrets();
-    expect(extractSecretEnvFromCommand("echo hello", TEST_AGENT_ID)).toEqual(
-      {},
-    );
+    expect(
+      await extractSecretEnvFromCommand("echo hello", TEST_AGENT_ID),
+    ).toEqual({});
   });
 });
 

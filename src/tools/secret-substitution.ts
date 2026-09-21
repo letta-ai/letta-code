@@ -2,7 +2,7 @@
  * Secret handling for shell tool arguments and output.
  */
 
-import { loadSecrets } from "@/utils/secrets-store";
+import { loadSecretsForSubstitution } from "@/utils/secrets-store";
 
 /**
  * Pattern to match $SECRET_NAME references where SECRET_NAME is uppercase with
@@ -21,30 +21,40 @@ const SECRET_PATTERN = /\$(?:\{[#!]?)?([A-Z_][A-Z0-9_]*)/g;
  * The shell will expand these vars natively, so secret values never get
  * injected into the command string itself.
  */
-export function extractSecretEnvFromCommand(
+export async function extractSecretEnvFromCommand(
   command: string | readonly string[],
   agentId?: string,
-): Record<string, string> {
-  const secrets = loadSecrets(agentId);
-  const env: Record<string, string> = {};
+): Promise<Record<string, string>> {
+  const referencedNames = new Set<string>();
 
   const scan = (text: string) => {
     for (const match of text.matchAll(SECRET_PATTERN)) {
       const name = match[1];
-      if (name !== undefined && secrets[name] !== undefined) {
-        env[name] = secrets[name];
+      if (name !== undefined) {
+        referencedNames.add(name);
       }
     }
   };
 
   if (typeof command === "string") {
     scan(command);
-    return env;
+  } else {
+    for (const part of command) {
+      if (typeof part === "string") {
+        scan(part);
+      }
+    }
   }
 
-  for (const part of command) {
-    if (typeof part === "string") {
-      scan(part);
+  if (referencedNames.size === 0) {
+    return {};
+  }
+
+  const secrets = await loadSecretsForSubstitution(agentId);
+  const env: Record<string, string> = {};
+  for (const name of referencedNames) {
+    if (secrets[name] !== undefined) {
+      env[name] = secrets[name];
     }
   }
 
