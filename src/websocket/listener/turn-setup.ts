@@ -325,7 +325,9 @@ export async function prepareListenerTurn(params: {
       ? { exclude: [...INTERACTIVE_USER_INPUT_TOOL_NAMES] }
       : {}),
     externalToolScopeIds: msg.externalToolScopeIds,
-    githubPullRequestConversationIds: msg.githubPullRequestConversationIds,
+    // A reused listener must not fall back to its process launcher's IDs.
+    githubPullRequestConversationIds:
+      msg.githubPullRequestConversationIds ?? [],
     workingDirectory,
     permissionModeState,
     skillsDirectory: listenerOptions?.skillsDirectory,
