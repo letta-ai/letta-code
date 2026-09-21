@@ -33,6 +33,7 @@ export function buildAppServerInfoResponse(
       conversation_management: true,
       memory_management: true,
       runtime_start: true,
+      launch_subagent: true,
       runtime_workspace_sandbox: true,
       runtime_external_tools_update: true,
       structured_outputs: options.backend === "api",
