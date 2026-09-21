@@ -80,7 +80,6 @@ import type { SkillSource } from "./agent/skills";
 import { SessionStats } from "./agent/stats";
 import {
   type BackendMode,
-  type ConversationCreateBody,
   type ConversationMessageStreamBody,
   getBackend,
 } from "./backend";
@@ -124,6 +123,7 @@ import {
   validatePrimaryStartupFlagConflicts,
 } from "./cli/startup-flag-validation";
 import { tryCloudHeadlessSend } from "./headless-cloud-send";
+import { resolveHeadlessConversation } from "./headless-conversation";
 import {
   buildEnvironmentLaunchResult,
   buildEnvironmentResponseMetadata,
@@ -1528,63 +1528,21 @@ export async function handleHeadlessCommand(
     process.exit(1);
   }
 
-  if (ephemeralConversationId) {
-    conversationId = ephemeralConversationId;
-    conversationOpenReason = "new";
-  } else if (specifiedConversationId) {
-    if (specifiedConversationId === "default") {
-      // "default" is the agent's primary message history (no explicit conversation)
-      // Don't validate - just use it directly
-      conversationId = "default";
-      conversationOpenReason = "resume";
-    } else {
-      // User specified an explicit conversation to resume - validate it exists
-      try {
-        debugLog(
-          "conversations",
-          `retrieve(${specifiedConversationId}) [headless --conv validate]`,
-        );
-        await startupBackend.retrieveConversation(specifiedConversationId);
-        conversationId = specifiedConversationId;
-        conversationOpenReason = "resume";
-      } catch {
-        console.error(
-          `Error: Conversation ${specifiedConversationId} not found`,
-        );
-        process.exit(1);
-      }
-    }
-  } else if (forceNewConversation) {
-    // --new flag: create a new conversation (for concurrent sessions).
-    // When --from-agent is set (agent-to-agent messaging), mark the new
-    // conversation as hidden so it doesn't clutter the target agent's
-    // default conversation list in the ADE. The `hidden` field is still
-    // missing from @letta-ai/letta-client@1.10.1 types, but the core
-    // endpoint accepts it and the SDK's create impl forwards unknown
-    // body fields unchanged — remove the cast once the SDK is bumped.
-    const createParams: ConversationCreateBody = {
-      agent_id: agent.id,
-    };
-    if (fromAgentId) {
-      (createParams as { hidden?: boolean }).hidden = true;
-    }
-    const conversation = await startupBackend.createConversation(createParams);
-    conversationId = conversation.id;
-    conversationOpenReason = "new";
-  } else if (isSubagent) {
-    // Freshly created subagents have no concurrency risk — use the default
-    // conversation so it's easy to inspect in the ADE.
-    conversationId = "default";
-    conversationOpenReason = "startup";
-  } else {
-    // Default for headless: always create a new conversation to avoid
-    // 409 "conversation busy" races (e.g., parent agent calling letta -p).
-    // Use --conv default to explicitly target the agent's primary conversation.
-    const conversation = await startupBackend.createConversation({
-      agent_id: agent.id,
-    });
-    conversationId = conversation.id;
-    conversationOpenReason = "new";
+  try {
+    ({ conversationId, conversationOpenReason } =
+      await resolveHeadlessConversation({
+        backend: startupBackend,
+        agent,
+        ephemeralConversationId,
+        specifiedConversationId,
+        forceNewConversation,
+        isSubagent,
+        isAgentLaunch,
+        fromAgentId,
+      }));
+  } catch (error) {
+    console.error(`Error: ${getErrorMessage(error)}`);
+    process.exit(1);
   }
   markMilestone("HEADLESS_CONVERSATION_READY");
 

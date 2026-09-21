@@ -86,7 +86,18 @@ test("an ordinary child's caller routes it without changing the parent's environ
     listenerConnectionId: "conn-parent",
   });
   expect(env[LISTENER_CONNECTION_ENV]).toBe("conn-parent");
+  expect(env.LETTA_SUBAGENT_TYPE).toBe("general-purpose");
   expect(parentProcessEnv).toEqual({ USER_CWD: "/workspace" });
+});
+
+test("launch type never leaks from an earlier child when omitted", () => {
+  const env = composeSubagentChildEnv({
+    parentProcessEnv: { LETTA_SUBAGENT_TYPE: "reflection" },
+    parentAgentId: "agent-parent",
+    inheritedPrimaryRoot: null,
+    launchProfile: "default",
+  });
+  expect(env.LETTA_SUBAGENT_TYPE).toBeUndefined();
 });
 
 test("nested children keep the root task's PR attribution conversation", () => {

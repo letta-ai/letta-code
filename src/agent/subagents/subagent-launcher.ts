@@ -26,6 +26,7 @@ import {
   SUBAGENT_LAUNCH_ENV,
   SUBAGENT_LAUNCH_PROFILE_ENV,
   SUBAGENT_NAME_ENV,
+  SUBAGENT_TYPE_ENV,
 } from "@/utils/subagent-launch-marker";
 import { TRANSCRIPT_ROOT_ENV } from "@/utils/transcript-paths";
 import type { SubagentLaunchProfile, SubagentMemoryScope } from ".";
@@ -263,6 +264,8 @@ export function composeSubagentChildEnv(
   // A nested launch must never reuse its parent's assigned creation name.
   delete childEnv[SUBAGENT_NAME_ENV];
   if (options.subagentName) childEnv[SUBAGENT_NAME_ENV] = options.subagentName;
+  delete childEnv[SUBAGENT_TYPE_ENV];
+  if (subagentType) childEnv[SUBAGENT_TYPE_ENV] = subagentType;
 
   if (backendMode === "local") {
     childEnv.LETTA_LOCAL_BACKEND_EXPERIMENTAL = "1";

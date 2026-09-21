@@ -39,6 +39,7 @@ import {
   projectLocalAgentState,
   shouldPersistSubagentHiddenBackfill,
   shouldUseDefaultLocalModel,
+  updateLocalAgentMetadata,
 } from "./local-agent-record";
 import { selectLocalMessagesForFork } from "./local-conversation-fork";
 import { listLocalConversations } from "./local-conversation-list";
@@ -1106,19 +1107,8 @@ export class LocalStore {
     };
     const updated = {
       ...existingRecord,
-      ...(typeof bodyRecord.name === "string" && { name: bodyRecord.name }),
-      ...((typeof bodyRecord.description === "string" ||
-        bodyRecord.description === null) && {
-        description: bodyRecord.description,
-      }),
-      ...(typeof bodyRecord.system === "string" && {
-        system: bodyRecord.system,
-      }),
-      ...(isStringArray(bodyRecord.tags) && { tags: bodyRecord.tags }),
+      ...updateLocalAgentMetadata(existingRecord, bodyRecord),
       ...(nextModel && { model: nextModel }),
-      ...(typeof bodyRecord.hidden === "boolean" && {
-        hidden: bodyRecord.hidden,
-      }),
       model_settings: nextModelSettings,
     };
     this.agents.set(agentId, updated);
