@@ -17,6 +17,12 @@ interface BindingReceipt {
   created: boolean;
   agent_id: string;
   conversation_id: string;
+  initial_client_message_id: string;
+  initial_input_receipt: {
+    clientMessageId: string;
+    superRunId: string;
+    workflowId: string;
+  } | null;
 }
 
 function textResult(value: unknown, isError = false) {
@@ -50,7 +56,18 @@ function readReceipt(
     typeof receipt.agent_id !== "string" ||
     !receipt.agent_id.startsWith("agent-") ||
     typeof receipt.conversation_id !== "string" ||
-    !receipt.conversation_id.startsWith("conv-")
+    !receipt.conversation_id.startsWith("conv-") ||
+    typeof receipt.initial_client_message_id !== "string" ||
+    !receipt.initial_client_message_id ||
+    (receipt.initial_input_receipt !== null &&
+      (!receipt.initial_input_receipt ||
+        typeof receipt.initial_input_receipt !== "object" ||
+        Reflect.get(receipt.initial_input_receipt, "clientMessageId") !==
+          receipt.initial_client_message_id ||
+        typeof Reflect.get(receipt.initial_input_receipt, "superRunId") !==
+          "string" ||
+        typeof Reflect.get(receipt.initial_input_receipt, "workflowId") !==
+          "string"))
   ) {
     throw new Error("Invalid Slack thread binding receipt");
   }
@@ -61,8 +78,9 @@ function existingResult(receipt: BindingReceipt): string {
   return JSON.stringify({
     ...receipt,
     created: false,
-    message:
-      "This thread already has a worker. New instructions were not delivered. Use SendAgentMessage to steer it.",
+    message: receipt.initial_input_receipt
+      ? "This thread already has a worker. New instructions were not delivered. Use SendAgentMessage to steer it."
+      : "This thread has a reserved worker, but its initial input has not been accepted yet. New instructions were not delivered. Retry this tool to check startup; do not send additional work yet.",
   });
 }
 
@@ -74,6 +92,7 @@ export function createSlackThreadDispatchExecutor(
   deps: { runAgent?: typeof task; cloudBackend?: () => boolean } = {},
 ): ExternalToolExecutor {
   return async (toolCallId, toolName, input, context) => {
+    let binding: BindingReceipt | undefined;
     try {
       if (
         !(
@@ -117,7 +136,6 @@ export function createSlackThreadDispatchExecutor(
       );
       signal?.throwIfAborted();
       if (lookup.status === "bound") return textResult(existingResult(lookup));
-      let binding: BindingReceipt | undefined;
       const parent = getRuntimeContext();
       const report = await (deps.runAgent ?? task)(
         {
@@ -145,6 +163,22 @@ export function createSlackThreadDispatchExecutor(
         {
           firstTurnReminder:
             "<system-reminder>\nYou are the persistent worker assigned to a Slack thread. Your conversation was forked from the channel coordinator. Use your thread-scoped Slack tools to reply and ask follow-up questions in that thread. Use SendAgentMessage for private coordination with the channel coordinator. The coordinator also receives the thread events.\n</system-reminder>\n\n",
+          onInputAccepted: async (accepted) => {
+            if (
+              !binding ||
+              accepted.agent_id !== binding.agent_id ||
+              accepted.conversation_id !== binding.conversation_id ||
+              accepted.client_message_id !== binding.initial_client_message_id
+            )
+              throw new Error(
+                "Agent accepted input for a different Slack worker",
+              );
+            binding.initial_input_receipt = {
+              clientMessageId: accepted.client_message_id,
+              superRunId: accepted.super_run_id,
+              workflowId: accepted.workflow_id,
+            };
+          },
           beforeStart: async (child) => {
             const receipt = readReceipt(
               await controller(
@@ -177,7 +211,10 @@ export function createSlackThreadDispatchExecutor(
                 discardUnstartedFork: true,
               };
             }
-            return { start: true };
+            return {
+              start: true,
+              clientMessageId: receipt.initial_client_message_id,
+            };
           },
         },
       );
@@ -186,8 +223,16 @@ export function createSlackThreadDispatchExecutor(
         report.startsWith("Error:"),
       );
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       return textResult(
-        `Slack dispatch failed: ${error instanceof Error ? error.message : String(error)}`,
+        binding
+          ? {
+              ...binding,
+              error: message,
+              message:
+                "Worker startup was not confirmed. Retry lookup before sending additional work; the reserved conversation was retained.",
+            }
+          : `Slack dispatch failed: ${message}`,
         true,
       );
     }

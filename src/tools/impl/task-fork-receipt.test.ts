@@ -29,7 +29,7 @@ import { backgroundTasks } from "./process_manager";
 mock.module("@/backend/api/metadata", () => ({
   getBillingTier: async () => null,
 }));
-const spawnProcess = mock(() => {
+function fakeChildProcess() {
   const child = Object.assign(new EventEmitter(), {
     stdin: new PassThrough(),
     stdout: new PassThrough(),
@@ -39,8 +39,10 @@ const spawnProcess = mock(() => {
   return {
     process: child,
     completion: new Promise<never>(() => {}),
+    wasAborted: () => false,
   };
-});
+}
+const spawnProcess = mock(fakeChildProcess);
 mock.module("@/agent/subagents/subagent-process", () => ({
   spawnSubagentProcess: spawnProcess,
 }));
@@ -64,7 +66,7 @@ beforeEach(async () => {
   forkConversation.mockClear();
   clearSubagentConfigCache();
   __testSetBackend({
-    capabilities: { localMemfs: false },
+    capabilities: { localMemfs: false, environmentRouting: true },
     forkConversation,
     retrieveAgent: async () => ({ name: "Parent", model: "anthropic/test" }),
     retrieveConversation: async () => ({ model: "anthropic/test" }),
@@ -90,6 +92,116 @@ afterEach(async () => {
 });
 
 describe("fork launch receipt", () => {
+  test("a failed Agent startup rejects dispatch without accepting input or replacing the fork", async () => {
+    let exit!: (value: { exitCode: number; exitSignal: null }) => void;
+    let spawned!: () => void;
+    const spawnGate = new Promise<void>((resolve) => {
+      spawned = resolve;
+    });
+    const child = fakeChildProcess();
+    const completion = new Promise<{ exitCode: number; exitSignal: null }>(
+      (resolve) => {
+        exit = resolve;
+      },
+    );
+    spawnProcess.mockImplementationOnce(() => {
+      spawned();
+      return { ...child, completion } as ReturnType<typeof fakeChildProcess>;
+    });
+    const accepted = mock(async () => {});
+    const pending = runWithRuntimeContext({ workingDirectory: testHome }, () =>
+      task(
+        {
+          subagent_type: "fork",
+          prompt: "Run bound work",
+          description: "Failed startup",
+          computer: "work-mac",
+        },
+        {
+          beforeStart: async () => ({
+            start: true,
+            clientMessageId: "slack-thread:conv-fork",
+          }),
+          onInputAccepted: accepted,
+        },
+      ),
+    );
+    await spawnGate;
+    child.process.stderr.write("Computer is offline.");
+    exit({ exitCode: 1, exitSignal: null });
+    await expect(pending).rejects.toThrow("Computer is offline");
+    expect(accepted).not.toHaveBeenCalled();
+    expect(forkConversation).toHaveBeenCalledTimes(1);
+    expect(spawnProcess).toHaveBeenCalledTimes(1);
+  });
+
+  test("dispatch waits past the eager fork link for initial enqueue acceptance on the selected computer", async () => {
+    let spawned!: () => void;
+    const spawnGate = new Promise<void>((resolve) => {
+      spawned = resolve;
+    });
+    let created: ReturnType<typeof fakeChildProcess> | undefined;
+    spawnProcess.mockImplementationOnce(() => {
+      const value = fakeChildProcess();
+      created = value;
+      spawned();
+      return value;
+    });
+    let returned = false;
+    const pending = runWithRuntimeContext({ workingDirectory: testHome }, () =>
+      task(
+        {
+          subagent_type: "fork",
+          prompt: "Run the bound work",
+          description: "Thread worker",
+          computer: "work-mac",
+        },
+        {
+          beforeStart: async () => ({
+            start: true,
+            clientMessageId: "slack-thread:conv-fork",
+          }),
+          onInputAccepted: async (receipt) => {
+            expect(receipt.conversation_id).toBe("conv-fork");
+          },
+        },
+      ),
+    ).then((value) => {
+      returned = true;
+      return value;
+    });
+    await spawnGate;
+    expect(getSubagentSnapshot().agents[0]?.conversationId).toBe("conv-fork");
+    expect(returned).toBe(false);
+    const call = (
+      spawnProcess.mock.calls as unknown as Array<
+        [string, string[], { env: NodeJS.ProcessEnv }]
+      >
+    )[0];
+    if (!call || !created) throw new Error("Child did not start");
+    expect(call[1]).toContain("work-mac");
+    expect(call[2].env.LETTA_SUBAGENT_INITIAL_INPUT).toContain(
+      "slack-thread:conv-fork",
+    );
+    const child = created.process;
+    child.stdout.write(
+      `${JSON.stringify({
+        type: "system",
+        subtype: "input_accepted",
+        receipt: {
+          status: "queued",
+          agent_id: "agent-parent",
+          conversation_id: "conv-fork",
+          client_message_id: "slack-thread:conv-fork",
+          super_run_id: "super-1",
+          workflow_id: "conv-queue-conv-fork",
+        },
+      })}\n`,
+    );
+    expect(await pending).toContain("Task running in background");
+    expect(returned).toBe(true);
+  });
+
   test.each(["fork", "recall"])(
     "%s returns both IDs before the child emits init or completes",
     async (subagent_type) => {

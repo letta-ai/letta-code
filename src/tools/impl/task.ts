@@ -22,6 +22,7 @@ import {
   type SubagentConfig,
   type SubagentMemoryScope,
 } from "@/agent/subagents";
+import type { SubagentInputAcceptance } from "@/agent/subagents/input-acceptance";
 import { spawnSubagent } from "@/agent/subagents/manager";
 import {
   type ForkModelOverride,
@@ -52,7 +53,11 @@ import {
   scheduleBackgroundTaskCleanup,
   setBackgroundTaskOutput,
 } from "./process_manager.js";
-import { runSubagentSetup, type SubagentSetup } from "./subagent-setup";
+import {
+  createInputAcceptanceWaiter,
+  runSubagentSetup,
+  type SubagentSetup,
+} from "./subagent-setup";
 import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation";
 
@@ -97,6 +102,7 @@ export interface SpawnBackgroundSubagentTaskArgs {
   /** Replace the subagent's configured system prompt/persona (advanced). */
   systemPromptOverride?: string;
   firstTurnReminder?: string;
+  inputAcceptance?: SubagentInputAcceptance;
   toolCallId?: string;
   existingAgentId?: string;
   existingConversationId?: string;
@@ -370,6 +376,7 @@ export function spawnBackgroundSubagentTask(
     model,
     systemPromptOverride,
     firstTurnReminder,
+    inputAcceptance,
     toolCallId,
     existingAgentId,
     existingConversationId,
@@ -470,6 +477,7 @@ export function spawnBackgroundSubagentTask(
     environment,
     actingUserId,
     firstTurnReminder,
+    inputAcceptance,
   );
   bgTask.completion = subagentExecution.then(
     () => undefined,
@@ -862,6 +870,7 @@ export async function task(
 
   let effectiveAgentId = args.agent_id;
   let effectiveConversationId = args.conversation_id;
+  let initialClientMessageId: string | undefined;
 
   if (config.fork) {
     if (args.agent_id || args.conversation_id) {
@@ -894,7 +903,8 @@ export async function task(
             return backend.deleteConversation(id);
           },
         });
-        if (stopped !== undefined) return stopped;
+        if (!stopped.start) return stopped.result;
+        initialClientMessageId = stopped.clientMessageId;
       }
     } catch (error) {
       const errorMessage =
@@ -908,6 +918,15 @@ export async function task(
   const prompt = inputPrompt;
 
   const resolvedParentScope = resolveNotificationScope(args.parentScope);
+  if (setup?.onInputAccepted && !initialClientMessageId)
+    throw new Error("Before-start setup must provide the initial input ID");
+  const acceptance =
+    setup?.onInputAccepted && initialClientMessageId
+      ? createInputAcceptanceWaiter(
+          initialClientMessageId,
+          setup.onInputAccepted,
+        )
+      : undefined;
 
   const { taskId, outputFile, subagentId } = spawnBackgroundSubagentTask({
     subagentType: subagent_type,
@@ -920,6 +939,10 @@ export async function task(
     maxTurns: args.max_turns,
     forkedContext: config.fork,
     firstTurnReminder: setup?.firstTurnReminder,
+    inputAcceptance: acceptance?.acceptance,
+    onComplete: acceptance
+      ? async (result) => acceptance.completed(result.error)
+      : undefined,
     parentScope: resolvedParentScope,
     environment:
       typeof args.computer === "string" && args.computer.trim()
@@ -927,7 +950,8 @@ export async function task(
         : undefined,
   });
 
-  await waitForBackgroundSubagentLink(subagentId, null, signal);
+  if (acceptance) await acceptance.wait(signal);
+  else await waitForBackgroundSubagentLink(subagentId, null, signal);
 
   // Extract Letta agent ID from subagent state (available after link resolves)
   const linkedAgent = getSubagentSnapshot().agents.find(

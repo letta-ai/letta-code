@@ -32,6 +32,8 @@ export interface ExecutionState {
    * remote turn from this receipt.
    */
   enqueueReceipt: EnqueueReceipt | null;
+  /** First enqueue acceptance, also emitted by children that keep streaming. */
+  acceptedInput?: EnqueueReceipt;
   resultStats: {
     durationMs: number;
     totalTokens: number;
@@ -254,6 +256,13 @@ export function processStreamEvent(
     switch (event.type) {
       case "init":
       case "system":
+        if (
+          event.subtype === "input_accepted" &&
+          isEnqueueReceipt(event.receipt ?? {})
+        ) {
+          state.acceptedInput = event.receipt;
+          break;
+        }
         // Handle both legacy "init" type and new "system" type with subtype "init"
         if (event.type === "init" || event.subtype === "init") {
           handleInitEvent(event, state, subagentId);

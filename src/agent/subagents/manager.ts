@@ -24,11 +24,7 @@ import {
   getLocalBackendStorageDir,
 } from "@/backend";
 import { buildAgentReference } from "@/cli/helpers/app-urls";
-import {
-  INTERRUPTED_BY_USER,
-  SYSTEM_REMINDER_CLOSE,
-  SYSTEM_REMINDER_OPEN,
-} from "@/constants";
+import { INTERRUPTED_BY_USER } from "@/constants";
 import { cliPermissions } from "@/permissions/cli-permissions-instance";
 import { resolveAllowedMemoryRoots } from "@/permissions/memory-paths";
 import { sessionPermissions } from "@/permissions/session";
@@ -51,6 +47,15 @@ import {
   type SubagentResult,
 } from ".";
 import { buildSubagentPrompt } from "./context-budget";
+import {
+  buildDeploySystemReminder,
+  buildForkSystemReminder,
+} from "./initial-reminders";
+import {
+  createSubagentInputObserver,
+  SUBAGENT_INITIAL_INPUT_ENV,
+  type SubagentInputAcceptance,
+} from "./input-acceptance";
 import { allocateSubagentName } from "./names";
 import { collectRemoteTurnResult } from "./remote-turn-wait";
 import {
@@ -291,6 +296,7 @@ async function executeSubagent(
   actingUserIdOverride?: string,
   parentAgentName?: string | null,
   parentConversationId?: string,
+  inputAcceptance?: SubagentInputAcceptance,
 ): Promise<SubagentResult> {
   const withModel = (result: SubagentResult): SubagentResult =>
     model ? { ...result, model } : result;
@@ -410,6 +416,12 @@ async function executeSubagent(
           ? undefined
           : allocateSubagentName(parentAgentName),
     });
+    delete childEnv[SUBAGENT_INITIAL_INPUT_ENV];
+    if (inputAcceptance && existingConversationId)
+      childEnv[SUBAGENT_INITIAL_INPUT_ENV] = JSON.stringify({
+        conversationId: existingConversationId,
+        clientMessageId: inputAcceptance.clientMessageId,
+      });
 
     // Optionally confine subagents with the memory-subagent profile to an OS filesystem sandbox.
     // Returns null (spawn unchanged) when disabled, not applicable, or no
@@ -460,6 +472,7 @@ async function executeSubagent(
     });
 
     const stdoutChunks: Buffer[] = [];
+    const inputObserver = createSubagentInputObserver(inputAcceptance);
     const stderrChunks: Buffer[] = [];
 
     // Initialize execution state
@@ -488,6 +501,7 @@ async function executeSubagent(
 
       for (const line of lines) {
         processStreamEvent(line, state, subagentId);
+        inputObserver.observe(state.acceptedInput ?? state.enqueueReceipt);
       }
     });
 
@@ -535,7 +549,7 @@ async function executeSubagent(
     // Handle non-zero exit code
     if (exitCode !== 0) {
       // Check if this is a provider-not-supported error and we haven't retried yet
-      if (!isRetry && isProviderNotSupportedError(stderr)) {
+      if (!inputAcceptance && !isRetry && isProviderNotSupportedError(stderr)) {
         const { handle: primaryModel } = await getPrimaryAgentModelHandle({
           agentId: parentAgentIdOverride,
         });
@@ -563,6 +577,7 @@ async function executeSubagent(
             actingUserIdOverride,
             parentAgentName,
             parentConversationId,
+            inputAcceptance,
           );
         }
       }
@@ -594,6 +609,7 @@ async function executeSubagent(
           actingUserIdOverride,
           parentAgentName,
           parentConversationId,
+          inputAcceptance,
         );
       }
 
@@ -609,6 +625,8 @@ async function executeSubagent(
       });
     }
 
+    inputObserver.observe(state.acceptedInput ?? state.enqueueReceipt);
+    await inputObserver.finish();
     // The child submitted a computer-routed send and exited with the receipt.
     // Follow the remote turn from here; the remote listener owns execution.
     if (state.enqueueReceipt) {
@@ -712,6 +730,7 @@ async function executeSubagent(
           actingUserIdOverride,
           parentAgentName,
           parentConversationId,
+          inputAcceptance,
         );
       }
     }
@@ -726,22 +745,6 @@ async function executeSubagent(
   }
 }
 
-/**
- * Build a system reminder prefix for deployed agents
- */
-function buildDeploySystemReminder(
-  senderAgentName: string,
-  senderAgentId: string,
-): string {
-  return `${SYSTEM_REMINDER_OPEN}
-This task is from "${senderAgentName}" (agent ID: ${senderAgentId}), which deployed you as a subagent inside the Letta Code CLI (docs.letta.com/letta-code).
-You have access to local tools (Bash, Read, Write, Edit, etc.) in their codebase.
-Your final message will be returned to the caller.
-${SYSTEM_REMINDER_CLOSE}
-
-`;
-}
-
 export function shouldPrependDeploySystemReminder(
   existingAgentId: string | undefined,
   parentAgentId: string,
@@ -753,42 +756,6 @@ export function recallPromptForBackend(backendMode?: BackendMode): string {
   return backendMode === "local"
     ? recallSubagentLocalPrompt
     : recallSubagentPrompt;
-}
-
-function buildForkSystemReminder(
-  subagentType?: string,
-  backendMode?: BackendMode,
-): string {
-  if (subagentType === "recall") {
-    const recallPrompt = recallPromptForBackend(backendMode);
-    return `${SYSTEM_REMINDER_OPEN}
-You have been forked from the primary conversational thread to run as an independent subagent. The fork only exists so you can see the parent agent's conversation trajectory in-context as reference — you are NOT the primary agent and do not share its tools.
-
-**Your sole task is now to search previous conversation history and provide a report. Ignore any existing ongoing tasks.** Do not attempt to continue, finish, or act on anything the primary agent was in the middle of doing.
-
-Your toolset is limited to Bash, Read, and TaskOutput. You cannot edit files, run skills, dispatch further tasks, or take any action beyond searching messages and returning a report.
-
-You CANNOT ask questions mid-execution — all instructions are provided upfront.
-Your final message will be returned to the caller.
-
-${recallPrompt}
-${SYSTEM_REMINDER_CLOSE}
-
-`;
-  }
-
-  return `${SYSTEM_REMINDER_OPEN}
-You have been forked from the primary conversational thread to run as an independent subagent. The fork only exists so you can see the parent agent's conversation trajectory in-context as reference — you are NOT the primary agent.
-
-**Your sole task is the one described in the user message below. Ignore any existing ongoing tasks from the inherited trajectory.** Do not attempt to continue, finish, or act on anything the primary agent was in the middle of doing.
-
-You inherit the primary agent's toolset.
-
-You CANNOT ask questions mid-execution — all instructions are provided upfront.
-Your final message will be returned to the caller.
-${SYSTEM_REMINDER_CLOSE}
-
-`;
 }
 
 /**
@@ -824,6 +791,7 @@ async function spawnSubagentInContext(
   environment?: string,
   actingUserId?: string,
   firstTurnReminder?: string,
+  inputAcceptance?: SubagentInputAcceptance,
 ): Promise<SubagentResult> {
   const launchActingUserId = resolveActingUserId(actingUserId);
   const allConfigs = await getAllSubagentConfigs();
@@ -908,7 +876,8 @@ async function spawnSubagentInContext(
         (await getBackend().retrieveAgent(resolvedParentAgentId));
       if (forkedContext) {
         const systemReminder =
-          firstTurnReminder ?? buildForkSystemReminder(type, backendMode);
+          firstTurnReminder ??
+          buildForkSystemReminder(type, recallPromptForBackend(backendMode));
         finalPrompt = systemReminder + prompt;
       } else if (
         shouldPrependDeploySystemReminder(
@@ -964,6 +933,7 @@ async function spawnSubagentInContext(
     launchActingUserId,
     parentAgent?.name,
     resolvedParentConversationId,
+    inputAcceptance,
   );
 
   return result;

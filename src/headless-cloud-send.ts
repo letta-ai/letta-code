@@ -1,4 +1,8 @@
 import { randomUUID } from "node:crypto";
+import {
+  emitSubagentInputAccepted,
+  subagentInitialInputId,
+} from "@/agent/subagents/input-acceptance";
 import type { Backend } from "@/backend";
 import {
   buildAgentSendContent,
@@ -134,7 +138,7 @@ export async function tryCloudHeadlessSend(
   const format = values["output-format"] ?? "text";
   const noWait = Boolean(values["no-wait"]);
   const started = Date.now();
-  const clientMessageId = randomUUID();
+  let clientMessageId: string = randomUUID();
   const controller = new AbortController();
   const submissionTimeout = setTimeout(
     () =>
@@ -225,6 +229,11 @@ export async function tryCloudHeadlessSend(
       backend,
       controller.signal,
     ));
+    clientMessageId = subagentInitialInputId(
+      conversationId,
+      clientMessageId,
+      env,
+    );
     const recovery = {
       status_command: `letta messages status --agent ${agentId} --conversation ${conversationId}`,
       messages_command: `letta messages list --agent ${agentId} --conversation ${conversationId}`,
@@ -256,6 +265,7 @@ export async function tryCloudHeadlessSend(
       AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]),
     );
     clearTimeout(submissionTimeout);
+    await emitSubagentInputAccepted(receipt, env, deps.writeStdout);
     if (noWait) {
       await writeObject({ ...receipt, ...recovery });
       return 0;

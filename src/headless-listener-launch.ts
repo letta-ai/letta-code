@@ -3,6 +3,10 @@ import { setTimeout as delay } from "node:timers/promises";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import WebSocket from "ws";
 import {
+  emitSubagentInputAccepted,
+  subagentInitialInputId,
+} from "@/agent/subagents/input-acceptance";
+import {
   type AppServerClient,
   createAppServerClient,
 } from "@/app-server-client";
@@ -171,7 +175,10 @@ export async function launchListenerConversation(
   const client =
     deps.client ??
     (await createListenerClient(params.connectionId, params.scope));
-  const clientMessageId = randomUUID();
+  const clientMessageId = subagentInitialInputId(
+    params.scope.conversation_id,
+    randomUUID(),
+  );
   const runIds = new Set<string>();
   let loop: LoopState | undefined;
   let cancelled = false;
@@ -289,6 +296,7 @@ export async function launchListenerConversation(
       },
       AbortSignal.timeout(30_000),
     );
+    await emitSubagentInputAccepted(accepted);
     if (params.noWait)
       return {
         status: "queued",

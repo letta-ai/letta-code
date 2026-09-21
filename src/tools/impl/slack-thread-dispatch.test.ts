@@ -15,6 +15,8 @@ const bound = {
   created: true,
   agent_id: "agent-parent",
   conversation_id: "conv-new",
+  initial_client_message_id: "slack-thread:conv-new",
+  initial_input_receipt: null,
 };
 function result(value: unknown) {
   return {
@@ -47,8 +49,19 @@ test("uses Agent's fork launch and waits for Cloud binding before its first turn
       agentId: "agent-parent",
       conversationId: "conv-new",
     });
-    expect(prepared).toEqual({ start: true });
+    expect(prepared).toEqual({
+      start: true,
+      clientMessageId: "slack-thread:conv-new",
+    });
     order.push("start");
+    await setup?.onInputAccepted?.({
+      status: "queued",
+      agent_id: "agent-parent",
+      conversation_id: "conv-new",
+      client_message_id: "slack-thread:conv-new",
+      super_run_id: "super-1",
+      workflow_id: "conv-queue-conv-new",
+    });
     return "Task running";
   };
   const execute = createSlackThreadDispatchExecutor(controller, {
@@ -63,7 +76,16 @@ test("uses Agent's fork launch and waits for Cloud binding before its first turn
 
 test("repeat dispatch returns the bound worker and does not send new instructions", async () => {
   const execute = createSlackThreadDispatchExecutor(
-    async () => result({ ...bound, created: false }),
+    async () =>
+      result({
+        ...bound,
+        created: false,
+        initial_input_receipt: {
+          clientMessageId: bound.initial_client_message_id,
+          superRunId: "super-1",
+          workflowId: "conv-queue-conv-new",
+        },
+      }),
     {
       cloudBackend: () => true,
       runAgent: async () => {

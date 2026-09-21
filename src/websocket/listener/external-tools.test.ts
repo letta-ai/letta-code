@@ -139,6 +139,12 @@ describe("listener runtime_start external tool bridge", () => {
                     created: false,
                     agent_id: "agent-1",
                     conversation_id: "conv-worker",
+                    initial_client_message_id: "slack-thread:conv-worker",
+                    initial_input_receipt: {
+                      clientMessageId: "slack-thread:conv-worker",
+                      superRunId: "super-1",
+                      workflowId: "conv-queue-conv-worker",
+                    },
                   }),
                 },
               ],
