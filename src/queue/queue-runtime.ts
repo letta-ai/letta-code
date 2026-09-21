@@ -106,8 +106,11 @@ export function isCoalescable(kind: QueueItemKind): boolean {
   );
 }
 
-function preventsCoalescing(item: QueueItem): boolean {
-  return "noCoalesce" in item && item.noCoalesce === true;
+function preventsCoalescing(item: {
+  kind: QueueItemKind;
+  noCoalesce?: boolean;
+}): boolean {
+  return item.noCoalesce === true;
 }
 
 function hasSameScope(a: QueueItem, b: QueueItem): boolean {
@@ -234,8 +237,14 @@ export class QueueRuntime {
     }
 
     // Soft limit: only drop coalescable items
-    if (this.store.length >= this.maxItems && isCoalescable(input.kind)) {
-      const dropIdx = this.store.findIndex((i) => isCoalescable(i.kind));
+    if (
+      this.store.length >= this.maxItems &&
+      isCoalescable(input.kind) &&
+      !preventsCoalescing(input)
+    ) {
+      const dropIdx = this.store.findIndex(
+        (item) => isCoalescable(item.kind) && !preventsCoalescing(item),
+      );
       const dropped =
         dropIdx !== -1 ? this.store.splice(dropIdx, 1)[0] : undefined;
       if (dropped !== undefined) {

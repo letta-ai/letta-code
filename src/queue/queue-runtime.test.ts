@@ -135,6 +135,32 @@ describe("bounded buffer — soft limit", () => {
     expect(q.length).toBe(2);
   });
 
+  test("noCoalesce owner input survives ordinary and owner arrivals", () => {
+    const dropped: QueueItem[] = [];
+    const q = new QueueRuntime({
+      maxItems: 1,
+      hardMaxItems: 3,
+      callbacks: { onDropped: (item) => dropped.push(item) },
+    });
+    const ownerA = q.enqueue(
+      makeScopedMsg({ text: "owner A", noCoalesce: true }),
+    );
+    if (!ownerA) throw new Error("owner A was not enqueued");
+    q.enqueue(makeMsg("local follow-up"));
+    q.enqueue(makeScopedMsg({ text: "owner B", noCoalesce: true }));
+
+    expect(dropped).toHaveLength(0);
+    expect(q.peek().map((item) => item.id)).toContain(ownerA.id);
+    expect(q.peek().map((item) => (item as MessageQueueItem).content)).toEqual([
+      "owner A",
+      "local follow-up",
+      "owner B",
+    ]);
+    expect(
+      q.enqueue(makeScopedMsg({ text: "hard reject", noCoalesce: true })),
+    ).toBeNull();
+  });
+
   test("coalescable drop resumes when new coalescable arrives at capacity", () => {
     const dropped: QueueItem[] = [];
     const q = new QueueRuntime({
