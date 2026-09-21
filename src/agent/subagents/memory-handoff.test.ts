@@ -3,6 +3,8 @@ import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { __testSetBackend, type Backend } from "@/backend";
+import { DeterministicPongExecutor } from "@/backend/dev/headless-turn-executor";
+import { LocalBackend } from "@/backend/local/local-backend";
 import { prepareMemoryHandoff } from "./memory-handoff";
 
 const originalRoot = process.env.LETTA_TRANSCRIPT_ROOT;
@@ -12,6 +14,44 @@ afterEach(async () => {
   if (originalRoot === undefined) delete process.env.LETTA_TRANSCRIPT_ROOT;
   else process.env.LETTA_TRANSCRIPT_ROOT = originalRoot;
   if (root) await rm(root, { recursive: true, force: true });
+});
+
+test("local backend handoff includes history beyond the first page", async () => {
+  root = await mkdtemp(join(tmpdir(), "memory-handoff-local-"));
+  process.env.LETTA_TRANSCRIPT_ROOT = root;
+  const backend = new LocalBackend({
+    storageDir: join(root, "store"),
+    executor: new DeterministicPongExecutor(),
+    memfsEnabled: false,
+  });
+  __testSetBackend(backend);
+  const agent = await backend.createAgent({ name: "Handoff test" });
+  const conversation = await backend.createConversation({ agent_id: agent.id });
+  const stream = await backend.createConversationMessageStream(
+    conversation.id,
+    {
+      agent_id: agent.id,
+      messages: Array.from({ length: 105 }, (_, i) => ({
+        role: "user" as const,
+        content: `Parent fact ${i}`,
+      })),
+    },
+  );
+  for await (const _chunk of stream) {
+    // Persist the real local transcript before preparing the worker handoff.
+  }
+  const handoff = await prepareMemoryHandoff({
+    agentId: agent.id,
+    conversationId: conversation.id,
+    memoryDir: join(root, "memory"),
+    assignment: "Remember the latest fact.",
+  });
+  if (!handoff.transcriptPath) throw new Error("Missing transcript");
+  const snapshot = await readFile(handoff.transcriptPath, "utf8");
+  expect(JSON.parse(snapshot)).toHaveLength(106);
+  expect(snapshot).toContain("Parent fact 0");
+  expect(snapshot).toContain("Parent fact 104");
+  expect(handoff.prompt).not.toContain("Parent fact");
 });
 
 test("repeated launches preserve separate read-only snapshots without inlining history", async () => {
@@ -24,17 +64,19 @@ test("repeated launches preserve separate read-only snapshots without inlining h
     ) => {
       expect(conversationId).toBe("conv-parent");
       expect(options.agent_id).toBe("agent-parent");
-      return [
-        {
-          message_type: "system_message",
-          content: "parent system instructions",
-        },
-        { message_type: "reasoning_message", reasoning: "private reasoning" },
-        {
-          message_type: "user_message",
-          content: "old facts in parent history",
-        },
-      ];
+      return {
+        getPaginatedItems: () => [
+          {
+            message_type: "system_message",
+            content: "parent system instructions",
+          },
+          { message_type: "reasoning_message", reasoning: "private reasoning" },
+          {
+            message_type: "user_message",
+            content: "old facts in parent history",
+          },
+        ],
+      };
     },
   } as unknown as Backend);
   const params = {

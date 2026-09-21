@@ -58,7 +58,7 @@ test("memory delegates immediately, exports the originating conversation and lau
       exports.push(conversationId);
       startExport();
       await exportGate;
-      return [];
+      return { getPaginatedItems: () => [] };
     },
   } as unknown as Backend);
   const notifications: unknown[] = [];

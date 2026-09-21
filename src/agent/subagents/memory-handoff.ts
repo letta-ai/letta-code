@@ -15,21 +15,29 @@ export async function prepareMemoryHandoff(params: {
   let transcriptPath: string | undefined;
   // Conflict repair needs the checkout and its Git state, not the parent dialogue.
   if (!params.repairOnly) {
-    const page = await getBackend().listConversationMessages(
-      params.conversationId,
-      {
-        agent_id: params.agentId,
-        order: "asc",
-        limit: 100,
-      },
-    );
     const messages = [];
-    for await (const message of page) {
-      if (
-        message.message_type !== "reasoning_message" &&
-        message.message_type !== "system_message"
-      )
-        messages.push(message);
+    let after: string | undefined;
+    for (;;) {
+      const page = await getBackend().listConversationMessages(
+        params.conversationId,
+        {
+          agent_id: params.agentId,
+          order: "asc",
+          limit: 100,
+          ...(after ? { after } : {}),
+        },
+      );
+      // Both backends expose page items; only the API SDK provides an iterator.
+      const items = page.getPaginatedItems();
+      for (const message of items) {
+        if (
+          message.message_type !== "reasoning_message" &&
+          message.message_type !== "system_message"
+        )
+          messages.push(message);
+      }
+      if (items.length < 100) break;
+      after = items[items.length - 1]?.id;
     }
     const directory = join(
       getTranscriptRoot(),
