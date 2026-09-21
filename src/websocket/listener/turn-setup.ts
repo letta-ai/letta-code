@@ -343,6 +343,7 @@ export async function prepareListenerTurn(params: {
       modAdapters,
       modEvents: createListenerModEvents(modAdapters),
     });
+    if (isInterrupted()) return prepared;
     runtime.currentToolset = prepared.toolset;
     runtime.currentToolsetPreference = prepared.toolsetPreference;
     runtime.currentLoadedTools = prepared.preparedToolContext.loadedToolNames;
