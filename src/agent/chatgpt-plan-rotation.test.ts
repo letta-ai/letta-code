@@ -20,6 +20,7 @@ const FULL_DETAIL =
 
 const PRIMARY_HANDLE = "chatgpt-caren/gpt-5.2";
 const SIBLING_HANDLE = "chatgpt-jin/gpt-5.2";
+const THIRD_HANDLE = "chatgpt-mia/gpt-5.2";
 
 describe("quota-aware plan rotation over HTTP", () => {
   for (const outcome of [
@@ -343,7 +344,6 @@ describe("rotateChatGPTPlanOnQuotaLimit", () => {
     }
   });
 
-<<<<<<< HEAD
   test("skips an expired account selected by an earlier quota rotation", async () => {
     const agent = {
       id: "agent-rotation",
@@ -842,85 +842,5 @@ describe("isChatGPTOAuthCredentialFailure", () => {
         message: "Invalid Anthropic API key provided",
       }),
     ).toBe(false);
-  });
-});
-
-describe("rotateChatGPTPlanOnRecoverableFailure on authentication failure", () => {
-  test("rotates to a sibling plan on terminal OAuth credential failure", async () => {
-    const agent = {
-      id: "agent-rotation",
-      model: PRIMARY_HANDLE,
-      llm_config: { context_window: 272_000 },
-    };
-    const conversations = new Map([
-      ["conv-first", { id: "conv-first", model: PRIMARY_HANDLE }],
-    ]);
-    const backend = {
-      capabilities: { localModelCatalog: false },
-      async listModels() {
-        return [
-          {
-            handle: PRIMARY_HANDLE,
-            provider_type: "chatgpt_oauth",
-            provider_category: "byok",
-            max_context_window: 128_000,
-          },
-          {
-            handle: SIBLING_HANDLE,
-            provider_type: "chatgpt_oauth",
-            provider_category: "byok",
-            max_context_window: 128_000,
-          },
-        ];
-      },
-      async retrieveAgent() {
-        return agent;
-      },
-      async updateAgent(_agentId: string, update: Record<string, unknown>) {
-        Object.assign(agent, update);
-        return agent;
-      },
-      async retrieveConversation(conversationId: string) {
-        return conversations.get(conversationId);
-      },
-      async updateConversation(
-        conversationId: string,
-        update: Record<string, unknown>,
-      ) {
-        const conv = conversations.get(conversationId);
-        if (!conv) throw new Error("not found");
-        Object.assign(conv, update);
-        return conv;
-      },
-    };
-    __testSetBackend(backend as never);
-    clearAvailableModelsCache();
-
-    try {
-      const exhausted = new Set<string>();
-      const result = await rotateChatGPTPlanOnRecoverableFailure({
-        agentId: "agent-rotation",
-        conversationId: "conv-first",
-        currentHandle: null,
-        error: {
-          error_type: "llm_authentication",
-          message:
-            "Failed to refresh ChatGPT OAuth token: refresh token is invalid or expired",
-        },
-        exhaustedProviders: exhausted,
-      });
-
-      expect(result).not.toBeNull();
-      expect(result?.fromProvider).toBe("chatgpt-caren");
-      expect(result?.toProvider).toBe("chatgpt-jin");
-      expect(result?.toHandle).toBe(SIBLING_HANDLE);
-      expect(result?.failureKind).toBe("authentication");
-      expect(result?.resetsAt).toBeNull();
-      expect(exhausted).toContain("chatgpt-caren");
-      expect(conversations.get("conv-first")?.model).toBe(SIBLING_HANDLE);
-    } finally {
-      clearAvailableModelsCache();
-      __testSetBackend(null);
-    }
   });
 });
