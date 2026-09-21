@@ -158,13 +158,14 @@ test("buildMessageContentFromDisplay handles mixed content", () => {
     data: "imgdata",
     mediaType: "image/jpeg",
   });
+  const image = getImage(imageId);
   const display = `Start [Pasted text #${textId} +1 lines] middle [Image #${imageId}] end`;
   const content = buildMessageContentFromDisplay(display);
   expect(content).toHaveLength(3);
-  expect(content[0]?.type).toBe("text");
-  expect(content[0]?.type === "text" && content[0].text).toMatch(
-    /^Start Pasted content middle <system-reminder>Image available at "\/.*\.jpg"<\/system-reminder>\n$/,
-  );
+  expect(content[0]).toEqual({
+    type: "text",
+    text: `Start Pasted content middle <system-reminder>Image available at ${JSON.stringify(image?.localPath)}</system-reminder>\n`,
+  });
   expect(content[1]?.type).toBe("image");
   expect(content[2]).toEqual({ type: "text", text: " end" });
 });
