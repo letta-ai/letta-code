@@ -24,6 +24,8 @@ beforeEach(() => {
   git("config", "user.name", "Memory Test");
   git("config", "user.email", "memory@example.test");
   git("config", "commit.gpgsign", "false");
+  git("config", "core.autocrlf", "false");
+  git("config", "core.eol", "lf");
   writeFileSync(join(root, "note.md"), "original\n");
   git("add", "note.md");
   git("commit", "-m", "initial");

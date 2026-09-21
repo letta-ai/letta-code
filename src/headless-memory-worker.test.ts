@@ -178,9 +178,18 @@ for (const mode of ["one-shot", "bidirectional", "primary"] as const) {
         storageDir,
         seedDefaultAgent: false,
       });
-      const workerMessages = JSON.stringify(
-        workerStore.listConversationMessages("default", { agent_id: workerId }),
-      );
+      const workerMessages = workerStore
+        .listConversationMessages("default", { agent_id: workerId })
+        .flatMap((message) =>
+          typeof message.content === "string"
+            ? [message.content]
+            : Array.isArray(message.content)
+              ? message.content.flatMap((part) =>
+                  part.type === "text" ? [part.text] : [],
+                )
+              : [],
+        )
+        .join("\n");
       expect(
         JSON.parse(readFileSync(settingsPath, "utf8")).agents.find(
           (a: { agentId: string }) => a.agentId === workerId,
