@@ -14,22 +14,21 @@ describe("request-scoped client toolsets", () => {
       toolsetPreference: "auto",
       clientToolset: {
         base: "none",
-        include: ["Read", "LS", "Glob", "Grep"],
+        include: ["Read", "Glob", "Grep"],
       },
-      clientToolAllowlist: ["Read", "LS", "Glob", "Grep"],
+      clientToolAllowlist: ["Read", "Glob", "Grep"],
     });
 
     expect(prepared.toolset).toBe("none");
     expect(prepared.toolsetPreference).toBe("auto");
     expect(prepared.preparedToolContext.loadedToolNames).toEqual([
       "Read",
-      "LS",
       "Glob",
       "Grep",
     ]);
     expect(
       prepared.preparedToolContext.clientTools.map((tool) => tool.name),
-    ).toEqual(["Read", "LS", "Glob", "Grep"]);
+    ).toEqual(["Read", "Glob", "Grep"]);
   });
 
   test("applies exclusions after additive tool includes", async () => {
@@ -115,15 +114,14 @@ describe("request-scoped client toolsets", () => {
     const prepared = await prepareToolExecutionContextForResolvedTarget({
       modelIdentifier: "anthropic/claude-sonnet-5",
       toolsetPreference: "auto",
-      clientToolAllowlist: ["Read", "LS", "Glob", "Grep"],
+      clientToolAllowlist: ["Read", "Glob", "Grep"],
     });
 
-    // LS, Glob and Grep are not in the default base; allowlisting them is
-    // what loads them.
+    // Glob and Grep are not in the default base; allowlisting them is what
+    // loads them.
     expect([...prepared.preparedToolContext.loadedToolNames].sort()).toEqual([
       "Glob",
       "Grep",
-      "LS",
       "Read",
     ]);
   });

@@ -112,7 +112,7 @@ describe("tool execution context snapshot", () => {
     await loadSpecificTools(["Read"]);
     const { contextId } = captureToolExecutionContext();
 
-    await loadSpecificTools(["ReadFile"]);
+    await loadSpecificTools(["Write"]);
 
     const withoutContext = await executeTool("Read", {
       file_path: "README.md",
@@ -122,28 +122,6 @@ describe("tool execution context snapshot", () => {
 
     const withContext = await executeTool(
       "Read",
-      { file_path: "README.md" },
-      { toolContextId: contextId },
-    );
-    expect(withContext.status).toBe("success");
-  });
-
-  test("executes ReadFile using captured context after global toolset changes", async () => {
-    await loadSpecificTools(["ReadFile"]);
-    const { contextId } = captureToolExecutionContext();
-
-    await loadSpecificTools(["Read"]);
-
-    const withoutContext = await executeTool("ReadFile", {
-      file_path: "README.md",
-    });
-    expect(withoutContext.status).toBe("error");
-    expect(asText(withoutContext.toolReturn)).toContain(
-      "Tool not found: ReadFile",
-    );
-
-    const withContext = await executeTool(
-      "ReadFile",
       { file_path: "README.md" },
       { toolContextId: contextId },
     );

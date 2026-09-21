@@ -72,7 +72,7 @@ function targetPaths(
     const filePath = extractFilePath(toolArgs);
     if (filePath) rawPaths.push(filePath);
     if (
-      ["Glob", "Grep", "ListDir"].includes(canonicalToolName(toolName)) &&
+      ["Glob", "Grep"].includes(canonicalToolName(toolName)) &&
       typeof toolArgs.pattern === "string" &&
       isAbsolute(toolArgs.pattern)
     ) {
@@ -89,7 +89,7 @@ function isWithin(path: string, root: string): boolean {
 }
 
 function isRecursiveTool(toolName: string): boolean {
-  return ["Glob", "Grep", "ListDir"].includes(canonicalToolName(toolName));
+  return ["Glob", "Grep"].includes(canonicalToolName(toolName));
 }
 
 function isWriteTool(toolName: string): boolean {

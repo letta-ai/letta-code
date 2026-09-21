@@ -248,22 +248,15 @@ export function extractFilePath(toolArgs: ToolArgs): string | null {
   return null;
 }
 
-function extractMultiEditPaths(toolArgs: ToolArgs): string[] {
-  // MultiEdit uses file_path (singular), but callers occasionally pass an
-  // `edits` array. Either way the paths come from the top-level `file_path`.
-  const single = extractFilePath(toolArgs);
-  return single ? [single] : [];
-}
-
 /**
  * Tools whose semantics imply a recursive walk from the given path
  * (as opposed to touching a single file). When one of these is pointed
  * at an *ancestor* of the agents tree, the walk would expose every
  * agent on disk — so we treat ancestor paths as hits for these tools.
  *
- * Compared against the canonical tool name, including the LS alias.
+ * Compared against the canonical tool name.
  */
-const RECURSIVE_CANONICAL_TOOLS = new Set<string>(["Glob", "ListDir", "Grep"]);
+const RECURSIVE_CANONICAL_TOOLS = new Set<string>(["Glob", "Grep"]);
 
 function isRecursivePathTool(toolName: string): boolean {
   return RECURSIVE_CANONICAL_TOOLS.has(canonicalToolName(toolName));
@@ -301,7 +294,7 @@ export function extractTargetAgentPaths(
         return;
       case "ancestor":
         // Only dangerous for tools that recursively walk from the
-        // given path (Glob/ListDir). Single-file tools like Read
+        // given path (Glob/Grep). Single-file tools like Read
         // can't escape their target.
         if (recursive) {
           anyAgentScoped = true;
@@ -344,17 +337,8 @@ export function extractTargetAgentPaths(
     return { agentIds, anyAgentScoped };
   }
 
-  // MultiEdit: same path semantics as Edit.
-  if (toolName === "MultiEdit") {
-    for (const p of extractMultiEditPaths(toolArgs)) {
-      addFromPath(p);
-    }
-    return { agentIds, anyAgentScoped };
-  }
-
-  // All other in-process file tools: Read/Write/Edit/NotebookEdit/Glob/
-  // ListDir + Codex aliases (all converge on file_path / path /
-  // notebook_path after the toolset adapters).
+  // All other in-process file tools: Read/Write/Edit/NotebookEdit/Glob/Grep
+  // (all converge on file_path / path / notebook_path).
   addFromPath(extractFilePath(toolArgs));
 
   // Glob also accepts a `pattern` arg. An absolute pattern like

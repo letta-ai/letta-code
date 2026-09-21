@@ -3,10 +3,9 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bash } from "@/tools/impl/bash";
-import { bash_output } from "@/tools/impl/bash-output";
+import { getTaskOutput } from "@/tools/impl/bash-output";
 import { glob } from "@/tools/impl/glob";
 import { grep } from "@/tools/impl/grep";
-import { ls } from "@/tools/impl/ls";
 import { read } from "@/tools/impl/read";
 import { LIMITS } from "@/tools/impl/truncation";
 
@@ -216,46 +215,7 @@ describe("tool truncation integration tests", () => {
     });
   });
 
-  describe("LS tool truncation", () => {
-    test(
-      "truncates directory exceeding 1000 entries",
-      async () => {
-        // Create 1500 files
-        for (let i = 1; i <= 1500; i++) {
-          await writeFile(join(testDir, `file${i}.txt`), "content");
-        }
-
-        const result = await ls({ path: testDir });
-
-        const output = result.content[0]?.text || "";
-        expect(output).toContain("[Output truncated");
-        expect(output).toContain("showing 1,000 of 1,500 entries");
-        expect(output).toContain("file1.txt");
-        // Should not contain files beyond 1000
-        const lines = output.split("\n");
-        // Count actual file entries (excluding headers and notices)
-        const fileEntries = lines.filter((line) => line.match(/^\s+- file/));
-        expect(fileEntries.length).toBeLessThanOrEqual(LIMITS.LS_MAX_ENTRIES);
-      },
-      { timeout: 15000 },
-    ); // Increased timeout for Windows CI where file creation is slower
-
-    test("does not truncate small directories", async () => {
-      // Create 5 files
-      for (let i = 1; i <= 5; i++) {
-        await writeFile(join(testDir, `file${i}.txt`), "content");
-      }
-
-      const result = await ls({ path: testDir });
-
-      const output = result.content[0]?.text || "";
-      expect(output).not.toContain("truncated");
-      expect(output).toContain("file1.txt");
-      expect(output).toContain("file5.txt");
-    });
-  });
-
-  describe("BashOutput tool truncation", () => {
+  describe("background task output truncation", () => {
     test.skipIf(process.platform === "win32")(
       "truncates accumulated output exceeding 30K characters",
       async () => {
@@ -274,7 +234,10 @@ describe("tool truncation integration tests", () => {
         // Wait a bit for output to accumulate
         await new Promise((resolve) => setTimeout(resolve, 100));
 
-        const outputResult = await bash_output({ shell_id: bashId });
+        const outputResult = await getTaskOutput({
+          task_id: bashId,
+          block: false,
+        });
 
         expect(outputResult.message.length).toBeLessThan(35000); // 30K + notice
         if (outputResult.message.length > 30000) {

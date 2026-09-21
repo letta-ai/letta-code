@@ -8,7 +8,6 @@ import {
   getBackgroundOutputFileReadBytes,
 } from "./process_manager.js";
 import { LIMITS, truncateByChars } from "./truncation.js";
-import { validateRequiredParams } from "./validation.js";
 
 interface GetTaskOutputArgs {
   task_id: string;
@@ -428,32 +427,4 @@ async function getBackgroundTaskOutput(
     message: truncatedOutput,
     status: currentTask.status,
   };
-}
-
-// Legacy BashOutput interface
-interface BashOutputArgs {
-  shell_id: string;
-  filter?: string;
-}
-
-interface BashOutputResult {
-  message: string;
-}
-
-/**
- * Legacy BashOutput function - wraps getTaskOutput with non-blocking behavior.
- */
-export async function bash_output(
-  args: BashOutputArgs,
-): Promise<BashOutputResult> {
-  validateRequiredParams(args, ["shell_id"], "BashOutput");
-  const { shell_id, filter } = args;
-
-  const result = await getTaskOutput({
-    task_id: shell_id,
-    block: false, // BashOutput is always non-blocking (legacy behavior)
-    filter,
-  });
-
-  return { message: result.message };
 }

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +8,7 @@ import {
   resolveSubagentConfigForMemoryFormat,
 } from "@/agent/subagents";
 import { __testSetBackend, type Backend } from "@/backend";
+import { findRemovedToolNames } from "@/tools/removed-tools";
 
 let tempDir: string | null = null;
 
@@ -185,6 +186,46 @@ Custom prompt body`,
     expect(configs.reflection?.systemPrompt).not.toContain(
       "local backend memory filesystem",
     );
+  });
+
+  test("built-ins never list a removed tool", async () => {
+    const configs = await getAllSubagentConfigs();
+    for (const config of Object.values(configs)) {
+      if (config.allowedTools === "all") continue;
+      expect(findRemovedToolNames(config.allowedTools)).toEqual([]);
+    }
+  });
+
+  test("warns when a custom subagent lists a removed tool, and still loads it", async () => {
+    tempDir = createTempProjectDir();
+    writeCustomSubagent(
+      tempDir,
+      "searcher.md",
+      [
+        "---",
+        "name: searcher",
+        "description: Read-only searcher",
+        "tools: Read, LS, MultiEdit",
+        "---",
+        "Search the repo.",
+      ].join("\n"),
+    );
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      const configs = await getAllSubagentConfigs(tempDir);
+
+      expect(configs.searcher?.allowedTools).toEqual([
+        "Read",
+        "LS",
+        "MultiEdit",
+      ]);
+      expect(warn.mock.calls.map((call) => String(call[0]))).toContain(
+        "[subagent] Warning: searcher: these tools no longer exist and will be ignored: LS, MultiEdit",
+      );
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   test("custom CRLF reflection override replaces built-in reflection", async () => {

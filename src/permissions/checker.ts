@@ -46,32 +46,8 @@ import { evaluateWorkspaceSandboxGuard } from "./workspace-sandbox";
 /**
  * Tools that don't require approval within working directory
  */
-const WORKING_DIRECTORY_TOOLS_V2 = ["Read", "Glob", "Grep", "ListDir"];
-const WORKING_DIRECTORY_TOOLS_V1 = [
-  "Read",
-  "Glob",
-  "Grep",
-  "read_file",
-  "ReadFile",
-  "list_dir",
-  "ListDir",
-  "grep_files",
-  "GrepFiles",
-];
-const FILE_TOOLS_V2 = ["Read", "Write", "Edit", "Glob", "Grep", "ListDir"];
-const FILE_TOOLS_V1 = [
-  "Read",
-  "Write",
-  "Edit",
-  "Glob",
-  "Grep",
-  "read_file",
-  "ReadFile",
-  "list_dir",
-  "ListDir",
-  "grep_files",
-  "GrepFiles",
-];
+const WORKING_DIRECTORY_TOOLS = ["Read", "Glob", "Grep"];
+const FILE_TOOLS = ["Read", "Write", "Edit", "Glob", "Grep"];
 
 type ToolArgs = Record<string, unknown>;
 
@@ -290,8 +266,6 @@ function checkPermissionForEngine(
       ));
   const trace = createTrace(engine, toolName, canonicalTool, query);
   const sessionRules = sessionPermissions.getRules();
-  const workingDirectoryTools =
-    engine === "v2" ? WORKING_DIRECTORY_TOOLS_V2 : WORKING_DIRECTORY_TOOLS_V1;
 
   const workspaceGuardResult = evaluateWorkspaceSandboxGuard(
     permissionToolName,
@@ -509,7 +483,7 @@ function checkPermissionForEngine(
     }
   }
 
-  if (!isStrictMode && workingDirectoryTools.includes(queryTool)) {
+  if (!isStrictMode && WORKING_DIRECTORY_TOOLS.includes(queryTool)) {
     const filePath = extractFilePath(toolArgs);
     if (
       filePath &&
@@ -651,13 +625,7 @@ function buildPermissionQuery(toolName: string, toolArgs: ToolArgs): string {
     case "Write":
     case "Edit":
     case "Glob":
-    case "Grep":
-    case "ListDir":
-    case "read_file":
-    case "ReadFile":
-    case "list_dir":
-    case "grep_files":
-    case "GrepFiles": {
+    case "Grep": {
       const filePath = extractFilePath(toolArgs);
       return filePath ? `${toolName}(${filePath})` : toolName;
     }
@@ -674,8 +642,6 @@ function buildPermissionQuery(toolName: string, toolArgs: ToolArgs): string {
               : "";
       return `Bash(${command})`;
     }
-    case "shell":
-    case "shell_command":
     case "exec_command": {
       const command =
         typeof toolArgs.cmd === "string"
@@ -723,20 +689,14 @@ function matchesPattern(
       ? { canonicalizeToolNames: true, allowBareToolFallback: true }
       : { canonicalizeToolNames: false, allowBareToolFallback: false };
   const toolForMatch = engine === "v2" ? canonicalToolName(toolName) : toolName;
-  const fileTools = engine === "v2" ? FILE_TOOLS_V2 : FILE_TOOLS_V1;
   // File tools use glob matching
-  if (fileTools.includes(toolForMatch)) {
+  if (FILE_TOOLS.includes(toolForMatch)) {
     return matchesFilePattern(query, pattern, workingDirectory, matcherOptions);
   }
 
   // Bash uses prefix matching
-  const legacyShellTool =
-    engine === "v1" &&
-    (toolForMatch === "Bash" ||
-      toolForMatch === "shell" ||
-      toolForMatch === "shell_command");
   const v2ShellTool = engine === "v2" && isShellToolName(toolName);
-  if (toolForMatch === "Bash" || legacyShellTool || v2ShellTool) {
+  if (toolForMatch === "Bash" || v2ShellTool) {
     return matchesBashPattern(query, pattern, matcherOptions);
   }
 
@@ -783,22 +743,11 @@ function getDefaultDecision(
   // Import is async so we need to do this synchronously - get the permissions from manager
   // For now, use a hardcoded check that matches TOOL_PERMISSIONS configuration
   const autoAllowTools = [
-    // Anthropic toolset - tools that don't require approval
     "Read",
     "Glob",
     "Grep",
-    "TodoWrite",
     "TaskOutput",
-    "LS",
-    // Additional Codex tools - tools that don't require approval
-    "read_file",
-    "list_dir",
-    "grep_files",
     "write_stdin",
-    // Codex tools - tools that don't require approval
-    "ReadFile",
-    "ListDir",
-    "GrepFiles",
     "UpdatePlan",
     // Memory tools are constrained to the memfs repo and include their
     // own path/read_only guardrails, so allow by default.

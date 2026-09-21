@@ -2372,24 +2372,11 @@ export function App({
             typeof args.chars === "string" && args.chars.length > 0
               ? "Write input to running shell session"
               : "Poll running shell session";
-        } else if (t === "shell") {
-          const cmdVal = args.command;
-          command = Array.isArray(cmdVal)
-            ? cmdVal.join(" ")
-            : typeof cmdVal === "string"
-              ? cmdVal
-              : "(no command)";
-          description =
-            typeof args.justification === "string" ? args.justification : "";
         } else {
           command =
             typeof args.command === "string" ? args.command : "(no command)";
           description =
-            typeof args.description === "string"
-              ? args.description
-              : typeof args.justification === "string"
-                ? args.justification
-                : "";
+            typeof args.description === "string" ? args.description : "";
         }
 
         let lines = 3; // solid line + header + blank line

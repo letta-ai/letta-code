@@ -29,9 +29,7 @@ Usage notes:
   - Set `run_in_background` only when you want the command to return a task ID immediately. You do not need to use '&' at the end of the command.
   - Pick between Bash and the Monitor tool by how many notifications you need. **One** ("tell me when the server is ready / the build finishes") → Bash with a command that exits when the condition is true, e.g. `until grep -q "Ready in" dev.log; do sleep 0.5; done`. Bash automatically yields and sends one completion notification. **One per occurrence** ("tell me every time an ERROR line appears") → use Monitor: each stdout line is an event while you keep working.
   
-  - Avoid using Bash with the `find`, `grep`, `cat`, `head`, `tail`, `sed`, `awk`, or `echo` commands, unless explicitly instructed or when these commands are truly necessary for the task. Instead, always prefer using the dedicated tools for these commands:
-    - File search: Use Glob (NOT find or ls)
-    - Content search: Use Grep (NOT grep or rg)
+  - Avoid using Bash with the `cat`, `head`, `tail`, `sed`, `awk`, or `echo` commands, unless explicitly instructed or when these commands are truly necessary for the task. Instead, always prefer using the dedicated tools for these commands:
     - Read files: Use Read (NOT cat/head/tail)
     - Edit files: Use Edit (NOT sed/awk)
     - Write files: Use Write (NOT echo >/cat <<EOF)
@@ -78,7 +76,7 @@ Git Safety Protocol:
 
 Important notes:
 - NEVER run additional commands to read or explore code, besides git bash commands
-- NEVER use the TodoWrite or Task tools
+- NEVER use the TaskCreate or Task tools
 - DO NOT push to the remote repository unless the user explicitly asks you to do so
 - IMPORTANT: Never use git commands with the -i flag (like git rebase -i or git add -i) since they require interactive input which is not supported.
 - IMPORTANT: Do not use --no-edit with git rebase commands, as the --no-edit flag is not a valid option for git rebase.
@@ -120,7 +118,7 @@ gh pr create --title "the pr title" --body '## Summary
 </example>
 
 Important:
-- DO NOT use the TodoWrite or Task tools
+- DO NOT use the TaskCreate or Task tools
 - Return the PR URL when you're done, so the user can see it
 
 # Other common operations

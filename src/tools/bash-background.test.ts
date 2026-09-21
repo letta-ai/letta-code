@@ -3,8 +3,8 @@ import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bash } from "@/tools/impl/bash";
-import { bash_output } from "@/tools/impl/bash-output";
-import { kill_bash } from "@/tools/impl/kill-bash";
+import { getTaskOutput } from "@/tools/impl/bash-output";
+import { killBackgroundProcess } from "@/tools/impl/kill-bash";
 import {
   __resetBackgroundRetentionConfigForTests,
   __setBackgroundRetentionConfigForTests,
@@ -79,7 +79,7 @@ describe.skipIf(isWindows)("Bash background tools", () => {
     expect(backgroundProcesses.get(bashId ?? "")?.status).toBe("failed");
   });
 
-  test("BashOutput retrieves output from background shell", async () => {
+  test("getTaskOutput retrieves output from background shell", async () => {
     // Start background process
     const startResult = await bash({
       command: "echo 'background output'",
@@ -96,18 +96,21 @@ describe.skipIf(isWindows)("Bash background tools", () => {
     await new Promise((resolve) => setTimeout(resolve, 200));
 
     // Retrieve output
-    const outputResult = await bash_output({ shell_id: bashId });
+    const outputResult = await getTaskOutput({ task_id: bashId, block: false });
 
     expect(outputResult.message).toContain("background output");
   });
 
-  test("BashOutput handles non-existent shell_id gracefully", async () => {
-    const result = await bash_output({ shell_id: "nonexistent" });
+  test("getTaskOutput handles non-existent task_id gracefully", async () => {
+    const result = await getTaskOutput({
+      task_id: "nonexistent",
+      block: false,
+    });
 
     expect(result.message).toContain("No background process found");
   });
 
-  test("KillBash terminates background process", async () => {
+  test("killBackgroundProcess terminates background process", async () => {
     // Start long-running process
     const startResult = await bash({
       command: "sleep 10",
@@ -118,19 +121,14 @@ describe.skipIf(isWindows)("Bash background tools", () => {
     const match = startResult.content[0]?.text.match(/bash_(\d+)/);
     const bashId = `bash_${match?.[1]}`;
 
-    // Kill it (KillBash uses shell_id parameter)
-    const killResult = await kill_bash({ shell_id: bashId });
-
-    expect(killResult.killed).toBe(true);
+    expect(killBackgroundProcess(bashId)).toBe(true);
   });
 
-  test("KillBash handles non-existent shell_id", async () => {
-    const result = await kill_bash({ shell_id: "nonexistent" });
-
-    expect(result.killed).toBe(false);
+  test("killBackgroundProcess handles non-existent id", () => {
+    expect(killBackgroundProcess("nonexistent")).toBe(false);
   });
 
-  test("KillBash preserves completed-process cleanup behavior", async () => {
+  test("killBackgroundProcess preserves completed-process cleanup behavior", () => {
     let killed = false;
     backgroundProcesses.set("bash_completed", {
       process: {
@@ -146,9 +144,7 @@ describe.skipIf(isWindows)("Bash background tools", () => {
       lastReadIndex: { stdout: 0, stderr: 0 },
     });
 
-    expect(await kill_bash({ shell_id: "bash_completed" })).toEqual({
-      killed: true,
-    });
+    expect(killBackgroundProcess("bash_completed")).toBe(true);
     expect(killed).toBe(true);
     expect(backgroundProcesses.has("bash_completed")).toBe(false);
   });

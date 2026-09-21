@@ -1,24 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import ShellDescription from "@/tools/descriptions/Shell.md";
 import ExecCommandSchema from "@/tools/schemas/ExecCommand.json";
 import { TOOL_DEFINITIONS } from "@/tools/tool-definitions";
 import { TOOLSET_CATALOG } from "@/tools/toolset-catalog";
 
-function extractCommitGuidance(description: string): string {
-  const start = description.indexOf("# Committing changes with git");
-  const end = description.indexOf("# Creating pull requests", start);
-  if (start === -1 || end === -1) {
-    throw new Error("Expected shell description to include commit guidance");
-  }
-  return description.slice(start, end).trim();
-}
-
 describe("Codex unified exec toolset", () => {
-  test("uses Codex exec_command/write_stdin instead of shell_command", () => {
+  test("uses Codex exec_command/write_stdin", () => {
     expect(TOOLSET_CATALOG.codex.tools).toContain("exec_command");
     expect(TOOLSET_CATALOG.codex.tools).toContain("write_stdin");
     expect(TOOLSET_CATALOG.codex.tools).toContain("Monitor");
-    expect(TOOLSET_CATALOG.codex.tools).not.toContain("ShellCommand");
   });
 
   test("documents LC-specific omission of upstream sandbox fields", () => {
@@ -41,20 +30,24 @@ describe("Codex unified exec toolset", () => {
       "",
       "Provide the required `description` field as a clear, concise user-facing status label for what the command does. It may be shown directly in chat with no prefix, so make it grammatical by itself and avoid tense-dependent wording. Use an imperative or purpose phrase like `Find debug log entries` or `Search recent logs for errors`. Describe the command's purpose, not its shell syntax. Keep it brief for simple commands; add only enough context to clarify commands that are hard to parse at a glance.",
       "",
-      extractCommitGuidance(ShellDescription),
+      "# Committing changes with git",
     ].join("\n");
+    const description = TOOL_DEFINITIONS.exec_command.description;
 
-    expect(TOOL_DEFINITIONS.exec_command.description).toBe(
-      process.platform === "win32"
-        ? [
-            execCommandDescription,
-            "",
-            "Windows safety rules:",
-            "- Do not compose destructive filesystem commands across shells. Do not enumerate paths in PowerShell and then pass them to `cmd /c`, batch builtins, or another shell for deletion or moving. Use one shell end-to-end, prefer native PowerShell cmdlets such as `Remove-Item` / `Move-Item` with `-LiteralPath`, and avoid string-built shell commands for file operations.",
-            "- Before any recursive delete or move on Windows, verify the resolved absolute target paths stay within the intended workspace or explicitly named target directory. Never issue a recursive delete or move against a computed path if the final target has not been checked.",
-            "- When using `Start-Process` to launch a background helper or service, pass `-WindowStyle Hidden` unless the user explicitly asked for a visible interactive window. Use visible windows only for interactive tools the user needs to see or control.",
-          ].join("\n")
-        : execCommandDescription,
+    // The Codex intro is pinned verbatim; the LC commit guidance follows it.
+    expect(description.startsWith(execCommandDescription)).toBe(true);
+    expect(description).not.toContain("# Creating pull requests");
+
+    const windowsRules = [
+      "",
+      "",
+      "Windows safety rules:",
+      "- Do not compose destructive filesystem commands across shells. Do not enumerate paths in PowerShell and then pass them to `cmd /c`, batch builtins, or another shell for deletion or moving. Use one shell end-to-end, prefer native PowerShell cmdlets such as `Remove-Item` / `Move-Item` with `-LiteralPath`, and avoid string-built shell commands for file operations.",
+      "- Before any recursive delete or move on Windows, verify the resolved absolute target paths stay within the intended workspace or explicitly named target directory. Never issue a recursive delete or move against a computed path if the final target has not been checked.",
+      "- When using `Start-Process` to launch a background helper or service, pass `-WindowStyle Hidden` unless the user explicitly asked for a visible interactive window. Use visible windows only for interactive tools the user needs to see or control.",
+    ].join("\n");
+    expect(description.endsWith(windowsRules)).toBe(
+      process.platform === "win32",
     );
     expect(TOOL_DEFINITIONS.write_stdin.description).toContain(
       "create a one-shot scheduled check instead of blocking or polling",

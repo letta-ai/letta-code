@@ -146,7 +146,6 @@ export const ApprovalPreview = memo(
     // File Edit tools: Render diff preview
     if (
       toolName === "Edit" ||
-      toolName === "MultiEdit" ||
       toolName === "Write" ||
       toolName === "str_replace_editor" ||
       toolName === "str_replace_based_edit_tool" ||

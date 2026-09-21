@@ -1,7 +1,7 @@
 ---
 name: general-purpose
 description: Full-capability agent for research, planning, and implementation
-tools: Bash, TaskCreate, TaskGet, TaskList, TaskOutput, TaskUpdate, Edit, KillBash, Read, Write
+tools: Bash, TaskCreate, TaskGet, TaskList, TaskOutput, TaskUpdate, Edit, TaskStop, Read, Write
 model: inherit
 ---
 

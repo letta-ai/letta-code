@@ -112,14 +112,9 @@ function resolvedModelForm(
 
 const STREAMING_SHELL_TOOLS = new Set([
   "Bash",
-  "BashOutput",
   "TaskOutput",
   "exec_command",
   "write_stdin",
-  "shell_command",
-  "ShellCommand",
-  "shell",
-  "Shell",
   "Monitor",
   "Workflow",
 ]);
@@ -127,7 +122,7 @@ const STREAMING_SHELL_TOOLS = new Set([
 const SCOPED_BACKGROUND_TOOLS = new Set(["Monitor", "Workflow"]);
 
 // Tools that write files — used to trigger onFileWrite broadcast after execution.
-const FILE_MUTATING_TOOLS = new Set(["Edit", "Write", "MultiEdit"]);
+const FILE_MUTATING_TOOLS = new Set(["Edit", "Write"]);
 
 // Maps internal implementation names to the names shown to the model.
 const TOOL_NAME_MAPPINGS: Partial<Record<ToolName, string>> = {
@@ -2184,7 +2179,7 @@ async function executeToolInner(
     onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
     toolContextId?: string;
     parentScope?: { agentId: string; conversationId: string };
-    /** Called after a file-mutating tool (Edit, Write, MultiEdit) writes to disk.
+    /** Called after a file-mutating tool (Edit, Write) writes to disk.
      *  The listener layer uses this to broadcast the new content via WebSocket. */
     onFileWrite?: (filePath: string, content: string) => void;
     toolEndArgsRef?: { current: ToolArgs };
