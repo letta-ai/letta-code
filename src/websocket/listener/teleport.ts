@@ -354,7 +354,7 @@ export function handleTeleportRequest(params: {
     }
     if (emitClaimedTeleportReady(listener, pending)) {
       pending.readyAt = Date.now();
-      sessionOwner?.onRelinquished?.();
+      if (localOwnerMatches) sessionOwner.onRelinquished?.();
     }
   } else if (localOwnerMatches) {
     waitForLocalSessionTeleportBoundary(listener, pending);
@@ -374,7 +374,13 @@ function waitForLocalSessionTeleportBoundary(
       pending.agentId,
       pending.conversationId,
     );
-    if (!connection || !owner || !isListenerTransportOpen(connection.writer)) {
+    if (
+      !connection ||
+      !owner ||
+      owner.agentId !== pending.agentId ||
+      owner.conversationId !== pending.conversationId ||
+      !isListenerTransportOpen(connection.writer)
+    ) {
       listener.pendingTeleports?.delete(pending.teleportId);
       return;
     }

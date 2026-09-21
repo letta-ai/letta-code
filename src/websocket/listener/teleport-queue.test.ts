@@ -135,6 +135,50 @@ test("local session teleport waits for the outer executor boundary", async () =>
   expect(onRelinquished).toHaveBeenCalledTimes(1);
 });
 
+test("teleport for another runtime does not relinquish the local owner", () => {
+  const listener = createRuntime();
+  const socket = new MockSocket();
+  const onRelinquished = mock(() => {});
+  openListenerConnection({
+    runtime: listener,
+    connectionId: "source",
+    writer: socket as never,
+    options: {
+      ...makeOptions(),
+      localSessionOwner: {
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        queueRuntime: new QueueRuntime(),
+        acceptInput: () => true,
+        abort: () => true,
+        isProcessing: () => false,
+        onRelinquished,
+      },
+    },
+  });
+
+  handleTeleportRequest({
+    listener,
+    connectionId: "source",
+    command: {
+      type: "teleport_request",
+      request_id: "other-runtime",
+      teleport_id: "other-runtime",
+      runtime: { agent_id: "agent-2", conversation_id: "conversation-2" },
+      target: {
+        connection_id: "target",
+        device_id: "target-device",
+        connection_name: "Target",
+      },
+    },
+  });
+
+  expect(socket.sent).toContainEqual(
+    expect.objectContaining({ type: "teleport_ready", success: true }),
+  );
+  expect(onRelinquished).not.toHaveBeenCalled();
+});
+
 test("new production input waits outside a pending teleport", async () => {
   const listener = createRuntime();
   const runtime = getOrCreateScopedRuntime(
