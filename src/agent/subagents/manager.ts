@@ -823,10 +823,10 @@ async function spawnSubagentInContext(
   systemPromptOverride?: string,
   environment?: string,
   actingUserId?: string,
+  resolvedConfig?: SubagentConfig,
 ): Promise<SubagentResult> {
   const launchActingUserId = resolveActingUserId(actingUserId);
-  const allConfigs = await getAllSubagentConfigs();
-  let config = allConfigs[type];
+  let config = resolvedConfig ?? (await getAllSubagentConfigs())[type];
 
   if (!config) {
     return {
@@ -900,7 +900,11 @@ async function spawnSubagentInContext(
       });
   // Build the prompt with system reminder for deployed agents
   let finalPrompt = prompt;
-  if (isDeployingExisting && resolvedParentAgentId) {
+  if (
+    (type !== "custom" || forkedContext) &&
+    isDeployingExisting &&
+    resolvedParentAgentId
+  ) {
     try {
       const cachedParent =
         parentAgent ??
@@ -931,10 +935,12 @@ async function spawnSubagentInContext(
   // the card would have no link and any fallback would route to the parent's
   // main conversation. Set the link eagerly to the forked conversation so it
   // opens the subagent's own thread instead.
-  if (forkedContext && existingAgentId && existingConversationId) {
-    const forkAgentURL = buildAgentReference(existingAgentId, {
-      conversationId: existingConversationId,
-    });
+  if ((forkedContext || type === "custom") && existingConversationId) {
+    const forkAgentURL = existingAgentId
+      ? buildAgentReference(existingAgentId, {
+          conversationId: existingConversationId,
+        })
+      : undefined;
     updateSubagent(subagentId, {
       agentId: existingAgentId,
       agentURL: forkAgentURL,
