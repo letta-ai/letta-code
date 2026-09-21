@@ -28,6 +28,7 @@ describe("headless local session ownership", () => {
     expect(session.owner).toBeNull();
     resolveOwner({
       ready,
+      forceStop() {},
       stopAdmission() {},
       resumeAdmission() {},
       release,
@@ -69,15 +70,31 @@ describe("headless local session ownership", () => {
       rejectReady(new Error("claim cancelled"));
       return true;
     });
+    const sigint = new AbortController();
     const session = startHeadlessLocalSession(
       {
         enabled: true,
         agentId: "agent-local",
         conversationId: "conv-local",
-        sigintSignal: new AbortController().signal,
+        sigintSignal: sigint.signal,
       },
       async () => ({
-        ready: () => readyPromise,
+        ready: (signal) =>
+          signal
+            ? Promise.race([
+                readyPromise,
+                new Promise<boolean>((_resolve, reject) =>
+                  signal.addEventListener(
+                    "abort",
+                    () => reject(new Error("SIGINT")),
+                    { once: true },
+                  ),
+                ),
+              ])
+            : readyPromise,
+        forceStop() {
+          rejectReady(new Error("claim cancelled"));
+        },
         stopAdmission() {},
         resumeAdmission() {},
         release,
@@ -86,9 +103,10 @@ describe("headless local session ownership", () => {
 
     const starting = session.start().catch((error: unknown) => error);
     await Bun.sleep(0);
+    sigint.abort();
+    expect(await starting).toBeInstanceOf(Error);
     session.cancel();
     await session.release();
     expect(release).toHaveBeenCalledTimes(1);
-    expect(await starting).toBeInstanceOf(Error);
   });
 });

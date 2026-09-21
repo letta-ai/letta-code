@@ -3,13 +3,27 @@ import { isLocalBackendEnabled } from "@/backend";
 import { isLocalAgentId } from "@/cli/helpers/app-urls";
 import type { QueueRuntime } from "@/queue/queue-runtime";
 import { debugWarn } from "@/utils/debug";
-import { startLocalSessionOwner } from "@/websocket/local-session-owner";
+import {
+  type LocalSessionOwnerHandle,
+  startLocalSessionOwner,
+} from "@/websocket/local-session-owner";
 
 export interface LocalSessionOwnerController {
-  ready(): Promise<boolean>;
+  ready(signal?: AbortSignal): Promise<boolean>;
   stopAdmission(): void;
   resumeAdmission(): void;
   release(): Promise<boolean>;
+}
+
+type LocalSessionOwnerStarter = (
+  options: Parameters<typeof startLocalSessionOwner>[0],
+) => Promise<LocalSessionOwnerHandle>;
+let testLocalSessionOwnerStarter: LocalSessionOwnerStarter | null = null;
+
+export function __testSetLocalSessionOwnerStarter(
+  starter: LocalSessionOwnerStarter | null,
+): void {
+  testLocalSessionOwnerStarter = starter;
 }
 
 export function useLocalSessionOwner(params: {
@@ -58,7 +72,9 @@ export function useLocalSessionOwner(params: {
     let disposed = false;
     let release: (() => Promise<boolean>) | undefined;
     acceptingRef.current = true;
-    const ownerPromise = startLocalSessionOwner({
+    const ownerPromise = (
+      testLocalSessionOwnerStarter ?? startLocalSessionOwner
+    )({
       agentId: params.agentId,
       conversationId: params.conversationId || "default",
       queueRuntime: params.queueRuntime,
@@ -121,9 +137,9 @@ export function useLocalSessionOwner(params: {
 
   return useMemo(
     () => ({
-      async ready() {
+      async ready(signal) {
         const ownerPromise = ownerPromiseRef.current;
-        if (ownerPromise) return await (await ownerPromise).ready();
+        if (ownerPromise) return await (await ownerPromise).ready(signal);
         return (await readinessRef.current?.promise) ?? false;
       },
       stopAdmission() {

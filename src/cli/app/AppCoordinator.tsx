@@ -1419,6 +1419,7 @@ export function App({
   const sessionSwitchAdmissionStateRef = useRef<
     "idle" | "draining" | "releasing"
   >("idle");
+  const sessionSwitchRetryScheduledRef = useRef(false);
   if (!tuiQueueRef.current) {
     tuiQueueRef.current = createTuiQueueRuntime(setQueueDisplay);
   }
@@ -4503,6 +4504,9 @@ export function App({
   // These are actions from interactive commands (like /agents, /model) that were
   // used while the agent was busy. The change is applied after end_turn.
   useEffect(() => {
+    // finishTuiTurn bumps this after refs (processing/controller) settle; refs
+    // alone are not reactive, so this is the handoff gate's retry trigger.
+    void dequeueEpoch;
     if (
       !streaming &&
       !commandRunning &&
@@ -4530,7 +4534,13 @@ export function App({
         ) {
           // Keep the switch pending. The normal dequeue path is allowed to run
           // while this action is pending and remains bound to the old scope.
-          setDequeueEpoch((epoch) => epoch + 1);
+          if (!sessionSwitchRetryScheduledRef.current) {
+            sessionSwitchRetryScheduledRef.current = true;
+            setTimeout(() => {
+              sessionSwitchRetryScheduledRef.current = false;
+              setDequeueEpoch((epoch) => epoch + 1);
+            }, 10);
+          }
           return;
         }
         sessionSwitchAdmissionStateRef.current = "releasing";
@@ -4657,6 +4667,7 @@ export function App({
     agentId,
     agentState,
     conversationId,
+    dequeueEpoch,
     refreshDerived,
     setCommandRunning,
     commandRunner.getHandle,

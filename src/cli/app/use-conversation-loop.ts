@@ -223,7 +223,7 @@ type ConversationLoopContext = {
   llmApiErrorRetriesRef: MutableRefObject<number>;
   llmConfigRef: MutableRefObject<LlmConfig | null>;
   maybeRunPostTurnReflection: () => Promise<void>;
-  waitForLocalSessionOwnerReady: () => Promise<boolean>;
+  waitForLocalSessionOwnerReady: (signal?: AbortSignal) => Promise<boolean>;
   needsEagerApprovalCheck: boolean;
   openTrajectorySegment: () => void;
   pendingInterruptRecoveryConversationIdRef: MutableRefObject<string | null>;
@@ -489,9 +489,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         allowResponseStateReuse?: boolean;
       },
     ): Promise<void> => {
-      // A connected socket is not an ownership boundary. Wait for Cloud's
-      // positive scoped claim receipt before any local direct run can begin.
-      await waitForLocalSessionOwnerReady();
       // Transient pre-stream retries can yield for seconds.
       // Pin the user's permission mode for the duration of the submission so
       // auto-approvals (YOLO / unrestricted) don't regress after a retry.
@@ -655,6 +652,15 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         setExecutionPhase("requesting");
         turnAbortController = new AbortController();
         abortControllerRef.current = turnAbortController;
+        // A connected socket is not an ownership boundary. Establish the
+        // ordinary per-turn cancellation path before waiting for Cloud's
+        // positive scoped claim receipt, so Esc can cancel only this prompt.
+        try {
+          await waitForLocalSessionOwnerReady(turnAbortController.signal);
+        } catch (error) {
+          if (turnAbortController.signal.aborted) return;
+          throw error;
+        }
 
         if (
           await maybeStreamSyntheticNoModelResponse(

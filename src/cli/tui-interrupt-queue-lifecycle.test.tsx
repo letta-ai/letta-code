@@ -32,6 +32,7 @@ import {
   type HeadlessTurnExecutorInput,
 } from "@/backend/dev/headless-turn-executor";
 import { App } from "@/cli/App";
+import { __testSetLocalSessionOwnerStarter } from "@/cli/app/use-local-session-owner";
 import { settingsManager } from "@/settings-manager";
 import { monitor } from "@/tools/impl/monitor";
 import {
@@ -45,6 +46,7 @@ import {
   setMessageQueueAdder,
 } from "@/utils/message-queue-bridge";
 import { formatTaskNotification } from "@/utils/task-notifications";
+import type { StartLocalSessionOwnerOptions } from "@/websocket/local-session-owner";
 
 class TuiOutputStream extends Writable {
   columns = 100;
@@ -215,6 +217,7 @@ afterEach(async () => {
   }
   monitorSources.clear();
   setMessageQueueAdder(null);
+  __testSetLocalSessionOwnerStarter(null);
   clearPendingMessages();
   __testSetBackend(null);
   setConfiguredBackendMode(previousBackendMode);
@@ -230,6 +233,9 @@ afterEach(async () => {
 async function renderTestApp(executor: HeadlessTurnExecutor): Promise<{
   backend: FakeHeadlessBackend;
   stdin: NodeJS.ReadStream;
+  instance: Instance;
+  agentState: Awaited<ReturnType<FakeHeadlessBackend["retrieveAgent"]>>;
+  conversationId: string;
 }> {
   const agentId = "agent-tui-interrupt-queue";
   const backend = new FakeHeadlessBackend(agentId, executor);
@@ -256,7 +262,13 @@ async function renderTestApp(executor: HeadlessTurnExecutor): Promise<{
   );
   renderedInstances.add(instance);
   await waitFor(isQueueBridgeConnected, "the TUI queue bridge to mount");
-  return { backend, stdin };
+  return {
+    backend,
+    stdin,
+    instance,
+    agentState,
+    conversationId: conversation.id,
+  };
 }
 
 async function typePrompt(stdin: NodeJS.ReadStream, text: string) {
@@ -268,6 +280,208 @@ async function typePrompt(stdin: NodeJS.ReadStream, text: string) {
 }
 
 describe("TUI interrupt queue lifecycle", () => {
+  test("accepted old-scope input drains before a prop switch and new readiness", async () => {
+    setConfiguredBackendMode("api");
+    const lifecycle: string[] = [];
+    const ownerOptions: StartLocalSessionOwnerOptions[] = [];
+    let resolveNewReady!: (ready: boolean) => void;
+    const newReady = new Promise<boolean>((resolve) => {
+      resolveNewReady = resolve;
+    });
+    __testSetLocalSessionOwnerStarter(async (options) => {
+      ownerOptions.push(options);
+      const scope = options.conversationId;
+      const ownerNumber = ownerOptions.length;
+      lifecycle.push(`start:${scope}`);
+      return {
+        ready: (signal) => {
+          if (ownerNumber === 1) return Promise.resolve(true);
+          if (!signal) return newReady;
+          return Promise.race([
+            newReady,
+            new Promise<boolean>((_resolve, reject) =>
+              signal.addEventListener(
+                "abort",
+                () => reject(new Error("aborted")),
+                {
+                  once: true,
+                },
+              ),
+            ),
+          ]);
+        },
+        forceStop() {},
+        stopAdmission() {
+          lifecycle.push(`stop:${scope}`);
+        },
+        resumeAdmission() {
+          lifecycle.push(`resume:${scope}`);
+        },
+        async release() {
+          lifecycle.push(`release:${scope}`);
+          return true;
+        },
+      };
+    });
+    const inputs: HeadlessTurnExecutorInput[] = [];
+    const rendered = await renderTestApp({
+      async execute(input) {
+        inputs.push(input);
+        lifecycle.push(`submit:${input.conversationId}`);
+        return createAssistantMessageStream();
+      },
+    });
+    await waitFor(() => ownerOptions.length === 1, "the first scoped owner");
+
+    const firstOptions = ownerOptions[0];
+    if (!firstOptions) throw new Error("Missing first owner options");
+    firstOptions.queueRuntime.enqueue({
+      kind: "message",
+      source: "user",
+      content: "accepted under A",
+      agentId: "agent-tui-interrupt-queue",
+      conversationId: rendered.conversationId,
+      noCoalesce: true,
+    } as Parameters<typeof firstOptions.queueRuntime.enqueue>[0]);
+    firstOptions.onQueueChanged();
+    const secondConversation = await rendered.backend.createConversation({
+      agent_id: "agent-tui-interrupt-queue",
+    });
+    rendered.instance.rerender(
+      <App
+        agentId="agent-tui-interrupt-queue"
+        agentState={rendered.agentState}
+        conversationId={secondConversation.id}
+        modsDisabled
+        systemInfoReminderEnabled={false}
+      />,
+    );
+    await waitFor(() => inputs.length === 1, "accepted A input to execute");
+    await waitFor(
+      () => ownerOptions.length === 2,
+      "the new scoped owner",
+      10_000,
+    ).catch((error: unknown) => {
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)}; lifecycle=${lifecycle.join(",")}`,
+      );
+    });
+    expect(JSON.stringify(inputs[0]?.body)).toContain("accepted under A");
+    expect(lifecycle.indexOf(`submit:${rendered.conversationId}`)).toBeLessThan(
+      lifecycle.indexOf(`release:${rendered.conversationId}`),
+    );
+
+    await typePrompt(rendered.stdin, "new scope prompt");
+    await sleep(100);
+    expect(inputs).toHaveLength(1);
+    resolveNewReady(true);
+    await waitFor(() => inputs.length === 2, "new scope readiness and run");
+  }, 15_000);
+
+  test("Esc cancels only the prompt waiting for owner readiness", async () => {
+    setConfiguredBackendMode("api");
+    let resolveClaim!: (ready: boolean) => void;
+    const claimReady = new Promise<boolean>((resolve) => {
+      resolveClaim = resolve;
+    });
+    let readyCalls = 0;
+    let abortedWaits = 0;
+    let forcedStops = 0;
+    __testSetLocalSessionOwnerStarter(async () => ({
+      ready(signal) {
+        readyCalls += 1;
+        if (!signal) return claimReady;
+        return Promise.race([
+          claimReady,
+          new Promise<boolean>((_resolve, reject) => {
+            signal.addEventListener(
+              "abort",
+              () => {
+                abortedWaits += 1;
+                reject(new Error("aborted"));
+              },
+              { once: true },
+            );
+          }),
+        ]);
+      },
+      forceStop() {
+        forcedStops += 1;
+      },
+      stopAdmission() {},
+      resumeAdmission() {},
+      async release() {
+        return true;
+      },
+    }));
+    const inputs: HeadlessTurnExecutorInput[] = [];
+    const { stdin } = await renderTestApp({
+      async execute(input) {
+        inputs.push(input);
+        return createAssistantMessageStream();
+      },
+    });
+
+    await typePrompt(stdin, "wait for claim");
+    await waitFor(() => readyCalls > 1, "the prompt readiness wait");
+    stdin.push("\u001b");
+    await waitFor(() => abortedWaits === 1, "Esc to abort the readiness wait");
+    expect(forcedStops).toBe(0);
+    expect(inputs).toHaveLength(0);
+
+    resolveClaim(true);
+    await typePrompt(stdin, "run after claim");
+    await waitFor(() => inputs.length === 1, "the next prompt after readiness");
+  }, 15_000);
+
+  test("failed prop agent lookup reopens old owner admission", async () => {
+    setConfiguredBackendMode("api");
+    const lifecycle: string[] = [];
+    __testSetLocalSessionOwnerStarter(async () => ({
+      ready: async () => true,
+      forceStop() {},
+      stopAdmission() {
+        lifecycle.push("stop");
+      },
+      resumeAdmission() {
+        lifecycle.push("resume");
+      },
+      async release() {
+        lifecycle.push("release");
+        return true;
+      },
+    }));
+    const rendered = await renderTestApp({
+      async execute() {
+        return createAssistantMessageStream();
+      },
+    });
+    await sleep(300);
+    const retrieveAgent = rendered.backend.retrieveAgent.bind(rendered.backend);
+    rendered.backend.retrieveAgent = async (agentId) => {
+      if (agentId === "missing-agent") {
+        throw new Error("missing agent");
+      }
+      return await retrieveAgent(agentId);
+    };
+    rendered.instance.rerender(
+      <App
+        agentId="missing-agent"
+        agentState={rendered.agentState}
+        conversationId={rendered.conversationId}
+        modsDisabled
+        systemInfoReminderEnabled={false}
+      />,
+    );
+    await waitFor(() => lifecycle.includes("stop"), "old admission to close");
+    await waitFor(
+      () => lifecycle.includes("resume"),
+      "failed lookup to reopen admission",
+      10_000,
+    );
+    expect(lifecycle).not.toContain("release");
+  }, 15_000);
+
   test("a real Monitor survives normal completion and idle Esc", async () => {
     const inputs: HeadlessTurnExecutorInput[] = [];
     const { stdin } = await renderTestApp({

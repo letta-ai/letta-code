@@ -72,7 +72,7 @@ export function startHeadlessLocalSession(
             return false;
           }
           session.owner = owner;
-          return await owner.ready();
+          return await owner.ready(params.sigintSignal);
         })
         .catch((error: unknown) => {
           debugWarn(
@@ -89,6 +89,7 @@ export function startHeadlessLocalSession(
     cancel() {
       disposed = true;
       session.owner?.stopAdmission();
+      session.owner?.forceStop();
       queue.clear("cancelled");
     },
     async release() {

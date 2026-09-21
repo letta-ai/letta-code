@@ -88,6 +88,7 @@ import {
   resolveAgentSandboxConnectionId,
   resolveEnvironmentConnectionId,
 } from "./backend/api/environments";
+import { resolveBackendMode } from "./backend/backend-mode";
 import type { ParsedCliArgs } from "./cli/args";
 import {
   normalizeConversationShorthandFlags,
@@ -2100,7 +2101,7 @@ export async function handleHeadlessCommand(
     enabled:
       !ephemeralFlag &&
       !usesRemoteEnvironment &&
-      !getBackend().capabilities.localMemfs,
+      resolveBackendMode() === "api",
     agentId: agent.id,
     conversationId,
     sigintSignal,

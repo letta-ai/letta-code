@@ -26,7 +26,9 @@ export interface StartLocalSessionOwnerOptions {
 
 export interface LocalSessionOwnerHandle {
   /** Resolves true only after Cloud positively acknowledges this scope claim. */
-  ready(): Promise<boolean>;
+  ready(signal?: AbortSignal): Promise<boolean>;
+  /** Force local shutdown; an unknown Cloud claim may remain sticky for recovery. */
+  forceStop(): void;
   /** Close the ACK boundary before testing whether accepted work is drained. */
   stopAdmission(): void;
   /** Reopen admission when an accepted batch starts another local turn. */
@@ -89,6 +91,22 @@ function parseOwnerAck(
   } catch {
     return null;
   }
+}
+
+function waitForReadyOrAbort(
+  readiness: Promise<boolean>,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  if (!signal) return readiness;
+  if (signal.aborted)
+    return Promise.reject(signal.reason ?? new Error("Aborted"));
+  return new Promise<boolean>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason ?? new Error("Aborted"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    void readiness.then(resolve, reject).finally(() => {
+      signal.removeEventListener("abort", onAbort);
+    });
+  });
 }
 
 /**
@@ -401,7 +419,11 @@ export async function startLocalSessionOwner(
 
   await connect();
   return {
-    ready: () => readiness.promise,
+    ready: (signal) => waitForReadyOrAbort(readiness.promise, signal),
+    forceStop: () => {
+      accepting = false;
+      if (!stopped) stopWithoutOwnedGeneration();
+    },
     stopAdmission: () => {
       accepting = false;
     },

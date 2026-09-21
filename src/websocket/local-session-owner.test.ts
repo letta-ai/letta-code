@@ -266,11 +266,31 @@ describe("local session owner", () => {
       () => "ready" as const,
       () => "cancelled" as const,
     );
+    const staleReconnect = JSON.parse(sent[2] ?? "{}") as {
+      request_id?: string;
+    };
+    capturedOptions?.onDisconnected();
+    capturedOptions?.onConnected(capturedOptions.connectionId);
+    capturedOptions?.onWsEvent?.("recv", "lifecycle", {
+      type: "_ws_unparseable",
+      raw: JSON.stringify({
+        type: "session_owner_claimed",
+        request_id: staleReconnect.request_id,
+        claimed: true,
+      }),
+    });
+    expect(
+      await Promise.race([
+        revalidated,
+        Bun.sleep(5).then(() => "pending" as const),
+      ]),
+    ).toBe("pending");
+    while (sent.length < 4) await Bun.sleep(1);
     const releaseAfterReconnect = owner.release();
     await Bun.sleep(22);
     expect(stopListener).not.toHaveBeenCalled();
-    while (sent.length < 4) await Bun.sleep(1);
-    const reconnectRetry = JSON.parse(sent[3] ?? "{}") as {
+    while (sent.length < 5) await Bun.sleep(1);
+    const reconnectRetry = JSON.parse(sent[4] ?? "{}") as {
       request_id?: string;
     };
     capturedOptions?.onWsEvent?.("recv", "lifecycle", {
