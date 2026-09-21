@@ -130,7 +130,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "^0.86.0",
+    "@earendil-works/pi-ai": "^0.86.1",
     "@janhapke/sharp-electron": "0.35.3-electron.1",
     "@letta-ai/letta-agent-sdk": "^0.8.11",
     "@letta-ai/letta-client": "^1.10.2",

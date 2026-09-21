@@ -185,6 +185,54 @@ describe("local pi provider catalog", () => {
     }
   });
 
+  test("local Meta catalog includes every Muse Spark model", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-meta-muse-"));
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "meta",
+        providerName: "meta",
+        apiKey: "test-meta-key",
+      });
+
+      const handles = (await listLocalModels(storageDir)).map(
+        (model) => model.handle,
+      );
+      for (const model of [
+        "muse-spark-1.1",
+        "muse-spark-1.2",
+        "muse-spark-1.2-contributor",
+        "muse-spark-1.3",
+        "muse-spark-1.3-contributor",
+      ]) {
+        expect(handles).toContain(`meta/${model}`);
+      }
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("local OpenRouter catalog includes Mistral Small 3.1", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-openrouter-"));
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "openrouter",
+        providerName: "openrouter",
+        apiKey: "test-openrouter-key",
+      });
+
+      const handles = (await listLocalModels(storageDir)).map(
+        (model) => model.handle,
+      );
+      expect(handles).toContain(
+        "openrouter/mistralai/mistral-small-3.1-24b-instruct",
+      );
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("local ChatGPT OAuth catalog includes GPT-5.6 named variants", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-chatgpt-56-"));
     try {
@@ -262,6 +310,8 @@ describe("local pi provider catalog", () => {
     expect(localOAuthProviderIds.has("anthropic-oauth")).toBe(true);
     expect(localApiKeyProviderIds.has("openrouter")).toBe(true);
     expect(localOAuthProviderIds.has("openrouter-oauth")).toBe(true);
+    expect(localApiKeyProviderIds.has("meta")).toBe(true);
+    expect(localOAuthProviderIds.has("meta-oauth")).toBe(true);
     expect(localApiKeyProviderIds.has("openai-codex")).toBe(false);
     expect(localApiKeyProviderIds.has("github-copilot")).toBe(false);
   });
