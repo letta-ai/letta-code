@@ -104,6 +104,13 @@ describe("buildCreateAgentRequest", () => {
     ).rejects.toThrow("must describe the same memory mode");
   });
 
+  test("preserves a null system prompt on the outbound wire payload", async () => {
+    const request = await buildCreateAgentRequest({ system: null });
+
+    expect(request.system).toBeNull();
+    expect(JSON.parse(JSON.stringify(request))).toHaveProperty("system", null);
+  });
+
   test("pins exact caller overrides without restoring server defaults", async () => {
     const request = await buildCreateAgentRequest({
       name: "Worker",

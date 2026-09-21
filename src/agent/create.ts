@@ -155,6 +155,31 @@ export interface CreatedAgentMemfsConfig {
   memoryPromptMode: MemoryPromptMode;
 }
 
+export interface CreatedAgentSystemPromptOptions {
+  isLettaCloud: boolean;
+  systemPromptPreset?: string;
+  systemPromptCustom?: string;
+  memoryPromptMode: MemoryPromptMode;
+}
+
+export async function resolveCreatedAgentSystemPrompt(
+  options: CreatedAgentSystemPromptOptions,
+): Promise<string | null> {
+  if (options.systemPromptCustom) {
+    return options.systemPromptCustom;
+  }
+  if (
+    options.isLettaCloud &&
+    (!options.systemPromptPreset || options.systemPromptPreset === "default")
+  ) {
+    return null;
+  }
+  return resolveAndBuildSystemPrompt(
+    options.systemPromptPreset,
+    options.memoryPromptMode,
+  );
+}
+
 export function resolveCreatedAgentMemfsConfig(
   options: CreatedAgentMemfsConfigOptions,
 ): CreatedAgentMemfsConfig {
@@ -350,11 +375,15 @@ export async function createAgent(
     (modelUpdateArgs?.context_window as number | undefined) ??
     (await getModelContextWindow(modelHandle));
 
-  // Resolve system prompt content
+  // Letta Cloud owns its default prompt. Local and self-hosted backends still
+  // receive the bundled default so their existing behavior remains unchanged.
   const memMode: MemoryPromptMode = memfsConfig.memoryPromptMode;
-  const systemPromptContent = options.systemPromptCustom
-    ? options.systemPromptCustom
-    : await resolveAndBuildSystemPrompt(options.systemPromptPreset, memMode);
+  const systemPromptContent = await resolveCreatedAgentSystemPrompt({
+    isLettaCloud,
+    systemPromptPreset: options.systemPromptPreset,
+    systemPromptCustom: options.systemPromptCustom,
+    memoryPromptMode: memMode,
+  });
 
   // Create agent with inline memory blocks (LET-7101: single API call instead of N+1)
   // - memory_blocks: new blocks to create inline
@@ -430,7 +459,10 @@ export async function createAgent(
   if (!isSubagent && settingsManager.isReady) {
     if (options.systemPromptCustom) {
       settingsManager.setSystemPromptCustom(fullAgent.id);
-    } else if (isKnownPreset(options.systemPromptPreset ?? "default")) {
+    } else if (
+      systemPromptContent !== null &&
+      isKnownPreset(options.systemPromptPreset ?? "default")
+    ) {
       recordManagedSystemPrompt(
         fullAgent.id,
         options.systemPromptPreset ?? "default",

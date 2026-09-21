@@ -43,8 +43,8 @@ export interface BuildCreateAgentRequestOptions {
   description?: string;
   /** Model ID or handle. Personality default, then catalog default, applies. */
   model?: string;
-  /** Complete prompt override. Otherwise the standard prompt for prompt mode. */
-  system?: string;
+  /** Complete prompt override. Null delegates default selection to the server. */
+  system?: string | null;
   memoryPromptMode?: MemoryPromptMode;
   /**
    * Caller-defined identity. With a personality, matching labels replace its
@@ -69,7 +69,7 @@ export interface CreateAgentRequest {
   name?: string;
   description?: string;
   model: string;
-  system: string;
+  system: string | null;
   memory_blocks?: CreateAgentMemoryBlock[];
   block_ids?: string[];
   tags: string[];
@@ -164,7 +164,10 @@ export async function buildCreateAgentRequest(
       ? { description: options.description ?? personality?.description }
       : {}),
     model: modelHandle,
-    system: options.system ?? buildSystemPrompt("default", memoryPromptMode),
+    system:
+      options.system !== undefined
+        ? options.system
+        : buildSystemPrompt("default", memoryPromptMode),
     ...(memoryBlocks !== undefined ? { memory_blocks: memoryBlocks } : {}),
     ...(blockIds && blockIds.length > 0 ? { block_ids: blockIds } : {}),
     tags: buildCreatedAgentTags({
