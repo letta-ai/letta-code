@@ -222,7 +222,7 @@ jobs:
     if: needs.classify.outputs.run_heavy_ci == 'true'
     name: Package / ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 10
+    timeout-minutes: ${{ matrix.runner == 'windows-latest' && 15 || 10 }}
     strategy:
       fail-fast: false
       matrix:
