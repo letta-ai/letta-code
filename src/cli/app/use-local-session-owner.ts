@@ -108,7 +108,8 @@ export function useLocalSessionOwner(params: {
           .some(
             (item) =>
               (item.agentId === undefined &&
-                item.conversationId === undefined) ||
+                item.conversationId === undefined &&
+                !item.paused) ||
               (item.agentId === params.agentId &&
                 item.conversationId === (params.conversationId || "default")),
           );

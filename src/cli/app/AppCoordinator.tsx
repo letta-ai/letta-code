@@ -1446,7 +1446,9 @@ export function App({
         ?.peek()
         .some(
           (item) =>
-            (item.agentId === undefined && item.conversationId === undefined) ||
+            (item.agentId === undefined &&
+              item.conversationId === undefined &&
+              !item.paused) ||
             (item.agentId === agentId &&
               item.conversationId === conversationId),
         ) ?? false,
