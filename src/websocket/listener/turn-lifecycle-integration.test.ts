@@ -294,7 +294,7 @@ describe("listener turn lifecycle integration", () => {
     ["user-a", "user-a"],
     [undefined, undefined],
   ])(
-    "reminder and steering keep request actor %s with queued author %s",
+    "explicit steering keeps request actor %s with queued author %s",
     async (activeUser, queuedUser) => {
       const runtime = getOrCreateScopedRuntime(
         createRuntime(),
@@ -329,6 +329,11 @@ describe("listener turn lifecycle integration", () => {
         },
         queuedUser,
       );
+      // These inbound user messages now wait for turn end unless selected.
+      // Exercise both bearer and human authorship through explicit steering.
+      for (const item of runtime.queueRuntime.items) {
+        expect(runtime.queueRuntime.steer(item.id)).toBe(true);
+      }
       const approval = {
         toolCallId: "call-monitor",
         toolName: "Bash",
