@@ -130,20 +130,33 @@ describe("workflow execution registry", () => {
     expect(getWorkflowExecution("workflow_9")).toBeNull();
   });
 
-  test("notifies subscribers and bumps the version on every change", () => {
+  test("coalesces a burst of changes into one notification per tick", async () => {
     let calls = 0;
     const unsubscribe = subscribeToWorkflowExecutions(() => {
       calls += 1;
     });
     const before = getWorkflowExecutionsVersion();
     register();
-    recordWorkflowProgress("workflow_1", { kind: "log", message: "hi" });
+    for (let i = 0; i < 40; i++) {
+      recordWorkflowProgress("workflow_1", {
+        kind: "agent",
+        callIndex: i,
+        label: `a${i}`,
+        phase: null,
+        status: "queued",
+      });
+    }
     finishWorkflowExecution("workflow_1", { status: "completed" });
-    expect(calls).toBe(3);
-    expect(getWorkflowExecutionsVersion()).toBe(before + 3);
+    // Synchronous burst: nothing has been published yet, but reads are live.
+    expect(calls).toBe(0);
+    expect(getWorkflowExecution("workflow_1")?.agentsTotal).toBe(40);
+    await Bun.sleep(5);
+    expect(calls).toBe(1);
+    expect(getWorkflowExecutionsVersion()).toBe(before + 1);
     expect(getWorkflowExecution("workflow_1")?.finishedAt).toBeGreaterThan(0);
     unsubscribe();
     recordWorkflowProgress("workflow_1", { kind: "log", message: "later" });
-    expect(calls).toBe(3);
+    await Bun.sleep(5);
+    expect(calls).toBe(1);
   });
 });

@@ -65,10 +65,25 @@ const FINISHED_RUN_RETENTION_MS = 5 * 60 * 1000;
 const MAX_LOG_LINES = 50;
 
 let version = 0;
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
+/**
+ * Coalesce change notifications to one per tick. The engine emits bursts
+ * (every agent of a pipeline is queued in the same tick), and one forced
+ * useSyncExternalStore re-render per event can exceed React's nested-update
+ * limit under Ink ("Maximum update depth exceeded"; see #3964 for the same
+ * failure in the mod registry). Readers see the latest state either way.
+ */
 function notify(): void {
-  version += 1;
-  for (const listener of listeners) listener();
+  if (flushTimer) return;
+  flushTimer = setTimeout(() => {
+    flushTimer = null;
+    version += 1;
+    for (const listener of listeners) listener();
+  }, 0);
+  if (typeof flushTimer === "object" && "unref" in flushTimer) {
+    flushTimer.unref();
+  }
 }
 
 /**
@@ -241,5 +256,7 @@ export function __resetWorkflowExecutionsForTests(): void {
   cleanupTimers.clear();
   runs.clear();
   listeners.clear();
+  if (flushTimer) clearTimeout(flushTimer);
+  flushTimer = null;
   version = 0;
 }
