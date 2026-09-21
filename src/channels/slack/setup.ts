@@ -40,7 +40,7 @@ export async function runSlackSetup(): Promise<boolean> {
     );
     console.log("Recommended bot token scopes:");
     console.log(
-      "  app_mentions:read, channels:history, chat:write, commands, groups:history, im:history, users:read",
+      "  app_mentions:read, channels:history, chat:write, commands, emoji:read, groups:history, im:history, users:read",
     );
     console.log("  reactions:read, reactions:write, files:read, files:write\n");
 

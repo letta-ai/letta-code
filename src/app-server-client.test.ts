@@ -74,6 +74,37 @@ describe("app-server client", () => {
     FakeSocket.instances = [];
   });
 
+  test("stops a Monitor and waits for the matching scoped reply", async () => {
+    const { client, control } = createFakeClient();
+    const opened = client.connect();
+    control.open();
+    await opened;
+    const runtime = { agent_id: "agent-a", conversation_id: "conv-a" };
+    const pending = client.stopMonitor({ runtime, process_id: "monitor-a" });
+    const sent = JSON.parse(control.sent[0] ?? "{}");
+    expect(sent).toEqual({
+      type: "monitor_stop",
+      request_id: "monitor-stop-1",
+      runtime,
+      process_id: "monitor-a",
+    });
+    const response = {
+      type: "monitor_stop_response" as const,
+      request_id: sent.request_id,
+      runtime,
+      process_id: "monitor-a",
+      success: true,
+      stopped: true,
+    };
+    control.receive({
+      ...response,
+      runtime: { ...runtime, conversation_id: "other" },
+    });
+    control.receive(response);
+    expect(await pending).toEqual(response);
+    client.close();
+  });
+
   test("resolves historical channel names to the same websocket URL", () => {
     expect(resolveAppServerChannelUrl("http://127.0.0.1:4500", "control")).toBe(
       "ws://127.0.0.1:4500/ws",
@@ -358,6 +389,27 @@ describe("app-server client", () => {
       "abort_message",
       "input",
     ]);
+  });
+
+  test("wraps resume_queue requests", async () => {
+    const { client, control } = createFakeClient();
+    control.open();
+    const runtime = { agent_id: "agent-1", conversation_id: "conv-1" };
+
+    const resumePromise = client.resumeQueue({ runtime });
+    expect(JSON.parse(control.sent[0] ?? "{}")).toMatchObject({
+      type: "resume_queue",
+      request_id: "resume-queue-1",
+      runtime,
+    });
+    control.receive({
+      type: "resume_queue_response",
+      request_id: "resume-queue-1",
+      runtime,
+      resumed: 2,
+      success: true,
+    });
+    expect((await resumePromise).resumed).toBe(2);
   });
 
   test("wraps conversation list requests", async () => {

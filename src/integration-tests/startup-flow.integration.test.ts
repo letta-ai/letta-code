@@ -230,7 +230,7 @@ describe("Startup Flow - Invalid Inputs", () => {
       const result = await runCli(
         [
           "--conversation",
-          "conversation-definitely-does-not-exist-12345",
+          "conv-00000000-0000-0000-0000-000000000000",
           "-p",
           "test",
         ],
@@ -240,14 +240,6 @@ describe("Startup Flow - Invalid Inputs", () => {
     },
     { timeout: 70000 },
   );
-
-  test("--import with nonexistent file shows error", async () => {
-    const result = await runCli(
-      ["--import", "/nonexistent/path/agent.af", "-p", "test"],
-      { expectExit: 1 },
-    );
-    expect(result.stderr).toContain("not found");
-  });
 });
 
 // ============================================================================
@@ -455,8 +447,7 @@ describe("Startup Flow - Integration", () => {
         [
           "--conversation",
           realConversationId,
-          "-m",
-          "sonnet-4.6-low",
+          // The recipient was configured above; enqueue does not reconfigure it.
           "-p",
           "Say OK",
           "--output-format",
@@ -501,8 +492,7 @@ describe("Startup Flow - Integration", () => {
           agentIdForTest,
           "--conversation",
           "default",
-          "-m",
-          "sonnet-4.6-low",
+          // Keep the model set during agent creation.
           "-p",
           "Say OK",
           "--output-format",

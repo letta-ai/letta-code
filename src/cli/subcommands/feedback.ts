@@ -1,5 +1,8 @@
 import { parseArgs } from "node:util";
-import { submitFeedbackMetadata } from "@/backend/api/metadata";
+import {
+  getFeedbackClientType,
+  submitFeedbackMetadata,
+} from "@/backend/api/metadata";
 import { settingsManager } from "@/settings-manager";
 import { getVersion } from "@/version";
 
@@ -10,6 +13,7 @@ export interface FeedbackSubcommandDependencies {
   submitFeedback?: typeof submitFeedbackMetadata;
   getDeviceId?: () => string;
   getApiKey?: () => string | undefined;
+  getClientType?: typeof getFeedbackClientType;
   stdout?: (message: string) => void;
   stderr?: (message: string) => void;
 }
@@ -96,6 +100,8 @@ export async function runFeedbackSubcommand(
       {
         message,
         feature: "letta-code-agent-feedback",
+        submission_source: "agent_skill",
+        client_type: (deps.getClientType ?? getFeedbackClientType)(),
         version: getVersion(),
         platform: process.platform,
         agent_id: agentId || undefined,

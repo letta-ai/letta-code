@@ -81,7 +81,11 @@ interface CreateProactiveSlackTransportParams {
 export function createProactiveSlackTransport(
   params: CreateProactiveSlackTransportParams,
 ): ChannelMessageActionTransport {
+  const listCustomEmojis = params.adapter.listCustomEmojis?.bind(
+    params.adapter,
+  );
   return {
+    ...(listCustomEmojis ? { listCustomEmojis } : {}),
     sendMessage: async (message) => {
       const result = await params.adapter.sendMessage(message);
       const isRootChannelPost =

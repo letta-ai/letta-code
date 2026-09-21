@@ -9,8 +9,8 @@ import {
   scrubSecretsFromString,
 } from "@/tools/secret-substitution";
 import {
+  __testSeedSecretsCache,
   clearSecretsCache,
-  initSecretsFromServer,
 } from "@/utils/secrets-store";
 import { createTempRuntimeScriptCommand } from "./runtime-script";
 
@@ -28,10 +28,8 @@ function asText(
     : JSON.stringify(toolReturn);
 }
 
-async function seedSecret(agentId: string, value: string): Promise<void> {
-  await initSecretsFromServer(agentId, {
-    secrets: [{ key: SECRET_KEY, value }],
-  });
+function seedSecret(agentId: string, value: string): void {
+  __testSeedSecretsCache(agentId, { [SECRET_KEY]: value });
 }
 
 afterEach(() => {
@@ -131,16 +129,6 @@ describe("scoped shell secret execution", () => {
       name: "ShellCommand",
       toolNames: ["ShellCommand"],
       buildArgs: (command) => ({ command, login: false, timeout_ms: 5000 }),
-    },
-    {
-      name: "run_shell_command",
-      toolNames: ["run_shell_command"],
-      buildArgs: (command) => ({ command, timeout_ms: 5000 }),
-    },
-    {
-      name: "RunShellCommand",
-      toolNames: ["RunShellCommand"],
-      buildArgs: (command) => ({ command, timeout_ms: 5000 }),
     },
   ];
 

@@ -1,5 +1,9 @@
 import { hostname } from "node:os";
 import Letta from "@letta-ai/letta-client";
+import {
+  bindDesktopCredentials,
+  getDesktopAccessToken,
+} from "@/auth/desktop-credentials";
 import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
 import { refreshAccessTokenSingleFlight } from "@/auth/oauth-refresh";
 import { type Settings, settingsManager } from "@/settings-manager";
@@ -105,19 +109,6 @@ const sdkLogger = {
   },
 };
 
-/**
- * Get the current Letta server URL from environment or settings.
- * Used for cache keys and API operations.
- */
-export function getServerUrl(): string {
-  const settings = settingsManager.getSettings();
-  return (
-    process.env.LETTA_BASE_URL ||
-    settings.env?.LETTA_BASE_URL ||
-    LETTA_CLOUD_API_URL
-  );
-}
-
 export {
   getMemfsGitProxyRewriteConfig,
   getMemfsServerUrl,
@@ -125,25 +116,7 @@ export {
   type MemfsGitProxyRewriteConfig,
 } from "./memfs-git-proxy";
 
-const NODE_HEADER_ENABLED_VALUES = new Set(["1", "true", "yes"]);
 const RUNTIME_ENVIRONMENT_DEVICE_ID_ENV = "LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID";
-
-/**
- * Resolve the `x-letta-node` runtime routing header from the LETTA_NODE env
- * var only. The old "node" experiment is retired: persisted
- * `experiments.node` settings overrides are ignored so a stale opt-out can no
- * longer silently pin an installation's traffic to the Python core runtime
- * (LET-9516). When LETTA_NODE is unset, no header is sent and the server
- * routes letta-code traffic to the TS runtime by default.
- */
-function getNodeRoutingHeader(): Record<string, string> {
-  const raw = process.env.LETTA_NODE;
-  if (raw === undefined || raw.trim() === "") {
-    return {};
-  }
-  const enabled = NODE_HEADER_ENABLED_VALUES.has(raw.trim().toLowerCase());
-  return { "x-letta-node": enabled ? "1" : "0" };
-}
 
 export function getRuntimeEnvironmentDeviceId(): string {
   // A managed runtime may have an orchestrator-assigned execution identity
@@ -164,7 +137,6 @@ export function getClientDefaultHeaders(): Record<string, string> {
     // restore it on other browsers/sessions. The cloud middleware
     // ignores this header on non-message routes.
     "X-Letta-Environment-Device-Id": getRuntimeEnvironmentDeviceId(),
-    ...getNodeRoutingHeader(),
     ...(process.env.LETTA_MEMFS_BACKEND === "hosted"
       ? { "x-letta-memfs-backend": "hosted" }
       : {}),
@@ -193,7 +165,11 @@ export async function getClient() {
       ? cachedSettings
       : await settingsManager.getSettingsWithSecureTokens();
 
-  let apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
+  const desktopAccessToken = getDesktopAccessToken();
+  let apiKey =
+    desktopAccessToken ||
+    process.env.LETTA_API_KEY ||
+    settings.env?.LETTA_API_KEY;
 
   if (!process.env.LETTA_API_KEY) {
     if (apiKey) {
@@ -209,6 +185,7 @@ export async function getClient() {
 
   // Check if token is expired and refresh if needed
   if (
+    !desktopAccessToken &&
     !process.env.LETTA_API_KEY &&
     settings.tokenExpiresAt &&
     settings.refreshToken
@@ -318,5 +295,5 @@ export async function getClient() {
     return promise;
   }) as typeof client.messages.retrieve;
 
-  return client;
+  return bindDesktopCredentials(client);
 }

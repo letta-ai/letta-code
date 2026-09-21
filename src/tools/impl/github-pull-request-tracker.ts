@@ -37,6 +37,18 @@ const HEREDOC_AT_LINE_END =
 const MAX_TRACKED_OUTPUT_CHARS = 30_000;
 
 const GH_GLOBAL_FLAGS_WITH_VALUES = new Set(["--hostname", "--repo", "-R"]);
+const TIMEOUT_FLAGS_WITH_VALUES = new Set([
+  "--kill-after",
+  "--signal",
+  "-k",
+  "-s",
+]);
+const TIMEOUT_FLAGS_WITHOUT_VALUES = new Set([
+  "--foreground",
+  "--preserve-status",
+  "--verbose",
+  "-v",
+]);
 
 const conversationTagUpdateTails = new Map<string, Promise<void>>();
 
@@ -89,6 +101,48 @@ function findExecutableIndex(tokens: readonly string[]): number {
   return index;
 }
 
+function unwrapTimeoutCommand(
+  tokens: readonly string[],
+  executableIndex: number,
+): number | undefined {
+  const executable = executableName(tokens[executableIndex] ?? "");
+  if (executable !== "timeout" && executable !== "gtimeout") {
+    return executableIndex;
+  }
+
+  let index = executableIndex + 1;
+  while (index < tokens.length) {
+    const token = tokens[index] ?? "";
+    if (token === "--") {
+      index += 1;
+      break;
+    }
+    if (TIMEOUT_FLAGS_WITH_VALUES.has(token)) {
+      index += 2;
+      continue;
+    }
+    if (
+      token.startsWith("--kill-after=") ||
+      token.startsWith("--signal=") ||
+      (/^-[ks].+/.test(token) && token !== "-k" && token !== "-s")
+    ) {
+      index += 1;
+      continue;
+    }
+    if (TIMEOUT_FLAGS_WITHOUT_VALUES.has(token)) {
+      index += 1;
+      continue;
+    }
+    if (token.startsWith("-")) {
+      return undefined;
+    }
+    break;
+  }
+
+  // timeout requires a duration before the command it runs.
+  return index + 1 < tokens.length ? index + 1 : undefined;
+}
+
 function skipGhGlobalFlags(
   tokens: readonly string[],
   startIndex: number,
@@ -114,7 +168,13 @@ function skipGhGlobalFlags(
 }
 
 function tokensCreatePullRequest(tokens: readonly string[]): boolean {
-  const executableIndex = findExecutableIndex(tokens);
+  const executableIndex = unwrapTimeoutCommand(
+    tokens,
+    findExecutableIndex(tokens),
+  );
+  if (executableIndex === undefined) {
+    return false;
+  }
   if (executableName(tokens[executableIndex] ?? "") !== "gh") {
     return false;
   }
@@ -141,7 +201,13 @@ function isShellExecutable(value: string): boolean {
 }
 
 function shellScriptFromCommand(tokens: readonly string[]): string | undefined {
-  const executableIndex = findExecutableIndex(tokens);
+  const executableIndex = unwrapTimeoutCommand(
+    tokens,
+    findExecutableIndex(tokens),
+  );
+  if (executableIndex === undefined) {
+    return undefined;
+  }
   if (!isShellExecutable(tokens[executableIndex] ?? "")) {
     return undefined;
   }

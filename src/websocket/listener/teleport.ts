@@ -1,18 +1,23 @@
 import type WebSocket from "ws";
+import { resolveBackendMode } from "@/backend/backend-mode";
+import { getLocalChannelTeleportError } from "@/channels/teleport-guard";
 import type {
   TeleportContinuation,
+  TeleportFailedCommand,
   TeleportProbeCommand,
   TeleportReadyMessage,
   TeleportRequestCommand,
 } from "@/types/protocol_v2";
 import { toListenerConnection } from "./connection";
+import { createInterruptedTurnStore } from "./interrupted-turn-record";
 import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
 import {
   emitProtocolV2Message,
   emitRuntimeStateUpdates,
 } from "./protocol-outbound";
+import { emitLoopErrorNotice } from "./recoverable-notices";
 import { getConversationRuntime } from "./runtime";
-import { isListenerTransportOpen } from "./transport";
+import { isListenerTransportOpen, type ListenerTransport } from "./transport";
 import type { TurnFinishTransition, TurnLease } from "./turn-lifecycle";
 import type {
   ConversationRuntime,
@@ -20,6 +25,7 @@ import type {
   ListenerConnectionId,
   ListenerRuntime,
   PendingTeleport,
+  StartListenerOptions,
 } from "./types";
 
 type SafeSocketSend = (
@@ -30,24 +36,97 @@ type SafeSocketSend = (
 ) => boolean;
 
 const TELEPORT_RECOVERY_TTL_MS = 5 * 60_000;
+/**
+ * How long a destination waits for the `teleport_continue` announced by its
+ * `runtime_start` before sync recovery may again finish stale approvals on its
+ * own. The cloud holds its per-conversation teleport lock for 60 seconds.
+ */
+const INBOUND_TELEPORT_CONTINUE_TTL_MS = 60_000;
+
+/**
+ * Record that the cloud is about to send `teleport_continue` for this scope.
+ * The source's yielded turn left pending approvals on the backend; the
+ * continuation carries their results, so sync recovery must not deny them as
+ * stale and start a competing turn (the destination would then reject the
+ * continuation with "already processing").
+ */
+export function expectInboundTeleport(
+  runtime: ConversationRuntime,
+  teleportId: string,
+): void {
+  runtime.expectedTeleportId = teleportId;
+  runtime.expectedTeleportExpiresAt =
+    Date.now() + INBOUND_TELEPORT_CONTINUE_TTL_MS;
+}
+
+export function isInboundTeleportExpected(
+  runtime: ConversationRuntime,
+): boolean {
+  if (runtime.expectedTeleportId === null) return false;
+  if (
+    runtime.expectedTeleportExpiresAt !== null &&
+    runtime.expectedTeleportExpiresAt <= Date.now()
+  ) {
+    clearExpectedInboundTeleport(runtime);
+    return false;
+  }
+  return true;
+}
+
+export function clearExpectedInboundTeleport(
+  runtime: ConversationRuntime,
+): void {
+  runtime.expectedTeleportId = null;
+  runtime.expectedTeleportExpiresAt = null;
+}
 
 export function buildTeleportContinuationMessages(params: {
   teleportId: string;
-  approvals: NonNullable<TeleportContinuation["approvals"]>;
+  approvals?: TeleportContinuation["approvals"];
 }): IncomingMessage["messages"] {
-  return [
-    {
+  const messages: IncomingMessage["messages"] = [];
+  if (params.approvals?.length) {
+    messages.push({
       type: "approval",
       approvals: params.approvals,
       otid: params.teleportId,
-    },
-    {
-      role: "system",
-      content:
-        "<system-reminder>Teleportation to this environment is complete. Continue the existing task from this environment now.</system-reminder>",
-      otid: `${params.teleportId}:continue`,
-    },
-  ];
+    });
+  }
+  messages.push({
+    role: "user",
+    content:
+      "<system-reminder>Teleportation to this environment is complete. Continue the existing task from this environment now.</system-reminder>",
+    otid: `${params.teleportId}:continue`,
+  });
+  return messages;
+}
+
+function escapeSystemReminderText(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function buildTeleportFailureMessages(params: {
+  teleportId: string;
+  error: string;
+  approvals?: NonNullable<TeleportContinuation["approvals"]>;
+}): IncomingMessage["messages"] {
+  const messages: IncomingMessage["messages"] = [];
+  if (params.approvals && params.approvals.length > 0) {
+    messages.push({
+      type: "approval",
+      approvals: params.approvals,
+      otid: params.teleportId,
+    });
+  }
+  messages.push({
+    role: "user",
+    content: `<system-reminder>Teleportation failed.\n\nError: ${escapeSystemReminderText(params.error)}\n\nContinue the existing task from this environment now.</system-reminder>`,
+    otid: `${params.teleportId}:failed`,
+  });
+  return messages;
 }
 
 function getPendingTeleports(
@@ -185,7 +264,7 @@ export function handleTeleportProbe(
       type: "teleport_probe_response",
       request_id: command.request_id,
       runtime: command.runtime,
-      supported: true,
+      supported: resolveBackendMode() === "api",
       drains_accepted_inputs: true,
       idempotent_continuation: true,
     },
@@ -221,6 +300,18 @@ export function handleTeleportRequest(params: {
     drainAcceptedInputs: false,
     activeTurn: false,
   };
+  const channelError = getLocalChannelTeleportError(pending);
+  if (channelError) {
+    pending.readyAt = Date.now();
+    pending.error = channelError;
+    pendingTeleports.set(pending.teleportId, pending);
+    sendTeleportReady(listener, pending, {
+      success: false,
+      error: channelError,
+    });
+    retainTeleportForRecovery(listener, pending);
+    return;
+  }
   const conflicting = findPendingTeleportForRuntime(
     listener,
     pending.agentId,
@@ -248,9 +339,13 @@ export function handleTeleportRequest(params: {
     ? hasAcceptedInputsWaiting(conversationRuntime, true)
     : false;
   if (!conversationRuntime?.isProcessing && !pending.drainAcceptedInputs) {
-    if (sendTeleportReady(listener, pending, { success: true })) {
+    const connection = listener.connections.get(pending.connectionId);
+    if (!connection || !isListenerTransportOpen(connection.writer)) {
+      pendingTeleports.delete(pending.teleportId);
+      return;
+    }
+    if (emitClaimedTeleportReady(listener, pending)) {
       pending.readyAt = Date.now();
-      retainTeleportForRecovery(listener, pending);
     }
   }
 }
@@ -278,7 +373,12 @@ export function claimPendingTeleportAtBoundary(params: {
     if (runtime && hasAcceptedInputsWaiting(runtime, false)) return null;
   }
   const connection = params.listener.connections.get(pending.connectionId);
-  if (!connection || !isListenerTransportOpen(connection.writer)) return null;
+  if (!connection || !isListenerTransportOpen(connection.writer)) {
+    // No readiness was sent and the source still owns its turn and results.
+    // Drop only the handoff request so later input is not blocked forever.
+    params.listener.pendingTeleports?.delete(pending.teleportId);
+    return null;
+  }
   pending.readyAt = Date.now();
   pending.activeTurn = params.activeTurn;
   pending.continuation = params.continuation;
@@ -289,11 +389,28 @@ export function emitClaimedTeleportReady(
   listener: ListenerRuntime,
   pending: PendingTeleport,
 ): boolean {
+  if (listener.connectionId?.startsWith("conn-"))
+    suspendRecordedTeleport(pending, true);
   const sent = sendTeleportReady(listener, pending, { success: true });
   if (sent) {
     retainTeleportForRecovery(listener, pending);
+  } else if (listener.connectionId?.startsWith("conn-")) {
+    suspendRecordedTeleport(pending, false);
   }
   return sent;
+}
+
+function suspendRecordedTeleport(
+  pending: PendingTeleport,
+  suspended: boolean,
+): void {
+  const store = createInterruptedTurnStore();
+  const record = store.read(pending.agentId, pending.conversationId);
+  if (record)
+    store.write({
+      ...record,
+      teleportId: suspended ? pending.teleportId : undefined,
+    });
 }
 
 export function finishTeleport(
@@ -333,7 +450,7 @@ export function finishPendingTeleport(runtime: ConversationRuntime): void {
   if (claimed) emitClaimedTeleportReady(runtime.listener, claimed);
 }
 
-export function takeFailedTeleport(params: {
+function takeFailedTeleport(params: {
   listener: ListenerRuntime;
   teleportId: string;
   agentId: string;
@@ -349,4 +466,68 @@ export function takeFailedTeleport(params: {
   }
   params.listener.pendingTeleports?.delete(params.teleportId);
   return pending;
+}
+
+export function handleTeleportFailure(params: {
+  listener: ListenerRuntime;
+  command: TeleportFailedCommand;
+  socket: ListenerTransport;
+  onStatusChange?: StartListenerOptions["onStatusChange"];
+  getOrCreateScopedRuntime: (
+    listener: ListenerRuntime,
+    agentId?: string | null,
+    conversationId?: string | null,
+  ) => ConversationRuntime;
+  runDetachedListenerTask: (
+    commandName: string,
+    task: () => Promise<void>,
+  ) => void;
+  processIncomingMessage: (
+    msg: IncomingMessage,
+    socket: ListenerTransport,
+    runtime: ConversationRuntime,
+    onStatusChange?: StartListenerOptions["onStatusChange"],
+    connectionId?: string,
+  ) => Promise<void>;
+}): void {
+  const pending = takeFailedTeleport({
+    listener: params.listener,
+    teleportId: params.command.teleport_id,
+    agentId: params.command.runtime.agent_id,
+    conversationId: params.command.runtime.conversation_id,
+  });
+  // Rejected requests never yielded, so their source turn needs no recovery.
+  if (!pending || pending.error) return;
+
+  const runtime = params.getOrCreateScopedRuntime(
+    params.listener,
+    pending.agentId,
+    pending.conversationId,
+  );
+  emitLoopErrorNotice(params.socket, runtime, {
+    message: `Teleport failed: ${params.command.error}`,
+    stopReason: "error",
+    isTerminal: false,
+    agentId: pending.agentId,
+    conversationId: pending.conversationId,
+  });
+  params.runDetachedListenerTask("teleport_failed", async () => {
+    await params.processIncomingMessage(
+      {
+        type: "message",
+        connectionId: pending.connectionId,
+        agentId: pending.agentId,
+        conversationId: pending.conversationId,
+        messages: buildTeleportFailureMessages({
+          teleportId: params.command.teleport_id,
+          error: params.command.error,
+          approvals: pending.continuation?.approvals,
+        }),
+      },
+      params.socket,
+      runtime,
+      params.onStatusChange,
+      pending.connectionId,
+    );
+  });
 }

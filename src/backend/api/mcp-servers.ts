@@ -14,7 +14,6 @@
 
 import type { McpServerListResponse } from "@letta-ai/letta-client/resources/mcp-servers/mcp-servers";
 import type { Tool } from "@letta-ai/letta-client/resources/tools";
-import { isRecord } from "@/utils/type-guards";
 
 export type ServerMcpServer = McpServerListResponse[number];
 
@@ -67,91 +66,6 @@ export interface AgentMcpAttachment {
   serverName?: string;
 }
 
-export interface AgentConnectedMcpServer {
-  id: string;
-  serverName: string;
-  serverType: string;
-  target: string;
-}
-
-export interface AgentConnectedMcpTool {
-  id: string;
-  name: string;
-  description?: string | null;
-}
-
-export interface AgentMcpToolRunResult {
-  status: string;
-  funcReturn: unknown;
-  stdout?: unknown;
-  stderr?: unknown;
-}
-
-function getString(
-  record: Record<string, unknown>,
-  key: string,
-): string | null {
-  const value = record[key];
-  return typeof value === "string" ? value : null;
-}
-
-function parseAgentConnectedMcpServer(
-  value: unknown,
-): AgentConnectedMcpServer | null {
-  if (!isRecord(value)) {
-    return null;
-  }
-
-  const id = getString(value, "id");
-  const serverName = getString(value, "server_name");
-  const serverType = getString(value, "mcp_server_type");
-  if (!id || !serverName || !serverType) {
-    return null;
-  }
-
-  const target =
-    getString(value, "server_url") ??
-    [
-      getString(value, "command"),
-      ...(Array.isArray(value.args) ? value.args : []),
-    ]
-      .filter((item): item is string => typeof item === "string")
-      .join(" ");
-
-  return { id, serverName, serverType, target };
-}
-
-function parseAgentConnectedMcpTool(
-  value: unknown,
-): AgentConnectedMcpTool | null {
-  if (!isRecord(value)) {
-    return null;
-  }
-
-  const id = getString(value, "id");
-  const name = getString(value, "name");
-  if (!id || !name) {
-    return null;
-  }
-
-  const description = getString(value, "description");
-  return { id, name, description };
-}
-
-function parseAgentMcpToolRunResult(value: unknown): AgentMcpToolRunResult {
-  if (!isRecord(value)) {
-    throw new Error("MCP tool run returned an invalid response");
-  }
-
-  const status = getString(value, "status") ?? "unknown";
-  return {
-    status,
-    funcReturn: value.func_return,
-    stdout: value.stdout,
-    stderr: value.stderr,
-  };
-}
-
 function withTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
@@ -179,72 +93,6 @@ export function listServerMcpServers(
     timeoutMs,
     "Listing server-side MCP servers",
   );
-}
-
-/** List MCP servers connected to a specific agent through the server-side association table. */
-export async function listAgentConnectedMcpServers(
-  client: ServerMcpClient,
-  agentId: string,
-  timeoutMs = 10_000,
-): Promise<AgentConnectedMcpServer[]> {
-  const result = await withTimeout(
-    client.get(`/v1/agents/${encodeURIComponent(agentId)}/mcp-servers`),
-    timeoutMs,
-    "Listing agent-connected MCP servers",
-  );
-
-  if (!Array.isArray(result)) {
-    return [];
-  }
-
-  return result
-    .map(parseAgentConnectedMcpServer)
-    .filter((server): server is AgentConnectedMcpServer => server !== null);
-}
-
-/** List registered tools for an MCP server connected to a specific agent. */
-export async function listAgentConnectedMcpTools(
-  client: ServerMcpClient,
-  agentId: string,
-  mcpServerId: string,
-  timeoutMs = 10_000,
-): Promise<AgentConnectedMcpTool[]> {
-  const result = await withTimeout(
-    client.get(
-      `/v1/agents/${encodeURIComponent(agentId)}/mcp-servers/${encodeURIComponent(mcpServerId)}/tools`,
-    ),
-    timeoutMs,
-    "Listing agent-connected MCP server tools",
-  );
-
-  if (!Array.isArray(result)) {
-    return [];
-  }
-
-  return result
-    .map(parseAgentConnectedMcpTool)
-    .filter((tool): tool is AgentConnectedMcpTool => tool !== null);
-}
-
-/** Run a registered MCP tool through an agent-scoped MCP server association. */
-export async function runAgentConnectedMcpTool(params: {
-  client: ServerMcpClient;
-  agentId: string;
-  mcpServerId: string;
-  toolId: string;
-  args: Record<string, unknown>;
-  timeoutMs?: number;
-}): Promise<AgentMcpToolRunResult> {
-  const result = await withTimeout(
-    params.client.post(
-      `/v1/agents/${encodeURIComponent(params.agentId)}/mcp-servers/${encodeURIComponent(params.mcpServerId)}/tools/${encodeURIComponent(params.toolId)}/run`,
-      { args: params.args },
-    ),
-    params.timeoutMs ?? 60_000,
-    "Running agent-connected MCP tool",
-  );
-
-  return parseAgentMcpToolRunResult(result);
 }
 
 /** List a server's tools live from the MCP server (name-keyed legacy route). */

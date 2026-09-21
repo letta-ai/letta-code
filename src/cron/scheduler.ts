@@ -15,6 +15,7 @@
 import { getBackend } from "@/backend";
 import type { ConversationCreateBody } from "@/backend/backend";
 import type { CronPromptQueueItem, DequeuedBatch } from "@/queue/queue-runtime";
+import { debugWarn } from "@/utils/debug";
 import { TO_SUBSCRIBERS } from "@/websocket/listener/connection";
 import { ensureConversationQueueRuntime } from "@/websocket/listener/conversation-runtime";
 import { emitProtocolV2Message } from "@/websocket/listener/protocol-outbound";
@@ -107,6 +108,14 @@ const MAX_LEASE_RETRIES = 3;
 const NEW_CONVERSATION_TARGET = "new";
 
 // ── Helpers ─────────────────────────────────────────────────────────
+
+function logScheduler(opts: StartListenerOptions, message: string): void {
+  if (opts.onLog) {
+    opts.onLog(`[Cron] ${message}`);
+    return;
+  }
+  debugWarn("Cron", message);
+}
 
 export function minuteKey(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}T${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
@@ -494,7 +503,7 @@ function tick(
 ): void {
   // Verify we still hold the lease
   if (!verifySchedulerLease(state.token)) {
-    console.error("[Cron] Scheduler lease lost. Stopping.");
+    logScheduler(opts, "Scheduler lease lost. Stopping.");
     stopScheduler();
     return;
   }
@@ -552,7 +561,10 @@ function tick(
           processQueuedTurn,
           "automatic",
         ).catch((err) => {
-          console.error(`[Cron] Error firing task ${taskId}:`, err);
+          logScheduler(
+            opts,
+            `Error firing task ${taskId}: ${err instanceof Error ? err.message : String(err)}`,
+          );
           setLastRunOutcome(freshTask.id, {
             outcome: "failed",
             reason: "scheduler_error",
@@ -611,22 +623,26 @@ export function startScheduler(
     token = claimSchedulerLease();
   } catch (err) {
     if (_retryCount < MAX_LEASE_RETRIES) {
-      console.warn(
-        `[Cron] Could not claim scheduler lease (attempt ${_retryCount + 1}/${MAX_LEASE_RETRIES + 1}): ${err instanceof Error ? err.message : err}`,
+      logScheduler(
+        opts,
+        `Could not claim scheduler lease (attempt ${_retryCount + 1}/${MAX_LEASE_RETRIES + 1}): ${err instanceof Error ? err.message : err}`,
       );
-      console.warn(
-        "[Cron] Cron tasks will not fire until the scheduler starts. Retrying...",
+      logScheduler(
+        opts,
+        "Cron tasks will not fire until the scheduler starts. Retrying...",
       );
       setTimeout(
         () => startScheduler(socket, opts, processQueuedTurn, _retryCount + 1),
         LEASE_RETRY_MS,
       );
     } else {
-      console.error(
-        `[Cron] Failed to claim scheduler lease after ${MAX_LEASE_RETRIES + 1} attempts. Cron tasks will not fire.`,
+      logScheduler(
+        opts,
+        `Failed to claim scheduler lease after ${MAX_LEASE_RETRIES + 1} attempts. Cron tasks will not fire.`,
       );
-      console.error(
-        "[Cron] Another process may hold the lease. Restart Letta Code to retry.",
+      logScheduler(
+        opts,
+        "Another process may hold the lease. Restart Letta Code to retry.",
       );
     }
     return;
@@ -661,7 +677,10 @@ export function startScheduler(
         state.lastMtime = 0; // Force cache refresh
       }
     } catch (err) {
-      console.error("[Cron] GC error:", err);
+      logScheduler(
+        opts,
+        `GC error: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }, GC_INTERVAL_MS);
 

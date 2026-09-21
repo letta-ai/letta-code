@@ -215,6 +215,16 @@ describe("listener auth lifecycle", () => {
     return connectionChannels.filter((value) => value === channel).length;
   }
 
+  function isClientInitialized(): boolean {
+    const runtime = getActiveRuntime();
+    return (
+      runtime?.connections.get("connection-id")?.initialized === true &&
+      runtime.socket?.readyState === WebSocket.OPEN &&
+      (!runtime.streamSocket ||
+        runtime.streamSocket.readyState === WebSocket.OPEN)
+    );
+  }
+
   function lastConnectionIndexForChannel(channel: string): number {
     for (let index = connectionChannels.length - 1; index >= 0; index -= 1) {
       if (connectionChannels[index] === channel) return index;
@@ -275,7 +285,7 @@ describe("listener auth lifecycle", () => {
   test("refreshes missing credentials on a real socket reconnect", async () => {
     await startClient();
     await waitFor(
-      () => connections.length === 1,
+      () => connections.length === 1 && isClientInitialized(),
       "initial socket did not open",
     );
     expect(authorizations[0]).toBe("Bearer initial-access-token");
@@ -295,7 +305,7 @@ describe("listener auth lifecycle", () => {
 
     connections[0]?.close(1000, "reconnect");
     await waitFor(
-      () => connections.length === 2,
+      () => connections.length === 2 && isClientInitialized(),
       "listener did not reconnect with refreshed credentials",
     );
 
@@ -308,7 +318,7 @@ describe("listener auth lifecycle", () => {
     const onNeedsReregister = mock(() => {});
     await startClient({ onDisconnected, onNeedsReregister });
     await waitFor(
-      () => connections.length === 1,
+      () => connections.length === 1 && isClientInitialized(),
       "initial socket did not open",
     );
 
@@ -356,7 +366,7 @@ describe("listener auth lifecycle", () => {
 
     connections[0]?.close(1000, "relay recycle");
     await waitFor(
-      () => connections.length === 2,
+      () => connections.length === 2 && isClientInitialized(),
       "listener did not reconnect after transient close",
     );
 
@@ -409,7 +419,7 @@ describe("listener auth lifecycle", () => {
   test("queued input survives a transient relay close behind an active turn", async () => {
     await startClient();
     await waitFor(
-      () => connections.length === 1,
+      () => connections.length === 1 && isClientInitialized(),
       "initial socket did not open",
     );
 
@@ -443,7 +453,7 @@ describe("listener auth lifecycle", () => {
 
     connections[0]?.close(1000, "relay recycle");
     await waitFor(
-      () => connections.length === 2,
+      () => connections.length === 2 && isClientInitialized(),
       "listener did not reconnect after transient close",
     );
 
@@ -470,7 +480,8 @@ describe("listener auth lifecycle", () => {
     await waitFor(
       () =>
         countConnectionsForChannel("control") === 1 &&
-        countConnectionsForChannel("stream") === 1,
+        countConnectionsForChannel("stream") === 1 &&
+        isClientInitialized(),
       "initial split sockets did not open",
     );
 
@@ -481,7 +492,8 @@ describe("listener auth lifecycle", () => {
     await waitFor(
       () =>
         countConnectionsForChannel("control") === 2 &&
-        countConnectionsForChannel("stream") === 2,
+        countConnectionsForChannel("stream") === 2 &&
+        isClientInitialized(),
       "split stream close did not reconnect paired sockets",
     );
 
@@ -501,7 +513,8 @@ describe("listener auth lifecycle", () => {
     await waitFor(
       () =>
         countConnectionsForChannel("control") === 1 &&
-        countConnectionsForChannel("stream") === 1,
+        countConnectionsForChannel("stream") === 1 &&
+        isClientInitialized(),
       "initial split sockets did not open",
     );
 
@@ -565,7 +578,7 @@ describe("listener auth lifecycle", () => {
     const onNeedsReregister = mock(() => {});
     await startClient({ onDisconnected, onNeedsReregister });
     await waitFor(
-      () => connections.length === 1,
+      () => connections.length === 1 && isClientInitialized(),
       "initial socket did not open",
     );
 
@@ -626,7 +639,7 @@ describe("listener auth lifecycle", () => {
     const onNeedsReregister = mock(() => {});
     await startClient({ onNeedsReregister });
     await waitFor(
-      () => connections.length === 1,
+      () => connections.length === 1 && isClientInitialized(),
       "initial socket did not open",
     );
 
@@ -682,7 +695,7 @@ describe("listener auth lifecycle", () => {
   test("intentional stop closes tear down same-process runtime state", async () => {
     await startClient();
     await waitFor(
-      () => connections.length === 1,
+      () => connections.length === 1 && isClientInitialized(),
       "initial socket did not open",
     );
 
@@ -852,7 +865,7 @@ describe("listener auth lifecycle", () => {
     const onError = mock(() => {});
     await startClient({ onError });
     await waitFor(
-      () => connections.length === 1,
+      () => connections.length === 1 && isClientInitialized(),
       "initial socket did not open",
     );
 
@@ -877,7 +890,7 @@ describe("listener auth lifecycle", () => {
 
     connections[0]?.close(1000, "reconnect");
     await waitFor(
-      () => connections.length === 2,
+      () => connections.length === 2 && isClientInitialized(),
       "listener did not retry the transient refresh failure",
     );
 

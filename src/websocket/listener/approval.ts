@@ -432,6 +432,16 @@ export function requestApprovalOverWS(
     return Promise.reject(new Error("Cancelled by user"));
   }
 
+  if (runtime.executionSettings !== undefined) {
+    return Promise.resolve({
+      request_id: requestId,
+      decision: {
+        behavior: "deny",
+        message: "Tool requires approval (headless mode)",
+      },
+    });
+  }
+
   return new Promise<ApprovalResponseBody>((resolve, reject) => {
     let settled = false;
     const pending: import("./types").PendingApprovalResolver = {

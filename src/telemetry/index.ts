@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
-import { getServerUrl } from "@/backend/api/client";
 import { getServerHealth } from "@/backend/api/health";
 import { submitTelemetryMetadata } from "@/backend/api/metadata";
+import { getServerUrl } from "@/backend/api/server-url";
 import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
+import { getRuntimeActingUserId } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { debugLogFile } from "@/utils/debug";
 import { isLoopbackHostname, parseUrl } from "@/utils/url";
@@ -12,6 +13,7 @@ import {
   resolveTelemetryAgentOrigin,
   type TelemetryAgentOrigin,
 } from "./agent-origin";
+import { extractInputChannel } from "./channel";
 import { installFatalErrorHandlers } from "./fatal-error-handler";
 
 export type TelemetrySurface =
@@ -38,6 +40,7 @@ export interface TelemetryEvent {
     | "tool_usage"
     | "error"
     | "user_input"
+    | "channel_gateway_lifecycle"
     | "reflection_start"
     | "reflection_end"
     | "reflection_worktree_cleanup"
@@ -73,6 +76,8 @@ export interface SessionEndData {
 
 export interface ToolUsageData {
   tool_name: string;
+  channel?: string;
+  channel_action?: string;
   success: boolean;
   duration: number;
   response_length?: number;
@@ -99,10 +104,31 @@ export interface ErrorData {
 
 export interface UserInputData {
   input_length: number;
+  channel?: string;
   is_command: boolean;
   command_name?: string;
   message_type: string;
   model_id: string;
+}
+
+export interface ChannelGatewayLifecycleData {
+  lifecycle_event:
+    | "exit"
+    | "process_error"
+    | "restart_scheduled"
+    | "restart_ready"
+    | "restart_exhausted";
+  restart_attempt: number;
+  max_restart_attempts: number;
+  restore_mode: "explicit_channels" | "enabled_accounts";
+  channel_types: string[];
+  duration_ms?: number;
+  delay_ms?: number;
+  exit_code?: number | null;
+  signal?: string | null;
+  reached_ready?: boolean;
+  version?: string;
+  platform?: string;
 }
 
 export type ReflectionTriggerSource =
@@ -274,6 +300,8 @@ function isNonActionableError(message: string): boolean {
 
 class TelemetryManager {
   private events: TelemetryEvent[] = [];
+  // Transport-only snapshots: never serialize identity into telemetry JSON.
+  private eventActingUsers = new WeakMap<TelemetryEvent, string | undefined>();
   private sessionId: string;
   private deviceId: string | null = null;
   private currentAgentId: string | null = null;
@@ -462,6 +490,7 @@ class TelemetryManager {
       | ToolUsageData
       | ErrorData
       | UserInputData
+      | ChannelGatewayLifecycleData
       | ReflectionStartData
       | ReflectionEndData
       | ReflectionWorktreeCleanupData
@@ -484,6 +513,7 @@ class TelemetryManager {
       },
     };
 
+    this.eventActingUsers.set(event, getRuntimeActingUserId());
     this.events.push(event);
 
     // Flush if batch size is reached
@@ -698,6 +728,7 @@ class TelemetryManager {
     responseLength?: number,
     errorType?: string,
     stderr?: string,
+    channelMetadata?: Pick<ToolUsageData, "channel" | "channel_action">,
   ) {
     this.toolCallCount++;
     const data: ToolUsageData = {
@@ -707,8 +738,19 @@ class TelemetryManager {
       response_length: responseLength,
       error_type: errorType,
       stderr,
+      ...channelMetadata,
     };
     this.track("tool_usage", data);
+  }
+
+  trackChannelGatewayLifecycle(
+    data: Omit<ChannelGatewayLifecycleData, "version" | "platform">,
+  ) {
+    this.track("channel_gateway_lifecycle", {
+      ...data,
+      version: getVersion(),
+      platform: process.platform,
+    });
   }
 
   /**
@@ -774,6 +816,7 @@ class TelemetryManager {
       command_name: commandName,
       message_type: messageType,
       model_id: modelId,
+      channel: extractInputChannel(input),
     };
     this.track("user_input", data);
   }
@@ -878,21 +921,36 @@ class TelemetryManager {
 
     const deviceId = this.getTelemetryDeviceId();
 
-    try {
-      await submitTelemetryMetadata(
-        apiKey,
-        deviceId,
-        {
-          service: "letta-code",
-          server_version: this.serverVersion || undefined,
-          events: eventsToSend,
-        },
-        { signal: AbortSignal.timeout(5000) },
-      );
-    } catch (_error) {
-      // If flush fails, put events back in queue, but don't throw error
-      this.events.unshift(...eventsToSend);
+    const groups = new Map<string | undefined, TelemetryEvent[]>();
+    for (const event of eventsToSend) {
+      const actingUserId = this.eventActingUsers.get(event);
+      const group = groups.get(actingUserId) ?? [];
+      group.push(event);
+      groups.set(actingUserId, group);
     }
+
+    const failed = new Set<TelemetryEvent>();
+    await Promise.all(
+      [...groups].map(async ([actingUserId, events]) => {
+        try {
+          await submitTelemetryMetadata(
+            apiKey,
+            deviceId,
+            {
+              service: "letta-code",
+              server_version: this.serverVersion || undefined,
+              events,
+            },
+            { signal: AbortSignal.timeout(5000), actingUserId },
+          );
+        } catch {
+          for (const event of events) failed.add(event);
+        }
+      }),
+    );
+    // Keep failed snapshots in their original order, ahead of late arrivals.
+    // Successful groups must not be duplicated when another identity fails.
+    this.events.unshift(...eventsToSend.filter((event) => failed.has(event)));
   }
 
   /** Await in-flight flush and drain remaining queue (bounded by DRAIN_TIMEOUT_MS). Replaces fire-and-forget flush on exit. */

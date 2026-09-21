@@ -12,6 +12,10 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    outputs:
+      should_publish: ${{ steps.detect.outputs.should_publish }}
+      is_prerelease: ${{ steps.version.outputs.is_prerelease }}
+      pypi_published: ${{ steps.version.outputs.pypi_published }}
     environment: npm-publish
     permissions:
       contents: write
@@ -54,7 +58,7 @@ jobs:
         if: steps.detect.outputs.should_publish == 'true'
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.10
+          bun-version: 1.3.14
 
       - name: Setup Node (bundled npm 11 for OIDC publishing)
         if: steps.detect.outputs.should_publish == 'true'
@@ -122,6 +126,12 @@ jobs:
             echo "npm_published=true" >> $GITHUB_OUTPUT
           else
             echo "npm_published=false" >> $GITHUB_OUTPUT
+          fi
+
+          if curl -fsSL "https://pypi.org/pypi/letta/$VERSION/json" >/dev/null 2>&1; then
+            echo "pypi_published=true" >> $GITHUB_OUTPUT
+          else
+            echo "pypi_published=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Install dependencies
@@ -194,12 +204,21 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Log in to Docker Hub
+        if: steps.detect.outputs.should_publish == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
       - name: Set container image tags
         if: steps.detect.outputs.should_publish == 'true'
         id: container
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: |
+            ghcr.io/${{ github.repository }}
+            letta/letta
           tags: |
             type=raw,value=${{ steps.version.outputs.version }}
             type=raw,value=latest,enable=${{ steps.version.outputs.is_prerelease == 'false' }}
@@ -273,3 +292,37 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --ref main \
             -f letta_code_version="$TARGET_VERSION"
+
+  build-pypi-wheels:
+    needs: publish
+    if: >-
+      needs.publish.outputs.should_publish == 'true' &&
+      needs.publish.outputs.is_prerelease == 'false' &&
+      needs.publish.outputs.pypi_published != 'true'
+    uses: ./.github/workflows/pypi-wheels.yml
+
+  publish-pypi:
+    needs: [publish, build-pypi-wheels]
+    if: >-
+      always() &&
+      needs.publish.result == 'success' &&
+      needs.build-pypi-wheels.result == 'success' &&
+      needs.publish.outputs.should_publish == 'true' &&
+      needs.publish.outputs.is_prerelease == 'false' &&
+      needs.publish.outputs.pypi_published != 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi-publish
+      url: https://pypi.org/project/letta/
+    permissions:
+      id-token: write
+    steps:
+      - name: Download tested wheels
+        uses: actions/download-artifact@v5
+        with:
+          pattern: letta-wheel-*
+          path: dist
+          merge-multiple: true
+
+      - name: Publish wheels to PyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33

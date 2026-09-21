@@ -5,6 +5,7 @@
  * Supports both built-in subagent types and custom subagents defined in .letta/agents/.
  */
 
+import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { updateConversationLLMConfig } from "@/agent/modify";
 import {
@@ -29,7 +30,10 @@ import {
 } from "@/agent/subagents/subagent-model";
 import { type Backend, getBackend } from "@/backend";
 import { runSubagentStopHooks } from "@/hooks";
-import { getCurrentWorkingDirectory } from "@/runtime-context";
+import {
+  getCurrentWorkingDirectory,
+  getRuntimeContext,
+} from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { addToMessageQueue } from "@/utils/message-queue-bridge.js";
 import { sleep } from "@/utils/sleep";
@@ -59,6 +63,7 @@ interface TaskArgs {
   model?: string;
   agent_id?: string; // Deploy an existing agent instead of creating new
   conversation_id?: string; // Resume from an existing conversation
+  computer?: string; // Route the subagent's turn to a connected computer
   max_turns?: number; // Maximum number of agentic turns
   toolCallId?: string; // Injected by executeTool for linking subagent to parent tool call
   signal?: AbortSignal; // Injected by executeTool for interruption handling
@@ -97,6 +102,8 @@ export interface SpawnBackgroundSubagentTaskArgs {
   forkedContext?: boolean;
   /** Parent conversation scope for routing notifications in listener mode. */
   parentScope?: { agentId: string; conversationId: string };
+  /** Authenticated Cloud user responsible for the launch-time turn. */
+  actingUserId?: string;
   /**
    * Optional path to a transcript/payload file the subagent should read.
    * Exposed to the child process as the `TRANSCRIPT_PATH` env var so
@@ -107,6 +114,12 @@ export interface SpawnBackgroundSubagentTaskArgs {
   transcriptPath?: string;
   /** Optional exact memory scope for harness-created memory worktrees. */
   memoryScope?: SubagentMemoryScope;
+  /**
+   * Optional computer selector passed to the child as `--computer`.
+   * The child routes its turn to that connected computer and fails fast
+   * if the device is offline, ambiguous, or too old to support routing.
+   */
+  environment?: string;
   /**
    * When true, skip injecting the completion notification into the primary
    * agent's message queue and hide from SubagentGroupDisplay.
@@ -360,18 +373,24 @@ export function spawnBackgroundSubagentTask(
     maxTurns,
     forkedContext,
     parentScope,
+    actingUserId: explicitActingUserId,
     silentCompletion,
     emitCompletionNotification,
     completionSummary,
     onComplete,
     transcriptPath,
     memoryScope,
+    environment,
     deps,
   } = args;
   const shouldEmitCompletionNotification =
     emitCompletionNotification ?? !silentCompletion;
 
   const resolvedParentScope = resolveNotificationScope(parentScope);
+  const actingUserId =
+    explicitActingUserId ??
+    getRuntimeContext()?.actingUserId ??
+    process.env[ACTING_USER_ID_ENV];
 
   const spawnSubagentFn = deps?.spawnSubagentImpl ?? spawnSubagent;
   const copyGitHubPullRequestTagsFn =
@@ -415,6 +434,7 @@ export function spawnBackgroundSubagentTask(
     outputFile,
     abortController,
     runtimeScope: resolvedParentScope,
+    actingUserId,
   };
   backgroundTasks.set(taskId, bgTask);
   writeTaskTranscriptStart(outputFile, description, subagentType);
@@ -429,7 +449,7 @@ export function spawnBackgroundSubagentTask(
   // is the authoritative value — the listener and App.tsx both derive it
   // from their own closure-captured agentId.
   const parentAgentIdForSpawn = resolvedParentScope?.agentId;
-  spawnSubagentFn(
+  const subagentExecution = spawnSubagentFn(
     subagentType,
     prompt,
     model,
@@ -444,7 +464,14 @@ export function spawnBackgroundSubagentTask(
     resolvedParentScope?.conversationId,
     memoryScope,
     systemPromptOverride,
-  )
+    environment,
+    actingUserId,
+  );
+  bgTask.completion = subagentExecution.then(
+    () => undefined,
+    () => undefined,
+  );
+  subagentExecution
     .then(async (result) => {
       await copyGitHubPullRequestTagsFn(
         result.conversationId,
@@ -506,7 +533,7 @@ export function spawnBackgroundSubagentTask(
           fullResult,
           LIMITS.TASK_OUTPUT_CHARS,
           "Task",
-          { workingDirectory: userCwd, toolName: "Task" },
+          { workingDirectory: userCwd },
         );
 
         const defaultSummary = `Agent "${description}" ${result.success ? "completed" : "failed"}`;
@@ -536,6 +563,7 @@ export function spawnBackgroundSubagentTask(
           text: notificationXml,
           agentId: resolvedParentScope?.agentId,
           conversationId: resolvedParentScope?.conversationId,
+          actingUserId: bgTask.actingUserId,
         });
       }
 
@@ -618,6 +646,7 @@ export function spawnBackgroundSubagentTask(
           text: notificationXml,
           agentId: resolvedParentScope?.agentId,
           conversationId: resolvedParentScope?.conversationId,
+          actingUserId: bgTask.actingUserId,
         });
       }
 
@@ -809,6 +838,18 @@ export async function task(args: TaskArgs): Promise<string> {
   if (!config) {
     return `Error: Invalid subagent type "${subagent_type}"`;
   }
+  if (typeof args.computer === "string" && args.computer.trim()) {
+    let environmentRouting = false;
+    try {
+      environmentRouting = getBackend().capabilities.environmentRouting;
+    } catch {
+      environmentRouting = false;
+    }
+    if (!environmentRouting) {
+      return "Error: The computer option requires a Letta Cloud backend. This backend has no connected computers; omit the computer field to run the subagent on the current machine.";
+    }
+  }
+
   let effectiveAgentId = args.agent_id;
   let effectiveConversationId = args.conversation_id;
 
@@ -851,6 +892,10 @@ export async function task(args: TaskArgs): Promise<string> {
     maxTurns: args.max_turns,
     forkedContext: config.fork,
     parentScope: resolvedParentScope,
+    environment:
+      typeof args.computer === "string" && args.computer.trim()
+        ? args.computer.trim()
+        : undefined,
   });
 
   await waitForBackgroundSubagentLink(subagentId, null, signal);
@@ -861,6 +906,10 @@ export async function task(args: TaskArgs): Promise<string> {
   );
   const agentId = linkedAgent?.agentId ?? null;
   const agentIdLine = agentId ? `\nAgent ID: ${agentId}` : "";
+  const conversationId = linkedAgent?.conversationId ?? null;
+  const conversationIdLine = conversationId
+    ? `\nConversation ID: ${conversationId}`
+    : "";
 
-  return `Task running in background with task ID: ${taskId}${agentIdLine}\nOutput file: ${outputFile}\n\nYou will be notified automatically when this task completes — a <task-notification> message will be delivered with the result. No need to poll, sleep-wait, or check the output file. Just continue with your current work.`;
+  return `Task running in background with task ID: ${taskId}${agentIdLine}${conversationIdLine}\nOutput file: ${outputFile}\n\nYou will be notified automatically when this task completes — a <task-notification> message will be delivered with the result. No need to poll, sleep-wait, or check the output file. Just continue with your current work.`;
 }

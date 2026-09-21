@@ -45,12 +45,18 @@ export interface McpToolDefinition {
   title?: string;
   description?: string;
   inputSchema: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
+  annotations?: Record<string, unknown>;
+  execution?: Record<string, unknown>;
+  _meta?: Record<string, unknown>;
+  icons?: Array<Record<string, unknown>>;
 }
 
 export interface McpToolResult {
   content: unknown[];
   isError?: boolean;
   structuredContent?: Record<string, unknown>;
+  _meta?: Record<string, unknown>;
 }
 
 export interface ConnectedMcpServer {
@@ -115,10 +121,11 @@ export async function connectMcpServer(
     await options.oauth?.close();
     const response = await client.listTools();
     const tools = response.tools.map((tool) => ({
-      name: tool.name,
-      ...(tool.title ? { title: tool.title } : {}),
-      ...(tool.description ? { description: tool.description } : {}),
+      ...tool,
       inputSchema: normalizeInputSchema(tool.inputSchema),
+      ...(tool.outputSchema
+        ? { outputSchema: normalizeInputSchema(tool.outputSchema) }
+        : {}),
     }));
 
     let closed = false;
@@ -133,10 +140,13 @@ export async function connectMcpServer(
         );
         return {
           content: Array.isArray(result.content) ? result.content : [],
-          ...(result.isError === true ? { isError: true } : {}),
+          ...(typeof result.isError === "boolean"
+            ? { isError: result.isError }
+            : {}),
           ...(isRecord(result.structuredContent)
             ? { structuredContent: result.structuredContent }
             : {}),
+          ...(isRecord(result._meta) ? { _meta: result._meta } : {}),
         };
       },
       close: async () => {

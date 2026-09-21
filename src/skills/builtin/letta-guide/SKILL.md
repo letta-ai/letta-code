@@ -1,9 +1,11 @@
 ---
 name: letta-guide
-description: Read the official Letta documentation (docs.letta.com) through its cached, ETag-checked fetch route. Load before ANY docs.letta.com retrieval — answering how Letta works, what Letta (or you) can do, setting up providers, models, channels, skills, memory, schedules, permissions, self-hosting, pricing, or billing, AND looking up Letta API, Agent SDK, or Letta Code reference while writing code. Do not use fetch_webpage or web_search on docs.letta.com; this skill's helper is the docs route. Never answer Letta product questions from memory alone.
+description: Read the official Letta documentation (docs.letta.com) through its cached, ETag-checked fetch route. Load before ANY docs.letta.com retrieval — answering how Letta works, what Letta (or you) can do, and looking up Letta API, Agent SDK, or Letta Code reference.
 ---
 
 # Letta Guide
+
+Do not use fetch_webpage or web_search on docs.letta.com; this skill's helper is the docs route.
 
 You are running inside Letta, but your training data about Letta's commands,
 flags, settings, UI, pricing, and providers is out of date. Users lose trust
@@ -32,7 +34,8 @@ helper below fetches the live index first, so you pick a URL that exists.
    The helper retrieves `https://docs.letta.com/llms.txt` from the docs host,
    verifies its ETag against the body, and prints the paths to a current local
    copy and heading outline. Read the outline, then read the relevant index
-   lines to pick the best page URL.
+   lines and their applicability labels to pick a page matching the user's
+   backend and interface (see below).
 3. **Fetch the specific page directly.** Pass the exact canonical URL from the
    index back to the same helper, for example:
 
@@ -41,7 +44,8 @@ helper below fetches the live index first, so you pick a URL that exists.
      --docs-url "https://docs.letta.com/configuration/models/index.md"
    ```
 
-   Read the returned docs path before running the helper for another URL. The
+   Read the returned docs path, including its frontmatter, before applying its
+   instructions or running the helper for another URL. The
    helper uses native HTTPS with a curl fallback; do not use `fetch_webpage`
    for the normal docs route because its upstream content cache may be stale.
    Cite the public doc URL so the user can go deeper.
@@ -50,6 +54,29 @@ helper below fetches the live index first, so you pick a URL that exists.
    fallback may be stale. If that also fails, say the docs are unreachable,
    give your best answer, and clearly mark it as possibly out of date with a
    link to https://docs.letta.com. Never silently fall back to memory.
+
+## Match documentation to the user's setup
+
+Read each page's `applies_to` frontmatter before using its instructions:
+
+```yaml
+applies_to:
+  backends: [cloud, local]
+  interfaces: [web, desktop, cli, sdk]
+```
+
+- **Backends describe agent state, not the computer running tools.** `cloud`
+  means Letta Cloud; `local` means a user-managed backend.
+- **Interfaces** refer to the user's current interface: chat.letta.com (`web`,
+  cloud-only), CLI, Desktop, or SDK.
+- Do NOT use context from files marked `status: legacy` unless providing
+  historical context.
+
+## Inspect or change your model from the CLI
+
+- `letta model list [--byok | --hosted]` lists available models.
+- `letta model set [model_handle] [--reasoning <reasoning-option>] [--default]` overrides the current conversation's model or reasoning; `--default` overrides the agent's default instead.
+- `letta model get [--default]` gets the current model configuration; `--default` gets the agent's default configuration.
 
 ## Hard rules
 
@@ -94,4 +121,3 @@ The helper owns the cache. It uses the first writable temporary directory from
 when an explicit location is needed. Every invocation checks the live ETag and
 reuses the local document only when its body hash still matches. Do not create
 or manage a second cache yourself.
-

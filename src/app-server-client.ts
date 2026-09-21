@@ -13,6 +13,10 @@ import type {
   ExternalToolCallResult,
   InputAcceptedResponseMessage,
   InputCommand,
+  MonitorStopCommand,
+  MonitorStopResponse,
+  ResumeQueueCommand,
+  ResumeQueueResponseMessage,
   RuntimeExternalToolsUpdateCommand,
   RuntimeExternalToolsUpdateResponseMessage,
   RuntimeStartCommand,
@@ -464,6 +468,32 @@ export class AppServerClient {
     );
   }
 
+  stopMonitor(
+    command: Omit<MonitorStopCommand, "type" | "request_id"> & {
+      request_id?: string;
+    },
+    options: Omit<
+      AppServerRequestOptions<MonitorStopResponse>,
+      "predicate"
+    > = {},
+  ): Promise<MonitorStopResponse> {
+    return this.request(
+      {
+        type: "monitor_stop",
+        ...command,
+        request_id: command.request_id ?? this.nextRequestId("monitor-stop"),
+      },
+      {
+        ...options,
+        predicate: (message): message is MonitorStopResponse =>
+          message.type === "monitor_stop_response" &&
+          message.process_id === command.process_id &&
+          message.runtime.agent_id === command.runtime.agent_id &&
+          message.runtime.conversation_id === command.runtime.conversation_id,
+      },
+    );
+  }
+
   runtimeStart(
     command: Omit<RuntimeStartCommand, "type" | "request_id"> & {
       request_id?: string;
@@ -553,6 +583,30 @@ export class AppServerClient {
         ...options,
         predicate: (message): message is AbortMessageResponseMessage =>
           message.type === "abort_message_response",
+      },
+    );
+  }
+
+  /** Release queue items parked by `abort()` without sending a new message. */
+  resumeQueue(
+    command: Omit<ResumeQueueCommand, "type" | "request_id"> & {
+      request_id?: string;
+    },
+    options: Omit<
+      AppServerRequestOptions<ResumeQueueResponseMessage>,
+      "predicate"
+    > = {},
+  ): Promise<ResumeQueueResponseMessage> {
+    return this.request(
+      {
+        type: "resume_queue",
+        request_id: command.request_id ?? this.nextRequestId("resume-queue"),
+        ...command,
+      },
+      {
+        ...options,
+        predicate: (message): message is ResumeQueueResponseMessage =>
+          message.type === "resume_queue_response",
       },
     );
   }

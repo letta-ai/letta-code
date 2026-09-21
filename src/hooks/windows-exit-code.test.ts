@@ -5,6 +5,15 @@ import { join } from "node:path";
 import { executeCommandHook } from "@/hooks/executor";
 import { HookExitCode, type PreToolUseHookInput } from "@/hooks/types";
 
+function quotePowerShellLiteral(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+function runtimeCommand(...args: string[]): string {
+  // The active Bun runtime is guaranteed to exist; a separate `node` shim is not.
+  return `& ${quotePowerShellLiteral(process.execPath)} ${args.map(quotePowerShellLiteral).join(" ")}`;
+}
+
 describe.skipIf(process.platform !== "win32")(
   "Windows command hook exit codes",
   () => {
@@ -43,7 +52,7 @@ process.exit(code);
         const result = await executeCommandHook(
           {
             type: "command",
-            command: `node "${hookScript}" ${nativeCode}`,
+            command: runtimeCommand(hookScript, String(nativeCode)),
             quiet: true,
           },
           input,
@@ -66,7 +75,7 @@ process.exit(code);
       const result = await executeCommandHook(
         {
           type: "command",
-          command: `node "${hookScript}" 2; Get-Item -LiteralPath 'Z:\\missing-letta-hook-path' -ErrorAction SilentlyContinue`,
+          command: `${runtimeCommand(hookScript, "2")}; Get-Item -LiteralPath 'Z:\\missing-letta-hook-path' -ErrorAction SilentlyContinue`,
           quiet: true,
         },
         input,
@@ -88,7 +97,7 @@ process.exit(code);
       const result = await executeCommandHook(
         {
           type: "command",
-          command: `node "${hookScript}" 2; Get-Item -LiteralPath 'Z:\\missing-letta-hook-path' -ErrorAction Ignore`,
+          command: `${runtimeCommand(hookScript, "2")}; Get-Item -LiteralPath 'Z:\\missing-letta-hook-path' -ErrorAction Ignore`,
           quiet: true,
         },
         input,
@@ -110,7 +119,7 @@ process.exit(code);
       const result = await executeCommandHook(
         {
           type: "command",
-          command: `$PSNativeCommandUseErrorActionPreference = $true; node "${hookScript}" 2; Get-Item -LiteralPath 'Z:\\missing-letta-hook-path' -ErrorAction Ignore`,
+          command: `$PSNativeCommandUseErrorActionPreference = $true; ${runtimeCommand(hookScript, "2")}; Get-Item -LiteralPath 'Z:\\missing-letta-hook-path' -ErrorAction Ignore`,
           quiet: true,
         },
         input,
@@ -132,7 +141,7 @@ process.exit(code);
       const result = await executeCommandHook(
         {
           type: "command",
-          command: `node "${hookScript}" 2; $null.NoSuchMethod()`,
+          command: `${runtimeCommand(hookScript, "2")}; $null.NoSuchMethod()`,
           quiet: true,
         },
         input,
@@ -154,7 +163,7 @@ process.exit(code);
       const result = await executeCommandHook(
         {
           type: "command",
-          command: `$PSNativeCommandUseErrorActionPreference = $true; node "${hookScript}" 2`,
+          command: `$PSNativeCommandUseErrorActionPreference = $true; ${runtimeCommand(hookScript, "2")}`,
           quiet: true,
         },
         input,

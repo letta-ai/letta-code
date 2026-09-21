@@ -3,6 +3,10 @@ import { resolveScopedMemoryDir } from "@/agent/memory-filesystem";
 import { detectMemoryFormat } from "@/agent/memory-format";
 import { getBackend } from "@/backend";
 import type { JsonSchema } from "./model-facing-tool";
+import {
+  stripComputerFromTaskDescription,
+  stripComputerFromTaskSchema,
+} from "./task-tool-assets";
 import { ROOT_MEMORY_TOOL_ASSETS } from "./tool-definitions";
 
 export async function resolveBackendSpecificToolAssets(
@@ -10,6 +14,22 @@ export async function resolveBackendSpecificToolAssets(
   description: string,
   inputSchema: JsonSchema,
 ): Promise<{ description: string; inputSchema: JsonSchema }> {
+  if (name === "Task") {
+    let environmentRouting = false;
+    try {
+      environmentRouting = getBackend().capabilities.environmentRouting;
+    } catch {
+      environmentRouting = false;
+    }
+    if (!environmentRouting) {
+      return {
+        description: stripComputerFromTaskDescription(description),
+        inputSchema: stripComputerFromTaskSchema(inputSchema),
+      };
+    }
+    return { description, inputSchema };
+  }
+
   let isLocalMemfs = false;
   try {
     isLocalMemfs = getBackend().capabilities.localMemfs;

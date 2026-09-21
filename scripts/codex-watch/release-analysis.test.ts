@@ -1,5 +1,6 @@
 import {
   findLatestStableReleaseAfter,
+  listStableReleases,
   type Release,
   releaseNotesForRange,
 } from "./release-analysis.ts";
@@ -47,5 +48,91 @@ describe("Codex stable release range", () => {
     expect(() => findLatestStableReleaseAfter(STABLES, "rust-v0.0.9")).toThrow(
       "Could not find terminal release rust-v0.0.9",
     );
+  });
+});
+
+describe("Codex GitHub release fetch", () => {
+  test("retries a server error before succeeding", async () => {
+    const sleeps: number[] = [];
+    let requests = 0;
+
+    const releases = await listStableReleases({
+      fetchImpl: (async () => {
+        requests++;
+        if (requests === 1) {
+          return new Response("Gateway Timeout", { status: 504 });
+        }
+        return new Response(JSON.stringify(STABLES), { status: 200 });
+      }) as typeof fetch,
+      sleep: async (delayMs) => {
+        sleeps.push(delayMs);
+      },
+    });
+
+    expect(requests).toBe(2);
+    expect(sleeps).toEqual([1000]);
+    expect(releases).toEqual(STABLES);
+  });
+
+  test("retries a network error before succeeding", async () => {
+    const sleeps: number[] = [];
+    let requests = 0;
+
+    const releases = await listStableReleases({
+      fetchImpl: (async () => {
+        requests++;
+        if (requests === 1) throw new TypeError("fetch failed: ECONNRESET");
+        return new Response(JSON.stringify(STABLES), { status: 200 });
+      }) as typeof fetch,
+      sleep: async (delayMs) => {
+        sleeps.push(delayMs);
+      },
+    });
+
+    expect(requests).toBe(2);
+    expect(sleeps).toEqual([1000]);
+    expect(releases).toEqual(STABLES);
+  });
+
+  test("stops after the bounded retry budget", async () => {
+    const sleeps: number[] = [];
+    let requests = 0;
+
+    const result = listStableReleases({
+      fetchImpl: (async () => {
+        requests++;
+        return new Response("Gateway Timeout", { status: 504 });
+      }) as typeof fetch,
+      sleep: async (delayMs) => {
+        sleeps.push(delayMs);
+      },
+    });
+
+    await expect(result).rejects.toThrow(
+      "GitHub releases API failed (504): Gateway Timeout",
+    );
+    expect(requests).toBe(3);
+    expect(sleeps).toEqual([1000, 2000]);
+  });
+
+  test("fails immediately on a client error", async () => {
+    const sleeps: number[] = [];
+    let requests = 0;
+
+    const result = listStableReleases({
+      fetchImpl: (async () => {
+        requests++;
+        return new Response("Not Found", { status: 404 });
+      }) as typeof fetch,
+      sleep: async (delayMs) => {
+        sleeps.push(delayMs);
+      },
+    });
+
+    await expect(result).rejects.toThrow(
+      "GitHub releases API failed (404): Not Found",
+    );
+    expect(requests).toBe(1);
+    expect(sleeps).toEqual([]);
   });
 });

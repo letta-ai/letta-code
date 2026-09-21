@@ -70,7 +70,7 @@ describe("headless bidirectional auto-reflection", () => {
     expect(summary.transcriptLines[0]).toContain("hello one");
     expect(summary.transcriptLines[1]).toContain('"kind":"assistant"');
     expect(summary.transcriptLines[1]).toContain(
-      '"source_message_id":"letta-msg-1"',
+      '"source_message_id":"ui-msg-2"',
     );
 
     // Reflection launches post-turn, so every completed turn gets reflected.
@@ -101,7 +101,7 @@ describe("headless bidirectional auto-reflection", () => {
     expect(
       summary.state?.reflected_through_message_id,
       formatSummary(summary),
-    ).toBe("letta-msg-3");
+    ).toBe("ui-msg-6");
   }, 30_000);
 });
 
@@ -157,7 +157,9 @@ async function runBidirectionalReflectionScenario(): Promise<BidirectionalReflec
       env: createIsolatedCliTestEnv({
         HOME: homeDir,
         LETTA_LOCAL_BACKEND_DIR: localBackendDir,
-        LETTA_LOCAL_BACKEND_EXECUTOR: "deterministic",
+        // Ordinary turns still return pong, while reflection turns execute a
+        // real Bash read of TRANSCRIPT_PATH before returning success.
+        LETTA_LOCAL_BACKEND_EXECUTOR: "deterministic-reflection",
         LETTA_TRANSCRIPT_ROOT: transcriptRoot,
         // This test exercises transcript-driven reflection, not kernel sandbox
         // behavior. Keep it independent of host bwrap/seatbelt availability.

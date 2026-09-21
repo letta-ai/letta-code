@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildAgentConfigReport } from "@/cli/subcommands/agents";
+import { buildAgentConfigReport } from "@/cli/subcommands/model";
 
 describe("buildAgentConfigReport", () => {
   test("reports agent defaults and redacts credential fields", () => {
@@ -42,6 +42,7 @@ describe("buildAgentConfigReport", () => {
       effective: {
         scope: "agent",
         model: "letta/auto",
+        context_window_limit: 140000,
         model_settings: {
           provider_type: "openai",
           max_output_tokens: 28000,
@@ -91,6 +92,33 @@ describe("buildAgentConfigReport", () => {
           provider_type: "anthropic",
           effort: "high",
         },
+      },
+    });
+  });
+
+  test("reports a context-only conversation override without replacing the model", () => {
+    const report = buildAgentConfigReport(
+      {
+        id: "agent-test",
+        model: "letta/auto",
+        context_window_limit: 140000,
+        model_settings: { provider_type: "openai" },
+      },
+      {
+        id: "conv-test",
+        agent_id: "agent-test",
+        model: null,
+        context_window_limit: 64000,
+      },
+    );
+    expect(report).toMatchObject({
+      agent: { context_window_limit: 140000 },
+      conversation: { model: null, context_window_limit: 64000 },
+      effective: {
+        scope: "conversation",
+        model: "letta/auto",
+        context_window_limit: 64000,
+        model_settings: { provider_type: "openai" },
       },
     });
   });

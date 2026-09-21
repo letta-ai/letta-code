@@ -72,8 +72,12 @@ describe("GitHub pull request command detection", () => {
     'GH_TOKEN="$TOKEN" gh pr create -R letta-ai/letta-code --fill',
     "env GH_TOKEN=value /usr/bin/gh --repo letta-ai/letta-code pr create --fill",
     "command gh pr create --fill",
+    "timeout 45 gh pr create -R letta-ai/letta-cloud --fill; git rev-parse HEAD",
+    "timeout 90 git push -u origin HEAD && timeout -k 5 45 gh pr create --fill",
     ["gh", "pr", "create", "--fill"],
+    ["timeout", "--signal=TERM", "45", "gh", "pr", "create", "--fill"],
     ["bash", "-lc", "git push && gh pr create --fill"],
+    ["timeout", "45", "bash", "-lc", "git push && gh pr create --fill"],
     ["env", "GH_TOKEN=value", "pwsh", "-Command", "gh pr create --fill"],
   ];
 
@@ -104,6 +108,8 @@ describe("GitHub pull request command detection", () => {
     "gh pr create --dry-run --fill",
     "gh pr create --web",
     "gh pr create -w",
+    "timeout 45 echo gh pr create --fill",
+    "timeout --help gh pr create --fill",
     ["bash", "-lc", "gh pr view 3744"],
   ];
 

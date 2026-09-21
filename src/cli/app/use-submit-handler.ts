@@ -1,7 +1,5 @@
-// src/cli/app/useSubmitHandler.ts
-
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -35,6 +33,7 @@ import { buildReflectionMemoryScope } from "@/agent/memory-worktree";
 import { sendMessageStreamWithBackend } from "@/agent/message";
 import { detectPersonalityFromPersonaFile } from "@/agent/personality";
 import type { PersonalityId } from "@/agent/personality-presets";
+import { requestCloudReflectionRun } from "@/agent/reflection-runs";
 import { recordSessionEnd } from "@/agent/session-history";
 import type { SessionStats } from "@/agent/stats";
 import { getBackend } from "@/backend";
@@ -56,9 +55,9 @@ import {
 import type { ContextTracker } from "@/cli/helpers/context-tracker";
 import { resetContextHistory } from "@/cli/helpers/context-tracker";
 import type { ConversationSwitchContext } from "@/cli/helpers/conversation-switch-alert";
+import { buildDoctorMessage } from "@/cli/helpers/doctor-command";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import {
-  buildDoctorMessage,
   buildInitMessage,
   gatherInitGitContext,
 } from "@/cli/helpers/init-command";
@@ -69,6 +68,7 @@ import {
   clearPlaceholdersInText,
 } from "@/cli/helpers/paste-registry";
 import { resolveReasoningTabToggleCommand } from "@/cli/helpers/reasoning-tab-toggle";
+import { parseReflectCommandArgs } from "@/cli/helpers/reflect-command";
 import {
   buildReflectionArenaChoiceQuestions,
   finalizeReflectionArenaChoice,
@@ -99,10 +99,6 @@ import {
   buildReflectionSelectorPrompt,
   readReflectionAutoSelection,
 } from "@/cli/helpers/reflection-transcript";
-import {
-  formatSkillNameFrontmatterRepairReport,
-  repairMissingSkillNameFrontmatter,
-} from "@/cli/helpers/skill-name-frontmatter-repair";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
   estimateSystemTokens,
@@ -152,7 +148,10 @@ import { detectShellContext } from "@/utils/shell-context";
 import { extractTaskNotificationsForDisplay } from "@/utils/task-notifications";
 import { switchCurrentRuntimeWorkingDirectory } from "@/websocket/listener/cwd-change";
 
-import { shouldSlashCommandBypassQueue } from "./command-routing";
+import {
+  aliasBareExitCommand,
+  shouldSlashCommandBypassQueue,
+} from "./command-routing";
 import { buildTextParts } from "./content-parts";
 import { appendOptimisticUserLine, createClientOtid, uid } from "./ids";
 import { saveLastSessionBeforeExit } from "./session";
@@ -351,12 +350,6 @@ type SubmitHandlerContext = {
   onReload?: () => Promise<void>;
 };
 
-type ReflectCommandArgs =
-  | { instruction?: string; kind: "single" }
-  | { instruction?: string; kind: "recent"; limit: number }
-  | { conversationIds: string[]; instruction?: string; kind: "conversations" }
-  | { instruction?: string; kind: "auto" };
-
 type ReflectArenaCommandArgs =
   | {
       instruction?: string;
@@ -371,19 +364,6 @@ type ReflectArenaCommandArgs =
       runId: string;
     }
   | { kind: "resume"; runId: string };
-
-function isReflectCommandFlag(value: string): boolean {
-  return (
-    value === "--" ||
-    value === "--auto" ||
-    value === "--conversation" ||
-    value === "--instruction" ||
-    value === "--instructions" ||
-    value === "--recent" ||
-    value === "-i" ||
-    value.startsWith("--instruction=")
-  );
-}
 
 function parseReflectArenaCommandArgs(input: string): ReflectArenaCommandArgs {
   const trimmed = input.trim();
@@ -490,114 +470,6 @@ function parseReflectArenaCommandArgs(input: string): ReflectArenaCommandArgs {
     modelB,
     instruction: instructions.join("\n").trim() || undefined,
   };
-}
-
-function parseReflectCommandArgs(input: string): ReflectCommandArgs {
-  const trimmed = input.trim();
-  const command = trimmed.split(/\s+/, 1)[0] ?? "/reflect";
-  const parts = parseModCommandArgv(trimmed.slice(command.length).trim());
-  if (parts.length === 0) {
-    return { kind: "single" };
-  }
-
-  let recentLimit: number | null = null;
-  const conversationIds: string[] = [];
-  const instructions: string[] = [];
-  let auto = false;
-  for (let index = 0; index < parts.length; index += 1) {
-    const part = parts[index];
-    if (!part) continue;
-    if (
-      part === "--instruction" ||
-      part === "--instructions" ||
-      part === "-i"
-    ) {
-      let instructionEnd = index + 1;
-      while (instructionEnd < parts.length) {
-        const instructionPart = parts[instructionEnd];
-        if (!instructionPart || isReflectCommandFlag(instructionPart)) break;
-        instructionEnd += 1;
-      }
-      const instruction = parts
-        .slice(index + 1, instructionEnd)
-        .join(" ")
-        .trim();
-      if (!instruction) {
-        throw new Error("Usage: /reflect --instruction <instruction>");
-      }
-      instructions.push(instruction);
-      index = instructionEnd - 1;
-      continue;
-    }
-    if (part.startsWith("--instruction=")) {
-      const instruction = part.slice("--instruction=".length).trim();
-      if (!instruction) {
-        throw new Error("Usage: /reflect --instruction <instruction>");
-      }
-      instructions.push(instruction);
-      continue;
-    }
-    if (part === "--") {
-      const instruction = parts
-        .slice(index + 1)
-        .join(" ")
-        .trim();
-      if (!instruction) {
-        throw new Error("Usage: /reflect -- <instruction>");
-      }
-      instructions.push(instruction);
-      break;
-    }
-    if (part === "--auto") {
-      auto = true;
-      continue;
-    }
-    if (part === "--recent") {
-      const raw = parts[index + 1];
-      const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
-      if (!Number.isFinite(parsed) || parsed <= 0) {
-        throw new Error("Usage: /reflect --recent <positive integer>");
-      }
-      recentLimit = parsed;
-      index += 1;
-      continue;
-    }
-    if (part === "--conversation") {
-      const conversationId = parts[index + 1];
-      if (!conversationId) {
-        throw new Error("Usage: /reflect --conversation <conversation-id>");
-      }
-      conversationIds.push(conversationId);
-      index += 1;
-      continue;
-    }
-    throw new Error(
-      "Usage: /reflect [--recent N | --conversation <id> ... | --auto] [--instruction <instruction>]",
-    );
-  }
-
-  const instruction = instructions.join("\n").trim() || undefined;
-  const modes = [recentLimit !== null, conversationIds.length > 0, auto].filter(
-    Boolean,
-  ).length;
-  if (modes > 1) {
-    throw new Error("Use only one of --recent, --conversation, or --auto.");
-  }
-  if (auto) {
-    return { instruction, kind: "auto" };
-  }
-  if (recentLimit !== null) {
-    return { instruction, kind: "recent", limit: recentLimit };
-  }
-  if (conversationIds.length > 0) {
-    return { conversationIds, instruction, kind: "conversations" };
-  }
-  return { instruction, kind: "single" };
-}
-
-function aliasBareExitCommand(input: string): string {
-  if (input === "exit" || input === "quit") return "/exit";
-  return input;
 }
 
 export function useSubmitHandler(ctx: SubmitHandlerContext) {
@@ -711,6 +583,10 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: moved from AppCoordinator; dependencies are preserved from the original callback.
   const onSubmit = useCallback(
     async (message?: string): Promise<{ submitted: boolean }> => {
+      const commandScope = {
+        agentId: agentIdRef.current,
+        conversationId: conversationIdRef.current,
+      };
       const msg = message?.trim() ?? "";
       const overrideContentParts = overrideContentPartsRef.current;
       const hasOverrideContent = overrideContentParts !== null;
@@ -747,7 +623,15 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         // Continue processing the new message
       }
 
-      if (!msg && !hasOverrideContent) return { submitted: false };
+      if (!msg && !hasOverrideContent) {
+        // Enter on an empty input resumes a queue parked by Esc (no new message).
+        const paused = tuiQueueRef.current?.pausedCount ?? 0;
+        if (paused === 0) return { submitted: false };
+        tuiQueueRef.current?.resume();
+        userCancelledRef.current = false;
+        setDequeueEpoch((e: number) => e + 1);
+        return { submitted: true };
+      }
 
       // If the user just cycled reasoning tiers, flush the final choice before
       // sending the next message so the upcoming run uses the selected tier.
@@ -811,30 +695,13 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           .slice(0, 100);
       }
 
-      // Block submission if waiting for explicit user action (approvals)
-      // In this case, input is hidden anyway, so this shouldn't happen
+      // Block submission while approvals are pending (input is hidden anyway).
       if (pendingApprovals.length > 0) {
         return { submitted: false };
       }
 
-      // Queue message if agent is busy (streaming, executing tool, or running command)
-      // This allows messages to queue up while agent is working
-
-      // Reset cancellation flag before queue check - this ensures queued messages
-      // can be dequeued even if the user just cancelled. The dequeue effect checks
-      // userCancelledRef.current, so we must clear it here to prevent blocking.
+      // Release cancellation, but wake dequeue only after the new input is queued.
       userCancelledRef.current = false;
-
-      // If there are queued messages and agent is not busy, bump epoch to trigger
-      // dequeue effect. Without this, the effect won't re-run because refs aren't
-      // in its deps array (only state values are).
-      if (!isAgentBusy() && (tuiQueueRef.current?.length ?? 0) > 0) {
-        debugLog(
-          "queue",
-          `Bumping dequeueEpoch: userCancelledRef was reset, ${tuiQueueRef.current?.length ?? 0} message(s) queued, agent not busy`,
-        );
-        setDequeueEpoch((e: number) => e + 1);
-      }
 
       const isSlashCommand = routedUserText.startsWith("/");
       const parsedModCommand = isSlashCommand
@@ -864,19 +731,21 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         return { submitted: true }; // Clears input
       }
 
-      if (isAgentBusy() && !shouldBypassQueue) {
+      if (
+        !shouldBypassQueue &&
+        (isAgentBusy() ||
+          (!hasOverrideContent && (tuiQueueRef.current?.length ?? 0) > 0))
+      ) {
         // Enqueue via QueueRuntime — onEnqueued callback updates queueDisplay.
         tuiQueueRef.current?.enqueue({
           kind: "message",
           source: "user",
           content: msg,
         } as Parameters<typeof tuiQueueRef.current.enqueue>[0]);
+        if (!hasOverrideContent && !isSystemOnly) tuiQueueRef.current?.resume();
         setDequeueEpoch((e: number) => e + 1);
         return { submitted: true }; // Clears input
       }
-
-      // Note: userCancelledRef.current was already reset above before the queue check
-      // to ensure the dequeue effect isn't blocked by a stale cancellation flag.
 
       const aliasedMsg = routedUserText;
 
@@ -917,12 +786,12 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
           try {
             // Mark command as finished BEFORE sending to agent
-            // (matches /remember pattern - command succeeded in triggering agent)
+            // (command succeeded in triggering agent)
             cmd.finish("Running custom command...", true);
 
             // Send prompt to agent
-            // NOTE: Unlike /remember, we DON'T append args separately because
-            // they're already substituted into the prompt via $ARGUMENTS
+            // NOTE: We DON'T append args separately because they're already
+            // substituted into the prompt via $ARGUMENTS
             await processConversationWithQueuedApprovals([
               {
                 type: "message",
@@ -2062,32 +1931,38 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /clear command - reset all agent messages (destructive)
-        if (msg.trim() === "/clear") {
+        const resetAllAgentMessages = trimmed === "/clear-messages";
+
+        if (trimmed === "/clear" || resetAllAgentMessages) {
           const cmd = commandRunner.start(
-            msg.trim(),
-            "Clearing in-context messages...",
+            trimmed,
+            resetAllAgentMessages
+              ? "Resetting agent messages..."
+              : "Clearing in-context messages...",
           );
 
-          // Clearing conversation state should also clear pending reasoning-tier debounce.
           resetPendingReasoningCycle();
           setCommandRunning(true);
 
           const clearPrevConversationId = conversationIdRef.current;
 
-          // Run SessionEnd hooks for current session before clearing
-          await runEndHooks("new");
-
           try {
             const backend = getBackend();
-
-            // Reset all messages on the agent only when in the default API conversation.
-            // Local/headless backends model /clear by switching to a fresh conversation.
-            // For named conversations, clearing just means starting a new conversation —
-            // there is no reason to wipe the agent's entire message history.
             if (
-              conversationIdRef.current === "default" &&
-              !backend.capabilities.localModelCatalog
+              resetAllAgentMessages &&
+              backend.capabilities.localModelCatalog
+            ) {
+              throw new Error(
+                "/clear-messages is unsupported by local backend.",
+              );
+            }
+            await runEndHooks("new");
+
+            // /clear-messages always resets the API agent's message history.
+            // /clear only resets when leaving the default API conversation.
+            if (
+              !backend.capabilities.localModelCatalog &&
+              (resetAllAgentMessages || conversationIdRef.current === "default")
             ) {
               const client = await getClient();
               await client.agents.messages.reset(agentId, {
@@ -2095,7 +1970,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               });
             }
 
-            // Create a new conversation
             const conversation = await backend.createConversation({
               agent_id: agentId,
             });
@@ -2103,7 +1977,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             setConversationAutoTitleEligibility(true);
             await maybeCarryOverActiveConversationModel(conversation.id);
             setConversationIdAndRef(conversation.id);
-
             pendingConversationSwitchRef.current = {
               origin: "clear",
               conversationId: conversation.id,
@@ -2111,14 +1984,8 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             };
 
             settingsManager.persistSession(agentId, conversation.id);
-
-            // Reset context tokens for new conversation
             resetContextHistory(contextTrackerRef.current);
-
-            // Ensure bootstrap reminders are re-injected for the new conversation.
             resetBootstrapReminderState(true);
-
-            // Re-run SessionStart hooks for new conversation
             sessionHooksRanRef.current = false;
             runSessionStartHooks(
               true, // isNewSession
@@ -2145,9 +2012,10 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               modAdapter.context,
             );
 
-            // Update command with success
             cmd.finish(
-              "Agent's in-context messages cleared & moved to conversation history",
+              resetAllAgentMessages
+                ? "All agent messages reset"
+                : "Agent's in-context messages cleared & moved to conversation history",
               true,
             );
           } catch (error) {
@@ -2607,75 +2475,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /export command (also accepts legacy /download)
-        if (msg.trim() === "/export" || msg.trim() === "/download") {
-          const cmd = commandRunner.start(
-            msg.trim(),
-            "Exporting agent file...",
-          );
-
-          if (!getBackend().capabilities.agentFileImportExport) {
-            cmd.fail(
-              "AgentFile export is not supported by the local backend yet.",
-            );
-            return { submitted: true };
-          }
-
-          setCommandRunning(true);
-
-          try {
-            const client = await getClient();
-
-            // Build export parameters (include conversation_id if in specific conversation)
-            const exportParams: { conversation_id?: string } = {};
-            if (conversationId !== "default" && conversationId !== agentId) {
-              exportParams.conversation_id = conversationId;
-            }
-
-            // Package skills from agent/project/global directories
-            const { packageSkills } = await import("@/agent/export");
-            const skills = await packageSkills(agentId);
-
-            // Export agent via SDK (GET endpoint), then embed skills client-side
-            const baseContent = await client.agents.exportFile(
-              agentId,
-              exportParams,
-            );
-
-            // Parse if returned as a string, otherwise use as-is
-            const fileContent: Record<string, unknown> =
-              typeof baseContent === "string"
-                ? JSON.parse(baseContent)
-                : (baseContent as Record<string, unknown>);
-
-            // Embed skills into the .af JSON (client-side, no server support needed)
-            if (skills.length > 0) {
-              fileContent.skills = skills;
-            }
-
-            // Generate filename
-            const fileName = exportParams.conversation_id
-              ? `${exportParams.conversation_id}.af`
-              : `${agentId}.af`;
-
-            writeFileSync(fileName, JSON.stringify(fileContent, null, 2));
-
-            // Build success message
-            let summary = `AgentFile exported to ${fileName}`;
-            if (skills.length > 0) {
-              summary += `\n📦 Included ${skills.length} skill(s): ${skills.map((s) => s.name).join(", ")}`;
-            }
-
-            cmd.finish(summary, true);
-          } catch (error) {
-            const errorDetails = formatErrorDetails(error, agentId);
-            cmd.fail(`Failed: ${errorDetails}`);
-          } finally {
-            setCommandRunning(false);
-          }
-          return { submitted: true };
-        }
-
         // Special handling for /memfs command - manage filesystem-backed memory
         if (trimmed.startsWith("/memfs")) {
           const [, subcommand] = trimmed.split(/\s+/);
@@ -2959,70 +2758,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /remember command - remember something from conversation
-        if (trimmed.startsWith("/remember")) {
-          // Extract optional description after `/remember`
-          const [, ...rest] = trimmed.split(/\s+/);
-          const userText = rest.join(" ").trim();
-
-          const initialOutput = userText
-            ? "Storing to memory..."
-            : "Processing memory request...";
-
-          const cmd = commandRunner.start(msg, initialOutput);
-
-          // Check for pending approvals before sending (mirrors regular message flow)
-          const approvalCheck = await checkPendingApprovalsForSlashCommand();
-          if (approvalCheck.blocked) {
-            cmd.fail(
-              "Pending approval(s). Resolve approvals before running /remember.",
-            );
-            return { submitted: false }; // Keep /remember in input box, user handles approval first
-          }
-
-          setCommandRunning(true);
-
-          try {
-            // Import the remember prompt
-            const { REMEMBER_PROMPT } = await import(
-              "@/agent/prompt-assets.js"
-            );
-
-            // Build system-reminder content for memory request
-            const rememberReminder = userText
-              ? `${SYSTEM_REMINDER_OPEN}\n${REMEMBER_PROMPT}\n${SYSTEM_REMINDER_CLOSE}`
-              : `${SYSTEM_REMINDER_OPEN}\n${REMEMBER_PROMPT}\n\nThe user did not specify what to remember. Look at the recent conversation context to identify what they likely want you to remember, or ask them to clarify.\n${SYSTEM_REMINDER_CLOSE}`;
-            const rememberParts = userText
-              ? buildTextParts(rememberReminder, userText)
-              : buildTextParts(rememberReminder);
-
-            // Mark command as finished before sending message
-            cmd.finish(
-              userText
-                ? "Storing to memory..."
-                : "Processing memory request from conversation context...",
-              true,
-            );
-
-            // Process conversation with the remember prompt
-            await processConversationWithQueuedApprovals([
-              {
-                type: "message",
-                role: "user",
-                content: rememberParts,
-                otid: randomUUID(),
-              },
-            ]);
-          } catch (error) {
-            const errorDetails = formatErrorDetails(error, agentId);
-            cmd.fail(`Failed: ${errorDetails}`);
-          } finally {
-            setCommandRunning(false);
-          }
-
-          return { submitted: true };
-        }
-
         // Experimental reflection arena - blind A/B reflection model comparison
         if (
           trimmed === "/reflect-arena" ||
@@ -3129,16 +2864,12 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
           return { submitted: true };
         }
-        // Special handling for /reflect command - manually launch reflection subagent
-        if (trimmed === "/reflect" || trimmed.startsWith("/reflect ")) {
-          const cmd = commandRunner.start(msg, "Launching reflection agent...");
-
-          if (!isActiveMemfsEnabled(agentId)) {
-            cmd.fail(
-              "Memory filesystem is not enabled. Use /remember instead.",
-            );
-            return { submitted: true };
-          }
+        // All manual aliases resolve ownership before entering any legacy mode.
+        if (/^\/(dream|reflect|reflection)(?:\s|$)/.test(trimmed)) {
+          const agentId = commandScope.agentId;
+          const cmd = commandRunner.start(msg, "Starting reflection...");
+          const reflectionConversationId =
+            commandScope.conversationId ?? "default";
 
           let reflectionReserved = false;
           let reflectionReservationDelegated = false;
@@ -3149,9 +2880,19 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           };
 
           try {
+            const output = await requestCloudReflectionRun(
+              commandScope,
+              trimmed.replace(/^\/\S+/, "").trim(),
+            );
+            if (output !== null) {
+              cmd.finish(output, true);
+              return { submitted: true };
+            }
+            if (!isActiveMemfsEnabled(commandScope.agentId)) {
+              cmd.fail("Memory filesystem is not enabled.");
+              return { submitted: true };
+            }
             const reflectArgs = parseReflectCommandArgs(trimmed);
-            const reflectionConversationId =
-              conversationIdRef.current ?? "default";
 
             if (reflectArgs.kind === "single") {
               if (experimentManager.isEnabled("reflection_arena")) {
@@ -3193,27 +2934,30 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                 return { submitted: true };
               }
 
-              const result = await launchReflectionSubagent({
-                agentId,
-                conversationId: reflectionConversationId,
-                memfsEnabled: isActiveMemfsEnabled(agentId),
-                triggerSource: "manual",
-                description: AUTO_REFLECTION_DESCRIPTION,
-                instruction: reflectArgs.instruction,
-                completionConversationId: () => conversationIdRef.current,
-                recompileByConversation:
-                  systemPromptRecompileByConversationRef.current,
-                recompileQueuedByConversation:
-                  queuedSystemPromptRecompileByConversationRef.current,
-                onCompletionMessage: (completionMessage) => {
-                  appendTaskNotificationEvents([completionMessage]);
+              const result = await launchReflectionSubagent(
+                {
+                  agentId,
+                  conversationId: reflectionConversationId,
+                  memfsEnabled: isActiveMemfsEnabled(agentId),
+                  triggerSource: "manual",
+                  description: AUTO_REFLECTION_DESCRIPTION,
+                  instruction: reflectArgs.instruction,
+                  completionConversationId: () => conversationIdRef.current,
+                  recompileByConversation:
+                    systemPromptRecompileByConversationRef.current,
+                  recompileQueuedByConversation:
+                    queuedSystemPromptRecompileByConversationRef.current,
+                  onCompletionMessage: (completionMessage) => {
+                    appendTaskNotificationEvents([completionMessage]);
+                  },
+                  feedbackContext: {
+                    parentAgentName: agentName,
+                    parentAgentDescription: agentDescription,
+                    surface: "letta_code_tui",
+                  },
                 },
-                feedbackContext: {
-                  parentAgentName: agentName,
-                  parentAgentDescription: agentDescription,
-                  surface: "letta_code_tui",
-                },
-              });
+                { isCutover: async () => false },
+              ); // Use the captured ownership decision.
 
               if (!result.launched) {
                 const skippedMessage = getReflectionLaunchSkippedMessage(
@@ -3570,10 +3314,8 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /doctor command
-        if (trimmed === "/doctor") {
-          const cmd = commandRunner.start(msg, "Gathering project context...");
-
+        if (trimmed === "/doctor" || trimmed.startsWith("/doctor ")) {
+          const cmd = commandRunner.start(msg, "Starting doctor...");
           const approvalCheck = await checkPendingApprovalsForSlashCommand();
           if (approvalCheck.blocked) {
             cmd.fail(
@@ -3581,39 +3323,26 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             );
             return { submitted: false };
           }
-
           setCommandRunning(true);
           try {
-            cmd.finish(
-              "Running memory doctor... I'll ask a few questions to refine memory structure.",
-              true,
-            );
-
-            const { context: gitContext } = gatherInitGitContext();
-            const memoryDir = getActiveMemoryDirectory(agentId);
-            const skillNameFrontmatterRepair =
-              await repairMissingSkillNameFrontmatter(memoryDir);
-            const skillNameFrontmatterRepairReport =
-              formatSkillNameFrontmatterRepairReport(
-                skillNameFrontmatterRepair,
-              );
-
             const doctorMessage = buildDoctorMessage({
-              gitContext,
-              memoryDir,
-              skillNameFrontmatterRepairReport,
+              agentId,
+              conversationId: conversationIdRef.current,
+              memoryDir: getActiveMemoryDirectory(agentId),
+              local: getBackend().capabilities.localMemfs,
+              symptom: trimmed.slice("/doctor".length).trim(),
             });
-
+            cmd.finish("", true);
             await processConversationWithQueuedApprovals([
               {
                 type: "message",
                 role: "user",
                 content: buildTextParts(doctorMessage),
+                otid: randomUUID(),
               },
             ]);
           } catch (error) {
-            const errorDetails = formatErrorDetails(error, agentId);
-            cmd.fail(`Failed: ${errorDetails}`);
+            cmd.fail(`Doctor failed: ${formatErrorDetails(error, agentId)}`);
           } finally {
             setCommandRunning(false);
           }
@@ -3728,7 +3457,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         const registryCmd = isRegistryCommand
           ? commandRunner.start(msg, `Running ${registryCommandName}...`)
           : null;
-        const result = await executeCommand(aliasedMsg);
+        const result = await executeCommand(aliasedMsg, commandScope);
 
         // If command not found, try user-invocable skills before falling through.
         if (result.notFound) {

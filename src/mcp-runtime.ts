@@ -3,25 +3,19 @@ import {
   connectMcpServer,
   type McpOAuthConnection,
   type McpServerConfig,
-  type McpToolResult,
+  type McpToolDefinition,
 } from "@/mcp-client";
 import { createMcpOAuthSession } from "@/mcp-oauth";
-import {
-  type ExternalToolDefinition,
-  registerExternalTools,
-  unregisterExternalTools,
-} from "@/tools/manager";
 
 export interface ClientMcpServerState {
   config: McpServerConfig;
   status: "connected" | "failed";
-  tools: ExternalToolDefinition[];
+  tools: McpToolDefinition[];
   error?: string;
 }
 
 interface ActiveMcpServer {
   connection: ConnectedMcpServer;
-  tools: ExternalToolDefinition[];
 }
 
 export interface ReplaceClientMcpServersOptions {
@@ -60,7 +54,7 @@ function getRuntime(): ClientMcpRuntime {
   return runtime;
 }
 
-/** Replace all client-local MCP connections and their model-facing tools. */
+/** Replace client-local MCP connections used by the interactive MCP manager. */
 export async function replaceClientMcpServers(
   agentId: string,
   configs: readonly McpServerConfig[],
@@ -70,7 +64,6 @@ export async function replaceClientMcpServers(
   const generation = ++runtime.generation;
   await closeActiveServers(runtime);
   runtime.agentId = agentId;
-  const usedToolNames = new Set<string>();
   const states = await Promise.all(
     configs.map(async (config): Promise<ClientMcpServerState> => {
       let oauth: McpOAuthConnection | undefined;
@@ -89,26 +82,8 @@ export async function replaceClientMcpServers(
           await connection.close();
           return { config, status: "failed", tools: [], error: "Superseded" };
         }
-        const tools = connection.tools.map((tool) => {
-          const name = uniqueToolName(
-            `mcp__${normalizeName(config.name)}__${normalizeName(tool.name)}`,
-            usedToolNames,
-          );
-          const definition: ExternalToolDefinition = {
-            name,
-            label: tool.title ?? tool.name,
-            description:
-              tool.description ??
-              `Tool ${tool.name} from MCP server ${config.name}`,
-            parameters: tool.inputSchema,
-            executor: async (_toolCallId, _toolName, input) =>
-              toExternalToolResult(await connection.callTool(tool.name, input)),
-          };
-          return definition;
-        });
-        registerExternalTools(tools);
-        runtime.active.set(config.name, { connection, tools });
-        return { config, status: "connected", tools };
+        runtime.active.set(config.name, { connection });
+        return { config, status: "connected", tools: connection.tools };
       } catch (error) {
         return {
           config,
@@ -158,7 +133,7 @@ export function getClientMcpServerStates(
   return runtime.agentId === agentId ? [...runtime.states] : [];
 }
 
-/** Close every local MCP connection and unregister its tools. */
+/** Close every local MCP manager connection. */
 export async function closeClientMcpServers(): Promise<void> {
   const runtime = getRuntime();
   runtime.generation++;
@@ -172,70 +147,21 @@ async function closeActiveServers(runtime: ClientMcpRuntime): Promise<void> {
   runtime.pendingOAuth.clear();
   runtime.active.clear();
   runtime.states = [];
-  for (const server of active) unregisterExternalTools(server.tools);
   await Promise.allSettled([
     ...pendingOAuth.map((oauth) => oauth.close()),
     ...active.map((server) => server.connection.close()),
   ]);
 }
 
-function uniqueToolName(base: string, used: Set<string>): string {
-  let name = base;
-  let suffix = 2;
-  while (used.has(name)) {
-    name = `${base}_${suffix}`;
-    suffix++;
-  }
-  used.add(name);
-  return name;
+/** Return the CLI name for a tool from a client-connected MCP server. */
+export function formatClientMcpToolName(
+  serverName: string,
+  toolName: string,
+): string {
+  return `mcp__${normalizeMcpName(serverName)}__${normalizeMcpName(toolName)}`;
 }
 
-function normalizeName(value: string): string {
+export function normalizeMcpName(value: string): string {
   const normalized = value.replace(/[^a-zA-Z0-9_-]/g, "_");
   return normalized || "tool";
-}
-
-function toExternalToolResult(result: McpToolResult): {
-  content: Array<{
-    type: string;
-    text?: string;
-    data?: string;
-    mimeType?: string;
-  }>;
-  isError: boolean;
-} {
-  return {
-    content: result.content.map((item) => normalizeContent(item)),
-    isError: result.isError === true,
-  };
-}
-
-function normalizeContent(item: unknown): {
-  type: string;
-  text?: string;
-  data?: string;
-  mimeType?: string;
-} {
-  if (isRecord(item)) {
-    if (item.type === "text" && typeof item.text === "string") {
-      return { type: "text", text: item.text };
-    }
-    if (
-      (item.type === "image" || item.type === "audio") &&
-      typeof item.data === "string"
-    ) {
-      return {
-        type: item.type,
-        data: item.data,
-        ...(typeof item.mimeType === "string"
-          ? { mimeType: item.mimeType }
-          : {}),
-      };
-    }
-  }
-  return { type: "text", text: JSON.stringify(item) };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

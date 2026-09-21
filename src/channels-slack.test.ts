@@ -160,6 +160,52 @@ describe("public Slack attachment primitives", () => {
 });
 
 describe("public Slack model picker", () => {
+  type Option = { value: string; text: { text: string } };
+  type Select = {
+    options?: Option[];
+    option_groups?: { options: Option[] }[];
+    initial_option?: Option;
+  };
+
+  function picker(handles: string[], current = handles[0]) {
+    const blocks = buildSlackModelPickerBlocks({
+      current: { modelLabel: current ?? "", modelHandle: current ?? null },
+      entries: handles.map((handle) => ({
+        id: handle,
+        handle,
+        label: handle,
+        description: "",
+      })),
+      availableHandles: handles,
+    });
+    return (blocks?.[2] as { elements: Select[] }).elements[0];
+  }
+
+  test("keeps BYOK models beyond the first 100 options selectable", () => {
+    const handles = [
+      ...Array.from({ length: 101 }, (_, i) => `hosted/model-${i}`),
+      "my-anthropic/claude-sonnet-5",
+    ];
+    const select = picker(handles, handles[101]);
+    const groups = select?.option_groups ?? [];
+    expect(select?.options).toBeUndefined();
+    expect(groups.map((group) => group.options.length)).toEqual([100, 2]);
+    expect(
+      groups.flatMap((group) => group.options.map((option) => option.value)),
+    ).toEqual(handles);
+    expect(select?.initial_option?.value).toBe(handles[101]);
+  });
+
+  test("preserves long BYOK handles within Slack's 150-character value limit", () => {
+    const handle = `my-provider/${"m".repeat(138)}`;
+    const options = picker([handle, `${handle}x`])?.options ?? [];
+    expect(options.map((option) => option.value)).toEqual([handle]);
+    expect(options[0]?.text.text).toBe(`${handle.slice(0, 72)}...`);
+    expect(
+      resolveSlackSelectedModel({ selected_option: { value: handle } }, {}),
+    ).toBe(handle);
+  });
+
   test("exports the shared picker blocks and action contract", () => {
     const blocks = buildSlackModelPickerBlocks({
       current: {

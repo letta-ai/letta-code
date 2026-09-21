@@ -915,7 +915,7 @@ describe("ChannelRegistry command routing", () => {
     expect(replies[0]?.text).toBe("Started a reflection pass.");
   });
 
-  test("Slack root channel routes do not catch unmentioned thread input", async () => {
+  test("Slack root channel routes do not catch unmentioned thread commands", async () => {
     const replies: Array<{
       chatId: string;
       text: string;
@@ -989,6 +989,6 @@ describe("ChannelRegistry command routing", () => {
 
     expect(delivered).toHaveLength(0);
     expect(reflections).toHaveLength(0);
-    expect(replies).toHaveLength(0);
+    expect(replies[0]?.text).toContain("could not find an existing route");
   });
 });

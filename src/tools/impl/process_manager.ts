@@ -35,7 +35,7 @@ export interface BackgroundProcess {
   totalStderrLines?: number;
   cleanupTimer?: TimerHandle;
   runtimeScope?: BackgroundRuntimeScope;
-  kind?: "monitor";
+  kind?: "monitor" | "workflow";
   description?: string;
   monitorSource?: "command" | "websocket";
   persistent?: boolean;
@@ -59,8 +59,12 @@ export interface BackgroundTask {
   startTime: Date;
   outputFile: string;
   abortController?: AbortController;
+  /** Resolves once the local subagent launcher and its process tree have stopped. */
+  completion?: Promise<void>;
   cleanupTimer?: TimerHandle;
   runtimeScope?: BackgroundRuntimeScope;
+  /** Authenticated Cloud user responsible for launching this task. */
+  actingUserId?: string;
 }
 
 export const backgroundProcesses = new Map<string, BackgroundProcess>();
@@ -92,9 +96,13 @@ export function getNextBashId() {
   return `bash_${bashIdCounter++}`;
 }
 
-let monitorIdCounter = 1;
 export function getNextMonitorId() {
-  return `monitor_${monitorIdCounter++}`;
+  return `monitor_${crypto.randomUUID()}`;
+}
+
+let workflowIdCounter = 1;
+export function getNextWorkflowId() {
+  return `workflow_${workflowIdCounter++}`;
 }
 
 let execSessionIdCounter = 1;

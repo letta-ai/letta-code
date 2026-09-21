@@ -212,7 +212,7 @@ describe("computeDiffPreviews", () => {
       "*** End Patch",
     ].join("\n");
 
-    const previews = await computeDiffPreviews("apply_patch", { input: patch });
+    const previews = await computeDiffPreviews("ApplyPatch", { input: patch });
     expect(previews).toHaveLength(2);
     expect(previews.map((p) => p.fileName).sort()).toEqual(["a.txt", "b.txt"]);
   });

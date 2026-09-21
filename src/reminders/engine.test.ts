@@ -12,8 +12,8 @@ import {
   markSecretsInfoReminderPending,
 } from "@/reminders/state";
 import {
+  __testSeedSecretsCache,
   clearSecretsCache,
-  initSecretsFromServer,
 } from "@/utils/secrets-store";
 
 const SECRETS_AGENT_ID = "agent-reminder-secrets";
@@ -108,8 +108,8 @@ describe("secrets info reminders", () => {
     const initial = await buildSecretsTestReminderParts(state);
     expect(initial.appliedReminderIds).not.toContain("secrets-info");
 
-    await initSecretsFromServer(SECRETS_AGENT_ID, {
-      secrets: [{ key: "PLAYGROUND_AGENT_ID", value: "agent-123" }],
+    __testSeedSecretsCache(SECRETS_AGENT_ID, {
+      PLAYGROUND_AGENT_ID: "agent-123",
     });
 
     const updated = await buildSecretsTestReminderParts(state);
@@ -141,8 +141,8 @@ describe("secrets info reminders", () => {
   });
 
   test("re-emits secret names after a secrets refresh", async () => {
-    await initSecretsFromServer(SECRETS_AGENT_ID, {
-      secrets: [{ key: "PLAYGROUND_AGENT_ID", value: "agent-123" }],
+    __testSeedSecretsCache(SECRETS_AGENT_ID, {
+      PLAYGROUND_AGENT_ID: "agent-123",
     });
     setCurrentAgentId(SECRETS_AGENT_ID);
     const state = createSharedReminderState();
@@ -162,8 +162,8 @@ describe("secrets info reminders", () => {
   });
 
   test("re-emits existing secret names after compaction", async () => {
-    await initSecretsFromServer(SECRETS_AGENT_ID, {
-      secrets: [{ key: "PLAYGROUND_AGENT_ID", value: "agent-123" }],
+    __testSeedSecretsCache(SECRETS_AGENT_ID, {
+      PLAYGROUND_AGENT_ID: "agent-123",
     });
     const state = createSharedReminderState();
     state.hasSentAgentInfo = true;

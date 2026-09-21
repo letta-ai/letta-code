@@ -3,7 +3,10 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { syncPendingAttachedRepositoryCommits } from "./attached-repository-git-sync";
+import {
+  syncPendingAttachedRepositoryCommits,
+  syncPendingAttachedRepositoryCommitsAfterTurn,
+} from "./attached-repository-git-sync";
 
 const tempDirs: string[] = [];
 
@@ -182,5 +185,27 @@ describe("syncPendingAttachedRepositoryCommits", () => {
 
     expect(result.status).toBe("push_failed");
     expect(result.summary).toContain("read-only with 1 uncommitted change");
+  });
+});
+
+describe("syncPendingAttachedRepositoryCommitsAfterTurn", () => {
+  test("skips repository discovery when the backend has no remote MemFS", async () => {
+    let repositoryDiscoveryRan = false;
+
+    const result = await syncPendingAttachedRepositoryCommitsAfterTurn(
+      "agent-local-test",
+      {
+        backend: {
+          capabilities: { remoteMemfs: false },
+        },
+        listRepositories: async () => {
+          repositoryDiscoveryRan = true;
+          return [];
+        },
+      },
+    );
+
+    expect(result).toEqual({ results: [] });
+    expect(repositoryDiscoveryRan).toBe(false);
   });
 });

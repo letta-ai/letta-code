@@ -7,7 +7,6 @@ const capabilities = {
   remoteMemfs: false,
   serverSideToolManagement: false,
   serverSecrets: false,
-  agentFileImportExport: false,
   promptRecompile: false,
   byokProviderRefresh: false,
   localModelCatalog: true,

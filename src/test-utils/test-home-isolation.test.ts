@@ -48,64 +48,69 @@ test("unit tests write home-relative state under a disposable home", () => {
 
   const routingPath = getChannelRoutingPath("slack");
   expect(routingPath).toBe(
-    join(testHome, ".letta", "channels", "slack", "routing.yaml"),
+    join(testHome, ".letta", "channels", "slack", "routing.json"),
   );
   expect(existsSync(routingPath)).toBe(true);
   expect(readFileSync(routingPath, "utf-8")).toContain("test-conversation");
 });
 
-test("direct bun test preserves state outside its disposable home", () => {
-  const operatorHome = mkdtempSync(join(tmpdir(), "letta-operator-home-"));
-  const liveRoutePath = join(
-    operatorHome,
-    ".letta",
-    "channels",
-    "slack",
-    "routing.yaml",
-  );
-  const liveMemoryDir = join(
-    operatorHome,
-    ".letta",
-    "agents",
-    "operator-agent",
-    "memory",
-  );
-  const liveMemorySentinel = join(liveMemoryDir, "sentinel");
-  const routeSentinel = '{"routes":[{"conversationId":"operator-route"}]}\n';
-
-  try {
-    mkdirSync(join(operatorHome, ".letta", "channels", "slack"), {
-      recursive: true,
-    });
-    mkdirSync(liveMemoryDir, { recursive: true });
-    writeFileSync(liveRoutePath, routeSentinel, "utf-8");
-    writeFileSync(liveMemorySentinel, "operator-memory\n", "utf-8");
-
-    const env: NodeJS.ProcessEnv = {
-      ...process.env,
-      HOME: operatorHome,
-      USERPROFILE: operatorHome,
-      MEMORY_DIR: liveMemoryDir,
-    };
-    delete env.LETTA_TEST_HOME;
-
-    const fixturePath = join(
-      process.cwd(),
-      "src",
-      "test-utils",
-      "write-channel-route.test-fixture.ts",
+test.each(["routing.json", "routing.yaml"])(
+  "direct bun test preserves %s outside its disposable home",
+  (filename) => {
+    const operatorHome = mkdtempSync(join(tmpdir(), "letta-operator-home-"));
+    const liveRoutePath = join(
+      operatorHome,
+      ".letta",
+      "channels",
+      "slack",
+      filename,
     );
-    const result = spawnSync(process.execPath, ["test", fixturePath], {
-      cwd: process.cwd(),
-      encoding: "utf-8",
-      env,
-    });
+    const liveMemoryDir = join(
+      operatorHome,
+      ".letta",
+      "agents",
+      "operator-agent",
+      "memory",
+    );
+    const liveMemorySentinel = join(liveMemoryDir, "sentinel");
+    const routeSentinel = '{"routes":[{"conversationId":"operator-route"}]}\n';
 
-    expect(result.status).toBe(0);
-    expect(readFileSync(liveRoutePath, "utf-8")).toBe(routeSentinel);
-    expect(readFileSync(liveMemorySentinel, "utf-8")).toBe("operator-memory\n");
-    expect(existsSync(join(liveMemoryDir, "fixture-write"))).toBe(false);
-  } finally {
-    rmSync(operatorHome, { recursive: true, force: true });
-  }
-});
+    try {
+      mkdirSync(join(operatorHome, ".letta", "channels", "slack"), {
+        recursive: true,
+      });
+      mkdirSync(liveMemoryDir, { recursive: true });
+      writeFileSync(liveRoutePath, routeSentinel, "utf-8");
+      writeFileSync(liveMemorySentinel, "operator-memory\n", "utf-8");
+
+      const env: NodeJS.ProcessEnv = {
+        ...process.env,
+        HOME: operatorHome,
+        USERPROFILE: operatorHome,
+        MEMORY_DIR: liveMemoryDir,
+      };
+      delete env.LETTA_TEST_HOME;
+
+      const fixturePath = join(
+        process.cwd(),
+        "src",
+        "test-utils",
+        "write-channel-route.test-fixture.ts",
+      );
+      const result = spawnSync(process.execPath, ["test", fixturePath], {
+        cwd: process.cwd(),
+        encoding: "utf-8",
+        env,
+      });
+
+      expect(result.status).toBe(0);
+      expect(readFileSync(liveRoutePath, "utf-8")).toBe(routeSentinel);
+      expect(readFileSync(liveMemorySentinel, "utf-8")).toBe(
+        "operator-memory\n",
+      );
+      expect(existsSync(join(liveMemoryDir, "fixture-write"))).toBe(false);
+    } finally {
+      rmSync(operatorHome, { recursive: true, force: true });
+    }
+  },
+);

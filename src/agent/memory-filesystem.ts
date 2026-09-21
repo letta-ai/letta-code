@@ -22,6 +22,7 @@ import {
   getDirectoryLimits,
 } from "@/utils/directory-limits";
 import { getCurrentAgentId } from "./context";
+import { installMemoryGitHooks } from "./memory-git-hooks";
 
 export const MEMORY_FS_ROOT = ".letta";
 export const MEMORY_FS_AGENTS_DIR = "agents";
@@ -243,8 +244,8 @@ export interface EnsureLocalMemfsCheckoutOptions {
 /**
  * Ensures the local memfs checkout exists for an already-enabled agent.
  *
- * Unlike applyMemfsFlags(), this helper does not update prompts, tags, tools,
- * or other agent configuration. It materializes the local git checkout when
+ * Unlike applyMemfsFlags(), this helper does not update prompts, tags, or
+ * other agent configuration. It materializes the local git checkout when
  * missing and can optionally pull an existing remote-backed repo before use.
  */
 export async function ensureLocalMemfsCheckout(
@@ -267,6 +268,8 @@ export async function ensureLocalMemfsCheckout(
   if (isGitRepo(agentId)) {
     if (options.pullOnExistingRepo) {
       await pullMemory(agentId, { throwOnFailure: true });
+    } else {
+      installMemoryGitHooks(getScopedMemoryFilesystemRoot(agentId));
     }
     return;
   }
@@ -478,8 +481,7 @@ async function seedDefaultPersonalityFiles(
  *   1. Validate MemFS API endpoint support (for explicit enable)
  *   2. Reconcile system prompt to the memfs memory mode
  *   3. Persist memfs setting locally
- *   4. Detach old API-based memory tools
- *   5. Add git-memory-enabled tag + clone/pull repo
+ *   4. Add git-memory-enabled tag + clone/pull repo
  *
  * @throws {Error} if MemFS endpoint validation fails or git setup fails
  */
@@ -550,13 +552,7 @@ export async function applyMemfsFlags(
 
   const isEnabled = enabling || localMemfsEnabled;
 
-  // 3. Detach old API-based memory tools when enabling.
-  if (enabling) {
-    const { detachMemoryTools } = await import("@/tools/toolset");
-    await detachMemoryTools(agentId);
-  }
-
-  // 4. Add git tag + clone/pull repo.
+  // 3. Add git tag + clone/pull repo.
   let pullSummary: string | undefined;
   if (isEnabled) {
     const { addGitMemoryTag, isGitRepo, cloneMemoryRepo, pullMemory } =
@@ -570,6 +566,8 @@ export async function applyMemfsFlags(
     } else if (options?.pullOnExistingRepo) {
       const result = await pullMemory(agentId);
       pullSummary = result.summary;
+    } else {
+      installMemoryGitHooks(getScopedMemoryFilesystemRoot(agentId));
     }
 
     await seedDefaultPersonalityFiles(
@@ -599,7 +597,7 @@ export async function applyMemfsFlags(
  * Whether the current server is the Letta API (or local memfs testing is enabled).
  */
 export async function isLettaCloud(): Promise<boolean> {
-  const { getServerUrl } = await import("@/backend/api/client");
+  const { getServerUrl } = await import("@/backend/api/server-url");
   const serverUrl = getServerUrl();
 
   return (

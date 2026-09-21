@@ -4,11 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type WebSocket from "ws";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
-import { replaySyncStateForRuntime } from "@/websocket/listener/lifecycle";
 import {
   __listenerModAdapterTestUtils,
   disposeListenerModAdapter,
 } from "@/websocket/listener/mod-adapter";
+import { replaySyncStateForRuntime } from "@/websocket/listener/sync-replay";
 import type { ListenerTransport } from "@/websocket/listener/transport";
 import {
   __listenerWarmupTestUtils,

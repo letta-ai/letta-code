@@ -1,4 +1,5 @@
 import { parseArgs } from "node:util";
+import { TOOLSET_OPTIONS } from "@/tools/toolset-catalog";
 
 export type CliFlagMode = "interactive" | "headless" | "both";
 export type CliBackendMode = "api" | "local";
@@ -109,8 +110,7 @@ export const CLI_FLAG_CATALOG = {
     mode: "both",
     help: {
       argLabel: "<name>",
-      description:
-        'Toolset mode: "auto", "codex", "default", or "gemini" (manual values override model-based auto-selection)',
+      description: `Toolset mode: ${TOOLSET_OPTIONS.map(({ id }) => `"${id}"`).join(", ")} (manual values override model-based auto-selection)`,
     },
   },
   prompt: {
@@ -156,6 +156,17 @@ export const CLI_FLAG_CATALOG = {
       continuationLines: ["Default: text"],
     },
   },
+  "no-wait": {
+    parser: { type: "boolean" },
+    mode: "headless",
+    help: {
+      description:
+        "Submit a Cloud message and return its acceptance receipt without waiting for an answer",
+      continuationLines: [
+        "Use --conversation or --agent to select the destination.",
+      ],
+    },
+  },
   "input-format": {
     parser: { type: "string" },
     mode: "headless",
@@ -183,15 +194,16 @@ export const CLI_FLAG_CATALOG = {
       description: "Inject agent-to-agent system reminder (headless mode)",
     },
   },
-  environment: {
+  computer: {
     parser: { type: "string" },
     mode: "headless",
     help: {
       argLabel: "<selector>",
       description:
-        "Route headless message through 'cloud' sandbox or an environment by name, device ID, or connection ID",
+        "Route headless message through 'cloud' or a computer by name, device ID, or connection ID",
     },
   },
+  environment: { parser: { type: "string" }, mode: "headless" },
   env: { parser: { type: "string" }, mode: "headless" },
   skills: {
     parser: { type: "string" },
@@ -212,17 +224,6 @@ export const CLI_FLAG_CATALOG = {
     },
   },
   "pre-load-skills": { parser: { type: "string" }, mode: "headless" },
-  // Legacy alias retained for backward compatibility; use --import in docs/errors.
-  "from-af": { parser: { type: "string" }, mode: "both" },
-  import: {
-    parser: { type: "string" },
-    mode: "both",
-    help: {
-      argLabel: "<path>",
-      description: "Create agent from an AgentFile (.af) template",
-      continuationLines: ["Use @author/name to import from the agent registry"],
-    },
-  },
   // Internal headless metadata tag assignment (not part of primary user help).
   tags: { parser: { type: "string" }, mode: "headless" },
   memfs: {

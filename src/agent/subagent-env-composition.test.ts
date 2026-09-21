@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-
+import {
+  allocateSubagentName,
+  resolveCreatedAgentName,
+} from "@/agent/subagents/names";
 import {
   composeSubagentChildEnv,
   resolveSubagentInheritedPrimaryRoot,
@@ -10,11 +13,49 @@ import {
   PROVIDERS_ONLY_MOD_CAPABILITY_PROFILE,
 } from "@/mods/capabilities";
 import { LETTA_DISABLE_MODS_ENV } from "@/mods/disable";
+import { SUBAGENT_NAME_ENV } from "@/utils/subagent-launch-marker";
+import { TRANSCRIPT_ROOT_ENV } from "@/utils/transcript-paths";
 
 const PARENT_ID = "agent-226cd814-09bf-4436-940e-aea9d91d14cb";
 const PARENT_MEMORY_DIR = `/Users/someone/.letta/agents/${PARENT_ID}/memory`;
 
 describe("composeSubagentChildEnv", () => {
+  test("carries the reserved generated name through child creation", () => {
+    const reservedName = allocateSubagentName("Bob");
+    const env = composeSubagentChildEnv({
+      parentProcessEnv: {},
+      parentAgentId: PARENT_ID,
+      launchProfile: "default",
+      inheritedPrimaryRoot: null,
+      subagentName: reservedName,
+    });
+    const createdName = resolveCreatedAgentName(
+      undefined,
+      true,
+      env[SUBAGENT_NAME_ENV],
+    );
+    expect(createdName).toBe(reservedName);
+    expect(createdName).not.toContain("shadow");
+  });
+
+  test("forwards a reserved name to a fresh child without leaking a parent's name", () => {
+    const parentProcessEnv = { [SUBAGENT_NAME_ENV]: "Deckard (subagent)" };
+    const options = {
+      parentProcessEnv,
+      parentAgentId: PARENT_ID,
+      launchProfile: "default" as const,
+      inheritedPrimaryRoot: null,
+    };
+    expect(
+      composeSubagentChildEnv({ ...options, subagentName: "Joi (subagent)" })[
+        SUBAGENT_NAME_ENV
+      ],
+    ).toBe("Joi (subagent)");
+    // Forks and existing-agent launches have no reservation.
+    expect(composeSubagentChildEnv(options)[SUBAGENT_NAME_ENV]).toBeUndefined();
+    expect(parentProcessEnv[SUBAGENT_NAME_ENV]).toBe("Deckard (subagent)");
+  });
+
   test("reflection subagents load only mod providers in the child process", () => {
     const parentProcessEnv: NodeJS.ProcessEnv = {
       HOME: "/home/user",
@@ -51,6 +92,7 @@ describe("composeSubagentChildEnv", () => {
 
     expect(env[LETTA_DISABLE_MODS_ENV]).toBeUndefined();
     expect(env[LETTA_MOD_CAPABILITY_PROFILE_ENV]).toBeUndefined();
+    expect(env.LETTA_SUBAGENT_LAUNCH).toBe("1");
   });
 
   test("normal subagent records parent identity without overriding memory dir", () => {
@@ -80,6 +122,36 @@ describe("composeSubagentChildEnv", () => {
     expect(env.MEMORY_DIR).toBe(PARENT_MEMORY_DIR);
     expect(env.LETTA_MEMORY_DIR).toBe(PARENT_MEMORY_DIR);
     expect(env.LETTA_CODE_AGENT_ROLE).toBe("subagent");
+  });
+
+  test("memory subagent receives a transcript-scoped scratchpad by default", () => {
+    const env = composeSubagentChildEnv({
+      parentProcessEnv: {
+        HOME: "/home/user",
+        [TRANSCRIPT_ROOT_ENV]: "/sandbox/transcripts",
+      },
+      parentAgentId: PARENT_ID,
+      launchProfile: "memory-subagent",
+      inheritedPrimaryRoot: PARENT_MEMORY_DIR,
+      subagentId: "subagent-123",
+    });
+
+    expect(env.LETTA_SCRATCHPAD).toBe(
+      join("/sandbox/transcripts", "background", "subagent-123"),
+    );
+  });
+
+  test("memory subagent preserves an explicitly configured scratchpad", () => {
+    const env = composeSubagentChildEnv({
+      parentProcessEnv: {
+        LETTA_SCRATCHPAD: "/approved/scratchpad",
+      },
+      parentAgentId: PARENT_ID,
+      launchProfile: "memory-subagent",
+      inheritedPrimaryRoot: PARENT_MEMORY_DIR,
+    });
+
+    expect(env.LETTA_SCRATCHPAD).toBe("/approved/scratchpad");
   });
 
   test("memory subagent with no primaryRoot keeps parent marker but clears dir", () => {

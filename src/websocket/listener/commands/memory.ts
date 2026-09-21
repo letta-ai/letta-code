@@ -2,6 +2,7 @@ import type WebSocket from "ws";
 import type { EnsureLocalMemfsCheckoutOptions } from "@/agent/memory-filesystem";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import type { ListMemoryCommand } from "@/types/protocol_v2";
+import { debugWarn } from "@/utils/debug";
 import {
   isDeleteMemoryFileCommand,
   isEnableMemfsCommand,
@@ -14,6 +15,7 @@ import {
 } from "@/websocket/listener/protocol-inbound";
 import type { RunDetachedListenerTask, SafeSocketSend } from "./types";
 
+const warnMemoryCommand = debugWarn.bind(null, "memory-commands");
 const WIKI_LINK_REGEX = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
 
 // Image assets the memory viewer can render inline. Must stay in sync with
@@ -25,14 +27,12 @@ const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
   ".png": "image/png",
   ".webp": "image/webp",
 };
-
 function getLowercaseExtension(path: string): string {
   const lastSlash = path.lastIndexOf("/");
   const lastDot = path.lastIndexOf(".");
   if (lastDot <= lastSlash) return "";
   return path.slice(lastDot).toLowerCase();
 }
-
 function getMemoryImageMimeType(path: string): string | null {
   return IMAGE_MIME_BY_EXTENSION[getLowercaseExtension(path)] ?? null;
 }
@@ -97,7 +97,7 @@ async function awaitMemoryPushBounded(
 
   const warnOnFailure = (result: { status: string; summary: string }): void => {
     if (result.status === "push_failed" || result.status === "conflict") {
-      console.warn(
+      warnMemoryCommand(
         `[${commandName}] push failed for ${agentId}: ${result.summary}`,
       );
     }
@@ -111,11 +111,11 @@ async function awaitMemoryPushBounded(
   try {
     const result = await Promise.race([syncPromise, capPromise]);
     if (result === "timed_out") {
-      console.warn(
+      warnMemoryCommand(
         `[${commandName}] push still in flight after ${MEMORY_PUSH_AWAIT_CAP_MS}ms for ${agentId}; responding now, push continues in background`,
       );
       syncPromise.then(warnOnFailure).catch((err) => {
-        console.warn(
+        warnMemoryCommand(
           `[${commandName}] background push failed for ${agentId}:`,
           err instanceof Error ? err.message : err,
         );
@@ -124,7 +124,7 @@ async function awaitMemoryPushBounded(
     }
     warnOnFailure(result);
   } catch (err) {
-    console.warn(
+    warnMemoryCommand(
       `[${commandName}] push failed for ${agentId}:`,
       err instanceof Error ? err.message : err,
     );
@@ -735,7 +735,7 @@ export function handleMemoryProtocolCommand(
           err,
           "listener_memory_read",
         );
-        console.error(
+        warnMemoryCommand(
           `[Listen] read_memory_file error: ${err instanceof Error ? err.message : "Unknown error"}`,
         );
         sendFailure(
@@ -913,7 +913,7 @@ export function handleMemoryProtocolCommand(
           err,
           "listener_memory_write",
         );
-        console.error(
+        warnMemoryCommand(
           `[Listen] write_memory_file error: ${err instanceof Error ? err.message : "Unknown error"}`,
         );
         sendFailure(
@@ -1099,7 +1099,7 @@ export function handleMemoryProtocolCommand(
           err,
           "listener_memory_delete",
         );
-        console.error(
+        warnMemoryCommand(
           `[Listen] delete_memory_file error: ${err instanceof Error ? err.message : "Unknown error"}`,
         );
         sendFailure(

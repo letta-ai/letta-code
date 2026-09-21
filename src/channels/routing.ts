@@ -2,13 +2,17 @@
  * Channel routing table.
  *
  * Maps platform chat IDs to Letta agent+conversation pairs.
- * Persisted in ~/.letta/channels/<channel>/routing.yaml.
+ * Persisted in ~/.letta/channels/<channel>/routing.json. The file holds JSON
+ * content (it was originally misnamed `routing.yaml`; legacy files are migrated
+ * on load — see #3076).
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { LEGACY_CHANNEL_ACCOUNT_ID } from "./accounts";
-import { getChannelDir, getChannelRoutingPath } from "./config";
 import { resolveChannelRouteThreadKey } from "./route-thread-key";
+import {
+  readChannelRoutesFromDisk,
+  writeChannelRoutesToDisk,
+} from "./routing-store";
 import { normalizeTelegramChatId } from "./telegram/chat-id";
 import type { ChannelRoute, InboundChannelMessage } from "./types";
 
@@ -46,6 +50,14 @@ function routeKey(
 }
 
 // ── Load/save ─────────────────────────────────────────────────────
+
+/** Read the current persisted routes without merging into the process cache. */
+export function readRoutes(channelId: string): ChannelRoute[] {
+  if (loadRoutesOverride) {
+    return loadRoutesOverride(channelId) ?? getRoutesForChannel(channelId);
+  }
+  return readChannelRoutesFromDisk(channelId);
+}
 
 /**
  * Load routing table from disk for a given channel.
@@ -88,13 +100,8 @@ export function loadRoutes(channelId: string): void {
     return;
   }
 
-  const path = getChannelRoutingPath(channelId);
-  if (!existsSync(path)) return;
-
   try {
-    const text = readFileSync(path, "utf-8");
-    const parsed = JSON.parse(text) as { routes?: ChannelRoute[] };
-    const routes = parsed.routes ?? [];
+    const routes = readRoutes(channelId);
 
     for (const route of routes) {
       if (route.chatId && route.agentId && route.conversationId) {
@@ -148,16 +155,7 @@ export function saveRoutes(channelId: string): void {
     return;
   }
 
-  const dir = getChannelDir(channelId);
-  mkdirSync(dir, { recursive: true });
-
-  const routes = getRoutesForChannel(channelId);
-  const data = { routes };
-  writeFileSync(
-    getChannelRoutingPath(channelId),
-    `${JSON.stringify(data, null, 2)}\n`,
-    "utf-8",
-  );
+  writeChannelRoutesToDisk(channelId, getRoutesForChannel(channelId));
 }
 
 // ── Lookup ────────────────────────────────────────────────────────

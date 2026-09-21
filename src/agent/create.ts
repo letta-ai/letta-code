@@ -5,9 +5,9 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { type BackendCapabilities, getBackend } from "@/backend";
 import { apiRequest, getApiRequestConfig } from "@/backend/api/request";
-import { DEFAULT_AGENT_NAME } from "@/constants";
 import { settingsManager } from "@/settings-manager";
 import { debugWarn } from "@/utils/debug";
+import { SUBAGENT_NAME_ENV } from "@/utils/subagent-launch-marker";
 import { getModelContextWindow } from "./available-models";
 import { buildCreateAgentRequest } from "./create-agent-request";
 import { getDefaultMemoryBlocks } from "./memory";
@@ -19,6 +19,7 @@ import {
 } from "./model";
 import { updateAgentLLMConfig } from "./modify";
 import { isKnownPreset, type MemoryPromptMode } from "./prompt-assets";
+import { resolveCreatedAgentName } from "./subagents/names";
 import { resolveAndBuildSystemPrompt } from "./system-prompt-resolution";
 import { recordManagedSystemPrompt } from "./system-prompt-versioning";
 
@@ -206,7 +207,7 @@ export interface CreateAgentOptions {
 }
 
 export async function createAgent(
-  nameOrOptions: string | CreateAgentOptions = DEFAULT_AGENT_NAME,
+  nameOrOptions?: string | CreateAgentOptions,
   model?: string,
   embeddingModel?: string,
   updateArgs?: Record<string, unknown>,
@@ -232,11 +233,16 @@ export async function createAgent(
     };
   }
 
-  const name = options.name ?? DEFAULT_AGENT_NAME;
   const embeddingModelVal = options.embeddingModel;
   const parallelToolCallsVal = options.parallelToolCalls ?? true;
   // Subagents are ephemeral and don't carry memory blocks of their own.
   const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
+  const name = resolveCreatedAgentName(
+    options.name,
+    isSubagent,
+    process.env[SUBAGENT_NAME_ENV],
+  );
+  delete process.env[SUBAGENT_NAME_ENV];
 
   // Resolve model identifier to handle
   let modelHandle: string;

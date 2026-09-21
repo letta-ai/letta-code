@@ -12,7 +12,10 @@ import {
   startListenerClient,
   stopListenerClient,
 } from "@/websocket/listen-client";
-import { requestApprovalOverWS } from "@/websocket/listener/approval";
+import {
+  requestApprovalOverWS,
+  resolvePendingApprovalResolver,
+} from "@/websocket/listener/approval";
 import { getOrCreateScopedRuntime } from "@/websocket/listener/conversation-runtime";
 import { getActiveRuntime } from "@/websocket/listener/runtime";
 import { handleListenerSocketOpenFailure } from "@/websocket/listener/split-stream-lifecycle";
@@ -522,7 +525,9 @@ describe("split stream listener lifecycle", () => {
   });
 
   test("split stream handshake stall retries without clearing runtime turn state", async () => {
-    process.env.LETTA_LISTENER_STREAM_OPEN_TIMEOUT_MS = "25";
+    // Keep the synthetic stall short without racing healthy socket setup on a
+    // loaded Windows runner.
+    process.env.LETTA_LISTENER_STREAM_OPEN_TIMEOUT_MS = "500";
     const onConnected = mock(() => {});
     const onDisconnected = mock(() => {});
     const onNeedsReregister = mock(() => {});
@@ -640,18 +645,12 @@ describe("split stream listener lifecycle", () => {
     );
     expect(countConnectionsForChannel("stream")).toBe(streamCountAfterRecovery);
 
-    const finalControlIndex = lastConnectionIndexForChannel("control");
-    connections[finalControlIndex]?.send(
-      JSON.stringify({
-        type: "input",
-        runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
-        payload: {
-          kind: "approval_response",
-          request_id: "perm-stream-stall",
-          decision: { behavior: "allow" },
-        },
+    expect(
+      resolvePendingApprovalResolver(conversationRuntime, {
+        request_id: "perm-stream-stall",
+        decision: { behavior: "allow" },
       }),
-    );
+    ).toBe(true);
     expect(await approvalResult).toMatchObject({
       ok: true,
       value: {

@@ -1,10 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { runWithRuntimeContext } from "@/runtime-context";
+import {
+  expectOverflowPath,
+  expectPrefixPreview,
+} from "@/test-utils/overflow-preview";
 import { bash, spawnCommand } from "@/tools/impl/bash";
 import { backgroundProcesses } from "@/tools/impl/process_manager";
+import { LIMITS } from "@/tools/impl/truncation";
 
 async function runBashInTemp(
   command: string,
@@ -49,6 +54,35 @@ describe("Bash tool", () => {
     });
 
     expect(result.content[0]?.text).toContain("error message");
+  });
+
+  test("returns a prefix preview when successful output overflows", async () => {
+    const result = await runBashInTemp(
+      `node -e "process.stdout.write('a'.repeat(${LIMITS.BASH_OUTPUT_CHARS + 1}) + 'TAIL')"`,
+    );
+    const output = result.content[0]?.text ?? "";
+
+    expect(result.status).toBe("success");
+    expect(output).not.toContain("TAIL");
+    const overflowPath = expectPrefixPreview(output, "a");
+    expect(await readFile(overflowPath, "utf8")).toEndWith("TAIL");
+  });
+
+  test("returns a head-and-tail excerpt and saved file when failed output overflows", async () => {
+    const result = await runBashInTemp(
+      `node -e "process.stdout.write('HEAD' + 'a'.repeat(${LIMITS.BASH_FAILURE_OUTPUT_CHARS}) + 'TAIL'); process.exitCode = 1"`,
+    );
+    const output = result.content[0]?.text ?? "";
+
+    expect(result.status).toBe("error");
+    expect(output).toContain("HEAD");
+    expect(output).toContain("characters omitted");
+    expect(output).toContain("TAIL");
+    expect(output).toContain(
+      `[Output truncated: showing ${LIMITS.BASH_FAILURE_OUTPUT_CHARS.toLocaleString()}`,
+    );
+    const overflowPath = expectOverflowPath(output);
+    expect(await readFile(overflowPath, "utf8")).toEndWith("TAIL");
   });
 
   test("recovers when runtime working directory was deleted mid-turn", async () => {
@@ -149,16 +183,16 @@ describe("Bash tool", () => {
     expect(result.content[0]?.text).toContain("timed out");
   }, 5000);
 
-  test("blocks foreground sleep with guidance toward background waits", async () => {
+  test("automatically yields a foreground sleep", async () => {
     const result = await bash({
       command: "sleep 10",
-      description: "Test foreground sleep block",
+      description: "Test automatic yield",
+      foregroundYieldMs: 50,
     });
 
-    expect(result.status).toBe("error");
-    expect(result.content[0]?.text).toContain("Foreground `sleep` is blocked");
-    expect(result.content[0]?.text).toContain("run_in_background");
-    expect(result.content[0]?.text).toContain("Monitor");
+    expect(result.status).toBe("success");
+    expect(result.content[0]?.text).toContain("still running with task ID:");
+    expect(result.content[0]?.text).toContain("You will be notified");
   });
 
   test("runs command in background mode", async () => {

@@ -15,10 +15,16 @@ interface KillBashResult {
 
 export async function kill_bash(args: KillBashArgs): Promise<KillBashResult> {
   validateRequiredParams(args, ["shell_id"], "KillBash");
-  const { shell_id } = args;
+  return { killed: killBackgroundProcess(args.shell_id) };
+}
+
+export function killBackgroundProcess(shell_id: string): boolean {
   const proc = backgroundProcesses.get(shell_id);
-  if (!proc || (proc.kind === "monitor" && proc.status !== "running")) {
-    return { killed: false };
+  // Monitors and workflows keep their entry after a stop (so TaskOutput can
+  // still read what they produced); only a running one can be killed.
+  const retainsEntry = proc?.kind === "monitor" || proc?.kind === "workflow";
+  if (!proc || (retainsEntry && proc.status !== "running")) {
+    return false;
   }
   const previousStatus = proc.status;
   const previousNotificationSuppression = proc.completionNotificationSuppressed;
@@ -26,21 +32,21 @@ export async function kill_bash(args: KillBashArgs): Promise<KillBashResult> {
     // The kill below still fires the child's "exit" event; suppress the
     // completion notification so a deliberate stop does not wake the agent.
     proc.completionNotificationSuppressed = true;
-    if (proc.kind === "monitor") {
+    if (retainsEntry) {
       proc.status = "failed";
     }
     proc.process.kill("SIGTERM");
     clearBackgroundProcessCleanup(shell_id);
-    if (proc.kind === "monitor") {
+    if (retainsEntry) {
       scheduleBackgroundProcessCleanup(shell_id);
       notifyBackgroundProcessStateChanged(proc.runtimeScope);
     } else {
       backgroundProcesses.delete(shell_id);
     }
-    return { killed: true };
+    return true;
   } catch {
     proc.status = previousStatus;
     proc.completionNotificationSuppressed = previousNotificationSuppression;
-    return { killed: false };
+    return false;
   }
 }

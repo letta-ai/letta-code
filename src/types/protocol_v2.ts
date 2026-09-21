@@ -30,7 +30,7 @@ import type {
   MessageListParams,
 } from "@letta-ai/letta-client/resources/conversations/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
-import type { ChatGPTOAuthConfig } from "@/types/chatgpt-oauth";
+import type { ConnectProviderOAuthConfig } from "@/types/provider-oauth-config";
 import type {
   AppServerInfoCommand,
   AppServerInfoResponseMessage,
@@ -47,7 +47,6 @@ import type {
   ExternalToolCallResponseCommand,
   RuntimeExternalToolsUpdateCommand,
   RuntimeExternalToolsUpdateResponseMessage,
-  RuntimeStartExternalToolsGroup,
 } from "./external-tool-protocol";
 import type { LoopState } from "./loop-status-protocol";
 import type {
@@ -55,15 +54,26 @@ import type {
   ConversationRuntimeScope,
 } from "./runtime-scope";
 import type {
-  RuntimeStartClientInfo,
-  RuntimeStartCreateAgentOptions,
-  RuntimeStartCreateConversationOptions,
+  DevicePermissionMode,
+  RuntimeStartCommand,
+  RuntimeStartResponseMessage,
 } from "./runtime-start-protocol";
 import type {
   CronProtocolCommand,
   CronProtocolResponseMessage,
 } from "./schedule-protocol";
+import type {
+  MonitorStopCommand,
+  MonitorStopResponse,
+  RemoveQueueItemCommand,
+  RemoveQueueItemResponse,
+} from "./task-control-protocol";
 import type * as TeleportProtocol from "./teleport-protocol";
+import type {
+  ToolsetName,
+  ToolsetOption,
+  ToolsetPreference,
+} from "./toolset-protocol";
 
 export type * from "./approval-classification-protocol";
 export type * from "./background-process-protocol";
@@ -73,7 +83,9 @@ export type * from "./loop-status-protocol";
 export type * from "./runtime-scope";
 export type * from "./runtime-start-protocol";
 export type * from "./schedule-protocol";
+export type * from "./task-control-protocol";
 export type * from "./teleport-protocol";
+export type * from "./toolset-protocol";
 
 export type DmPolicy = "pairing" | "allowlist" | "open";
 
@@ -106,22 +118,6 @@ export interface RuntimeEnvelope {
   emitted_at: string;
   idempotency_key: string;
 }
-
-export type DevicePermissionMode =
-  | "standard"
-  | "acceptEdits"
-  | "unrestricted"
-  | "strict";
-
-export type ToolsetName =
-  | "codex"
-  | "codex_snake"
-  | "default"
-  | "gemini"
-  | "gemini_snake"
-  | "none";
-
-export type ToolsetPreference = ToolsetName | "auto";
 
 export interface ClientToolsetConfig {
   /** Request-scoped base toolset. Omitted preserves the runtime preference. */
@@ -379,6 +375,7 @@ export interface DeviceStatus {
   letta_code_version: string | null;
   current_toolset: ToolsetName | null;
   current_toolset_preference: ToolsetPreference;
+  available_toolsets: ToolsetOption[];
   current_loaded_tools: string[];
   current_available_skills: AvailableSkillSummary[];
   background_processes: BackgroundProcessSummary[];
@@ -441,6 +438,7 @@ export interface QueueMessage {
   source: QueueMessageSource;
   content: MessageCreate["content"] | string;
   enqueued_at: string;
+  paused?: boolean; // parked by abort_message/Esc until resume_queue/next input
 }
 
 export interface DeviceStatusUpdateMessage extends RuntimeEnvelope {
@@ -453,10 +451,7 @@ export interface LoopStatusUpdateMessage extends RuntimeEnvelope {
   loop_status: LoopState;
 }
 
-/**
- * Full queue snapshot plus exact dequeue/cancellation transitions. Emitted on
- * mutation; transitions are ordered and cannot be inferred from absence.
- */
+/** Full queue snapshot plus ordered dequeue/cancel transitions; emitted on mutation. */
 export interface QueueUpdateMessage extends RuntimeEnvelope {
   type: "update_queue";
   queue: QueueMessage[];
@@ -565,6 +560,8 @@ export interface TurnFinishedMessage extends RuntimeEnvelope {
   stop_reason: StopReasonType;
   run_id?: string;
   error?: string;
+  /** Final CLI counters, independent of control/stream socket delivery order. */
+  usage?: LettaStreamingResponse.LettaUsageStatistics;
 }
 
 export interface SubagentSnapshotToolCall {
@@ -649,11 +646,7 @@ export interface InputCreateMessagePayload {
    * client tools before the allowlist is applied.
    */
   client_toolset?: ClientToolsetConfig;
-  /**
-   * Optional scoped external tools to expose for this turn. Runtime-start
-   * external tools with a scope_id stay hidden unless selected here; unscoped
-   * external tools for the runtime remain available normally.
-   */
+  /** Scoped runtime-start tools to expose for this turn; unscoped tools remain available. */
   external_tool_scope_ids?: string[];
   /**
    * Exclude interactive user-input tools (AskUserQuestion and friends) from
@@ -663,6 +656,7 @@ export interface InputCreateMessagePayload {
    * interactive tools are covered without client updates.
    */
   exclude_interactive_tools?: boolean;
+  response_format?: Record<string, unknown>;
 }
 
 export type InputApprovalResponsePayload = {
@@ -716,50 +710,15 @@ export interface SyncCommand {
   runtime: ConversationRuntimeScope;
   /** When provided, app-server sends sync_response after replaying state. */
   request_id?: string;
-  /**
-   * Whether the device should probe backend state for stale pending approvals.
-   * Defaults to true for older clients. Lightweight status/recovery syncs should
-   * set this false and only replay in-memory listener state.
-   */
+  /** Consult the backend for stale approvals (default true). Observer-safe. */
   recover_approvals?: boolean;
+  /** Owner-only: resume the interrupted turn now (listener/recovery-sync.ts). */
+  resume_interrupted_turn?: boolean;
   /**
    * Force the sync replay to include update_device_status even when the
    * listener's last device-status snapshot for this socket/scope is unchanged.
    */
   force_device_status?: boolean;
-}
-
-export interface RuntimeStartCommand {
-  type: "runtime_start";
-  /** Echoed back in the response for request correlation. */
-  request_id: string;
-  /** Existing agent to start/resume a runtime for. Mutually exclusive with create_agent. */
-  agent_id?: string;
-  /** Create a new agent before starting the runtime. Mutually exclusive with agent_id. */
-  create_agent?: RuntimeStartCreateAgentOptions;
-  /** Existing conversation to start/resume. Mutually exclusive with create_conversation. */
-  conversation_id?: string;
-  /** Create a new conversation. Without an agent, body must provide model and system. */
-  create_conversation?: RuntimeStartCreateConversationOptions;
-  /** Canonical source tags to merge. Matching legacy summary prefixes are removed. */
-  conversation_source_tags?: readonly string[];
-  /** Initial working directory for this runtime scope. Null resets to listener boot CWD. */
-  cwd?: string | null;
-  /** Initial permission mode for this runtime scope. */
-  mode?: DevicePermissionMode;
-  workspace_sandbox?: { root: string; isolation_root: string };
-  skill_sources?: readonly ("bundled" | "global" | "agent" | "project")[];
-  /** Preserve the current override when skill_sources is omitted. */ preserve_skill_sources?: boolean;
-  /** Optional client metadata for diagnostics/future protocol negotiation. */
-  client_info?: RuntimeStartClientInfo;
-  /** Whether to probe backend state for stale pending approvals before replaying state. Defaults to true. */
-  recover_approvals?: boolean;
-  /** Force the initial state replay to include update_device_status. Defaults to true. */
-  force_device_status?: boolean;
-  /** Resolve runtime_start only after its initial state replay has been emitted. */
-  wait_for_replay?: boolean;
-  /** Controller-owned tools registered atomically with the resolved runtime. */
-  external_tools?: readonly RuntimeStartExternalToolsGroup[];
 }
 
 export interface TerminalSpawnCommand {
@@ -1315,7 +1274,7 @@ export interface ConnectProviderCommand {
   auth_method_id?: string;
   fields: Record<string, string>;
   provider_name?: string;
-  oauth_config?: ChatGPTOAuthConfig;
+  oauth_config?: ConnectProviderOAuthConfig;
 }
 
 export interface DisconnectProviderCommand {
@@ -2048,20 +2007,6 @@ export interface ConversationCompactResponseMessage {
   error?: string;
 }
 
-export interface RuntimeStartResponseMessage {
-  type: "runtime_start_response";
-  request_id: string;
-  success: boolean;
-  runtime: ConversationRuntimeScope | null;
-  agent: AgentState | null;
-  conversation: Conversation | null;
-  created: {
-    agent: boolean;
-    conversation: boolean;
-  };
-  error?: string;
-}
-
 export interface GetReflectionSettingsResponseMessage {
   type: "get_reflection_settings_response";
   request_id: string;
@@ -2333,24 +2278,6 @@ export interface ExecuteCommandResponseMessage {
 }
 
 // ─────────────────────────────────────────────────
-//  Queue item commands
-// ─────────────────────────────────────────────────
-
-/**
- * Remove a specific item from the queue by ID.
- * Used by desktop to implement queue editing (load into input, remove from queue).
- */
-export interface RemoveQueueItemCommand {
-  type: "remove_queue_item";
-  /** Correlation id (echoed back in the response for request correlation). */
-  request_id: string;
-  /** Runtime scope — identifies which agent + conversation this targets. */
-  runtime: AgentRuntimeScope;
-  /** The queue item ID to remove. */
-  item_id: string;
-}
-
-// ─────────────────────────────────────────────────
 //  Git branch commands
 // ─────────────────────────────────────────────────
 
@@ -2462,17 +2389,11 @@ export interface SecretApplyResponse {
   error?: string;
 }
 
-export interface RemoveQueueItemResponse {
-  type: "remove_queue_item_response";
-  request_id: string;
-  success: boolean;
-  item_id: string;
-}
-
 export type WsProtocolCommand =
   | InputCommand
   | ChangeDeviceStateCommand
   | AbortMessageCommand
+  | import("./queue-update-protocol").ResumeQueueCommand
   | SyncCommand
   | RuntimeStartCommand
   | TeleportProtocol.TeleportProtocolCommand
@@ -2553,6 +2474,7 @@ export type WsProtocolCommand =
   | ChannelRouteUpdateCommand
   | ExecuteCommandCommand
   | RemoveQueueItemCommand
+  | MonitorStopCommand
   | SearchBranchesCommand
   | CheckoutBranchCommand
   | SecretListCommand
@@ -2573,6 +2495,7 @@ export type WsProtocolMessage =
   | SubagentStateUpdateMessage
   | ExternalToolCallRequestMessage
   | AbortMessageResponseMessage
+  | import("./queue-update-protocol").ResumeQueueResponseMessage
   | SyncResponseMessage
   | RuntimeExternalToolsUpdateResponseMessage
   | TerminalOutputMessage
@@ -2659,7 +2582,8 @@ export type WsProtocolMessage =
   | CheckoutBranchResponse
   | SecretListResponse
   | SecretApplyResponse
-  | RemoveQueueItemResponse;
+  | RemoveQueueItemResponse
+  | MonitorStopResponse;
 
 export type WsProtocolMessageType = WsProtocolMessage["type"];
 

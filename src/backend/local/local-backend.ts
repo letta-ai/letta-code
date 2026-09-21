@@ -14,7 +14,10 @@ import type {
   ConversationMessageStreamBody,
   ConversationRecompileBody,
 } from "@/backend/backend";
-import { HeadlessBackend } from "@/backend/dev/headless-backend";
+import {
+  HEADLESS_BACKEND_CAPABILITIES,
+  HeadlessBackend,
+} from "@/backend/dev/headless-backend";
 import type { HeadlessTurnExecutor } from "@/backend/dev/headless-turn-executor";
 import { LocalPiModelsRuntime } from "@/backend/dev/pi-models-runtime";
 import type {
@@ -223,12 +226,6 @@ function localCompactionSettingsForStorage(
   return { ...settings };
 }
 
-function supportsMidConversationSystemMessages(
-  agent: LocalAgentRecord,
-): boolean {
-  return agent.model === "anthropic/claude-opus-4-8";
-}
-
 function formatMidConversationMemoryUpdate(
   compiled: LocalCompiledSystemPrompt,
 ): string {
@@ -244,13 +241,8 @@ function formatMidConversationMemoryUpdate(
 
 export class LocalBackend extends HeadlessBackend {
   override readonly capabilities: BackendCapabilities = {
-    remoteMemfs: false,
-    serverSideToolManagement: false,
-    serverSecrets: false,
-    agentFileImportExport: false,
+    ...HEADLESS_BACKEND_CAPABILITIES,
     promptRecompile: true,
-    byokProviderRefresh: false,
-    localModelCatalog: true,
     localMemfs: true,
   };
 
@@ -393,9 +385,7 @@ export class LocalBackend extends HeadlessBackend {
     ...args: Parameters<HeadlessBackend["createAgent"]>
   ) {
     let [body, ...restArgs] = args;
-    // When local memfs is enabled, stamp the git-memory-enabled tag on the
-    // agent body so all downstream tag-checking paths (isMemfsEnabledOnServer,
-    // memfs-sync, etc.) see this agent as memfs-enabled from creation.
+    // Stamp local memfs agents so downstream tag checks enable memory sync.
     if (this.isLocalMemfsEnabled()) {
       const bodyRecord = body as Record<string, unknown>;
       const existingTags = Array.isArray(bodyRecord.tags)
@@ -841,6 +831,7 @@ export class LocalBackend extends HeadlessBackend {
     const contextTokensBefore = estimateLocalMessageTokens(messages);
     const plan = planLocalAllCompaction(messages);
     const summary = await summarizeLocalMessagesAll({
+      conversationId,
       agent,
       messages: plan.messagesToSummarize,
       complete: this.complete,
@@ -894,6 +885,7 @@ export class LocalBackend extends HeadlessBackend {
       contextWindow,
     });
     const summary = await summarizeLocalMessagesSlidingWindow({
+      conversationId,
       agent,
       messages: plan.messagesToSummarize,
       complete: this.complete,
@@ -952,8 +944,7 @@ export class LocalBackend extends HeadlessBackend {
 
     if (
       existing?.rawSystemHash === rawSystemHash &&
-      existing.memfsRevision !== memfsRevision &&
-      supportsMidConversationSystemMessages(agent)
+      existing.memfsRevision !== memfsRevision
     ) {
       const compiled = await this.compileAndMaybePersistSystemPrompt(
         conversationId,

@@ -527,14 +527,22 @@ function getGitChangedFiles(baseSha, headSha, rootDir = process.cwd()) {
     });
 }
 
-function readPullRequestShas(eventPath) {
+function readPullRequestShas(eventPath, rootDir = process.cwd()) {
   const event = JSON.parse(readFileSync(eventPath, "utf8"));
-  const baseSha = event.pull_request?.base?.sha;
-  const headSha =
-    event.pull_request?.merge_commit_sha ?? event.pull_request?.head?.sha;
-  if (typeof baseSha !== "string" || typeof headSha !== "string") {
-    throw new Error("Pull request event is missing base/head SHAs");
+  if (!event.pull_request) {
+    throw new Error("Expected a pull request event");
   }
+  // GitHub can enqueue an event whose merge_commit_sha differs from the merge
+  // actions/checkout fetches. Compare the tested tree with its own base parent;
+  // both are present at fetch-depth: 2. Requiring HEAD^2 also rejects a checkout
+  // of a branch head, so the caller safely runs everything in that case.
+  const [baseSha, , headSha] = execFileSync(
+    "git",
+    ["rev-parse", "HEAD^1", "HEAD^2", "HEAD"],
+    { cwd: rootDir, encoding: "utf8" },
+  )
+    .trim()
+    .split(/\r?\n/u);
   return { baseSha, headSha };
 }
 
