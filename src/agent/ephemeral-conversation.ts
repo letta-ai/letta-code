@@ -15,6 +15,10 @@ export interface CreateEphemeralConversationOptions {
   systemPromptPreset?: string;
   systemPromptCustom?: string;
   memoryPromptMode?: MemoryPromptMode;
+  name?: string;
+  isSubagent?: boolean;
+  parentAgentId?: string;
+  requestOptions?: { headers?: Record<string, string> };
 }
 
 export async function buildEphemeralConversationCreateBody(
@@ -43,6 +47,9 @@ export async function buildEphemeralConversationCreateBody(
   return {
     model: request.model,
     system: request.system,
+    ...(options.parentAgentId
+      ? { parent_agent_id: options.parentAgentId }
+      : {}),
     ...(modelSettings ? { model_settings: modelSettings } : {}),
     ...(contextWindow ? { context_window_limit: contextWindow } : {}),
   };
@@ -51,10 +58,11 @@ export async function buildEphemeralConversationCreateBody(
 function projectEphemeralAgent(
   conversationId: string,
   body: EphemeralConversationCreateBody,
+  name?: string | null,
 ): AgentState {
   return {
     id: conversationId,
-    name: "Ephemeral conversation",
+    name: name ?? "Ephemeral conversation",
     system: body.system,
     tools: [],
     memory: { blocks: [] },
@@ -69,13 +77,52 @@ function projectEphemeralAgent(
   } as unknown as AgentState;
 }
 
+// Execution-only projection: the server owns the persisted system message and
+// fork snapshot. Never rebuild it from today's prompt presets on resume.
+export function projectResumedEphemeralConversation(conversation: {
+  id: string;
+  agent_id?: string | null;
+  name?: string | null;
+  model?: string | null;
+  model_settings?: unknown;
+  context_window_limit?: number | null;
+}): AgentState {
+  if (conversation.agent_id !== null || !conversation.model) {
+    throw new Error(
+      "Expected an agent-free conversation with a persisted model",
+    );
+  }
+  return projectEphemeralAgent(
+    conversation.id,
+    {
+      model: conversation.model,
+      system: "",
+      model_settings: (conversation.model_settings ?? {}) as Record<
+        string,
+        unknown
+      >,
+      context_window_limit: conversation.context_window_limit,
+    },
+    conversation.name,
+  );
+}
+
 export async function createEphemeralConversation(
   options: CreateEphemeralConversationOptions,
 ): Promise<{ agent: AgentState; conversationId: string }> {
   const body = await buildEphemeralConversationCreateBody(options);
-  const conversation = await createEphemeralConversationRequest(body);
+  const conversation = await createEphemeralConversationRequest(
+    body,
+    {
+      ...(options.name !== undefined ? { name: options.name } : {}),
+      ...(options.isSubagent !== undefined
+        ? { is_subagent: options.isSubagent }
+        : {}),
+    },
+    options.requestOptions,
+  );
   return {
-    agent: projectEphemeralAgent(conversation.id, body),
+    agent: projectEphemeralAgent(conversation.id, body, conversation.name),
     conversationId: conversation.id,
   };
 }

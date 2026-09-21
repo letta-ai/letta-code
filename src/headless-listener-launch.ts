@@ -14,13 +14,15 @@ import {
   getLatestConversationSuperRun,
   listEnqueuedRunMessages,
 } from "@/backend/api/conversation-enqueue";
+import { listEphemeralReplies } from "@/backend/api/ephemeral-conversations";
 import { getApiRequestConfig } from "@/backend/api/request";
 import type { RuntimeExecutionSettings } from "@/runtime-execution-settings";
 import type {
-  AgentRuntimeScope,
   ConversationRuntimeScope,
   LoopState,
   MessageDelta,
+  QueueMessage,
+  RemoveQueueItemResponse,
   RuntimeStartCommand,
   TurnFinishedMessage,
 } from "@/types/protocol_v2";
@@ -46,7 +48,7 @@ export function listenerControlUrl(
 
 async function createListenerClient(
   connectionId: string,
-  scope: AgentRuntimeScope,
+  scope: ConversationRuntimeScope,
 ): Promise<AppServerClient> {
   const auth = await getApiRequestConfig();
   return createAppServerClient({
@@ -60,27 +62,48 @@ async function createListenerClient(
 /** Cancel only this input: a queued child must not interrupt the turn ahead of it. */
 export async function cancelListenerInput(params: {
   client: AppServerClient;
-  scope: AgentRuntimeScope;
+  scope: ConversationRuntimeScope;
   clientMessageId: string;
   dequeue?: typeof dequeueConversationMessage;
   readState: () => {
     loop?: LoopState;
+    queue?: QueueMessage[];
     cancelled: boolean;
   };
 }): Promise<boolean> {
-  const removed = await (params.dequeue ?? dequeueConversationMessage)(
-    {
-      agentId: params.scope.agent_id,
-      conversationId: params.scope.conversation_id,
-      clientMessageId: params.clientMessageId,
-    },
-    AbortSignal.timeout(30_000),
-  );
-  if (removed.status === "dequeued" || removed.status === "already_dequeued")
-    return true;
+  if (params.scope.agent_id !== null) {
+    const removed = await (params.dequeue ?? dequeueConversationMessage)(
+      {
+        agentId: params.scope.agent_id,
+        conversationId: params.scope.conversation_id,
+        clientMessageId: params.clientMessageId,
+      },
+      AbortSignal.timeout(30_000),
+    );
+    if (removed.status === "dequeued" || removed.status === "already_dequeued")
+      return true;
+  }
   await params.client.sync({ runtime: params.scope, recover_approvals: false });
-  const { loop, cancelled } = params.readState();
+  const { loop, queue, cancelled } = params.readState();
   if (cancelled) return true;
+  const queued = queue?.find(
+    (item) => item.client_message_id === params.clientMessageId,
+  );
+  if (params.scope.agent_id === null && queued) {
+    const removed = await params.client.request<RemoveQueueItemResponse>(
+      {
+        type: "remove_queue_item",
+        request_id: randomUUID(),
+        runtime: params.scope,
+        item_id: queued.id,
+      },
+      {
+        predicate: (message): message is RemoveQueueItemResponse =>
+          message.type === "remove_queue_item_response",
+      },
+    );
+    if (removed.success) return true;
+  }
   const ownRun = loop?.active_run_ids.find((id) =>
     loop.client_message_ids_by_run_id?.[id]?.includes(params.clientMessageId),
   );
@@ -142,7 +165,7 @@ export async function cancelAcceptedListenerInput(
 export async function launchListenerConversation(
   params: {
     connectionId: string;
-    scope: AgentRuntimeScope;
+    scope: ConversationRuntimeScope;
     content: MessageCreate["content"];
     backend: Pick<Backend, "retrieveRun">;
     settings: RuntimeExecutionSettings;
@@ -164,16 +187,21 @@ export async function launchListenerConversation(
     dequeue?: typeof dequeueConversationMessage;
     latestSuperRun?: typeof getLatestConversationSuperRun;
     listRunMessages?: typeof listEnqueuedRunMessages;
+    listConversationReplies?: typeof listEphemeralReplies;
     pollMs?: number;
     waitDeadline?: AbortSignal;
   } = {},
 ): Promise<ListenerLaunchResult> {
+  if (params.noWait && params.scope.agent_id === null) {
+    throw new Error("--no-wait is not supported for ephemeral listener input");
+  }
   const client =
     deps.client ??
     (await createListenerClient(params.connectionId, params.scope));
   const clientMessageId = randomUUID();
   const runIds = new Set<string>();
   let loop: LoopState | undefined;
+  let queue: QueueMessage[] = [];
   let cancelled = false;
   let disconnected = false;
   let interrupted = params.signal?.aborted ?? false;
@@ -210,6 +238,7 @@ export async function launchListenerConversation(
         if (ids.includes(clientMessageId)) runIds.add(runId);
       }
     } else if (message.type === "update_queue") {
+      queue = message.queue;
       cancelled ||= message.removed.some(
         (entry) =>
           entry.client_message_id === clientMessageId &&
@@ -278,18 +307,42 @@ export async function launchListenerConversation(
         "This listener does not support scoped CLI launch settings; upgrade it before launching children",
       );
     if (interrupted) throw new Error("Launch cancelled before input was sent");
-    const accepted = await (deps.enqueue ?? enqueueConversationMessage)(
-      {
-        agentId: params.scope.agent_id,
-        conversationId: params.scope.conversation_id,
-        clientMessageId,
-        content: params.content,
-        computer: params.connectionId,
-        actingUserId: params.scope.acting_user_id,
-      },
-      AbortSignal.timeout(30_000),
-    );
-    if (params.noWait)
+    // Cloud enqueue currently delivers children under the parent agent's runtime
+    // scope. Agent-free launches must retain the null-owned runtime configured
+    // above, using the listener's existing acknowledged input/queue path.
+    let accepted:
+      | Awaited<ReturnType<typeof enqueueConversationMessage>>
+      | undefined;
+    if (params.scope.agent_id === null) {
+      const response = await client.submitInput({
+        runtime: params.scope,
+        payload: {
+          kind: "create_message",
+          messages: [
+            {
+              role: "user",
+              content: params.content,
+              client_message_id: clientMessageId,
+            },
+          ],
+        },
+      });
+      if (!response.accepted)
+        throw new Error(response.error ?? "Listener rejected input");
+    } else {
+      accepted = await (deps.enqueue ?? enqueueConversationMessage)(
+        {
+          agentId: params.scope.agent_id,
+          conversationId: params.scope.conversation_id,
+          clientMessageId,
+          content: params.content,
+          computer: params.connectionId,
+          actingUserId: params.scope.acting_user_id,
+        },
+        AbortSignal.timeout(30_000),
+      );
+    }
+    if (params.noWait && accepted)
       return {
         status: "queued",
         receipt: { ...accepted, connection_id: params.connectionId },
@@ -309,7 +362,7 @@ export async function launchListenerConversation(
             scope: params.scope,
             clientMessageId,
             dequeue: deps.dequeue,
-            readState: () => ({ loop, cancelled }),
+            readState: () => ({ loop, queue, cancelled }),
           })
         ) {
           throw new Error("Listener execution cancelled");
@@ -332,7 +385,7 @@ export async function launchListenerConversation(
             ownFinished.error ??
               `Listener turn stopped (${ownFinished.stop_reason})`,
           );
-        if (!runId && params.scope.conversation_id !== "default") {
+        if (accepted && !runId && params.scope.conversation_id !== "default") {
           const latest = await read((signal) =>
             (deps.latestSuperRun ?? getLatestConversationSuperRun)(
               params.scope.conversation_id,
@@ -361,9 +414,21 @@ export async function launchListenerConversation(
             ownFinished
           ) {
             const messages = await read((signal) =>
-              (deps.listRunMessages ?? listEnqueuedRunMessages)(runId, signal),
+              params.scope.agent_id === null
+                ? (deps.listConversationReplies ?? listEphemeralReplies)(
+                    params.scope.conversation_id,
+                    signal,
+                  )
+                : (deps.listRunMessages ?? listEnqueuedRunMessages)(
+                    runId,
+                    signal,
+                  ),
             );
             const last = messages
+              .filter(
+                (message) =>
+                  params.scope.agent_id !== null || message.run_id === runId,
+              )
               .filter((message) => message.message_type === "assistant_message")
               .sort((a, b) => (b.seq_id ?? 0) - (a.seq_id ?? 0))[0];
             if (last?.message_type === "assistant_message") {

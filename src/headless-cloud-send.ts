@@ -169,6 +169,38 @@ export async function tryCloudHeadlessSend(
   try {
     if (!["text", "json", "stream-json"].includes(format))
       throw new Error(`Invalid output format: ${format}`);
+    // Agent-free conversations have no agent enqueue destination. Resume them
+    // through the execution path, which preserves their null-owned scope.
+    const resume = normalizeConversationShorthandFlags({
+      specifiedConversationId: values.conversation,
+      specifiedAgentId: values.agent,
+    });
+    const resumeId = validateAddress(
+      resume.specifiedConversationId ?? undefined,
+      "conversation",
+    );
+    const resolvedConversation =
+      resumeId && resumeId !== "default"
+        ? await backend.retrieveConversation(resumeId, {
+            signal: controller.signal,
+          })
+        : undefined;
+    controller.signal.throwIfAborted();
+    if (resolvedConversation) {
+      if (resolvedConversation.agent_id === null) {
+        if (resume.specifiedAgentId) {
+          throw new Error(
+            "An ephemeral conversation cannot be resumed with --agent",
+          );
+        }
+        if (noWait || values["from-agent"]) {
+          throw new Error(
+            "Ephemeral conversation execution does not support --no-wait or --from-agent",
+          );
+        }
+        return undefined;
+      }
+    }
     validateSendOptions(values);
     const computer = normalizeAgentMessageComputer(
       values.computer ?? values.environment ?? values.env,
@@ -217,6 +249,7 @@ export async function tryCloudHeadlessSend(
         agentId,
         conversationId,
         senderAgentId: sender.agentId,
+        resolvedConversation,
         currentConversation: {
           agentId: ambientSender,
           conversationId: env.CONVERSATION_ID || env.LETTA_CONVERSATION_ID,

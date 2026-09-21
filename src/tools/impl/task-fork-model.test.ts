@@ -15,9 +15,18 @@ const forkConfig: SubagentConfig = {
   launchProfile: "default",
 };
 
-function backendFixture(events: string[]) {
+function backendFixture(events: string[], parentName?: string) {
   return {
-    forkConversation: async (conversationId: string) => {
+    capabilities: { localMemfs: false },
+    forkConversation: async (
+      conversationId: string,
+      options: Parameters<Backend["forkConversation"]>[1],
+    ) => {
+      expect(options).toMatchObject({ ephemeral: true, isSubagent: true });
+      expect(options?.name).toBeTruthy();
+      if (parentName)
+        expect(options?.name).not.toEndWith(`(${parentName}'s shadow)`);
+      expect(options?.hidden).toBeUndefined();
       events.push(`fork:${conversationId}`);
       return { id: "conv-fork" };
     },
@@ -32,8 +41,9 @@ describe("forkParentConversation", () => {
     const events: string[] = [];
     const result = await forkParentConversation(
       {
-        backend: backendFixture(events),
+        backend: backendFixture(events, "Parent"),
         parentAgentId: "agent-parent",
+        parentAgentName: "Parent",
         parentConversationId: "conv-parent",
         config: forkConfig,
         model: "gpt-5.6-sol",
@@ -70,6 +80,34 @@ describe("forkParentConversation", () => {
     ]);
     expect(events.some((event) => event.includes("model:conv-parent"))).toBe(
       false,
+    );
+  });
+
+  test("local forks retain hidden agent-backed conversations", async () => {
+    const fixture = backendFixture([]);
+    const backend = {
+      ...fixture,
+      capabilities: { ...fixture.capabilities, localMemfs: true },
+    };
+    backend.forkConversation = async (_id, options) => {
+      expect(options).toMatchObject({ hidden: true });
+      expect(options).not.toHaveProperty("ephemeral");
+      expect(options).not.toHaveProperty("name");
+      return { id: "local-conv-fork" };
+    };
+    await forkParentConversation(
+      {
+        backend,
+        parentAgentId: "agent-local-parent",
+        parentConversationId: "local-conv-parent",
+        config: forkConfig,
+      },
+      {
+        resolveModelOverride: async () => null,
+        inheritToolset: async (_agentId, _parentId, _forkId, targetAgentId) => {
+          expect(targetAgentId).toBe("agent-local-parent");
+        },
+      },
     );
   });
 
