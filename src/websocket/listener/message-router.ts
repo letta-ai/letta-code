@@ -10,7 +10,7 @@ import type {
   ApprovalResponseBody,
   ChangeDeviceStateCommand,
 } from "@/types/protocol_v2";
-import { debugLog, isDebugEnabled } from "@/utils/debug";
+import { isDebugEnabled } from "@/utils/debug";
 import { getErrorMessage } from "@/utils/error";
 import { sealStartupLogs } from "@/utils/startup-log-boundary";
 import {
@@ -57,7 +57,7 @@ import {
   parseServerLifecycleMessage,
   parseServerMessage,
 } from "./protocol-inbound";
-import { summarizeV2Command } from "./protocol-logging";
+import { logV2Command, summarizeV2Command } from "./protocol-logging";
 import { emitDeviceStatusUpdate } from "./protocol-outbound";
 import {
   scheduleQueuePump,
@@ -67,6 +67,7 @@ import {
 import { emitLoopErrorNotice } from "./recoverable-notices";
 import { getActiveRuntime, safeEmitWsEvent } from "./runtime";
 import { parseListenerReadyMessage } from "./split-stream-lifecycle";
+import { validateResponseFormat } from "./structured-output";
 import {
   buildTeleportContinuationMessages,
   clearExpectedInboundTeleport,
@@ -184,14 +185,6 @@ type MessageRouterParams = {
   trackListenerError: TrackListenerError;
   processIncomingMessage?: typeof handleIncomingMessage;
 };
-
-function logV2Command(opts: StartListenerOptions, message: string): void {
-  if (opts.onLog) {
-    opts.onLog(`[Listen V2] ${message}`);
-    return;
-  }
-  debugLog("Listen V2", message);
-}
 
 export function createListenerMessageHandler(
   params: MessageRouterParams,
@@ -542,6 +535,11 @@ export function createListenerMessageHandler(
           acknowledgeInput(false, "Unsupported input payload kind");
           return;
         }
+        const error = validateResponseFormat(inputPayload.response_format);
+        if (error) {
+          acknowledgeInput(false, error);
+          return;
+        }
         const incoming: IncomingMessage = {
           type: "message",
           connectionId,
@@ -555,6 +553,7 @@ export function createListenerMessageHandler(
           excludeInteractiveTools: inputPayload.exclude_interactive_tools,
           githubPullRequestConversationIds:
             inputPayload.github_pull_request_conversation_ids,
+          responseFormat: inputPayload.response_format,
           imageFailureMode: inputPayload.image_failure_mode,
           messages: inputPayload.messages,
         };

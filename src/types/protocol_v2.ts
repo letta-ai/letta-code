@@ -646,11 +646,7 @@ export interface InputCreateMessagePayload {
    * client tools before the allowlist is applied.
    */
   client_toolset?: ClientToolsetConfig;
-  /**
-   * Optional scoped external tools to expose for this turn. Runtime-start
-   * external tools with a scope_id stay hidden unless selected here; unscoped
-   * external tools for the runtime remain available normally.
-   */
+  /** Scoped runtime-start tools to expose for this turn; unscoped tools remain available. */
   external_tool_scope_ids?: string[];
   /**
    * Exclude interactive user-input tools (AskUserQuestion and friends) from
@@ -661,6 +657,7 @@ export interface InputCreateMessagePayload {
    */
   exclude_interactive_tools?: boolean;
   github_pull_request_conversation_ids?: string[];
+  response_format?: Record<string, unknown>;
 }
 export type InputApprovalResponsePayload = {
   kind: "approval_response";

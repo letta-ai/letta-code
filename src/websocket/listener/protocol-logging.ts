@@ -1,3 +1,17 @@
+import { debugLog } from "@/utils/debug";
+import type { StartListenerOptions } from "./types";
+
+export function logV2Command(
+  opts: Pick<StartListenerOptions, "onLog">,
+  message: string,
+): void {
+  if (opts.onLog) {
+    opts.onLog(`[Listen V2] ${message}`);
+    return;
+  }
+  debugLog("Listen V2", message);
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

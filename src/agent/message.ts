@@ -248,6 +248,8 @@ export type SendMessageStreamOptions = {
    * does not mutate agent/conversation persisted model configuration.
    */
   overrideModel?: string;
+  /** Request-scoped Messages API response format. */
+  responseFormat?: Record<string, unknown>;
   /** Explicit turn-scoped tool snapshot. When present, bypasses the global registry. */
   preparedToolContext?: PreparedToolExecutionContext;
   /**
@@ -325,6 +327,7 @@ function buildRequestBodyFromPreparedMessages(
     client_tools: clientTools,
     include_compaction_messages: true,
     ...(opts.overrideModel ? { override_model: opts.overrideModel } : {}),
+    ...(opts.responseFormat ? { response_format: opts.responseFormat } : {}),
     ...(isDefaultConversation ? { agent_id: opts.agentId } : {}),
   };
 }

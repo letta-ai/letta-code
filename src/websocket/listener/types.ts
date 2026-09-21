@@ -112,6 +112,7 @@ export interface IncomingMessage {
   excludeInteractiveTools?: boolean;
   /** Durable ancestor conversations that receive PRs created during this turn. */
   githubPullRequestConversationIds?: string[];
+  responseFormat?: Record<string, unknown>;
   messages: Array<
     (AttributedMessageCreate & { client_message_id?: string }) | ApprovalCreate
   >;
