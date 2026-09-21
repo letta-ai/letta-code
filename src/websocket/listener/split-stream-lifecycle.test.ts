@@ -6,11 +6,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer } from "ws";
+import { QueueRuntime } from "@/queue/queue-runtime";
 import { settingsManager } from "@/settings-manager";
 import type { ControlRequest } from "@/types/protocol_v2";
 import {
   startListenerClient,
   stopListenerClient,
+  stopListenerRuntime,
 } from "@/websocket/listen-client";
 import {
   requestApprovalOverWS,
@@ -279,6 +281,73 @@ describe("split stream listener lifecycle", () => {
       }),
     );
   }
+
+  test("process-global server start and stop preserves a local session owner", async () => {
+    const ownerConnected = mock(() => {});
+    const owner = await startListenerClient({
+      connectionId: "owner-connection",
+      wsUrl,
+      deviceId: "device-id",
+      connectionName: "local-owner",
+      supportsSplitStatusChannels: true,
+      supportsPairedListenerGenerations: true,
+      localSessionOwner: {
+        agentId: "agent-owner",
+        conversationId: "conversation-owner",
+        queueRuntime: new QueueRuntime(),
+        acceptInput: () => true,
+        abort: () => true,
+        isProcessing: () => false,
+      },
+      onConnected: ownerConnected,
+      onDisconnected: mock(() => {}),
+      onError: mock(() => {}),
+    });
+    await waitFor(
+      () => countConnectionsForChannel("control") === 1,
+      "local owner control socket did not open",
+    );
+    acceptConnection(lastConnectionIndexForChannel("control"));
+    await waitFor(
+      () => countConnectionsForChannel("stream") === 1,
+      "local owner stream socket did not open",
+    );
+    acceptConnection(lastConnectionIndexForChannel("stream"));
+    await waitFor(
+      () => ownerConnected.mock.calls.length === 1,
+      "local owner did not connect",
+    );
+
+    const serverConnected = mock(() => {});
+    const server = await startClient({
+      onConnected: serverConnected,
+      supportsPairedListenerGenerations: true,
+    });
+    await waitFor(
+      () => countConnectionsForChannel("control") === 2,
+      "server control socket did not open",
+    );
+    acceptConnection(lastConnectionIndexForChannel("control"));
+    await waitFor(
+      () => countConnectionsForChannel("stream") === 2,
+      "server stream socket did not open",
+    );
+    acceptConnection(lastConnectionIndexForChannel("stream"));
+    await waitFor(
+      () => serverConnected.mock.calls.length === 1,
+      "server listener did not connect",
+    );
+    expect(getActiveRuntime()).toBe(server);
+    expect(owner.detachedFromActiveRuntime).toBe(true);
+    expect(owner.intentionallyClosed).toBe(false);
+
+    stopListenerRuntime(server);
+    expect(getActiveRuntime()).toBeNull();
+    expect(owner.intentionallyClosed).toBe(false);
+
+    stopListenerRuntime(owner);
+    expect(owner.intentionallyClosed).toBe(true);
+  });
 
   test("paired startup waits for exact control and stream acceptance", async () => {
     const onConnected = mock(() => {});

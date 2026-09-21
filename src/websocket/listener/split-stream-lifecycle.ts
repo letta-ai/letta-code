@@ -1,7 +1,7 @@
 import { WebSocket } from "ws";
 import { isDebugEnabled } from "@/utils/debug";
 import { LISTENER_STREAM_OPEN_TIMEOUT_MS } from "./constants";
-import { getActiveRuntime } from "./runtime";
+import { isListenerRuntimeCurrent } from "./runtime";
 import type { ListenerTransport } from "./transport";
 import type { ListenerRuntime } from "./types";
 
@@ -103,7 +103,7 @@ export function isCurrentSocketPair(
   streamSocket: WebSocket | null,
 ): boolean {
   return (
-    runtime === getActiveRuntime() &&
+    isListenerRuntimeCurrent(runtime) &&
     !runtime.intentionallyClosed &&
     runtime.socket === controlSocket &&
     runtime.streamSocket === streamSocket
@@ -116,7 +116,7 @@ export function shouldHandleControlSocketClose(
   connectionId: string,
 ): boolean {
   return (
-    runtime === getActiveRuntime() &&
+    isListenerRuntimeCurrent(runtime) &&
     (runtime.socket === controlSocket ||
       runtime.connections.get(connectionId)?.writer === controlSocket)
   );

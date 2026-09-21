@@ -9,7 +9,7 @@ import {
   shouldProcessInboundMessageDirectly,
   shouldQueueInboundMessage,
 } from "./queue";
-import { emitListenerStatus, getActiveRuntime } from "./runtime";
+import { emitListenerStatus, isListenerRuntimeCurrent } from "./runtime";
 import { isRuntimeTeleportPending } from "./teleport";
 import type { ListenerTransport } from "./transport";
 import type { handleIncomingMessage } from "./turn";
@@ -95,7 +95,7 @@ export function dispatchInboundMessageWhenReady(params: {
 
   runtime.messageQueue = runtime.messageQueue
     .then(async () => {
-      if (listener !== getActiveRuntime() || listener.intentionallyClosed) {
+      if (!isListenerRuntimeCurrent(listener) || listener.intentionallyClosed) {
         acknowledgeInput({ accepted: false });
         return;
       }

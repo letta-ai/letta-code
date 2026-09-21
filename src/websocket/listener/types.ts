@@ -359,6 +359,8 @@ export type ListenerRuntime = {
    */
   lastPongAt: number | null;
   intentionallyClosed: boolean;
+  /** Runs alongside, rather than replacing, the process-global listener. */
+  detachedFromActiveRuntime?: boolean;
   hasSuccessfulConnection: boolean;
   /** True once the WS has connected at least once. Never reset to false. */
   everConnected: boolean;
