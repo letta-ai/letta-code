@@ -45,11 +45,23 @@ function resolveIncludedToolNames(toolNames: string[] | undefined): ToolName[] {
   });
 }
 
+/**
+ * Provider types whose models speak the OpenAI API and should use the codex
+ * toolset regardless of handle prefix. Handles are unreliable here: BYOK and
+ * managed providers use arbitrary prefixes (e.g. "lc-openai/gpt-6-astra",
+ * "chatgpt-work/gpt-5.5"), so the provider type is the authoritative signal.
+ */
+const OPENAI_PROVIDER_TYPES = new Set([
+  "openai",
+  "openai-codex",
+  "chatgpt_oauth",
+]);
+
 export function deriveToolsetFromModel(
   modelIdentifier: string,
   providerType?: string | null,
 ): "codex" | "default" {
-  if (providerType === "chatgpt_oauth" || providerType === "openai-codex") {
+  if (providerType && OPENAI_PROVIDER_TYPES.has(providerType)) {
     return "codex";
   }
   const resolvedModel = resolveModel(modelIdentifier) ?? modelIdentifier;

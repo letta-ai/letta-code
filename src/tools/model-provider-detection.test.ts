@@ -57,6 +57,16 @@ describe("deriveToolsetFromModel", () => {
     ).toBe("codex");
   });
 
+  test("maps managed OpenAI provider handles to codex toolset via provider type", () => {
+    expect(deriveToolsetFromModel("lc-openai/gpt-6-astra", "openai")).toBe(
+      "codex",
+    );
+  });
+
+  test("maps BYOK OpenAI providers with arbitrary prefixes to codex toolset via provider type", () => {
+    expect(deriveToolsetFromModel("acme-corp/gpt-5.5", "openai")).toBe("codex");
+  });
+
   test("maps Gemini models to default (anthropic) toolset", () => {
     expect(deriveToolsetFromModel("google_ai/gemini-2.5-pro")).toBe("default");
     expect(deriveToolsetFromModel("gemini-pro")).toBe("default");
