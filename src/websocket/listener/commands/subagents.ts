@@ -16,12 +16,28 @@ export async function handleLaunchSubagentCommand(
   parent: ConversationRuntime,
   connectionId?: string,
   launch = launchSubagent,
+  startupTimeoutMs = 25_000,
 ): Promise<LaunchSubagentResponse> {
   const response = {
     type: "launch_subagent_response" as const,
     request_id: command.request_id,
   };
+  const controller = new AbortController();
+  const connectionSignal = connectionId
+    ? parent.listener.connections.get(connectionId)?.cancellation.signal
+    : undefined;
+  const signal = connectionSignal
+    ? AbortSignal.any([controller.signal, connectionSignal])
+    : controller.signal;
+  const aborted = Promise.withResolvers<never>();
+  const onAbort = () => aborted.reject(signal.reason);
+  signal.addEventListener("abort", onAbort, { once: true });
+  // Finish startup before the client's default 30-second request deadline.
+  const timeout = setTimeout(() => {
+    controller.abort(new Error("Subagent launch timed out"));
+  }, startupTimeoutMs);
   try {
+    signal.throwIfAborted();
     if (parent.listener.intentionallyClosed)
       throw new Error("Runtime is no longer active");
     if (
@@ -30,36 +46,40 @@ export async function handleLaunchSubagentCommand(
     ) {
       throw new Error("Parent runtime does not match the launch request");
     }
-    const result = await runOutsideRuntimeContext(() =>
-      runWithRuntimeContext(
-        {
-          connectionId,
-          environmentDeviceId: connectionId
-            ? parent.listener.connections.get(connectionId)?.options.deviceId
-            : undefined,
-          agentId: parent.agentId,
-          conversationId: parent.conversationId,
-          actingUserId: command.runtime.acting_user_id,
-          workingDirectory: getConversationWorkingDirectory(
-            parent.listener,
-            parent.agentId,
-            parent.conversationId,
-          ),
-          skillSources: parent.skillSources,
-          workspaceSandbox: parent.workspaceSandbox,
-          executionSettings: parent.executionSettings,
-        },
-        () =>
-          launch({
-            ...command.args,
-            toolCallId: command.tool_call_id,
-            parentScope: {
-              agentId: command.runtime.agent_id,
-              conversationId: command.runtime.conversation_id,
-            },
-          }),
+    const result = await Promise.race([
+      aborted.promise,
+      runOutsideRuntimeContext(() =>
+        runWithRuntimeContext(
+          {
+            connectionId,
+            environmentDeviceId: connectionId
+              ? parent.listener.connections.get(connectionId)?.options.deviceId
+              : undefined,
+            agentId: parent.agentId,
+            conversationId: parent.conversationId,
+            actingUserId: command.runtime.acting_user_id,
+            workingDirectory: getConversationWorkingDirectory(
+              parent.listener,
+              parent.agentId,
+              parent.conversationId,
+            ),
+            skillSources: parent.skillSources,
+            workspaceSandbox: parent.workspaceSandbox,
+            executionSettings: parent.executionSettings,
+          },
+          () =>
+            launch({
+              ...command.args,
+              signal,
+              toolCallId: command.tool_call_id,
+              parentScope: {
+                agentId: command.runtime.agent_id,
+                conversationId: command.runtime.conversation_id,
+              },
+            }),
+        ),
       ),
-    );
+    ]);
     return { ...response, ...result };
   } catch (error) {
     return {
@@ -67,5 +87,8 @@ export async function handleLaunchSubagentCommand(
       success: false,
       error: error instanceof Error ? error.message : String(error),
     };
+  } finally {
+    clearTimeout(timeout);
+    signal.removeEventListener("abort", onAbort);
   }
 }

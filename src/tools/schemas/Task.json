@@ -11,7 +11,7 @@
     },
     "subagent_type": {
       "type": "string",
-      "description": "The type of specialized agent to use for this task. Use custom with an already-prepared conversation_id to preserve that conversation's configuration."
+      "description": "The type of specialized agent to use for this task"
     },
     "model": {
       "type": "string",

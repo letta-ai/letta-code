@@ -19,7 +19,7 @@ import {
   subscribe,
 } from "@/agent/subagent-state";
 import { clearSubagentConfigCache } from "@/agent/subagents";
-import { __testSetBackend, type Backend } from "@/backend";
+import { __testSetBackend, type Backend, getBackend } from "@/backend";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { backgroundTasks } from "./process_manager";
@@ -123,6 +123,39 @@ afterEach(async () => {
 });
 
 describe("prepared conversation launch", () => {
+  test("aborting startup prevents a child from spawning after delayed model lookup", async () => {
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const controller = new AbortController();
+    spyOn(getBackend(), "retrieveAgent").mockImplementation(async () => {
+      entered.resolve();
+      await release.promise;
+      return { name: "Parent", model: "anthropic/test" } as Awaited<
+        ReturnType<Backend["retrieveAgent"]>
+      >;
+    });
+    const outcome = runWithRuntimeContext({ workingDirectory: testHome }, () =>
+      launchSubagent({
+        subagent_type: "custom",
+        conversation_id: "conv-child",
+        prompt: "Work",
+        description: "Cancelled startup",
+        signal: controller.signal,
+      }),
+    ).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    await entered.promise;
+    controller.abort(new Error("Startup cancelled"));
+    release.resolve();
+    expect(await outcome).toBeInstanceOf(Error);
+    const [backgroundTask] = backgroundTasks.values();
+    await backgroundTask?.completion;
+    expect(backgroundTask?.abortController?.signal.aborted).toBe(true);
+    expect(spawnProcess).not.toHaveBeenCalled();
+  });
+
   test.each(["custom", "general-purpose"])(
     "%s preserves its provider-failure policy",
     async (subagent_type) => {
@@ -168,11 +201,13 @@ describe("prepared conversation launch", () => {
   );
 
   test("uses the existing conversation without prompt or tool overrides and remains cancellable", async () => {
+    const controller = new AbortController();
     const receipt = await runWithRuntimeContext(
       { workingDirectory: testHome },
       () =>
         launchSubagent({
           subagent_type: "custom",
+          signal: controller.signal,
           conversation_id: "conv-child",
           prompt: "Worker instructions",
           description: "Worker",
@@ -188,6 +223,10 @@ describe("prepared conversation launch", () => {
       conversation_id: "conv-child",
     });
     if (!receipt.success) throw new Error(receipt.error);
+    controller.abort();
+    expect(
+      backgroundTasks.get(receipt.task_id)?.abortController?.signal.aborted,
+    ).toBe(false);
     expect(forkConversation).not.toHaveBeenCalled();
     expect(childInputs[0]?.prompt).toBe("Worker instructions");
     expect(childInputs[0]?.args).toContain("--conv");

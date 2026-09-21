@@ -35,9 +35,7 @@ Instead of spawning a fresh subagent from a template, you can deploy an existing
 
 ### Access Levels (subagent_type)
 
-When deploying an existing agent, `general-purpose` provides full read-write access (Bash, Edit, Write, etc.) for implementation and research tasks. If `subagent_type` is not specified, it defaults to `"general-purpose"`.
-
-For an already-prepared conversation, use `subagent_type: "custom"` with its `conversation_id`. This preserves its configured prompt, model, and tools without applying a subagent preset. Configure the conversation before launching; do not pass `model` or `conversation_id: "default"` in this mode.
+When deploying an existing agent, only `general-purpose` is supported: full read-write access (Bash, Edit, Write, etc.) for implementation and research tasks. If `subagent_type` is not specified, it defaults to `"general-purpose"`.
 
 ### Parameters
 

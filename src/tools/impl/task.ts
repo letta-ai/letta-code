@@ -872,6 +872,7 @@ export async function launchSubagent(
     }
     const child = await getBackend().retrieveConversation(
       effectiveConversationId,
+      { signal },
     );
     if (args.agent_id && child.agent_id !== args.agent_id) {
       return {
@@ -935,7 +936,16 @@ export async function launchSubagent(
         : undefined,
   });
 
-  await waitForBackgroundSubagentLink(subagentId, null, signal);
+  const abortStartup = () =>
+    backgroundTasks.get(taskId)?.abortController?.abort(signal?.reason);
+  signal?.addEventListener("abort", abortStartup, { once: true });
+  try {
+    if (signal?.aborted) abortStartup();
+    await waitForBackgroundSubagentLink(subagentId, null, signal);
+    signal?.throwIfAborted();
+  } finally {
+    signal?.removeEventListener("abort", abortStartup);
+  }
 
   // Extract Letta agent ID from subagent state (available after link resolves)
   const linkedAgent = getSubagentSnapshot().agents.find(

@@ -21,6 +21,45 @@ const args = {
 };
 
 describe("subagent command context", () => {
+  test("times out startup without changing the parent turn", async () => {
+    const parent = createConversationRuntime(
+      createRuntime(),
+      "agent-a",
+      "conv-a",
+    );
+    const lease = parent.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: cwdA,
+    });
+    const release = Promise.withResolvers<void>();
+    let launchSignal: AbortSignal | undefined;
+    const response = await handleLaunchSubagentCommand(
+      {
+        type: "launch_subagent",
+        request_id: "slow-launch",
+        runtime: { agent_id: "agent-a", conversation_id: "conv-a" },
+        args,
+      },
+      parent,
+      undefined,
+      async (input) => {
+        launchSignal = input.signal;
+        expect(launchSignal).toBeDefined();
+        await release.promise;
+        return { success: false, error: "Late launch result" };
+      },
+      1,
+    );
+    release.resolve();
+    expect(response).toMatchObject({
+      success: false,
+      error: "Subagent launch timed out",
+    });
+    expect(launchSignal?.aborted).toBe(true);
+    expect(parent.turnLifecycle.currentLease).toBe(lease);
+    parent.turnLifecycle.finish(lease, "end_turn");
+  });
+
   test("concurrent launches capture their parent context without changing active turns", async () => {
     const listener = createRuntime();
     const a = createConversationRuntime(listener, "agent-a", "conv-a");
