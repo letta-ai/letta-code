@@ -183,7 +183,6 @@ export async function startLocalSessionOwner(
     );
     if (!userPayload) return false;
 
-    options.queueRuntime.resume();
     const item = options.queueRuntime.enqueue({
       kind: "message",
       source: "user",
@@ -196,6 +195,11 @@ export async function startLocalSessionOwner(
       noCoalesce: true,
     } as Parameters<QueueRuntime["enqueue"]>[0]);
     if (!item) return false;
+    options.queueRuntime.resume(
+      (queuedItem) =>
+        queuedItem.agentId === options.agentId &&
+        queuedItem.conversationId === options.conversationId,
+    );
     options.onQueueChanged();
     return true;
   };

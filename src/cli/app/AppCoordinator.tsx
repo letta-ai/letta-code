@@ -1454,6 +1454,13 @@ export function App({
         ) ?? false,
     [agentId, conversationId],
   );
+  const resumeAcceptedLocalSessionInput = useCallback(() => {
+    const resumed = tuiQueueRef.current?.resume(
+      (item) =>
+        item.agentId === agentId && item.conversationId === conversationId,
+    );
+    if (resumed) setDequeueEpoch((epoch) => epoch + 1);
+  }, [agentId, conversationId]);
   const waitForLocalSessionTurnBoundary = useCallback(async () => {
     while (
       dequeueInFlightRef.current ||
@@ -3938,6 +3945,7 @@ export function App({
         tuiQueueRef.current?.removeItem(item.id);
       }
     }
+    resumeAcceptedLocalSessionInput();
 
     // Exit is a terminal scope transition. Close admission immediately, but
     // keep the process alive until every message already accepted by this
@@ -4006,6 +4014,7 @@ export function App({
     currentModelProvider,
     localSessionOwner,
     hasAcceptedLocalSessionInput,
+    resumeAcceptedLocalSessionInput,
   ]);
 
   // Queue edit: load all queued user messages into the input (joined with newlines),
@@ -4580,6 +4589,7 @@ export function App({
         // input accepted first remains visible here; later delivery is rejected
         // for Cloud to retry after the new owner is ready.
         localSessionOwner.stopAdmission();
+        resumeAcceptedLocalSessionInput();
         sessionSwitchAdmissionStateRef.current = "draining";
         const oldScopeHasAcceptedInput = hasAcceptedLocalSessionInput();
         if (
@@ -4715,6 +4725,7 @@ export function App({
     handleAgentSelect,
     handleCreateNewAgent,
     handleExit,
+    resumeAcceptedLocalSessionInput,
     handleModelSelect,
     handleSleeptimeModeSelect,
     handleCompactionModeSelect,

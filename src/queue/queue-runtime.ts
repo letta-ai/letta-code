@@ -430,11 +430,11 @@ export class QueueRuntime {
     return changed;
   }
 
-  /** Release every paused item. Returns the number of items resumed. */
-  resume(): number {
+  /** Release matching paused items. With no predicate, releases every item. */
+  resume(predicate: (item: QueueItem) => boolean = () => true): number {
     let changed = 0;
     for (const item of this.store) {
-      if (item.paused) {
+      if (item.paused && predicate(item)) {
         delete item.paused;
         changed += 1;
       }
@@ -442,7 +442,7 @@ export class QueueRuntime {
     if (changed > 0) {
       this.lastEmittedBlockedReason = null;
       this.blockedEmittedForNonEmpty = false;
-      this.safeCallback("onPauseChanged", 0, this.store.length);
+      this.safeCallback("onPauseChanged", this.pausedCount, this.store.length);
     }
     return changed;
   }

@@ -41,7 +41,7 @@ describe("local session owner", () => {
       },
       stopListener,
     };
-    const queue = new QueueRuntime({ maxItems: Infinity });
+    const queue = new QueueRuntime({ maxItems: 3, hardMaxItems: 3 });
     const owner = await startLocalSessionOwner(
       {
         agentId: "agent-local",
@@ -80,6 +80,39 @@ describe("local session owner", () => {
     });
     expect(await owner.ready()).toBe(true);
 
+    queue.enqueue({
+      kind: "message",
+      source: "user",
+      content: "parked local draft",
+    } as Parameters<typeof queue.enqueue>[0]);
+    queue.enqueue({
+      kind: "message",
+      source: "user",
+      content: "parked accepted input",
+      agentId: "agent-local",
+      conversationId: "conv-local",
+      clientMessageId: "cm-scoped-paused",
+    } as Parameters<typeof queue.enqueue>[0]);
+    const capacityItem = queue.enqueue({
+      kind: "task_notification",
+      source: "task_notification",
+      text: "fill queue capacity",
+    } as Parameters<typeof queue.enqueue>[0]);
+    if (!capacityItem) throw new Error("capacity item missing");
+    expect(queue.pause()).toBe(2);
+    expect(
+      session.acceptInput({
+        type: "message",
+        agentId: "agent-local",
+        conversationId: "conv-local",
+        messages: [{ role: "user", content: "rejected at capacity" }],
+      }),
+    ).toBe(false);
+    expect(queue.peek()[1]).toMatchObject({
+      clientMessageId: "cm-scoped-paused",
+      paused: true,
+    });
+    queue.removeItem(capacityItem.id);
     expect(
       session.acceptInput({
         type: "message",
@@ -113,8 +146,15 @@ describe("local session owner", () => {
 
     const batch = queue.consumeItems(queue.readyLength);
     expect(batch?.items).toMatchObject([
+      { clientMessageId: "cm-scoped-paused" },
       { clientMessageId: "cm-1", actingUserId: "user-sender" },
     ]);
+    expect(queue.peek()).toMatchObject([
+      { content: "parked local draft", paused: true },
+    ]);
+    const parkedDraft = queue.peek()[0];
+    if (!parkedDraft) throw new Error("parked local draft missing");
+    queue.removeItem(parkedDraft.id);
 
     const rejectedRelease = owner.release();
     while (sent.length < 2) await Bun.sleep(1);
