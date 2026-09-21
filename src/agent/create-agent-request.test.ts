@@ -165,9 +165,10 @@ describe("buildCreateAgentRequestForPersonality", () => {
         resolveModel(personality.defaultModel ?? "auto") as string,
       );
 
-      // The CLI resolves the same prompt via memoryPromptMode: "memfs".
+      // Direct Cloud creation and the CLI Cloud path both delegate the default
+      // prompt to the service. Local CLI creation still resolves it client-side.
       expect(cliOptions.memoryPromptMode).toBe("memfs");
-      expect(request.system).toBe(buildSystemPrompt("default", "memfs"));
+      expect(request.system).toBeNull();
 
       expect(request.agent_type).toBe(LETTA_CODE_AGENT_TYPE);
       expect(request.tags).toEqual([

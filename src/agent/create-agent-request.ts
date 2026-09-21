@@ -83,13 +83,9 @@ export interface CreateAgentRequest {
   hidden?: boolean;
 }
 
-export type CreateAgentRequestForPersonality = Omit<
-  CreateAgentRequest,
-  "system"
-> & {
+export type CreateAgentRequestForPersonality = CreateAgentRequest & {
   name: string;
   description: string;
-  system: string;
   memory_blocks: PersonalityMemoryBlock[];
   profile_picture?: {
     content: string;
@@ -206,9 +202,10 @@ export async function buildCreateAgentRequestForPersonality(params: {
   model?: string;
   extraTags?: string[];
 }): Promise<CreateAgentRequestForPersonality> {
-  const request = (await buildCreateAgentRequest(
-    params,
-  )) as CreateAgentRequestForPersonality;
+  const request = (await buildCreateAgentRequest({
+    ...params,
+    system: null,
+  })) as CreateAgentRequestForPersonality;
   const profilePicture = getPersonalityDefaultMemoryFiles(
     params.personalityId,
   ).find((file) => file.path === "profile.png");
