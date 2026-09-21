@@ -79,6 +79,7 @@ describe("recoverListenerModelFailure", () => {
       kind: "plan_rotation",
       message: "chatgpt-caren hit its usage limit — switched to chatgpt-jin",
       chatgptPlanSwaps: 1,
+      overrideModel: "chatgpt-jin/gpt-5.2",
     });
   });
 
@@ -110,6 +111,7 @@ describe("recoverListenerModelFailure", () => {
       kind: "plan_rotation",
       message: "chatgpt-ari credentials expired — switched to chatgpt-jin",
       chatgptPlanSwaps: 2,
+      overrideModel: "chatgpt-jin/gpt-5.2",
     });
   });
 
@@ -167,8 +169,12 @@ describe("recoverListenerModelFailure", () => {
   });
 
   test("does not attempt Auto fallback if already attempted or already active", async () => {
+    let rotateCalls = 0;
     const dependencies = createMockDependencies({
-      rotatePlan: async () => null,
+      rotatePlan: async () => {
+        rotateCalls += 1;
+        return null;
+      },
     });
 
     const alreadyAttempted = await recoverListenerModelFailure({
@@ -182,6 +188,7 @@ describe("recoverListenerModelFailure", () => {
       dependencies,
     });
     expect(alreadyAttempted).toBeNull();
+    expect(rotateCalls).toBe(1);
 
     const alreadyActive = await recoverListenerModelFailure({
       agentId: "agent-1",
@@ -195,6 +202,7 @@ describe("recoverListenerModelFailure", () => {
       dependencies,
     });
     expect(alreadyActive).toBeNull();
+    expect(rotateCalls).toBe(1);
   });
 
   test("does not attempt Auto fallback if hosted Auto is unsupported or disabled", async () => {

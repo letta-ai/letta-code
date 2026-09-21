@@ -86,6 +86,7 @@ function successStop(runId: string): LettaStreamingResponse[] {
 
 describe("listener turn model failure recovery", () => {
   beforeEach(async () => {
+    clearAvailableModelsCache();
     await settingsManager.initialize();
   });
 
@@ -212,6 +213,25 @@ describe("listener turn model failure recovery", () => {
     await handleIncomingMessage(env.incoming, env.transport, env.runtime);
 
     expect(env.sentRequests).toHaveLength(3);
+    const secondRequestBody = env.sentRequests[1]?.body as Record<
+      string,
+      unknown
+    >;
+    const thirdRequestBody = env.sentRequests[2]?.body as Record<
+      string,
+      unknown
+    >;
+    const secondOverride = secondRequestBody.override_model;
+    const thirdOverride = thirdRequestBody.override_model;
+    if (
+      typeof secondOverride !== "string" ||
+      typeof thirdOverride !== "string"
+    ) {
+      throw new Error("Expected sibling model overrides on both retries");
+    }
+    expect([ARI, JIN]).toContain(secondOverride);
+    expect([ARI, JIN]).toContain(thirdOverride);
+    expect(thirdOverride).not.toBe(secondOverride);
 
     // Verify conversation was updated to a healthy sibling
     expect([JIN, ARI]).toContain(env.conversation.model);

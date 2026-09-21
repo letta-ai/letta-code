@@ -580,17 +580,14 @@ async function handleIncomingMessageInner(
           if (recovery) {
             if (recovery.kind === "plan_rotation") {
               chatgptPlanSwaps = recovery.chatgptPlanSwaps;
+              activeOverrideModel = recovery.overrideModel;
             } else if (recovery.kind === "auto_fallback") {
               autoFallbackAttempted = true;
+              const refreshed = await setup.prepareToolContext(
+                recovery.overrideModel,
+              );
+              activePreparedToolContext = refreshed.preparedToolContext;
               activeOverrideModel = recovery.overrideModel;
-              try {
-                const refreshed = await setup.prepareToolContext(
-                  recovery.overrideModel,
-                );
-                activePreparedToolContext = refreshed.preparedToolContext;
-              } catch {
-                // Best-effort refresh; keep active context if refresh fails
-              }
             }
             emitRecoverableRetryNotice(socket, runtime, {
               kind: "transient_provider_retry",

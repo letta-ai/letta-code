@@ -824,6 +824,12 @@ describe("isChatGPTOAuthCredentialFailure", () => {
         },
       }),
     ).toBe(true);
+
+    expect(
+      isChatGPTOAuthCredentialFailure({
+        raw: "invalid_grant: refresh token revoked",
+      }),
+    ).toBe(true);
   });
 
   test("rejects non-auth and unrelated provider errors", () => {
@@ -840,6 +846,13 @@ describe("isChatGPTOAuthCredentialFailure", () => {
       isChatGPTOAuthCredentialFailure({
         error_type: "llm_authentication",
         message: "Invalid Anthropic API key provided",
+      }),
+    ).toBe(false);
+    expect(
+      isChatGPTOAuthCredentialFailure({
+        error_type: "llm_authentication",
+        retryable: true,
+        message: "Failed to refresh ChatGPT OAuth token: service unavailable",
       }),
     ).toBe(false);
   });

@@ -32,6 +32,7 @@ export type ListenerModelRecoveryAction =
       kind: "plan_rotation";
       message: string;
       chatgptPlanSwaps: number;
+      overrideModel: string;
     }
   | {
       kind: "auto_fallback";
@@ -58,6 +59,7 @@ export async function recoverListenerModelFailure(params: {
   dependencies?: RecoveryDependencies;
 }): Promise<ListenerModelRecoveryAction | null> {
   const dependencies = params.dependencies ?? DEFAULT_DEPENDENCIES;
+  if (params.activeOverrideModel === LISTENER_TEMP_AUTO_MODEL) return null;
   const isQuotaFailure =
     parseChatGPTUsageLimitDetail(params.error) !== null ||
     isQuotaLimitErrorDetail(params.errorDetail);
@@ -80,13 +82,13 @@ export async function recoverListenerModelFailure(params: {
         kind: "plan_rotation",
         message: formatPlanRotationNotice(rotation),
         chatgptPlanSwaps: params.chatgptPlanSwaps + 1,
+        overrideModel: rotation.toHandle,
       };
     }
   }
 
   if (
     params.autoFallbackAttempted ||
-    params.activeOverrideModel === LISTENER_TEMP_AUTO_MODEL ||
     !dependencies.autoSwapEnabled() ||
     !dependencies.supportsHostedAuto()
   ) {

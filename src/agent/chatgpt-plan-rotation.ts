@@ -91,6 +91,7 @@ export function isChatGPTOAuthCredentialFailure(error: unknown): boolean {
     return textContainsChatGPTOAuthRefreshFailure(error.message);
   }
   if (!isRecord(error)) return false;
+  if (error.retryable === true) return false;
 
   const errorType =
     (typeof error.error_type === "string" && error.error_type) ||
@@ -131,10 +132,10 @@ export function isChatGPTOAuthCredentialFailure(error: unknown): boolean {
   ) {
     return true;
   }
-  if (isRecord(error.error)) {
+  if (isRecord(error.error) || typeof error.error === "string") {
     return isChatGPTOAuthCredentialFailure(error.error);
   }
-  if (isRecord(error.raw)) {
+  if (isRecord(error.raw) || typeof error.raw === "string") {
     return isChatGPTOAuthCredentialFailure(error.raw);
   }
   return false;
