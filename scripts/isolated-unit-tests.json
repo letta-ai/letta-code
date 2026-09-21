@@ -2,7 +2,7 @@
   "tests": [
     {
       "path": "src/websocket/launch-subagent.test.ts",
-      "timeoutMs": 60000,
+      "timeoutMs": 15000,
       "reason": "Starts a real App Server and child CLI while replacing process-wide backend, settings, HOME, and task state; keep its launch state separate from shared unit suites."
     },
     {
