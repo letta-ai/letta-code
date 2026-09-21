@@ -2103,7 +2103,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                         otid: queuedUserOtid,
                       },
                     ],
-                    { allowReentry: true },
+                    { allowReentry: true, ownerRequest: options?.ownerRequest },
                   );
                   toolResultsInFlightRef.current = false;
                   return;
@@ -2112,7 +2112,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   refreshDerived();
                 }
 
-                // Cancel mode - queue results and let dequeue effect handle
                 if (waitingForQueueCancelRef.current) {
                   // Queue results - dequeue effect will pick them up via onSubmit
                   if (allResults.length > 0) {
@@ -2152,6 +2151,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   {
                     allowReentry: true,
                     allowResponseStateReuse: true,
+                    ownerRequest: options?.ownerRequest,
                   },
                 );
                 toolResultsInFlightRef.current = false;
@@ -2196,7 +2196,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   setRestoreQueueOnCancel(false);
                 }
 
-                // Reset flags - dequeue effect will fire when streaming=false commits
                 waitingForQueueCancelRef.current = false;
                 queueSnapshotRef.current = [];
                 setStreaming(false);

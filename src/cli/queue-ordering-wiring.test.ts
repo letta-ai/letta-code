@@ -165,4 +165,19 @@ describe("queue ordering wiring", () => {
     expect(experimentWindow).toContain("setQueuedOverlayAction({");
     expect(experimentWindow).toContain('type: "set_experiment"');
   });
+
+  test("same-turn tool result reentries retain owner request overrides", () => {
+    const source = readFileSync(
+      new URL("./app/use-conversation-loop.ts", import.meta.url),
+      "utf8",
+    );
+    expect(source.match(/ownerRequest: options\?\.ownerRequest/g)).toHaveLength(
+      2,
+    );
+    const newTurnContinuations = source.slice(
+      source.indexOf("if (stopHookResult.blocked)"),
+      source.indexOf("// Disable eager approval check"),
+    );
+    expect(newTurnContinuations).not.toContain("ownerRequest:");
+  });
 });

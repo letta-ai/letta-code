@@ -583,9 +583,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       const { notifications: taskNotifications, cleanedText } =
         extractTaskNotificationsForDisplay(msg);
       const userTextForInput = cleanedText.trim();
-      const routedUserText = ownerRequest
-        ? ""
-        : aliasBareExitCommand(userTextForInput);
+      const routedUserText = aliasBareExitCommand(userTextForInput);
       const isSystemOnly =
         taskNotifications.length > 0 && userTextForInput.length === 0;
 
@@ -693,7 +691,8 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       userCancelledRef.current = false;
 
       const isSlashCommand = routedUserText.startsWith("/");
-      const parsedModCommand = isSlashCommand
+      const isActionableSlashCommand = !ownerRequest && isSlashCommand;
+      const parsedModCommand = isActionableSlashCommand
         ? parseModSlashCommand(routedUserText.trim())
         : null;
       const parsedSlashCommandName = parsedModCommand?.command ?? null;
@@ -706,13 +705,13 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       // Interactive/non-state slash commands bypass queueing so menus stay responsive
       // while the agent is busy. Overlay writes are still deferred via queuedOverlayAction.
       const shouldBypassQueue =
-        isSlashCommand &&
+        isActionableSlashCommand &&
         shouldSlashCommandBypassQueue(routedUserText, {
           hasCustomCommand: Boolean(matchedCustomCommand),
           ...(matchedModCommand ? { modCommand: matchedModCommand } : {}),
         });
 
-      if (isAgentBusy() && isSlashCommand && !shouldBypassQueue) {
+      if (isAgentBusy() && isActionableSlashCommand && !shouldBypassQueue) {
         const attemptedCommand = routedUserText.split(/\s+/)[0] || "/";
         const disabledMessage = `'${attemptedCommand}' is disabled while the agent is running.`;
         const cmd = commandRunner.start(routedUserText, disabledMessage);
@@ -738,8 +737,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
       const aliasedMsg = routedUserText;
 
-      // Handle commands (messages starting with "/")
-      if (aliasedMsg.startsWith("/")) {
+      if (!ownerRequest && aliasedMsg.startsWith("/")) {
         const trimmed = aliasedMsg.trim();
 
         // Custom commands and mod commands override built-ins.

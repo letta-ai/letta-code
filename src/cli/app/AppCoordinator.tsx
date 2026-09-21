@@ -1488,7 +1488,6 @@ export function App({
   const ownerRequestRef = useRef<OwnerTurnRequest | null>(null);
 
   useEffect(() => {
-    // Enqueue via QueueRuntime — onEnqueued callback updates queueDisplay.
     setMessageQueueAdder((message: QueuedMessage) => {
       tuiQueueRef.current?.enqueue(
         message.kind === "task_notification"
@@ -4756,6 +4755,7 @@ export function App({
     queuedOverlayAction,
   ]);
 
+  // Handle escape when profile confirmation is pending
   const { handleFeedbackSubmit } = useFeedbackHandler({
     agentDescription,
     agentId,
