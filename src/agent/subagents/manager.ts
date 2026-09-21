@@ -13,6 +13,7 @@ import { resolveActingUserId } from "@/agent/acting-user";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { detectMemoryFormat } from "@/agent/memory-format";
+import type { ModelReasoningEffort } from "@/agent/model";
 import recallSubagentPrompt from "@/agent/prompts/recall_subagent.md";
 import recallSubagentLocalPrompt from "@/agent/prompts/recall_subagent_local.md";
 import { updateSubagent } from "@/agent/subagent-state.js";
@@ -133,6 +134,12 @@ interface BuildSubagentArgsOptions {
   environment?: string;
   /** Identity for the child's initial assignment, never inherited. */
   clientMessageId?: string;
+  /**
+   * Reasoning effort for the child's model (`--reasoning-effort`), applied on
+   * top of the effort implied by the model ID. Only applies to new agents;
+   * a deployed existing agent keeps its own model settings.
+   */
+  reasoningEffort?: ModelReasoningEffort;
 }
 
 /** Build CLI arguments for spawning a subagent. */
@@ -200,6 +207,11 @@ export function buildSubagentArgs(
     // flag needed, and no user-facing opt-out exists.
     if (model) {
       args.push("--model", model);
+    }
+
+    // Pushed independently of --model so "same model, more effort" works.
+    if (options.reasoningEffort) {
+      args.push("--reasoning-effort", options.reasoningEffort);
     }
 
     // Reflection-specific startup flags: match the memory_reflection training
@@ -295,6 +307,7 @@ async function executeSubagent(
   parentAgentName?: string | null,
   parentConversationId?: string,
   clientMessageId?: string,
+  reasoningEffort?: ModelReasoningEffort,
 ): Promise<SubagentResult> {
   const withModel = (result: SubagentResult): SubagentResult =>
     model ? { ...result, model } : result;
@@ -345,6 +358,7 @@ async function executeSubagent(
         systemPromptOverride,
         environment,
         clientMessageId,
+        reasoningEffort,
       },
     );
 
@@ -574,6 +588,7 @@ async function executeSubagent(
             parentAgentName,
             parentConversationId,
             clientMessageId,
+            reasoningEffort,
           );
         }
       }
@@ -606,6 +621,7 @@ async function executeSubagent(
           parentAgentName,
           parentConversationId,
           clientMessageId,
+          reasoningEffort,
         );
       }
 
@@ -725,6 +741,7 @@ async function executeSubagent(
           parentAgentName,
           parentConversationId,
           clientMessageId,
+          reasoningEffort,
         );
       }
     }
@@ -838,6 +855,7 @@ async function spawnSubagentInContext(
   actingUserId?: string,
   resolvedConfig?: SubagentConfig,
   clientMessageId?: string,
+  reasoningEffort?: ModelReasoningEffort,
 ): Promise<SubagentResult> {
   const launchActingUserId = resolveActingUserId(actingUserId);
   let config = resolvedConfig ?? (await getAllSubagentConfigs())[type];
@@ -983,6 +1001,7 @@ async function spawnSubagentInContext(
     parentAgent?.name,
     resolvedParentConversationId,
     clientMessageId,
+    reasoningEffort,
   );
 
   return result;

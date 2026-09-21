@@ -86,6 +86,18 @@ export const CLI_FLAG_CATALOG = {
         'Model ID or handle (e.g., "opus-4.5" or "anthropic/claude-opus-4-5")',
     },
   },
+  "reasoning-effort": {
+    parser: { type: "string" },
+    mode: "headless",
+    help: {
+      argLabel: "<level>",
+      description:
+        "Reasoning effort: none, minimal, low, medium, high, xhigh, max",
+      continuationLines: [
+        'Overrides the effort implied by the model ID (e.g. "sonnet-5-low").',
+      ],
+    },
+  },
   embedding: { parser: { type: "string" }, mode: "both" },
   system: {
     parser: { type: "string", short: "s" },

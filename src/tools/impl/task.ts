@@ -9,6 +9,11 @@ import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
+  isModelReasoningEffort,
+  type ModelReasoningEffort,
+  REASONING_EFFORT_ORDER,
+} from "@/agent/model";
+import {
   completeSubagent,
   generateSubagentId,
   getSnapshot as getSubagentSnapshot,
@@ -57,6 +62,8 @@ import { validateRequiredParams } from "./validation";
 
 interface TaskArgs extends Partial<SubagentLaunchArgs> {
   command?: "run" | "refresh";
+  /** Reasoning effort override, independent of the model ID. */
+  reasoning_effort?: string;
   toolCallId?: string; // Injected by executeTool for linking subagent to parent tool call
   signal?: AbortSignal; // Injected by executeTool for interruption handling
   parentScope?: { agentId: string; conversationId: string }; // Injected by executeTool for notification routing
@@ -75,6 +82,8 @@ export interface SpawnBackgroundSubagentTaskArgs {
   prompt: string;
   description: string;
   model?: string;
+  /** Reasoning effort override applied on top of the model's own settings. */
+  reasoningEffort?: ModelReasoningEffort;
   /** Replace the subagent's configured system prompt/persona (advanced). */
   systemPromptOverride?: string;
   toolCallId?: string;
@@ -348,6 +357,7 @@ export function spawnBackgroundSubagentTask(
     prompt,
     description,
     model,
+    reasoningEffort,
     systemPromptOverride,
     toolCallId,
     existingAgentId,
@@ -467,6 +477,7 @@ export function spawnBackgroundSubagentTask(
       actingUserId,
       args.config,
       args.clientMessageId,
+      reasoningEffort,
     );
   };
   const memoryTask =
@@ -810,6 +821,17 @@ export async function launchSubagent(
     }
   }
 
+  const reasoningEffort = args.reasoning_effort;
+  if (
+    reasoningEffort !== undefined &&
+    !isModelReasoningEffort(reasoningEffort)
+  ) {
+    return {
+      success: false,
+      error: `Invalid reasoning_effort "${reasoningEffort}". Expected one of: ${REASONING_EFFORT_ORDER.join(", ")}`,
+    };
+  }
+
   let effectiveAgentId = args.agent_id;
   let effectiveConversationId = args.conversation_id;
 
@@ -851,6 +873,7 @@ export async function launchSubagent(
         parentConversationId: parentConvId,
         config,
         model,
+        reasoningEffort,
         signal,
       });
       effectiveAgentId = parentAgentId;
@@ -874,6 +897,7 @@ export async function launchSubagent(
     prompt,
     description,
     model,
+    reasoningEffort,
     toolCallId,
     existingAgentId: effectiveAgentId,
     existingConversationId: effectiveConversationId,

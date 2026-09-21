@@ -62,19 +62,23 @@ import { createAgent } from "./agent/create";
 import { handleListMessages } from "./agent/list-messages-handler";
 import { getStreamToolContextId, sendMessageStream } from "./agent/message";
 import {
-  getModelPresetUpdateForAgent,
   getModelUpdateArgs,
-  getResumeRefreshArgs,
-  preservableContextWindow,
-  resolveModel,
+  isModelReasoningEffort,
+  type ModelReasoningEffort,
+  REASONING_EFFORT_ORDER,
+  withReasoningEffortUpdateArg,
 } from "./agent/model";
-import { updateAgentLLMConfig, updateAgentSystemPrompt } from "./agent/modify";
+import { updateAgentSystemPrompt } from "./agent/modify";
 import { buildCreateAgentOptionsForPersonality } from "./agent/personality";
 import { resolvePersonalityId } from "./agent/personality-presets";
 import {
   INTERRUPT_RECOVERY_ALERT,
   type MemoryPromptMode,
 } from "./agent/prompt-assets";
+import {
+  applyResumeModelOverrides,
+  ResumeModelOverrideError,
+} from "./agent/resume-model-refresh";
 import { resolveSkillSourcesSelection } from "./agent/skill-sources";
 import type { SkillSource } from "./agent/skills";
 import { SessionStats } from "./agent/stats";
@@ -669,6 +673,17 @@ export async function handleHeadlessCommand(
   startupOptions: { requestedBackendMode?: BackendMode } = {},
 ) {
   const { values, positionals } = parsedArgs;
+  const reasoningEffortFlag = values["reasoning-effort"];
+  if (
+    reasoningEffortFlag !== undefined &&
+    !isModelReasoningEffort(reasoningEffortFlag)
+  ) {
+    console.error(
+      `Error: Invalid --reasoning-effort value "${reasoningEffortFlag}". Expected one of: ${REASONING_EFFORT_ORDER.join(", ")}`,
+    );
+    process.exit(1);
+  }
+  const reasoningEffort: ModelReasoningEffort | undefined = reasoningEffortFlag;
   const isAgentLaunch = consumeSubagentLaunch(process.env);
   const senderReminder = buildHeadlessSenderReminder(
     isAgentLaunch,
@@ -1182,7 +1197,10 @@ export async function handleHeadlessCommand(
         })
       : undefined;
     const modelForUpdateArgs = personalityOptions?.model ?? model;
-    const updateArgs = getModelUpdateArgs(modelForUpdateArgs);
+    const updateArgs = withReasoningEffortUpdateArg(
+      getModelUpdateArgs(modelForUpdateArgs),
+      reasoningEffort,
+    );
     const createOptions = {
       ...(personalityOptions ?? {}),
       model: modelForUpdateArgs,
@@ -1284,43 +1302,16 @@ export async function handleHeadlessCommand(
   // Refresh presets before applying optional model/system-prompt overrides.
 
   if (isResumingAgent) {
-    if (model) {
-      const modelHandle = resolveModel(model);
-      if (typeof modelHandle !== "string") {
-        console.error(`Error: Invalid model "${model}"`);
-        process.exit(1);
-      }
-
-      // Always apply model update - different model IDs can share the same
-      // handle but have different settings (e.g., gpt-5.2-medium vs gpt-5.2-xhigh)
-      const updateArgs = getModelUpdateArgs(model);
-      agent = await updateAgentLLMConfig(agent.id, modelHandle, updateArgs);
-    } else {
-      const presetRefresh = getModelPresetUpdateForAgent(agent);
-      if (presetRefresh) {
-        const { updateArgs: resumeRefreshUpdateArgs, needsUpdate } =
-          getResumeRefreshArgs(presetRefresh.updateArgs, agent);
-
-        if (needsUpdate) {
-          // Resume refresh must not reset the context window; preserve it by
-          // re-sending the agent's current value explicitly (omitting it
-          // makes the server re-derive + clamp to a legacy 128k default —
-          // LET-9786). A current value that looks like that clamp is not
-          // preserved, letting the agent heal.
-          const preservedContextWindow = preservableContextWindow(
-            agent.llm_config?.context_window,
-            presetRefresh.modelHandle,
-          );
-          agent = await updateAgentLLMConfig(
-            agent.id,
-            presetRefresh.modelHandle,
-            resumeRefreshUpdateArgs,
-            preservedContextWindow !== undefined
-              ? { contextWindowOverride: preservedContextWindow }
-              : undefined,
-          );
-        }
-      }
+    try {
+      agent = await applyResumeModelOverrides({
+        agent,
+        model,
+        reasoningEffort,
+      });
+    } catch (error) {
+      if (!(error instanceof ResumeModelOverrideError)) throw error;
+      console.error(`Error: ${error.message}`);
+      process.exit(1);
     }
   }
 

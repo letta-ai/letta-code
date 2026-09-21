@@ -29,6 +29,35 @@ When using the Agent tool, you must specify a subagent_type parameter to select 
 - If the agent description mentions that it should be used proactively, then you should try your best to use it without the user having to ask for it first. Use your judgement.
 - If the user specifies that they want you to run agents "in parallel", you MUST send a single message with multiple Agent tool use content blocks. For example, if you need to launch multiple agents in parallel, send a single message with multiple Agent tool calls.
 
+## Reasoning Effort
+
+Pass `reasoning_effort` to choose how hard the agent thinks, independently of which model it runs on: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`.
+
+Some model IDs already encode an effort (for example `sonnet-5-low`). An explicit `reasoning_effort` overrides that. Omit the field to keep whatever the model ID implies, which is the existing behavior.
+
+`reasoning_effort` may be used on its own, without `model`, to run the same model at a different effort. It is ignored when deploying an existing agent with `agent_id` or `conversation_id`, because that agent keeps its own model settings.
+
+Whether a given model supports a given effort is up to the provider; an unsupported combination surfaces as a provider error rather than being rejected locally.
+
+```typescript
+// Same model, more effort
+Agent({
+  subagent_type: "general-purpose",
+  reasoning_effort: "high",
+  description: "Design the migration",
+  prompt: "..."
+})
+
+// Model and effort chosen independently
+Agent({
+  subagent_type: "general-purpose",
+  model: "opus-5",
+  reasoning_effort: "low",
+  description: "Apply the rename",
+  prompt: "..."
+})
+```
+
 ## Deploying an Existing Agent
 
 Instead of spawning a fresh subagent from a template, you can deploy an existing agent to work in your local codebase.

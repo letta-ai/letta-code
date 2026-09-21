@@ -44,7 +44,7 @@ type ReasoningCapabilities = {
   mandatory?: boolean;
 };
 
-const REASONING_EFFORT_ORDER: ModelReasoningEffort[] = [
+export const REASONING_EFFORT_ORDER: ModelReasoningEffort[] = [
   "none",
   "minimal",
   "low",
@@ -78,7 +78,9 @@ export function getLocalModelLabel(modelHandle: string): string {
     : modelHandle;
 }
 
-function isModelReasoningEffort(value: unknown): value is ModelReasoningEffort {
+export function isModelReasoningEffort(
+  value: unknown,
+): value is ModelReasoningEffort {
   return (
     typeof value === "string" &&
     REASONING_EFFORT_ORDER.includes(value as ModelReasoningEffort)

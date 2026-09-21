@@ -17,6 +17,11 @@
       "type": "string",
       "description": "Optional model to use for this agent. If not specified, inherits from parent. Prefer lighter models for quick, straightforward tasks to minimize cost and latency."
     },
+    "reasoning_effort": {
+      "type": "string",
+      "enum": ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
+      "description": "Optional reasoning effort for this agent's model, chosen independently of the model. Overrides the effort implied by a model ID that already encodes one (e.g. \"sonnet-5-low\"). Ignored when deploying an existing agent with agent_id or conversation_id."
+    },
     "agent_id": {
       "type": "string",
       "description": "Deploy an existing agent instead of creating a new one. Starts a new conversation with that agent."

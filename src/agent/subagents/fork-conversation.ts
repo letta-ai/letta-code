@@ -1,3 +1,4 @@
+import type { ModelReasoningEffort } from "@/agent/model";
 import { updateConversationLLMConfig } from "@/agent/modify";
 import type { Backend } from "@/backend";
 import { settingsManager } from "@/settings-manager";
@@ -33,6 +34,7 @@ interface ForkParentConversationParams {
   parentConversationId: string;
   config: SubagentConfig;
   model?: string;
+  reasoningEffort?: ModelReasoningEffort;
   signal?: AbortSignal;
 }
 
@@ -65,6 +67,7 @@ export async function forkParentConversation(
         recommendedModel: params.config.recommendedModel,
         recommendedModelSource: params.config.recommendedModelSource,
         parentModelHandle: parent.handle,
+        reasoningEffort: params.reasoningEffort,
       });
     })
   )();

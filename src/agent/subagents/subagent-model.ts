@@ -8,7 +8,12 @@
 
 import { getAvailableModelHandles } from "@/agent/available-models";
 import { getCurrentAgentId } from "@/agent/context";
-import { getDefaultModelForTier, resolveModel } from "@/agent/model";
+import {
+  getDefaultModelForTier,
+  type ModelReasoningEffort,
+  resolveModel,
+  withReasoningEffortUpdateArg,
+} from "@/agent/model";
 import { resolveCatalogModel } from "@/agent/model-catalog";
 import { type BackendMode, getBackend } from "@/backend";
 import { getBillingTier } from "@/backend/api/metadata";
@@ -127,6 +132,7 @@ export async function resolveForkModelOverride(options: {
   recommendedModel?: string;
   recommendedModelSource?: "builtin" | "user";
   parentModelHandle?: string | null;
+  reasoningEffort?: ModelReasoningEffort;
   availableModels?: Awaited<ReturnType<typeof getAvailableModelHandles>>;
 }): Promise<ForkModelOverride | null> {
   const requestedModel =
@@ -135,7 +141,25 @@ export async function resolveForkModelOverride(options: {
       : options.recommendedModelSource === "user"
         ? options.recommendedModel
         : undefined;
-  if (!requestedModel || isInheritModel(requestedModel)) return null;
+  if (!requestedModel || isInheritModel(requestedModel)) {
+    // Effort without a model: keep the fork on the parent's model and change
+    // only the effort, mirroring updateModelConfig's effort-only update.
+    if (options.reasoningEffort && options.parentModelHandle) {
+      const availableForParent =
+        options.availableModels ?? (await getAvailableModelHandles());
+      const parentProviderType = availableForParent.providerTypes.get(
+        options.parentModelHandle,
+      );
+      return {
+        modelHandle: options.parentModelHandle,
+        updateArgs: {
+          ...(parentProviderType ? { provider_type: parentProviderType } : {}),
+          reasoning_effort: options.reasoningEffort,
+        },
+      };
+    }
+    return null;
+  }
 
   const catalogModel = resolveCatalogModel(requestedModel);
   const resolvedHandle = catalogModel?.handle ?? resolveModel(requestedModel);
@@ -180,7 +204,7 @@ export async function resolveForkModelOverride(options: {
     throw new Error(`Fork model is not available: ${requestedModel}`);
   }
 
-  const updateArgs = catalogModel?.updateArgs
+  const baseUpdateArgs = catalogModel?.updateArgs
     ? {
         ...catalogModel.updateArgs,
         ...(providerType ? { provider_type: providerType } : {}),
@@ -188,6 +212,10 @@ export async function resolveForkModelOverride(options: {
     : providerType
       ? { provider_type: providerType }
       : undefined;
+  const updateArgs = withReasoningEffortUpdateArg(
+    baseUpdateArgs,
+    options.reasoningEffort,
+  );
 
   return { modelHandle, ...(updateArgs ? { updateArgs } : {}) };
 }
