@@ -57,7 +57,6 @@ import {
 } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
-import { messageChannelTelemetry } from "@/telemetry/channel";
 import { waitForToolCheckouts } from "@/utils/checkout-readiness";
 import { debugLog } from "@/utils/debug";
 import { refreshAndListSecrets } from "@/utils/secrets-store";
@@ -66,7 +65,7 @@ import {
   selectModelFacingExternalTools,
   serializeClientTools,
 } from "./client-tool-serialization";
-import { normalizeExternalToolResultContent } from "./external-tool-content";
+import { runExternalTool } from "./external-tool-execution";
 import { toolFilter } from "./filter";
 import { clampToolReturnContent } from "./impl/tool-return-clamp";
 import { resolveBackendSpecificToolAssets } from "./memory-tool-assets";
@@ -623,7 +622,7 @@ export type ExternalToolExecutor = (
   toolCallId: string,
   toolName: string,
   input: Record<string, unknown>,
-  context?: { tool: ExternalToolDefinition },
+  context?: { tool: ExternalToolDefinition; signal?: AbortSignal },
 ) => Promise<{
   content: Array<{
     type: string;
@@ -728,53 +727,16 @@ export async function executeExternalTool(
   input: Record<string, unknown>,
   executorOverride?: ExternalToolExecutor,
   toolDefinition?: ExternalToolDefinition,
+  signal?: AbortSignal,
 ): Promise<ToolExecutionResult> {
-  const executor = executorOverride ?? getExternalToolExecutor();
-  if (!executor) {
-    return {
-      toolReturn: `External tool executor not set for tool: ${toolName}`,
-      status: "error",
-    };
-  }
-
-  const startedAt = Date.now();
-  let success = false;
-  try {
-    const tool = toolDefinition ?? getExternalToolDefinition(toolName);
-    const result = await executor(
-      toolCallId,
-      toolName,
-      input,
-      tool ? { tool } : undefined,
-    );
-    success = !result.isError;
-
-    return {
-      toolReturn: clampToolReturnContent(
-        normalizeExternalToolResultContent(result.content),
-        toolName,
-      ),
-      status: result.isError ? "error" : "success",
-    };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    return {
-      toolReturn: `External tool execution error: ${errorMessage}`,
-      status: "error",
-    };
-  } finally {
-    if (toolName === "MessageChannel" || toolName === "message_channel") {
-      telemetry.trackToolUsage(
-        toolName,
-        success,
-        Date.now() - startedAt,
-        undefined,
-        success ? undefined : "tool_error",
-        undefined,
-        messageChannelTelemetry(input),
-      );
-    }
-  }
+  return runExternalTool({
+    toolCallId,
+    toolName,
+    input,
+    signal,
+    executor: executorOverride ?? getExternalToolExecutor(),
+    tool: toolDefinition ?? getExternalToolDefinition(toolName),
+  });
 }
 
 /**
@@ -2325,6 +2287,7 @@ async function executeToolInner(
         eventArgs as Record<string, unknown>,
         externalTool?.executor ?? activeExternalExecutor,
         externalTool,
+        options?.signal,
       ),
     );
   }

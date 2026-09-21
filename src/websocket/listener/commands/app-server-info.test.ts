@@ -48,6 +48,7 @@ describe("app-server info protocol", () => {
         runtime_start: true,
         runtime_workspace_sandbox: true,
         runtime_external_tools_update: true,
+        slack_thread_dispatch: false,
         structured_outputs: false,
         split_channels: false,
       },
@@ -60,5 +61,6 @@ describe("app-server info protocol", () => {
       { backend: "api", version: "0.32.14" },
     );
     expect(response.capabilities.structured_outputs).toBe(true);
+    expect(response.capabilities.slack_thread_dispatch).toBe(true);
   });
 });

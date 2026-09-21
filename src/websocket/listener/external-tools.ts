@@ -1,5 +1,7 @@
+import { createSlackThreadDispatchExecutor } from "@/tools/impl/slack-thread-dispatch";
 import {
   type ExternalToolDefinition,
+  type ExternalToolExecutor,
   registerExternalTools,
   setExternalToolExecutor,
   unregisterExternalTools,
@@ -20,6 +22,10 @@ import type {
 } from "@/websocket/listener/types";
 
 const EXTERNAL_TOOL_CALL_TIMEOUT_MS = 5 * 60 * 1000;
+const controllerExecutors = new WeakMap<
+  ListenerRuntime,
+  ExternalToolExecutor
+>();
 const registeredToolsByRuntime = new WeakMap<
   ListenerRuntime,
   Map<string, ExternalToolDefinition[]>
@@ -72,6 +78,7 @@ function getToolRegistrationKey(
 }
 
 function toExternalToolDefinition(
+  listener: ListenerRuntime,
   tool: ExternalToolDefinitionPayload,
   connectionId: ListenerConnectionId,
   runtime: RuntimeScope<string | null>,
@@ -94,11 +101,29 @@ function toExternalToolDefinition(
       agentId: runtime.agent_id ?? undefined,
       conversationId: runtime.conversation_id,
     },
+    ...(tool.name === "start_thread_session" &&
+    tool.execution === "slack_thread_dispatch"
+      ? {
+          executor: createSlackThreadDispatchExecutor(
+            (...args: Parameters<ExternalToolExecutor>) => {
+              const executor = controllerExecutors.get(listener);
+              if (!executor)
+                throw new Error("External tool controller is not connected");
+              return executor(...args);
+            },
+          ),
+        }
+      : {}),
   };
 }
 
 export function installExternalToolBridge(runtime: ListenerRuntime): void {
-  setExternalToolExecutor(async (toolCallId, toolName, input, context) => {
+  const executor: ExternalToolExecutor = async (
+    toolCallId,
+    toolName,
+    input,
+    context,
+  ) => {
     const registrationKey = context?.tool.registrationKey;
     const connectionId = registrationKey
       ? getConnectionIdsByRegistrationKey(runtime).get(registrationKey)
@@ -114,6 +139,8 @@ export function installExternalToolBridge(runtime: ListenerRuntime): void {
       throw new Error("External tool controller is not connected");
     }
     const writer = connection.writer;
+    const signal = context?.signal;
+    signal?.throwIfAborted();
 
     const requestId = `external-tool-${crypto.randomUUID()}`;
     const requestKey = createConnectionRequestKey(connection.id, requestId);
@@ -136,43 +163,56 @@ export function installExternalToolBridge(runtime: ListenerRuntime): void {
       input,
     };
 
-    const result = await new Promise<{
-      content: Array<{
-        type: string;
-        text?: string;
-        data?: string;
-        mimeType?: string;
-      }>;
-      isError: boolean;
-    }>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        getPendingExternalToolCalls(runtime).delete(requestKey);
-        reject(new Error(`External tool call timed out: ${toolName}`));
-      }, EXTERNAL_TOOL_CALL_TIMEOUT_MS);
+    let onAbort: (() => void) | undefined;
+    try {
+      const result = await new Promise<{
+        content: Array<{
+          type: string;
+          text?: string;
+          data?: string;
+          mimeType?: string;
+        }>;
+        isError: boolean;
+      }>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          getPendingExternalToolCalls(runtime).delete(requestKey);
+          reject(new Error(`External tool call timed out: ${toolName}`));
+        }, EXTERNAL_TOOL_CALL_TIMEOUT_MS);
 
-      getPendingExternalToolCalls(runtime).set(requestKey, {
-        connectionId: connection.id,
-        resolve: (response) => {
-          resolve({
-            content: [...response.content],
-            isError: response.is_error === true,
-          });
-        },
-        reject,
-        timeout,
+        getPendingExternalToolCalls(runtime).set(requestKey, {
+          connectionId: connection.id,
+          resolve: (response) => {
+            resolve({
+              content: [...response.content],
+              isError: response.is_error === true,
+            });
+          },
+          reject,
+          timeout,
+        });
+        onAbort = () => {
+          clearTimeout(timeout);
+          getPendingExternalToolCalls(runtime).delete(requestKey);
+          reject(signal?.reason ?? new Error("External tool interrupted"));
+        };
+        signal?.addEventListener("abort", onAbort, { once: true });
+
+        try {
+          writer.send(JSON.stringify(request));
+        } catch (error) {
+          clearTimeout(timeout);
+          getPendingExternalToolCalls(runtime).delete(requestKey);
+          reject(error instanceof Error ? error : new Error(String(error)));
+        }
       });
 
-      try {
-        writer.send(JSON.stringify(request));
-      } catch (error) {
-        clearTimeout(timeout);
-        getPendingExternalToolCalls(runtime).delete(requestKey);
-        reject(error instanceof Error ? error : new Error(String(error)));
-      }
-    });
-
-    return result;
-  });
+      return result;
+    } finally {
+      if (onAbort) signal?.removeEventListener("abort", onAbort);
+    }
+  };
+  controllerExecutors.set(runtime, executor);
+  setExternalToolExecutor(executor);
 }
 
 export function registerRuntimeExternalTools(
@@ -193,6 +233,7 @@ export function registerRuntimeExternalTools(
   const tools = resolvedGroups.flatMap((group) =>
     group.tools.map((tool) =>
       toExternalToolDefinition(
+        runtime,
         tool,
         connectionId,
         runtimeScope,

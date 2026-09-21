@@ -52,6 +52,7 @@ import {
   scheduleBackgroundTaskCleanup,
   setBackgroundTaskOutput,
 } from "./process_manager.js";
+import { runSubagentSetup, type SubagentSetup } from "./subagent-setup";
 import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation";
 
@@ -95,6 +96,7 @@ export interface SpawnBackgroundSubagentTaskArgs {
   model?: string;
   /** Replace the subagent's configured system prompt/persona (advanced). */
   systemPromptOverride?: string;
+  firstTurnReminder?: string;
   toolCallId?: string;
   existingAgentId?: string;
   existingConversationId?: string;
@@ -367,6 +369,7 @@ export function spawnBackgroundSubagentTask(
     description,
     model,
     systemPromptOverride,
+    firstTurnReminder,
     toolCallId,
     existingAgentId,
     existingConversationId,
@@ -466,6 +469,7 @@ export function spawnBackgroundSubagentTask(
     systemPromptOverride,
     environment,
     actingUserId,
+    firstTurnReminder,
   );
   bgTask.completion = subagentExecution.then(
     () => undefined,
@@ -765,7 +769,10 @@ export async function forkParentConversation(
 /**
  * Task tool - Launch a specialized subagent to handle complex tasks
  */
-export async function task(args: TaskArgs): Promise<string> {
+export async function task(
+  args: TaskArgs,
+  setup?: SubagentSetup,
+): Promise<string> {
   const { command = "run", model, toolCallId, signal } = args;
 
   // Handle refresh command - re-discover subagents from .letta/agents/ directories
@@ -838,6 +845,9 @@ export async function task(args: TaskArgs): Promise<string> {
   if (!config) {
     return `Error: Invalid subagent type "${subagent_type}"`;
   }
+  if (setup && !config.fork) {
+    return "Error: Before-start setup currently requires a forked subagent.";
+  }
   if (typeof args.computer === "string" && args.computer.trim()) {
     let environmentRouting = false;
     try {
@@ -870,10 +880,28 @@ export async function task(args: TaskArgs): Promise<string> {
       });
       effectiveAgentId = parentAgentId;
       effectiveConversationId = forkedConv.id;
+      if (setup) {
+        const stopped = await runSubagentSetup({
+          child: { agentId: parentAgentId, conversationId: forkedConv.id },
+          setup,
+          signal,
+          deleteUnstartedFork: async (id) => {
+            const backend = getBackend();
+            if (!backend.deleteConversation)
+              throw new Error(
+                "Backend cannot delete the unstarted losing fork",
+              );
+            return backend.deleteConversation(id);
+          },
+        });
+        if (stopped !== undefined) return stopped;
+      }
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
-      return `Error: Failed to fork parent conversation: ${errorMessage}`;
+      return effectiveConversationId
+        ? `Error: Setup failed for child conversation ${effectiveConversationId}; verify its binding before retrying: ${errorMessage}`
+        : `Error: Failed to fork parent conversation: ${errorMessage}`;
     }
   }
 
@@ -891,6 +919,7 @@ export async function task(args: TaskArgs): Promise<string> {
     existingConversationId: effectiveConversationId,
     maxTurns: args.max_turns,
     forkedContext: config.fork,
+    firstTurnReminder: setup?.firstTurnReminder,
     parentScope: resolvedParentScope,
     environment:
       typeof args.computer === "string" && args.computer.trim()

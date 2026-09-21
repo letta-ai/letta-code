@@ -823,6 +823,7 @@ async function spawnSubagentInContext(
   systemPromptOverride?: string,
   environment?: string,
   actingUserId?: string,
+  firstTurnReminder?: string,
 ): Promise<SubagentResult> {
   const launchActingUserId = resolveActingUserId(actingUserId);
   const allConfigs = await getAllSubagentConfigs();
@@ -906,7 +907,8 @@ async function spawnSubagentInContext(
         parentAgent ??
         (await getBackend().retrieveAgent(resolvedParentAgentId));
       if (forkedContext) {
-        const systemReminder = buildForkSystemReminder(type, backendMode);
+        const systemReminder =
+          firstTurnReminder ?? buildForkSystemReminder(type, backendMode);
         finalPrompt = systemReminder + prompt;
       } else if (
         shouldPrependDeploySystemReminder(

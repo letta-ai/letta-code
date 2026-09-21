@@ -22,6 +22,7 @@ export interface AppServerInfoResponseMessage {
     runtime_start: boolean;
     runtime_workspace_sandbox?: boolean;
     runtime_external_tools_update?: boolean;
+    slack_thread_dispatch?: boolean;
     structured_outputs?: boolean;
     split_channels: boolean;
   };
@@ -62,6 +63,8 @@ export function isAppServerInfoResponseMessage(
       typeof capabilityRecord.runtime_workspace_sandbox === "boolean") &&
     (capabilityRecord.runtime_external_tools_update === undefined ||
       typeof capabilityRecord.runtime_external_tools_update === "boolean") &&
+    (capabilityRecord.slack_thread_dispatch === undefined ||
+      typeof capabilityRecord.slack_thread_dispatch === "boolean") &&
     (capabilityRecord.structured_outputs === undefined ||
       typeof capabilityRecord.structured_outputs === "boolean") &&
     typeof capabilityRecord.split_channels === "boolean"

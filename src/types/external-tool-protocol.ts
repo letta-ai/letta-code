@@ -5,6 +5,8 @@ export interface ExternalToolDefinitionPayload {
   label?: string;
   description: string;
   parameters: Record<string, unknown>;
+  /** Explicit controller opt-in to the built-in Slack Agent wrapper. */
+  execution?: "slack_thread_dispatch";
 }
 
 export interface RuntimeStartExternalToolsGroup {

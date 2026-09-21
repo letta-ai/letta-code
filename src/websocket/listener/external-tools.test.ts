@@ -3,6 +3,7 @@ import type WebSocket from "ws";
 import {
   clearExternalTools,
   executeTool,
+  getExternalToolDefinition,
   prepareToolExecutionContextForModel,
 } from "@/tools/manager";
 import type { ExternalToolCallRequestMessage } from "@/types/protocol_v2";
@@ -71,6 +72,133 @@ function createMockRuntime(): {
 describe("listener runtime_start external tool bridge", () => {
   beforeEach(() => {
     clearExternalTools();
+  });
+
+  test("installs the Agent wrapper only for the explicit Slack marker and exact tool name", () => {
+    const { runtime } = createMockRuntime();
+    installExternalToolBridge(runtime);
+    const cases = [
+      { name: "start_thread_session", marked: true, wrapped: true },
+      { name: "start_thread_session", marked: false, wrapped: false },
+      { name: "ordinary_tool", marked: true, wrapped: false },
+    ];
+    for (const [index, item] of cases.entries()) {
+      const conversationId = `conv-${index}`;
+      registerRuntimeExternalTools(
+        runtime,
+        "client-1",
+        { agent_id: "agent-1", conversation_id: conversationId },
+        [
+          {
+            tools: [
+              {
+                name: item.name,
+                description: "test",
+                parameters: {},
+                ...(item.marked
+                  ? { execution: "slack_thread_dispatch" as const }
+                  : {}),
+              },
+            ],
+          },
+        ],
+      );
+      const key = JSON.stringify([
+        "runtime",
+        "client-1",
+        "agent-1",
+        conversationId,
+        null,
+        item.name,
+      ]);
+      const tool = getExternalToolDefinition(key);
+      expect(Boolean(tool?.executor)).toBe(item.wrapped);
+      expect(tool?.runtime?.conversationId).toBe(conversationId);
+    }
+  });
+
+  test("marked dispatch uses its registering controller and returns an existing worker without a launch", async () => {
+    const { runtime, sent } = createMockRuntime();
+    const connection = runtime.connections.get("client-1");
+    if (!connection) throw new Error("missing fixture controller");
+    connection.writer = {
+      readyState: 1,
+      send(data: string) {
+        const request = JSON.parse(data) as ExternalToolCallRequestMessage;
+        sent.push(request);
+        queueMicrotask(() =>
+          handleExternalToolCallResponseCommand(runtime, "client-1", {
+            type: "external_tool_call_response",
+            request_id: request.request_id,
+            result: {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    status: "bound",
+                    created: false,
+                    agent_id: "agent-1",
+                    conversation_id: "conv-worker",
+                  }),
+                },
+              ],
+            },
+          }),
+        );
+      },
+    } as unknown as WebSocket;
+    installExternalToolBridge(runtime);
+    registerRuntimeExternalTools(
+      runtime,
+      "client-1",
+      { agent_id: "agent-1", conversation_id: "conv-parent" },
+      [
+        {
+          tools: [
+            {
+              name: "start_thread_session",
+              execution: "slack_thread_dispatch",
+              description: "dispatch",
+              parameters: {},
+            },
+          ],
+        },
+      ],
+    );
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      {
+        clientToolAllowlist: ["start_thread_session"],
+        runtimeContext: {
+          connectionId: "client-1",
+          agentId: "agent-1",
+          conversationId: "conv-parent",
+        },
+      },
+    );
+    const response = await executeTool(
+      "start_thread_session",
+      { thread_ts: "100.1", label: "Task", computer: "work-mac" },
+      {
+        toolContextId: prepared.contextId,
+        toolCallId: "dispatch-1",
+      },
+    );
+    expect(response.status).toBe("success");
+    expect(response.toolReturn).toContain("conv-worker");
+    expect(response.toolReturn).toContain(
+      "New instructions were not delivered",
+    );
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({
+      runtime: { agent_id: "agent-1", conversation_id: "conv-parent" },
+      tool_call_id: "dispatch-1",
+      input: {
+        thread_ts: "100.1",
+        computer: "work-mac",
+        _slack_dispatch: { operation: "lookup" },
+      },
+    });
   });
 
   afterEach(() => {
