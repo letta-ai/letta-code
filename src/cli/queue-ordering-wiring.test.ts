@@ -180,4 +180,18 @@ describe("queue ordering wiring", () => {
     );
     expect(newTurnContinuations).not.toContain("ownerRequest:");
   });
+
+  test("tool continuations stop before no-coalesce owner turns", () => {
+    const source = readAppSource();
+    const start = source.indexOf("const consumeQueuedMessages = useCallback");
+    const end = source.indexOf("const withCommandLock", start);
+    const segment = source.slice(start, end);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    expect(segment).toContain('item.kind === "message" && item.noCoalesce');
+    expect(segment).toContain(
+      "barrierIndex < 0 ? readyItems.length : barrierIndex",
+    );
+    expect(segment).toContain("consumeItems(len)");
+  });
 });

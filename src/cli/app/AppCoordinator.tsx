@@ -1767,7 +1767,11 @@ export function App({
 
   // Queue callbacks remove consumed display entries by item ID.
   const consumeQueuedMessages = useCallback((): QueuedMessage[] | null => {
-    const len = tuiQueueRef.current?.length ?? 0;
+    const readyItems = tuiQueueRef.current?.peekReady() ?? [];
+    const barrierIndex = readyItems.findIndex(
+      (item) => item.kind === "message" && item.noCoalesce,
+    );
+    const len = barrierIndex < 0 ? readyItems.length : barrierIndex;
     if (len === 0) return null;
     const batch = tuiQueueRef.current?.consumeItems(len);
     if (!batch) return null;
@@ -4872,6 +4876,7 @@ export function App({
           deferredToolCallCommitsRef.current.has(ln.id)
         );
       }
+      // Events (like compaction) show while running
       if (ln.kind === "event") {
         if (!showCompactionsEnabled && ln.eventType === "compaction")
           return false;
@@ -4888,25 +4893,32 @@ export function App({
     deferredCommitAt,
   ]);
 
+  // Subscribe to subagent state for reactive overflow detection
   const { agents: subagents } = useSyncExternalStore(
     subscribeToSubagents,
     getSubagentSnapshot,
   );
 
+  // Estimate live area height for overflow detection.
   const estimatedLiveHeight = useMemo(() => {
+    // Count actual lines in live content by counting newlines
     const countLines = (text: string | undefined): number => {
       if (!text) return 0;
       return (text.match(/\n/g) || []).length + 1;
     };
 
+    // Estimate height for each live item based on actual content
     let liveItemsHeight = 0;
     for (const item of liveItems) {
+      // Base height for each item (header line, margins)
       let itemHeight = 2;
 
       if (item.kind === "bash_command" || item.kind === "command") {
+        // Count lines in command input and output
         itemHeight += countLines(item.input);
         itemHeight += countLines(item.output);
       } else if (item.kind === "tool_call") {
+        // Count lines in tool args and result
         itemHeight += Math.min(countLines(item.argsText), 5); // Cap args display
         itemHeight += countLines(item.resultText);
       } else if (
@@ -4920,9 +4932,12 @@ export function App({
       liveItemsHeight += itemHeight;
     }
 
+    // Subagents: 4 lines each (description + URL + status + margin)
     const LINES_PER_SUBAGENT = 4;
     const subagentsHeight = subagents.length * LINES_PER_SUBAGENT;
 
+    // Fixed buffer for header, input area, status bar, margins
+    // Using larger buffer to catch edge cases and account for timing lag
     const FIXED_BUFFER = 20;
 
     const estimatedHeight = liveItemsHeight + subagentsHeight + FIXED_BUFFER;
