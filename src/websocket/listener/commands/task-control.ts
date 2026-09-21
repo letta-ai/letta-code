@@ -10,7 +10,7 @@ import type {
   SafeSocketSend,
 } from "./types";
 
-export function handleTaskControlCommand(
+export async function handleTaskControlCommand(
   command: LaunchSubagentCommand | MonitorStopCommand,
   context: {
     runtime: ListenerRuntime;
@@ -20,7 +20,7 @@ export function handleTaskControlCommand(
     runDetachedListenerTask: RunDetachedListenerTask;
     safeSocketSend: SafeSocketSend;
   },
-): void {
+): Promise<void> {
   const {
     runtime,
     socket,
@@ -29,7 +29,7 @@ export function handleTaskControlCommand(
     runDetachedListenerTask,
     safeSocketSend,
   } = context;
-  runDetachedListenerTask(command.type, async () => {
+  const execute = async () => {
     const response =
       command.type === "monitor_stop"
         ? await handleMonitorStopCommand(command, runtime)
@@ -43,5 +43,10 @@ export function handleTaskControlCommand(
             connectionId,
           );
     safeSocketSend(socket, response, response.type, command.type);
-  });
+  };
+  if (command.type === "launch_subagent") {
+    runDetachedListenerTask(command.type, execute);
+  } else {
+    await execute();
+  }
 }

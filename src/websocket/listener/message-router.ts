@@ -281,7 +281,7 @@ export function createListenerMessageHandler(
         const { handleTaskControlCommand } = await import(
           "./commands/task-control"
         );
-        handleTaskControlCommand(parsed, {
+        await handleTaskControlCommand(parsed, {
           runtime,
           socket,
           connectionId,
