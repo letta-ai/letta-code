@@ -20,8 +20,3 @@ export function validateResponseFormat(value: unknown): string | null {
   }
   return null;
 }
-
-export function assertValidResponseFormat(value: unknown): void {
-  const error = validateResponseFormat(value);
-  if (error) throw new Error(`Protocol violation: ${error}`);
-}

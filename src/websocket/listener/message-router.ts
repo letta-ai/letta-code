@@ -67,7 +67,7 @@ import {
 import { emitLoopErrorNotice } from "./recoverable-notices";
 import { getActiveRuntime, safeEmitWsEvent } from "./runtime";
 import { parseListenerReadyMessage } from "./split-stream-lifecycle";
-import { assertValidResponseFormat } from "./structured-output";
+import { validateResponseFormat } from "./structured-output";
 import {
   buildTeleportContinuationMessages,
   clearExpectedInboundTeleport,
@@ -543,7 +543,11 @@ export function createListenerMessageHandler(
           acknowledgeInput(false, "Unsupported input payload kind");
           return;
         }
-        assertValidResponseFormat(inputPayload.response_format);
+        const error = validateResponseFormat(inputPayload.response_format);
+        if (error) {
+          acknowledgeInput(false, error);
+          return;
+        }
         const incoming: IncomingMessage = {
           type: "message",
           connectionId,
