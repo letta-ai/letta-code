@@ -131,6 +131,7 @@ export async function startLocalSessionOwner(
   };
   let readiness = createReadiness();
   let connected = false;
+  let connectionEpoch = 0;
   let ownershipSupported = false;
   let claimed = false;
   let claimInFlight = false;
@@ -259,6 +260,7 @@ export async function startLocalSessionOwner(
     const transport = runtime?.transport ?? runtime?.socket;
     if (!transport || !isListenerTransportOpen(transport)) return;
     claimInFlight = true;
+    const attemptConnectionEpoch = connectionEpoch;
     lastClaimDefinitivelyDenied = false;
     const requestId = `claim-${crypto.randomUUID()}`;
     const claimResult = new Promise<{
@@ -286,15 +288,17 @@ export async function startLocalSessionOwner(
     );
     const result = await claimResult;
     claimInFlight = false;
-    if (result.received && result.claimed) {
+    const appliesToCurrentConnection =
+      connected && attemptConnectionEpoch === connectionEpoch;
+    if (appliesToCurrentConnection && result.received && result.claimed) {
       claimed = true;
       settleReady(true);
       resolveReleaseClaimDisposition?.("claimed");
       resolveReleaseClaimDisposition = null;
       return;
     }
-    lastClaimDefinitivelyDenied = result.received;
-    if (releaseRequested && result.received) {
+    lastClaimDefinitivelyDenied = appliesToCurrentConnection && result.received;
+    if (releaseRequested && lastClaimDefinitivelyDenied) {
       resolveReleaseClaimDisposition?.("denied");
       resolveReleaseClaimDisposition = null;
       return;
@@ -352,10 +356,12 @@ export async function startLocalSessionOwner(
       },
       onConnected: () => {
         connected = true;
+        connectionEpoch += 1;
         void claim();
       },
       onDisconnected: () => {
         connected = false;
+        connectionEpoch += 1;
         if (claimed && !stopped) {
           claimed = false;
           readiness = createReadiness();
@@ -378,6 +384,7 @@ export async function startLocalSessionOwner(
       onNeedsReregister: () => {
         if (stopped) return;
         connected = false;
+        connectionEpoch += 1;
         if (claimed) {
           claimed = false;
           readiness = createReadiness();
