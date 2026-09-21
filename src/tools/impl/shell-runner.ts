@@ -446,14 +446,35 @@ export function startShellProcess(
     emitDecodedOutput(outputDecoders.stderr.end(), "stderr");
   };
   const finishPullRequestTracking = async (): Promise<void> => {
-    const timeoutSignal = AbortSignal.timeout(GITHUB_PR_ATTRIBUTION_TIMEOUT_MS);
-    const signal = options.signal
-      ? AbortSignal.any([options.signal, timeoutSignal])
-      : timeoutSignal;
+    if (!pullRequestTracker) return;
+    const controller = new AbortController();
+    let rejectStopped!: (reason: unknown) => void;
+    const stopped = new Promise<never>((_, reject) => {
+      rejectStopped = reject;
+    });
+    const stop = (reason: unknown) => {
+      rejectStopped(reason);
+      controller.abort(reason);
+    };
+    // Own a referenced timer: the shell has exited, and a stalled metadata
+    // backend may neither keep the event loop alive nor honor cancellation.
+    const timer = setTimeout(
+      () => stop(new DOMException("PR attribution timed out", "TimeoutError")),
+      GITHUB_PR_ATTRIBUTION_TIMEOUT_MS,
+    );
+    const onAbort = () => stop(options.signal?.reason);
+    options.signal?.addEventListener("abort", onAbort, { once: true });
     try {
-      await pullRequestTracker?.finish(signal);
+      if (options.signal?.aborted) onAbort();
+      await Promise.race([
+        pullRequestTracker.finish(controller.signal),
+        stopped,
+      ]);
     } catch (error) {
-      debugLog("github-pr-tracking", "PR attribution deadline expired", error);
+      debugLog("github-pr-tracking", "PR attribution did not complete", error);
+    } finally {
+      clearTimeout(timer);
+      options.signal?.removeEventListener("abort", onAbort);
     }
   };
 
