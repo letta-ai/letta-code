@@ -2553,7 +2553,6 @@ export async function handleHeadlessCommand(
 
       // Case 1: Turn ended normally
       if (stopReason === "end_turn") {
-        localSession.setProcessing(false);
         // Reset retry counters on success
         llmApiErrorRetries = 0;
         emptyResponseRetries = 0;
@@ -2629,6 +2628,7 @@ export async function handleHeadlessCommand(
           continue;
         }
 
+        localSession.setProcessing(false);
         break;
       }
 
