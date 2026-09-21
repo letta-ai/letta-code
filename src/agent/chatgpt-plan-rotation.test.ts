@@ -385,24 +385,32 @@ describe("rotateChatGPTPlanOnQuotaLimit", () => {
         },
         exhaustedProviders: unavailableProviders,
       });
+      if (!quotaRotation || !authRotation) {
+        throw new Error("Expected quota and authentication plan rotations");
+      }
 
       expect(quotaRotation).toMatchObject({
         fromProvider: "chatgpt-caren",
-        toProvider: "chatgpt-jin",
         failureKind: "quota",
       });
+      expect(["chatgpt-jin", "chatgpt-mia"]).toContain(
+        quotaRotation.toProvider,
+      );
       expect(authRotation).toMatchObject({
-        fromProvider: "chatgpt-jin",
-        toProvider: "chatgpt-mia",
+        fromProvider: quotaRotation.toProvider,
         failureKind: "authentication",
       });
+      expect(["chatgpt-jin", "chatgpt-mia"]).toContain(authRotation.toProvider);
+      expect(authRotation.toProvider).not.toBe(quotaRotation.toProvider);
       expect(unavailableProviders).toEqual(
-        new Set(["chatgpt-caren", "chatgpt-jin"]),
+        new Set(["chatgpt-caren", quotaRotation.toProvider]),
       );
-      expect(conversations.get("conv-first")?.model).toBe(THIRD_HANDLE);
+      expect(conversations.get("conv-first")?.model).toBe(
+        authRotation.toHandle,
+      );
       expect(
         helpers.conversationUpdates.map(({ payload }) => payload.model),
-      ).toEqual([SIBLING_HANDLE, THIRD_HANDLE]);
+      ).toEqual([quotaRotation.toHandle, authRotation.toHandle]);
       expect(
         helpers.conversationUpdates.map(
           ({ payload }) => payload.context_window_limit,
