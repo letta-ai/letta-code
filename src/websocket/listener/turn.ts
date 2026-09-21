@@ -268,7 +268,6 @@ async function handleIncomingMessageInner(
     const overrideModel = setup.overrideModel;
     let pendingNormalizationInterruptedToolCallIds =
       setup.pendingNormalizationInterruptedToolCallIds;
-    const preparedToolContext = setup.preparedToolContext;
     const initial = await startTurnInput({
       conversationId,
       agentId,
@@ -277,8 +276,9 @@ async function handleIncomingMessageInner(
       turnLease,
       workingDirectory: turnWorkingDirectory,
       permissionModeState: turnPermissionModeState,
-      preparedToolContext: preparedToolContext.preparedToolContext,
+      preparedToolContext: setup.preparedToolContext.preparedToolContext,
       overrideModel,
+      responseFormat: msg.responseFormat,
       actingUserId: msg.actingUserId,
       getInput: () => turnInput,
       getInterruptedToolCallIds: () =>

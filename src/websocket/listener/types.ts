@@ -110,6 +110,7 @@ export interface IncomingMessage {
   externalToolScopeIds?: string[];
   /** Exclude interactive user-input tools (AskUserQuestion) from this turn's toolset. */
   excludeInteractiveTools?: boolean;
+  responseFormat?: Record<string, unknown>;
   messages: Array<
     (AttributedMessageCreate & { client_message_id?: string }) | ApprovalCreate
   >;
