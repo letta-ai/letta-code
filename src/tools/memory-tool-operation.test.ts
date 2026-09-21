@@ -237,7 +237,7 @@ test.each([false, true])(
   },
 );
 
-test("a patch spanning the primary and reflection worktree acquires their shared lock once", async () => {
+function reflectionWorktree(): string {
   execFileSync("git", [
     "-C",
     memory,
@@ -258,6 +258,11 @@ test("a patch spanning the primary and reflection worktree acquires their shared
     ["-C", memory, "worktree", "add", "-b", "reflection", worktree],
     { stdio: "pipe" },
   );
+  return worktree;
+}
+
+test("a patch spanning two memory checkouts protects both", async () => {
+  const worktree = reflectionWorktree();
   process.env.MEMORY_DIR = worktree;
   const result = await scope(() =>
     runMemoryTool(
@@ -274,4 +279,22 @@ test("a patch spanning the primary and reflection worktree acquires their shared
     ),
   );
   expect(result).toBe("edited");
+});
+
+test("isolated reflection edits proceed while a worker owns the primary checkout", async () => {
+  const worktree = reflectionWorktree();
+  process.env.MEMORY_DIR = worktree;
+  await loadSpecificTools(["Write"]);
+  await reserve();
+  const file = join(worktree, "reflection.md");
+  const result = await scope(() =>
+    executeTool(
+      "Write",
+      { file_path: file, content: "reflection\n" },
+      { signal: AbortSignal.timeout(2000) },
+    ),
+  );
+  expect(result.status).toBe("success");
+  expect(readFileSync(file, "utf8")).toBe("reflection\n");
+  expect(await claimMemoryOperation(memory)).toBeNull();
 });

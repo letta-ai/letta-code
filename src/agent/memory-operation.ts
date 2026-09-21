@@ -66,7 +66,7 @@ function isAlive(pid: number): boolean {
   }
 }
 
-/** Worktrees and symlink aliases share the repository's operation lock. */
+/** Lock a checkout and its index; isolated reflection worktrees remain independent. */
 export async function getMemoryOperationPath(
   memoryDir: string,
 ): Promise<string> {
@@ -74,7 +74,7 @@ export async function getMemoryOperationPath(
     "-C",
     memoryDir,
     "rev-parse",
-    "--git-common-dir",
+    "--git-dir",
   ]);
   return resolve(
     await realpath(resolve(memoryDir, stdout.trim())),

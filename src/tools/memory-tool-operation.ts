@@ -94,8 +94,8 @@ export async function runMemoryTool<T>(
       paths.some((path) => containsPath(root, path)) ||
       (shell && command.includes(root)),
   );
-  // One command can name both the primary checkout and a reflection worktree.
-  // Lock their shared Git repository once, in a stable order across processes.
+  // A command may touch multiple checkouts. Deduplicate aliases and acquire
+  // their locks in a stable order across processes.
   const repositories = new Map<string, string>();
   for (const root of targets)
     repositories.set(await getMemoryOperationPath(root), root);
