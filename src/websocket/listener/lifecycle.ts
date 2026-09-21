@@ -824,6 +824,15 @@ async function connectWithRetry(
             createStreamSocket: () => {
               if (!streamUrl) throw new Error("Paired stream URL is missing");
               streamSocket = new WebSocket(streamUrl.toString(), { headers });
+              // Install the durable error/close handlers synchronously. The
+              // temporary ready-frame waiter removes its own listeners when
+              // acceptance settles; waiting until the next await continuation
+              // left an unhandled-error gap if the relay closed immediately.
+              attachSplitStreamSocketHandlers({
+                runtime,
+                streamSocket,
+                trackListenerError,
+              });
               return streamSocket;
             },
             trackListenerError,
@@ -838,11 +847,6 @@ async function connectWithRetry(
       const streamTransport = streamOpen.transport;
       if (streamOpen.streamSocket) {
         streamSocket = streamOpen.streamSocket;
-        attachSplitStreamSocketHandlers({
-          runtime,
-          streamSocket: streamOpen.streamSocket,
-          trackListenerError,
-        });
       }
       if (!isCurrentSocketPair(runtime, socket, streamSocket)) return;
       openListenerConnection({

@@ -404,6 +404,43 @@ describe("split stream listener lifecycle", () => {
     );
   });
 
+  test.each(["close", "error"] as const)(
+    "accepted stream %s is handled during the startup handoff",
+    async (failure) => {
+      const listener = await startClient({
+        supportsPairedListenerGenerations: true,
+      });
+      await waitFor(
+        () => countConnectionsForChannel("control") === 1,
+        "paired control socket did not open",
+      );
+      acceptConnection(lastConnectionIndexForChannel("control"));
+      await waitFor(
+        () => countConnectionsForChannel("stream") === 1,
+        "paired stream socket did not open",
+      );
+      const streamIndex = lastConnectionIndexForChannel("stream");
+      acceptConnection(streamIndex);
+      queueMicrotask(() => {
+        const connection = connections[streamIndex];
+        if (failure === "close") {
+          connection?.terminate();
+          return;
+        }
+        listener.streamSocket?.emit(
+          "error",
+          new Error("accepted stream failed"),
+        );
+        connection?.terminate();
+      });
+
+      await waitFor(
+        () => countConnectionsForChannel("control") === 2,
+        "accepted stream close did not reconnect control",
+      );
+    },
+  );
+
   test("mismatched acceptance reconnects with a new generation and attempt", async () => {
     const onConnected = mock(() => {});
     const onError = mock(() => {});
