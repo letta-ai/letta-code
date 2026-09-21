@@ -32,6 +32,7 @@ describe("local session owner", () => {
         wsUrl: "wss://relay.test",
         supportsSplitStatusChannels: false,
         supportsPairedListenerGenerations: false,
+        supportsLocalSessionOwnership: true,
       }),
       startListener: async (options) => {
         capturedOptions = options;
@@ -130,5 +131,41 @@ describe("local session owner", () => {
     });
     expect(await rejectedRelease).toBe(true);
     expect(stopListener).toHaveBeenCalledTimes(1);
+  });
+
+  test("does not claim ownership when Cloud lacks protocol support", async () => {
+    const startListener = mock(async () => ({}) as ListenerRuntime);
+    const owner = await startLocalSessionOwner(
+      {
+        agentId: "agent-local",
+        conversationId: "conv-local",
+        queueRuntime: new QueueRuntime(),
+        surfaceName: "headless",
+        onQueueChanged: () => {},
+        onAbort: () => true,
+        isProcessing: () => false,
+      },
+      {
+        getDeviceId: () => "device-local",
+        resolveRegistration: async () => ({
+          serverUrl: "https://api.test",
+          apiKey: "test",
+          deviceId: "device-local",
+          connectionName: "local",
+        }),
+        register: async () => ({
+          connectionId: "conn-local",
+          wsUrl: "wss://relay.test",
+          supportsSplitStatusChannels: true,
+          supportsPairedListenerGenerations: true,
+          supportsLocalSessionOwnership: false,
+        }),
+        startListener,
+        stopListener: () => {},
+      },
+    );
+
+    expect(startListener).not.toHaveBeenCalled();
+    expect(await owner.release()).toBe(true);
   });
 });

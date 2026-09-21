@@ -186,6 +186,13 @@ export async function startLocalSessionOwner(
       listenerInstanceId,
     });
     if (stopped) return;
+    // Older Cloud deployments ignore owner status and cannot acknowledge a
+    // generation-guarded release. Treat registration as a no-op there so a
+    // normal one-shot process never waits forever for an unsupported ACK.
+    if (!registration.supportsLocalSessionOwnership) {
+      stopped = true;
+      return;
+    }
 
     ownedRuntime = await dependencies.startListener({
       connectionId: registration.connectionId,

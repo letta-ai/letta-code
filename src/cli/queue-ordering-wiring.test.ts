@@ -29,9 +29,9 @@ describe("queue ordering wiring", () => {
     expect(segment).toContain("!userCancelledRef.current");
     expect(segment).toContain("!abortControllerRef.current");
     expect(segment).toContain("queuedOverlayAction=");
-    // Queue is now drained via QueueRuntime.consumeItems; setQueueDisplay is
-    // updated automatically via the onDequeued callback — no direct setState here.
-    expect(segment).toContain("tuiQueueRef.current?.consumeItems(queueLen)");
+    // QueueRuntime applies sender-scope and noCoalesce boundaries; setQueueDisplay
+    // updates automatically via onDequeued, with no direct setState here.
+    expect(segment).toContain("tuiQueueRef.current?.tryDequeue(null)");
     expect(segment).toContain("onSubmitRef.current(concatenatedMessage)");
     expect(segment).toContain("!dequeueInFlightRef.current");
     expect(segment).toContain("queuedOverlayAction,");

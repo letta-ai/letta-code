@@ -14,6 +14,7 @@ export interface RegisterResult {
   wsUrl: string;
   supportsSplitStatusChannels: boolean;
   supportsPairedListenerGenerations: boolean;
+  supportsLocalSessionOwnership: boolean;
 }
 
 export interface RegisterOptions {
@@ -199,6 +200,8 @@ export async function registerWithCloud(
     supportsSplitStatusChannels: result.supportsSplitStatusChannels === true,
     supportsPairedListenerGenerations:
       result.supportsPairedListenerGenerations === true,
+    supportsLocalSessionOwnership:
+      result.supportsLocalSessionOwnership === true,
   };
 }
 
