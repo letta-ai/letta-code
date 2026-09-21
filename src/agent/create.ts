@@ -165,7 +165,7 @@ export interface CreatedAgentSystemPromptOptions {
 export async function resolveCreatedAgentSystemPrompt(
   options: CreatedAgentSystemPromptOptions,
 ): Promise<string | null> {
-  if (options.systemPromptCustom) {
+  if (options.systemPromptCustom !== undefined) {
     return options.systemPromptCustom;
   }
   if (
@@ -457,7 +457,7 @@ export async function createAgent(
   // Persist system prompt preset — only for non-subagents and known presets or custom.
   // Guarded by isReady since settings may not be initialized in direct/test callers.
   if (!isSubagent && settingsManager.isReady) {
-    if (options.systemPromptCustom) {
+    if (options.systemPromptCustom !== undefined) {
       settingsManager.setSystemPromptCustom(fullAgent.id);
     } else if (
       systemPromptContent !== null &&

@@ -95,6 +95,13 @@ describe("created agent system prompt defaults", () => {
     await expect(
       resolveCreatedAgentSystemPrompt({
         isLettaCloud: true,
+        systemPromptCustom: "",
+        memoryPromptMode: "memfs",
+      }),
+    ).resolves.toBe("");
+    await expect(
+      resolveCreatedAgentSystemPrompt({
+        isLettaCloud: true,
         systemPromptPreset: "letta",
         memoryPromptMode: "memfs",
       }),
