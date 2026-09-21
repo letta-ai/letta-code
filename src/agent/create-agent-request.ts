@@ -83,9 +83,13 @@ export interface CreateAgentRequest {
   hidden?: boolean;
 }
 
-export type CreateAgentRequestForPersonality = CreateAgentRequest & {
+export type CreateAgentRequestForPersonality = Omit<
+  CreateAgentRequest,
+  "system"
+> & {
   name: string;
   description: string;
+  system: string;
   memory_blocks: PersonalityMemoryBlock[];
   profile_picture?: {
     content: string;
