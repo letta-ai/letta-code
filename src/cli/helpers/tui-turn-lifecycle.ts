@@ -15,11 +15,12 @@ export function settleTuiInterrupt(args: {
   userCancelledRef: { current: boolean };
   setInterruptRequested: (value: boolean) => void;
   queueLength: number;
+  hasPendingScopeSwitch?: boolean;
   bumpDequeueEpoch: () => void;
 }): void {
   args.userCancelledRef.current = false;
   args.setInterruptRequested(false);
-  if (args.queueLength > 0) {
+  if (args.queueLength > 0 || args.hasPendingScopeSwitch) {
     args.bumpDequeueEpoch();
   }
 }
@@ -34,6 +35,7 @@ export type TuiTurnFinishArgs = {
   userCancelledRef: { current: boolean };
   setInterruptRequested: (value: boolean) => void;
   queueLength: () => number;
+  hasPendingScopeSwitch?: () => boolean;
   bumpDequeueEpoch: () => void;
 };
 
@@ -58,7 +60,7 @@ export function finishTuiTurn(args: TuiTurnFinishArgs): void {
   if (!args.isStale) {
     // The dequeue effect gates on abortControllerRef (a ref, not state), so
     // it needs an explicit re-trigger now that this turn is done.
-    if (args.queueLength() > 0) {
+    if (args.queueLength() > 0 || args.hasPendingScopeSwitch?.()) {
       args.bumpDequeueEpoch();
     }
     return;
@@ -68,6 +70,7 @@ export function finishTuiTurn(args: TuiTurnFinishArgs): void {
       userCancelledRef: args.userCancelledRef,
       setInterruptRequested: args.setInterruptRequested,
       queueLength: args.queueLength(),
+      hasPendingScopeSwitch: args.hasPendingScopeSwitch?.() ?? false,
       bumpDequeueEpoch: args.bumpDequeueEpoch,
     });
   }

@@ -1419,7 +1419,10 @@ export function App({
   const sessionSwitchAdmissionStateRef = useRef<
     "idle" | "draining" | "releasing"
   >("idle");
-  const sessionSwitchRetryScheduledRef = useRef(false);
+  const pendingLocalSessionScopeSwitchRef = useRef(false);
+  pendingLocalSessionScopeSwitchRef.current =
+    queuedOverlayAction?.type === "switch_conversation" ||
+    queuedOverlayAction?.type === "switch_agent";
   if (!tuiQueueRef.current) {
     tuiQueueRef.current = createTuiQueueRuntime(setQueueDisplay);
   }
@@ -3791,6 +3794,8 @@ export function App({
     llmConfigRef,
     maybeRunPostTurnReflection,
     waitForLocalSessionOwnerReady: localSessionOwner.ready,
+    hasPendingLocalSessionScopeSwitch: () =>
+      pendingLocalSessionScopeSwitchRef.current,
     needsEagerApprovalCheck,
     openTrajectorySegment,
     pendingInterruptRecoveryConversationIdRef,
@@ -4415,8 +4420,13 @@ export function App({
         onSubmitRef.current(concatenatedMessage),
       ).finally(() => {
         dequeueInFlightRef.current = false;
-        // If more items arrived while in-flight, bump epoch so the effect re-runs.
-        if ((tuiQueueRef.current?.length ?? 0) > 0) {
+        // Queue length and pending scope action are state-independent gates.
+        // Wake after this authoritative ref boundary even when the last old-
+        // scope item emptied the queue.
+        if (
+          (tuiQueueRef.current?.length ?? 0) > 0 ||
+          pendingLocalSessionScopeSwitchRef.current
+        ) {
           setDequeueEpoch((e) => e + 1);
         }
       });
@@ -4534,13 +4544,6 @@ export function App({
         ) {
           // Keep the switch pending. The normal dequeue path is allowed to run
           // while this action is pending and remains bound to the old scope.
-          if (!sessionSwitchRetryScheduledRef.current) {
-            sessionSwitchRetryScheduledRef.current = true;
-            setTimeout(() => {
-              sessionSwitchRetryScheduledRef.current = false;
-              setDequeueEpoch((epoch) => epoch + 1);
-            }, 10);
-          }
           return;
         }
         sessionSwitchAdmissionStateRef.current = "releasing";

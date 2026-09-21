@@ -387,50 +387,71 @@ describe("TUI interrupt queue lifecycle", () => {
     let readyCalls = 0;
     let abortedWaits = 0;
     let forcedStops = 0;
-    __testSetLocalSessionOwnerStarter(async () => ({
-      ready(signal) {
-        readyCalls += 1;
-        if (!signal) return claimReady;
-        return Promise.race([
-          claimReady,
-          new Promise<boolean>((_resolve, reject) => {
-            signal.addEventListener(
-              "abort",
-              () => {
-                abortedWaits += 1;
-                reject(new Error("aborted"));
-              },
-              { once: true },
-            );
-          }),
-        ]);
-      },
-      forceStop() {
-        forcedStops += 1;
-      },
-      stopAdmission() {},
-      resumeAdmission() {},
-      async release() {
-        return true;
-      },
-    }));
+    let ownerStarts = 0;
+    let releases = 0;
+    __testSetLocalSessionOwnerStarter(async () => {
+      ownerStarts += 1;
+      return {
+        ready(signal) {
+          readyCalls += 1;
+          if (!signal) return claimReady;
+          return Promise.race([
+            claimReady,
+            new Promise<boolean>((_resolve, reject) => {
+              signal.addEventListener(
+                "abort",
+                () => {
+                  abortedWaits += 1;
+                  reject(new Error("aborted"));
+                },
+                { once: true },
+              );
+            }),
+          ]);
+        },
+        forceStop() {
+          forcedStops += 1;
+        },
+        stopAdmission() {},
+        resumeAdmission() {},
+        async release() {
+          releases += 1;
+          return true;
+        },
+      };
+    });
     const inputs: HeadlessTurnExecutorInput[] = [];
-    const { stdin } = await renderTestApp({
+    const rendered = await renderTestApp({
       async execute(input) {
         inputs.push(input);
         return createAssistantMessageStream();
       },
     });
 
-    await typePrompt(stdin, "wait for claim");
+    await typePrompt(rendered.stdin, "wait for claim");
     await waitFor(() => readyCalls > 1, "the prompt readiness wait");
-    stdin.push("\u001b");
+    const secondConversation = await rendered.backend.createConversation({
+      agent_id: "agent-tui-interrupt-queue",
+    });
+    rendered.instance.rerender(
+      <App
+        agentId="agent-tui-interrupt-queue"
+        agentState={rendered.agentState}
+        conversationId={secondConversation.id}
+        modsDisabled
+        systemInfoReminderEnabled={false}
+      />,
+    );
+    await sleep(50);
+    rendered.stdin.push("\u001b");
     await waitFor(() => abortedWaits === 1, "Esc to abort the readiness wait");
+    await waitFor(() => ownerStarts === 2, "queued switch after cancellation");
+    expect(releases).toBeGreaterThan(0);
     expect(forcedStops).toBe(0);
     expect(inputs).toHaveLength(0);
 
     resolveClaim(true);
-    await typePrompt(stdin, "run after claim");
+    await typePrompt(rendered.stdin, "run after claim");
     await waitFor(() => inputs.length === 1, "the next prompt after readiness");
   }, 15_000);
 

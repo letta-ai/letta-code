@@ -224,6 +224,7 @@ type ConversationLoopContext = {
   llmConfigRef: MutableRefObject<LlmConfig | null>;
   maybeRunPostTurnReflection: () => Promise<void>;
   waitForLocalSessionOwnerReady: (signal?: AbortSignal) => Promise<boolean>;
+  hasPendingLocalSessionScopeSwitch: () => boolean;
   needsEagerApprovalCheck: boolean;
   openTrajectorySegment: () => void;
   pendingInterruptRecoveryConversationIdRef: MutableRefObject<string | null>;
@@ -323,6 +324,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     llmConfigRef,
     maybeRunPostTurnReflection,
     waitForLocalSessionOwnerReady,
+    hasPendingLocalSessionScopeSwitch,
     needsEagerApprovalCheck,
     openTrajectorySegment,
     pendingInterruptRecoveryConversationIdRef,
@@ -2881,6 +2883,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           userCancelledRef,
           setInterruptRequested,
           queueLength: () => tuiQueueRef.current?.length ?? 0,
+          hasPendingScopeSwitch: hasPendingLocalSessionScopeSwitch,
           bumpDequeueEpoch: () => setDequeueEpoch((e: number) => e + 1),
         });
       }
