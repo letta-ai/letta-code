@@ -3,7 +3,10 @@ import Letta from "@letta-ai/letta-client";
 import { __testSetBackend, APIBackend } from "@/backend";
 import { waitForBlockingRunToSettle } from "@/cli/app/busy-run-recovery";
 
-type RunStatus = "created" | "running" | "completed";
+type RunState = {
+  status: "created" | "running" | "completed";
+  stopReason?: "end_turn" | "requires_approval";
+};
 
 const servers = new Set<ReturnType<typeof Bun.serve>>();
 
@@ -13,7 +16,7 @@ afterEach(() => {
   servers.clear();
 });
 
-function startRunApi(statuses: RunStatus[]) {
+function startRunApi(states: RunState[]) {
   const requestedRunIds: string[] = [];
   const server = Bun.serve({
     hostname: "127.0.0.1",
@@ -26,12 +29,16 @@ function startRunApi(statuses: RunStatus[]) {
       }
 
       requestedRunIds.push(match[1]);
-      const status = statuses.shift() ?? "completed";
+      const state = states.shift() ?? {
+        status: "completed",
+        stopReason: "end_turn",
+      };
       return Response.json({
         id: match[1],
         agent_id: "agent-busy-recovery",
         conversation_id: "conv-busy-recovery",
-        status,
+        status: state.status,
+        stop_reason: state.stopReason,
         created_at: "2026-09-21T00:00:00.000Z",
         metadata: {},
       });
@@ -54,7 +61,10 @@ function startRunApi(statuses: RunStatus[]) {
 
 describe("TUI blocking-run wait", () => {
   test("polls a real Core API request boundary until the blocker settles", async () => {
-    const requestedRunIds = startRunApi(["running", "completed"]);
+    const requestedRunIds = startRunApi([
+      { status: "running" },
+      { status: "completed", stopReason: "end_turn" },
+    ]);
     await expect(
       waitForBlockingRunToSettle("run-blocker", undefined, 0),
     ).resolves.toBe("settled");
@@ -62,8 +72,22 @@ describe("TUI blocking-run wait", () => {
     expect(requestedRunIds).toEqual(["run-blocker", "run-blocker"]);
   });
 
+  test("keeps a completed blocker pending when it requires approval", async () => {
+    const requestedRunIds = startRunApi([
+      { status: "completed", stopReason: "requires_approval" },
+    ]);
+
+    await expect(
+      waitForBlockingRunToSettle("run-awaiting-approval", undefined, 0),
+    ).resolves.toBe("requires_approval");
+    expect(requestedRunIds).toEqual(["run-awaiting-approval"]);
+  });
+
   test("cancels an active blocker wait without another polling request", async () => {
-    const requestedRunIds = startRunApi(["running", "running"]);
+    const requestedRunIds = startRunApi([
+      { status: "running" },
+      { status: "running" },
+    ]);
     const controller = new AbortController();
     const waiting = waitForBlockingRunToSettle(
       "run-long-blocker",

@@ -31,7 +31,7 @@ function isBlockingRunActive(status: unknown): boolean {
   return typeof status === "string" && ACTIVE_BLOCKING_RUN_STATUSES.has(status);
 }
 
-async function sleepWithAbort(
+export async function sleepWithAbort(
   delayMs: number,
   abortSignal?: AbortSignal,
 ): Promise<void> {
@@ -55,7 +55,7 @@ export async function waitForBlockingRunToSettle(
   runId: string,
   abortSignal?: AbortSignal,
   pollIntervalMs = BUSY_RUN_POLL_INTERVAL_MS,
-): Promise<"settled" | "unavailable"> {
+): Promise<"settled" | "requires_approval" | "unavailable"> {
   while (true) {
     if (abortSignal?.aborted) throw abortSignal.reason;
 
@@ -76,7 +76,11 @@ export async function waitForBlockingRunToSettle(
       return "unavailable";
     }
 
-    if (!isBlockingRunActive(run.status)) return "settled";
+    if (!isBlockingRunActive(run.status)) {
+      return run.stop_reason === "requires_approval"
+        ? "requires_approval"
+        : "settled";
+    }
     await sleepWithAbort(pollIntervalMs, abortSignal);
   }
 }

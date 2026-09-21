@@ -120,6 +120,7 @@ import { debugLog, debugWarn, isDebugEnabled } from "@/utils/debug";
 import type { QueuedMessage } from "@/utils/message-queue-bridge";
 import {
   showBusyWaitStatus,
+  sleepWithAbort,
   waitForBlockingRunToSettle,
 } from "./busy-run-recovery";
 import {
@@ -746,6 +747,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         }
 
         let streamSequenceCursor: StreamSequenceCursor | null = null;
+        let waitingForExternalBlocker = false;
 
         while (true) {
           const signal = abortControllerRef.current?.signal;
@@ -840,9 +842,30 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               },
             );
 
-            // Resolve stale approval conflict: fetch real pending approvals, auto-deny, retry.
-            // Shares llmApiErrorRetriesRef budget with LLM transient-error retries (max 3 per turn).
-            // Resets on each processConversation entry and on success.
+            // After a named blocker, approval state belongs to that external turn.
+            // Never auto-deny its tools while retrying this still-unadmitted prompt.
+            if (
+              waitingForExternalBlocker &&
+              preStreamAction === "resolve_approval_pending"
+            ) {
+              const clearWaitStatus = showBusyWaitStatus(
+                buffersRef.current,
+                "Conversation is busy; waiting for the blocking turn's approval. Press Esc to cancel.",
+                refreshDerived,
+              );
+              try {
+                await sleepWithAbort(5000, signal);
+              } catch (waitError) {
+                if (signal?.aborted || userCancelledRef.current) return;
+                throw waitError;
+              } finally {
+                clearWaitStatus();
+              }
+              continue;
+            }
+
+            // Resolve stale approval conflict only when this prompt has not observed
+            // another owner's blocking run. Shares the transient retry budget.
             if (
               shouldAttemptApprovalRecovery({
                 approvalPendingDetected:
@@ -911,12 +934,16 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               // attach this rejected prompt to that run: wait for it to settle,
               // then retry the original input with its original OTIDs and options.
               if (blockingRunId) {
+                waitingForExternalBlocker = true;
                 const clearWaitStatus = showBusyWaitStatus(
                   buffersRef.current,
                   `Conversation is busy; waiting for run ${blockingRunId} to finish. Press Esc to cancel.`,
                   refreshDerived,
                 );
-                let waitResult: "settled" | "unavailable" = "unavailable";
+                let waitResult:
+                  | "settled"
+                  | "requires_approval"
+                  | "unavailable" = "unavailable";
                 try {
                   waitResult = await waitForBlockingRunToSettle(
                     blockingRunId,
@@ -930,6 +957,24 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 }
 
                 if (waitResult === "settled") {
+                  buffersRef.current.interrupted = false;
+                  restorePinnedPermissionMode();
+                  continue;
+                }
+                if (waitResult === "requires_approval") {
+                  const clearApprovalStatus = showBusyWaitStatus(
+                    buffersRef.current,
+                    "Conversation is busy; waiting for the blocking turn's approval. Press Esc to cancel.",
+                    refreshDerived,
+                  );
+                  try {
+                    await sleepWithAbort(5000, signal);
+                  } catch (waitError) {
+                    if (signal?.aborted || userCancelledRef.current) return;
+                    throw waitError;
+                  } finally {
+                    clearApprovalStatus();
+                  }
                   buffersRef.current.interrupted = false;
                   restorePinnedPermissionMode();
                   continue;
