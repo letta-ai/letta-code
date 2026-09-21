@@ -713,11 +713,13 @@ describe("TUI interrupt queue lifecycle", () => {
     }
   }, 15_000);
 
-  test("a parked local draft does not deadlock conversation handoff", async () => {
+  test("direct resume drains paused scoped input before handoff", async () => {
     setConfiguredBackendMode("api");
+    const lifecycle: string[] = [];
     const ownerOptions: StartLocalSessionOwnerOptions[] = [];
     __testSetLocalSessionOwnerStarter(async (options) => {
       ownerOptions.push(options);
+      lifecycle.push(`start:${options.conversationId}`);
       return {
         ready: async () => true,
         forceStop() {},
@@ -725,18 +727,16 @@ describe("TUI interrupt queue lifecycle", () => {
         resumeAdmission() {},
         async release() {
           await options.waitForAcceptedInputs?.();
+          lifecycle.push(`release:${options.conversationId}`);
           return true;
         },
       };
     });
-    const inputs: HeadlessTurnExecutorInput[] = [];
-    const rendered = await renderTestApp({
-      async execute(input) {
-        inputs.push(input);
-        return createAssistantMessageStream();
-      },
-    });
+    const executor = new DelayedInterruptExecutor();
+    const rendered = await renderTestApp(executor);
     await waitFor(() => ownerOptions.length === 1, "initial owner");
+    await typePrompt(rendered.stdin, "active turn before direct resume");
+    await waitFor(() => executor.inputs.length === 1, "active turn");
     const firstOwner = ownerOptions[0];
     if (!firstOwner) throw new Error("Missing owner options");
     firstOwner.queueRuntime.enqueue({
@@ -744,29 +744,43 @@ describe("TUI interrupt queue lifecycle", () => {
       source: "user",
       content: "keep this parked draft",
     } as Parameters<typeof firstOwner.queueRuntime.enqueue>[0]);
-    expect(firstOwner.queueRuntime.pause()).toBe(1);
+    firstOwner.queueRuntime.enqueue({
+      kind: "message",
+      source: "user",
+      content: "run scoped A before handoff",
+      agentId: "agent-tui-interrupt-queue",
+      conversationId: rendered.conversationId,
+      noCoalesce: true,
+    } as Parameters<typeof firstOwner.queueRuntime.enqueue>[0]);
     firstOwner.onQueueChanged();
+    rendered.stdin.push("\u001b");
+    await executor.abortObserved;
+    await waitFor(() => firstOwner.queueRuntime.pausedCount === 2, "Esc pause");
 
     const secondConversation = await rendered.backend.createConversation({
       agent_id: "agent-tui-interrupt-queue",
     });
-    rendered.instance.rerender(
-      <App
-        agentId="agent-tui-interrupt-queue"
-        agentState={rendered.agentState}
-        conversationId={secondConversation.id}
-        modsDisabled
-        systemInfoReminderEnabled={false}
-      />,
-    );
+    await typePrompt(rendered.stdin, `/resume ${secondConversation.id}`);
+    expect(ownerOptions).toHaveLength(1);
+    executor.settleInterruptedTurn();
+    await waitFor(() => executor.inputs.length === 2, "scoped A input");
     await waitFor(() => ownerOptions.length === 2, "new conversation owner");
+    expect(executor.inputs[1]?.conversationId).toBe(rendered.conversationId);
+    expect(JSON.stringify(executor.inputs[1]?.body)).toContain(
+      "run scoped A before handoff",
+    );
+    expect(JSON.stringify(executor.inputs)).not.toContain(
+      "keep this parked draft",
+    );
     expect(firstOwner.queueRuntime.peek()).toMatchObject([
       {
         content: "keep this parked draft",
         paused: true,
       },
     ]);
-    expect(inputs).toHaveLength(0);
+    expect(
+      lifecycle.indexOf(`release:${rendered.conversationId}`),
+    ).toBeLessThan(lifecycle.indexOf(`start:${secondConversation.id}`));
   }, 15_000);
 
   test("agent creation keeps the old backend until accepted input drains", async () => {
@@ -806,7 +820,6 @@ describe("TUI interrupt queue lifecycle", () => {
     rendered.stdin.push("N");
     await sleep(200);
     await typePrompt(rendered.stdin, "new backend agent");
-
     await waitFor(
       () => executionModes.length === 1,
       "old-scope accepted input",
@@ -848,12 +861,10 @@ describe("TUI interrupt queue lifecycle", () => {
   test("an idle Monitor notification starts an agent turn without user input", async () => {
     const executor = new DelayedInterruptExecutor();
     await renderTestApp(executor);
-
     addToMessageQueue({
       kind: "task_notification",
       text: monitorNotification("idle monitor completion"),
     });
-
     await waitFor(() => executor.inputs.length === 1, "the notification turn");
     expect(JSON.stringify(executor.inputs[0]?.body)).toContain(
       "idle monitor completion",
@@ -864,10 +875,8 @@ describe("TUI interrupt queue lifecycle", () => {
   test("typed prompt, notification queued, Esc: the Monitor survives and notifications drain after cancellation", async () => {
     const executor = new DelayedInterruptExecutor();
     const { stdin } = await renderTestApp(executor);
-
     await typePrompt(stdin, "start turn");
     await waitFor(() => executor.inputs.length === 1, "the typed initial turn");
-
     const input = executor.inputs[0];
     if (!input) throw new Error("Missing first turn");
     const source = await startMonitor(input);
@@ -881,10 +890,8 @@ describe("TUI interrupt queue lifecycle", () => {
     await executor.abortObserved;
     expect(source.isClosed()).toBe(false);
     expect(source.state.status).toBe("running");
-
     await sleep(100);
     expect(executor.inputs).toHaveLength(1);
-
     executor.settleInterruptedTurn();
     await waitFor(
       () => executor.inputs.length === 2,
@@ -893,7 +900,6 @@ describe("TUI interrupt queue lifecycle", () => {
     const nextTurn = JSON.stringify(executor.inputs[1]?.body);
     expect(nextTurn).toContain("queued before Esc");
     expect(nextTurn).not.toContain("Any pending monitors");
-
     source.socket.send("still watching after active Esc");
     await waitFor(
       () => executor.inputs.length === 3,
@@ -908,15 +914,12 @@ describe("TUI interrupt queue lifecycle", () => {
   test("typed prompt, Esc, then a notification that arrives after cancellation settled", async () => {
     const executor = new DelayedInterruptExecutor();
     const { stdin } = await renderTestApp(executor);
-
     await typePrompt(stdin, "start turn");
     await waitFor(() => executor.inputs.length === 1, "the typed initial turn");
-
     stdin.push("\u001b");
     await executor.abortObserved;
     executor.settleInterruptedTurn();
     await sleep(200);
-
     addToMessageQueue({
       kind: "task_notification",
       text: monitorNotification("arrived after Esc"),
@@ -935,14 +938,12 @@ describe("TUI interrupt queue lifecycle", () => {
     async (resumeWith) => {
       const executor = new DelayedInterruptExecutor();
       const { stdin } = await renderTestApp(executor);
-
       await typePrompt(stdin, "start turn");
       await waitFor(
         () => executor.inputs.length === 1,
         "the typed initial turn",
       );
       addToMessageQueue({ kind: "user", text: "queued while busy" });
-
       addToMessageQueue(
         resumeWith === "cron event"
           ? { kind: "user", source: "cron", text: "scheduled event" }
@@ -954,7 +955,6 @@ describe("TUI interrupt queue lifecycle", () => {
       stdin.push("\u001b");
       await executor.abortObserved;
       executor.settleInterruptedTurn();
-
       await waitFor(
         () => executor.inputs.length === 2,
         "the notification turn after Esc",
@@ -966,7 +966,6 @@ describe("TUI interrupt queue lifecycle", () => {
       expect(notificationTurn).not.toContain("queued while busy");
       await sleep(300);
       expect(executor.inputs).toHaveLength(2);
-
       if (resumeWith !== "new message") {
         stdin.push("\r");
       } else {

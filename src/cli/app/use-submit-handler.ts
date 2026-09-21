@@ -45,7 +45,7 @@ import {
 } from "@/cli/commands/mods";
 import type { CommandHandle } from "@/cli/commands/runner";
 import { validateAgentName } from "@/cli/components/PinDialog";
-import { type Buffers, type Line, toLines } from "@/cli/helpers/accumulator";
+import { type Buffers, toLines } from "@/cli/helpers/accumulator";
 import { buildChatUrl, isLocalAgentId } from "@/cli/helpers/app-urls";
 import {
   CHDIR_USAGE,
@@ -163,7 +163,7 @@ import type {
   ActiveOverlay,
   AppCommandRunner,
   ProcessConversation,
-  StaticItem,
+  QueuedOverlayAction,
 } from "./types";
 
 type BashCommandCacheEntry = {
@@ -206,7 +206,6 @@ type SubmitHandlerContext = {
   agentIdRef: MutableRefObject<string>;
   agentLastRunAt: string | null;
   agentName: string | null;
-  agentState: AgentState | null | undefined;
   agentStateRef: MutableRefObject<AgentState | null | undefined>;
   appendTaskNotificationEvents: (summaries: string[]) => boolean;
   bashCommandCacheRef: MutableRefObject<BashCommandCacheEntry[]>;
@@ -228,7 +227,6 @@ type SubmitHandlerContext = {
   currentModelLabel: string | null;
   currentModelProvider: string | null;
   effectiveContextWindowSize: number | undefined;
-  emittedIdsRef: MutableRefObject<Set<string>>;
   modAdapter: LocalModAdapter;
   firstUserQueryRef: MutableRefObject<string | null>;
   flushPendingReasoningEffort: () => Promise<void>;
@@ -246,7 +244,6 @@ type SubmitHandlerContext = {
   ) => Promise<void>;
   handleBtwCommand: (question: string) => Promise<void>;
   handleExit: () => Promise<void>;
-  hasBackfilledRef: MutableRefObject<boolean>;
   isAgentBusy: () => boolean;
   isExecutingTool: boolean;
   llmConfigRef: MutableRefObject<LlmConfig | null>;
@@ -266,13 +263,8 @@ type SubmitHandlerContext = {
   queuedApprovalResults: ApprovalResult[] | null;
   queuedSystemPromptRecompileByConversationRef: MutableRefObject<Set<string>>;
   reasoningTabCycleEnabled: boolean;
-  recoverRestoredPendingApprovals: (
-    approvals: ApprovalRequest[],
-    options?: { notifyOnManualApproval?: boolean },
-  ) => Promise<void>;
   refreshDerived: () => void;
   resetBootstrapReminderState: (pendingConversationBootstrap?: boolean) => void;
-  resetDeferredToolCallCommits: () => void;
   resetPendingReasoningCycle: () => void;
   resetTrajectoryBases: () => void;
   runEndHooks: (reason?: ModConversationCloseReason) => Promise<void>;
@@ -301,7 +293,6 @@ type SubmitHandlerContext = {
   setDequeueEpoch: Dispatch<SetStateAction<number>>;
   setFeedbackPrefill: Dispatch<SetStateAction<string>>;
   setHasConversationModelOverride: (value: boolean) => void;
-  setLines: Dispatch<SetStateAction<Line[]>>;
   setLlmConfig: Dispatch<SetStateAction<LlmConfig | null>>;
   markLocalModelsAvailable: () => void;
   setModelSelectorOptions: Dispatch<SetStateAction<ModelSelectorOptions>>;
@@ -309,6 +300,7 @@ type SubmitHandlerContext = {
   setProfileConfirmPending: Dispatch<
     SetStateAction<ProfileConfirmPending | null>
   >;
+  setQueuedOverlayAction: Dispatch<SetStateAction<QueuedOverlayAction>>;
   setReflectionArenaChoicePending: Dispatch<
     SetStateAction<{
       questions: ReflectionArenaChoiceQuestion[];
@@ -320,8 +312,6 @@ type SubmitHandlerContext = {
   >;
   setReasoningTabCycleEnabled: Dispatch<SetStateAction<boolean>>;
   setSearchQuery: Dispatch<SetStateAction<string>>;
-  setStaticItems: Dispatch<SetStateAction<StaticItem[]>>;
-  setStaticRenderEpoch: Dispatch<SetStateAction<number>>;
   setStreaming: (value: boolean) => void;
   setThinkingMessage: Dispatch<SetStateAction<string>>;
   setTokenStreamingEnabled: Dispatch<SetStateAction<boolean>>;
@@ -480,7 +470,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     agentIdRef,
     agentLastRunAt,
     agentName,
-    agentState,
     agentStateRef,
     appendTaskNotificationEvents,
     bashCommandCacheRef,
@@ -498,7 +487,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     currentModelLabel,
     currentModelProvider,
     effectiveContextWindowSize,
-    emittedIdsRef,
     modAdapter,
     firstUserQueryRef,
     flushPendingReasoningEffort,
@@ -507,7 +495,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     handleAgentSelect,
     handleBtwCommand,
     handleExit,
-    hasBackfilledRef,
     isAgentBusy,
     isExecutingTool,
     llmConfigRef,
@@ -525,10 +512,8 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     queuedApprovalResults,
     queuedSystemPromptRecompileByConversationRef,
     reasoningTabCycleEnabled,
-    recoverRestoredPendingApprovals,
     refreshDerived,
     resetBootstrapReminderState,
-    resetDeferredToolCallCommits,
     resetPendingReasoningCycle,
     resetTrajectoryBases,
     runEndHooks,
@@ -548,18 +533,16 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     setDequeueEpoch,
     setFeedbackPrefill,
     setHasConversationModelOverride,
-    setLines,
     setLlmConfig,
     markLocalModelsAvailable,
     setModelSelectorOptions,
     setNeedsEagerApprovalCheck,
     setProfileConfirmPending,
+    setQueuedOverlayAction,
     setReflectionArenaChoicePending,
     setWorktreeDiffSelectorPending,
     setReasoningTabCycleEnabled,
     setSearchQuery,
-    setStaticItems,
-    setStaticRenderEpoch,
     setStreaming,
     setThinkingMessage,
     setTokenStreamingEnabled,
@@ -2402,27 +2385,11 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
         // Special handling for /agents command - routed through navigation commands.
         const navigationCommandResult = await handleNavigationCommand(trimmed, {
-          agentId,
-          agentState,
-          buffersRef,
           commandRunner,
-          contextTrackerRef,
           conversationId,
-          emittedIdsRef,
-          hasBackfilledRef,
-          pendingConversationSwitchRef,
-          recoverRestoredPendingApprovals,
-          resetBootstrapReminderState,
-          resetDeferredToolCallCommits,
-          resetTrajectoryBases,
           openOverlay,
-          setCommandRunning,
-          setConversationAutoTitleEligibility,
-          setConversationIdAndRef,
-          setLines,
+          setQueuedOverlayAction,
           setSearchQuery,
-          setStaticItems,
-          setStaticRenderEpoch,
         });
         if (navigationCommandResult) {
           return navigationCommandResult;
