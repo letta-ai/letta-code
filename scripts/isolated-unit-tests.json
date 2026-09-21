@@ -1,6 +1,11 @@
 {
   "tests": [
     {
+      "path": "src/tools/impl/workflow.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Spies on the process-global backend, changes HOME and constructs the real SDK client. Its model-resolution cases fail in the shared shard but pass with their own backend instance."
+    },
+    {
       "path": "src/websocket/listener/turn-cleanup-memory-update.e2e.test.ts",
       "timeoutMs": 30000,
       "reason": "Exercises real MemFS Git pushes and listener notifications with isolated HOME, settings, backend, auth environment, and repository-list fetch."
