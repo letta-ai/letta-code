@@ -225,6 +225,26 @@ describe("createSdkSpawner", () => {
     expect(stopped.totalTokens).toBe(700);
   });
 
+  test("reports cumulative usage live through the onUsage hook", async () => {
+    const usage = (total: number) => ({
+      type: "stream_event",
+      event: { message_type: "usage_statistics", total_tokens: total },
+    });
+    const seen: number[] = [];
+    const outcome = await createSdkSpawner(
+      fakeClient([
+        usage(1_000),
+        usage(2_500),
+        { type: "result", success: true, result: "ok" },
+      ]),
+      CONFIG,
+    )(request(), new AbortController().signal, {
+      onUsage: (total) => seen.push(total),
+    });
+    expect(seen).toEqual([1_000, 3_500]);
+    expect(outcome.totalTokens).toBe(3_500);
+  });
+
   test("falls back to streamed assistant text and reports turn failures", async () => {
     const text = await createSdkSpawner(
       fakeClient([

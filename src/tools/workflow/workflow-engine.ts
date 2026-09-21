@@ -132,6 +132,18 @@ export async function executeWorkflow(
       const outcome = await spawner(
         { prompt, options: opts, callIndex },
         signal,
+        {
+          // Live usage so status rows can show tokens before the agent ends.
+          onUsage: (totalTokens) =>
+            emit({
+              kind: "agent",
+              callIndex,
+              label,
+              phase,
+              status: "running",
+              totalTokens,
+            }),
+        },
       );
       // Account for the outcome even when the run was aborted meanwhile: the
       // spawner returns what the interrupted subagent had already consumed.

@@ -34,7 +34,6 @@ interface WorkflowExecutionRecord {
   phases: string[];
   agents: Map<number, WorkflowAgentRecord>;
   logs: string[];
-  totalTokens: number;
 }
 
 export interface WorkflowExecutionSnapshot {
@@ -126,7 +125,6 @@ export function registerWorkflowExecution(params: {
     phases: (params.meta.phases ?? []).map((p) => p.title),
     agents: new Map(),
     logs: [],
-    totalTokens: 0,
   });
   notify();
 }
@@ -157,11 +155,10 @@ export function recordWorkflowProgress(
         status: event.status,
         detail: event.detail,
         durationMs: event.durationMs ?? previous?.durationMs,
+        // Cumulative per agent: a running event carries usage so far, the
+        // terminal event the final figure.
         totalTokens: event.totalTokens ?? previous?.totalTokens,
       });
-      if (event.status === "done" || event.status === "error") {
-        record.totalTokens += event.totalTokens ?? 0;
-      }
       break;
     }
   }
@@ -227,7 +224,7 @@ function snapshot(
     agentsDone: agents.filter((a) => a.status === "done").length,
     agentsFailed: agents.filter((a) => a.status === "error").length,
     agentsRunning: agents.filter((a) => a.status === "running").length,
-    totalTokens: record.totalTokens,
+    totalTokens: agents.reduce((sum, a) => sum + (a.totalTokens ?? 0), 0),
     phases: phaseOrder.map((title) => ({
       title,
       agents: byPhase.get(title) ?? [],
