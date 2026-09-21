@@ -48,8 +48,17 @@ describe("app-server info protocol", () => {
         runtime_start: true,
         runtime_workspace_sandbox: true,
         runtime_external_tools_update: true,
+        structured_outputs: false,
         split_channels: false,
       },
     });
+  });
+
+  test("advertises structured outputs only for the API backend", () => {
+    const response = buildAppServerInfoResponse(
+      { type: "app_server_info", request_id: "info-api" },
+      { backend: "api", version: "0.32.14" },
+    );
+    expect(response.capabilities.structured_outputs).toBe(true);
   });
 });
