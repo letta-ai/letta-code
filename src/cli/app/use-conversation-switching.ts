@@ -85,6 +85,11 @@ type ConversationSwitchingContext = {
   modAdapter: LocalModAdapter;
   hasBackfilledRef: MutableRefObject<boolean>;
   isAgentBusy: () => boolean;
+  hasAcceptedLocalSessionInput: () => boolean;
+  stopLocalSessionAdmission: () => void;
+  resumeLocalSessionAdmission: () => void;
+  waitForLocalSessionTurnBoundary: () => Promise<void>;
+  releaseLocalSessionOwner: () => Promise<boolean>;
   maybeCarryOverActiveConversationModel: (
     targetConversationId: string,
   ) => Promise<void>;
@@ -144,6 +149,11 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
     modAdapter,
     hasBackfilledRef,
     isAgentBusy,
+    hasAcceptedLocalSessionInput,
+    stopLocalSessionAdmission,
+    resumeLocalSessionAdmission,
+    waitForLocalSessionTurnBoundary,
+    releaseLocalSessionOwner,
     maybeCarryOverActiveConversationModel,
     pendingConversationSwitchRef,
     prepareScopedToolExecutionContext,
@@ -334,6 +344,16 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
     async (conversationId: string) => {
       debugLog("btw", "jump to conversationId=%s", conversationId);
 
+      stopLocalSessionAdmission();
+      if (hasAcceptedLocalSessionInput()) {
+        setQueuedOverlayAction({
+          type: "switch_conversation",
+          conversationId,
+        });
+        return;
+      }
+      let releasedLocalSessionOwner = false;
+
       // Clear btw state
       setBtwState({ status: "idle" });
 
@@ -370,6 +390,9 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         );
 
         await maybeCarryOverActiveConversationModel(conversationId);
+        await waitForLocalSessionTurnBoundary();
+        await releaseLocalSessionOwner();
+        releasedLocalSessionOwner = true;
         setConversationIdAndRef(conversationId);
         setConversationAutoTitleEligibility(false);
         setConversationSummary(null);
@@ -453,6 +476,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
           userCancelledRef.current = false;
         }, 50);
       } catch (error) {
+        if (!releasedLocalSessionOwner) resumeLocalSessionAdmission();
         debugWarn("btw", "failed to jump to conversation: %s", error);
         setCommandRunning(false);
         userCancelledRef.current = false;
@@ -482,6 +506,12 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
       sessionHooksRanRef,
       sessionStartFeedbackRef,
       setBtwState,
+      hasAcceptedLocalSessionInput,
+      stopLocalSessionAdmission,
+      resumeLocalSessionAdmission,
+      waitForLocalSessionTurnBoundary,
+      releaseLocalSessionOwner,
+      setQueuedOverlayAction,
       setInterruptRequested,
       setIsExecutingTool,
       setLines,
@@ -520,11 +550,13 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         return;
       }
 
+      stopLocalSessionAdmission();
+
       // Drop any pending reasoning-tier debounce before switching contexts.
       resetPendingReasoningCycle();
 
       // If agent is busy, queue the switch for after end_turn
-      if (isAgentBusy()) {
+      if (isAgentBusy() || hasAcceptedLocalSessionInput()) {
         const cmd =
           overlayCommand ??
           commandRunner.start(
@@ -539,6 +571,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         setQueuedOverlayAction({
           type: "switch_agent",
           agentId: targetAgentId,
+          conversationId: opts?.conversationId,
           commandId: cmd.id,
           backendMode: opts?.backendMode,
         });
@@ -556,6 +589,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
       // Track previous backend mode for rollback on failure
       const previousBackendMode = isLocalBackendEnabled() ? "local" : "api";
       let didSwitchBackend = false;
+      let releasedLocalSessionOwner = false;
 
       try {
         // Switch backend if the target agent belongs to a different backend
@@ -581,6 +615,9 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
 
         // Save the session (agent + conversation) to settings
         settingsManager.persistSession(targetAgentId, targetConversationId);
+
+        await releaseLocalSessionOwner();
+        releasedLocalSessionOwner = true;
 
         // Clear current transcript and static items
         buffersRef.current.byId.clear();
@@ -656,6 +693,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         setStaticItems([separator]);
         cmd.finish(successOutput, true);
       } catch (error) {
+        if (!releasedLocalSessionOwner) resumeLocalSessionAdmission();
         // Rollback backend mode if we switched before the failure
         if (didSwitchBackend) {
           configureBackendMode(previousBackendMode);
@@ -673,6 +711,10 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
       consumeOverlayCommand,
       setCommandRunning,
       isAgentBusy,
+      hasAcceptedLocalSessionInput,
+      stopLocalSessionAdmission,
+      resumeLocalSessionAdmission,
+      releaseLocalSessionOwner,
       resetDeferredToolCallCommits,
       resetTrajectoryBases,
       resetBootstrapReminderState,
@@ -713,8 +755,28 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
 
       const previousBackendMode = isLocalBackendEnabled() ? "local" : "api";
       let didSwitchBackend = false;
+      let releasedLocalSessionOwner = false;
 
       try {
+        // Backend selection is part of the execution scope. Close Cloud
+        // admission and drain anything already accepted before configuring a
+        // target backend for creation; otherwise old-scope input can execute
+        // through the new backend.
+        stopLocalSessionAdmission();
+        if (hasAcceptedLocalSessionInput()) {
+          setQueuedOverlayAction({
+            type: "create_agent",
+            name,
+            commandId: cmd.id,
+            backendMode: opts?.backendMode,
+          });
+          cmd.update({
+            output: `Creating agent "${name}" after accepted messages finish...`,
+            phase: "running",
+          });
+          return;
+        }
+
         if (opts?.backendMode && opts.backendMode !== previousBackendMode) {
           configureBackendMode(opts.backendMode);
           didSwitchBackend = true;
@@ -772,6 +834,9 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         // a previous agent's non-default conversation id.
         const targetConversationId = "default";
         settingsManager.persistSession(agent.id, targetConversationId);
+
+        await releaseLocalSessionOwner();
+        releasedLocalSessionOwner = true;
 
         // Build success message with hints
         const agentUrl = buildAgentReference(agent.id);
@@ -834,6 +899,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         setStaticItems([separator]);
         cmd.finish(successOutput, true);
       } catch (error) {
+        if (!releasedLocalSessionOwner) resumeLocalSessionAdmission();
         if (didSwitchBackend) {
           configureBackendMode(previousBackendMode);
         }
@@ -848,6 +914,10 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
       commandRunner,
       currentModelHandle,
       currentModelId,
+      hasAcceptedLocalSessionInput,
+      stopLocalSessionAdmission,
+      resumeLocalSessionAdmission,
+      releaseLocalSessionOwner,
       setCommandRunning,
       resetDeferredToolCallCommits,
       resetTrajectoryBases,

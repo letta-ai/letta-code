@@ -15,4 +15,5 @@ export {
   startListenerClient,
   startLocalChannelListener,
   stopListenerClient,
+  stopListenerRuntime,
 } from "./listener/client";

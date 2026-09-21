@@ -7,8 +7,20 @@ import type {
   QueueItemSource,
 } from "@/types/protocol";
 import { isDebugEnabled } from "@/utils/debug";
+import type { IncomingMessage } from "@/websocket/listener/types";
 
 export type { QueueBlockedReason, QueueClearedReason, QueueItemKind };
+
+export type OwnerTurnRequest = Pick<
+  IncomingMessage,
+  | "messages"
+  | "imageFailureMode"
+  | "clientToolAllowlist"
+  | "clientToolset"
+  | "externalToolScopeIds"
+  | "excludeInteractiveTools"
+  | "responseFormat"
+>;
 
 // ── Item types ───────────────────────────────────────────────────
 
@@ -54,6 +66,8 @@ export type MessageQueueItem = QueueItemBase & {
    * run as its own turn so its correlated client request can settle.
    */
   noCoalesce?: boolean;
+  /** Full owner-delivered turn, retained for the TUI's existing executor. */
+  ownerRequest?: OwnerTurnRequest;
 };
 
 export type TaskNotificationQueueItem = QueueItemBase & {
@@ -106,10 +120,18 @@ export function isCoalescable(kind: QueueItemKind): boolean {
   );
 }
 
+function preventsCoalescing(item: {
+  kind: QueueItemKind;
+  noCoalesce?: boolean;
+}): boolean {
+  return item.noCoalesce === true;
+}
+
 function hasSameScope(a: QueueItem, b: QueueItem): boolean {
   return (
     (a.agentId ?? null) === (b.agentId ?? null) &&
-    (a.conversationId ?? null) === (b.conversationId ?? null)
+    (a.conversationId ?? null) === (b.conversationId ?? null) &&
+    (a.actingUserId ?? null) === (b.actingUserId ?? null)
   );
 }
 
@@ -229,8 +251,14 @@ export class QueueRuntime {
     }
 
     // Soft limit: only drop coalescable items
-    if (this.store.length >= this.maxItems && isCoalescable(input.kind)) {
-      const dropIdx = this.store.findIndex((i) => isCoalescable(i.kind));
+    if (
+      this.store.length >= this.maxItems &&
+      isCoalescable(input.kind) &&
+      !preventsCoalescing(input)
+    ) {
+      const dropIdx = this.store.findIndex(
+        (item) => isCoalescable(item.kind) && !preventsCoalescing(item),
+      );
       const dropped =
         dropIdx !== -1 ? this.store.splice(dropIdx, 1)[0] : undefined;
       if (dropped !== undefined) {
@@ -309,7 +337,14 @@ export class QueueRuntime {
     if (first && isCoalescable(first.kind)) {
       for (const item of this.store) {
         if (item.paused) continue;
-        if (!isCoalescable(item.kind) || !hasSameScope(first, item)) break;
+        if (
+          !isCoalescable(item.kind) ||
+          !hasSameScope(first, item) ||
+          (batch.length > 0 &&
+            (preventsCoalescing(first) || preventsCoalescing(item)))
+        ) {
+          break;
+        }
         batch.push(item);
       }
     } else if (first) {
@@ -418,11 +453,11 @@ export class QueueRuntime {
     return changed;
   }
 
-  /** Release every paused item. Returns the number of items resumed. */
-  resume(): number {
+  /** Release matching paused items. With no predicate, releases every item. */
+  resume(predicate: (item: QueueItem) => boolean = () => true): number {
     let changed = 0;
     for (const item of this.store) {
-      if (item.paused) {
+      if (item.paused && predicate(item)) {
         delete item.paused;
         changed += 1;
       }
@@ -430,7 +465,7 @@ export class QueueRuntime {
     if (changed > 0) {
       this.lastEmittedBlockedReason = null;
       this.blockedEmittedForNonEmpty = false;
-      this.safeCallback("onPauseChanged", 0, this.store.length);
+      this.safeCallback("onPauseChanged", this.pausedCount, this.store.length);
     }
     return changed;
   }

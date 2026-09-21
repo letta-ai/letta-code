@@ -45,7 +45,7 @@ import {
 } from "@/cli/commands/mods";
 import type { CommandHandle } from "@/cli/commands/runner";
 import { validateAgentName } from "@/cli/components/PinDialog";
-import { type Buffers, type Line, toLines } from "@/cli/helpers/accumulator";
+import { type Buffers, toLines } from "@/cli/helpers/accumulator";
 import { buildChatUrl, isLocalAgentId } from "@/cli/helpers/app-urls";
 import {
   CHDIR_USAGE,
@@ -128,7 +128,7 @@ import {
   runUserPromptSubmitHooks,
 } from "@/hooks";
 import { createModConversationHandle } from "@/mods/conversation-handle";
-import type { QueueRuntime } from "@/queue/queue-runtime";
+import type { OwnerTurnRequest, QueueRuntime } from "@/queue/queue-runtime";
 import {
   buildSharedReminderParts,
   prependReminderPartsToContent,
@@ -163,7 +163,7 @@ import type {
   ActiveOverlay,
   AppCommandRunner,
   ProcessConversation,
-  StaticItem,
+  QueuedOverlayAction,
 } from "./types";
 
 type BashCommandCacheEntry = {
@@ -206,7 +206,6 @@ type SubmitHandlerContext = {
   agentIdRef: MutableRefObject<string>;
   agentLastRunAt: string | null;
   agentName: string | null;
-  agentState: AgentState | null | undefined;
   agentStateRef: MutableRefObject<AgentState | null | undefined>;
   appendTaskNotificationEvents: (summaries: string[]) => boolean;
   bashCommandCacheRef: MutableRefObject<BashCommandCacheEntry[]>;
@@ -228,7 +227,6 @@ type SubmitHandlerContext = {
   currentModelLabel: string | null;
   currentModelProvider: string | null;
   effectiveContextWindowSize: number | undefined;
-  emittedIdsRef: MutableRefObject<Set<string>>;
   modAdapter: LocalModAdapter;
   firstUserQueryRef: MutableRefObject<string | null>;
   flushPendingReasoningEffort: () => Promise<void>;
@@ -246,7 +244,6 @@ type SubmitHandlerContext = {
   ) => Promise<void>;
   handleBtwCommand: (question: string) => Promise<void>;
   handleExit: () => Promise<void>;
-  hasBackfilledRef: MutableRefObject<boolean>;
   isAgentBusy: () => boolean;
   isExecutingTool: boolean;
   llmConfigRef: MutableRefObject<LlmConfig | null>;
@@ -256,6 +253,7 @@ type SubmitHandlerContext = {
   needsEagerApprovalCheck: boolean;
   openTrajectorySegment: () => void;
   overrideContentPartsRef: MutableRefObject<MessageCreate["content"] | null>;
+  ownerRequestRef: MutableRefObject<OwnerTurnRequest | null>;
   pendingApprovals: ApprovalRequest[];
   pendingConversationSwitchRef: MutableRefObject<ConversationSwitchContext | null>;
   pendingGitReminderRef: MutableRefObject<PendingGitReminder | null>;
@@ -266,13 +264,8 @@ type SubmitHandlerContext = {
   queuedApprovalResults: ApprovalResult[] | null;
   queuedSystemPromptRecompileByConversationRef: MutableRefObject<Set<string>>;
   reasoningTabCycleEnabled: boolean;
-  recoverRestoredPendingApprovals: (
-    approvals: ApprovalRequest[],
-    options?: { notifyOnManualApproval?: boolean },
-  ) => Promise<void>;
   refreshDerived: () => void;
   resetBootstrapReminderState: (pendingConversationBootstrap?: boolean) => void;
-  resetDeferredToolCallCommits: () => void;
   resetPendingReasoningCycle: () => void;
   resetTrajectoryBases: () => void;
   runEndHooks: (reason?: ModConversationCloseReason) => Promise<void>;
@@ -301,7 +294,6 @@ type SubmitHandlerContext = {
   setDequeueEpoch: Dispatch<SetStateAction<number>>;
   setFeedbackPrefill: Dispatch<SetStateAction<string>>;
   setHasConversationModelOverride: (value: boolean) => void;
-  setLines: Dispatch<SetStateAction<Line[]>>;
   setLlmConfig: Dispatch<SetStateAction<LlmConfig | null>>;
   markLocalModelsAvailable: () => void;
   setModelSelectorOptions: Dispatch<SetStateAction<ModelSelectorOptions>>;
@@ -309,6 +301,7 @@ type SubmitHandlerContext = {
   setProfileConfirmPending: Dispatch<
     SetStateAction<ProfileConfirmPending | null>
   >;
+  setQueuedOverlayAction: Dispatch<SetStateAction<QueuedOverlayAction>>;
   setReflectionArenaChoicePending: Dispatch<
     SetStateAction<{
       questions: ReflectionArenaChoiceQuestion[];
@@ -320,8 +313,6 @@ type SubmitHandlerContext = {
   >;
   setReasoningTabCycleEnabled: Dispatch<SetStateAction<boolean>>;
   setSearchQuery: Dispatch<SetStateAction<string>>;
-  setStaticItems: Dispatch<SetStateAction<StaticItem[]>>;
-  setStaticRenderEpoch: Dispatch<SetStateAction<number>>;
   setStreaming: (value: boolean) => void;
   setThinkingMessage: Dispatch<SetStateAction<string>>;
   setTokenStreamingEnabled: Dispatch<SetStateAction<boolean>>;
@@ -480,7 +471,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     agentIdRef,
     agentLastRunAt,
     agentName,
-    agentState,
     agentStateRef,
     appendTaskNotificationEvents,
     bashCommandCacheRef,
@@ -498,7 +488,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     currentModelLabel,
     currentModelProvider,
     effectiveContextWindowSize,
-    emittedIdsRef,
     modAdapter,
     firstUserQueryRef,
     flushPendingReasoningEffort,
@@ -507,7 +496,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     handleAgentSelect,
     handleBtwCommand,
     handleExit,
-    hasBackfilledRef,
     isAgentBusy,
     isExecutingTool,
     llmConfigRef,
@@ -515,6 +503,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     needsEagerApprovalCheck,
     openTrajectorySegment,
     overrideContentPartsRef,
+    ownerRequestRef,
     pendingApprovals,
     pendingConversationSwitchRef,
     pendingGitReminderRef,
@@ -525,10 +514,8 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     queuedApprovalResults,
     queuedSystemPromptRecompileByConversationRef,
     reasoningTabCycleEnabled,
-    recoverRestoredPendingApprovals,
     refreshDerived,
     resetBootstrapReminderState,
-    resetDeferredToolCallCommits,
     resetPendingReasoningCycle,
     resetTrajectoryBases,
     runEndHooks,
@@ -548,18 +535,16 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     setDequeueEpoch,
     setFeedbackPrefill,
     setHasConversationModelOverride,
-    setLines,
     setLlmConfig,
     markLocalModelsAvailable,
     setModelSelectorOptions,
     setNeedsEagerApprovalCheck,
     setProfileConfirmPending,
+    setQueuedOverlayAction,
     setReflectionArenaChoicePending,
     setWorktreeDiffSelectorPending,
     setReasoningTabCycleEnabled,
     setSearchQuery,
-    setStaticItems,
-    setStaticRenderEpoch,
     setStreaming,
     setThinkingMessage,
     setTokenStreamingEnabled,
@@ -589,10 +574,12 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       };
       const msg = message?.trim() ?? "";
       const overrideContentParts = overrideContentPartsRef.current;
+      const ownerRequest = ownerRequestRef.current;
       const hasOverrideContent = overrideContentParts !== null;
       if (overrideContentParts) {
         overrideContentPartsRef.current = null;
       }
+      ownerRequestRef.current = null;
       const { notifications: taskNotifications, cleanedText } =
         extractTaskNotificationsForDisplay(msg);
       const userTextForInput = cleanedText.trim();
@@ -638,7 +625,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       await flushPendingReasoningEffort();
 
       // Run UserPromptSubmit hooks - can block the prompt from being processed
-      const isCommand = userTextForInput.startsWith("/");
+      const isCommand = !ownerRequest && userTextForInput.startsWith("/");
       const hookResult = isSystemOnly
         ? { blocked: false, feedback: [] as string[] }
         : await runUserPromptSubmitHooks(
@@ -704,7 +691,8 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       userCancelledRef.current = false;
 
       const isSlashCommand = routedUserText.startsWith("/");
-      const parsedModCommand = isSlashCommand
+      const isActionableSlashCommand = !ownerRequest && isSlashCommand;
+      const parsedModCommand = isActionableSlashCommand
         ? parseModSlashCommand(routedUserText.trim())
         : null;
       const parsedSlashCommandName = parsedModCommand?.command ?? null;
@@ -717,13 +705,13 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       // Interactive/non-state slash commands bypass queueing so menus stay responsive
       // while the agent is busy. Overlay writes are still deferred via queuedOverlayAction.
       const shouldBypassQueue =
-        isSlashCommand &&
+        isActionableSlashCommand &&
         shouldSlashCommandBypassQueue(routedUserText, {
           hasCustomCommand: Boolean(matchedCustomCommand),
           ...(matchedModCommand ? { modCommand: matchedModCommand } : {}),
         });
 
-      if (isAgentBusy() && isSlashCommand && !shouldBypassQueue) {
+      if (isAgentBusy() && isActionableSlashCommand && !shouldBypassQueue) {
         const attemptedCommand = routedUserText.split(/\s+/)[0] || "/";
         const disabledMessage = `'${attemptedCommand}' is disabled while the agent is running.`;
         const cmd = commandRunner.start(routedUserText, disabledMessage);
@@ -749,8 +737,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
       const aliasedMsg = routedUserText;
 
-      // Handle commands (messages starting with "/")
-      if (aliasedMsg.startsWith("/")) {
+      if (!ownerRequest && aliasedMsg.startsWith("/")) {
         const trimmed = aliasedMsg.trim();
 
         // Custom commands and mod commands override built-ins.
@@ -2402,27 +2389,11 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
         // Special handling for /agents command - routed through navigation commands.
         const navigationCommandResult = await handleNavigationCommand(trimmed, {
-          agentId,
-          agentState,
-          buffersRef,
           commandRunner,
-          contextTrackerRef,
           conversationId,
-          emittedIdsRef,
-          hasBackfilledRef,
-          pendingConversationSwitchRef,
-          recoverRestoredPendingApprovals,
-          resetBootstrapReminderState,
-          resetDeferredToolCallCommits,
-          resetTrajectoryBases,
           openOverlay,
-          setCommandRunning,
-          setConversationAutoTitleEligibility,
-          setConversationIdAndRef,
-          setLines,
+          setQueuedOverlayAction,
           setSearchQuery,
-          setStaticItems,
-          setStaticRenderEpoch,
         });
         if (navigationCommandResult) {
           return navigationCommandResult;
@@ -3541,15 +3512,8 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         }
       }
 
-      // Build message content from display value (handles placeholders for text/images)
       const contentParts =
         overrideContentParts ?? buildMessageContentFromDisplay(msg);
-
-      // Append the optimistic user message and trigger a render immediately —
-      // before any async work (reminder building, hooks, etc.) so the user
-      // sees their message appear without delay. Ink uses React legacy mode
-      // which doesn't auto-batch async state updates, so we do this synchronously
-      // while still inside the React event handler to get a single render cycle.
       const userOtid = createClientOtid();
       const optimisticUserLineId = appendOptimisticUserLine(
         buffersRef.current,
@@ -3568,15 +3532,11 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       openTrajectorySegment();
       refreshDerived();
 
-      // Inject SessionStart hook feedback (stdout on exit 2) into first message only
       let sessionStartHookFeedback = "";
       if (sessionStartFeedbackRef.current.length > 0) {
         sessionStartHookFeedback = `${SYSTEM_REMINDER_OPEN}\n[SessionStart hook context]:\n${sessionStartFeedbackRef.current.join("\n")}\n${SYSTEM_REMINDER_CLOSE}\n\n`;
-        // Clear after injecting so it only happens once
         sessionStartFeedbackRef.current = [];
       }
-
-      // Build bash command prefix if there are cached commands
       let bashCommandPrefix = "";
       if (bashCommandCacheRef.current.length > 0) {
         bashCommandPrefix = `${SYSTEM_REMINDER_OPEN}
@@ -3587,11 +3547,9 @@ ${SYSTEM_REMINDER_CLOSE}
         for (const cmd of bashCommandCacheRef.current) {
           bashCommandPrefix += `<bash-input>${cmd.input}</bash-input>\n<bash-output>${cmd.output}</bash-output>\n`;
         }
-        // Clear the cache after building the prefix
         bashCommandCacheRef.current = [];
       }
 
-      // Build git memory sync reminder if uncommitted changes or unpushed commits
       let memoryGitReminder = "";
       const gitStatus = pendingGitReminderRef.current;
       if (gitStatus) {
@@ -3610,7 +3568,6 @@ ${syncInstructions}
 You should do this soon to avoid losing memory updates. It only takes a few seconds.
 ${SYSTEM_REMINDER_CLOSE}
 `;
-        // Clear after injecting so it doesn't repeat
         pendingGitReminderRef.current = null;
       }
 
@@ -3716,8 +3673,6 @@ ${SYSTEM_REMINDER_CLOSE}
         }
       }
 
-      // Start the conversation loop. If we have queued approval results from an interrupted
-      // client-side execution, send them first before the new user message.
       const initialInput: Array<MessageCreate | ApprovalCreate> = [];
 
       if (eagerRecoveryDenials && eagerRecoveryDenials.length > 0) {
@@ -3734,16 +3689,25 @@ ${SYSTEM_REMINDER_CLOSE}
         initialInput.push(queuedApprovalInput);
       }
 
-      initialInput.push({
-        type: "message",
-        role: "user",
-        content: messageContent as unknown as MessageCreate["content"],
-        otid: userOtid,
-      });
+      if (ownerRequest) {
+        initialInput.push(
+          ...ownerRequest.messages.map((input) =>
+            "content" in input ? { type: "message" as const, ...input } : input,
+          ),
+        );
+      } else {
+        initialInput.push({
+          type: "message",
+          role: "user",
+          content: messageContent as unknown as MessageCreate["content"],
+          otid: userOtid,
+        });
+      }
 
       await processConversation(initialInput, {
         submissionGeneration,
         transcriptStartLineIndex,
+        ownerRequest: ownerRequest ?? undefined,
       });
 
       await runPostTurnMemorySync({
@@ -3757,7 +3721,6 @@ ${SYSTEM_REMINDER_CLOSE}
         },
       });
 
-      // Clean up placeholders after submission
       clearPlaceholdersInText(msg);
 
       return { submitted: true };

@@ -484,6 +484,105 @@ describe("listener message router ownership handoff", () => {
     );
   });
 
+  test("busy owned input bypasses the standalone queue pump", async () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const socket = new MockSocket();
+    const sent: unknown[] = [];
+    const draft = runtime.queueRuntime.enqueue({
+      kind: "message",
+      source: "user",
+      content: "keep local draft parked",
+    } as Parameters<typeof runtime.queueRuntime.enqueue>[0]);
+    runtime.queueRuntime.pause();
+    const acceptInput = mock((incoming: IncomingMessage) => {
+      const payload = incoming.messages.find((item) => "content" in item);
+      if (!payload || !("content" in payload)) return false;
+      runtime.queueRuntime.enqueue({
+        kind: "message",
+        source: "user",
+        content: payload.content,
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        noCoalesce: true,
+      } as Parameters<typeof runtime.queueRuntime.enqueue>[0]);
+      runtime.queueRuntime.resume(
+        (item) =>
+          item.agentId === "agent-1" && item.conversationId === "conv-1",
+      );
+      return true;
+    });
+    const processQueuedTurn = mock(async () => {});
+    const opts: StartListenerOptions = {
+      ...makeListenerOptions(),
+      localSessionOwner: {
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        queueRuntime: runtime.queueRuntime,
+        acceptInput,
+        abort: () => false,
+      },
+    };
+    setActiveRuntime(listener);
+    const handleMessage = createListenerMessageHandler({
+      runtime: listener,
+      socket: socket as unknown as WebSocket,
+      opts,
+      processQueuedTurn,
+      fileCommandSession: { handle: () => false },
+      getParsedRuntimeScope: () => null,
+      replaySyncStateForRuntime: async () => {},
+      getOrCreateScopedRuntime: () => runtime,
+      handleApprovalResponseInput: async () => false,
+      handleChangeDeviceStateInput: async () => false,
+      handleAbortMessageInput: async () => false,
+      stampInboundUserMessageOtids: (incoming) => incoming,
+      safeSocketSend: (_target, payload) => {
+        sent.push(payload);
+        return true;
+      },
+      runDetachedListenerTask: () => {},
+      trackListenerError: () => {},
+      processIncomingMessage: async () => {},
+    });
+
+    await handleMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          request_id: "owned-busy",
+          runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+          payload: {
+            kind: "create_message",
+            messages: [
+              {
+                role: "user",
+                content: "owner follow-up",
+                client_message_id: "cm-owned-busy",
+              },
+            ],
+          },
+        }),
+      ),
+    );
+    await runtime.messageQueue;
+
+    expect(acceptInput).toHaveBeenCalledTimes(1);
+    expect(processQueuedTurn).not.toHaveBeenCalled();
+    expect(runtime.queuedMessagesByItemId.size).toBe(0);
+    expect(
+      runtime.queueRuntime.peek().find((item) => item.id === draft?.id),
+    ).toMatchObject({ paused: true });
+    expect(sent).toContainEqual(
+      expect.objectContaining({
+        type: "input_accepted",
+        request_id: "owned-busy",
+        accepted: true,
+        disposition: "queued",
+      }),
+    );
+  });
+
   test("rejects an invalid response format through input_accepted", async () => {
     const listener = createRuntime();
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");

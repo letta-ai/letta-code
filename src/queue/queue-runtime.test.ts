@@ -16,6 +16,8 @@ function makeScopedMsg(params: {
   text?: string;
   agentId?: string;
   conversationId?: string;
+  actingUserId?: string;
+  noCoalesce?: boolean;
 }): Omit<MessageQueueItem, "id" | "enqueuedAt"> {
   return {
     kind: "message",
@@ -23,6 +25,8 @@ function makeScopedMsg(params: {
     content: params.text ?? "hello",
     agentId: params.agentId,
     conversationId: params.conversationId,
+    actingUserId: params.actingUserId,
+    noCoalesce: params.noCoalesce,
   };
 }
 
@@ -129,6 +133,32 @@ describe("bounded buffer — soft limit", () => {
     q.enqueue(makeApproval()); // another barrier — soft limit exceeded, not dropped
     expect(dropped).toHaveLength(0);
     expect(q.length).toBe(2);
+  });
+
+  test("noCoalesce owner input survives ordinary and owner arrivals", () => {
+    const dropped: QueueItem[] = [];
+    const q = new QueueRuntime({
+      maxItems: 1,
+      hardMaxItems: 3,
+      callbacks: { onDropped: (item) => dropped.push(item) },
+    });
+    const ownerA = q.enqueue(
+      makeScopedMsg({ text: "owner A", noCoalesce: true }),
+    );
+    if (!ownerA) throw new Error("owner A was not enqueued");
+    q.enqueue(makeMsg("local follow-up"));
+    q.enqueue(makeScopedMsg({ text: "owner B", noCoalesce: true }));
+
+    expect(dropped).toHaveLength(0);
+    expect(q.peek().map((item) => item.id)).toContain(ownerA.id);
+    expect(q.peek().map((item) => (item as MessageQueueItem).content)).toEqual([
+      "owner A",
+      "local follow-up",
+      "owner B",
+    ]);
+    expect(
+      q.enqueue(makeScopedMsg({ text: "hard reject", noCoalesce: true })),
+    ).toBeNull();
   });
 
   test("coalescable drop resumes when new coalescable arrives at capacity", () => {
@@ -264,25 +294,31 @@ describe("dequeue coalescable items", () => {
     expect(q.length).toBe(0);
   });
 
-  test("dequeues different acting users in arrival order without author gating", () => {
+  test("does not coalesce items from different acting users", () => {
     const q = new QueueRuntime();
     q.enqueue(makeTask("unattributed"));
     q.enqueue({ ...makeTask("a"), actingUserId: "cloud-user-a" });
     q.enqueue({ ...makeTask("b"), actingUserId: "cloud-user-b" });
 
-    const first = q.tryDequeue(null);
-    const second = q.tryDequeue(null);
-
-    expect(
-      first?.items.map((item) => ("text" in item ? item.text : undefined)),
-    ).toEqual(["unattributed", "a", "b"]);
-    expect(first?.items.map((item) => item.actingUserId)).toEqual([
+    expect(q.tryDequeue(null)?.items.map((item) => item.actingUserId)).toEqual([
       undefined,
+    ]);
+    expect(q.tryDequeue(null)?.items.map((item) => item.actingUserId)).toEqual([
       "cloud-user-a",
+    ]);
+    expect(q.tryDequeue(null)?.items.map((item) => item.actingUserId)).toEqual([
       "cloud-user-b",
     ]);
-    expect(second).toBeNull();
     expect(q.length).toBe(0);
+  });
+
+  test("noCoalesce forces one message per batch", () => {
+    const q = new QueueRuntime();
+    q.enqueue(makeScopedMsg({ text: "a", noCoalesce: true }));
+    q.enqueue(makeScopedMsg({ text: "b", noCoalesce: true }));
+
+    expect(q.tryDequeue(null)?.items).toHaveLength(1);
+    expect(q.tryDequeue(null)?.items).toHaveLength(1);
   });
 
   test("length is 0 after full dequeue", () => {

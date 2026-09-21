@@ -3,12 +3,13 @@ import {
   enqueueInboundUserMessage,
   getInboundClientMessageId,
 } from "./inbound-queue";
+import { emitQueueUpdateIfOpen } from "./protocol-outbound";
 import {
   scheduleQueuePump,
   shouldProcessInboundMessageDirectly,
   shouldQueueInboundMessage,
 } from "./queue";
-import { emitListenerStatus, getActiveRuntime } from "./runtime";
+import { emitListenerStatus, isListenerRuntimeCurrent } from "./runtime";
 import { isRuntimeTeleportPending } from "./teleport";
 import type { ListenerTransport } from "./transport";
 import type { handleIncomingMessage } from "./turn";
@@ -94,7 +95,7 @@ export function dispatchInboundMessageWhenReady(params: {
 
   runtime.messageQueue = runtime.messageQueue
     .then(async () => {
-      if (listener !== getActiveRuntime() || listener.intentionallyClosed) {
+      if (!isListenerRuntimeCurrent(listener) || listener.intentionallyClosed) {
         acknowledgeInput({ accepted: false });
         return;
       }
@@ -114,6 +115,30 @@ export function dispatchInboundMessageWhenReady(params: {
         )
       ) {
         acknowledgeInput({ accepted: false });
+        return;
+      }
+      const localSessionOwner = options.localSessionOwner;
+      if (
+        localSessionOwner &&
+        runtime.agentId === localSessionOwner.agentId &&
+        runtime.conversationId === localSessionOwner.conversationId
+      ) {
+        const accepted = localSessionOwner.acceptInput(
+          actingUserId && incoming.actingUserId !== actingUserId
+            ? { ...incoming, actingUserId }
+            : incoming,
+        );
+        if (accepted) {
+          rememberAcceptedInputDisposition(runtime, clientMessageId, "queued");
+          emitQueueUpdateIfOpen(runtime, {
+            agent_id: runtime.agentId,
+            conversation_id: runtime.conversationId,
+          });
+        }
+        acknowledgeInput({
+          accepted,
+          ...(accepted ? { disposition: "queued" as const } : {}),
+        });
         return;
       }
       if (

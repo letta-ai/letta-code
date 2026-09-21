@@ -45,7 +45,9 @@ type InterruptHandlerContext = {
   interruptQueuedRef: MutableRefObject<boolean>;
   interruptRequested: boolean;
   isExecutingTool: boolean;
+  lastRunIdRef: MutableRefObject<string | null>;
   pendingApprovals: ApprovalRequest[];
+  pendingBackendCancellationRef: MutableRefObject<Promise<void> | null>;
   pendingInterruptRecoveryConversationIdRef: MutableRefObject<string | null>;
   processingConversationRef: MutableRefObject<number>;
   queueApprovalResults: QueueApprovalResults;
@@ -101,7 +103,9 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
     interruptQueuedRef,
     interruptRequested,
     isExecutingTool,
+    lastRunIdRef,
     pendingApprovals,
+    pendingBackendCancellationRef,
     pendingInterruptRecoveryConversationIdRef,
     processingConversationRef,
     queueApprovalResults,
@@ -136,6 +140,41 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
       queueLength: tuiQueueRef.current?.length ?? 0,
       bumpDequeueEpoch: () => setDequeueEpoch((e) => e + 1),
     });
+  };
+
+  const startBackendCancellation = () => {
+    if (pendingBackendCancellationRef.current) {
+      return pendingBackendCancellationRef.current;
+    }
+    const cancelAgentId = agentIdRef.current;
+    const cancelConversationId =
+      conversationIdRef.current === "default"
+        ? cancelAgentId
+        : conversationIdRef.current;
+    const cancelRunId = lastRunIdRef.current;
+    if (!cancelConversationId || cancelConversationId === "loading") {
+      return Promise.resolve();
+    }
+    const cancellation = (async () => {
+      try {
+        if (cancelRunId) {
+          await getBackend().cancelRun(cancelAgentId, cancelRunId);
+        } else {
+          await getBackend().cancelConversation(cancelConversationId);
+        }
+      } catch {
+        // Cancellation already happened client-side.
+      }
+    })();
+    pendingBackendCancellationRef.current = cancellation;
+    void cancellation.then(() => {
+      if (pendingBackendCancellationRef.current === cancellation) {
+        pendingBackendCancellationRef.current = null;
+      }
+      settleIfNoTurnInFlight();
+      setDequeueEpoch((e) => e + 1);
+    });
+    return cancellation;
   };
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: refs are stable objects; .current is read dynamically when interrupt fires.
@@ -219,20 +258,7 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
       // Send cancel request to backend (fire-and-forget).
       // Without this, the backend stays in requires_approval state after tool interrupt,
       // causing CONFLICT on the next user message.
-      Promise.resolve()
-        .then(() => {
-          const cancelConversationId =
-            conversationIdRef.current === "default"
-              ? agentIdRef.current
-              : conversationIdRef.current;
-          if (!cancelConversationId || cancelConversationId === "loading") {
-            return;
-          }
-          return getBackend().cancelConversation(cancelConversationId);
-        })
-        .catch(() => {
-          // Silently ignore - cancellation already happened client-side
-        });
+      void startBackendCancellation();
 
       settleIfNoTurnInFlight();
       return;
@@ -340,20 +366,7 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
 
       // Send cancel request to backend asynchronously (fire-and-forget)
       // Don't wait for it or show errors since user already got feedback
-      Promise.resolve()
-        .then(() => {
-          const cancelConversationId =
-            conversationIdRef.current === "default"
-              ? agentIdRef.current
-              : conversationIdRef.current;
-          if (!cancelConversationId || cancelConversationId === "loading") {
-            return;
-          }
-          return getBackend().cancelConversation(cancelConversationId);
-        })
-        .catch(() => {
-          // Silently ignore - cancellation already happened client-side
-        });
+      void startBackendCancellation();
 
       settleIfNoTurnInFlight();
       return;
@@ -367,7 +380,12 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
         if (!cancelConversationId || cancelConversationId === "loading") {
           return;
         }
-        await getBackend().cancelConversation(cancelConversationId);
+        const cancelRunId = lastRunIdRef.current;
+        if (cancelRunId) {
+          await getBackend().cancelRun(agentIdRef.current, cancelRunId);
+        } else {
+          await getBackend().cancelConversation(cancelConversationId);
+        }
 
         if (abortControllerRef.current) {
           abortControllerRef.current.abort();

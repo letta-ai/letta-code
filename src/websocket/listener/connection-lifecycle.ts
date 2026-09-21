@@ -138,6 +138,7 @@ export function closeListenerRuntimeConnections(
   for (const socket of socketsToClose) {
     if (suppressCallbacks) {
       socket.removeAllListeners();
+      if (typeof socket.on === "function") socket.on("error", () => {});
     }
     if (
       socket.readyState === WebSocket.OPEN ||

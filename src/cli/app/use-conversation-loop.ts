@@ -110,13 +110,14 @@ import type { ApprovalContext } from "@/permissions/analyzer";
 import { formatPermissionDenial } from "@/permissions/format-denial";
 import type { PermissionMode } from "@/permissions/mode";
 import { permissionMode } from "@/permissions/mode";
-import type { QueueRuntime } from "@/queue/queue-runtime";
+import type { OwnerTurnRequest, QueueRuntime } from "@/queue/queue-runtime";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { analyzeToolApproval, type ToolExecutionResult } from "@/tools/manager";
 import type { PreparedScopeToolContext } from "@/tools/toolset";
 import { debugLog, debugWarn, isDebugEnabled } from "@/utils/debug";
 import type { QueuedMessage } from "@/utils/message-queue-bridge";
+import { getInboundImageFailureModes } from "@/websocket/listener/image-policy";
 
 import {
   CONVERSATION_BUSY_MAX_RETRIES,
@@ -223,6 +224,8 @@ type ConversationLoopContext = {
   llmApiErrorRetriesRef: MutableRefObject<number>;
   llmConfigRef: MutableRefObject<LlmConfig | null>;
   maybeRunPostTurnReflection: () => Promise<void>;
+  waitForLocalSessionOwnerReady: (signal?: AbortSignal) => Promise<boolean>;
+  hasPendingLocalSessionScopeSwitch: () => boolean;
   needsEagerApprovalCheck: boolean;
   openTrajectorySegment: () => void;
   pendingInterruptRecoveryConversationIdRef: MutableRefObject<string | null>;
@@ -230,6 +233,7 @@ type ConversationLoopContext = {
   precomputedDiffsRef: MutableRefObject<Map<string, AdvancedDiffSuccess>>;
   prepareScopedToolExecutionContext: (
     overrideModel?: string | null,
+    ownerRequest?: OwnerTurnRequest,
   ) => Promise<PreparedScopeToolContext>;
   processingConversationRef: MutableRefObject<number>;
   queueApprovalResults: QueueApprovalResults;
@@ -321,6 +325,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     llmApiErrorRetriesRef,
     llmConfigRef,
     maybeRunPostTurnReflection,
+    waitForLocalSessionOwnerReady,
+    hasPendingLocalSessionScopeSwitch,
     needsEagerApprovalCheck,
     openTrajectorySegment,
     pendingInterruptRecoveryConversationIdRef,
@@ -485,6 +491,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         submissionGeneration?: number;
         transcriptStartLineIndex?: number | null;
         allowResponseStateReuse?: boolean;
+        ownerRequest?: OwnerTurnRequest;
       },
     ): Promise<void> => {
       // Transient pre-stream retries can yield for seconds.
@@ -555,7 +562,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
       if (myGeneration !== conversationGenerationRef.current) {
         return;
       }
-
       // Guard against concurrent processConversation calls
       // This can happen if user submits two messages in quick succession
       // Uses dedicated ref (not streamingRef) since streaming may be set early for UI responsiveness
@@ -563,8 +569,9 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         return;
       }
       processingConversationRef.current += 1;
+      // An early interrupt must not target a stale prior run.
+      lastRunIdRef.current = null;
       let turnStartCancelReason: string | null = null;
-
       if (hasUserMessageInput(currentInput)) {
         const originalInput = currentInput;
         try {
@@ -650,6 +657,15 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         setExecutionPhase("requesting");
         turnAbortController = new AbortController();
         abortControllerRef.current = turnAbortController;
+        // A connected socket is not an ownership boundary. Establish the
+        // ordinary per-turn cancellation path before waiting for Cloud's
+        // positive scoped claim receipt, so Esc can cancel only this prompt.
+        try {
+          await waitForLocalSessionOwnerReady(turnAbortController.signal);
+        } catch (error) {
+          if (turnAbortController.signal.aborted) return;
+          throw error;
+        }
 
         if (
           await maybeStreamSyntheticNoModelResponse(
@@ -791,6 +807,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           try {
             const preparedToolContext = await prepareScopedToolExecutionContext(
               tempModelOverrideRef.current ?? undefined,
+              options?.ownerRequest,
             );
             prefetchedAgent = preparedToolContext.agent;
             const nextStream = await sendMessageStream(
@@ -800,6 +817,13 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 agentId: agentIdRef.current,
                 overrideModel: tempModelOverrideRef.current ?? undefined,
                 preparedToolContext: preparedToolContext.preparedToolContext,
+                responseFormat: options?.ownerRequest?.responseFormat,
+                imageFailureModesByMessageOtid: options?.ownerRequest
+                  ? getInboundImageFailureModes({
+                      imageFailureMode: options.ownerRequest.imageFailureMode,
+                      messages: currentInput,
+                    })
+                  : undefined,
                 allowResponseStateReuse:
                   options?.allowResponseStateReuse === true,
               },
@@ -1947,6 +1971,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 (
                   await prepareScopedToolExecutionContext(
                     tempModelOverrideRef.current ?? undefined,
+                    options?.ownerRequest,
                   )
                 ).preparedToolContext.contextId;
               autoAllowedResults =
@@ -2078,7 +2103,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                         otid: queuedUserOtid,
                       },
                     ],
-                    { allowReentry: true },
+                    { allowReentry: true, ownerRequest: options?.ownerRequest },
                   );
                   toolResultsInFlightRef.current = false;
                   return;
@@ -2087,7 +2112,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   refreshDerived();
                 }
 
-                // Cancel mode - queue results and let dequeue effect handle
                 if (waitingForQueueCancelRef.current) {
                   // Queue results - dequeue effect will pick them up via onSubmit
                   if (allResults.length > 0) {
@@ -2127,6 +2151,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   {
                     allowReentry: true,
                     allowResponseStateReuse: true,
+                    ownerRequest: options?.ownerRequest,
                   },
                 );
                 toolResultsInFlightRef.current = false;
@@ -2171,7 +2196,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   setRestoreQueueOnCancel(false);
                 }
 
-                // Reset flags - dequeue effect will fire when streaming=false commits
                 waitingForQueueCancelRef.current = false;
                 queueSnapshotRef.current = [];
                 setStreaming(false);
@@ -2648,7 +2672,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               setRestoredInput(lastDequeuedMessageRef.current);
               lastDequeuedMessageRef.current = null;
             }
-            // Clear any remaining queue on error
             tuiQueueRef.current?.clear("error");
 
             setStreaming(false);
@@ -2658,21 +2681,16 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             return;
           }
 
-          // Shared telemetry options for the primary error appendError call.
-          // The first appendError in each branch carries the telemetry event;
-          // subsequent hint lines pass `true` to skip duplicate tracking.
           const errorTelemetryBase = {
             errorType: stopReasonToHandle || "unknown_stop_reason",
             context: "message_stream" as const,
             runId: lastRunId ?? undefined,
           };
 
-          // Fetch error details from the run if available (server-side errors)
           if (lastRunId) {
             try {
               const run = await getBackend().retrieveRun(lastRunId);
 
-              // Check if run has error information in metadata
               if (run.metadata?.error) {
                 const errorData = run.metadata.error as {
                   type?: string;
@@ -2683,7 +2701,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 const serverErrorDetail =
                   errorData.detail || errorData.message || null;
 
-                // Pass structured error data to our formatter
                 const errorObject = {
                   error: {
                     error: errorData,
@@ -2695,8 +2712,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   agentIdRef.current,
                 );
 
-                // Encrypted content errors are self-explanatory (include /clear advice)
-                // — skip the generic "Something went wrong?" hint
                 appendError(errorDetails, {
                   ...errorTelemetryBase,
                   errorMessage: formatTelemetryErrorMessage(
@@ -2712,7 +2727,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                     isProviderStreamDisconnectErrorText(serverErrorDetail)
                   )
                 ) {
-                  // Show appropriate error hint based on stop reason
                   appendError(
                     getErrorHintForStopReason(
                       stopReasonToHandle,
@@ -2723,7 +2737,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   );
                 }
               } else {
-                // No error metadata, show generic error with run info
                 appendError(
                   `An error occurred during agent execution\n(run_id: ${lastRunId}, stop_reason: ${stopReason})`,
                   {
@@ -2732,7 +2745,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   },
                 );
 
-                // Show appropriate error hint based on stop reason
                 appendError(
                   getErrorHintForStopReason(
                     stopReasonToHandle,
@@ -2870,6 +2882,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           userCancelledRef,
           setInterruptRequested,
           queueLength: () => tuiQueueRef.current?.length ?? 0,
+          hasPendingScopeSwitch: hasPendingLocalSessionScopeSwitch,
           bumpDequeueEpoch: () => setDequeueEpoch((e: number) => e + 1),
         });
       }

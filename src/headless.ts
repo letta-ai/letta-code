@@ -88,6 +88,7 @@ import {
   resolveAgentSandboxConnectionId,
   resolveEnvironmentConnectionId,
 } from "./backend/api/environments";
+import { resolveBackendMode } from "./backend/backend-mode";
 import type { ParsedCliArgs } from "./cli/args";
 import {
   normalizeConversationShorthandFlags,
@@ -137,6 +138,11 @@ import {
   prepareHeadlessEphemeralBackend,
 } from "./headless-ephemeral-startup";
 import { launchListenerConversation } from "./headless-listener-launch";
+import {
+  type HeadlessLocalSession,
+  startHeadlessLocalSession,
+  takeAcceptedHeadlessInputs,
+} from "./headless-local-session-owner";
 import { resolveHeadlessMemfsPolicy } from "./headless-memfs-policy";
 import {
   createHeadlessModAdapter,
@@ -299,10 +305,8 @@ function trackTelemetryUserInputFromContent(
   modelId: string,
 ): void {
   const inputText = extractTelemetryInputText(content);
-  if (inputText.length === 0) {
-    return;
-  }
-  telemetry.trackUserInput(inputText, "user", modelId);
+  if (inputText.length > 0)
+    telemetry.trackUserInput(inputText, "user", modelId);
 }
 
 function shouldTrackTelemetryForQueuedMessage(
@@ -314,10 +318,7 @@ function shouldTrackTelemetryForQueuedMessage(
 function contentToTaskNotificationText(
   content: MessageCreate["content"],
 ): string {
-  if (typeof content === "string") {
-    return content;
-  }
-
+  if (typeof content === "string") return content;
   return content
     .flatMap((part) =>
       part.type === "text" && typeof part.text === "string" ? [part.text] : [],
@@ -329,33 +330,14 @@ function toBidirectionalQueuedInput(
   content: MessageCreate["content"],
   queuedKind?: QueuedMessage["kind"],
 ): BidirectionalQueuedInput {
-  if (queuedKind === "task_notification") {
-    return {
-      kind: "task_notification",
-      text: contentToTaskNotificationText(content),
-    };
-  }
-
-  return {
-    kind: "user",
-    content,
-  };
+  return queuedKind === "task_notification"
+    ? {
+        kind: "task_notification",
+        text: contentToTaskNotificationText(content),
+      }
+    : { kind: "user", content };
 }
 
-/**
- * Decide what an incoming `control_request: interrupt` should do, given the
- * current turn state. Extracted as a pure function so the policy is unit-
- * testable and shared between the fast-path (`rl.on("line", ...)`) and the
- * main-loop interrupt handlers.
- *
- * - `abort-active`: a turn is running — abort its AbortController now.
- * - `latch`: no controller exists yet, but a user message has just been
- *   dispatched and its controller is about to be created (the narrow
- *   pre-controller race). Latch so the imminent turn aborts immediately.
- * - `noop`: the session is idle (no active or starting turn). Respond success
- *   but do NOT latch — latching here would poison the next user turn, which
- *   would create a controller and immediately abort itself.
- */
 export type InterruptAction = "abort-active" | "latch" | "noop";
 
 export function decideInterruptAction(state: {
@@ -1719,6 +1701,7 @@ export async function handleHeadlessCommand(
   const sessionId = agent.id;
   let headlessConversationClosed = false;
   let lastKnownRunId: string | null = null;
+  let localSession: HeadlessLocalSession | null = null;
   const exitHeadless = async (
     code: number,
     exitReason: string,
@@ -1749,6 +1732,8 @@ export async function handleHeadlessCommand(
       telemetry.trackSessionEnd(sessionStats.getSnapshot(), exitReason);
       await telemetry.flush();
     } finally {
+      if (code !== 0) localSession?.cancel();
+      await localSession?.release();
       headlessModAdapter.dispose();
       telemetry.setSessionStatsGetter(undefined);
     }
@@ -2111,6 +2096,17 @@ export async function handleHeadlessCommand(
   }
 
   const responseState = createHeadlessResponseState();
+  const sigintSignal = createSigintAbortSignal();
+  localSession = startHeadlessLocalSession({
+    enabled:
+      !ephemeralFlag &&
+      !usesRemoteEnvironment &&
+      resolveBackendMode() === "api",
+    agentId: agent.id,
+    conversationId,
+    sigintSignal,
+  });
+  const { turnAbortSignal } = localSession;
   let currentInput: Array<MessageCreate | ApprovalCreate> = [
     {
       role: "user",
@@ -2118,6 +2114,7 @@ export async function handleHeadlessCommand(
       otid: randomUUID(),
     },
   ];
+  let currentActingUserId: string | undefined;
   const recoveredApprovalResults: ApprovalResult[] =
     queuedRecoveredApprovalResults ?? [];
   if (recoveredApprovalResults.length > 0) {
@@ -2186,9 +2183,9 @@ export async function handleHeadlessCommand(
     }
   };
 
-  // One-shot mode has no input loop, so wire SIGINT directly into the turn.
-  const sigintSignal = createSigintAbortSignal();
+  // One-shot mode wires SIGINT and remote owner cancellation into the turn.
   const exitInterrupted = async (): Promise<never> => {
+    localSession?.cancel({ force: true });
     if (outputFormat === "stream-json") {
       const errorMsg: ErrorMessage = {
         type: "error",
@@ -2206,9 +2203,10 @@ export async function handleHeadlessCommand(
 
   try {
     while (true) {
-      if (sigintSignal.aborted) {
+      if (turnAbortSignal.aborted) {
         await exitInterrupted();
       }
+      localSession.setProcessing(true);
 
       const hasApprovalContinuation = currentInput.some(
         (item) => item.type === "approval",
@@ -2247,6 +2245,10 @@ export async function handleHeadlessCommand(
       let stream: Awaited<ReturnType<typeof sendMessageStream>>;
       let turnToolContextId: string | null = null;
       try {
+        // Cloud must positively acknowledge this scoped local owner before the
+        // first direct run can become ACTIVE_UNATTRIBUTED. Unsupported servers
+        // resolve false immediately; advertised-but-mixed revisions fail closed.
+        await localSession.start();
         const turnToolContext = await prepareHeadlessToolExecutionContext({
           agentId: agent.id,
           conversationId,
@@ -2267,15 +2269,16 @@ export async function handleHeadlessCommand(
           currentInput,
           {
             agentId: agent.id,
+            actingUserId: currentActingUserId,
             allowResponseStateReuse: responseState.consume(currentInput),
             preparedToolContext:
               turnToolContext.preparedToolContext.preparedToolContext,
           },
-          { maxRetries: 0, signal: sigintSignal },
+          { maxRetries: 0, signal: turnAbortSignal },
         );
         turnToolContextId = getStreamToolContextId(stream);
       } catch (preStreamError) {
-        if (sigintSignal.aborted) {
+        if (turnAbortSignal.aborted) {
           await exitInterrupted();
         }
 
@@ -2518,7 +2521,7 @@ export async function handleHeadlessCommand(
         stream,
         buffers,
         () => {},
-        sigintSignal,
+        turnAbortSignal,
         undefined,
         streamJsonHook,
         reminderContextTracker,
@@ -2535,7 +2538,7 @@ export async function handleHeadlessCommand(
       sessionStats.endTurn(apiDurationMs);
 
       // Exit before dispatching tool calls produced after an interrupt.
-      if (stopReason === "cancelled" || sigintSignal.aborted) {
+      if (stopReason === "cancelled" || turnAbortSignal.aborted) {
         await exitInterrupted();
       }
 
@@ -2603,6 +2606,33 @@ export async function handleHeadlessCommand(
           continue;
         }
 
+        const acceptedInput = takeAcceptedHeadlessInputs(localSession);
+        if (acceptedInput) {
+          currentInput = acceptedInput.input;
+          currentActingUserId = acceptedInput.actingUserId;
+          const queuedTurnStartEmission = await emitHeadlessTurnStart({
+            agent,
+            conversationId,
+            input: currentInput,
+            adapter: headlessModAdapter,
+            context: turnStartModContext,
+          });
+          if (queuedTurnStartEmission.cancelled) {
+            await emitHeadlessTurnStartCancellationOutput({
+              agent,
+              conversationId,
+              outputFormat,
+              reason: queuedTurnStartEmission.reason,
+              sessionId,
+            });
+            await exitHeadless(1, "headless_turn_start_cancelled");
+          } else {
+            currentInput = queuedTurnStartEmission.input;
+          }
+          continue;
+        }
+
+        localSession.setProcessing(false);
         break;
       }
 
@@ -2678,13 +2708,13 @@ export async function handleHeadlessCommand(
           decisions,
           undefined,
           {
-            abortSignal: sigintSignal,
+            abortSignal: turnAbortSignal,
             toolContextId: turnToolContextId ?? undefined,
           },
         );
 
         // Don't send interrupted tool results back for another provider round.
-        if (sigintSignal.aborted) {
+        if (turnAbortSignal.aborted) {
           await exitInterrupted();
         }
 
@@ -2724,7 +2754,7 @@ export async function handleHeadlessCommand(
           currentHandle: null,
           error: result.errorInfo ?? runErrorInfo ?? latestErrorText,
           exhaustedProviders: chatgptExhaustedProviders,
-          signal: sigintSignal,
+          signal: turnAbortSignal,
         });
         if (rotation) {
           chatgptPlanSwaps += 1;

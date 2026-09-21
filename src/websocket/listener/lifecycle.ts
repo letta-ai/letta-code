@@ -72,6 +72,7 @@ import {
   clearConversationRuntimeState,
   clearRuntimeTimers,
   getActiveRuntime,
+  isListenerRuntimeCurrent,
   safeEmitWsEvent,
   setActiveRuntime,
 } from "./runtime";
@@ -121,20 +122,16 @@ export function safeSocketSend(
   errorType: string,
   context: string,
 ): boolean {
-  if (socket.readyState !== WebSocket.OPEN) {
-    return false;
-  }
-
+  if (socket.readyState !== WebSocket.OPEN) return false;
   try {
-    const serialized =
-      typeof payload === "string" ? payload : JSON.stringify(payload);
-    socket.send(serialized);
+    socket.send(
+      typeof payload === "string" ? payload : JSON.stringify(payload),
+    );
     return true;
   } catch (error) {
     trackListenerError(errorType, error, context);
-    if (isDebugEnabled()) {
+    if (isDebugEnabled())
       console.error(`[Listen] ${context} send failed:`, error);
-    }
     return false;
   }
 }
@@ -145,20 +142,16 @@ function safeTransportSend(
   errorType: string,
   context: string,
 ): boolean {
-  if (!isListenerTransportOpen(transport)) {
-    return false;
-  }
-
+  if (!isListenerTransportOpen(transport)) return false;
   try {
-    const serialized =
-      typeof payload === "string" ? payload : JSON.stringify(payload);
-    transport.send(serialized);
+    transport.send(
+      typeof payload === "string" ? payload : JSON.stringify(payload),
+    );
     return true;
   } catch (error) {
     trackListenerError(errorType, error, context);
-    if (isDebugEnabled()) {
+    if (isDebugEnabled())
       console.error(`[Listen] ${context} send failed:`, error);
-    }
     return false;
   }
 }
@@ -245,6 +238,7 @@ export function createRuntime(): ListenerRuntime {
     reconnectTimeout: null,
     lastPongAt: null,
     intentionallyClosed: false,
+    detachedFromActiveRuntime: false,
     hasSuccessfulConnection: false,
     everConnected: false,
     sessionId: `listen-${crypto.randomUUID()}`,
@@ -294,14 +288,18 @@ export function stopRuntime(
   disposeListenerModAdapter(runtime);
   rejectPendingExternalToolCalls(runtime, "Listener runtime stopped");
   runtime.intentionallyClosed = true;
-  invalidateProcessServices(runtime);
+  if (runtime.detachedFromActiveRuntime) clearRuntimeTimers(runtime);
+  else invalidateProcessServices(runtime);
   for (const conversationRuntime of runtime.conversationRuntimes.values()) {
     rejectPendingApprovalResolvers(
       conversationRuntime,
       "Listener runtime stopped",
     );
     clearConversationRuntimeState(conversationRuntime);
-    if (conversationRuntime.queueRuntime) {
+    if (
+      conversationRuntime.queueRuntime &&
+      !conversationRuntime.queueRuntimeOwnedExternally
+    ) {
       conversationRuntime.queuedMessagesByItemId.clear();
       conversationRuntime.queueRuntime.clear("shutdown");
     }
@@ -336,9 +334,10 @@ export async function startConnectedListenerRuntime(
     recoverRecordedWork?: typeof recoverRecordedTurns;
   } = {},
 ): Promise<void> {
-  if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) return;
+  if (!isListenerRuntimeCurrent(runtime) || runtime.intentionallyClosed) return;
   sealStartupLogs();
-  installExternalToolBridge(runtime);
+  if (options.startProcessServices !== false)
+    installExternalToolBridge(runtime);
   // Opt out when another process already holds the cron scheduler lease.
   // LETTA_DISABLE_CRON_SCHEDULER=1 suppresses recurring lease-held messages.
   const shouldStartCronScheduler =
@@ -470,7 +469,7 @@ export async function attachOpenListenerSocket(
     startupReady?: Promise<void>;
   } = {},
 ): Promise<void> {
-  if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
+  if (!isListenerRuntimeCurrent(runtime) || runtime.intentionallyClosed) {
     return;
   }
 
@@ -532,7 +531,7 @@ export async function attachOpenListenerSocket(
 
   socket.on("close", (code: number, reason: Buffer) => {
     if (
-      runtime !== getActiveRuntime() ||
+      !isListenerRuntimeCurrent(runtime) ||
       runtime.connections.get(opts.connectionId) !== connection
     ) {
       return;
@@ -598,23 +597,38 @@ export async function attachOpenListenerSocket(
  */
 export async function startListenerClient(
   opts: StartListenerOptions,
-): Promise<void> {
-  // Replace any existing runtime without stale callback leakage.
-  const existingRuntime = getActiveRuntime();
-  if (existingRuntime) {
-    stopRuntime(existingRuntime, true);
+): Promise<ListenerRuntime> {
+  // Process-global listener surfaces replace each other. A scoped local owner
+  // is transport-only and must coexist without entering that singleton slot.
+  if (!opts.localSessionOwner) {
+    const existingRuntime = getActiveRuntime();
+    if (existingRuntime) stopRuntime(existingRuntime, true);
   }
 
   const runtime = createRuntime();
+  runtime.detachedFromActiveRuntime = opts.localSessionOwner !== undefined;
   runtime.onWsEvent = opts.onWsEvent;
   runtime.connectionId = opts.connectionId;
   runtime.connectionName = opts.connectionName;
-  setActiveRuntime(runtime);
-  telemetry.setSurface(getListenerTelemetrySurface());
-  telemetry.init();
-
-  await reloadListenerModAdapter(runtime);
+  if (opts.localSessionOwner) {
+    const scopedRuntime = getOrCreateScopedRuntime(
+      runtime,
+      opts.localSessionOwner.agentId,
+      opts.localSessionOwner.conversationId,
+    );
+    // Share the TUI's authoritative queue. Incoming Cloud input is accepted by
+    // the normal listener path but consumed only by the interactive TUI loop.
+    scopedRuntime.queueRuntime = opts.localSessionOwner.queueRuntime;
+    scopedRuntime.queueRuntimeOwnedExternally = true;
+  }
+  if (!opts.localSessionOwner) {
+    setActiveRuntime(runtime);
+    telemetry.setSurface(getListenerTelemetrySurface());
+    telemetry.init();
+    await reloadListenerModAdapter(runtime);
+  }
   await connectWithRetry(runtime, opts);
+  return runtime;
 }
 
 export interface StartLocalChannelListenerOptions {
@@ -687,7 +701,7 @@ async function connectWithRetry(
   attempt: number = 0,
   startTime: number = Date.now(),
 ): Promise<void> {
-  if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
+  if (!isListenerRuntimeCurrent(runtime) || runtime.intentionallyClosed) {
     return;
   }
 
@@ -721,21 +735,21 @@ async function connectWithRetry(
     });
 
     runtime.reconnectTimeout = null;
-    if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
+    if (!isListenerRuntimeCurrent(runtime) || runtime.intentionallyClosed) {
       return;
     }
   }
 
   clearRuntimeTimers(runtime);
 
-  if (attempt === 0) {
+  if (attempt === 0 && !opts.localSessionOwner) {
     await loadTools();
   }
 
   const auth = await resolveListenerReconnectAuth(opts);
   if (auth.kind === "retry")
     return connectWithRetry(runtime, opts, attempt + 1, startTime);
-  if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
+  if (!isListenerRuntimeCurrent(runtime) || runtime.intentionallyClosed) {
     return;
   }
   const apiKey = auth.apiKey;
@@ -810,6 +824,15 @@ async function connectWithRetry(
             createStreamSocket: () => {
               if (!streamUrl) throw new Error("Paired stream URL is missing");
               streamSocket = new WebSocket(streamUrl.toString(), { headers });
+              // Install the durable error/close handlers synchronously. The
+              // temporary ready-frame waiter removes its own listeners when
+              // acceptance settles; waiting until the next await continuation
+              // left an unhandled-error gap if the relay closed immediately.
+              attachSplitStreamSocketHandlers({
+                runtime,
+                streamSocket,
+                trackListenerError,
+              });
               return streamSocket;
             },
             trackListenerError,
@@ -824,11 +847,6 @@ async function connectWithRetry(
       const streamTransport = streamOpen.transport;
       if (streamOpen.streamSocket) {
         streamSocket = streamOpen.streamSocket;
-        attachSplitStreamSocketHandlers({
-          runtime,
-          streamSocket: streamOpen.streamSocket,
-          trackListenerError,
-        });
       }
       if (!isCurrentSocketPair(runtime, socket, streamSocket)) return;
       openListenerConnection({
@@ -845,7 +863,8 @@ async function connectWithRetry(
         processQueuedTurn,
         {
           startHeartbeat: true,
-          startCronScheduler: true,
+          startCronScheduler: !opts.localSessionOwner,
+          startProcessServices: !opts.localSessionOwner,
           streamTransport,
         },
       );
@@ -912,7 +931,7 @@ async function connectWithRetry(
       }
     }
     suspendListenerConnection(runtime, opts.connectionId);
-    killAllTerminals();
+    if (!opts.localSessionOwner) killAllTerminals();
     clearListenerWarmState(runtime);
     if (streamSocket) {
       streamSocket.removeAllListeners("message");
@@ -985,6 +1004,18 @@ export function isListenerActive(): boolean {
   return runtime !== null && runtime.transport !== null;
 }
 
+/** Stop a listener without disturbing an unrelated process-global runtime. */
+export function stopListenerRuntime(runtime: ListenerRuntime): void {
+  if (runtime.detachedFromActiveRuntime) {
+    stopRuntime(runtime, true);
+    return;
+  }
+  if (getActiveRuntime() !== runtime) return;
+  setActiveRuntime(null);
+  telemetry.setSurface(getTerminalTelemetrySurface(!process.stdin.isTTY));
+  stopRuntime(runtime, true);
+}
+
 /**
  * Stop the active listener connection.
  */
@@ -993,7 +1024,5 @@ export function stopListenerClient(): void {
   if (!runtime) {
     return;
   }
-  setActiveRuntime(null);
-  telemetry.setSurface(getTerminalTelemetrySurface(!process.stdin.isTTY));
-  stopRuntime(runtime, true);
+  stopListenerRuntime(runtime);
 }

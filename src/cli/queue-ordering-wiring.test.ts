@@ -24,14 +24,18 @@ describe("queue ordering wiring", () => {
     expect(segment).toContain("!commandRunning");
     expect(segment).toContain("!isExecutingTool");
     expect(segment).toContain("!anySelectorOpen");
-    expect(segment).toContain("!queuedOverlayAction");
+    expect(segment).toContain("!queuedOverlayAction ||");
+    expect(segment).toContain(
+      'queuedOverlayAction.type === "switch_conversation"',
+    );
+    expect(segment).toContain('queuedOverlayAction.type === "switch_agent"');
     expect(segment).toContain("!waitingForQueueCancelRef.current");
     expect(segment).toContain("!userCancelledRef.current");
     expect(segment).toContain("!abortControllerRef.current");
     expect(segment).toContain("queuedOverlayAction=");
-    // Queue is now drained via QueueRuntime.consumeItems; setQueueDisplay is
-    // updated automatically via the onDequeued callback — no direct setState here.
-    expect(segment).toContain("tuiQueueRef.current?.consumeItems(queueLen)");
+    // QueueRuntime applies sender-scope and noCoalesce boundaries; setQueueDisplay
+    // updates automatically via onDequeued, with no direct setState here.
+    expect(segment).toContain("tuiQueueRef.current?.tryDequeue(null)");
     expect(segment).toContain("onSubmitRef.current(concatenatedMessage)");
     expect(segment).toContain("!dequeueInFlightRef.current");
     expect(segment).toContain("queuedOverlayAction,");
@@ -160,5 +164,20 @@ describe("queue ordering wiring", () => {
     expect(experimentWindow).toContain("if (isAgentBusy())");
     expect(experimentWindow).toContain("setQueuedOverlayAction({");
     expect(experimentWindow).toContain('type: "set_experiment"');
+  });
+
+  test("same-turn tool result reentries retain owner request overrides", () => {
+    const source = readFileSync(
+      new URL("./app/use-conversation-loop.ts", import.meta.url),
+      "utf8",
+    );
+    expect(source.match(/ownerRequest: options\?\.ownerRequest/g)).toHaveLength(
+      2,
+    );
+    const newTurnContinuations = source.slice(
+      source.indexOf("if (stopHookResult.blocked)"),
+      source.indexOf("// Disable eager approval check"),
+    );
+    expect(newTurnContinuations).not.toContain("ownerRequest:");
   });
 });

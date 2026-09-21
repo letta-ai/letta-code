@@ -151,6 +151,21 @@ describe("dequeue paths skip paused items", () => {
 });
 
 describe("QueueRuntime.resume", () => {
+  test("releases only paused items selected by the predicate", () => {
+    const q = new QueueRuntime();
+    q.enqueue({ ...userMsg("draft"), conversationId: "conv-a" });
+    q.enqueue({ ...userMsg("owner input"), conversationId: "conv-b" });
+    q.pause();
+
+    expect(q.resume((item) => item.conversationId === "conv-b")).toBe(1);
+    expect(q.pausedCount).toBe(1);
+    expect(q.peek()).toMatchObject([
+      { content: "draft", paused: true },
+      { content: "owner input" },
+    ]);
+    expect(q.peek()[1]?.paused).toBeUndefined();
+  });
+
   test("releases parked items in their original order ahead of later arrivals", () => {
     const q = new QueueRuntime();
     q.enqueue(userMsg("first"));

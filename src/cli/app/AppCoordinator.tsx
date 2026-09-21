@@ -49,6 +49,7 @@ import { getClient } from "@/backend/api/client";
 import { getBillingTier } from "@/backend/api/metadata";
 import { subscribePiProviderRegistry } from "@/backend/dev/pi-provider-mod-registry";
 import { useConversationTitleSync } from "@/cli/app/conversation-title-sync";
+import { useLocalSessionOwner } from "@/cli/app/use-local-session-owner";
 import {
   cancelActiveConnectOperation,
   isActiveConnectOperationCancellable,
@@ -93,7 +94,7 @@ import type { ExecutionPhase } from "@/cli/helpers/phase-visuals";
 import { maybeLaunchPostTurnReflection } from "@/cli/helpers/post-turn-reflection";
 import {
   buildContentFromQueueBatch,
-  toQueuedMsg,
+  consumeQueuedMessagesForContinuation,
 } from "@/cli/helpers/queued-message-parts";
 import {
   buildReflectionArenaChoiceQuestions,
@@ -162,11 +163,7 @@ import {
   isByokHandleForSelector,
   listProviders,
 } from "@/providers/byok-providers";
-import type {
-  MessageQueueItem,
-  QueueRuntime,
-  TaskNotificationQueueItem,
-} from "@/queue/queue-runtime";
+import type { OwnerTurnRequest, QueueRuntime } from "@/queue/queue-runtime";
 import {
   createSharedReminderState,
   enqueueCommandIoReminder,
@@ -174,9 +171,14 @@ import {
   resetSharedReminderState,
   type SharedReminderState,
 } from "@/reminders/state";
-import { getCurrentWorkingDirectory } from "@/runtime-context";
+import {
+  getCurrentWorkingDirectory,
+  getRuntimeContext,
+  runWithRuntimeContext,
+} from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
+import { INTERACTIVE_USER_INPUT_TOOL_NAMES } from "@/tools/interactive-policy";
 import {
   releaseToolExecutionContext,
   type ToolExecutionResult,
@@ -233,6 +235,7 @@ import {
   providerTypeFromModelSettings,
   reasoningEffortLlmConfigPatch,
 } from "./model-config";
+import { restoreConversationView } from "./restore-conversation-view";
 import { saveLastSessionBeforeExit } from "./session";
 import type {
   ActiveOverlay,
@@ -405,6 +408,10 @@ export function App({
   const [conversationSummary, setConversationSummary] = useState<string | null>(
     null,
   );
+  // Queued overlay action - executed after end_turn when user makes a selection
+  // while agent is busy (streaming/executing tools).
+  const [queuedOverlayAction, setQueuedOverlayAction] =
+    useState<QueuedOverlayAction>(null);
   // Keep a ref to the current agentId for use in callbacks that need the latest value
   const agentIdRef = useRef(agentId);
   useEffect(() => {
@@ -420,22 +427,18 @@ export function App({
     conversationIdRef.current = nextConversationId;
     setConversationId(nextConversationId);
   }, []);
-
   // Tracks the transcript start index for the current user turn across
   // approval continuations (requires_approval -> approval result round-trip).
   const pendingTranscriptStartLineIndexRef = useRef<number | null>(null);
-
   // Track the most recent run ID from streaming (for statusline display)
   const lastRunIdRef = useRef<string | null>(null);
-
+  const pendingBackendCancellationRef = useRef<Promise<void> | null>(null);
   const resumeKey = useSuspend();
-
   // Pending conversation switch context — consumed on first message after a switch
   const pendingConversationSwitchRef = useRef<
     | import("@/cli/helpers/conversation-switch-alert").ConversationSwitchContext
     | null
   >(null);
-
   // Track previous prop values to detect actual prop changes (not internal state changes)
   const prevInitialAgentIdRef = useRef(initialAgentId);
   const prevInitialAgentStateRef = useRef(initialAgentState);
@@ -446,24 +449,46 @@ export function App({
   useEffect(() => {
     if (initialAgentId !== prevInitialAgentIdRef.current) {
       prevInitialAgentIdRef.current = initialAgentId;
-      agentIdRef.current = initialAgentId;
-      setAgentId(initialAgentId);
+      if (
+        agentIdRef.current &&
+        agentIdRef.current !== "loading" &&
+        initialAgentId !== "loading"
+      ) {
+        setQueuedOverlayAction({
+          type: "switch_agent",
+          agentId: initialAgentId,
+          conversationId: initialConversationId,
+        });
+      } else {
+        agentIdRef.current = initialAgentId;
+        setAgentId(initialAgentId);
+      }
     }
-  }, [initialAgentId]);
+  }, [initialAgentId, initialConversationId]);
 
   useEffect(() => {
     if (initialAgentState !== prevInitialAgentStateRef.current) {
       prevInitialAgentStateRef.current = initialAgentState;
-      setAgentState(initialAgentState);
+      if (!initialAgentState || initialAgentState.id === agentIdRef.current) {
+        setAgentState(initialAgentState);
+      }
     }
   }, [initialAgentState]);
 
   useEffect(() => {
     if (initialConversationId !== prevInitialConversationIdRef.current) {
       prevInitialConversationIdRef.current = initialConversationId;
-      setConversationIdAndRef(initialConversationId);
+      if (initialAgentId !== agentIdRef.current) return;
+      if (agentIdRef.current && agentIdRef.current !== "loading") {
+        setQueuedOverlayAction({
+          type: "switch_conversation",
+          conversationId: initialConversationId,
+        });
+      } else {
+        setConversationIdAndRef(initialConversationId);
+      }
     }
-  }, [initialConversationId, setConversationIdAndRef]);
+  }, [initialAgentId, initialConversationId, setConversationIdAndRef]);
 
   // Set agent context for tools (especially Task tool)
   useEffect(() => {
@@ -789,11 +814,6 @@ export function App({
     setModelSelectorOptions({});
     setModelReasoningPrompt(null);
   }, [activeOverlay]);
-
-  // Queued overlay action - executed after end_turn when user makes a selection
-  // while agent is busy (streaming/executing tools)
-  const [queuedOverlayAction, setQueuedOverlayAction] =
-    useState<QueuedOverlayAction>(null);
 
   // Derived: check if any selector/overlay is open (blocks queue processing and hides input)
   const anySelectorOpen = activeOverlay !== null;
@@ -1372,52 +1392,104 @@ export function App({
         },
       ];
     });
-    // Also show briefly in the footer placeholder area
     setFooterUpdateText(
       `New version available (${updateNotification}). Restart to update!`,
     );
     const timer = setTimeout(() => setFooterUpdateText(null), 8000);
     return () => clearTimeout(timer);
   }, [updateNotification]);
-
-  // Track committed ids to avoid duplicates
   const emittedIdsRef = useRef<Set<string>>(new Set());
-
-  // Guard to append welcome snapshot only once
   const welcomeCommittedRef = useRef(false);
-
-  // AbortController for stream cancellation
   const abortControllerRef = useRef<AbortController | null>(null);
-
-  // Track if user wants to cancel (persists across state updates)
   const userCancelledRef = useRef(false);
-
-  // Retry counter for transient LLM API errors (ref for synchronous access in loop)
+  const remoteAbortRef = useRef<() => boolean>(() => false);
   const llmApiErrorRetriesRef = useRef(0);
   const quotaAutoSwapAttemptedRef = useRef(false);
   const emptyResponseRetriesRef = useRef(0);
   const chatgptPlanSwapsRef = useRef(0);
   const chatgptExhaustedProvidersRef = useRef(new Set<string>());
-  // Retry counter for 409 "conversation busy" errors
   const conversationBusyRetriesRef = useRef(0);
-
-  // Message queue state for queueing messages during streaming
   const [queueDisplay, setQueueDisplay] = useState<QueuedMessage[]>([]);
-
-  // QueueRuntime — authoritative queue; queueDisplay is derived from its
-  // callbacks (see createTuiQueueRuntime). Lazy init; typed QueueRuntime | null.
   const tuiQueueRef = useRef<QueueRuntime | null>(null);
+  const sessionSwitchAdmissionStateRef = useRef<
+    "idle" | "draining" | "releasing"
+  >("idle");
+  const pendingLocalSessionScopeSwitchRef = useRef(false);
+  pendingLocalSessionScopeSwitchRef.current =
+    queuedOverlayAction?.type === "switch_conversation" ||
+    queuedOverlayAction?.type === "switch_agent" ||
+    queuedOverlayAction?.type === "create_agent" ||
+    queuedOverlayAction?.type === "exit";
   if (!tuiQueueRef.current) {
     tuiQueueRef.current = createTuiQueueRuntime(setQueueDisplay);
   }
-
-  // Override content parts for queued submissions (to preserve part boundaries)
-  const overrideContentPartsRef = useRef<MessageCreate["content"] | null>(null);
-
-  // Set up message queue bridge for background tasks
-  // This allows non-React code (Task.ts) to add notifications to queueDisplay
+  const localSessionOwner = useLocalSessionOwner({
+    agentId,
+    conversationId,
+    queueRuntime: tuiQueueRef.current,
+    onQueueChanged: () => setDequeueEpoch((epoch) => epoch + 1),
+    onAbort: () => remoteAbortRef.current(),
+    isProcessing:
+      streaming ||
+      isExecutingTool ||
+      pendingApprovals.length > 0 ||
+      commandRunning,
+  });
+  const hasAcceptedLocalSessionInput = useCallback(
+    () =>
+      tuiQueueRef.current
+        ?.peek()
+        .some(
+          (item) =>
+            (item.agentId === undefined &&
+              item.conversationId === undefined &&
+              !item.paused) ||
+            (item.agentId === agentId &&
+              item.conversationId === conversationId),
+        ) ?? false,
+    [agentId, conversationId],
+  );
+  const resumeAcceptedLocalSessionInput = useCallback(() => {
+    const resumed = tuiQueueRef.current?.resume(
+      (item) =>
+        item.agentId === agentId && item.conversationId === conversationId,
+    );
+    if (resumed) setDequeueEpoch((epoch) => epoch + 1);
+  }, [agentId, conversationId]);
+  const waitForLocalSessionTurnBoundary = useCallback(async () => {
+    for (;;) {
+      const pendingCancellation = pendingBackendCancellationRef.current;
+      if (pendingCancellation) {
+        await pendingCancellation;
+        continue;
+      }
+      if (
+        !dequeueInFlightRef.current &&
+        !abortControllerRef.current &&
+        processingConversationRef.current === 0
+      )
+        return;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }, []);
   useEffect(() => {
-    // Enqueue via QueueRuntime — onEnqueued callback updates queueDisplay.
+    const pendingScopeSwitch =
+      queuedOverlayAction?.type === "switch_conversation" ||
+      queuedOverlayAction?.type === "switch_agent" ||
+      queuedOverlayAction?.type === "create_agent" ||
+      queuedOverlayAction?.type === "exit";
+    if (
+      sessionSwitchAdmissionStateRef.current === "draining" &&
+      !pendingScopeSwitch
+    ) {
+      sessionSwitchAdmissionStateRef.current = "idle";
+      localSessionOwner.resumeAdmission();
+    }
+  }, [localSessionOwner, queuedOverlayAction]);
+  const overrideContentPartsRef = useRef<MessageCreate["content"] | null>(null);
+  const ownerRequestRef = useRef<OwnerTurnRequest | null>(null);
+
+  useEffect(() => {
     setMessageQueueAdder((message: QueuedMessage) => {
       tuiQueueRef.current?.enqueue(
         message.kind === "task_notification"
@@ -1580,7 +1652,7 @@ export function App({
     releaseToolExecutionContext(contextId);
   }, []);
   const prepareScopedToolExecutionContext = useCallback(
-    async (overrideModel?: string | null) => {
+    async (overrideModel?: string | null, ownerRequest?: OwnerTurnRequest) => {
       const workingDirectory = getCurrentWorkingDirectory();
       const desiredModel = overrideModel ?? currentModelHandle;
 
@@ -1589,6 +1661,13 @@ export function App({
           agentId: agentIdRef.current,
           conversationId: conversationIdRef.current,
           overrideModel: desiredModel,
+          actingUserId: getRuntimeContext()?.actingUserId,
+          clientToolset: ownerRequest?.clientToolset,
+          clientToolAllowlist: ownerRequest?.clientToolAllowlist,
+          externalToolScopeIds: ownerRequest?.externalToolScopeIds,
+          ...(ownerRequest?.excludeInteractiveTools
+            ? { exclude: [...INTERACTIVE_USER_INPUT_TOOL_NAMES] }
+            : {}),
           workingDirectory,
           modContext: modAdapterRef.current?.context,
           modEvents: modAdapterRef.current?.events,
@@ -1659,7 +1738,8 @@ export function App({
       streamingRef.current ||
       isExecutingTool ||
       commandRunningRef.current ||
-      abortControllerRef.current !== null
+      abortControllerRef.current !== null ||
+      pendingBackendCancellationRef.current !== null
     );
   }, [isExecutingTool]);
 
@@ -1681,18 +1761,11 @@ export function App({
   );
 
   // Queue callbacks remove consumed display entries by item ID.
-  const consumeQueuedMessages = useCallback((): QueuedMessage[] | null => {
-    const len = tuiQueueRef.current?.length ?? 0;
-    if (len === 0) return null;
-    const batch = tuiQueueRef.current?.consumeItems(len);
-    if (!batch) return null;
-    return batch.items
-      .filter(
-        (item): item is MessageQueueItem | TaskNotificationQueueItem =>
-          item.kind === "message" || item.kind === "task_notification",
-      )
-      .map(toQueuedMsg);
-  }, []);
+  const consumeQueuedMessages = useCallback(
+    (): QueuedMessage[] | null =>
+      consumeQueuedMessagesForContinuation(tuiQueueRef.current),
+    [],
+  );
 
   // Helper to wrap async handlers that need to close overlay and lock input
   // Closes overlay and sets commandRunning before executing, releases lock in finally
@@ -3734,6 +3807,9 @@ export function App({
     llmApiErrorRetriesRef,
     llmConfigRef,
     maybeRunPostTurnReflection,
+    waitForLocalSessionOwnerReady: localSessionOwner.ready,
+    hasPendingLocalSessionScopeSwitch: () =>
+      pendingLocalSessionScopeSwitchRef.current,
     needsEagerApprovalCheck,
     openTrajectorySegment,
     pendingInterruptRecoveryConversationIdRef,
@@ -3857,6 +3933,36 @@ export function App({
   });
 
   const handleExit = useCallback(async () => {
+    // Esc-parked, unscoped local drafts were never accepted through the Cloud
+    // owner boundary and cannot drain until a user explicitly resumes them.
+    // A requested process exit discards those local drafts rather than leaving
+    // the release action permanently blocked. Scoped owner input still drains.
+    for (const item of tuiQueueRef.current?.peek() ?? []) {
+      if (
+        item.paused &&
+        item.agentId === undefined &&
+        item.conversationId === undefined
+      ) {
+        tuiQueueRef.current?.removeItem(item.id);
+      }
+    }
+    resumeAcceptedLocalSessionInput();
+
+    // Exit is a terminal scope transition. Close admission immediately, but
+    // keep the process alive until every message already accepted by this
+    // owner has run and all turn refs have settled.
+    localSessionOwner.stopAdmission();
+    if (
+      hasAcceptedLocalSessionInput() ||
+      dequeueInFlightRef.current ||
+      abortControllerRef.current ||
+      processingConversationRef.current > 0
+    ) {
+      sessionSwitchAdmissionStateRef.current = "draining";
+      setQueuedOverlayAction({ type: "exit" });
+      return;
+    }
+
     saveLastSessionBeforeExit(conversationIdRef.current);
 
     // Run SessionEnd hooks
@@ -3888,6 +3994,11 @@ export function App({
       // Non-critical, don't fail the exit
     }
 
+    // A clean TUI exit must cross the same positive release boundary as a
+    // scope switch. React effect cleanup is fire-and-forget and process.exit
+    // can otherwise close the socket before Cloud observes the release.
+    await localSessionOwner.release();
+
     await closeMcp();
     await telemetry.flush();
 
@@ -3902,6 +4013,9 @@ export function App({
     projectDirectory,
     currentModelLabel,
     currentModelProvider,
+    localSessionOwner,
+    hasAcceptedLocalSessionInput,
+    resumeAcceptedLocalSessionInput,
   ]);
 
   // Queue edit: load all queued user messages into the input (joined with newlines),
@@ -3966,7 +4080,9 @@ export function App({
     interruptQueuedRef,
     interruptRequested,
     isExecutingTool,
+    lastRunIdRef,
     pendingApprovals,
+    pendingBackendCancellationRef,
     pendingInterruptRecoveryConversationIdRef,
     processingConversationRef,
     queueApprovalResults,
@@ -3989,6 +4105,16 @@ export function App({
     userCancelledRef,
     waitingForQueueCancelRef,
   });
+  remoteAbortRef.current = () => {
+    const hasActiveWork =
+      streaming ||
+      isExecutingTool ||
+      pendingApprovals.length > 0 ||
+      abortControllerRef.current !== null;
+    if (!hasActiveWork) return false;
+    handleInterrupt();
+    return true;
+  };
 
   // Keep ref to latest processConversation to avoid circular deps in useEffect
   const processConversationRef = useRef(processConversation);
@@ -4049,6 +4175,11 @@ export function App({
     modAdapter,
     hasBackfilledRef,
     isAgentBusy,
+    hasAcceptedLocalSessionInput,
+    stopLocalSessionAdmission: localSessionOwner.stopAdmission,
+    resumeLocalSessionAdmission: localSessionOwner.resumeAdmission,
+    waitForLocalSessionTurnBoundary,
+    releaseLocalSessionOwner: localSessionOwner.release,
     maybeCarryOverActiveConversationModel,
     pendingConversationSwitchRef,
     prepareScopedToolExecutionContext,
@@ -4163,7 +4294,6 @@ export function App({
     agentIdRef,
     agentLastRunAt,
     agentName,
-    agentState,
     agentStateRef,
     appendTaskNotificationEvents,
     bashCommandCacheRef,
@@ -4181,7 +4311,6 @@ export function App({
     currentModelLabel,
     currentModelProvider,
     effectiveContextWindowSize,
-    emittedIdsRef,
     modAdapter,
     firstUserQueryRef,
     flushPendingReasoningEffort: () => flushPendingReasoningEffort(),
@@ -4190,7 +4319,6 @@ export function App({
     handleAgentSelect,
     handleBtwCommand,
     handleExit,
-    hasBackfilledRef,
     isAgentBusy,
     isExecutingTool,
     llmConfigRef,
@@ -4198,6 +4326,7 @@ export function App({
     needsEagerApprovalCheck,
     openTrajectorySegment,
     overrideContentPartsRef,
+    ownerRequestRef,
     pendingApprovals,
     pendingConversationSwitchRef,
     pendingGitReminderRef,
@@ -4209,10 +4338,8 @@ export function App({
     queuedSystemPromptRecompileByConversationRef:
       _queuedSystemPromptRecompileByConversationRef,
     reasoningTabCycleEnabled,
-    recoverRestoredPendingApprovals,
     refreshDerived,
     resetBootstrapReminderState,
-    resetDeferredToolCallCommits,
     resetPendingReasoningCycle,
     resetTrajectoryBases,
     runEndHooks,
@@ -4232,18 +4359,16 @@ export function App({
     setDequeueEpoch,
     setFeedbackPrefill,
     setHasConversationModelOverride,
-    setLines,
     setLlmConfig,
     markLocalModelsAvailable,
     setModelSelectorOptions,
     setNeedsEagerApprovalCheck,
     setProfileConfirmPending,
+    setQueuedOverlayAction,
     setReflectionArenaChoicePending,
     setWorktreeDiffSelectorPending,
     setReasoningTabCycleEnabled: _setReasoningTabCycleEnabled,
     setSearchQuery,
-    setStaticItems,
-    setStaticRenderEpoch,
     setStreaming,
     setThinkingMessage,
     setTokenStreamingEnabled,
@@ -4285,7 +4410,11 @@ export function App({
     if (
       !streaming &&
       hasAnythingQueued &&
-      !queuedOverlayAction && // Prioritize queued model/toolset/system switches before dequeuing messages
+      (!queuedOverlayAction ||
+        queuedOverlayAction.type === "switch_conversation" ||
+        queuedOverlayAction.type === "switch_agent" ||
+        queuedOverlayAction.type === "create_agent" ||
+        queuedOverlayAction.type === "exit") && // Drain accepted old-scope input before a scope switch
       pendingApprovals.length === 0 &&
       !commandRunning &&
       !isExecutingTool &&
@@ -4293,6 +4422,7 @@ export function App({
       !anySelectorOpen && // Don't dequeue while a selector/overlay is open
       !waitingForQueueCancelRef.current && // Don't dequeue while waiting for cancel
       !userCancelledRef.current && // Don't dequeue if user just cancelled
+      !pendingBackendCancellationRef.current &&
       !abortControllerRef.current && // Don't dequeue while processConversation is still active
       !dequeueInFlightRef.current && // Don't dequeue while previous dequeue submit is still in flight
       // In defer mode, only dequeue when the agent is truly done:
@@ -4302,8 +4432,7 @@ export function App({
         (lastStopReasonRef.current === "end_turn" &&
           processingConversationRef.current === 0))
     ) {
-      // consumeItems(n) fires onDequeued → setQueueDisplay(prev => prev.slice(n)).
-      const batch = tuiQueueRef.current?.consumeItems(queueLen);
+      const batch = tuiQueueRef.current?.tryDequeue(null);
       if (!batch) return;
 
       // Build concatenated text for lastDequeuedMessageRef (error restoration).
@@ -4330,15 +4459,30 @@ export function App({
 
       // Submit via normal flow — overrideContentPartsRef carries rich content parts.
       overrideContentPartsRef.current = queuedContentParts;
+      const ownerItem =
+        batch.items.length === 1 && batch.items[0]?.kind === "message"
+          ? batch.items[0]
+          : null;
+      ownerRequestRef.current = ownerItem?.ownerRequest ?? null;
       // Lock prevents re-entrant dequeue if deps churn before processConversation
       // sets abortControllerRef (which is the normal long-term gate).
       dequeueInFlightRef.current = true;
       // Reset to immediate mode after each dequeue — defer is opt-in per batch.
       setQueueMode("immediate");
-      void onSubmitRef.current(concatenatedMessage).finally(() => {
+      const actingUserId = batch.items.find(
+        (item) => item.actingUserId,
+      )?.actingUserId;
+      void runWithRuntimeContext({ actingUserId }, () =>
+        onSubmitRef.current(concatenatedMessage),
+      ).finally(() => {
         dequeueInFlightRef.current = false;
-        // If more items arrived while in-flight, bump epoch so the effect re-runs.
-        if ((tuiQueueRef.current?.length ?? 0) > 0) {
+        // Queue length and pending scope action are state-independent gates.
+        // Wake after this authoritative ref boundary even when the last old-
+        // scope item emptied the queue.
+        if (
+          (tuiQueueRef.current?.length ?? 0) > 0 ||
+          pendingLocalSessionScopeSwitchRef.current
+        ) {
           setDequeueEpoch((e) => e + 1);
         }
       });
@@ -4426,6 +4570,7 @@ export function App({
   // These are actions from interactive commands (like /agents, /model) that were
   // used while the agent was busy. The change is applied after end_turn.
   useEffect(() => {
+    void dequeueEpoch;
     if (
       !streaming &&
       !commandRunning &&
@@ -4434,17 +4579,44 @@ export function App({
       queuedOverlayAction !== null
     ) {
       const action = queuedOverlayAction;
+      const changesLocalSessionScope =
+        (action.type === "switch_conversation" &&
+          action.conversationId !== conversationId) ||
+        (action.type === "switch_agent" && action.agentId !== agentId) ||
+        action.type === "create_agent" ||
+        action.type === "exit";
+      if (changesLocalSessionScope) {
+        localSessionOwner.stopAdmission();
+        resumeAcceptedLocalSessionInput();
+        sessionSwitchAdmissionStateRef.current = "draining";
+        const oldScopeHasAcceptedInput = hasAcceptedLocalSessionInput();
+        if (
+          oldScopeHasAcceptedInput ||
+          dequeueInFlightRef.current ||
+          pendingBackendCancellationRef.current ||
+          abortControllerRef.current ||
+          processingConversationRef.current > 0
+        ) {
+          return;
+        }
+        sessionSwitchAdmissionStateRef.current = "releasing";
+      }
       setQueuedOverlayAction(null); // Clear immediately to prevent re-runs
 
-      // Process the queued action
       if (action.type === "switch_agent") {
-        // Call handleAgentSelect - it will see isAgentBusy() as false now
         handleAgentSelect(action.agentId, {
+          conversationId: action.conversationId,
           commandId: action.commandId,
           backendMode: action.backendMode,
         });
+      } else if (action.type === "create_agent") {
+        handleCreateNewAgent(action.name, {
+          commandId: action.commandId,
+          backendMode: action.backendMode,
+        });
+      } else if (action.type === "exit") {
+        void handleExit();
       } else if (action.type === "switch_model") {
-        // Call handleModelSelect - it will see isAgentBusy() as false now
         handleModelSelect(
           action.modelSelection ?? action.modelId,
           action.commandId,
@@ -4465,7 +4637,6 @@ export function App({
           phase: "running",
         });
 
-        // Execute the conversation switch asynchronously
         (async () => {
           setCommandRunning(true);
           try {
@@ -4478,7 +4649,9 @@ export function App({
                   action.conversationId,
                 );
 
+                await localSessionOwner.release();
                 setConversationIdAndRef(action.conversationId);
+                sessionSwitchAdmissionStateRef.current = "idle";
                 setConversationAutoTitleEligibility(false);
 
                 pendingConversationSwitchRef.current = {
@@ -4490,10 +4663,22 @@ export function App({
                 };
 
                 settingsManager.persistSession(agentId, action.conversationId);
-
-                // Reset context tokens for new conversation
                 resetContextHistory(contextTrackerRef.current);
                 resetBootstrapReminderState();
+                process.stdout.write(CLEAR_SCREEN_AND_HOME);
+                setStaticItems([]);
+                setStaticRenderEpoch((epoch) => epoch + 1);
+                restoreConversationView({
+                  buffers: buffersRef.current,
+                  history: resumeData.messageHistory,
+                  emittedIds: emittedIdsRef.current,
+                  hasBackfilledRef,
+                  resetDeferredToolCallCommits,
+                  resetTrajectoryBases,
+                  setLines,
+                  setStaticItems,
+                  separatorId: uid("sep"),
+                });
 
                 if (resumeData.pendingApprovals.length > 0) {
                   await recoverRestoredPendingApprovals(
@@ -4508,6 +4693,8 @@ export function App({
               }
             }
           } catch (error) {
+            sessionSwitchAdmissionStateRef.current = "idle";
+            localSessionOwner.resumeAdmission();
             cmd.fail(
               `Failed to switch conversation: ${error instanceof Error ? error.message : String(error)}`,
             );
@@ -4538,6 +4725,9 @@ export function App({
     isExecutingTool,
     pendingApprovals,
     handleAgentSelect,
+    handleCreateNewAgent,
+    handleExit,
+    resumeAcceptedLocalSessionInput,
     handleModelSelect,
     handleSleeptimeModeSelect,
     handleCompactionModeSelect,
@@ -4548,12 +4738,17 @@ export function App({
     agentId,
     agentState,
     conversationId,
+    dequeueEpoch,
     refreshDerived,
     setCommandRunning,
     commandRunner.getHandle,
     commandRunner.start,
     recoverRestoredPendingApprovals,
     resetBootstrapReminderState,
+    resetDeferredToolCallCommits,
+    resetTrajectoryBases,
+    hasAcceptedLocalSessionInput,
+    localSessionOwner,
     setConversationAutoTitleEligibility,
     setConversationIdAndRef,
     queuedOverlayAction,
@@ -4582,13 +4777,10 @@ export function App({
     }
   }, [commandRunner, profileConfirmPending]);
 
-  // Toggle expand/collapse for a specific tool call ID
   const handleToggleExpandedToolCall = useCallback((id: string) => {
     setExpandedToolCallId((prev) => (prev === id ? null : id));
   }, []);
 
-  // The ID of the last finished shell tool call — used for the ctrl+o hint and handler.
-  // lines is intentionally in the dep array to recompute when buffers change (buffersRef is a ref).
   // biome-ignore lint/correctness/useExhaustiveDependencies: lines triggers recompute when buffer changes
   const lastShellToolCallId = useMemo(() => {
     const order = buffersRef.current.order;
@@ -4609,17 +4801,14 @@ export function App({
     return null;
   }, [lines]);
 
-  // ctrl+o toggles the last shell tool call output
   const handleCtrlO = useCallback(() => {
     if (lastShellToolCallId) {
       handleToggleExpandedToolCall(lastShellToolCallId);
     }
   }, [lastShellToolCallId, handleToggleExpandedToolCall]);
 
-  // Handle permission mode changes from the Input component (e.g., shift+tab cycling)
   const handlePermissionModeChange = useCallback(
     (mode: PermissionMode) => {
-      // permissionMode.setMode() is called in InputRich.tsx before this callback
       setUiPermissionMode(mode);
     },
     [setUiPermissionMode],
@@ -4654,7 +4843,6 @@ export function App({
       withCommandLock,
     });
 
-  // Live area shows only in-progress items
   // biome-ignore lint/correctness/useExhaustiveDependencies: staticItems.length and deferredCommitAt are intentional triggers to recompute when items are promoted to static or deferred commits complete
   const liveItems = useMemo(() => {
     return lines.filter((ln) => {
@@ -4664,14 +4852,9 @@ export function App({
         return ln.phase === "running";
       }
       if (ln.kind === "tool_call") {
-        // Task tool_calls need special handling:
-        // - Only include if pending approval (phase: "ready" or "streaming")
-        // - Running/finished Task tools are handled by SubagentGroupDisplay
         if (ln.name && isTaskTool(ln.name)) {
-          // Only show Task tools that are awaiting approval (not running/finished)
           return ln.phase === "ready" || ln.phase === "streaming";
         }
-        // Always show other tool calls in progress
         return (
           ln.phase !== "finished" ||
           deferredToolCallCommitsRef.current.has(ln.id)

@@ -99,6 +99,17 @@ describe("finishTuiTurn — normal completion", () => {
     });
     expect(h.bumps()).toBe(0);
   });
+
+  test("wakes a pending scope switch after the last queued item drains", () => {
+    const h = harness({ queueLength: 0 });
+    finishTuiTurn({
+      ...h.args,
+      isStale: false,
+      turnAbortController: h.controller,
+      hasPendingScopeSwitch: () => true,
+    });
+    expect(h.bumps()).toBe(1);
+  });
 });
 
 describe("finishTuiTurn — interrupted (stale) turn", () => {

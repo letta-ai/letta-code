@@ -14,6 +14,7 @@ export interface RegisterResult {
   wsUrl: string;
   supportsSplitStatusChannels: boolean;
   supportsPairedListenerGenerations: boolean;
+  supportsLocalSessionOwnership: boolean;
 }
 
 export interface RegisterOptions {
@@ -40,9 +41,10 @@ export interface RegisterOptions {
  * Surfaces:
  * - "server": `letta server` CLI process
  * - "listen": in-app /listen command
+ * - "local-session": automatic scoped relay owned by an interactive TUI
  */
 export function deriveListenerInstanceId(
-  surface: "server" | "listen",
+  surface: "server" | "listen" | "local-session",
   connectionName: string,
 ): string {
   const nameHash = createHash("sha256")
@@ -198,6 +200,8 @@ export async function registerWithCloud(
     supportsSplitStatusChannels: result.supportsSplitStatusChannels === true,
     supportsPairedListenerGenerations:
       result.supportsPairedListenerGenerations === true,
+    supportsLocalSessionOwnership:
+      result.supportsLocalSessionOwnership === true,
   };
 }
 

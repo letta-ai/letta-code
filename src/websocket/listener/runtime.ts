@@ -27,13 +27,20 @@ export function setActiveRuntime(runtime: ListenerRuntime | null): void {
   activeRuntime = runtime;
 }
 
+export function isListenerRuntimeCurrent(runtime: ListenerRuntime): boolean {
+  return (
+    runtime.detachedFromActiveRuntime === true || activeRuntime === runtime
+  );
+}
+
 export function safeEmitWsEvent(
   direction: "send" | "recv",
   label: "client" | "protocol" | "control" | "lifecycle",
   event: unknown,
+  runtime: ListenerRuntime | null = activeRuntime,
 ): void {
   try {
-    activeRuntime?.onWsEvent?.(direction, label, event);
+    runtime?.onWsEvent?.(direction, label, event);
   } catch {
     // Debug hook must never break transport flow.
   }
@@ -288,6 +295,7 @@ export function createConversationRuntime(
       return turnLifecycle.cancelRequested;
     },
     queueRuntime: null as unknown as ConversationRuntime["queueRuntime"],
+    queueRuntimeOwnedExternally: false,
     queuedMessagesByItemId: new Map(),
     dequeuedClientMessageIdsByBatchId: new Map(),
     queuePumpActive: false,

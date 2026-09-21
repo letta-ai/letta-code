@@ -65,7 +65,7 @@ import {
   shouldQueueInboundMessage,
 } from "./queue";
 import { emitLoopErrorNotice } from "./recoverable-notices";
-import { getActiveRuntime, safeEmitWsEvent } from "./runtime";
+import { isListenerRuntimeCurrent, safeEmitWsEvent } from "./runtime";
 import { parseListenerReadyMessage } from "./split-stream-lifecycle";
 import { validateResponseFormat } from "./structured-output";
 import {
@@ -235,20 +235,22 @@ export function createListenerMessageHandler(
         if (lifecycleMessage.type === "pong") {
           runtime.lastPongAt = Date.now();
         }
-        safeEmitWsEvent("recv", "lifecycle", lifecycleMessage);
+        safeEmitWsEvent("recv", "lifecycle", lifecycleMessage, runtime);
         return;
       }
 
       const parsed = parseServerMessage(data);
       parsedScope = getParsedRuntimeScope(parsed);
       if (parsed) {
-        safeEmitWsEvent("recv", "client", parsed);
+        safeEmitWsEvent("recv", "client", parsed, runtime);
       } else {
         // Log unparseable frames so protocol drift is visible in debug mode
-        safeEmitWsEvent("recv", "lifecycle", {
-          type: "_ws_unparseable",
-          raw,
-        });
+        safeEmitWsEvent(
+          "recv",
+          "lifecycle",
+          { type: "_ws_unparseable", raw },
+          runtime,
+        );
       }
       if (isDebugEnabled()) {
         console.log(
@@ -356,7 +358,7 @@ export function createListenerMessageHandler(
             "runtime_external_tools_update",
           );
         };
-        if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
+        if (!isListenerRuntimeCurrent(runtime) || runtime.intentionallyClosed) {
           respond(false, "Runtime is no longer active");
           return;
         }
@@ -366,7 +368,7 @@ export function createListenerMessageHandler(
       }
 
       if (parsed.type === "sync") {
-        if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
+        if (!isListenerRuntimeCurrent(runtime) || runtime.intentionallyClosed) {
           logV2Command(opts, "Dropping sync: runtime mismatch or closed");
           if (parsed.request_id) {
             safeSocketSend(
@@ -447,7 +449,7 @@ export function createListenerMessageHandler(
             "input",
           );
         };
-        if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
+        if (!isListenerRuntimeCurrent(runtime) || runtime.intentionallyClosed) {
           logV2Command(opts, "Dropping input: runtime mismatch or closed");
           acknowledgeInput(false, "Runtime is no longer active");
           return;
@@ -582,13 +584,11 @@ export function createListenerMessageHandler(
           );
           return;
         }
-
         const scopedRuntime = getOrCreateScopedRuntime(
           runtime,
           incoming.agentId,
           incoming.conversationId,
         );
-
         const processIncomingMessageDirectly = (
           directIncoming: IncomingMessage,
         ): void => {
@@ -610,7 +610,6 @@ export function createListenerMessageHandler(
               ),
           });
         };
-
         if (shouldQueueInboundMessage(incoming)) {
           const stampedIncoming = stampInboundUserMessageOtids(incoming);
           const clientMessageId = getInboundClientMessageId(stampedIncoming);
@@ -632,13 +631,21 @@ export function createListenerMessageHandler(
             acknowledgeInput(false, "Conversation is switching computers");
             return;
           }
+          const localSessionOwner = opts.localSessionOwner;
+          if (
+            localSessionOwner &&
+            scopedRuntime.agentId === localSessionOwner.agentId &&
+            scopedRuntime.conversationId === localSessionOwner.conversationId
+          ) {
+            processIncomingMessageDirectly(stampedIncoming);
+            return;
+          }
           if (
             shouldProcessInboundMessageDirectly(scopedRuntime, stampedIncoming)
           ) {
             processIncomingMessageDirectly(stampedIncoming);
             return;
           }
-
           const enqueued = enqueueInboundUserMessage(
             scopedRuntime,
             stampedIncoming,
@@ -659,11 +666,9 @@ export function createListenerMessageHandler(
           );
           return;
         }
-
         processIncomingMessageDirectly(incoming);
         return;
       }
-
       if (parsed.type === "change_device_state") {
         await handleChangeDeviceStateInput(runtime, {
           command: parsed,
@@ -677,9 +682,8 @@ export function createListenerMessageHandler(
         });
         return;
       }
-
       if (parsed.type === "abort_message") {
-        if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
+        if (!isListenerRuntimeCurrent(runtime) || runtime.intentionallyClosed) {
           if (parsed.request_id) {
             safeSocketSend(
               socket,
@@ -698,16 +702,22 @@ export function createListenerMessageHandler(
           return;
         }
         try {
-          const aborted = await handleAbortMessageInput(runtime, {
-            command: parsed,
-            connectionId,
-            socket,
-            opts: {
-              onStatusChange: opts.onStatusChange,
-              connectionId: opts.connectionId,
-            },
-            processQueuedTurn,
-          });
+          const sessionOwner = opts.localSessionOwner;
+          const isOwnedLocalScope =
+            sessionOwner?.agentId === parsed.runtime.agent_id &&
+            sessionOwner.conversationId === parsed.runtime.conversation_id;
+          const aborted = isOwnedLocalScope
+            ? await sessionOwner.abort()
+            : await handleAbortMessageInput(runtime, {
+                command: parsed,
+                connectionId,
+                socket,
+                opts: {
+                  onStatusChange: opts.onStatusChange,
+                  connectionId: opts.connectionId,
+                },
+                processQueuedTurn,
+              });
           if (parsed.request_id) {
             safeSocketSend(
               socket,
@@ -758,11 +768,9 @@ export function createListenerMessageHandler(
         });
         return;
       }
-
       if (fileCommandSession.handle(parsed)) {
         return;
       }
-
       if (
         handleMemfsSyncedMemoryProtocolCommand(parsed, {
           socket,
