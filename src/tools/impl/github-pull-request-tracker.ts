@@ -13,10 +13,6 @@ export type ShellSourceCommand = string | readonly string[];
 type OutputStream = "stdout" | "stderr";
 
 export type ConversationTagBackend = {
-  retrieveConversation(
-    conversationId: string,
-    options?: { signal?: AbortSignal },
-  ): Promise<unknown>;
   updateConversation(
     conversationId: string,
     body: ConversationUpdateBody,
@@ -50,18 +46,6 @@ const TIMEOUT_FLAGS_WITHOUT_VALUES = new Set([
   "--verbose",
   "-v",
 ]);
-
-const conversationTagUpdateTails = new Map<string, Promise<void>>();
-
-function conversationTags(conversation: unknown): string[] {
-  const tags =
-    typeof conversation === "object" && conversation !== null
-      ? Reflect.get(conversation, "tags")
-      : undefined;
-  return Array.isArray(tags)
-    ? tags.filter((tag): tag is string => typeof tag === "string")
-    : [];
-}
 
 function executableName(value: string): string {
   return value.replaceAll("\\", "/").split("/").pop()?.toLowerCase() ?? "";
@@ -314,23 +298,25 @@ async function appendConversationTags(
   signal?: AbortSignal,
 ): Promise<void> {
   signal?.throwIfAborted();
-  const conversation = await backend.retrieveConversation(conversationId, {
-    signal,
-  });
-  signal?.throwIfAborted();
-  const existingTags = conversationTags(conversation);
-  const missingTags = tags.filter((tag) => !existingTags.includes(tag));
-  if (missingTags.length === 0) {
-    return;
+  try {
+    await waitForTagUpdate(
+      backend
+        .updateConversation(
+          conversationId,
+          { tags_to_add: [...tags] },
+          { signal },
+        )
+        .then(() => undefined),
+      signal,
+    );
+  } catch (error) {
+    if (signal?.aborted) signal.throwIfAborted();
+    debugLog(
+      "github-pr-tracking",
+      `Failed to tag conversation ${conversationId}`,
+      error,
+    );
   }
-
-  await backend.updateConversation(
-    conversationId,
-    {
-      tags: [...new Set([...existingTags, ...missingTags])],
-    } as ConversationUpdateBody,
-    { signal },
-  );
 }
 
 function waitForTagUpdate(
@@ -347,40 +333,6 @@ function waitForTagUpdate(
   return Promise.race([update, stopped]).finally(() => {
     signal.removeEventListener("abort", onAbort);
   });
-}
-
-function queueConversationTagUpdate(
-  backend: ConversationTagBackend,
-  conversationId: string,
-  tags: readonly string[],
-  signal?: AbortSignal,
-): Promise<void> {
-  const previous = conversationTagUpdateTails.get(conversationId);
-  const update = waitForTagUpdate(
-    (previous ?? Promise.resolve()).then(() =>
-      appendConversationTags(backend, conversationId, tags, signal),
-    ),
-    signal,
-  ).catch((error: unknown) => {
-    if (signal?.aborted) {
-      signal.throwIfAborted();
-    }
-    debugLog(
-      "github-pr-tracking",
-      `Failed to tag conversation ${conversationId}`,
-      error,
-    );
-  });
-  const tail = update.catch(() => {});
-  conversationTagUpdateTails.set(conversationId, tail);
-  void tail
-    .finally(() => {
-      if (conversationTagUpdateTails.get(conversationId) === tail) {
-        conversationTagUpdateTails.delete(conversationId);
-      }
-    })
-    .catch(() => {});
-  return update;
 }
 
 export function createGitHubPullRequestOutputTracker(
@@ -446,7 +398,7 @@ export function createGitHubPullRequestOutputTracker(
         const backend = options?.backend ?? getBackend();
         finishPromise = Promise.all(
           targetConversationIds.map((targetConversationId) =>
-            queueConversationTagUpdate(
+            appendConversationTags(
               backend,
               targetConversationId,
               [...tags],

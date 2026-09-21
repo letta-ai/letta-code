@@ -27,10 +27,11 @@ class FakeConversationTagBackend implements ConversationTagBackend {
     if (this.updateError) {
       throw this.updateError;
     }
-    const tags = Reflect.get(body, "tags");
+    expect(body).not.toHaveProperty("tags");
+    const tags = body.tags_to_add;
     this.tags = Array.isArray(tags)
-      ? tags.filter((tag): tag is string => typeof tag === "string")
-      : [];
+      ? [...new Set([...this.tags, ...tags])]
+      : this.tags;
     this.updates.push([...this.tags]);
     return { id: _conversationId, tags: [...this.tags] };
   }
@@ -56,10 +57,16 @@ class MultiConversationTagBackend implements ConversationTagBackend {
     conversationId: string,
     body: ConversationUpdateBody,
   ): Promise<unknown> {
-    const tags = Reflect.get(body, "tags");
+    expect(body).not.toHaveProperty("tags");
+    const tags = body.tags_to_add;
     const nextTags = Array.isArray(tags)
-      ? tags.filter((tag): tag is string => typeof tag === "string")
-      : [];
+      ? [
+          ...new Set([
+            ...(this.tagsByConversation.get(conversationId) ?? []),
+            ...tags,
+          ]),
+        ]
+      : (this.tagsByConversation.get(conversationId) ?? []);
     this.tagsByConversation.set(conversationId, nextTags);
     return { id: conversationId, tags: [...nextTags] };
   }
@@ -201,7 +208,7 @@ describe("GitHub pull request output tracking", () => {
     ]);
   });
 
-  test("serializes updates for the same conversation", async () => {
+  test("adds tags without replacement for concurrent updates to the same conversation", async () => {
     const backend = new FakeConversationTagBackend(["channel:discord"]);
     const first = createGitHubPullRequestOutputTracker("gh pr create --fill", {
       conversationId: "conv-4",
@@ -229,35 +236,28 @@ describe("GitHub pull request output tracking", () => {
     ]);
   });
 
-  test.each(["retrieve", "update"] as const)(
-    "releases a cancelled %s so the next PR can update the same conversation",
-    async (stalledOperation) => {
+  test.each(["success", "rejection"] as const)(
+    "allows the next PR while a cancelled update ends in late %s",
+    async (lateResult) => {
       const started = Promise.withResolvers<void>();
       const stalled = Promise.withResolvers<void>();
       const controller = new AbortController();
       let first = true;
       let tags: string[] = [];
       const backend: ConversationTagBackend = {
-        retrieveConversation: async (id) => {
-          if (stalledOperation === "retrieve" && first) {
-            first = false;
-            started.resolve();
-            await stalled.promise;
-          }
-          return { id, tags: [...tags] };
-        },
         updateConversation: async (id, body) => {
-          if (stalledOperation === "update" && first) {
+          expect(body).not.toHaveProperty("tags");
+          if (first) {
             first = false;
             started.resolve();
             await stalled.promise;
           }
-          tags = Reflect.get(body, "tags") as string[];
+          tags = [...new Set([...tags, ...(body.tags_to_add ?? [])])];
           return { id, tags };
         },
       };
       const options = {
-        conversationId: `conv-cancel-${stalledOperation}`,
+        conversationId: `conv-cancel-${lateResult}`,
         attributionConversationIds: [],
         backend,
       };
@@ -288,12 +288,17 @@ describe("GitHub pull request output tracking", () => {
       expect(await firstFinished).toBe(reason);
       expect(tags).toEqual(["github:pull-request:letta-ai:letta-code:4007"]);
 
-      // A late read must not start a stale write; a late write rejection must
-      // remain observed after its caller has returned.
-      if (stalledOperation === "retrieve") stalled.resolve();
+      // Successful late additions preserve the newer tag. Rejections remain
+      // observed even after the caller has stopped waiting.
+      if (lateResult === "success") stalled.resolve();
       else stalled.reject(new Error("late backend failure"));
       await Bun.sleep(0);
-      expect(tags).toEqual(["github:pull-request:letta-ai:letta-code:4007"]);
+      expect(tags).toEqual([
+        "github:pull-request:letta-ai:letta-code:4007",
+        ...(lateResult === "success"
+          ? ["github:pull-request:letta-ai:letta-code:4006"]
+          : []),
+      ]);
     },
   );
 
