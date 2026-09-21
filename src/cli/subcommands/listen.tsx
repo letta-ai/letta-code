@@ -6,13 +6,11 @@
 import { hostname } from "node:os";
 import { parseArgs } from "node:util";
 import { MessageChannel } from "node:worker_threads";
-import { Box, render, Text } from "ink";
-import TextInput from "ink-text-input";
-import type React from "react";
-import { useState } from "react";
+import { render } from "ink";
 import { configureBackendMode } from "@/backend";
 import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
 import type { ChannelGatewaySupervisor } from "@/channels/gateway-supervisor";
+import { resolveChannelGatewayTelemetryTypes } from "@/channels/gateway-telemetry-types";
 import {
   type ChannelRestoreAgentScope,
   parseChannelRestoreAgentScope,
@@ -20,6 +18,7 @@ import {
   RESTORE_ENABLED_CHANNELS_AGENT_SCOPE_ENV,
 } from "@/channels/restore-scope";
 import { ListenerStatusUI } from "@/cli/components/ListenerStatusUI";
+import { printFirstRunWelcome } from "@/cli/subcommands/listen-first-run-welcome";
 import { applyStartupPermissionMode } from "@/permissions/startup";
 import { settingsManager } from "@/settings-manager";
 import { getListenerTelemetrySurface, telemetry } from "@/telemetry";
@@ -60,29 +59,6 @@ type CreateListenerProcessAnchor = () => ListenerProcessAnchor;
 // Without a retained reference, the MessageChannel anchor could be garbage
 // collected even though it is intended to hold channel-only listeners open.
 const activeListenerProcessAnchors = new Set<ListenerProcessAnchor>();
-
-/**
- * Interactive prompt for computer name
- */
-function PromptEnvName(props: {
-  onSubmit: (envName: string) => void;
-}): React.ReactElement {
-  const [value, setValue] = useState("");
-
-  return (
-    <Box flexDirection="column">
-      <Text>Enter computer name (or press Enter for hostname): </Text>
-      <TextInput
-        value={value}
-        onChange={setValue}
-        onSubmit={(input) => {
-          const finalName = input.trim() || hostname();
-          props.onSubmit(finalName);
-        }}
-      />
-    </Box>
-  );
-}
 
 function formatTimestamp(): string {
   const now = new Date();
@@ -397,9 +373,26 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         .map((s) => s.trim())
         .filter(Boolean)
     : [];
+  const readChannelGatewayTelemetryTypes = (): string[] => {
+    try {
+      return resolveChannelGatewayTelemetryTypes({
+        restoreEnabledChannels,
+        channelNames,
+        restoreAgentScope,
+      });
+    } catch (error) {
+      console.warn(
+        `Unable to enumerate enabled channels for telemetry: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return [];
+    }
+  };
 
   // Determine connection name
   let connectionName: string;
+  let showedFirstRunWelcome = false;
 
   const explicitComputerName = values["computer-name"] ?? values["env-name"];
   const spawnerDeviceId = getSpawnerDeviceId();
@@ -414,25 +407,13 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     if (savedName) {
       // Reuse saved name
       connectionName = savedName;
-    } else if (debugMode) {
-      // In debug mode, default to hostname without prompting
-      connectionName = hostname();
-      settingsManager.setListenerEnvName(connectionName);
     } else {
-      // No saved name - prompt user
-      connectionName = await new Promise<string>((resolve) => {
-        const { unmount } = render(
-          <PromptEnvName
-            onSubmit={(name) => {
-              unmount();
-              resolve(name);
-            }}
-          />,
-        );
-      });
-
-      // Save to local project settings for future runs
+      // No saved name - default to hostname so a first run (e.g. pasted from
+      // onboarding) registers without an interactive prompt.
+      connectionName = hostname() || "my-computer";
       settingsManager.setListenerEnvName(connectionName);
+      printFirstRunWelcome(connectionName);
+      showedFirstRunWelcome = true;
     }
   }
 
@@ -578,10 +559,32 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             sessionLog.log(message);
             if (debugMode) console.log(`[${formatTimestamp()}] ${message}`);
           },
+          onLifecycleEvent: (event) => {
+            telemetry.trackChannelGatewayLifecycle({
+              lifecycle_event: event.kind,
+              restart_attempt: event.restartAttempt,
+              max_restart_attempts: event.maxRestartAttempts,
+              restore_mode: restoreEnabledChannels
+                ? "enabled_accounts"
+                : "explicit_channels",
+              channel_types: readChannelGatewayTelemetryTypes(),
+              duration_ms: event.durationMs,
+              delay_ms: event.delayMs,
+              exit_code: event.exitCode,
+              signal: event.signal,
+              reached_ready: event.reachedReady,
+            });
+          },
           onUnexpectedExit: (error) => {
             console.error(`[${formatTimestamp()}] ${error.message}`);
+          },
+          onRestartExhausted: (error) => {
+            console.error(`[${formatTimestamp()}] ${error.message}`);
             if (values.channels) {
-              void exitWithTelemetry(1, "listener_channel_gateway_exited");
+              void exitWithTelemetry(
+                1,
+                "listener_channel_gateway_restart_exhausted",
+              );
             }
           },
           onServiceEvent: (event) => {
@@ -844,8 +847,9 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         supportsPairedListenerGenerations,
       );
     } else {
-      // Normal mode: interactive Ink UI
-      console.clear();
+      // Normal mode: interactive Ink UI. On a first run keep the welcome banner
+      // and sign-in output on screen instead of clearing them.
+      if (!showedFirstRunWelcome) console.clear();
 
       let updateStatusCallback:
         | ((status: "idle" | "receiving" | "processing") => void)
@@ -859,6 +863,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         <ListenerStatusUI
           connectionId={connectionId}
           envName={connectionName}
+          isFirstRun={showedFirstRunWelcome}
           onReady={(callbacks) => {
             updateStatusCallback = callbacks.updateStatus;
             updateRetryStatusCallback = callbacks.updateRetryStatus;

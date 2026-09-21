@@ -35,6 +35,7 @@ export function buildAppServerInfoResponse(
       runtime_start: true,
       runtime_workspace_sandbox: true,
       runtime_external_tools_update: true,
+      structured_outputs: options.backend === "api",
       split_channels: false,
     },
   };

@@ -38,12 +38,11 @@ export function getDisplayableToolReturn(content: ToolReturnContent): string {
  * These tools don't modify files or shared state, so they can't race with each other.
  * Note: Bash/shell tools are intentionally excluded - they can run arbitrary commands that may write files.
  *
- * Includes equivalent tools across all toolsets (Anthropic, Codex/OpenAI, Gemini).
+ * Includes equivalent tools across all toolsets (Anthropic and Codex/OpenAI).
  */
 const PARALLEL_SAFE_TOOLS = new Set([
   // === Anthropic toolset (default) ===
   "Read",
-  "view_image",
   "ViewImage",
   "Grep",
   "Glob",
@@ -57,20 +56,6 @@ const PARALLEL_SAFE_TOOLS = new Set([
   "ReadFile",
   "ListDir",
   "GrepFiles",
-
-  // === Gemini toolset ===
-  // snake_case variants
-  "read_file_gemini",
-  "list_directory",
-  "glob_gemini",
-  "search_file_content",
-  "read_many_files",
-  // PascalCase variants
-  "ReadFileGemini",
-  "ListDirectory",
-  "GlobGemini",
-  "SearchFileContent",
-  "ReadManyFiles",
 
   // === Cross-toolset tools ===
   // Search/fetch tools (external APIs or read-only queries)
@@ -100,11 +85,6 @@ const FILE_PATH_TOOLS = new Set([
   "Edit",
   "Write",
   "MultiEdit",
-  // Gemini toolset
-  "replace",
-  "write_file_gemini",
-  "Replace",
-  "WriteFileGemini",
 ]);
 
 /**
@@ -115,8 +95,6 @@ const GLOBAL_LOCK_TOOLS = new Set([
   // Shell tools (arbitrary side effects)
   "Bash",
   "KillBash",
-  "run_shell_command",
-  "RunShellCommand",
   // Memory tool (file + git side effects)
   "memory",
   "shell_command",
@@ -125,8 +103,6 @@ const GLOBAL_LOCK_TOOLS = new Set([
   "shell",
   "ShellCommand",
   "Shell",
-  // Patch tools (can touch multiple files in a single operation)
-  "apply_patch",
   "ApplyPatch",
 ]);
 

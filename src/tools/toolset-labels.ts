@@ -1,4 +1,4 @@
-import { TOOLSET_OPTIONS } from "./toolset-options";
+import { TOOLSET_OPTIONS } from "./toolset-catalog";
 
 /**
  * Human-readable display names for toolset IDs.

@@ -8,9 +8,7 @@ const MEMORY_ROOT_NAMES = new Set(["system", "reference", "skills"]);
 const MEMORY_PATH_TOOL_NAMES = new Set([
   "Read",
   "ReadFile",
-  "ReadFileGemini",
   "ReadLSP",
-  "ReadManyFiles",
   "LS",
   "Glob",
   "Grep",

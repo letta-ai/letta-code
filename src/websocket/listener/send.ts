@@ -20,6 +20,7 @@ import {
 import { type ConversationMessageStreamBody, getBackend } from "@/backend";
 import { getRetryStatusMessage } from "@/cli/helpers/error-formatter";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
+import { shouldEmitRetryNotice } from "@/utils/cloud-api-shutdown";
 import { createStreamAbortRelay } from "@/utils/stream-abort-relay";
 import {
   rememberPendingApprovalBatchIds,
@@ -604,7 +605,7 @@ export async function sendMessageStreamWithRetry(
         });
 
         const retryMessage = getRetryStatusMessage(errorDetail);
-        if (retryMessage) {
+        if (retryMessage && shouldEmitRetryNotice(preStreamError)) {
           emitRetryDelta(socket, runtime, {
             message: retryMessage,
             reason: "error",
@@ -805,7 +806,7 @@ export async function sendApprovalContinuationWithRetry(
         });
 
         const retryMessage = getRetryStatusMessage(errorDetail);
-        if (retryMessage) {
+        if (retryMessage && shouldEmitRetryNotice(preStreamError)) {
           emitRetryDelta(socket, runtime, {
             message: retryMessage,
             reason: "error",

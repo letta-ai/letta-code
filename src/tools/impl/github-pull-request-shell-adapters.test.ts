@@ -25,7 +25,7 @@ import { runWithRuntimeContext } from "@/runtime-context";
 import { bash } from "./bash";
 import { __clearExecSessionsForTests, exec_command } from "./exec-command";
 import { backgroundProcesses } from "./process_manager";
-import { run_shell_command } from "./run-shell-command-gemini";
+
 import { shell } from "./shell";
 import { shell_command } from "./shell-command";
 
@@ -149,11 +149,6 @@ const adapters: Array<{
     name: "shell_command",
     run: (command) =>
       shell_command({ command, description: "Create test PR", login: false }),
-  },
-  {
-    name: "run_shell_command",
-    run: (command) =>
-      run_shell_command({ command, description: "Create test PR" }),
   },
 ];
 

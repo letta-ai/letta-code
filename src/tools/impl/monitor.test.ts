@@ -17,12 +17,7 @@ import {
   releaseToolExecutionContext,
 } from "@/tools/manager";
 import MonitorSchema from "@/tools/schemas/Monitor.json";
-import {
-  ANTHROPIC_DEFAULT_TOOLS,
-  GEMINI_DEFAULT_TOOLS,
-  OPENAI_DEFAULT_TOOLS,
-  OPENAI_PASCAL_TOOLS,
-} from "@/tools/toolset-defaults";
+import { TOOLSET_CATALOG } from "@/tools/toolset-catalog";
 import {
   clearPendingMessages,
   type QueuedMessage,
@@ -101,10 +96,8 @@ describe("Monitor", () => {
   });
 
   test("is exposed in the Anthropic and Codex toolsets", () => {
-    expect(ANTHROPIC_DEFAULT_TOOLS).toContain("Monitor");
-    expect(OPENAI_PASCAL_TOOLS).toContain("Monitor");
-    expect(OPENAI_DEFAULT_TOOLS).not.toContain("Monitor");
-    expect(GEMINI_DEFAULT_TOOLS).not.toContain("Monitor");
+    expect(TOOLSET_CATALOG.default.tools).toContain("Monitor");
+    expect(TOOLSET_CATALOG.codex.tools).toContain("Monitor");
   });
 
   test("matches the reference schema defaults and descriptions", () => {

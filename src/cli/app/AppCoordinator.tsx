@@ -275,7 +275,6 @@ function buildStartupCommandHints(options: {
         "→ **/resume**    browse all conversations",
         "→ **/new**       start a new conversation",
         "→ **/init**      initialize your agent's memory",
-        "→ **/remember**  teach your agent",
       ]
     : isPinned
       ? [
@@ -283,14 +282,12 @@ function buildStartupCommandHints(options: {
           "→ **/resume**    resume a previous conversation",
           "→ **/memory**    view your agent's memory",
           "→ **/init**      initialize your agent's memory",
-          "→ **/remember**  teach your agent",
         ]
       : [
           "→ **/agents**    list all agents",
           "→ **/resume**    resume a previous conversation",
           "→ **/pin**       save + name your agent",
           "→ **/init**      initialize your agent's memory",
-          "→ **/remember**  teach your agent",
         ];
 
   const onboardingHints: string[] = [];

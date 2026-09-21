@@ -314,7 +314,6 @@ async function getProcessOutput(
     "TaskOutput",
     {
       workingDirectory: userCwd,
-      toolName: "TaskOutput",
       secrets: currentProc.secrets,
     },
   );
@@ -422,7 +421,7 @@ async function getBackgroundTaskOutput(
     text || "(no output yet)",
     LIMITS.TASK_OUTPUT_CHARS,
     "TaskOutput",
-    { workingDirectory: userCwd, toolName: "TaskOutput" },
+    { workingDirectory: userCwd },
   );
 
   return {

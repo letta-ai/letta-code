@@ -1,5 +1,5 @@
-import { isChatGPTOAuthConfig } from "@/types/chatgpt-oauth";
 import type { ConnectProviderCommand } from "@/types/protocol_v2";
+import { isConnectProviderOAuthConfig } from "@/types/provider-oauth-config";
 import { isStringRecord } from "./protocol-validation";
 
 export function isConnectProviderCommand(
@@ -18,6 +18,6 @@ export function isConnectProviderCommand(
     (command.provider_name === undefined ||
       typeof command.provider_name === "string") &&
     (command.oauth_config === undefined ||
-      isChatGPTOAuthConfig(command.oauth_config))
+      isConnectProviderOAuthConfig(command.oauth_config))
   );
 }

@@ -1,0 +1,32 @@
+{
+  "type": "object",
+  "properties": {
+    "script": {
+      "type": "string",
+      "description": "Self-contained workflow script (plain JavaScript, not TypeScript) starting with `export const meta = {...}`."
+    },
+    "scriptPath": {
+      "type": "string",
+      "description": "Path to a workflow script file on disk. Takes precedence over `script`."
+    },
+    "args": {
+      "description": "Optional input value exposed to the script as the global `args`, verbatim. Pass arrays/objects as actual JSON values, NOT as a JSON-encoded string."
+    },
+    "maxConcurrent": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Maximum subagents running at once (default 16). Further agent() calls queue."
+    },
+    "model": {
+      "type": "string",
+      "description": "Default model handle or alias for subagents (see `letta model list`). Omit to inherit the invoking conversation's model; per-call opts.model overrides this."
+    },
+    "allowedTools": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Default tool allowlist for subagents (per-call opts.allowedTools overrides). Defaults to read-only: Read, Grep, Glob. Widen deliberately for workflows that must write."
+    }
+  },
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

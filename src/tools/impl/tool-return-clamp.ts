@@ -25,7 +25,6 @@ function clampText(text: string, toolName: string): string {
   }
   return truncateByChars(text, LIMITS.TOOL_RETURN_MAX_CHARS, toolName, {
     workingDirectory: getCurrentWorkingDirectory(),
-    toolName,
   }).content;
 }
 

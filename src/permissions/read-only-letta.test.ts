@@ -116,20 +116,17 @@ describe("Letta evidence tool permissions", () => {
 
   afterEach(() => permissionMode.reset());
 
-  test.each([
-    "Bash",
-    "shell_command",
-    "ShellCommand",
-    "run_shell_command",
-    "exec_command",
-  ])("auto-allows evidence through %s in standard mode", (toolName) => {
-    permissionMode.setMode("standard");
-    const args = toolName === "exec_command" ? { cmd: command } : { command };
-    expect(checkPermission(toolName, args, emptyRules)).toMatchObject({
-      decision: "allow",
-      reason: "Read-only shell command",
-    });
-  });
+  test.each(["Bash", "shell_command", "ShellCommand", "exec_command"])(
+    "auto-allows evidence through %s in standard mode",
+    (toolName) => {
+      permissionMode.setMode("standard");
+      const args = toolName === "exec_command" ? { cmd: command } : { command };
+      expect(checkPermission(toolName, args, emptyRules)).toMatchObject({
+        decision: "allow",
+        reason: "Read-only shell command",
+      });
+    },
+  );
 
   test("preserves strict mode and explicit permission rules", () => {
     permissionMode.setMode("strict");

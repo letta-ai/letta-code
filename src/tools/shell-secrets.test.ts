@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { bash } from "@/tools/impl/bash";
-import { run_shell_command } from "@/tools/impl/run-shell-command-gemini";
+
 import { shell_command } from "@/tools/impl/shell-command.js";
 import {
   buildPowerShellCommand,
@@ -147,15 +147,6 @@ describe("shell secret execution", () => {
     expectLiteralSecrets(result.output);
   });
 
-  test("run_shell_command expands injected secret env values literally", async () => {
-    const result = await run_shell_command({
-      command: literalSecretCommand(),
-      secretEnv,
-    });
-
-    expectLiteralSecrets(result.message);
-  });
-
   test("does not scrub an unused low-entropy secret", async () => {
     await seedSecrets();
     const context = await prepareToolExecutionContextForSpecificTools(
@@ -241,7 +232,7 @@ describe("shell secret execution", () => {
     await seedSecrets();
     const command = literalSecretCommand();
     const context = await prepareToolExecutionContextForSpecificTools(
-      ["Bash", "shell_command", "ShellCommand", "run_shell_command"],
+      ["Bash", "shell_command", "ShellCommand"],
       {
         runtimeContext: {
           agentId: TEST_AGENT_ID,
@@ -256,7 +247,6 @@ describe("shell secret execution", () => {
         ["Bash", { command, description: "Test shell secrets" }],
         ["shell_command", { command, description: "Test shell secrets" }],
         ["ShellCommand", { command, description: "Test shell secrets" }],
-        ["run_shell_command", { command, description: "Test shell secrets" }],
       ] as const;
 
       for (const [toolName, args] of calls) {

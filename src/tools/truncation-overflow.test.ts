@@ -31,7 +31,6 @@ describe("truncation with overflow support", () => {
       const longText = "a".repeat(2000);
       const result = truncateByChars(longText, 1000, "TestTool", {
         workingDirectory: testWorkingDir,
-        toolName: "TestTool",
       });
 
       expect(result.wasTruncated).toBe(true);
@@ -47,7 +46,6 @@ describe("truncation with overflow support", () => {
       const longText = "x".repeat(2000);
       const result = truncateByChars(longText, 1000, "TestTool", {
         workingDirectory: testWorkingDir,
-        toolName: "TestTool",
       });
 
       expect(result.content).toContain("Full output written to:");
@@ -81,11 +79,27 @@ describe("truncation with overflow support", () => {
       expect(result.content.split("[")[0]).not.toContain("END");
     });
 
+    test("shows a previewChars prefix once the full output is saved", () => {
+      const text = `${"a".repeat(1000)}END`;
+      const result = truncateByChars(text, 500, "TestTool", {
+        workingDirectory: testWorkingDir,
+        previewChars: 100,
+        useMiddleTruncation: true,
+      });
+
+      expect(result.overflowPath).toBeDefined();
+      expect(result.content).toStartWith("a".repeat(100));
+      expect(result.content).not.toContain("a".repeat(101));
+      expect(result.content).not.toContain("END");
+      expect(result.content).toContain(
+        "[Output truncated: showing 100 of 1,003 characters.]",
+      );
+    });
+
     test("does not create overflow file when under limit", () => {
       const shortText = "short text";
       const result = truncateByChars(shortText, 1000, "TestTool", {
         workingDirectory: testWorkingDir,
-        toolName: "TestTool",
       });
 
       expect(result.wasTruncated).toBe(false);
@@ -100,7 +114,6 @@ describe("truncation with overflow support", () => {
 
       const result = truncateByLines(text, 50, undefined, "TestTool", {
         workingDirectory: testWorkingDir,
-        toolName: "TestTool",
       });
 
       expect(result.wasTruncated).toBe(true);
@@ -135,7 +148,6 @@ describe("truncation with overflow support", () => {
 
       const result = truncateByLines(text, 50, undefined, "TestTool", {
         workingDirectory: testWorkingDir,
-        toolName: "TestTool",
       });
 
       expect(result.content).toContain("Full output written to:");
@@ -150,7 +162,6 @@ describe("truncation with overflow support", () => {
 
       const result = truncateArray(items, 50, formatter, "items", "TestTool", {
         workingDirectory: testWorkingDir,
-        toolName: "TestTool",
       });
 
       expect(result.wasTruncated).toBe(true);
@@ -187,7 +198,6 @@ describe("truncation with overflow support", () => {
 
       const result = truncateArray(items, 50, formatter, "items", "TestTool", {
         workingDirectory: testWorkingDir,
-        toolName: "TestTool",
       });
 
       expect(result.content).toContain("Full output written to:");

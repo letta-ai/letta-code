@@ -67,6 +67,7 @@ import {
 import { emitLoopErrorNotice } from "./recoverable-notices";
 import { getActiveRuntime, safeEmitWsEvent } from "./runtime";
 import { parseListenerReadyMessage } from "./split-stream-lifecycle";
+import { validateResponseFormat } from "./structured-output";
 import {
   buildTeleportContinuationMessages,
   clearExpectedInboundTeleport,
@@ -483,10 +484,6 @@ export function createListenerMessageHandler(
             return;
           }
           const approvals = parsed.payload.continuation?.approvals;
-          if (!approvals || approvals.length === 0) {
-            acknowledgeInput(true);
-            return;
-          }
           if (scopedRuntime.isProcessing) {
             acknowledgeInput(
               false,
@@ -546,6 +543,11 @@ export function createListenerMessageHandler(
           acknowledgeInput(false, "Unsupported input payload kind");
           return;
         }
+        const error = validateResponseFormat(inputPayload.response_format);
+        if (error) {
+          acknowledgeInput(false, error);
+          return;
+        }
         const incoming: IncomingMessage = {
           type: "message",
           connectionId,
@@ -557,6 +559,7 @@ export function createListenerMessageHandler(
           clientToolset: inputPayload.client_toolset,
           externalToolScopeIds: inputPayload.external_tool_scope_ids,
           excludeInteractiveTools: inputPayload.exclude_interactive_tools,
+          responseFormat: inputPayload.response_format,
           imageFailureMode: inputPayload.image_failure_mode,
           messages: inputPayload.messages,
         };

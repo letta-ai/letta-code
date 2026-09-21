@@ -130,16 +130,6 @@ describe("scoped shell secret execution", () => {
       toolNames: ["ShellCommand"],
       buildArgs: (command) => ({ command, login: false, timeout_ms: 5000 }),
     },
-    {
-      name: "run_shell_command",
-      toolNames: ["run_shell_command"],
-      buildArgs: (command) => ({ command, timeout_ms: 5000 }),
-    },
-    {
-      name: "RunShellCommand",
-      toolNames: ["RunShellCommand"],
-      buildArgs: (command) => ({ command, timeout_ms: 5000 }),
-    },
   ];
 
   for (const tool of stringShellTools) {

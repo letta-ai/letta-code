@@ -21,6 +21,7 @@ import { runInstallSubcommand, runSkillsSubcommand } from "./skills";
 import { runStepsSubcommand } from "./steps";
 import { runTeleportSubcommand } from "./teleport";
 import { runTrajectoriesSubcommand } from "./trajectories";
+import { runUsageSubcommand } from "./usage";
 
 async function runUpdateSubcommand(): Promise<number> {
   const { manualUpdate } = await import("@/updater/auto-update");
@@ -63,6 +64,7 @@ export function subcommandNeedsEarlyBackendMode(
     case "shared-memory":
     case "skills":
     case "teleport":
+    case "usage":
       return true;
     default:
       return false;
@@ -90,6 +92,8 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
     case "model":
     case "models": // alias
       return runModelSubcommand(rest);
+    case "usage":
+      return runUsageSubcommand(rest);
     case "app-server":
       console.error(
         "Warning: `letta app-server` is deprecated. Use `letta server --listen` instead.",

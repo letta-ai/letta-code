@@ -29,6 +29,7 @@ const requestDeviceCodeMock = mock(async (): Promise<DeviceCodeResponse> => {
 const pollForTokenMock = mock(async (): Promise<TokenResponse> => {
   throw new Error("pollForToken not mocked");
 });
+const openInBrowserMock = mock((_url: string) => {});
 
 describe("listener auth", () => {
   const originalGetSettingsWithSecureTokens =
@@ -50,6 +51,7 @@ describe("listener auth", () => {
     refreshAccessTokenMock.mockReset();
     requestDeviceCodeMock.mockReset();
     pollForTokenMock.mockReset();
+    openInBrowserMock.mockReset();
     updateSettingsMock.mockReset();
     flushMock.mockReset();
     __listenerAuthTestUtils.setOAuthDepsForTests({
@@ -57,6 +59,7 @@ describe("listener auth", () => {
       refreshAccessToken: refreshAccessTokenMock,
       requestDeviceCode: requestDeviceCodeMock,
       pollForToken: pollForTokenMock,
+      openInBrowser: openInBrowserMock,
     });
     settingsManager.getSettingsWithSecureTokens = mock(
       async () => settings,
@@ -193,6 +196,34 @@ describe("listener auth", () => {
       }),
     ).rejects.toBeInstanceOf(ListenerReauthenticationRequiredError);
     expect(requestDeviceCodeMock).not.toHaveBeenCalled();
+  });
+
+  test("opens the device-auth page when no credentials exist", async () => {
+    requestDeviceCodeMock.mockResolvedValue({
+      device_code: "device-code",
+      user_code: "ABCD-EFGH",
+      verification_uri: "https://app.letta.com/oauth/device",
+      verification_uri_complete:
+        "https://app.letta.com/oauth/device?user_code=ABCD-EFGH",
+      expires_in: 600,
+      interval: 5,
+    });
+    pollForTokenMock.mockResolvedValue({
+      access_token: "new-access-token",
+      refresh_token: "new-refresh-token",
+      expires_in: 3600,
+      token_type: "Bearer",
+    });
+
+    const result = await resolveListenerRegistrationOptions(
+      "device-id",
+      "listener-name",
+    );
+
+    expect(openInBrowserMock).toHaveBeenCalledWith(
+      "https://app.letta.com/oauth/device?user_code=ABCD-EFGH",
+    );
+    expect(result.apiKey).toBe("new-access-token");
   });
 
   test("builds fresh in-app registration options from current credentials", async () => {
