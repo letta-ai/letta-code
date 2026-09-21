@@ -41,10 +41,8 @@ class RecordingBackend {
     conversationId: string,
     body: ConversationUpdateBody,
   ): Promise<unknown> {
-    const tags = Reflect.get(body, "tags");
-    this.tags = Array.isArray(tags)
-      ? tags.filter((tag): tag is string => typeof tag === "string")
-      : [];
+    expect(body).not.toHaveProperty("tags");
+    this.tags = [...new Set([...this.tags, ...(body.tags_to_add ?? [])])];
     for (const tag of this.tags) {
       this.tagWaiters.get(tag)?.();
       this.tagWaiters.delete(tag);

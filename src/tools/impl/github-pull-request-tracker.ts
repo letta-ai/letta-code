@@ -7,12 +7,16 @@ import {
 import { getRuntimeContext } from "@/runtime-context";
 import { debugLog } from "@/utils/debug";
 import { GITHUB_PR_CONVERSATIONS_ENV } from "@/utils/subagent-launch-marker";
+import {
+  getPullRequestParentConversationIds,
+  type ParentConversationBackend,
+} from "./github-pull-request-parents";
 
 export type ShellSourceCommand = string | readonly string[];
 
 type OutputStream = "stdout" | "stderr";
 
-export type ConversationTagBackend = {
+export type ConversationTagBackend = ParentConversationBackend & {
   updateConversation(
     conversationId: string,
     body: ConversationUpdateBody,
@@ -338,6 +342,7 @@ function waitForTagUpdate(
 export function createGitHubPullRequestOutputTracker(
   command: ShellSourceCommand,
   options?: {
+    agentId?: string;
     conversationId?: string;
     attributionConversationIds?: string[];
     backend?: ConversationTagBackend;
@@ -349,6 +354,7 @@ export function createGitHubPullRequestOutputTracker(
 
   const conversationId =
     options?.conversationId ?? getRuntimeContext()?.conversationId;
+  const agentId = options?.agentId ?? getRuntimeContext()?.agentId;
   const attributionConversationIds =
     options?.attributionConversationIds ??
     getRuntimeContext()?.githubPullRequestConversationIds ??
@@ -360,7 +366,10 @@ export function createGitHubPullRequestOutputTracker(
         typeof id === "string" && id.length > 0 && id !== "default",
     )
     .filter((id, index, ids) => ids.indexOf(id) === index);
-  if (targetConversationIds.length === 0) {
+  if (
+    targetConversationIds.length === 0 &&
+    !(agentId && conversationId === "default")
+  ) {
     return undefined;
   }
 
@@ -396,16 +405,28 @@ export function createGitHubPullRequestOutputTracker(
       }
       try {
         const backend = options?.backend ?? getBackend();
-        finishPromise = Promise.all(
-          targetConversationIds.map((targetConversationId) =>
-            appendConversationTags(
-              backend,
-              targetConversationId,
-              [...tags],
-              signal,
-            ),
-          ),
-        ).then(() => undefined);
+        const targeted = new Set<string>();
+        const writes: Promise<void>[] = [];
+        const append = (id: string) => {
+          if (targeted.has(id)) return;
+          targeted.add(id);
+          const write = appendConversationTags(backend, id, [...tags], signal);
+          // Discovery can outlive a rejected write; attach a handler immediately.
+          void write.catch(() => {});
+          writes.push(write);
+        };
+        targetConversationIds.forEach(append);
+        const discover = async () => {
+          for await (const id of getPullRequestParentConversationIds(
+            backend,
+            { agentId, conversationId },
+            signal,
+          ))
+            append(id);
+        };
+        finishPromise = waitForTagUpdate(discover(), signal)
+          .then(() => Promise.all(writes))
+          .then(() => undefined);
       } catch (error) {
         debugLog(
           "github-pr-tracking",

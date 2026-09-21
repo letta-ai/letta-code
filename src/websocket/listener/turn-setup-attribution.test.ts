@@ -64,6 +64,8 @@ test("reused listener turns do not inherit process-level PR attribution", async 
   setActiveRuntime(listener);
   const tagsByConversation = new Map<string, string[]>();
   const tagBackend: ConversationTagBackend = {
+    retrieveAgent: async () => ({ tags: [] }),
+    retrieveConversation: async () => ({ tags: [] }),
     updateConversation: async (id, body) => {
       const tags = [
         ...new Set([
