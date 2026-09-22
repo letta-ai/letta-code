@@ -1,5 +1,4 @@
 import { afterEach, expect, test } from "bun:test";
-import { execFileSync } from "node:child_process";
 import {
   existsSync,
   mkdtempSync,
@@ -16,11 +15,16 @@ import {
 } from "@/agent/subagent-state";
 import { __testSetBackend, type Backend } from "@/backend";
 import { settingsManager } from "@/settings-manager";
+import {
+  createTempGitRepo,
+  type TempGitRepo,
+} from "@/test-utils/temp-git-repo";
 import { finishBackgroundMemoryTasks } from "./memory-task-lifecycle";
 import { backgroundTasks } from "./process_manager";
 import { spawnBackgroundSubagentTask } from "./task";
 
 const roots: string[] = [];
+const repos: TempGitRepo[] = [];
 const originalHome = process.env.HOME;
 afterEach(async () => {
   await settingsManager.reset();
@@ -32,23 +36,19 @@ afterEach(async () => {
   backgroundTasks.clear();
   for (const root of roots.splice(0))
     rmSync(root, { recursive: true, force: true });
+  for (const repo of repos.splice(0)) repo.cleanup();
 });
 
 test("memory delegates immediately, exports the originating conversation and launches fresh, and never notifies the primary", async () => {
-  const root = mkdtempSync(join(tmpdir(), "memory-task-"));
-  roots.push(root);
+  const repo = createTempGitRepo("memory-task-");
+  repos.push(repo);
+  const { dir: root, git } = repo;
   // Settings must not land inside the memory checkout, or sync sees them as dirty.
   const home = mkdtempSync(join(tmpdir(), "memory-task-home-"));
   roots.push(home);
   await settingsManager.reset();
   process.env.HOME = home;
   await settingsManager.initialize();
-  const git = (...args: string[]) =>
-    execFileSync("git", ["-C", root, ...args], { stdio: "pipe" });
-  git("init", "-b", "main");
-  git("config", "user.name", "Test");
-  git("config", "user.email", "test@example.test");
-  git("config", "commit.gpgsign", "false");
   writeFileSync(join(root, "note.md"), "memory\n");
   git("add", "note.md");
   git("commit", "-m", "initial");
@@ -163,14 +163,14 @@ test("memory delegates immediately, exports the originating conversation and lau
 });
 
 test("a failed transcript export terminates the silent task with an inspectable error", async () => {
-  const root = mkdtempSync(join(tmpdir(), "memory-task-failed-"));
-  roots.push(root);
+  const repo = createTempGitRepo("memory-task-failed-");
+  repos.push(repo);
+  const root = repo.dir;
   const home = mkdtempSync(join(tmpdir(), "memory-task-failed-home-"));
   roots.push(home);
   await settingsManager.reset();
   process.env.HOME = home;
   await settingsManager.initialize();
-  execFileSync("git", ["init", "-b", "main", root], { stdio: "pipe" });
   __testSetBackend({
     capabilities: { localMemfs: true, remoteMemfs: false },
     listConversationMessages: async () => {

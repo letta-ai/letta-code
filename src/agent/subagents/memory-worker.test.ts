@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { claimMemoryOperation } from "@/agent/memory-operation";
 import {
@@ -9,23 +8,20 @@ import {
   finalizeReflectionMemoryWorktree,
 } from "@/agent/memory-worktree";
 import { __testSetBackend, type Backend } from "@/backend";
+import {
+  createTempGitRepo,
+  type TempGitRepo,
+} from "@/test-utils/temp-git-repo";
 import { runMemoryWorker } from "./memory-worker";
 
+let repo: TempGitRepo;
 let root: string;
-function git(...args: string[]) {
-  return execFileSync("git", ["-C", root, ...args], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+function git(...args: string[]): string {
+  return repo.git(...args);
 }
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), "memory-worker-"));
-  git("init", "-b", "main");
-  git("config", "user.name", "Memory Test");
-  git("config", "user.email", "memory@example.test");
-  git("config", "commit.gpgsign", "false");
-  git("config", "core.autocrlf", "false");
-  git("config", "core.eol", "lf");
+  repo = createTempGitRepo("memory-worker-");
+  root = repo.dir;
   writeFileSync(join(root, "note.md"), "original\n");
   git("add", "note.md");
   git("commit", "-m", "initial");
@@ -35,7 +31,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   __testSetBackend(null);
-  rmSync(root, { recursive: true, force: true });
+  repo.cleanup();
 });
 function scope() {
   return {
