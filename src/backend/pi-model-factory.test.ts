@@ -335,6 +335,36 @@ describe("pi model factory", () => {
     }
   });
 
+  test("preserves max reasoning for GPT-6 models", () => {
+    expect(
+      reasoningForSettings(
+        { reasoning_effort: "max" },
+        "openai-codex/gpt-6-sol",
+      ),
+    ).toBe("max");
+    expect(
+      reasoningForSettings(
+        { reasoning_effort: "max" },
+        "openai-codex/gpt-6-luna",
+      ),
+    ).toBe("max");
+    expect(
+      reasoningForSettings(
+        { reasoning_effort: "max" },
+        "openai-codex/gpt-6-astra",
+      ),
+    ).toBe("max");
+    expect(
+      reasoningForSettings(
+        { reasoning_effort: "minimal" },
+        "openai-codex/gpt-6-sol",
+      ),
+    ).toBe("none" as "low");
+    expect(
+      reasoningForSettings({ reasoning_effort: "max" }, "openai-codex/gpt-5.4"),
+    ).toBe("xhigh");
+  });
+
   test("resolves generic local OAuth credentials through pi OAuth providers", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "pi-anthropic-oauth-"));
     try {
