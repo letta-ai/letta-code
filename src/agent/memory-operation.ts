@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { getMemoryGitDir } from "@/agent/memory-git-dir";
 import { withFileLock } from "@/utils/file-lock";
 import {
-  getProcessStartTime,
+  getOwnProcessStartTime,
   isSameProcessRunning,
   type ProcessIdentity,
 } from "@/utils/process-liveness";
@@ -70,7 +70,7 @@ export async function claimMemoryOperation(
       return null;
     }
   };
-  const started = await getProcessStartTime(process.pid);
+  const started = await getOwnProcessStartTime();
   for (;;) {
     options.signal?.throwIfAborted();
     const acquired = await withFileLock(

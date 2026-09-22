@@ -1,6 +1,6 @@
 import { open, readFile, stat, unlink } from "node:fs/promises";
 import {
-  getProcessStartTime,
+  getOwnProcessStartTime,
   isSameProcessRunning,
 } from "@/utils/process-liveness";
 import { sleep } from "@/utils/sleep";
@@ -57,7 +57,7 @@ async function acquireFileLock(
   const start = Date.now();
   const payload = JSON.stringify({
     pid: process.pid,
-    started: await getProcessStartTime(process.pid),
+    started: await getOwnProcessStartTime(),
     acquiredAt: Date.now(),
   });
 
@@ -139,12 +139,7 @@ async function tryReapStaleLock(
     if (Date.now() - mtimeMs <= CORRUPT_LOCK_GRACE_MS) {
       return false;
     }
-    try {
-      await unlink(lockPath);
-    } catch {
-      // Another reaper got there first.
-    }
-    return true;
+    return removeIfUnchanged(lockPath, raw, opts);
   }
   if (opts.reapOnlyDeadOwner) {
     if (typeof owner.pid !== "number") return false;
@@ -156,10 +151,54 @@ async function tryReapStaleLock(
   } else if (Date.now() - acquiredAt <= opts.staleMs) {
     return false;
   }
+  return removeIfUnchanged(lockPath, raw, opts);
+}
+
+/**
+ * Remove a lock file only if it still holds the stale content the caller
+ * judged, and only while holding an exclusive reap marker. Two contenders
+ * that both judged the old lock dead therefore cannot have the second one
+ * delete the fresh lock the first just acquired.
+ */
+async function removeIfUnchanged(
+  lockPath: string,
+  expected: string,
+  opts: Required<FileLockOptions>,
+): Promise<boolean> {
+  const reapPath = `${lockPath}.reap`;
+  let marker: Awaited<ReturnType<typeof open>>;
   try {
+    marker = await open(reapPath, "wx");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== "EEXIST") throw error;
+    // Another reaper is active. If it died mid-reap its marker is itself a
+    // stale lock; clear it the same way, then let the caller retry.
+    await tryReapStaleLock(reapPath, { ...opts, reapOnlyDeadOwner: true });
+    return false;
+  }
+  try {
+    await marker.writeFile(
+      JSON.stringify({
+        pid: process.pid,
+        started: await getOwnProcessStartTime(),
+        acquiredAt: Date.now(),
+      }),
+      "utf-8",
+    );
+    await marker.close();
+    let current: string;
+    try {
+      current = await readFile(lockPath, "utf-8");
+    } catch {
+      return true;
+    }
+    if (current !== expected) return false;
     await unlink(lockPath);
+    return true;
   } catch {
     // Another reaper got there first.
+    return true;
+  } finally {
+    await unlink(reapPath).catch(() => undefined);
   }
-  return true;
 }

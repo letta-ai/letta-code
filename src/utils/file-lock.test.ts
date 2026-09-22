@@ -153,4 +153,44 @@ describe("withFileLock", () => {
       }),
     ).toBe("entered");
   });
+
+  test("a reaper does not delete a lock that was re-acquired after it judged the old one dead", async () => {
+    const lockPath = join(tmpDir, "reacquired.lock");
+    // Stale lock: a pid that no longer runs.
+    const child = Bun.spawn(
+      [process.execPath, "-e", "console.log(process.pid)"],
+      { stdout: "pipe" },
+    );
+    const deadPid = Number(await new Response(child.stdout).text());
+    await child.exited;
+    await writeFile(
+      lockPath,
+      JSON.stringify({ pid: deadPid, started: "1970-01-01", acquiredAt: 0 }),
+    );
+    // A live contender wins the lock between another reaper's read and unlink:
+    // simulate by holding the reap marker while the live acquisition happens.
+    const reapPath = `${lockPath}.reap`;
+    await writeFile(
+      reapPath,
+      JSON.stringify({
+        pid: process.pid,
+        started: await getProcessStartTime(process.pid),
+        acquiredAt: Date.now(),
+      }),
+    );
+    // While the marker is held, no other reaper may remove the stale lock.
+    await expect(
+      withFileLock(lockPath, async () => "entered", {
+        reapOnlyDeadOwner: true,
+        timeoutMs: 300,
+      }),
+    ).rejects.toThrow("File lock timeout");
+    await rm(reapPath, { force: true });
+    expect(
+      await withFileLock(lockPath, async () => "entered", {
+        reapOnlyDeadOwner: true,
+      }),
+    ).toBe("entered");
+    expect(existsSync(reapPath)).toBe(false);
+  });
 });

@@ -39,6 +39,14 @@ export async function getProcessStartTime(pid: number): Promise<string | null> {
   }
 }
 
+let ownStartTime: Promise<string | null> | undefined;
+
+/** This process's own start time, resolved once; it cannot change. */
+export function getOwnProcessStartTime(): Promise<string | null> {
+  ownStartTime ??= getProcessStartTime(process.pid);
+  return ownStartTime;
+}
+
 export interface ProcessIdentity {
   pid: number;
   /** Start time from getProcessStartTime, so a reused pid is not mistaken for the original. */
