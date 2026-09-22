@@ -31,7 +31,7 @@ When using the Agent tool, you must specify a subagent_type parameter to select 
 
 ## Reasoning Effort
 
-Pass `reasoning_effort` to choose how hard the agent thinks, independently of which model it runs on: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`.
+Pass `reasoning_effort` to choose how hard the agent thinks, independently of which model it runs on: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. `none` means no reasoning at all; `minimal` through `max` turn it up.
 
 Some model IDs already encode an effort (for example `sonnet-5-low`). An explicit `reasoning_effort` overrides that. Omit the field to keep whatever the model ID implies, which is the existing behavior.
 
