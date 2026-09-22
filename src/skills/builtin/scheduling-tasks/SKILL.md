@@ -1,6 +1,6 @@
 ---
 name: scheduling-tasks
-description: Schedules reminders and recurring tasks via the letta cron CLI. Use when the user asks to be reminded of something, wants periodic work or check-ins, or needs to list, inspect, replace, or cancel scheduled tasks.
+description: Schedules reminders, recurring tasks, and conversation-bound iMessage outreach via the letta cron CLI. Use when the user asks to be reminded of something, wants periodic work or check-ins, wants a scheduled iMessage message, or needs to list, inspect, replace, or cancel scheduled tasks.
 ---
 
 # Scheduling Tasks
@@ -116,6 +116,29 @@ Then verify the binding explicitly:
 ```bash
 letta cron list --agent "$LETTA_AGENT_ID" --conversation self
 ```
+
+### Preserve iMessage Conversation Continuity
+
+If a scheduled turn will send through `MessageChannel` and the recipient may
+reply, run it in the channel route's existing conversation. A fresh scheduled
+conversation can deliver the outbound message, but the recipient's reply returns
+to the route conversation without the scheduled turn or tool result in context.
+
+- When the request arrived in the target iMessage conversation, pass
+  `--conversation self`.
+- Never omit `--conversation` or pass `new` for a scheduled message that should
+  continue an existing channel conversation.
+- Store every exact opaque routing argument in the prompt. Do not rely on the
+  scheduled agent recovering them from conversation history after compaction.
+- Include `action="send"` and the actual message in an explicit `MessageChannel`
+  call. An ordinary assistant response is not a channel delivery.
+
+For any scheduled iMessage outreach, read and follow the complete
+[conversation-continuity procedure](references/imessage-conversation-continuity.md).
+Do not improvise a shorter route lookup or creation sequence: it contains the
+required privacy, exact-message, ambiguity, and post-create checks. If the
+request did not arrive in the target iMessage conversation, ask the user to
+schedule from that conversation instead of weakening the conversation match.
 
 ### Deleting or Replacing Tasks
 
