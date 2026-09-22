@@ -47,6 +47,7 @@ import {
   providerTypeFromModelSettings,
   providerTypeFromUpdateArgs,
   resolveModelSelectionReasoningHandle,
+  toolsetProviderTypeFromSettings,
 } from "./model-config";
 import { formatReflectionSettings } from "./reflection";
 import type {
@@ -640,7 +641,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             const { switchToolsetForModel } = await import("@/tools/toolset");
             const toolsetName = await switchToolsetForModel(
               modelHandle,
-              resolvedProviderType,
+              isOpenAICompatibleProxy ? null : resolvedProviderType,
             );
             setCurrentToolsetPreference("auto");
             setCurrentToolset(toolsetName);
@@ -1197,13 +1198,11 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
                 ? `${llmConfig.model_endpoint_type}/${llmConfig.model}`
                 : (llmConfig?.model ?? null));
             if (!modelHandle) {
-              throw new Error(
-                "Could not determine current model for auto toolset",
-              );
+              throw new Error("No current model resolved for auto toolset");
             }
 
             const providerType =
-              providerTypeFromModelSettings(agentState?.model_settings) ??
+              toolsetProviderTypeFromSettings(agentState?.model_settings) ??
               llmConfig?.model_endpoint_type ??
               null;
             const derivedToolset = await switchToolsetForModel(

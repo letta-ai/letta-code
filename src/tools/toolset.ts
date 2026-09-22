@@ -12,6 +12,7 @@ import type { ModToolDefinition } from "@/mods/tool-registry";
 import type { ModContext } from "@/mods/types";
 import type { RuntimeContextSnapshot } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
+import { OPENAI_COMPATIBLE_PROXY_UPDATE_ARG } from "@/utils/openai-endpoint";
 import { isRecord } from "@/utils/type-guards";
 import {
   getInternalToolName,
@@ -45,11 +46,31 @@ function resolveIncludedToolNames(toolNames: string[] | undefined): ToolName[] {
   });
 }
 
+/**
+ * Provider types whose models speak the OpenAI API and should use the codex
+ * toolset regardless of handle prefix. Handles are unreliable here: BYOK and
+ * managed providers use arbitrary prefixes (e.g. "lc-openai/gpt-6-astra",
+ * "chatgpt-work/gpt-5.5"), so the provider type is the authoritative signal.
+ */
+const OPENAI_PROVIDER_TYPES = new Set([
+  "openai",
+  "openai-codex",
+  "chatgpt_oauth",
+]);
+
 export function deriveToolsetFromModel(
   modelIdentifier: string,
   providerType?: string | null,
+  options?: { openAICompatibleProxy?: boolean | null },
 ): "codex" | "default" {
-  if (providerType === "chatgpt_oauth" || providerType === "openai-codex") {
+  // Generic OpenAI-compatible endpoints also report provider_type "openai"
+  // (with the openai_compatible_proxy marker in model_settings) but may serve
+  // non-GPT models, so they keep the default toolset.
+  if (
+    providerType &&
+    OPENAI_PROVIDER_TYPES.has(providerType) &&
+    options?.openAICompatibleProxy !== true
+  ) {
     return "codex";
   }
   const resolvedModel = resolveModel(modelIdentifier) ?? modelIdentifier;
@@ -125,6 +146,7 @@ function getPreferredAgentModelHandle(
 type ModelTarget = {
   model: string | null;
   providerType: string | null;
+  openAICompatibleProxy: boolean;
 };
 
 function normalizeModelHandle(model: string | null | undefined): string | null {
@@ -134,19 +156,23 @@ function normalizeModelHandle(model: string | null | undefined): string | null {
 function modelTargetFromCarrier(
   carrier: ScopeModelCarrier | null | undefined,
 ): ModelTarget {
+  const modelSettings = carrier?.model_settings;
   return {
     model: normalizeModelHandle(getPreferredAgentModelHandle(carrier)),
-    providerType: providerTypeFromModelSettings(carrier?.model_settings),
+    providerType: providerTypeFromModelSettings(modelSettings),
+    openAICompatibleProxy:
+      isRecord(modelSettings) &&
+      modelSettings[OPENAI_COMPATIBLE_PROXY_UPDATE_ARG] === true,
   };
 }
 
-function providerForMatchingModel(
+function targetForMatchingModel(
   model: string,
   targets: ModelTarget[],
-): string | null {
+): ModelTarget | null {
   for (const target of targets) {
     if (target.model === model && target.providerType) {
-      return target.providerType;
+      return target;
     }
   }
   return null;
@@ -155,6 +181,7 @@ function providerForMatchingModel(
 export async function prepareToolExecutionContextForResolvedTarget(params: {
   modelIdentifier?: string | null;
   providerType?: string | null;
+  openAICompatibleProxy?: boolean | null;
   conversationId?: string | null;
   toolsetPreference: ToolsetPreference;
   clientToolset?: ClientToolsetConfig;
@@ -172,6 +199,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
   const {
     modelIdentifier,
     providerType,
+    openAICompatibleProxy,
     conversationId,
     toolsetPreference,
     clientToolset,
@@ -207,7 +235,9 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
 
   const resolvedToolset =
     effectiveToolsetPreference === "auto"
-      ? deriveToolsetFromModel(effectiveModel ?? "", providerType)
+      ? deriveToolsetFromModel(effectiveModel ?? "", providerType, {
+          openAICompatibleProxy,
+        })
       : effectiveToolsetPreference;
 
   const scopedModContext = buildModInvocationContext({
@@ -313,7 +343,7 @@ export async function prepareToolExecutionContextForScope(params: {
             conversationId,
           )) as ScopeModelCarrier,
         )
-      : { model: null, providerType: null };
+      : { model: null, providerType: null, openAICompatibleProxy: false };
 
   const explicitModel = normalizeModelHandle(overrideModel);
   const cachedModel = normalizeModelHandle(cachedEffectiveModel);
@@ -322,17 +352,21 @@ export async function prepareToolExecutionContextForScope(params: {
     cachedModel ??
     conversationTarget.model ??
     agentTarget.model;
+  const matchedTarget = effectiveModel
+    ? targetForMatchingModel(effectiveModel, [conversationTarget, agentTarget])
+    : null;
   let effectiveProviderType = explicitModel
-    ? (overrideProviderType ??
-      providerForMatchingModel(explicitModel, [
-        conversationTarget,
-        agentTarget,
-      ]))
+    ? (overrideProviderType ?? matchedTarget?.providerType ?? null)
     : cachedModel
-      ? providerForMatchingModel(cachedModel, [conversationTarget, agentTarget])
+      ? (matchedTarget?.providerType ?? null)
       : conversationTarget.model
         ? conversationTarget.providerType
         : agentTarget.providerType;
+  const effectiveOpenAICompatibleProxy =
+    matchedTarget?.openAICompatibleProxy ??
+    (conversationTarget.model === effectiveModel
+      ? conversationTarget.openAICompatibleProxy
+      : agentTarget.openAICompatibleProxy);
 
   const toolsetPreference = (() => {
     try {
@@ -365,6 +399,7 @@ export async function prepareToolExecutionContextForScope(params: {
   const result = await prepareToolExecutionContextForResolvedTarget({
     modelIdentifier: effectiveModel,
     providerType: effectiveProviderType,
+    openAICompatibleProxy: effectiveOpenAICompatibleProxy,
     conversationId: conversationId ?? undefined,
     toolsetPreference,
     clientToolset,
