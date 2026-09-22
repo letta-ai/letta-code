@@ -1,5 +1,4 @@
 import { expect, test } from "bun:test";
-import { execFileSync } from "node:child_process";
 import {
   mkdirSync,
   mkdtempSync,
@@ -13,6 +12,7 @@ import { join, resolve } from "node:path";
 import { composeSubagentChildEnv } from "@/agent/subagents/subagent-launcher";
 import { LocalStore } from "@/backend/local/local-store";
 import { getLocalBackendMemoryFilesystemRoot } from "@/backend/local/paths";
+import { initGitRepo } from "@/test-utils/temp-git-repo";
 import { createIsolatedCliTestEnv } from "@/test-utils/test-process-env";
 
 for (const mode of [
@@ -38,15 +38,7 @@ for (const mode of [
         storageDir,
       );
       mkdirSync(memoryDir, { recursive: true });
-      const git = (...args: string[]) =>
-        execFileSync("git", ["-C", memoryDir, ...args], {
-          encoding: "utf8",
-          stdio: ["ignore", "pipe", "pipe"],
-        });
-      git("init", "-b", "main");
-      git("config", "user.name", "Memory Test");
-      git("config", "user.email", "memory@example.test");
-      git("config", "commit.gpgsign", "false");
+      const { git } = initGitRepo(memoryDir);
       writeFileSync(join(memoryDir, "note.md"), "initial\n");
       git("add", "note.md");
       git("commit", "-m", "initial");

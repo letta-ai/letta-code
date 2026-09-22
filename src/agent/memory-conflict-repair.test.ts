@@ -1,32 +1,28 @@
 import { afterEach, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import {
+  createTempGitRepo,
+  type TempGitRepo,
+} from "@/test-utils/temp-git-repo";
 import {
   claimMemoryConflictRepair,
   releaseMemoryConflictRepair,
 } from "./memory-conflict-repair";
 
-const roots: string[] = [];
+const repos: TempGitRepo[] = [];
 afterEach(() => {
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true });
+  for (const repo of repos.splice(0)) repo.cleanup();
 });
 
 function repository(): string {
-  const root = mkdtempSync(join(tmpdir(), "memory-conflict-repair-"));
-  roots.push(root);
-  const git = (...args: string[]) =>
-    execFileSync("git", ["-C", root, ...args], { stdio: "pipe" });
-  git("init", "-q", "-b", "main");
-  git("config", "user.name", "Test");
-  git("config", "user.email", "test@example.test");
-  git("config", "commit.gpgsign", "false");
-  writeFileSync(join(root, "note.md"), "memory\n");
-  git("add", "note.md");
-  git("commit", "-q", "-m", "initial");
-  return root;
+  const repo = createTempGitRepo("memory-conflict-repair-");
+  repos.push(repo);
+  writeFileSync(join(repo.dir, "note.md"), "memory\n");
+  repo.git("add", "note.md");
+  repo.git("commit", "-q", "-m", "initial");
+  return repo.dir;
 }
 
 test("the same unfinished operation is handed to a repair worker only once", async () => {

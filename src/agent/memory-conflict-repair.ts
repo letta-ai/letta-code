@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { getMemoryGitDir } from "@/agent/memory-operation";
+import { getMemoryGitDir } from "@/agent/memory-git-dir";
 
 const ATTEMPT_FILE = "letta-memory-repair.json";
 const OPERATION_HEADS = [
