@@ -11,6 +11,7 @@ import {
   syncPendingMemoryCommitsAfterTurn,
 } from "@/agent/memory-git";
 import { claimMemoryOperation } from "@/agent/memory-operation";
+import { isMemoryWorkerSession } from "@/agent/subagents/memory-worker-session";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { debugWarn } from "@/utils/debug";
 
@@ -130,6 +131,7 @@ export async function runPostTurnMemorySync(
   params: RunPostTurnMemorySyncParams,
   dependencies: RunPostTurnMemorySyncDependencies = {},
 ): Promise<void> {
+  if (isMemoryWorkerSession()) return;
   const debugLabel = params.debugLabel ?? "Post-turn memory sync";
   const syncMemory =
     dependencies.syncMemory ?? syncPendingMemoryCommitsAfterTurn;
