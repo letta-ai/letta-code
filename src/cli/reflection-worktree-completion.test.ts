@@ -152,7 +152,7 @@ describe("reflection worktree completion messaging", () => {
     git(worktree.worktreeDir, ["commit", "-m", "reflection"]);
 
     const synced: string[] = [];
-    let mergedBeforeSync = false;
+    let worktreeGoneAtSync = false;
     const result = await finalizeLaunch(worktree, true, {
       mergePolicy: "explicit",
       runExplicitIntegration: async () => {
@@ -166,13 +166,11 @@ describe("reflection worktree completion messaging", () => {
         return { success: true, conversationId: "conv-review" };
       },
       // The integration child cannot sync while the parent holds the lease.
+      // The parent syncs only after finalize verified the merge, so a rebase
+      // during sync can no longer make the reflection look unmerged.
       syncIntegratedMemory: async (agentId, options) => {
         synced.push(`${agentId}:${options?.memoryDir}`);
-        mergedBeforeSync = git(memoryDir, [
-          "log",
-          "-1",
-          "--format=%s",
-        ]).includes("merge reflection");
+        worktreeGoneAtSync = !existsSync(worktree.worktreeDir);
         return {
           status: "pushed",
           summary: "Pushed",
@@ -184,7 +182,7 @@ describe("reflection worktree completion messaging", () => {
 
     expect(result.integration.status).toBe("merged");
     expect(synced).toEqual([`agent-test:${memoryDir}`]);
-    expect(mergedBeforeSync).toBe(true);
+    expect(worktreeGoneAtSync).toBe(true);
   });
 
   test("explicit integration failure cleans up for transcript retry", async () => {

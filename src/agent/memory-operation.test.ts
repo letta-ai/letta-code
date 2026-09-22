@@ -1,6 +1,12 @@
 import { afterEach, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { claimMemoryOperation, withMemoryOperation } from "./memory-operation";
@@ -176,4 +182,18 @@ test("a lease taken while the guard was reaped is not overwritten", async () => 
   // The late acquirer must lose: the owner file still names the second owner.
   expect(await claimMemoryOperation(root)).toBeNull();
   expect(JSON.parse(readFileSync(path, "utf8")).token).toBe("second-owner");
+});
+
+test("a published owner file is never partially written", async () => {
+  const root = repository();
+  const path = join(root, ".git", "letta-memory-operation.json");
+  const release = await claimMemoryOperation(root);
+  // Only the complete record is ever visible at the lease path.
+  expect(JSON.parse(readFileSync(path, "utf8"))).toMatchObject({
+    pid: process.pid,
+  });
+  expect(
+    readdirSync(join(root, ".git")).filter((f) => f.endsWith(".tmp")),
+  ).toEqual([]);
+  await release?.();
 });

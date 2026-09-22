@@ -610,33 +610,14 @@ export async function finalizeReflectionMemoryWorktreeLaunch(params: {
     if (state.commitCount > 0 || state.dirty) {
       integrationRun = await withMemoryOperation(
         params.worktree.parentMemoryDir,
-        async () => {
-          const outcome = await (
-            params.runExplicitIntegration ?? runExplicitReflectionIntegration
-          )({
+        () =>
+          (params.runExplicitIntegration ?? runExplicitReflectionIntegration)({
             agentId: params.agentId,
             conversationId: params.conversationId,
             worktree: params.worktree,
             instructions: params.mergeInstructions,
             reflectionSubagentId: params.subagentAgentId,
-          });
-          // The integration child's own post-turn sync finds this lease held
-          // and skips, and no parent turn may follow; push its merge from here.
-          try {
-            const sync = await (
-              params.syncIntegratedMemory ?? syncPendingMemoryCommitsAfterTurn
-            )(params.agentId, { memoryDir: params.worktree.parentMemoryDir });
-            if (sync.status !== "clean" && sync.status !== "pushed") {
-              debugWarn("reflection", `Integration sync: ${sync.summary}`);
-            }
-          } catch (error) {
-            debugWarn(
-              "reflection",
-              `Integration sync failed: ${String(error)}`,
-            );
-          }
-          return outcome;
-        },
+          }),
       );
     }
   }
@@ -653,6 +634,29 @@ export async function finalizeReflectionMemoryWorktreeLaunch(params: {
   const completionSuccess =
     params.subagentSuccess &&
     reflectionIntegrationConsumesTranscript(integration);
+
+  // The integration child's own post-turn sync found the lease held and
+  // skipped, and no parent turn may follow. Push its merge from here, only
+  // after finalize has verified the merge: a pull --rebase before that check
+  // could rewrite the integration commit and make a merged reflection look
+  // unmerged.
+  if (integrationRun !== undefined && integration.status === "merged") {
+    try {
+      const sync = await withMemoryOperation(
+        params.worktree.parentMemoryDir,
+        () =>
+          (params.syncIntegratedMemory ?? syncPendingMemoryCommitsAfterTurn)(
+            params.agentId,
+            { memoryDir: params.worktree.parentMemoryDir },
+          ),
+      );
+      if (sync.status !== "clean" && sync.status !== "pushed") {
+        debugWarn("reflection", `Integration sync: ${sync.summary}`);
+      }
+    } catch (error) {
+      debugWarn("reflection", `Integration sync failed: ${String(error)}`);
+    }
+  }
   const shouldNotify = recordReflectionIntegrationRetry(
     params.agentId,
     integration,

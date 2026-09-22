@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { readFile, realpath, unlink, writeFile } from "node:fs/promises";
+import { link, readFile, realpath, unlink, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { withFileLock } from "@/utils/file-lock";
@@ -126,24 +126,28 @@ async function acquireMemoryOperation(
     const acquired = await withFileLock(guard, async () => {
       const owner = await readOwner();
       if (owner && (await isOwnerRunning(owner))) return false;
-      // Dead, unreadable or absent owner: clear it before the exclusive create.
+      // Dead, unreadable or absent owner: clear it before publishing ours.
       await unlink(path).catch(() => undefined);
-      // Exclusive create: if this process was paused long enough for the guard
-      // to be reaped and someone else took the lease, we lose rather than
-      // overwrite their owner file.
+      // Write the record in full to a private file, then publish it with a
+      // hard link: the link is atomic, never exposes partial content, and fails
+      // with EEXIST if this process was paused across a guard reap and another
+      // acquirer published first, so we lose rather than overwrite them.
+      const temporaryPath = `${path}.${token}.tmp`;
+      await writeFile(
+        temporaryPath,
+        JSON.stringify({
+          pid: process.pid,
+          token,
+          ...(started && { started }),
+        }),
+      );
       try {
-        await writeFile(
-          path,
-          JSON.stringify({
-            pid: process.pid,
-            token,
-            ...(started && { started }),
-          }),
-          { flag: "wx" },
-        );
+        await link(temporaryPath, path);
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
-        throw error;
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        return false;
+      } finally {
+        await unlink(temporaryPath).catch(() => undefined);
       }
       return true;
     });
