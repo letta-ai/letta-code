@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bash } from "@/tools/impl/bash";
@@ -40,6 +40,7 @@ describe("Background bash completion notifications", () => {
     description?: string;
     timeout?: number;
     parentScope?: { agentId: string; conversationId: string };
+    secretEnv?: Record<string, string>;
   }): Promise<string> => {
     const result = await bash({ ...args, run_in_background: true });
     const bashId = result.content[0]?.text.match(/bash_\d+/)?.[0];
@@ -172,6 +173,42 @@ describe("Background bash completion notifications", () => {
     expect(notification.text).not.toContain(secret);
     expect(notification.text).toContain("PASSWORD=&lt;REDACTED&gt;");
     expect(notification.text.length).toBeLessThan(35_000);
+  });
+
+  test("redacts a secret written across several chunks from the notification and output file", async () => {
+    const secret = "he$$o-very-secret";
+    const bashId = await startBackground({
+      command: command(
+        [
+          "const value = process.env.PASSWORD ?? '';",
+          "process.stdout.write('stdout ' + value.slice(0, 4));",
+          "process.stderr.write('stderr ' + value.slice(0, 7));",
+          "setTimeout(() => {",
+          "  process.stdout.write(value.slice(4) + '\\n');",
+          "  process.stderr.write(value.slice(7) + '\\n');",
+          "}, 50);",
+        ].join("\n"),
+      ),
+      description: "Print a split secret",
+      secretEnv: { PASSWORD: secret },
+    });
+
+    const notification = await waitForNotification(bashId);
+    const outputFile = backgroundProcesses.get(bashId)?.outputFile as string;
+    const output = readFileSync(outputFile, "utf8");
+    expect(notification.text.match(/PASSWORD=&lt;REDACTED&gt;/g)).toHaveLength(
+      2,
+    );
+    expect(output.match(/PASSWORD=<REDACTED>/g)).toHaveLength(2);
+    for (const part of [
+      secret.slice(0, 4),
+      secret.slice(4),
+      secret.slice(0, 7),
+      secret.slice(7),
+    ]) {
+      expect(notification.text).not.toContain(part);
+      expect(output).not.toContain(part);
+    }
   });
 
   test("reports a failing background command as failed with its exit code", async () => {

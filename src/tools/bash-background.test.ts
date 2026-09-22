@@ -9,6 +9,7 @@ import {
   __setBackgroundRetentionConfigForTests,
   backgroundProcesses,
 } from "@/tools/impl/process_manager";
+import { createTempRuntimeScriptCommand } from "@/tools/runtime-script";
 import { clearPendingMessages } from "@/utils/message-queue-bridge";
 
 const isWindows = process.platform === "win32";
@@ -57,6 +58,55 @@ describe.skipIf(isWindows)("Bash background tools", () => {
     expect(backgroundProcesses.get(bashId ?? "")?.runtimeScope).toEqual(
       runtimeScope,
     );
+  });
+
+  test("keeps split secrets out of a running command's output file", async () => {
+    const secret = "he$$o-very-secret";
+    const script = createTempRuntimeScriptCommand(
+      [
+        "const value = process.env.PASSWORD ?? '';",
+        "process.stdout.write('stdout ' + value.slice(0, 4));",
+        "process.stderr.write('stderr ' + value.slice(0, 7));",
+        "setTimeout(() => {",
+        "  process.stdout.write(value.slice(4) + '\\n');",
+        "  process.stderr.write(value.slice(7) + '\\n');",
+        "}, 100);",
+        "setInterval(() => {}, 1000);",
+      ].join("\n"),
+    );
+
+    try {
+      const result = await bash({
+        command: script.command,
+        description: "Print a split secret",
+        run_in_background: true,
+        secretEnv: { PASSWORD: secret },
+      });
+      const bashId = result.content[0]?.text.match(/bash_\d+/)?.[0] ?? "";
+      const outputFile = backgroundProcesses.get(bashId)?.outputFile as string;
+
+      const deadline = Date.now() + 5_000;
+      while (
+        (fs.readFileSync(outputFile, "utf8").match(/\n/g)?.length ?? 0) < 2 &&
+        Date.now() < deadline
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      const output = fs.readFileSync(outputFile, "utf8");
+
+      expect(backgroundProcesses.get(bashId)?.status).toBe("running");
+      expect(output.match(/PASSWORD=<REDACTED>/g)).toHaveLength(2);
+      for (const part of [
+        secret.slice(0, 4),
+        secret.slice(4),
+        secret.slice(0, 7),
+        secret.slice(7),
+      ]) {
+        expect(output).not.toContain(part);
+      }
+    } finally {
+      script.cleanup();
+    }
   });
 
   test("fails a background process when its output file cannot be written", async () => {

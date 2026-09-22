@@ -357,6 +357,44 @@ describe("Monitor", () => {
     expect(output).not.toContain(secret);
   });
 
+  test("keeps split secrets out of a persistent monitor's output file while it runs", async () => {
+    const secret = "he$$o-very-secret";
+    const result = await monitor({
+      description: "live secret output",
+      timeout_ms: 5000,
+      persistent: true,
+      command: nodeCommand(
+        [
+          "const value = process.env.PASSWORD ?? '';",
+          "process.stdout.write('stdout ' + value.slice(0, 4));",
+          "process.stderr.write('stderr ' + value.slice(0, 7));",
+          "setTimeout(() => {",
+          "  process.stdout.write(value.slice(4) + '\\n');",
+          "  process.stderr.write(value.slice(7) + '\\n');",
+          "}, 100);",
+          "setInterval(() => {}, 1000);",
+        ].join("\n"),
+      ),
+      secretEnv: { PASSWORD: secret },
+    });
+    const outputFile = outputFileOf(result);
+
+    await waitFor(
+      () => (readFileSync(outputFile, "utf8").match(/\n/g)?.length ?? 0) >= 2,
+    );
+    const output = readFileSync(outputFile, "utf8");
+    expect(backgroundProcesses.get(result.taskId)?.status).toBe("running");
+    expect(output.match(/PASSWORD=<REDACTED>/g)).toHaveLength(2);
+    for (const part of [
+      secret.slice(0, 4),
+      secret.slice(4),
+      secret.slice(0, 7),
+      secret.slice(7),
+    ]) {
+      expect(output).not.toContain(part);
+    }
+  });
+
   test("persistent command monitors can be stopped with TaskStop", async () => {
     const result = await monitor({
       description: "long process",

@@ -5,6 +5,7 @@ import {
   releaseToolExecutionContext,
 } from "@/tools/manager";
 import {
+  createStreamingSecretScrubber,
   extractSecretEnvFromCommand,
   scrubSecretsFromString,
 } from "@/tools/secret-substitution";
@@ -205,4 +206,112 @@ describe("scoped shell secret execution", () => {
       }
     });
   }
+});
+
+describe("streaming secret scrubber", () => {
+  function streamChunks(
+    chunks: readonly string[],
+    secrets: Readonly<Record<string, string>>,
+  ): string[] {
+    const scrubber = createStreamingSecretScrubber(secrets);
+    return [...chunks.map((chunk) => scrubber.push(chunk)), scrubber.flush()];
+  }
+
+  /** Every way to cut `text` into two or three chunks. */
+  function allSplits(text: string): string[][] {
+    const splits: string[][] = [];
+    for (let first = 0; first <= text.length; first++) {
+      splits.push([text.slice(0, first), text.slice(first)]);
+      for (let second = first; second <= text.length; second++) {
+        splits.push([
+          text.slice(0, first),
+          text.slice(first, second),
+          text.slice(second),
+        ]);
+      }
+    }
+    return splits;
+  }
+
+  test("redacts a secret written across two chunks", () => {
+    const secrets = { PASSWORD: "he$$o-very-secret" };
+
+    expect(streamChunks(["PASSWORD=he$$", "o-very-secret\n"], secrets)).toEqual(
+      ["PASSWORD=", "PASSWORD=<REDACTED>\n", ""],
+    );
+  });
+
+  test("matches whole-text redaction however the output is chunked", () => {
+    const cases: Array<{
+      text: string;
+      secrets: Record<string, string>;
+    }> = [
+      {
+        text: "token=s3cr3t-value done; again s3cr3t-value\n",
+        secrets: { TOKEN: "s3cr3t-value" },
+      },
+      {
+        // One secret is a prefix of another.
+        text: "short abc, long abcdef, short again abc.",
+        secrets: { SHORT: "abc", LONG: "abcdef" },
+      },
+      {
+        // The end of one secret begins another.
+        text: "abcdzz cdxy abcdxy",
+        secrets: { FIRST: "abcd", SECOND: "cdxy" },
+      },
+      {
+        // The secret repeats its own prefix.
+        text: "aaab aaaab aab",
+        secrets: { REPEAT: "aaab" },
+      },
+    ];
+
+    for (const { text, secrets } of cases) {
+      const expected = scrubSecretsFromString(text, secrets);
+      for (const chunks of allSplits(text)) {
+        const output = streamChunks(chunks, secrets).join("");
+        expect({ chunks, output }).toEqual({ chunks, output: expected });
+      }
+    }
+  });
+
+  test("never emits part of a secret before the rest arrives", () => {
+    const secret = "abcdef";
+    const scrubber = createStreamingSecretScrubber({ KEY: secret });
+
+    let emitted = "";
+    for (const char of "xx abcdef yy") {
+      emitted += scrubber.push(char);
+      expect(emitted).not.toContain("abc");
+    }
+    emitted += scrubber.flush();
+
+    expect(emitted).toBe("xx KEY=<REDACTED> yy");
+  });
+
+  test("holds a possible secret prefix until the next chunk settles it", () => {
+    const scrubber = createStreamingSecretScrubber({ TOKEN: "secret-value" });
+
+    expect(scrubber.push("wrote sec")).toBe("wrote ");
+    expect(scrubber.push("ond line\n")).toBe("second line\n");
+    expect(scrubber.push("")).toBe("");
+    expect(scrubber.flush()).toBe("");
+  });
+
+  test("emits a dangling secret prefix unchanged when the stream ends", () => {
+    const scrubber = createStreamingSecretScrubber({ TOKEN: "secret-value" });
+
+    expect(scrubber.push("done: secr")).toBe("done: ");
+    expect(scrubber.flush()).toBe("secr");
+    expect(scrubber.flush()).toBe("");
+  });
+
+  test("passes chunks through unchanged without secrets", () => {
+    const scrubber = createStreamingSecretScrubber({ EMPTY: "" });
+
+    expect(scrubber.push("partial ")).toBe("partial ");
+    expect(scrubber.push("")).toBe("");
+    expect(scrubber.flush()).toBe("");
+  });
 });

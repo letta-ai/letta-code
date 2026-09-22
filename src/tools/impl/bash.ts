@@ -4,7 +4,10 @@ import {
   consumeWorkingDirectoryRecovery,
   getCurrentWorkingDirectory,
 } from "@/runtime-context";
-import { scrubSecretsFromString } from "@/tools/secret-substitution";
+import {
+  createStreamingSecretScrubber,
+  scrubSecretsFromString,
+} from "@/tools/secret-substitution";
 import {
   addToMessageQueue,
   isQueueBridgeConnected,
@@ -393,6 +396,38 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       ? timeout
       : 0
     : Math.min(Math.max(timeout, 1), 600000);
+  // The output file can be read while the command runs, so a secret printed
+  // across several writes must be redacted before any of it is written.
+  const scrubbers = {
+    stdout: createStreamingSecretScrubber(secretEnv ?? {}),
+    stderr: createStreamingSecretScrubber(secretEnv ?? {}),
+  };
+  const recordOutput = (sanitizedText: string, stream: "stdout" | "stderr") => {
+    if (!sanitizedText) return;
+    appendBackgroundProcessOutput(bgProcess, stream, sanitizedText);
+    const wrote = appendToOutputFile(
+      outputFile,
+      stream === "stderr" ? `[stderr] ${sanitizedText}` : sanitizedText,
+    );
+    if (!wrote && bgProcess.status === "running") {
+      outputWriteFailed = true;
+      appendBackgroundProcessOutput(
+        bgProcess,
+        "stderr",
+        "[output file write failed; output may be incomplete]",
+      );
+      bgProcess.status = "failed";
+      try {
+        runningProcess.process.kill("SIGTERM");
+      } catch {
+        // Process may have already exited.
+      }
+    }
+  };
+  const flushOutput = () => {
+    recordOutput(scrubbers.stdout.flush(), "stdout");
+    recordOutput(scrubbers.stderr.flush(), "stderr");
+  };
   const runningProcess = startShellProcess(sandboxed.launcher, {
     cwd: userCwd,
     env: sandboxed.env,
@@ -401,30 +436,11 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     signal: run_in_background ? undefined : signal,
     captureOutput: false,
     onOutput(text, stream) {
-      const sanitizedText = sanitizeOutput(text);
       if (!run_in_background) {
         foregroundOutput[stream] += text;
         onOutput?.(text, stream);
       }
-      appendBackgroundProcessOutput(bgProcess, stream, sanitizedText);
-      const wrote = appendToOutputFile(
-        outputFile,
-        stream === "stderr" ? `[stderr] ${sanitizedText}` : sanitizedText,
-      );
-      if (!wrote && bgProcess.status === "running") {
-        outputWriteFailed = true;
-        appendBackgroundProcessOutput(
-          bgProcess,
-          "stderr",
-          "[output file write failed; output may be incomplete]",
-        );
-        bgProcess.status = "failed";
-        try {
-          runningProcess.process.kill("SIGTERM");
-        } catch {
-          // Process may have already exited.
-        }
-      }
+      recordOutput(scrubbers[stream].push(text), stream);
     },
   });
   bgProcess = {
@@ -449,6 +465,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
   const notificationScope = resolveNotificationScope(parentScope);
   const settled = runningProcess.completion.then(
     ({ exitCode }) => {
+      flushOutput();
       bgProcess.status =
         exitCode === 0 && !outputWriteFailed ? "completed" : "failed";
       bgProcess.exitCode = exitCode;
@@ -468,6 +485,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       };
     },
     (error: unknown) => {
+      flushOutput();
       const err = error as Error & { killed?: boolean };
       const message = sanitizeOutput(
         err.killed ? `Command timed out after ${timeout}ms` : err.message,

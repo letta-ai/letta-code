@@ -11,6 +11,7 @@ import {
   __resetBackgroundRetentionConfigForTests,
   backgroundProcesses,
 } from "@/tools/impl/process_manager";
+import { createTempRuntimeScriptCommand } from "@/tools/runtime-script";
 import { clearPendingMessages } from "@/utils/message-queue-bridge";
 
 const isWindows = process.platform === "win32";
@@ -80,6 +81,55 @@ describe.skipIf(isWindows)("Codex unified exec tools", () => {
       -1,
     )?.outputFile;
     expect(fs.readFileSync(outputFile as string, "utf8")).not.toContain(secret);
+  });
+
+  test("keeps a split secret out of session reads and the output file while the command runs", async () => {
+    const secret = "he$$o-very-secret";
+    const script = createTempRuntimeScriptCommand(
+      [
+        "const value = process.env.PASSWORD ?? '';",
+        "process.stdout.write('token ' + value.slice(0, 4));",
+        "setTimeout(() => process.stdout.write(value.slice(4) + '\\n'), 500);",
+        "setTimeout(() => {}, 1500);",
+      ].join("\n"),
+    );
+
+    try {
+      const first = await exec_command({
+        cmd: script.command,
+        yield_time_ms: 250,
+        secretEnv: { PASSWORD: secret },
+      });
+      const sessionId =
+        first.output.match(/Process running with session ID (\d+)/)?.[1] ?? "";
+      const outputFile = backgroundProcesses.get(sessionId)
+        ?.outputFile as string;
+
+      const deadline = Date.now() + 5_000;
+      while (
+        !fs.readFileSync(outputFile, "utf8").includes("\n") &&
+        Date.now() < deadline
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      const liveOutput = fs.readFileSync(outputFile, "utf8");
+      expect(backgroundProcesses.get(sessionId)?.status).toBe("running");
+
+      const second = await write_stdin({
+        session_id: Number(sessionId),
+        chars: "",
+      });
+
+      expect(second.output).toContain("Process exited with code 0");
+      expect(second.output).toContain("PASSWORD=<REDACTED>");
+      expect(liveOutput).toContain("PASSWORD=<REDACTED>");
+      for (const text of [first.output, liveOutput, second.output]) {
+        expect(text).not.toContain(secret.slice(0, 4));
+        expect(text).not.toContain(secret.slice(4));
+      }
+    } finally {
+      script.cleanup();
+    }
   });
 
   test("scrubs invocation secrets before writing overflow output", async () => {

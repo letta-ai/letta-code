@@ -1,5 +1,8 @@
 import { getCurrentWorkingDirectory } from "@/runtime-context";
-import { scrubSecretsFromString } from "@/tools/secret-substitution";
+import {
+  createStreamingSecretScrubber,
+  scrubSecretsFromString,
+} from "@/tools/secret-substitution";
 import { addToMessageQueue } from "@/utils/message-queue-bridge.js";
 import {
   formatTaskNotification,
@@ -382,13 +385,26 @@ function buildExecLaunchers(args: ExecCommandArgs): string[][] {
   });
 }
 
+interface SessionOutputAppender {
+  append(text: string, stream: "stdout" | "stderr"): void;
+  /** Record the output held back for redaction once the process has ended. */
+  flush(): void;
+}
+
 function createSessionOutputAppender(params: {
   session: ExecSession;
   outputFile: string;
   secrets: Readonly<Record<string, string>>;
-}): (text: string, stream: "stdout" | "stderr") => void {
-  return (text: string, stream: "stdout" | "stderr") => {
-    const sanitizedText = scrubSecretsFromString(text, params.secrets);
+}): SessionOutputAppender {
+  // Session reads and the output file both see output while the command runs,
+  // so a secret printed across several writes must be redacted before any of
+  // it is recorded.
+  const scrubbers = {
+    stdout: createStreamingSecretScrubber(params.secrets),
+    stderr: createStreamingSecretScrubber(params.secrets),
+  };
+  const record = (sanitizedText: string, stream: "stdout" | "stderr") => {
+    if (!sanitizedText) return;
     appendSessionOutput(params.session, sanitizedText, stream);
     const bgProcess = backgroundProcesses.get(params.session.id);
     if (bgProcess) {
@@ -415,6 +431,13 @@ function createSessionOutputAppender(params: {
         }
       }
     }
+  };
+  return {
+    append: (text, stream) => record(scrubbers[stream].push(text), stream),
+    flush: () => {
+      record(scrubbers.stdout.flush(), "stdout");
+      record(scrubbers.stderr.flush(), "stderr");
+    },
   };
 }
 
@@ -591,7 +614,7 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
   };
   execSessions.set(id, session);
 
-  const appendOutput = createSessionOutputAppender({
+  const sessionOutput = createSessionOutputAppender({
     session,
     outputFile,
     secrets: args.secretEnv ?? {},
@@ -606,7 +629,7 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
       signal: args.signal,
       tty: session.tty,
       captureOutput: false,
-      onOutput: appendOutput,
+      onOutput: sessionOutput.append,
     });
   } catch (error) {
     execSessions.delete(id);
@@ -637,11 +660,15 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
   }
 
   void runningProcess.completion.then(
-    ({ exitCode }) => markSessionClosed(session, exitCode),
+    ({ exitCode }) => {
+      sessionOutput.flush();
+      markSessionClosed(session, exitCode);
+    },
     (error: unknown) => {
       if (error instanceof ShellExecutionError) {
-        appendOutput(error.message, "stderr");
+        sessionOutput.append(error.message, "stderr");
       }
+      sessionOutput.flush();
       markSessionFailed(
         session,
         `Error: ${error instanceof Error ? error.message : String(error)}`,

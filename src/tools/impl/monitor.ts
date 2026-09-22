@@ -2,7 +2,10 @@ import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import stripAnsi from "strip-ansi";
 import { type RawData, WebSocket } from "ws";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
-import { scrubSecretsFromString } from "@/tools/secret-substitution";
+import {
+  createStreamingSecretScrubber,
+  scrubSecretsFromString,
+} from "@/tools/secret-substitution";
 import { addToMessageQueue } from "@/utils/message-queue-bridge.js";
 import {
   formatMonitorEventNotification,
@@ -415,6 +418,44 @@ function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
     },
   });
 
+  // The output file can be read while the monitor runs, and a persistent
+  // monitor may never end, so a secret printed across several writes must be
+  // redacted before any of it is written.
+  const scrubbers = {
+    stdout: createStreamingSecretScrubber(secrets),
+    stderr: createStreamingSecretScrubber(secrets),
+  };
+  const recordOutput = (redactedText: string, stream: "stdout" | "stderr") => {
+    const sanitizedText = stripAnsi(redactedText);
+    if (!sanitizedText) return;
+    appendBackgroundProcessOutput(processState, stream, sanitizedText);
+    const wrote = output.append(
+      stream === "stderr" ? `[stderr] ${sanitizedText}` : sanitizedText,
+    );
+    if (!wrote && processState.status === "running") {
+      appendBackgroundProcessOutput(
+        processState,
+        "stderr",
+        "[output file write failed; output may be incomplete]",
+      );
+      processState.completionNotificationSuppressed = true;
+      markMonitorFinished(taskId, processState, "failed", null);
+      try {
+        runningProcess.process.kill("SIGTERM");
+      } catch {
+        // Process may have already exited.
+      }
+      return;
+    }
+    if (stream === "stdout") {
+      events.onData(sanitizedText);
+    }
+  };
+  const flushOutput = () => {
+    recordOutput(scrubbers.stdout.flush(), "stdout");
+    recordOutput(scrubbers.stderr.flush(), "stderr");
+  };
+
   const runningProcess = startShellProcess(sandboxed.launcher, {
     cwd,
     env: sandboxed.env,
@@ -423,29 +464,7 @@ function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
     captureOutput: false,
     onOutput(text, stream) {
       if (!processState) return;
-      const sanitizedText = sanitizeMonitorText(text, secrets);
-      appendBackgroundProcessOutput(processState, stream, sanitizedText);
-      const wrote = output.append(
-        stream === "stderr" ? `[stderr] ${sanitizedText}` : sanitizedText,
-      );
-      if (!wrote && processState.status === "running") {
-        appendBackgroundProcessOutput(
-          processState,
-          "stderr",
-          "[output file write failed; output may be incomplete]",
-        );
-        processState.completionNotificationSuppressed = true;
-        markMonitorFinished(taskId, processState, "failed", null);
-        try {
-          runningProcess.process.kill("SIGTERM");
-        } catch {
-          // Process may have already exited.
-        }
-        return;
-      }
-      if (stream === "stdout") {
-        events.onData(sanitizedText);
-      }
+      recordOutput(scrubbers[stream].push(text), stream);
     },
   });
 
@@ -482,6 +501,7 @@ function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
   void runningProcess.completion.then(
     ({ exitCode }) => {
       if (backgroundProcesses.get(taskId) !== processState) return;
+      flushOutput();
       events.finish();
       output.append(`\n[exit code: ${exitCode}]\n`);
       if (processState.status !== "running") return;
@@ -502,6 +522,7 @@ function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
     },
     (error: unknown) => {
       if (backgroundProcesses.get(taskId) !== processState) return;
+      flushOutput();
       events.finish();
       if (processState.status !== "running") return;
       const shellError = error as Error & { killed?: boolean };
