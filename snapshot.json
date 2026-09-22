@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "candidate_id": "claude@2.1.280:docs:426d067a6350b682b6c4ff769de06482ad76cf6907dd065655dbe46310304615:runtime:6db9de23835da48e2965fc2049c3a22b15c0ac0a5a11d4560bf0cf3d029c4029",
+  "candidate_id": "claude@2.1.280:docs:cc114383af78fff57c663c8beb39ace354b1f4c158e760587edf6b62350a0282:runtime:6db9de23835da48e2965fc2049c3a22b15c0ac0a5a11d4560bf0cf3d029c4029",
   "package_version": "2.1.280",
   "npm_integrity": "sha512-EZlX8jqNf+e7q9v+UoPbLYAbEGth7aDbcTytHzPYYohbP/fCfrjboCbcv85ZYGEq1Rq7Amm8hXLhuCKxLsabwA==",
   "npm_published_at": "2026-09-22T15:44:39.443Z",
@@ -14,8 +14,8 @@
   },
   "docs": {
     "index_url": "https://code.claude.com/docs/llms.txt",
-    "index_hash": "92adf76ba4eb3e090e186ed7766c99686ca7fb067a4038e86754e9231c42dac3",
-    "full_scan": true,
+    "index_hash": "d3eb22344f8e1383bb1ce0c1925ea0ebcd5fd0e52be50cd077a0d62807048872",
+    "full_scan": false,
     "scanned_at": "2026-09-22T18:31:29.063Z",
     "pages": {
       "https://code.claude.com/docs/_llms/cn.md": {
@@ -1273,7 +1273,7 @@
         "source_path": "sources/raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md"
       }
     },
-    "digest": "426d067a6350b682b6c4ff769de06482ad76cf6907dd065655dbe46310304615"
+    "digest": "cc114383af78fff57c663c8beb39ace354b1f4c158e760587edf6b62350a0282"
   },
   "runtime": {
     "probe_contract_version": 2,
@@ -1555,8 +1555,8 @@
     ],
     "digest": "6db9de23835da48e2965fc2049c3a22b15c0ac0a5a11d4560bf0cf3d029c4029"
   },
-  "fetched_at": "2026-09-22T18:32:30.959Z",
-  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/35767680218",
-  "state_commit_parent": "a61edd4473a4c8f59c9852ef668153ce96c5b1c9",
-  "analysis_parent_sha": "a61edd4473a4c8f59c9852ef668153ce96c5b1c9"
+  "fetched_at": "2026-09-22T22:24:21.708Z",
+  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/35792068508",
+  "state_commit_parent": "8004d2b95f8edf01f87927d7ea3cc493703f09ff",
+  "analysis_parent_sha": "8004d2b95f8edf01f87927d7ea3cc493703f09ff"
 }
