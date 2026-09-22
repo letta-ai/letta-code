@@ -37,6 +37,7 @@ import type {
   SubagentLaunchArgs,
   SubagentLaunchResult,
 } from "@/types/subagent-protocol";
+import { debugWarn } from "@/utils/debug";
 import { addToMessageQueue } from "@/utils/message-queue-bridge.js";
 import { sleep } from "@/utils/sleep";
 import {
@@ -221,10 +222,10 @@ function writeTaskTranscriptResult(
   outputFile: string,
   result: SubagentResult,
   header: string,
-  options: { reportAlreadyWritten?: boolean } = {},
+  reportAlreadyWritten = false,
 ): void {
   if (result.success) {
-    const report = options.reportAlreadyWritten ? "" : `${result.report}\n\n`;
+    const report = reportAlreadyWritten ? "" : `${result.report}\n\n`;
     appendToOutputFile(outputFile, `${header}\n\n${report}[Task completed]\n`);
     return;
   }
@@ -333,7 +334,7 @@ export async function waitForBackgroundSubagentConversationId(
   }
 }
 
-/** Launch a repair-only worker; false when this conflict was already attempted. */
+/** Launch a repair-only worker; false when already attempted or the launch failed. */
 export async function startMemoryConflictRepair(
   params: {
     agentId: string;
@@ -344,23 +345,29 @@ export async function startMemoryConflictRepair(
   spawn = spawnBackgroundSubagentTask,
   claimRepair = claimMemoryConflictRepair,
 ): Promise<boolean> {
-  if (!(await claimRepair(params.result.memoryDir))) return false;
-  spawn({
-    subagentType: "memory",
-    description: "Repair memory Git conflict",
-    prompt: `Repair only the existing Git conflict in your memory repository. Do not perform unrelated edits or reorganization. If the conflict is already resolved, stop.\n\nMemory directory: ${params.result.memoryDir}\nReported status: ${params.result.summary}`,
-    parentScope: {
-      agentId: params.agentId,
-      conversationId: params.conversationId ?? "default",
-    },
-    memoryScope: {
-      primaryRoot: params.result.memoryDir,
-      writableRoots: [params.result.memoryDir],
-    },
-    memoryRepairOnly: true,
-    actingUserId: params.actingUserId,
-  });
-  return true;
+  try {
+    if (!(await claimRepair(params.result.memoryDir))) return false;
+    spawn({
+      subagentType: "memory",
+      description: "Repair memory Git conflict",
+      prompt: `Repair only the existing Git conflict in your memory repository. Do not perform unrelated edits or reorganization. If the conflict is already resolved, stop.\n\nMemory directory: ${params.result.memoryDir}\nReported status: ${params.result.summary}`,
+      parentScope: {
+        agentId: params.agentId,
+        conversationId: params.conversationId ?? "default",
+      },
+      memoryScope: {
+        primaryRoot: params.result.memoryDir,
+        writableRoots: [params.result.memoryDir],
+      },
+      memoryRepairOnly: true,
+      actingUserId: params.actingUserId,
+    });
+    return true;
+  } catch (error) {
+    // Capacity or checkout errors must not become unhandled rejections.
+    debugWarn("memory-repair", `Could not launch repair: ${String(error)}`);
+    return false;
+  }
 }
 
 /**
@@ -514,13 +521,13 @@ export function spawnBackgroundSubagentTask(
           formatHeader: (identity) =>
             buildTaskResultHeader(subagentType, subagentId, identity),
           execute,
-          repair: (result) => {
-            void startMemoryConflictRepair({
+          // Awaited by the worker so a one-shot drain sees the repair task.
+          repair: (result) =>
+            startMemoryConflictRepair({
               ...resolvedParentScope,
               actingUserId,
               result,
-            });
-          },
+            }),
           getSnapshot: getSubagentSnapshotFn,
         })
       : undefined;
@@ -550,9 +557,7 @@ export function spawnBackgroundSubagentTask(
         result,
         result.success ? "success" : "error",
       );
-      writeTaskTranscriptResult(outputFile, result, header, {
-        reportAlreadyWritten: memoryTask !== undefined,
-      });
+      writeTaskTranscriptResult(outputFile, result, header, !!memoryTask);
       if (result.success) {
         setBackgroundTaskOutput(bgTask, result.report || "");
       }
@@ -729,13 +734,12 @@ export function spawnBackgroundSubagentTask(
     })
     .finally(unsubscribe);
 
+  // Memory drains wait for the whole lifecycle (sync, cleanup), not just the child.
+  const swallow = () => undefined;
   bgTask.completion =
     subagentType === "memory"
       ? taskLifecycle
-      : subagentExecution.then(
-          () => undefined,
-          () => undefined,
-        );
+      : subagentExecution.then(swallow, swallow);
   return { taskId, outputFile, subagentId };
 }
 

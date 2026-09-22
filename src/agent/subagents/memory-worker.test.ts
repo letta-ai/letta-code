@@ -317,3 +317,21 @@ test("a repair that finds no conflict reports no worker identity", async () => {
     report: "No memory conflict remains.",
   });
 });
+
+test("a worker whose sync leaves a conflict waits for the repair launch before completing", async () => {
+  let launched = false;
+  await runMemoryWorker(
+    scope(),
+    async () => {
+      conflict();
+      return { agentId: "agent-worker", success: true, report: "edited" };
+    },
+    {
+      repair: async () => {
+        await Bun.sleep(20);
+        launched = true;
+      },
+    },
+  );
+  expect(launched).toBe(true);
+});

@@ -21,7 +21,8 @@ export async function runMemoryWorker(
   deps: {
     sync?: typeof syncPendingMemoryCommitsAfterTurn;
     recompile?: typeof recompileAgentSystemPrompt;
-    repair?: (result: MemoryPostTurnSyncResult) => void;
+    /** Awaited so the repair task is registered before this worker completes. */
+    repair?: (result: MemoryPostTurnSyncResult) => void | Promise<unknown>;
     onMemoryPushed?: () => void;
   } = {},
 ): Promise<SubagentResult> {
@@ -66,7 +67,7 @@ export async function runMemoryWorker(
             syncError = `Memory sync incomplete (${syncResult.status}): ${syncResult.summary}`;
             debugWarn("memory-worker", syncError);
             if (syncResult.status === "conflict" && !params.repairOnly) {
-              deps.repair?.(syncResult);
+              await deps.repair?.(syncResult);
             }
           }
         } catch (error) {

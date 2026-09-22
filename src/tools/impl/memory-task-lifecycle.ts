@@ -30,7 +30,7 @@ export interface RunBackgroundMemoryTaskParams {
     transcriptPath?: string,
   ) => Promise<SubagentResult>;
   /** Harness conflict repair, launched when the worker's sync leaves a conflict. */
-  repair: (result: MemoryPostTurnSyncResult) => void;
+  repair: (result: MemoryPostTurnSyncResult) => void | Promise<unknown>;
   getSnapshot?: typeof getSubagentSnapshot;
 }
 
