@@ -1,75 +1,17 @@
-import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { link, readFile, realpath, unlink, writeFile } from "node:fs/promises";
+import { link, readFile, unlink, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { promisify } from "node:util";
+import { getMemoryGitDir } from "@/agent/memory-git-dir";
 import { withFileLock } from "@/utils/file-lock";
+import {
+  getProcessStartTime,
+  isSameProcessRunning,
+  type ProcessIdentity,
+} from "@/utils/process-liveness";
 import { sleep } from "@/utils/sleep";
 
-interface MemoryOwner {
-  pid: number;
+interface MemoryOwner extends ProcessIdentity {
   token: string;
-  /** Process start time, so a reused PID is not mistaken for the holder. */
-  started?: string;
-}
-
-function isAlive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM";
-  }
-}
-
-/**
- * Start time of a process as the OS reports it; null when it cannot be read.
- * Rendered in UTC with the C locale so every Letta process on the machine
- * produces the same string for the same holder regardless of its own TZ.
- */
-async function processStartTime(pid: number): Promise<string | null> {
-  try {
-    const { stdout } =
-      process.platform === "win32"
-        ? await promisify(execFile)("powershell", [
-            "-NoProfile",
-            "-Command",
-            `(Get-Process -Id ${pid}).StartTime.ToFileTimeUtc()`,
-          ])
-        : await promisify(execFile)(
-            "ps",
-            ["-o", "lstart=", "-p", String(pid)],
-            { env: { ...process.env, TZ: "UTC", LC_ALL: "C" } },
-          );
-    const started = stdout.trim();
-    return started.length > 0 ? started : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Is the recorded owner still running? Liveness alone is not enough: the PID
- * may have been reused by an unrelated process. A holder that is merely paused
- * or blocked keeps its start time and keeps the lease; waiting on it is correct.
- */
-async function isOwnerRunning(owner: MemoryOwner): Promise<boolean> {
-  if (!isAlive(owner.pid)) return false;
-  if (!owner.started) return true;
-  const started = await processStartTime(owner.pid);
-  return started === null || started === owner.started;
-}
-
-/** Harness state lives in the checkout's own Git directory, so worktrees stay independent. */
-export async function getMemoryGitDir(memoryDir: string): Promise<string> {
-  const { stdout } = await promisify(execFile)("git", [
-    "-C",
-    memoryDir,
-    "rev-parse",
-    "--git-dir",
-  ]);
-  return realpath(resolve(memoryDir, stdout.trim()));
 }
 
 /** Lock a checkout and its index; isolated reflection worktrees remain independent. */
@@ -88,8 +30,13 @@ export async function getMemoryOperationPath(
  * post-turn sync. The primary agent's own edits are not routed through this
  * lock; the prompts ask it to wait for a worker it launched, and workers stage
  * only the files they change so concurrent edits degrade to a Git conflict.
+ *
+ * Returns a release function, or null when the checkout is owned by another
+ * running process and `wait` is false. With `wait`, polls until the owner
+ * releases or exits; a holder that is merely paused keeps the lease, and only
+ * the abort signal gives up.
  */
-async function acquireMemoryOperation(
+export async function claimMemoryOperation(
   memoryDir: string,
   options: { wait?: boolean; signal?: AbortSignal } = {},
 ): Promise<(() => Promise<void>) | null> {
@@ -120,12 +67,12 @@ async function acquireMemoryOperation(
       return null;
     }
   };
-  const started = await processStartTime(process.pid);
+  const started = await getProcessStartTime(process.pid);
   for (;;) {
     options.signal?.throwIfAborted();
     const acquired = await withFileLock(guard, async () => {
       const owner = await readOwner();
-      if (owner && (await isOwnerRunning(owner))) return false;
+      if (owner && (await isSameProcessRunning(owner))) return false;
       // Dead, unreadable or absent owner: clear it before publishing ours.
       await unlink(path).catch(() => undefined);
       // Write the record in full to a private file, then publish it with a
@@ -162,23 +109,12 @@ async function acquireMemoryOperation(
   }
 }
 
-/** Reserve the checkout without transferring ownership to unrelated concurrent calls. */
-export async function claimMemoryOperation(
-  memoryDir: string,
-  options: { wait?: boolean; signal?: AbortSignal } = {},
-): Promise<(() => Promise<void>) | null> {
-  return acquireMemoryOperation(memoryDir, options);
-}
-
 export async function withMemoryOperation<T>(
   memoryDir: string,
   operation: () => Promise<T>,
   signal?: AbortSignal,
 ): Promise<T> {
-  const release = await acquireMemoryOperation(memoryDir, {
-    wait: true,
-    signal,
-  });
+  const release = await claimMemoryOperation(memoryDir, { wait: true, signal });
   if (!release) throw new Error("Failed to acquire memory checkout");
   try {
     signal?.throwIfAborted();

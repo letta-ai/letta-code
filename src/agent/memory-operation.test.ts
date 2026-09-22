@@ -1,26 +1,20 @@
 import { afterEach, expect, test } from "bun:test";
-import { execFileSync } from "node:child_process";
-import {
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import {
+  createTempGitRepo,
+  type TempGitRepo,
+} from "@/test-utils/temp-git-repo";
 import { claimMemoryOperation, withMemoryOperation } from "./memory-operation";
 
-const roots: string[] = [];
+const repos: TempGitRepo[] = [];
 afterEach(() => {
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true });
+  for (const repo of repos.splice(0)) repo.cleanup();
 });
-function repository() {
-  const root = mkdtempSync(join(tmpdir(), "memory-operation-"));
-  roots.push(root);
-  execFileSync("git", ["init", "-q", root]);
-  return root;
+function repository(): string {
+  const repo = createTempGitRepo("memory-operation-");
+  repos.push(repo);
+  return repo.dir;
 }
 test("a separate process cannot mutate an owned checkout", async () => {
   const root = repository();

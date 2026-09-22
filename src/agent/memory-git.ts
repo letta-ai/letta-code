@@ -21,8 +21,9 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir, platform } from "node:os";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
+import { getMemoryGitDir } from "@/agent/memory-git-dir";
 import { getDesktopAccessToken } from "@/auth/desktop-credentials";
 import {
   getMemfsGitProxyRewriteConfig,
@@ -1846,12 +1847,6 @@ export async function getMemoryGitStatus(
 
 function isUnmergedStatusCode(code: string): boolean {
   return code.includes("U") || code === "AA" || code === "DD";
-}
-
-async function getMemoryGitDir(memoryDir: string): Promise<string> {
-  const { stdout } = await runGit(memoryDir, ["rev-parse", "--git-dir"]);
-  const gitDir = stdout.trim() || ".git";
-  return isAbsolute(gitDir) ? gitDir : join(memoryDir, gitDir);
 }
 
 export async function getMemoryConflictSummary(
