@@ -356,7 +356,8 @@ async function cleanupWorktreeAndBranch(
   ]);
 }
 
-async function finalizeReflectionMemoryWorktreeImpl(
+/** Finalize without taking the checkout lease; the caller must already hold it. */
+export async function finalizeReflectionMemoryWorktreeUnlocked(
   worktree: ReflectionMemoryWorktree,
   options: ReflectionMemoryWorktreeFinalizeOptions,
 ): Promise<ReflectionMemoryWorktreeFinalizeResult> {
@@ -657,7 +658,7 @@ export async function finalizeReflectionMemoryWorktree(
   options: ReflectionMemoryWorktreeFinalizeOptions,
 ): Promise<ReflectionMemoryWorktreeFinalizeResult> {
   return withMemoryOperation(worktree.parentMemoryDir, () =>
-    finalizeReflectionMemoryWorktreeImpl(worktree, options),
+    finalizeReflectionMemoryWorktreeUnlocked(worktree, options),
   );
 }
 

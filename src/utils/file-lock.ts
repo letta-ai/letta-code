@@ -1,4 +1,8 @@
 import { open, readFile, stat, unlink } from "node:fs/promises";
+import {
+  getProcessStartTime,
+  isSameProcessRunning,
+} from "@/utils/process-liveness";
 import { sleep } from "@/utils/sleep";
 
 export type FileLockOptions = {
@@ -8,12 +12,20 @@ export type FileLockOptions = {
   retryMs?: number;
   /** Give up acquiring the lock after this many ms. */
   timeoutMs?: number;
+  /**
+   * Reap a lock only when the process that wrote it is gone, never merely
+   * because it is old. A paused or slow holder then keeps the lock and
+   * waiters time out, which is the safe outcome for a critical section that
+   * must stay exclusive; age-based reaping can let two holders in.
+   */
+  reapOnlyDeadOwner?: boolean;
 };
 
 const DEFAULT_OPTIONS: Required<FileLockOptions> = {
   staleMs: 90_000,
   retryMs: 25,
   timeoutMs: 10_000,
+  reapOnlyDeadOwner: false,
 };
 
 const CORRUPT_LOCK_GRACE_MS = 100;
@@ -45,6 +57,7 @@ async function acquireFileLock(
   const start = Date.now();
   const payload = JSON.stringify({
     pid: process.pid,
+    started: await getProcessStartTime(process.pid),
     acquiredAt: Date.now(),
   });
 
@@ -79,7 +92,7 @@ async function acquireFileLock(
         throw error;
       }
 
-      const reaped = await tryReapStaleLock(lockPath, opts.staleMs);
+      const reaped = await tryReapStaleLock(lockPath, opts);
       if (reaped) {
         continue;
       }
@@ -94,7 +107,7 @@ async function acquireFileLock(
 
 async function tryReapStaleLock(
   lockPath: string,
-  staleMs: number,
+  opts: Required<FileLockOptions>,
 ): Promise<boolean> {
   let raw: string;
   try {
@@ -104,9 +117,11 @@ async function tryReapStaleLock(
     return true;
   }
   let acquiredAt: unknown;
+  let owner: { pid?: unknown; started?: unknown } = {};
   let isCorrupt = false;
   try {
-    acquiredAt = (JSON.parse(raw) as { acquiredAt?: unknown }).acquiredAt;
+    owner = JSON.parse(raw) as { pid?: unknown; started?: unknown };
+    acquiredAt = (owner as { acquiredAt?: unknown }).acquiredAt;
   } catch {
     isCorrupt = true;
   }
@@ -131,7 +146,14 @@ async function tryReapStaleLock(
     }
     return true;
   }
-  if (Date.now() - acquiredAt <= staleMs) {
+  if (opts.reapOnlyDeadOwner) {
+    if (typeof owner.pid !== "number") return false;
+    const running = await isSameProcessRunning({
+      pid: owner.pid,
+      ...(typeof owner.started === "string" && { started: owner.started }),
+    });
+    if (running) return false;
+  } else if (Date.now() - acquiredAt <= opts.staleMs) {
     return false;
   }
   try {

@@ -42,6 +42,9 @@ export async function claimMemoryOperation(
 ): Promise<(() => Promise<void>) | null> {
   const path = await getMemoryOperationPath(memoryDir);
   const guard = `${path}.lock`;
+  // The guard must stay exclusive even across a paused holder; only a dead
+  // holder's guard may be reaped, so the section below cannot run twice.
+  const guardOptions = { reapOnlyDeadOwner: true };
   const token = randomUUID();
   const readOwner = async (): Promise<MemoryOwner | null> => {
     let content: string;
@@ -70,39 +73,47 @@ export async function claimMemoryOperation(
   const started = await getProcessStartTime(process.pid);
   for (;;) {
     options.signal?.throwIfAborted();
-    const acquired = await withFileLock(guard, async () => {
-      const owner = await readOwner();
-      if (owner && (await isSameProcessRunning(owner))) return false;
-      // Dead, unreadable or absent owner: clear it before publishing ours.
-      await unlink(path).catch(() => undefined);
-      // Write the record in full to a private file, then publish it with a
-      // hard link: the link is atomic, never exposes partial content, and fails
-      // with EEXIST if this process was paused across a guard reap and another
-      // acquirer published first, so we lose rather than overwrite them.
-      const temporaryPath = `${path}.${token}.tmp`;
-      await writeFile(
-        temporaryPath,
-        JSON.stringify({
-          pid: process.pid,
-          token,
-          ...(started && { started }),
-        }),
-      );
-      try {
-        await link(temporaryPath, path);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-        return false;
-      } finally {
-        await unlink(temporaryPath).catch(() => undefined);
-      }
-      return true;
-    });
+    const acquired = await withFileLock(
+      guard,
+      async () => {
+        const owner = await readOwner();
+        if (owner && (await isSameProcessRunning(owner))) return false;
+        // Dead, unreadable or absent owner: clear it before publishing ours.
+        await unlink(path).catch(() => undefined);
+        // Write the record in full to a private file, then publish it with a
+        // hard link: the link is atomic, never exposes partial content, and fails
+        // with EEXIST if this process was paused across a guard reap and another
+        // acquirer published first, so we lose rather than overwrite them.
+        const temporaryPath = `${path}.${token}.tmp`;
+        await writeFile(
+          temporaryPath,
+          JSON.stringify({
+            pid: process.pid,
+            token,
+            ...(started && { started }),
+          }),
+        );
+        try {
+          await link(temporaryPath, path);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+          return false;
+        } finally {
+          await unlink(temporaryPath).catch(() => undefined);
+        }
+        return true;
+      },
+      guardOptions,
+    );
     if (acquired) {
       return () =>
-        withFileLock(guard, async () => {
-          if ((await readOwner())?.token === token) await unlink(path);
-        });
+        withFileLock(
+          guard,
+          async () => {
+            if ((await readOwner())?.token === token) await unlink(path);
+          },
+          guardOptions,
+        );
     }
     if (!options.wait) return null;
     await sleep(100);

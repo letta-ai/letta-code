@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { claimMemoryOperation } from "@/agent/memory-operation";
 import {
   createReflectionMemoryWorktree,
   type ReflectionMemoryWorktree,
@@ -153,6 +154,7 @@ describe("reflection worktree completion messaging", () => {
 
     const synced: string[] = [];
     let worktreeGoneAtSync = false;
+    let leaseHeldAtSync = false;
     const result = await finalizeLaunch(worktree, true, {
       mergePolicy: "explicit",
       runExplicitIntegration: async () => {
@@ -171,6 +173,8 @@ describe("reflection worktree completion messaging", () => {
       syncIntegratedMemory: async (agentId, options) => {
         synced.push(`${agentId}:${options?.memoryDir}`);
         worktreeGoneAtSync = !existsSync(worktree.worktreeDir);
+        // Still under the same lease as the integration and its verification.
+        leaseHeldAtSync = (await claimMemoryOperation(memoryDir)) === null;
         return {
           status: "pushed",
           summary: "Pushed",
@@ -183,6 +187,7 @@ describe("reflection worktree completion messaging", () => {
     expect(result.integration.status).toBe("merged");
     expect(synced).toEqual([`agent-test:${memoryDir}`]);
     expect(worktreeGoneAtSync).toBe(true);
+    expect(leaseHeldAtSync).toBe(true);
   });
 
   test("explicit integration failure cleans up for transcript retry", async () => {

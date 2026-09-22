@@ -4,6 +4,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { withFileLock } from "@/utils/file-lock";
+import { getProcessStartTime } from "@/utils/process-liveness";
 
 describe("withFileLock", () => {
   let tmpDir: string;
@@ -116,5 +117,40 @@ describe("withFileLock", () => {
       }),
     ).rejects.toThrow("boom");
     expect(existsSync(lockPath)).toBe(false);
+  });
+
+  test("reapOnlyDeadOwner keeps an old lock whose holder is still running", async () => {
+    const lockPath = join(tmpDir, "owner.lock");
+    await writeFile(
+      lockPath,
+      JSON.stringify({
+        pid: process.pid,
+        started: await getProcessStartTime(process.pid),
+        acquiredAt: Date.now() - 10 * 60_000,
+      }),
+    );
+    await expect(
+      withFileLock(lockPath, async () => "entered", {
+        reapOnlyDeadOwner: true,
+        timeoutMs: 200,
+      }),
+    ).rejects.toThrow("File lock timeout");
+  });
+
+  test("reapOnlyDeadOwner reaps a lock whose pid was reused", async () => {
+    const lockPath = join(tmpDir, "reused.lock");
+    await writeFile(
+      lockPath,
+      JSON.stringify({
+        pid: process.pid,
+        started: "1970-01-01",
+        acquiredAt: Date.now(),
+      }),
+    );
+    expect(
+      await withFileLock(lockPath, async () => "entered", {
+        reapOnlyDeadOwner: true,
+      }),
+    ).toBe("entered");
   });
 });

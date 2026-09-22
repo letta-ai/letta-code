@@ -10,6 +10,7 @@ import {
   buildReflectionMemoryScope,
   createReflectionMemoryWorktree,
   finalizeReflectionMemoryWorktree,
+  finalizeReflectionMemoryWorktreeUnlocked,
   inspectReflectionMemoryWorktree,
   type ReflectionMemoryWorktree,
   type ReflectionMemoryWorktreeFinalizeResult,
@@ -603,26 +604,7 @@ export async function finalizeReflectionMemoryWorktreeLaunch(params: {
   }
 
   let integrationRun: ReflectionIntegrationOutcome | undefined;
-  if (params.subagentSuccess && params.mergePolicy === "explicit") {
-    const state = params.knownNoChanges
-      ? { commitCount: 0, dirty: false }
-      : await inspectReflectionMemoryWorktree(params.worktree);
-    if (state.commitCount > 0 || state.dirty) {
-      integrationRun = await withMemoryOperation(
-        params.worktree.parentMemoryDir,
-        () =>
-          (params.runExplicitIntegration ?? runExplicitReflectionIntegration)({
-            agentId: params.agentId,
-            conversationId: params.conversationId,
-            worktree: params.worktree,
-            instructions: params.mergeInstructions,
-            reflectionSubagentId: params.subagentAgentId,
-          }),
-      );
-    }
-  }
-
-  const integration = await finalizeReflectionMemoryWorktree(params.worktree, {
+  const finalizeOptions = () => ({
     shouldMerge: params.subagentSuccess,
     knownNoChanges: params.knownNoChanges,
     requireAlreadyMerged:
@@ -631,32 +613,59 @@ export async function finalizeReflectionMemoryWorktreeLaunch(params: {
       ? `Reflection integration did not complete (${integrationRun.error}); the worktree was cleaned up so the transcript can be retried.`
       : undefined,
   });
+  const explicitIntegration =
+    params.subagentSuccess &&
+    params.mergePolicy === "explicit" &&
+    (params.knownNoChanges
+      ? false
+      : await inspectReflectionMemoryWorktree(params.worktree).then(
+          (state) => state.commitCount > 0 || state.dirty,
+        ));
+  // Explicit integration, its verification and the push happen under one
+  // lease: releasing between them would let another process's post-turn sync
+  // pull --rebase and rewrite the merge before ancestry is checked.
+  const integration = explicitIntegration
+    ? await withMemoryOperation(params.worktree.parentMemoryDir, async () => {
+        integrationRun = await (
+          params.runExplicitIntegration ?? runExplicitReflectionIntegration
+        )({
+          agentId: params.agentId,
+          conversationId: params.conversationId,
+          worktree: params.worktree,
+          instructions: params.mergeInstructions,
+          reflectionSubagentId: params.subagentAgentId,
+        });
+        const result = await finalizeReflectionMemoryWorktreeUnlocked(
+          params.worktree,
+          finalizeOptions(),
+        );
+        // The integration child's own post-turn sync found the lease held and
+        // skipped, and no parent turn may follow; push its verified merge here.
+        if (result.status === "merged") {
+          try {
+            const sync = await (
+              params.syncIntegratedMemory ?? syncPendingMemoryCommitsAfterTurn
+            )(params.agentId, { memoryDir: params.worktree.parentMemoryDir });
+            if (sync.status !== "clean" && sync.status !== "pushed") {
+              debugWarn("reflection", `Integration sync: ${sync.summary}`);
+            }
+          } catch (error) {
+            debugWarn(
+              "reflection",
+              `Integration sync failed: ${String(error)}`,
+            );
+          }
+        }
+        return result;
+      })
+    : await finalizeReflectionMemoryWorktree(
+        params.worktree,
+        finalizeOptions(),
+      );
   const completionSuccess =
     params.subagentSuccess &&
     reflectionIntegrationConsumesTranscript(integration);
 
-  // The integration child's own post-turn sync found the lease held and
-  // skipped, and no parent turn may follow. Push its merge from here, only
-  // after finalize has verified the merge: a pull --rebase before that check
-  // could rewrite the integration commit and make a merged reflection look
-  // unmerged.
-  if (integrationRun !== undefined && integration.status === "merged") {
-    try {
-      const sync = await withMemoryOperation(
-        params.worktree.parentMemoryDir,
-        () =>
-          (params.syncIntegratedMemory ?? syncPendingMemoryCommitsAfterTurn)(
-            params.agentId,
-            { memoryDir: params.worktree.parentMemoryDir },
-          ),
-      );
-      if (sync.status !== "clean" && sync.status !== "pushed") {
-        debugWarn("reflection", `Integration sync: ${sync.summary}`);
-      }
-    } catch (error) {
-      debugWarn("reflection", `Integration sync failed: ${String(error)}`);
-    }
-  }
   const shouldNotify = recordReflectionIntegrationRetry(
     params.agentId,
     integration,
