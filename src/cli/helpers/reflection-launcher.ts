@@ -3,6 +3,7 @@ import {
   isLettaCloud,
 } from "@/agent/memory-filesystem";
 import { detectMemoryFormat } from "@/agent/memory-format";
+import { syncPendingMemoryCommitsAfterTurn } from "@/agent/memory-git";
 import { withMemoryOperation } from "@/agent/memory-operation";
 import {
   buildReflectionIntegrationMemoryScope,
@@ -571,6 +572,8 @@ export async function finalizeReflectionMemoryWorktreeLaunch(params: {
   mergePolicy?: "auto" | "explicit";
   mergeInstructions?: string;
   runExplicitIntegration?: RunExplicitReflectionIntegration;
+  /** Pushes the integration merge; the integration child cannot while the lease is held. */
+  syncIntegratedMemory?: typeof syncPendingMemoryCommitsAfterTurn;
   updateIntegrationConversation?: (
     conversationId: string,
     body: { summary: string; archived: boolean },
@@ -607,14 +610,33 @@ export async function finalizeReflectionMemoryWorktreeLaunch(params: {
     if (state.commitCount > 0 || state.dirty) {
       integrationRun = await withMemoryOperation(
         params.worktree.parentMemoryDir,
-        () =>
-          (params.runExplicitIntegration ?? runExplicitReflectionIntegration)({
+        async () => {
+          const outcome = await (
+            params.runExplicitIntegration ?? runExplicitReflectionIntegration
+          )({
             agentId: params.agentId,
             conversationId: params.conversationId,
             worktree: params.worktree,
             instructions: params.mergeInstructions,
             reflectionSubagentId: params.subagentAgentId,
-          }),
+          });
+          // The integration child's own post-turn sync finds this lease held
+          // and skips, and no parent turn may follow; push its merge from here.
+          try {
+            const sync = await (
+              params.syncIntegratedMemory ?? syncPendingMemoryCommitsAfterTurn
+            )(params.agentId, { memoryDir: params.worktree.parentMemoryDir });
+            if (sync.status !== "clean" && sync.status !== "pushed") {
+              debugWarn("reflection", `Integration sync: ${sync.summary}`);
+            }
+          } catch (error) {
+            debugWarn(
+              "reflection",
+              `Integration sync failed: ${String(error)}`,
+            );
+          }
+          return outcome;
+        },
       );
     }
   }

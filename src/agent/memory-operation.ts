@@ -1,12 +1,6 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import {
-  readFile,
-  realpath,
-  rename,
-  unlink,
-  writeFile,
-} from "node:fs/promises";
+import { readFile, realpath, unlink, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { withFileLock } from "@/utils/file-lock";
@@ -132,16 +126,25 @@ async function acquireMemoryOperation(
     const acquired = await withFileLock(guard, async () => {
       const owner = await readOwner();
       if (owner && (await isOwnerRunning(owner))) return false;
-      const temporaryPath = `${path}.${token}.tmp`;
-      await writeFile(
-        temporaryPath,
-        JSON.stringify({
-          pid: process.pid,
-          token,
-          ...(started && { started }),
-        }),
-      );
-      await rename(temporaryPath, path);
+      // Dead, unreadable or absent owner: clear it before the exclusive create.
+      await unlink(path).catch(() => undefined);
+      // Exclusive create: if this process was paused long enough for the guard
+      // to be reaped and someone else took the lease, we lose rather than
+      // overwrite their owner file.
+      try {
+        await writeFile(
+          path,
+          JSON.stringify({
+            pid: process.pid,
+            token,
+            ...(started && { started }),
+          }),
+          { flag: "wx" },
+        );
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
+        throw error;
+      }
       return true;
     });
     if (acquired) {

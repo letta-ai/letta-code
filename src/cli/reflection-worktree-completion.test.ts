@@ -143,6 +143,50 @@ describe("reflection worktree completion messaging", () => {
     expect(existsSync(worktree.worktreeDir)).toBe(false);
   });
 
+  test("explicit integration pushes its merge from the lease holder", async () => {
+    const worktree = await createReflectionMemoryWorktree({
+      parentMemoryDir: memoryDir,
+    });
+    writeFileSync(join(worktree.worktreeDir, "reflection.md"), "draft\n");
+    git(worktree.worktreeDir, ["add", "reflection.md"]);
+    git(worktree.worktreeDir, ["commit", "-m", "reflection"]);
+
+    const synced: string[] = [];
+    let mergedBeforeSync = false;
+    const result = await finalizeLaunch(worktree, true, {
+      mergePolicy: "explicit",
+      runExplicitIntegration: async () => {
+        git(memoryDir, [
+          "merge",
+          "--no-ff",
+          worktree.branchName,
+          "-m",
+          "merge reflection",
+        ]);
+        return { success: true, conversationId: "conv-review" };
+      },
+      // The integration child cannot sync while the parent holds the lease.
+      syncIntegratedMemory: async (agentId, options) => {
+        synced.push(`${agentId}:${options?.memoryDir}`);
+        mergedBeforeSync = git(memoryDir, [
+          "log",
+          "-1",
+          "--format=%s",
+        ]).includes("merge reflection");
+        return {
+          status: "pushed",
+          summary: "Pushed",
+          memoryDir,
+          localOnly: false,
+        };
+      },
+    });
+
+    expect(result.integration.status).toBe("merged");
+    expect(synced).toEqual([`agent-test:${memoryDir}`]);
+    expect(mergedBeforeSync).toBe(true);
+  });
+
   test("explicit integration failure cleans up for transcript retry", async () => {
     const worktree = await createReflectionMemoryWorktree({
       parentMemoryDir: memoryDir,

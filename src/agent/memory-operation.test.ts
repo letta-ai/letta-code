@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { claimMemoryOperation, withMemoryOperation } from "./memory-operation";
@@ -155,4 +155,25 @@ test("the recorded start time does not depend on the holder's timezone", async (
   expect(await other.exited).toBe(0);
   expect((await new Response(other.stdout).text()).trim()).toBe("true");
   await release?.();
+});
+
+test("a lease taken while the guard was reaped is not overwritten", async () => {
+  const root = repository();
+  const path = join(root, ".git", "letta-memory-operation.json");
+  // Simulate the reaped-guard race: another live process wrote its owner file
+  // after this process had already decided the checkout was free.
+  const guard = `${path}.lock`;
+  const { withFileLock } = await import("@/utils/file-lock");
+  let secondOwner = false;
+  await withFileLock(guard, async () => {
+    writeFileSync(
+      path,
+      JSON.stringify({ pid: process.pid, token: "second-owner" }),
+    );
+    secondOwner = true;
+  });
+  expect(secondOwner).toBe(true);
+  // The late acquirer must lose: the owner file still names the second owner.
+  expect(await claimMemoryOperation(root)).toBeNull();
+  expect(JSON.parse(readFileSync(path, "utf8")).token).toBe("second-owner");
 });
