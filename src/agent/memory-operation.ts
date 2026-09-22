@@ -1,18 +1,6 @@
-import { randomUUID } from "node:crypto";
-import { link, readFile, unlink, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { getMemoryGitDir } from "@/agent/memory-git-dir";
-import { withFileLock } from "@/utils/file-lock";
-import {
-  getOwnProcessStartTime,
-  isSameProcessRunning,
-  type ProcessIdentity,
-} from "@/utils/process-liveness";
-import { sleep } from "@/utils/sleep";
-
-interface MemoryOwner extends ProcessIdentity {
-  token: string;
-}
+import { type FileLockOptions, tryAcquireFileLock } from "@/utils/file-lock";
 
 /** Lock a checkout and its index; isolated reflection worktrees remain independent. */
 export async function getMemoryOperationPath(
@@ -20,9 +8,19 @@ export async function getMemoryOperationPath(
 ): Promise<string> {
   return resolve(
     await getMemoryGitDir(memoryDir),
-    "letta-memory-operation.json",
+    "letta-memory-operation.lock",
   );
 }
+
+/**
+ * The lease is a file lock that is reaped only when its holder process is
+ * gone (pid plus start time), so a paused holder keeps the checkout and
+ * waiters keep waiting; the abort signal is the way to give up.
+ */
+const LEASE_OPTIONS: FileLockOptions = {
+  reapOnlyDeadOwner: true,
+  retryMs: 100,
+};
 
 /**
  * Serialize the harness-owned writers of a memory checkout across local
@@ -32,92 +30,17 @@ export async function getMemoryOperationPath(
  * only the files they change so concurrent edits degrade to a Git conflict.
  *
  * Returns a release function, or null when the checkout is owned by another
- * running process and `wait` is false. With `wait`, polls until the owner
- * releases or exits; a holder that is merely paused keeps the lease, and only
- * the abort signal gives up.
+ * running process and `wait` is false.
  */
 export async function claimMemoryOperation(
   memoryDir: string,
   options: { wait?: boolean; signal?: AbortSignal } = {},
 ): Promise<(() => Promise<void>) | null> {
-  const path = await getMemoryOperationPath(memoryDir);
-  const guard = `${path}.lock`;
-  // The guard must stay exclusive even across a paused holder; only a dead
-  // holder's guard may be reaped, so the section below cannot run twice.
-  const guardOptions = { reapOnlyDeadOwner: true };
-  const token = randomUUID();
-  const readOwner = async (): Promise<MemoryOwner | null> => {
-    let content: string;
-    try {
-      content = await readFile(path, "utf8");
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-      throw error;
-    }
-    try {
-      const owner = JSON.parse(content) as Partial<MemoryOwner> | null;
-      return typeof owner?.pid === "number" && typeof owner.token === "string"
-        ? {
-            pid: owner.pid,
-            token: owner.token,
-            ...(typeof owner.started === "string" && {
-              started: owner.started,
-            }),
-          }
-        : null;
-    } catch {
-      // An unreadable owner file must not wedge every memory operation.
-      return null;
-    }
-  };
-  const started = await getOwnProcessStartTime();
-  for (;;) {
-    options.signal?.throwIfAborted();
-    const acquired = await withFileLock(
-      guard,
-      async () => {
-        const owner = await readOwner();
-        if (owner && (await isSameProcessRunning(owner))) return false;
-        // Dead, unreadable or absent owner: clear it before publishing ours.
-        await unlink(path).catch(() => undefined);
-        // Write the record in full to a private file, then publish it with a
-        // hard link: the link is atomic, never exposes partial content, and fails
-        // with EEXIST if this process was paused across a guard reap and another
-        // acquirer published first, so we lose rather than overwrite them.
-        const temporaryPath = `${path}.${token}.tmp`;
-        await writeFile(
-          temporaryPath,
-          JSON.stringify({
-            pid: process.pid,
-            token,
-            ...(started && { started }),
-          }),
-        );
-        try {
-          await link(temporaryPath, path);
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-          return false;
-        } finally {
-          await unlink(temporaryPath).catch(() => undefined);
-        }
-        return true;
-      },
-      guardOptions,
-    );
-    if (acquired) {
-      return () =>
-        withFileLock(
-          guard,
-          async () => {
-            if ((await readOwner())?.token === token) await unlink(path);
-          },
-          guardOptions,
-        );
-    }
-    if (!options.wait) return null;
-    await sleep(100);
-  }
+  return tryAcquireFileLock(await getMemoryOperationPath(memoryDir), {
+    ...LEASE_OPTIONS,
+    timeoutMs: options.wait ? Number.POSITIVE_INFINITY : 0,
+    signal: options.signal,
+  });
 }
 
 export async function withMemoryOperation<T>(

@@ -1,4 +1,12 @@
-import { open, readFile, stat, unlink } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import {
+  link,
+  open,
+  readFile,
+  stat,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import {
   getOwnProcessStartTime,
   isSameProcessRunning,
@@ -10,8 +18,10 @@ export type FileLockOptions = {
   staleMs?: number;
   /** Poll interval while waiting for a held lock. */
   retryMs?: number;
-  /** Give up acquiring the lock after this many ms. */
+  /** Give up acquiring the lock after this many ms; 0 tries once, Infinity waits. */
   timeoutMs?: number;
+  /** Stop waiting when aborted. */
+  signal?: AbortSignal;
   /**
    * Reap a lock only when the process that wrote it is gone, never merely
    * because it is old. A paused or slow holder then keeps the lock and
@@ -21,7 +31,10 @@ export type FileLockOptions = {
   reapOnlyDeadOwner?: boolean;
 };
 
-const DEFAULT_OPTIONS: Required<FileLockOptions> = {
+type ResolvedOptions = Required<Omit<FileLockOptions, "signal">> &
+  Pick<FileLockOptions, "signal">;
+
+const DEFAULT_OPTIONS: ResolvedOptions = {
   staleMs: 90_000,
   retryMs: 25,
   timeoutMs: 10_000,
@@ -41,8 +54,8 @@ export async function withFileLock<T>(
   fn: () => Promise<T>,
   options?: FileLockOptions,
 ): Promise<T> {
-  const opts = { ...DEFAULT_OPTIONS, ...options };
-  const release = await acquireFileLock(lockPath, opts);
+  const release = await tryAcquireFileLock(lockPath, options);
+  if (!release) throw new Error(`File lock timeout: ${lockPath}`);
   try {
     return await fn();
   } finally {
@@ -50,64 +63,60 @@ export async function withFileLock<T>(
   }
 }
 
-async function acquireFileLock(
+/**
+ * Acquire the lock and return its release, or null once `timeoutMs` elapses.
+ * The record is written in full to a private file and published with a hard
+ * link, so a lock file is never seen half-written and a process paused
+ * across a reap cannot overwrite a lock someone else has since taken.
+ * Release removes the file only while it still holds this acquisition.
+ */
+export async function tryAcquireFileLock(
   lockPath: string,
-  opts: Required<FileLockOptions>,
-): Promise<() => Promise<void>> {
+  options?: FileLockOptions,
+): Promise<(() => Promise<void>) | null> {
+  const opts: ResolvedOptions = { ...DEFAULT_OPTIONS, ...options };
   const start = Date.now();
   const payload = JSON.stringify({
     pid: process.pid,
     started: await getOwnProcessStartTime(),
     acquiredAt: Date.now(),
+    token: randomUUID(),
   });
+  const temporaryPath = `${lockPath}.${process.pid}.${randomUUID()}.tmp`;
 
   while (true) {
+    opts.signal?.throwIfAborted();
+    await writeFile(temporaryPath, payload, "utf-8");
+    let acquired = false;
     try {
-      const handle = await open(lockPath, "wx");
-      try {
-        await handle.writeFile(payload, "utf-8");
-        await handle.close();
-      } catch (error) {
-        try {
-          await handle.close();
-        } catch {
-          // Ignore close failures while cleaning up a failed acquisition.
-        }
-        try {
-          await unlink(lockPath);
-        } catch {
-          // Best-effort cleanup; another process may have reaped it.
-        }
-        throw error;
-      }
+      await link(temporaryPath, lockPath);
+      acquired = true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code !== "EEXIST") throw error;
+    } finally {
+      await unlink(temporaryPath).catch(() => undefined);
+    }
+    if (acquired) {
       return async () => {
         try {
-          await unlink(lockPath);
+          if ((await readFile(lockPath, "utf-8")) === payload) {
+            await unlink(lockPath);
+          }
         } catch {
           // Already gone (reaped by another process, or unlink raced).
         }
       };
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException)?.code !== "EEXIST") {
-        throw error;
-      }
-
-      const reaped = await tryReapStaleLock(lockPath, opts);
-      if (reaped) {
-        continue;
-      }
-
-      if (Date.now() - start > opts.timeoutMs) {
-        throw new Error(`File lock timeout: ${lockPath}`);
-      }
-      await sleep(opts.retryMs);
     }
+
+    if (await tryReapStaleLock(lockPath, opts)) continue;
+    if (Date.now() - start >= opts.timeoutMs) return null;
+    await sleep(opts.retryMs);
   }
 }
 
 async function tryReapStaleLock(
   lockPath: string,
-  opts: Required<FileLockOptions>,
+  opts: ResolvedOptions,
 ): Promise<boolean> {
   let raw: string;
   try {
@@ -133,9 +142,9 @@ async function tryReapStaleLock(
       // Lock vanished between read and stat - retry immediately.
       return true;
     }
-    // `open("wx")` creates the file before `writeFile` fills it. Give a live
-    // writer a short grace period before treating corrupt/empty content as an
-    // abandoned acquisition.
+    // An older writer may still create the file before filling it. Give a
+    // live writer a short grace period before treating corrupt/empty content
+    // as an abandoned acquisition.
     if (Date.now() - mtimeMs <= CORRUPT_LOCK_GRACE_MS) {
       return false;
     }
@@ -163,7 +172,7 @@ async function tryReapStaleLock(
 async function removeIfUnchanged(
   lockPath: string,
   expected: string,
-  opts: Required<FileLockOptions>,
+  opts: ResolvedOptions,
 ): Promise<boolean> {
   const reapPath = `${lockPath}.reap`;
   let marker: Awaited<ReturnType<typeof open>>;
