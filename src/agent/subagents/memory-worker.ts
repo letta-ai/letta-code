@@ -75,7 +75,9 @@ export async function runMemoryWorker(
         }
       }
       // Memory is committed and synced at this point; a failed prompt refresh
-      // is worth a warning but must not report the worker as failed.
+      // is worth a warning but must not report the worker as failed. Running
+      // it under the checkout lock is safe because the primary's tools never
+      // take this lock, so its active turn cannot be waiting on us.
       if (synced) {
         try {
           if (deps.recompile || getBackend().capabilities.promptRecompile) {

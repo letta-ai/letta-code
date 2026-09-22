@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { claimMemoryOperation, withMemoryOperation } from "./memory-operation";
@@ -81,4 +81,25 @@ test("a follow-up worker launched inside another operation still waits its turn"
   });
   await followup;
   expect(ran).toBe(true);
+});
+
+test("a lease that stopped being refreshed is reclaimed even if its pid reads as alive", async () => {
+  const root = repository();
+  const path = join(root, ".git", "letta-memory-operation.json");
+  // Our own pid is certainly alive; only the missing heartbeat marks it stale.
+  writeFileSync(path, JSON.stringify({ pid: process.pid, token: "stale" }));
+  const stale = new Date(Date.now() - 2 * 60_000);
+  utimesSync(path, stale, stale);
+  const release = await claimMemoryOperation(root);
+  expect(release).not.toBeNull();
+  expect(await claimMemoryOperation(root)).toBeNull();
+  await release?.();
+});
+
+test("an unreadable owner file does not wedge the checkout", async () => {
+  const root = repository();
+  writeFileSync(join(root, ".git", "letta-memory-operation.json"), "{not json");
+  const release = await claimMemoryOperation(root);
+  expect(release).not.toBeNull();
+  await release?.();
 });

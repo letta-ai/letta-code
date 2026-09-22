@@ -4,7 +4,9 @@ import {
   readFile,
   realpath,
   rename,
+  stat,
   unlink,
+  utimes,
   writeFile,
 } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -16,6 +18,14 @@ interface MemoryOwner {
   pid: number;
   token: string;
 }
+
+/**
+ * A holder refreshes its owner file while it works. A file that stops being
+ * refreshed belongs to a process that is gone even if its PID reads as alive:
+ * the PID was reused, or the holder is a zombie or unreadable (EPERM).
+ */
+const HEARTBEAT_MS = 5_000;
+const STALE_MS = 60_000;
 
 function isAlive(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false;
@@ -80,11 +90,19 @@ async function acquireMemoryOperation(
       return null;
     }
   };
+  const isHeld = async (): Promise<boolean> => {
+    const owner = await readOwner();
+    if (!owner || !isAlive(owner.pid)) return false;
+    try {
+      return Date.now() - (await stat(path)).mtimeMs < STALE_MS;
+    } catch {
+      return false;
+    }
+  };
   for (;;) {
     options.signal?.throwIfAborted();
     const acquired = await withFileLock(guard, async () => {
-      const owner = await readOwner();
-      if (owner && isAlive(owner.pid)) return false;
+      if (await isHeld()) return false;
       const temporaryPath = `${path}.${token}.tmp`;
       await writeFile(
         temporaryPath,
@@ -94,10 +112,19 @@ async function acquireMemoryOperation(
       return true;
     });
     if (acquired) {
-      return () =>
-        withFileLock(guard, async () => {
+      const heartbeat = setInterval(() => {
+        const now = new Date();
+        utimes(path, now, now).catch(() => {
+          /* Released or replaced; the next acquisition decides. */
+        });
+      }, HEARTBEAT_MS);
+      heartbeat.unref();
+      return () => {
+        clearInterval(heartbeat);
+        return withFileLock(guard, async () => {
           if ((await readOwner())?.token === token) await unlink(path);
         });
+      };
     }
     if (!options.wait) return null;
     await sleep(100);

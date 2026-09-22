@@ -1361,8 +1361,13 @@ export async function handleHeadlessCommand(
       )
     : Promise.resolve();
 
-  // Stateless subagents retain the inherited checkout without enabling their own MemFS.
+  // Apply memfs flags and auto-enable from server tag when local settings are missing.
+  // Respects memfsStartupPolicy:
+  //   "blocking"  (default) – await the pull; exit on conflict.
+  //   "background"           – fire pull async; session init proceeds immediately.
+  //   "skip"                 – skip the pull this session.
   if (isStatelessSession) {
+    // Stateless subagents retain the inherited checkout without enabling their own MemFS.
     settingsManager.setMemfsEnabled(agent.id, false);
   } else if (!backend.capabilities.remoteMemfs) {
     if (backend.capabilities.localMemfs) {
@@ -3266,6 +3271,7 @@ export async function handleHeadlessCommand(
     await writeFinalHeadlessStdout(`${resultText}\n`);
   }
 
+  // Report all milestones at the end for latency audit
   markMilestone("HEADLESS_COMPLETE");
   reportAllMilestones();
   await exitHeadless(0, "headless_complete");
