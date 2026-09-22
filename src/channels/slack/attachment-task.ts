@@ -69,7 +69,6 @@ export async function runSlackAttachmentDownloadTask(params: {
     stderr: [],
     status: "running",
     exitCode: null,
-    lastReadIndex: { stdout: 0, stderr: 0 },
     startTime: new Date(),
     outputFile,
     totalStdoutLines: 0,

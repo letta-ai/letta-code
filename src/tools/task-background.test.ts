@@ -77,7 +77,6 @@ describe("Task background infrastructure", () => {
       subagentType: "general-purpose",
       subagentId: "subagent_1",
       status: "running",
-      output: [],
       startTime: new Date(),
       outputFile,
       abortController: new AbortController(),
@@ -113,7 +112,6 @@ describe("TaskStop with background tasks", () => {
       subagentType: "general-purpose",
       subagentId: "subagent_6",
       status: "running",
-      output: [],
       startTime: new Date(),
       outputFile,
       abortController,
@@ -158,7 +156,6 @@ describe("TaskStop with background tasks", () => {
       subagentType: "general-purpose",
       subagentId: "subagent_7",
       status: "completed",
-      output: ["Done"],
       startTime: new Date(),
       outputFile,
     };
@@ -184,7 +181,6 @@ describe("TaskStop with background tasks", () => {
       subagentType: "general-purpose",
       subagentId: "subagent_8",
       status: "running",
-      output: [],
       startTime: new Date(),
       outputFile,
       // No abortController

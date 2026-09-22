@@ -434,7 +434,6 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     stderr: [],
     status: "running",
     exitCode: null,
-    lastReadIndex: { stdout: 0, stderr: 0 },
     startTime: new Date(),
     outputFile,
     totalStdoutLines: 0,

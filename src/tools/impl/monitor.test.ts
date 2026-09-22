@@ -624,7 +624,6 @@ describe("Monitor", () => {
       stderr: [],
       status: "running",
       exitCode: null,
-      lastReadIndex: { stdout: 0, stderr: 0 },
       kind: "monitor",
     });
 

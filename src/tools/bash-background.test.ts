@@ -114,7 +114,6 @@ describe.skipIf(isWindows)("Bash background tools", () => {
       stderr: [],
       status: "completed",
       exitCode: 0,
-      lastReadIndex: { stdout: 0, stderr: 0 },
     });
 
     expect(await kill_bash({ shell_id: "bash_completed" })).toEqual({
