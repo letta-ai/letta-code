@@ -44,6 +44,7 @@ import { OPENAI_COMPATIBLE_PROXY_UPDATE_ARG } from "@/utils/openai-endpoint";
 import {
   deriveReasoningEffort,
   mapHandleToLlmConfigPatch,
+  providerTypeForToolsetFromModelSettings,
   providerTypeFromModelSettings,
   providerTypeFromUpdateArgs,
   resolveModelSelectionReasoningHandle,
@@ -640,7 +641,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             const { switchToolsetForModel } = await import("@/tools/toolset");
             const toolsetName = await switchToolsetForModel(
               modelHandle,
-              resolvedProviderType,
+              isOpenAICompatibleProxy ? null : resolvedProviderType,
             );
             setCurrentToolsetPreference("auto");
             setCurrentToolset(toolsetName);
@@ -1203,7 +1204,9 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             }
 
             const providerType =
-              providerTypeFromModelSettings(agentState?.model_settings) ??
+              providerTypeForToolsetFromModelSettings(
+                agentState?.model_settings,
+              ) ??
               llmConfig?.model_endpoint_type ??
               null;
             const derivedToolset = await switchToolsetForModel(
