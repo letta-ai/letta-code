@@ -19,7 +19,6 @@ import {
 import { clearAllSubagents, registerSubagent } from "@/agent/subagent-state";
 import { __testSetBackend, type AgentCreateBody } from "@/backend";
 import { LocalBackend } from "@/backend/local";
-import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import { setSystemPromptDoctorState } from "@/cli/helpers/system-prompt-warning";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { appendCronRunLog, getCronRunLogPath } from "@/cron";
@@ -4873,7 +4872,7 @@ describe("listen-client loop error notices", () => {
       message: "Connection to Letta service failed. Please retry.",
     });
   });
-  test("reuses TUI formatter for structured run errors", () => {
+  test("formats structured run errors with the generic unclassified fallback", () => {
     const apiError = {
       message_type: "error_message" as const,
       error_type: "insufficient_credits_error",
@@ -4881,21 +4880,6 @@ describe("listen-client loop error notices", () => {
       detail: "Please add credits to continue.",
       run_id: "run-123",
     };
-    const expectedMessage = formatErrorDetails(
-      {
-        error: {
-          error: {
-            type: apiError.error_type,
-            message: apiError.message,
-            detail: apiError.detail,
-          },
-          run_id: apiError.run_id,
-        },
-      },
-      "agent-1",
-      "default",
-    );
-
     expect(
       getLoopErrorNoticeDecision({
         message: apiError.detail,
@@ -4910,7 +4894,9 @@ describe("listen-client loop error notices", () => {
       }),
     ).toEqual({
       visibility: "transcript",
-      message: expectedMessage,
+      // Unclassified upstream errors fall back to a generic message so raw
+      // payload dumps never reach end-user surfaces.
+      message: "The request failed. Please try again.",
       apiError,
     });
   });

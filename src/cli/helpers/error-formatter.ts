@@ -19,7 +19,13 @@ export type ErrorDisplaySurface = "plain" | "terminal";
 export interface FormatErrorDetailsOptions {
   automaticRetry?: boolean;
   surface?: ErrorDisplaySurface;
-  unclassifiedFallback?: "generic";
+  /**
+   * "generic" replaces unclassified errors with GENERIC_ERROR_MESSAGE so
+   * internal stack detail never reaches end-user surfaces. "passthrough" is
+   * an explicit opt-out for call sites that compose their own user-facing
+   * message locally; upstream-sourced error text must never use it.
+   */
+  unclassifiedFallback?: "generic" | "passthrough";
 }
 
 const GENERIC_ERROR_MESSAGE = "The request failed. Please try again.";

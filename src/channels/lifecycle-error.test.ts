@@ -85,6 +85,37 @@ describe("normalizeChannelLifecycleErrorMessage", () => {
       CHANNEL_LIFECYCLE_FALLBACK_ERROR_MESSAGE,
     );
   });
+
+  test("never surfaces raw serialized internal error payloads", () => {
+    const rawError = JSON.stringify(
+      {
+        error: {
+          error: {
+            type: "internal_error",
+            message:
+              "write CONNECTION_CLOSED gcp-us-central1-1.pg.psdb.cloud:6432",
+            detail:
+              "write CONNECTION_CLOSED gcp-us-central1-1.pg.psdb.cloud:6432",
+          },
+          run_id: "run-45315cfe-d74f-4eda-bf10-e2f6315767ef",
+        },
+      },
+      null,
+      2,
+    );
+
+    const message = formatChannelLifecycleErrorMessage(rawError, {
+      codeBlock: true,
+    });
+
+    expect(message).toContain(CHANNEL_LIFECYCLE_FALLBACK_ERROR_MESSAGE);
+    expect(message).toContain(
+      "Run ID: run-45315cfe-d74f-4eda-bf10-e2f6315767ef",
+    );
+    expect(message).not.toContain("psdb.cloud");
+    expect(message).not.toContain("CONNECTION_CLOSED");
+    expect(message).not.toContain("internal_error");
+  });
 });
 
 describe("formatChannelLifecycleErrorMessage", () => {
