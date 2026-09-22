@@ -162,6 +162,7 @@ for (const producer of [
                   : {
                       ...source,
                       description: "Background check",
+                      persistent: true,
                     },
               { toolContextId: prepared.contextId },
             ),

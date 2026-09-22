@@ -120,6 +120,7 @@ describe("listener interrupt queue handoff", () => {
       const command = await monitor({
         command: `${JSON.stringify(process.execPath)} ${JSON.stringify(script)}`,
         description: "target command",
+        persistent: true,
         parentScope: scopes[0],
       });
       taskIds.push(command.taskId);
@@ -127,6 +128,7 @@ describe("listener interrupt queue handoff", () => {
         const result = await monitor({
           ws: { url: `ws://127.0.0.1:${address.port}` },
           description: `socket ${scope.agentId}/${scope.conversationId}`,
+          persistent: true,
           parentScope: scope,
         });
         taskIds.push(result.taskId);

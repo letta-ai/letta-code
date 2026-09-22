@@ -34,7 +34,6 @@ import { applyShellSandbox } from "./shell-sandbox.js";
 
 const MIN_TIMEOUT_MS = 1000;
 const MAX_TIMEOUT_MS = 3_600_000;
-const MAX_EFFECTIVE_TIMEOUT_MS = 1_800_000;
 const DEFAULT_TIMEOUT_MS = 300_000;
 export const MONITOR_OUTPUT_FILE_BYTES = 1024 * 1024;
 const WEBSOCKET_MAX_PAYLOAD_BYTES = MONITOR_EVENT_BUFFER_CHARS * 2;
@@ -48,6 +47,7 @@ interface MonitorWebSocketSource {
 interface MonitorArgs {
   description: string;
   timeout_ms?: number;
+  persistent?: boolean;
   command?: string;
   ws?: MonitorWebSocketSource;
   secretEnv?: Record<string, string>;
@@ -57,6 +57,7 @@ interface MonitorArgs {
 
 type NormalizedMonitorArgs = MonitorArgs & {
   timeout_ms: number;
+  persistent: boolean;
 };
 
 interface MonitorResult {
@@ -66,17 +67,24 @@ interface MonitorResult {
   persistent: boolean;
 }
 
-function buildMonitorResult(taskId: string, timeoutMs: number): MonitorResult {
+function buildMonitorResult(
+  taskId: string,
+  timeoutMs: number,
+  persistent: boolean,
+): MonitorResult {
+  const lifetime = persistent
+    ? "persistent — runs until TaskStop or session end"
+    : `timeout ${timeoutMs}ms`;
   return {
     content: [
       {
         type: "text",
-        text: `Monitor started (task ${taskId}, timeout ${timeoutMs}ms). You will be notified on each event. Keep working — do not poll or sleep. Events may arrive while you are waiting for the user — an event is not their reply.`,
+        text: `Monitor started (task ${taskId}, ${lifetime}). You will be notified on each event. Keep working — do not poll or sleep. Events may arrive while you are waiting for the user — an event is not their reply.`,
       },
     ],
     taskId,
     timeoutMs,
-    persistent: false,
+    persistent,
   };
 }
 
@@ -194,6 +202,7 @@ function normalizeMonitorArgs(args: MonitorArgs): NormalizedMonitorArgs {
   const normalized: NormalizedMonitorArgs = {
     ...args,
     timeout_ms: args.timeout_ms ?? DEFAULT_TIMEOUT_MS,
+    persistent: args.persistent ?? false,
   };
 
   if (typeof normalized.description !== "string") {
@@ -203,16 +212,15 @@ function normalizeMonitorArgs(args: MonitorArgs): NormalizedMonitorArgs {
     typeof normalized.timeout_ms !== "number" ||
     !Number.isFinite(normalized.timeout_ms) ||
     normalized.timeout_ms < MIN_TIMEOUT_MS ||
-    normalized.timeout_ms > MAX_TIMEOUT_MS
+    (!normalized.persistent && normalized.timeout_ms > MAX_TIMEOUT_MS)
   ) {
     throw new Error(
       `Monitor timeout_ms must be between ${MIN_TIMEOUT_MS} and ${MAX_TIMEOUT_MS}`,
     );
   }
-  normalized.timeout_ms = Math.min(
-    normalized.timeout_ms,
-    MAX_EFFECTIVE_TIMEOUT_MS,
-  );
+  if (typeof normalized.persistent !== "boolean") {
+    throw new Error("Monitor persistent must be a boolean");
+  }
   if (
     normalized.command !== undefined &&
     typeof normalized.command !== "string"
@@ -409,7 +417,7 @@ function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
   const runningProcess = startShellProcess(sandboxed.launcher, {
     cwd,
     env: sandboxed.env,
-    timeoutMs: args.timeout_ms,
+    timeoutMs: args.persistent ? 0 : args.timeout_ms,
     sourceCommand: command,
     captureOutput: false,
     onOutput(text, stream) {
@@ -465,7 +473,7 @@ function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
     kind: "monitor",
     description: args.description,
     monitorSource: "command",
-    persistent: false,
+    persistent: args.persistent,
     secrets,
   };
   backgroundProcesses.set(taskId, processState);
@@ -529,7 +537,11 @@ function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
     },
   );
 
-  return buildMonitorResult(taskId, args.timeout_ms);
+  return buildMonitorResult(
+    taskId,
+    args.persistent ? 0 : args.timeout_ms,
+    args.persistent,
+  );
 }
 
 function startWebSocketMonitor(args: NormalizedMonitorArgs): MonitorResult {
@@ -599,7 +611,7 @@ function startWebSocketMonitor(args: NormalizedMonitorArgs): MonitorResult {
     kind: "monitor",
     description: args.description,
     monitorSource: "websocket",
-    persistent: false,
+    persistent: args.persistent,
     secrets,
   };
   backgroundProcesses.set(taskId, processState);
@@ -705,25 +717,31 @@ function startWebSocketMonitor(args: NormalizedMonitorArgs): MonitorResult {
     );
   });
 
-  timeout = setTimeout(() => {
-    if (processState.status !== "running") return;
-    events.finish();
-    if (processState.status !== "running") return;
-    queueMonitorEvent({
-      taskId,
-      description: args.description,
-      event: "[Monitor timed out — re-arm if needed.]",
-      scope,
-      secrets,
-    });
-    output.append(`\n[timeout after ${args.timeout_ms}ms]\n`);
-    processState.completionNotificationSuppressed = true;
-    markMonitorFinished(taskId, processState, "failed", null);
-    closeSocket();
-  }, args.timeout_ms);
-  unrefTimer(timeout);
+  if (!args.persistent) {
+    timeout = setTimeout(() => {
+      if (processState.status !== "running") return;
+      events.finish();
+      if (processState.status !== "running") return;
+      queueMonitorEvent({
+        taskId,
+        description: args.description,
+        event: "[Monitor timed out — re-arm if needed.]",
+        scope,
+        secrets,
+      });
+      output.append(`\n[timeout after ${args.timeout_ms}ms]\n`);
+      processState.completionNotificationSuppressed = true;
+      markMonitorFinished(taskId, processState, "failed", null);
+      closeSocket();
+    }, args.timeout_ms);
+    unrefTimer(timeout);
+  }
 
-  return buildMonitorResult(taskId, args.timeout_ms);
+  return buildMonitorResult(
+    taskId,
+    args.persistent ? 0 : args.timeout_ms,
+    args.persistent,
+  );
 }
 
 export async function monitor(args: MonitorArgs): Promise<MonitorResult> {
