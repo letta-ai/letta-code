@@ -27,8 +27,25 @@ describe("launch_subagent protocol", () => {
       command,
     );
   });
+  test.each([undefined, "assignment:initial-input"])(
+    "accepts optional initial client_message_id %s independently of request_id",
+    (client_message_id) => {
+      const input = {
+        ...command,
+        args: { ...command.args, client_message_id },
+      };
+      expect(isLaunchSubagentCommand(input)).toBe(true);
+      expect(parseServerMessage(Buffer.from(JSON.stringify(input)))).toEqual(
+        input,
+      );
+    },
+  );
   test.each([
     { request_id: "" },
+    { args: { ...command.args, client_message_id: "" } },
+    { args: { ...command.args, client_message_id: "  " } },
+    { args: { ...command.args, client_message_id: 42 } },
+    { args: { ...command.args, client_message_id: null } },
     { runtime: null },
     { runtime: { agent_id: null, conversation_id: "conv-parent" } },
     { runtime: { ...command.runtime, acting_user_id: 42 } },

@@ -131,11 +131,11 @@ interface BuildSubagentArgsOptions {
    * ambiguous, or does not support environment-routed messaging.
    */
   environment?: string;
+  /** Identity for the child's initial assignment, never inherited. */
+  clientMessageId?: string;
 }
 
-/**
- * Build CLI arguments for spawning a subagent
- */
+/** Build CLI arguments for spawning a subagent. */
 export function buildSubagentArgs(
   type: string,
   config: SubagentConfig,
@@ -155,6 +155,9 @@ export function buildSubagentArgs(
   if (options.backendMode) {
     args.push("--backend", options.backendMode);
   }
+
+  if (options.clientMessageId !== undefined)
+    args.push("--client-message-id", options.clientMessageId);
 
   if (options.environment) {
     // The child only submits the send and exits with the enqueue receipt;
@@ -291,6 +294,7 @@ async function executeSubagent(
   actingUserIdOverride?: string,
   parentAgentName?: string | null,
   parentConversationId?: string,
+  clientMessageId?: string,
 ): Promise<SubagentResult> {
   const withModel = (result: SubagentResult): SubagentResult =>
     model ? { ...result, model } : result;
@@ -340,6 +344,7 @@ async function executeSubagent(
         parentAgentId,
         systemPromptOverride,
         environment,
+        clientMessageId,
       },
     );
 
@@ -568,6 +573,7 @@ async function executeSubagent(
             actingUserIdOverride,
             parentAgentName,
             parentConversationId,
+            clientMessageId,
           );
         }
       }
@@ -599,6 +605,7 @@ async function executeSubagent(
           actingUserIdOverride,
           parentAgentName,
           parentConversationId,
+          clientMessageId,
         );
       }
 
@@ -717,6 +724,7 @@ async function executeSubagent(
           actingUserIdOverride,
           parentAgentName,
           parentConversationId,
+          clientMessageId,
         );
       }
     }
@@ -829,6 +837,7 @@ async function spawnSubagentInContext(
   environment?: string,
   actingUserId?: string,
   resolvedConfig?: SubagentConfig,
+  clientMessageId?: string,
 ): Promise<SubagentResult> {
   const launchActingUserId = resolveActingUserId(actingUserId);
   let config = resolvedConfig ?? (await getAllSubagentConfigs())[type];
@@ -973,6 +982,7 @@ async function spawnSubagentInContext(
     launchActingUserId,
     parentAgent?.name,
     resolvedParentConversationId,
+    clientMessageId,
   );
 
   return result;
