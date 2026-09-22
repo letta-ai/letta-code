@@ -61,10 +61,10 @@ describe("task() computer guard", () => {
     const guardIndex = source.indexOf(
       "The computer option requires a Letta Cloud backend",
     );
-    const taskStart = source.indexOf("export async function task(");
+    const launchStart = source.indexOf("export async function launchSubagent(");
     const spawnIndex = source.indexOf(
       "spawnBackgroundSubagentTask({",
-      taskStart,
+      launchStart,
     );
     expect(guardIndex).toBeGreaterThan(-1);
     expect(spawnIndex).toBeGreaterThan(-1);

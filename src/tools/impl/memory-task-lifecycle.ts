@@ -1,4 +1,100 @@
-import { backgroundTasks } from "./process_manager";
+import type { MemoryPostTurnSyncResult } from "@/agent/memory-git";
+import {
+  emitStreamEvent,
+  getSnapshot as getSubagentSnapshot,
+  subscribeToSubagentLifecycle,
+} from "@/agent/subagent-state";
+import type { SubagentResult } from "@/agent/subagents";
+import { withMemoryHandoff } from "@/agent/subagents/memory-handoff";
+import { runMemoryWorker } from "@/agent/subagents/memory-worker";
+import { appendToOutputFile, backgroundTasks } from "./process_manager";
+
+export interface RunBackgroundMemoryTaskParams {
+  agentId: string;
+  conversationId: string;
+  memoryDir: string;
+  assignment: string;
+  repairOnly?: boolean;
+  signal: AbortSignal;
+  subagentId: string;
+  outputFile: string;
+  /** Transcript header for a worker identity, in the task's usual format. */
+  formatHeader: (
+    identity: Pick<SubagentResult, "agentId" | "conversationId">,
+  ) => string;
+  /** Spawn the worker with the handoff prompt and optional transcript snapshot. */
+  execute: (
+    assignment: string,
+    transcriptPath?: string,
+  ) => Promise<SubagentResult>;
+  /** Harness conflict repair, launched when the worker's sync leaves a conflict. */
+  repair: (result: MemoryPostTurnSyncResult) => void;
+  getSnapshot?: typeof getSubagentSnapshot;
+}
+
+/**
+ * Run a fresh memory worker under its checkout lock. The worker's identity and
+ * report are written to the task log as soon as they are known so the primary
+ * can inspect the task even when remote sync is slow or fails afterwards.
+ */
+export function runBackgroundMemoryTask(
+  params: RunBackgroundMemoryTaskParams,
+): {
+  execution: Promise<SubagentResult>;
+  unsubscribe: () => void;
+} {
+  const getSnapshot = params.getSnapshot ?? getSubagentSnapshot;
+  let loggedAddress = "";
+  const unsubscribe = subscribeToSubagentLifecycle(() => {
+    const worker = getSnapshot().agents.find(
+      (entry) => entry.id === params.subagentId,
+    );
+    if (!worker?.agentId || !worker.conversationId) return;
+    const address = `${worker.agentId}:${worker.conversationId}`;
+    if (address === loggedAddress) return;
+    loggedAddress = address;
+    appendToOutputFile(
+      params.outputFile,
+      `${params.formatHeader({ agentId: worker.agentId, conversationId: worker.conversationId })}\n`,
+    );
+  });
+  const scope = {
+    agentId: params.agentId,
+    conversationId: params.conversationId,
+    memoryDir: params.memoryDir,
+    repairOnly: params.repairOnly,
+  };
+  const execution = runMemoryWorker(
+    { ...scope, signal: params.signal },
+    () =>
+      withMemoryHandoff(
+        { ...scope, assignment: params.assignment },
+        async (handoff) => {
+          const result = await params.execute(
+            handoff.prompt,
+            handoff.transcriptPath,
+          );
+          // Preserve the worker identity/report even if remote sync is slow or fails.
+          appendToOutputFile(
+            params.outputFile,
+            `${params.formatHeader(result)}\n\n${result.report}\n[Memory worker finished; syncing commits]\n`,
+          );
+          return result;
+        },
+      ),
+    {
+      onMemoryPushed: () => {
+        emitStreamEvent(params.subagentId, {
+          type: "memory_updated",
+          affected_paths: ["*"],
+          timestamp: Date.now(),
+        });
+      },
+      repair: params.repair,
+    },
+  );
+  return { execution, unsubscribe };
+}
 
 /** Await child teardown before the process owning its checkout lock exits. */
 export async function finishBackgroundMemoryTasks(

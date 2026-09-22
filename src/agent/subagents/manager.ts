@@ -446,6 +446,7 @@ async function executeSubagent(
     if (!managedCommand) {
       throw new Error("Subagent executable is required");
     }
+    signal?.throwIfAborted();
     const runningProcess = spawnSubagentProcess(managedCommand, managedArgs, {
       cwd: subagentWorkingDirectory,
       env: spawnEnv,
@@ -536,8 +537,12 @@ async function executeSubagent(
 
     // Handle non-zero exit code
     if (exitCode !== 0) {
-      // Check if this is a provider-not-supported error and we haven't retried yet
-      if (!isRetry && isProviderNotSupportedError(stderr)) {
+      // A prepared conversation must fail rather than switch models and agents.
+      if (
+        !isRetry &&
+        (type !== "custom" || !existingConversationId) &&
+        isProviderNotSupportedError(stderr)
+      ) {
         const { handle: primaryModel } = await getPrimaryAgentModelHandle({
           agentId: parentAgentIdOverride,
         });
@@ -825,10 +830,10 @@ async function spawnSubagentInContext(
   systemPromptOverride?: string,
   environment?: string,
   actingUserId?: string,
+  resolvedConfig?: SubagentConfig,
 ): Promise<SubagentResult> {
   const launchActingUserId = resolveActingUserId(actingUserId);
-  const allConfigs = await getAllSubagentConfigs();
-  let config = allConfigs[type];
+  let config = resolvedConfig ?? (await getAllSubagentConfigs())[type];
 
   if (!config) {
     return {
@@ -902,7 +907,11 @@ async function spawnSubagentInContext(
       });
   // Build the prompt with system reminder for deployed agents
   let finalPrompt = prompt;
-  if (isDeployingExisting && resolvedParentAgentId) {
+  if (
+    (type !== "custom" || forkedContext) &&
+    isDeployingExisting &&
+    resolvedParentAgentId
+  ) {
     try {
       const cachedParent =
         parentAgent ??
@@ -933,10 +942,12 @@ async function spawnSubagentInContext(
   // the card would have no link and any fallback would route to the parent's
   // main conversation. Set the link eagerly to the forked conversation so it
   // opens the subagent's own thread instead.
-  if (forkedContext && existingAgentId && existingConversationId) {
-    const forkAgentURL = buildAgentReference(existingAgentId, {
-      conversationId: existingConversationId,
-    });
+  if ((forkedContext || type === "custom") && existingConversationId) {
+    const forkAgentURL = existingAgentId
+      ? buildAgentReference(existingAgentId, {
+          conversationId: existingConversationId,
+        })
+      : undefined;
     updateSubagent(subagentId, {
       agentId: existingAgentId,
       agentURL: forkAgentURL,
