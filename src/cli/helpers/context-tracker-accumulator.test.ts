@@ -377,6 +377,28 @@ describe("accumulator usage statistics", () => {
     expect(buffers.byId.get("reasoning-otid-1")).toBeUndefined();
   });
 
+  test("records elapsed time when reasoning finishes", () => {
+    const buffers = createBuffers();
+
+    onChunk(buffers, {
+      message_type: "reasoning_message",
+      id: "timed-reasoning",
+      reasoning: "Considering the response",
+    } as unknown as LettaStreamingResponse);
+    onChunk(buffers, {
+      message_type: "assistant_message",
+      id: "timed-assistant",
+      content: [{ type: "text", text: "Done" }],
+    } as unknown as LettaStreamingResponse);
+
+    const line = buffers.byId.get("timed-reasoning");
+    expect(line?.kind).toBe("reasoning");
+    if (line?.kind !== "reasoning") throw new Error("missing reasoning line");
+    expect(line.phase).toBe("finished");
+    expect(line.startedAtMs).toBeNumber();
+    expect(line.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
   test("keeps one reasoning line when stream transitions otid -> both -> id", () => {
     const buffers = createBuffers();
 
@@ -613,29 +635,42 @@ describe("accumulator usage statistics", () => {
     );
   });
 
-  test("trims reasoning paragraph separator when promoting static split", () => {
+  test("keeps long reasoning in one live block until its duration is final", () => {
     const buffers = createBuffers();
     buffers.tokenStreamingEnabled = true;
 
     const firstParagraph = "A".repeat(1500);
+    const fullReasoning = `${firstParagraph}\n\nSecond paragraph`;
     onChunk(buffers, {
       message_type: "reasoning_message",
       id: "reasoning-static-split",
-      reasoning: `${firstParagraph}\n\nSecond paragraph`,
+      reasoning: fullReasoning,
     } as unknown as LettaStreamingResponse);
 
     const committed = buffers.byId.get("reasoning-static-split-split-0");
     const live = buffers.byId.get("reasoning-static-split");
 
-    expect(committed?.kind).toBe("reasoning");
-    expect(committed && "text" in committed ? committed.text : "").toBe(
-      firstParagraph,
-    );
+    expect(committed).toBeUndefined();
     expect(live?.kind).toBe("reasoning");
-    expect(live && "text" in live ? live.text : "").toBe("Second paragraph");
-    expect(live && "isContinuation" in live ? live.isContinuation : false).toBe(
-      true,
-    );
+    if (live?.kind !== "reasoning") throw new Error("missing reasoning line");
+    expect(live.text).toBe(fullReasoning);
+    expect(live.phase).toBe("streaming");
+    expect(live.isContinuation).toBeUndefined();
+    expect(live.startedAtMs).toBeNumber();
+
+    onChunk(buffers, {
+      message_type: "assistant_message",
+      id: "assistant-after-long-reasoning",
+      content: [{ type: "text", text: "Done" }],
+    } as unknown as LettaStreamingResponse);
+
+    const finished = buffers.byId.get("reasoning-static-split");
+    expect(finished?.kind).toBe("reasoning");
+    if (finished?.kind !== "reasoning") {
+      throw new Error("missing finished reasoning line");
+    }
+    expect(finished.phase).toBe("finished");
+    expect(finished.durationMs).toBeGreaterThanOrEqual(0);
   });
 
   test("trims trailing reasoning newlines when finalizing unsplit reasoning", () => {
