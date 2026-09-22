@@ -226,24 +226,24 @@ Use AskUserQuestion to gather key information. Bundle questions together:
 
 **Don't ask** things you can discover by reading files, git, or history analysis. Rules and preferences should be learned from observation, not asked upfront.
 
-### 5. Check model capacity before any fan-out
+### 5. Check model capacity
 
-Run both commands before launching history or project workers:
+Fan-out spawns many subagents and spends credits, `letta/*` quota, or BYOK provider budget. Before writing any workflow, confirm you can pay for it:
 
 ```bash
-letta usage
-letta models list --byok
+letta usage                 # plan, credit balance, letta/* quota bucket (window + daily)
+letta models list --byok    # BYOK / user-configured models (JSON array)
 ```
 
-Interpret the evidence exactly:
-- `Balance: N credits` with `N > 0` means hosted non-BYOK models are available.
-- A `letta/*` quota `Bucket` other than `empty` means `letta/*` auto models are available.
-- `Running on local backend. Model usage requires BYOK.` means the hosted/credits path is unavailable and the backend cannot run Workflow subagents.
-- `letta models list --byok` is JSON. A non-empty array means BYOK models are available; choose one returned `handle` and pass it explicitly as the Workflow tool's `model` input or each `agent()` call's `opts.model`.
+Interpret the output:
+- `Balance: N credits`, N > 0 → hosted non-BYOK models are available.
+- `Bucket (full/high/medium/low/empty): X (daily: Y)` → `letta/*` auto models are available only when **both** X and Y are not `empty`. `medium (daily: empty)` means `letta/*` inference is blocked until the daily window resets.
+- `letta models list --byok` non-empty → BYOK models are available. Pick one `handle` and pass it as the Workflow tool's `model` (or per-call `opts.model`); never leave workflow subagents on an inherited model you have not confirmed has capacity.
+- `Running on local backend. Model usage requires BYOK.` → no hosted capacity, and the Workflow tool requires the API backend, so the workflow path is unavailable.
 
-If at least one of credits, non-empty Letta quota, or BYOK is available **and** the active backend is API, use the Workflow path below. Otherwise use the Agent fallback, or explore directly if Agent is unavailable. Never run a workflow with an `empty` quota, zero credits, and no BYOK. Tell the user the route and evidence in one line, for example: `Init fan-out: Workflow (API backend; letta quota medium; BYOK anthropic/claude-sonnet available).`
+Decision: on the API backend with at least one of credits, usable `letta/*` quota, or BYOK available, use the **workflow path** in Steps 6 and 7. Otherwise use the **fallback path** (Agent-tool workers, or direct exploration when even those are unavailable). Tell the user the route and evidence in one line — e.g. `Init fan-out: Workflow (API backend; letta/* medium, daily high; BYOK anthropic/claude-sonnet).` A `low` bucket with no credits and no BYOK means fewer, larger slices, not skipping the check.
 
-Workflow fan-out is intentionally authorized here: invoking this skill is explicit opt-in to use the `Workflow` tool for initialization. Workflows can spawn many subagents, so keep the work-list purposeful and set `maxConcurrent`; this cost is why the capacity check is mandatory.
+Invoking this skill is the user's opt-in to multi-agent orchestration: call the Workflow tool from here without asking again. Its cost is why this check is mandatory; keep work-lists purposeful and set `maxConcurrent`.
 
 ### 6. Historical session analysis (if approved)
 
@@ -254,12 +254,6 @@ This is **optional** — only run if the user explicitly approved analyzing hist
 **Launch history workers in the background, then immediately proceed to Step 7.** Do your own codebase research while workers run. Don't wait for workers to finish before exploring.
 
 The goal is to extract user personality, preferences, coding patterns, and project context from past sessions and write them into agent memory. The point is not to produce a thin summary. The point is to extract enough useful detail that future work does not have to rediscover the same user expectations, workflow rules, and project gotchas.
-
-#### Prerequisites
-
-- `letta.js` must be built (`bun run build`) — subagents spawn via this binary
-- Use `subagent_type: "history-analyzer"` — cheaper model (sonnet), has `bypassPermissions`, creates its own worktree
-- The `history-analyzer` subagent has the normalized trajectory format docs inlined — workers never need to know any harness's native format
 
 #### Steps
 
@@ -289,11 +283,53 @@ To browse the export yourself (all source-agnostic):
 - `letta trajectories view <file|sessionId> [--tools] [--reasoning]` — one session as a readable conversation
 - `letta trajectories search <keyword> [--role user]` — search message content across all sessions
 
+#### What every worker must extract
+
+Both paths below dispatch workers over the export. Paste this section into every worker prompt (as `args.extractionRequirements` on the workflow path); a worker that cannot see it produces generic output.
+
+If a Focus is assigned, go deep on it and only note incidental findings from the other categories. Otherwise extract findings for ALL THREE:
+
+1. **User Personality & Identity**
+   - How would you describe them as a person?
+   - What drives them? What are their goals?
+   - Communication style (beyond "direct" — humor, sarcasm, catchphrases?)
+   - Quirks, linguistic patterns, unique attributes
+
+2. **Hard Rules & Preferences**
+   - Coding preferences — especially chronic failures (things the agent kept getting wrong)
+   - Workflow patterns (testing, commits, tools)
+   - What frustrates them and why
+   - Explicit "always/never" statements
+
+3. **Project Context**
+   - Codebase structures, conventions, patterns
+   - Gotchas discovered through debugging
+   - Which files are safe to edit vs deprecated
+
+If any category lacks data, explicitly state why.
+
+For each finding, prefer evidence that is repeated across sessions, tied to a concrete command, file path, or workflow, and useful for future execution without rereading history. Specifically look for:
+1. What the user is building and why it matters to them
+2. Correction loops the agent repeatedly got wrong
+3. Preferred commands and tooling patterns that were actually used successfully
+4. Specific files or directories the user works in or treats as special
+5. Project gotchas discovered through debugging or rollback requests
+
+Promote important findings into focused files instead of leaving them trapped in generic ingestion notes. Prefer paths like:
+- `system/human/identity.md`
+- `system/human/prefs/communication.md`
+- `system/human/prefs/workflow.md`
+- `system/human/prefs/coding.md`
+- `system/<project>/conventions.md`
+- `system/<project>/gotchas.md`
+
+Avoid generic repo facts unless they influence execution. "Uses TypeScript" is weak. "Uses bun:test, so vitest is wrong for this test suite" is useful.
+
 ##### Step 6b: Analyze History With a Dynamic Workflow
 
 **Workflow path (primary):** Load the `workflow-authoring` skill first. Scout `/tmp/letta-trajectories/manifest.json` inline, then derive `args.historySlices` from the actual dates, sources, projects, volume, and useful question focuses. Ensure every session is covered. Workflow subagents have no memory or conversation context and are read-only by default: they return structured findings; you write memory in Step 8. Do not create worker branches or use `git merge -s ours` on this path.
 
-Every history prompt must be self-contained: name `/tmp/letta-trajectories`, its assigned files/range/focus, and normalized trajectory v1. Explain that each session JSON is an ordered array of `meta`, `user`, `assistant`, `tool`, and optional `reasoning` records; `assistant.tool_calls[].args` is stringified JSON. With `Bash` allowed, workers may run `letta trajectories view <file|sessionId> --out /tmp/letta-trajectories --tools`; otherwise tell them to read those JSON fields directly. Require identity/personality, communication style, hard rules and preferences with concrete quotes/evidence, project context, and correction loops. If the output is generic, the worker failed.
+Every history prompt must be self-contained: name `/tmp/letta-trajectories`, its assigned files/range/focus, and normalized trajectory v1. Explain that each session JSON is an ordered array of `meta`, `user`, `assistant`, `tool`, and optional `reasoning` records; `assistant.tool_calls[].args` is stringified JSON. With `Bash` allowed, workers may run `letta trajectories view <file|sessionId> --out /tmp/letta-trajectories --tools`; otherwise tell them to read those JSON fields directly. Pass the "What every worker must extract" section above as `args.extractionRequirements` and interpolate it into every history prompt. If the output is generic, the worker failed.
 
 Author a repo/history-specific plain-JavaScript script, not a copied fixed template. Pass work-lists as actual JSON in `args`, use `json: true`, declare the exact JSON return shape, and `.filter(Boolean)` because `agent()` returns `null` on failure. Set `timeoutMs`, `maxToolCalls`, `effort`, and `model` deliberately. Prefer `pipeline` for independent item work; use `parallel` only when a barrier is genuinely needed. The runtime caps concurrent agents (default 16), so pass a sensible `maxConcurrent` to the Workflow tool.
 
@@ -315,7 +351,7 @@ const repo = (await pipeline(args.subsystems, (_, item, index) => agent(
 ))).filter(Boolean)
 
 const history = (await parallel(args.historySlices.map((slice, index) => () => agent(
-  `Export dir: /tmp/letta-trajectories\nAssignment: ${JSON.stringify(slice)}\nFormat: normalized trajectory v1, an ordered JSON array of meta/user/assistant/tool/reasoning records; assistant tool args are stringified JSON. Use letta trajectories view <file|sessionId> --out /tmp/letta-trajectories --tools or read the JSON directly. Return JSON: {"identityAndPersonality":[{"finding":"...","evidence":["quote or session path"]}],"communicationStyle":[],"hardRulesAndPreferences":[],"projectContext":[],"correctionLoops":[]}. Preserve quotes, paths, and repeated evidence; generic output is failure.`,
+  `Export dir: /tmp/letta-trajectories\nAssignment: ${JSON.stringify(slice)}\n${args.extractionRequirements}\nFormat: normalized trajectory v1, an ordered JSON array of meta/user/assistant/tool/reasoning records; assistant tool args are stringified JSON. Use letta trajectories view <file|sessionId> --out /tmp/letta-trajectories --tools or read the JSON directly. Return JSON: {"identityAndPersonality":[{"finding":"...","evidence":["quote or session path"]}],"communicationStyle":[],"hardRulesAndPreferences":[],"projectContext":[],"correctionLoops":[]}. Preserve quotes, paths, and repeated evidence; generic output is failure.`,
   { label: `history-${index}`, phase: 'History', json: true, allowedTools: ['Read','Grep','Glob','Bash'], timeoutMs: 900000, maxToolCalls: 120, effort: 'high', model: args.model },
 )))).filter(Boolean)
 
@@ -324,7 +360,22 @@ return { repo, history }
 
 A real init workflow may run repository and history fan-outs separately or compose them differently based on the scan. After completion, inspect the returned structured findings. If any result is empty, null, or unexpected, read the persisted `journal.jsonl` path reported by Workflow before diagnosing or retrying. Preserve concrete quotes and paths when synthesizing into memory; do not over-prune.
 
-**Fallback path:** Use the existing `history-analyzer` Agent workers when capacity fails, the backend is local, or Workflow is unavailable/fails. Split by question and/or manifest-derived data slice, cover every session, launch all workers concurrently, and give each a self-contained assignment. Workers directly edit memory in separate worktrees and commit; then run Step 6c aggregation. Their prompt must request the same concrete categories and evidence as the Workflow path. Use direct exploration if Agent is also unavailable.
+**Fallback path:** Requires a built `letta.js` (`bun run build`) — subagents spawn via this binary. Use `subagent_type: "history-analyzer"`: cheaper model, has `bypassPermissions`, creates its own worktree, and has the normalized trajectory format docs inlined. Use them when capacity fails, the backend is local, or Workflow is unavailable/fails. Split by question and/or manifest-derived data slice, cover every session, and send all Agent calls in **a single message**. Workers directly edit memory in separate worktrees and commit; then run Step 6c aggregation and tie the worker branches into `main` with `git merge -s ours` so their commits stay in ancestry. Use direct exploration if Agent is also unavailable.
+
+```
+Agent({
+  subagent_type: "history-analyzer",
+  description: "Analyze history: [focus and/or slice]",
+  prompt: `## Assignment
+- **Memory dir**: [MEMORY_DIR]
+- **Trajectory export dir**: /tmp/letta-trajectories
+- **Your sessions**: [describe the slice — e.g. "every session with startedAt from 2026-01 through 2026-03", "all codex/ sessions", or "the whole directory"; filenames start with startedAt so ls sorts chronologically]
+- **Focus**: [optional — e.g. "understanding the user: identity, communication style, preferences, correction loops" or "project/codebase context: conventions, gotchas, commands". Omit for full coverage.]
+- **Format**: normalized trajectory v1 (same for every source; format docs and jq recipes are in your system prompt)
+
+[paste the "What every worker must extract" section here verbatim]`
+})
+```
 
 ##### Step 6c: Aggregate Agent-Fallback Worker Diffs Into Main
 
@@ -436,7 +487,7 @@ Pragmatic builder who values shipping over perfection. Gets frustrated when agen
 
 ##### Step 6d: Consider Creating Skills From Discovered Workflows
 
-After merging and curating, review the extracted history for repeatable multi-step workflows that would benefit from being codified as skills. History analysis often surfaces procedures the user runs frequently that the agent would otherwise have to rediscover each session.
+After curating the findings, review the extracted history for repeatable multi-step workflows that would benefit from being codified as skills. History analysis often surfaces procedures the user runs frequently that the agent would otherwise have to rediscover each session.
 
 **Good candidates for skills:**
 - Multi-step debugging procedures (e.g. "how to debug agent message desync", "how to trace TTFT regressions")
@@ -462,7 +513,9 @@ Don't force skill creation — only create them when you've found genuinely repe
 | Subagent exits with code `null`, 0 tool uses | `letta.js` not built | Run `bun run build` |
 | `letta trajectories export` reports errors in manifest.json | Degenerate sessions (e.g. no assistant turns) that cannot form a valid trajectory | Expected — those sessions are skipped; review `jq .errors manifest.json` only if counts look wrong |
 | `deepagents` sessions fail to normalize | Checkpoint decoding needs a Python environment with LangGraph installed | Expected on machines without it; the failures land in manifest errors and other sources are unaffected |
-| Subagent hangs on "Tool requires approval" | Wrong subagent type | Use `subagent_type: "history-analyzer"` (workers) or `"memory"` (synthesis) |
+| Subagent hangs on "Tool requires approval" | Wrong subagent type (fallback path) | Use `subagent_type: "history-analyzer"` (workers) or `"memory"` (synthesis) |
+| Workflow slice resolves to `null` | Subagent timed out, hit `maxToolCalls`, repeated one tool call three times, or returned non-JSON | Read `~/.letta/workflows/executions/<id>/journal.jsonl`, then rerun that slice with a narrower assignment |
+| Workflow refuses to run, or every `agent()` resolves `null` | Local backend, or the `model` handle has no capacity | Re-run Step 5; use the fallback path or a confirmed BYOK handle |
 | Workers touched overlapping files | Multiple workers wrote the same canonical paths | Expected — the per-branch `--name-only` listing in Step 6c-3a shows the overlaps; combine every branch's unique details additively. |
 | Information lost after aggregation | Synthesis compressed worker output | Re-read the worker diffs (Step 6c-3a) and compare against final files. Re-add missing specifics. |
 | `git branch -d` refuses to delete worker branches | Ancestry merge (Step 6c-3c) was skipped | Run the `git merge -s ours` step first, then delete. |
@@ -631,6 +684,7 @@ git push
 ```
 
 ## Critical 
+**Check capacity before fan-out** — Step 5 decides whether a workflow is affordable; do not skip it.
 **Use parallel tool calls wherever possible** — read multiple files in a single turn, write multiple memory files in a single turn. This dramatically reduces init time.
 **Write findings to memory as you go** — don't wait until the end.
 **Edit memory files directly via the filesystem** — memory is projected to `$MEMORY_DIR` specifically for ease of bulk modification. Use standard file tools (Read, Write, Edit) and git to manage changes during initialization.
