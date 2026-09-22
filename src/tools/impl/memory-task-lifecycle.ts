@@ -79,7 +79,7 @@ export function runBackgroundMemoryTask(
         },
       ),
     {
-      onMemoryPushed: () => {
+      onMemoryChanged: () => {
         emitStreamEvent(params.subagentId, {
           type: "memory_updated",
           affected_paths: ["*"],

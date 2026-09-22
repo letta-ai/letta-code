@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { claimMemoryOperation } from "@/agent/memory-operation";
 import {
@@ -196,4 +196,79 @@ test("a failed prompt refresh does not fail a worker whose memory synced", async
   expect(result).toMatchObject({ success: true, report: "saved" });
   expect(result.error).toBeUndefined();
   expect(git("status", "--porcelain")).toBe("");
+});
+
+test("cancellation discards the worker's uncommitted edits but keeps earlier dirt", async () => {
+  writeFileSync(join(root, "unrelated.md"), "primary in progress\n");
+  const controller = new AbortController();
+  let synced = false;
+  await expect(
+    runMemoryWorker(
+      { ...scope(), signal: controller.signal },
+      async () => {
+        writeFileSync(join(root, "note.md"), "half-written\n");
+        writeFileSync(join(root, "draft.md"), "new file\n");
+        git("add", "draft.md");
+        controller.abort();
+        throw new Error("cancelled");
+      },
+      {
+        sync: async () => {
+          synced = true;
+          throw new Error("must not sync a cancelled worker");
+        },
+      },
+    ),
+  ).rejects.toThrow("cancelled");
+  expect(synced).toBe(false);
+  expect(readFileSync(join(root, "note.md"), "utf8")).toBe("original\n");
+  expect(existsSync(join(root, "draft.md"))).toBe(false);
+  expect(readFileSync(join(root, "unrelated.md"), "utf8")).toBe(
+    "primary in progress\n",
+  );
+});
+
+test("a local-only commit still reports that memory changed", async () => {
+  let changed = 0;
+  await runMemoryWorker(
+    scope(),
+    async () => {
+      writeFileSync(join(root, "note.md"), "local update\n");
+      git("commit", "-am", "local update");
+      return { agentId: "agent-worker", success: true, report: "saved" };
+    },
+    {
+      // No remote: the harness reports the sync as skipped, not pushed.
+      sync: async () => ({
+        status: "skipped",
+        summary: "No remote configured",
+        memoryDir: root,
+        localOnly: true,
+      }),
+      onMemoryChanged: () => {
+        changed++;
+      },
+    },
+  );
+  expect(changed).toBe(1);
+});
+
+test("a worker that changed nothing does not report a memory change", async () => {
+  let changed = 0;
+  await runMemoryWorker(
+    scope(),
+    async () => ({ agentId: "agent-worker", success: true, report: "noop" }),
+    {
+      sync: async () => ({
+        status: "clean",
+        summary: "clean",
+        memoryDir: root,
+        localOnly: true,
+      }),
+      onMemoryChanged: () => {
+        changed++;
+      },
+    },
+  );
+  expect(changed).toBe(0);
 });

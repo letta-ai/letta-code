@@ -177,7 +177,7 @@ test("an unfinished turn neither pushes nor notifies", async () => {
 });
 
 test.each([false, true])(
-  "background worker push refreshes the parent UI only on success (rejected=%s)",
+  "background worker commits refresh the parent UI, pushed or not (rejected=%s)",
   async (rejectPush) => {
     const { remote, memoryDir, agentId, updates, commitPicture, listener } =
       setupAgent();
@@ -243,16 +243,17 @@ test.each([false, true])(
         backgroundTasks.get(task.taskId)?.status,
         backgroundTasks.get(task.taskId)?.error,
       ).toBe(rejectPush ? "failed" : "completed");
-      expect(updates).toHaveLength(rejectPush ? 0 : 1);
-      if (!rejectPush) {
-        expect(updates[0]).toEqual({
-          remoteSha: sha,
-          message: expect.objectContaining({
-            type: "memory_updated",
-            runtime: { agent_id: agentId, conversation_id: "conv-picture" },
-          }),
-        });
-      }
+      // The worker's commit changed memory on disk either way; only the remote
+      // differs. A rejected push is reported through the failed task, not by
+      // hiding the local change from readers.
+      expect(updates).toHaveLength(1);
+      expect(updates[0]?.message).toEqual(
+        expect.objectContaining({
+          type: "memory_updated",
+          runtime: { agent_id: agentId, conversation_id: "conv-picture" },
+        }),
+      );
+      if (!rejectPush) expect(updates[0]?.remoteSha).toBe(sha);
       expect(primaryTurns).toBe(0);
       expect(notifications).toBe(0);
     } finally {
