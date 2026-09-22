@@ -87,6 +87,25 @@ export function isModelReasoningEffort(
   );
 }
 
+/**
+ * Narrow a caller-supplied reasoning effort. The single place that decides
+ * whether a value is a level and how the accepted levels are listed; callers
+ * keep their own way of surfacing a rejection (the CLI exits, the Agent tool
+ * returns a failed launch).
+ */
+export function parseReasoningEffort(
+  value: unknown,
+):
+  | { ok: true; effort: ModelReasoningEffort | undefined }
+  | { ok: false; message: string } {
+  if (value === undefined) return { ok: true, effort: undefined };
+  if (isModelReasoningEffort(value)) return { ok: true, effort: value };
+  return {
+    ok: false,
+    message: `Expected one of: ${REASONING_EFFORT_ORDER.join(", ")}`,
+  };
+}
+
 export function isLocalChatGptOAuthModelHandle(modelHandle: string): boolean {
   return modelHandle.startsWith(LOCAL_CHATGPT_OAUTH_HANDLE_PREFIX);
 }

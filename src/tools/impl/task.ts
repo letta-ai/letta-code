@@ -9,7 +9,7 @@ import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import type { ModelReasoningEffort } from "@/agent/model";
-import { isModelReasoningEffort, REASONING_EFFORT_ORDER } from "@/agent/model";
+import { parseReasoningEffort } from "@/agent/model";
 import {
   completeSubagent,
   generateSubagentId,
@@ -817,16 +817,14 @@ export async function launchSubagent(
     }
   }
 
-  const reasoningEffort = args.reasoning_effort;
-  if (
-    reasoningEffort !== undefined &&
-    !isModelReasoningEffort(reasoningEffort)
-  ) {
+  const parsedReasoningEffort = parseReasoningEffort(args.reasoning_effort);
+  if (!parsedReasoningEffort.ok) {
     return {
       success: false,
-      error: `Invalid reasoning_effort "${reasoningEffort}". Expected one of: ${REASONING_EFFORT_ORDER.join(", ")}`,
+      error: `Invalid reasoning_effort "${args.reasoning_effort}". ${parsedReasoningEffort.message}`,
     };
   }
+  const reasoningEffort = parsedReasoningEffort.effort;
 
   let effectiveAgentId = args.agent_id;
   let effectiveConversationId = args.conversation_id;

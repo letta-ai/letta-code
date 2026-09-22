@@ -63,9 +63,7 @@ import { handleListMessages } from "./agent/list-messages-handler";
 import { getStreamToolContextId, sendMessageStream } from "./agent/message";
 import {
   getModelUpdateArgs,
-  isModelReasoningEffort,
-  type ModelReasoningEffort,
-  REASONING_EFFORT_ORDER,
+  parseReasoningEffort,
   withReasoningEffortUpdateArg,
 } from "./agent/model";
 import { updateAgentSystemPrompt } from "./agent/modify";
@@ -674,16 +672,14 @@ export async function handleHeadlessCommand(
 ) {
   const { values, positionals } = parsedArgs;
   const reasoningEffortFlag = values["reasoning-effort"];
-  if (
-    reasoningEffortFlag !== undefined &&
-    !isModelReasoningEffort(reasoningEffortFlag)
-  ) {
+  const parsedReasoningEffort = parseReasoningEffort(reasoningEffortFlag);
+  if (!parsedReasoningEffort.ok) {
     console.error(
-      `Error: Invalid --reasoning-effort value "${reasoningEffortFlag}". Expected one of: ${REASONING_EFFORT_ORDER.join(", ")}`,
+      `Error: Invalid --reasoning-effort value "${reasoningEffortFlag}". ${parsedReasoningEffort.message}`,
     );
     process.exit(1);
   }
-  const reasoningEffort: ModelReasoningEffort | undefined = reasoningEffortFlag;
+  const reasoningEffort = parsedReasoningEffort.effort;
   const isAgentLaunch = consumeSubagentLaunch(process.env);
   const senderReminder = buildHeadlessSenderReminder(
     isAgentLaunch,
