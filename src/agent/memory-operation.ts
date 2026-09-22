@@ -4,9 +4,7 @@ import {
   readFile,
   realpath,
   rename,
-  stat,
   unlink,
-  utimes,
   writeFile,
 } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -17,15 +15,9 @@ import { sleep } from "@/utils/sleep";
 interface MemoryOwner {
   pid: number;
   token: string;
+  /** Process start time, so a reused PID is not mistaken for the holder. */
+  started?: string;
 }
-
-/**
- * A holder refreshes its owner file while it works. A file that stops being
- * refreshed belongs to a process that is gone even if its PID reads as alive:
- * the PID was reused, or the holder is a zombie or unreadable (EPERM).
- */
-const HEARTBEAT_MS = 5_000;
-const STALE_MS = 60_000;
 
 function isAlive(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false;
@@ -35,6 +27,36 @@ function isAlive(pid: number): boolean {
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === "EPERM";
   }
+}
+
+/** Start time of a process as the OS reports it; null when it cannot be read. */
+async function processStartTime(pid: number): Promise<string | null> {
+  try {
+    const { stdout } =
+      process.platform === "win32"
+        ? await promisify(execFile)("powershell", [
+            "-NoProfile",
+            "-Command",
+            `(Get-Process -Id ${pid}).StartTime.ToFileTimeUtc()`,
+          ])
+        : await promisify(execFile)("ps", ["-o", "lstart=", "-p", String(pid)]);
+    const started = stdout.trim();
+    return started.length > 0 ? started : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Is the recorded owner still running? Liveness alone is not enough: the PID
+ * may have been reused by an unrelated process. A holder that is merely paused
+ * or blocked keeps its start time and keeps the lease; waiting on it is correct.
+ */
+async function isOwnerRunning(owner: MemoryOwner): Promise<boolean> {
+  if (!isAlive(owner.pid)) return false;
+  if (!owner.started) return true;
+  const started = await processStartTime(owner.pid);
+  return started === null || started === owner.started;
 }
 
 /** Harness state lives in the checkout's own Git directory, so worktrees stay independent. */
@@ -83,48 +105,42 @@ async function acquireMemoryOperation(
     try {
       const owner = JSON.parse(content) as Partial<MemoryOwner> | null;
       return typeof owner?.pid === "number" && typeof owner.token === "string"
-        ? { pid: owner.pid, token: owner.token }
+        ? {
+            pid: owner.pid,
+            token: owner.token,
+            ...(typeof owner.started === "string" && {
+              started: owner.started,
+            }),
+          }
         : null;
     } catch {
       // An unreadable owner file must not wedge every memory operation.
       return null;
     }
   };
-  const isHeld = async (): Promise<boolean> => {
-    const owner = await readOwner();
-    if (!owner || !isAlive(owner.pid)) return false;
-    try {
-      return Date.now() - (await stat(path)).mtimeMs < STALE_MS;
-    } catch {
-      return false;
-    }
-  };
+  const started = await processStartTime(process.pid);
   for (;;) {
     options.signal?.throwIfAborted();
     const acquired = await withFileLock(guard, async () => {
-      if (await isHeld()) return false;
+      const owner = await readOwner();
+      if (owner && (await isOwnerRunning(owner))) return false;
       const temporaryPath = `${path}.${token}.tmp`;
       await writeFile(
         temporaryPath,
-        JSON.stringify({ pid: process.pid, token }),
+        JSON.stringify({
+          pid: process.pid,
+          token,
+          ...(started && { started }),
+        }),
       );
       await rename(temporaryPath, path);
       return true;
     });
     if (acquired) {
-      const heartbeat = setInterval(() => {
-        const now = new Date();
-        utimes(path, now, now).catch(() => {
-          /* Released or replaced; the next acquisition decides. */
-        });
-      }, HEARTBEAT_MS);
-      heartbeat.unref();
-      return () => {
-        clearInterval(heartbeat);
-        return withFileLock(guard, async () => {
+      return () =>
+        withFileLock(guard, async () => {
           if ((await readOwner())?.token === token) await unlink(path);
         });
-      };
     }
     if (!options.wait) return null;
     await sleep(100);

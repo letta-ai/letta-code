@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { claimMemoryOperation, withMemoryOperation } from "./memory-operation";
@@ -83,17 +83,46 @@ test("a follow-up worker launched inside another operation still waits its turn"
   expect(ran).toBe(true);
 });
 
-test("a lease that stopped being refreshed is reclaimed even if its pid reads as alive", async () => {
+test("a lease whose pid now belongs to another process is reclaimed", async () => {
   const root = repository();
   const path = join(root, ".git", "letta-memory-operation.json");
-  // Our own pid is certainly alive; only the missing heartbeat marks it stale.
-  writeFileSync(path, JSON.stringify({ pid: process.pid, token: "stale" }));
-  const stale = new Date(Date.now() - 2 * 60_000);
-  utimesSync(path, stale, stale);
+  // Our own pid is alive, but the recorded start time is not ours: the pid was reused.
+  writeFileSync(
+    path,
+    JSON.stringify({
+      pid: process.pid,
+      token: "reused",
+      started: "1970-01-01",
+    }),
+  );
   const release = await claimMemoryOperation(root);
   expect(release).not.toBeNull();
   expect(await claimMemoryOperation(root)).toBeNull();
   await release?.();
+});
+
+test("a paused holder keeps its lease", async () => {
+  const root = repository();
+  const holder = Bun.spawn(
+    [
+      process.execPath,
+      "-e",
+      `import { claimMemoryOperation } from ${JSON.stringify(join(import.meta.dir, "memory-operation.ts"))}; await claimMemoryOperation(process.argv[1]); console.log("held"); setInterval(() => {}, 1000);`,
+      root,
+    ],
+    { stdout: "pipe", stderr: "pipe" },
+  );
+  try {
+    const reader = holder.stdout.getReader();
+    await reader.read();
+    reader.releaseLock();
+    // Stop the holder outright: no heartbeat could ever be sent from here.
+    holder.kill("SIGSTOP");
+    expect(await claimMemoryOperation(root)).toBeNull();
+  } finally {
+    holder.kill("SIGKILL");
+    await holder.exited;
+  }
 });
 
 test("an unreadable owner file does not wedge the checkout", async () => {
