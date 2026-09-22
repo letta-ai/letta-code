@@ -494,14 +494,14 @@ function handleOtidTransition(
   } else if (b.lastOtid && b.lastOtid !== newOtid) {
     const previous = b.byId.get(b.lastOtid);
     const incoming = newOtid ? b.byId.get(newOtid) : undefined;
-    // Distinct blocks of the same kind retain their separate lifecycles. A
-    // reasoning/assistant switch is not completion: both can receive more text.
-    // Status events (including retries) likewise do not end a text block.
-    if (
-      (incomingKind === "assistant" || incomingKind === "reasoning") &&
-      previous?.kind === incomingKind &&
-      !incoming
-    ) {
+    // An otid-addressable block survives an interleave of the other kind.
+    const previousResumable =
+      [...b.assistantCanonicalByOtid.values()].includes(b.lastOtid) ||
+      [...b.reasoningCanonicalByOtid.values()].includes(b.lastOtid);
+    const isText = incomingKind === "assistant" || incomingKind === "reasoning";
+    const sameKindOrFinished =
+      previous?.kind === incomingKind || !previousResumable;
+    if (isText && !incoming && sameKindOrFinished) {
       markAsFinished(b, b.lastOtid);
     }
   }

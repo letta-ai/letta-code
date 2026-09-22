@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
 import { Readable, Writable } from "node:stream";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { Box, render } from "ink";
@@ -12,6 +12,7 @@ import {
 import type { StaticItem } from "@/cli/app/types";
 import { AssistantMessage } from "@/cli/components/AssistantMessageRich";
 import { ReasoningMessage } from "@/cli/components/ReasoningMessageRich";
+import { setThinkingExpanded } from "@/cli/components/transcript-display-state";
 import {
   createBuffers,
   type Line,
@@ -19,6 +20,12 @@ import {
   onChunk,
   toLines,
 } from "@/cli/helpers/accumulator";
+
+// Thinking is collapsed by default upstream; this suite asserts content order
+// and uniqueness, so force it expanded and reset after each case.
+afterEach(() => {
+  setThinkingExpanded(false);
+});
 
 class CaptureStream extends Writable {
   rows = 12;
@@ -104,6 +111,7 @@ for (const columns of [40, 120]) {
       });
       process.stdout.emit("resize");
 
+      setThinkingExpanded(true);
       const stdout = new CaptureStream(columns);
       const instance = render(transcript([], [], columns), {
         stdout: stdout as CaptureStream & NodeJS.WriteStream,
@@ -144,11 +152,11 @@ for (const columns of [40, 120]) {
         onChunk(
           b,
           assistant(
-            Array.from(
+            `${Array.from(
               { length: 60 },
               (_, index) =>
                 `ROW_${index.toString().padStart(2, "0")} ${"word ".repeat(8)}`,
-            ).join("\n") + "\n\n",
+            ).join("\n")}\n\n`,
           ),
         );
         await refresh();
