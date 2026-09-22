@@ -94,12 +94,15 @@ model: [gpt-5-minimal, gpt-4.1, sonnet-4.5, gemini-pro, your-new-model, glm-4.6,
 
 ## Toolset Detection
 
-Models are automatically assigned toolsets based on provider:
-- `openai/*` → `codex` toolset
-- `google_ai/*` or `google_vertex/*` → `gemini` toolset
-- Others → `default` toolset
+Models are assigned either the `codex` or `default` toolset:
+- OpenAI models (`openai/*`, `openai-codex/*`, `chatgpt_oauth/*`, and other
+  OpenAI handles or OpenAI provider types) → `codex` toolset
+- Everything else (Anthropic, Google `google_ai/*`/`google_vertex/*`,
+  MiniMax, `letta/auto`, ...) → `default` toolset
 
-This is handled by `isGeminiModel()` and `isOpenAIModel()` in `src/tools/manager.ts`. You typically don't need to modify this unless adding a new provider.
+Handled by `deriveToolsetFromModel()` in `src/tools/toolset.ts` (with
+`isOpenAIModel()` in `src/tools/manager.ts`). There is no separate Gemini
+toolset. You typically don't need to modify this unless adding a new provider.
 
 ## Common Issues
 
