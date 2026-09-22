@@ -5,7 +5,7 @@ import {
   estimateStartupContextTokens,
   REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT,
 } from "@/agent/subagents/context-budget";
-import { buildSubagentArgs } from "@/agent/subagents/manager";
+import { buildSubagentArgs } from "@/agent/subagents/subagent-args";
 
 describe("buildSubagentArgs", () => {
   const baseConfig: SubagentConfig = {

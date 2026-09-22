@@ -8,6 +8,8 @@ export interface SubagentLaunchArgs {
   /** Identity of the initial assignment input, not the launch command request_id. */
   client_message_id?: string;
   model?: string;
+  /** Reasoning effort, chosen independently of the model ID. */
+  reasoning_effort?: string;
   agent_id?: string;
   conversation_id?: string;
   computer?: string;

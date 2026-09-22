@@ -6,6 +6,7 @@ const ARGUMENTS = new Set([
   "prompt",
   "description",
   "model",
+  "reasoning_effort",
   "agent_id",
   "conversation_id",
   "client_message_id",
@@ -46,6 +47,7 @@ export function isLaunchSubagentCommand(
   for (const key of [
     "subagent_type",
     "model",
+    "reasoning_effort",
     "agent_id",
     "conversation_id",
     "client_message_id",

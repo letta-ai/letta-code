@@ -8,11 +8,8 @@
 import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
-import {
-  isModelReasoningEffort,
-  type ModelReasoningEffort,
-  REASONING_EFFORT_ORDER,
-} from "@/agent/model";
+import type { ModelReasoningEffort } from "@/agent/model";
+import { isModelReasoningEffort, REASONING_EFFORT_ORDER } from "@/agent/model";
 import {
   completeSubagent,
   generateSubagentId,
@@ -62,8 +59,6 @@ import { validateRequiredParams } from "./validation";
 
 interface TaskArgs extends Partial<SubagentLaunchArgs> {
   command?: "run" | "refresh";
-  /** Reasoning effort override, independent of the model ID. */
-  reasoning_effort?: string;
   toolCallId?: string; // Injected by executeTool for linking subagent to parent tool call
   signal?: AbortSignal; // Injected by executeTool for interruption handling
   parentScope?: { agentId: string; conversationId: string }; // Injected by executeTool for notification routing

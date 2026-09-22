@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { parseArgs } from "node:util";
 import type { SubagentConfig } from "@/agent/subagents";
 import { validateConversationDefaultRequiresAgent } from "@/cli/startup-flag-validation";
-import { buildSubagentArgs } from "./manager";
+import { buildSubagentArgs } from "./subagent-args";
 
 const config: SubagentConfig = {
   name: "general-purpose",
