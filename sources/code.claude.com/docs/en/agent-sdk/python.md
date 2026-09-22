@@ -813,7 +813,7 @@ class ClaudeAgentOptions:
 | `resume`                      | `str \| None`                                                                         | `None`                             | Session ID to resume                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `session_id`                  | `str \| None`                                                                         | `None`                             | Use a specific session ID instead of an auto-generated one. Must be a valid UUID. Can't be combined with `continue_conversation` or `resume` unless `fork_session` is also set                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `max_turns`                   | `int \| None`                                                                         | `None`                             | Maximum agentic turns (tool-use round trips)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `max_budget_usd`              | `float \| None`                                                                       | `None`                             | Stop the query when the client-side cost estimate reaches this USD value. Compared against the same estimate as `total_cost_usd`. For accuracy caveats and reset behavior, see [Track cost and usage](/docs/en/agent-sdk/cost-tracking)                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `max_budget_usd`              | `float \| None`                                                                       | `None`                             | Stop the query when the client-side cost estimate reaches this USD value. Counts only the call's own spend; totals restored from a resumed session don't count. For accuracy caveats and reset behavior, see [Track cost and usage](/docs/en/agent-sdk/cost-tracking)                                                                                                                                                                                                                                                                                                                                                                       |
 | `disallowed_tools`            | `list[str]`                                                                           | `[]`                               | Tools to deny. A bare name such as `"Bash"` removes the tool from Claude's context. A scoped rule such as `"Bash(rm *)"` leaves the tool available and denies matching calls in every permission mode, including `bypassPermissions`, for the command [as written](/docs/en/permissions#bash-rule-limits). See [Permissions](/docs/en/agent-sdk/permissions#allow-and-deny-rules)                                                                                                                                                                                                                                                                |
 | `enable_file_checkpointing`   | `bool`                                                                                | `False`                            | Enable file change tracking for rewinding. See [File checkpointing](/docs/en/agent-sdk/file-checkpointing)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `model`                       | `str \| None`                                                                         | `None`                             | Claude model alias or full model name. See [accepted values and provider-specific IDs](/docs/en/model-config#available-models)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
@@ -1629,7 +1629,7 @@ The `usage` dict covers the main agent loop only and excludes subagent and other
 
 The `model_usage` dict maps model names to per-model usage. It covers every model call made through the query pipeline: the main loop, subagents, and internal calls such as compaction and Workflow agents. Helper calls outside that pipeline, such as the permission classifier and token-counting requests, are excluded from `model_usage`. Treat `model_usage` as an estimate, not a billing statement.
 
-In [streaming input mode](/docs/en/agent-sdk/streaming-vs-single-mode), `model_usage` and `total_cost_usd` are cumulative across turns, so read the latest result rather than summing across results. See [Track costs in streaming input mode](/docs/en/agent-sdk/cost-tracking#track-costs-in-streaming-input-mode) for resets and [Recover totals after a session crash](/docs/en/agent-sdk/cost-tracking#recover-totals-after-a-session-crash) for zeroed results.
+In [streaming input mode](/docs/en/agent-sdk/streaming-vs-single-mode), `model_usage` and `total_cost_usd` are cumulative across turns, so read the latest result rather than summing across results. A call that resumes a session also counts the [totals restored from the session's earlier calls](/docs/en/agent-sdk/cost-tracking#accumulate-costs-across-multiple-calls). See [Track costs in streaming input mode](/docs/en/agent-sdk/cost-tracking#track-costs-in-streaming-input-mode) for resets and [Recover totals after a session crash](/docs/en/agent-sdk/cost-tracking#recover-totals-after-a-session-crash) for zeroed results.
 
 Each value in `model_usage` is a `ModelUsage` TypedDict, imported via `from claude_agent_sdk.types import ModelUsage`. Its keys use camelCase because the SDK passes the value through unmodified from the underlying CLI process, matching the TypeScript [`ModelUsage`](/docs/en/agent-sdk/typescript#modelusage) type:
 
@@ -2657,8 +2657,7 @@ When Monitor runs a command, it follows the same permission rules as Bash; a Web
     "command": str | None,  # Shell script; each stdout line is an event, exit ends the watch
     "ws": dict | None,  # WebSocket source: {"url": str, "protocols": list[str] | None}; each text frame is an event
     "description": str,  # Short description shown in notifications
-    "timeout_ms": int | None,  # Kill after this deadline (default 300000, max 3600000)
-    "persistent": bool | None,  # Run for the lifetime of the session; stop with TaskStop
+    "timeout_ms": int | None,  # Deadline in milliseconds (default 300000, max 3600000; the effective deadline is at most 1800000)
 }
 ```
 
@@ -2667,8 +2666,8 @@ When Monitor runs a command, it follows the same permission rules as Bash; a Web
 ```python theme={null}
 {
     "taskId": str,  # ID of the background monitor task
-    "timeoutMs": int,  # Timeout deadline in milliseconds (0 when persistent)
-    "persistent": bool | None,  # True when running until TaskStop or session end
+    "timeoutMs": int,  # The watch's effective deadline in milliseconds
+    "persistent": bool | None,  # False: every watch has a deadline
 }
 ```
 
@@ -3056,28 +3055,9 @@ When Monitor runs a command, it follows the same permission rules as Bash; a Web
 
 ### TaskOutput
 
-**Tool name:** `TaskOutput`. The previous name `BashOutput` is still accepted as an alias.
+Removed in Claude Code v2.1.277. Previously retrieved output from a running or completed background task, with `BashOutput` accepted as an alias; Claude reads a background task's output file with `Read` instead.
 
-<Note>`TaskOutput` is deprecated; prefer `Read` on the task's output file path. The schemas below remain valid for hooks and permission handlers that encounter the tool.</Note>
-
-**Input:**
-
-```python theme={null}
-{
-    "task_id": str,  # The task ID to get output from
-    "block": bool,  # Whether to wait for completion (default True)
-    "timeout": int,  # Max wait time in ms (default 30000)
-}
-```
-
-**Output:**
-
-```python theme={null}
-{
-    "retrieval_status": "success" | "timeout" | "not_ready",  # Whether the output was retrieved
-    "task": dict | None,  # Task details: task_id, task_type, status, description, output, plus type-specific fields such as exitCode
-}
-```
+A `disallowed_tools` entry or a deny rule that still names either name is ignored without a warning.
 
 ### TaskStop
 
@@ -3318,15 +3298,15 @@ class SandboxSettings(TypedDict, total=False):
     enableWeakerNestedSandbox: bool
 ```
 
-| Property                    | Type                                                  | Default | Description                                                                                                                                                                                                                             |
-| :-------------------------- | :---------------------------------------------------- | :------ | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `enabled`                   | `bool`                                                | `False` | Enable sandbox mode for command execution                                                                                                                                                                                               |
-| `autoAllowBashIfSandboxed`  | `bool`                                                | `True`  | Auto-approve bash commands when sandbox is enabled                                                                                                                                                                                      |
-| `excludedCommands`          | `list[str]`                                           | `[]`    | Commands that always bypass sandbox restrictions (e.g., `["docker"]`). These run unsandboxed automatically without model involvement                                                                                                    |
-| `allowUnsandboxedCommands`  | `bool`                                                | `True`  | Allow the model to request running commands outside the sandbox. When `True`, the model can set `dangerouslyDisableSandbox` in tool input, which falls back to the [permissions system](#permissions-fallback-for-unsandboxed-commands) |
-| `network`                   | [`SandboxNetworkConfig`](#sandboxnetworkconfig)       | `None`  | Network-specific sandbox configuration                                                                                                                                                                                                  |
-| `ignoreViolations`          | [`SandboxIgnoreViolations`](#sandboxignoreviolations) | `None`  | Configure which sandbox violations to ignore                                                                                                                                                                                            |
-| `enableWeakerNestedSandbox` | `bool`                                                | `False` | Enable a weaker nested sandbox for compatibility                                                                                                                                                                                        |
+| Property                    | Type                                                  | Default | Description                                                                                                                                                                                                                                  |
+| :-------------------------- | :---------------------------------------------------- | :------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `enabled`                   | `bool`                                                | `False` | Enable sandbox mode for command execution                                                                                                                                                                                                    |
+| `autoAllowBashIfSandboxed`  | `bool`                                                | `True`  | Auto-approve bash commands when sandbox is enabled                                                                                                                                                                                           |
+| `excludedCommands`          | `list[str]`                                           | `[]`    | Commands that bypass sandbox restrictions, such as `["docker *"]`. These run unsandboxed automatically without model involvement; [`sandbox.excludedCommands`](/docs/en/settings-reference#sandbox-excludedcommands) covers when an entry applies |
+| `allowUnsandboxedCommands`  | `bool`                                                | `True`  | Allow the model to request running commands outside the sandbox. When `True`, the model can set `dangerouslyDisableSandbox` in tool input, which falls back to the [permissions system](#permissions-fallback-for-unsandboxed-commands)      |
+| `network`                   | [`SandboxNetworkConfig`](#sandboxnetworkconfig)       | `None`  | Network-specific sandbox configuration                                                                                                                                                                                                       |
+| `ignoreViolations`          | [`SandboxIgnoreViolations`](#sandboxignoreviolations) | `None`  | Configure which sandbox violations to ignore                                                                                                                                                                                                 |
+| `enableWeakerNestedSandbox` | `bool`                                                | `False` | Enable a weaker nested sandbox for compatibility                                                                                                                                                                                             |
 
 <Note>
   The sandbox depends on platform support and, on Linux, tools like `bubblewrap` and `socat`. By default, when `enabled` is `True` but the sandbox can't start, commands run unsandboxed with a warning on stderr. This default differs from the TypeScript SDK, where `failIfUnavailable` defaults to `true`.
@@ -3419,7 +3399,9 @@ class SandboxIgnoreViolations(TypedDict, total=False):
 
 ### Permissions Fallback for Unsandboxed Commands
 
-When `allowUnsandboxedCommands` is enabled, the model can request to run commands outside the sandbox by setting `dangerouslyDisableSandbox: True` in the tool input. These requests fall back to the existing permissions system, meaning your `can_use_tool` handler will be invoked, allowing you to implement custom authorization logic. Commands listed in `excludedCommands` instead bypass the sandbox automatically, with no model involvement; see [`SandboxSettings`](#sandboxsettings).
+When `allowUnsandboxedCommands` is enabled, the model can request to run commands outside the sandbox by setting `dangerouslyDisableSandbox: True` in the tool input. These requests fall back to the existing permissions system, meaning your `can_use_tool` handler is invoked, allowing you to implement custom authorization logic.
+
+Your `excludedCommands` entries instead take a call out of the sandbox with no model involvement; [`sandbox.excludedCommands`](/docs/en/settings-reference#sandbox-excludedcommands) covers when an entry applies.
 
 The following example logs each unsandboxed request and denies it unless your own authorization logic allows it:
 

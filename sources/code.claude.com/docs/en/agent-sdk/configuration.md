@@ -175,7 +175,9 @@ Both languages have the same setters:
 TypeScript also has `applyFlagSettings()` and `updateSettings()`:
 
 * **`applyFlagSettings()`**: applies settings at runtime, as in `await session.applyFlagSettings({ effortLevel: "high" })`. The method takes settings file keys rather than options fields, so check the [`applyFlagSettings()` reference](/docs/en/agent-sdk/typescript#applyflagsettings) for the schema and for which keys take effect mid-session.
-* **`updateSettings()`**: writes an allowlisted set of keys to the project's local settings file, as in `await session.updateSettings("localSettings", { outputStyle: "Explanatory" })`. The written keys take effect on the session's next request and persist for later sessions that load `local` settings. The method's row in the [methods table](/docs/en/agent-sdk/typescript#methods) names the allowlisted keys and the version floor.
+* **`updateSettings()`**: writes one allowlisted key to a settings file. The [`updateSettings()` reference](/docs/en/agent-sdk/typescript#updatesettings) names the key each source accepts and the version floors.
+  * Pass `"localSettings"` to write the project's local settings file, as in `await session.updateSettings("localSettings", { outputStyle: "Explanatory" })`. The written key takes effect on the session's next request and persists for later sessions that load `local` settings.
+  * Pass `"userSettings"` to write `effortLevel`, the only key that source accepts. Claude Code saves it as the default effort level for the session's current model, and the running session's effort doesn't change.
 
 The example below runs a two-turn session, changes the configuration between the turns, and prints the model that answered each turn. In TypeScript, the prompt stream holds the second message until the setters have run, and the second turn runs on the new model.
 

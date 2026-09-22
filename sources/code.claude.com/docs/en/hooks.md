@@ -260,7 +260,7 @@ Where you define a hook determines its scope:
 | [Skill](/docs/en/skills) frontmatter          | The rest of the session once the skill is invoked. See [Hooks in skills and agents](#hooks-in-skills-and-agents) | Yes, defined in the skill file                        |
 | [Subagent](/docs/en/sub-agents) frontmatter   | While that subagent is running                                                                                   | Yes, defined in the subagent file                     |
 
-[Cloud sessions](/docs/en/claude-code-on-the-web) don't read your local `~/.claude/settings.json`; hooks there come from the repo, meaning its `.claude/settings.json` in a session with one repository and the plugins it declares in any session, and from your organization's server-managed settings. In a [self-hosted environment](/docs/en/self-hosted-environments-configuration#permissions-and-tool-approval), Claude Code also runs the hooks the operator seeded from the runner host's `~/.claude/`, and it runs the hooks in the runner image's managed settings file when that file is among the [managed sources Claude Code applies](/docs/en/managed-settings#how-claude-code-combines-managed-sources), which by default means only when neither server-managed settings nor an MDM-delivered Claude Code policy supplies the managed tier. See [what carries over from your setup](/docs/en/cloud-environments#what-carries-over-from-your-setup) for which files reach a cloud session.
+[Cloud sessions](/docs/en/claude-code-on-the-web) don't read your local `~/.claude/settings.json`; hooks there come from the repo's `.claude/settings.json` in a session with one repository, from the plugins [synced from your claude.ai account](/docs/en/plugins-reference#synced-plugins), and from your organization's server-managed settings. In a [self-hosted environment](/docs/en/self-hosted-environments-configuration#permissions-and-tool-approval), Claude Code also runs the hooks the operator seeded from the runner host's `~/.claude/`, and it runs the hooks in the runner image's managed settings file when that file is among the [managed sources Claude Code applies](/docs/en/managed-settings#how-claude-code-combines-managed-sources), which by default means only when neither server-managed settings nor an MDM-delivered Claude Code policy supplies the managed tier. See [what carries over from your setup](/docs/en/cloud-environments#what-carries-over-from-your-setup) for which files reach a cloud session.
 
 For details on settings file resolution, see [settings](/docs/en/settings).
 
@@ -1352,7 +1352,7 @@ An [Agent SDK callback hook](/docs/en/agent-sdk/hooks) on `UserPromptSubmit` tha
 
 #### UserPromptSubmit input
 
-In addition to the [common input fields](#common-input-fields), UserPromptSubmit hooks receive the `prompt` field containing the text the user submitted.
+In addition to the [common input fields](#common-input-fields), UserPromptSubmit hooks receive the `prompt` field containing the text the user submitted. Pasted content that collapsed to a `[Pasted text #N]` placeholder arrives expanded in place. In sessions where Claude Code [marks pasted text for Claude](/docs/en/terminal-config#how-claude-treats-pasted-text), that expanded content sits between a `<pasted_content id="…">` line and a `</pasted_content id="…">` line, so account for those lines if your hook parses the prompt.
 
 ```json theme={null}
 {
@@ -2401,6 +2401,10 @@ Runs when a Claude Code subagent has finished responding. Matches on agent type,
 #### SubagentStop input
 
 In addition to the [common input fields](#common-input-fields), SubagentStop hooks receive `stop_hook_active`, `agent_id`, `agent_type`, `agent_transcript_path`, and `last_assistant_message`. The `agent_type` field is the value used for matcher filtering. The `transcript_path` is the main session's transcript, while `agent_transcript_path` is the subagent's own transcript stored in a nested `subagents/` folder. The `last_assistant_message` field contains the text content of the subagent's final response, so hooks can access it without parsing the transcript file.
+
+Not every SubagentStop event comes from a subagent Claude spawned. Claude Code also runs internal agents for some of its own features, such as [prompt suggestions](/docs/en/interactive-mode#prompt-suggestions) and [`/btw` side questions](/docs/en/interactive-mode#side-questions-with-%2Fbtw), and SubagentStop fires when one of those finishes too. For those events, `agent_type` is the agent name the session itself runs as, such as one set with [`--agent`](/docs/en/cli-reference#cli-flags) or the [`agent` setting](/docs/en/settings-reference#agent), and an empty string when the session runs without one.
+
+A `matcher` that names agent types doesn't match an empty `agent_type`. A hook whose matcher is omitted, `""`, or `"*"`, or is a regular expression that matches an empty string, runs for events with an empty `agent_type` too.
 
 On Claude Code v2.1.271 or later, a subagent that runs with the [`SubagentHandback`](/docs/en/tools-reference) tool delivers its report through that tool before it stops. The `last_assistant_message` field then holds the subagent's closing text, if any, which is not the delivered report. The report is that call's `message` input, which a `PreToolUse` or `PostToolUse` hook matched on `SubagentHandback` receives as `tool_input.message`.
 

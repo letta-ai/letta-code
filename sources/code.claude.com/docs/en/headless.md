@@ -97,7 +97,7 @@ This example pipes a build log into Claude and writes the explanation to a file:
 cat build-error.txt | claude -p 'concisely explain the root cause of this build error' > output.txt
 ```
 
-With `--output-format json`, the response payload includes `total_cost_usd` and a per-model cost breakdown, so scripted callers can track spend per invocation without consulting the [usage dashboard](/docs/en/costs). Both figures are [client-side estimates](/docs/en/agent-sdk/cost-tracking) and can differ from your actual bill.
+With `--output-format json`, the response payload includes `total_cost_usd` and a per-model cost breakdown, so scripted callers can track spend without consulting the [usage dashboard](/docs/en/costs). When you continue an earlier conversation with `--continue` or `--resume`, the run reports the conversation's whole total, [earlier runs' spend included](/docs/en/agent-sdk/cost-tracking#accumulate-costs-across-multiple-calls). Both figures are [client-side estimates](/docs/en/agent-sdk/cost-tracking) and can differ from your actual bill.
 
 <Note>
   Piped stdin is capped at 10MB. If you exceed the cap, Claude Code exits with a clear error and a non-zero status. To work with larger inputs, write the content to a file and reference the file path in your prompt instead of piping it.
@@ -192,7 +192,7 @@ The first message from a subagent running in the [foreground](/docs/en/sub-agent
 * **By default**: the subagent's `tool_use` and `tool_result` blocks.
 * **With [`--forward-subagent-text`](/docs/en/cli-reference#cli-flags) or [`CLAUDE_CODE_FORWARD_SUBAGENT_TEXT`](/docs/en/env-vars)**: the subagent's text and thinking blocks too, so you can reconstruct each subagent's transcript. This requires Claude Code v2.1.211 or later.
 
-When you enable either option, Claude Code forwards messages from [subagents at every nesting depth](/docs/en/sub-agents#let-subagents-spawn-their-own-subagents): when a subagent spawns its own subagent, the nested subagent's messages carry the ID of the Agent tool call that spawned it in `parent_tool_use_id`, so you can rebuild the full nesting tree by following those IDs. Before v2.1.219, messages from nested subagents didn't appear in the stream.
+When you enable either option, Claude Code forwards messages from [subagents at every nesting depth](/docs/en/sub-agents#let-subagents-spawn-their-own-subagents), whether each one was spawned with the Agent tool or started as a [forked skill](/docs/en/skills#run-skills-in-a-subagent). Messages of subagents that a forked skill spawns, and of forked skills started inside a subagent or another forked skill, require Claude Code v2.1.275 or later. In `parent_tool_use_id`, the nested subagent's messages carry the ID of the Agent or Skill tool call that started it, so you can rebuild the full nesting tree by following those IDs. Before v2.1.219, messages from nested subagents didn't appear in the stream.
 
 Skills that [run in a subagent](/docs/en/skills#run-skills-in-a-subagent) appear in the stream the same way: the forked skill's first message is a `user` message carrying the skill content that drives the run. If you enable either option, the stream also carries the forked skill's text and thinking blocks. Before v2.1.265, only a forked skill's `tool_use` and `tool_result` blocks appeared in the stream.
 

@@ -525,6 +525,14 @@ Claude Code underlines nothing when it can't keep a checker running:
 
 To find out which of these happened, start `claude --debug` with spell checking on and type a word. Then look for the `[spellcheck]` lines in the debug log at `~/.claude/debug/<session-id>.txt`. One line names the program Claude Code started, or lists the ones it looked for and didn't find. Later lines say why it stopped. A missing-dictionary error there means the checker has no dictionary for your `language` value, or no default one when `language` is unset. Install one, or set `language` to a dictionary you have.
 
+## Invisible characters in prompts
+
+Pasted text can carry Unicode characters that a terminal draws as nothing at all, such as tag characters, bidirectional controls, and zero-width spaces, so a prompt can contain text you never see. To keep copied text from carrying instructions your terminal doesn't draw, Claude Code removes those characters when you press Enter, before sending anything. It cleans both the prompt and the contents of any collapsed [pasted-text reference](/docs/en/terminal-config#paste-large-content) the prompt includes. Claude Code keeps the joiners that Persian and Indic scripts write and the selectors inside emoji sequences.
+
+If Claude Code removed anything, that Enter sends nothing. The cleaned prompt goes back into the input box with a notice such as `Removed 3 invisible characters · review and press Enter to send`, and pressing Enter again sends the text as shown.
+
+When you pass a prompt on the command line, as in `claude "fix the login bug"`, or pipe one into an interactive session, Claude Code doesn't wait for a second Enter. It removes the characters, shows a notice, and sends the cleaned prompt. If the cleaned prompt would begin with `/`, Claude Code puts it in the input box for you to review and send instead.
+
 ## Review changes with /diff
 
 Run `/diff` to look over the changes in your working tree without leaving Claude Code. You see the edits Claude has made so far alongside anything else you haven't committed.

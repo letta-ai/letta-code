@@ -331,7 +331,7 @@ In Python, load a large custom prompt from a file with `system_prompt={"type": "
 In the TypeScript SDK, you can pass a custom prompt as an array of strings instead of one string, with the `SYSTEM_PROMPT_DYNAMIC_BOUNDARY` marker between the static part and the rest. Use this when your prompt combines instructions that are the same on every request with context that changes per request, such as the customer or ticket the agent is handling. When you pass both parts as one string, a change to the per-request part changes the whole system prompt, so the static instructions miss the cache too. The array form isn't available in the Python SDK; [`ClaudeAgentOptions`](/docs/en/agent-sdk/python#claudeagentoptions) lists the forms `system_prompt` accepts.
 
 <Note>
-  The SDK splits the prompt only when it calls the Claude API directly or runs on [Claude Platform on AWS](/docs/en/claude-platform-on-aws). In every other configuration, such as Amazon Bedrock, Google Cloud's Agent Platform, Microsoft Foundry, or an [LLM gateway](/docs/en/llm-gateway-connect), and whenever you set [`CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1`](/docs/en/llm-gateway-protocol#disable-pre-release-capabilities), the SDK sends the whole prompt as one block, the same as passing one string.
+  Claude Code splits the prompt only when it calls the Claude API directly or runs on [Claude Platform on AWS](/docs/en/claude-platform-on-aws). In every other configuration, such as Amazon Bedrock, Google Cloud's Agent Platform, Microsoft Foundry, or an [LLM gateway](/docs/en/llm-gateway-connect), it sends the whole prompt as one block, the same as passing one string. The same happens whenever you set [`CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1`](/docs/en/llm-gateway-protocol#disable-pre-release-capabilities).
 </Note>
 
 To split the prompt, import `SYSTEM_PROMPT_DYNAMIC_BOUNDARY` from `@anthropic-ai/claude-agent-sdk` and pass it as its own array element between the two parts. The SDK sends the strings before the marker as one text block and the strings after it as a second block, each with its own cache breakpoint. In the example below, a support agent loads its triage instructions from a file and receives details about one ticket on each request, so the instructions stay cached while the ticket details change:
@@ -362,6 +362,10 @@ The SDK assembles the blocks from the array as follows:
 * The SDK joins the strings on each side of the marker with a blank line between them and removes the marker itself, so the marker text doesn't reach Claude.
 * If you include the marker more than once, the first one is the split and the SDK removes the others.
 * If you leave the marker out, the SDK joins all the strings into one block, the same as passing one string.
+
+With the CLI's [`--system-prompt` or `--system-prompt-file` flags](/docs/en/cli-reference#system-prompt-flags), the prompt is one string, so there is no array to carry the marker. Include a line containing only `__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__` between the static and per-request parts instead. Claude Code splits the prompt at the first such line into the same two blocks and removes that line. Requires Claude Code v2.1.275 or later.
+
+In the SDK, prefer the array form, which carries the boundary without a marker line.
 
 ### Change the prompt of an existing session
 

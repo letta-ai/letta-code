@@ -24,15 +24,7 @@ When you choose "Yes, and don't ask again" and the approval saves permanently, s
 
 Before v2.1.211, Claude Code always saved the rule in the starting directory, so an approval granted in a worktree or subdirectory didn't apply to the rest of the repository. Rules that earlier versions saved in a subdirectory or worktree still apply to sessions started there.
 
-Sometimes a permission prompt offers only a one-time approval, with no "don't ask again" option and no option to allow the action for the rest of the session. Claude Code offers those options only when the prompt can show you everything they would allow, so a rule you save from a prompt covers only what its option named.
-
-When the directory you started Claude Code in is what makes the option's label too long, Claude Code shortens it in the label, replacing your home directory with `~` and then the end of the path with `…`, and keeps the option. You still save the same rule. Claude Code leaves the options out in three cases:
-
-* **Command or edit:** too large to show in full.
-* **Commands or paths the rule would cover:** the label can't fit them all.
-* **Starting directory too long, not shortened:** it contains characters Claude Code can't display safely, or even its start doesn't fit.
-
-Approve the action once, or add the rule yourself in [`/permissions`](#manage-permissions).
+Sometimes a permission prompt offers only a one-time approval, with no "don't ask again" option and no option to allow the action for the rest of the session. Claude Code offers those options only when the prompt can show you everything they would allow, so a rule you save from a prompt covers only what its option named. When a prompt offers only the one-time approval, approve the action once, or add the rule yourself in [`/permissions`](#manage-permissions).
 
 ### Add a comment when you answer a permission prompt
 
@@ -204,7 +196,7 @@ Deny and ask rules also accept glob patterns in the tool-name position. The patt
 
 Allow rules accept tool-name globs only after a literal `mcp__<server>__` prefix. The server segment must be glob-free so the rule names a specific server you configured. `mcp__puppeteer__*` matches every tool from the `puppeteer` server, and `mcp__github__get_*` matches its `get_` tools. An unanchored allow glob such as `"*"`, `"B*"`, or `"mcp__*"` is skipped with a warning and doesn't auto-approve anything.
 
-A deny or ask rule whose tool name matches no known tool produces a startup warning to catch typos. Tool names containing `_` or `*` are exempt from the check.
+A deny or ask rule whose tool name matches no known tool produces a startup warning to catch typos. Tool names containing `_` or `*` are exempt from the check, and so are the names of tools Claude Code has removed, such as `TaskOutput`.
 
 The label shown for a tool in the transcript and permission dialog can differ from its canonical name. For example, the tool labeled `Stop Task` in the transcript has the canonical name `TaskStop`. Permission rules and [hook matchers](/docs/en/hooks) don't match the label, so a rule written as `Stop Task` doesn't match. For deny and ask rules, the startup warning above catches the mismatch. Use the canonical names listed in the [tools reference](/docs/en/tools-reference).
 
@@ -224,7 +216,7 @@ Deny and ask rules apply when any subcommand matches them, including a command n
 
 When `&&` or `||` has nothing after it, such as in `npm test &&`, Claude Code treats the command as unparseable and doesn't split it into subcommands for allow-rule matching, so a rule such as `Bash(npm *)` doesn't approve it.
 
-When you approve a compound command with "Yes, and don't ask again", Claude Code saves a separate rule for each subcommand that requires approval, rather than a single rule for the full compound string. For example, approving `git status && npm test` saves a rule for `npm test`, so future `npm test` invocations are recognized regardless of what precedes the `&&`. Subcommands like `cd` into a subdirectory generate their own Read rule for that path. Up to 5 rules may be saved for a single compound command.
+When you approve a compound command with "Yes, and don't ask again", Claude Code saves a separate rule for each subcommand that requires approval, rather than a single rule for the full compound string. For example, approving `git status && npm test` saves a rule for `npm test`, so future `npm test` invocations are recognized regardless of what precedes the `&&`. Subcommands like `cd` into a directory outside your working directories generate their own Read rule for that path. Up to 5 rules may be saved for a single compound command.
 
 <h4 id="process-wrappers">
   Wrappers
