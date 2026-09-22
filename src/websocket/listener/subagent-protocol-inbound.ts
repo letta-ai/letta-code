@@ -8,6 +8,7 @@ const ARGUMENTS = new Set([
   "model",
   "agent_id",
   "conversation_id",
+  "client_message_id",
   "computer",
   "max_turns",
 ]);
@@ -47,6 +48,7 @@ export function isLaunchSubagentCommand(
     "model",
     "agent_id",
     "conversation_id",
+    "client_message_id",
     "computer",
   ]) {
     if (

@@ -807,6 +807,8 @@ export async function handleHeadlessCommand(
     computer: explicitEnvironmentSelector,
     ephemeral: values.ephemeral,
   });
+  if (values["client-message-id"] !== undefined && !usesRemoteEnvironment)
+    throw new Error("--client-message-id requires a Cloud input destination");
   const startupBackend = createStartupBackend(backend, usesRemoteEnvironment);
 
   // Resolve agent (same logic as interactive mode)
@@ -851,10 +853,7 @@ export async function handleHeadlessCommand(
     );
     disableLocalBackendMemfsForProcess();
   }
-  // Startup policy for the git-backed memory pull on session init.
-  // "blocking" (default): await the pull before proceeding.
-  // "background": fire the pull async, emit init without waiting.
-  // "skip": skip the pull entirely this session.
+  // MemFS startup: block (default), pull in background, or skip this session.
   const memfsStartupRaw = values["memfs-startup"];
   const memfsStartupPolicy: "blocking" | "background" | "skip" =
     memfsStartupRaw === "background" || memfsStartupRaw === "skip"
@@ -1994,6 +1993,7 @@ export async function handleHeadlessCommand(
       : { source: "same-environment" };
     const launchParams: Parameters<typeof launchListenerConversation>[0] = {
       noWait: Boolean(values["no-wait"]),
+      clientMessageId: values["client-message-id"],
       connectionId,
       scope: {
         agent_id: agent.id,

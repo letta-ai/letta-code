@@ -82,19 +82,15 @@ export interface SpawnBackgroundSubagentTaskArgs {
   toolCallId?: string;
   existingAgentId?: string;
   existingConversationId?: string;
+  /** Identity for this child's initial input only. */
+  clientMessageId?: string;
   maxTurns?: number;
   forkedContext?: boolean;
   /** Parent conversation scope for routing notifications in listener mode. */
   parentScope?: { agentId: string; conversationId: string };
   /** Authenticated Cloud user responsible for the launch-time turn. */
   actingUserId?: string;
-  /**
-   * Optional path to a transcript/payload file the subagent should read.
-   * Exposed to the child process as the `TRANSCRIPT_PATH` env var so
-   * prompts can reference `$TRANSCRIPT_PATH` (resolved via Bash) instead
-   * of interpolating an absolute path. Currently used by reflection
-   * subagents.
-   */
+  /** Transcript/payload file exposed as TRANSCRIPT_PATH for reflection prompts. */
   transcriptPath?: string;
   /** Optional exact memory scope for harness-created memory worktrees. */
   memoryScope?: SubagentMemoryScope;
@@ -498,6 +494,7 @@ export function spawnBackgroundSubagentTask(
       environment,
       actingUserId,
       args.config,
+      args.clientMessageId,
     );
   };
   const memoryTask =
@@ -741,6 +738,15 @@ export async function launchSubagent(
   args: TaskArgs,
 ): Promise<SubagentLaunchResult> {
   const { model, toolCallId, signal } = args;
+  if (
+    args.client_message_id !== undefined &&
+    (typeof args.client_message_id !== "string" ||
+      !args.client_message_id.trim())
+  )
+    return {
+      success: false,
+      error: "client_message_id must be a non-empty string",
+    };
   const resolvedParentScope = resolveNotificationScope(args.parentScope);
   signal?.throwIfAborted();
 
@@ -909,6 +915,7 @@ export async function launchSubagent(
     existingAgentId: effectiveAgentId,
     existingConversationId: effectiveConversationId,
     maxTurns: args.max_turns,
+    clientMessageId: args.client_message_id,
     forkedContext: subagent_type !== "memory" && config.fork,
     parentScope: resolvedParentScope,
     environment:

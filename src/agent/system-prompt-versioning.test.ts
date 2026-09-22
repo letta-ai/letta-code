@@ -11,7 +11,7 @@ import {
 } from "@/agent/system-prompt-versioning";
 
 function agent(
-  system: string,
+  system: string | null,
   tags: string[] = ["origin:letta-code"],
 ): AgentState {
   return {
@@ -96,6 +96,22 @@ describe("system prompt versioning", () => {
     });
 
     expect(decision.kind).toBe("custom");
+  });
+
+  test("does not classify a backend-owned inherited prompt as custom", () => {
+    const storedPrompt = buildSystemPrompt("default", "memfs");
+    const decision = decideManagedSystemPromptUpdate({
+      agent: agent(null),
+      memoryMode: "memfs",
+      storedPreset: "default",
+      storedHash: hashSystemPrompt(storedPrompt),
+      storedVersion: "old-version",
+    });
+
+    expect(decision).toEqual({
+      kind: "noop",
+      reason: "system prompt inherits backend default",
+    });
   });
 
   test("does not replace a customized managed prompt when root layout is selected", () => {

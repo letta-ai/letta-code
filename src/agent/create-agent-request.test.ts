@@ -104,6 +104,13 @@ describe("buildCreateAgentRequest", () => {
     ).rejects.toThrow("must describe the same memory mode");
   });
 
+  test("preserves a null system prompt on the outbound wire payload", async () => {
+    const request = await buildCreateAgentRequest({ system: null });
+
+    expect(request.system).toBeNull();
+    expect(JSON.parse(JSON.stringify(request))).toHaveProperty("system", null);
+  });
+
   test("pins exact caller overrides without restoring server defaults", async () => {
     const request = await buildCreateAgentRequest({
       name: "Worker",
@@ -158,9 +165,10 @@ describe("buildCreateAgentRequestForPersonality", () => {
         resolveModel(personality.defaultModel ?? "auto") as string,
       );
 
-      // The CLI resolves the same prompt via memoryPromptMode: "memfs".
+      // Direct Cloud creation and the CLI Cloud path both delegate the default
+      // prompt to the service. Local CLI creation still resolves it client-side.
       expect(cliOptions.memoryPromptMode).toBe("memfs");
-      expect(request.system).toBe(buildSystemPrompt("default", "memfs"));
+      expect(request.system).toBeNull();
 
       expect(request.agent_type).toBe(LETTA_CODE_AGENT_TYPE);
       expect(request.tags).toEqual([
