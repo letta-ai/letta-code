@@ -5,7 +5,10 @@ import {
   getCurrentWorkingDirectory,
 } from "@/runtime-context";
 import { scrubSecretsFromString } from "@/tools/secret-substitution";
-import { addToMessageQueue } from "@/utils/message-queue-bridge.js";
+import {
+  addToMessageQueue,
+  isQueueBridgeConnected,
+} from "@/utils/message-queue-bridge.js";
 import {
   formatTaskNotification,
   resolveNotificationScope,
@@ -503,18 +506,31 @@ export async function bash(args: BashArgs): Promise<BashResult> {
   };
 
   if (!run_in_background) {
-    const outcome = await Promise.race([
-      settled.then((result) => ({ type: "settled" as const, result })),
-      new Promise<{ type: "yield" }>((resolve) => {
-        const timer = setTimeout(
-          () => resolve({ type: "yield" }),
-          Math.max(0, foregroundYieldMs),
-        );
-        if (typeof timer === "object" && timer !== null && "unref" in timer) {
-          timer.unref();
-        }
-      }),
-    ]);
+    const settledOutcome = settled.then((result) => ({
+      type: "settled" as const,
+      result,
+    }));
+    // A yielded command reports back only through a task notification. One-shot
+    // headless runs, including every subagent, have no queue consumer, so there
+    // the command stays in the foreground until it exits or times out.
+    const outcome = isQueueBridgeConnected()
+      ? await Promise.race([
+          settledOutcome,
+          new Promise<{ type: "yield" }>((resolve) => {
+            const timer = setTimeout(
+              () => resolve({ type: "yield" }),
+              Math.max(0, foregroundYieldMs),
+            );
+            if (
+              typeof timer === "object" &&
+              timer !== null &&
+              "unref" in timer
+            ) {
+              timer.unref();
+            }
+          }),
+        ])
+      : await settledOutcome;
 
     if (outcome.type === "settled") {
       backgroundProcesses.delete(bashId);

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   getDisplayToolName,
   isMemoryTool,
+  isShellOutputTool,
   isTaskTool,
 } from "@/cli/helpers/tool-name-mapping";
 
@@ -29,12 +30,25 @@ describe("toolNameMapping.isMemoryTool", () => {
   });
 });
 
+describe("toolNameMapping task output mappings", () => {
+  test("uses distinct display labels for shell output and task output", () => {
+    expect(getDisplayToolName("BashOutput")).toBe("Shell Output");
+    expect(getDisplayToolName("TaskOutput")).toBe("Task Output");
+  });
+
+  test("treats TaskOutput as shell-style output for streaming UI", () => {
+    expect(isShellOutputTool("TaskOutput")).toBe(true);
+    expect(isShellOutputTool("BashOutput")).toBe(true);
+    expect(isShellOutputTool("Task")).toBe(false);
+  });
+});
+
 describe("toolNameMapping task aliases", () => {
   test("treats Agent as a task/subagent tool for TUI rendering", () => {
     expect(isTaskTool("Task")).toBe(true);
     expect(isTaskTool("task")).toBe(true);
     expect(isTaskTool("Agent")).toBe(true);
     expect(isTaskTool("agent")).toBe(true);
-    expect(isTaskTool("TaskStop")).toBe(false);
+    expect(isTaskTool("TaskOutput")).toBe(false);
   });
 });
