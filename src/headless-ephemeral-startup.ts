@@ -3,6 +3,7 @@ import {
   createEphemeralConversation,
   createLocalEphemeralConversation,
 } from "@/agent/ephemeral-conversation";
+import type { ModelReasoningEffort } from "@/agent/model";
 import {
   configureEphemeralLocalBackend,
   isLocalBackendEnabled,
@@ -20,6 +21,7 @@ export async function createHeadlessEphemeralConversation(params: {
   backendMode: string;
   personality: string | null | undefined;
   model: string | undefined;
+  reasoningEffort?: ModelReasoningEffort;
   systemPromptPreset: string | undefined;
   systemPromptCustom: string | undefined;
 }): Promise<{ agent: AgentState; conversationId: string }> {
@@ -30,6 +32,7 @@ export async function createHeadlessEphemeralConversation(params: {
   }
   const options = {
     model: params.model,
+    reasoningEffort: params.reasoningEffort,
     systemPromptPreset: params.systemPromptPreset,
     systemPromptCustom: params.systemPromptCustom,
     memoryPromptMode: "standard" as const,

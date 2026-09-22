@@ -1153,6 +1153,7 @@ export async function handleHeadlessCommand(
         backendMode: startupBackendMode,
         personality: personalityInput,
         model,
+        reasoningEffort,
         systemPromptPreset,
         systemPromptCustom: systemCustom,
       });
