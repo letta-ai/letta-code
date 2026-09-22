@@ -95,7 +95,9 @@ test("memory delegates immediately, exports the originating conversation and lau
         expect(args[5]).toBeUndefined();
         expect(args[6]).toBeUndefined();
         expect(args[8]).toBeUndefined();
-        expect(args[1]).toContain(`Memory repository: ${root}`);
+        expect(args[1]).toContain("Memory repository: ");
+        expect(args[1]).toContain("memory-worker-");
+        expect(args[1]).not.toContain(`Memory repository: ${root}\n`);
         expect(args[1]).toContain("Remember Bun");
         expect(args[10]).toContain("memory-handoffs");
         transcriptPath = args[10];
@@ -103,7 +105,9 @@ test("memory delegates immediately, exports the originating conversation and lau
         expect(existsSync(transcriptPath)).toBe(true);
         expect(args[9]).toBe("agent-parent");
         expect(args[11]).toBe("conv-origin");
-        expect(args[12]?.primaryRoot).toBe(root);
+        // The worker is handed a private worktree, not the checkout itself.
+        expect(args[12]?.primaryRoot).toContain("memory-worker-");
+        expect(args[12]?.primaryRoot).not.toBe(root);
         updateSubagent(args[3], {
           agentId: "agent-worker",
           conversationId: "default",
@@ -166,6 +170,9 @@ test("a failed transcript export terminates the silent task with an inspectable 
   const repo = createTempGitRepo("memory-task-failed-");
   repos.push(repo);
   const root = repo.dir;
+  writeFileSync(join(root, "note.md"), "memory\n");
+  repo.git("add", "note.md");
+  repo.git("commit", "-m", "initial");
   const home = mkdtempSync(join(tmpdir(), "memory-task-failed-home-"));
   roots.push(home);
   await settingsManager.reset();

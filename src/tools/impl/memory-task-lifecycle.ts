@@ -3,7 +3,7 @@ import {
   getSnapshot as getSubagentSnapshot,
   subscribeToSubagentLifecycle,
 } from "@/agent/subagent-state";
-import type { SubagentResult } from "@/agent/subagents";
+import type { SubagentMemoryScope, SubagentResult } from "@/agent/subagents";
 import { withMemoryHandoff } from "@/agent/subagents/memory-handoff";
 import { runMemoryWorker } from "@/agent/subagents/memory-worker";
 import { sleep } from "@/utils/sleep";
@@ -21,10 +21,14 @@ export interface RunBackgroundMemoryTaskParams {
   formatHeader: (
     identity: Pick<SubagentResult, "agentId" | "conversationId">,
   ) => string;
-  /** Spawn the worker with the handoff prompt and optional transcript snapshot. */
+  /**
+   * Spawn the worker with the handoff prompt, optional transcript snapshot,
+   * and the memory scope of the private worktree it must edit.
+   */
   execute: (
     assignment: string,
-    transcriptPath?: string,
+    transcriptPath: string | undefined,
+    memoryScope: SubagentMemoryScope,
   ) => Promise<SubagentResult>;
   getSnapshot?: typeof getSubagentSnapshot;
 }
@@ -62,13 +66,19 @@ export function runBackgroundMemoryTask(
   };
   const execution = runMemoryWorker(
     { ...scope, signal: params.signal },
-    () =>
+    (workerDir, memoryScope) =>
       withMemoryHandoff(
-        { ...scope, assignment: params.assignment, signal: params.signal },
+        {
+          ...scope,
+          memoryDir: workerDir,
+          assignment: params.assignment,
+          signal: params.signal,
+        },
         async (handoff) => {
           const result = await params.execute(
             handoff.prompt,
             handoff.transcriptPath,
+            memoryScope,
           );
           // Preserve the worker identity/report even if remote sync is slow or fails.
           appendToOutputFile(

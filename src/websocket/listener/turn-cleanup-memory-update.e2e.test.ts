@@ -109,12 +109,12 @@ function setupAgent() {
       conversationId: "conv-picture",
       finalized,
     });
-  const commitPicture = () => {
+  const commitPicture = (dir = memoryDir) => {
     // A direct file write + commit, with no memory tool or upload command.
-    writeFileSync(join(memoryDir, "profile.png"), Buffer.from("picture bytes"));
-    git(memoryDir, ["add", "profile.png"]);
-    git(memoryDir, ["commit", "-m", "Change profile picture"]);
-    return git(memoryDir, ["rev-parse", "HEAD"]);
+    writeFileSync(join(dir, "profile.png"), Buffer.from("picture bytes"));
+    git(dir, ["add", "profile.png"]);
+    git(dir, ["commit", "-m", "Change profile picture"]);
+    return git(dir, ["rev-parse", "HEAD"]);
   };
   return {
     remote,
@@ -215,8 +215,12 @@ test.each([false, true])(
       parentScope: { agentId, conversationId: "conv-picture" },
       memoryScope: { primaryRoot: memoryDir, writableRoots: [memoryDir] },
       deps: {
-        spawnSubagentImpl: async () => {
-          sha = commitPicture();
+        spawnSubagentImpl: async (...args) => {
+          // Workers edit a private worktree; the harness merges it back.
+          const workerDir = args[12]?.primaryRoot;
+          if (!workerDir || workerDir === memoryDir)
+            throw new Error("worker must run in its own worktree");
+          sha = commitPicture(workerDir);
           expect(updates).toEqual([]);
           return {
             agentId: "agent-worker",

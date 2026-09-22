@@ -443,7 +443,11 @@ export function spawnBackgroundSubagentTask(
     (workerMemoryDir
       ? { primaryRoot: workerMemoryDir, writableRoots: [workerMemoryDir] }
       : undefined);
-  const execute = (assignment = prompt, parentTranscript = transcriptPath) => {
+  const execute = (
+    assignment = prompt,
+    parentTranscript = transcriptPath,
+    scope = effectiveMemoryScope,
+  ) => {
     return spawnSubagentFn(
       subagentType,
       assignment,
@@ -457,7 +461,7 @@ export function spawnBackgroundSubagentTask(
       parentAgentIdForSpawn,
       parentTranscript,
       resolvedParentScope?.conversationId,
-      effectiveMemoryScope,
+      scope,
       systemPromptOverride,
       environment,
       actingUserId,

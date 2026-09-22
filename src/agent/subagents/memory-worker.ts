@@ -1,76 +1,25 @@
-import { execFile } from "node:child_process";
-import { rm } from "node:fs/promises";
-import { join } from "node:path";
-import { promisify } from "node:util";
 import { syncPendingMemoryCommitsAfterTurn } from "@/agent/memory-git";
 import { withMemoryOperation } from "@/agent/memory-operation";
+import {
+  buildReflectionMemoryScope,
+  createReflectionMemoryWorktree,
+  integrateMemoryWorkerWorktree,
+} from "@/agent/memory-worktree";
 import { recompileAgentSystemPrompt } from "@/agent/modify";
 import { getBackend } from "@/backend";
 import { debugWarn } from "@/utils/debug";
-import type { SubagentResult } from ".";
-
-async function git(memoryDir: string, args: string[]): Promise<string> {
-  const { stdout } = await promisify(execFile)("git", [
-    "-C",
-    memoryDir,
-    ...args,
-  ]);
-  return stdout.trim();
-}
-
-/** Paths with uncommitted changes, keyed so a rename counts by its new name. */
-async function dirtyPaths(memoryDir: string): Promise<Map<string, string>> {
-  const { stdout } = await promisify(execFile)("git", [
-    "-C",
-    memoryDir,
-    "status",
-    "--porcelain",
-    "-z",
-  ]);
-  const entries = new Map<string, string>();
-  const tokens = stdout.split("\0");
-  for (let index = 0; index < tokens.length; index++) {
-    const token = tokens[index];
-    if (!token) continue;
-    const code = token.slice(0, 2);
-    entries.set(token.slice(3), code);
-    // Renames and copies carry the original path as the next token.
-    if (code.startsWith("R") || code.startsWith("C")) index++;
-  }
-  return entries;
-}
+import type { SubagentMemoryScope, SubagentResult } from ".";
 
 /**
- * Undo the uncommitted changes a cancelled worker introduced. Paths that were
- * already dirty before it started are left alone: they may belong to the
- * primary agent.
+ * Run a memory worker under the checkout lease. The worker edits a private
+ * worktree of the memory repository, so the primary agent's own edits to the
+ * checkout are never touched: a cancelled worker is discarded outright, and a
+ * finished worker's commits are merged back before the lease is released. A
+ * merge that conflicts with the primary's changes keeps the worker's branch
+ * and reports it instead of guessing.
+ *
+ * Called inside the existing background task, never awaited by the primary.
  */
-async function discardNewChanges(
-  memoryDir: string,
-  before: Map<string, string>,
-): Promise<void> {
-  const introduced = (entries: Map<string, string>) =>
-    [...entries].filter(([path]) => !before.has(path));
-  // Unstage first: a file the worker added becomes untracked and is removed
-  // below, while a modified tracked file is restored from HEAD.
-  const staged = introduced(await dirtyPaths(memoryDir)).map(([path]) => path);
-  if (staged.length > 0) {
-    await git(memoryDir, ["reset", "-q", "--", ...staged]).catch(() => {});
-  }
-  const untracked: string[] = [];
-  const modified: string[] = [];
-  for (const [path, code] of introduced(await dirtyPaths(memoryDir))) {
-    (code === "??" ? untracked : modified).push(path);
-  }
-  if (modified.length > 0) {
-    await git(memoryDir, ["checkout", "-q", "--", ...modified]).catch(() => {});
-  }
-  for (const path of untracked) {
-    await rm(join(memoryDir, path), { recursive: true, force: true });
-  }
-}
-
-/** Called inside the existing background task, never awaited by the primary. */
 export async function runMemoryWorker(
   params: {
     agentId: string;
@@ -78,68 +27,88 @@ export async function runMemoryWorker(
     memoryDir: string;
     signal?: AbortSignal;
   },
-  execute: () => Promise<SubagentResult>,
+  execute: (
+    memoryDir: string,
+    memoryScope: SubagentMemoryScope,
+  ) => Promise<SubagentResult>,
   deps: {
     sync?: typeof syncPendingMemoryCommitsAfterTurn;
     recompile?: typeof recompileAgentSystemPrompt;
-    /** Memory on disk changed (a local commit, a push, or a pull); refresh readers. */
+    /** Memory on disk changed (a merge, a push, or a pull); refresh readers. */
     onMemoryChanged?: () => void;
   } = {},
 ): Promise<SubagentResult> {
-  const head = () =>
-    git(params.memoryDir, ["rev-parse", "--verify", "-q", "HEAD"]).catch(
-      () => "",
-    );
   return withMemoryOperation(
     params.memoryDir,
     async () => {
-      const headBefore = await head();
-      const dirtyBefore = await dirtyPaths(params.memoryDir);
-      let result: SubagentResult;
+      const worktree = await createReflectionMemoryWorktree({
+        parentMemoryDir: params.memoryDir,
+        label: "memory-worker",
+      });
+      let result: SubagentResult | undefined;
+      let failure: string | undefined;
+      try {
+        result = await execute(
+          worktree.worktreeDir,
+          buildReflectionMemoryScope(worktree),
+        );
+      } catch (error) {
+        failure = error instanceof Error ? error.message : String(error);
+      }
+      // A cancelled worker's edits are dropped with its worktree; nothing it
+      // did reaches the checkout, and no sync (with remote retries) runs.
+      const outcome = await integrateMemoryWorkerWorktree(worktree, {
+        discard: params.signal?.aborted === true,
+      });
+      if (failure !== undefined) throw new Error(failure);
+      if (!result) throw new Error("Memory worker returned no result");
+      if (outcome.status === "merge_conflict") {
+        return {
+          ...result,
+          success: false,
+          error:
+            result.error ??
+            `Memory changes conflict with the checkout; ${outcome.commitCount} commit(s) kept on ${outcome.branchName}`,
+        };
+      }
+      if (outcome.status === "failed") {
+        return {
+          ...result,
+          success: false,
+          error: result.error ?? outcome.error,
+        };
+      }
       let syncError: string | undefined;
       let synced = false;
+      let pushed = false;
+      // Normal sync owns Git status checks and remote retries.
       try {
-        result = await execute();
-      } finally {
-        if (params.signal?.aborted) {
-          // A cancelled worker must not leave half-edited files for the next
-          // session to find, and its sync (with remote retries) must not hold
-          // the exit. Whatever it already committed stays for the next sync.
-          await discardNewChanges(params.memoryDir, dirtyBefore).catch(
-            (error) => {
-              debugWarn("memory-worker", `Rollback failed: ${String(error)}`);
-            },
-          );
+        const syncResult = await (
+          deps.sync ?? syncPendingMemoryCommitsAfterTurn
+        )(params.agentId, { memoryDir: params.memoryDir });
+        pushed = syncResult.status === "pushed";
+        if (
+          syncResult.status === "clean" ||
+          syncResult.status === "pushed" ||
+          syncResult.status === "skipped"
+        ) {
+          synced = true;
         } else {
-          // Normal sync owns Git status checks and remote retries.
-          try {
-            const syncResult = await (
-              deps.sync ?? syncPendingMemoryCommitsAfterTurn
-            )(params.agentId, { memoryDir: params.memoryDir });
-            if (
-              syncResult.status === "clean" ||
-              syncResult.status === "pushed" ||
-              syncResult.status === "skipped"
-            ) {
-              synced = true;
-            } else {
-              syncError = `Memory sync incomplete (${syncResult.status}): ${syncResult.summary}`;
-              debugWarn("memory-worker", syncError);
-            }
-          } catch (error) {
-            syncError = `Memory sync failed: ${String(error)}`;
-            debugWarn("memory-worker", syncError);
-          }
-          // Local-only checkouts report "skipped" after a commit; readers still
-          // need to know memory changed.
-          if ((await head()) !== headBefore) deps.onMemoryChanged?.();
+          syncError = `Memory sync incomplete (${syncResult.status}): ${syncResult.summary}`;
+          debugWarn("memory-worker", syncError);
         }
+      } catch (error) {
+        syncError = `Memory sync failed: ${String(error)}`;
+        debugWarn("memory-worker", syncError);
       }
+      // Local-only checkouts report a merge as "skipped"; readers still need
+      // to know memory changed.
+      if (pushed || outcome.status === "merged") deps.onMemoryChanged?.();
       // Memory is committed and synced at this point; a failed prompt refresh
       // is worth a warning but must not report the worker as failed. Running
       // it under the checkout lock is safe because the primary's tools never
       // take this lock, so its active turn cannot be waiting on us.
-      if (synced) {
+      if (synced && outcome.status === "merged") {
         try {
           if (deps.recompile || getBackend().capabilities.promptRecompile) {
             await (deps.recompile ?? recompileAgentSystemPrompt)(
