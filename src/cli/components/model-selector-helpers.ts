@@ -87,6 +87,32 @@ export function registryHandleForByokAlias(
   return normalizeModelHandleForRegistry(baseHandle) ?? baseHandle;
 }
 
+export function preferredStaticModelForHandle(
+  catalog: readonly UiModel[],
+  handle: string,
+  contextWindow?: number,
+): UiModel | undefined {
+  const registryHandle = normalizeModelHandleForRegistry(handle) ?? handle;
+  const staticCandidates = catalog.filter(
+    (model) =>
+      model.handle === registryHandle &&
+      (contextWindow === undefined ||
+        (model.updateArgs?.context_window as number | undefined) ===
+          contextWindow),
+  );
+  return (
+    staticCandidates.find((model) => model.isDefault) ??
+    staticCandidates.find((model) => model.isFeatured) ??
+    staticCandidates.find(
+      (model) => model.updateArgs?.reasoning_effort === "medium",
+    ) ??
+    staticCandidates.find(
+      (model) => model.updateArgs?.reasoning_effort === "high",
+    ) ??
+    staticCandidates[0]
+  );
+}
+
 export function registryHandleForBackendModel(
   handle: string,
   providerType?: string,

@@ -62,6 +62,16 @@ const MODEL_SETTINGS_PROVIDER_LLM_CONFIG_ENDPOINT_TYPES = new Map([
   ["ollama_cloud", "openai"],
 ]);
 
+export function isCatalogMoonshotAiHandle(
+  modelHandle: string | null | undefined,
+): boolean {
+  return (
+    typeof modelHandle === "string" &&
+    modelHandle.startsWith("moonshotai/") &&
+    models.some((entry) => entry.handle === modelHandle)
+  );
+}
+
 export function normalizeModelHandleForRegistry(
   modelHandle: string | null | undefined,
 ): string | null {
@@ -81,7 +91,11 @@ export function normalizeModelHandleForRegistry(
   if (provider === "lc-anthropic" && model.length > 0) {
     return `anthropic/${model}`;
   }
-  if (provider === "moonshotai" && model.length > 0) {
+  if (
+    provider === "moonshotai" &&
+    model.length > 0 &&
+    !models.some((entry) => entry.handle === modelHandle)
+  ) {
     return `moonshot/${model}`;
   }
   return modelHandle;
@@ -242,6 +256,15 @@ export function mapModelHandleToLlmConfigPatch(
   providerType?: string | null,
 ): Pick<ModelConfigSnapshot, "model" | "model_endpoint_type"> {
   const normalizedHandle = normalizeKnownModelHandle(modelHandle);
+  if (
+    isCatalogMoonshotAiHandle(normalizedHandle) &&
+    (providerType == null || providerType === "openrouter")
+  ) {
+    return {
+      model: normalizedHandle,
+      model_endpoint_type: "openrouter",
+    };
+  }
   const provider = providerPrefix(normalizedHandle);
   const model = modelPortionFromHandle(normalizedHandle);
   if (!provider || !model) {

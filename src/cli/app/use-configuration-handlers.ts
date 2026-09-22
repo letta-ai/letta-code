@@ -22,6 +22,7 @@ import {
 import { getBackend } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import type { ModelSelectorSelection } from "@/cli/components/ModelSelector";
+import { preferredStaticModelForHandle } from "@/cli/components/model-selector-helpers";
 import {
   type ContextTracker,
   resetContextHistory,
@@ -201,27 +202,8 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
           normalizeModelHandleForRegistry,
           models,
         } = await import("@/agent/model");
-        const pickPreferredModelForHandle = (handle: string) => {
-          const registryHandle =
-            normalizeModelHandleForRegistry(handle) ?? handle;
-          const candidates = models.filter((m) => m.handle === registryHandle);
-          return (
-            candidates.find((m) => m.isDefault) ??
-            candidates.find((m) => m.isFeatured) ??
-            candidates.find(
-              (m) =>
-                (m.updateArgs as { reasoning_effort?: unknown } | undefined)
-                  ?.reasoning_effort === "medium",
-            ) ??
-            candidates.find(
-              (m) =>
-                (m.updateArgs as { reasoning_effort?: unknown } | undefined)
-                  ?.reasoning_effort === "high",
-            ) ??
-            candidates[0] ??
-            null
-          );
-        };
+        const pickPreferredModelForHandle = (handle: string) =>
+          preferredStaticModelForHandle(models, handle) ?? null;
         let apiProviderType: string | undefined;
         let didLoadApiProviderType = false;
         const getApiProviderType = async () => {

@@ -17,6 +17,7 @@ import { normalizeReasoningEffortForModel } from "@/utils/openai-reasoning-effor
 import { isRecord } from "@/utils/type-guards";
 import { getModelContextWindow } from "./available-models";
 import { getModelInfo, type ModelReasoningSelection } from "./model";
+import { isCatalogMoonshotAiHandle } from "./model-handles";
 
 type ModelSettings =
   | OpenAIModelSettings
@@ -64,11 +65,13 @@ export function buildModelSettings(
     modelHandle.startsWith("lc-anthropic/") ||
     modelHandle.startsWith("claude-pro-max/") ||
     modelHandle.startsWith("minimax/");
+  const catalogMoonshotAi = isCatalogMoonshotAiHandle(modelHandle);
   const isMoonshot =
-    explicitProviderType === "moonshot" ||
-    explicitProviderType === "moonshotai" ||
-    modelHandle.startsWith("moonshot/") ||
-    modelHandle.startsWith("moonshotai/");
+    !catalogMoonshotAi &&
+    (explicitProviderType === "moonshot" ||
+      explicitProviderType === "moonshotai" ||
+      modelHandle.startsWith("moonshot/") ||
+      modelHandle.startsWith("moonshotai/"));
   const isZai =
     explicitProviderType === "zai" || modelHandle.startsWith("zai/");
   const isXai =
@@ -81,7 +84,8 @@ export function buildModelSettings(
     modelHandle.startsWith("google_vertex/");
   const isOpenRouter =
     explicitProviderType === "openrouter" ||
-    modelHandle.startsWith("openrouter/");
+    modelHandle.startsWith("openrouter/") ||
+    catalogMoonshotAi;
   const isBedrock =
     explicitProviderType === "bedrock" || modelHandle.startsWith("bedrock/");
 
