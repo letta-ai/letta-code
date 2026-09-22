@@ -229,9 +229,7 @@ function handleResultEvent(
         : undefined,
   };
 
-  if (event.is_error) {
-    state.finalError = getResultEnvelopeError(event);
-  }
+  state.finalError = event.is_error ? getResultEnvelopeError(event) : null;
 
   // Update state store with final stats
   updateSubagent(subagentId, {
