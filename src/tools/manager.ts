@@ -9,7 +9,7 @@ import {
   getSkillsDirectory,
 } from "@/agent/context";
 import { getModelInfo } from "@/agent/model";
-import { getAllSubagentConfigs } from "@/agent/subagents";
+import { getModelFacingSubagentDescriptors } from "@/agent/subagents";
 import { getBackend } from "@/backend";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { experimentManager } from "@/experiments/manager";
@@ -1277,15 +1277,9 @@ async function buildToolRegistry(
     let { description } = resolvedAssets;
     const { inputSchema } = resolvedAssets;
     if (internalName === "Task") {
-      const configs = await getAllSubagentConfigs(workingDirectory);
-      description = injectSubagentsIntoTaskDescription(
-        description,
-        Object.entries(configs).map(([name, config]) => ({
-          name,
-          description: config.description,
-          recommendedModel: config.recommendedModel,
-        })),
-      );
+      const subagents =
+        await getModelFacingSubagentDescriptors(workingDirectory);
+      description = injectSubagentsIntoTaskDescription(description, subagents);
     }
 
     const toolSchema: ToolSchema = {

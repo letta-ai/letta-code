@@ -11,6 +11,10 @@ export interface SubagentLaunchArgs {
   agent_id?: string;
   conversation_id?: string;
   computer?: string;
+  mcp?: {
+    inherit: boolean;
+    servers?: string[];
+  };
   max_turns?: number;
 }
 
