@@ -71,6 +71,7 @@ function buildMonitorResult(
   taskId: string,
   timeoutMs: number,
   persistent: boolean,
+  outputFile: string,
 ): MonitorResult {
   const lifetime = persistent
     ? "persistent — runs until TaskStop or session end"
@@ -79,7 +80,7 @@ function buildMonitorResult(
     content: [
       {
         type: "text",
-        text: `Monitor started (task ${taskId}, ${lifetime}). You will be notified on each event. Keep working — do not poll or sleep. Events may arrive while you are waiting for the user — an event is not their reply.`,
+        text: `Monitor started (task ${taskId}, ${lifetime}). You will be notified on each event. Keep working — do not poll or sleep. Events may arrive while you are waiting for the user — an event is not their reply.\nOutput file: ${outputFile}`,
       },
     ],
     taskId,
@@ -541,6 +542,7 @@ function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
     taskId,
     args.persistent ? 0 : args.timeout_ms,
     args.persistent,
+    outputFile,
   );
 }
 
@@ -741,6 +743,7 @@ function startWebSocketMonitor(args: NormalizedMonitorArgs): MonitorResult {
     taskId,
     args.persistent ? 0 : args.timeout_ms,
     args.persistent,
+    outputFile,
   );
 }
 

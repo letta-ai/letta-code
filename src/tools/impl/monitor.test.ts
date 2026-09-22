@@ -45,6 +45,13 @@ async function waitFor(
   }
 }
 
+/** The output file path as the model sees it in the Monitor tool result. */
+function outputFileOf(result: Awaited<ReturnType<typeof monitor>>): string {
+  const outputFile = result.content[0]?.text.match(/^Output file: (.+)$/m)?.[1];
+  if (!outputFile) throw new Error("Monitor result omitted its output file");
+  return outputFile;
+}
+
 describe("Monitor", () => {
   let scratchpad: string;
   let previousScratchpad: string | undefined;
@@ -317,8 +324,11 @@ describe("Monitor", () => {
     expect(event?.text).toContain("first\nsecond");
     expect(event?.text).not.toContain("warning");
 
-    const outputFile = backgroundProcesses.get(result.taskId)?.outputFile;
-    const output = readFileSync(outputFile as string, "utf8");
+    const outputFile = outputFileOf(result);
+    expect(outputFile).toBe(
+      backgroundProcesses.get(result.taskId)?.outputFile as string,
+    );
+    const output = readFileSync(outputFile, "utf8");
     expect(output).toContain("first");
     expect(output).toContain("warning");
   });
@@ -342,8 +352,7 @@ describe("Monitor", () => {
     expect(eventText).toContain("PASSWORD=&lt;REDACTED&gt;");
     expect(eventText).not.toContain(secret);
 
-    const outputFile = backgroundProcesses.get(result.taskId)?.outputFile;
-    const output = readFileSync(outputFile as string, "utf8");
+    const output = readFileSync(outputFileOf(result), "utf8");
     expect(output).toContain("PASSWORD=<REDACTED>");
     expect(output).not.toContain(secret);
   });
@@ -369,8 +378,7 @@ describe("Monitor", () => {
       killed: true,
     });
     expect(backgroundProcesses.get(result.taskId)?.status).toBe("failed");
-    const outputFile = backgroundProcesses.get(result.taskId)?.outputFile;
-    expect(readFileSync(outputFile as string, "utf8")).toContain("pending");
+    expect(readFileSync(outputFileOf(result), "utf8")).toContain("pending");
     await Bun.sleep(250);
     expect(
       queuedMessages.some((message) => message.text.includes("Monitor event")),
@@ -473,8 +481,7 @@ describe("Monitor", () => {
         `ws://127.0.0.1:${address.port}/events`,
       );
 
-      const outputFile = backgroundProcesses.get(result.taskId)?.outputFile;
-      const output = readFileSync(outputFile as string, "utf8");
+      const output = readFileSync(outputFileOf(result), "utf8");
       expect(output).toContain("first");
       expect(output).toContain("binary frame, 3 bytes");
       expect(output).toContain("[WebSocket closed: 1000 done]");
