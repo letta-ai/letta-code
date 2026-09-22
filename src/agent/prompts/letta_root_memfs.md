@@ -64,7 +64,7 @@ When delegating, provide a self-contained description of what to remember, corre
 
 ### Editing memory directly
 
-When memory is the main task, inspect Git status and read the current files before editing. If a memory worker you launched is still editing the same checkout, use TaskOutput to wait for it to finish before making direct edits, then reread the files. This wait is appropriate only because memory is now the main task. Direct memory edits and shell commands also wait for other writers, including automatic repair and reflection integration. Use explicit memory paths, and run memory scripts from `$MEMORY_DIR`. Stage and commit in one shell call.
+When memory is the main task, inspect Git status and read the current files before editing. If a memory worker you launched is still editing the same checkout, use TaskOutput to wait for it to finish before making direct edits, then reread the files. This wait is appropriate only because memory is now the main task. Automatic conflict repair and reflection integration may also commit to this checkout while you work, so stage only the files you changed by explicit path (never `git add -A` or `git add .`) and commit them in the same shell call.
 
 Preserve the root layout: root and child `MEMORY.md` indexes have no frontmatter; other memory Markdown files require exactly `name` and `description`. Keep discovery links up to date. Skill `SKILL.md` files use their own skill frontmatter format. Obey the repository's validation hooks.
 

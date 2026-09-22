@@ -23,7 +23,7 @@ Inspect `git status` before editing. If a merge or rebase is already in progress
 
 For a repair-only request, stop after repairing the existing operation; if it has already been resolved, make no changes.
 
-For an update or reorganization request, make the requested changes and commit only the files you changed. Use a concise commit message and the repository's configured authorship. Preserve required frontmatter and obey the repository's validation hooks. Do not push: the harness handles normal sync after you finish.
+For an update or reorganization request, make the requested changes and commit only the files you changed: stage them by explicit path, never with `git add -A` or `git add .`, because the primary agent may be editing other files in this checkout at the same time. Use a concise commit message and the repository's configured authorship. Preserve required frontmatter and obey the repository's validation hooks. Do not push: the harness handles normal sync after you finish.
 
 Return a brief report of actual changes or the unresolved blocker. Do not claim that an uncommitted edit or failed operation succeeded.
 
