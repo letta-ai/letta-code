@@ -45,7 +45,12 @@ type PeersResponse = {
 };
 
 type AgentDetailsResponse = {
+  name: string;
   hidden?: boolean | null;
+};
+
+type PeerGrantDetails = PeerGrant & {
+  name: string;
 };
 
 export interface PermissionsReport {
@@ -59,8 +64,8 @@ export interface PermissionsReport {
     default_role: OrganizationSharingResponse["defaultRole"];
   };
   explicit_shared_users: SharedUserGrant[];
-  direct_incoming_peer_grants: PeerGrant[];
-  direct_outgoing_peer_grants: PeerGrant[];
+  direct_incoming_peer_grants: PeerGrantDetails[];
+  direct_outgoing_peer_grants: PeerGrantDetails[];
 }
 
 interface PermissionsSubcommandDependencies {
@@ -101,7 +106,7 @@ async function filterVisiblePeerGrants(
   outgoing: PeerGrant[],
   request: typeof apiRequest,
   options: Parameters<typeof apiRequest>[3],
-): Promise<{ incoming: PeerGrant[]; outgoing: PeerGrant[] }> {
+): Promise<{ incoming: PeerGrantDetails[]; outgoing: PeerGrantDetails[] }> {
   const peerIds = [
     ...new Set([...incoming, ...outgoing].map((grant) => grant.agent_id)),
   ];
@@ -114,20 +119,26 @@ async function filterVisiblePeerGrants(
           undefined,
           options,
         );
-        return [peerId, agent.hidden !== true] as const;
+        return [peerId, agent.hidden === true ? null : agent.name] as const;
       } catch {
         // Match the Cloud UI: unresolved peer agents do not render.
-        return [peerId, false] as const;
+        return [peerId, null] as const;
       }
     }),
   );
-  const visiblePeerIds = new Set(
-    details.filter(([, visible]) => visible).map(([peerId]) => peerId),
+  const visiblePeerNames = new Map(
+    details.filter(
+      (entry): entry is readonly [string, string] => entry[1] !== null,
+    ),
   );
+  const enrich = (grant: PeerGrant): PeerGrantDetails | null => {
+    const name = visiblePeerNames.get(grant.agent_id);
+    return name ? { ...grant, name } : null;
+  };
 
   return {
-    incoming: incoming.filter((grant) => visiblePeerIds.has(grant.agent_id)),
-    outgoing: outgoing.filter((grant) => visiblePeerIds.has(grant.agent_id)),
+    incoming: incoming.map(enrich).filter((grant) => grant !== null),
+    outgoing: outgoing.map(enrich).filter((grant) => grant !== null),
   };
 }
 

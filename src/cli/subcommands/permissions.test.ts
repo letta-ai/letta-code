@@ -86,9 +86,13 @@ function makeRequest() {
         ],
       };
     }
-    if (path.endsWith("/agent-source")) return { hidden: false };
-    if (path.endsWith("/agent-target")) return {};
-    if (path.endsWith("/agent-hidden")) return { hidden: true };
+    if (path.endsWith("/agent-source")) {
+      return { name: "Research agent", hidden: false };
+    }
+    if (path.endsWith("/agent-target")) return { name: "Release agent" };
+    if (path.endsWith("/agent-hidden")) {
+      return { name: "Internal subagent", hidden: true };
+    }
     if (path.endsWith("/agent-missing")) throw new Error("Agent not found");
     throw new Error(`Unexpected request: ${method} ${path}`);
   };
@@ -154,10 +158,18 @@ describe("permissions subcommand", () => {
       });
     }
     expect(report.direct_incoming_peer_grants).toEqual([
-      { agent_id: "agent-source", role: "agent_peer" },
+      {
+        agent_id: "agent-source",
+        role: "agent_peer",
+        name: "Research agent",
+      },
     ]);
     expect(report.direct_outgoing_peer_grants).toEqual([
-      { agent_id: "agent-target", role: "agent_peer" },
+      {
+        agent_id: "agent-target",
+        role: "agent_peer",
+        name: "Release agent",
+      },
     ]);
     expect(JSON.stringify(report)).not.toContain("agent-hidden");
     expect(JSON.stringify(report)).not.toContain("agent-missing");
@@ -190,10 +202,18 @@ describe("permissions subcommand", () => {
           { user_id: "user-editor", role: "editor", user: null },
         ],
         direct_incoming_peer_grants: [
-          { agent_id: "agent-source", role: "agent_peer" },
+          {
+            agent_id: "agent-source",
+            role: "agent_peer",
+            name: "Research agent",
+          },
         ],
         direct_outgoing_peer_grants: [
-          { agent_id: "agent-target", role: "agent_peer" },
+          {
+            agent_id: "agent-target",
+            role: "agent_peer",
+            name: "Release agent",
+          },
         ],
       });
     } finally {
