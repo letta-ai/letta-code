@@ -132,3 +132,37 @@ test("a full page whose cursor cannot advance ends the export", async () => {
     JSON.parse(await readFile(handoff.transcriptPath, "utf8")),
   ).toHaveLength(100);
 });
+
+test("cancelling the task stops the transcript export", async () => {
+  root = await mkdtemp(join(tmpdir(), "memory-handoff-abort-"));
+  process.env.LETTA_TRANSCRIPT_ROOT = root;
+  const controller = new AbortController();
+  let receivedSignal: AbortSignal | undefined;
+  __testSetBackend({
+    listConversationMessages: async (
+      _conversationId: string,
+      _body: unknown,
+      options?: { signal?: AbortSignal },
+    ) => {
+      receivedSignal = options?.signal;
+      // A slow page: only the signal can end this request.
+      await new Promise<void>((_, reject) => {
+        options?.signal?.addEventListener("abort", () =>
+          reject(new Error("aborted")),
+        );
+      });
+      return { getPaginatedItems: () => [] };
+    },
+  } as unknown as Backend);
+  const handoff = prepareMemoryHandoff({
+    agentId: "agent-abort",
+    conversationId: "conv-abort",
+    memoryDir: join(root, "memory"),
+    assignment: "Remember the abort",
+    signal: controller.signal,
+  });
+  await Bun.sleep(10);
+  controller.abort();
+  await expect(handoff).rejects.toThrow("aborted");
+  expect(receivedSignal).toBe(controller.signal);
+});

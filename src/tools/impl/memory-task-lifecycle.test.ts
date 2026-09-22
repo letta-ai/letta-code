@@ -83,9 +83,10 @@ test.skipIf(process.platform === "win32")(
   },
 );
 
-test("interactive exit cancels memory tasks instead of waiting for them", async () => {
-  const controller = new AbortController();
-  let settled = false;
+function runningMemoryTask(
+  controller: AbortController,
+  completion: Promise<void>,
+) {
   backgroundTasks.set("memory", {
     description: "test",
     subagentType: "memory",
@@ -96,15 +97,31 @@ test("interactive exit cancels memory tasks instead of waiting for them", async 
     startTime: new Date(),
     runtimeScope: { agentId: "agent-parent", conversationId: "conv" },
     abortController: controller,
-    // Mirrors a worker whose lifecycle only settles once its signal fires.
-    completion: new Promise<void>((resolve) => {
+    completion,
+  });
+}
+
+test("interactive exit lets a quick worker finish without cancelling it", async () => {
+  const controller = new AbortController();
+  runningMemoryTask(controller, Bun.sleep(20));
+  await cancelBackgroundMemoryTasks(1_000);
+  expect(controller.signal.aborted).toBe(false);
+});
+
+test("interactive exit cancels a worker that outlives the grace period", async () => {
+  const controller = new AbortController();
+  let settled = false;
+  // Mirrors a worker whose lifecycle only settles once its signal fires.
+  runningMemoryTask(
+    controller,
+    new Promise<void>((resolve) => {
       controller.signal.addEventListener("abort", () => {
         settled = true;
         resolve();
       });
     }),
-  });
-  await cancelBackgroundMemoryTasks();
+  );
+  await cancelBackgroundMemoryTasks(50);
   expect(controller.signal.aborted).toBe(true);
   expect(settled).toBe(true);
 });

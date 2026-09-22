@@ -26,12 +26,15 @@ export async function prepareMemoryHandoff(params: {
   conversationId: string;
   memoryDir: string;
   assignment: string;
+  /** Cancelling the task must also stop a slow export, not just the child. */
+  signal?: AbortSignal;
 }): Promise<{ prompt: string; transcriptPath?: string }> {
   let transcriptPath: string | undefined;
   {
     const messages = [];
     let after: string | undefined;
     for (;;) {
+      params.signal?.throwIfAborted();
       const page = await getBackend().listConversationMessages(
         params.conversationId,
         {
@@ -40,6 +43,7 @@ export async function prepareMemoryHandoff(params: {
           limit: 100,
           ...(after ? { after } : {}),
         },
+        params.signal ? { signal: params.signal } : undefined,
       );
       // Both backends expose page items; only the API SDK provides an iterator.
       const items = page.getPaginatedItems();

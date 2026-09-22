@@ -6,6 +6,7 @@ import {
 import type { SubagentResult } from "@/agent/subagents";
 import { withMemoryHandoff } from "@/agent/subagents/memory-handoff";
 import { runMemoryWorker } from "@/agent/subagents/memory-worker";
+import { sleep } from "@/utils/sleep";
 import { appendToOutputFile, backgroundTasks } from "./process_manager";
 
 export interface RunBackgroundMemoryTaskParams {
@@ -63,7 +64,7 @@ export function runBackgroundMemoryTask(
     { ...scope, signal: params.signal },
     () =>
       withMemoryHandoff(
-        { ...scope, assignment: params.assignment },
+        { ...scope, assignment: params.assignment, signal: params.signal },
         async (handoff) => {
           const result = await params.execute(
             handoff.prompt,
@@ -120,9 +121,27 @@ export async function finishBackgroundMemoryTasks(
   }
 }
 
-/** Interactive exits do not wait for memory work: the child, its snapshot and its lock are torn down. */
-export async function cancelBackgroundMemoryTasks(): Promise<void> {
-  await finishBackgroundMemoryTasks(undefined, undefined, { cancel: true });
+/** Most workers finish within seconds; give them that before dropping their work. */
+const INTERACTIVE_EXIT_GRACE_MS = 10_000;
+
+/**
+ * Interactive exits wait briefly for running memory work, then cancel what is
+ * left so the child, its snapshot and its lock are torn down before the
+ * process goes. Work still in flight after the grace period is dropped.
+ */
+export async function cancelBackgroundMemoryTasks(
+  graceMs = INTERACTIVE_EXIT_GRACE_MS,
+): Promise<void> {
+  let expired = false;
+  await Promise.race([
+    finishBackgroundMemoryTasks(),
+    sleep(graceMs).then(() => {
+      expired = true;
+    }),
+  ]);
+  if (expired) {
+    await finishBackgroundMemoryTasks(undefined, undefined, { cancel: true });
+  }
 }
 
 /** Controlled process exits must account for tasks from previously active conversations too. */
