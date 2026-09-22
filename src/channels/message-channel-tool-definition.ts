@@ -237,7 +237,7 @@ export function buildMessageChannelDescriptionFromDiscovery(
     : "";
   const slackAttachmentDownload =
     discovery.activeChannels.includes("slack") && hasAction("download-file")
-      ? '\n\nSlack attachments that exceed the automatic download limit include an exact recovery instruction. Use action="download-file" with channel, chat_id, attachmentId, and messageId from that instruction. The action saves the file in the normal Slack inbound attachment directory and returns its local_path. Downloads that outlast the synchronous window return a task_id instead; wait for the local_path with TaskOutput (block: true, timeout: 600000) or cancel with TaskStop.'
+      ? '\n\nSlack attachments that exceed the automatic download limit include an exact recovery instruction. Use action="download-file" with channel, chat_id, attachmentId, and messageId from that instruction. The action saves the file in the normal Slack inbound attachment directory and returns its local_path. Downloads that outlast the synchronous window return a task_id and output file path; read that file later for the local_path or cancel with TaskStop.'
       : "";
   const slackThreadGuidance =
     scoped && discovery.activeChannels.includes("slack")

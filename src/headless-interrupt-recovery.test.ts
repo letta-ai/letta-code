@@ -25,7 +25,7 @@ const backend = new FakeHeadlessBackend("agent-headless-interrupt", {
     turns++;
     console.log(JSON.stringify({ type: "fixture_input", turn: turns, body: { messages: input.body.messages } }));
     if (turns === 1) {
-      await monitor({ description: "Watch headless interrupt events", persistent: true,
+      await monitor({ description: "Watch headless interrupt events",
         ws: { url: process.env.MONITOR_TEST_URL },
         parentScope: { agentId: input.agentId, conversationId: input.conversationId } });
     }

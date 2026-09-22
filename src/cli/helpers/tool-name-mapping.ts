@@ -53,8 +53,6 @@ export function getDisplayToolName(rawName: string): string {
 
   // Additional tools
   if (rawName === "KillBash") return "Kill Bash";
-  if (rawName === "BashOutput") return "Shell Output";
-  if (rawName === "TaskOutput") return "Task Output";
   if (rawName === "MultiEdit") return "Update";
 
   // No mapping found, return as-is
@@ -198,11 +196,9 @@ export function isShellTool(name: string): boolean {
 
 /**
  * Checks if a tool should use shell-style streaming output rendering.
- * Includes shell command tools plus TaskOutput/BashOutput pollers.
  */
 export function isShellOutputTool(name: string): boolean {
-  const n = name.toLowerCase();
-  return isShellTool(name) || n === "taskoutput" || n === "bashoutput";
+  return isShellTool(name);
 }
 
 /**

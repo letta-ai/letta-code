@@ -20,7 +20,7 @@ export const SLACK_ATTACHMENT_DOWNLOAD_YIELD_MS = 10_000;
 export type SlackAttachmentDownloadOutcome =
   | { outcome: "completed"; attachment: ChannelMessageAttachment }
   | { outcome: "failed"; error: string }
-  | { outcome: "backgrounded"; taskId: string };
+  | { outcome: "backgrounded"; taskId: string; outputFile: string };
 
 function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -30,8 +30,8 @@ function toErrorMessage(error: unknown): string {
  * Run a Slack attachment download with a bounded synchronous window.
  *
  * The download is registered in the shared background-process registry up
- * front so TaskOutput/TaskStop and the listener status snapshot see it from
- * the first byte. If it settles within the yield window the entry completes
+ * front so TaskStop and the listener status snapshot see it from the first
+ * byte. If it settles within the yield window the entry completes
  * immediately and the caller gets the direct result; otherwise the caller
  * gets the task id while the transfer keeps streaming in-process.
  */
@@ -101,7 +101,7 @@ export async function runSlackAttachmentDownloadTask(params: {
   const yieldPromise = new Promise<SlackAttachmentDownloadOutcome>(
     (resolve) => {
       timeoutHandle = setTimeout(
-        () => resolve({ outcome: "backgrounded", taskId }),
+        () => resolve({ outcome: "backgrounded", taskId, outputFile }),
         yieldTimeMs,
       );
     },

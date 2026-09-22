@@ -363,14 +363,6 @@ export function formatArgsDisplay(
             return { display, parsed };
           }
 
-          // TaskOutput: show task id with optional non-blocking marker
-          if (toolName.toLowerCase() === "taskoutput" && parsed.task_id) {
-            const taskId = String(parsed.task_id);
-            const isNonBlocking = parsed.block === false;
-            display = isNonBlocking ? `(non-blocking) ${taskId}` : taskId;
-            return { display, parsed };
-          }
-
           // write_stdin is part of Codex unified exec: keep it on the shell
           // rendering path, but don't dump raw polling/truncation args in the
           // transcript header.

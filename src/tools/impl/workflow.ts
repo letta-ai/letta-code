@@ -6,7 +6,7 @@
  *
  * The run happens in the background: the tool validates the script, registers
  * a background task, and returns at once with the task id. Progress lines go
- * to the task's output file (for TaskOutput). Completion queues a task
+ * to the task's output file. Completion queues a task
  * notification through the message-queue bridge, exactly like background
  * Bash, Monitor, and background subagents, so all three host paths (TUI,
  * headless, listener) wake the model the same way.
@@ -440,8 +440,9 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
       `Summary: ${meta.description}`,
       `Script file: ${scriptPath}`,
       `Journal: ${journalPath} (one line per completed agent)`,
+      `Output file: ${outputFile}`,
       "",
-      "You will be notified when it completes. Do not poll or sleep — keep working or end your turn. TaskOutput reads the progress log; TaskStop aborts the run; the user can watch live status with /workflows.",
+      "You will be notified when it completes. Do not poll or sleep — keep working or end your turn. Read the output file only when you need interim progress; TaskStop aborts the run; the user can watch live status with /workflows.",
     ].join("\n"),
     status: "success",
   };

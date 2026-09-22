@@ -43,7 +43,7 @@ async function downloadSlackFile(
   if (result.outcome === "backgrounded") {
     return [
       `Slack attachment download is still running in the background (task_id: ${result.taskId}).`,
-      `Check on it with TaskOutput (task_id: ${result.taskId}, block: true, timeout: 600000) to wait for the local_path, or TaskStop to cancel.`,
+      `Read ${result.outputFile} later to get the local_path, or use TaskStop to cancel.`,
       "You will not be notified automatically when it finishes.",
     ].join(" ");
   }

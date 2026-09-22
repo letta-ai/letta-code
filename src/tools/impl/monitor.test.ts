@@ -30,7 +30,6 @@ import {
 } from "./monitor";
 import { MONITOR_EVENT_BUFFER_CHARS } from "./monitor-event-stream";
 import { backgroundProcesses } from "./process_manager";
-import { task_output } from "./task-output";
 import { task_stop } from "./task-stop";
 
 async function waitFor(
@@ -108,15 +107,12 @@ describe("Monitor", () => {
     );
     expect(MonitorSchema.properties.timeout_ms).toMatchObject({
       minimum: 1000,
+      maximum: 3600000,
       default: 300000,
       description:
-        "Kill the monitor after this deadline. Default 300000ms, max 3600000ms. Ignored when persistent is true.",
+        "Deadline in milliseconds. Default 300000ms, max 3600000ms; the effective deadline is at most 1800000ms.",
     });
-    expect(MonitorSchema.properties.persistent).toMatchObject({
-      default: false,
-      description:
-        "Run for the lifetime of the session (no timeout). Use for session-length watches like PR monitoring or log tails. Stop with TaskStop.",
-    });
+    expect(MonitorSchema.properties).not.toHaveProperty("persistent");
     expect(MonitorSchema.properties.ws.properties.protocols).not.toHaveProperty(
       "uniqueItems",
     );
@@ -127,7 +123,6 @@ describe("Monitor", () => {
       monitor({
         description: "invalid",
         timeout_ms: 999,
-        persistent: false,
         command: "echo hi",
       }),
     ).rejects.toThrow("timeout_ms");
@@ -135,7 +130,6 @@ describe("Monitor", () => {
       monitor({
         description: "invalid",
         timeout_ms: 1000,
-        persistent: false,
         command: "echo hi",
         ws: { url: "wss://example.com" },
       }),
@@ -144,7 +138,6 @@ describe("Monitor", () => {
       monitor({
         description: "invalid",
         timeout_ms: 1000,
-        persistent: false,
         ws: { url: "https://example.com" },
       }),
     ).rejects.toThrow("ASCII ws:// or wss://");
@@ -152,7 +145,6 @@ describe("Monitor", () => {
       monitor({
         description: "invalid",
         timeout_ms: 1000,
-        persistent: false,
         ws: { url: "wss://example.com/a b" },
       }),
     ).rejects.toThrow("ASCII ws:// or wss://");
@@ -160,7 +152,6 @@ describe("Monitor", () => {
       monitor({
         description: "invalid",
         timeout_ms: 1000,
-        persistent: false,
         ws: {
           url: "wss://example.com",
           protocols: ["events", "events"],
@@ -187,7 +178,6 @@ describe("Monitor", () => {
         monitor({
           ...source,
           description: "Interrupted before startup",
-          persistent: true,
           signal: controller.signal,
         }),
       ).rejects.toMatchObject({ name: "AbortError" });
@@ -221,7 +211,6 @@ describe("Monitor", () => {
         {
           description: "Delayed startup",
           command: nodeCommand("setInterval(() => {}, 1000)"),
-          persistent: true,
         },
         { toolContextId: prepared.contextId, signal: controller.signal },
       );
@@ -287,11 +276,23 @@ describe("Monitor", () => {
     );
   });
 
+  test("caps the effective deadline at thirty minutes", async () => {
+    const result = await monitor({
+      description: "bounded deadline",
+      timeout_ms: 3_600_000,
+      command: nodeCommand('process.stdout.write("done\\n")'),
+    });
+
+    expect(result).toMatchObject({ timeoutMs: 1_800_000, persistent: false });
+    await waitFor(
+      () => backgroundProcesses.get(result.taskId)?.status === "completed",
+    );
+  });
+
   test("streams command stdout as scoped notifications and records stderr", async () => {
     const result = await monitor({
       description: "build output",
       timeout_ms: 5000,
-      persistent: false,
       command: nodeCommand(
         'process.stdout.write("first\\nsecond\\n"); process.stderr.write("warning\\n")',
       ),
@@ -318,14 +319,10 @@ describe("Monitor", () => {
     expect(event?.text).toContain("first\nsecond");
     expect(event?.text).not.toContain("warning");
 
-    const output = await task_output({
-      task_id: result.taskId,
-      block: false,
-      timeout: 1000,
-    });
-    expect(output.status).toBe("completed");
-    expect(output.message).toContain("first");
-    expect(output.message).toContain("warning");
+    const outputFile = backgroundProcesses.get(result.taskId)?.outputFile;
+    const output = readFileSync(outputFile as string, "utf8");
+    expect(output).toContain("first");
+    expect(output).toContain("warning");
   });
 
   test("redacts split invocation secrets from notifications and stored output", async () => {
@@ -333,7 +330,6 @@ describe("Monitor", () => {
     const result = await monitor({
       description: "secret output",
       timeout_ms: 5000,
-      persistent: false,
       command: nodeCommand(
         "const value = process.env.PASSWORD ?? ''; process.stdout.write(value.slice(0, 2)); setTimeout(() => process.stdout.write(value.slice(2) + '\\n'), 25)",
       ),
@@ -347,31 +343,24 @@ describe("Monitor", () => {
     expect(eventText).toContain("PASSWORD=&lt;REDACTED&gt;");
     expect(eventText).not.toContain(secret);
 
-    const output = await task_output({
-      task_id: result.taskId,
-      block: false,
-      timeout: 1000,
-    });
-    expect(output.message).toContain("PASSWORD=<REDACTED>");
-    expect(output.message).not.toContain(secret);
-
     const outputFile = backgroundProcesses.get(result.taskId)?.outputFile;
-    expect(readFileSync(outputFile as string, "utf8")).not.toContain(secret);
+    const output = readFileSync(outputFile as string, "utf8");
+    expect(output).toContain("PASSWORD=<REDACTED>");
+    expect(output).not.toContain(secret);
   });
 
-  test("persistent command monitors can be stopped with TaskStop", async () => {
+  test("running command monitors can be stopped with TaskStop", async () => {
     const result = await monitor({
       description: "long process",
-      timeout_ms: 1000,
-      persistent: true,
+      timeout_ms: 5000,
       command: nodeCommand(
         'process.stdout.write("pending\\n"); setInterval(() => {}, 1000)',
       ),
     });
 
     expect(result).toMatchObject({
-      timeoutMs: 0,
-      persistent: true,
+      timeoutMs: 5000,
+      persistent: false,
     });
     await waitFor(
       () => (backgroundProcesses.get(result.taskId)?.totalStdoutLines ?? 0) > 0,
@@ -380,15 +369,8 @@ describe("Monitor", () => {
       killed: true,
     });
     expect(backgroundProcesses.get(result.taskId)?.status).toBe("failed");
-    expect(
-      (
-        await task_output({
-          task_id: result.taskId,
-          block: false,
-          timeout: 1000,
-        })
-      ).message,
-    ).toContain("pending");
+    const outputFile = backgroundProcesses.get(result.taskId)?.outputFile;
+    expect(readFileSync(outputFile as string, "utf8")).toContain("pending");
     await Bun.sleep(250);
     expect(
       queuedMessages.some((message) => message.text.includes("Monitor event")),
@@ -399,7 +381,6 @@ describe("Monitor", () => {
     const result = await monitor({
       description: "output write failure",
       timeout_ms: 5_000,
-      persistent: false,
       command: nodeCommand(
         'process.stdout.write("start\\n"); setTimeout(() => process.stdout.write("after\\n"), 1000); setTimeout(() => {}, 30000)',
       ),
@@ -418,7 +399,6 @@ describe("Monitor", () => {
     const result = await monitor({
       description: "large output",
       timeout_ms: 5000,
-      persistent: false,
       command: nodeCommand(
         `process.stdout.write("x".repeat(${MONITOR_OUTPUT_FILE_BYTES}), () => setTimeout(() => process.stdout.write("y"), 250))`,
       ),
@@ -439,7 +419,6 @@ describe("Monitor", () => {
     const result = await monitor({
       description: "slow process",
       timeout_ms: 1000,
-      persistent: false,
       command: nodeCommand("setInterval(() => {}, 1000)"),
     });
 
@@ -471,7 +450,6 @@ describe("Monitor", () => {
       const result = await monitor({
         description: "socket events",
         timeout_ms: 5000,
-        persistent: false,
         command: "",
         ws: {
           url: `ws://127.0.0.1:${address.port}/events?token=secret`,
@@ -491,15 +469,12 @@ describe("Monitor", () => {
         `ws://127.0.0.1:${address.port}/events`,
       );
 
-      const output = await task_output({
-        task_id: result.taskId,
-        block: false,
-        timeout: 1000,
-      });
-      expect(output.message).toContain("first");
-      expect(output.message).toContain("binary frame, 3 bytes");
-      expect(output.message).toContain("[WebSocket closed: 1000 done]");
-      expect(output.message).not.toContain("\u001b[31m");
+      const outputFile = backgroundProcesses.get(result.taskId)?.outputFile;
+      const output = readFileSync(outputFile as string, "utf8");
+      expect(output).toContain("first");
+      expect(output).toContain("binary frame, 3 bytes");
+      expect(output).toContain("[WebSocket closed: 1000 done]");
+      expect(output).not.toContain("\u001b[31m");
     } finally {
       for (const client of server.clients) {
         client.terminate();
@@ -587,7 +562,7 @@ describe("Monitor", () => {
     }
   });
 
-  test("persistent WebSocket monitors can be stopped with TaskStop", async () => {
+  test("running WebSocket monitors can be stopped with TaskStop", async () => {
     const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
     await new Promise<void>((resolve) => server.once("listening", resolve));
     const address = server.address();
@@ -598,9 +573,8 @@ describe("Monitor", () => {
 
     try {
       const result = await monitor({
-        description: "persistent socket",
-        timeout_ms: 1000,
-        persistent: true,
+        description: "running socket",
+        timeout_ms: 5000,
         ws: { url: `ws://127.0.0.1:${address.port}` },
       });
       await waitFor(

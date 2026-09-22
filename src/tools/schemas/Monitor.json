@@ -8,13 +8,9 @@
     "timeout_ms": {
       "type": "number",
       "minimum": 1000,
+      "maximum": 3600000,
       "default": 300000,
-      "description": "Kill the monitor after this deadline. Default 300000ms, max 3600000ms. Ignored when persistent is true."
-    },
-    "persistent": {
-      "type": "boolean",
-      "default": false,
-      "description": "Run for the lifetime of the session (no timeout). Use for session-length watches like PR monitoring or log tails. Stop with TaskStop."
+      "description": "Deadline in milliseconds. Default 300000ms, max 3600000ms; the effective deadline is at most 1800000ms."
     },
     "command": {
       "type": "string",
