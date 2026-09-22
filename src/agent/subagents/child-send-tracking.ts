@@ -88,6 +88,12 @@ function waitForChildRun(
  * `active_subagent_count`) and follow the enqueue receipt until that specific
  * Super Run settles. Tracking is bound to the receipt, so a later direct chat
  * with the child never keeps the parent's indicator lit.
+ *
+ * The entry is deliberately not a background subagent. The child runs on its
+ * own machine, so the parent has no work of its own to keep alive; Cloud reads
+ * `is_background` as a sandbox keep-alive claim and an ownership hold
+ * (sandboxActivityClaims, conversationRuntimeStatusResolver), and this entry
+ * must light the roster and badges without changing either.
  */
 export function trackChildSend(input: TrackChildSendInput): string {
   const { receipt, child, parentScope } = input;
@@ -97,7 +103,7 @@ export function trackChildSend(input: TrackChildSendInput): string {
     child.type,
     child.name,
     undefined,
-    true,
+    false,
     false,
     parentScope,
     input.prompt,
