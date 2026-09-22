@@ -289,6 +289,7 @@ describe("prepared conversation launch", () => {
     { conversation_id: "conv-child", model: "do-not-override" },
     { conversation_id: "conv-child", client_message_id: "" },
     { conversation_id: "conv-child", client_message_id: "  " },
+    { conversation_id: "conv-child", reasoning_effort: "high" },
   ])("rejects invalid prepared launches before spawning %j", async (input) => {
     const result = await launchSubagent({
       subagent_type: "custom",

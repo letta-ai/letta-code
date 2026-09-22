@@ -780,12 +780,13 @@ export async function launchSubagent(
     prepared &&
     (!args.conversation_id ||
       args.conversation_id === "default" ||
-      args.model !== undefined)
+      args.model !== undefined ||
+      args.reasoning_effort !== undefined)
   ) {
     return {
       success: false,
       error:
-        "custom requires a prepared conversation_id; configure its model before launching.",
+        "custom requires a prepared conversation_id; configure its model and reasoning effort before launching.",
     };
   }
   if (
