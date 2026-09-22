@@ -29,7 +29,11 @@ function isAlive(pid: number): boolean {
   }
 }
 
-/** Start time of a process as the OS reports it; null when it cannot be read. */
+/**
+ * Start time of a process as the OS reports it; null when it cannot be read.
+ * Rendered in UTC with the C locale so every Letta process on the machine
+ * produces the same string for the same holder regardless of its own TZ.
+ */
 async function processStartTime(pid: number): Promise<string | null> {
   try {
     const { stdout } =
@@ -39,7 +43,11 @@ async function processStartTime(pid: number): Promise<string | null> {
             "-Command",
             `(Get-Process -Id ${pid}).StartTime.ToFileTimeUtc()`,
           ])
-        : await promisify(execFile)("ps", ["-o", "lstart=", "-p", String(pid)]);
+        : await promisify(execFile)(
+            "ps",
+            ["-o", "lstart=", "-p", String(pid)],
+            { env: { ...process.env, TZ: "UTC", LC_ALL: "C" } },
+          );
     const started = stdout.trim();
     return started.length > 0 ? started : null;
   } catch {

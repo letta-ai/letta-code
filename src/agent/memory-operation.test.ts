@@ -101,34 +101,58 @@ test("a lease whose pid now belongs to another process is reclaimed", async () =
   await release?.();
 });
 
-test("a paused holder keeps its lease", async () => {
-  const root = repository();
-  const holder = Bun.spawn(
-    [
-      process.execPath,
-      "-e",
-      `import { claimMemoryOperation } from ${JSON.stringify(join(import.meta.dir, "memory-operation.ts"))}; await claimMemoryOperation(process.argv[1]); console.log("held"); setInterval(() => {}, 1000);`,
-      root,
-    ],
-    { stdout: "pipe", stderr: "pipe" },
-  );
-  try {
-    const reader = holder.stdout.getReader();
-    await reader.read();
-    reader.releaseLock();
-    // Stop the holder outright: no heartbeat could ever be sent from here.
-    holder.kill("SIGSTOP");
-    expect(await claimMemoryOperation(root)).toBeNull();
-  } finally {
-    holder.kill("SIGKILL");
-    await holder.exited;
-  }
-});
+test.skipIf(process.platform === "win32")(
+  "a paused holder keeps its lease",
+  async () => {
+    const root = repository();
+    const holder = Bun.spawn(
+      [
+        process.execPath,
+        "-e",
+        `import { claimMemoryOperation } from ${JSON.stringify(join(import.meta.dir, "memory-operation.ts"))}; await claimMemoryOperation(process.argv[1]); console.log("held"); setInterval(() => {}, 1000);`,
+        root,
+      ],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+    try {
+      const reader = holder.stdout.getReader();
+      await reader.read();
+      reader.releaseLock();
+      // Stop the holder outright: no heartbeat could ever be sent from here.
+      holder.kill("SIGSTOP");
+      expect(await claimMemoryOperation(root)).toBeNull();
+    } finally {
+      holder.kill("SIGKILL");
+      await holder.exited;
+    }
+  },
+);
 
 test("an unreadable owner file does not wedge the checkout", async () => {
   const root = repository();
   writeFileSync(join(root, ".git", "letta-memory-operation.json"), "{not json");
   const release = await claimMemoryOperation(root);
   expect(release).not.toBeNull();
+  await release?.();
+});
+
+test("the recorded start time does not depend on the holder's timezone", async () => {
+  const root = repository();
+  const release = await claimMemoryOperation(root);
+  const other = Bun.spawn(
+    [
+      process.execPath,
+      "-e",
+      `import { claimMemoryOperation } from ${JSON.stringify(join(import.meta.dir, "memory-operation.ts"))}; console.log(await claimMemoryOperation(process.argv[1]) === null);`,
+      root,
+    ],
+    {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, TZ: "Asia/Kolkata" },
+    },
+  );
+  expect(await other.exited).toBe(0);
+  expect((await new Response(other.stdout).text()).trim()).toBe("true");
   await release?.();
 });
