@@ -157,7 +157,7 @@ describe("formatChannelNotification", () => {
     expect(xml).toContain(
       "same Slack inbound attachment directory and returns its local_path",
     );
-    expect(xml).toContain("return a task_id and output file path");
+    expect(xml).toContain("a task notification delivers the local_path");
     expect(xml).toContain("Do not ask the sender to reattach it.");
     expect(xml).toContain(
       "<download-instruction>This file is 41.7 MiB, above the 20 MiB automatic download limit. Call MessageChannel",

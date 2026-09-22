@@ -192,7 +192,7 @@ function buildAttachmentXml(
             }. `
           : "";
       children.push(
-        `<download-instruction>${sizeNote}Call ${action}. The tool downloads the file into the same Slack inbound attachment directory and returns its local_path. Large downloads return a task_id and output file path instead of blocking; read that file later for the local_path. Do not ask the sender to reattach it.</download-instruction>`,
+        `<download-instruction>${sizeNote}Call ${action}. The tool downloads the file into the same Slack inbound attachment directory and returns its local_path. Large downloads continue in the background instead of blocking; a task notification delivers the local_path when they finish. Do not ask the sender to reattach it.</download-instruction>`,
       );
     } else {
       children.push(

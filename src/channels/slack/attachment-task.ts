@@ -3,11 +3,17 @@ import {
   appendBackgroundProcessOutput,
   appendToOutputFile,
   assertBackgroundProcessCapacity,
+  type BackgroundProcess,
   backgroundProcesses,
   createBackgroundOutputFile,
   getNextDownloadId,
   scheduleBackgroundProcessCleanup,
 } from "@/tools/impl/process_manager";
+import { addToMessageQueue } from "@/utils/message-queue-bridge";
+import {
+  formatTaskNotification,
+  resolveNotificationScope,
+} from "@/utils/task-notifications";
 
 /**
  * How long an explicit Slack attachment download may run inside the tool call
@@ -33,7 +39,8 @@ function toErrorMessage(error: unknown): string {
  * front so TaskStop and the listener status snapshot see it from the first
  * byte. If it settles within the yield window the entry completes
  * immediately and the caller gets the direct result; otherwise the caller
- * gets the task id while the transfer keeps streaming in-process.
+ * gets the task id while the transfer keeps streaming in-process, and a task
+ * notification reports the local_path (or failure) once it settles.
  */
 export async function runSlackAttachmentDownloadTask(params: {
   description: string;
@@ -46,7 +53,11 @@ export async function runSlackAttachmentDownloadTask(params: {
   const taskId = getNextDownloadId();
   const outputFile = createBackgroundOutputFile(taskId);
   const abortController = new AbortController();
-  const processState = {
+  // Resolve now: by the time a slow download settles, the process-global agent
+  // context may point at a different conversation.
+  const notificationScope = resolveNotificationScope(params.runtimeScope);
+  let backgrounded = false;
+  const processState: BackgroundProcess = {
     process: {
       kill: () => {
         abortController.abort();
@@ -54,10 +65,10 @@ export async function runSlackAttachmentDownloadTask(params: {
       },
     },
     command: params.description,
-    stdout: [] as string[],
-    stderr: [] as string[],
-    status: "running" as "running" | "completed" | "failed",
-    exitCode: null as number | null,
+    stdout: [],
+    stderr: [],
+    status: "running",
+    exitCode: null,
     lastReadIndex: { stdout: 0, stderr: 0 },
     startTime: new Date(),
     outputFile,
@@ -68,6 +79,25 @@ export async function runSlackAttachmentDownloadTask(params: {
   backgroundProcesses.set(taskId, processState);
   appendToOutputFile(outputFile, `${params.description}\n`);
 
+  const notifyIfBackgrounded = (
+    status: "completed" | "failed",
+    result: string,
+  ) => {
+    // TaskStop suppresses the notification for a download it cancelled.
+    if (!backgrounded || processState.completionNotificationSuppressed) return;
+    addToMessageQueue({
+      kind: "task_notification",
+      text: formatTaskNotification({
+        taskId,
+        status,
+        summary: `${params.description} ${status}`,
+        result,
+        outputFile,
+      }),
+      ...notificationScope,
+    });
+  };
+
   const downloadPromise = params
     .download(abortController.signal)
     .then((attachment) => {
@@ -77,22 +107,18 @@ export async function runSlackAttachmentDownloadTask(params: {
       appendBackgroundProcessOutput(processState, "stdout", line);
       appendToOutputFile(outputFile, `${line}\n`);
       scheduleBackgroundProcessCleanup(taskId);
+      notifyIfBackgrounded("completed", line);
       return { outcome: "completed" as const, attachment };
     })
     .catch((error: unknown) => {
       const message = toErrorMessage(error);
+      const line = `Slack attachment download failed: ${message}`;
       processState.status = "failed";
       processState.exitCode = 1;
-      appendBackgroundProcessOutput(
-        processState,
-        "stderr",
-        `Slack attachment download failed: ${message}`,
-      );
-      appendToOutputFile(
-        outputFile,
-        `Slack attachment download failed: ${message}\n`,
-      );
+      appendBackgroundProcessOutput(processState, "stderr", line);
+      appendToOutputFile(outputFile, `${line}\n`);
       scheduleBackgroundProcessCleanup(taskId);
+      notifyIfBackgrounded("failed", line);
       return { outcome: "failed" as const, error: message };
     });
 
@@ -100,10 +126,10 @@ export async function runSlackAttachmentDownloadTask(params: {
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   const yieldPromise = new Promise<SlackAttachmentDownloadOutcome>(
     (resolve) => {
-      timeoutHandle = setTimeout(
-        () => resolve({ outcome: "backgrounded", taskId, outputFile }),
-        yieldTimeMs,
-      );
+      timeoutHandle = setTimeout(() => {
+        backgrounded = true;
+        resolve({ outcome: "backgrounded", taskId, outputFile });
+      }, yieldTimeMs);
     },
   );
 
