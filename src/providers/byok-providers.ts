@@ -123,6 +123,15 @@ export const CLOUD_BYOK_PROVIDERS: readonly ByokProvider[] = [
     isOAuth: true,
   },
   {
+    id: "grok",
+    displayName: "xAI (Grok/X subscription)",
+    description: "Connect a subscription account",
+    providerType: "xai",
+    providerName: "lc-xai",
+    isOAuth: true,
+    oauthProviderId: "xai",
+  },
+  {
     id: "anthropic",
     displayName: "Claude API",
     description: "Connect an Anthropic API key",
@@ -864,4 +873,12 @@ export function getProviderConfig(
   target: ProviderStorageTarget = defaultProviderStorageTarget(),
 ): ByokProvider | undefined {
   return getProviderConfigs(target).find((p) => p.id === id);
+}
+
+export function isXaiOAuthProvider(provider: ByokProvider): boolean {
+  return (
+    provider.isOAuth === true &&
+    provider.providerType === "xai" &&
+    provider.oauthProviderId === "xai"
+  );
 }

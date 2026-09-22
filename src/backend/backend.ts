@@ -12,6 +12,16 @@ import type {
   ForkConversationOptions,
   forkConversation as forkConversationRequest,
 } from "./api/conversations";
+import {
+  type CloudReflectionConfig,
+  retrieveCloudReflectionConfig,
+} from "./api/reflection";
+import {
+  postReflectionRun,
+  REFLECTION_UNSUPPORTED,
+  type ReflectionRunReceipt,
+  type ReflectionRunRequest,
+} from "./api/reflection-runs";
 import { isCloudServerUrl } from "./api/server-url";
 import {
   type BackendMode,
@@ -199,6 +209,19 @@ export interface Backend {
     body: AgentUpdateBody,
     options?: AgentUpdateOptions,
   ): Promise<Awaited<ReturnType<APIClient["agents"]["update"]>>>;
+
+  /** Null means a known non-Cloud API server; lookup errors must propagate. */
+  retrieveReflectionConfig?(
+    agentId: string,
+    options?: { headers: Record<string, string> },
+  ): Promise<CloudReflectionConfig | null>;
+
+  /** Cloud admission only; unsupported backends must not run local reflection. */
+  enqueueReflectionRun?(
+    agentId: string,
+    request: ReflectionRunRequest,
+    options?: { headers: Record<string, string> },
+  ): Promise<ReflectionRunReceipt>;
 
   /** Optional until every backend supports server-backed agent secrets. */
   listAgentSecrets?(agentId: string): Promise<AgentSecret[]>;
@@ -390,6 +413,37 @@ export class APIBackend implements Backend {
       },
     );
     return request;
+  }
+
+  async retrieveReflectionConfig(
+    agentId: string,
+    options?: { headers: Record<string, string> },
+  ): Promise<CloudReflectionConfig | null> {
+    if (!isCloudServerUrl()) return null;
+    const headers = options ? { ...options.headers } : undefined;
+    const client = await this.getClient();
+    const config = await retrieveCloudReflectionConfig(
+      agentId,
+      (_method, path) => client.get(path, { headers, maxRetries: 0 }),
+    );
+    if (!config || typeof config.cutover !== "boolean") {
+      throw new Error(
+        "Unable to determine reflection ownership: missing cutover configuration.",
+      );
+    }
+    return config;
+  }
+
+  async enqueueReflectionRun(
+    agentId: string,
+    request: ReflectionRunRequest,
+    options?: { headers: Record<string, string> },
+  ): Promise<ReflectionRunReceipt> {
+    if (!isCloudServerUrl()) throw new Error(REFLECTION_UNSUPPORTED);
+    const body = { ...request };
+    const headers = options ? { headers: { ...options.headers } } : undefined;
+    const client = await this.getClient();
+    return postReflectionRun(client, agentId, body, headers);
   }
 
   async listAgentSecrets(agentId: string): Promise<AgentSecret[]> {
@@ -622,10 +676,16 @@ export function getLocalBackendStorageDir(homeDir = homedir()): string {
   return getLocalBackendStorageDirFromPaths(homeDir);
 }
 
-function localBackendExecutionMode(): "deterministic" | "pi" {
-  return process.env.LETTA_LOCAL_BACKEND_EXECUTOR === "deterministic"
-    ? "deterministic"
-    : "pi";
+function localBackendExecutionMode():
+  | "deterministic"
+  | "deterministic-reflection"
+  | "pi" {
+  const configuredMode = process.env.LETTA_LOCAL_BACKEND_EXECUTOR;
+  if (configuredMode === "deterministic") return "deterministic";
+  if (configuredMode === "deterministic-reflection") {
+    return "deterministic-reflection";
+  }
+  return "pi";
 }
 
 function createExperimentalLocalBackend(): Backend {

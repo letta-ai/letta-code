@@ -1,6 +1,21 @@
 {
   "tests": [
     {
+      "path": "src/websocket/listener/turn-cleanup-memory-update.e2e.test.ts",
+      "timeoutMs": 30000,
+      "reason": "Exercises real MemFS Git pushes and listener notifications with isolated HOME, settings, backend, auth environment, and repository-list fetch."
+    },
+    {
+      "path": "src/tools/impl/task-fork-receipt.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Replaces billing I/O and the child process while exercising real fork launch state and task receipts with process-global backend, settings, and subagent state."
+    },
+    {
+      "path": "src/tools/impl/task-computer-routing.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Mocks subagent discovery and the child-process launch boundary while exercising task() with process-global backend and subagent state."
+    },
+    {
       "path": "src/websocket/listener/turn-cleanup-shared-memory.e2e.test.ts",
       "timeoutMs": 30000,
       "reason": "Runs real Git pushes while replacing global fetch and mutating the backend, settings, auth environment, MemFS URL, and a synthetic agent mount."
@@ -186,14 +201,14 @@
       "reason": "Uses a top-level Bun module mock for the backend client."
     },
     {
-      "path": "src/tools/toolset-memfs-detach.test.ts",
-      "timeoutMs": 15000,
-      "reason": "Uses a top-level Bun module mock for the backend client."
-    },
-    {
       "path": "src/websocket/listen-client-concurrency.test.ts",
       "timeoutMs": 30000,
       "reason": "Uses several top-level Bun module mocks and exercises real concurrent listener state."
+    },
+    {
+      "path": "src/websocket/launch-subagent.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Runs a real App Server and child CLI while mutating HOME, settings, backend, environment, background tasks, and subagent state."
     },
     {
       "path": "src/websocket/listener/auth-lifecycle.test.ts",

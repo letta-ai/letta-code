@@ -63,7 +63,7 @@ jobs:
           letta_args: --new
           track_progress: ""
           tracking_comment: "false"
-          model: auto
+          model: letta/auto
           prompt: |
             You are reviewing PR #${{ env.PR_NUMBER }} in ${{ github.repository }}.
 
@@ -210,6 +210,30 @@ jobs:
             5. If nothing to flag, respond with exactly: `LGTM`
             6. If you leave inline review comments, respond with exactly: `Left comments`
 
+      - name: React based on review outcome
+        if: steps.letta_review.outputs.execution_file != ''
+        run: |
+          # Parse the agent's final response from the execution file before the
+          # expert review action reuses the action's shared output path.
+          RESULT=$(cat "${{ steps.letta_review.outputs.execution_file }}" \
+            | jq -r '[.[] | select(.type == "result") | .result] | last // ""')
+          echo "Review result: $RESULT"
+
+          if echo "$RESULT" | grep -qi "LGTM"; then
+            # LGTM — delete eyes, add rocket
+            if [ -n "${{ steps.eyes_reaction.outputs.reaction_id }}" ]; then
+              gh api repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/reactions/${{ steps.eyes_reaction.outputs.reaction_id }} \
+                -X DELETE || true
+            fi
+            gh api repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/reactions \
+              -X POST -f content="rocket"
+          else
+            # Comments left — keep eyes, no rocket
+            echo "Comments left — keeping eyes reaction"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.AMELIA_GITHUB_TOKEN }}
+
       - name: Load expert review prompt
         id: expert_review_prompt
         if: steps.letta_review.outcome == 'success'
@@ -233,7 +257,7 @@ jobs:
           letta_args: --new
           track_progress: ""
           tracking_comment: "false"
-          model: auto
+          model: letta/auto
           prompt: ${{ steps.expert_review_prompt.outputs.value }}
 
       - name: Report expert review outcome
@@ -242,26 +266,3 @@ jobs:
           RESULT=$(cat "${{ steps.expert_review.outputs.execution_file }}" \
             | jq -r '[.[] | select(.type == "result") | .result] | last // ""')
           echo "Expert review result: $RESULT"
-
-      - name: React based on review outcome
-        if: steps.letta_review.outputs.execution_file != ''
-        run: |
-          # Parse the agent's final response from the execution file
-          RESULT=$(cat "${{ steps.letta_review.outputs.execution_file }}" \
-            | jq -r '[.[] | select(.type == "result") | .result] | last // ""')
-          echo "Review result: $RESULT"
-
-          if echo "$RESULT" | grep -qi "LGTM"; then
-            # LGTM — delete eyes, add rocket
-            if [ -n "${{ steps.eyes_reaction.outputs.reaction_id }}" ]; then
-              gh api repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/reactions/${{ steps.eyes_reaction.outputs.reaction_id }} \
-                -X DELETE || true
-            fi
-            gh api repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/reactions \
-              -X POST -f content="rocket"
-          else
-            # Comments left — keep eyes, no rocket
-            echo "Comments left — keeping eyes reaction"
-          fi
-        env:
-          GH_TOKEN: ${{ secrets.AMELIA_GITHUB_TOKEN }}

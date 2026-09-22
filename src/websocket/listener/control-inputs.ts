@@ -5,7 +5,6 @@ import { getBackend } from "@/backend";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { migratePermissionMode } from "@/permissions/mode";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
-import { stopMonitorsForScope } from "@/tools/impl/stop-monitor";
 import type {
   AbortMessageCommand,
   ApprovalResponseBody,
@@ -488,12 +487,6 @@ export async function handleAbortMessageInput(
     return false;
   }
 
-  if (scope.agent_id) {
-    stopMonitorsForScope({
-      agentId: scope.agent_id,
-      conversationId: scope.conversation_id,
-    });
-  }
   const cancellation = scopedRuntime.turnLifecycle.requestCancellation({
     waitForExternalSettlement: hasActiveTurn && Boolean(scopedRuntime.agentId),
   });

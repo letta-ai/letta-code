@@ -4,7 +4,8 @@
  */
 
 import { isInteractiveApprovalTool } from "@/tools/interactive-policy";
-import { MEMORY_TOOL_NAMES } from "@/tools/toolset";
+
+const MEMORY_TOOL_NAMES = new Set(["memory", "memory_apply_patch"]);
 
 /**
  * Maps internal tool names to user-friendly display names.
@@ -70,6 +71,13 @@ export function isTaskTool(name: string): boolean {
 }
 
 /**
+ * Checks if a tool name represents the background Workflow orchestration tool
+ */
+export function isWorkflowTool(name: string): boolean {
+  return name === "Workflow" || name === "workflow";
+}
+
+/**
  * Checks if a tool name represents a TODO/planning tool
  */
 export function isTodoTool(rawName: string, displayName?: string): boolean {
@@ -128,7 +136,7 @@ export function alwaysRequiresUserInput(name: string): boolean {
 }
 
 /**
- * Checks if a tool is a memory tool (server-side memory management)
+ * Checks if a tool is a memory tool (client-side MemFS memory editing)
  */
 export function isMemoryTool(name: string): boolean {
   return MEMORY_TOOL_NAMES.has(name);

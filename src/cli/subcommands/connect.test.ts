@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { OAuthSelectPrompt } from "@earendil-works/pi-ai/oauth";
-import { __testSetBackend, type Backend } from "@/backend";
+import { __testSetBackend, type Backend, getBackend } from "@/backend";
 import type { LocalOAuthConnectCallbacks } from "@/cli/commands/connect-local-oauth";
 import { runConnectSubcommand } from "@/cli/subcommands/connect";
 
@@ -40,6 +40,9 @@ function createIoDeps() {
       runCloudOAuthConnectFlow: mock(() =>
         Promise.resolve({ providerName: "openrouter-oauth" }),
       ),
+      runCloudXaiOAuthConnectFlow: mock(() =>
+        Promise.resolve({ providerName: "lc-xai" }),
+      ),
       providerStorageTargetLabel: () => "test storage",
     },
   };
@@ -73,12 +76,15 @@ async function withEnv<T>(
 }
 
 describe("connect subcommand", () => {
+  let previousBackend: Backend;
+
   beforeEach(() => {
+    previousBackend = getBackend();
     setProviderTarget("api");
   });
 
   afterEach(() => {
-    setProviderTarget("api");
+    __testSetBackend(previousBackend);
   });
 
   test("suggests --backend local for local-only providers on the API backend", async () => {
@@ -156,6 +162,40 @@ describe("connect subcommand", () => {
     );
     expect(stdout.join("\n")).toContain(
       "Successfully connected to OpenRouter OAuth.",
+    );
+  });
+
+  test("stores Pi xAI OAuth credentials for Cloud Grok connect", async () => {
+    const { stdout, deps } = createIoDeps();
+
+    const exitCode = await runConnectSubcommand(["grok"], deps);
+
+    expect(exitCode).toBe(0);
+    expect(deps.ensureSettingsReady).toHaveBeenCalledTimes(1);
+    expect(deps.runCloudXaiOAuthConnectFlow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "grok",
+        providerType: "xai",
+        providerName: "lc-xai",
+        oauthProviderId: "xai",
+      }),
+      expect.objectContaining({ onStatus: expect.any(Function) }),
+    );
+    expect(deps.runCloudOAuthConnectFlow).not.toHaveBeenCalled();
+    expect(stdout.join("\n")).toContain(
+      "Successfully connected to xAI (Grok/X subscription).",
+    );
+    expect(stdout.join("\n")).toContain("Provider 'lc-xai' saved.");
+  });
+
+  test("does not treat grok as a local-only provider on the Cloud backend", async () => {
+    const { stderr, deps } = createIoDeps();
+
+    const exitCode = await runConnectSubcommand(["grok"], deps);
+
+    expect(exitCode).toBe(0);
+    expect(stderr.join("\n")).not.toContain(
+      'Provider "grok" is only available with the local backend.',
     );
   });
 
@@ -485,6 +525,28 @@ describe("connect subcommand", () => {
     expect(runLocalOAuthConnectFlow).toHaveBeenCalledTimes(1);
     expect(selections).toEqual(["browser"]);
     expect(stdout.join("\n")).toContain("Successfully connected");
+  });
+
+  test("local grok still uses the local OAuth flow", async () => {
+    const { deps } = createIoDeps();
+    setProviderTarget("local");
+    const { runLocalOAuthConnectFlow } = createLocalOAuthFlowMock();
+
+    const exitCode = await runConnectSubcommand(["grok"], {
+      ...deps,
+      runLocalOAuthConnectFlow,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(runLocalOAuthConnectFlow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        oauthProviderId: "xai",
+        providerName: "xai",
+        isOAuth: true,
+      }),
+      expect.objectContaining({ onStatus: expect.any(Function) }),
+    );
+    expect(deps.runCloudXaiOAuthConnectFlow).not.toHaveBeenCalled();
   });
 
   test("local codex connect honors --method device-code", async () => {

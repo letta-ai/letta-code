@@ -51,12 +51,19 @@ function runPtyRunner(filename: string, ...args: string[]): void {
 }
 
 describe("startup PTY", () => {
-  for (const scenario of ["fresh", "saved-cloud", "explicit-cloud"]) {
-    ptyTest(
-      `${scenario} startup offers Cloud by default with working keyboard input`,
-      () => runPtyRunner("startup-setup-pty-runner.cjs", scenario),
-      { timeout: 35000 },
-    );
+  for (const runtime of ["bun", "node"]) {
+    for (const scenario of [
+      "fresh",
+      "fresh-local",
+      "saved-cloud",
+      "explicit-cloud",
+    ]) {
+      ptyTest(
+        `${runtime} ${scenario} startup preserves backend selection semantics`,
+        () => runPtyRunner("startup-setup-pty-runner.cjs", runtime, scenario),
+        { timeout: 35000 },
+      );
+    }
   }
 
   for (const runtime of ["bun", "node"]) {

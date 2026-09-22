@@ -121,7 +121,10 @@ const STREAMING_SHELL_TOOLS = new Set([
   "shell",
   "Shell",
   "Monitor",
+  "Workflow",
 ]);
+/** Background tools whose completion notification targets the invoking scope. */
+const SCOPED_BACKGROUND_TOOLS = new Set(["Monitor", "Workflow"]);
 
 // Tools that write files — used to trigger onFileWrite broadcast after execution.
 const FILE_MUTATING_TOOLS = new Set(["Edit", "Write", "MultiEdit"]);
@@ -134,19 +137,13 @@ const TOOL_NAME_MAPPINGS: Partial<Record<ToolName, string>> = {
   Task: "Agent",
 };
 
-/**
- * Get the server-facing name for a tool (maps internal names to what the model sees)
- */
+/** Get the server-facing name for a tool (maps internal names to what the model sees). */
 export function getServerToolName(internalName: string): string {
   return TOOL_NAME_MAPPINGS[internalName as ToolName] || internalName;
 }
 
-/**
- * Get the internal tool name from a server-facing name
- * Used when the server sends back tool calls/approvals with server names
- */
+/** Get the internal tool name from a server-facing name (tool calls/approvals arrive with server names). */
 export function getInternalToolName(serverName: string): string {
-  // Build reverse mapping
   for (const [internal, server] of Object.entries(TOOL_NAME_MAPPINGS)) {
     if (server === serverName) {
       return internal;
@@ -313,7 +310,7 @@ function filterModToolsByClientAllowlist(
   );
 }
 
-import { TOOLSET_TOOLS, WORKTREE_TOOL_NAMES } from "./toolset-defaults";
+import { TOOLSET_CATALOG, WORKTREE_TOOL_NAMES } from "./toolset-catalog";
 import type { ToolsetName } from "./toolset-types";
 
 type ToolArgs = Record<string, unknown>;
@@ -1328,7 +1325,7 @@ function resolveBaseToolNamesForModel(
     .filter((name): name is ToolName => Object.hasOwn(TOOL_DEFINITIONS, name));
   let toolNames = resolveArtifactToolNames([
     ...new Set([
-      ...TOOLSET_TOOLS[toolset],
+      ...TOOLSET_CATALOG[toolset].tools,
       ...(options?.include ?? []),
       ...allowlistedTools,
     ]),
@@ -2438,7 +2435,7 @@ async function executeToolInner(
         }
         const parentScope =
           options?.parentScope ??
-          (internalName === "Monitor" && scopedAgentId
+          (SCOPED_BACKGROUND_TOOLS.has(internalName) && scopedAgentId
             ? {
                 agentId: scopedAgentId,
                 conversationId: executionScope.conversationId ?? "default",

@@ -244,8 +244,8 @@ export interface EnsureLocalMemfsCheckoutOptions {
 /**
  * Ensures the local memfs checkout exists for an already-enabled agent.
  *
- * Unlike applyMemfsFlags(), this helper does not update prompts, tags, tools,
- * or other agent configuration. It materializes the local git checkout when
+ * Unlike applyMemfsFlags(), this helper does not update prompts, tags, or
+ * other agent configuration. It materializes the local git checkout when
  * missing and can optionally pull an existing remote-backed repo before use.
  */
 export async function ensureLocalMemfsCheckout(
@@ -481,8 +481,7 @@ async function seedDefaultPersonalityFiles(
  *   1. Validate MemFS API endpoint support (for explicit enable)
  *   2. Reconcile system prompt to the memfs memory mode
  *   3. Persist memfs setting locally
- *   4. Detach old API-based memory tools
- *   5. Add git-memory-enabled tag + clone/pull repo
+ *   4. Add git-memory-enabled tag + clone/pull repo
  *
  * @throws {Error} if MemFS endpoint validation fails or git setup fails
  */
@@ -553,13 +552,7 @@ export async function applyMemfsFlags(
 
   const isEnabled = enabling || localMemfsEnabled;
 
-  // 3. Detach old API-based memory tools when enabling.
-  if (enabling) {
-    const { detachMemoryTools } = await import("@/tools/toolset");
-    await detachMemoryTools(agentId);
-  }
-
-  // 4. Add git tag + clone/pull repo.
+  // 3. Add git tag + clone/pull repo.
   let pullSummary: string | undefined;
   if (isEnabled) {
     const { addGitMemoryTag, isGitRepo, cloneMemoryRepo, pullMemory } =

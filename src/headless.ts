@@ -14,6 +14,7 @@ import { loadPreloadedSkills } from "@/agent/preloaded-skills";
 import { shouldLaunchThroughListener } from "@/agent/subagents/subagent-launcher";
 import { buildHeadlessSenderReminder } from "@/headless-message-sender";
 import { createHeadlessResponseState } from "@/headless-response-state";
+import { createStartupBackend } from "@/headless-startup-backend";
 import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
 import {
   trackBoundaryError,
@@ -180,7 +181,6 @@ import {
 import { getCurrentWorkingDirectory } from "./runtime-context";
 import { settingsManager, shouldPersistSessionState } from "./settings-manager";
 import { writeWireMessage, writeWireMessageAsync } from "./stream-json-writer";
-import { stopMonitorsForScope } from "./tools/impl/stop-monitor";
 import {
   INTERACTIVE_USER_INPUT_TOOL_NAMES,
   isInteractiveApprovalTool,
@@ -806,6 +806,9 @@ export async function handleHeadlessCommand(
     computer: explicitEnvironmentSelector,
     ephemeral: values.ephemeral,
   });
+  if (values["client-message-id"] !== undefined && !usesRemoteEnvironment)
+    throw new Error("--client-message-id requires a Cloud input destination");
+  const startupBackend = createStartupBackend(backend, usesRemoteEnvironment);
 
   // Resolve agent (same logic as interactive mode)
   let agent: AgentState | null = null;
@@ -849,10 +852,7 @@ export async function handleHeadlessCommand(
     );
     disableLocalBackendMemfsForProcess();
   }
-  // Startup policy for the git-backed memory pull on session init.
-  // "blocking" (default): await the pull before proceeding.
-  // "background": fire the pull async, emit init without waiting.
-  // "skip": skip the pull entirely this session.
+  // MemFS startup: block (default), pull in background, or skip this session.
   const memfsStartupRaw = values["memfs-startup"];
   const memfsStartupPolicy: "blocking" | "background" | "skip" =
     memfsStartupRaw === "background" || memfsStartupRaw === "skip"
@@ -1079,18 +1079,17 @@ export async function handleHeadlessCommand(
   }
 
   // Priority 0: --conversation derives agent from conversation ID.
-  // "default" is a virtual agent-scoped conversation (not a retrievable conv-*).
-  // It requires --agent and should not hit conversations.retrieve().
+  // "default" is virtual and requires --agent, so it is never retrieved.
   if (specifiedConversationId && specifiedConversationId !== "default") {
     try {
       debugLog(
         "conversations",
         `retrieve(${specifiedConversationId}) [headless conv→agent lookup]`,
       );
-      const conversation = await backend.retrieveConversation(
+      const conversation = await startupBackend.retrieveConversation(
         specifiedConversationId,
       );
-      agent = await backend.retrieveAgent(conversation.agent_id, {
+      agent = await startupBackend.retrieveAgent(conversation.agent_id, {
         include: ["agent.tools", "agent.tags"],
       });
     } catch (error) {
@@ -1107,7 +1106,7 @@ export async function handleHeadlessCommand(
   // Priority 2: Try to use --agent specified ID
   if (!agent && specifiedAgentId) {
     try {
-      agent = await backend.retrieveAgent(specifiedAgentId, {
+      agent = await startupBackend.retrieveAgent(specifiedAgentId, {
         include: ["agent.tools", "agent.tags"],
       });
     } catch (_error) {
@@ -1544,7 +1543,7 @@ export async function handleHeadlessCommand(
           "conversations",
           `retrieve(${specifiedConversationId}) [headless --conv validate]`,
         );
-        await backend.retrieveConversation(specifiedConversationId);
+        await startupBackend.retrieveConversation(specifiedConversationId);
         conversationId = specifiedConversationId;
         conversationOpenReason = "resume";
       } catch {
@@ -1568,7 +1567,7 @@ export async function handleHeadlessCommand(
     if (fromAgentId) {
       (createParams as { hidden?: boolean }).hidden = true;
     }
-    const conversation = await backend.createConversation(createParams);
+    const conversation = await startupBackend.createConversation(createParams);
     conversationId = conversation.id;
     conversationOpenReason = "new";
   } else if (isSubagent) {
@@ -1579,9 +1578,8 @@ export async function handleHeadlessCommand(
   } else {
     // Default for headless: always create a new conversation to avoid
     // 409 "conversation busy" races (e.g., parent agent calling letta -p).
-    // Use --conv default to explicitly target the agent's
-    // primary conversation.
-    const conversation = await backend.createConversation({
+    // Use --conv default to explicitly target the agent's primary conversation.
+    const conversation = await startupBackend.createConversation({
       agent_id: agent.id,
     });
     conversationId = conversation.id;
@@ -2003,6 +2001,7 @@ export async function handleHeadlessCommand(
       : { source: "same-environment" };
     const launchParams: Parameters<typeof launchListenerConversation>[0] = {
       noWait: Boolean(values["no-wait"]),
+      clientMessageId: values["client-message-id"],
       connectionId,
       scope: {
         agent_id: agent.id,
@@ -2189,11 +2188,6 @@ export async function handleHeadlessCommand(
 
   // One-shot mode has no input loop, so wire SIGINT directly into the turn.
   const sigintSignal = createSigintAbortSignal();
-  sigintSignal.addEventListener(
-    "abort",
-    () => stopMonitorsForScope({ agentId: agent.id, conversationId }),
-    { once: true },
-  );
   const exitInterrupted = async (): Promise<never> => {
     if (outputFormat === "stream-json") {
       const errorMsg: ErrorMessage = {
@@ -4204,13 +4198,8 @@ async function runBidirectionalMode(
         continue;
       }
 
-      // Drain pre-controller interrupts after installing scoped monitor cleanup.
+      // Drain any interrupt that arrived before the controller existed.
       currentAbortController = new AbortController();
-      currentAbortController.signal.addEventListener(
-        "abort",
-        () => stopMonitorsForScope({ agentId: agent.id, conversationId }),
-        { once: true },
-      );
       if (pendingInterrupt) {
         pendingInterrupt = false;
         currentAbortController.abort();

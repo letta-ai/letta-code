@@ -35,6 +35,7 @@ export const TOOL_PERMISSIONS: Record<
   TaskList: { requiresApproval: false },
   TaskUpdate: { requiresApproval: false },
   TodoWrite: { requiresApproval: false },
+  Workflow: { requiresApproval: true },
   Write: { requiresApproval: true },
   write_artifact_file: { requiresApproval: false },
   shell_command: { requiresApproval: true },

@@ -7,6 +7,7 @@
  * - Managing parallel subagent execution
  */
 
+import { rmSync } from "node:fs";
 import { platform } from "node:os";
 import { resolveActingUserId } from "@/agent/acting-user";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
@@ -67,6 +68,7 @@ import { spawnSubagentProcess } from "./subagent-process";
 import {
   describeSubagentExit,
   type ExecutionState,
+  hasSuccessfulToolCall,
   looksLikeTruncatedStreamJson,
   parseResultFromStdout,
   processStreamEvent,
@@ -129,11 +131,11 @@ interface BuildSubagentArgsOptions {
    * ambiguous, or does not support environment-routed messaging.
    */
   environment?: string;
+  /** Identity for the child's initial assignment, never inherited. */
+  clientMessageId?: string;
 }
 
-/**
- * Build CLI arguments for spawning a subagent
- */
+/** Build CLI arguments for spawning a subagent. */
 export function buildSubagentArgs(
   type: string,
   config: SubagentConfig,
@@ -153,6 +155,9 @@ export function buildSubagentArgs(
   if (options.backendMode) {
     args.push("--backend", options.backendMode);
   }
+
+  if (options.clientMessageId !== undefined)
+    args.push("--client-message-id", options.clientMessageId);
 
   if (options.environment) {
     // The child only submits the send and exits with the enqueue receipt;
@@ -289,6 +294,7 @@ async function executeSubagent(
   actingUserIdOverride?: string,
   parentAgentName?: string | null,
   parentConversationId?: string,
+  clientMessageId?: string,
 ): Promise<SubagentResult> {
   const withModel = (result: SubagentResult): SubagentResult =>
     model ? { ...result, model } : result;
@@ -338,6 +344,7 @@ async function executeSubagent(
         parentAgentId,
         systemPromptOverride,
         environment,
+        clientMessageId,
       },
     );
 
@@ -380,14 +387,15 @@ async function executeSubagent(
         memoryScope,
       },
     );
+    const parentProcessEnv: NodeJS.ProcessEnv = {
+      ...getRuntimeExecutionEnv(
+        process.env,
+        getRuntimeContext()?.executionSettings,
+      ),
+      USER_CWD: subagentWorkingDirectory,
+    };
     const childEnv = composeSubagentChildEnv({
-      parentProcessEnv: {
-        ...getRuntimeExecutionEnv(
-          process.env,
-          getRuntimeContext()?.executionSettings,
-        ),
-        USER_CWD: subagentWorkingDirectory,
-      },
+      parentProcessEnv,
       listenerConnectionId: getRuntimeContext()?.connectionId,
       backendMode,
       localBackendStorageDir,
@@ -401,6 +409,7 @@ async function executeSubagent(
       inheritedBaseUrl,
       actingUserId: actingUserIdOverride,
       transcriptPath,
+      subagentId,
       subagentName:
         existingAgentId || existingConversationId
           ? undefined
@@ -440,6 +449,7 @@ async function executeSubagent(
     if (!managedCommand) {
       throw new Error("Subagent executable is required");
     }
+    signal?.throwIfAborted();
     const runningProcess = spawnSubagentProcess(managedCommand, managedArgs, {
       cwd: subagentWorkingDirectory,
       env: spawnEnv,
@@ -467,6 +477,7 @@ async function executeSubagent(
       enqueueReceipt: null,
       resultStats: null,
       displayedToolCalls: new Set(),
+      toolCallStatuses: new Map(),
     };
 
     // Parse child stdout manually instead of using readline. This keeps the
@@ -493,6 +504,21 @@ async function executeSubagent(
     // Wait for process to complete
     const { exitCode, exitSignal } = await runningProcess.completion;
 
+    if (
+      effectiveLaunchProfile === "memory-subagent" &&
+      !parentProcessEnv.LETTA_SCRATCHPAD?.trim() &&
+      childEnv.LETTA_SCRATCHPAD
+    ) {
+      try {
+        rmSync(childEnv.LETTA_SCRATCHPAD, { recursive: true, force: true });
+      } catch (error) {
+        debugWarn(
+          "subagent",
+          `Failed to clean up memory-subagent scratchpad: ${getErrorMessage(error)}`,
+        );
+      }
+    }
+
     // Ensure the trailing partial line is processed before completing.
     // Without this, late tool events can be dropped before Task marks completion.
     if (stdoutBuffer.length > 0) {
@@ -514,8 +540,12 @@ async function executeSubagent(
 
     // Handle non-zero exit code
     if (exitCode !== 0) {
-      // Check if this is a provider-not-supported error and we haven't retried yet
-      if (!isRetry && isProviderNotSupportedError(stderr)) {
+      // A prepared conversation must fail rather than switch models and agents.
+      if (
+        !isRetry &&
+        (type !== "custom" || !existingConversationId) &&
+        isProviderNotSupportedError(stderr)
+      ) {
         const { handle: primaryModel } = await getPrimaryAgentModelHandle({
           agentId: parentAgentIdOverride,
         });
@@ -543,6 +573,7 @@ async function executeSubagent(
             actingUserIdOverride,
             parentAgentName,
             parentConversationId,
+            clientMessageId,
           );
         }
       }
@@ -574,6 +605,7 @@ async function executeSubagent(
           actingUserIdOverride,
           parentAgentName,
           parentConversationId,
+          clientMessageId,
         );
       }
 
@@ -604,12 +636,17 @@ async function executeSubagent(
 
     // Return captured result if available
     if (state.finalResult !== null) {
+      const toolFailureError =
+        type === "reflection" && !hasSuccessfulToolCall(state)
+          ? "Reflection could not complete because it did not finish a successful tool call."
+          : undefined;
+      const completionError = state.finalError ?? toolFailureError;
       return withModel({
         agentId: state.agentId || "",
         conversationId: state.conversationId || undefined,
         report: state.finalResult,
-        success: !state.finalError,
-        error: state.finalError || undefined,
+        success: !completionError,
+        error: completionError,
         totalTokens: state.resultStats?.totalTokens,
         stepCount: state.resultStats?.stepCount,
         durationMs: state.resultStats?.durationMs,
@@ -687,6 +724,7 @@ async function executeSubagent(
           actingUserIdOverride,
           parentAgentName,
           parentConversationId,
+          clientMessageId,
         );
       }
     }
@@ -798,10 +836,11 @@ async function spawnSubagentInContext(
   systemPromptOverride?: string,
   environment?: string,
   actingUserId?: string,
+  resolvedConfig?: SubagentConfig,
+  clientMessageId?: string,
 ): Promise<SubagentResult> {
   const launchActingUserId = resolveActingUserId(actingUserId);
-  const allConfigs = await getAllSubagentConfigs();
-  let config = allConfigs[type];
+  let config = resolvedConfig ?? (await getAllSubagentConfigs())[type];
 
   if (!config) {
     return {
@@ -875,7 +914,11 @@ async function spawnSubagentInContext(
       });
   // Build the prompt with system reminder for deployed agents
   let finalPrompt = prompt;
-  if (isDeployingExisting && resolvedParentAgentId) {
+  if (
+    (type !== "custom" || forkedContext) &&
+    isDeployingExisting &&
+    resolvedParentAgentId
+  ) {
     try {
       const cachedParent =
         parentAgent ??
@@ -906,11 +949,14 @@ async function spawnSubagentInContext(
   // the card would have no link and any fallback would route to the parent's
   // main conversation. Set the link eagerly to the forked conversation so it
   // opens the subagent's own thread instead.
-  if (forkedContext && existingAgentId && existingConversationId) {
-    const forkAgentURL = buildAgentReference(existingAgentId, {
-      conversationId: existingConversationId,
-    });
+  if ((forkedContext || type === "custom") && existingConversationId) {
+    const forkAgentURL = existingAgentId
+      ? buildAgentReference(existingAgentId, {
+          conversationId: existingConversationId,
+        })
+      : undefined;
     updateSubagent(subagentId, {
+      agentId: existingAgentId,
       agentURL: forkAgentURL,
       conversationId: existingConversationId,
     });
@@ -936,6 +982,7 @@ async function spawnSubagentInContext(
     launchActingUserId,
     parentAgent?.name,
     resolvedParentConversationId,
+    clientMessageId,
   );
 
   return result;

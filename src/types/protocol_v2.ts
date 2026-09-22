@@ -30,7 +30,7 @@ import type {
   MessageListParams,
 } from "@letta-ai/letta-client/resources/conversations/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
-import type { ChatGPTOAuthConfig } from "@/types/chatgpt-oauth";
+import type { ConnectProviderOAuthConfig } from "@/types/provider-oauth-config";
 import type {
   AppServerInfoCommand,
   AppServerInfoResponseMessage,
@@ -62,12 +62,18 @@ import type {
   CronProtocolCommand,
   CronProtocolResponseMessage,
 } from "./schedule-protocol";
+import type * as SubagentProtocol from "./subagent-protocol";
 import type {
+  ExecuteCommandCommand,
+  ExecuteCommandResponseMessage,
   MonitorStopCommand,
   MonitorStopResponse,
   RemoveQueueItemCommand,
   RemoveQueueItemResponse,
 } from "./task-control-protocol";
+
+export type * from "./subagent-protocol";
+
 import type * as TeleportProtocol from "./teleport-protocol";
 import type {
   ToolsetName,
@@ -646,11 +652,7 @@ export interface InputCreateMessagePayload {
    * client tools before the allowlist is applied.
    */
   client_toolset?: ClientToolsetConfig;
-  /**
-   * Optional scoped external tools to expose for this turn. Runtime-start
-   * external tools with a scope_id stay hidden unless selected here; unscoped
-   * external tools for the runtime remain available normally.
-   */
+  /** Scoped runtime-start tools to expose for this turn; unscoped tools remain available. */
   external_tool_scope_ids?: string[];
   /**
    * Exclude interactive user-input tools (AskUserQuestion and friends) from
@@ -660,6 +662,7 @@ export interface InputCreateMessagePayload {
    * interactive tools are covered without client updates.
    */
   exclude_interactive_tools?: boolean;
+  response_format?: Record<string, unknown>;
 }
 
 export type InputApprovalResponsePayload = {
@@ -1277,7 +1280,7 @@ export interface ConnectProviderCommand {
   auth_method_id?: string;
   fields: Record<string, string>;
   provider_name?: string;
-  oauth_config?: ChatGPTOAuthConfig;
+  oauth_config?: ConnectProviderOAuthConfig;
 }
 
 export interface DisconnectProviderCommand {
@@ -2256,30 +2259,6 @@ export interface ChannelTargetsUpdatedMessage {
   channel_id: ChannelId;
 }
 
-/**
- * Generic slash-command dispatch from the web app.
- * The device handles the `command_id` and emits `command_start` /
- * `command_end` stream deltas with the result.
- */
-export interface ExecuteCommandCommand {
-  type: "execute_command";
-  /** Which slash command to run (e.g., "clear") */
-  command_id: string;
-  /** Correlation id (echoed in the response stream deltas) */
-  request_id: string;
-  /** Runtime scope — identifies which agent + conversation this targets */
-  runtime: AgentRuntimeScope;
-  /** Optional command arguments (everything after the command name). */
-  args?: string;
-}
-
-export interface ExecuteCommandResponseMessage {
-  type: "execute_command_response";
-  request_id: string;
-  success: boolean;
-  output: string;
-}
-
 // ─────────────────────────────────────────────────
 //  Git branch commands
 // ─────────────────────────────────────────────────
@@ -2477,6 +2456,7 @@ export type WsProtocolCommand =
   | ChannelRouteUpdateCommand
   | ExecuteCommandCommand
   | RemoveQueueItemCommand
+  | SubagentProtocol.LaunchSubagentCommand
   | MonitorStopCommand
   | SearchBranchesCommand
   | CheckoutBranchCommand
@@ -2586,7 +2566,8 @@ export type WsProtocolMessage =
   | SecretListResponse
   | SecretApplyResponse
   | RemoveQueueItemResponse
-  | MonitorStopResponse;
+  | MonitorStopResponse
+  | SubagentProtocol.LaunchSubagentResponse;
 
 export type WsProtocolMessageType = WsProtocolMessage["type"];
 

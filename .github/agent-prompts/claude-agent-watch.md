@@ -65,7 +65,7 @@ For a bootstrap candidate, there is intentionally no historical Claude snapshot.
 Narrow based on evidence, but begin with:
 
 - prompt/provenance: `src/agent/prompts/source_claude.md`, `src/agent/prompts/README.md`, `src/agent/prompt-assets.ts`, and tests
-- model-facing tool names/default membership: `src/tools/manager.ts` (`TOOL_NAME_MAPPINGS`, `ANTHROPIC_DEFAULT_TOOLS`), `src/tools/tool-definitions.ts`, `src/tools/toolset.ts`, `src/tools/filter.ts`, `src/tools/toolset-labels.ts`
+- model-facing tool names/default membership: `src/tools/manager.ts` (`TOOL_NAME_MAPPINGS`), `src/tools/toolset-catalog.ts` (`TOOLSET_CATALOG.default.tools`), `src/tools/tool-definitions.ts`, `src/tools/toolset.ts`, `src/tools/filter.ts`, `src/tools/toolset-labels.ts`
 - mirrored contracts and behavior: `src/tools/schemas/`, `src/tools/descriptions/`, `src/tools/impl/`, and adjacent tests
 - Claude-derived output behavior: `src/tools/impl/truncation.ts`, `src/tools/impl/read.ts`, `src/tools/impl/bash.ts`
 - permissions: `src/permissions/matcher.ts`, `src/permissions/types.ts`, and tests

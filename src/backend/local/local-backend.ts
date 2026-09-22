@@ -226,12 +226,6 @@ function localCompactionSettingsForStorage(
   return { ...settings };
 }
 
-function supportsMidConversationSystemMessages(
-  agent: LocalAgentRecord,
-): boolean {
-  return agent.model === "anthropic/claude-opus-4-8";
-}
-
 function formatMidConversationMemoryUpdate(
   compiled: LocalCompiledSystemPrompt,
 ): string {
@@ -950,8 +944,7 @@ export class LocalBackend extends HeadlessBackend {
 
     if (
       existing?.rawSystemHash === rawSystemHash &&
-      existing.memfsRevision !== memfsRevision &&
-      supportsMidConversationSystemMessages(agent)
+      existing.memfsRevision !== memfsRevision
     ) {
       const compiled = await this.compileAndMaybePersistSystemPrompt(
         conversationId,

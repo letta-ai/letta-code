@@ -3,7 +3,8 @@ const os = require("node:os");
 const path = require("node:path");
 const pty = require("node-pty");
 
-const [, , cliPath, projectRoot, scenario = "fresh"] = process.argv;
+const [, , cliPath, projectRoot, runtime = "node", scenario = "fresh"] =
+  process.argv;
 const INK_BRACKETED_PASTE_ENABLE = "\x1b[?2004h";
 
 function sleep(ms) {
@@ -81,11 +82,14 @@ async function main() {
 
     let output = "";
     let exited = false;
+    const executable = runtime === "bun" ? "bun" : "node";
+    const runtimeCliPath =
+      runtime === "bun" ? path.join(projectRoot, "src/index.ts") : cliPath;
     terminal = pty.spawn(
-      "node",
+      executable,
       scenario === "explicit-cloud"
-        ? [cliPath, "--backend", "cloud"]
-        : [cliPath],
+        ? [runtimeCliPath, "--backend", "cloud"]
+        : [runtimeCliPath],
       {
         cols: 120,
         cwd: projectRoot,
@@ -152,6 +156,22 @@ async function main() {
     }
     if (exited) {
       throw new Error("CLI exited while setup menu should still be active");
+    }
+    if (scenario === "fresh-local") {
+      terminal.write("\r");
+      await waitForOutput(
+        () => output,
+        (current) =>
+          globalThis.stripAnsi(current).includes("Setup complete!") &&
+          JSON.parse(
+            fs.readFileSync(
+              path.join(homeDir, ".letta", "settings.json"),
+              "utf8",
+            ),
+          ).preferredBackendMode === "local",
+        "persisted local setup selection",
+      );
+      return;
     }
     if (scenario !== "explicit-cloud") {
       const beforeExitSelection = output.length;

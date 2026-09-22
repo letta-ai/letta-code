@@ -1,6 +1,6 @@
 import type WebSocket from "ws";
 import type { ExperimentId } from "@/experiments/types";
-import { isToolsetPreference } from "@/tools/toolset-options";
+import { isToolsetPreference } from "@/tools/toolset-catalog";
 import {
   CHANNEL_ACCOUNT_CREATE_FIELDS,
   CHANNEL_ACCOUNT_UPDATE_FIELDS,
@@ -59,7 +59,6 @@ import type {
   DisconnectProviderCommand,
   EditFileCommand,
   EnableMemfsCommand,
-  ExecuteCommandCommand,
   FileOpsCommand,
   GetExperimentsCommand,
   GetReflectionSettingsCommand,
@@ -1950,33 +1949,18 @@ export function isSecretApplyCommand(
   }
   return true;
 }
-export function isExecuteCommandCommand(
-  value: unknown,
-): value is ExecuteCommandCommand {
-  if (!value || typeof value !== "object") return false;
-  const c = value as {
-    type?: unknown;
-    command_id?: unknown;
-    request_id?: unknown;
-    runtime?: unknown;
-    args?: unknown;
-  };
-  const hasValidArgs = c.args === undefined || typeof c.args === "string";
-  return (
-    c.type === "execute_command" &&
-    typeof c.command_id === "string" &&
-    typeof c.request_id === "string" &&
-    isAgentRuntimeScope(c.runtime) &&
-    hasValidArgs
-  );
-}
 
+import { isLaunchSubagentCommand } from "./subagent-protocol-inbound";
 import {
+  isExecuteCommandCommand,
   isMonitorStopCommand,
   isRemoveQueueItemCommand,
 } from "./task-control-protocol-inbound";
 
-export { isRemoveQueueItemCommand } from "./task-control-protocol-inbound";
+export {
+  isExecuteCommandCommand,
+  isRemoveQueueItemCommand,
+} from "./task-control-protocol-inbound";
 
 export function parseServerLifecycleMessage(
   data: WebSocket.RawData,
@@ -2103,6 +2087,7 @@ export function parseServerMessage(
       isExecuteCommandCommand(parsed) ||
       isRemoveQueueItemCommand(parsed) ||
       isMonitorStopCommand(parsed) ||
+      isLaunchSubagentCommand(parsed) ||
       isSearchBranchesCommand(parsed) ||
       isCheckoutBranchCommand(parsed) ||
       isSecretListCommand(parsed) ||

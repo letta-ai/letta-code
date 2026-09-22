@@ -74,6 +74,16 @@ describe("statusline renderers", () => {
     );
   });
 
+  test("default renderer does not render BYOK triangle indicator", () => {
+    const { context, ui } = createStatuslineFixture({
+      modelDisplayName: "kimi-k3",
+    });
+    ui.isByokProvider = true;
+    const output = buildDefaultStatuslineParts(context, ui);
+
+    expect(stripAnsi(String(output.right)).trim()).toBe("Letta Code · kimi-k3");
+  });
+
   test("default renderer omits reasoning and backend labels", () => {
     const { context, ui } = createStatuslineFixture({
       modelDisplayName: "No model selected",

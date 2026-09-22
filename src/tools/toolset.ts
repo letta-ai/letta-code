@@ -4,7 +4,6 @@ import { resolveModel } from "@/agent/model";
 import { resolveModelHandleFromLlmConfig } from "@/agent/model-handles";
 import type { SkillSource } from "@/agent/skill-sources";
 import { getBackend } from "@/backend";
-import { getClient } from "@/backend/api/client";
 import { buildModInvocationContext } from "@/mods/context";
 import type { ModEvents } from "@/mods/event-emitter";
 import type { ModAdapter } from "@/mods/mod-adapter";
@@ -13,6 +12,7 @@ import type { ModToolDefinition } from "@/mods/tool-registry";
 import type { ModContext } from "@/mods/types";
 import type { RuntimeContextSnapshot } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
+import { OPENAI_COMPATIBLE_PROXY_UPDATE_ARG } from "@/utils/openai-endpoint";
 import { isRecord } from "@/utils/type-guards";
 import {
   getInternalToolName,
@@ -26,16 +26,6 @@ import { TOOL_DEFINITIONS, type ToolName } from "./tool-definitions";
 import type { ToolsetName, ToolsetPreference } from "./toolset-types";
 
 export type { ToolsetName, ToolsetPreference } from "./toolset-types";
-
-// Server-side memory tool names that can mutate memory blocks.
-// When memfs is enabled, we detach ALL of these from the agent.
-export const MEMORY_TOOL_NAMES = new Set([
-  "memory",
-  "memory_apply_patch",
-  "memory_insert",
-  "memory_replace",
-  "memory_rethink",
-]);
 
 export interface ClientToolsetConfig {
   /** Request-scoped base toolset. Omitted preserves the runtime preference. */
@@ -56,11 +46,31 @@ function resolveIncludedToolNames(toolNames: string[] | undefined): ToolName[] {
   });
 }
 
+/**
+ * Provider types whose models speak the OpenAI API and should use the codex
+ * toolset regardless of handle prefix. Handles are unreliable here: BYOK and
+ * managed providers use arbitrary prefixes (e.g. "lc-openai/gpt-6-astra",
+ * "chatgpt-work/gpt-5.5"), so the provider type is the authoritative signal.
+ */
+const OPENAI_PROVIDER_TYPES = new Set([
+  "openai",
+  "openai-codex",
+  "chatgpt_oauth",
+]);
+
 export function deriveToolsetFromModel(
   modelIdentifier: string,
   providerType?: string | null,
+  options?: { openAICompatibleProxy?: boolean | null },
 ): "codex" | "default" {
-  if (providerType === "chatgpt_oauth" || providerType === "openai-codex") {
+  // Generic OpenAI-compatible endpoints also report provider_type "openai"
+  // (with the openai_compatible_proxy marker in model_settings) but may serve
+  // non-GPT models, so they keep the default toolset.
+  if (
+    providerType &&
+    OPENAI_PROVIDER_TYPES.has(providerType) &&
+    options?.openAICompatibleProxy !== true
+  ) {
     return "codex";
   }
   const resolvedModel = resolveModel(modelIdentifier) ?? modelIdentifier;
@@ -136,6 +146,7 @@ function getPreferredAgentModelHandle(
 type ModelTarget = {
   model: string | null;
   providerType: string | null;
+  openAICompatibleProxy: boolean;
 };
 
 function normalizeModelHandle(model: string | null | undefined): string | null {
@@ -145,19 +156,23 @@ function normalizeModelHandle(model: string | null | undefined): string | null {
 function modelTargetFromCarrier(
   carrier: ScopeModelCarrier | null | undefined,
 ): ModelTarget {
+  const modelSettings = carrier?.model_settings;
   return {
     model: normalizeModelHandle(getPreferredAgentModelHandle(carrier)),
-    providerType: providerTypeFromModelSettings(carrier?.model_settings),
+    providerType: providerTypeFromModelSettings(modelSettings),
+    openAICompatibleProxy:
+      isRecord(modelSettings) &&
+      modelSettings[OPENAI_COMPATIBLE_PROXY_UPDATE_ARG] === true,
   };
 }
 
-function providerForMatchingModel(
+function targetForMatchingModel(
   model: string,
   targets: ModelTarget[],
-): string | null {
+): ModelTarget | null {
   for (const target of targets) {
     if (target.model === model && target.providerType) {
-      return target.providerType;
+      return target;
     }
   }
   return null;
@@ -166,6 +181,7 @@ function providerForMatchingModel(
 export async function prepareToolExecutionContextForResolvedTarget(params: {
   modelIdentifier?: string | null;
   providerType?: string | null;
+  openAICompatibleProxy?: boolean | null;
   conversationId?: string | null;
   toolsetPreference: ToolsetPreference;
   clientToolset?: ClientToolsetConfig;
@@ -183,6 +199,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
   const {
     modelIdentifier,
     providerType,
+    openAICompatibleProxy,
     conversationId,
     toolsetPreference,
     clientToolset,
@@ -218,7 +235,9 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
 
   const resolvedToolset =
     effectiveToolsetPreference === "auto"
-      ? deriveToolsetFromModel(effectiveModel ?? "", providerType)
+      ? deriveToolsetFromModel(effectiveModel ?? "", providerType, {
+          openAICompatibleProxy,
+        })
       : effectiveToolsetPreference;
 
   const scopedModContext = buildModInvocationContext({
@@ -324,7 +343,7 @@ export async function prepareToolExecutionContextForScope(params: {
             conversationId,
           )) as ScopeModelCarrier,
         )
-      : { model: null, providerType: null };
+      : { model: null, providerType: null, openAICompatibleProxy: false };
 
   const explicitModel = normalizeModelHandle(overrideModel);
   const cachedModel = normalizeModelHandle(cachedEffectiveModel);
@@ -333,17 +352,21 @@ export async function prepareToolExecutionContextForScope(params: {
     cachedModel ??
     conversationTarget.model ??
     agentTarget.model;
+  const matchedTarget = effectiveModel
+    ? targetForMatchingModel(effectiveModel, [conversationTarget, agentTarget])
+    : null;
   let effectiveProviderType = explicitModel
-    ? (overrideProviderType ??
-      providerForMatchingModel(explicitModel, [
-        conversationTarget,
-        agentTarget,
-      ]))
+    ? (overrideProviderType ?? matchedTarget?.providerType ?? null)
     : cachedModel
-      ? providerForMatchingModel(cachedModel, [conversationTarget, agentTarget])
+      ? (matchedTarget?.providerType ?? null)
       : conversationTarget.model
         ? conversationTarget.providerType
         : agentTarget.providerType;
+  const effectiveOpenAICompatibleProxy =
+    matchedTarget?.openAICompatibleProxy ??
+    (conversationTarget.model === effectiveModel
+      ? conversationTarget.openAICompatibleProxy
+      : agentTarget.openAICompatibleProxy);
 
   const toolsetPreference = (() => {
     try {
@@ -376,6 +399,7 @@ export async function prepareToolExecutionContextForScope(params: {
   const result = await prepareToolExecutionContextForResolvedTarget({
     modelIdentifier: effectiveModel,
     providerType: effectiveProviderType,
+    openAICompatibleProxy: effectiveOpenAICompatibleProxy,
     conversationId: conversationId ?? undefined,
     toolsetPreference,
     clientToolset,
@@ -403,123 +427,6 @@ export async function prepareToolExecutionContextForScope(params: {
     },
   });
   return { ...result, agent: agent as AgentState | null };
-}
-
-/**
- * Ensures the server-side memory tool is attached to the agent.
- * Client toolsets may use memory_apply_patch, but server-side base memory tool remains memory.
- *
- * This is a server-side tool swap - client tools are passed via client_tools per-request.
- *
- * @param agentId - The agent ID to update
- */
-export async function ensureCorrectMemoryTool(agentId: string): Promise<void> {
-  if (!getBackend().capabilities.serverSideToolManagement) {
-    return;
-  }
-  const client = await getClient();
-
-  try {
-    // Need full agent state for tool_rules, so use retrieve with include
-    const agentWithTools = await client.agents.retrieve(agentId, {
-      include: ["agent.tools"],
-    });
-    const currentTools = agentWithTools.tools || [];
-    const mapByName = new Map(currentTools.map((t) => [t.name, t.id]));
-
-    // If agent has no memory tool at all, don't add one
-    // This preserves stateless agents (like Incognito) that intentionally have no memory
-    const hasAnyMemoryTool =
-      mapByName.has("memory") || mapByName.has("memory_apply_patch");
-    if (!hasAnyMemoryTool) {
-      return;
-    }
-
-    // Determine which memory tool we want
-    // OpenAI/Codex models use client-side memory_apply_patch now; keep server memory tool as "memory" for all models
-    const desiredMemoryTool = "memory";
-    const otherMemoryTool =
-      desiredMemoryTool === "memory" ? "memory_apply_patch" : "memory";
-
-    // Ensure desired memory tool attached
-    let desiredId = mapByName.get(desiredMemoryTool);
-    if (!desiredId) {
-      const resp = await client.tools.list({ name: desiredMemoryTool });
-      desiredId = resp.items[0]?.id;
-    }
-    if (!desiredId) {
-      // No warning needed - the tool might not exist on this server
-      return;
-    }
-
-    const otherId = mapByName.get(otherMemoryTool);
-
-    // Check if swap is needed
-    if (mapByName.has(desiredMemoryTool) && !otherId) {
-      // Already has the right tool, no swap needed
-      return;
-    }
-
-    const currentIds = currentTools
-      .map((t) => t.id)
-      .filter((id): id is string => typeof id === "string");
-    const newIds = new Set(currentIds);
-    if (otherId) newIds.delete(otherId);
-    newIds.add(desiredId);
-
-    const updatedRules = (agentWithTools.tool_rules || []).map((r) =>
-      r.tool_name === otherMemoryTool
-        ? { ...r, tool_name: desiredMemoryTool }
-        : r,
-    );
-
-    await client.agents.update(agentId, {
-      tool_ids: Array.from(newIds),
-      tool_rules: updatedRules,
-    });
-  } catch (err) {
-    console.warn(
-      `Warning: Failed to sync memory tool: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-}
-
-/**
- * Detach all memory tools from an agent.
- * Used when enabling memfs (filesystem-backed memory).
- *
- * @param agentId - Agent to detach memory tools from
- * @returns true if any tools were detached
- */
-export async function detachMemoryTools(agentId: string): Promise<boolean> {
-  if (!getBackend().capabilities.serverSideToolManagement) {
-    return false;
-  }
-  const client = await getClient();
-
-  try {
-    const agentWithTools = await client.agents.retrieve(agentId, {
-      include: ["agent.tools"],
-    });
-    const currentTools = agentWithTools.tools || [];
-
-    let detachedAny = false;
-    for (const tool of currentTools) {
-      if (tool.name && MEMORY_TOOL_NAMES.has(tool.name)) {
-        if (tool.id) {
-          await client.agents.tools.detach(tool.id, { agent_id: agentId });
-          detachedAny = true;
-        }
-      }
-    }
-
-    return detachedAny;
-  } catch (err) {
-    console.warn(
-      `Warning: Failed to detach memory tools: ${err instanceof Error ? err.message : String(err)}`,
-    );
-    return false;
-  }
 }
 
 type PersistedToolRule = NonNullable<AgentState["tool_rules"]>[number];
@@ -575,29 +482,24 @@ export async function clearPersistedClientToolRules(
  * Force switch to a specific toolset regardless of model.
  *
  * @param toolsetName - The toolset to switch to
- * @param agentId - Agent to relink tools to
  */
 export async function forceToolsetSwitch(
   toolsetName: ToolsetName,
-  agentId: string,
 ): Promise<void> {
   await loadTools(undefined, { resolvedToolset: toolsetName });
-  if (toolsetName !== "none") await ensureCorrectMemoryTool(agentId);
 }
 
 /**
- * Switches the loaded toolset based on the target model identifier,
- * and ensures the correct memory tool is attached to the agent.
+ * Switches the loaded toolset based on the target model identifier.
  *
  * @param modelIdentifier - The model handle/id
- * @param agentId - Agent to relink tools to
+ * @param providerType - Provider type used to refine toolset derivation
  */
 export async function switchToolsetForModel(
   modelIdentifier: string,
-  agentId: string,
   providerType?: string | null,
 ): Promise<ToolsetName> {
   const toolset = deriveToolsetFromModel(modelIdentifier, providerType);
-  await forceToolsetSwitch(toolset, agentId);
+  await forceToolsetSwitch(toolset);
   return toolset;
 }

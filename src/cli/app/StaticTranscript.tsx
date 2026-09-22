@@ -1,4 +1,5 @@
-import { Box, Static } from "ink";
+import { Box, Static, useApp } from "ink";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { ApprovalPreview } from "@/cli/components/ApprovalPreview";
 import { AssistantMessage } from "@/cli/components/AssistantMessageRich";
 import { BashCommandMessage } from "@/cli/components/BashCommandMessage";
@@ -11,10 +12,22 @@ import { SubagentGroupStatic } from "@/cli/components/SubagentGroupStatic";
 import { Text } from "@/cli/components/Text";
 import { ToolCallMessage } from "@/cli/components/ToolCallMessageRich";
 import { TrajectorySummary } from "@/cli/components/TrajectorySummary";
+import {
+  getSystemRemindersExpanded,
+  getSystemRemindersVisible,
+  getThinkingExpanded,
+  subscribeToSystemReminderDisplay,
+  subscribeToThinkingDisplay,
+  subscribeToTranscriptDisplayRepaint,
+} from "@/cli/components/transcript-display-state";
 import { UserMessage } from "@/cli/components/UserMessageRich";
 import { WelcomeScreen } from "@/cli/components/WelcomeScreen";
 import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
 import type { StaticItem } from "./types";
+
+type InkAppWithStaticOutputReset = ReturnType<typeof useApp> & {
+  resetStaticOutput?: () => void;
+};
 
 export function StaticTranscript({
   renderEpoch,
@@ -40,9 +53,32 @@ export function StaticTranscript({
    *  remounting on every tool call and re-printing history). */
   lastShellToolCallId?: string;
 }) {
+  const [displayRenderEpoch, setDisplayRenderEpoch] = useState(0);
+  const { resetStaticOutput } = useApp() as InkAppWithStaticOutputReset;
+  const systemRemindersExpanded = useSyncExternalStore(
+    subscribeToSystemReminderDisplay,
+    getSystemRemindersExpanded,
+  );
+  const systemRemindersVisible = useSyncExternalStore(
+    subscribeToSystemReminderDisplay,
+    getSystemRemindersVisible,
+  );
+  const thinkingExpanded = useSyncExternalStore(
+    subscribeToThinkingDisplay,
+    getThinkingExpanded,
+  );
+  useEffect(
+    () =>
+      subscribeToTranscriptDisplayRepaint(() => {
+        resetStaticOutput?.();
+        setDisplayRenderEpoch((epoch) => epoch + 1);
+      }),
+    [resetStaticOutput],
+  );
+
   return (
     <Static
-      key={`${renderEpoch}-${hiddenToolCallId ?? ""}`}
+      key={`${renderEpoch}-${displayRenderEpoch}-${hiddenToolCallId ?? ""}`}
       items={items}
       style={{ flexDirection: "column" }}
     >
@@ -53,9 +89,14 @@ export function StaticTranscript({
               {item.kind === "welcome" ? (
                 <WelcomeScreen loadingState="ready" {...item.snapshot} />
               ) : item.kind === "user" ? (
-                <UserMessage line={item} prompt={statusLinePrompt} />
+                <UserMessage
+                  line={item}
+                  prompt={statusLinePrompt}
+                  systemRemindersVisible={systemRemindersVisible}
+                  systemRemindersExpanded={systemRemindersExpanded}
+                />
               ) : item.kind === "reasoning" ? (
-                <ReasoningMessage line={item} />
+                <ReasoningMessage line={item} expanded={thinkingExpanded} />
               ) : item.kind === "assistant" ? (
                 <AssistantMessage line={item} />
               ) : item.kind === "tool_call" ? (

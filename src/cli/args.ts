@@ -1,5 +1,5 @@
 import { parseArgs } from "node:util";
-import { TOOLSET_OPTIONS } from "@/tools/toolset-options";
+import { TOOLSET_OPTIONS } from "@/tools/toolset-catalog";
 
 export type CliFlagMode = "interactive" | "headless" | "both";
 export type CliBackendMode = "api" | "local";
@@ -154,6 +154,15 @@ export const CLI_FLAG_CATALOG = {
       argLabel: "<fmt>",
       description: "Output format for headless mode (text, json, stream-json)",
       continuationLines: ["Default: text"],
+    },
+  },
+  "client-message-id": {
+    parser: { type: "string" },
+    mode: "headless",
+    help: {
+      argLabel: "<id>",
+      description:
+        "Client identity for the initial Cloud input (not a command request_id)",
     },
   },
   "no-wait": {
@@ -404,6 +413,12 @@ export function parseCliArgs(args: string[], strict: boolean) {
     strict,
     allowPositionals: true,
   });
+  const clientMessageId = parsed.values["client-message-id"];
+  if (
+    clientMessageId !== undefined &&
+    (typeof clientMessageId !== "string" || !clientMessageId.trim())
+  )
+    throw new Error("--client-message-id must be a non-empty string");
   return {
     ...parsed,
     values: parsed.values as CliParsedValues,

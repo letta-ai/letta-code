@@ -15,6 +15,7 @@ export interface RunPostTurnMemorySyncParams {
   isEnabled?: (agentId: string) => boolean;
   enqueueReminder?: (text: string) => void;
   emitWarning?: (text: string) => void | Promise<void>;
+  onMemoryPushed?: () => void;
   debugLabel?: string;
 }
 
@@ -149,6 +150,9 @@ export async function runPostTurnMemorySync(
   if (memorySyncEnabled) {
     try {
       const syncResult = await syncMemory(params.agentId);
+      if (syncResult.status === "pushed") {
+        params.onMemoryPushed?.();
+      }
       const syncReminder = formatMemoryPostTurnSyncReminder(syncResult);
       if (syncReminder) {
         params.enqueueReminder?.(syncReminder);

@@ -154,6 +154,8 @@ export type Line =
       phase: "streaming" | "finished";
       isContinuation?: boolean; // true for split continuation lines (no header)
       messageId?: string; // canonical backend message.id when known
+      startedAtMs?: number;
+      durationMs?: number;
     }
   | {
       kind: "assistant";
@@ -456,14 +458,19 @@ function markAsFinished(b: Buffers, id: string): void {
   ) {
     return;
   }
-  const updatedLine = {
-    ...line,
-    text:
-      line.kind === "reasoning"
-        ? trimFinishedReasoningText(line.text)
-        : line.text,
-    phase: "finished" as const,
-  };
+  const updatedLine =
+    line.kind === "reasoning"
+      ? {
+          ...line,
+          text: trimFinishedReasoningText(line.text),
+          phase: "finished" as const,
+          durationMs:
+            line.durationMs ??
+            (line.startedAtMs === undefined
+              ? undefined
+              : Math.max(0, Date.now() - line.startedAtMs)),
+        }
+      : { ...line, phase: "finished" as const };
   b.byId.set(id, updatedLine);
   // PostToolUse and Stop hooks consume the completed text.
   if (updatedLine.text) {
@@ -662,6 +669,7 @@ function trySplitContent(
   newText: string,
 ): boolean {
   if (!b.tokenStreamingEnabled) return false;
+  if (kind === "reasoning") return false;
 
   const splitPoint = findLastSafeSplitPoint(newText);
   if (splitPoint >= newText.length) return false; // No safe split point
@@ -680,8 +688,7 @@ function trySplitContent(
   const committedLine = {
     kind,
     id: commitId,
-    text:
-      kind === "reasoning" ? trimFinishedReasoningText(beforeText) : beforeText,
+    text: beforeText,
     phase: "finished" as const,
     isContinuation: counter > 0, // First split shows bullet, subsequent don't
     messageId:
@@ -733,11 +740,6 @@ export function onChunk(
     return;
   }
 
-  // TODO remove once SDK v1 has proper typing for in-stream errors
-  // Check for streaming error objects (not typed in SDK but emitted by backend)
-  // Note: Error handling moved to catch blocks in App.tsx and headless.ts
-  // The SDK now throws APIError when it sees event: error, so chunks never have error property
-
   switch (chunk.message_type) {
     case "reasoning_message": {
       const chunkWithIds = chunk as LettaStreamingResponse & {
@@ -745,9 +747,7 @@ export function onChunk(
         otid?: string;
       };
       const id = resolveTextLineId(b, chunkWithIds, "reasoning");
-      // console.log(`[REASONING] Received chunk with otid=${id}, delta="${chunk.reasoning?.substring(0, 50)}..."`);
       if (!id) {
-        // console.log(`[REASONING] No otid, breaking`);
         break;
       }
 
@@ -763,6 +763,7 @@ export function onChunk(
         text: "",
         phase: "streaming",
         messageId,
+        startedAtMs: Date.now(),
       }));
       if (delta) {
         const newText = normalizeReasoningSectionBoundaries(line.text + delta);
@@ -780,7 +781,6 @@ export function onChunk(
       } else if (messageId && line.messageId !== messageId) {
         b.byId.set(id, { ...line, messageId });
       }
-      // console.log(`[REASONING] Updated ${id}, textLen=${newText.length}`);
       break;
     }
 
