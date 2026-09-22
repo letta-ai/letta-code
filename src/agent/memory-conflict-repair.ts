@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { getMemoryGitDir } from "@/agent/memory-operation";
@@ -77,4 +77,17 @@ export async function claimMemoryConflictRepair(
     JSON.stringify({ signature, attemptedAt: new Date().toISOString() }),
   );
   return true;
+}
+
+/** Forget an attempt whose worker was cancelled before it could report. */
+export async function releaseMemoryConflictRepair(
+  memoryDir: string,
+): Promise<void> {
+  try {
+    await rm(join(await getMemoryGitDir(memoryDir), ATTEMPT_FILE), {
+      force: true,
+    });
+  } catch {
+    /* Not a repository; nothing was recorded. */
+  }
 }

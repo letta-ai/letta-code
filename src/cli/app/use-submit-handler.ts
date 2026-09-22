@@ -154,7 +154,7 @@ import {
 } from "./command-routing";
 import { buildTextParts } from "./content-parts";
 import { appendOptimisticUserLine, createClientOtid, uid } from "./ids";
-import { saveLastSessionBeforeExit } from "./session";
+import { prepareSessionExit } from "./session";
 import { handleConnectionCommand } from "./submit-connection-commands";
 import { handleDiagnosticsCommand } from "./submit-diagnostics-commands";
 import { handleNavigationCommand } from "./submit-navigation-commands";
@@ -1603,7 +1603,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
             cmd.finish(buildLogoutSuccessMessage(hasEnvApiKey), true);
 
-            saveLastSessionBeforeExit(currentConversationId);
+            await prepareSessionExit(currentConversationId);
 
             // Track session end explicitly (before exit) with stats
             const stats = sessionStatsRef.current.getSnapshot();

@@ -3,7 +3,10 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { claimMemoryConflictRepair } from "./memory-conflict-repair";
+import {
+  claimMemoryConflictRepair,
+  releaseMemoryConflictRepair,
+} from "./memory-conflict-repair";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -48,4 +51,13 @@ test("a conflict that follows new commits is attempted again", async () => {
 
 test("a checkout that is not a repository is left to the worker", async () => {
   expect(await claimMemoryConflictRepair("/nonexistent/memory")).toBe(true);
+});
+
+test("a cancelled attempt does not count against the same conflict", async () => {
+  const root = repository();
+  writeFileSync(join(root, ".git", "MERGE_HEAD"), "a".repeat(40));
+  expect(await claimMemoryConflictRepair(root)).toBe(true);
+  await releaseMemoryConflictRepair(root);
+  expect(await claimMemoryConflictRepair(root)).toBe(true);
+  await releaseMemoryConflictRepair("/nonexistent/memory");
 });

@@ -1,7 +1,10 @@
 import { afterEach, expect, test } from "bun:test";
 import { once } from "node:events";
 import { spawnSubagentProcess } from "@/agent/subagents/subagent-process";
-import { shutdownBackgroundMemoryTasks } from "./memory-task-lifecycle";
+import {
+  cancelBackgroundMemoryTasks,
+  shutdownBackgroundMemoryTasks,
+} from "./memory-task-lifecycle";
 import { backgroundTasks } from "./process_manager";
 
 afterEach(() => backgroundTasks.clear());
@@ -79,3 +82,29 @@ test.skipIf(process.platform === "win32")(
     }
   },
 );
+
+test("interactive exit cancels memory tasks instead of waiting for them", async () => {
+  const controller = new AbortController();
+  let settled = false;
+  backgroundTasks.set("memory", {
+    description: "test",
+    subagentType: "memory",
+    subagentId: "memory",
+    status: "running",
+    output: [],
+    outputFile: "",
+    startTime: new Date(),
+    runtimeScope: { agentId: "agent-parent", conversationId: "conv" },
+    abortController: controller,
+    // Mirrors a worker whose lifecycle only settles once its signal fires.
+    completion: new Promise<void>((resolve) => {
+      controller.signal.addEventListener("abort", () => {
+        settled = true;
+        resolve();
+      });
+    }),
+  });
+  await cancelBackgroundMemoryTasks();
+  expect(controller.signal.aborted).toBe(true);
+  expect(settled).toBe(true);
+});

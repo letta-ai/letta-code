@@ -1,3 +1,4 @@
+import { releaseMemoryConflictRepair } from "@/agent/memory-conflict-repair";
 import type { MemoryPostTurnSyncResult } from "@/agent/memory-git";
 import {
   emitStreamEvent,
@@ -92,6 +93,11 @@ export function runBackgroundMemoryTask(
       },
       repair: params.repair,
     },
+  ).finally(() =>
+    // A repair cancelled at exit has not been tried; let the next session retry it.
+    params.repairOnly && params.signal.aborted
+      ? releaseMemoryConflictRepair(params.memoryDir)
+      : undefined,
   );
   return { execution, unsubscribe };
 }
@@ -124,6 +130,11 @@ export async function finishBackgroundMemoryTasks(
     await Promise.allSettled(pending);
     for (const completion of pending) finished.add(completion);
   }
+}
+
+/** Interactive exits do not wait for memory work: the child, its snapshot and its lock are torn down. */
+export async function cancelBackgroundMemoryTasks(): Promise<void> {
+  await finishBackgroundMemoryTasks(undefined, undefined, { cancel: true });
 }
 
 /** Controlled process exits must account for tasks from previously active conversations too. */
