@@ -7,7 +7,9 @@
 
 import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
+import { claimMemoryConflictRepair } from "@/agent/memory-conflict-repair";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import type { MemoryPostTurnSyncResult } from "@/agent/memory-git";
 import {
   completeSubagent,
   generateSubagentId,
@@ -105,6 +107,8 @@ export interface SpawnBackgroundSubagentTaskArgs {
    * into the agent's context.
    */
   silentCompletion?: boolean;
+  /** Harness-triggered conflict repair; skip if another worker already resolved it. */
+  memoryRepairOnly?: boolean;
   /**
    * Emit a completion notification even when `silentCompletion` is true.
    * Useful when the parent should not stream subagent tokens but still wants
@@ -328,6 +332,36 @@ export async function waitForBackgroundSubagentConversationId(
   }
 }
 
+/** Launch a repair-only worker; false when this conflict was already attempted. */
+export async function startMemoryConflictRepair(
+  params: {
+    agentId: string;
+    conversationId?: string | null;
+    result: MemoryPostTurnSyncResult;
+    actingUserId?: string;
+  },
+  spawn = spawnBackgroundSubagentTask,
+  claimRepair = claimMemoryConflictRepair,
+): Promise<boolean> {
+  if (!(await claimRepair(params.result.memoryDir))) return false;
+  spawn({
+    subagentType: "memory",
+    description: "Repair memory Git conflict",
+    prompt: `Repair only the existing Git conflict in your memory repository. Do not perform unrelated edits or reorganization. If the conflict is already resolved, stop.\n\nMemory directory: ${params.result.memoryDir}\nReported status: ${params.result.summary}`,
+    parentScope: {
+      agentId: params.agentId,
+      conversationId: params.conversationId ?? "default",
+    },
+    memoryScope: {
+      primaryRoot: params.result.memoryDir,
+      writableRoots: [params.result.memoryDir],
+    },
+    memoryRepairOnly: true,
+    actingUserId: params.actingUserId,
+  });
+  return true;
+}
+
 /**
  * Spawn a background subagent task and return task metadata immediately.
  * Notification/hook behavior is identical to Task's background path.
@@ -475,12 +509,20 @@ export function spawnBackgroundSubagentTask(
           ...resolvedParentScope,
           memoryDir: workerMemoryDir,
           assignment: prompt,
+          repairOnly: args.memoryRepairOnly,
           signal: abortController.signal,
           subagentId,
           outputFile,
           formatHeader: (identity) =>
             buildTaskResultHeader(subagentType, subagentId, identity),
           execute,
+          repair: (result) => {
+            void startMemoryConflictRepair({
+              ...resolvedParentScope,
+              actingUserId,
+              result,
+            });
+          },
           getSnapshot: getSubagentSnapshotFn,
         })
       : undefined;

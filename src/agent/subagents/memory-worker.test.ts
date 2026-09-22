@@ -40,13 +40,30 @@ afterEach(() => {
   __testSetBackend(null);
   repo.cleanup();
 });
-function scope() {
+function scope(repairOnly = false) {
   return {
     agentId: "agent-parent",
     conversationId: "conv-parent",
     memoryDir: root,
+    repairOnly,
   };
 }
+/** Leave the checkout mid-merge with a conflicted note.md. */
+function conflict() {
+  git("checkout", "-q", "-b", "other");
+  writeFileSync(join(root, "note.md"), "other\n");
+  git("commit", "-q", "-am", "other");
+  git("checkout", "-q", "main");
+  writeFileSync(join(root, "note.md"), "main\n");
+  git("commit", "-q", "-am", "main");
+  expect(() => git("merge", "other")).toThrow();
+}
+const conflictSync = async () => ({
+  status: "conflict" as const,
+  summary: "merge in progress",
+  memoryDir: root,
+  localOnly: true,
+});
 const localSync = (status: "skipped" | "clean") => async () => ({
   status,
   summary: status,
@@ -330,4 +347,111 @@ test("a worker that crashes after committing still has its commit merged, synced
   );
   expect(changed).toBe(1);
   expect(git("branch", "--list", "letta/memory-worker/*")).toBe("");
+});
+
+test("repairs a real Git conflict in place and skips a duplicate repair", async () => {
+  conflict();
+  let executions = 0;
+  const repair = async (dir: string) => {
+    executions++;
+    expect(dir).toBe(root);
+    writeFileSync(join(root, "note.md"), "resolved\n");
+    git("add", "note.md");
+    git("commit", "-q", "-m", "resolve conflict");
+    return { agentId: "agent-repair", success: true, report: "repaired" };
+  };
+  await Promise.all([
+    runMemoryWorker(scope(true), repair),
+    runMemoryWorker(scope(true), repair),
+  ]);
+  expect(executions).toBe(1);
+  expect(git("status", "--porcelain")).toBe("");
+  expect(readFileSync(join(root, "note.md"), "utf8")).toBe("resolved\n");
+});
+
+test("a repair that reports success without resolving is caught by the sync", async () => {
+  conflict();
+  const before = git("status", "--porcelain");
+  let refreshed = false;
+  const result = await runMemoryWorker(
+    scope(true),
+    async () => ({ agentId: "agent-repair", success: true, report: "done" }),
+    {
+      recompile: async () => {
+        refreshed = true;
+        return "compiled";
+      },
+    },
+  );
+  expect(result.success).toBe(false);
+  expect(git("status", "--porcelain")).toBe(before);
+  expect(refreshed).toBe(false);
+});
+
+test("a sync conflict after an update triggers repair before the worker completes", async () => {
+  let launched = false;
+  const result = await runMemoryWorker(
+    scope(),
+    async (dir) => {
+      writeFileSync(join(dir, "note.md"), "edited\n");
+      gitIn(dir, "commit", "-am", "edit");
+      return { agentId: "agent-worker", success: true, report: "edited" };
+    },
+    {
+      sync: conflictSync,
+      repair: async () => {
+        await Bun.sleep(20);
+        launched = true;
+      },
+    },
+  );
+  expect(launched).toBe(true);
+  expect(result.success).toBe(false);
+  expect(result.error).toContain("conflict");
+});
+
+test("a queued repair that finds the conflict already pushed notifies without launching", async () => {
+  let notified = false;
+  const result = await runMemoryWorker(
+    scope(true),
+    async () => {
+      throw new Error("must not run");
+    },
+    {
+      sync: async () => ({
+        status: "pushed",
+        summary: "Pushed resolved conflict",
+        memoryDir: root,
+        localOnly: false,
+      }),
+      onMemoryChanged: () => {
+        notified = true;
+      },
+    },
+  );
+  expect(result).toEqual({
+    agentId: "",
+    success: true,
+    report: "No memory conflict remains.",
+  });
+  expect(notified).toBe(true);
+});
+
+test("a queued repair reports a dirty checkout instead of declaring it repaired", async () => {
+  const result = await runMemoryWorker(
+    scope(true),
+    async () => {
+      throw new Error("must not run");
+    },
+    {
+      sync: async () => ({
+        status: "dirty",
+        summary: "1 uncommitted memory change(s).",
+        memoryDir: root,
+        localOnly: true,
+      }),
+    },
+  );
+  expect(result.success).toBe(false);
+  expect(result.error).toContain("Memory sync incomplete (dirty)");
 });

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { __testSetBackend, type Backend } from "@/backend";
 import { DeterministicPongExecutor } from "@/backend/dev/headless-turn-executor";
 import { LocalBackend } from "@/backend/local/local-backend";
-import { prepareMemoryHandoff } from "./memory-handoff";
+import { prepareMemoryHandoff, withMemoryHandoff } from "./memory-handoff";
 
 const originalRoot = process.env.LETTA_TRANSCRIPT_ROOT;
 let root: string | undefined;
@@ -104,6 +104,56 @@ test("repeated launches preserve separate read-only snapshots without inlining h
   expect(first.prompt).toContain(params.assignment);
   expect(first.prompt).not.toContain("old facts in parent history");
 });
+
+test("Git repair does not fetch or attach parent history", async () => {
+  __testSetBackend({
+    listConversationMessages: () => {
+      throw new Error("Must not fetch history");
+    },
+  } as unknown as Backend);
+  const result = await prepareMemoryHandoff({
+    agentId: "agent-parent",
+    conversationId: "conv-parent",
+    memoryDir: "/exact/parent/memory",
+    assignment: "Repair the merge.",
+    repairOnly: true,
+  });
+  expect(result.transcriptPath).toBeUndefined();
+  expect(result.prompt).toContain("Repair the merge.");
+  expect(result.prompt).not.toContain("Parent transcript");
+});
+
+test.each([false, true])(
+  "removes the snapshot after the worker settles (failed=%s)",
+  async (failed) => {
+    root = await mkdtemp(join(tmpdir(), "memory-handoff-cleanup-"));
+    process.env.LETTA_TRANSCRIPT_ROOT = root;
+    __testSetBackend({
+      listConversationMessages: async () => ({ getPaginatedItems: () => [] }),
+    } as unknown as Backend);
+    let snapshot: string | undefined;
+    const result = withMemoryHandoff(
+      {
+        agentId: "agent-parent",
+        conversationId: "conv-parent",
+        memoryDir: root,
+        assignment: "Remember Bun",
+      },
+      async (handoff) => {
+        snapshot = handoff.transcriptPath;
+        if (!snapshot) throw new Error("No snapshot provided");
+        expect(await readFile(snapshot, "utf8")).toBe("[]");
+        if (failed) throw new Error("Worker cancelled");
+        return "saved";
+      },
+    );
+    if (failed) await expect(result).rejects.toThrow("Worker cancelled");
+    else expect(await result).toBe("saved");
+    expect(snapshot).toBeDefined();
+    if (!snapshot) throw new Error("No snapshot provided");
+    await expect(stat(snapshot)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
 
 test("a full page whose cursor cannot advance ends the export", async () => {
   root = await mkdtemp(join(tmpdir(), "memory-handoff-cursor-"));
