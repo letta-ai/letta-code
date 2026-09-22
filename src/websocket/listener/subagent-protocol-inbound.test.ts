@@ -69,7 +69,11 @@ describe("launch_subagent protocol", () => {
         { backend, version: "test" },
       );
       expect(isAppServerInfoResponseMessage(info)).toBe(true);
-      expect(info.capabilities.launch_subagent_client_message_id).toBe(true);
+      // Only a Cloud input destination accepts --client-message-id, so a
+      // local listener keeps launch support without the identity capability.
+      expect(info.capabilities.launch_subagent_client_message_id).toBe(
+        backend === "api",
+      );
       delete info.capabilities.launch_subagent_client_message_id;
       expect(info.capabilities.launch_subagent).toBe(true);
       expect(isAppServerInfoResponseMessage(info)).toBe(true);
