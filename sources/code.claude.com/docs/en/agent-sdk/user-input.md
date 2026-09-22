@@ -64,7 +64,7 @@ Your callback receives three arguments:
 
 | Argument                            | Description                                                                                                                                                                                                                                                                                                                           |
 | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `toolName`                          | The name of the tool Claude wants to use (e.g., `"Bash"`, `"Write"`, `"Edit"`)                                                                                                                                                                                                                                                        |
+| `toolName`                          | The name of the tool Claude wants to use (for example, `"Bash"`, `"Write"`, `"Edit"`)                                                                                                                                                                                                                                                 |
 | `input`                             | The parameters Claude is passing to the tool. Contents vary by tool.                                                                                                                                                                                                                                                                  |
 | `options` (TS) / `context` (Python) | Additional context including optional `suggestions` (proposed `PermissionUpdate` entries to avoid re-prompting) and a cancellation signal. In TypeScript, `signal` is an `AbortSignal`; in Python, the signal field is reserved for future use. See [`ToolPermissionContext`](/docs/en/agent-sdk/python#toolpermissioncontext) for Python. |
 
@@ -218,7 +218,7 @@ When denying, provide a message explaining why. Claude sees this message and may
 Beyond allowing or denying, you can modify the tool's input or provide context that helps Claude adjust its approach:
 
 * **Approve**: let the tool execute as Claude requested
-* **Approve with changes**: modify the input before execution (e.g., sanitize paths, add constraints)
+* **Approve with changes**: modify the input before execution (for example, sanitize paths, add constraints)
 * **Approve and remember**: echo a suggested permission rule back so matching calls skip the prompt next time
 * **Reject**: block the tool and tell Claude why
 * **Suggest alternative**: block but guide Claude toward what the user wants instead
@@ -504,10 +504,10 @@ The following steps show how to handle clarifying questions:
   <Step title="Return answers to Claude">
     Build the `answers` object as a record where each key is the `question` text and each value is the selected option's `label`:
 
-    | From the question object                                     | Use as |
-    | ------------------------------------------------------------ | ------ |
-    | `question` field (e.g., `"How should I format the output?"`) | Key    |
-    | Selected option's `label` field (e.g., `"Summary"`)          | Value  |
+    | From the question object                                            | Use as |
+    | ------------------------------------------------------------------- | ------ |
+    | `question` field (for example, `"How should I format the output?"`) | Key    |
+    | Selected option's `label` field (for example, `"Summary"`)          | Value  |
 
     For multi-select questions, pass an array of labels or join them with `", "`. If you [support free-text input](#support-free-text-input), use the user's custom text as the value.
 
@@ -651,7 +651,7 @@ This example handles those questions in a terminal application. Here's what happ
 
 1. **Route the request**: The `canUseTool` callback checks if the tool name is `"AskUserQuestion"` and routes to a dedicated handler
 2. **Display questions**: The handler loops through the `questions` array and prints each question with numbered options
-3. **Collect input**: The user can enter a number to select an option, or type free text directly (e.g., "jquery", "i don't know")
+3. **Collect input**: The user can enter a number to select an option, or type free text directly (for example, "jquery", "i don't know")
 4. **Map answers**: The code checks if input is numeric (uses the option's label) or free text (uses the text directly)
 5. **Return to Claude**: The response includes both the original `questions` array and the `answers` mapping
 

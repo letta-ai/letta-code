@@ -1547,7 +1547,7 @@ class AssistantMessage:
 | `error`              | [`AssistantMessageError`](#assistantmessageerror) ` \| None` | Error type if the response encountered an error                                |
 | `usage`              | `dict[str, Any] \| None`                                     | Per-message token usage (same keys as [`ResultMessage.usage`](#resultmessage)) |
 | `message_id`         | `str \| None`                                                | API message ID. Multiple messages from one turn share the same ID              |
-| `stop_reason`        | `str \| None`                                                | Stop reason from the API (e.g. `end_turn`, `tool_use`)                         |
+| `stop_reason`        | `str \| None`                                                | Stop reason from the API (for example, `end_turn`, `tool_use`)                 |
 | `session_id`         | `str \| None`                                                | ID of the session this message belongs to                                      |
 | `uuid`               | `str \| None`                                                | Unique message identifier within the session transcript                        |
 
@@ -3373,7 +3373,7 @@ class SandboxNetworkConfig(TypedDict, total=False):
 | `allowManagedDomainsOnly` | `bool`      | `False` | Managed-settings only: when set in managed settings, ignore `allowedDomains` and `WebFetch(domain:...)` allow rules from non-managed settings sources. Has no effect when set via SDK options |
 | `allowUnixSockets`        | `list[str]` | `[]`    | macOS only: Unix socket paths that processes can access, such as the Docker socket. Ignored on Linux                                                                                          |
 | `allowAllUnixSockets`     | `bool`      | `False` | Allow access to all Unix sockets                                                                                                                                                              |
-| `allowLocalBinding`       | `bool`      | `False` | Allow processes to bind to local ports (e.g., for dev servers)                                                                                                                                |
+| `allowLocalBinding`       | `bool`      | `False` | Allow processes to bind to local ports (for example, for dev servers)                                                                                                                         |
 | `allowMachLookup`         | `list[str]` | `[]`    | macOS only: XPC/Mach service names to allow. Supports a trailing wildcard                                                                                                                     |
 | `httpProxyPort`           | `int`       | `None`  | HTTP proxy port for network requests                                                                                                                                                          |
 | `socksProxyPort`          | `int`       | `None`  | SOCKS proxy port for network requests                                                                                                                                                         |

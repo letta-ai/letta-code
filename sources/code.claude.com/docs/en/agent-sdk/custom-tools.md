@@ -10,7 +10,7 @@ Custom tools extend the Agent SDK by letting you define your own functions that 
 
 ## Quick reference
 
-| If you want to...                            | Do this                                                                                                                                                                                                       |
+| What you want to do                          | Do this                                                                                                                                                                                                       |
 | :------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Define a tool                                | Use [`@tool`](/docs/en/agent-sdk/python#tool) (Python) or [`tool()`](/docs/en/agent-sdk/typescript#tool) (TypeScript) with a name, description, schema, and handler. See [Create a custom tool](#create-a-custom-tool). |
 | Register a tool with Claude                  | Wrap in `create_sdk_mcp_server` / `createSdkMcpServer` and pass to `mcpServers` in `query()`. See [Call a custom tool](#call-a-custom-tool).                                                                  |
