@@ -3,10 +3,10 @@
 // resolves under another agent's memory directory.
 //
 // SCOPE — this guard now exists ONLY for agent-process IN-PROCESS file
-// tools: Read / Write / Edit / MultiEdit / NotebookEdit / Glob / ListDir, the
-// ApplyPatch family, and their Codex aliases (all canonicalized via
-// `canonicalToolName`, all carrying an explicit absolute path). These never
-// fork, so the kernel filesystem sandbox (src/sandbox/) cannot see them.
+// tools: Read / Write / Edit / NotebookEdit / Glob / Grep and the ApplyPatch
+// family (all canonicalized via `canonicalToolName`, all carrying an explicit
+// absolute path). These never fork, so the kernel filesystem sandbox
+// (src/sandbox/) cannot see them.
 //
 // Spawned shell commands are intentionally no longer analyzed here (the old
 // token/raw-command scanner is gone — it was bypassable by symlinks, command
@@ -143,7 +143,7 @@ function normalizePathForCompare(path: string): string {
  *  - `agents-root` — path is exactly the tree root (enumeration of every agent
  *                    on the machine).
  *  - `ancestor`    — path is an ancestor of the tree root (e.g. `$HOME`, `/`).
- *                    Recursive tools (Glob/ListDir) entering this path would
+ *                    Recursive tools (Glob/Grep) entering this path would
  *                    walk into other agents' directories.
  *  - `agent`       — path is inside a specific agent's directory (any depth,
  *                    including the bare agent dir). The `id` is the agent ID

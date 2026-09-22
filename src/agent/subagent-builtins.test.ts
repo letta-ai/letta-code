@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -188,11 +195,25 @@ Custom prompt body`,
     );
   });
 
-  test("built-ins never list a removed tool", async () => {
-    const configs = await getAllSubagentConfigs();
-    for (const config of Object.values(configs)) {
-      if (config.allowedTools === "all") continue;
-      expect(findRemovedToolNames(config.allowedTools)).toEqual([]);
+  test("built-ins never list a removed tool", () => {
+    // Read the shipped files directly: every built-in variant (standard,
+    // local-memfs, memfs-v2) lives here, and discovery would also pull in the
+    // developer's own ~/.letta/agents and project subagents.
+    const builtinDir = join(import.meta.dir, "subagents", "builtin");
+    const files = readdirSync(builtinDir).filter((file) =>
+      file.endsWith(".md"),
+    );
+    expect(files.length).toBeGreaterThan(0);
+    for (const file of files) {
+      const source = readFileSync(join(builtinDir, file), "utf-8");
+      const tools = (source.match(/^tools:(.*)$/m)?.[1] ?? "")
+        .split(",")
+        .map((tool) => tool.trim())
+        .filter(Boolean);
+      expect({ file, removed: findRemovedToolNames(tools) }).toEqual({
+        file,
+        removed: [],
+      });
     }
   });
 

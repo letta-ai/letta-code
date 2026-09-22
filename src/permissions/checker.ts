@@ -630,19 +630,9 @@ function buildPermissionQuery(toolName: string, toolArgs: ToolArgs): string {
       return filePath ? `${toolName}(${filePath})` : toolName;
     }
 
-    case "Bash": {
-      // Bash: "Bash(command with args)"
-      const command =
-        typeof toolArgs.cmd === "string"
-          ? toolArgs.cmd
-          : typeof toolArgs.command === "string"
-            ? toolArgs.command
-            : Array.isArray(toolArgs.command)
-              ? toolArgs.command.join(" ")
-              : "";
-      return `Bash(${command})`;
-    }
+    case "Bash":
     case "exec_command": {
+      // Both shell tools: "Bash(command with args)"
       const command =
         typeof toolArgs.cmd === "string"
           ? toolArgs.cmd

@@ -19,6 +19,10 @@ const REMOVED_TOOL_NAMES = new Set([
   "TodoWrite",
 ]);
 
+export function isRemovedToolName(toolName: string): boolean {
+  return REMOVED_TOOL_NAMES.has(toolName);
+}
+
 export function findRemovedToolNames(toolNames: readonly string[]): string[] {
-  return toolNames.filter((name) => REMOVED_TOOL_NAMES.has(name));
+  return toolNames.filter(isRemovedToolName);
 }

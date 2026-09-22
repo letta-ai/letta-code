@@ -170,7 +170,7 @@ function emitNewBackgroundTaskOutput(
 
 /**
  * Core implementation for retrieving task/process output.
- * Used by both BashOutput (legacy) and TaskOutput (new).
+ * Used by TaskOutput.
  * Checks both backgroundProcesses (Bash) and backgroundTasks (Task).
  */
 export async function getTaskOutput(

@@ -2449,19 +2449,6 @@ export function App({
           return headerLines + diffLines;
         }
 
-        if (Array.isArray(args.edits)) {
-          for (const edit of args.edits) {
-            if (!edit || typeof edit !== "object") continue;
-            const oldString =
-              typeof edit.old_string === "string" ? edit.old_string : "";
-            const newString =
-              typeof edit.new_string === "string" ? edit.new_string : "";
-            diffLines += countWrappedLines(oldString, wrapWidth);
-            diffLines += countWrappedLines(newString, wrapWidth);
-          }
-          return headerLines + diffLines;
-        }
-
         if (typeof args.content === "string") {
           diffLines += countWrappedLines(args.content, wrapWidth);
           return headerLines + diffLines;

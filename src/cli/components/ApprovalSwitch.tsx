@@ -35,11 +35,6 @@ type FileEditInfo = {
   oldString?: string;
   newString?: string;
   replaceAll?: boolean;
-  edits?: Array<{
-    old_string: string;
-    new_string: string;
-    replace_all?: boolean;
-  }>;
   patchInput?: string;
   toolCallId?: string;
 };
@@ -152,7 +147,6 @@ function getFileEditInfo(approval: ApprovalRequest): FileEditInfo | null {
       oldString: args.old_string as string | undefined,
       newString: args.new_string as string | undefined,
       replaceAll: args.replace_all as boolean | undefined,
-      edits: args.edits as FileEditInfo["edits"],
       toolCallId: approval.toolCallId,
     };
   } catch {

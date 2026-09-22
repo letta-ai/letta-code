@@ -160,4 +160,16 @@ describe("request-scoped client toolsets", () => {
       }),
     ).rejects.toThrow("Unknown bundled client tool: NotABundledTool");
   });
+
+  test("names a removed bundled tool as removed", async () => {
+    await expect(
+      prepareToolExecutionContextForResolvedTarget({
+        modelIdentifier: "anthropic/claude-sonnet-5",
+        toolsetPreference: "auto",
+        clientToolset: { include: ["Read", "LS"] },
+      }),
+    ).rejects.toThrow(
+      "Unknown bundled client tool: LS (removed from Letta Code)",
+    );
+  });
 });
