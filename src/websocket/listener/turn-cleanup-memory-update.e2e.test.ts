@@ -4,10 +4,18 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import { clearAllSubagents } from "@/agent/subagent-state";
 import { __testSetBackend, type Backend } from "@/backend";
 import { settingsManager } from "@/settings-manager";
+import { finishBackgroundMemoryTasks } from "@/tools/impl/memory-task-lifecycle";
+import { backgroundTasks } from "@/tools/impl/process_manager";
+import { spawnBackgroundSubagentTask } from "@/tools/impl/task";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { createRuntime } from "./lifecycle";
+import {
+  clearProcessServices,
+  installProcessEventRouting,
+} from "./process-services";
 import { runListenerTurnCleanup } from "./turn-cleanup";
 
 const root = mkdtempSync(join(tmpdir(), "memory-update-e2e-"));
@@ -40,6 +48,7 @@ beforeAll(async () => {
   await settingsManager.initialize();
   __testSetBackend({
     capabilities: { remoteMemfs: true, localMemfs: false },
+    listConversationMessages: async () => ({ getPaginatedItems: () => [] }),
   } as unknown as Backend);
   globalThis.fetch = (async (input) => {
     if (String(input).endsWith("/repositories")) {
@@ -107,7 +116,15 @@ function setupAgent() {
     git(memoryDir, ["commit", "-m", "Change profile picture"]);
     return git(memoryDir, ["rev-parse", "HEAD"]);
   };
-  return { remote, memoryDir, agentId, updates, cleanup, commitPicture };
+  return {
+    remote,
+    memoryDir,
+    agentId,
+    updates,
+    cleanup,
+    commitPicture,
+    listener,
+  };
 }
 
 test("a direct profile picture commit notifies its conversation after the push", async () => {
@@ -158,3 +175,91 @@ test("an unfinished turn neither pushes nor notifies", async () => {
   expect(git(remote, ["rev-parse", "main"])).toBe(oldSha);
   expect(updates).toEqual([]);
 });
+
+test.each([false, true])(
+  "background worker push refreshes the parent UI only on success (rejected=%s)",
+  async (rejectPush) => {
+    const { remote, memoryDir, agentId, updates, commitPicture, listener } =
+      setupAgent();
+    if (rejectPush) {
+      writeFileSync(
+        join(remote, "hooks", "pre-receive"),
+        "#!/bin/sh\nexit 1\n",
+        { mode: 0o755 },
+      );
+    }
+    if (!listener.transport) throw new Error("Missing transport");
+    let primaryTurns = 0;
+    let notifications = 0;
+    installProcessEventRouting({
+      runtime: listener,
+      processTransport: listener.transport,
+      opts: {
+        connectionId: "memory-test",
+        wsUrl: "wss://example.test/ws",
+        deviceId: "memory-test",
+        connectionName: "test",
+        onConnected() {},
+        onDisconnected() {},
+        onError() {},
+      },
+      processQueuedTurn: async () => {
+        primaryTurns++;
+      },
+    });
+    let sha = "";
+    const task = spawnBackgroundSubagentTask({
+      subagentType: "memory",
+      prompt: "Update the profile picture",
+      description: "Update memory",
+      parentScope: { agentId, conversationId: "conv-picture" },
+      memoryScope: { primaryRoot: memoryDir, writableRoots: [memoryDir] },
+      deps: {
+        spawnSubagentImpl: async () => {
+          sha = commitPicture();
+          expect(updates).toEqual([]);
+          return {
+            agentId: "agent-worker",
+            success: true,
+            report: "Committed picture",
+          };
+        },
+        copyGitHubPullRequestTagsImpl: async () => {},
+        addToMessageQueueImpl: () => {
+          notifications++;
+        },
+        runSubagentStopHooksImpl: async () => ({
+          blocked: false,
+          errored: false,
+          feedback: [],
+          results: [],
+        }),
+      },
+    });
+    try {
+      await finishBackgroundMemoryTasks(agentId, "conv-picture");
+      expect(sha).toHaveLength(40);
+      expect(
+        backgroundTasks.get(task.taskId)?.status,
+        backgroundTasks.get(task.taskId)?.error,
+      ).toBe(rejectPush ? "failed" : "completed");
+      expect(updates).toHaveLength(rejectPush ? 0 : 1);
+      if (!rejectPush) {
+        expect(updates[0]).toEqual({
+          remoteSha: sha,
+          message: expect.objectContaining({
+            type: "memory_updated",
+            runtime: { agent_id: agentId, conversation_id: "conv-picture" },
+          }),
+        });
+      }
+      expect(primaryTurns).toBe(0);
+      expect(notifications).toBe(0);
+    } finally {
+      clearProcessServices(listener);
+      clearAllSubagents();
+      backgroundTasks.delete(task.taskId);
+      rmSync(task.outputFile, { force: true });
+    }
+  },
+);
