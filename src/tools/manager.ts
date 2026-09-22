@@ -112,7 +112,6 @@ function resolvedModelForm(
 
 const STREAMING_SHELL_TOOLS = new Set([
   "Bash",
-  "TaskOutput",
   "exec_command",
   "write_stdin",
   "Monitor",

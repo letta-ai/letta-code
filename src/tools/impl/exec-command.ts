@@ -632,7 +632,6 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
     stderr: [],
     status: session.status,
     exitCode: session.exitCode,
-    lastReadIndex: { stdout: 0, stderr: 0 },
     startTime: new Date(),
     outputFile,
     totalStdoutLines: 0,

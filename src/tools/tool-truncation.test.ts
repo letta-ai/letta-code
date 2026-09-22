@@ -3,7 +3,6 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bash } from "@/tools/impl/bash";
-import { getTaskOutput } from "@/tools/impl/bash-output";
 import { glob } from "@/tools/impl/glob";
 import { grep } from "@/tools/impl/grep";
 import { read } from "@/tools/impl/read";
@@ -213,39 +212,5 @@ describe("tool truncation integration tests", () => {
       expect(result.truncated).toBeUndefined();
       expect(result.totalFiles).toBeUndefined();
     });
-  });
-
-  describe("background task output truncation", () => {
-    test.skipIf(process.platform === "win32")(
-      "truncates accumulated output exceeding 30K characters",
-      async () => {
-        // Start a background process that generates lots of output
-        const startResult = await bash({
-          command: `for i in {1..1000}; do echo "$(printf 'x%.0s' {1..100})"; done`,
-          run_in_background: true,
-        });
-
-        const message = startResult.content[0]?.text || "";
-        const bashIdMatch = message.match(/with ID: (.+)/);
-        expect(bashIdMatch).toBeTruthy();
-        const bashId = bashIdMatch?.[1];
-        if (!bashId) throw new Error("bashId not found");
-
-        // Wait a bit for output to accumulate
-        await new Promise((resolve) => setTimeout(resolve, 100));
-
-        const outputResult = await getTaskOutput({
-          task_id: bashId,
-          block: false,
-        });
-
-        expect(outputResult.message.length).toBeLessThan(35000); // 30K + notice
-        if (outputResult.message.length > 30000) {
-          expect(outputResult.message).toContain(
-            "[Output truncated: showing 30,000",
-          );
-        }
-      },
-    );
   });
 });

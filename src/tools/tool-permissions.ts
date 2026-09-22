@@ -8,7 +8,6 @@ export const TOOL_PERMISSIONS: Record<
 > = {
   AskUserQuestion: { requiresApproval: true },
   Bash: { requiresApproval: true },
-  TaskOutput: { requiresApproval: false },
   EnterWorktree: { requiresApproval: true },
   ExitWorktree: { requiresApproval: true },
   Edit: { requiresApproval: true },

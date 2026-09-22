@@ -193,7 +193,6 @@ const readOnlyToolNames = new Set([
   "search",
   "searchfiles",
   "skill",
-  "taskoutput",
   "viewimage",
 ]);
 
@@ -258,7 +257,7 @@ if (letta.capabilities.permissions) {
       return {
         decision: "deny",
         reason:
-          `Plan mode is active. Use direct read-only tools (Read, Grep, Glob, ViewImage, Skill, TaskOutput, safe read-only Bash), planning tools (AskUserQuestion, TaskCreate/TaskUpdate, UpdatePlan), or recall-style subagents only. ` +
+          `Plan mode is active. Use direct read-only tools (Read, Grep, Glob, ViewImage, Skill, safe read-only Bash), planning tools (AskUserQuestion, TaskCreate/TaskUpdate, UpdatePlan), or recall-style subagents only. ` +
           `Do not use coding, general-purpose, or fork subagents in plan mode. ` +
           `Write your plan to: ${session.planFilePath}. ` +
           `When ready, read the plan file and include the full current plan text in AskUserQuestion for approval, then call exit_plan_mode after approval.`,

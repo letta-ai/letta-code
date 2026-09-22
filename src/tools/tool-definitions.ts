@@ -23,7 +23,6 @@ import TaskDescription from "./descriptions/Task.md";
 import TaskCreateDescription from "./descriptions/TaskCreate.md";
 import TaskGetDescription from "./descriptions/TaskGet.md";
 import TaskListDescription from "./descriptions/TaskList.md";
-import TaskOutputDescription from "./descriptions/TaskOutput.md";
 import TaskStopDescription from "./descriptions/TaskStop.md";
 import TaskUpdateDescription from "./descriptions/TaskUpdate.md";
 import UpdatePlanDescription from "./descriptions/UpdatePlan.md";
@@ -54,7 +53,6 @@ import { task } from "./impl/task";
 import { task_create } from "./impl/task-create";
 import { task_get } from "./impl/task-get";
 import { task_list } from "./impl/task-list";
-import { task_output } from "./impl/task-output";
 import { task_stop } from "./impl/task-stop";
 import { task_update } from "./impl/task-update";
 import { update_plan } from "./impl/update-plan";
@@ -85,7 +83,6 @@ import TaskSchema from "./schemas/Task.json";
 import TaskCreateSchema from "./schemas/TaskCreate.json";
 import TaskGetSchema from "./schemas/TaskGet.json";
 import TaskListSchema from "./schemas/TaskList.json";
-import TaskOutputSchema from "./schemas/TaskOutput.json";
 import TaskStopSchema from "./schemas/TaskStop.json";
 import TaskUpdateSchema from "./schemas/TaskUpdate.json";
 import UpdatePlanSchema from "./schemas/UpdatePlan.json";
@@ -168,11 +165,6 @@ const toolDefinitions = {
     schema: GrepSchema,
     description: GrepDescription.trim(),
     impl: grep,
-  }),
-  TaskOutput: defineTool({
-    schema: TaskOutputSchema,
-    description: TaskOutputDescription.trim(),
-    impl: task_output,
   }),
   TaskStop: defineTool({
     schema: TaskStopSchema,

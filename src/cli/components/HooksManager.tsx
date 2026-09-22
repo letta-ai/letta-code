@@ -97,7 +97,6 @@ const FALLBACK_TOOL_NAMES = [
   "Write",
   "AskUserQuestion",
   "Skill",
-  "TaskOutput",
   "TaskStop",
 ];
 

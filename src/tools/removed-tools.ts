@@ -18,6 +18,7 @@ const REMOVED_TOOL_NAMES = new Set([
   "shell",
   "ShellCommand",
   "shell_command",
+  "TaskOutput",
   "TodoWrite",
 ]);
 

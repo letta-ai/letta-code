@@ -28,7 +28,6 @@ export interface BackgroundProcess {
   stderr: string[];
   status: "running" | "completed" | "failed";
   exitCode: number | null;
-  lastReadIndex: { stdout: number; stderr: number };
   startTime?: Date;
   outputFile?: string; // File path for persistent output
   totalStdoutLines?: number;
@@ -54,7 +53,6 @@ export interface BackgroundTask {
   displayType?: string;
   subagentId: string;
   status: "running" | "completed" | "failed";
-  output: string[];
   error?: string;
   startTime: Date;
   outputFile: string;
@@ -124,8 +122,6 @@ interface BackgroundRetentionConfig {
   completedEntryTtlMs: number;
   maxProcessLinesPerStream: number;
   maxProcessCharsPerStream: number;
-  maxTaskOutputChars: number;
-  maxOutputFileReadBytes: number;
   maxRunningProcesses: number;
   maxRunningTasks: number;
 }
@@ -134,8 +130,6 @@ const DEFAULT_BACKGROUND_RETENTION_CONFIG: BackgroundRetentionConfig = {
   completedEntryTtlMs: 5 * 60 * 1000,
   maxProcessLinesPerStream: 500,
   maxProcessCharsPerStream: 30_000,
-  maxTaskOutputChars: 30_000,
-  maxOutputFileReadBytes: 1_000_000,
   maxRunningProcesses: 32,
   maxRunningTasks: 32,
 };
@@ -210,18 +204,6 @@ function trimBufferedLines(lines: string[]): string[] {
   return retained;
 }
 
-function truncateTaskOutput(text: string): string {
-  const maxChars = backgroundRetentionConfig.maxTaskOutputChars;
-  if (text.length <= maxChars) {
-    return text;
-  }
-
-  const notice =
-    "\n\n[Background task output truncated in memory. See the task output file for the full transcript.]";
-  const headLength = Math.max(0, maxChars - notice.length);
-  return `${text.slice(0, headLength)}${notice}`;
-}
-
 export function __setBackgroundRetentionConfigForTests(
   overrides: Partial<BackgroundRetentionConfig>,
 ): void {
@@ -261,10 +243,6 @@ function countRunningEntries<
     }
   }
   return count;
-}
-
-export function getBackgroundOutputFileReadBytes(): number {
-  return backgroundRetentionConfig.maxOutputFileReadBytes;
 }
 
 export function assertBackgroundProcessCapacity(): void {
@@ -317,13 +295,6 @@ export function appendBackgroundProcessOutput(
     lines.length;
   processState.stderr.push(...lines);
   processState.stderr = trimBufferedLines(processState.stderr);
-}
-
-export function setBackgroundTaskOutput(
-  task: BackgroundTask,
-  output: string,
-): void {
-  task.output = output.length > 0 ? [truncateTaskOutput(output)] : [];
 }
 
 /**

@@ -700,7 +700,7 @@ function matchesPattern(
  * mutations are constrained by the memory-subagent sandbox.
  */
 const SAFE_AUTO_APPROVE_SUBAGENT_TYPES = new Set([
-  "recall", // Conversation history search - Skill, Bash, Read, TaskOutput
+  "recall", // Conversation history search - Skill, Bash, Read
   "Recall",
   "reflection", // Memory reflection - writes constrained by memory-subagent sandbox
   "Reflection",
@@ -736,7 +736,6 @@ function getDefaultDecision(
     "Read",
     "Glob",
     "Grep",
-    "TaskOutput",
     "write_stdin",
     "UpdatePlan",
     // Memory tools are constrained to the memfs repo and include their

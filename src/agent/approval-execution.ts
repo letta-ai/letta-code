@@ -47,8 +47,6 @@ const PARALLEL_SAFE_TOOLS = new Set([
   "conversation_search",
   "web_search",
   "fetch_webpage",
-  // Background task output (read-only check)
-  "TaskOutput",
   // Task spawns independent subagents
   "Task",
   "Agent",
