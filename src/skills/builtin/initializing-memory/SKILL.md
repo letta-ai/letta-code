@@ -3,6 +3,8 @@ name: initializing-memory
 description: Comprehensive guide for initializing or reorganizing agent memory. Load this skill when running /init, when the user asks you to set up your memory, or when you need guidance on creating effective memory files.
 ---
 
+Memory initialization or reorganization is the main task here. The primary agent owns the work through completion: research, ask necessary questions, synthesize findings, edit files, commit, and verify the result before reporting success. You may delegate research, but integrate its results into memory yourself. If a memory worker you launched is still editing this checkout, wait for it to finish before making direct edits, then inspect the current files. Do not report initialization complete merely because a background task was launched.
+
 # Memory Initialization
 
 The user has requested that you initialize or reorganize your memory. Your memory has been projected to a local filesystem (in $MEMORY_DIR) so you can easily edit and restructure your own memory through local filesystem operations. Changes to the memory filesystem will be reflected in your future memory.
