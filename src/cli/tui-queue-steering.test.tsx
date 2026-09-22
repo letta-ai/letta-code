@@ -442,7 +442,7 @@ describe("TUI user queue steering", () => {
 
   test("bash-mode submission and history still use the shell callback", async () => {
     const { executor, stdin, stdout } = await renderTestApp();
-    const script = join(tempHome, "bash-history.cjs");
+    const script = join(tempHome, `${"long-path-".repeat(6)}bash-history.cjs`);
     writeFileSync(
       script,
       `const fs = require("node:fs");
@@ -453,10 +453,12 @@ console.log("BASH_HISTORY_" + count);
 `,
     );
     const command = `node "${script}"`;
+    const showsCommand = (text: string) =>
+      text.replace(/\s+/g, "").includes(command.replace(/\s+/g, ""));
     stdin.push("!");
     await waitFor(() => /\n!\s*\n/.test(stdout.text), "bash mode");
     stdin.push(command);
-    await waitFor(() => stdout.text.includes(command), "the bash draft");
+    await waitFor(() => showsCommand(stdout.text), "the bash draft");
     stdin.push("\r");
     await waitFor(
       () => stdout.text.includes("BASH_HISTORY_1"),
@@ -465,7 +467,7 @@ console.log("BASH_HISTORY_" + count);
     const frameStart = stdout.text.length;
     stdin.push("\u001b[A");
     await waitFor(
-      () => stdout.text.slice(frameStart).includes(command),
+      () => showsCommand(stdout.text.slice(frameStart)),
       "the recalled shell command",
     );
     stdin.push("\r");
