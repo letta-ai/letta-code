@@ -1,4 +1,7 @@
-import { claimMemoryConflictRepair } from "@/agent/memory-conflict-repair";
+import {
+  claimMemoryConflictRepair,
+  type ReleaseMemoryConflictRepair,
+} from "@/agent/memory-conflict-repair";
 import type { MemoryPostTurnSyncResult } from "@/agent/memory-git";
 import {
   emitStreamEvent,
@@ -128,7 +131,7 @@ export async function startMemoryConflictRepair(
   spawn: (args: SpawnBackgroundSubagentTaskArgs) => unknown,
   claimRepair = claimMemoryConflictRepair,
 ): Promise<boolean> {
-  let release: (() => Promise<void>) | null = null;
+  let release: ReleaseMemoryConflictRepair | null = null;
   try {
     release = await claimRepair(params.result.memoryDir);
     if (!release) return false;
@@ -153,7 +156,7 @@ export async function startMemoryConflictRepair(
     // Capacity or checkout errors must not become unhandled rejections, and
     // an attempt that never launched must not block the next turn's retry.
     debugWarn("memory-repair", `Could not launch repair: ${String(error)}`);
-    await release?.().catch(() => undefined);
+    await release?.({ leaseHeld: true }).catch(() => undefined);
     return false;
   }
 }

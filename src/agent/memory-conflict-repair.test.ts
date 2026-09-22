@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { claimMemoryOperation } from "@/agent/memory-operation";
 import {
   createTempGitRepo,
   type TempGitRepo,
@@ -69,4 +70,18 @@ test("a stale release does not forget a newer attempt", async () => {
   await first?.();
   expect(await claimMemoryConflictRepair(root)).toBeNull();
   await second?.();
+});
+
+test("a cancelled attempt is left in place while another process holds the checkout", async () => {
+  const root = repository();
+  writeFileSync(join(root, ".git", "MERGE_HEAD"), "a".repeat(40));
+  const release = await claimMemoryConflictRepair(root);
+  expect(release).not.toBeNull();
+  const lease = await claimMemoryOperation(root);
+  await release?.();
+  // Still recorded: the release could not take the lease safely.
+  expect(await claimMemoryConflictRepair(root)).toBeNull();
+  await lease?.();
+  await release?.();
+  expect(await claimMemoryConflictRepair(root)).not.toBeNull();
 });

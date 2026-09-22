@@ -4,6 +4,7 @@ import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { getMemoryGitDir } from "@/agent/memory-git-dir";
+import { claimMemoryOperation } from "@/agent/memory-operation";
 
 const ATTEMPT_FILE = "letta-memory-repair.json";
 const OPERATION_HEADS = [
@@ -56,9 +57,14 @@ async function describeMemoryConflict(
  * that is not a readable Git repository is left to the worker, which reports
  * the failure itself.
  */
+export type ReleaseMemoryConflictRepair = (options?: {
+  /** The caller already holds the checkout lease (launch paths do). */
+  leaseHeld?: boolean;
+}) => Promise<void>;
+
 export async function claimMemoryConflictRepair(
   memoryDir: string,
-): Promise<(() => Promise<void>) | null> {
+): Promise<ReleaseMemoryConflictRepair | null> {
   let gitDir: string;
   try {
     gitDir = await getMemoryGitDir(memoryDir);
@@ -83,7 +89,20 @@ export async function claimMemoryConflictRepair(
     path,
     JSON.stringify({ signature, nonce, attemptedAt: new Date().toISOString() }),
   );
-  return async () => {
-    if ((await readAttempt()).nonce === nonce) await rm(path, { force: true });
+  return async (options = {}) => {
+    // Compare-and-remove must not race a newer attempt from another process;
+    // attempts are written under the checkout lease, so remove under it too.
+    // At exit the lease may be busy: then leave the marker, which costs one
+    // "already attempted" report instead of a retry.
+    const lease = options.leaseHeld
+      ? null
+      : await claimMemoryOperation(memoryDir);
+    if (!options.leaseHeld && !lease) return;
+    try {
+      if ((await readAttempt()).nonce === nonce)
+        await rm(path, { force: true });
+    } finally {
+      await lease?.();
+    }
   };
 }
