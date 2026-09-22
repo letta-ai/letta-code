@@ -42,6 +42,16 @@ describe("ephemeral conversation creation", () => {
     expect(body.model_settings).toMatchObject({ reasoning_effort: "high" });
   });
 
+  test("adjusts a reasoning effort the model rejects, as agent updates do", async () => {
+    const body = await buildEphemeralConversationCreateBody({
+      model: "gpt-5.6-luna",
+      reasoningEffort: "minimal",
+      systemPromptCustom: "isolated prompt",
+    });
+
+    expect(body.model_settings).toMatchObject({ reasoning_effort: "none" });
+  });
+
   test("creates local execution state outside the persistent local store", async () => {
     const storageDir = mkdtempSync(join(tmpdir(), "letta-local-persistent-"));
     const originalStorageDir = process.env.LETTA_LOCAL_BACKEND_DIR;

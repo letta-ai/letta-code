@@ -13,6 +13,7 @@ import {
   createEphemeralConversation as createEphemeralConversationRequest,
   type EphemeralConversationCreateBody,
 } from "@/backend/api/ephemeral-conversations";
+import { normalizeReasoningEffortForModel } from "@/utils/openai-reasoning-effort";
 
 export interface CreateEphemeralConversationOptions {
   model?: string;
@@ -40,9 +41,17 @@ export async function buildEphemeralConversationCreateBody(
     isSubagent: true,
     baseTools: [],
   });
+  // Agent updates repair efforts the model rejects (buildModelSettings); this
+  // body skips that path, so apply the same repair here.
+  const reasoningEffort =
+    options.reasoningEffort &&
+    (normalizeReasoningEffortForModel(
+      request.model,
+      options.reasoningEffort,
+    ) as ModelReasoningEffort);
   const modelSettings = withReasoningEffortUpdateArg(
     options.model ? getModelUpdateArgs(options.model) : undefined,
-    options.reasoningEffort,
+    reasoningEffort,
   );
   const contextWindow =
     (modelSettings?.context_window as number | undefined) ??
