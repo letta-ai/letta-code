@@ -44,10 +44,10 @@ import { OPENAI_COMPATIBLE_PROXY_UPDATE_ARG } from "@/utils/openai-endpoint";
 import {
   deriveReasoningEffort,
   mapHandleToLlmConfigPatch,
-  providerTypeForToolsetFromModelSettings,
   providerTypeFromModelSettings,
   providerTypeFromUpdateArgs,
   resolveModelSelectionReasoningHandle,
+  toolsetProviderTypeFromSettings,
 } from "./model-config";
 import { formatReflectionSettings } from "./reflection";
 import type {
@@ -1198,15 +1198,11 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
                 ? `${llmConfig.model_endpoint_type}/${llmConfig.model}`
                 : (llmConfig?.model ?? null));
             if (!modelHandle) {
-              throw new Error(
-                "Could not determine current model for auto toolset",
-              );
+              throw new Error("No current model resolved for auto toolset");
             }
 
             const providerType =
-              providerTypeForToolsetFromModelSettings(
-                agentState?.model_settings,
-              ) ??
+              toolsetProviderTypeFromSettings(agentState?.model_settings) ??
               llmConfig?.model_endpoint_type ??
               null;
             const derivedToolset = await switchToolsetForModel(

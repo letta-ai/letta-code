@@ -166,7 +166,7 @@ export function providerTypeFromModelSettings(
  * they get the non-matching "openai-compatible" label and keep handle-based
  * detection (which resolves them to the default toolset).
  */
-export function providerTypeForToolsetFromModelSettings(
+export function toolsetProviderTypeFromSettings(
   modelSettings: unknown,
 ): string | null {
   if (
