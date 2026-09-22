@@ -1,39 +1,24 @@
 {
   "tests": [
     {
-      "path": "src/websocket/listener/turn-cleanup-memory-update.e2e.test.ts",
-      "timeoutMs": 30000,
-      "reason": "Exercises real MemFS Git pushes and listener notifications with isolated HOME, settings, backend, auth environment, and repository-list fetch."
-    },
-    {
-      "path": "src/tools/impl/task-fork-receipt.test.ts",
+      "path": "scripts/unit-test-impact.test.cjs",
       "timeoutMs": 15000,
-      "reason": "Replaces billing I/O and the child process while exercising real fork launch state and task receipts with process-global backend, settings, and subagent state."
+      "reason": "Adding this test to the shared Bun batch shifted existing batch boundaries and exposed package-installer module-mock leakage; run it separately."
     },
     {
-      "path": "src/tools/impl/task-computer-routing.test.ts",
+      "path": "src/agent/available-models.test.ts",
       "timeoutMs": 15000,
-      "reason": "Mocks subagent discovery and the child-process launch boundary while exercising task() with process-global backend and subagent state."
+      "reason": "Mutates the backend singleton, shared model catalog cache, and Date.now while testing cache freshness."
     },
     {
-      "path": "src/websocket/listener/turn-cleanup-shared-memory.e2e.test.ts",
-      "timeoutMs": 30000,
-      "reason": "Runs real Git pushes while replacing global fetch and mutating the backend, settings, auth environment, MemFS URL, and a synthetic agent mount."
+      "path": "src/agent/resume-model-refresh.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Replaces the agent LLM-config update boundary with a module mock to observe the resume model/effort overrides it writes."
     },
     {
       "path": "src/auth/desktop-credentials.test.ts",
       "timeoutMs": 30000,
       "reason": "Builds Bun and Node child fixtures with Bun.build; running channel imports afterward in the same Bun process produces alias-resolution failures."
-    },
-    {
-      "path": "src/cli/tui-interrupt-queue-lifecycle.test.tsx",
-      "timeoutMs": 30000,
-      "reason": "Mounts the production TUI, which updates process-wide agent/tool context and settings; keep its proof agent out of later permission and mod tests."
-    },
-    {
-      "path": "scripts/unit-test-impact.test.cjs",
-      "timeoutMs": 15000,
-      "reason": "Adding this test to the shared Bun batch shifted existing batch boundaries and exposed package-installer module-mock leakage; run it separately."
     },
     {
       "path": "src/channels/discord-reconcile.test.ts",
@@ -42,16 +27,6 @@
     },
     {
       "path": "src/channels/discord-registry.test.ts",
-      "timeoutMs": 15000,
-      "reason": "Uses a top-level Bun module mock for the backend client."
-    },
-    {
-      "path": "src/channels/slack-registry.test.ts",
-      "timeoutMs": 15000,
-      "reason": "Uses a top-level Bun module mock for the backend client."
-    },
-    {
-      "path": "src/channels/telegram-registry.test.ts",
       "timeoutMs": 15000,
       "reason": "Uses a top-level Bun module mock for the backend client."
     },
@@ -68,8 +43,15 @@
     {
       "path": "src/channels/service.test.ts",
       "timeoutMs": 15000,
-      "env": { "LETTA_SKIP_KEYCHAIN_CHECK": "1" },
+      "env": {
+        "LETTA_SKIP_KEYCHAIN_CHECK": "1"
+      },
       "reason": "Mutates shared channel stores and credential mode; local fixtures must not use the macOS keychain."
+    },
+    {
+      "path": "src/channels/slack-registry.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Uses a top-level Bun module mock for the backend client."
     },
     {
       "path": "src/channels/slack/media.test.ts",
@@ -77,14 +59,9 @@
       "reason": "Imports the real media module while Slack adapter tests replace it."
     },
     {
-      "path": "src/cli/subcommands/teleport.test.ts",
+      "path": "src/channels/telegram-registry.test.ts",
       "timeoutMs": 15000,
-      "reason": "Reads process-global channel route state that other shared-batch suites mutate."
-    },
-    {
-      "path": "src/cli/components/provider-mod-selector-refresh.test.tsx",
-      "timeoutMs": 15000,
-      "reason": "Renders Ink while mutating the backend mode, backend instance, provider registry, settings singleton, and model cache."
+      "reason": "Uses a top-level Bun module mock for the backend client."
     },
     {
       "path": "src/cli/app/use-configuration-handlers.test.tsx",
@@ -92,15 +69,45 @@
       "reason": "Renders the reasoning picker while replacing the shared runtime model catalog; shared batches can retain prior catalog or Ink state."
     },
     {
+      "path": "src/cli/components/provider-mod-selector-refresh.test.tsx",
+      "timeoutMs": 15000,
+      "reason": "Renders Ink while mutating the backend mode, backend instance, provider registry, settings singleton, and model cache."
+    },
+    {
+      "path": "src/cli/helpers/pinned-agent-listing.test.ts",
+      "timeoutMs": 15000,
+      "env": {
+        "LETTA_SKIP_KEYCHAIN_CHECK": "1"
+      },
+      "reason": "Mutates HOME, local-backend paths, the settings singleton, and the keychain service name."
+    },
+    {
+      "path": "src/cli/helpers/reflection-launcher.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Exercises reflection launch preflight with real Git processes and temporary local-backend environment overrides."
+    },
+    {
       "path": "src/cli/message-search-cache-warm.test.ts",
       "timeoutMs": 15000,
       "reason": "Uses a top-level Bun module mock for backend search."
     },
     {
-      "path": "src/cli/helpers/pinned-agent-listing.test.ts",
+      "path": "src/cli/reflection-worktree-completion.test.ts",
       "timeoutMs": 15000,
-      "env": { "LETTA_SKIP_KEYCHAIN_CHECK": "1" },
-      "reason": "Mutates HOME, local-backend paths, the settings singleton, and the keychain service name."
+      "env": {
+        "LETTA_CODE_TELEM": "1"
+      },
+      "reason": "Exercises reflection worktree cleanup telemetry with real Git processes and the shared telemetry singleton."
+    },
+    {
+      "path": "src/cli/subcommands/teleport.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Reads process-global channel route state that other shared-batch suites mutate."
+    },
+    {
+      "path": "src/cli/tui-interrupt-queue-lifecycle.test.tsx",
+      "timeoutMs": 30000,
+      "reason": "Mounts the production TUI, which updates process-wide agent/tool context and settings; keep its proof agent out of later permission and mod tests."
     },
     {
       "path": "src/hooks/prompt-executor.test.ts",
@@ -138,26 +145,19 @@
       "reason": "Mutates the settings singleton and HOME while checking persisted conversation overrides."
     },
     {
-      "path": "src/cli/reflection-worktree-completion.test.ts",
-      "timeoutMs": 15000,
-      "env": { "LETTA_CODE_TELEM": "1" },
-      "reason": "Exercises reflection worktree cleanup telemetry with real Git processes and the shared telemetry singleton."
-    },
-    {
-      "path": "src/cli/helpers/reflection-launcher.test.ts",
-      "timeoutMs": 15000,
-      "reason": "Exercises reflection launch preflight with real Git processes and temporary local-backend environment overrides."
-    },
-    {
       "path": "src/telemetry/flush-auth.test.ts",
       "timeoutMs": 15000,
-      "env": { "LETTA_CODE_TELEM": "1" },
+      "env": {
+        "LETTA_CODE_TELEM": "1"
+      },
       "reason": "Explicitly exercises telemetry emission with mocked network requests."
     },
     {
       "path": "src/telemetry/flush-batching.test.ts",
       "timeoutMs": 15000,
-      "env": { "LETTA_CODE_TELEM": "1" },
+      "env": {
+        "LETTA_CODE_TELEM": "1"
+      },
       "reason": "Explicitly exercises telemetry batching with mocked network requests."
     },
     {
@@ -166,14 +166,24 @@
       "reason": "Spawns real shells and temporarily mutates process platform and PATH state."
     },
     {
+      "path": "src/tools/enter-worktree.test.ts",
+      "timeoutMs": 30000,
+      "reason": "Spawns real Git processes and mutates HOME, USER_CWD, cwd, and runtime singletons."
+    },
+    {
       "path": "src/tools/impl/github-pull-request-shell-adapters.test.ts",
       "timeoutMs": 30000,
       "reason": "Spawns every shell adapter while mutating PATH, the backend singleton, and process registries."
     },
     {
-      "path": "src/tools/enter-worktree.test.ts",
-      "timeoutMs": 30000,
-      "reason": "Spawns real Git processes and mutates HOME, USER_CWD, cwd, and runtime singletons."
+      "path": "src/tools/impl/task-computer-routing.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Mocks subagent discovery and the child-process launch boundary while exercising task() with process-global backend and subagent state."
+    },
+    {
+      "path": "src/tools/impl/task-fork-receipt.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Replaces billing I/O and the child process while exercising real fork launch state and task receipts with process-global backend, settings, and subagent state."
     },
     {
       "path": "src/tools/memory-apply-patch.test.ts",
@@ -186,19 +196,14 @@
       "reason": "Uses a top-level Bun module mock for the backend client."
     },
     {
-      "path": "src/agent/available-models.test.ts",
+      "path": "src/tools/toolset-client-tool-rule-cleanup.test.ts",
       "timeoutMs": 15000,
-      "reason": "Mutates the backend singleton, shared model catalog cache, and Date.now while testing cache freshness."
+      "reason": "Uses a top-level Bun module mock for the backend client."
     },
     {
       "path": "src/tools/toolset-provider-resolution.test.ts",
       "timeoutMs": 15000,
       "reason": "Mutates the backend singleton and shared model catalog cache while exercising provider fallback behavior."
-    },
-    {
-      "path": "src/tools/toolset-client-tool-rule-cleanup.test.ts",
-      "timeoutMs": 15000,
-      "reason": "Uses a top-level Bun module mock for the backend client."
     },
     {
       "path": "src/websocket/listen-client-concurrency.test.ts",
@@ -221,14 +226,19 @@
       "reason": "Exercises real WebSockets while mutating listener, settings, HOME, and process environment state."
     },
     {
-      "path": "src/websocket/listener/control-inputs.test.ts",
-      "timeoutMs": 15000,
-      "reason": "Mutates HOME and the remote-settings singleton while exercising cwd recovery persistence."
+      "path": "src/websocket/listener/auth-lifecycle.test.ts",
+      "timeoutMs": 30000,
+      "reason": "Exercises real WebSockets while mutating listener, settings, HOME, and process environment state."
     },
     {
       "path": "src/websocket/listener/commands/model-toolset.test.ts",
       "timeoutMs": 15000,
       "reason": "Mutates the backend singleton and shared model catalog cache while asserting backend-native catalog metadata."
+    },
+    {
+      "path": "src/websocket/listener/control-inputs.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Mutates HOME and the remote-settings singleton while exercising cwd recovery persistence."
     },
     {
       "path": "src/websocket/listener/protocol-ergonomics.test.ts",
@@ -239,6 +249,16 @@
       "path": "src/websocket/listener/remote-settings.test.ts",
       "timeoutMs": 15000,
       "reason": "Mutates HOME and the remote-settings singleton to verify startup cwd-map repair."
+    },
+    {
+      "path": "src/websocket/listener/turn-cleanup-memory-update.e2e.test.ts",
+      "timeoutMs": 30000,
+      "reason": "Exercises real MemFS Git pushes and listener notifications with isolated HOME, settings, backend, auth environment, and repository-list fetch."
+    },
+    {
+      "path": "src/websocket/listener/turn-cleanup-shared-memory.e2e.test.ts",
+      "timeoutMs": 30000,
+      "reason": "Runs real Git pushes while replacing global fetch and mutating the backend, settings, auth environment, MemFS URL, and a synthetic agent mount."
     }
   ]
 }

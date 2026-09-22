@@ -1,5 +1,6 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import {
+  getAgentModelHandle,
   getModelPresetUpdateForAgent,
   getModelUpdateArgs,
   getResumeRefreshArgs,
@@ -40,23 +41,33 @@ export async function applyResumeModelOverrides(params: {
     return await updateAgentLLMConfig(agent.id, modelHandle, updateArgs);
   }
 
-  if (reasoningEffort) {
-    // Changing only the effort on an already-configured agent is the `letta
-    // model set --reasoning` path, which resolves the agent's current model
-    // itself. Fail loudly rather than silently dropping the flag.
-    throw new ResumeModelOverrideError(
-      "--reasoning-effort requires --model when resuming an existing agent. Use `letta model set --reasoning <level>` to change an existing agent's reasoning effort.",
-    );
-  }
-
+  // Effort without a model applies against the agent's current model, the same
+  // thing `letta model set --reasoning` does and the same shape the fork path
+  // uses for an effort-only override. Chris's call: the flag stays independent
+  // of --model on every path, and like --model on resume it persists onto the
+  // agent rather than applying to one run.
   const presetRefresh = getModelPresetUpdateForAgent(agent);
-  if (!presetRefresh) return agent;
+  const effortRequested = reasoningEffort !== undefined;
+  const targetHandle = presetRefresh?.modelHandle ?? getAgentModelHandle(agent);
 
+  if (!targetHandle) {
+    if (effortRequested) {
+      throw new ResumeModelOverrideError(
+        `Cannot apply --reasoning-effort: agent ${agent.id} has no model to attach it to. Set one with \`letta model set <handle> --reasoning ${reasoningEffort}\`.`,
+      );
+    }
+    return agent;
+  }
+  if (!presetRefresh && !effortRequested) return agent;
+
+  // An effort-only request must write even when no preset field is stale: the
+  // preset lookup returns null for a model that carries no catalog args, which
+  // is exactly the BYOK/proxy case this flag exists for.
   const { updateArgs, needsUpdate } = getResumeRefreshArgs(
-    presetRefresh.updateArgs,
+    presetRefresh?.updateArgs ?? {},
     agent,
   );
-  if (!needsUpdate) return agent;
+  if (!needsUpdate && !effortRequested) return agent;
 
   // Resume refresh must not reset the context window; preserve it by
   // re-sending the agent's current value explicitly (omitting it makes the
@@ -64,12 +75,12 @@ export async function applyResumeModelOverrides(params: {
   // value that looks like that clamp is not preserved, letting the agent heal.
   const preservedContextWindow = preservableContextWindow(
     agent.llm_config?.context_window,
-    presetRefresh.modelHandle,
+    targetHandle,
   );
   return await updateAgentLLMConfig(
     agent.id,
-    presetRefresh.modelHandle,
-    updateArgs,
+    targetHandle,
+    withReasoningEffortUpdateArg(updateArgs, reasoningEffort),
     preservedContextWindow !== undefined
       ? { contextWindowOverride: preservedContextWindow }
       : undefined,

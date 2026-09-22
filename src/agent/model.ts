@@ -498,9 +498,12 @@ type AgentModelSnapshot = {
  * Used during startup/resume refresh to re-apply only preset-defined fields
  * (without requiring an explicit --model flag).
  */
-export function getModelPresetUpdateForAgent(
-  agent: AgentModelSnapshot,
-): { modelHandle: string; updateArgs: Record<string, unknown> } | null {
+/**
+ * The model handle an agent is currently configured with, independent of
+ * whether that model carries any catalog preset. Null when the agent names no
+ * model at all.
+ */
+export function getAgentModelHandle(agent: AgentModelSnapshot): string | null {
   const directHandle =
     typeof agent.model === "string" && agent.model.length > 0
       ? agent.model
@@ -522,7 +525,13 @@ export function getModelPresetUpdateForAgent(
         ? llmModel
         : null;
 
-  const modelHandle = directHandle ?? llmDerivedHandle;
+  return directHandle ?? llmDerivedHandle;
+}
+
+export function getModelPresetUpdateForAgent(
+  agent: AgentModelSnapshot,
+): { modelHandle: string; updateArgs: Record<string, unknown> } | null {
+  const modelHandle = getAgentModelHandle(agent);
   if (!modelHandle) return null;
 
   const modelInfo = getModelInfoForLlmConfig(modelHandle, {
