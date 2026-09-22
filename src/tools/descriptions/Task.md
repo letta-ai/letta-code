@@ -31,9 +31,9 @@ When using the Agent tool, you must specify a subagent_type parameter to select 
 
 ## External Coding Agents
 
-Use `subagent_type: "claude-code"` or `subagent_type: "codex"` to start a coding worker through the corresponding locally installed CLI. These types use the same background task lifecycle and completion notifications as Letta subagents, but they do not create Letta agents or conversations. Do not combine them with `agent_id`, `conversation_id`, or `computer`.
+Use `subagent_type: "claude-code"` or `subagent_type: "codex"` to start a coding worker through the corresponding locally installed CLI. These types use the same background task lifecycle and completion notifications as Letta subagents, but they do not create Letta agents or conversations. Do not combine them with `agent_id` or `conversation_id`. External coding workers always run on the current machine and do not accept the remote-machine option.
 
-The initial Codex receipt includes a synthetic `codex_...` agent ID as soon as its native thread starts, so `SendAgentMessage` can steer the active turn. Claude Code returns a synthetic `claude_...` ID with its completion. Pass either ID to `SendAgentMessage` for follow-up work in the same native session.
+The initial receipt includes a synthetic `claude_...` or `codex_...` agent ID as soon as the native session starts. Pass that ID to `SendAgentMessage` to steer active work or start one tracked follow-up turn when idle.
 
 External coding agents can receive the current agent's MCP discovery metadata and use the existing `letta mcp` CLI through their shell:
 

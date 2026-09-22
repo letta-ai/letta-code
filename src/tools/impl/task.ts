@@ -782,7 +782,10 @@ export async function launchSubagent(
       },
     });
     let agentId: string | null = null;
-    if (externalCodingAgentType === "codex") {
+    if (
+      externalCodingAgentType === "codex" ||
+      externalCodingAgentType === "claude-code"
+    ) {
       const abortStartup = () =>
         backgroundTasks.get(taskId)?.abortController?.abort(signal?.reason);
       signal?.addEventListener("abort", abortStartup, { once: true });

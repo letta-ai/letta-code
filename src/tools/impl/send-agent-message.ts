@@ -16,12 +16,10 @@ import {
   getCurrentWorkingDirectory,
   getRuntimeContext,
 } from "@/runtime-context";
+import { sendClaudeMessage } from "./claude-stream-session";
 import { sendCodexMessage } from "./codex-app-server";
 import { parseExternalCodingAgentId } from "./external-coding-agent";
-import {
-  spawnExternalCodingAgentFollowup,
-  trackCodexFollowupCompletion,
-} from "./external-coding-agent-task";
+import { trackExternalFollowupCompletion } from "./external-coding-agent-task";
 
 interface SendAgentMessageArgs {
   message: string;
@@ -41,9 +39,9 @@ interface SendAgentMessageDeps {
   >;
   enqueue?: typeof enqueueConversationMessage;
   trackChildSend?: typeof trackChildSend;
-  spawnExternalFollowup?: typeof spawnExternalCodingAgentFollowup;
+  sendClaudeMessage?: typeof sendClaudeMessage;
   sendCodexMessage?: typeof sendCodexMessage;
-  trackCodexFollowup?: typeof trackCodexFollowupCompletion;
+  trackExternalFollowup?: typeof trackExternalFollowupCompletion;
 }
 
 export async function send_agent_message(
@@ -111,15 +109,22 @@ export async function send_agent_message(
             "Codex turn/start returned an incomplete background-task receipt",
           );
         }
-        const taskReceipt = (
-          deps.trackCodexFollowup ?? trackCodexFollowupCompletion
-        )({
-          agentId: args.agent_id as string,
-          message: args.message,
-          parentScope,
-          completion: receipt.completion,
-          interrupt: receipt.interrupt,
-        });
+        let taskReceipt: ReturnType<typeof trackExternalFollowupCompletion>;
+        try {
+          taskReceipt = (
+            deps.trackExternalFollowup ?? trackExternalFollowupCompletion
+          )({
+            type: "codex",
+            agentId: args.agent_id as string,
+            message: args.message,
+            parentScope,
+            completion: receipt.completion,
+            interrupt: receipt.interrupt,
+          });
+        } catch (error) {
+          await receipt.interrupt().catch(() => undefined);
+          throw error;
+        }
         return {
           content: JSON.stringify({
             status: "accepted",
@@ -132,17 +137,49 @@ export async function send_agent_message(
           status: "success",
         };
       }
-      const taskReceipt = (
-        deps.spawnExternalFollowup ?? spawnExternalCodingAgentFollowup
-      )({
-        agentId: args.agent_id as string,
-        message: args.message,
-        parentScope,
+      const receipt = await (deps.sendClaudeMessage ?? sendClaudeMessage)({
+        sessionId: externalTarget.sessionId,
+        prompt: args.message,
+        parentAgentId: parentScope.agentId,
+        cwd: getCurrentWorkingDirectory(),
+        signal: args.signal,
       });
+      if (receipt.mode === "steered") {
+        return {
+          content: JSON.stringify({
+            status: "accepted",
+            agent_id: args.agent_id,
+            delivery: "stream/interrupt",
+          }),
+          status: "success",
+        };
+      }
+      if (!receipt.completion || !receipt.interrupt) {
+        throw new Error(
+          "Claude resume returned an incomplete background-task receipt",
+        );
+      }
+      let taskReceipt: ReturnType<typeof trackExternalFollowupCompletion>;
+      try {
+        taskReceipt = (
+          deps.trackExternalFollowup ?? trackExternalFollowupCompletion
+        )({
+          type: "claude-code",
+          agentId: args.agent_id as string,
+          message: args.message,
+          parentScope,
+          completion: receipt.completion,
+          interrupt: receipt.interrupt,
+        });
+      } catch (error) {
+        await receipt.interrupt().catch(() => undefined);
+        throw error;
+      }
       return {
         content: JSON.stringify({
           status: "accepted",
           agent_id: args.agent_id,
+          delivery: "resume/start",
           task_id: taskReceipt.taskId,
           output_file: taskReceipt.outputFile,
         }),

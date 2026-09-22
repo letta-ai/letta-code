@@ -18,7 +18,6 @@ describe("Agent background-only execution", () => {
         servers: {
           type: "array",
           items: { type: "string", minLength: 1 },
-          uniqueItems: true,
           description: expect.any(String),
         },
       },

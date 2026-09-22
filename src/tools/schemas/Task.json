@@ -40,7 +40,6 @@
         "servers": {
           "type": "array",
           "items": { "type": "string", "minLength": 1 },
-          "uniqueItems": true,
           "description": "Optional exact subset of parent MCP server names to advertise. Requires inherit: true."
         }
       },

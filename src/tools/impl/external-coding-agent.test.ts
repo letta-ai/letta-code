@@ -22,7 +22,8 @@ describe("external coding agent commands", () => {
       cwd: "/repo",
     });
     expect(command.executable).toBe("claude");
-    expect(command.args).toContain("json");
+    expect(command.args).toContain("stream-json");
+    expect(command.args).toContain("--verbose");
     expect(command.args).toContain("acceptEdits");
     expect(command.args).not.toContain("--dangerously-skip-permissions");
     expect(command.args).toContain("--append-system-prompt");

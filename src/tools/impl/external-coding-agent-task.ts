@@ -10,7 +10,8 @@ import {
   spawnBackgroundSubagentTask,
 } from "./task";
 
-export function trackCodexFollowupCompletion(args: {
+export function trackExternalFollowupCompletion(args: {
+  type: "claude-code" | "codex";
   agentId: string;
   message: string;
   parentScope: { agentId: string; conversationId: string };
@@ -18,10 +19,10 @@ export function trackCodexFollowupCompletion(args: {
   interrupt: () => Promise<void>;
 }): SpawnBackgroundSubagentTaskResult {
   return spawnBackgroundSubagentTask({
-    subagentType: "codex",
-    config: createExternalCodingAgentConfig("codex"),
+    subagentType: args.type,
+    config: createExternalCodingAgentConfig(args.type),
     prompt: args.message,
-    description: "Continue codex session",
+    description: `Continue ${args.type} session`,
     existingAgentId: args.agentId,
     parentScope: args.parentScope,
     deps: {

@@ -1,8 +1,10 @@
+import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import type { SubagentConfig, SubagentResult } from "@/agent/subagents";
 import { spawnSubagentProcess } from "@/agent/subagents/subagent-process";
 import { buildMcpServersReminderText } from "@/reminders/engine";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { runClaudeTurn } from "./claude-stream-session";
 import { runCodexTurn } from "./codex-app-server";
 
 export const EXTERNAL_CODING_AGENT_TYPES = ["claude-code", "codex"] as const;
@@ -166,8 +168,11 @@ export function buildExternalCodingAgentCommand(
   if (options.type === "claude-code") {
     const args = [
       "--print",
+      "--verbose",
+      "--input-format",
+      "stream-json",
       "--output-format",
-      "json",
+      "stream-json",
       "--permission-mode",
       "acceptEdits",
       "--allowed-tools",
@@ -395,6 +400,25 @@ export async function runExternalCodingAgent(
       options.signal,
     );
     assertPreflightReady(options.type, preflight);
+    if (options.type === "claude-code" && !deps.runProcess) {
+      const sessionId = options.resumeSessionId ?? randomUUID();
+      options.onStarted?.(
+        formatExternalCodingAgentId("claude-code", sessionId),
+      );
+      return runClaudeTurn(
+        {
+          prompt: options.prompt,
+          parentAgentId: options.parentAgentId,
+          cwd,
+          model: options.model,
+          mcpReminder: options.mcpReminder,
+          signal: options.signal,
+          resumeSessionId: options.resumeSessionId,
+          sessionId,
+        },
+        { env },
+      );
+    }
     const result = await (deps.runProcess ?? runProcess)(
       buildExternalCodingAgentCommand({ ...options, cwd }),
       { cwd, env, signal: options.signal },

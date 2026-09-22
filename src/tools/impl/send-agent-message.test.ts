@@ -72,7 +72,17 @@ test("resumes an external coding-agent session without the Cloud backend", async
       },
       {
         ...f,
-        spawnExternalFollowup: (input) => {
+        sendClaudeMessage: async () => ({
+          mode: "resumed",
+          sessionId: CLAUDE_SESSION_ID,
+          completion: Promise.resolve({
+            agentId: CLAUDE_AGENT_ID,
+            report: "done",
+            success: true,
+          }),
+          interrupt: async () => undefined,
+        }),
+        trackExternalFollowup: (input) => {
           launches.push(input);
           return {
             taskId: "task-followup",
@@ -87,20 +97,50 @@ test("resumes an external coding-agent session without the Cloud backend", async
   expect(JSON.parse(result.content)).toEqual({
     status: "accepted",
     agent_id: CLAUDE_AGENT_ID,
+    delivery: "resume/start",
     task_id: "task-followup",
     output_file: "/tmp/task-followup.log",
   });
-  expect(launches).toEqual([
-    {
-      agentId: CLAUDE_AGENT_ID,
-      message: "Now fix the test.",
-      parentScope: {
-        agentId: "agent-caller",
-        conversationId: "conv-caller",
-      },
+  expect(launches).toHaveLength(1);
+  expect(launches[0]).toMatchObject({
+    type: "claude-code",
+    agentId: CLAUDE_AGENT_ID,
+    message: "Now fix the test.",
+    parentScope: {
+      agentId: "agent-caller",
+      conversationId: "conv-caller",
     },
-  ]);
+    completion: expect.any(Promise),
+    interrupt: expect.any(Function),
+  });
   expect(f.submissions).toHaveLength(0);
+});
+
+test("aborts an external turn when background tracking cannot be created", async () => {
+  const f = fixture();
+  let interrupts = 0;
+  const result = await runWithRuntimeContext(caller, () =>
+    send_agent_message(
+      { agent_id: CLAUDE_AGENT_ID, message: "Continue" },
+      {
+        ...f,
+        sendClaudeMessage: async () => ({
+          mode: "resumed",
+          sessionId: CLAUDE_SESSION_ID,
+          completion: new Promise(() => undefined),
+          interrupt: async () => {
+            interrupts++;
+          },
+        }),
+        trackExternalFollowup: () => {
+          throw new Error("Background task limit reached");
+        },
+      },
+    ),
+  );
+  expect(result.status).toBe("error");
+  expect(result.content).toContain("Background task limit reached");
+  expect(interrupts).toBe(1);
 });
 
 test("steers an active Codex app-server turn without exec resume", async () => {
@@ -120,9 +160,9 @@ test("steers an active Codex app-server turn without exec resume", async () => {
             turnId: "turn-1",
           };
         },
-        spawnExternalFollowup: (input) => {
+        trackExternalFollowup: (input) => {
           launches.push(input);
-          throw new Error("must not spawn an exec resume followup");
+          throw new Error("must not track a new followup");
         },
       },
     ),
@@ -157,7 +197,7 @@ test("tracks an idle Codex new turn through background lifecycle", async () => {
           completion,
           interrupt: async () => undefined,
         }),
-        trackCodexFollowup: (input) => {
+        trackExternalFollowup: (input) => {
           tracked.push(input);
           return {
             taskId: "task-codex",
