@@ -976,7 +976,6 @@ async function main(): Promise<void> {
     }
   }
 
-  // Validate shared mutual-exclusion rules for startup flags.
   try {
     validatePrimaryStartupFlagConflicts({
       specifiedConversationId,
@@ -986,6 +985,7 @@ async function main(): Promise<void> {
       forceNewConversation,
       shouldResume,
       stateless: values.stateless,
+      reasoningEffort: values["reasoning-effort"],
       isHeadless,
       memfs: memfsFlag,
       memfsStartup: values["memfs-startup"],

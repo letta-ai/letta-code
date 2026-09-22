@@ -95,6 +95,40 @@ describe("startup flag validation helpers", () => {
     ).toThrow("--stateless requires --agent");
   });
 
+  test("reasoning effort is refused outside headless mode", () => {
+    const baseOptions = {
+      specifiedConversationId: null,
+      specifiedAgentId: "agent-123",
+      specifiedAgentName: null,
+      forceNewConversation: false,
+      stateless: false,
+      isHeadless: true,
+      memfs: false,
+      memfsStartup: undefined,
+      forceNewAgent: false,
+    };
+
+    expect(() =>
+      validatePrimaryStartupFlagConflicts({
+        ...baseOptions,
+        reasoningEffort: "high",
+      }),
+    ).not.toThrow();
+    expect(() =>
+      validatePrimaryStartupFlagConflicts({
+        ...baseOptions,
+        reasoningEffort: "high",
+        isHeadless: false,
+      }),
+    ).toThrow("--reasoning-effort is only supported in headless mode");
+    expect(() =>
+      validatePrimaryStartupFlagConflicts({
+        ...baseOptions,
+        isHeadless: false,
+      }),
+    ).not.toThrow();
+  });
+
   test("ephemeral startup rejects agent-backed and memory-backed modes", () => {
     const baseOptions = {
       specifiedConversationId: null,

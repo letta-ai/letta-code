@@ -1,4 +1,5 @@
 import { parseArgs } from "node:util";
+import { REASONING_EFFORT_ORDER } from "@/agent/model";
 import { TOOLSET_OPTIONS } from "@/tools/toolset-catalog";
 
 export type CliFlagMode = "interactive" | "headless" | "both";
@@ -91,8 +92,7 @@ export const CLI_FLAG_CATALOG = {
     mode: "headless",
     help: {
       argLabel: "<level>",
-      description:
-        "Reasoning effort: none, minimal, low, medium, high, xhigh, max",
+      description: `Reasoning effort: ${REASONING_EFFORT_ORDER.join(", ")}`,
       continuationLines: [
         'Overrides the effort implied by the model ID (e.g. "sonnet-5-low").',
       ],

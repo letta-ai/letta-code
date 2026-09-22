@@ -71,6 +71,8 @@ interface PrimaryStartupFlagOptions {
   shouldResume?: boolean | null;
   stateless: boolean | null | undefined;
   ephemeral?: boolean | null;
+  /** `--reasoning-effort` is a headless-only input; the interactive app picks effort in its own screens. */
+  reasoningEffort?: string | null;
   isHeadless: boolean;
   memfs: boolean | null | undefined;
   memfsStartup: string | null | undefined;
@@ -120,6 +122,18 @@ export function validatePrimaryStartupFlagConflicts(
         options.specifiedAgentName ||
         options.specifiedConversationId,
     ),
+  });
+
+  // Refuse rather than silently ignore: the interactive app collects effort in
+  // its own model screens, so the flag has no effect there.
+  validateFlagConflicts({
+    guard: options.reasoningEffort,
+    checks: [
+      {
+        when: !options.isHeadless,
+        message: "--reasoning-effort is only supported in headless mode",
+      },
+    ],
   });
 
   validateFlagConflicts({
