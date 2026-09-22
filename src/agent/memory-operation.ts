@@ -27,18 +27,23 @@ function isAlive(pid: number): boolean {
   }
 }
 
-/** Lock a checkout and its index; isolated reflection worktrees remain independent. */
-export async function getMemoryOperationPath(
-  memoryDir: string,
-): Promise<string> {
+/** Harness state lives in the checkout's own Git directory, so worktrees stay independent. */
+export async function getMemoryGitDir(memoryDir: string): Promise<string> {
   const { stdout } = await promisify(execFile)("git", [
     "-C",
     memoryDir,
     "rev-parse",
     "--git-dir",
   ]);
+  return realpath(resolve(memoryDir, stdout.trim()));
+}
+
+/** Lock a checkout and its index; isolated reflection worktrees remain independent. */
+export async function getMemoryOperationPath(
+  memoryDir: string,
+): Promise<string> {
   return resolve(
-    await realpath(resolve(memoryDir, stdout.trim())),
+    await getMemoryGitDir(memoryDir),
     "letta-memory-operation.json",
   );
 }
@@ -58,11 +63,21 @@ async function acquireMemoryOperation(
   const guard = `${path}.lock`;
   const token = randomUUID();
   const readOwner = async (): Promise<MemoryOwner | null> => {
+    let content: string;
     try {
-      return JSON.parse(await readFile(path, "utf8")) as MemoryOwner;
+      content = await readFile(path, "utf8");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
       throw error;
+    }
+    try {
+      const owner = JSON.parse(content) as Partial<MemoryOwner> | null;
+      return typeof owner?.pid === "number" && typeof owner.token === "string"
+        ? { pid: owner.pid, token: owner.token }
+        : null;
+    } catch {
+      // An unreadable owner file must not wedge every memory operation.
+      return null;
     }
   };
   for (;;) {

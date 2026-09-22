@@ -37,8 +37,11 @@ afterEach(async () => {
 test("memory delegates immediately, exports the originating conversation and launches fresh, and never notifies the primary", async () => {
   const root = mkdtempSync(join(tmpdir(), "memory-task-"));
   roots.push(root);
+  // Settings must not land inside the memory checkout, or sync sees them as dirty.
+  const home = mkdtempSync(join(tmpdir(), "memory-task-home-"));
+  roots.push(home);
   await settingsManager.reset();
-  process.env.HOME = root;
+  process.env.HOME = home;
   await settingsManager.initialize();
   const git = (...args: string[]) =>
     execFileSync("git", ["-C", root, ...args], { stdio: "pipe" });
@@ -147,6 +150,13 @@ test("memory delegates immediately, exports the originating conversation and lau
   await completion;
   expect(exports).toEqual(["conv-origin"]);
   expect(spawned, backgroundTasks.get(result.taskId)?.error).toBe(true);
+  // Assertions inside the spawn stub surface here: a throw there fails the task.
+  const task = backgroundTasks.get(result.taskId);
+  expect(task?.error).toBeUndefined();
+  expect(task?.status).toBe("completed");
+  const log = readFileSync(result.outputFile, "utf8");
+  expect(log.split("saved").length - 1).toBe(1);
+  expect(log).toContain("[Task completed]");
   expect(notifications).toEqual([]);
   if (!transcriptPath) throw new Error("Missing handoff snapshot");
   expect(existsSync(transcriptPath)).toBe(false);
@@ -155,8 +165,10 @@ test("memory delegates immediately, exports the originating conversation and lau
 test("a failed transcript export terminates the silent task with an inspectable error", async () => {
   const root = mkdtempSync(join(tmpdir(), "memory-task-failed-"));
   roots.push(root);
+  const home = mkdtempSync(join(tmpdir(), "memory-task-failed-home-"));
+  roots.push(home);
   await settingsManager.reset();
-  process.env.HOME = root;
+  process.env.HOME = home;
   await settingsManager.initialize();
   execFileSync("git", ["init", "-b", "main", root], { stdio: "pipe" });
   __testSetBackend({

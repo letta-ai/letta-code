@@ -1,4 +1,4 @@
-import { isMemoryWorkerSession } from "@/agent/subagents/memory-worker";
+import { isMemoryWorkerSession } from "@/agent/subagents/memory-worker-session";
 import { buildAgentSendReminder } from "@/backend/api/agent-message";
 
 /** Capture launch attribution before headless startup installs the child's scope. */

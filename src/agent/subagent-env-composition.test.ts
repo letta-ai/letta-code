@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { isMemoryWorkerSession } from "@/agent/subagents/memory-worker";
+import { isMemoryWorkerSession } from "@/agent/subagents/memory-worker-session";
 import {
   allocateSubagentName,
   resolveCreatedAgentName,

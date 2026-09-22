@@ -120,7 +120,8 @@ export async function finishBackgroundMemoryTasks(
         Boolean(completion && !finished.has(completion)),
       );
     if (pending.length === 0) return;
-    await Promise.all(pending);
+    // One task's failure must not skip the teardown of the others.
+    await Promise.allSettled(pending);
     for (const completion of pending) finished.add(completion);
   }
 }

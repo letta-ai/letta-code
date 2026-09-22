@@ -287,3 +287,33 @@ test("a queued repair notifies after sync pushes an already-resolved conflict wi
   expect(result.success).toBe(true);
   expect(notified).toBe(true);
 });
+
+test("a failed prompt refresh does not fail a worker whose memory synced", async () => {
+  const result = await runMemoryWorker(
+    scope(),
+    async () => {
+      writeFileSync(join(root, "note.md"), "refreshed preference\n");
+      git("commit", "-am", "remember preference");
+      return { agentId: "agent-worker", success: true, report: "saved" };
+    },
+    {
+      recompile: async () => {
+        throw new Error("server unavailable");
+      },
+    },
+  );
+  expect(result).toMatchObject({ success: true, report: "saved" });
+  expect(result.error).toBeUndefined();
+  expect(git("status", "--porcelain")).toBe("");
+});
+
+test("a repair that finds no conflict reports no worker identity", async () => {
+  const result = await runMemoryWorker(scope(true), async () => {
+    throw new Error("must not run");
+  });
+  expect(result).toEqual({
+    agentId: "",
+    success: true,
+    report: "No memory conflict remains.",
+  });
+});

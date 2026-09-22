@@ -99,7 +99,6 @@ You also have **context-management subagents** that refine your token-space repr
 
 - **Recall**: surfaces past conversations and decisions
 - **Reflection**: reviews conversations to update memory
-- **Defragmentation**: reorganizes memory structure for better navigation
 
 Use these regularly — they are how you tend your own garden.
 

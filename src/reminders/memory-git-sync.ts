@@ -6,9 +6,12 @@ import {
   syncPendingAttachedRepositoryCommitsAfterTurn,
 } from "@/agent/attached-repository-git-sync";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
-import { syncPendingMemoryCommitsAfterTurn } from "@/agent/memory-git";
+import {
+  type MemoryPostTurnSyncResult,
+  syncPendingMemoryCommitsAfterTurn,
+} from "@/agent/memory-git";
 import { claimMemoryOperation } from "@/agent/memory-operation";
-import { isMemoryWorkerSession } from "@/agent/subagents/memory-worker";
+import { isMemoryWorkerSession } from "@/agent/subagents/memory-worker-session";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { startMemoryConflictRepair } from "@/tools/impl/task";
 import { debugWarn } from "@/utils/debug";
@@ -28,6 +31,53 @@ export interface RunPostTurnMemorySyncDependencies {
   repairConflict?: typeof startMemoryConflictRepair;
   claimOperation?: typeof claimMemoryOperation;
   syncAttachedRepositories?: typeof syncPendingAttachedRepositoryCommitsAfterTurn;
+}
+
+/**
+ * Reminders for the primary's own post-turn MemFS sync. A conflict is normally
+ * handed to a background repair worker, so callers pass `conflict` only when
+ * that repair was not launched.
+ */
+export function formatMemoryPostTurnSyncReminder(
+  result: MemoryPostTurnSyncResult,
+): string | null {
+  if (result.status === "conflict") {
+    return `${SYSTEM_REMINDER_OPEN}
+MEMORY GIT CONFLICT: The memory repository has an unfinished merge or rebase that automatic repair could not resolve.
+
+Memory directory: ${result.memoryDir}
+Status: ${result.summary}
+
+Resolve the conflicts in the memory repository, stage the resolved files, and complete the merge/rebase or create the needed commit. The harness will retry remote push after a future turn when the repo is clean.
+${SYSTEM_REMINDER_CLOSE}`;
+  }
+
+  if (result.status === "dirty") {
+    const action = result.localOnly
+      ? "Commit these memory changes locally"
+      : "Commit these memory changes";
+    return `${SYSTEM_REMINDER_OPEN}
+MEMORY COMMIT NEEDED: The memory repository has uncommitted changes.
+
+Memory directory: ${result.memoryDir}
+Status: ${result.summary}
+
+${action} when appropriate, staging only the files you changed. Do not run \`git push\` for MemFS sync; the harness pushes clean committed memory changes automatically for remote MemFS agents after turns.
+${SYSTEM_REMINDER_CLOSE}`;
+  }
+
+  if (result.status === "push_failed") {
+    return `${SYSTEM_REMINDER_OPEN}
+MEMORY SYNC FAILED: The harness could not push pending memory commits.
+
+Memory directory: ${result.memoryDir}
+Status: ${result.summary}
+
+Inspect the memory repository and resolve any local git issue. The harness will retry remote push after a future turn when the repo is clean.
+${SYSTEM_REMINDER_CLOSE}`;
+  }
+
+  return null;
 }
 
 export function formatAttachedRepositoryPostTurnSyncReminder(
@@ -118,16 +168,18 @@ export async function runPostTurnMemorySync(
         try {
           const result = await syncMemory(params.agentId);
           if (result.status === "pushed") params.onMemoryPushed?.();
-          if (result.status === "conflict") {
-            (dependencies.repairConflict ?? startMemoryConflictRepair)({
+          const repairLaunched =
+            result.status === "conflict" &&
+            (await (dependencies.repairConflict ?? startMemoryConflictRepair)({
               ...params,
               result,
-            });
-          } else if (
-            result.status === "dirty" ||
-            result.status === "push_failed"
-          ) {
-            debugWarn("memfs-git", result.summary);
+            }));
+          const reminder = repairLaunched
+            ? null
+            : formatMemoryPostTurnSyncReminder(result);
+          if (reminder) {
+            params.enqueueReminder?.(reminder);
+            await params.emitWarning?.(reminder);
           }
         } finally {
           await release?.();

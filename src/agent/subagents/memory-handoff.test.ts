@@ -154,3 +154,31 @@ test.each([false, true])(
     await expect(stat(snapshot)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );
+
+test("a full page whose cursor cannot advance ends the export", async () => {
+  root = await mkdtemp(join(tmpdir(), "memory-handoff-cursor-"));
+  process.env.LETTA_TRANSCRIPT_ROOT = root;
+  let requests = 0;
+  const page = Array.from({ length: 100 }, (_, index) => ({
+    message_type: "user_message",
+    content: `message ${index}`,
+    // No id: a backend that omits ids cannot page further.
+  }));
+  __testSetBackend({
+    listConversationMessages: async () => {
+      requests++;
+      return { getPaginatedItems: () => page };
+    },
+  } as unknown as Backend);
+  const handoff = await prepareMemoryHandoff({
+    agentId: "agent-cursor",
+    conversationId: "conv-cursor",
+    memoryDir: join(root, "memory"),
+    assignment: "Remember the cursor",
+  });
+  expect(requests).toBe(1);
+  if (!handoff.transcriptPath) throw new Error("Missing snapshot");
+  expect(
+    JSON.parse(await readFile(handoff.transcriptPath, "utf8")),
+  ).toHaveLength(100);
+});

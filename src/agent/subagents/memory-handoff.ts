@@ -53,7 +53,10 @@ export async function prepareMemoryHandoff(params: {
           messages.push(message);
       }
       if (items.length < 100) break;
-      after = items[items.length - 1]?.id;
+      const cursor = items[items.length - 1]?.id;
+      // A page whose cursor cannot advance would otherwise be fetched forever.
+      if (!cursor || cursor === after) break;
+      after = cursor;
     }
     const directory = join(
       getTranscriptRoot(),

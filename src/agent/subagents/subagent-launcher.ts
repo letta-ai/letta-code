@@ -28,7 +28,7 @@ import {
 } from "@/utils/subagent-launch-marker";
 import { TRANSCRIPT_ROOT_ENV } from "@/utils/transcript-paths";
 import type { SubagentLaunchProfile, SubagentMemoryScope } from ".";
-import { MEMORY_WORKER_SESSION_ENV } from "./memory-worker";
+import { MEMORY_WORKER_SESSION_ENV } from "./memory-worker-session";
 
 interface ResolveSubagentLauncherOptions {
   env?: NodeJS.ProcessEnv;

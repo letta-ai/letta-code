@@ -7,6 +7,7 @@
 
 import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
+import { claimMemoryConflictRepair } from "@/agent/memory-conflict-repair";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import type { MemoryPostTurnSyncResult } from "@/agent/memory-git";
 import {
@@ -220,12 +221,11 @@ function writeTaskTranscriptResult(
   outputFile: string,
   result: SubagentResult,
   header: string,
+  options: { reportAlreadyWritten?: boolean } = {},
 ): void {
   if (result.success) {
-    appendToOutputFile(
-      outputFile,
-      `${header}\n\n${result.report}\n\n[Task completed]\n`,
-    );
+    const report = options.reportAlreadyWritten ? "" : `${result.report}\n\n`;
+    appendToOutputFile(outputFile, `${header}\n\n${report}[Task completed]\n`);
     return;
   }
 
@@ -333,7 +333,8 @@ export async function waitForBackgroundSubagentConversationId(
   }
 }
 
-export function startMemoryConflictRepair(
+/** Launch a repair-only worker; false when this conflict was already attempted. */
+export async function startMemoryConflictRepair(
   params: {
     agentId: string;
     conversationId?: string | null;
@@ -341,7 +342,9 @@ export function startMemoryConflictRepair(
     actingUserId?: string;
   },
   spawn = spawnBackgroundSubagentTask,
-): void {
+  claimRepair = claimMemoryConflictRepair,
+): Promise<boolean> {
+  if (!(await claimRepair(params.result.memoryDir))) return false;
   spawn({
     subagentType: "memory",
     description: "Repair memory Git conflict",
@@ -357,6 +360,7 @@ export function startMemoryConflictRepair(
     memoryRepairOnly: true,
     actingUserId: params.actingUserId,
   });
+  return true;
 }
 
 /**
@@ -511,7 +515,7 @@ export function spawnBackgroundSubagentTask(
             buildTaskResultHeader(subagentType, subagentId, identity),
           execute,
           repair: (result) => {
-            startMemoryConflictRepair({
+            void startMemoryConflictRepair({
               ...resolvedParentScope,
               actingUserId,
               result,
@@ -546,7 +550,9 @@ export function spawnBackgroundSubagentTask(
         result,
         result.success ? "success" : "error",
       );
-      writeTaskTranscriptResult(outputFile, result, header);
+      writeTaskTranscriptResult(outputFile, result, header, {
+        reportAlreadyWritten: memoryTask !== undefined,
+      });
       if (result.success) {
         setBackgroundTaskOutput(bgTask, result.report || "");
       }

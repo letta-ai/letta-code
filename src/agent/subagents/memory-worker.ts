@@ -8,14 +8,6 @@ import { getBackend } from "@/backend";
 import { debugWarn } from "@/utils/debug";
 import type { SubagentResult } from ".";
 
-export const MEMORY_WORKER_SESSION_ENV = "LETTA_MEMORY_WORKER_SESSION";
-
-export function isMemoryWorkerSession(
-  env: NodeJS.ProcessEnv = process.env,
-): boolean {
-  return env[MEMORY_WORKER_SESSION_ENV] === "1";
-}
-
 /** Called inside the existing background task, never awaited by the primary. */
 export async function runMemoryWorker(
   params: {
@@ -48,14 +40,16 @@ export async function runMemoryWorker(
     async () => {
       // Another worker may have repaired the checkout before this one acquired it.
       if (params.repairOnly && (await sync()).status !== "conflict") {
+        // No worker ran, so there is no worker identity to report.
         return {
-          agentId: params.agentId,
+          agentId: "",
           success: true,
           report: "No memory conflict remains.",
         };
       }
       let result: SubagentResult;
       let syncError: string | undefined;
+      let synced = false;
       try {
         result = await execute();
       } finally {
@@ -67,12 +61,7 @@ export async function runMemoryWorker(
             syncResult.status === "pushed" ||
             syncResult.status === "skipped"
           ) {
-            if (deps.recompile || getBackend().capabilities.promptRecompile) {
-              await (deps.recompile ?? recompileAgentSystemPrompt)(
-                params.conversationId,
-                params.agentId,
-              );
-            }
+            synced = true;
           } else {
             syncError = `Memory sync incomplete (${syncResult.status}): ${syncResult.summary}`;
             debugWarn("memory-worker", syncError);
@@ -83,6 +72,23 @@ export async function runMemoryWorker(
         } catch (error) {
           syncError = `Memory sync failed: ${String(error)}`;
           debugWarn("memory-worker", syncError);
+        }
+      }
+      // Memory is committed and synced at this point; a failed prompt refresh
+      // is worth a warning but must not report the worker as failed.
+      if (synced) {
+        try {
+          if (deps.recompile || getBackend().capabilities.promptRecompile) {
+            await (deps.recompile ?? recompileAgentSystemPrompt)(
+              params.conversationId,
+              params.agentId,
+            );
+          }
+        } catch (error) {
+          debugWarn(
+            "memory-worker",
+            `System prompt recompile failed after memory sync: ${String(error)}`,
+          );
         }
       }
       return syncError

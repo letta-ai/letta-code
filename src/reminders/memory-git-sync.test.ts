@@ -54,7 +54,7 @@ describe("post-turn memory push notification", () => {
           },
         },
         {
-          repairConflict: () => {},
+          repairConflict: async () => true,
           syncMemory: async () => ({
             status,
             summary: status,
@@ -237,8 +237,11 @@ test("post-turn conflict launches the memory task without parent reminders or a 
   expect(jobs[0]?.existingAgentId).toBeUndefined();
   expect(reminders).toEqual([]);
 });
-test("dirty and failed primary memory sync do not inject repair work into the primary", async () => {
-  for (const status of ["dirty", "push_failed"] as const) {
+test("dirty and failed primary memory sync remind the primary instead of launching repair", async () => {
+  for (const [status, heading] of [
+    ["dirty", "MEMORY COMMIT NEEDED"],
+    ["push_failed", "MEMORY SYNC FAILED"],
+  ] as const) {
     const messages: string[] = [];
     await runPostTurnMemorySync(
       {
@@ -258,6 +261,49 @@ test("dirty and failed primary memory sync do not inject repair work into the pr
         },
       },
     );
-    expect(messages).toEqual([]);
+    expect(messages).toHaveLength(2);
+    expect(messages[0]).toContain(heading);
+    expect(messages[0]).toContain(conflict.memoryDir);
   }
+});
+
+test("a conflict that repair already attempted is reported to the primary", async () => {
+  const jobs: SpawnBackgroundSubagentTaskArgs[] = [];
+  const reminders: string[] = [];
+  const spawn = (args: SpawnBackgroundSubagentTaskArgs) => {
+    jobs.push(args);
+    return {
+      taskId: "task-repair",
+      outputFile: "/tmp/repair.log",
+      subagentId: "repair",
+    };
+  };
+  let attempts = 0;
+  const run = () =>
+    runPostTurnMemorySync(
+      {
+        agentId: "agent-memory-repair-test",
+        enqueueReminder: (text) => {
+          reminders.push(text);
+        },
+      },
+      {
+        syncMemory: async () => conflict,
+        syncAttachedRepositories: async () => ({ results: [] }),
+        repairConflict: (params) =>
+          startMemoryConflictRepair(
+            params,
+            spawn,
+            async () => attempts++ === 0,
+          ),
+      },
+    );
+  await run();
+  expect(jobs).toHaveLength(1);
+  expect(reminders).toEqual([]);
+  await run();
+  expect(jobs).toHaveLength(1);
+  expect(reminders).toHaveLength(1);
+  expect(reminders[0]).toContain("MEMORY GIT CONFLICT");
+  expect(reminders[0]).toContain("automatic repair could not resolve");
 });
