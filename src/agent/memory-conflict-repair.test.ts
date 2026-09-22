@@ -6,10 +6,7 @@ import {
   createTempGitRepo,
   type TempGitRepo,
 } from "@/test-utils/temp-git-repo";
-import {
-  claimMemoryConflictRepair,
-  releaseMemoryConflictRepair,
-} from "./memory-conflict-repair";
+import { claimMemoryConflictRepair } from "./memory-conflict-repair";
 
 const repos: TempGitRepo[] = [];
 afterEach(() => {
@@ -28,32 +25,48 @@ function repository(): string {
 test("the same unfinished operation is handed to a repair worker only once", async () => {
   const root = repository();
   writeFileSync(join(root, ".git", "MERGE_HEAD"), "a".repeat(40));
-  expect(await claimMemoryConflictRepair(root)).toBe(true);
-  expect(await claimMemoryConflictRepair(root)).toBe(false);
+  expect(await claimMemoryConflictRepair(root)).not.toBeNull();
+  expect(await claimMemoryConflictRepair(root)).toBeNull();
   // A different incoming commit is a new conflict.
   writeFileSync(join(root, ".git", "MERGE_HEAD"), "b".repeat(40));
-  expect(await claimMemoryConflictRepair(root)).toBe(true);
+  expect(await claimMemoryConflictRepair(root)).not.toBeNull();
 });
 
 test("a conflict that follows new commits is attempted again", async () => {
   const root = repository();
-  expect(await claimMemoryConflictRepair(root)).toBe(true);
+  expect(await claimMemoryConflictRepair(root)).not.toBeNull();
   writeFileSync(join(root, "note.md"), "updated\n");
   execFileSync("git", ["-C", root, "commit", "-q", "-am", "update"], {
     stdio: "pipe",
   });
-  expect(await claimMemoryConflictRepair(root)).toBe(true);
+  expect(await claimMemoryConflictRepair(root)).not.toBeNull();
 });
 
 test("a checkout that is not a repository is left to the worker", async () => {
-  expect(await claimMemoryConflictRepair("/nonexistent/memory")).toBe(true);
+  const release = await claimMemoryConflictRepair("/nonexistent/memory");
+  expect(release).not.toBeNull();
+  await release?.();
 });
 
-test("a cancelled attempt does not count against the same conflict", async () => {
+test("releasing a cancelled attempt lets the same conflict be attempted again", async () => {
   const root = repository();
   writeFileSync(join(root, ".git", "MERGE_HEAD"), "a".repeat(40));
-  expect(await claimMemoryConflictRepair(root)).toBe(true);
-  await releaseMemoryConflictRepair(root);
-  expect(await claimMemoryConflictRepair(root)).toBe(true);
-  await releaseMemoryConflictRepair("/nonexistent/memory");
+  const release = await claimMemoryConflictRepair(root);
+  expect(release).not.toBeNull();
+  await release?.();
+  expect(await claimMemoryConflictRepair(root)).not.toBeNull();
+});
+
+test("a stale release does not forget a newer attempt", async () => {
+  const root = repository();
+  writeFileSync(join(root, ".git", "MERGE_HEAD"), "a".repeat(40));
+  const first = await claimMemoryConflictRepair(root);
+  // Forget the first attempt, then record a second one for the same conflict.
+  await first?.();
+  const second = await claimMemoryConflictRepair(root);
+  expect(second).not.toBeNull();
+  // The first handle is stale now; releasing it must not clear the second.
+  await first?.();
+  expect(await claimMemoryConflictRepair(root)).toBeNull();
+  await second?.();
 });

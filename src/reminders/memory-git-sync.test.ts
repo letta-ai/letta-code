@@ -4,10 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import type { MemoryPostTurnSyncResult } from "@/agent/memory-git";
-import {
-  type SpawnBackgroundSubagentTaskArgs,
-  startMemoryConflictRepair,
-} from "@/tools/impl/task";
+import { startMemoryConflictRepair } from "@/tools/impl/memory-task-lifecycle";
+import type { SpawnBackgroundSubagentTaskArgs } from "@/tools/impl/task";
 import {
   formatAttachedRepositoriesPostTurnSyncReminders,
   formatAttachedRepositoryPostTurnSyncReminder,
@@ -295,10 +293,8 @@ test("a conflict that repair already attempted is reported to the primary", asyn
         syncMemory: async () => conflict,
         syncAttachedRepositories: async () => ({ results: [] }),
         repairConflict: (params) =>
-          startMemoryConflictRepair(
-            params,
-            spawn,
-            async () => attempts++ === 0,
+          startMemoryConflictRepair(params, spawn, async () =>
+            attempts++ === 0 ? async () => undefined : null,
           ),
       },
     );

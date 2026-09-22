@@ -7,9 +7,7 @@
 
 import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
-import { claimMemoryConflictRepair } from "@/agent/memory-conflict-repair";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
-import type { MemoryPostTurnSyncResult } from "@/agent/memory-git";
 import {
   completeSubagent,
   generateSubagentId,
@@ -37,7 +35,6 @@ import type {
   SubagentLaunchArgs,
   SubagentLaunchResult,
 } from "@/types/subagent-protocol";
-import { debugWarn } from "@/utils/debug";
 import { addToMessageQueue } from "@/utils/message-queue-bridge.js";
 import { sleep } from "@/utils/sleep";
 import {
@@ -45,7 +42,10 @@ import {
   resolveNotificationScope,
 } from "@/utils/task-notifications.js";
 import { copyGitHubPullRequestTags } from "./github-pull-request-tracker.js";
-import { runBackgroundMemoryTask } from "./memory-task-lifecycle";
+import {
+  runBackgroundMemoryTask,
+  startMemoryConflictRepair,
+} from "./memory-task-lifecycle";
 import {
   appendToOutputFile,
   assertBackgroundTaskCapacity,
@@ -110,6 +110,8 @@ export interface SpawnBackgroundSubagentTaskArgs {
   silentCompletion?: boolean;
   /** Harness-triggered conflict repair; skip if another worker already resolved it. */
   memoryRepairOnly?: boolean;
+  /** Forgets the recorded attempt if this repair is cancelled before it runs. */
+  releaseRepairAttempt?: () => Promise<void>;
   /**
    * Emit a completion notification even when `silentCompletion` is true.
    * Useful when the parent should not stream subagent tokens but still wants
@@ -333,42 +335,6 @@ export async function waitForBackgroundSubagentConversationId(
   }
 }
 
-/** Launch a repair-only worker; false when already attempted or the launch failed. */
-export async function startMemoryConflictRepair(
-  params: {
-    agentId: string;
-    conversationId?: string | null;
-    result: MemoryPostTurnSyncResult;
-    actingUserId?: string;
-  },
-  spawn = spawnBackgroundSubagentTask,
-  claimRepair = claimMemoryConflictRepair,
-): Promise<boolean> {
-  try {
-    if (!(await claimRepair(params.result.memoryDir))) return false;
-    spawn({
-      subagentType: "memory",
-      description: "Repair memory Git conflict",
-      prompt: `Repair only the existing Git conflict in your memory repository. Do not perform unrelated edits or reorganization. If the conflict is already resolved, stop.\n\nMemory directory: ${params.result.memoryDir}\nReported status: ${params.result.summary}`,
-      parentScope: {
-        agentId: params.agentId,
-        conversationId: params.conversationId ?? "default",
-      },
-      memoryScope: {
-        primaryRoot: params.result.memoryDir,
-        writableRoots: [params.result.memoryDir],
-      },
-      memoryRepairOnly: true,
-      actingUserId: params.actingUserId,
-    });
-    return true;
-  } catch (error) {
-    // Capacity or checkout errors must not become unhandled rejections.
-    debugWarn("memory-repair", `Could not launch repair: ${String(error)}`);
-    return false;
-  }
-}
-
 /**
  * Spawn a background subagent task and return task metadata immediately.
  * Notification/hook behavior is identical to Task's background path.
@@ -517,6 +483,7 @@ export function spawnBackgroundSubagentTask(
           memoryDir: workerMemoryDir,
           assignment: prompt,
           repairOnly: args.memoryRepairOnly,
+          releaseRepairAttempt: args.releaseRepairAttempt,
           signal: abortController.signal,
           subagentId,
           outputFile,
@@ -525,11 +492,10 @@ export function spawnBackgroundSubagentTask(
           execute,
           // Awaited by the worker so a one-shot drain sees the repair task.
           repair: (result) =>
-            startMemoryConflictRepair({
-              ...resolvedParentScope,
-              actingUserId,
-              result,
-            }),
+            startMemoryConflictRepair(
+              { ...resolvedParentScope, actingUserId, result },
+              spawnBackgroundSubagentTask,
+            ),
           getSnapshot: getSubagentSnapshotFn,
         })
       : undefined;

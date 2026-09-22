@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -46,48 +47,43 @@ async function describeMemoryConflict(
 
 /**
  * Record that automatic repair is being attempted for the current conflict.
- * Returns false when the same unfinished operation was already handed to a
+ * Returns null when the same unfinished operation was already handed to a
  * repair worker, so a conflict the worker could not resolve is reported to the
- * agent instead of launching another worker on every turn. A checkout that is
- * not a readable Git repository is left to the worker, which reports the
- * failure itself.
+ * agent instead of launching another worker on every turn. Otherwise returns
+ * a release that forgets this attempt (a launch that failed or was cancelled
+ * before running has not tried the conflict); the release only removes its
+ * own record, never a newer attempt recorded by another process. A checkout
+ * that is not a readable Git repository is left to the worker, which reports
+ * the failure itself.
  */
 export async function claimMemoryConflictRepair(
   memoryDir: string,
-): Promise<boolean> {
+): Promise<(() => Promise<void>) | null> {
   let gitDir: string;
   try {
     gitDir = await getMemoryGitDir(memoryDir);
   } catch {
-    return true;
+    return async () => undefined;
   }
   const path = join(gitDir, ATTEMPT_FILE);
   const signature = await describeMemoryConflict(memoryDir, gitDir);
-  let previous: string | undefined;
-  try {
-    previous = (
-      JSON.parse(await readFile(path, "utf8")) as { signature?: string }
-    ).signature;
-  } catch {
-    /* No usable earlier attempt. */
-  }
-  if (previous === signature) return false;
+  const readAttempt = async (): Promise<{
+    signature?: string;
+    nonce?: string;
+  }> => {
+    try {
+      return JSON.parse(await readFile(path, "utf8"));
+    } catch {
+      return {};
+    }
+  };
+  if ((await readAttempt()).signature === signature) return null;
+  const nonce = randomUUID();
   await writeFile(
     path,
-    JSON.stringify({ signature, attemptedAt: new Date().toISOString() }),
+    JSON.stringify({ signature, nonce, attemptedAt: new Date().toISOString() }),
   );
-  return true;
-}
-
-/** Forget an attempt whose worker was cancelled before it could report. */
-export async function releaseMemoryConflictRepair(
-  memoryDir: string,
-): Promise<void> {
-  try {
-    await rm(join(await getMemoryGitDir(memoryDir), ATTEMPT_FILE), {
-      force: true,
-    });
-  } catch {
-    /* Not a repository; nothing was recorded. */
-  }
+  return async () => {
+    if ((await readAttempt()).nonce === nonce) await rm(path, { force: true });
+  };
 }

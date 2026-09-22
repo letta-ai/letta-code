@@ -1,4 +1,4 @@
-import { releaseMemoryConflictRepair } from "@/agent/memory-conflict-repair";
+import { claimMemoryConflictRepair } from "@/agent/memory-conflict-repair";
 import type { MemoryPostTurnSyncResult } from "@/agent/memory-git";
 import {
   emitStreamEvent,
@@ -8,6 +8,8 @@ import {
 import type { SubagentMemoryScope, SubagentResult } from "@/agent/subagents";
 import { withMemoryHandoff } from "@/agent/subagents/memory-handoff";
 import { runMemoryWorker } from "@/agent/subagents/memory-worker";
+import type { SpawnBackgroundSubagentTaskArgs } from "@/tools/impl/task";
+import { debugWarn } from "@/utils/debug";
 import { sleep } from "@/utils/sleep";
 import { appendToOutputFile, backgroundTasks } from "./process_manager";
 
@@ -17,6 +19,8 @@ export interface RunBackgroundMemoryTaskParams {
   memoryDir: string;
   assignment: string;
   repairOnly?: boolean;
+  /** Forgets this repair's attempt marker if it is cancelled before running. */
+  releaseRepairAttempt?: () => Promise<void>;
   signal: AbortSignal;
   subagentId: string;
   outputFile: string;
@@ -107,10 +111,51 @@ export function runBackgroundMemoryTask(
   ).finally(() =>
     // A repair cancelled at exit has not been tried; let the next session retry it.
     params.repairOnly && params.signal.aborted
-      ? releaseMemoryConflictRepair(params.memoryDir)
+      ? params.releaseRepairAttempt?.()
       : undefined,
   );
   return { execution, unsubscribe };
+}
+
+/** Launch a repair-only worker; false when already attempted or the launch failed. */
+export async function startMemoryConflictRepair(
+  params: {
+    agentId: string;
+    conversationId?: string | null;
+    result: MemoryPostTurnSyncResult;
+    actingUserId?: string;
+  },
+  spawn: (args: SpawnBackgroundSubagentTaskArgs) => unknown,
+  claimRepair = claimMemoryConflictRepair,
+): Promise<boolean> {
+  let release: (() => Promise<void>) | null = null;
+  try {
+    release = await claimRepair(params.result.memoryDir);
+    if (!release) return false;
+    spawn({
+      subagentType: "memory",
+      description: "Repair memory Git conflict",
+      prompt: `Repair only the existing Git conflict in your memory repository. Do not perform unrelated edits or reorganization. If the conflict is already resolved, stop.\n\nMemory directory: ${params.result.memoryDir}\nReported status: ${params.result.summary}`,
+      parentScope: {
+        agentId: params.agentId,
+        conversationId: params.conversationId ?? "default",
+      },
+      memoryScope: {
+        primaryRoot: params.result.memoryDir,
+        writableRoots: [params.result.memoryDir],
+      },
+      memoryRepairOnly: true,
+      releaseRepairAttempt: release,
+      actingUserId: params.actingUserId,
+    });
+    return true;
+  } catch (error) {
+    // Capacity or checkout errors must not become unhandled rejections, and
+    // an attempt that never launched must not block the next turn's retry.
+    debugWarn("memory-repair", `Could not launch repair: ${String(error)}`);
+    await release?.().catch(() => undefined);
+    return false;
+  }
 }
 
 /** Await child teardown before the process owning its checkout lock exits. */

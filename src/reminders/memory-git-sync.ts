@@ -13,7 +13,8 @@ import {
 import { claimMemoryOperation } from "@/agent/memory-operation";
 import { isMemoryWorkerSession } from "@/agent/subagents/memory-worker-session";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
-import { startMemoryConflictRepair } from "@/tools/impl/task";
+import { startMemoryConflictRepair } from "@/tools/impl/memory-task-lifecycle";
+import { spawnBackgroundSubagentTask } from "@/tools/impl/task";
 import { debugWarn } from "@/utils/debug";
 
 export interface RunPostTurnMemorySyncParams {
@@ -28,7 +29,9 @@ export interface RunPostTurnMemorySyncParams {
 
 export interface RunPostTurnMemorySyncDependencies {
   syncMemory?: typeof syncPendingMemoryCommitsAfterTurn;
-  repairConflict?: typeof startMemoryConflictRepair;
+  repairConflict?: (
+    params: Parameters<typeof startMemoryConflictRepair>[0],
+  ) => Promise<boolean>;
   claimOperation?: typeof claimMemoryOperation;
   syncAttachedRepositories?: typeof syncPendingAttachedRepositoryCommitsAfterTurn;
 }
@@ -170,10 +173,11 @@ export async function runPostTurnMemorySync(
           if (result.status === "pushed") params.onMemoryPushed?.();
           const repairLaunched =
             result.status === "conflict" &&
-            (await (dependencies.repairConflict ?? startMemoryConflictRepair)({
-              ...params,
-              result,
-            }));
+            (await (
+              dependencies.repairConflict ??
+              ((repair) =>
+                startMemoryConflictRepair(repair, spawnBackgroundSubagentTask))
+            )({ ...params, result }));
           const reminder = repairLaunched
             ? null
             : formatMemoryPostTurnSyncReminder(result);
