@@ -171,7 +171,7 @@ describe("result envelope parsing", () => {
     });
     processEvent(state, {
       type: "result",
-      is_error: true,
+      subtype: "error",
       result: "Terminal failure",
     });
 
