@@ -21,8 +21,6 @@ export interface AppServerInfoResponseMessage {
     memory_management: boolean;
     runtime_start: boolean;
     launch_subagent?: boolean;
-    /** Supports an explicit client_message_id for a launched child's initial Cloud input. */
-    launch_subagent_client_message_id?: boolean;
     runtime_workspace_sandbox?: boolean;
     runtime_external_tools_update?: boolean;
     structured_outputs?: boolean;
@@ -63,9 +61,6 @@ export function isAppServerInfoResponseMessage(
     typeof capabilityRecord.runtime_start === "boolean" &&
     (capabilityRecord.launch_subagent === undefined ||
       typeof capabilityRecord.launch_subagent === "boolean") &&
-    (capabilityRecord.launch_subagent_client_message_id === undefined ||
-      typeof capabilityRecord.launch_subagent_client_message_id ===
-        "boolean") &&
     (capabilityRecord.runtime_workspace_sandbox === undefined ||
       typeof capabilityRecord.runtime_workspace_sandbox === "boolean") &&
     (capabilityRecord.runtime_external_tools_update === undefined ||

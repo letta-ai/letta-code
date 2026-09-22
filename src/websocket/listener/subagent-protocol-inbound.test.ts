@@ -61,38 +61,6 @@ describe("launch_subagent protocol", () => {
   ])("rejects malformed or injected launch fields %j", (fields) => {
     expect(isLaunchSubagentCommand({ ...command, ...fields })).toBe(false);
   });
-  test.each(["local", "api"] as const)(
-    "clients can detect initial client message ID support independently of launch support (%s)",
-    (backend) => {
-      const info = buildAppServerInfoResponse(
-        { type: "app_server_info", request_id: "info" },
-        { backend, version: "test" },
-      );
-      expect(isAppServerInfoResponseMessage(info)).toBe(true);
-      // Only a Cloud input destination accepts --client-message-id, so a
-      // local listener keeps launch support without the identity capability.
-      expect(info.capabilities.launch_subagent_client_message_id).toBe(
-        backend === "api",
-      );
-      delete info.capabilities.launch_subagent_client_message_id;
-      expect(info.capabilities.launch_subagent).toBe(true);
-      expect(isAppServerInfoResponseMessage(info)).toBe(true);
-      expect(info.capabilities.launch_subagent_client_message_id === true).toBe(
-        false,
-      );
-      for (const value of [false, true, "yes", null, 1]) {
-        expect(
-          isAppServerInfoResponseMessage({
-            ...info,
-            capabilities: {
-              ...info.capabilities,
-              launch_subagent_client_message_id: value,
-            },
-          }),
-        ).toBe(typeof value === "boolean");
-      }
-    },
-  );
   test("clients can distinguish older servers without rejecting their info response", () => {
     const info = buildAppServerInfoResponse(
       { type: "app_server_info", request_id: "info" },
