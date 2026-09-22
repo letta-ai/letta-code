@@ -75,7 +75,6 @@ for (const busy of [false, true])
       runtimeScope: { agentId: "agent-a", conversationId: "default" },
       stdout: [],
       stderr: [],
-      lastReadIndex: { stdout: 0, stderr: 0 },
     });
     const handler = createListenerMessageHandler({
       runtime: listener,

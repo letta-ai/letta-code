@@ -112,8 +112,6 @@ function resolvedModelForm(
 
 const STREAMING_SHELL_TOOLS = new Set([
   "Bash",
-  "BashOutput",
-  "TaskOutput",
   "exec_command",
   "write_stdin",
   "shell_command",

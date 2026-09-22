@@ -48,7 +48,6 @@ import {
   createBackgroundOutputFile,
   getNextTaskId,
   scheduleBackgroundTaskCleanup,
-  setBackgroundTaskOutput,
 } from "./process_manager.js";
 import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation";
@@ -417,7 +416,6 @@ export function spawnBackgroundSubagentTask(
     displayType,
     subagentId,
     status: "running",
-    output: [],
     startTime: new Date(),
     outputFile,
     abortController,
@@ -480,9 +478,6 @@ export function spawnBackgroundSubagentTask(
         result.success ? "success" : "error",
       );
       writeTaskTranscriptResult(outputFile, result, header);
-      if (result.success) {
-        setBackgroundTaskOutput(bgTask, result.report || "");
-      }
       scheduleBackgroundTaskCleanup(taskId);
 
       completeSubagentFn(subagentId, {
