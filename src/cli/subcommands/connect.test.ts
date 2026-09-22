@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { OAuthSelectPrompt } from "@earendil-works/pi-ai/oauth";
-import { __testSetBackend, type Backend } from "@/backend";
+import { __testSetBackend, type Backend, getBackend } from "@/backend";
 import type { LocalOAuthConnectCallbacks } from "@/cli/commands/connect-local-oauth";
 import { runConnectSubcommand } from "@/cli/subcommands/connect";
 
@@ -76,12 +76,15 @@ async function withEnv<T>(
 }
 
 describe("connect subcommand", () => {
+  let previousBackend: Backend;
+
   beforeEach(() => {
+    previousBackend = getBackend();
     setProviderTarget("api");
   });
 
   afterEach(() => {
-    setProviderTarget("api");
+    __testSetBackend(previousBackend);
   });
 
   test("suggests --backend local for local-only providers on the API backend", async () => {

@@ -221,6 +221,11 @@
       "reason": "Uses several top-level Bun module mocks and exercises real concurrent listener state."
     },
     {
+      "path": "src/websocket/launch-subagent.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Runs a real App Server and child CLI while mutating HOME, settings, backend, environment, background tasks, and subagent state."
+    },
+    {
       "path": "src/websocket/listener/auth-lifecycle.test.ts",
       "timeoutMs": 30000,
       "reason": "Exercises real WebSockets while mutating listener, settings, HOME, and process environment state."

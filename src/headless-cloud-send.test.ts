@@ -168,6 +168,26 @@ test.each(["text", "json", "stream-json"])(
   },
 );
 
+test("the CLI client message ID reaches Cloud enqueue unchanged", async () => {
+  const f = fixture();
+  expect(
+    await tryCloudHeadlessSend(
+      flags(
+        "--conversation",
+        "conv-target",
+        "--no-wait",
+        "--client-message-id",
+        "assignment:1",
+      ),
+      "hello",
+      f.backend,
+      false,
+      f.deps,
+    ),
+  ).toBe(0);
+  expect(f.submissions[0]?.clientMessageId).toBe("assignment:1");
+});
+
 test("computer is forwarded to enqueue without a direct environment send", async () => {
   const f = fixture();
   await tryCloudHeadlessSend(

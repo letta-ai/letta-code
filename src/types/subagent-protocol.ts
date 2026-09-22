@@ -5,6 +5,8 @@ export interface SubagentLaunchArgs {
   subagent_type?: string;
   prompt: string;
   description: string;
+  /** Identity of the initial assignment input, not the launch command request_id. */
+  client_message_id?: string;
   model?: string;
   agent_id?: string;
   conversation_id?: string;

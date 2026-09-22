@@ -236,6 +236,8 @@ async function renderTestApp(local = false, failure?: TerminalFailure) {
   __testSetBackend(backend);
   const agentState = await backend.retrieveAgent(agentId);
   const conversation = await backend.createConversation({ agent_id: agentId });
+  // The executor requests Read, independent of the model's auto-selected toolset.
+  settingsManager.setToolsetPreference(agentId, "letta", conversation.id);
   const stdin = createInputStream();
   const stdout = new TuiOutputStream() as TuiOutputStream & NodeJS.WriteStream;
   const instance = render(

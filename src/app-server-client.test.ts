@@ -84,6 +84,7 @@ describe("app-server client", () => {
       args: {
         subagent_type: "custom",
         conversation_id: "child-conv",
+        client_message_id: "assignment:1",
         prompt: "work",
         description: "Worker",
       },

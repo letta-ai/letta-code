@@ -1,4 +1,8 @@
 import { randomUUID } from "node:crypto";
+import {
+  resolveChildSubagent,
+  trackChildSend,
+} from "@/agent/subagents/child-send-tracking";
 import { type Backend, getBackend } from "@/backend";
 import {
   buildAgentSendContent,
@@ -21,9 +25,13 @@ interface SendAgentMessageArgs {
 interface SendAgentMessageDeps {
   backend?: Pick<
     Backend,
-    "capabilities" | "retrieveConversation" | "createConversation"
+    | "capabilities"
+    | "retrieveConversation"
+    | "createConversation"
+    | "retrieveAgent"
   >;
   enqueue?: typeof enqueueConversationMessage;
+  trackChildSend?: typeof trackChildSend;
 }
 
 export async function send_agent_message(
@@ -82,6 +90,13 @@ export async function send_agent_message(
       signal,
     );
     signal.throwIfAborted();
+    // A child spawned by this agent keeps doing its work; show it as running.
+    const child = await resolveChildSubagent(
+      backend,
+      destination.agentId,
+      sender.agentId,
+    );
+    signal.throwIfAborted();
     submissionAttempted = true;
     const receipt = await (deps.enqueue ?? enqueueConversationMessage)(
       {
@@ -93,6 +108,17 @@ export async function send_agent_message(
       },
       signal,
     );
+    if (child) {
+      (deps.trackChildSend ?? trackChildSend)({
+        receipt,
+        child,
+        prompt: args.message,
+        parentScope: {
+          agentId: sender.agentId,
+          conversationId: sender.conversationId,
+        },
+      });
+    }
     return {
       content: JSON.stringify({
         ...receipt,
