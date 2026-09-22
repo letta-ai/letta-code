@@ -511,8 +511,9 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       result,
     }));
     // A yielded command reports back only through a task notification. One-shot
-    // headless runs, including every subagent, have no queue consumer, so there
-    // the command stays in the foreground until it exits or times out.
+    // headless runs, including every subagent, have no queue consumer, and they
+    // are already background work that nobody waits on interactively, so there
+    // the command simply blocks until it exits or times out.
     const outcome = isQueueBridgeConnected()
       ? await Promise.race([
           settledOutcome,
