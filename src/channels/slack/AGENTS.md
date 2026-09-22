@@ -20,6 +20,15 @@ an orchestration entrypoint, not a shared utility module.
 Import helpers from the module that defines them. Only `plugin.ts` and the test
 harness may import `adapter.ts`; do not add forwarding exports to the adapter.
 
+## Startup contract
+
+Complete `auth.test` before constructing Bolt. The auth response supplies the
+bot identity (`botUserId`/`botId`) Bolt is constructed with, and an
+authorization failure (for example `account_inactive`) must surface as an
+adapter start error before Bolt exists. A channel startup failure must not
+crash the parent runtime — keep Bolt construction and registration off every
+path until startup succeeds. `adapter.test.ts` pins this behavior.
+
 ## Progress contract
 
 Slack permanent messages are limited to agent-authored `MessageChannel` output,
