@@ -133,6 +133,9 @@ export function decideManagedSystemPromptUpdate(input: {
   storedVersion?: string;
 }): SystemPromptUpdateDecision {
   const { agent, memoryMode, storedPreset, storedHash, storedVersion } = input;
+  if (agent.system == null) {
+    return { kind: "noop", reason: "system prompt inherits backend default" };
+  }
   const currentSystemPrompt = agent.system ?? "";
   const currentHash = hashSystemPrompt(currentSystemPrompt);
   const currentVersion = getVersion();
