@@ -2405,6 +2405,7 @@ async function executeToolInner(
       let enhancedArgs = args;
       let invocationSecrets: Record<string, string> = {};
 
+      // Cancellation is internal, not part of model-facing tool schemas.
       if (options?.signal) {
         enhancedArgs = { ...enhancedArgs, signal: options.signal };
       }
@@ -2471,7 +2472,6 @@ async function executeToolInner(
         };
       }
 
-      // Cancellation is internal, not part of model-facing tool schemas.
       const result = await tool.fn(enhancedArgs);
       const duration = Date.now() - startTime;
 
