@@ -1,3 +1,5 @@
+import { releaseMemoryConflictRepair } from "@/agent/memory-conflict-repair";
+import type { MemoryPostTurnSyncResult } from "@/agent/memory-git";
 import {
   emitStreamEvent,
   getSnapshot as getSubagentSnapshot,
@@ -14,6 +16,7 @@ export interface RunBackgroundMemoryTaskParams {
   conversationId: string;
   memoryDir: string;
   assignment: string;
+  repairOnly?: boolean;
   signal: AbortSignal;
   subagentId: string;
   outputFile: string;
@@ -26,6 +29,8 @@ export interface RunBackgroundMemoryTaskParams {
     assignment: string,
     transcriptPath?: string,
   ) => Promise<SubagentResult>;
+  /** Harness conflict repair, launched when the worker's sync leaves a conflict. */
+  repair: (result: MemoryPostTurnSyncResult) => void;
   getSnapshot?: typeof getSubagentSnapshot;
 }
 
@@ -59,6 +64,7 @@ export function runBackgroundMemoryTask(
     agentId: params.agentId,
     conversationId: params.conversationId,
     memoryDir: params.memoryDir,
+    repairOnly: params.repairOnly,
   };
   const execution = runMemoryWorker(
     { ...scope, signal: params.signal },
@@ -86,7 +92,13 @@ export function runBackgroundMemoryTask(
           timestamp: Date.now(),
         });
       },
+      repair: params.repair,
     },
+  ).finally(() =>
+    // A repair cancelled at exit has not been tried; let the next session retry it.
+    params.repairOnly && params.signal.aborted
+      ? releaseMemoryConflictRepair(params.memoryDir)
+      : undefined,
   );
   return { execution, unsubscribe };
 }

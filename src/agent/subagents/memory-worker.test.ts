@@ -37,12 +37,22 @@ afterEach(() => {
   __testSetBackend(null);
   rmSync(root, { recursive: true, force: true });
 });
-function scope() {
+function scope(repairOnly = false) {
   return {
     agentId: "agent-parent",
     conversationId: "conv-parent",
     memoryDir: root,
+    repairOnly,
   };
+}
+function conflict() {
+  git("checkout", "-b", "other");
+  writeFileSync(join(root, "note.md"), "other\n");
+  git("commit", "-am", "other");
+  git("checkout", "main");
+  writeFileSync(join(root, "note.md"), "main\n");
+  git("commit", "-am", "main");
+  expect(() => git("merge", "other")).toThrow();
 }
 
 test("commits an update before normal sync and parent context refresh", async () => {
@@ -67,6 +77,42 @@ test("commits an update before normal sync and parent context refresh", async ()
   const release = await claimMemoryOperation(root);
   expect(release).not.toBeNull();
   await release?.();
+});
+
+test("repairs a real Git conflict and skips a duplicate repair after normal sync", async () => {
+  conflict();
+  let executions = 0;
+  const repair = async () => {
+    executions++;
+    writeFileSync(join(root, "note.md"), "main and other\n");
+    git("add", "note.md");
+    git("commit", "-m", "resolve conflict");
+    return { agentId: "agent-parent", success: true, report: "repaired" };
+  };
+  await Promise.all([
+    runMemoryWorker(scope(true), repair),
+    runMemoryWorker(scope(true), repair),
+  ]);
+  expect(executions).toBe(1);
+  expect(git("status", "--porcelain")).toBe("");
+});
+
+test("normal sync detects an unresolved conflict despite a successful report", async () => {
+  conflict();
+  const before = git("status", "--porcelain");
+  let refreshed = false;
+  await runMemoryWorker(
+    scope(true),
+    async () => ({ agentId: "agent-parent", success: true, report: "done" }),
+    {
+      recompile: async () => {
+        refreshed = true;
+        return "compiled";
+      },
+    },
+  );
+  expect(git("status", "--porcelain")).toBe(before);
+  expect(refreshed).toBe(false);
 });
 
 test("simultaneous updates read the latest committed memory without overlapping edits", async () => {
@@ -96,6 +142,37 @@ test("failed launches release the checkout and keep unrelated dirty files", asyn
   const release = await claimMemoryOperation(root);
   expect(release).not.toBeNull();
   await release?.();
+});
+
+test("a sync conflict after an update triggers repair without another primary turn", async () => {
+  const repairs: string[] = [];
+  await runMemoryWorker(
+    scope(),
+    async () => {
+      conflict();
+      return { agentId: "agent-parent", success: true, report: "updated" };
+    },
+    {
+      repair: (result) => {
+        repairs.push(result.status);
+      },
+    },
+  );
+  expect(repairs).toEqual(["conflict"]);
+  await runMemoryWorker(
+    scope(true),
+    async () => ({
+      agentId: "agent-parent",
+      success: false,
+      report: "unresolved",
+    }),
+    {
+      repair: () => {
+        repairs.push("recursive repair");
+      },
+    },
+  );
+  expect(repairs).toEqual(["conflict"]);
 });
 
 test("reflection integrates its own worktree after a memory edit releases the checkout", async () => {
@@ -183,6 +260,34 @@ test("failed remote sync preserves the worker identity and report and releases t
   await release?.();
 });
 
+test("a queued repair notifies after sync pushes an already-resolved conflict without launching a worker", async () => {
+  let pushed = false;
+  let notified = false;
+  const result = await runMemoryWorker(
+    scope(true),
+    async () => {
+      throw new Error("Conflict was already resolved");
+    },
+    {
+      sync: async () => {
+        pushed = true;
+        return {
+          status: "pushed",
+          summary: "Pushed resolved conflict",
+          memoryDir: root,
+          localOnly: false,
+        };
+      },
+      onMemoryPushed: () => {
+        expect(pushed).toBe(true);
+        notified = true;
+      },
+    },
+  );
+  expect(result.success).toBe(true);
+  expect(notified).toBe(true);
+});
+
 test("a failed prompt refresh does not fail a worker whose memory synced", async () => {
   const result = await runMemoryWorker(
     scope(),
@@ -200,4 +305,15 @@ test("a failed prompt refresh does not fail a worker whose memory synced", async
   expect(result).toMatchObject({ success: true, report: "saved" });
   expect(result.error).toBeUndefined();
   expect(git("status", "--porcelain")).toBe("");
+});
+
+test("a repair that finds no conflict reports no worker identity", async () => {
+  const result = await runMemoryWorker(scope(true), async () => {
+    throw new Error("must not run");
+  });
+  expect(result).toEqual({
+    agentId: "",
+    success: true,
+    report: "No memory conflict remains.",
+  });
 });

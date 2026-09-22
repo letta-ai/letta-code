@@ -1,4 +1,7 @@
-import { syncPendingMemoryCommitsAfterTurn } from "@/agent/memory-git";
+import {
+  type MemoryPostTurnSyncResult,
+  syncPendingMemoryCommitsAfterTurn,
+} from "@/agent/memory-git";
 import { withMemoryOperation } from "@/agent/memory-operation";
 import { recompileAgentSystemPrompt } from "@/agent/modify";
 import { getBackend } from "@/backend";
@@ -11,12 +14,14 @@ export async function runMemoryWorker(
     agentId: string;
     conversationId: string;
     memoryDir: string;
+    repairOnly?: boolean;
     signal?: AbortSignal;
   },
   execute: () => Promise<SubagentResult>,
   deps: {
     sync?: typeof syncPendingMemoryCommitsAfterTurn;
     recompile?: typeof recompileAgentSystemPrompt;
+    repair?: (result: MemoryPostTurnSyncResult) => void;
     onMemoryPushed?: () => void;
   } = {},
 ): Promise<SubagentResult> {
@@ -33,6 +38,15 @@ export async function runMemoryWorker(
   return withMemoryOperation(
     params.memoryDir,
     async () => {
+      // Another worker may have repaired the checkout before this one acquired it.
+      if (params.repairOnly && (await sync()).status !== "conflict") {
+        // No worker ran, so there is no worker identity to report.
+        return {
+          agentId: "",
+          success: true,
+          report: "No memory conflict remains.",
+        };
+      }
       let result: SubagentResult;
       let syncError: string | undefined;
       let synced = false;
@@ -51,6 +65,9 @@ export async function runMemoryWorker(
           } else {
             syncError = `Memory sync incomplete (${syncResult.status}): ${syncResult.summary}`;
             debugWarn("memory-worker", syncError);
+            if (syncResult.status === "conflict" && !params.repairOnly) {
+              deps.repair?.(syncResult);
+            }
           }
         } catch (error) {
           syncError = `Memory sync failed: ${String(error)}`;
