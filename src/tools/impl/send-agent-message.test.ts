@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { TrackChildSendInput } from "@/agent/subagents/child-send-tracking";
-import type { Backend } from "@/backend";
+import type { AgentRetrieveOptions, Backend } from "@/backend";
 import type { EnqueueConversationInput } from "@/backend/api/conversation-enqueue";
 import { ApiRequestError } from "@/backend/api/request";
 import { runWithRuntimeContext } from "@/runtime-context";
@@ -12,10 +12,11 @@ function fixture(targetTags: readonly string[] = []) {
   const tracked: TrackChildSendInput[] = [];
   const backend = {
     capabilities: { environmentRouting: true },
-    retrieveAgent: async (id: string) => ({
+    retrieveAgent: async (id: string, options?: AgentRetrieveOptions) => ({
       id,
       name: "Hayt",
-      tags: targetTags,
+      // Cloud only returns tags when explicitly included.
+      tags: options?.include?.includes("agent.tags") ? targetTags : [],
     }),
     retrieveConversation: async (id: string) => ({
       id,

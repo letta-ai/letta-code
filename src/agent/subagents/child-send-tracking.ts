@@ -41,7 +41,11 @@ export async function resolveChildSubagent(
   parentAgentId: string,
 ): Promise<ChildSubagentIdentity | null> {
   try {
-    const agent = await backend.retrieveAgent(agentId);
+    // Cloud omits tags unless asked; without this a tagged child looks like a
+    // peer and is silently never tracked (same footgun as memfs-sync.ts).
+    const agent = await backend.retrieveAgent(agentId, {
+      include: ["agent.tags"],
+    });
     if (readTag(agent.tags, "parent:") !== parentAgentId) return null;
     return {
       name: agent.name,

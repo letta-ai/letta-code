@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { clearAllSubagents, getSubagents } from "@/agent/subagent-state";
-import type { Backend } from "@/backend";
+import type { AgentRetrieveOptions, Backend } from "@/backend";
 import type { EnqueueReceipt } from "@/backend/api/conversation-enqueue";
 import { resolveChildSubagent, trackChildSend } from "./child-send-tracking";
 
@@ -21,7 +21,11 @@ afterEach(() => {
 
 function backendWithTags(tags: string[]) {
   return {
-    retrieveAgent: async () => ({ id: "agent-hayt", name: "Hayt", tags }),
+    retrieveAgent: async (_id: string, options?: AgentRetrieveOptions) => {
+      // Cloud only returns tags when explicitly included.
+      const includesTags = options?.include?.includes("agent.tags") ?? false;
+      return { id: "agent-hayt", name: "Hayt", tags: includesTags ? tags : [] };
+    },
   } as unknown as Pick<Backend, "retrieveAgent">;
 }
 
