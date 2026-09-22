@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { models } from "@/agent/model-catalog";
 import {
   mapModelHandleToLlmConfigPatch,
+  normalizeModelHandleForRegistry,
   resolveModelHandleFromLlmConfig,
 } from "@/agent/model-handles";
 import {
@@ -85,6 +87,37 @@ describe("model handles", () => {
         model_endpoint_type: "openai",
       }),
     ).toBe("ollama-cloud/local-model");
+  });
+
+  test("keeps a catalog moonshotai handle distinct from the moonshot alias", () => {
+    models.push({
+      id: "kimi-k3-openrouter",
+      handle: "moonshotai/kimi-k3",
+      label: "Kimi K3",
+      description: "Moonshot AI's Kimi K3 model (high reasoning)",
+      updateArgs: {
+        context_window: 1048576,
+        reasoning_effort: "high",
+      },
+    });
+
+    expect(normalizeModelHandleForRegistry("moonshotai/kimi-k3")).toBe(
+      "moonshotai/kimi-k3",
+    );
+    expect(normalizeModelHandleForRegistry("moonshot/kimi-k3")).toBe(
+      "moonshot/kimi-k3",
+    );
+    expect(normalizeModelHandleForRegistry("moonshotai/kimi-k3-unlisted")).toBe(
+      "moonshot/kimi-k3-unlisted",
+    );
+    expect(mapModelHandleToLlmConfigPatch("moonshotai/kimi-k3")).toEqual({
+      model: "moonshotai/kimi-k3",
+      model_endpoint_type: "openrouter",
+    });
+    expect(mapModelHandleToLlmConfigPatch("moonshot/kimi-k3")).toEqual({
+      model: "kimi-k3",
+      model_endpoint_type: "moonshot",
+    });
   });
 
   test("does not reapply stale provider metadata to canonical handles", () => {

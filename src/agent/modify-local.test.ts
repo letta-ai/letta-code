@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getBuiltinModel as getModel } from "@earendil-works/pi-ai/providers/all";
+import { models } from "@/agent/model-catalog";
 import { configureBackendMode, getBackend } from "@/backend/backend";
 import { createOrUpdateLocalProvider } from "@/backend/local";
 import { LOCAL_BACKEND_DIR_ENV } from "@/backend/local/paths";
@@ -46,6 +47,38 @@ describe("local model updates", () => {
       parallel_tool_calls: true,
       max_output_tokens: 16384,
     });
+  });
+
+  test("keeps a catalog moonshotai Kimi handle on OpenRouter settings", () => {
+    models.push({
+      id: "kimi-k3-openrouter",
+      handle: "moonshotai/kimi-k3",
+      label: "Kimi K3",
+      description: "Moonshot AI's Kimi K3 model (high reasoning)",
+    });
+    try {
+      expect(
+        __modifyTestUtils.buildModelSettings("moonshotai/kimi-k3", {
+          reasoning_effort: "high",
+        }),
+      ).toMatchObject({
+        provider_type: "openrouter",
+        reasoning: { reasoning_effort: "high" },
+      });
+      expect(
+        __modifyTestUtils.buildModelSettings("moonshotai/kimi-k3-unlisted", {
+          reasoning_effort: "high",
+        }),
+      ).toMatchObject({
+        provider_type: "moonshot",
+        reasoning_effort: "high",
+      });
+    } finally {
+      const index = models.findIndex(
+        (model) => model.handle === "moonshotai/kimi-k3",
+      );
+      if (index >= 0) models.splice(index, 1);
+    }
   });
 
   test("builds direct Moonshot K3 settings without client reasoning controls", () => {

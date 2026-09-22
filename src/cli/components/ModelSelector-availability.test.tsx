@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { models } from "@/agent/model";
-import { filterModelsByAvailabilityForSelector } from "@/cli/components/ModelSelector";
+import {
+  filterModelsByAvailabilityForSelector,
+  preferredStaticModelForHandle,
+} from "@/cli/components/ModelSelector";
 import { setupRuntimeModelCatalogFixture } from "@/test-utils/runtime-model-catalog";
 
 setupRuntimeModelCatalogFixture();
@@ -72,5 +75,40 @@ describe("ModelSelector availability gating", () => {
     expect(result.map((m) => m.updateArgs?.reasoning_effort)).toEqual([
       undefined,
     ]);
+  });
+
+  test("keeps direct and OpenRouter Kimi K3 rows on distinct selector keys", () => {
+    models.push({
+      id: "kimi-k3-openrouter",
+      handle: "moonshotai/kimi-k3",
+      label: "Kimi K3",
+      description: "Moonshot AI's Kimi K3 model (high reasoning)",
+      updateArgs: {
+        context_window: 1048576,
+        reasoning_effort: "high",
+      },
+    });
+    const direct = models.find((model) => model.handle === "moonshot/kimi-k3");
+    const openRouter = models.find(
+      (model) => model.handle === "moonshotai/kimi-k3",
+    );
+    if (!direct || !openRouter) {
+      throw new Error("expected both Kimi K3 catalog handles");
+    }
+
+    const rows = [direct, openRouter].map(
+      (model) =>
+        preferredStaticModelForHandle(
+          models,
+          model.handle,
+          model.updateArgs?.context_window as number,
+        ) ?? model,
+    );
+
+    expect(rows.map((model) => model.id)).toEqual([
+      "kimi-k3",
+      "kimi-k3-openrouter",
+    ]);
+    expect(new Set(rows.map((model) => model.id)).size).toBe(rows.length);
   });
 });

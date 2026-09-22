@@ -20,7 +20,6 @@ import {
   CHATGPT_FAST_SERVICE_TIER,
   getChatGptFastRegistryHandleForModelHandle,
   models,
-  normalizeModelHandleForRegistry,
 } from "@/agent/model";
 import { refreshModelCatalog } from "@/agent/remote-model-catalog";
 import {
@@ -42,6 +41,7 @@ import {
   includeUnknownBackendHandleInRecommended,
   labelForBackendModel,
   type ModelSelectorSelection,
+  preferredStaticModelForHandle,
   registryHandleForBackendModel,
   registryHandleForByokAlias,
   toByokSelectorModel,
@@ -75,6 +75,7 @@ export {
   includeUnknownBackendHandleInRecommended,
   labelForBackendModel,
   labelForChatGPTByokAlias,
+  preferredStaticModelForHandle,
   registryHandleForBackendModel,
   registryHandleForByokAlias,
   toByokSelectorModel,
@@ -335,31 +336,8 @@ export function ModelSelector({
   }, [localModelCatalog]);
 
   const pickPreferredStaticModel = useCallback(
-    (handle: string, contextWindow?: number): UiModel | undefined => {
-      const registryHandle = normalizeModelHandleForRegistry(handle) ?? handle;
-      const staticCandidates = typedModels.filter(
-        (m) =>
-          m.handle === registryHandle &&
-          (contextWindow === undefined ||
-            (m.updateArgs?.context_window as number | undefined) ===
-              contextWindow),
-      );
-      return (
-        staticCandidates.find((m) => m.isDefault) ??
-        staticCandidates.find((m) => m.isFeatured) ??
-        staticCandidates.find(
-          (m) =>
-            (m.updateArgs as { reasoning_effort?: unknown } | undefined)
-              ?.reasoning_effort === "medium",
-        ) ??
-        staticCandidates.find(
-          (m) =>
-            (m.updateArgs as { reasoning_effort?: unknown } | undefined)
-              ?.reasoning_effort === "high",
-        ) ??
-        staticCandidates[0]
-      );
-    },
+    (handle: string, contextWindow?: number): UiModel | undefined =>
+      preferredStaticModelForHandle(typedModels, handle, contextWindow),
     [typedModels],
   );
 
