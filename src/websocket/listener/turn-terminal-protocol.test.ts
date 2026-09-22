@@ -107,6 +107,105 @@ test("consumer terminal errors match the plain loop error", () => {
   ).toBeUndefined();
 });
 
+test("consumer terminal errors never leak internal stack detail", () => {
+  const internalDetail =
+    "write CONNECTION_CLOSED gcp-us-central1-1.pg.psdb.cloud:6432";
+  const errorInfo = {
+    message: internalDetail,
+    detail: internalDetail,
+    error_type: "internal_error",
+    run_id: "run-45315cfe-d74f-4eda-bf10-e2f6315767ef",
+  };
+
+  const message = getConsumerLoopErrorMessage({
+    message: internalDetail,
+    errorInfo,
+  });
+
+  expect(message).toBe("The request failed. Please try again.");
+  expect(message).not.toContain("psdb.cloud");
+  expect(message).not.toContain("CONNECTION_CLOSED");
+  expect(message).not.toContain('"error"');
+
+  // A bare serialized payload with no structured metadata is still
+  // machine detail and must not reach consumers either.
+  const rawOnly = getConsumerLoopErrorMessage({
+    message: JSON.stringify({
+      error: {
+        error: {
+          type: "internal_error",
+          message: internalDetail,
+          detail: internalDetail,
+        },
+        run_id: "run-45315cfe-d74f-4eda-bf10-e2f6315767ef",
+      },
+    }),
+  });
+  expect(rawOnly).toBe("The request failed. Please try again.");
+  expect(rawOnly).not.toContain("psdb.cloud");
+});
+
+test("loop error deltas never leak internal stack detail", () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+  const sent: string[] = [];
+  const socket: ListenerTransport = {
+    kind: "local",
+    bufferedAmount: 0,
+    isOpen: () => true,
+    send: (payload: string) => sent.push(payload),
+  };
+  const internalDetail =
+    "write CONNECTION_CLOSED gcp-us-central1-1.pg.psdb.cloud:6432";
+
+  emitLoopErrorNotice(socket, runtime, {
+    message: internalDetail,
+    stopReason: "error",
+    isTerminal: true,
+    runId: "run-45315cfe-d74f-4eda-bf10-e2f6315767ef",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+    errorInfo: {
+      message: internalDetail,
+      detail: internalDetail,
+      error_type: "internal_error",
+      run_id: "run-45315cfe-d74f-4eda-bf10-e2f6315767ef",
+    },
+  });
+
+  const loopErrors = sent
+    .map((payload) => JSON.parse(payload))
+    .filter(
+      (payload) =>
+        payload.type === "stream_delta" &&
+        payload.delta?.message_type === "loop_error",
+    );
+  expect(loopErrors).toHaveLength(1);
+  expect(loopErrors[0]?.delta.message).toBe(
+    "The request failed. Please try again.",
+  );
+  expect(loopErrors[0]?.delta.message).not.toContain("psdb.cloud");
+});
+
+test("consumer terminal errors keep user-actionable conflict guidance", () => {
+  expect(
+    getConsumerLoopErrorMessage({
+      message:
+        "CONFLICT: Cannot send a new message: Another request is currently being processed for this conversation.",
+    }),
+  ).toContain(
+    "Another request is already processing for this conversation. Please wait for it to finish, then try again.",
+  );
+  expect(
+    getConsumerLoopErrorMessage({
+      message:
+        "CONFLICT: Cannot send a new message: The agent is waiting for approval on a tool call. Please approve or deny the pending request before continuing.",
+    }),
+  ).toBe(
+    "The agent is still waiting on a tool approval from an earlier turn. Please approve or deny that pending request, then send your message again.",
+  );
+});
+
 test("exhausted deployment recovery emits one audience-safe terminal failure", () => {
   const listener = createRuntime();
   const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");

@@ -1,20 +1,19 @@
 import {
+  APPROVAL_PENDING_ERROR_MESSAGE,
+  isApprovalPendingErrorText,
+} from "@/utils/approval-pending-error";
+import {
   buildConversationBusyErrorBody,
   CONVERSATION_BUSY_TITLE,
   isConversationBusyErrorText,
 } from "@/utils/conversation-busy-error";
+import { isRawErrorPayloadText } from "@/utils/raw-error-payload";
 
 const RAW_LOOP_ERROR_PATTERN = /^Unexpected stop reason:\s*error$/i;
 const APP_CHAT_URL_PATTERN = /https:\/\/app\.letta\.com\/chat\/\S+/i;
 const ESCAPE_CHARACTER = String.fromCharCode(27);
 const OSC8_PREFIX = `${ESCAPE_CHARACTER}]8;;`;
 const OSC8_TERMINATOR = `${ESCAPE_CHARACTER}\\`;
-
-const APPROVAL_PENDING_ERROR_PATTERNS = [
-  /waiting for approval/i,
-  /pending request before continuing/i,
-  /approve or deny the pending request/i,
-];
 
 const DATABASE_LOCK_TIMEOUT_PATTERN =
   /\bcancel(?:l)?ing statement due to lock timeout\b/i;
@@ -58,7 +57,7 @@ export const CHANNEL_LIFECYCLE_FALLBACK_ERROR_MESSAGE =
   "Something went wrong while processing that message. Please try again.";
 
 export const CHANNEL_LIFECYCLE_APPROVAL_PENDING_MESSAGE =
-  "The agent is still waiting on a tool approval from an earlier turn. Please approve or deny that pending request, then send your message again.";
+  APPROVAL_PENDING_ERROR_MESSAGE;
 
 export const CHANNEL_LIFECYCLE_TRANSIENT_ERROR_MESSAGE =
   "A temporary error interrupted this turn. Please try again.";
@@ -199,13 +198,20 @@ export function getChannelLifecycleErrorDisplay(
     };
   }
 
-  if (
-    APPROVAL_PENDING_ERROR_PATTERNS.some((pattern) => pattern.test(normalized))
-  ) {
+  if (isApprovalPendingErrorText(normalized)) {
     return {
       kind: "approval_pending",
       title: "Turn failed",
       body: CHANNEL_LIFECYCLE_APPROVAL_PENDING_MESSAGE,
+      runId,
+    };
+  }
+
+  if (isRawErrorPayloadText(normalized)) {
+    return {
+      kind: "generic",
+      title: "Turn failed",
+      body: CHANNEL_LIFECYCLE_FALLBACK_ERROR_MESSAGE,
       runId,
     };
   }

@@ -11,10 +11,19 @@ import {
 import type { ErrorInfo } from "@/cli/helpers/stream-processor";
 import type { StatusMessage, StopReasonType } from "@/types/protocol_v2";
 import {
+  APPROVAL_PENDING_ERROR_MESSAGE,
+  isApprovalPendingErrorText,
+} from "@/utils/approval-pending-error";
+import {
   CLOUD_API_UNAVAILABLE_MESSAGE,
   isCloudApiDeploymentInterrupted,
 } from "@/utils/cloud-api-shutdown";
+import {
+  formatConversationBusyErrorMessage,
+  isConversationBusyErrorText,
+} from "@/utils/conversation-busy-error";
 import { debugLog } from "@/utils/debug";
+import { isRawErrorPayloadText } from "@/utils/raw-error-payload";
 import {
   emitLoopErrorDelta,
   emitRetryDelta,
@@ -245,6 +254,52 @@ export function getLoopErrorNoticeDecision(params: {
     };
   }
 
+  // Conversation-busy and approval-pending conflicts carry user-actionable
+  // guidance. Classify them before the generic fallback below so their
+  // tailored copy survives even when the error arrives as structured run
+  // metadata rather than a local APIError.
+  if (
+    isConversationBusyErrorText(detail) ||
+    isConversationBusyErrorText(params.message)
+  ) {
+    return {
+      visibility: "transcript",
+      message: formatConversationBusyErrorMessage({
+        runId:
+          apiError?.run_id ??
+          params.errorInfo?.run_id ??
+          params.runErrorInfo?.run_id ??
+          undefined,
+      }),
+      apiError,
+    };
+  }
+
+  if (
+    isApprovalPendingErrorText(detail) ||
+    isApprovalPendingErrorText(params.message)
+  ) {
+    return {
+      visibility: "transcript",
+      message: APPROVAL_PENDING_ERROR_MESSAGE,
+      apiError,
+    };
+  }
+
+  // Everything emitted from this decision reaches end-user surfaces (channel
+  // messages, headless output, the app-server API). Upstream-sourced errors —
+  // structured run metadata, API exceptions, or bare serialized error
+  // payloads — can carry internal stack detail (hostnames, connection errors,
+  // raw JSON dumps), so unclassified ones collapse to a generic message; the
+  // run ID stays available for support. Messages composed locally by the
+  // listener (protocol feedback, lifecycle notices) pass through unchanged.
+  const upstreamSourced = Boolean(
+    apiError ??
+      params.error ??
+      params.errorInfo ??
+      params.runErrorInfo ??
+      (isRawErrorPayloadText(params.message) ? params.message : null),
+  );
   const formattedMessage = formatErrorDetails(
     apiError
       ? buildStructuredFormatInput(apiError)
@@ -253,7 +308,9 @@ export function getLoopErrorNoticeDecision(params: {
     params.conversationId ?? undefined,
     {
       surface: params.surface,
-      unclassifiedFallback: params.unclassifiedFallback,
+      unclassifiedFallback:
+        params.unclassifiedFallback ??
+        (upstreamSourced ? "generic" : "passthrough"),
     },
   );
 
