@@ -310,13 +310,12 @@ jobs:
           npm install -g ./letta-ai-letta-code-*.tgz
           letta --help
 
-      - name: Headless smoke test (API)
-        # Only run on push to main or non-Dependabot PRs from the same repo
-        # (fork and Dependabot PRs cannot access secrets).
-        if: ${{ github.event_name == 'push' || (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository) }}
+      - name: Headless smoke test (packaged local backend)
         env:
-          LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
-        run: ./letta.js --prompt "ping" --tools "" --permission-mode standard
+          LETTA_LOCAL_BACKEND_EXPERIMENTAL: '1'
+          LETTA_LOCAL_BACKEND_EXECUTOR: deterministic
+          LETTA_LOCAL_BACKEND_DIR: ${{ runner.temp }}/letta-package-smoke
+        run: ./letta.js --backend local --new-agent --prompt "ping" --tools "" --permission-mode standard --output-format text
 
       - name: Windows integration test
         # Only run on Windows, with API key available
@@ -511,6 +510,9 @@ jobs:
     if: ${{ needs.classify.outputs.run_heavy_ci == 'true' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository)) }}
     name: Reflection / Headless
     runs-on: ubuntu-latest
+    # This is live Cloud/model coverage. Keep its diagnostics visible without
+    # letting a provider outage block packaging and release readiness.
+    continue-on-error: true
     timeout-minutes: 10
     steps:
       - name: Checkout
