@@ -69,6 +69,18 @@ describe("resolveForkModelOverride", () => {
     });
   });
 
+  test("an effort without a model fails when the parent model cannot be resolved", async () => {
+    expect(
+      resolveForkModelOverride({
+        parentModelHandle: null,
+        reasoningEffort: "max",
+        availableModels: availableModels(),
+      }),
+    ).rejects.toThrow(
+      "Fork reasoning effort is not available: the parent's model could not be resolved",
+    );
+  });
+
   test("explicit inherit with an effort still changes only the effort", async () => {
     const result = await resolveForkModelOverride({
       userModel: "inherit",

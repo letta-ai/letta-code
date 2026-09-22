@@ -143,8 +143,16 @@ export async function resolveForkModelOverride(options: {
         : undefined;
   if (!requestedModel || isInheritModel(requestedModel)) {
     // Effort without a model: keep the fork on the parent's model and change
-    // only the effort, mirroring updateModelConfig's effort-only update.
-    if (options.reasoningEffort && options.parentModelHandle) {
+    // only the effort, mirroring updateModelConfig's effort-only update. The
+    // parent's handle is the effort's only anchor, so refuse when it is
+    // unresolved rather than silently dropping the request, matching how an
+    // unresolvable fork model fails above.
+    if (options.reasoningEffort) {
+      if (!options.parentModelHandle) {
+        throw new Error(
+          "Fork reasoning effort is not available: the parent's model could not be resolved",
+        );
+      }
       const availableForParent =
         options.availableModels ?? (await getAvailableModelHandles());
       const parentProviderType = availableForParent.providerTypes.get(
