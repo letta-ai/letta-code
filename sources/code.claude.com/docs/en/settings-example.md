@@ -27,7 +27,9 @@ One developer's personal settings. It picks a model and effort, adjusts the term
     ```json ~/.claude/settings.json theme={null}
     {
       "model": "claude-sonnet-5",
-      "effortLevel": "xhigh",
+      "modelSettings": {
+        "claude-sonnet-5": { "effortLevel": "xhigh" }
+      },
       "editorMode": "vim",
       "theme": "light-daltonized",
       "statusLine": {
@@ -56,8 +58,10 @@ One developer's personal settings. It picks a model and effort, adjusts the term
     {
       // Start every session on Sonnet 5
       "model": "claude-sonnet-5",
-      // Reason more deeply than the default high level on models without a saved level; /effort saves a level per model, and --effort sets one for a single session
-      "effortLevel": "xhigh",
+      // Run Sonnet 5 above its default high level; /effort saves a level per model, and --effort sets one for a single session
+      "modelSettings": {
+        "claude-sonnet-5": { "effortLevel": "xhigh" }
+      },
       // Vim keybindings in the prompt
       "editorMode": "vim",
       // The colorblind-friendly light theme
