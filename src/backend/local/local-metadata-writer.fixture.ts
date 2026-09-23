@@ -8,15 +8,17 @@ const [directory, kind, id, tag, ready, release, contending] =
 if (!directory || !kind || !id || !tag || !ready || !release || !contending)
   throw new Error("Missing writer arguments");
 if (tag === "second") {
+  // withFileLock acquires by hard-linking a temp file onto the lock path, so
+  // contention surfaces as EEXIST from fs.promises.link (args[1] is the lock).
   const fs = require("node:fs/promises");
-  const open = fs.open;
-  fs.open = async (...args: unknown[]) => {
+  const link = fs.link;
+  fs.link = async (...args: unknown[]) => {
     try {
-      return await open(...args);
+      return await link(...args);
     } catch (error) {
       if (
         (error as NodeJS.ErrnoException).code === "EEXIST" &&
-        String(args[0]).endsWith(".lock")
+        String(args[1]).endsWith(".lock")
       )
         writeFileSync(contending, "waiting");
       throw error;

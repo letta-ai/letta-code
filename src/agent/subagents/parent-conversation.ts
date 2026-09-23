@@ -29,3 +29,19 @@ export function getParentConversationTag(
   const tag = `parent-conversation:${agentId}/${conversationId}`;
   return getParentConversationScopes([tag]).length ? tag : undefined;
 }
+
+/** Compose the launch `--tags` list for a newly spawned subagent. */
+export function buildSubagentLaunchTags(
+  type: string,
+  parentAgentId?: string | null,
+  parentConversationId?: string | null,
+): string[] {
+  const tags = [`type:${type}`];
+  if (parentAgentId) tags.push(`parent:${parentAgentId}`);
+  const parentTag = getParentConversationTag(
+    parentAgentId,
+    parentConversationId,
+  );
+  if (parentTag) tags.push(parentTag);
+  return tags;
+}
