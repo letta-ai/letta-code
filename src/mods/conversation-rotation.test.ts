@@ -17,7 +17,7 @@ afterEach(() => {
 });
 
 describe("conversation rotation registry", () => {
-  test("rotate throws a scoped error when no session handler is registered", async () => {
+  test("new() throws a scoped error when no session handler is registered", async () => {
     expect(hasConversationRotationHandler()).toBe(false);
 
     const handle = createModConversationHandle({
@@ -26,12 +26,12 @@ describe("conversation rotation registry", () => {
       sendMessageStream,
     });
 
-    await expect(handle.rotate()).rejects.toThrow(
-      "Mod conversation rotate: no live session in this context",
+    await expect(handle.new()).rejects.toThrow(
+      "Mod conversation new(): no live session in this context",
     );
   });
 
-  test("rotate delegates to the session handler and returns a handle to the new conversation", async () => {
+  test("new() delegates to the session handler and returns a handle to the new conversation", async () => {
     const requests: unknown[] = [];
     const handler: ConversationRotationHandler = async (request) => {
       requests.push(request);
@@ -45,13 +45,13 @@ describe("conversation rotation registry", () => {
       sendMessageStream,
     });
 
-    const rotated = await handle.rotate({ name: "post-merge" });
+    const rotated = await handle.new({ name: "post-merge" });
 
     expect(requests).toEqual([{ agentId: "agent-1", name: "post-merge" }]);
     expect(rotated.id).toBe("conv-new");
     // The returned handle behaves like any other conversation handle.
     expect(typeof rotated.getHistory).toBe("function");
-    expect(typeof rotated.rotate).toBe("function");
+    expect(typeof rotated.new).toBe("function");
   });
 
   test("the disposer unregisters only its own handler", async () => {

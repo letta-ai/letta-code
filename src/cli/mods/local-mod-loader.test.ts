@@ -638,7 +638,7 @@ export default function(letta) {
             conversation: {
               id: "conversation-1",
               fork: notImplemented,
-              rotate: notImplemented,
+              new: notImplemented,
               getHistory: async () => [],
               sendMessageStream: async () => (async function* () {})(),
               updateLlmConfig: async () => {},
@@ -694,7 +694,7 @@ export default function(letta) {
                 conversation: {
                   id: "conversation-1",
                   fork: notImplemented,
-                  rotate: notImplemented,
+                  new: notImplemented,
                   getHistory: async () => [],
                   sendMessageStream: async () => (async function* () {})(),
                   updateLlmConfig: async () => {},
@@ -750,7 +750,7 @@ export default function(letta) {
             conversation: {
               id: "conversation-1",
               fork: notImplemented,
-              rotate: notImplemented,
+              new: notImplemented,
               getHistory: async () => [],
               sendMessageStream: async () => (async function* () {})(),
               updateLlmConfig: async () => {},

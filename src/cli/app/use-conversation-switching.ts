@@ -879,7 +879,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
     ],
   );
 
-  // Mod conversation rotation (ctx.conversation.rotate): create a fresh
+  // Mod conversation rotation (ctx.conversation.new): create a fresh
   // conversation on the active agent and move the live session to it. When a
   // turn is in flight, the rebind is queued to run when the turn ends so the
   // current turn finishes in the old conversation. Uses the shared /new
@@ -954,7 +954,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         const activeAgentId = agentIdRef.current ?? agentId;
         if (request.agentId && request.agentId !== activeAgentId) {
           throw new Error(
-            `Mod conversation rotate: agent ${request.agentId} is not the active session agent`,
+            `Mod conversation new(): agent ${request.agentId} is not the active session agent`,
           );
         }
         const conversationId = await createFreshConversation(

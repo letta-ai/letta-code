@@ -1,10 +1,10 @@
 // Session-owned conversation rotation for mods.
 //
-// `ctx.conversation.rotate()` needs to rebind the live session (UI state,
+// `ctx.conversation.new()` needs to rebind the live session (UI state,
 // routing, hooks) to a fresh conversation — something only the process that
 // owns the session can do. The TUI registers a handler here at startup; mod
 // conversation handles call through the registry. Contexts without a live
-// session (headless, listener) register nothing, and rotate() throws there
+// session (headless, listener) register nothing, and new() throws there
 // instead of half-rotating: creating a conversation the session never moves
 // to.
 
@@ -48,8 +48,8 @@ export function requestConversationRotation(
 ): Promise<ConversationRotationResult> {
   if (!activeHandler) {
     throw new Error(
-      "Mod conversation rotate: no live session in this context can be rotated " +
-        "(conversation rotation is only available in an interactive session)",
+      "Mod conversation new(): no live session in this context can be rotated " +
+        "(starting a new conversation is only available in an interactive session)",
     );
   }
   return activeHandler(request);

@@ -135,7 +135,7 @@ export interface ModUpdateLlmConfigOptions {
   scope?: "conversation" | "agent";
 }
 
-export interface ModConversationRotateOptions {
+export interface ModConversationNewOptions {
   /** Title/summary for the new conversation, like `/new <name>`. */
   name?: string;
 }
@@ -153,9 +153,7 @@ export interface ModConversationHandle {
    * Returns a handle to the new conversation. Throws where no live session
    * can be rebound (headless, listener).
    */
-  rotate: (
-    options?: ModConversationRotateOptions,
-  ) => Promise<ModConversationHandle>;
+  new: (options?: ModConversationNewOptions) => Promise<ModConversationHandle>;
   getHistory: (options?: ModConversationHistoryOptions) => Promise<Message[]>;
   /** Persist a new conversation title and refresh active local UI consumers. */
   updateTitle?: (title: string) => Promise<void>;
