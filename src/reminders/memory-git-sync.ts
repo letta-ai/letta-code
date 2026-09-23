@@ -41,6 +41,20 @@ export interface RunPostTurnMemorySyncDependencies {
  * handed to a background repair worker, so callers pass `conflict` only when
  * that repair was not launched.
  */
+/** A repair worker is editing the checkout in place; the primary must leave it alone until it finishes. */
+export function formatMemoryRepairInProgressReminder(
+  result: MemoryPostTurnSyncResult,
+): string {
+  return `${SYSTEM_REMINDER_OPEN}
+MEMORY REPAIR IN PROGRESS: A background worker is resolving an unfinished merge or rebase in the memory repository.
+
+Memory directory: ${result.memoryDir}
+Status: ${result.summary}
+
+Do not edit memory files or run Git commands in the memory repository until the worker's task log ends with [Task completed] or [Task failed]; its changes would be swept into the repair or overwritten. Reading memory is fine.
+${SYSTEM_REMINDER_CLOSE}`;
+}
+
 export function formatMemoryPostTurnSyncReminder(
   result: MemoryPostTurnSyncResult,
 ): string | null {
@@ -179,7 +193,7 @@ export async function runPostTurnMemorySync(
                 startMemoryConflictRepair(repair, spawnBackgroundSubagentTask))
             )({ ...params, result }));
           const reminder = repairLaunched
-            ? null
+            ? formatMemoryRepairInProgressReminder(result)
             : formatMemoryPostTurnSyncReminder(result);
           if (reminder) {
             params.enqueueReminder?.(reminder);

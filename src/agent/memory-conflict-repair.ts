@@ -1,10 +1,13 @@
 import { execFile } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { getMemoryGitDir } from "@/agent/memory-git-dir";
-import { claimMemoryOperation } from "@/agent/memory-operation";
+import {
+  getOwnProcessStartTime,
+  isSameProcessRunning,
+  type ProcessIdentity,
+} from "@/utils/process-liveness";
 
 const ATTEMPT_FILE = "letta-memory-repair.json";
 const OPERATION_HEADS = [
@@ -13,6 +16,18 @@ const OPERATION_HEADS = [
   "CHERRY_PICK_HEAD",
   "REVERT_HEAD",
 ];
+
+/**
+ * The attempt recorded for a conflict. Every write happens under the
+ * checkout lease: the claim runs inside post-turn sync or a worker's sync,
+ * and the later transitions inside the repair worker itself.
+ */
+interface RepairAttempt extends ProcessIdentity {
+  signature: string;
+  /** "launching" until the repair worker has run; "done" once it has. */
+  state: "launching" | "done";
+  attemptedAt: string;
+}
 
 async function readOptional(path: string): Promise<string> {
   try {
@@ -46,63 +61,90 @@ async function describeMemoryConflict(
   return [head, ...heads].join("\n");
 }
 
+async function attemptPath(memoryDir: string): Promise<string> {
+  return join(await getMemoryGitDir(memoryDir), ATTEMPT_FILE);
+}
+
+async function readAttempt(path: string): Promise<Partial<RepairAttempt>> {
+  try {
+    return JSON.parse(await readFile(path, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
 /**
  * Record that automatic repair is being attempted for the current conflict.
- * Returns null when the same unfinished operation was already handed to a
- * repair worker, so a conflict the worker could not resolve is reported to the
- * agent instead of launching another worker on every turn. Otherwise returns
- * a release that forgets this attempt (a launch that failed or was cancelled
- * before running has not tried the conflict); the release only removes its
- * own record, never a newer attempt recorded by another process. A checkout
- * that is not a readable Git repository is left to the worker, which reports
- * the failure itself.
+ * Returns false when the same unfinished operation is already being handled:
+ * a repair worker has run and could not resolve it (reported to the agent
+ * instead of relaunched on every turn), or a repair is still in progress in
+ * a running process. An attempt whose process is gone before the worker ran
+ * (cancelled, crashed) is retried. A checkout that is not a readable Git
+ * repository is left to the worker, which reports the failure itself.
  */
-export type ReleaseMemoryConflictRepair = (options?: {
-  /** The caller already holds the checkout lease (launch paths do). */
-  leaseHeld?: boolean;
-}) => Promise<void>;
-
 export async function claimMemoryConflictRepair(
   memoryDir: string,
-): Promise<ReleaseMemoryConflictRepair | null> {
-  let gitDir: string;
+): Promise<boolean> {
+  let path: string;
+  let signature: string;
   try {
-    gitDir = await getMemoryGitDir(memoryDir);
+    path = await attemptPath(memoryDir);
+    signature = await describeMemoryConflict(
+      memoryDir,
+      await getMemoryGitDir(memoryDir),
+    );
   } catch {
-    return async () => undefined;
+    return true;
   }
-  const path = join(gitDir, ATTEMPT_FILE);
-  const signature = await describeMemoryConflict(memoryDir, gitDir);
-  const readAttempt = async (): Promise<{
-    signature?: string;
-    nonce?: string;
-  }> => {
-    try {
-      return JSON.parse(await readFile(path, "utf8"));
-    } catch {
-      return {};
+  const previous = await readAttempt(path);
+  if (previous.signature === signature) {
+    if (previous.state === "done") return false;
+    if (
+      typeof previous.pid === "number" &&
+      (await isSameProcessRunning({
+        pid: previous.pid,
+        ...(typeof previous.started === "string" && {
+          started: previous.started,
+        }),
+      }))
+    ) {
+      return false;
     }
+  }
+  const attempt: RepairAttempt = {
+    signature,
+    state: "launching",
+    pid: process.pid,
+    ...((await getOwnProcessStartTime()) && {
+      started: (await getOwnProcessStartTime()) ?? undefined,
+    }),
+    attemptedAt: new Date().toISOString(),
   };
-  if ((await readAttempt()).signature === signature) return null;
-  const nonce = randomUUID();
-  await writeFile(
-    path,
-    JSON.stringify({ signature, nonce, attemptedAt: new Date().toISOString() }),
-  );
-  return async (options = {}) => {
-    // Compare-and-remove must not race a newer attempt from another process;
-    // attempts are written under the checkout lease, so remove under it too.
-    // At exit the lease may be busy: then leave the marker, which costs one
-    // "already attempted" report instead of a retry.
-    const lease = options.leaseHeld
-      ? null
-      : await claimMemoryOperation(memoryDir);
-    if (!options.leaseHeld && !lease) return;
-    try {
-      if ((await readAttempt()).nonce === nonce)
-        await rm(path, { force: true });
-    } finally {
-      await lease?.();
-    }
-  };
+  await writeFile(path, JSON.stringify(attempt));
+  return true;
+}
+
+/** The repair worker ran; the same conflict is not attempted again automatically. */
+export async function completeMemoryConflictRepair(
+  memoryDir: string,
+): Promise<void> {
+  try {
+    const path = await attemptPath(memoryDir);
+    const attempt = await readAttempt(path);
+    if (attempt.signature === undefined) return;
+    await writeFile(path, JSON.stringify({ ...attempt, state: "done" }));
+  } catch {
+    /* Not a repository; nothing was recorded. */
+  }
+}
+
+/** The attempt never ran (launch failed or was cancelled); let the next turn retry. */
+export async function clearMemoryConflictRepair(
+  memoryDir: string,
+): Promise<void> {
+  try {
+    await rm(await attemptPath(memoryDir), { force: true });
+  } catch {
+    /* Not a repository; nothing was recorded. */
+  }
 }

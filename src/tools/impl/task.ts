@@ -110,8 +110,6 @@ export interface SpawnBackgroundSubagentTaskArgs {
   silentCompletion?: boolean;
   /** Harness-triggered conflict repair; skip if another worker already resolved it. */
   memoryRepairOnly?: boolean;
-  /** Forgets the recorded attempt if this repair is cancelled before it runs. */
-  releaseRepairAttempt?: () => Promise<void>;
   /**
    * Emit a completion notification even when `silentCompletion` is true.
    * Useful when the parent should not stream subagent tokens but still wants
@@ -483,7 +481,6 @@ export function spawnBackgroundSubagentTask(
           memoryDir: workerMemoryDir,
           assignment: prompt,
           repairOnly: args.memoryRepairOnly,
-          releaseRepairAttempt: args.releaseRepairAttempt,
           signal: abortController.signal,
           subagentId,
           outputFile,

@@ -1,13 +1,16 @@
 import { afterEach, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { claimMemoryOperation } from "@/agent/memory-operation";
 import {
   createTempGitRepo,
   type TempGitRepo,
 } from "@/test-utils/temp-git-repo";
-import { claimMemoryConflictRepair } from "./memory-conflict-repair";
+import {
+  claimMemoryConflictRepair,
+  clearMemoryConflictRepair,
+  completeMemoryConflictRepair,
+} from "./memory-conflict-repair";
 
 const repos: TempGitRepo[] = [];
 afterEach(() => {
@@ -23,65 +26,57 @@ function repository(): string {
   return repo.dir;
 }
 
-test("the same unfinished operation is handed to a repair worker only once", async () => {
+test("a conflict a worker has run on is not attempted again while unchanged", async () => {
   const root = repository();
   writeFileSync(join(root, ".git", "MERGE_HEAD"), "a".repeat(40));
-  expect(await claimMemoryConflictRepair(root)).not.toBeNull();
-  expect(await claimMemoryConflictRepair(root)).toBeNull();
+  expect(await claimMemoryConflictRepair(root)).toBe(true);
+  await completeMemoryConflictRepair(root);
+  expect(await claimMemoryConflictRepair(root)).toBe(false);
   // A different incoming commit is a new conflict.
   writeFileSync(join(root, ".git", "MERGE_HEAD"), "b".repeat(40));
-  expect(await claimMemoryConflictRepair(root)).not.toBeNull();
+  expect(await claimMemoryConflictRepair(root)).toBe(true);
 });
 
 test("a conflict that follows new commits is attempted again", async () => {
   const root = repository();
-  expect(await claimMemoryConflictRepair(root)).not.toBeNull();
+  expect(await claimMemoryConflictRepair(root)).toBe(true);
+  await completeMemoryConflictRepair(root);
   writeFileSync(join(root, "note.md"), "updated\n");
   execFileSync("git", ["-C", root, "commit", "-q", "-am", "update"], {
     stdio: "pipe",
   });
-  expect(await claimMemoryConflictRepair(root)).not.toBeNull();
+  expect(await claimMemoryConflictRepair(root)).toBe(true);
+});
+
+test("a repair still in progress in a running process is not launched twice", async () => {
+  const root = repository();
+  writeFileSync(join(root, ".git", "MERGE_HEAD"), "a".repeat(40));
+  expect(await claimMemoryConflictRepair(root)).toBe(true);
+  // Still "launching" and this process is alive: in progress.
+  expect(await claimMemoryConflictRepair(root)).toBe(false);
+});
+
+test("an attempt whose process is gone before the worker ran is retried", async () => {
+  const root = repository();
+  writeFileSync(join(root, ".git", "MERGE_HEAD"), "a".repeat(40));
+  expect(await claimMemoryConflictRepair(root)).toBe(true);
+  const path = join(root, ".git", "letta-memory-repair.json");
+  const attempt = JSON.parse(readFileSync(path, "utf8"));
+  // The recording process crashed or was cancelled: its pid was reused.
+  writeFileSync(path, JSON.stringify({ ...attempt, started: "1970-01-01" }));
+  expect(await claimMemoryConflictRepair(root)).toBe(true);
+});
+
+test("clearing an attempt that never ran lets the same conflict be attempted again", async () => {
+  const root = repository();
+  writeFileSync(join(root, ".git", "MERGE_HEAD"), "a".repeat(40));
+  expect(await claimMemoryConflictRepair(root)).toBe(true);
+  await clearMemoryConflictRepair(root);
+  expect(await claimMemoryConflictRepair(root)).toBe(true);
 });
 
 test("a checkout that is not a repository is left to the worker", async () => {
-  const release = await claimMemoryConflictRepair("/nonexistent/memory");
-  expect(release).not.toBeNull();
-  await release?.();
-});
-
-test("releasing a cancelled attempt lets the same conflict be attempted again", async () => {
-  const root = repository();
-  writeFileSync(join(root, ".git", "MERGE_HEAD"), "a".repeat(40));
-  const release = await claimMemoryConflictRepair(root);
-  expect(release).not.toBeNull();
-  await release?.();
-  expect(await claimMemoryConflictRepair(root)).not.toBeNull();
-});
-
-test("a stale release does not forget a newer attempt", async () => {
-  const root = repository();
-  writeFileSync(join(root, ".git", "MERGE_HEAD"), "a".repeat(40));
-  const first = await claimMemoryConflictRepair(root);
-  // Forget the first attempt, then record a second one for the same conflict.
-  await first?.();
-  const second = await claimMemoryConflictRepair(root);
-  expect(second).not.toBeNull();
-  // The first handle is stale now; releasing it must not clear the second.
-  await first?.();
-  expect(await claimMemoryConflictRepair(root)).toBeNull();
-  await second?.();
-});
-
-test("a cancelled attempt is left in place while another process holds the checkout", async () => {
-  const root = repository();
-  writeFileSync(join(root, ".git", "MERGE_HEAD"), "a".repeat(40));
-  const release = await claimMemoryConflictRepair(root);
-  expect(release).not.toBeNull();
-  const lease = await claimMemoryOperation(root);
-  await release?.();
-  // Still recorded: the release could not take the lease safely.
-  expect(await claimMemoryConflictRepair(root)).toBeNull();
-  await lease?.();
-  await release?.();
-  expect(await claimMemoryConflictRepair(root)).not.toBeNull();
+  expect(await claimMemoryConflictRepair("/nonexistent/memory")).toBe(true);
+  await clearMemoryConflictRepair("/nonexistent/memory");
+  await completeMemoryConflictRepair("/nonexistent/memory");
 });

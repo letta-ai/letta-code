@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { claimMemoryConflictRepair } from "@/agent/memory-conflict-repair";
 import { claimMemoryOperation } from "@/agent/memory-operation";
 import {
   createReflectionMemoryWorktree,
@@ -454,4 +455,41 @@ test("a queued repair reports a dirty checkout instead of declaring it repaired"
   );
   expect(result.success).toBe(false);
   expect(result.error).toContain("Memory sync incomplete (dirty)");
+});
+
+test("a repair that ran marks its attempt done; the same conflict is reported next time", async () => {
+  conflict();
+  expect(await claimMemoryConflictRepair(root)).toBe(true);
+  await runMemoryWorker(scope(true), async () => ({
+    agentId: "agent-repair",
+    success: true,
+    report: "could not resolve",
+  }));
+  // Still conflicted, and now recorded as attempted: no relaunch.
+  expect(await claimMemoryConflictRepair(root)).toBe(false);
+});
+
+test("a repair cancelled before finishing forgets its attempt so the next turn retries", async () => {
+  conflict();
+  expect(await claimMemoryConflictRepair(root)).toBe(true);
+  const controller = new AbortController();
+  await runMemoryWorker(
+    { ...scope(true), signal: controller.signal },
+    async () => {
+      controller.abort();
+      return { agentId: "agent-repair", success: false, report: "" };
+    },
+  );
+  expect(await claimMemoryConflictRepair(root)).toBe(true);
+});
+
+test("a repair whose launch fails forgets its attempt so the next turn retries", async () => {
+  conflict();
+  expect(await claimMemoryConflictRepair(root)).toBe(true);
+  await expect(
+    runMemoryWorker(scope(true), async () => {
+      throw new Error("child exited before starting");
+    }),
+  ).rejects.toThrow("child exited before starting");
+  expect(await claimMemoryConflictRepair(root)).toBe(true);
 });

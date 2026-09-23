@@ -1,6 +1,6 @@
 import {
   claimMemoryConflictRepair,
-  type ReleaseMemoryConflictRepair,
+  clearMemoryConflictRepair,
 } from "@/agent/memory-conflict-repair";
 import type { MemoryPostTurnSyncResult } from "@/agent/memory-git";
 import {
@@ -22,8 +22,6 @@ export interface RunBackgroundMemoryTaskParams {
   memoryDir: string;
   assignment: string;
   repairOnly?: boolean;
-  /** Forgets this repair's attempt marker if it is cancelled before running. */
-  releaseRepairAttempt?: () => Promise<void>;
   signal: AbortSignal;
   subagentId: string;
   outputFile: string;
@@ -111,11 +109,6 @@ export function runBackgroundMemoryTask(
       },
       repair: params.repair,
     },
-  ).finally(() =>
-    // A repair cancelled at exit has not been tried; let the next session retry it.
-    params.repairOnly && params.signal.aborted
-      ? params.releaseRepairAttempt?.()
-      : undefined,
   );
   return { execution, unsubscribe };
 }
@@ -131,10 +124,10 @@ export async function startMemoryConflictRepair(
   spawn: (args: SpawnBackgroundSubagentTaskArgs) => unknown,
   claimRepair = claimMemoryConflictRepair,
 ): Promise<boolean> {
-  let release: ReleaseMemoryConflictRepair | null = null;
+  let claimed = false;
   try {
-    release = await claimRepair(params.result.memoryDir);
-    if (!release) return false;
+    claimed = await claimRepair(params.result.memoryDir);
+    if (!claimed) return false;
     spawn({
       subagentType: "memory",
       description: "Repair memory Git conflict",
@@ -148,15 +141,15 @@ export async function startMemoryConflictRepair(
         writableRoots: [params.result.memoryDir],
       },
       memoryRepairOnly: true,
-      releaseRepairAttempt: release,
       actingUserId: params.actingUserId,
     });
     return true;
   } catch (error) {
     // Capacity or checkout errors must not become unhandled rejections, and
     // an attempt that never launched must not block the next turn's retry.
+    // Callers hold the checkout lease, so clearing the marker here is safe.
     debugWarn("memory-repair", `Could not launch repair: ${String(error)}`);
-    await release?.({ leaseHeld: true }).catch(() => undefined);
+    if (claimed) await clearMemoryConflictRepair(params.result.memoryDir);
     return false;
   }
 }

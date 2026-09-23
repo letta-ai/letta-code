@@ -197,7 +197,7 @@ const conflict: MemoryPostTurnSyncResult = {
   summary: "merge in progress",
   localOnly: true,
 };
-test("post-turn conflict launches the memory task without parent reminders or a same-agent conversation", async () => {
+test("post-turn conflict launches the memory task and warns the primary, without a same-agent conversation", async () => {
   const jobs: SpawnBackgroundSubagentTaskArgs[] = [];
   const reminders: string[] = [];
   await runPostTurnMemorySync(
@@ -237,7 +237,10 @@ test("post-turn conflict launches the memory task without parent reminders or a 
   });
   expect(jobs[0]?.existingConversationId).toBeUndefined();
   expect(jobs[0]?.existingAgentId).toBeUndefined();
-  expect(reminders).toEqual([]);
+  // The primary is told to leave the checkout alone while the repair runs.
+  expect(reminders).toHaveLength(1);
+  expect(reminders[0]).toContain("MEMORY REPAIR IN PROGRESS");
+  expect(reminders[0]).not.toContain("MEMORY GIT CONFLICT");
 });
 test("dirty and failed primary memory sync remind the primary instead of launching repair", async () => {
   for (const [status, heading] of [
@@ -293,19 +296,22 @@ test("a conflict that repair already attempted is reported to the primary", asyn
         syncMemory: async () => conflict,
         syncAttachedRepositories: async () => ({ results: [] }),
         repairConflict: (params) =>
-          startMemoryConflictRepair(params, spawn, async () =>
-            attempts++ === 0 ? async () => undefined : null,
+          startMemoryConflictRepair(
+            params,
+            spawn,
+            async () => attempts++ === 0,
           ),
       },
     );
   await run();
   expect(jobs).toHaveLength(1);
-  expect(reminders).toEqual([]);
+  expect(reminders).toHaveLength(1);
+  expect(reminders[0]).toContain("MEMORY REPAIR IN PROGRESS");
   await run();
   expect(jobs).toHaveLength(1);
-  expect(reminders).toHaveLength(1);
-  expect(reminders[0]).toContain("MEMORY GIT CONFLICT");
-  expect(reminders[0]).toContain("automatic repair could not resolve");
+  expect(reminders).toHaveLength(2);
+  expect(reminders[1]).toContain("MEMORY GIT CONFLICT");
+  expect(reminders[1]).toContain("automatic repair could not resolve");
 });
 
 test("post-turn sync is skipped while another writer owns the checkout", async () => {

@@ -1,4 +1,8 @@
 import {
+  clearMemoryConflictRepair,
+  completeMemoryConflictRepair,
+} from "@/agent/memory-conflict-repair";
+import {
   type MemoryPostTurnSyncResult,
   syncPendingMemoryCommitsAfterTurn,
 } from "@/agent/memory-git";
@@ -93,10 +97,48 @@ type Helpers = {
   deps: Parameters<typeof runMemoryWorker>[2];
 };
 
+function syncSummary(result: MemoryPostTurnSyncResult): string {
+  return `Memory sync incomplete (${result.status}): ${result.summary}`;
+}
+
+/**
+ * Sync the checkout after a worker changed it, tell readers when memory
+ * changed, refresh the parent's prompt on success, and fold a sync problem
+ * into the worker's result. Shared by update and repair workers.
+ */
+async function settle(
+  result: SubagentResult,
+  changed: boolean,
+  { sync, recompile, deps }: Helpers,
+): Promise<SubagentResult> {
+  let syncError: string | undefined;
+  let pushed = false;
+  // Normal sync owns Git status checks and remote retries.
+  try {
+    const syncResult = await sync();
+    pushed = syncResult.status === "pushed";
+    if (!SYNCED_STATUSES.has(syncResult.status)) {
+      syncError = syncSummary(syncResult);
+      debugWarn("memory-worker", syncError);
+      if (syncResult.status === "conflict") await deps?.repair?.(syncResult);
+    }
+  } catch (error) {
+    syncError = `Memory sync failed: ${String(error)}`;
+    debugWarn("memory-worker", syncError);
+  }
+  // Local-only checkouts report a merge as "skipped"; readers still need to
+  // know memory changed.
+  if (pushed || changed) deps?.onMemoryChanged?.();
+  if (!syncError && changed && result.success) await recompile();
+  return syncError
+    ? { ...result, success: false, error: result.error ?? syncError }
+    : result;
+}
+
 async function runUpdate(
   params: Parameters<typeof runMemoryWorker>[0],
   execute: Parameters<typeof runMemoryWorker>[1],
-  { sync, recompile, deps }: Helpers,
+  helpers: Helpers,
 ): Promise<SubagentResult> {
   const worktree = await createReflectionMemoryWorktree({
     parentMemoryDir: params.memoryDir,
@@ -125,93 +167,66 @@ async function runUpdate(
     await integrateMemoryWorkerWorktree(worktree, {
       discard: params.signal?.aborted === true,
     });
-  if (outcome.status === "discarded") {
-    return {
-      ...result,
-      success: false,
-      error: result.error ?? "Memory worker cancelled",
-    };
-  }
-  if (outcome.status === "merge_conflict") {
-    return {
-      ...result,
-      success: false,
-      error:
-        result.error ??
+  const failed = (error: string) => ({
+    ...result,
+    success: false,
+    error: result.error ?? error,
+  });
+  switch (outcome.status) {
+    case "discarded":
+      return failed("Memory worker cancelled");
+    case "merge_conflict":
+      return failed(
         `Memory changes conflict with the checkout; ${outcome.commitCount} commit(s) kept on ${outcome.branchName}`,
-    };
+      );
+    case "failed":
+      return failed(outcome.error);
+    default:
+      return settle(result, outcome.status === "merged", helpers);
   }
-  if (outcome.status === "failed") {
-    return { ...result, success: false, error: result.error ?? outcome.error };
-  }
-  let syncError: string | undefined;
-  let pushed = false;
-  // Normal sync owns Git status checks and remote retries.
-  try {
-    const syncResult = await sync();
-    pushed = syncResult.status === "pushed";
-    if (!SYNCED_STATUSES.has(syncResult.status)) {
-      syncError = `Memory sync incomplete (${syncResult.status}): ${syncResult.summary}`;
-      debugWarn("memory-worker", syncError);
-      if (syncResult.status === "conflict") await deps?.repair?.(syncResult);
-    }
-  } catch (error) {
-    syncError = `Memory sync failed: ${String(error)}`;
-    debugWarn("memory-worker", syncError);
-  }
-  // Local-only checkouts report a merge as "skipped"; readers still need to
-  // know memory changed.
-  if (pushed || outcome.status === "merged") deps?.onMemoryChanged?.();
-  if (!syncError && outcome.status === "merged" && result.success) {
-    await recompile();
-  }
-  return syncError
-    ? { ...result, success: false, error: result.error ?? syncError }
-    : result;
 }
 
+/**
+ * Repair works on the checkout itself, where the unfinished Git operation
+ * lives. The attempt marker that keeps the same conflict from being retried
+ * every turn is advanced here, under the lease: cleared if the worker never
+ * ran (launch failure, cancellation) so the next turn retries, marked done
+ * once it has run so an unresolved conflict is reported instead.
+ */
 async function runRepair(
   params: Parameters<typeof runMemoryWorker>[0],
   execute: Parameters<typeof runMemoryWorker>[1],
-  { sync, recompile, deps }: Helpers,
+  helpers: Helpers,
 ): Promise<SubagentResult> {
   // Another worker may have repaired the checkout before this one acquired
   // it. Only a clean sync is a no-op; a dirty or unpushed checkout is
   // reported, not silently declared repaired.
-  const state = await sync();
+  const state = await helpers.sync();
   if (state.status !== "conflict") {
-    if (state.status === "pushed") deps?.onMemoryChanged?.();
+    if (state.status === "pushed") helpers.deps?.onMemoryChanged?.();
     // No worker ran, so there is no worker identity to report.
     return SYNCED_STATUSES.has(state.status)
       ? { agentId: "", success: true, report: "No memory conflict remains." }
-      : {
-          agentId: "",
-          success: false,
-          report: "",
-          error: `Memory sync incomplete (${state.status}): ${state.summary}`,
-        };
+      : { agentId: "", success: false, report: "", error: syncSummary(state) };
   }
-  const result = await execute(params.memoryDir, {
-    primaryRoot: params.memoryDir,
-    writableRoots: [params.memoryDir],
-  });
-  if (params.signal?.aborted) return result;
-  let syncError: string | undefined;
-  let pushed = false;
+  let result: SubagentResult;
   try {
-    const syncResult = await sync();
-    pushed = syncResult.status === "pushed";
-    if (!SYNCED_STATUSES.has(syncResult.status)) {
-      syncError = `Memory sync incomplete (${syncResult.status}): ${syncResult.summary}`;
-      debugWarn("memory-worker", syncError);
-    }
+    result = await execute(params.memoryDir, {
+      primaryRoot: params.memoryDir,
+      writableRoots: [params.memoryDir],
+    });
   } catch (error) {
-    syncError = `Memory sync failed: ${String(error)}`;
-    debugWarn("memory-worker", syncError);
+    await clearMemoryConflictRepair(params.memoryDir);
+    throw error;
   }
-  if (pushed || !syncError) deps?.onMemoryChanged?.();
-  if (!syncError) await recompile();
-  return syncError
-    ? { ...result, success: false, error: result.error ?? syncError }
-    : result;
+  if (params.signal?.aborted) {
+    await clearMemoryConflictRepair(params.memoryDir);
+    return {
+      ...result,
+      success: false,
+      error: result.error ?? "Memory repair cancelled",
+    };
+  }
+  await completeMemoryConflictRepair(params.memoryDir);
+  return settle(result, true, helpers);
 }
