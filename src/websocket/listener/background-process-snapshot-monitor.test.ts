@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { backgroundProcesses } from "@/tools/impl/process_manager";
+import {
+  type BackgroundProcess,
+  backgroundProcesses,
+} from "@/tools/impl/process_manager";
 import { buildBackgroundProcessSnapshot } from "./background-process-snapshot";
 
 afterEach(() => {
@@ -66,7 +69,7 @@ describe("background process snapshots", () => {
       runtimeScope: { agentId: "agent-a", conversationId: "conv-a" },
       kind: "workflow",
       description: "Review changed files across dimensions",
-    });
+    } as BackgroundProcess);
 
     expect(buildBackgroundProcessSnapshot("agent-a", "conv-a")).toEqual([
       {
