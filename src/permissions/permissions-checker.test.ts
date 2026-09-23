@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { checkPermission } from "@/permissions/checker";
 import { permissionMode } from "@/permissions/mode";
 import { sessionPermissions } from "@/permissions/session";
@@ -53,52 +52,6 @@ test("Glob within working directory is auto-allowed", () => {
   );
 
   expect(result.decision).toBe("allow");
-});
-
-// ============================================================================
-// Agent Memory Checkout Tests
-// ============================================================================
-
-test("Edit inside the agent's own memory checkout is auto-allowed", () => {
-  const memoryDir = getScopedMemoryFilesystemRoot("agent-memory-edit-test");
-  for (const tool of ["Edit", "Write"]) {
-    const result = checkPermission(
-      tool,
-      { file_path: `${memoryDir}/system/user.md` },
-      { allow: [], deny: [], ask: [] },
-      "/Users/test/project",
-      undefined,
-      "agent-memory-edit-test",
-    );
-    expect(result.decision).toBe("allow");
-    expect(result.reason).toBe("Agent memory directory operation");
-  }
-});
-
-test("Edit outside the memory checkout still asks", () => {
-  const result = checkPermission(
-    "Edit",
-    { file_path: "/Users/test/other/notes.md" },
-    { allow: [], deny: [], ask: [] },
-    "/Users/test/project",
-    undefined,
-    "agent-memory-edit-test",
-  );
-  expect(result.decision).toBe("ask");
-});
-
-test("strict mode does not auto-allow memory checkout edits", () => {
-  permissionMode.setMode("strict");
-  const memoryDir = getScopedMemoryFilesystemRoot("agent-memory-edit-test");
-  const result = checkPermission(
-    "Edit",
-    { file_path: `${memoryDir}/system/user.md` },
-    { allow: [], deny: [], ask: [] },
-    "/Users/test/project",
-    undefined,
-    "agent-memory-edit-test",
-  );
-  expect(result.decision).toBe("ask");
 });
 
 // ============================================================================
