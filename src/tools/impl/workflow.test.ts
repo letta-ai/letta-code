@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getBackend } from "@/backend";
 import { runWithRuntimeContext } from "@/runtime-context";
-import { task_output } from "@/tools/impl/task-output";
 import { clearCapturedToolExecutionContexts } from "@/tools/manager";
 import { prepareToolExecutionContextForResolvedTarget } from "@/tools/toolset";
 import { TOOLSET_CATALOG } from "@/tools/toolset-catalog";
@@ -302,7 +301,7 @@ describe("Workflow tool (background launch)", () => {
       "Quick demo workflow with parallel agents",
     );
 
-    // The progress log is what TaskOutput reads while the run is live.
+    // The progress log is also retained in the output file while the run is live.
     await waitFor(() => (processState?.stdout.length ?? 0) >= 3);
     const live = getWorkflowExecution(taskId);
     expect(live).toMatchObject({
@@ -313,12 +312,7 @@ describe("Workflow tool (background launch)", () => {
       logs: ["starting"],
     });
     expect(live?.phases[0]?.title).toBe("Find");
-    const running = await task_output({
-      task_id: taskId,
-      block: false,
-      timeout: 100,
-    });
-    expect(running.status).toBe("running");
+    expect(processState?.stdout).toContain("» starting");
     expect(queuedMessages).toHaveLength(0);
 
     releaseAgents?.();
@@ -401,12 +395,6 @@ describe("Workflow tool (background launch)", () => {
     expect(
       processState?.stdout.filter((line) => line.startsWith("✓ ")),
     ).toEqual(["✓ a", "✓ b"]);
-    const completed = await task_output({
-      task_id: taskId,
-      block: false,
-      timeout: 100,
-    });
-    expect(completed.message.match(/^▶ [ab]$/gm)).toEqual(["▶ a", "▶ b"]);
     expect(getWorkflowExecution(taskId)).toMatchObject({
       status: "completed",
       agentsDone: 2,
