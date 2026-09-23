@@ -4,6 +4,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   statSync,
   unlinkSync,
   writeFileSync,
@@ -56,6 +57,7 @@ import {
   unregisterModPermission,
   unregisterModPermissionsForOwner,
 } from "@/mods/permission-registry";
+import { resolveRegistrationConflict } from "@/mods/registration-conflict";
 import { ensureRuntimeDependenciesForModCache } from "@/mods/runtime-dependencies";
 import {
   getModToolDefinition,
@@ -92,7 +94,6 @@ import type {
   ModPanelRender,
   ModPermission,
   ModPermissionRegistration,
-  ModSourceScope,
   ModTool,
   ModToolEndEvent,
   ModToolRegistration,
@@ -248,37 +249,6 @@ export interface ModEngine {
 
 export interface CreateModEngineOptions extends LoadLocalModsOptions {
   getBackend?: () => Backend | undefined;
-}
-
-function getModSourcePriority(scope: ModSourceScope): number {
-  switch (scope) {
-    case "legacy_global":
-      return 0;
-    case "bundled":
-      return 1;
-    case "global":
-      return 2;
-    case "agent":
-      return 3;
-    case "project":
-      return 4;
-  }
-}
-
-function canShadowOwner(owner: ModOwner, existingOwner?: ModOwner): boolean {
-  return (
-    existingOwner !== undefined &&
-    getModSourcePriority(owner.scope) >
-      getModSourcePriority(existingOwner.scope)
-  );
-}
-
-function isShadowedByOwner(owner: ModOwner, existingOwner?: ModOwner): boolean {
-  return (
-    existingOwner !== undefined &&
-    getModSourcePriority(owner.scope) <
-      getModSourcePriority(existingOwner.scope)
-  );
 }
 
 function createEmptyModRegistry(
@@ -1125,20 +1095,16 @@ function createLettaModApi(
           );
         }
 
-        const existing = registry.commands[normalized.id];
-        if (existing && isShadowedByOwner(owner, existing.owner)) {
-          throw new Error(
-            `Mod command '${normalized.id}' is already registered by higher-priority mod ${existing.path}`,
-          );
-        }
-        if (
-          existing &&
-          !command.override &&
-          !canShadowOwner(owner, existing.owner)
-        ) {
-          throw new Error(
-            `Mod command '${normalized.id}' is already registered by ${existing.path}`,
-          );
+        const conflict = resolveRegistrationConflict({
+          kind: "command",
+          id: normalized.id,
+          owner,
+          override: command.override,
+          existing: registry.commands[normalized.id],
+        });
+        if (conflict === "skip") {
+          // Duplicate load of the same file: keep the first registration.
+          return () => undefined;
         }
 
         registry.commands[normalized.id] = {
@@ -1167,25 +1133,17 @@ function createLettaModApi(
           );
         }
 
-        const existing = registry.tools[normalized.name];
-        const existingGlobal = getModToolDefinition(normalized.name);
-        const existingOwner = existing?.owner ?? existingGlobal?.owner;
-        if (
-          (existing || existingGlobal) &&
-          isShadowedByOwner(owner, existingOwner)
-        ) {
-          throw new Error(
-            `Mod tool '${normalized.name}' is already registered by higher-priority mod ${existing?.path ?? existingGlobal?.path}`,
-          );
-        }
-        if (
-          (existing || existingGlobal) &&
-          !tool.override &&
-          !canShadowOwner(owner, existingOwner)
-        ) {
-          throw new Error(
-            `Mod tool '${normalized.name}' is already registered by ${existing?.path ?? existingGlobal?.path}`,
-          );
+        const conflict = resolveRegistrationConflict({
+          kind: "tool",
+          id: normalized.name,
+          owner,
+          override: tool.override,
+          existing: registry.tools[normalized.name],
+          existingGlobal: getModToolDefinition(normalized.name),
+        });
+        if (conflict === "skip") {
+          // Duplicate load of the same file: keep the first registration.
+          return () => undefined;
         }
 
         const definition: ModToolDefinition = {
@@ -1194,7 +1152,12 @@ function createLettaModApi(
           recordDiagnostic: recordCapabilityDiagnostic,
         };
         registry.tools[normalized.name] = definition;
-        if (registry.registerCapabilitiesGlobally) {
+        // Another engine in this process may already hold the identical
+        // global registration; only register genuinely new entries.
+        if (
+          registry.registerCapabilitiesGlobally &&
+          conflict !== "skip-global"
+        ) {
           registerModTool(definition);
         }
         onChange();
@@ -1223,24 +1186,16 @@ function createLettaModApi(
         }
 
         const normalized = normalizeModPermission(permission, owner);
-        const existing = registry.permissions[normalized.id];
-        const existingGlobal = getModPermissionDefinition(normalized.id);
-        const existingOwner = existing?.owner ?? existingGlobal?.owner;
-        if (
-          (existing || existingGlobal) &&
-          isShadowedByOwner(owner, existingOwner)
-        ) {
-          throw new Error(
-            `Mod permission '${normalized.id}' is already registered by higher-priority mod ${existing?.path ?? existingGlobal?.path}`,
-          );
-        }
-        if (
-          (existing || existingGlobal) &&
-          !canShadowOwner(owner, existingOwner)
-        ) {
-          throw new Error(
-            `Mod permission '${normalized.id}' is already registered by ${existing?.path ?? existingGlobal?.path}`,
-          );
+        const conflict = resolveRegistrationConflict({
+          kind: "permission",
+          id: normalized.id,
+          owner,
+          existing: registry.permissions[normalized.id],
+          existingGlobal: getModPermissionDefinition(normalized.id),
+        });
+        if (conflict === "skip") {
+          // Duplicate load of the same file: keep the first registration.
+          return () => undefined;
         }
 
         const definition: ModPermissionDefinition = {
@@ -1249,7 +1204,12 @@ function createLettaModApi(
           recordDiagnostic: recordCapabilityDiagnostic,
         };
         registry.permissions[normalized.id] = definition;
-        if (registry.registerCapabilitiesGlobally) {
+        // Another engine in this process may already hold the identical
+        // global registration; only register genuinely new entries.
+        if (
+          registry.registerCapabilitiesGlobally &&
+          conflict !== "skip-global"
+        ) {
           registerModPermission(definition);
         }
         onChange();
@@ -1394,6 +1354,10 @@ export async function loadLocalMods(
   );
   options.onRegistryCreated?.(registry);
 
+  // The same file can arrive through two sources (e.g. symlinked legacy and
+  // global directories): load it once so its side effects run once.
+  const seenModPaths = new Set<string>();
+
   for (const source of sources) {
     for (const diagnostic of source.diagnostics ?? []) {
       const owner = createModOwner(diagnostic.path, source, generation);
@@ -1409,6 +1373,15 @@ export async function loadLocalMods(
     }
 
     for (const modPath of source.files) {
+      let resolvedModPath: string;
+      try {
+        resolvedModPath = realpathSync(modPath);
+      } catch {
+        resolvedModPath = path.resolve(modPath);
+      }
+      if (seenModPaths.has(resolvedModPath)) continue;
+      seenModPaths.add(resolvedModPath);
+
       const owner = createModOwner(modPath, source, generation);
       const abortController = new AbortController();
       let failurePhase: ModDiagnostic["phase"] = "import";
