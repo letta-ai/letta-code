@@ -90,10 +90,15 @@ async function readAttempt(path: string): Promise<Partial<RepairAttempt>> {
 /**
  * Every transition is a compare-and-set on the marker. They run under this
  * lock rather than the checkout lease, so a worker forgetting its attempt
- * after the lease is gone cannot race a claim made under it. Sections last
- * microseconds; a crashed holder is reaped quickly.
+ * after the lease is gone cannot race a claim made under it. The lock is
+ * reaped only once its holder's process is gone, never by age, so a paused
+ * holder keeps exclusivity; sections last microseconds, and a waiter that
+ * still cannot get in gives up rather than break it.
  */
-const MARKER_LOCK: FileLockOptions = { staleMs: 10_000, timeoutMs: 5_000 };
+const MARKER_LOCK: FileLockOptions = {
+  reapOnlyDeadOwner: true,
+  timeoutMs: 5_000,
+};
 
 async function updateAttempt<T>(
   path: string,
