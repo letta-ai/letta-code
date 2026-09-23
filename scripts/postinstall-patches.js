@@ -213,19 +213,22 @@ await patchInkRuntime([
     all: true,
   },
   {
-    // Overflow frames: skip the full clear+rewrite when nothing changed since
-    // the last frame, so a tall live region does not re-serialize the retained
-    // static history on every throttled render. Use the #4032 clear sequence
-    // (2J+H, no 3J) so incrementally printed history stays in emulator scrollback;
-    // ansiEscapes.clearTerminal also emits 3J, which wipes that history.
+    // Overflow frames: do not replay fullStaticOutput. That string exists for
+    // the one-shot #4032 ctrl+r/ctrl+t repaint. Replaying it on this recurring
+    // path (2J+H, no 3J) would append another copy of the retained tail to
+    // emulator scrollback on every changed tall-live-region frame. Write only
+    // this frame's new static increment (already printed incrementally) plus
+    // the #4032 clear and the live region. Skip when nothing changed.
     before: [
-      // Current PR patch: skip-no-change guard still used clearTerminal (3J).
+      // Current branch: 2J+H but still replayed the retained tail.
+      "            if (hasStaticOutput || output !== this.lastOutput) {\n                this.options.stdout.write('\\u001B[2J\\u001B[H' + this.fullStaticOutput + output);\n            }\n            this.lastOutput = output;\n            return;",
+      // Earlier: skip-no-change guard still used clearTerminal (3J).
       "            if (hasStaticOutput || output !== this.lastOutput) {\n                this.options.stdout.write(ansiEscapes.clearTerminal + this.fullStaticOutput + output);\n            }\n            this.lastOutput = output;\n            return;",
       // Pristine Ink / earlier patched state: always-rewrite overflow.
       "            this.options.stdout.write(ansiEscapes.clearTerminal + this.fullStaticOutput + output);\n            this.lastOutput = output;\n            return;",
     ],
     after:
-      "            if (hasStaticOutput || output !== this.lastOutput) {\n                this.options.stdout.write('\\u001B[2J\\u001B[H' + this.fullStaticOutput + output);\n            }\n            this.lastOutput = output;\n            return;",
+      "            if (hasStaticOutput || output !== this.lastOutput) {\n                this.options.stdout.write((hasStaticOutput ? staticOutput : '') + '\\u001B[2J\\u001B[H' + output);\n            }\n            this.lastOutput = output;\n            return;",
   },
   {
     before: "        if (outputHeight >= this.options.stdout.rows) {",

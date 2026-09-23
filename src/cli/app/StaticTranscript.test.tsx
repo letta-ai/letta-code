@@ -208,10 +208,20 @@ test("repeated transcript repaints replace Ink static output", async () => {
   await waitForRender();
   const overflowOutput = stripAnsi(stdout.chunks.slice(overflowStart).join(""));
 
-  expect(overflowOutput.match(/Thought for 4 seconds/g)).toHaveLength(1);
+  // Overflow must not replay the retained static tail (that duplicates
+  // history into emulator scrollback). The collapsed summary and the
+  // expanded body both stay out of this frame; live output is rewritten
+  // with 2J+H and no 3J.
+  expect(overflowOutput).not.toContain("Thought for 4 seconds");
   expect(overflowOutput).not.toContain(
     "Reasoning body that must not return after recollapse",
   );
+  expect(overflowOutput).toContain("live");
+  expect(
+    stdout.chunks
+      .slice(overflowStart)
+      .some((chunk) => chunk.includes("\u001B[3J")),
+  ).toBe(false);
 
   instance.unmount();
   instance.cleanup();
