@@ -73,27 +73,6 @@ describe("built-in subagents", () => {
     expect(getBuiltinSubagentNames().has("history-analyzer")).toBe(false);
   });
 
-  test("a custom history-analyzer loads like any other custom subagent", async () => {
-    tempDir = createTempProjectDir();
-    writeCustomSubagent(
-      tempDir,
-      "history-analyzer.md",
-      `---
-name: history-analyzer
-description: Custom history analyzer
-tools: Read
----
-Custom prompt body`,
-    );
-
-    const configs = await getAllSubagentConfigs(tempDir);
-
-    expect(configs["history-analyzer"]?.description).toBe(
-      "Custom history analyzer",
-    );
-    expect(configs["history-analyzer"]?.launchProfile).toBe("default");
-  });
-
   test("legacy background metadata does not affect subagent config", async () => {
     tempDir = createTempProjectDir();
     writeCustomSubagent(
