@@ -724,6 +724,15 @@ BYOK row, while retaining the organization-specific handle for selection. Do
 not add provider-name rewrites to make hosted rows from `GET /v1/models` act
 like catalog rows.
 
+**Exact catalog matches win before handle-alias rewrites.** When a handle
+normalizer (e.g. `normalizeModelHandleForRegistry` in
+`src/agent/model-handles.ts`) maps a provider alias to a canonical handle (e.g.
+`moonshotai/...` → `moonshot/...`), skip the rewrite when the incoming handle is
+already a catalog entry. Rewriting a cataloged handle makes two distinct
+selector rows resolve to one model, so they share metadata and React keys and
+`/model` paints a duplicate row. Handles absent from the catalog still fall back
+to the alias target.
+
 Key files: `src/agent/model-catalog.ts`, `src/agent/remote-model-catalog.ts`,
 `src/agent/available-models.ts`, `src/backend/local/local-model-config.ts`.
 
