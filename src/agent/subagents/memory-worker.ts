@@ -45,23 +45,35 @@ export async function runMemoryWorker(
         parentMemoryDir: params.memoryDir,
         label: "memory-worker",
       });
-      let result: SubagentResult | undefined;
-      let failure: string | undefined;
+      let result: SubagentResult;
       try {
         result = await execute(
           worktree.worktreeDir,
           buildReflectionMemoryScope(worktree),
         );
       } catch (error) {
-        failure = error instanceof Error ? error.message : String(error);
+        // A worker that crashed after committing still has commits worth
+        // keeping; they are merged and synced below and the task reports
+        // the failure, rather than silently leaving an unsynced checkout.
+        result = {
+          agentId: "",
+          success: false,
+          report: "",
+          error: error instanceof Error ? error.message : String(error),
+        };
       }
       // A cancelled worker's edits are dropped with its worktree; nothing it
       // did reaches the checkout, and no sync (with remote retries) runs.
       const outcome = await integrateMemoryWorkerWorktree(worktree, {
         discard: params.signal?.aborted === true,
       });
-      if (failure !== undefined) throw new Error(failure);
-      if (!result) throw new Error("Memory worker returned no result");
+      if (outcome.status === "discarded") {
+        return {
+          ...result,
+          success: false,
+          error: result.error ?? "Memory worker cancelled",
+        };
+      }
       if (outcome.status === "merge_conflict") {
         return {
           ...result,
@@ -108,7 +120,7 @@ export async function runMemoryWorker(
       // is worth a warning but must not report the worker as failed. Running
       // it under the checkout lock is safe because the primary's tools never
       // take this lock, so its active turn cannot be waiting on us.
-      if (synced && outcome.status === "merged") {
+      if (synced && outcome.status === "merged" && result.success) {
         try {
           if (deps.recompile || getBackend().capabilities.promptRecompile) {
             await (deps.recompile ?? recompileAgentSystemPrompt)(

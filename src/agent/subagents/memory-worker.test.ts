@@ -109,13 +109,13 @@ test("simultaneous updates each start from the latest merged memory", async () =
   expect(git("status", "--porcelain")).toBe("");
 });
 
-test("failed launches release the checkout and keep the primary's dirty files", async () => {
+test("failed launches report the error, release the checkout and keep the primary's dirty files", async () => {
   writeFileSync(join(root, "unrelated.md"), "in progress");
-  await expect(
-    runMemoryWorker(scope(), async () => {
-      throw new Error("launch failed");
-    }),
-  ).rejects.toThrow("launch failed");
+  const result = await runMemoryWorker(scope(), async () => {
+    throw new Error("launch failed");
+  });
+  expect(result.success).toBe(false);
+  expect(result.error).toBe("launch failed");
   expect(readFileSync(join(root, "unrelated.md"), "utf8")).toBe("in progress");
   const release = await claimMemoryOperation(root);
   expect(release).not.toBeNull();
@@ -126,27 +126,27 @@ test("cancellation discards the worker's worktree and never touches the primary'
   const controller = new AbortController();
   let synced = false;
   let workerDir = "";
-  await expect(
-    runMemoryWorker(
-      { ...scope(), signal: controller.signal },
-      async (dir) => {
-        workerDir = dir;
-        // The primary edits the same file in the checkout meanwhile.
-        writeFileSync(join(root, "note.md"), "primary in progress\n");
-        writeFileSync(join(root, "draft.md"), "primary draft\n");
-        writeFileSync(join(dir, "note.md"), "worker half-written\n");
-        writeFileSync(join(dir, "new.md"), "worker file\n");
-        controller.abort();
-        throw new Error("cancelled");
+  const result = await runMemoryWorker(
+    { ...scope(), signal: controller.signal },
+    async (dir) => {
+      workerDir = dir;
+      // The primary edits the same file in the checkout meanwhile.
+      writeFileSync(join(root, "note.md"), "primary in progress\n");
+      writeFileSync(join(root, "draft.md"), "primary draft\n");
+      writeFileSync(join(dir, "note.md"), "worker half-written\n");
+      writeFileSync(join(dir, "new.md"), "worker file\n");
+      controller.abort();
+      throw new Error("cancelled");
+    },
+    {
+      sync: async () => {
+        synced = true;
+        throw new Error("must not sync a cancelled worker");
       },
-      {
-        sync: async () => {
-          synced = true;
-          throw new Error("must not sync a cancelled worker");
-        },
-      },
-    ),
-  ).rejects.toThrow("cancelled");
+    },
+  );
+  expect(result.success).toBe(false);
+  expect(result.error).toBe("cancelled");
   expect(synced).toBe(false);
   expect(existsSync(workerDir)).toBe(false);
   expect(readFileSync(join(root, "note.md"), "utf8")).toBe(
@@ -304,5 +304,30 @@ test("a worker that changed nothing does not report a memory change", async () =
     },
   );
   expect(changed).toBe(0);
+  expect(git("branch", "--list", "letta/memory-worker/*")).toBe("");
+});
+
+test("a worker that crashes after committing still has its commit merged, synced and reported", async () => {
+  let changed = 0;
+  const result = await runMemoryWorker(
+    scope(),
+    async (dir) => {
+      writeFileSync(join(dir, "note.md"), "committed before crash\n");
+      gitIn(dir, "commit", "-am", "partial work");
+      throw new Error("child exited with code 1");
+    },
+    {
+      sync: localSync("skipped"),
+      onMemoryChanged: () => {
+        changed++;
+      },
+    },
+  );
+  expect(result.success).toBe(false);
+  expect(result.error).toContain("exited with code 1");
+  expect(readFileSync(join(root, "note.md"), "utf8")).toBe(
+    "committed before crash\n",
+  );
+  expect(changed).toBe(1);
   expect(git("branch", "--list", "letta/memory-worker/*")).toBe("");
 });
