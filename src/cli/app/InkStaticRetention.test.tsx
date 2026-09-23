@@ -4,9 +4,10 @@ import { Box, render, Static, Text, useApp } from "ink";
 import { useEffect, useState } from "react";
 
 // Regression coverage for LET-13141: the patched Ink runtime must retain only
-// a bounded tail of the committed static transcript for one-shot repaints,
-// overflow frames must not replay that tail or 2J-erase a just-committed
-// increment, and identical overflow frames must not write.
+// a bounded tail of the committed static transcript for one-shot repaints.
+// Overflow must not replay that tail, must not 3J, must not 2J-erase a new
+// increment, must not append another live copy every streaming frame, and
+// must skip identical frames.
 
 const RETAIN_LIMIT = 2 * 1024 * 1024;
 const OVERFLOW_SLACK = 256 * 1024;
@@ -63,24 +64,108 @@ function latestClearWrite(chunks: string[]): string {
   return latest;
 }
 
-// xterm.js / VT 2J erases the display and does not copy those cells into
-// scrollback. 3J wipes scrollback. This is the buffer model Amelia reproduced
-// with @xterm/headless: `text + 2J` drops `text`.
-function replayTerminalBuffer(chunks: string[]): string {
-  let display = "";
-  for (const chunk of chunks) {
-    const rest = chunk.includes(CLEAR_SCROLLBACK)
-      ? chunk.replaceAll(CLEAR_SCROLLBACK, "")
-      : chunk;
-    const clearAt = rest.indexOf(CLEAR_SCREEN);
-    if (clearAt === -1) {
-      display += rest;
+function countOccurrences(haystack: string, needle: string): number {
+  if (needle.length === 0) {
+    return 0;
+  }
+  let count = 0;
+  let from = 0;
+  while (from <= haystack.length) {
+    const at = haystack.indexOf(needle, from);
+    if (at === -1) {
+      return count;
+    }
+    count += 1;
+    from = at + needle.length;
+  }
+  return count;
+}
+
+// Minimal VT model matching the xterm.js facts this patch depends on:
+// 2J erases the viewport and does not copy those cells into scrollback;
+// 3J wipes scrollback; text that scrolls off the top is preserved.
+function replayVt(
+  chunks: string[],
+  rows: number,
+  cols: number,
+): { viewport: string; scrollback: string } {
+  const scrollback: string[] = [];
+  const lines: string[] = Array.from({ length: rows }, () => "");
+  let row = 0;
+  let col = 0;
+
+  const scrollUp = () => {
+    scrollback.push(lines[0] ?? "");
+    for (let index = 0; index < rows - 1; index++) {
+      lines[index] = lines[index + 1] ?? "";
+    }
+    lines[rows - 1] = "";
+    row = rows - 1;
+    col = 0;
+  };
+
+  const writeChar = (char: string) => {
+    if (char === "\n") {
+      row += 1;
+      col = 0;
+      if (row >= rows) {
+        scrollUp();
+      }
+      return;
+    }
+    if (char === "\r") {
+      col = 0;
+      return;
+    }
+    if (row >= rows) {
+      scrollUp();
+    }
+    const line = lines[row] ?? "";
+    const padded = line.padEnd(col, " ");
+    lines[row] = padded.slice(0, col) + char + padded.slice(col + 1);
+    col += 1;
+    if (col >= cols) {
+      col = 0;
+      row += 1;
+      if (row >= rows) {
+        scrollUp();
+      }
+    }
+  };
+
+  const text = chunks.join("");
+  let index = 0;
+  while (index < text.length) {
+    if (text[index] === "\u001B" && text[index + 1] === "[") {
+      let end = index + 2;
+      while (end < text.length && !/[A-Za-z]/.test(text[end] ?? "")) {
+        end += 1;
+      }
+      const command = text[end];
+      const args = text.slice(index + 2, end);
+      if (command === "J") {
+        if (args === "3") {
+          scrollback.length = 0;
+        } else {
+          for (let line = 0; line < rows; line++) {
+            lines[line] = "";
+          }
+        }
+      } else if (command === "H" || command === "f") {
+        row = 0;
+        col = 0;
+      }
+      index = end + 1;
       continue;
     }
-    display += rest.slice(0, clearAt);
-    display = rest.slice(clearAt + CLEAR_SCREEN.length);
+    writeChar(text[index] ?? "");
+    index += 1;
   }
-  return display;
+
+  return {
+    viewport: lines.join("\n"),
+    scrollback: scrollback.join("\n"),
+  };
 }
 
 function expectNoScrollbackWipe(write: string) {
@@ -99,22 +184,6 @@ function expectBoundedNewestTail(write: string) {
   expect(write.length).toBeLessThan(RETAIN_LIMIT + OVERFLOW_SLACK);
 }
 
-function expectOverflowDoesNotClear(chunks: string[]) {
-  for (const chunk of chunks) {
-    expect(chunk).not.toContain(CLEAR_SCROLLBACK);
-    const clearAt = chunk.indexOf(CLEAR_SCREEN);
-    if (clearAt === -1) {
-      continue;
-    }
-    const before = chunk.slice(0, clearAt);
-    expect(before).not.toContain(EARLY_MARKER);
-    expect(before).not.toContain(FILLER_MARKER);
-    expect(before).not.toContain(LATE_MARKER);
-  }
-}
-
-// Live region is 10 rows tall while the terminal is 8 rows, so every frame
-// takes Ink's overflow path (new increment and/or live append, no 2J).
 function OverflowHarness({ items, tick }: { items: Item[]; tick: number }) {
   return (
     <>
@@ -128,7 +197,7 @@ function OverflowHarness({ items, tick }: { items: Item[]; tick: number }) {
   );
 }
 
-test("overflow frames append static increments without 2J-erasing them", async () => {
+test("overflow scrolls new static into scrollback and replaces live in place", async () => {
   const stdout = new CaptureStream() as CaptureStream & NodeJS.WriteStream;
   let items: Item[] = [];
   const { rerender, unmount } = render(
@@ -142,9 +211,67 @@ test("overflow frames append static increments without 2J-erasing them", async (
   );
   await waitForRender();
 
-  // Commit ~2.5 MiB of static transcript so a tail-replay bug would include
-  // the filler. Items are reassigned immutably because Static memoizes on the
-  // items array identity.
+  items = [...items, ...makeItems(0, 1, 8, EARLY_MARKER)];
+  rerender(<OverflowHarness items={items} tick={1} />);
+  await waitForRender();
+
+  items = [...items, ...makeItems(1, 1, 8, LATE_MARKER)];
+  rerender(<OverflowHarness items={items} tick={2} />);
+  await waitForRender();
+
+  const writesAfterCommit = stdout.chunks.length;
+  rerender(<OverflowHarness items={items} tick={2} />);
+  await waitForRender();
+  expect(stdout.chunks.length).toBe(writesAfterCommit);
+
+  rerender(<OverflowHarness items={items} tick={3} />);
+  await waitForRender();
+  rerender(<OverflowHarness items={items} tick={4} />);
+  await waitForRender();
+  rerender(<OverflowHarness items={items} tick={5} />);
+  await waitForRender();
+
+  const liveOnly = stdout.chunks.slice(writesAfterCommit).join("");
+  expect(liveOnly).toContain("live 5");
+  expect(liveOnly).not.toContain(EARLY_MARKER);
+  expect(liveOnly).not.toContain(LATE_MARKER);
+  expect(liveOnly).not.toContain(CLEAR_SCROLLBACK);
+  expectNoScrollbackWipe(liveOnly);
+
+  const { viewport, scrollback } = replayVt(
+    stdout.chunks,
+    stdout.rows,
+    stdout.columns,
+  );
+  const combined = `${scrollback}\n${viewport}`;
+  expect(combined).toContain(EARLY_MARKER);
+  expect(combined).toContain(LATE_MARKER);
+  expect(viewport).toContain("live 5");
+  expect(viewport).not.toContain("live 4");
+  expect(viewport).not.toContain("live 3");
+  // Live-only 2J replaces the previous tall frame; those ticks must not
+  // accumulate in scrollback.
+  expect(countOccurrences(combined, "live 3")).toBe(0);
+  expect(countOccurrences(combined, "live 4")).toBe(0);
+  expect(countOccurrences(combined, "live 5")).toBe(1);
+
+  unmount();
+}, 20000);
+
+test("overflow frames do not replay the retained tail", async () => {
+  const stdout = new CaptureStream() as CaptureStream & NodeJS.WriteStream;
+  let items: Item[] = [];
+  const { rerender, unmount } = render(
+    <OverflowHarness items={items} tick={0} />,
+    {
+      stdout,
+      debug: false,
+      patchConsole: false,
+      exitOnCtrlC: false,
+    },
+  );
+  await waitForRender();
+
   items = [...items, ...makeItems(0, 1, 256 * 1024, EARLY_MARKER)];
   rerender(<OverflowHarness items={items} tick={1} />);
   await waitForRender();
@@ -157,21 +284,17 @@ test("overflow frames append static increments without 2J-erasing them", async (
   rerender(<OverflowHarness items={items} tick={3} />);
   await waitForRender();
 
-  const afterCommit = stdout.chunks.join("");
-  expect(afterCommit).toContain(LATE_MARKER);
-  expect(afterCommit).not.toContain(CLEAR_SCROLLBACK);
-  expectOverflowDoesNotClear(stdout.chunks);
-  // A tail replay would write the retained filler on this overflow frame.
   const lateWrites = stdout.chunks.filter((chunk) =>
     chunk.includes(LATE_MARKER),
   );
   expect(lateWrites.length).toBeGreaterThan(0);
   expect(lateWrites.some((chunk) => chunk.includes(FILLER_MARKER))).toBe(false);
   expect(lateWrites.some((chunk) => chunk.includes(EARLY_MARKER))).toBe(false);
+  expect(stdout.chunks.some((chunk) => chunk.includes(CLEAR_SCROLLBACK))).toBe(
+    false,
+  );
 
   const writesAfterCommit = stdout.chunks.length;
-  rerender(<OverflowHarness items={items} tick={3} />);
-  await waitForRender();
   rerender(<OverflowHarness items={items} tick={3} />);
   await waitForRender();
   expect(stdout.chunks.length).toBe(writesAfterCommit);
@@ -179,21 +302,12 @@ test("overflow frames append static increments without 2J-erasing them", async (
   rerender(<OverflowHarness items={items} tick={4} />);
   await waitForRender();
   const liveOnly = stdout.chunks.slice(writesAfterCommit).join("");
+  expectNoScrollbackWipe(liveOnly);
   expect(liveOnly).toContain("live 4");
   expect(liveOnly).not.toContain(EARLY_MARKER);
   expect(liveOnly).not.toContain(FILLER_MARKER);
   expect(liveOnly).not.toContain(LATE_MARKER);
-  expect(liveOnly).not.toContain(CLEAR_SCREEN);
-  expect(liveOnly).not.toContain(CLEAR_SCROLLBACK);
   expect(liveOnly.length).toBeLessThan(4 * 1024);
-
-  // 2J does not preserve the cells it erases. After the live-only frame the
-  // committed markers must still be in the modeled terminal buffer.
-  const buffer = replayTerminalBuffer(stdout.chunks);
-  expect(buffer).toContain(EARLY_MARKER);
-  expect(buffer).toContain(FILLER_MARKER);
-  expect(buffer).toContain(LATE_MARKER);
-  expect(buffer).toContain("live 4");
 
   unmount();
 }, 45000);

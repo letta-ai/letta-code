@@ -213,14 +213,19 @@ await patchInkRuntime([
     all: true,
   },
   {
-    // Overflow frames: do not replay fullStaticOutput and do not 2J after a
-    // new static increment. 2J erases display cells and does not copy them
-    // into xterm.js scrollback, so `staticOutput + 2J` drops the just-committed
-    // item. Write the increment and/or live region as ordinary appends; skip
-    // when nothing changed. fullStaticOutput stays for the one-shot #4032
-    // ctrl+r/ctrl+t repaint.
+    // Overflow frames: do not replay fullStaticOutput. 2J erases display
+    // cells without copying them to xterm.js scrollback, so a just-written
+    // increment must be scrolled off the viewport (rows newlines) before the
+    // live 2J+H replace. Clip the live write to stdout.rows so a tall live
+    // region cannot scroll another copy of itself into scrollback. Skip when
+    // nothing changed. fullStaticOutput stays for the one-shot #4032 repaint.
     before: [
-      // Current branch: increment immediately followed by 2J (erases the item).
+      // Current branch: scroll increment then 2J+H the unclipped live region
+      // (still scrolls when outputHeight > rows).
+      "            if (hasStaticOutput) {\n                this.options.stdout.write(staticOutput + '\\n'.repeat(this.options.stdout.rows || 1));\n            }\n            if (hasStaticOutput || output !== this.lastOutput) {\n                this.options.stdout.write('\\u001B[2J\\u001B[H' + output);\n            }\n            this.lastOutput = output;\n            return;",
+      // Earlier: append increment and live with no viewport replace.
+      "            if (hasStaticOutput) {\n                this.options.stdout.write(staticOutput);\n            }\n            if (output !== this.lastOutput) {\n                this.options.stdout.write(output);\n            }\n            this.lastOutput = output;\n            return;",
+      // Earlier: increment immediately followed by 2J (erases the item).
       "            if (hasStaticOutput || output !== this.lastOutput) {\n                this.options.stdout.write((hasStaticOutput ? staticOutput : '') + '\\u001B[2J\\u001B[H' + output);\n            }\n            this.lastOutput = output;\n            return;",
       // Earlier: 2J+H but still replayed the retained tail.
       "            if (hasStaticOutput || output !== this.lastOutput) {\n                this.options.stdout.write('\\u001B[2J\\u001B[H' + this.fullStaticOutput + output);\n            }\n            this.lastOutput = output;\n            return;",
@@ -230,7 +235,7 @@ await patchInkRuntime([
       "            this.options.stdout.write(ansiEscapes.clearTerminal + this.fullStaticOutput + output);\n            this.lastOutput = output;\n            return;",
     ],
     after:
-      "            if (hasStaticOutput) {\n                this.options.stdout.write(staticOutput);\n            }\n            if (output !== this.lastOutput) {\n                this.options.stdout.write(output);\n            }\n            this.lastOutput = output;\n            return;",
+      "            if (hasStaticOutput) {\n                this.options.stdout.write(staticOutput + '\\n'.repeat(this.options.stdout.rows || 1));\n            }\n            if (hasStaticOutput || output !== this.lastOutput) {\n                const rows = this.options.stdout.rows || 1;\n                const liveLines = output.split('\\n');\n                this.options.stdout.write('\\u001B[2J\\u001B[H' + (liveLines.length > rows ? liveLines.slice(0, rows).join('\\n') : output));\n            }\n            this.lastOutput = output;\n            return;",
   },
   {
     before: "        if (outputHeight >= this.options.stdout.rows) {",
