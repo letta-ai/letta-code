@@ -8,7 +8,7 @@ import { useEffect, useState } from "react";
 // re-serialize the full static history per frame, and overflow clears must not
 // wipe emulator scrollback (no 3J).
 
-const RETAIN_LIMIT = 8 * 1024 * 1024;
+const RETAIN_LIMIT = 2 * 1024 * 1024;
 const OVERFLOW_SLACK = 256 * 1024;
 const EARLY_MARKER = "EARLY-STATIC-MARKER";
 const LATE_MARKER = "LATE-STATIC-MARKER";
@@ -18,9 +18,7 @@ const CLEAR_SCROLLBACK = "\u001B[3J";
 const CURSOR_HOME = "\u001B[H";
 
 class CaptureStream extends Writable {
-  // Wide enough that each committed item stays a single line so yoga does not
-  // wrap an 8+ MiB transcript into tens of thousands of rows.
-  columns = 2 * 1024 * 1024;
+  columns = 100;
   rows = 8;
   isTTY = true;
   chunks: string[] = [];
@@ -72,7 +70,9 @@ function expectBoundedNewestTail(write: string) {
   expect(write).toContain(CLEAR_SCREEN);
   expect(write).toContain(CURSOR_HOME);
   expect(write).not.toContain(CLEAR_SCROLLBACK);
-  expect(write).toContain(SGR_RESET);
+  // retainStaticOutput prepends SGR reset at the seam so dropped prefix style
+  // cannot leak. After 2J+H the rewrite must start with that reset.
+  expect(write).toContain(`${CLEAR_SCREEN}${CURSOR_HOME}${SGR_RESET}`);
   expect(write).toContain(LATE_MARKER);
   expect(write).not.toContain(EARLY_MARKER);
   expect(write.length).toBeLessThan(RETAIN_LIMIT + OVERFLOW_SLACK);
@@ -107,42 +107,40 @@ test("overflow frames rewrite only a bounded newest tail without wiping scrollba
   );
   await waitForRender();
 
-  // Commit ~10 MiB of static transcript so retention must drop the prefix.
+  // Commit ~2.5 MiB of static transcript so retention must drop the prefix.
   // Wide columns keep wrapping cheap; items are reassigned immutably because
   // Static memoizes on the items array identity.
-  items = [...items, ...makeItems(0, 1, 512 * 1024, EARLY_MARKER)];
+  items = [...items, ...makeItems(0, 1, 256 * 1024, EARLY_MARKER)];
   rerender(<OverflowHarness items={items} tick={1} />);
   await waitForRender();
 
-  for (let batch = 0; batch < 8; batch++) {
-    items = [...items, ...makeItems(1 + batch, 1, 1024 * 1024)];
-    rerender(<OverflowHarness items={items} tick={batch + 2} />);
-    await waitForRender();
-  }
+  items = [...items, ...makeItems(1, 1, RETAIN_LIMIT)];
+  rerender(<OverflowHarness items={items} tick={2} />);
+  await waitForRender();
 
-  items = [...items, ...makeItems(9, 1, 512 * 1024, LATE_MARKER)];
-  rerender(<OverflowHarness items={items} tick={10} />);
+  items = [...items, ...makeItems(2, 1, 256 * 1024, LATE_MARKER)];
+  rerender(<OverflowHarness items={items} tick={3} />);
   await waitForRender();
 
   const latest = latestOverflowWrite(stdout.chunks);
   expectBoundedNewestTail(latest);
 
   const writesAfterCommit = overflowWrites(stdout.chunks).length;
-  rerender(<OverflowHarness items={items} tick={10} />);
+  rerender(<OverflowHarness items={items} tick={3} />);
   await waitForRender();
-  rerender(<OverflowHarness items={items} tick={10} />);
+  rerender(<OverflowHarness items={items} tick={3} />);
   await waitForRender();
   expect(overflowWrites(stdout.chunks).length).toBe(writesAfterCommit);
 
   unmount();
-}, 60000);
+}, 45000);
 
 test("static repaint after reset rewrites only the bounded newest tail", async () => {
   const stdout = new CaptureStream() as CaptureStream & NodeJS.WriteStream;
   const items = [
-    ...makeItems(0, 1, 512 * 1024, EARLY_MARKER),
-    ...makeItems(1, 8, 1024 * 1024),
-    ...makeItems(9, 1, 512 * 1024, LATE_MARKER),
+    ...makeItems(0, 1, 256 * 1024, EARLY_MARKER),
+    ...makeItems(1, 1, RETAIN_LIMIT),
+    ...makeItems(2, 1, 256 * 1024, LATE_MARKER),
   ];
   let triggerReset: (() => void) | undefined;
 
@@ -185,4 +183,4 @@ test("static repaint after reset rewrites only the bounded newest tail", async (
   expectBoundedNewestTail(latestOverflowWrite(stdout.chunks));
 
   unmount();
-}, 60000);
+}, 45000);
