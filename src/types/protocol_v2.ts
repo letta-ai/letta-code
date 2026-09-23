@@ -94,12 +94,12 @@ export type * from "./teleport-protocol";
 export type * from "./toolset-protocol";
 
 export type DmPolicy = "pairing" | "allowlist" | "open";
-
 export type ExperimentId =
   | "artifacts"
   | "conversation_titles"
   | "desktop_conversation_bootstrap"
   | "diffs"
+  | "memory_palace"
   | "reflection_arena"
   | "tui_cron";
 

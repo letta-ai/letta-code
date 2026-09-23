@@ -37,6 +37,13 @@ const EXPERIMENT_DEFINITIONS: readonly ExperimentDefinition[] = [
       "Open browser-based worktree diff previews powered by Diffs from Pierre.",
   },
   {
+    id: "memory_palace",
+    label: "memory palace",
+    description:
+      "Opt-in memory palace experiment flag for disposable local listener runs. Disabled by default; no behavior changes unless consumers gate on it.",
+    envVar: "LETTA_MEMORY_PALACE",
+  },
+  {
     id: "reflection_arena",
     label: "reflection arena",
     description:
