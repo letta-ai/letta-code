@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { settingsManager } from "@/settings-manager";
 import { type TelemetrySurface, telemetry } from "@/telemetry";
+import { MAX_QUEUED_EVENTS } from "./event-queue";
 
 type TelemetryTestState = {
   events: unknown[];
@@ -138,6 +139,58 @@ describe("telemetry flush batching", () => {
 
     // 500 → submitTelemetryMetadata throws → performFlush re-queues.
     expect(telemetryState.events).toHaveLength(1);
+  });
+
+  test("failed flush re-queue is capped at MAX_QUEUED_EVENTS, oldest dropped", async () => {
+    const fetchMock = mock(async () => new Response(null, { status: 500 }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    // Simulate a long-unreachable endpoint: the queue has grown past the cap
+    // by the time the next failed batch is re-queued.
+    const overflow = 10;
+    telemetryState.events = Array.from(
+      { length: MAX_QUEUED_EVENTS + overflow },
+      (_, i) => ({
+        type: "tool_usage",
+        timestamp: new Date().toISOString(),
+        data: { seq: i },
+      }),
+    );
+
+    await telemetry.flush();
+
+    const events = telemetryState.events as { data: { seq: number } }[];
+    expect(events).toHaveLength(MAX_QUEUED_EVENTS);
+    // The oldest events were dropped; re-queued order is otherwise preserved.
+    expect(events[0]?.data.seq).toBe(overflow);
+    expect(events[events.length - 1]?.data.seq).toBe(
+      MAX_QUEUED_EVENTS + overflow - 1,
+    );
+  });
+
+  test("track drops the oldest event when the queue is already at the cap", () => {
+    // Park a never-resolving flush so track()'s batch-size trigger returns
+    // the in-flight promise instead of draining the queue mid-assertion.
+    telemetryState.inflightFlush = new Promise<void>(() => {});
+
+    telemetryState.events = Array.from(
+      { length: MAX_QUEUED_EVENTS },
+      (_, i) => ({
+        type: "tool_usage",
+        timestamp: new Date().toISOString(),
+        data: { seq: i },
+      }),
+    );
+
+    telemetry.trackUserInput("hello", "user", "model-1");
+
+    const events = telemetryState.events as {
+      type: string;
+      data: { seq?: number };
+    }[];
+    expect(events).toHaveLength(MAX_QUEUED_EVENTS);
+    expect(events[0]?.data.seq).toBe(1); // oldest dropped
+    expect(events[events.length - 1]?.type).toBe("user_input"); // newest kept
   });
 });
 

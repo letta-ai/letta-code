@@ -14,6 +14,7 @@ import {
   type TelemetryAgentOrigin,
 } from "./agent-origin";
 import { extractInputChannel } from "./channel";
+import { TelemetryEventQueueCap } from "./event-queue";
 import { installFatalErrorHandlers } from "./fatal-error-handler";
 
 export type TelemetrySurface =
@@ -318,6 +319,7 @@ class TelemetryManager {
   private serverVersion: string | null = null;
   /** Deduplicates concurrent flushes (prevents the 429 double-flush race on shutdown). */
   private inflightFlush: Promise<void> | null = null;
+  private eventQueueCap = new TelemetryEventQueueCap();
 
   private async resolveTelemetryApiKey(): Promise<string | undefined> {
     if (process.env.LETTA_API_KEY) {
@@ -515,6 +517,8 @@ class TelemetryManager {
 
     this.eventActingUsers.set(event, getRuntimeActingUserId());
     this.events.push(event);
+    // Drop the oldest events if failed re-queues have grown the queue to its bound.
+    this.eventQueueCap.enforce(this.events);
 
     // Flush if batch size is reached
     if (this.events.length >= this.MAX_BATCH_SIZE) {
@@ -951,6 +955,7 @@ class TelemetryManager {
     // Keep failed snapshots in their original order, ahead of late arrivals.
     // Successful groups must not be duplicated when another identity fails.
     this.events.unshift(...eventsToSend.filter((event) => failed.has(event)));
+    this.eventQueueCap.enforce(this.events);
   }
 
   /** Await in-flight flush and drain remaining queue (bounded by DRAIN_TIMEOUT_MS). Replaces fire-and-forget flush on exit. */
