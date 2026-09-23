@@ -1245,10 +1245,7 @@ export function onChunk(
 
         line = annotateWriteStdinCommandDisplay(b, line);
 
-        const resultText = clampToolReturnText(
-          rawResultText,
-          line.name ?? "tool",
-        );
+        const resultText = clampToolReturnText(rawResultText, line.name);
         const updatedLine = {
           ...line,
           resultText,

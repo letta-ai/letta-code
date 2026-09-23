@@ -35,7 +35,10 @@ function clampText(text: string, toolName: string): string {
  * the staticItems copy) for the rest of the session. As with the local clamp,
  * oversized output is written to an overflow file so nothing is lost.
  */
-export function clampToolReturnText(text: string, toolName: string): string {
+export function clampToolReturnText(
+  text: string,
+  toolName: string = "tool",
+): string {
   return clampText(text, toolName);
 }
 
