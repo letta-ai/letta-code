@@ -17,6 +17,7 @@ import stringWidth from "string-width";
 import type { ModelReasoningEffort } from "@/agent/model";
 import type { getSubagentLifecycleSnapshot } from "@/agent/subagent-state";
 import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
+import { appendInputHistory } from "@/cli/components/input-history";
 import { shouldRenderDefaultStatuslineRenderer } from "@/cli/display/statusline/default-renderer-activation";
 import { truncateToWidth } from "@/cli/display/statusline/formatting";
 import {
@@ -1640,10 +1641,7 @@ export function Input({
       if (bashRunning) return;
 
       // Add to history if not empty and not a duplicate of the last entry
-      setHistory((prev) => {
-        if (previousValue.trim() === prev[prev.length - 1]) return prev;
-        return [...prev, previousValue];
-      });
+      setHistory((prev) => appendInputHistory(prev, previousValue));
 
       // Reset history navigation
       setHistoryIndex(-1);
@@ -1659,10 +1657,7 @@ export function Input({
 
     // Add to history if not empty and not a duplicate of the last entry
     if (previousValue.trim()) {
-      setHistory((prev) => {
-        if (previousValue === prev[prev.length - 1]) return prev;
-        return [...prev, previousValue];
-      });
+      setHistory((prev) => appendInputHistory(prev, previousValue));
     }
 
     // Reset history navigation
@@ -1701,10 +1696,7 @@ export function Input({
 
       // Add to history if not a duplicate of the last entry
       if (commandToSubmit) {
-        setHistory((prev) => {
-          if (commandToSubmit === prev[prev.length - 1]) return prev;
-          return [...prev, commandToSubmit];
-        });
+        setHistory((prev) => appendInputHistory(prev, commandToSubmit));
       }
 
       // Reset history navigation
