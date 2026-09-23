@@ -153,6 +153,25 @@ describe("workflow status panel", () => {
     }
   });
 
+  test("keeps failed status visible when optional metrics do not fit", () => {
+    const lines = renderModPanelLines(
+      createWorkflowStatusPanel([
+        snapshot({
+          name: "init-history-final",
+          status: "failed",
+          agentsTotal: 12,
+          agentsDone: 2,
+          totalTokens: 8_800,
+        }),
+      ]),
+      48,
+      createContext(),
+    ).map(stripAnsi);
+    expect(lines[0]).toStartWith("✗ init-history-final");
+    expect(lines[0]).toContain("2/12 agents done");
+    expect(lines[0]).toContain("failed");
+  });
+
   test("caps rows and points to /workflows for the rest", () => {
     const runs = Array.from({ length: 6 }, (_, i) =>
       snapshot({ taskId: `workflow_${i}`, name: `run-${i}` }),
