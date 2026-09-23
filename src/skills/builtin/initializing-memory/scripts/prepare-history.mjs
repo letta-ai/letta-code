@@ -13,9 +13,12 @@
 
 import { spawnSync } from "node:child_process";
 import {
+  closeSync,
   existsSync,
   mkdirSync,
+  openSync,
   readFileSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -46,18 +49,27 @@ function slug(value) {
   );
 }
 
-function render(lettaCmd, exportDir, file) {
+function render(lettaCmd, exportDir, file, path) {
   const [bin, ...prefix] = lettaCmd;
-  const result = spawnSync(
-    bin,
-    [...prefix, "trajectories", "view", file, "--out", exportDir, "--tools"],
-    { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 },
-  );
+  // Bun can exit before flushing a large console.log to a pipe. Redirect to a
+  // regular file so a successful CLI exit cannot silently truncate history.
+  const fd = openSync(path, "w");
+  let result;
+  try {
+    result = spawnSync(
+      bin,
+      [...prefix, "trajectories", "view", file, "--out", exportDir, "--tools"],
+      { encoding: "utf8", stdio: ["ignore", fd, "pipe"] },
+    );
+  } finally {
+    closeSync(fd);
+  }
+  if (result.error || result.status !== 0) rmSync(path, { force: true });
   if (result.error) return { error: result.error.message };
   if (result.status !== 0) {
     return { error: (result.stderr || `exit ${result.status}`).trim() };
   }
-  return { text: result.stdout };
+  return { bytes: statSync(path).size };
 }
 
 function buildCohorts(sessions, maxBytes, maxSessions) {
@@ -151,14 +163,13 @@ for (const entry of manifest.sessions ?? []) {
     excluded.push({ ...ref, reason: "no user messages" });
     continue;
   }
-  const result = render(lettaCmd, exportDir, entry.file);
+  const path = join(outDir, "rendered", entry.file.replace(/\.json$/, ".txt"));
+  mkdirSync(dirname(path), { recursive: true });
+  const result = render(lettaCmd, exportDir, entry.file, path);
   if (result.error) {
     excluded.push({ ...ref, reason: `render failed: ${result.error}` });
     continue;
   }
-  const path = join(outDir, "rendered", entry.file.replace(/\.json$/, ".txt"));
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, result.text);
   rendered.push({
     sessionId: entry.sessionId,
     path,
@@ -166,7 +177,7 @@ for (const entry of manifest.sessions ?? []) {
     project: entry.project ?? null,
     startedAt: entry.startedAt ?? null,
     userMessages: entry.userMessages,
-    renderedBytes: statSync(path).size,
+    renderedBytes: result.bytes,
   });
 }
 

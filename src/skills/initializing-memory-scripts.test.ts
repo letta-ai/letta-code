@@ -171,6 +171,24 @@ describe("prepare-history.mjs", () => {
     ]);
   });
 
+  test("preserves the end of a long transcript rendered by the CLI", () => {
+    const project = makeTempDir();
+    const exportDir = makeExport(project);
+    writeTrajectory(
+      exportDir,
+      "codex/a.json",
+      `START-${"x".repeat(32_000)}-END`,
+    );
+
+    const outDir = prepare(exportDir);
+    const first = readCohorts(outDir)
+      .flatMap((c) => c.sessions)
+      .find((s) => s.sessionId === "aaaa");
+    const rendered = readFileSync(first?.path ?? "", "utf8");
+    expect(rendered.length).toBeGreaterThan(32_000);
+    expect(rendered).toContain("-END");
+  });
+
   test("splits cohorts at the session cap with unique ids", () => {
     const project = makeTempDir();
     const outDir = prepare(makeExport(project), ["--max-sessions", "1"]);

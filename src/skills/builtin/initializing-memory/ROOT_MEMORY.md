@@ -248,7 +248,7 @@ This produces:
 **The manifest is the authoritative inventory.** Every session in `.sessions` must end up either analyzed or explicitly excluded with a reason; every entry in `.errors` counts as not analyzed.
 
 Useful variations:
-- `--project $(pwd)` — only sessions whose recorded working directory is under the current project
+- `--project $(pwd)` — filters by pathname prefix, not directory boundary; inspect the manifest for similarly named sibling projects (e.g. `letta-code-internal` when filtering `letta-code`)
 - `--source claude-code --source codex` — restrict sources
 - `--root <source>:<path>` — read a source's store from a non-standard location
 - `--transcript <source>:<path>` — also normalize an explicit transcript file (e.g. copied from another machine)
