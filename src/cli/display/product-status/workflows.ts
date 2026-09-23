@@ -52,7 +52,12 @@ export function createWorkflowStatusPanel(
     path: WORKFLOW_STATUS_PANEL_ID,
     updatedAt: 0,
     render(ctx) {
-      const lines = executions
+      const prioritized = [...executions].sort((a, b) => {
+        if (a.status === "running" && b.status !== "running") return -1;
+        if (b.status === "running" && a.status !== "running") return 1;
+        return (b.finishedAt ?? 0) - (a.finishedAt ?? 0);
+      });
+      const lines = prioritized
         .slice(0, MAX_WORKFLOW_ROWS)
         .flatMap((execution) => {
           const row = formatWorkflowStatusRow(execution);

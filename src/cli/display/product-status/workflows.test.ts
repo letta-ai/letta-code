@@ -166,6 +166,30 @@ describe("workflow status panel", () => {
     expect(lines[6]?.trim()).toBe("+3 more · /workflows");
   });
 
+  test("shows active runs before newer completed runs under the panel cap", () => {
+    const now = 100_000;
+    const runs = [
+      ...Array.from({ length: 4 }, (_, index) =>
+        snapshot({
+          taskId: `finished-${index}`,
+          name: `finished-${index}`,
+          status: "completed",
+          finishedAt: now - (4 - index) * 1_000,
+        }),
+      ),
+      snapshot({ taskId: "active", name: "active" }),
+    ];
+    const lines = renderModPanelLines(
+      createWorkflowStatusPanel(visibleWorkflowExecutions(runs, now)),
+      100,
+      createContext(),
+    ).map(stripAnsi);
+    expect(lines[0]).toStartWith("○ active");
+    expect(lines[2]).toStartWith("● finished-3");
+    expect(lines[4]).toStartWith("● finished-2");
+    expect(lines[6]?.trim()).toBe("+2 more · /workflows");
+  });
+
   test("withWorkflowStatusPanel adds a below-input panel only when there are runs", () => {
     const existing: Record<string, ModPanel> = {
       "mod:x": {

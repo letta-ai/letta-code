@@ -245,6 +245,56 @@ describe("createSdkSpawner", () => {
     expect(outcome.totalTokens).toBe(3_500);
   });
 
+  test("ignores usage arriving after an interrupted agent has settled", async () => {
+    let releaseLate!: () => void;
+    const late = new Promise<void>((resolve) => {
+      releaseLate = resolve;
+    });
+    let firstUsage!: () => void;
+    const first = new Promise<void>((resolve) => {
+      firstUsage = resolve;
+    });
+    let drained!: () => void;
+    const drainFinished = new Promise<void>((resolve) => {
+      drained = resolve;
+    });
+    const usage = (tokens: number): SdkStreamMessage => ({
+      type: "stream_event",
+      event: { message_type: "usage_statistics", total_tokens: tokens },
+    });
+    const query: SdkQuery = {
+      conversationId: "conv-worker",
+      agentId: null,
+      async *[Symbol.asyncIterator]() {
+        yield usage(100);
+        await late;
+        yield usage(200);
+        drained();
+      },
+      async interrupt() {},
+      close() {},
+    };
+    const controller = new AbortController();
+    const seen: number[] = [];
+    const pending = createSdkSpawner({ query: () => query }, CONFIG)(
+      request(),
+      controller.signal,
+      {
+        onUsage(tokens) {
+          seen.push(tokens);
+          firstUsage();
+        },
+      },
+    );
+    await first;
+    controller.abort();
+    const outcome = await pending;
+    expect(outcome).toMatchObject({ failed: true, totalTokens: 100 });
+    releaseLate();
+    await drainFinished;
+    expect(seen).toEqual([100]);
+  });
+
   test("falls back to streamed assistant text and reports turn failures", async () => {
     const text = await createSdkSpawner(
       fakeClient([
