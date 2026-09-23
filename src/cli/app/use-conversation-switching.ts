@@ -48,6 +48,7 @@ import type { ConversationSwitchContext } from "@/cli/helpers/conversation-switc
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
+import { drainBackfilledItems } from "@/cli/helpers/transcript-windowing";
 import type { ModConversationCloseReason } from "@/cli/mods/types";
 import type { LocalModAdapter } from "@/cli/mods/use-local-mod-adapter";
 import { runSessionStartHooks } from "@/hooks";
@@ -400,13 +401,10 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         if (resumeData.messageHistory.length > 0) {
           hasBackfilledRef.current = false;
           backfillBuffers(buffersRef.current, resumeData.messageHistory);
-          const backfilledItems: StaticItem[] = [];
-          for (const id of buffersRef.current.order) {
-            const ln = buffersRef.current.byId.get(id);
-            if (!ln) continue;
-            emittedIdsRef.current.add(id);
-            backfilledItems.push({ ...ln } as StaticItem);
-          }
+          const backfilledItems: StaticItem[] = drainBackfilledItems(
+            buffersRef.current,
+            emittedIdsRef.current,
+          );
           const separator = { kind: "separator" as const, id: uid("sep") };
           setStaticItems([separator, ...backfilledItems]);
           setLines(toLines(buffersRef.current));

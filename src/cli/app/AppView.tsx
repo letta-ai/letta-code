@@ -83,6 +83,7 @@ import {
   isShellTool,
 } from "@/cli/helpers/tool-name-mapping";
 import { isTaskTool } from "@/cli/helpers/tool-name-mapping.js";
+import { drainBackfilledItems } from "@/cli/helpers/transcript-windowing";
 import type { WindowTitleData } from "@/cli/helpers/window-title-config";
 import type { ModContext } from "@/cli/mods/types";
 import type { LocalModAdapter } from "@/cli/mods/use-local-mod-adapter";
@@ -1283,13 +1284,11 @@ export function AppView(props: AppViewProps) {
                           resumeData.messageHistory,
                         );
                         // Collect backfilled items
-                        const backfilledItems: StaticItem[] = [];
-                        for (const id of buffersRef.current.order) {
-                          const ln = buffersRef.current.byId.get(id);
-                          if (!ln) continue;
-                          emittedIdsRef.current.add(id);
-                          backfilledItems.push({ ...ln } as StaticItem);
-                        }
+                        const backfilledItems: StaticItem[] =
+                          drainBackfilledItems(
+                            buffersRef.current,
+                            emittedIdsRef.current,
+                          );
                         // Add separator before backfilled messages, then success at end
                         const separator = {
                           kind: "separator" as const,
@@ -1541,13 +1540,11 @@ export function AppView(props: AppViewProps) {
                           buffersRef.current,
                           resumeData.messageHistory,
                         );
-                        const backfilledItems: StaticItem[] = [];
-                        for (const id of buffersRef.current.order) {
-                          const ln = buffersRef.current.byId.get(id);
-                          if (!ln) continue;
-                          emittedIdsRef.current.add(id);
-                          backfilledItems.push({ ...ln } as StaticItem);
-                        }
+                        const backfilledItems: StaticItem[] =
+                          drainBackfilledItems(
+                            buffersRef.current,
+                            emittedIdsRef.current,
+                          );
                         const separator = {
                           kind: "separator" as const,
                           id: uid("sep"),

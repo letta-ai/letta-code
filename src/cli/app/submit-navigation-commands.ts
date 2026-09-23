@@ -9,6 +9,7 @@ import { resetContextHistory } from "@/cli/helpers/context-tracker";
 import type { ConversationSwitchContext } from "@/cli/helpers/conversation-switch-alert";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
+import { drainBackfilledItems } from "@/cli/helpers/transcript-windowing";
 import { settingsManager } from "@/settings-manager";
 import { uid } from "./ids";
 import type { ActiveOverlay, AppCommandRunner, StaticItem } from "./types";
@@ -178,13 +179,10 @@ export async function handleNavigationCommand(
           if (resumeData.messageHistory.length > 0) {
             hasBackfilledRef.current = false;
             backfillBuffers(buffersRef.current, resumeData.messageHistory);
-            const backfilledItems: StaticItem[] = [];
-            for (const id of buffersRef.current.order) {
-              const ln = buffersRef.current.byId.get(id);
-              if (!ln) continue;
-              emittedIdsRef.current.add(id);
-              backfilledItems.push({ ...ln } as StaticItem);
-            }
+            const backfilledItems: StaticItem[] = drainBackfilledItems(
+              buffersRef.current,
+              emittedIdsRef.current,
+            );
             const separator = {
               kind: "separator" as const,
               id: uid("sep"),
