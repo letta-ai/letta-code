@@ -661,6 +661,33 @@ Response: `created.agent` / `created.conversation` booleans only. Don't leak
 internal implementation details like whether a JS `ConversationRuntime` was
 newly allocated.
 
+### `launch_subagent`
+
+App Server command exposing the shared `Agent` launcher (`launchSubagent` in
+`src/tools/impl/task.ts`) so external tools can start background workers with
+the same task tracking, cancellation, and completion notifications as the
+`Agent` tool. Types: `src/types/subagent-protocol.ts`; handler:
+`src/websocket/listener/commands/subagents.ts`; client:
+`AppServerClient.launchSubagent()`.
+
+- `runtime` is the **parent** scope (launch context, acting user, completion
+  notification routing); the child is `args.agent_id`/`args.conversation_id`.
+- `subagent_type: "custom"` runs an already-prepared child conversation and
+  applies no preset: the child must exist and must not be the parent
+  conversation, and `args.model` must be omitted (the caller configures the
+  child's prompt, model, and tools before launch).
+- Sideband launch: runs as a detached listener task while the parent waits on
+  an external-tool result, and never acquires or changes the parent's turn
+  lease or starts or completes a parent turn.
+- `client_message_id` identifies the child's initial assignment input (the
+  value Cloud correlates the originating message to), distinct from the
+  command's `request_id`; it must be a non-empty string when present.
+- The response is launch acknowledgment (`task_id`, `agent_id`,
+  `conversation_id`), not worker completion. Support is advertised via
+  `app_server_info.capabilities.launch_subagent`.
+- Cloud relay through `FORWARDABLE_COMMAND_TYPES` is a letta-cloud change, not
+  shipped from this repo.
+
 ---
 
 ## Filesystem Sandbox
