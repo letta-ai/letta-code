@@ -10,6 +10,7 @@ import {
   createProvider as createProviderRequest,
   deleteProvider as deleteProviderRequest,
   getProviderByName as getProviderByNameRequest,
+  getProviderByNameStrict as getProviderByNameStrictRequest,
   listProviders as listApiProviders,
   type ProviderResponse,
   removeProviderByName as removeProviderByNameRequest,
@@ -701,6 +702,21 @@ export async function getProviderByName(
     return getLocalProviderByName(providerName);
   }
   return getProviderByNameRequest(providerName);
+}
+
+/**
+ * Get a provider by name, surfacing storage failures instead of treating them
+ * as an unoccupied name. Use before destructive writes so a failed lookup
+ * cannot silently bypass their guards.
+ */
+export async function getProviderByNameStrict(
+  providerName: string,
+  options: ProviderOperationOptions = {},
+): Promise<ProviderResponse | null> {
+  if (useLocalProviderStore(options.target)) {
+    return getLocalProviderByName(providerName);
+  }
+  return getProviderByNameStrictRequest(providerName);
 }
 
 /**

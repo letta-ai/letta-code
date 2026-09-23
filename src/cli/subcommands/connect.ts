@@ -27,7 +27,7 @@ import { runCloudXaiOAuthConnectFlow } from "@/cli/commands/connect-xai-oauth";
 import {
   checkProviderApiKey,
   createOrUpdateProvider,
-  getProviderByName,
+  getProviderByNameStrict,
   isXaiOAuthProvider,
   type ProviderConnectionOptions,
   type ProviderOperationOptions,
@@ -84,7 +84,7 @@ interface ConnectSubcommandDeps {
     profile?: string,
     options?: ProviderConnectionOptions,
   ) => Promise<unknown>;
-  getProviderByName: (
+  getProviderByNameStrict: (
     providerName: string,
     options?: ProviderOperationOptions,
   ) => Promise<ProviderResponse | null>;
@@ -119,7 +119,7 @@ const DEFAULT_DEPS: ConnectSubcommandDeps = {
   promptSecret: promptSecret,
   checkProviderApiKey,
   createOrUpdateProvider,
-  getProviderByName,
+  getProviderByNameStrict,
   confirmOverwrite,
   isChatGPTOAuthConnected: (providerName) =>
     isChatGPTOAuthConnected({
@@ -555,6 +555,15 @@ export async function runConnectSubcommand(
       );
       return 1;
     }
+    if (requestedName && provider.target === "local") {
+      // The local runtime resolves endpoint providers through each spec's
+      // fixed localProviderNames, so a custom-named slot would be saved but
+      // never surfaced by /model. Reject instead of writing an unusable slot.
+      io.stderr(
+        `Custom provider names (--name) are not supported for local provider storage yet. Re-run without --name to update '${provider.byokProvider.providerName}'.`,
+      );
+      return 1;
+    }
     const providerName = requestedName ?? provider.byokProvider.providerName;
 
     try {
@@ -565,10 +574,19 @@ export async function runConnectSubcommand(
       // The API-key connect flow writes one provider slot keyed by the
       // provider name. When that slot is occupied by a different provider
       // type or endpoint, replacing it silently can repoint models at another
-      // billing account, so the replacement must be explicit.
-      const existingProvider = await io.getProviderByName(providerName, {
-        target: provider.target,
-      });
+      // billing account, so the replacement must be explicit. The lookup is
+      // strict: a failed check must abort, not bypass the guard.
+      let existingProvider: ProviderResponse | null;
+      try {
+        existingProvider = await io.getProviderByNameStrict(providerName, {
+          target: provider.target,
+        });
+      } catch (error) {
+        io.stderr(
+          `Could not check for an existing provider named '${providerName}' in ${io.providerStorageTargetLabel()}: ${getErrorMessage(error)}. Nothing was changed.`,
+        );
+        return 1;
+      }
       if (
         existingProvider &&
         overwriteChangesSlot(
