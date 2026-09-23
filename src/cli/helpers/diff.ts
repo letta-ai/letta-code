@@ -68,6 +68,35 @@ export type AdvancedDiffResult =
   | AdvancedDiffFallback
   | AdvancedDiffUnpreviewable;
 
+/**
+ * Release the full before/after file contents from a computed diff, keeping
+ * only what rendering consumes (hunks and fileName). Renderers never read
+ * oldStr/newStr — those fields exist to compute the patch. Any caller that
+ * retains a diff beyond the approval interaction (e.g. the session-scoped
+ * precomputed-diffs map) must store the released form, or a session with many
+ * edits to large files accumulates every version of every edited file.
+ */
+export function releaseDiffFileContents(
+  diff: AdvancedDiffSuccess,
+): AdvancedDiffSuccess {
+  if (diff.oldStr === "" && diff.newStr === "") return diff;
+  return { ...diff, oldStr: "", newStr: "" };
+}
+
+/**
+ * Store approval diffs into a retained map with full file contents released.
+ * Use this for any map that outlives the approval interaction.
+ */
+export function storeReleasedDiffs(
+  target: Map<string, AdvancedDiffSuccess>,
+  diffs?: Map<string, AdvancedDiffSuccess>,
+): void {
+  if (!diffs) return;
+  for (const [key, diff] of diffs) {
+    target.set(key, releaseDiffFileContents(diff));
+  }
+}
+
 function readFileOrNull(p: string): string | null {
   try {
     // Fall back to node:fs for sync reading

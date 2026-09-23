@@ -18,7 +18,10 @@ import {
   onChunk,
   setToolCallsRunning,
 } from "@/cli/helpers/accumulator";
-import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
+import {
+  type AdvancedDiffSuccess,
+  storeReleasedDiffs,
+} from "@/cli/helpers/diff";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import {
   buildQueuedContentParts,
@@ -676,12 +679,8 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
 
       if (!currentApproval) return;
 
-      // Store precomputed diffs before execution
-      if (diffs) {
-        for (const [key, diff] of diffs) {
-          precomputedDiffsRef.current.set(key, diff);
-        }
-      }
+      // Store precomputed diffs before execution (full file contents released)
+      storeReleasedDiffs(precomputedDiffsRef.current, diffs);
 
       setIsExecutingTool(true);
 
@@ -828,12 +827,8 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           const currentApproval = pendingApprovals[currentIndex];
           if (!currentApproval) return;
 
-          // Store diffs before execution
-          if (diffs) {
-            for (const [key, diff] of diffs) {
-              precomputedDiffsRef.current.set(key, diff);
-            }
-          }
+          // Store diffs before execution (full file contents released)
+          storeReleasedDiffs(precomputedDiffsRef.current, diffs);
 
           setIsExecutingTool(true);
 
