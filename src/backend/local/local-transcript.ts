@@ -639,6 +639,11 @@ export function localTranscriptTailMessages(
  * Read the smallest messages.jsonl suffix that yields at least `minMessages`
  * active messages (or the whole file when it is smaller), starting at a 64 KB
  * window and doubling — the same bounded policy as the resume tail fetch.
+ *
+ * After compaction `activeMessageIds` is the small in-context set, so the
+ * target is `min(minMessages, activeIds.length)`. Expanding until
+ * `minMessages` active rows exist would otherwise read the whole JSONL
+ * because the file still holds every pre-compaction row.
  */
 export function readLocalTranscriptTailWindow(
   messagesPath: string,
@@ -648,6 +653,10 @@ export function readLocalTranscriptTailWindow(
   storageDir: string,
   conversationDir: string,
 ): LocalTranscriptTailReadResult & { reachedStart: boolean } {
+  const targetCount =
+    activeMessageIds.length > 0
+      ? Math.min(minMessages, activeMessageIds.length)
+      : minMessages;
   let maxBytes = 64 * 1024;
   for (;;) {
     const tail = readJsonlFileSuffix<unknown>(messagesPath, maxBytes);
@@ -658,11 +667,44 @@ export function readLocalTranscriptTailWindow(
       storageDir,
       conversationDir,
     );
-    if (result.messages.length >= minMessages || tail.reachedStart) {
+    if (result.messages.length >= targetCount || tail.reachedStart) {
       return { ...result, reachedStart: tail.reachedStart };
     }
     maxBytes *= 2;
   }
+}
+
+/**
+ * Session-entry bookkeeping for a resident/active tail. The suffix parse may
+ * contain historical JSONL rows (especially after compaction, which appends
+ * rather than rewriting); persist and session maps must not pin those.
+ */
+export function restrictLocalTranscriptToResidentMessages(
+  transcript: LocalTranscriptRowsResult,
+  residentMessages: readonly LocalMessage[],
+): LocalTranscriptRowsResult {
+  const messageById = new Map<string, LocalMessage>();
+  const entryIdByMessageId = new Map<string, string>();
+  const entryIds = new Set<string>();
+  for (const message of residentMessages) {
+    messageById.set(
+      message.id,
+      transcript.messageById.get(message.id) ?? message,
+    );
+    const entryId = transcript.entryIdByMessageId.get(message.id);
+    if (entryId === undefined) continue;
+    entryIdByMessageId.set(message.id, entryId);
+    entryIds.add(entryId);
+  }
+  if (transcript.lastEntryId) entryIds.add(transcript.lastEntryId);
+  return {
+    messages: [...residentMessages],
+    entryIds,
+    entryIdByMessageId,
+    messageById,
+    lastEntryId: transcript.lastEntryId,
+    sourceStartIndex: transcript.sourceStartIndex,
+  };
 }
 
 /**
@@ -692,4 +734,31 @@ export function overlayResidentLocalMessageTail(
     if (!diskIds.has(message.id)) merged.push(message);
   }
   return merged;
+}
+
+/**
+ * Overlay a resident tail onto a disk *suffix* (not the full transcript).
+ * Older resident-only ids belong before this suffix and must not be appended
+ * (that would disorder the page). Trailing unpersisted messages — the
+ * in-flight assistant that streams with `transcript: "skip"` — still trail.
+ * Overlapping ids take the resident snapshot.
+ */
+export function overlayResidentLocalMessageSuffix(
+  diskSuffix: readonly LocalMessage[],
+  residentTail: readonly LocalMessage[],
+  isPersisted: (messageId: string) => boolean,
+): LocalMessage[] {
+  if (residentTail.length === 0) return [...diskSuffix];
+  const diskIds = new Set(diskSuffix.map((message) => message.id));
+  const overlayTail: LocalMessage[] = [];
+  let seenPersisted = false;
+  for (let index = residentTail.length - 1; index >= 0; index -= 1) {
+    const message = residentTail[index];
+    if (!message) continue;
+    if (isPersisted(message.id)) seenPersisted = true;
+    if (diskIds.has(message.id) || !seenPersisted) {
+      overlayTail.unshift(message);
+    }
+  }
+  return overlayResidentLocalMessageTail(diskSuffix, overlayTail);
 }

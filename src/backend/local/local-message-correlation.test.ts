@@ -622,4 +622,134 @@ describe("local transcript residency", () => {
       firstLocalId,
     );
   });
+
+  test("compact then reload seeds persist maps from the active set", async () => {
+    const storageDir = await createStorageDirectory();
+    const agentId = "agent-local-residency-compact-reload";
+    const store = new LocalStore(agentId, {
+      storageDir,
+      residentMessageTailLimit: 20,
+    });
+    for (let turn = 0; turn < 16; turn += 1) {
+      appendTurn(store, agentId, `bulk-${turn}-${"x".repeat(4096)}`);
+    }
+    const beforeCompact = store.listLocalMessages("default", agentId);
+    expect(beforeCompact.length).toBeGreaterThan(20);
+    const remaining = beforeCompact.slice(-4);
+    store.compactConversationAll({
+      conversationId: "default",
+      agentId,
+      summary: "compacted history",
+      packedSummary: "compacted history",
+      remainingMessages: remaining,
+    });
+
+    const reloaded = new LocalStore(agentId, {
+      storageDir,
+      residentMessageTailLimit: 20,
+    });
+    reloaded.appendTurnInput("default", {
+      agent_id: agentId,
+      messages: [{ role: "user", content: "after compact reload" }],
+    } as ConversationMessageCreateBody);
+
+    const residency = inspectResidency(reloaded, "default", agentId);
+    expect(residency.residentMessages).toBeLessThan(10);
+    expect(residency.persistedSnapshots).toBe(residency.residentMessages);
+    expect(residency.persistedSnapshots).toBeLessThan(beforeCompact.length / 2);
+  });
+
+  test("deep desc+before list does not refill the projection index", async () => {
+    const storageDir = await createStorageDirectory();
+    const agentId = "agent-local-residency-deep-cursor";
+    const store = new LocalStore(agentId, {
+      storageDir,
+      residentMessageTailLimit: 4,
+    });
+    for (let turn = 0; turn < 20; turn += 1) {
+      appendTurn(store, agentId, `turn-${turn}`);
+    }
+
+    const reloaded = new LocalStore(agentId, {
+      storageDir,
+      residentMessageTailLimit: 4,
+    });
+    const ascending = reloaded.listConversationMessages("default", {
+      agent_id: agentId,
+      order: "asc",
+    } as ConversationMessageListBody);
+    const oldest = ascending[0];
+    if (!oldest) throw new Error("Expected an oldest message");
+    const beforeDeep = inspectResidency(
+      reloaded,
+      "default",
+      agentId,
+    ).projectedIndexSize;
+
+    const page = reloaded.listConversationMessages("default", {
+      agent_id: agentId,
+      order: "desc",
+      before: oldest.id,
+      limit: 2,
+    } as ConversationMessageListBody);
+    expect(page.length).toBeGreaterThan(0);
+    expect(
+      inspectResidency(reloaded, "default", agentId).projectedIndexSize,
+    ).toBe(beforeDeep);
+    expect(
+      inspectResidency(reloaded, "default", agentId).projectedIndexSize,
+    ).toBeLessThan(ascending.length);
+  });
+
+  test("fast desc+limit list includes the in-flight assistant", async () => {
+    const storageDir = await createStorageDirectory();
+    const agentId = "agent-local-residency-in-flight";
+    const store = new LocalStore(agentId, {
+      storageDir,
+      residentMessageTailLimit: 4,
+    });
+    for (let turn = 0; turn < 3; turn += 1) {
+      appendTurn(store, agentId, `turn-${turn}`);
+    }
+    store.appendStreamChunk("default", agentId, {
+      message_type: "assistant_message",
+      content: [{ type: "text", text: "IN_FLIGHT_ASSISTANT" }],
+    } as LettaStreamingResponse);
+
+    const local = store.listLocalMessages("default", agentId);
+    expect(JSON.stringify(local)).toContain("IN_FLIGHT_ASSISTANT");
+
+    const descending = store.listConversationMessages("default", {
+      agent_id: agentId,
+      order: "desc",
+      limit: 5,
+    } as ConversationMessageListBody);
+    expect(JSON.stringify(descending)).toContain("IN_FLIGHT_ASSISTANT");
+  });
 });
+
+type LocalStoreResidencyMaps = {
+  conversationKey: (conversationId: string, agentId: string) => string;
+  persistedMessageByMessageIdByConversationKey: Map<
+    string,
+    Map<string, unknown>
+  >;
+  messagesById: Map<string, unknown>;
+  localMessagesByConversationKey: Map<string, unknown[]>;
+};
+
+function inspectResidency(
+  store: LocalStore,
+  conversationId: string,
+  agentId: string,
+) {
+  const internals = store as unknown as LocalStoreResidencyMaps;
+  const key = internals.conversationKey(conversationId, agentId);
+  return {
+    persistedSnapshots:
+      internals.persistedMessageByMessageIdByConversationKey.get(key)?.size ?? 0,
+    projectedIndexSize: internals.messagesById.size,
+    residentMessages:
+      internals.localMessagesByConversationKey.get(key)?.length ?? 0,
+  };
+}

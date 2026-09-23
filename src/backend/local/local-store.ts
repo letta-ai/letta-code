@@ -94,11 +94,13 @@ import {
   localTranscriptSessionEntries,
   localTranscriptTailMessages,
   normalizeLocalMessageForPi,
+  overlayResidentLocalMessageSuffix,
   overlayResidentLocalMessageTail,
   readJsonFile,
   readJsonlFile,
   readJsonlFileSuffix,
   readLocalTranscriptTailWindow,
+  restrictLocalTranscriptToResidentMessages,
   repairSyntheticConversationTimestamps,
   repairSyntheticLocalMessageTimestamps,
   timestampFromIso,
@@ -1935,11 +1937,17 @@ export class LocalStore {
           this.storageDir ?? "",
           metadata.conversationDir,
         );
+      const persistedIds =
+        this.sessionEntryIdByMessageIdByConversationKey.get(key);
       const projected = this.projectLocalMessages(
-        normalizedMessages,
+        overlayResidentLocalMessageSuffix(
+          normalizedMessages,
+          this.localMessagesByConversationKey.get(key) ?? [],
+          (messageId) => persistedIds?.has(messageId) === true,
+        ),
         agentId,
         conversationId,
-        { sourceStartIndex: transcript.sourceStartIndex },
+        { sourceStartIndex: transcript.sourceStartIndex, updateIndex: false },
       );
       const cursorFound =
         !before || projected.some((message) => message.id === before);
@@ -2324,21 +2332,11 @@ export class LocalStore {
       key,
       transcript.sourceStartIndex,
     );
-    this.sessionEntryIdsByConversationKey.set(key, transcript.entryIds);
-    this.sessionEntryIdByMessageIdByConversationKey.set(
+    this.resetPersistedSessionState(
       key,
-      transcript.entryIdByMessageId,
+      metadata.messageFormat,
+      restrictLocalTranscriptToResidentMessages(transcript, messages),
     );
-    this.persistedMessageByMessageIdByConversationKey.set(
-      key,
-      new Map(
-        Array.from(transcript.messageById, ([messageId, message]) => [
-          messageId,
-          cloneLocalMessage(message),
-        ]),
-      ),
-    );
-    this.lastSessionEntryIdByConversationKey.set(key, transcript.lastEntryId);
     for (const message of messages) {
       this.localMessageSeq = Math.max(
         this.localMessageSeq,
