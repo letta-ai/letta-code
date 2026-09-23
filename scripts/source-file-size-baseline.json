@@ -3,7 +3,7 @@
   "src/agent/memory-git.ts": 2092,
   "src/backend/local-backend.test.ts": 2473,
   "src/backend/local/local-backend.ts": 1005,
-  "src/backend/local/local-store.ts": 3457,
+  "src/backend/local/local-store.ts": 3296,
   "src/backend/pi-stream-adapter.test.ts": 1255,
   "src/cli/app/AppCoordinator.tsx": 5136,
   "src/cli/app/AppView.tsx": 1735,
