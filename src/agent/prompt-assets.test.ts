@@ -5,7 +5,6 @@ import {
   SYSTEM_PROMPTS,
   shouldRecommendDefaultPrompt,
 } from "@/agent/prompt-assets";
-import historyAnalyzerV2Prompt from "@/agent/subagents/builtin/history-analyzer-v2.md";
 import initV2Prompt from "@/agent/subagents/builtin/init-v2.md";
 import memoryV2Prompt from "@/agent/subagents/builtin/memory-v2.md";
 import reflectionV2Prompt from "@/agent/subagents/builtin/reflection-v2.md";
@@ -24,7 +23,6 @@ const ROOT_ONLY_PROMPT_ASSETS = [
   initV2Prompt,
   memoryV2Prompt,
   reflectionV2Prompt,
-  historyAnalyzerV2Prompt,
   memoryV2ToolPrompt,
   memoryApplyPatchV2Prompt,
 ];

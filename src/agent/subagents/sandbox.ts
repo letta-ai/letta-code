@@ -16,7 +16,7 @@ import type { SubagentLaunchProfile } from ".";
 /**
  * Applies an OS-level filesystem sandbox to a subagent child process at spawn.
  *
- * Subagents with the memory-subagent profile (reflection, memory, init, history-analyzer) operate
+ * Subagents with the memory-subagent profile (reflection, memory, init) operate
  * on their parent's memory as their working filesystem. Wrapping the whole child
  * process kernel-enforces the write scope — covering its in-process Write/Edit
  * tools, its Bash commands, and anything those spawn.

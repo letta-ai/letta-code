@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   clearSubagentConfigCache,
   getAllSubagentConfigs,
+  getBuiltinSubagentNames,
   resolveSubagentConfigForMemoryFormat,
 } from "@/agent/subagents";
 import { __testSetBackend, type Backend } from "@/backend";
@@ -64,9 +65,33 @@ describe("built-in subagents", () => {
     const configs = await getAllSubagentConfigs();
 
     expect(configs.reflection?.launchProfile).toBe("memory-subagent");
-    expect(configs["history-analyzer"]?.launchProfile).toBe("memory-subagent");
     expect(configs.memory?.launchProfile).toBe("memory-subagent");
     expect(configs.init?.launchProfile).toBe("memory-subagent");
+  });
+
+  test("does not register a built-in history-analyzer", () => {
+    expect(getBuiltinSubagentNames().has("history-analyzer")).toBe(false);
+  });
+
+  test("a custom history-analyzer loads like any other custom subagent", async () => {
+    tempDir = createTempProjectDir();
+    writeCustomSubagent(
+      tempDir,
+      "history-analyzer.md",
+      `---
+name: history-analyzer
+description: Custom history analyzer
+tools: Read
+---
+Custom prompt body`,
+    );
+
+    const configs = await getAllSubagentConfigs(tempDir);
+
+    expect(configs["history-analyzer"]?.description).toBe(
+      "Custom history analyzer",
+    );
+    expect(configs["history-analyzer"]?.launchProfile).toBe("default");
   });
 
   test("legacy background metadata does not affect subagent config", async () => {
@@ -120,7 +145,7 @@ Custom prompt body`,
   test("selects v2 writer prompts only for unchanged API built-ins", async () => {
     const configs = await getAllSubagentConfigs();
 
-    for (const name of ["reflection", "init", "memory", "history-analyzer"]) {
+    for (const name of ["reflection", "init", "memory"]) {
       const config = configs[name];
       expect(config).toBeDefined();
       if (!config) throw new Error(`Missing ${name} config`);
@@ -144,7 +169,6 @@ Custom prompt body`,
         "### 5. Commit (1 bash call)",
         "feat(init): initialize memory for project",
       ],
-      "history-analyzer": ["### 5. Commit", "Do NOT merge into main"],
       memory: [
         "### Phase 5: Merge and Clean Up (MANDATORY)",
         "## Error Handling",

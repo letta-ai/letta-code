@@ -215,9 +215,9 @@ Note: `codex exec resume` works non-interactively. `codex resume` and `codex for
 
 ### When to analyze past sessions
 
-**Don't** run `history-analyzer` after every dispatch — your reflection agent already captures insights naturally, and single-session analysis produces overly detailed notes.
+**Don't** analyze sessions after every dispatch — your reflection agent already captures insights naturally, and single-session analysis produces overly detailed notes.
 
-**Do** use `history-analyzer` for **bulk migration** when bootstrapping memory from months of accumulated history (e.g. during `/init`). See the `initializing-memory` skill's historical session analysis reference.
+**Do** analyze history in bulk when bootstrapping memory from months of accumulated sessions during `/init`. The `initializing-memory` skill covers this: it exports sessions with `letta trajectories export` and reviews them with a read-only Workflow.
 
 Direct uses for session files:
 - **Resume** an investigation (see above)

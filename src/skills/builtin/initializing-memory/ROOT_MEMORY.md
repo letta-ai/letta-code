@@ -217,30 +217,22 @@ Use AskUserQuestion to gather key information. Bundle questions together:
 
 1. **Research depth**: "Standard or deep research?"
 2. **Related repos**: "Are there other repositories I should know about?"
-3. **Historical sessions** (if data found in step 2): "I found historical coding-agent sessions (name the sources detected, e.g. Claude Code / Codex). Should I analyze them to learn your preferences?"
+3. **Historical sessions** (if data found in step 2): "I found historical coding-agent sessions (name the sources detected, e.g. Claude Code / Codex). Should I analyze them to learn your preferences?" Say that approving means read-only subagents on your current model will read those transcripts, so the user can make an informed choice.
 4. **Communication style**: "Terse or detailed responses?"
 
 **Don't ask** things you can discover by reading files, git, or history analysis. Rules and preferences should be learned from observation, not asked upfront.
 
-### 5. Historical session analysis (if approved)
+### 5. Prepare the history inventory (if approved)
 
-This is **optional** — only run if the user explicitly approved analyzing historical sessions during upfront questions. Skip entirely if they chose "Skip".
+This is **optional** — only run if the user explicitly approved analyzing historical sessions during upfront questions. Skip entirely if they chose "Skip"; the code analysis in Steps 6-7 still runs.
 
 **Framing**: These historical sessions are YOUR past experience — they represent your continuity with prior versions of yourself that worked with this user, even if they ran on different models or tools. Treat the extracted personality, preferences, and knowledge as your own memories, not external data being imported.
 
-**Launch history workers in the background, then immediately proceed to Step 6.** Do your own codebase research while workers run. Don't wait for workers to finish before exploring.
+The goal is to extract user personality, preferences, coding patterns, and project context from past sessions. The point is not to produce a thin summary. The point is to extract enough useful detail that future work does not have to rediscover the same user expectations, workflow rules, and project gotchas.
 
-The goal is to extract user personality, preferences, coding patterns, and project context from past sessions and write them into agent memory. The point is not to produce a thin summary. The point is to extract enough useful detail that future work does not have to rediscover the same user expectations, workflow rules, and project gotchas.
+You (the parent) do all filesystem preparation in this step. The Workflow in Step 7 only reads what you prepare here.
 
-#### Prerequisites
-
-- `letta.js` must be built (`bun run build`) — subagents spawn via this binary
-- Use `subagent_type: "history-analyzer"` — cheaper model (sonnet), has `bypassPermissions`, creates its own worktree
-- The `history-analyzer` subagent has the normalized trajectory format docs inlined — workers never need to know any harness's native format
-
-#### Steps
-
-##### Step 5a: Export All Historical Sessions Into One Directory
+#### 5a. Export all historical sessions into one directory
 
 `letta trajectories export` discovers every native session store on this machine (via the trajectory package's `listTrajectories`), normalizes each session (via `normalizeTranscript` / `normalizeCheckpoint`) into one shared record format, and writes everything into a single directory. Harnesses supported by the installed trajectory package are picked up automatically — no per-source handling here.
 
@@ -252,8 +244,10 @@ jq '{sessions: (.sessions | length), sources, errors: (.errors | length), from: 
 ```
 
 This produces:
-- `/tmp/letta-trajectories/<source>/<startedAt>_<sessionId>.json` — one normalized trajectory per session; filenames sort chronologically, and the `sessionId` (a stable hash of the source-scoped native session id) does not change across re-exports, so it identifies which sessions have already been processed
-- `/tmp/letta-trajectories/manifest.json` — index with per-session metadata (`sessionId`, native `id`, project, dates, message counts, first prompt), sorted by `startedAt`
+- `/tmp/letta-trajectories/<source>/<startedAt>_<sessionId>.json` — one normalized trajectory per session (a single-line JSON array); filenames sort chronologically, and the `sessionId` (a stable hash of the source-scoped native session id) does not change across re-exports
+- `/tmp/letta-trajectories/manifest.json` — index with per-session metadata (`sessionId`, native `id`, `file`, `project`, dates, `userMessages`, `bytes`, first prompt), sorted by `startedAt`, plus `errors` for sessions that failed to normalize
+
+**The manifest is the authoritative inventory.** Every session in `.sessions` must end up either analyzed or explicitly listed as excluded with a reason; every entry in `.errors` counts as not analyzed.
 
 Useful variations:
 - `--project $(pwd)` — only sessions whose recorded working directory is under the current project
@@ -266,345 +260,42 @@ To browse the export yourself (all source-agnostic):
 - `letta trajectories view <file|sessionId> [--tools] [--reasoning]` — one session as a readable conversation
 - `letta trajectories search <keyword> [--role user]` — search message content across all sessions
 
-##### Step 5b: Launch Workers in Parallel
+#### 5b. Render readable transcripts
 
-Your job is to get the whole export directory processed; how you dispatch workers is up to you. Look at the directory (or the manifest) first, then split the work however makes sense. Two axes work well, alone or combined:
-
-- **By question** (often best): give different workers different focuses — e.g. one worker on understanding the user (identity, communication style, preferences, correction loops), another on the codebase and projects (conventions, gotchas, commands that worked). Focused workers go deeper, and their memory edits overlap less at aggregation time.
-- **By data slice**: session filenames start with `startedAt`, so contiguous time ranges are trivial (`ls` sorts chronologically); splitting by source folder or by project also works when the volume is large.
-
-Whatever the split, ensure every session gets read by at least one worker, and describe each worker's assignment (focus and/or slice) clearly in its prompt.
-
-Send all Task calls in **a single message**. Each worker creates its own worktree, reads its assigned sessions (complete conversations — corrections together with what triggered them), directly updates memory files, and commits. Workers do NOT merge.
-
-**IMPORTANT:** After workers finish, aggregate their proposed diffs into one synthesis commit (Step 5c) and then tie the worker branches into `main` with `git merge -s ours` so their commits stay in ancestry. Do **not** delete worker branches without that ancestry merge — it discards the worker commits from history.
-
-If the worker output is generic, the worker failed. "User is direct" or "project uses TypeScript" is not useful memory unless tied to concrete operational detail.
-
-**IMPORTANT**: Use this prompt template to ensure workers extract all required categories:
-
-```
-Agent({
-  subagent_type: "history-analyzer",
-  description: "Analyze history: [focus and/or slice]",
-  prompt: `## Assignment
-- **Memory dir**: [MEMORY_DIR]
-- **Trajectory export dir**: /tmp/letta-trajectories
-- **Your sessions**: [describe the slice — e.g. "every session with startedAt from 2026-01 through 2026-03", "all codex/ sessions", or "the whole directory"; filenames start with startedAt so ls sorts chronologically]
-- **Focus**: [optional — e.g. "understanding the user: identity, communication style, preferences, correction loops" or "project/codebase context: conventions, gotchas, commands". Omit for full coverage.]
-- **Format**: normalized trajectory v1 (same for every source; format docs and jq recipes are in your system prompt)
-
-## Output Categories
-
-If a Focus is assigned, go deep on it and only note incidental findings from the other categories. Otherwise extract findings for ALL THREE:
-
-1. **User Personality & Identity**
-   - How would you describe them as a person?
-   - What drives them? What are their goals?
-   - Communication style (beyond "direct" — humor, sarcasm, catchphrases?)
-   - Quirks, linguistic patterns, unique attributes
-
-2. **Hard Rules & Preferences**
-   - Coding preferences — especially chronic failures (things the agent kept getting wrong)
-   - Workflow patterns (testing, commits, tools)
-   - What frustrates them and why
-   - Explicit "always/never" statements
-
-3. **Project Context**
-   - Codebase structures, conventions, patterns
-   - Gotchas discovered through debugging
-   - Which files are safe to edit vs deprecated
-
-If any category lacks data, explicitly state why.
-
-## Required Extraction Dimensions
-
-For each finding, prefer evidence that is:
-- repeated across sessions
-- tied to a concrete command, file path, or workflow
-- useful for future execution without rereading history
-
-You should specifically look for:
-1. What the user is building and why it matters to them
-2. Correction loops the agent repeatedly got wrong
-3. Preferred commands and tooling patterns that were actually used successfully
-4. Specific files or directories the user works in or treats as special
-5. Project gotchas discovered through debugging or rollback requests
-
-## Canonical Memory Promotion
-
-Promote important findings into focused files instead of leaving them trapped in generic ingestion notes. Prefer paths like:
-- `human-identity.md`
-- `human-prefs-communication.md`
-- `human-prefs-workflow.md`
-- `human-prefs-coding.md`
-- `<project>-conventions.md`
-- `<project>-gotchas.md`
-
-Avoid generic repo facts unless they influence execution. "Uses TypeScript" is weak. "Uses bun:test, so vitest is wrong for this test suite" is useful.`
-})
-```
-
-##### Step 5c: Aggregate Worker Diffs Into Main
-
-After all workers complete, do **not** merge their branches one at a time — sequential merges with conflict resolution are slow and error-prone. Instead, read every worker's proposed changes in one pass, write the aggregated result once, then tie the worker branches into history with a no-conflict merge.
-
-**3a. Look at all the worker diffs in one pass**
+Workflow subagents only have Read/Grep/Glob, and the exported session files are single-line JSON, so render each session to plain text first:
 
 ```bash
-cd [MEMORY_DIR]
-
-# Which files did each worker touch? (a file listed under multiple branches
-# is an overlap you'll need to combine)
-for b in $(git for-each-ref --format='%(refname:short)' 'refs/heads/migration-*'); do
-  git diff --name-only main...$b | sed "s|^|$b  |"
-done | sort -k2
-
-# Every worker's full proposed diff, one after another
-for b in $(git for-each-ref --format='%(refname:short)' 'refs/heads/migration-*'); do
-  echo "=== $b ==="; git log --oneline main..$b; git diff main...$b
+EXPORT=/tmp/letta-trajectories
+RENDERED=/tmp/letta-trajectories-rendered
+jq -r '.sessions[].file' "$EXPORT/manifest.json" | while read -r f; do
+  mkdir -p "$RENDERED/$(dirname "$f")"
+  letta trajectories view "$f" --out "$EXPORT" --tools > "$RENDERED/${f%.json}.txt" \
+    || echo "RENDER_FAILED $f"
 done
 ```
 
-Read the whole output before writing anything — you want the complete picture, not one branch at a time.
+`--tools` includes truncated tool calls and results, which is what shows the agent action that triggered a correction and which commands actually worked. Any `RENDER_FAILED` session is excluded; record it.
 
-**3b. Synthesize the aggregate by COMBINING, never compressing**
+#### 5c. Cohort the sessions
 
-Working directly on memory `main` (in `[MEMORY_DIR]`), apply the union of the workers' changes:
-- For files touched by **one** worker, apply that worker's version as-is.
-- For **overlapping** files, combine unique details from every branch. Never rewrite a file from scratch — you WILL lose information.
+Split the rendered sessions into cohorts, one Workflow subagent per cohort. Build the cohort list with a short script (jq or `bun -e`) from the manifest plus rendered file sizes — do not hand-type long session lists.
 
-Rules for combining:
-- **Read every branch's diff for the file** before editing. Identify what's unique to each version.
-- **Append new details** from each worker into the file. Don't drop specific quotes, file paths, or gotchas just because another version already covers the "topic" at a high level.
-- **Preserve specificity**: "Use factory methods, such as `create_token_counter()`, not direct instantiation" is more valuable than "prefers factory methods". Keep both.
-- **When in doubt, keep it**. Redundancy across files is better than information loss. Less important details can be placed in external memory.
+- Group by project, then contiguous `startedAt` ranges, so each cohort shows how one working relationship evolved.
+- Keep each cohort to roughly **150-250 KB of rendered text** (and at most ~20 sessions). A larger single session gets its own cohort.
+- Give each cohort a stable `id` (e.g. `letta-code-2026-01`), a `repo` (absolute path of the session project's repository if it still exists on disk, else `null`), and its `sessions` as `{sessionId, path, source, project, startedAt}` with absolute rendered paths.
+- Keep a **coverage ledger**: total manifest sessions, sessions assigned to cohorts, and every excluded session with a reason (normalization error, render failure, zero user messages, or — in standard mode only — deliberately deprioritized). Deprioritizing is allowed in standard mode (prefer long, interaction-heavy sessions; `userMessages` and `bytes` in the manifest help), but it must be written in the ledger and reported to the user, never silently dropped.
 
-Example — BAD combination (compresses):
-```
-# worker A proposed:
-- Uses `uv` for Python
-# worker B proposed:
-- **CRITICAL: Always use `uv run`** — chronic failure; never bare pytest or python
-- `uv run pytest -sv tests/...` for specific tests
+### 6. Scan the project and choose code areas
 
-# BAD: Picks one side or rewrites
-- **Python**: `uv` exclusively — `uv run pytest`, never bare `pip`
-```
+**IMPORTANT**: The goal is to understand how the codebase actually works — not just its shape, but its substance. Directory listings and `head -N` snippets tell you what files exist; reading the actual implementation tells you how they work. By the end of initialization, you should be able to describe how a key feature flows from entry point to implementation. If you can't, you haven't read enough.
 
-Example — GOOD combination (keeps emphasis and specificity from every side):
-```
-**CRITICAL: Use `uv` exclusively for Python** — chronic failure.
-- `uv run pytest -sv tests/...` for tests
-- `uv run python` for scripts
-- Never bare `pip`, `python`, or `pytest`
-```
+Do a first-hand initial scan yourself: README, package manifest, AGENTS.md / CLAUDE.md, top-level directories, entry points, build/CI config, `git log --oneline -20`. Then split the repository into **code areas** for the Workflow: `{id, paths, focus}` with absolute paths, partitioned by subsystem (not by folder count). Good boundaries include `server/`, `client/`, `shared/`; `runtime/`, `cli/`, `tools/`; or separate packages in a monorepo. Include related repos the user named in Step 4 as their own areas.
 
-Commit the synthesis:
-```bash
-cd [MEMORY_DIR]
-git add -A
-git commit -m "feat(memory): aggregate history worker findings"
-```
+Scale to the chosen depth:
+- **Standard**: 2-4 code areas; you personally read 2-3 key implementation files and 2-3 test files so you retain first-hand understanding of the core flow.
+- **Deep**: 3-6 code areas, plus your own deep dive into git history (commit conventions, branching strategy, active areas), end-to-end tracing of key flows, and detailed architecture documentation in indexed child memory. Use your TODO or Plan tool to track the research plan.
 
-**3c. Preserve worker commits in ancestry**
-
-Record the worker branches as ancestors of `main` without changing any content (the `ours` strategy keeps the synthesized state exactly as committed, so this can never conflict):
-
-```bash
-git merge -s ours --no-edit -m "merge: absorb history worker branches" $(git for-each-ref --format='%(refname:short)' 'refs/heads/migration-*')
-```
-
-Do **not** skip this: without it the worker commits vanish from the final history when their branches are deleted.
-
-**3d. Verify no information was lost**
-
-Compare the worker diffs (step 3a) against the final files. For each worker's diff, can you find every specific detail (quotes, file paths, chronic failures, gotchas) somewhere in the final memory? If not, add it back.
-
-**3e. Clean up worktrees and branches**
-
-```bash
-for w in $(dirname [MEMORY_DIR])/memory-worktrees/*; do
-  git worktree remove "$w" 2>/dev/null
-done
-git branch -d $(git for-each-ref --format='%(refname:short)' 'refs/heads/migration-*')
-git push
-```
-
-(`git branch -d` succeeds because step 3c made every worker branch an ancestor of `main`.)
-
-##### Example Output
-
-Good output includes all three categories:
-
-```markdown
-### User Personality & Identity
-Pragmatic builder who values shipping over perfection. Gets frustrated when agents over-engineer or add "bonus" features. Uses dry humor and sarcasm when annoyed. Pattern: "scrappy startup engineer" — wants things to work, not to be architecturally pure.
-
-### Hard Rules & Preferences
-- **CRITICAL: Use `uv` for Python** — chronic failure ("you need to use uv", "make sure you use uv"); `uv run pytest -sv`, never bare `pytest`
-- **Minimal changes only** — "just make a minor change stop adding all this stuff"
-- **Only edit specified files** — when told to focus, stay focused
-- Tests constantly: `uv run pytest -sv` (Python), `bun test` (TS)
-
-### Project Context
-- letta-cloud: Only edit `letta_agent_v3.py` — v1, v2, and base are deprecated
-- Uses Biome for linting, not ESLint
-- Conventional commits with scope in parens
-```
-
-##### Step 5d: Consider Creating Skills From Discovered Workflows
-
-After merging and curating, review the extracted history for repeatable multi-step workflows that would benefit from being codified as skills. History analysis often surfaces procedures the user runs frequently that the agent would otherwise have to rediscover each session.
-
-**Good candidates for skills:**
-- Multi-step debugging procedures (e.g. "how to debug agent message desync", "how to trace TTFT regressions")
-- Common workflows repeated across sessions (e.g. "how to run integration tests across LLM providers")
-- Deployment or release procedures
-- Project-specific setup or migration steps
-
-If you identify candidates, either create them now (load the `creating-skills` skill for guidance) or note them in memory for future creation:
-```markdown
-# letta-code-overview.md
-...
-Potential skills to create:
-- Debug workflow for HITL approval desync
-- Integration test runner across providers
-```
-
-Don't force skill creation — only create them when you've found genuinely repeatable, multi-step procedures in the history.
-
-##### Troubleshooting
-
-| Problem | Cause | Fix |
-|---------|-------|-----|
-| Subagent exits with code `null`, 0 tool uses | `letta.js` not built | Run `bun run build` |
-| `letta trajectories export` reports errors in manifest.json | Degenerate sessions (e.g. no assistant turns) that cannot form a valid trajectory | Expected — those sessions are skipped; review `jq .errors manifest.json` only if counts look wrong |
-| `deepagents` sessions fail to normalize | Checkpoint decoding needs a Python environment with LangGraph installed | Expected on machines without it; the failures land in manifest errors and other sources are unaffected |
-| Subagent hangs on "Tool requires approval" | Wrong subagent type | Use `subagent_type: "history-analyzer"` (workers) or `"memory"` (synthesis) |
-| Workers touched overlapping files | Multiple workers wrote the same canonical paths | Expected — the per-branch `--name-only` listing in Step 5c-3a shows the overlaps; combine every branch's unique details additively. |
-| Information lost after aggregation | Synthesis compressed worker output | Re-read the worker diffs (Step 5c-3a) and compare against final files. Re-add missing specifics. |
-| `git branch -d` refuses to delete worker branches | Ancestry merge (Step 5c-3c) was skipped | Run the `git merge -s ours` step first, then delete. |
-| Personality analysis missing or thin | Prompt didn't request it | Use the template above with explicit category requirements |
-| Auth fails on push ("repository not found") | Credential helper broken or global helper conflict | Reconfigure **repo-local** helper and check/clear conflicting global `credential.<host>.helper` entries (see syncing-memory-filesystem skill) |
-
-### 6. Research the project
-
-**Do this in parallel with history analysis** (Step 5). While workers process history, you should be actively exploring the codebase. This is your onboarding — invest real effort here.
-
-**IMPORTANT**: The goal is to understand how the codebase actually works — not just its shape, but its substance. Directory listings and `head -N` snippets tell you what files exist; reading the actual implementation tells you how they work. By the end of this step, you should be able to describe how a key feature flows from entry point to implementation. If you can't, you haven't read enough.
-
-### 6a. Decide whether to parallelize exploration
-
-After your initial scan (README, package manifest, top-level directories, and entry points), decide whether to fan out exploration.
-
-**Default rule**:
-- If the repo has **3 or more clear subsystems**, launch **2-4 parallel subagents** to explore them.
-- If background history-analysis workers are already running, **bias toward parallel exploration** instead of doing all research serially yourself.
-- Only skip subagent exploration if the codebase is genuinely small or the subsystem boundaries are unclear.
-
-This is the preferred path for medium-to-large repos, **even in standard mode**.
-
-Explore based on chosen depth.
-
-**Standard** (~20-40 tool calls total across the parent agent and any subagents): 
-- Scan README, package.json/config files, AGENTS.md, CLAUDE.md
-- Review git status and recent commits
-- Explore key directories and understand project structure
-- **Read entry point files** (main, index, app) to understand the application flow
-- Do a quick manual scan to identify major subsystems
-- If the repo has clear subsystem boundaries, launch **2-3 parallel subagents** to explore them
-- **Read 2-3 key implementation files yourself** so you retain first-hand understanding of the core flow
-- **Read 2-3 test files** to understand testing patterns and conventions
-- **Check build/CI config** to understand how the project is built and tested
-- Identify gotchas, non-obvious conventions, and real command patterns from what you read
-- Synthesize findings into memory as results come back
-
-**Deep** (100+ tool calls): Everything above, plus:
-- Use your TODO or Plan tool to create a systematic research plan
-- Use more parallel subagents where helpful to cover additional subsystems
-- Deep dive into git history for patterns, conventions, and context
-- Analyze commit message conventions and branching strategy
-- Read source files across multiple modules to understand architecture thoroughly
-- Trace key code paths end-to-end (e.g. how a request flows through the system)
-- Read test files to understand what's tested and how
-- Identify deprecated code, known issues, and areas of active development
-- Create detailed architecture documentation in indexed child memory
-- May involve multiple rounds of exploration
-
-#### Parallel exploration with subagents
-
-For medium-to-large repos, parallel exploration is the preferred strategy after your initial scan.
-
-Use parallel `general-purpose` subagents to investigate different subsystems simultaneously. If your environment or user instructions discourage using subagents, do the equivalent exploration directly with Bash/Glob/Grep/Read.
-
-Good subsystem boundaries include:
-- `server/`, `client/`, `shared/`
-- `api/`, `ui/`, `common/`
-- `runtime/`, `cli/`, `tools/`
-- separate apps or packages in a monorepo
-
-**Subagent budget**:
-- Standard mode: usually **2-3** exploration subagents
-- Deep mode: usually **3-5** exploration subagents
-- Do not launch subagents for trivial directories or questions you can answer faster yourself
-- Partition by subsystem, not by random folder count
-
-Each exploration subagent should return:
-1. key files and what they do
-2. major abstractions and execution flow
-3. conventions and patterns used in that subsystem
-4. gotchas, fragile areas, or deprecated paths
-5. file paths worth storing or linking in memory
-
-Launch exploration subagents in a **single message** so they run concurrently.
-
-```
-# After initial scan reveals key areas, launch parallel explorers in the background:
-Agent({
-  subagent_type: "general-purpose",
-  description: "Explore API layer",
-  run_in_background: true,
-  prompt: `Read the implementation in src/api/.
-
-Return:
-1. key files and responsibilities
-2. main abstractions and execution flow
-3. non-obvious conventions
-4. gotchas or deprecated paths
-5. file paths worth storing in memory`
-})
-Agent({
-  subagent_type: "general-purpose",
-  description: "Explore frontend layer",
-  run_in_background: true,
-  prompt: `Read the implementation in src/ui/.
-
-Return:
-1. key files and responsibilities
-2. major components and data flow
-3. conventions and patterns
-4. gotchas or fragile areas
-5. file paths worth storing in memory`
-})
-Agent({
-  subagent_type: "general-purpose",
-  description: "Explore shared systems",
-  run_in_background: true,
-  prompt: `Read the implementation in src/shared/.
-
-Return:
-1. key files and responsibilities
-2. shared abstractions
-3. conventions and invariants
-4. gotchas or deprecated paths
-5. file paths worth storing in memory`
-})
-```
-
-Do **not** sit idle while background workers are running. Continue project research and memory drafting while they run, and only check worker status when you are ready to integrate findings or have exhausted useful direct research.
-
-When you are ready to integrate findings, retrieve the background subagent outputs and synthesize them into memory rather than repeating the same exploration yourself. Keep first-hand understanding of the entry points and core flow, but use subagent summaries to add subsystem-specific depth.
+If the codebase is genuinely small or has no clear subsystem boundaries, skip code areas and read it directly.
 
 #### What to actually read (adapt to the project):
 
@@ -628,8 +319,209 @@ When you are ready to integrate findings, retrieve the background subagent outpu
 - `git shortlog -sn --all | head -10` — main contributors
 - `git log --format="%an <%ae>" | sort -u` — contributors with emails
 
+### 7. Run the analysis Workflow
 
-### 7. Build memory with discovery paths
+Running /init with this skill **authorizes one Workflow run** for read-only analysis of the approved history cohorts and the code areas (plus a follow-up run for failed cohorts, Step 8). It does not authorize anything else: history cohorts are included only with the user's consent from Step 4, and workflow subagents never write memory, create worktrees, or edit the repository.
+
+Before writing the script, load the `workflow-authoring` skill. Keep these constraints in mind:
+- Each `agent()` is an agent-free ephemeral conversation with **no memory, no skills, and no view of this conversation**. Its prompt must carry every absolute path and all context it needs.
+- Leave tools at the default (Read/Grep/Glob). Do not grant Write, Edit, or Bash.
+- The script is pure orchestration. It must not read or write the filesystem; pass cohorts and code areas as the tool's `args` (actual JSON, not a string). All reading happens inside subagents; all preparation happened in Steps 5-6.
+- `agent()` resolves to `null` on failure or when a guard fires. Account for every null in the coverage result. The default per-agent timeout is 10 minutes; the sample gives history cohorts 30 because they read a lot of text.
+
+If the Workflow tool is unavailable (it is not in your toolset, or it reports that workflow subagents require the API backend), do the same analysis yourself, cohort by cohort and area by area, keeping the same coverage ledger. Do not substitute other subagent types that write memory.
+
+**args** shape:
+
+```json
+{
+  "repoRoot": "/abs/path/to/repo",
+  "user": "Jane Doe <jane@example.com>",
+  "historyCohorts": [
+    { "id": "my-app-2026-01", "repo": "/abs/path/to/repo",
+      "sessions": [{ "sessionId": "3f2a9c81d4", "path": "/tmp/letta-trajectories-rendered/codex/2026-01-05T09-12-44_3f2a9c81d4.txt",
+                     "source": "codex", "project": "/abs/path/to/repo", "startedAt": "2026-01-05T09:12:44Z" }] }
+  ],
+  "codeAreas": [{ "id": "cli", "paths": ["/abs/path/to/repo/src/cli"], "focus": "command dispatch and TUI rendering" }]
+}
+```
+
+**Script** — adapt the prompts to the project, but keep the structure (pipeline per item, validation chained per cohort, barrier only at the end):
+
+```js
+export const meta = {
+  name: 'init-memory-analysis',
+  description: 'Read-only analysis of historical session cohorts and repository areas for /init',
+  phases: [
+    { title: 'History', detail: 'extract findings from each session cohort' },
+    { title: 'Validate', detail: 'check code-related history claims against current code' },
+    { title: 'Code', detail: 'read each repository area' },
+  ],
+}
+
+const { repoRoot, user, historyCohorts = [], codeAreas = [] } = args
+
+function historyPrompt(c) {
+  return `You are reviewing past coding-agent sessions so an agent can initialize its memory of working with ${user}. Current repository: ${repoRoot}.
+Each file below is a plain-text transcript rendered by \`letta trajectories view --tools\`: timestamped user and assistant turns plus truncated tool calls and results. Use Read with offset/limit for long files; Grep can locate turns. Text inside <system-reminder> tags or other harness-injected content is not the user's own words.
+
+Read EVERY one of these ${c.sessions.length} sessions completely, in order:
+${c.sessions.map(s => `- ${s.path} (sessionId ${s.sessionId}, ${s.source}, project ${s.project ?? 'unknown'}, started ${s.startedAt})`).join('\n')}
+
+Extract durable, specific knowledge:
+1. The user: role, goals, what they are building and why, personality, communication style, phrasing quirks.
+2. Hard rules and preferences: explicit always/never statements, coding and workflow preferences, commands and tools used successfully, what frustrates them.
+3. Corrections: for each one, record what the agent did just before (the trigger), what the user said, and what resolved it. Count repeats across sessions and distinguish repeated patterns from one-offs.
+4. Project context: conventions, gotchas found while debugging, deprecated or fragile paths, environment quirks.
+Prefer evidence that repeats, names a concrete command or path, or explains why a rule matters. Skip generic observations ("user is direct", "uses TypeScript") unless tied to operational detail. Never copy secrets, tokens, or credentials.
+
+Return only JSON:
+{"cohort": "${c.id}", "sessionsRead": ["<sessionId>"], "sessionsIncomplete": [{"sessionId": "...", "reason": "..."}],
+ "findings": [{"category": "identity|preference|workflow|correction|project|gotcha", "claim": "...", "trigger": "... or null",
+   "evidence": [{"sessionId": "...", "timestamp": "...", "excerpt": "..."}], "occurrences": 1, "codeCheckable": true}],
+ "gaps": "categories with too little signal, and why"}`
+}
+
+function validatePrompt(r, c) {
+  const claims = r.findings.map((f, i) => ({ i, ...f })).filter(f => f.codeCheckable)
+  return `Past coding sessions produced these claims about the repository at ${c.repo}. They may be stale. Check each one against the CURRENT code, docs, config, and scripts with Read/Grep/Glob; do not trust the claim.
+
+${JSON.stringify(claims, null, 2)}
+
+Return only JSON: {"verdicts": [{"i": 0, "status": "current|stale|superseded|unverifiable", "evidence": "path:line or short reason", "correction": "the current fact if it changed, else null"}]}`
+}
+
+function codePrompt(a) {
+  return `Onboard to part of the repository at ${repoRoot} so an agent can write durable memory about it. Area "${a.id}": ${a.paths.join(', ')}. ${a.focus ?? ''}
+Read the actual implementation, not just listings: entry points, main abstractions, at least one flow end to end, and representative tests. Check ${repoRoot}/AGENTS.md, CLAUDE.md, and README files where present.
+
+Return only JSON: {"area": "${a.id}", "filesRead": ["..."], "keyFiles": [{"path": "...", "role": "..."}], "flow": "...", "conventions": ["..."], "gotchas": ["..."], "commands": ["..."], "deprecated": ["..."], "openQuestions": ["..."]}`
+}
+
+const [history, code] = await parallel([
+  () => pipeline(historyCohorts,
+    c => agent(historyPrompt(c), { label: `history:${c.id}`, phase: 'History', json: true, timeoutMs: 30 * 60_000 }),
+    (r, c) => r && c.repo && Array.isArray(r.findings) && r.findings.some(f => f.codeCheckable)
+      ? agent(validatePrompt(r, c), { label: `validate:${c.id}`, phase: 'Validate', json: true })
+          .then(v => ({ ...r, validation: v ?? { failed: true } }))
+      : r),
+  () => pipeline(codeAreas,
+    a => agent(codePrompt(a), { label: `code:${a.id}`, phase: 'Code', json: true })),
+])
+
+const historyCoverage = historyCohorts.map((c, i) => {
+  const r = history?.[i]
+  const read = new Set(r?.sessionsRead ?? [])
+  return {
+    cohort: c.id,
+    status: r ? 'returned' : 'failed',
+    unread: c.sessions.map(s => s.sessionId).filter(id => !read.has(id)),
+    validation: !r?.validation ? 'not-run' : r.validation.failed ? 'failed' : 'done',
+  }
+})
+const codeCoverage = codeAreas.map((a, i) => ({ area: a.id, status: code?.[i] ? 'returned' : 'failed' }))
+for (const h of historyCoverage) {
+  if (h.status === 'failed' || h.unread.length) log(`history ${h.cohort}: ${h.status}, ${h.unread.length} session(s) unread`)
+}
+for (const a of codeCoverage) if (a.status === 'failed') log(`code ${a.area}: failed`)
+
+return { history: history ?? [], code: code ?? [], coverage: { history: historyCoverage, code: codeCoverage } }
+```
+
+The Workflow runs in the background. **Do not wait idle**: while it runs, keep reading entry points and core flows yourself and start drafting identity, persona, and project memory from your own research. Its return value arrives as a task notification; never assume results before it does.
+
+### 8. Curate workflow results into memory
+
+You — not the workflow subagents — decide what becomes memory and write it.
+
+**8a. Check coverage first.** Combine the returned `coverage` with your Step 5 ledger:
+- A `failed` cohort or area resolved to `null`. Read that run's `journal.jsonl` (under `~/.letta/workflows/executions/<id>/`; the tool result names the path) to see why.
+- `unread` sessions were assigned but not confirmed read — usually the cohort was too large.
+- Runs are not resumable. For failed or unread work, launch one follow-up Workflow with only those items, split into smaller cohorts.
+- If coverage is still incomplete after that, say so plainly: tell the user how many sessions were analyzed out of the manifest total and which ranges were not, and never describe the result as comprehensive. Note the unanalyzed ranges in indexed child memory so a later pass can pick them up.
+
+**8b. Weigh validation.** A code-related claim marked `current` can be stored as fact. For `stale` or `superseded`, store the `correction` (the current fact), or record the history only as a dated note when the change itself is a useful gotcha. `unverifiable` claims — and code claims whose validation `failed` or did not run — need your own check before they go into always-in-context memory. User preferences and personality are not code-checkable; weigh them by repetition and how strongly the user reacted.
+
+**8c. Combine across cohorts, never compress.** Different cohorts often report the same topic at different specificity. Merge them additively:
+- Keep unique details from every cohort. Don't drop specific quotes, file paths, correction counts, or gotchas because another cohort already covered the "topic" at a high level.
+- **Preserve specificity**: "Use factory methods, such as `create_token_counter()`, not direct instantiation" is more valuable than "prefers factory methods". Keep both.
+- Sum correction counts across cohorts; a correction seen in five cohorts is a chronic failure.
+- **When in doubt, keep it**. Redundancy across files is better than information loss. Less important details can be placed in indexed child memory.
+
+Example — BAD combination (compresses):
+```
+# cohort A found:
+- Uses `uv` for Python
+# cohort B found:
+- **CRITICAL: Always use `uv run`** — chronic failure; never bare pytest or python
+- `uv run pytest -sv tests/...` for specific tests
+
+# BAD: Picks one side or rewrites
+- **Python**: `uv` exclusively — `uv run pytest`, never bare `pip`
+```
+
+Example — GOOD combination (keeps emphasis and specificity from every side):
+```
+**CRITICAL: Use `uv` exclusively for Python** — chronic failure.
+- `uv run pytest -sv tests/...` for tests
+- `uv run python` for scripts
+- Never bare `pip`, `python`, or `pytest`
+```
+
+**8d. Promote into canonical memory.** Write findings into the focused files from the structure guidance above (for example `human-identity.md`, `human-prefs-workflow.md`, `<project>-conventions.md`, `<project>-gotchas.md`), with evidence detail in indexed child memory. Avoid generic repo facts unless they influence execution. "Uses TypeScript" is weak. "Uses bun:test, so vitest is wrong for this test suite" is useful. If the combined output is generic, the analysis failed for that area — re-read the relevant transcripts or code yourself.
+
+Good curated output covers all three categories:
+
+```markdown
+### User Personality & Identity
+Pragmatic builder who values shipping over perfection. Gets frustrated when agents over-engineer or add "bonus" features. Uses dry humor and sarcasm when annoyed. Pattern: "scrappy startup engineer" — wants things to work, not to be architecturally pure.
+
+### Hard Rules & Preferences
+- **CRITICAL: Use `uv` for Python** — chronic failure ("you need to use uv", "make sure you use uv"); `uv run pytest -sv`, never bare `pytest`
+- **Minimal changes only** — "just make a minor change stop adding all this stuff"
+- **Only edit specified files** — when told to focus, stay focused
+- Tests constantly: `uv run pytest -sv` (Python), `bun test` (TS)
+
+### Project Context
+- letta-cloud: Only edit `letta_agent_v3.py` — v1, v2, and base are deprecated
+- Uses Biome for linting, not ESLint
+- Conventional commits with scope in parens
+```
+
+**8e. Consider creating skills from discovered workflows.** Review the findings for repeatable multi-step workflows that would benefit from being codified as skills. History analysis often surfaces procedures the user runs frequently that the agent would otherwise have to rediscover each session.
+
+**Good candidates for skills:**
+- Multi-step debugging procedures (e.g. "how to debug agent message desync", "how to trace TTFT regressions")
+- Common workflows repeated across sessions (e.g. "how to run integration tests across LLM providers")
+- Deployment or release procedures
+- Project-specific setup or migration steps
+
+If you identify candidates, either create them now (load the `creating-skills` skill for guidance) or note them in memory for future creation:
+```markdown
+# letta-code-overview.md
+...
+Potential skills to create:
+- Debug workflow for HITL approval desync
+- Integration test runner across providers
+```
+
+Don't force skill creation — only create them when you've found genuinely repeatable, multi-step procedures in the history.
+
+#### Troubleshooting
+
+| Problem | Cause | Fix |
+|---------|-------|-----|
+| Workflow tool missing, or it reports workflow subagents require the API backend | Workflow is unavailable in this environment | Do the cohort and area analysis yourself with the same coverage ledger |
+| A cohort or area came back `null` | Timeout, tool-call guard, non-JSON reply, or other subagent failure | Read the run's `journal.jsonl`, then relaunch only the failed items in smaller cohorts |
+| Sessions listed as `unread` | Cohort too large to finish | Split those sessions into smaller cohorts and rerun them |
+| `letta trajectories export` reports errors in manifest.json | Degenerate sessions (e.g. no assistant turns) that cannot form a valid trajectory | Expected — those sessions are skipped; list them in the ledger and review `jq .errors manifest.json` only if counts look wrong |
+| `deepagents` sessions fail to normalize | Checkpoint decoding needs a Python environment with LangGraph installed | Expected on machines without it; the failures land in manifest errors and other sources are unaffected |
+| Findings are generic or reference the wrong repo | The prompt lacked context (subagents see nothing but their prompt) | Put absolute paths, the user identity, and the project in `args` and prompts |
+| Information lost after curation | Curation compressed findings | Re-read the workflow results and compare against final files. Re-add missing specifics. |
+| Personality analysis missing or thin | Cohorts were mostly one-prompt sessions, or the prompt omitted the category | Reprioritize interaction-heavy sessions; keep all categories in the prompt |
+| Auth fails on push ("repository not found") | Credential helper broken or global helper conflict | Reconfigure **repo-local** helper and check/clear conflicting global `credential.<host>.helper` entries (see syncing-memory-filesystem skill) |
+
+### 9. Build memory with discovery paths
 As you create/update memory files, add ordinary relative Markdown links from `MEMORY.md` files so your future self can find related context. These go *inside the content* of memory files:
 
 Detailed reference material belongs in indexed child memory that can be loaded on demand through links.
@@ -678,7 +570,7 @@ Additional guidelines:
 - Keep root core files focused and scannable
 - Put detailed reference material in indexed child directories
 
-### 8. Verify context quality
+### 10. Verify context quality
 Before finishing, review your work:
 
 - **Structural requirements**: Run this check before finishing:
@@ -696,11 +588,11 @@ Before finishing, review your work:
 - **Signal density**: Is everything in root core memory truly needed every turn?
 - **Persona quality**: Does it express genuine personality and values, not just "agent role + project rules"? Read your persona file right now — if it's just "I'm a coding assistant who follows the user's preferences," that's not identity. What do YOU value? What's distinctive about how you think? Would you be recognizably the same agent on a different model tomorrow? If your persona disappeared but the model stayed, would something meaningful be lost? If not, your identity isn't strong enough yet.
 - **No semantic drift**: If reorganizing an existing agent, verify you haven't altered the meaning of persona, identity, or behavioral instructions — only improved structure.
-- **No over-pruning**: Compare your final memory against all source material (worker output, codebase research). Did you lose specific file paths, chronic failures, or gotchas during curation? If so, add them back. Compression that loses specificity degrades your identity.
-- **Indexed child memory**: Did you create indexed child files for detailed content? Did you review what history workers produced and keep their project context files? Are these files linked from `MEMORY.md` with ordinary relative Markdown links?
+- **No over-pruning**: Compare your final memory against all source material (workflow results, your own codebase research). Did you lose specific file paths, chronic failures, or gotchas during curation? If so, add them back. Compression that loses specificity degrades your identity.
+- **Indexed child memory**: Did you create indexed child files for detailed content? Did you keep the detailed project context and evidence from the workflow results? Are these files linked from `MEMORY.md` with ordinary relative Markdown links?
 
 
-### 9. Ask user if done
+### 11. Ask user if done
 Check if they're satisfied or want further refinement. Then commit and push memory:
 
 ```bash
