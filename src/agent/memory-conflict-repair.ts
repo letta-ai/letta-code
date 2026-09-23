@@ -101,11 +101,9 @@ export async function claimMemoryConflictRepair(
   let path: string;
   let signature: string;
   try {
-    path = await attemptPath(memoryDir);
-    signature = await describeMemoryConflict(
-      memoryDir,
-      await getMemoryGitDir(memoryDir),
-    );
+    const gitDir = await getMemoryGitDir(memoryDir);
+    path = join(gitDir, ATTEMPT_FILE);
+    signature = await describeMemoryConflict(memoryDir, gitDir);
   } catch {
     return { status: "claimed", token };
   }

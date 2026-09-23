@@ -198,6 +198,17 @@ const conflict: MemoryPostTurnSyncResult = {
   summary: "merge in progress",
   localOnly: true,
 };
+/** A spawn stub that records the launched task's arguments. */
+function spawnInto(jobs: SpawnBackgroundSubagentTaskArgs[]) {
+  return (args: SpawnBackgroundSubagentTaskArgs) => {
+    jobs.push(args);
+    return {
+      taskId: "task-repair",
+      outputFile: "/tmp/repair.log",
+      subagentId: "repair",
+    };
+  };
+}
 test("post-turn conflict launches the memory task and warns the primary, without a same-agent conversation", async () => {
   const jobs: SpawnBackgroundSubagentTaskArgs[] = [];
   const reminders: string[] = [];
@@ -213,14 +224,7 @@ test("post-turn conflict launches the memory task and warns the primary, without
       syncMemory: async () => conflict,
       syncAttachedRepositories: async () => ({ results: [] }),
       repairConflict: (params) =>
-        ensureMemoryConflictRepair(params, (args) => {
-          jobs.push(args);
-          return {
-            taskId: "task-repair",
-            outputFile: "/tmp/repair.log",
-            subagentId: "repair",
-          };
-        }),
+        ensureMemoryConflictRepair(params, spawnInto(jobs)),
     },
   );
   expect(jobs).toHaveLength(1);
@@ -276,14 +280,7 @@ test("dirty and failed primary memory sync remind the primary instead of launchi
 test("a conflict is reported to the primary only once repair has run on it", async () => {
   const jobs: SpawnBackgroundSubagentTaskArgs[] = [];
   const reminders: string[] = [];
-  const spawn = (args: SpawnBackgroundSubagentTaskArgs) => {
-    jobs.push(args);
-    return {
-      taskId: "task-repair",
-      outputFile: "/tmp/repair.log",
-      subagentId: "repair",
-    };
-  };
+  const spawn = spawnInto(jobs);
   const claims: MemoryConflictRepairClaim[] = [
     { status: "claimed", token: "attempt" },
     { status: "in_progress" },

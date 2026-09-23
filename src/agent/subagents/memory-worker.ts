@@ -11,7 +11,6 @@ import {
   buildReflectionMemoryScope,
   createReflectionMemoryWorktree,
   integrateMemoryWorkerWorktree,
-  type MemoryWorkerWorktreeOutcome,
 } from "@/agent/memory-worktree";
 import { recompileAgentSystemPrompt } from "@/agent/modify";
 import { getBackend } from "@/backend";
@@ -23,6 +22,47 @@ const SYNCED_STATUSES = new Set<MemoryPostTurnSyncResult["status"]>([
   "pushed",
   "skipped",
 ]);
+
+interface MemoryWorkerParams {
+  agentId: string;
+  conversationId: string;
+  memoryDir: string;
+  /**
+   * Set for a harness-launched conflict repair: the attempt token from
+   * `claimMemoryConflictRepair`, which the worker advances or forgets.
+   */
+  repairToken?: string;
+  signal?: AbortSignal;
+}
+
+/** Spawn the worker on the given checkout; resolves with its result. */
+type MemoryWorkerExecute = (
+  memoryDir: string,
+  memoryScope: SubagentMemoryScope,
+) => Promise<SubagentResult>;
+
+interface MemoryWorkerDeps {
+  sync?: typeof syncPendingMemoryCommitsAfterTurn;
+  recompile?: typeof recompileAgentSystemPrompt;
+  /** Awaited so the repair task is registered before this worker completes. */
+  repair?: (result: MemoryPostTurnSyncResult) => void | Promise<unknown>;
+  /** Memory on disk changed (a merge, a push, or a pull); refresh readers. */
+  onMemoryChanged?: () => void;
+}
+
+/** The worker's resolved dependencies, bound to its scope. */
+type Helpers = Pick<MemoryWorkerDeps, "repair" | "onMemoryChanged"> & {
+  sync: () => Promise<MemoryPostTurnSyncResult>;
+  recompile: () => Promise<void>;
+};
+
+/** Mark a result failed, keeping an error the worker already reported. */
+function failed(result: SubagentResult, error: string): SubagentResult {
+  return { ...result, success: false, error: result.error ?? error };
+}
+
+/** The harness reports without a worker identity when no worker ran. */
+const NO_WORKER: SubagentResult = { agentId: "", success: false, report: "" };
 
 /**
  * Run a memory worker under the checkout lease.
@@ -38,29 +78,9 @@ const SYNCED_STATUSES = new Set<MemoryPostTurnSyncResult["status"]>([
  * Called inside the existing background task, never awaited by the primary.
  */
 export async function runMemoryWorker(
-  params: {
-    agentId: string;
-    conversationId: string;
-    memoryDir: string;
-    /**
-     * Set for a harness-launched conflict repair: the attempt token from
-     * `claimMemoryConflictRepair`, which the worker advances or forgets.
-     */
-    repairToken?: string;
-    signal?: AbortSignal;
-  },
-  execute: (
-    memoryDir: string,
-    memoryScope: SubagentMemoryScope,
-  ) => Promise<SubagentResult>,
-  deps: {
-    sync?: typeof syncPendingMemoryCommitsAfterTurn;
-    recompile?: typeof recompileAgentSystemPrompt;
-    /** Awaited so the repair task is registered before this worker completes. */
-    repair?: (result: MemoryPostTurnSyncResult) => void | Promise<unknown>;
-    /** Memory on disk changed (a merge, a push, or a pull); refresh readers. */
-    onMemoryChanged?: () => void;
-  } = {},
+  params: MemoryWorkerParams,
+  execute: MemoryWorkerExecute,
+  deps: MemoryWorkerDeps = {},
 ): Promise<SubagentResult> {
   const sync = () =>
     (deps.sync ?? syncPendingMemoryCommitsAfterTurn)(params.agentId, {
@@ -85,7 +105,12 @@ export async function runMemoryWorker(
       );
     }
   };
-  const helpers = { sync, recompile, deps };
+  const helpers: Helpers = {
+    sync,
+    recompile,
+    repair: deps.repair,
+    onMemoryChanged: deps.onMemoryChanged,
+  };
   const { repairToken } = params;
   if (repairToken === undefined) {
     return withMemoryOperation(
@@ -109,12 +134,6 @@ export async function runMemoryWorker(
   }
 }
 
-type Helpers = {
-  sync: () => Promise<MemoryPostTurnSyncResult>;
-  recompile: () => Promise<void>;
-  deps: Parameters<typeof runMemoryWorker>[2];
-};
-
 function syncSummary(result: MemoryPostTurnSyncResult): string {
   return `Memory sync incomplete (${result.status}): ${result.summary}`;
 }
@@ -127,7 +146,7 @@ function syncSummary(result: MemoryPostTurnSyncResult): string {
 async function settle(
   result: SubagentResult,
   changed: boolean,
-  { sync, recompile, deps }: Helpers,
+  { sync, recompile, repair, onMemoryChanged }: Helpers,
 ): Promise<SubagentResult> {
   let syncError: string | undefined;
   let pushed = false;
@@ -138,7 +157,7 @@ async function settle(
     if (!SYNCED_STATUSES.has(syncResult.status)) {
       syncError = syncSummary(syncResult);
       debugWarn("memory-worker", syncError);
-      if (syncResult.status === "conflict") await deps?.repair?.(syncResult);
+      if (syncResult.status === "conflict") await repair?.(syncResult);
     }
   } catch (error) {
     syncError = `Memory sync failed: ${String(error)}`;
@@ -146,16 +165,14 @@ async function settle(
   }
   // Local-only checkouts report a merge as "skipped"; readers still need to
   // know memory changed.
-  if (pushed || changed) deps?.onMemoryChanged?.();
+  if (pushed || changed) onMemoryChanged?.();
   if (!syncError && changed && result.success) await recompile();
-  return syncError
-    ? { ...result, success: false, error: result.error ?? syncError }
-    : result;
+  return syncError ? failed(result, syncError) : result;
 }
 
 async function runUpdate(
-  params: Parameters<typeof runMemoryWorker>[0],
-  execute: Parameters<typeof runMemoryWorker>[1],
+  params: MemoryWorkerParams,
+  execute: MemoryWorkerExecute,
   helpers: Helpers,
 ): Promise<SubagentResult> {
   const worktree = await createReflectionMemoryWorktree({
@@ -172,33 +189,26 @@ async function runUpdate(
     // A worker that crashed after committing still has commits worth
     // keeping; they are merged and synced below and the task reports the
     // failure, rather than silently leaving an unsynced checkout.
-    result = {
-      agentId: "",
-      success: false,
-      report: "",
-      error: error instanceof Error ? error.message : String(error),
-    };
+    result = failed(
+      NO_WORKER,
+      error instanceof Error ? error.message : String(error),
+    );
   }
   // A cancelled worker's edits are dropped with its worktree; nothing it did
   // reaches the checkout, and no sync (with remote retries) runs.
-  const outcome: MemoryWorkerWorktreeOutcome =
-    await integrateMemoryWorkerWorktree(worktree, {
-      discard: params.signal?.aborted === true,
-    });
-  const failed = (error: string) => ({
-    ...result,
-    success: false,
-    error: result.error ?? error,
+  const outcome = await integrateMemoryWorkerWorktree(worktree, {
+    discard: params.signal?.aborted === true,
   });
   switch (outcome.status) {
     case "discarded":
-      return failed("Memory worker cancelled");
+      return failed(result, "Memory worker cancelled");
     case "merge_conflict":
       return failed(
+        result,
         `Memory changes conflict with the checkout; ${outcome.commitCount} commit(s) kept on ${outcome.branchName}`,
       );
     case "failed":
-      return failed(outcome.error);
+      return failed(result, outcome.error);
     default:
       return settle(result, outcome.status === "merged", helpers);
   }
@@ -212,9 +222,9 @@ async function runUpdate(
  * done once it has run so an unresolved conflict is reported instead.
  */
 async function runRepair(
-  params: Parameters<typeof runMemoryWorker>[0],
+  params: MemoryWorkerParams,
   token: string,
-  execute: Parameters<typeof runMemoryWorker>[1],
+  execute: MemoryWorkerExecute,
   helpers: Helpers,
 ): Promise<SubagentResult> {
   // Another worker, or the primary, may have repaired the checkout before
@@ -225,11 +235,11 @@ async function runRepair(
   const state = await helpers.sync();
   if (state.status !== "conflict") {
     await clearMemoryConflictRepair(params.memoryDir, token);
-    if (state.status === "pushed") helpers.deps?.onMemoryChanged?.();
+    if (state.status === "pushed") helpers.onMemoryChanged?.();
     // No worker ran, so there is no worker identity to report.
     return SYNCED_STATUSES.has(state.status)
-      ? { agentId: "", success: true, report: "No memory conflict remains." }
-      : { agentId: "", success: false, report: "", error: syncSummary(state) };
+      ? { ...NO_WORKER, success: true, report: "No memory conflict remains." }
+      : failed(NO_WORKER, syncSummary(state));
   }
   const result = await execute(params.memoryDir, {
     primaryRoot: params.memoryDir,
@@ -237,11 +247,7 @@ async function runRepair(
   });
   if (params.signal?.aborted) {
     await clearMemoryConflictRepair(params.memoryDir, token);
-    return {
-      ...result,
-      success: false,
-      error: result.error ?? "Memory repair cancelled",
-    };
+    return failed(result, "Memory repair cancelled");
   }
   await completeMemoryConflictRepair(params.memoryDir, token);
   return settle(result, true, helpers);

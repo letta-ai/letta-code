@@ -159,6 +159,10 @@ export async function runPostTurnMemorySync(
   const syncAttachedRepositories =
     dependencies.syncAttachedRepositories ??
     syncPendingAttachedRepositoryCommitsAfterTurn;
+  const repairConflict =
+    dependencies.repairConflict ??
+    ((repair) =>
+      ensureMemoryConflictRepair(repair, spawnBackgroundSubagentTask));
   let memorySyncEnabled = true;
 
   try {
@@ -187,11 +191,7 @@ export async function runPostTurnMemorySync(
           if (result.status === "pushed") params.onMemoryPushed?.();
           const repairInProgress =
             result.status === "conflict" &&
-            (await (
-              dependencies.repairConflict ??
-              ((repair) =>
-                ensureMemoryConflictRepair(repair, spawnBackgroundSubagentTask))
-            )({ ...params, result }));
+            (await repairConflict({ ...params, result }));
           const reminder = repairInProgress
             ? formatMemoryRepairInProgressReminder(result)
             : formatMemoryPostTurnSyncReminder(result);
