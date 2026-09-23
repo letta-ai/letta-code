@@ -10,19 +10,24 @@ import {
 } from "@/agent/approval-recovery";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
 import { getBackend } from "@/backend";
+import type { Buffers } from "@/cli/helpers/accumulator";
+import { prepareBuffersForTurn } from "@/cli/helpers/transcript-eviction";
 import { debugWarn } from "@/utils/debug";
 
 import { createClientOtid } from "./ids";
 import type {
   ProcessConversation,
+  ProcessConversationOptions,
   QueueApprovalResults,
   QueuedApprovalMetadata,
 } from "./types";
 
 type QueuedApprovalSubmitContext = {
   agentId: string;
+  buffersRef: MutableRefObject<Buffers>;
   conversationGenerationRef: MutableRefObject<number>;
   conversationIdRef: MutableRefObject<string>;
+  emittedIdsRef: MutableRefObject<Set<string>>;
   interruptQueuedRef: MutableRefObject<boolean>;
   needsEagerApprovalCheck: boolean;
   processConversation: ProcessConversation;
@@ -32,11 +37,40 @@ type QueuedApprovalSubmitContext = {
   setNeedsEagerApprovalCheck: Dispatch<boolean>;
 };
 
+/**
+ * New-turn entry used by command/skill/mod paths. Evicts committed transcript
+ * lines before the turn starts so those sessions stay bounded the same way as
+ * typed Enter. Mid-turn reentry must call `processConversation` directly —
+ * eviction here would shift `order` after `transcriptStartLineIndex` is
+ * captured.
+ */
+export async function processNewTurnWithQueuedApprovals(args: {
+  buffers: Buffers;
+  committedIds: ReadonlySet<string>;
+  consumeQueuedApprovalInput: () => ApprovalCreate | null;
+  input: Array<MessageCreate | ApprovalCreate>;
+  options?: ProcessConversationOptions;
+  processConversation: ProcessConversation;
+}): Promise<void> {
+  prepareBuffersForTurn(args.buffers, args.committedIds);
+  const queuedApprovalInput = args.consumeQueuedApprovalInput();
+  const nextInput = queuedApprovalInput
+    ? [queuedApprovalInput, ...args.input]
+    : args.input;
+  await args.processConversation(nextInput, {
+    ...args.options,
+    // Eviction shifted `order`; a prior turn's slice index is no longer valid.
+    transcriptStartLineIndex: args.options?.transcriptStartLineIndex ?? null,
+  });
+}
+
 export function useQueuedApprovalSubmit(ctx: QueuedApprovalSubmitContext) {
   const {
     agentId,
+    buffersRef,
     conversationGenerationRef,
     conversationIdRef,
+    emittedIdsRef,
     interruptQueuedRef,
     needsEagerApprovalCheck,
     processConversation,
@@ -139,17 +173,21 @@ export function useQueuedApprovalSubmit(ctx: QueuedApprovalSubmitContext) {
     [queueApprovalResults, interruptQueuedRef],
   );
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: buffer/emitted-id refs are stable objects; .current is read at call time.
   const processConversationWithQueuedApprovals = useCallback(
     async (
       input: Array<MessageCreate | ApprovalCreate>,
       options?: Parameters<typeof processConversation>[1],
     ): Promise<void> => {
-      const queuedApprovalInput =
-        consumeQueuedApprovalInputForCurrentConversation();
-      const nextInput = queuedApprovalInput
-        ? [queuedApprovalInput, ...input]
-        : input;
-      await processConversation(nextInput, options);
+      await processNewTurnWithQueuedApprovals({
+        buffers: buffersRef.current,
+        committedIds: emittedIdsRef.current,
+        consumeQueuedApprovalInput:
+          consumeQueuedApprovalInputForCurrentConversation,
+        input,
+        options,
+        processConversation,
+      });
     },
     [consumeQueuedApprovalInputForCurrentConversation, processConversation],
   );

@@ -4094,15 +4094,16 @@ export function App({
     refreshDerivedStreaming,
     setBashRunning,
   });
-
   const {
     checkPendingApprovalsForSlashCommand,
     consumeQueuedApprovalInputForCurrentConversation,
     processConversationWithQueuedApprovals,
   } = useQueuedApprovalSubmit({
     agentId,
+    buffersRef,
     conversationGenerationRef,
     conversationIdRef,
+    emittedIdsRef,
     interruptQueuedRef,
     needsEagerApprovalCheck,
     processConversation,
@@ -4111,7 +4112,6 @@ export function App({
     queuedApprovalResultsRef,
     setNeedsEagerApprovalCheck,
   });
-
   const handleReflectionArenaChoiceSubmit = useCallback(
     async (answers: Record<string, string>) => {
       const pending = reflectionArenaChoicePending;

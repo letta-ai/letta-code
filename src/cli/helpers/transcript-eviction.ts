@@ -11,7 +11,7 @@
  * Why turn boundaries: the reflection transcript delta slices
  * `toLines(buffers)` by an index captured at submit time, so buffer order
  * must stay stable between submit and end of turn. Eviction therefore runs
- * at submit time (via `prepareBuffersForTurn`), never mid-turn.
+ * at new-turn entry (via `prepareBuffersForTurn`), never mid-turn.
  *
  * Why the id/otid alias maps are size-trimmed rather than pruned per line:
  * late chunks of a mixed id/otid stream resolve through them, and the
