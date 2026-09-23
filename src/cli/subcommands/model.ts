@@ -114,6 +114,8 @@ export async function runModelSubcommand(argv: string[]): Promise<number> {
       const local = getBackend().capabilities.localModelCatalog;
       await initializeModelCatalog();
       let catalog = [...models];
+      let availableModels = local ? (getCachedAvailableModels() ?? []) : [];
+      let byokLookupSucceeded = local;
       // The local runtime inventory is entirely user-configured, not hosted.
       if (local && values.hosted) catalog = [];
       // Cloud hosted rows only come from /models/catalog. /models adds BYOK
@@ -123,6 +125,10 @@ export async function runModelSubcommand(argv: string[]): Promise<number> {
         const known = new Set(catalog.map((entry) => entry.handle));
         try {
           const available = await getAvailableModelHandles();
+          availableModels = available.models.filter(
+            (entry) => entry.providerCategory === "byok",
+          );
+          byokLookupSucceeded = true;
           // BYOK handles can also have catalog presets (e.g. coding plans).
           // Use only BYOK metadata here, never the inventory's hosted/base rows.
           if (values.byok || values.hosted) {
@@ -162,11 +168,26 @@ export async function runModelSubcommand(argv: string[]): Promise<number> {
           );
         }
       }
+      const availableByHandle = new Map(
+        availableModels.map((entry) => [entry.handle, entry]),
+      );
       await printJson(
         catalog.map((entry) => ({
           id: entry.id,
           handle: entry.handle,
           label: entry.label,
+          provider_type:
+            availableByHandle.get(entry.handle)?.providerType ??
+            (typeof entry.updateArgs?.provider_type === "string"
+              ? entry.updateArgs.provider_type
+              : null),
+          provider_category: local
+            ? "byok"
+            : availableByHandle.has(entry.handle)
+              ? "byok"
+              : byokLookupSucceeded
+                ? "base"
+                : null,
           context_window_limit: entry.updateArgs?.context_window ?? null,
           reasoning_levels: reasoningLevels(
             entry.handle,
