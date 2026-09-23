@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { OAuthSelectPrompt } from "@earendil-works/pi-ai/oauth";
 import { __testSetBackend, type Backend, getBackend } from "@/backend";
+import type { ProviderResponse } from "@/backend/api/providers";
 import type { LocalOAuthConnectCallbacks } from "@/cli/commands/connect-local-oauth";
 import { runConnectSubcommand } from "@/cli/subcommands/connect";
+import type { ProviderOperationOptions } from "@/providers/byok-providers";
 
 function setProviderTarget(target: "api" | "local") {
   __testSetBackend({
@@ -33,6 +35,13 @@ function createIoDeps() {
       promptSecret: mock(() => Promise.resolve("prompted-key")),
       checkProviderApiKey: mock(() => Promise.resolve()),
       createOrUpdateProvider: mock(() => Promise.resolve({ id: "provider-1" })),
+      getProviderByName: mock<
+        (
+          providerName: string,
+          options?: ProviderOperationOptions,
+        ) => Promise<ProviderResponse | null>
+      >(() => Promise.resolve(null)),
+      confirmOverwrite: mock(() => Promise.resolve(false)),
       isChatGPTOAuthConnected: mock(() => Promise.resolve(false)),
       runChatGPTOAuthConnectFlow: mock(() =>
         Promise.resolve({ providerName: "chatgpt-plus-pro" }),
@@ -427,6 +436,208 @@ describe("connect subcommand", () => {
       undefined,
       undefined,
       { baseURL: "http://127.0.0.1:8000/v1/" },
+    );
+  });
+
+  // Regression for LET-13157: `letta connect openai-compatible` writes a
+  // single BYOK provider slot keyed by provider name, and a second run
+  // silently replaced the endpoint (and billing account) stored there.
+  // Reconnecting must not swap an existing slot's endpoint without explicit
+  // confirmation, and `--name` must be honored so a second endpoint can be
+  // saved alongside the first.
+  const EXISTING_OPENAI_COMPATIBLE_PROVIDER = {
+    id: "provider-mimo",
+    name: "openai-compatible",
+    provider_type: "openai-compatible",
+    base_url: "https://mimo.example/v1",
+  };
+
+  test("blocks a reconnect that would swap the openai-compatible endpoint", async () => {
+    const { stdout, stderr, deps } = createIoDeps();
+    setProviderTarget("local");
+    deps.getProviderByName = mock(() =>
+      Promise.resolve(EXISTING_OPENAI_COMPATIBLE_PROVIDER),
+    );
+    deps.confirmOverwrite = mock(() => Promise.resolve(false));
+
+    const exitCode = await runConnectSubcommand(
+      ["openai-compatible", "--base-url", "https://opencode.example/v1"],
+      deps,
+    );
+
+    expect(exitCode).toBe(1);
+    expect(deps.getProviderByName).toHaveBeenCalledWith("openai-compatible", {
+      target: "local",
+    });
+    expect(deps.checkProviderApiKey).not.toHaveBeenCalled();
+    expect(deps.createOrUpdateProvider).not.toHaveBeenCalled();
+    const output = [...stdout, ...stderr].join("\n");
+    expect(output).toContain("https://mimo.example/v1");
+    expect(output).toContain("https://opencode.example/v1");
+    expect(output).toContain("--force");
+  });
+
+  test("aborts a non-interactive overwrite without --force", async () => {
+    const { stderr, deps } = createIoDeps();
+    setProviderTarget("local");
+    deps.getProviderByName = mock(() =>
+      Promise.resolve(EXISTING_OPENAI_COMPATIBLE_PROVIDER),
+    );
+    const nonTtyDeps = { ...deps, isTTY: () => false };
+
+    const exitCode = await runConnectSubcommand(
+      ["openai-compatible", "--base-url", "https://opencode.example/v1"],
+      nonTtyDeps,
+    );
+
+    expect(exitCode).toBe(1);
+    expect(nonTtyDeps.createOrUpdateProvider).not.toHaveBeenCalled();
+    expect(stderr.join("\n")).toContain("--force");
+  });
+
+  test("overwrites the slot after explicit confirmation", async () => {
+    const { deps } = createIoDeps();
+    setProviderTarget("local");
+    deps.getProviderByName = mock(() =>
+      Promise.resolve(EXISTING_OPENAI_COMPATIBLE_PROVIDER),
+    );
+    deps.confirmOverwrite = mock(() => Promise.resolve(true));
+
+    const exitCode = await runConnectSubcommand(
+      ["openai-compatible", "--base-url", "https://opencode.example/v1"],
+      deps,
+    );
+
+    expect(exitCode).toBe(0);
+    expect(deps.createOrUpdateProvider).toHaveBeenCalledWith(
+      "openai-compatible",
+      "openai-compatible",
+      "not-needed",
+      undefined,
+      undefined,
+      undefined,
+      { baseURL: "https://opencode.example/v1" },
+    );
+  });
+
+  test("overwrites the slot with --force without prompting", async () => {
+    const { deps } = createIoDeps();
+    setProviderTarget("local");
+    deps.getProviderByName = mock(() =>
+      Promise.resolve(EXISTING_OPENAI_COMPATIBLE_PROVIDER),
+    );
+    deps.confirmOverwrite = mock(() => Promise.resolve(false));
+
+    const exitCode = await runConnectSubcommand(
+      [
+        "openai-compatible",
+        "--base-url",
+        "https://opencode.example/v1",
+        "--force",
+      ],
+      deps,
+    );
+
+    expect(exitCode).toBe(0);
+    expect(deps.confirmOverwrite).not.toHaveBeenCalled();
+    expect(deps.createOrUpdateProvider).toHaveBeenCalledWith(
+      "openai-compatible",
+      "openai-compatible",
+      "not-needed",
+      undefined,
+      undefined,
+      undefined,
+      { baseURL: "https://opencode.example/v1" },
+    );
+  });
+
+  test("saves a second openai-compatible endpoint under --name", async () => {
+    const { deps } = createIoDeps();
+    setProviderTarget("local");
+
+    const exitCode = await runConnectSubcommand(
+      [
+        "openai-compatible",
+        "--name",
+        "opencode-go",
+        "--base-url",
+        "https://opencode.example/v1",
+      ],
+      deps,
+    );
+
+    expect(exitCode).toBe(0);
+    expect(deps.getProviderByName).toHaveBeenCalledWith("opencode-go", {
+      target: "local",
+    });
+    expect(deps.confirmOverwrite).not.toHaveBeenCalled();
+    expect(deps.createOrUpdateProvider).toHaveBeenCalledWith(
+      "openai-compatible",
+      "opencode-go",
+      "not-needed",
+      undefined,
+      undefined,
+      undefined,
+      { baseURL: "https://opencode.example/v1" },
+    );
+  });
+
+  test("guards a --name that already belongs to a different slot", async () => {
+    const { stdout, stderr, deps } = createIoDeps();
+    setProviderTarget("local");
+    deps.getProviderByName = mock((providerName: string) =>
+      providerName === "opencode-go"
+        ? Promise.resolve({
+            id: "provider-occupied",
+            name: "opencode-go",
+            provider_type: "ollama",
+            base_url: "http://localhost:11434/v1",
+          })
+        : Promise.resolve(null),
+    );
+    deps.confirmOverwrite = mock(() => Promise.resolve(false));
+
+    const exitCode = await runConnectSubcommand(
+      [
+        "openai-compatible",
+        "--name",
+        "opencode-go",
+        "--base-url",
+        "https://opencode.example/v1",
+      ],
+      deps,
+    );
+
+    expect(exitCode).toBe(1);
+    expect(deps.createOrUpdateProvider).not.toHaveBeenCalled();
+    const output = [...stdout, ...stderr].join("\n");
+    expect(output).toContain("http://localhost:11434/v1");
+    expect(output).toContain("ollama");
+  });
+
+  test("keeps same-endpoint reconnects prompt-free for key rotation", async () => {
+    const { deps } = createIoDeps();
+    setProviderTarget("local");
+    deps.getProviderByName = mock(() =>
+      Promise.resolve(EXISTING_OPENAI_COMPATIBLE_PROVIDER),
+    );
+    deps.confirmOverwrite = mock(() => Promise.resolve(false));
+
+    const exitCode = await runConnectSubcommand(
+      ["openai-compatible", "--base-url", "https://mimo.example/v1"],
+      deps,
+    );
+
+    expect(exitCode).toBe(0);
+    expect(deps.confirmOverwrite).not.toHaveBeenCalled();
+    expect(deps.createOrUpdateProvider).toHaveBeenCalledWith(
+      "openai-compatible",
+      "openai-compatible",
+      "not-needed",
+      undefined,
+      undefined,
+      undefined,
+      { baseURL: "https://mimo.example/v1" },
     );
   });
 
