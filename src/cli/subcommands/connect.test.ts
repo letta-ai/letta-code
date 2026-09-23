@@ -451,6 +451,12 @@ describe("connect subcommand", () => {
     provider_type: "openai-compatible",
     base_url: "https://mimo.example/v1",
   };
+  const EXISTING_API_PROVIDER: ProviderResponse = {
+    id: "provider-existing",
+    name: "openai-compatible",
+    provider_type: "openai",
+    base_url: "https://mimo.example/v1",
+  };
 
   test("blocks a reconnect that would swap the openai-compatible endpoint", async () => {
     const { stdout, stderr, deps } = createIoDeps();
@@ -921,5 +927,74 @@ describe("connect subcommand", () => {
       undefined,
     );
     expect(callOrder).toEqual(["settings", "check"]);
+  });
+
+  test("local overwrite abort does not suggest --name", async () => {
+    const { stderr, deps } = createIoDeps();
+    setProviderTarget("local");
+    deps.getProviderByNameStrict = mock(() =>
+      Promise.resolve(EXISTING_OPENAI_COMPATIBLE_PROVIDER),
+    );
+    deps.confirmOverwrite = mock(() => Promise.resolve(false));
+
+    const exitCode = await runConnectSubcommand(
+      ["openai-compatible", "--base-url", "https://opencode.example/v1"],
+      deps,
+    );
+
+    expect(exitCode).toBe(1);
+    expect(stderr.join("\n")).toContain("Re-run with --force to overwrite it.");
+    expect(stderr.join("\n")).not.toContain("--name");
+  });
+
+  test("api overwrite abort suggests --name to save under a different slot", async () => {
+    const { stderr, deps } = createIoDeps();
+    setProviderTarget("api");
+    deps.getProviderByNameStrict = mock(() =>
+      Promise.resolve(EXISTING_API_PROVIDER),
+    );
+    deps.confirmOverwrite = mock(() => Promise.resolve(false));
+
+    const exitCode = await runConnectSubcommand(
+      [
+        "openai-compatible",
+        "--base-url",
+        "https://opencode.example/v1",
+        "--api-key",
+        "key",
+      ],
+      deps,
+    );
+
+    expect(exitCode).toBe(1);
+    expect(stderr.join("\n")).toContain(
+      "Re-run with --force to overwrite it, or pass --name to save this connection under a different provider name.",
+    );
+  });
+
+  test("local help omits --name examples that are not supported in local storage", async () => {
+    const { stdout, deps } = createIoDeps();
+    setProviderTarget("local");
+
+    const exitCode = await runConnectSubcommand(["help"], deps);
+
+    expect(exitCode).toBe(0);
+    const output = stdout.join("\n");
+    expect(output).toContain("letta connect openai-compatible --base-url");
+    expect(output).not.toContain("--name");
+  });
+
+  test("api help includes --name examples for custom provider slots", async () => {
+    const { stdout, deps } = createIoDeps();
+    setProviderTarget("api");
+
+    const exitCode = await runConnectSubcommand(["help"], deps);
+
+    expect(exitCode).toBe(0);
+    const output = stdout.join("\n");
+    expect(output).toContain(
+      "letta connect openai-compatible --name my-endpoint --base-url",
+    );
+    expect(output).toContain("letta connect chatgpt --name chatgpt-work");
   });
 });

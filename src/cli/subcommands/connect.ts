@@ -27,11 +27,13 @@ import { runCloudXaiOAuthConnectFlow } from "@/cli/commands/connect-xai-oauth";
 import {
   checkProviderApiKey,
   createOrUpdateProvider,
+  defaultProviderStorageTarget,
   getProviderByNameStrict,
   isXaiOAuthProvider,
   type ProviderConnectionOptions,
   type ProviderOperationOptions,
   type ProviderResponse,
+  type ProviderStorageTarget,
   providerStorageTargetLabel,
 } from "@/providers/byok-providers";
 import {
@@ -133,24 +135,31 @@ const DEFAULT_DEPS: ConnectSubcommandDeps = {
   providerStorageTargetLabel,
 };
 
-function formatUsage(): string {
+function formatUsage(
+  target: ProviderStorageTarget = defaultProviderStorageTarget(),
+): string {
+  const isLocal = target === "local";
   return [
     "Usage:",
     "  letta connect <provider> [options]",
     "",
     "Providers:",
-    `  ${listConnectProvidersForHelp().join("\n  ")}`,
+    `  ${listConnectProvidersForHelp(target).join("\n  ")}`,
     "",
     "Examples:",
     "  letta connect chatgpt",
-    "  letta connect chatgpt --name chatgpt-work",
+    ...(isLocal ? [] : ["  letta connect chatgpt --name chatgpt-work"]),
     "  letta connect grok",
     "  letta connect codex",
     "  letta connect codex --method device-code",
     "  letta connect anthropic <api_key>",
     "  letta connect openai --api-key <api_key>",
     "  letta connect openai-compatible --base-url http://localhost:8000/v1 [--api-key <api_key>]",
-    "  letta connect openai-compatible --name my-endpoint --base-url http://localhost:8000/v1",
+    ...(isLocal
+      ? []
+      : [
+          "  letta connect openai-compatible --name my-endpoint --base-url http://localhost:8000/v1",
+        ]),
     "  letta connect ollama --base-url http://192.168.1.50:11434/v1",
     "  letta connect lmstudio --base-url http://127.0.0.1:1234/v1 --timeout 600s",
     "  letta connect llama-cpp --base-url http://localhost:8080/v1",
@@ -297,7 +306,13 @@ export async function runConnectSubcommand(
   const [providerToken, ...restPositionals] = parsed.positionals;
 
   if (parsed.values.help || !providerToken || providerToken === "help") {
-    io.stdout(formatUsage());
+    const target =
+      (providerToken &&
+        providerToken !== "help" &&
+        (resolveConnectProvider(providerToken)?.target ??
+          resolveConnectProvider(providerToken, "local")?.target)) ||
+      defaultProviderStorageTarget();
+    io.stdout(formatUsage(target));
     return 0;
   }
 
@@ -611,8 +626,12 @@ export async function runConnectSubcommand(
             `Overwrite provider '${providerName}'? (y/N) `,
           ));
         if (!overwrite) {
+          const alternativeAdvice =
+            provider.target === "local"
+              ? "Re-run with --force to overwrite it."
+              : "Re-run with --force to overwrite it, or pass --name to save this connection under a different provider name.";
           io.stderr(
-            `Aborted. Provider '${providerName}' was not changed. Re-run with --force to overwrite it, or pass --name to save this connection under a different provider name.`,
+            `Aborted. Provider '${providerName}' was not changed. ${alternativeAdvice}`,
           );
           return 1;
         }
