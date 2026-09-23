@@ -172,6 +172,15 @@ export function scrubSecretsFromString(
   return scrubWithEntries(input, Object.entries(mergeAmbientSecrets(secrets)));
 }
 
+/**
+ * Scrub only the ambient runtime auth values from a string. For text produced
+ * by hook or mod code — user-configured commands whose children inherit the
+ * runtime environment — rather than by a shell tool invocation.
+ */
+export function scrubAmbientSecrets(text: string): string {
+  return scrubSecretsFromString(text, {});
+}
+
 export interface SecretStreamScrubber {
   /** Scrub one chunk; may return "" while holding back a potential partial match. */
   push(chunk: string): string;

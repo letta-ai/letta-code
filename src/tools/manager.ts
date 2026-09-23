@@ -13,11 +13,7 @@ import { getAllSubagentConfigs } from "@/agent/subagents";
 import { getBackend } from "@/backend";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { experimentManager } from "@/experiments/manager";
-import {
-  runPostToolUseFailureHooks,
-  runPostToolUseHooks,
-  runPreToolUseHooks,
-} from "@/hooks";
+import { runPreToolUseHooks } from "@/hooks";
 import { buildModInvocationContext } from "@/mods/context";
 import { createModConversationHandle } from "@/mods/conversation-handle";
 import { attachDeprecatedGetContextTrap } from "@/mods/deprecated-api";
@@ -68,6 +64,11 @@ import {
 } from "./client-tool-serialization";
 import { normalizeExternalToolResultContent } from "./external-tool-content";
 import { toolFilter } from "./filter";
+import {
+  appendHookFeedbackToText,
+  appendHookFeedbackToToolReturn,
+  collectPostToolHookFeedback,
+} from "./hook-feedback";
 import { clampToolReturnContent } from "./impl/tool-return-clamp";
 import { resolveBackendSpecificToolAssets } from "./memory-tool-assets";
 import {
@@ -86,6 +87,7 @@ import {
   type ScrubbedOutputStreamer,
   sanitizeOutputLines,
   sanitizeToolReturnContent,
+  scrubAmbientSecrets,
   scrubSecretsFromString,
 } from "./secret-substitution";
 import { TOOL_DEFINITIONS, type ToolName } from "./tool-definitions";
@@ -1768,85 +1770,6 @@ function getModToolStatus(result: unknown): "success" | "error" {
   return "success";
 }
 
-type ToolHookContext = {
-  args: Record<string, unknown>;
-  debugLabel: string;
-  scopedAgentId?: string;
-  toolCallId?: string;
-  toolName: string;
-  workingDirectory: string;
-};
-
-async function collectPostToolHookFeedback(
-  context: ToolHookContext,
-  result: {
-    errorType?: string;
-    failureOutput?: string;
-    output: string;
-    status: "success" | "error";
-  },
-): Promise<string[]> {
-  let postToolUseFeedback: string[] = [];
-  try {
-    const postHookResult = await runPostToolUseHooks(
-      context.toolName,
-      context.args,
-      { status: result.status, output: result.output },
-      context.toolCallId,
-      context.workingDirectory,
-      context.scopedAgentId,
-      undefined,
-      undefined,
-    );
-    postToolUseFeedback = postHookResult.feedback;
-  } catch (error) {
-    debugLog("hooks", `PostToolUse hook error (${context.debugLabel})`, error);
-  }
-
-  let postToolUseFailureFeedback: string[] = [];
-  if (result.status === "error") {
-    try {
-      const failureHookResult = await runPostToolUseFailureHooks(
-        context.toolName,
-        context.args,
-        result.failureOutput ?? result.output,
-        result.errorType ?? "tool_error",
-        context.toolCallId,
-        context.workingDirectory,
-        context.scopedAgentId,
-        undefined,
-        undefined,
-      );
-      postToolUseFailureFeedback = failureHookResult.feedback;
-    } catch (error) {
-      debugLog(
-        "hooks",
-        `PostToolUseFailure hook error (${context.debugLabel})`,
-        error,
-      );
-    }
-  }
-
-  return [...postToolUseFeedback, ...postToolUseFailureFeedback];
-}
-
-function appendHookFeedbackToText(text: string, feedback: string[]): string {
-  if (feedback.length === 0) return text;
-  return `${text}\n\n[Hook feedback]:\n${feedback.join("\n")}`;
-}
-
-function appendHookFeedbackToToolReturn(
-  toolReturn: ToolReturnContent,
-  feedback: string[],
-): ToolReturnContent {
-  if (feedback.length === 0) return toolReturn;
-  const feedbackMessage = `\n\n[Hook feedback]:\n${feedback.join("\n")}`;
-  if (typeof toolReturn === "string") {
-    return toolReturn + feedbackMessage;
-  }
-  return [...toolReturn, { type: "text" as const, text: feedbackMessage }];
-}
-
 function cloneToolArgsForModEvent(args: ToolArgs): ToolArgs {
   try {
     return structuredClone(args);
@@ -1982,7 +1905,7 @@ async function executeModTool(
     if (preHookResult.blocked) {
       const feedback = preHookResult.feedback.join("\n") || "Blocked by hook";
       return {
-        toolReturn: `Error: Tool execution blocked by hook. ${feedback}`,
+        toolReturn: `Error: Tool execution blocked by hook. ${scrubAmbientSecrets(feedback)}`,
         status: "error",
       };
     }
@@ -2394,7 +2317,7 @@ async function executeToolInner(
     if (preHookResult.blocked) {
       const feedback = preHookResult.feedback.join("\n") || "Blocked by hook";
       return {
-        toolReturn: `Error: Tool execution blocked by hook. ${feedback}`,
+        toolReturn: `Error: Tool execution blocked by hook. ${scrubAmbientSecrets(feedback)}`,
         status: "error",
       };
     }
@@ -2703,8 +2626,14 @@ export async function executeTool(
     output: res.toolReturn,
   });
 
+  // A tool_end mod handler replaces what the model sees; scrub the ambient
+  // runtime auth values from its output too (mod children inherit them).
   return override
-    ? { ...res, toolReturn: override.output, status: override.status }
+    ? {
+        ...res,
+        toolReturn: scrubAmbientSecrets(override.output),
+        status: override.status,
+      }
     : res;
 }
 

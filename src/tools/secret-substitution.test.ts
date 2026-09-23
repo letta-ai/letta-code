@@ -1,5 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { ModToolEndEvent } from "@/mods/types";
+import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { backgroundProcesses } from "@/tools/impl/process_manager";
 import {
@@ -518,4 +528,120 @@ describe("ambient runtime credential redaction", () => {
       parser.cleanup();
     }
   }, 15_000);
+
+  test("tool_end mod overrides never reintroduce the ambient key", async () => {
+    // tool_end overrides only fire for string results, so use Read.
+    const prepared = await prepareToolExecutionContextForSpecificTools(
+      ["Read"],
+      {
+        runtimeContext: {
+          agentId: AGENT_A,
+          workingDirectory: process.cwd(),
+        },
+        workingDirectory: process.cwd(),
+        modEvents: {
+          async emit(name, event) {
+            if (name === "tool_end") {
+              // A mod handler replaces what the model sees wholesale; its
+              // replacement can carry the ambient credential (mod children
+              // inherit the runtime environment).
+              (
+                event as ModToolEndEvent & {
+                  result?: { status: "success" | "error"; output: string };
+                }
+              ).result = {
+                status: "success",
+                output: `mod replacement output: ${AMBIENT_SENTINEL}`,
+              };
+            }
+            return { diagnostics: [], handlerCount: 0, name, results: [] };
+          },
+        },
+      },
+    );
+
+    try {
+      const result = await executeTool(
+        "Read",
+        { file_path: "package.json" },
+        { toolContextId: prepared.contextId },
+      );
+
+      const text = asText(result.toolReturn);
+      expect(result.status).toBe("success");
+      expect(text).not.toContain(AMBIENT_SENTINEL);
+      expect(text).toContain(AMBIENT_PLACEHOLDER);
+      expect(text).toContain("mod replacement output:");
+    } finally {
+      releaseToolExecutionContext(prepared.contextId);
+    }
+  });
+
+  // Hook commands run via the system shell; this test uses bash syntax.
+  test.skipIf(process.platform === "win32")(
+    "PostToolUse hook feedback never reintroduces the ambient key",
+    async () => {
+      const baseDir = mkdtempSync(join(tmpdir(), "letta-hook-redaction-"));
+      const fakeHome = join(baseDir, "home");
+      const projectDir = join(baseDir, "project");
+      mkdirSync(fakeHome, { recursive: true });
+      mkdirSync(join(projectDir, ".letta"), { recursive: true });
+      // The hook echoes the ambient runtime key from its inherited
+      // environment to stderr and blocks (exit 2); that stderr becomes hook
+      // feedback appended to the model-facing tool result.
+      writeFileSync(
+        join(projectDir, ".letta", "settings.json"),
+        JSON.stringify({
+          hooks: {
+            PostToolUse: [
+              {
+                matcher: "Bash",
+                hooks: [
+                  {
+                    type: "command",
+                    command: 'echo "$LETTA_API_KEY" >&2 && exit 2',
+                  },
+                ],
+              },
+            ],
+          },
+        }),
+      );
+
+      const originalHome = process.env.HOME;
+      await settingsManager.reset();
+      process.env.HOME = fakeHome;
+      await settingsManager.initialize();
+
+      let prepared:
+        | Awaited<
+            ReturnType<typeof prepareToolExecutionContextForSpecificTools>
+          >
+        | undefined;
+      try {
+        prepared = await prepareToolExecutionContextForSpecificTools(["Bash"], {
+          runtimeContext: { agentId: AGENT_A, workingDirectory: projectDir },
+          workingDirectory: projectDir,
+        });
+        const result = await executeTool(
+          "Bash",
+          { command: "echo tool-output", timeout: 5000 },
+          { toolContextId: prepared.contextId },
+        );
+
+        const text = asText(result.toolReturn);
+        expect(result.status).toBe("success");
+        // Prove the hook actually fed back, then prove containment.
+        expect(text).toContain("[Hook feedback]:");
+        expect(text).not.toContain(AMBIENT_SENTINEL);
+        expect(text).toContain(AMBIENT_PLACEHOLDER);
+      } finally {
+        if (prepared) releaseToolExecutionContext(prepared.contextId);
+        process.env.HOME = originalHome;
+        await settingsManager.reset();
+        rmSync(baseDir, { recursive: true, force: true });
+      }
+    },
+    15_000,
+  );
 });
