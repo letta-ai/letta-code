@@ -1,12 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { backgroundProcesses } from "@/tools/impl/process_manager";
+import {
+  type BackgroundProcess,
+  backgroundProcesses,
+} from "@/tools/impl/process_manager";
 import { buildBackgroundProcessSnapshot } from "./background-process-snapshot";
 
 afterEach(() => {
   backgroundProcesses.clear();
 });
 
-describe("monitor background process snapshots", () => {
+describe("background process snapshots", () => {
   test("reports only running monitors in their owning runtime", () => {
     backgroundProcesses.set("monitor_1", {
       process: { kill: () => {} },
@@ -15,7 +18,6 @@ describe("monitor background process snapshots", () => {
       stderr: [],
       status: "running",
       exitCode: null,
-      lastReadIndex: { stdout: 0, stderr: 0 },
       startTime: new Date(1234),
       runtimeScope: { agentId: "agent-a", conversationId: "conv-a" },
       kind: "monitor",
@@ -30,7 +32,6 @@ describe("monitor background process snapshots", () => {
       stderr: [],
       status: "completed",
       exitCode: 1000,
-      lastReadIndex: { stdout: 0, stderr: 0 },
       startTime: new Date(5678),
       runtimeScope: { agentId: "agent-a", conversationId: "conv-a" },
       kind: "monitor",
@@ -51,5 +52,31 @@ describe("monitor background process snapshots", () => {
       },
     ]);
     expect(buildBackgroundProcessSnapshot("agent-b", "conv-a")).toEqual([]);
+  });
+
+  test("reports running workflows separately from Bash processes", () => {
+    backgroundProcesses.set("workflow_1", {
+      process: { kill: () => {} },
+      command: "workflow review-changes",
+      stdout: [],
+      stderr: [],
+      status: "running",
+      exitCode: null,
+      lastReadIndex: { stdout: 0, stderr: 0 },
+      startTime: new Date(5678),
+      runtimeScope: { agentId: "agent-a", conversationId: "conv-a" },
+      kind: "workflow",
+      description: "Review changed files across dimensions",
+    } as BackgroundProcess);
+
+    expect(buildBackgroundProcessSnapshot("agent-a", "conv-a")).toEqual([
+      {
+        process_id: "workflow_1",
+        kind: "workflow",
+        description: "Review changed files across dimensions",
+        started_at_ms: 5678,
+        status: "running",
+      },
+    ]);
   });
 });

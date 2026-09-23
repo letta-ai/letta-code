@@ -71,6 +71,12 @@ export interface SubagentOutcome {
   totalTokens?: number;
 }
 
+/** Live signals a spawner may report while a subagent runs. */
+export interface SubagentSpawnHooks {
+  /** Tokens consumed so far by this subagent (cumulative, per model step). */
+  onUsage?: (totalTokens: number) => void;
+}
+
 /**
  * Runs one subagent. The SDK-backed implementation lives in sdk-spawner.ts;
  * tests inject fakes.
@@ -78,6 +84,7 @@ export interface SubagentOutcome {
 export type SubagentSpawner = (
   request: SubagentRequest,
   signal: AbortSignal,
+  hooks?: SubagentSpawnHooks,
 ) => Promise<SubagentOutcome>;
 
 /** Progress events emitted while a workflow runs. */

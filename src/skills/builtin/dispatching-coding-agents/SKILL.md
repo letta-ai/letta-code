@@ -7,7 +7,7 @@ description: Dispatch stateless coding agents through Claude Code or Codex. Mode
 
 You can shell out to **Claude Code** (`claude`) and **Codex** (`codex`) as stateless sub-agents via Bash. They have filesystem and tool access (scope depends on sandbox/approval settings) but **zero memory** — every session starts from scratch.
 
-**Default to `run_in_background: true`** on the Bash call so you can keep working while they run. Check results later with `TaskOutput`. Don't sit idle waiting for a subagent.
+**Default to `run_in_background: true`** on the Bash call so you can keep working while they run. The tool returns an output file path that you can read later. Don't sit idle waiting for a subagent.
 
 ## The Core Mental Model
 
@@ -104,7 +104,7 @@ OUTPUT:
 Run Claude Code and Codex simultaneously on the same question via separate Bash calls in a single message (use `run_in_background: true`). Compare results for higher confidence.
 
 ### Background dispatch — keep working while they run
-Use `run_in_background: true` on the Bash call to dispatch async. Continue your own work, then check results with `TaskOutput` when ready.
+Use `run_in_background: true` on the Bash call to dispatch async. Continue your own work, then read the returned output file when ready.
 
 ### Deep investigation
 For hard problems, use the configured model in a writable sandbox:

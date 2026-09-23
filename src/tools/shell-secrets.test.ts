@@ -59,6 +59,19 @@ function expectLiteralSecrets(output: string): void {
   expect(output).toContain("$foo$bar");
 }
 
+async function waitForFileContent(
+  filePath: string,
+  predicate: (content: string) => boolean,
+): Promise<string> {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    const content = readFileSync(filePath, "utf8");
+    if (predicate(content)) return content;
+    await Bun.sleep(10);
+  }
+  throw new Error(`Timed out waiting for background output in ${filePath}`);
+}
+
 function toolReturnText(toolReturn: ToolReturnContent): string {
   return typeof toolReturn === "string"
     ? toolReturn
@@ -182,7 +195,7 @@ describe("shell secret execution", () => {
   test("keeps background output scoped to the launch secrets", async () => {
     await seedSecrets();
     const context = await prepareToolExecutionContextForSpecificTools(
-      ["Bash", "TaskOutput"],
+      ["Bash"],
       {
         runtimeContext: {
           agentId: TEST_AGENT_ID,
@@ -211,17 +224,11 @@ describe("shell secret execution", () => {
       expect(taskId).toBeString();
       expect(outputFile).toBeString();
 
-      const completed = await executeTool(
-        "TaskOutput",
-        { task_id: taskId, block: true, timeout: 5000 },
-        { toolContextId: context.contextId },
+      const output = await waitForFileContent(outputFile as string, (content) =>
+        content.includes("PASSWORD=<REDACTED>"),
       );
-      const output = toolReturnText(completed.toolReturn);
       expect(output).toContain("PASSWORD=<REDACTED>");
       expect(output).not.toContain(seededSecrets.PASSWORD);
-      expect(readFileSync(outputFile as string, "utf8")).not.toContain(
-        seededSecrets.PASSWORD,
-      );
     } finally {
       releaseToolExecutionContext(context.contextId);
       runtimeScript.cleanup();

@@ -18,7 +18,6 @@ import {
   setMessageQueueAdder,
 } from "@/utils/message-queue-bridge";
 import { backgroundProcesses } from "./process_manager";
-import { task_output } from "./task-output";
 import { task_stop } from "./task-stop";
 import {
   __setWorkflowSpawnerFactoryForTests,
@@ -26,6 +25,12 @@ import {
   normalizeWorkflowArgs,
   workflow,
 } from "./workflow";
+
+/** Progress lines written to a workflow's output file so far. */
+function progressLineCount(outputFile: string | undefined): number {
+  if (!outputFile) return 0;
+  return readFileSync(outputFile, "utf8").split("\n").filter(Boolean).length;
+}
 
 async function waitFor(
   predicate: () => boolean,
@@ -294,6 +299,7 @@ describe("Workflow tool (background launch)", () => {
     const taskId = taskIdOf(result.toolReturn);
     expect(result.toolReturn).toContain("Script file:");
     expect(result.toolReturn).toContain("journal.jsonl");
+    expect(result.toolReturn).toContain("Output file:");
 
     const processState = backgroundProcesses.get(taskId);
     expect(processState?.kind).toBe("workflow");
@@ -302,8 +308,8 @@ describe("Workflow tool (background launch)", () => {
       "Quick demo workflow with parallel agents",
     );
 
-    // The progress log is what TaskOutput reads while the run is live.
-    await waitFor(() => (processState?.stdout.length ?? 0) >= 3);
+    // The progress log is what Read inspects while the run is live.
+    await waitFor(() => progressLineCount(processState?.outputFile) >= 3);
     const live = getWorkflowExecution(taskId);
     expect(live).toMatchObject({
       status: "running",
@@ -313,12 +319,9 @@ describe("Workflow tool (background launch)", () => {
       logs: ["starting"],
     });
     expect(live?.phases[0]?.title).toBe("Find");
-    const running = await task_output({
-      task_id: taskId,
-      block: false,
-      timeout: 100,
-    });
-    expect(running.status).toBe("running");
+    expect(readFileSync(processState?.outputFile as string, "utf8")).toContain(
+      "starting",
+    );
     expect(queuedMessages).toHaveLength(0);
 
     releaseAgents?.();
@@ -360,12 +363,59 @@ describe("Workflow tool (background launch)", () => {
     expect(journal.trim().split("\n")).toHaveLength(2);
   });
 
+  test("usage updates live status without duplicating agent start lines", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    installSpawner(async (request, _signal, hooks) => {
+      hooks?.onUsage?.(500);
+      hooks?.onUsage?.(1_200);
+      await gate;
+      return {
+        value: request.prompt,
+        failed: false,
+        totalTokens: 1_200,
+      };
+    });
+    const launched = await workflow({ script: SCRIPT });
+    const taskId = taskIdOf(launched.toolReturn);
+    const processState = backgroundProcesses.get(taskId);
+    try {
+      await waitFor(() => getWorkflowExecution(taskId)?.totalTokens === 2_400);
+      expect(getWorkflowExecution(taskId)).toMatchObject({
+        status: "running",
+        agentsRunning: 2,
+        totalTokens: 2_400,
+      });
+      expect(
+        readFileSync(processState?.outputFile as string, "utf8")
+          .split("\n")
+          .filter((line) => line.startsWith("▶ ")),
+      ).toEqual(["▶ a", "▶ b"]);
+    } finally {
+      release();
+    }
+    await waitFor(() => cleanupCalls === 1);
+    expect(processState?.status).toBe("completed");
+    expect(
+      readFileSync(processState?.outputFile as string, "utf8")
+        .split("\n")
+        .filter((line) => line.startsWith("✓ ")),
+    ).toEqual(["✓ a", "✓ b"]);
+    expect(getWorkflowExecution(taskId)).toMatchObject({
+      status: "completed",
+      agentsDone: 2,
+      totalTokens: 2_400,
+    });
+  });
+
   test("TaskStop aborts the run without waking the agent", async () => {
     installSpawner(gatedSpawner());
     const result = await workflow({ script: SCRIPT });
     const taskId = taskIdOf(result.toolReturn);
     const processState = backgroundProcesses.get(taskId);
-    await waitFor(() => (processState?.stdout.length ?? 0) >= 3);
+    await waitFor(() => progressLineCount(processState?.outputFile) >= 3);
 
     const stopped = await task_stop({ task_id: taskId });
     expect(stopped.killed).toBe(true);

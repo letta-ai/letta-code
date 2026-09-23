@@ -203,6 +203,7 @@ describe("ProviderSelector provider filtering", () => {
       "anthropic-oauth",
       "github-copilot",
       "kimi-coding",
+      "meta",
       "openai-codex-oauth",
       "openrouter-oauth",
       "radius",

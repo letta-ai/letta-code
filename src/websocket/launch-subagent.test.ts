@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -189,7 +190,7 @@ test("external tool launches a prepared child through the real App Server and ch
   for (let i = 0; task?.status === "running" && i < 500; i++)
     await Bun.sleep(10);
   expect(task?.status, task?.error).toBe("completed");
-  expect(task?.output.join("\n")).toContain("pong");
+  expect(readFileSync(task?.outputFile as string, "utf8")).toContain("pong");
   expect((await backend.retrieveAgent(parent.id)).system).toBe(
     originalParent.system,
   );

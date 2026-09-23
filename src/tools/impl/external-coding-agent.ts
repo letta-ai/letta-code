@@ -2,7 +2,11 @@ import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import type { SubagentConfig, SubagentResult } from "@/agent/subagents";
 import { spawnSubagentProcess } from "@/agent/subagents/subagent-process";
-import { buildMcpServersReminderText } from "@/reminders/engine";
+import {
+  buildMcpServersReminderText,
+  listMcpServersForAgent,
+} from "@/reminders/engine";
+import { createSharedReminderState } from "@/reminders/state";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { runClaudeTurn } from "./claude-stream-session";
 import { runCodexTurn } from "./codex-app-server";
@@ -157,6 +161,25 @@ export function buildExternalCodingAgentMcpReminder(
   entries: ExternalCodingAgentMcpEntry[],
 ): string {
   return buildMcpServersReminderText(entries);
+}
+
+/**
+ * Resolve the parent agent's MCP servers into the discovery reminder passed to
+ * an external coding agent. Returns undefined when inheritance is not
+ * requested; throws when the inventory cannot be read.
+ */
+export async function resolveExternalCodingAgentMcpReminder(
+  parentAgentId: string,
+  mcp: ExternalCodingAgentMcpOptions | undefined,
+): Promise<string | undefined> {
+  if (!mcp?.inherit) return undefined;
+  const inventory = await listMcpServersForAgent(
+    parentAgentId,
+    createSharedReminderState(),
+  );
+  return buildExternalCodingAgentMcpReminder(
+    selectExternalCodingAgentMcpEntries(inventory, mcp.servers),
+  );
 }
 
 export function buildExternalCodingAgentCommand(

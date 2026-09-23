@@ -28,7 +28,16 @@ export interface MonitorBackgroundProcessSummary {
   persistent: boolean;
 }
 
+export interface WorkflowBackgroundProcessSummary {
+  process_id: string;
+  kind: "workflow";
+  description: string;
+  started_at_ms: number;
+  status: "running";
+}
+
 export type BackgroundProcessSummary =
   | BashBackgroundProcessSummary
   | AgentTaskBackgroundProcessSummary
-  | MonitorBackgroundProcessSummary;
+  | MonitorBackgroundProcessSummary
+  | WorkflowBackgroundProcessSummary;

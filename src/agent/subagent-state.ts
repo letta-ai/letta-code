@@ -537,19 +537,14 @@ export function getSnapshot(): {
 // Stream Event Forwarding
 // ============================================================================
 
-/**
- * A raw message-type event from the subagent's stdout (headless format).
- * Shape: { type: "message", message_type: string, ...LettaStreamingResponse fields }
- */
-export interface SubagentStreamEvent {
-  type: "message";
-  message_type: string;
-  [key: string]: unknown;
-}
+/** Worker output or a harness notification after its memory push completes. */
+export type SubagentStreamEvent =
+  | { type: "message"; message_type: string; [key: string]: unknown }
+  | { type: "memory_updated"; affected_paths: string[]; timestamp: number };
 
 /**
  * Callback for forwarding raw subagent stream events to the WS layer.
- * The event is the parsed JSON line from the subagent's stdout.
+ * Events include streamed output and harness-owned memory push notifications.
  */
 export type SubagentStreamEventListener = (
   subagentId: string,
