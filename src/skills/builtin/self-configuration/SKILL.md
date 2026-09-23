@@ -102,7 +102,7 @@ Use the active layout shown by the prompt and memory files. Do not create a
 `system/` directory in a root-layout repository or move existing-layout memory
 to the root as part of an unrelated self-configuration request.
 
-A requested memory or identity change is memory as the main task: make the edit directly with ordinary file tools, preserve the active layout, stage only the files you changed by explicit path, commit in the same shell call, and verify the result before reporting success. If a memory worker you launched is still editing this checkout, wait for it with TaskOutput first, then reread the files. Delegate to the background `memory` subagent only when the change is incidental to another task the user is waiting on.
+A requested memory or identity change is memory as the main task: make the edit directly with ordinary file tools, preserve the active layout, stage only the files you changed by explicit path, commit in the same shell call, and verify the result before reporting success. If a memory worker you launched may still be running, read its output file first (it ends with `[Task completed]` or `[Task failed]`) and reread the files before editing what it was asked to change. Delegate to the background `memory` subagent only when the change is incidental to another task the user is waiting on.
 
 Do not use API system-prompt replacement for ordinary learning. That can clobber the compiled prompt. Edit the memory files instead.
 

@@ -10,8 +10,9 @@ setting up or syncing correctly. For ordinary memory reads and edits, use the
 memory files without loading this skill. Delegate incidental upkeep during another
 task to the background `memory` subagent. When memory repair is the user's main
 request, diagnose and repair it directly, then verify the result before reporting
-success. If a memory worker you launched is editing this checkout, wait for it
-to finish before changing files or Git state.
+success. If a memory worker you launched may still be running, read its output file
+first (it ends with `[Task completed]` or `[Task failed]`) before changing Git
+state.
 
 ## Current Model
 
