@@ -6,6 +6,7 @@ import {
   clearPlaceholdersInText,
   extractImagePlaceholderIds,
   extractTextPlaceholderIds,
+  releaseDiscardedPlaceholders,
   resolvePlaceholders,
 } from "@/cli/helpers/paste-registry";
 
@@ -92,6 +93,53 @@ test("clearPlaceholdersInText removes referenced placeholders", () => {
 
   // After clearing, placeholders should not resolve
   expect(resolvePlaceholders(display)).toBe(display);
+});
+
+test("releaseDiscardedPlaceholders frees entries only referenced by the discarded text", () => {
+  const textId = allocatePaste("Abandoned draft content");
+  const imageId = allocateImage({ data: "img", mediaType: "image/png" });
+  const display = `look [Pasted text #${textId} +1 lines] and [Image #${imageId}]`;
+
+  releaseDiscardedPlaceholders(display, [""]);
+
+  // Both placeholders dangle after the discard
+  expect(resolvePlaceholders(display)).toBe(display);
+  const content = buildMessageContentFromDisplay(display);
+  expect(content.every((p) => p.type === "text")).toBe(true);
+});
+
+test("releaseDiscardedPlaceholders keeps entries still referenced by keep texts", () => {
+  const id = allocateImage({ data: "img", mediaType: "image/png" });
+  const discarded = `[Image #${id}]`;
+  const queued = `queued copy: [Image #${id}]`;
+
+  releaseDiscardedPlaceholders(discarded, [null, undefined, queued]);
+
+  // The queued text still resolves to the image content part
+  const content = buildMessageContentFromDisplay(queued);
+  expect(content.some((p) => p.type === "image")).toBe(true);
+});
+
+test("releaseDiscardedPlaceholders leaves unrelated entries untouched", () => {
+  const keptId = allocatePaste("still in the composer");
+  const keptDisplay = `[Pasted text #${keptId} +1 lines]`;
+  const droppedId = allocatePaste("edited out");
+  const droppedDisplay = `[Pasted text #${droppedId} +1 lines]`;
+
+  releaseDiscardedPlaceholders(droppedDisplay, [keptDisplay]);
+
+  expect(resolvePlaceholders(keptDisplay)).toBe("still in the composer");
+  expect(resolvePlaceholders(droppedDisplay)).toBe(droppedDisplay);
+});
+
+test("releaseDiscardedPlaceholders no-ops on text without placeholders", () => {
+  const id = allocatePaste("untouched");
+  const display = `[Pasted text #${id} +1 lines]`;
+
+  releaseDiscardedPlaceholders("plain draft text");
+  releaseDiscardedPlaceholders("");
+
+  expect(resolvePlaceholders(display)).toBe("untouched");
 });
 
 test("extractTextPlaceholderIds extracts IDs correctly", () => {

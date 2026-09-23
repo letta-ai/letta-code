@@ -106,6 +106,38 @@ export function clearPlaceholdersInText(text: string): void {
   }
 }
 
+/**
+ * Release registry entries whose placeholders appear in `discardedText` but
+ * not in any of `keepTexts`. Use when a draft is abandoned (input cleared,
+ * placeholder edited out, draft replaced) rather than submitted: entries
+ * still referenced by surviving holders (queued messages, parked history
+ * draft, in-flight submission, pending restored input) are retained.
+ */
+export function releaseDiscardedPlaceholders(
+  discardedText: string,
+  keepTexts: ReadonlyArray<string | null | undefined> = [],
+): void {
+  if (!discardedText) return;
+  const textIds = extractTextPlaceholderIds(discardedText);
+  const imageIds = extractImagePlaceholderIds(discardedText);
+  if (textIds.length === 0 && imageIds.length === 0) return;
+
+  const keptTextIds = new Set<number>();
+  const keptImageIds = new Set<number>();
+  for (const keepText of keepTexts) {
+    if (!keepText) continue;
+    for (const id of extractTextPlaceholderIds(keepText)) keptTextIds.add(id);
+    for (const id of extractImagePlaceholderIds(keepText)) keptImageIds.add(id);
+  }
+
+  for (const id of textIds) {
+    if (!keptTextIds.has(id)) textRegistry.delete(id);
+  }
+  for (const id of imageIds) {
+    if (!keptImageIds.has(id)) imageRegistry.delete(id);
+  }
+}
+
 // ---------- Content Builder ----------
 
 // Convert display text (with placeholders) into Letta content parts
