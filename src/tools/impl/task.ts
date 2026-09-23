@@ -43,8 +43,8 @@ import {
 } from "@/utils/task-notifications.js";
 import { copyGitHubPullRequestTags } from "./github-pull-request-tracker.js";
 import {
+  ensureMemoryConflictRepair,
   runBackgroundMemoryTask,
-  startMemoryConflictRepair,
 } from "./memory-task-lifecycle";
 import {
   appendToOutputFile,
@@ -108,8 +108,12 @@ export interface SpawnBackgroundSubagentTaskArgs {
    * into the agent's context.
    */
   silentCompletion?: boolean;
-  /** Harness-triggered conflict repair; skip if another worker already resolved it. */
-  memoryRepairOnly?: boolean;
+  /**
+   * Harness-triggered conflict repair: the attempt token from
+   * `claimMemoryConflictRepair`. The worker records its outcome under it and
+   * skips if another worker already resolved the conflict.
+   */
+  memoryRepairToken?: string;
   /**
    * Emit a completion notification even when `silentCompletion` is true.
    * Useful when the parent should not stream subagent tokens but still wants
@@ -480,7 +484,7 @@ export function spawnBackgroundSubagentTask(
           ...resolvedParentScope,
           memoryDir: workerMemoryDir,
           assignment: prompt,
-          repairOnly: args.memoryRepairOnly,
+          repairToken: args.memoryRepairToken,
           signal: abortController.signal,
           subagentId,
           outputFile,
@@ -489,7 +493,7 @@ export function spawnBackgroundSubagentTask(
           execute,
           // Awaited by the worker so a one-shot drain sees the repair task.
           repair: (result) =>
-            startMemoryConflictRepair(
+            ensureMemoryConflictRepair(
               { ...resolvedParentScope, actingUserId, result },
               spawnBackgroundSubagentTask,
             ),

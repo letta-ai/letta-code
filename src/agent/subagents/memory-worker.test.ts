@@ -41,14 +41,22 @@ afterEach(() => {
   __testSetBackend(null);
   repo.cleanup();
 });
-function scope(repairOnly = false) {
+function scope(repairToken?: string) {
   return {
     agentId: "agent-parent",
     conversationId: "conv-parent",
     memoryDir: root,
-    repairOnly,
+    repairToken,
   };
 }
+/** Record a repair attempt, as post-turn sync does before launching a worker. */
+async function claim(): Promise<string> {
+  const result = await claimMemoryConflictRepair(root);
+  expect(result.status).toBe("claimed");
+  return result.status === "claimed" ? result.token : "";
+}
+const attemptStatus = async () =>
+  (await claimMemoryConflictRepair(root)).status;
 /** Leave the checkout mid-merge with a conflicted note.md. */
 function conflict() {
   git("checkout", "-q", "-b", "other");
@@ -362,8 +370,8 @@ test("repairs a real Git conflict in place and skips a duplicate repair", async 
     return { agentId: "agent-repair", success: true, report: "repaired" };
   };
   await Promise.all([
-    runMemoryWorker(scope(true), repair),
-    runMemoryWorker(scope(true), repair),
+    runMemoryWorker(scope("attempt"), repair),
+    runMemoryWorker(scope("attempt"), repair),
   ]);
   expect(executions).toBe(1);
   expect(git("status", "--porcelain")).toBe("");
@@ -375,7 +383,7 @@ test("a repair that reports success without resolving is caught by the sync", as
   const before = git("status", "--porcelain");
   let refreshed = false;
   const result = await runMemoryWorker(
-    scope(true),
+    scope("attempt"),
     async () => ({ agentId: "agent-repair", success: true, report: "done" }),
     {
       recompile: async () => {
@@ -414,7 +422,7 @@ test("a sync conflict after an update triggers repair before the worker complete
 test("a queued repair that finds the conflict already pushed notifies without launching", async () => {
   let notified = false;
   const result = await runMemoryWorker(
-    scope(true),
+    scope("attempt"),
     async () => {
       throw new Error("must not run");
     },
@@ -440,7 +448,7 @@ test("a queued repair that finds the conflict already pushed notifies without la
 
 test("a queued repair reports a dirty checkout instead of declaring it repaired", async () => {
   const result = await runMemoryWorker(
-    scope(true),
+    scope("attempt"),
     async () => {
       throw new Error("must not run");
     },
@@ -459,48 +467,45 @@ test("a queued repair reports a dirty checkout instead of declaring it repaired"
 
 test("a repair that ran marks its attempt done; the same conflict is reported next time", async () => {
   conflict();
-  expect(await claimMemoryConflictRepair(root)).toBe(true);
-  await runMemoryWorker(scope(true), async () => ({
+  await runMemoryWorker(scope(await claim()), async () => ({
     agentId: "agent-repair",
     success: true,
     report: "could not resolve",
   }));
   // Still conflicted, and now recorded as attempted: no relaunch.
-  expect(await claimMemoryConflictRepair(root)).toBe(false);
+  expect(await attemptStatus()).toBe("attempted");
 });
 
 test("a repair cancelled before finishing forgets its attempt so the next turn retries", async () => {
   conflict();
-  expect(await claimMemoryConflictRepair(root)).toBe(true);
   const controller = new AbortController();
   await runMemoryWorker(
-    { ...scope(true), signal: controller.signal },
+    { ...scope(await claim()), signal: controller.signal },
     async () => {
       controller.abort();
       return { agentId: "agent-repair", success: false, report: "" };
     },
   );
-  expect(await claimMemoryConflictRepair(root)).toBe(true);
+  expect(await attemptStatus()).toBe("claimed");
 });
 
 test("a repair whose launch fails forgets its attempt so the next turn retries", async () => {
   conflict();
-  expect(await claimMemoryConflictRepair(root)).toBe(true);
   await expect(
-    runMemoryWorker(scope(true), async () => {
+    runMemoryWorker(scope(await claim()), async () => {
       throw new Error("child exited before starting");
     }),
   ).rejects.toThrow("child exited before starting");
-  expect(await claimMemoryConflictRepair(root)).toBe(true);
+  expect(await attemptStatus()).toBe("claimed");
 });
 
 test("a repair cancelled while waiting for the checkout forgets its attempt", async () => {
   conflict();
-  expect(await claimMemoryConflictRepair(root)).toBe(true);
+  const token = await claim();
   const holder = await claimMemoryOperation(root);
   const controller = new AbortController();
   const waiting = runMemoryWorker(
-    { ...scope(true), signal: controller.signal },
+    { ...scope(token), signal: controller.signal },
     async () => {
       throw new Error("must not run");
     },
@@ -509,15 +514,14 @@ test("a repair cancelled while waiting for the checkout forgets its attempt", as
   controller.abort();
   await expect(waiting).rejects.toThrow();
   await holder?.();
-  expect(await claimMemoryConflictRepair(root)).toBe(true);
+  expect(await attemptStatus()).toBe("claimed");
 });
 
 test("a repair whose initial sync throws forgets its attempt", async () => {
   conflict();
-  expect(await claimMemoryConflictRepair(root)).toBe(true);
   await expect(
     runMemoryWorker(
-      scope(true),
+      scope(await claim()),
       async () => {
         throw new Error("must not run");
       },
@@ -528,5 +532,41 @@ test("a repair whose initial sync throws forgets its attempt", async () => {
       },
     ),
   ).rejects.toThrow("remote unreachable");
-  expect(await claimMemoryConflictRepair(root)).toBe(true);
+  expect(await attemptStatus()).toBe("claimed");
+});
+
+test("a repair that finds nothing left to repair forgets its attempt", async () => {
+  conflict();
+  const token = await claim();
+  // The primary abandoned the merge before the worker got the checkout.
+  git("merge", "--abort");
+  const result = await runMemoryWorker(scope(token), async () => {
+    throw new Error("must not run");
+  });
+  expect(result.success).toBe(true);
+  // Retrying the same merge is the same operation; it must be repaired anew.
+  expect(() => git("merge", "other")).toThrow();
+  expect(await attemptStatus()).toBe("claimed");
+});
+
+test("a late worker cannot forget a newer attempt for the same checkout", async () => {
+  conflict();
+  const stale = await claim();
+  const holder = await claimMemoryOperation(root);
+  const controller = new AbortController();
+  const waiting = runMemoryWorker(
+    { ...scope(stale), signal: controller.signal },
+    async () => {
+      throw new Error("must not run");
+    },
+  );
+  await Bun.sleep(30);
+  // Meanwhile the conflict changed and a new turn in the same process claimed
+  // it, before the waiting worker was cancelled.
+  writeFileSync(join(root, ".git", "MERGE_HEAD"), "b".repeat(40));
+  await claim();
+  controller.abort();
+  await expect(waiting).rejects.toThrow();
+  await holder?.();
+  expect(await attemptStatus()).toBe("in_progress");
 });

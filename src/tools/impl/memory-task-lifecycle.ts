@@ -1,6 +1,7 @@
 import {
   claimMemoryConflictRepair,
   clearMemoryConflictRepair,
+  type MemoryConflictRepairClaim,
 } from "@/agent/memory-conflict-repair";
 import type { MemoryPostTurnSyncResult } from "@/agent/memory-git";
 import {
@@ -21,7 +22,8 @@ export interface RunBackgroundMemoryTaskParams {
   conversationId: string;
   memoryDir: string;
   assignment: string;
-  repairOnly?: boolean;
+  /** Set for a harness-launched conflict repair: its attempt token. */
+  repairToken?: string;
   signal: AbortSignal;
   subagentId: string;
   outputFile: string;
@@ -73,16 +75,16 @@ export function runBackgroundMemoryTask(
     agentId: params.agentId,
     conversationId: params.conversationId,
     memoryDir: params.memoryDir,
-    repairOnly: params.repairOnly,
   };
   const execution = runMemoryWorker(
-    { ...scope, signal: params.signal },
+    { ...scope, repairToken: params.repairToken, signal: params.signal },
     (workerDir, memoryScope) =>
       withMemoryHandoff(
         {
           ...scope,
           memoryDir: workerDir,
           assignment: params.assignment,
+          repairOnly: params.repairToken !== undefined,
           signal: params.signal,
         },
         async (handoff) => {
@@ -113,8 +115,14 @@ export function runBackgroundMemoryTask(
   return { execution, unsubscribe };
 }
 
-/** Launch a repair-only worker; false when already attempted or the launch failed. */
-export async function startMemoryConflictRepair(
+/**
+ * Launch a repair-only worker for a conflict unless one is already handling
+ * it. True while a worker is on the conflict, launched here or still running
+ * from an earlier turn, so the primary is told to keep off the checkout;
+ * false when a worker has already attempted this conflict, or the launch
+ * failed, and the primary must resolve it. Callers hold the checkout lease.
+ */
+export async function ensureMemoryConflictRepair(
   params: {
     agentId: string;
     conversationId?: string | null;
@@ -124,10 +132,10 @@ export async function startMemoryConflictRepair(
   spawn: (args: SpawnBackgroundSubagentTaskArgs) => unknown,
   claimRepair = claimMemoryConflictRepair,
 ): Promise<boolean> {
-  let claimed = false;
+  let claim: MemoryConflictRepairClaim | undefined;
   try {
-    claimed = await claimRepair(params.result.memoryDir);
-    if (!claimed) return false;
+    claim = await claimRepair(params.result.memoryDir);
+    if (claim.status !== "claimed") return claim.status === "in_progress";
     spawn({
       subagentType: "memory",
       description: "Repair memory Git conflict",
@@ -140,16 +148,17 @@ export async function startMemoryConflictRepair(
         primaryRoot: params.result.memoryDir,
         writableRoots: [params.result.memoryDir],
       },
-      memoryRepairOnly: true,
+      memoryRepairToken: claim.token,
       actingUserId: params.actingUserId,
     });
     return true;
   } catch (error) {
     // Capacity or checkout errors must not become unhandled rejections, and
     // an attempt that never launched must not block the next turn's retry.
-    // Callers hold the checkout lease, so clearing the marker here is safe.
     debugWarn("memory-repair", `Could not launch repair: ${String(error)}`);
-    if (claimed) await clearMemoryConflictRepair(params.result.memoryDir);
+    if (claim?.status === "claimed") {
+      await clearMemoryConflictRepair(params.result.memoryDir, claim.token);
+    }
     return false;
   }
 }

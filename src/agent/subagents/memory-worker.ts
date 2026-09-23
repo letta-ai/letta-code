@@ -42,7 +42,11 @@ export async function runMemoryWorker(
     agentId: string;
     conversationId: string;
     memoryDir: string;
-    repairOnly?: boolean;
+    /**
+     * Set for a harness-launched conflict repair: the attempt token from
+     * `claimMemoryConflictRepair`, which the worker advances or forgets.
+     */
+    repairToken?: string;
     signal?: AbortSignal;
   },
   execute: (
@@ -82,7 +86,8 @@ export async function runMemoryWorker(
     }
   };
   const helpers = { sync, recompile, deps };
-  if (!params.repairOnly) {
+  const { repairToken } = params;
+  if (repairToken === undefined) {
     return withMemoryOperation(
       params.memoryDir,
       () => runUpdate(params, execute, helpers),
@@ -92,14 +97,14 @@ export async function runMemoryWorker(
   try {
     return await withMemoryOperation(
       params.memoryDir,
-      () => runRepair(params, execute, helpers),
+      () => runRepair(params, repairToken, execute, helpers),
       params.signal,
     );
   } catch (error) {
     // Nothing ran: a failure anywhere in the leased run, or cancellation while
-    // still waiting for the lease. Forget this process's attempt so the next
-    // turn retries instead of waiting for this process to exit.
-    await clearMemoryConflictRepair(params.memoryDir, { ownOnly: true });
+    // still waiting for the lease. Forget this attempt so the next turn
+    // retries instead of waiting for this process to exit.
+    await clearMemoryConflictRepair(params.memoryDir, repairToken);
     throw error;
   }
 }
@@ -202,20 +207,24 @@ async function runUpdate(
 /**
  * Repair works on the checkout itself, where the unfinished Git operation
  * lives. The attempt marker that keeps the same conflict from being retried
- * every turn is advanced here, under the lease: cleared if the worker never
- * ran (launch failure, cancellation) so the next turn retries, marked done
- * once it has run so an unresolved conflict is reported instead.
+ * every turn is advanced here, under the lease: forgotten if the worker never
+ * ran (nothing left to repair, cancellation) so the next turn retries, marked
+ * done once it has run so an unresolved conflict is reported instead.
  */
 async function runRepair(
   params: Parameters<typeof runMemoryWorker>[0],
+  token: string,
   execute: Parameters<typeof runMemoryWorker>[1],
   helpers: Helpers,
 ): Promise<SubagentResult> {
-  // Another worker may have repaired the checkout before this one acquired
-  // it. Only a clean sync is a no-op; a dirty or unpushed checkout is
-  // reported, not silently declared repaired.
+  // Another worker, or the primary, may have repaired the checkout before
+  // this one acquired it. Only a clean sync is a no-op; a dirty or unpushed
+  // checkout is reported, not silently declared repaired. Either way the
+  // attempt is forgotten: the same operation, if aborted and retried, gets a
+  // fresh repair rather than being suppressed while this process lives.
   const state = await helpers.sync();
   if (state.status !== "conflict") {
+    await clearMemoryConflictRepair(params.memoryDir, token);
     if (state.status === "pushed") helpers.deps?.onMemoryChanged?.();
     // No worker ran, so there is no worker identity to report.
     return SYNCED_STATUSES.has(state.status)
@@ -227,13 +236,13 @@ async function runRepair(
     writableRoots: [params.memoryDir],
   });
   if (params.signal?.aborted) {
-    await clearMemoryConflictRepair(params.memoryDir);
+    await clearMemoryConflictRepair(params.memoryDir, token);
     return {
       ...result,
       success: false,
       error: result.error ?? "Memory repair cancelled",
     };
   }
-  await completeMemoryConflictRepair(params.memoryDir);
+  await completeMemoryConflictRepair(params.memoryDir, token);
   return settle(result, true, helpers);
 }

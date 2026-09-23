@@ -2,9 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { MemoryConflictRepairClaim } from "@/agent/memory-conflict-repair";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import type { MemoryPostTurnSyncResult } from "@/agent/memory-git";
-import { startMemoryConflictRepair } from "@/tools/impl/memory-task-lifecycle";
+import { ensureMemoryConflictRepair } from "@/tools/impl/memory-task-lifecycle";
 import type { SpawnBackgroundSubagentTaskArgs } from "@/tools/impl/task";
 import {
   formatAttachedRepositoriesPostTurnSyncReminders,
@@ -212,7 +213,7 @@ test("post-turn conflict launches the memory task and warns the primary, without
       syncMemory: async () => conflict,
       syncAttachedRepositories: async () => ({ results: [] }),
       repairConflict: (params) =>
-        startMemoryConflictRepair(params, (args) => {
+        ensureMemoryConflictRepair(params, (args) => {
           jobs.push(args);
           return {
             taskId: "task-repair",
@@ -225,7 +226,7 @@ test("post-turn conflict launches the memory task and warns the primary, without
   expect(jobs).toHaveLength(1);
   expect(jobs[0]).toMatchObject({
     subagentType: "memory",
-    memoryRepairOnly: true,
+    memoryRepairToken: expect.any(String),
     parentScope: {
       agentId: "agent-memory-repair-test",
       conversationId: "conv-origin",
@@ -272,7 +273,7 @@ test("dirty and failed primary memory sync remind the primary instead of launchi
   }
 });
 
-test("a conflict that repair already attempted is reported to the primary", async () => {
+test("a conflict is reported to the primary only once repair has run on it", async () => {
   const jobs: SpawnBackgroundSubagentTaskArgs[] = [];
   const reminders: string[] = [];
   const spawn = (args: SpawnBackgroundSubagentTaskArgs) => {
@@ -283,7 +284,11 @@ test("a conflict that repair already attempted is reported to the primary", asyn
       subagentId: "repair",
     };
   };
-  let attempts = 0;
+  const claims: MemoryConflictRepairClaim[] = [
+    { status: "claimed", token: "attempt" },
+    { status: "in_progress" },
+    { status: "attempted" },
+  ];
   const run = () =>
     runPostTurnMemorySync(
       {
@@ -296,22 +301,28 @@ test("a conflict that repair already attempted is reported to the primary", asyn
         syncMemory: async () => conflict,
         syncAttachedRepositories: async () => ({ results: [] }),
         repairConflict: (params) =>
-          startMemoryConflictRepair(
-            params,
-            spawn,
-            async () => attempts++ === 0,
-          ),
+          ensureMemoryConflictRepair(params, spawn, async () => {
+            const claim = claims.shift();
+            if (!claim) throw new Error("unexpected claim");
+            return claim;
+          }),
       },
     );
   await run();
   expect(jobs).toHaveLength(1);
   expect(reminders).toHaveLength(1);
   expect(reminders[0]).toContain("MEMORY REPAIR IN PROGRESS");
+  // The worker is still running: keep the primary off the checkout.
   await run();
   expect(jobs).toHaveLength(1);
   expect(reminders).toHaveLength(2);
-  expect(reminders[1]).toContain("MEMORY GIT CONFLICT");
-  expect(reminders[1]).toContain("automatic repair could not resolve");
+  expect(reminders[1]).toContain("MEMORY REPAIR IN PROGRESS");
+  // The worker ran and could not resolve it: hand it to the primary.
+  await run();
+  expect(jobs).toHaveLength(1);
+  expect(reminders).toHaveLength(3);
+  expect(reminders[2]).toContain("MEMORY GIT CONFLICT");
+  expect(reminders[2]).toContain("automatic repair could not resolve");
 });
 
 test("post-turn sync is skipped while another writer owns the checkout", async () => {

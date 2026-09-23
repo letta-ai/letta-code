@@ -13,7 +13,7 @@ import {
 import { claimMemoryOperation } from "@/agent/memory-operation";
 import { isMemoryWorkerSession } from "@/agent/subagents/memory-worker-session";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
-import { startMemoryConflictRepair } from "@/tools/impl/memory-task-lifecycle";
+import { ensureMemoryConflictRepair } from "@/tools/impl/memory-task-lifecycle";
 import { spawnBackgroundSubagentTask } from "@/tools/impl/task";
 import { debugWarn } from "@/utils/debug";
 
@@ -30,17 +30,12 @@ export interface RunPostTurnMemorySyncParams {
 export interface RunPostTurnMemorySyncDependencies {
   syncMemory?: typeof syncPendingMemoryCommitsAfterTurn;
   repairConflict?: (
-    params: Parameters<typeof startMemoryConflictRepair>[0],
+    params: Parameters<typeof ensureMemoryConflictRepair>[0],
   ) => Promise<boolean>;
   claimOperation?: typeof claimMemoryOperation;
   syncAttachedRepositories?: typeof syncPendingAttachedRepositoryCommitsAfterTurn;
 }
 
-/**
- * Reminders for the primary's own post-turn MemFS sync. A conflict is normally
- * handed to a background repair worker, so callers pass `conflict` only when
- * that repair was not launched.
- */
 /** A repair worker is editing the checkout in place; the primary must leave it alone until it finishes. */
 export function formatMemoryRepairInProgressReminder(
   result: MemoryPostTurnSyncResult,
@@ -55,6 +50,11 @@ Do not edit memory files or run Git commands in the memory repository until the 
 ${SYSTEM_REMINDER_CLOSE}`;
 }
 
+/**
+ * Reminders for the primary's own post-turn MemFS sync. A conflict is normally
+ * handed to a background repair worker; the conflict reminder is for one no
+ * worker is handling any more.
+ */
 export function formatMemoryPostTurnSyncReminder(
   result: MemoryPostTurnSyncResult,
 ): string | null {
@@ -185,14 +185,14 @@ export async function runPostTurnMemorySync(
         try {
           const result = await syncMemory(params.agentId);
           if (result.status === "pushed") params.onMemoryPushed?.();
-          const repairLaunched =
+          const repairInProgress =
             result.status === "conflict" &&
             (await (
               dependencies.repairConflict ??
               ((repair) =>
-                startMemoryConflictRepair(repair, spawnBackgroundSubagentTask))
+                ensureMemoryConflictRepair(repair, spawnBackgroundSubagentTask))
             )({ ...params, result }));
-          const reminder = repairLaunched
+          const reminder = repairInProgress
             ? formatMemoryRepairInProgressReminder(result)
             : formatMemoryPostTurnSyncReminder(result);
           if (reminder) {
