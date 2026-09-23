@@ -98,7 +98,6 @@ const FALLBACK_TOOL_NAMES = [
   "TodoWrite",
   "AskUserQuestion",
   "Skill",
-  "TaskOutput",
   "KillBash",
 ];
 

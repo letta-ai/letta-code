@@ -1,12 +1,17 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import {
   type RepositoriesPostTurnSyncResult,
   type RepositoryPostTurnSyncResult,
   syncPendingAttachedRepositoryCommitsAfterTurn,
 } from "@/agent/attached-repository-git-sync";
+import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
   type MemoryPostTurnSyncResult,
   syncPendingMemoryCommitsAfterTurn,
 } from "@/agent/memory-git";
+import { claimMemoryOperation } from "@/agent/memory-operation";
+import { isMemoryWorkerSession } from "@/agent/subagents/memory-worker-session";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { debugWarn } from "@/utils/debug";
 
@@ -21,6 +26,7 @@ export interface RunPostTurnMemorySyncParams {
 
 export interface RunPostTurnMemorySyncDependencies {
   syncMemory?: typeof syncPendingMemoryCommitsAfterTurn;
+  claimOperation?: typeof claimMemoryOperation;
   syncAttachedRepositories?: typeof syncPendingAttachedRepositoryCommitsAfterTurn;
 }
 
@@ -125,6 +131,7 @@ export async function runPostTurnMemorySync(
   params: RunPostTurnMemorySyncParams,
   dependencies: RunPostTurnMemorySyncDependencies = {},
 ): Promise<void> {
+  if (isMemoryWorkerSession()) return;
   const debugLabel = params.debugLabel ?? "Post-turn memory sync";
   const syncMemory =
     dependencies.syncMemory ?? syncPendingMemoryCommitsAfterTurn;
@@ -149,14 +156,26 @@ export async function runPostTurnMemorySync(
 
   if (memorySyncEnabled) {
     try {
-      const syncResult = await syncMemory(params.agentId);
-      if (syncResult.status === "pushed") {
-        params.onMemoryPushed?.();
-      }
-      const syncReminder = formatMemoryPostTurnSyncReminder(syncResult);
-      if (syncReminder) {
-        params.enqueueReminder?.(syncReminder);
-        await params.emitWarning?.(syncReminder);
+      // Another harness writer (reflection integration, a worker in a later PR)
+      // may own the checkout; skip this turn's sync rather than wait for it.
+      const memoryDir = getScopedMemoryFilesystemRoot(params.agentId);
+      const release = existsSync(join(memoryDir, ".git"))
+        ? await (dependencies.claimOperation ?? claimMemoryOperation)(memoryDir)
+        : undefined;
+      if (release !== null) {
+        try {
+          const syncResult = await syncMemory(params.agentId);
+          if (syncResult.status === "pushed") {
+            params.onMemoryPushed?.();
+          }
+          const syncReminder = formatMemoryPostTurnSyncReminder(syncResult);
+          if (syncReminder) {
+            params.enqueueReminder?.(syncReminder);
+            await params.emitWarning?.(syncReminder);
+          }
+        } finally {
+          await release?.();
+        }
       }
     } catch (error) {
       debugWarn(

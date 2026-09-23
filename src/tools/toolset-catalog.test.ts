@@ -49,6 +49,15 @@ test.each(Object.entries(TOOLSET_CATALOG))(
   },
 );
 
+test("does not register removed background output pollers", () => {
+  expect(Object.hasOwn(TOOL_DEFINITIONS, "TaskOutput")).toBe(false);
+  expect(Object.hasOwn(TOOL_DEFINITIONS, "BashOutput")).toBe(false);
+  for (const { tools } of Object.values(TOOLSET_CATALOG)) {
+    expect(tools).not.toContain("TaskOutput");
+    expect(tools).not.toContain("BashOutput");
+  }
+});
+
 test("each nonempty preset exposes SendAgentMessage in the model's tool payload", async () => {
   for (const toolsetPreference of ["letta", "default", "codex"] as const) {
     const prepared = await prepareToolExecutionContextForResolvedTarget({

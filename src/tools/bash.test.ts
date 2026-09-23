@@ -10,6 +10,10 @@ import {
 import { bash, spawnCommand } from "@/tools/impl/bash";
 import { backgroundProcesses } from "@/tools/impl/process_manager";
 import { LIMITS } from "@/tools/impl/truncation";
+import {
+  clearPendingMessages,
+  setMessageQueueAdder,
+} from "@/utils/message-queue-bridge";
 
 async function runBashInTemp(
   command: string,
@@ -184,15 +188,34 @@ describe("Bash tool", () => {
   }, 5000);
 
   test("automatically yields a foreground sleep", async () => {
+    setMessageQueueAdder(() => {});
+    try {
+      const result = await bash({
+        command: "sleep 10",
+        description: "Test automatic yield",
+        foregroundYieldMs: 50,
+      });
+
+      expect(result.status).toBe("success");
+      expect(result.content[0]?.text).toContain("still running with task ID:");
+      expect(result.content[0]?.text).toContain("You will be notified");
+    } finally {
+      setMessageQueueAdder(null);
+      clearPendingMessages();
+    }
+  });
+
+  test("keeps a slow command in the foreground without a notification consumer", async () => {
+    setMessageQueueAdder(null);
     const result = await bash({
-      command: "sleep 10",
-      description: "Test automatic yield",
+      command: `node -e "setTimeout(() => console.log('finished'), 300)"`,
+      description: "Test one-shot foreground",
       foregroundYieldMs: 50,
     });
 
     expect(result.status).toBe("success");
-    expect(result.content[0]?.text).toContain("still running with task ID:");
-    expect(result.content[0]?.text).toContain("You will be notified");
+    expect(result.content[0]?.text).toContain("finished");
+    expect(result.content[0]?.text).not.toContain("still running");
   });
 
   test("runs command in background mode", async () => {

@@ -6,9 +6,11 @@ import {
 import { stopScheduler as stopCronScheduler } from "@/cron/scheduler";
 import { subscribeToBackgroundProcessState } from "@/tools/impl/process_manager";
 import { setMessageQueueAdder } from "@/utils/message-queue-bridge";
+import { TO_SUBSCRIBERS } from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import {
   emitDeviceStatusIfOpen,
+  emitProtocolV2Message,
   emitStreamDelta,
   emitSubagentStateIfOpen,
 } from "./protocol-outbound";
@@ -48,6 +50,21 @@ export function installProcessEventRouting(params: {
     (subagentId, event) => {
       if (!isListenerTransportOpen(processTransport)) return;
       const subagent = getSubagents().find((entry) => entry.id === subagentId);
+      if (event.type === "memory_updated") {
+        if (subagent?.parentAgentId) {
+          emitProtocolV2Message(
+            processTransport,
+            runtime,
+            event,
+            {
+              agent_id: subagent.parentAgentId,
+              conversation_id: subagent.parentConversationId ?? "default",
+            },
+            TO_SUBSCRIBERS,
+          );
+        }
+        return;
+      }
       if (subagent?.silent === true) return;
 
       emitStreamDelta(
