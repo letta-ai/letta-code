@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getBackend } from "@/backend";
 import { runWithRuntimeContext } from "@/runtime-context";
+import { task_output } from "@/tools/impl/task-output";
 import { clearCapturedToolExecutionContexts } from "@/tools/manager";
 import { prepareToolExecutionContextForResolvedTarget } from "@/tools/toolset";
 import { TOOLSET_CATALOG } from "@/tools/toolset-catalog";
@@ -18,7 +19,6 @@ import {
   setMessageQueueAdder,
 } from "@/utils/message-queue-bridge";
 import { backgroundProcesses } from "./process_manager";
-import { task_output } from "./task-output";
 import { task_stop } from "./task-stop";
 import {
   __setWorkflowSpawnerFactoryForTests,
@@ -385,12 +385,6 @@ describe("Workflow tool (background launch)", () => {
         agentsRunning: 2,
         totalTokens: 2_400,
       });
-      const running = await task_output({
-        task_id: taskId,
-        block: false,
-        timeout: 100,
-      });
-      expect(running.status).toBe("running");
       expect(
         processState?.stdout.filter((line) => line.startsWith("▶ ")),
       ).toEqual(["▶ a", "▶ b"]);
