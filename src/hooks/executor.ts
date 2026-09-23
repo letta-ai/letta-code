@@ -5,6 +5,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { buildShellLaunchers } from "@/tools/impl/shell-launchers";
 import { LIMITS, truncateByChars } from "@/tools/impl/truncation";
+import { scrubAmbientSecrets } from "@/tools/secret-substitution";
 import { executePromptHook } from "./prompt-executor";
 import {
   type CommandHookConfig,
@@ -23,15 +24,24 @@ const DEFAULT_TIMEOUT_MS = 60000;
 /**
  * Cap a model-facing hook string. Oversized text is saved to a file and
  * replaced with a short prefix plus the file path.
+ *
+ * Scrubbed for ambient runtime auth values first: hook children inherit the
+ * runtime environment, and the overflow file path is shown to the model, so
+ * both the excerpt and the persisted file must be credential-free.
  */
 export function truncateHookFeedback(
   text: string,
   workingDirectory: string,
 ): string {
-  return truncateByChars(text, LIMITS.HOOK_OUTPUT_CHARS, "Hook", {
-    workingDirectory,
-    previewChars: LIMITS.OVERFLOW_PREVIEW_CHARS,
-  }).content;
+  return truncateByChars(
+    scrubAmbientSecrets(text),
+    LIMITS.HOOK_OUTPUT_CHARS,
+    "Hook",
+    {
+      workingDirectory,
+      previewChars: LIMITS.OVERFLOW_PREVIEW_CHARS,
+    },
+  ).content;
 }
 
 /**

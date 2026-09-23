@@ -8,9 +8,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { truncateHookFeedback } from "@/hooks/executor";
 import type { ModToolEndEvent } from "@/mods/types";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
+import { monitor } from "@/tools/impl/monitor";
 import { backgroundProcesses } from "@/tools/impl/process_manager";
 import {
   executeTool,
@@ -333,6 +335,24 @@ describe("ambient runtime credential redaction", () => {
     expect(scrubber.flush()).toBe("");
   });
 
+  test("truncateHookFeedback scrubs the ambient key from excerpt and overflow file", () => {
+    // Directly covers the scrub point every hook-feedback caller shares,
+    // including paths that never pass through the tool manager (e.g.
+    // session-start feedback).
+    const oversized = `start ${AMBIENT_SENTINEL} ${"p".repeat(12000)} ${AMBIENT_SENTINEL}`;
+    const excerpt = truncateHookFeedback(oversized, process.cwd());
+    expect(excerpt).not.toContain(AMBIENT_SENTINEL);
+    expect(excerpt).toContain(AMBIENT_PLACEHOLDER);
+    const overflowPath = excerpt.match(
+      /\[Full output written to: ([^\]]+)\]/,
+    )?.[1];
+    expect(overflowPath).toBeDefined();
+    if (!overflowPath) throw new Error("Expected overflow file pointer");
+    const overflowContent = readFileSync(overflowPath, "utf8");
+    expect(overflowContent).not.toContain(AMBIENT_SENTINEL);
+    expect(overflowContent).toContain(AMBIENT_PLACEHOLDER);
+  });
+
   test("failing env-file parser never leaks the ambient key to the model or telemetry", async () => {
     const telemetryCalls: Array<{ errorType?: string; payload?: string }> = [];
     const originalTrackToolUsage = telemetry.trackToolUsage;
@@ -577,6 +597,48 @@ describe("ambient runtime credential redaction", () => {
     }
   });
 
+  // printf without a trailing newline exercises the held-back tail; the
+  // monitor command path uses the system shell.
+  test.skipIf(process.platform === "win32")(
+    "monitor events include a final unterminated tail held back as a secret prefix",
+    async () => {
+      const queued: QueuedMessage[] = [];
+      setMessageQueueAdder((message) => {
+        queued.push(message);
+      });
+
+      try {
+        // The sentinel starts with "sk-"; a final no-newline "sk" tail is
+        // held back by the stream scrubber until the process exits, and must
+        // still reach the emitted monitor event (not just the output file).
+        const result = await monitor({
+          description: "tail test",
+          timeout_ms: 30_000,
+          persistent: false,
+          command: "printf 'ready-sk'",
+        });
+
+        for (let attempt = 0; attempt < 100; attempt += 1) {
+          const state = backgroundProcesses.get(result.taskId);
+          if (state && state.status !== "running") break;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+
+        const texts = queued.map((message) => JSON.stringify(message));
+        expect(
+          texts.some((text) => text.includes("ready-sk")),
+          `expected an event containing the held-back tail; got: ${texts.join(" | ")}`,
+        ).toBe(true);
+        for (const text of texts) {
+          expect(text).not.toContain(AMBIENT_SENTINEL);
+        }
+      } finally {
+        setMessageQueueAdder(null);
+      }
+    },
+    15_000,
+  );
+
   // Hook commands run via the system shell; this test uses bash syntax.
   test.skipIf(process.platform === "win32")(
     "PostToolUse hook feedback never reintroduces the ambient key",
@@ -635,6 +697,85 @@ describe("ambient runtime credential redaction", () => {
         expect(text).toContain("[Hook feedback]:");
         expect(text).not.toContain(AMBIENT_SENTINEL);
         expect(text).toContain(AMBIENT_PLACEHOLDER);
+      } finally {
+        if (prepared) releaseToolExecutionContext(prepared.contextId);
+        process.env.HOME = originalHome;
+        await settingsManager.reset();
+        rmSync(baseDir, { recursive: true, force: true });
+      }
+    },
+    15_000,
+  );
+
+  // Hook commands run via the system shell; this test uses bash syntax.
+  test.skipIf(process.platform === "win32")(
+    "oversized hook feedback never persists the ambient key in its overflow file",
+    async () => {
+      const baseDir = mkdtempSync(
+        join(tmpdir(), "letta-hook-overflow-redaction-"),
+      );
+      const fakeHome = join(baseDir, "home");
+      const projectDir = join(baseDir, "project");
+      mkdirSync(fakeHome, { recursive: true });
+      mkdirSync(join(projectDir, ".letta"), { recursive: true });
+      // Over-limit (10k) hook output with the sentinel on both sides of the
+      // 2k preview boundary, so containment must hold in the returned excerpt
+      // AND the persisted overflow file the model is pointed at.
+      writeFileSync(
+        join(projectDir, ".letta", "settings.json"),
+        JSON.stringify({
+          hooks: {
+            PostToolUse: [
+              {
+                matcher: "Bash",
+                hooks: [
+                  {
+                    type: "command",
+                    command:
+                      "{ echo \"$LETTA_API_KEY\"; head -c 12000 /dev/zero | tr '\\0' 'p'; echo \"$LETTA_API_KEY\"; } >&2 && exit 2",
+                  },
+                ],
+              },
+            ],
+          },
+        }),
+      );
+
+      const originalHome = process.env.HOME;
+      await settingsManager.reset();
+      process.env.HOME = fakeHome;
+      await settingsManager.initialize();
+
+      let prepared:
+        | Awaited<
+            ReturnType<typeof prepareToolExecutionContextForSpecificTools>
+          >
+        | undefined;
+      try {
+        prepared = await prepareToolExecutionContextForSpecificTools(["Bash"], {
+          runtimeContext: { agentId: AGENT_A, workingDirectory: projectDir },
+          workingDirectory: projectDir,
+        });
+        const result = await executeTool(
+          "Bash",
+          { command: "echo tool-output", timeout: 5000 },
+          { toolContextId: prepared.contextId },
+        );
+
+        const text = asText(result.toolReturn);
+        expect(text).toContain("[Hook feedback]:");
+        expect(text).not.toContain(AMBIENT_SENTINEL);
+        expect(text).toContain(AMBIENT_PLACEHOLDER);
+        const overflowPath = text.match(
+          /\[Full output written to: ([^\]]+)\]/,
+        )?.[1];
+        expect(overflowPath).toBeDefined();
+        if (!overflowPath) {
+          throw new Error("Expected hook feedback overflow pointer");
+        }
+        const overflowContent = readFileSync(overflowPath, "utf8");
+        expect(overflowContent).not.toContain(AMBIENT_SENTINEL);
+        expect(overflowContent).toContain(AMBIENT_PLACEHOLDER);
       } finally {
         if (prepared) releaseToolExecutionContext(prepared.contextId);
         process.env.HOME = originalHome;

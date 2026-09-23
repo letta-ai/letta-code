@@ -412,17 +412,6 @@ function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
   };
   let processState: BackgroundProcess;
   let producedOutput = false;
-  const flushStreamScrubbers = (): void => {
-    if (!processState) return;
-    for (const stream of ["stdout", "stderr"] as const) {
-      const rest = streamScrubbers[stream].flush();
-      if (!rest) continue;
-      if (stream === "stdout" && /[^\n]/.test(rest)) {
-        producedOutput = true;
-      }
-      output.append(stream === "stderr" ? `[stderr] ${rest}` : rest);
-    }
-  };
 
   const events = createMonitorEventStream({
     emit(event) {
@@ -442,6 +431,25 @@ function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
       processState.process.kill("SIGTERM");
     },
   });
+
+  const flushStreamScrubbers = (): void => {
+    if (!processState) return;
+    for (const stream of ["stdout", "stderr"] as const) {
+      const rest = streamScrubbers[stream].flush();
+      if (!rest) continue;
+      if (stream === "stdout") {
+        // The held-back tail is still monitor output: route it through the
+        // event stream (before events.finish() flushes a final partial line)
+        // as well as the output file, or a command whose final unterminated
+        // output ends with a secret prefix would silently lose those bytes.
+        if (/[^\n]/.test(rest)) {
+          producedOutput = true;
+        }
+        events.onData(rest);
+      }
+      output.append(stream === "stderr" ? `[stderr] ${rest}` : rest);
+    }
+  };
 
   const runningProcess = startShellProcess(sandboxed.launcher, {
     cwd,
