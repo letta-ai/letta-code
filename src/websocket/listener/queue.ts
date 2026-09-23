@@ -116,6 +116,7 @@ function buildQueuedTurnMessage(
     agentId: scopeItem?.agentId ?? runtime.agentId ?? undefined,
     conversationId: scopeItem?.conversationId ?? runtime.conversationId,
     ...template,
+    actingUserId: template?.actingUserId ?? scopeItem?.actingUserId,
     messages,
   };
 }
