@@ -211,6 +211,7 @@ describe("Skill tool memory filesystem lookup", () => {
     expect(rendered).toContain("root `MEMORY.md`");
     expect(SYSTEM_DIRECTORY_PATH.test(rendered)).toBe(false);
     expect(rendered).not.toContain("<file>LEGACY_MEMORY.md</file>");
+    expect(rendered).toContain("including quota");
   });
 
   test("existing v1 memory still loads the legacy init instructions", async () => {
@@ -239,6 +240,7 @@ describe("Skill tool memory filesystem lookup", () => {
     );
     expect(rendered).toContain("system/persona.md");
     expect(rendered).not.toContain("<file>LEGACY_MEMORY.md</file>");
+    expect(rendered).toContain("including quota");
   });
 
   test("doctor uses the same investigation skill for both memory formats", () => {
