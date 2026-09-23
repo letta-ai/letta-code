@@ -5,8 +5,8 @@ import { useEffect, useState } from "react";
 
 // Regression coverage for LET-13141: the patched Ink runtime must retain only
 // a bounded tail of the committed static transcript for one-shot repaints,
-// overflow frames must not replay that tail (or wipe scrollback with 3J), and
-// identical overflow frames must not write.
+// overflow frames must not replay that tail or 2J-erase a just-committed
+// increment, and identical overflow frames must not write.
 
 const RETAIN_LIMIT = 2 * 1024 * 1024;
 const OVERFLOW_SLACK = 256 * 1024;
@@ -53,18 +53,34 @@ function makeItems(
   }));
 }
 
-function overflowWrites(chunks: string[]): string[] {
-  return chunks.filter((chunk) => chunk.includes(CLEAR_SCREEN));
-}
-
-function latestOverflowWrite(chunks: string[]): string {
-  const writes = overflowWrites(chunks);
+function latestClearWrite(chunks: string[]): string {
+  const writes = chunks.filter((chunk) => chunk.includes(CLEAR_SCREEN));
   expect(writes.length).toBeGreaterThan(0);
   const latest = writes[writes.length - 1];
   if (latest === undefined) {
-    throw new Error("expected an overflow rewrite");
+    throw new Error("expected a clear-and-rewrite");
   }
   return latest;
+}
+
+// xterm.js / VT 2J erases the display and does not copy those cells into
+// scrollback. 3J wipes scrollback. This is the buffer model Amelia reproduced
+// with @xterm/headless: `text + 2J` drops `text`.
+function replayTerminalBuffer(chunks: string[]): string {
+  let display = "";
+  for (const chunk of chunks) {
+    const rest = chunk.includes(CLEAR_SCROLLBACK)
+      ? chunk.replaceAll(CLEAR_SCROLLBACK, "")
+      : chunk;
+    const clearAt = rest.indexOf(CLEAR_SCREEN);
+    if (clearAt === -1) {
+      display += rest;
+      continue;
+    }
+    display += rest.slice(0, clearAt);
+    display = rest.slice(clearAt + CLEAR_SCREEN.length);
+  }
+  return display;
 }
 
 function expectNoScrollbackWipe(write: string) {
@@ -83,8 +99,22 @@ function expectBoundedNewestTail(write: string) {
   expect(write.length).toBeLessThan(RETAIN_LIMIT + OVERFLOW_SLACK);
 }
 
+function expectOverflowDoesNotClear(chunks: string[]) {
+  for (const chunk of chunks) {
+    expect(chunk).not.toContain(CLEAR_SCROLLBACK);
+    const clearAt = chunk.indexOf(CLEAR_SCREEN);
+    if (clearAt === -1) {
+      continue;
+    }
+    const before = chunk.slice(0, clearAt);
+    expect(before).not.toContain(EARLY_MARKER);
+    expect(before).not.toContain(FILLER_MARKER);
+    expect(before).not.toContain(LATE_MARKER);
+  }
+}
+
 // Live region is 10 rows tall while the terminal is 8 rows, so every frame
-// takes Ink's overflow path (new increment + 2J+H + live output).
+// takes Ink's overflow path (new increment and/or live append, no 2J).
 function OverflowHarness({ items, tick }: { items: Item[]; tick: number }) {
   return (
     <>
@@ -98,7 +128,7 @@ function OverflowHarness({ items, tick }: { items: Item[]; tick: number }) {
   );
 }
 
-test("overflow frames do not replay the retained tail or wipe scrollback", async () => {
+test("overflow frames append static increments without 2J-erasing them", async () => {
   const stdout = new CaptureStream() as CaptureStream & NodeJS.WriteStream;
   let items: Item[] = [];
   const { rerender, unmount } = render(
@@ -127,31 +157,43 @@ test("overflow frames do not replay the retained tail or wipe scrollback", async
   rerender(<OverflowHarness items={items} tick={3} />);
   await waitForRender();
 
-  const afterCommit = latestOverflowWrite(stdout.chunks);
-  expectNoScrollbackWipe(afterCommit);
-  // This frame's new increment may be present; previously retained items must
-  // not be replayed into the overflow write.
+  const afterCommit = stdout.chunks.join("");
   expect(afterCommit).toContain(LATE_MARKER);
-  expect(afterCommit).not.toContain(EARLY_MARKER);
-  expect(afterCommit).not.toContain(FILLER_MARKER);
-  expect(afterCommit.length).toBeLessThan(512 * 1024);
+  expect(afterCommit).not.toContain(CLEAR_SCROLLBACK);
+  expectOverflowDoesNotClear(stdout.chunks);
+  // A tail replay would write the retained filler on this overflow frame.
+  const lateWrites = stdout.chunks.filter((chunk) =>
+    chunk.includes(LATE_MARKER),
+  );
+  expect(lateWrites.length).toBeGreaterThan(0);
+  expect(lateWrites.some((chunk) => chunk.includes(FILLER_MARKER))).toBe(false);
+  expect(lateWrites.some((chunk) => chunk.includes(EARLY_MARKER))).toBe(false);
 
-  const writesAfterCommit = overflowWrites(stdout.chunks).length;
+  const writesAfterCommit = stdout.chunks.length;
   rerender(<OverflowHarness items={items} tick={3} />);
   await waitForRender();
   rerender(<OverflowHarness items={items} tick={3} />);
   await waitForRender();
-  expect(overflowWrites(stdout.chunks).length).toBe(writesAfterCommit);
+  expect(stdout.chunks.length).toBe(writesAfterCommit);
 
   rerender(<OverflowHarness items={items} tick={4} />);
   await waitForRender();
-  const liveOnly = latestOverflowWrite(stdout.chunks);
-  expectNoScrollbackWipe(liveOnly);
+  const liveOnly = stdout.chunks.slice(writesAfterCommit).join("");
   expect(liveOnly).toContain("live 4");
   expect(liveOnly).not.toContain(EARLY_MARKER);
   expect(liveOnly).not.toContain(FILLER_MARKER);
   expect(liveOnly).not.toContain(LATE_MARKER);
+  expect(liveOnly).not.toContain(CLEAR_SCREEN);
+  expect(liveOnly).not.toContain(CLEAR_SCROLLBACK);
   expect(liveOnly.length).toBeLessThan(4 * 1024);
+
+  // 2J does not preserve the cells it erases. After the live-only frame the
+  // committed markers must still be in the modeled terminal buffer.
+  const buffer = replayTerminalBuffer(stdout.chunks);
+  expect(buffer).toContain(EARLY_MARKER);
+  expect(buffer).toContain(FILLER_MARKER);
+  expect(buffer).toContain(LATE_MARKER);
+  expect(buffer).toContain("live 4");
 
   unmount();
 }, 45000);
@@ -201,7 +243,7 @@ test("static repaint after reset rewrites only the bounded newest tail", async (
   triggerReset?.();
   await waitForRender();
 
-  expectBoundedNewestTail(latestOverflowWrite(stdout.chunks));
+  expectBoundedNewestTail(latestClearWrite(stdout.chunks));
 
   unmount();
 }, 45000);

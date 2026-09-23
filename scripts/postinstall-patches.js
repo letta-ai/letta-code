@@ -213,14 +213,16 @@ await patchInkRuntime([
     all: true,
   },
   {
-    // Overflow frames: do not replay fullStaticOutput. That string exists for
-    // the one-shot #4032 ctrl+r/ctrl+t repaint. Replaying it on this recurring
-    // path (2J+H, no 3J) would append another copy of the retained tail to
-    // emulator scrollback on every changed tall-live-region frame. Write only
-    // this frame's new static increment (already printed incrementally) plus
-    // the #4032 clear and the live region. Skip when nothing changed.
+    // Overflow frames: do not replay fullStaticOutput and do not 2J after a
+    // new static increment. 2J erases display cells and does not copy them
+    // into xterm.js scrollback, so `staticOutput + 2J` drops the just-committed
+    // item. Write the increment and/or live region as ordinary appends; skip
+    // when nothing changed. fullStaticOutput stays for the one-shot #4032
+    // ctrl+r/ctrl+t repaint.
     before: [
-      // Current branch: 2J+H but still replayed the retained tail.
+      // Current branch: increment immediately followed by 2J (erases the item).
+      "            if (hasStaticOutput || output !== this.lastOutput) {\n                this.options.stdout.write((hasStaticOutput ? staticOutput : '') + '\\u001B[2J\\u001B[H' + output);\n            }\n            this.lastOutput = output;\n            return;",
+      // Earlier: 2J+H but still replayed the retained tail.
       "            if (hasStaticOutput || output !== this.lastOutput) {\n                this.options.stdout.write('\\u001B[2J\\u001B[H' + this.fullStaticOutput + output);\n            }\n            this.lastOutput = output;\n            return;",
       // Earlier: skip-no-change guard still used clearTerminal (3J).
       "            if (hasStaticOutput || output !== this.lastOutput) {\n                this.options.stdout.write(ansiEscapes.clearTerminal + this.fullStaticOutput + output);\n            }\n            this.lastOutput = output;\n            return;",
@@ -228,7 +230,7 @@ await patchInkRuntime([
       "            this.options.stdout.write(ansiEscapes.clearTerminal + this.fullStaticOutput + output);\n            this.lastOutput = output;\n            return;",
     ],
     after:
-      "            if (hasStaticOutput || output !== this.lastOutput) {\n                this.options.stdout.write((hasStaticOutput ? staticOutput : '') + '\\u001B[2J\\u001B[H' + output);\n            }\n            this.lastOutput = output;\n            return;",
+      "            if (hasStaticOutput) {\n                this.options.stdout.write(staticOutput);\n            }\n            if (output !== this.lastOutput) {\n                this.options.stdout.write(output);\n            }\n            this.lastOutput = output;\n            return;",
   },
   {
     before: "        if (outputHeight >= this.options.stdout.rows) {",
