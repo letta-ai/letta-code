@@ -34,4 +34,26 @@ describe("syntax-languages", () => {
     expect(spans).toBeDefined();
     expect(spans?.[0]?.length).toBeGreaterThan(1);
   });
+
+  it("loads non-extension fence aliases without requesting the canonical name", async () => {
+    // Highlighter + registration hooks must exist before the tail import
+    // resolves. Do not also request cpp / csharp / kotlin — those loaders
+    // populate loadedTail with aliases after the fact and would hide a miss.
+    expect(highlightCode("echo hi", "bash")).toBeDefined();
+
+    const cases = [
+      { alias: "c++", code: "int main() { return 0; }" },
+      { alias: "c#", code: "class C {}" },
+      { alias: "kts", code: "fun main() {}" },
+    ];
+
+    for (const { alias, code } of cases) {
+      expect(ensureLanguageLoaded(alias)).toBe(false);
+      await waitForLanguage(alias);
+      expect(ensureLanguageLoaded(alias)).toBe(true);
+      const spans = highlightCode(code, alias);
+      expect(spans).toBeDefined();
+      expect(spans?.[0]?.length).toBeGreaterThan(1);
+    }
+  });
 });

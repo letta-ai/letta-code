@@ -52,7 +52,10 @@ type GrammarModule = { default: LanguageRegistration | LanguageRegistration[] };
 const TAIL_LOADERS: Record<string, () => Promise<GrammarModule>> = {
   c: () => import("@shikijs/langs/c"),
   cpp: () => import("@shikijs/langs/cpp"),
+  // Fence aliases that are not file extensions (miss EXT_TO_LANG remapping).
+  "c++": () => import("@shikijs/langs/cpp"),
   csharp: () => import("@shikijs/langs/csharp"),
+  "c#": () => import("@shikijs/langs/csharp"),
   css: () => import("@shikijs/langs/css"),
   docker: () => import("@shikijs/langs/docker"),
   dockerfile: () => import("@shikijs/langs/docker"),
@@ -62,6 +65,7 @@ const TAIL_LOADERS: Record<string, () => Promise<GrammarModule>> = {
   ini: () => import("@shikijs/langs/ini"),
   java: () => import("@shikijs/langs/java"),
   kotlin: () => import("@shikijs/langs/kotlin"),
+  kts: () => import("@shikijs/langs/kotlin"),
   less: () => import("@shikijs/langs/less"),
   lua: () => import("@shikijs/langs/lua"),
   make: () => import("@shikijs/langs/make"),
@@ -77,6 +81,17 @@ const TAIL_LOADERS: Record<string, () => Promise<GrammarModule>> = {
   swift: () => import("@shikijs/langs/swift"),
   toml: () => import("@shikijs/langs/toml"),
   wasm: () => import("@shikijs/langs/wasm"),
+};
+
+/**
+ * Fence aliases that are not file extensions, so MarkdownDisplay's
+ * languageFromPath(`code.${name}`) remapping never sees them. Looked up
+ * before writing `unavailable` so a missed TAIL_LOADERS key is not sticky.
+ */
+const TAIL_ALIASES: Record<string, string> = {
+  "c++": "cpp",
+  "c#": "csharp",
+  kts: "kotlin",
 };
 
 const loadedTail = new Set<string>();
@@ -105,7 +120,8 @@ export function ensureLanguageLoaded(language: string): boolean {
   const lang = language.toLowerCase();
   if (CORE_LANG_NAMES.has(lang) || loadedTail.has(lang)) return true;
   if (unavailable.has(lang) || inFlight.has(lang)) return false;
-  const loader = TAIL_LOADERS[lang];
+  const loaderKey = lang in TAIL_LOADERS ? lang : TAIL_ALIASES[lang];
+  const loader = loaderKey !== undefined ? TAIL_LOADERS[loaderKey] : undefined;
   if (!loader) {
     unavailable.add(lang);
     return false;
