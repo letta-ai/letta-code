@@ -61,16 +61,13 @@ The command uses CLI auth and respects `LETTA_API_KEY`/`LETTA_BASE_URL`, not age
 
 Use `letta model list` for available models; credits and quota buckets do not guarantee inference availability. `letta usage` does not include session token statistics; the interactive `/usage` command is a separate surface. If either lookup fails, the command exits nonzero without partial usage. Treat that as unavailable data, not zero credits or exhausted quota.
 
-### Prefer plan-backed model handles over metered billing
+### Billing path when changing models
 
-Model handles split into two billing paths:
+The same model can often be reached through more than one route: a connected subscription (for example a ChatGPT or Grok plan), the Letta plan (`letta/*`), or per-token billing against organization credits or the user's own API key. Users choose provider names, so a handle's prefix does not reliably show which route it bills through.
 
-- Plan-backed handles, such as `chatgpt_oauth/gpt-5.5`, run against a connected provider subscription with allocated quota.
-- Metered handles, such as `openai/gpt-5.2`, bill per token against organization credits or the user's own API key.
+Before switching models, consider how the current model is billed and keep the user on that route unless they asked to change it. Use the current handle, the labels in `letta model list`, and anything the user has said about billing as evidence. If several available handles serve the requested model and you cannot tell which one uses the user's subscription, list the candidates and ask before switching. Do not silently move a user from a subscription to per-token billing.
 
-When the user asks you to change or configure a model, prefer a plan-backed handle unless they explicitly asked for metered or BYOK billing. A metered choice drains credits while the attached subscription quota sits unused.
-
-If the request does not make the billing path unambiguous, confirm the exact handle and its billing impact with the user before switching. Use `letta model list` (with `--byok`/`--hosted` to filter) to inspect available handles and `letta usage` to check plan and credit state before writing the change.
+`letta model list --byok` includes both connected subscriptions and user API keys, so it does not separate the two. `letta usage` covers only Letta credits and `letta/*` quota, not connected subscriptions.
 
 ### Harness and server settings
 

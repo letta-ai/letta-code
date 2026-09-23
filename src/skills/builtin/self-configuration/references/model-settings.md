@@ -2,14 +2,7 @@
 
 Use these examples when constructing `model_settings`. Send only fields supported by the target provider.
 
-## Billing path: plan-backed vs metered handles
-
-| Handle shape | Billing path | Example |
-| --- | --- | --- |
-| `chatgpt_oauth/...` | Connected provider subscription with allocated quota | `chatgpt_oauth/gpt-5.5` |
-| `openai/...`, `anthropic/...`, other direct-API or BYOK slugs | Per-token billing against organization credits or the user's own API key | `openai/gpt-5.2` |
-
-Prefer a plan-backed handle when configuring a model unless the user explicitly asked for metered or BYOK billing. A metered choice drains credits while the attached subscription quota sits unused. If the request does not make the billing path unambiguous, confirm the exact handle and its billing impact with the user before switching. `letta model list` shows available handles (`--byok`/`--hosted` filter the list) and `letta usage` reports plan and credit state.
+Before choosing a handle, follow the billing-path guidance in `SKILL.md` ("Billing path when changing models").
 
 ## Reasoning shapes
 
