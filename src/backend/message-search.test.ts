@@ -13,7 +13,7 @@ import {
   LOCAL_TRANSCRIPT_LEGACY_MESSAGE_FORMAT,
   LOCAL_TRANSCRIPT_LEGACY_SCHEMA_VERSION,
   LOCAL_TRANSCRIPT_PROVIDER_STACK,
-} from "@/backend/local/local-store";
+} from "@/backend/local/local-transcript";
 import { searchLocalTranscriptMessages } from "@/backend/local/transcript-search";
 import {
   searchMessagesForBackend,

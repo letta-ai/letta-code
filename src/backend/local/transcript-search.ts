@@ -11,7 +11,7 @@ import {
   LOCAL_TRANSCRIPT_LEGACY_MESSAGE_FORMAT,
   LOCAL_TRANSCRIPT_MESSAGE_FORMAT,
   type LocalTranscriptManifest,
-} from "./local-store";
+} from "./local-transcript";
 import type { StoredMessage } from "./local-types";
 
 export type LocalTranscriptSearchBody = {
