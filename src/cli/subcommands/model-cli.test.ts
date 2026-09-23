@@ -17,7 +17,11 @@ describe("model CLI", () => {
     handle: string;
     reasoning_levels?: string[];
   }[];
-  let runtimeModels: { handle: string; reasoning_levels?: string[] }[];
+  let runtimeModels: {
+    handle: string;
+    reasoning_levels?: string[];
+    provider_type?: string;
+  }[];
   const root = resolve(import.meta.dir, "../../..");
 
   async function run(
@@ -180,6 +184,24 @@ describe("model CLI", () => {
           level === "off" ? "none" : level,
         ),
       );
+    }
+  }, 30000);
+
+  test("lists provider metadata from the local runtime, not the handle prefix", async () => {
+    const result = await cli(["list"]);
+    expect(result.code, result.stderr).toBe(0);
+    const rows = JSON.parse(result.stdout) as {
+      handle: string;
+      provider_type: string | null;
+      provider_category: string | null;
+    }[];
+    for (const row of rows) {
+      const runtime = runtimeModels.find(
+        (model) => model.handle === row.handle,
+      );
+      if (!runtime) throw new Error(`Unexpected catalog handle: ${row.handle}`);
+      expect(row.provider_type).toBe(runtime.provider_type ?? null);
+      expect(row.provider_category).toBe("byok");
     }
   }, 30000);
 
