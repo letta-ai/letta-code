@@ -6,7 +6,8 @@
 //
 // Usage:
 //   node prepare-history.mjs --export <dir> --out <dir>
-//     [--max-bytes 200000] [--max-sessions 20] [--letta "letta"]
+//     [--max-bytes 200000] [--max-sessions 20]
+//     [--letta <executable>] [--letta-arg <argument> ...]
 //
 // Writes <out>/rendered/<source>/<session>.txt, <out>/cohorts.json
 // ({ historyCohorts }) and <out>/ledger.json, and prints a summary.
@@ -26,7 +27,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
 const USAGE =
-  'Usage: prepare-history.mjs --export <dir> --out <dir> [--max-bytes N] [--max-sessions N] [--letta "letta"]';
+  "Usage: prepare-history.mjs --export <dir> --out <dir> [--max-bytes N] [--max-sessions N] [--letta executable] [--letta-arg argument ...]";
 
 function fail(message) {
   console.error(message);
@@ -127,6 +128,7 @@ const { values } = parseArgs({
     "max-bytes": { type: "string", default: "200000" },
     "max-sessions": { type: "string", default: "20" },
     letta: { type: "string", default: "letta" },
+    "letta-arg": { type: "string", multiple: true },
     help: { type: "boolean", short: "h" },
   },
 });
@@ -141,7 +143,7 @@ const exportDir = resolve(values.export);
 const outDir = resolve(values.out);
 const maxBytes = positiveInt(values["max-bytes"], "max-bytes");
 const maxSessions = positiveInt(values["max-sessions"], "max-sessions");
-const lettaCmd = values.letta.trim().split(/\s+/);
+const lettaCmd = [values.letta, ...(values["letta-arg"] ?? [])];
 
 const manifestPath = join(exportDir, "manifest.json");
 if (!existsSync(manifestPath)) {

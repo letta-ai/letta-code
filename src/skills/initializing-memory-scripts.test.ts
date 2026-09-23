@@ -1,14 +1,17 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const repoRoot = process.cwd();
 const scriptsDir = join(
@@ -20,7 +23,10 @@ const scriptsDir = join(
   "scripts",
 );
 // Render through the real `letta trajectories view` implementation.
-const lettaCmd = `${process.execPath} ${join(repoRoot, "src", "index.ts")}`;
+const lettaCmd: [string, string] = [
+  process.execPath,
+  join(repoRoot, "src", "index.ts"),
+];
 const tempDirs: string[] = [];
 
 function makeTempDir(): string {
@@ -119,7 +125,9 @@ function prepare(exportDir: string, extra: string[] = []) {
     "--out",
     outDir,
     "--letta",
-    lettaCmd,
+    lettaCmd[0],
+    "--letta-arg",
+    lettaCmd[1],
     ...extra,
   ]);
   expect(result.stderr).toBe("");
@@ -187,6 +195,35 @@ describe("prepare-history.mjs", () => {
     const rendered = readFileSync(first?.path ?? "", "utf8");
     expect(rendered.length).toBeGreaterThan(32_000);
     expect(rendered).toContain("-END");
+  });
+
+  test("passes executable and script paths containing spaces as single arguments", () => {
+    const scriptDir = join(makeTempDir(), "runtime with spaces");
+    mkdirSync(scriptDir);
+    const executable = join(
+      scriptDir,
+      process.platform === "win32" ? "bun.exe" : "bun",
+    );
+    if (process.platform === "win32") linkSync(process.execPath, executable);
+    else symlinkSync(process.execPath, executable);
+    const entry = join(scriptDir, "entry point.ts");
+    writeFileSync(
+      entry,
+      `await import(${JSON.stringify(pathToFileURL(join(repoRoot, "src", "index.ts")).href)});`,
+    );
+    const outDir = makeTempDir();
+    const result = runScript("prepare-history.mjs", [
+      "--export",
+      makeExport(makeTempDir()),
+      "--out",
+      outDir,
+      "--letta",
+      executable,
+      "--letta-arg",
+      entry,
+    ]);
+    expect(result.status).toBe(0);
+    expect(readCohorts(outDir).flatMap((c) => c.sessions)).toHaveLength(2);
   });
 
   test("splits cohorts at the session cap with unique ids", () => {

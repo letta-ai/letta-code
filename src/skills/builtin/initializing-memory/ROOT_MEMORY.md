@@ -264,7 +264,7 @@ To browse the export yourself (all source-agnostic):
 node <SKILL_DIR>/scripts/prepare-history.mjs --export /tmp/letta-trajectories --out /tmp/letta-init-history
 ```
 
-This renders every session to plain text with `letta trajectories view --tools` (workflow subagents only have Read/Grep/Glob), groups each project's sessions into chronological cohorts of roughly 200 KB / 20 sessions (`--max-bytes`, `--max-sessions`), and writes the files below. If `letta` is not on PATH, pass the command that runs it with `--letta "<command>"`. Outputs:
+This renders every session to plain text with `letta trajectories view --tools` (workflow subagents only have Read/Grep/Glob), groups each project's sessions into chronological cohorts of roughly 200 KB / 20 sessions (`--max-bytes`, `--max-sessions`), and writes the files below. If `letta` is not on PATH, use `--letta <executable>` and repeat `--letta-arg <argument>` for each prefix argument (for example, `--letta bun --letta-arg src/index.ts`). Paths containing spaces remain single arguments. Outputs:
 - `cohorts.json` — `{ historyCohorts: [{ id, repo, sessions: [{ sessionId, path, source, project, startedAt, userMessages }] }] }` with absolute paths; `repo` is the session project if it still exists on disk
 - `ledger.json` — manifest total, export errors, and every excluded session with its reason (no user messages, render failure)
 
