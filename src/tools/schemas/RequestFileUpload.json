@@ -1,0 +1,43 @@
+{
+  "type": "object",
+  "properties": {
+    "message": {
+      "type": "string",
+      "description": "A clear explanation of which file or files the user should upload and why they are needed."
+    },
+    "accept": {
+      "type": "string",
+      "description": "Optional comma-separated MIME types or file extensions to suggest, such as '.pdf,image/png'."
+    },
+    "multiple": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether the user may upload more than one file."
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "mimeType": {
+            "type": "string"
+          },
+          "size": {
+            "type": "number"
+          }
+        },
+        "required": ["path", "name", "mimeType", "size"],
+        "additionalProperties": false
+      },
+      "description": "Uploaded file metadata filled in by the user interface. Do not populate this field yourself."
+    }
+  },
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

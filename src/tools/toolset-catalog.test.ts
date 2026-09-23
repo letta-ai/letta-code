@@ -71,6 +71,30 @@ test("each nonempty preset exposes SendAgentMessage in the model's tool payload"
   }
 });
 
+test("each nonempty preset exposes RequestFileUpload", async () => {
+  for (const toolsetPreference of ["letta", "default", "codex"] as const) {
+    const prepared = await prepareToolExecutionContextForResolvedTarget({
+      toolsetPreference,
+    });
+    expect(
+      prepared.preparedToolContext.clientTools.filter(
+        (tool) => tool.name === "RequestFileUpload",
+      ),
+    ).toHaveLength(1);
+  }
+});
+
+test("registers RequestFileUpload with UI-populated file metadata", () => {
+  expect(TOOL_DEFINITIONS.RequestFileUpload.schema).toMatchObject({
+    type: "object",
+    properties: {
+      files: {
+        type: "array",
+      },
+    },
+  });
+});
+
 test("none and explicit client allowlists still exclude the tool", async () => {
   const none = await prepareToolExecutionContextForResolvedTarget({
     toolsetPreference: "none",

@@ -7,6 +7,7 @@ export const TOOL_PERMISSIONS: Record<
   { requiresApproval: boolean; approvalPolicy?: ToolApprovalPolicy }
 > = {
   AskUserQuestion: { requiresApproval: true },
+  RequestFileUpload: { requiresApproval: true },
   Bash: { requiresApproval: true },
   EnterWorktree: { requiresApproval: true },
   ExitWorktree: { requiresApproval: true },

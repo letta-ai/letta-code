@@ -22,6 +22,7 @@ import ReadDescription from "./descriptions/Read.md";
 import ReadArtifactFileDescription from "./descriptions/ReadArtifactFile.md";
 import ReadFileCodexDescription from "./descriptions/ReadFileCodex.md";
 import ReadLSPDescription from "./descriptions/ReadLSP.md";
+import RequestFileUploadDescription from "./descriptions/RequestFileUpload.md";
 import SendAgentMessageDescription from "./descriptions/SendAgentMessage.md";
 import SetWorkingDirectoryDescription from "./descriptions/SetWorkingDirectory.md";
 import ShellDescription from "./descriptions/Shell.md";
@@ -61,6 +62,7 @@ import { multi_edit } from "./impl/multi-edit";
 import { read } from "./impl/read";
 import { read_file } from "./impl/read-file-codex";
 import { read_lsp } from "./impl/read-lsp";
+import { request_file_upload } from "./impl/request-file-upload";
 import { send_agent_message } from "./impl/send-agent-message";
 import { set_working_directory } from "./impl/set-working-directory";
 import { shell } from "./impl/shell";
@@ -100,6 +102,7 @@ import ReadSchema from "./schemas/Read.json";
 import ReadArtifactFileSchema from "./schemas/ReadArtifactFile.json";
 import ReadFileCodexSchema from "./schemas/ReadFileCodex.json";
 import ReadLSPSchema from "./schemas/ReadLSP.json";
+import RequestFileUploadSchema from "./schemas/RequestFileUpload.json";
 import SendAgentMessageSchema from "./schemas/SendAgentMessage.json";
 import SetWorkingDirectorySchema from "./schemas/SetWorkingDirectory.json";
 import ShellSchema from "./schemas/Shell.json";
@@ -162,6 +165,11 @@ const toolDefinitions = {
     schema: AskUserQuestionSchema,
     description: AskUserQuestionDescription.trim(),
     impl: ask_user_question,
+  }),
+  RequestFileUpload: defineTool({
+    schema: RequestFileUploadSchema,
+    description: RequestFileUploadDescription.trim(),
+    impl: request_file_upload,
   }),
   Bash: defineTool({
     schema: BashSchema,

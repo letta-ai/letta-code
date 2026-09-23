@@ -3,7 +3,10 @@
 
 import type { ToolName } from "./tool-definitions";
 
-const INTERACTIVE_APPROVAL_TOOLS = new Set(["AskUserQuestion"]);
+const INTERACTIVE_APPROVAL_TOOLS = new Set([
+  "AskUserQuestion",
+  "RequestFileUpload",
+]);
 
 export type InteractiveApprovalKind = "ask_user_question";
 
@@ -14,6 +17,7 @@ export type InteractiveApprovalKind = "ask_user_question";
  */
 export const INTERACTIVE_USER_INPUT_TOOL_NAMES = [
   "AskUserQuestion",
+  "RequestFileUpload",
 ] as const satisfies readonly ToolName[];
 
 const RUNTIME_USER_INPUT_TOOLS = new Set<string>(

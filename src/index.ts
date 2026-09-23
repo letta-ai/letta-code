@@ -84,6 +84,7 @@ import {
   shouldPersistSessionState,
 } from "./settings-manager";
 import { startStartupAutoUpdateCheck } from "./startup-auto-update";
+import { INTERACTIVE_USER_INPUT_TOOL_NAMES } from "./tools/interactive-policy";
 import {
   clearPersistedClientToolRules,
   loadStartupTools,
@@ -1292,11 +1293,10 @@ async function main(): Promise<void> {
 
   if (isHeadless) {
     markMilestone("HEADLESS_MODE_START");
-    // For headless mode, load tools synchronously (respecting model/toolset when provided)
     await loadStartupTools({
       modelIdentifier: specifiedModel,
       toolset: specifiedToolset as ToolsetPreference | undefined,
-      exclude: ["AskUserQuestion"],
+      exclude: [...INTERACTIVE_USER_INPUT_TOOL_NAMES],
     });
     markMilestone("TOOLS_LOADED");
 

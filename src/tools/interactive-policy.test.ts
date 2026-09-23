@@ -29,6 +29,7 @@ describe("interactive user-input tool policy", () => {
     expect(names).toContain("Bash");
     expect(names).toContain("get_weather");
     expect(names).not.toContain("AskUserQuestion");
+    expect(names).not.toContain("RequestFileUpload");
   });
 
   test("interactive tools remain available when exclusion is omitted", async () => {
@@ -38,6 +39,9 @@ describe("interactive user-input tool policy", () => {
 
     expect(prepared.clientTools.map((tool) => tool.name)).toContain(
       "AskUserQuestion",
+    );
+    expect(prepared.clientTools.map((tool) => tool.name)).toContain(
+      "RequestFileUpload",
     );
   });
 });

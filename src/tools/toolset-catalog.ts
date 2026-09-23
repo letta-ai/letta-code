@@ -24,6 +24,7 @@ export const TOOLSET_CATALOG: Readonly<Record<ToolsetName, ToolsetDefinition>> =
       is_featured: true,
       tools: [
         "AskUserQuestion",
+        "RequestFileUpload",
         "EnterWorktree",
         "ExitWorktree",
         "SetWorkingDirectory",
@@ -58,6 +59,7 @@ export const TOOLSET_CATALOG: Readonly<Record<ToolsetName, ToolsetDefinition>> =
       is_featured: true,
       tools: [
         "AskUserQuestion",
+        "RequestFileUpload",
         "Bash",
         "Monitor",
         "EnterWorktree",
@@ -85,6 +87,7 @@ export const TOOLSET_CATALOG: Readonly<Record<ToolsetName, ToolsetDefinition>> =
       is_featured: true,
       tools: [
         "AskUserQuestion",
+        "RequestFileUpload",
         "EnterWorktree",
         "ExitWorktree",
         "SetWorkingDirectory",
