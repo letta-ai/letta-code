@@ -1,13 +1,18 @@
 /**
  * Built-in status rows for Workflow runs, rendered below the input:
  *
- *   ○ simple-demo  Quick demo workflow with parallel agents   0/3 agents done · 9s · 133.6k tokens
+ *   ○ simple-demo                 0/3 agents done · 9s · 133.6k tokens
+ *     Quick demo workflow with parallel agents
  *
- * One row per run: running ones always, finished ones for a short linger so
- * the final numbers are visible before the row disappears.
+ * Each run occupies two lines: running ones always, finished ones for a short
+ * linger so the final numbers remain visible before the row disappears.
  */
 
 import { colors } from "@/cli/components/colors";
+import {
+  truncateToWidth,
+  visibleWidth,
+} from "@/cli/display/statusline/formatting";
 import { formatWorkflowStatusRow } from "@/cli/helpers/workflow-display";
 import type { ModPanel } from "@/cli/mods/types";
 import type { WorkflowExecutionSnapshot } from "@/tools/workflow/execution-registry";
@@ -16,7 +21,8 @@ import type { WorkflowExecutionSnapshot } from "@/tools/workflow/execution-regis
 export const WORKFLOW_STATUS_PANEL_ORDER = -1;
 export const WORKFLOW_STATUS_PANEL_ID = "default:workflows";
 export const WORKFLOW_ROW_LINGER_MS = 30_000;
-const MAX_WORKFLOW_ROWS = 4;
+const MAX_WORKFLOW_ROWS = 3;
+const WORKFLOW_DESCRIPTION_INDENT = "  ";
 
 const GLYPH_COLORS: Record<WorkflowExecutionSnapshot["status"], string> = {
   running: colors.tool.running,
@@ -46,12 +52,40 @@ export function createWorkflowStatusPanel(
     path: WORKFLOW_STATUS_PANEL_ID,
     updatedAt: 0,
     render(ctx) {
-      const lines = executions.slice(0, MAX_WORKFLOW_ROWS).map((execution) => {
-        const row = formatWorkflowStatusRow(execution);
-        const glyph = ctx.chalk.hex(GLYPH_COLORS[execution.status])(row.glyph);
-        const left = `${glyph} ${row.name}  ${ctx.chalk.dim(row.description)}`;
-        return ctx.row(left, ctx.chalk.dim(row.progress), ctx.width);
+      const prioritized = [...executions].sort((a, b) => {
+        if (a.status === "running" && b.status !== "running") return -1;
+        if (b.status === "running" && a.status !== "running") return 1;
+        return (b.finishedAt ?? 0) - (a.finishedAt ?? 0);
       });
+      const lines = prioritized
+        .slice(0, MAX_WORKFLOW_ROWS)
+        .flatMap((execution) => {
+          const row = formatWorkflowStatusRow(execution);
+          const glyph = ctx.chalk.hex(GLYPH_COLORS[execution.status])(
+            row.glyph,
+          );
+          const name = `${glyph} ${row.name}`;
+          const progressBudget = ctx.width - visibleWidth(name) - 1;
+          const [count, ...details] = row.progress.split(" · ");
+          let progressText = count ?? "";
+          for (const detail of details) {
+            const candidate = `${progressText} · ${detail}`;
+            if (visibleWidth(candidate) > progressBudget) break;
+            progressText = candidate;
+          }
+          const progress = ctx.chalk.dim(progressText);
+          const description = `${WORKFLOW_DESCRIPTION_INDENT}${row.description}`;
+          // Keep progress on the first line; a long description should not
+          // consume the left budget and clip the workflow name.
+          return [
+            ctx.row(name, progress, ctx.width),
+            ctx.chalk.dim(
+              visibleWidth(description) > ctx.width
+                ? truncateToWidth(description, ctx.width)
+                : description,
+            ),
+          ];
+        });
       const hidden = executions.length - MAX_WORKFLOW_ROWS;
       if (hidden > 0) {
         lines.push(ctx.chalk.dim(`  +${hidden} more · /workflows`));

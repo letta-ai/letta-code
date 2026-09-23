@@ -363,7 +363,9 @@ export function createSdkSpawner(
           usage,
           stop,
           options.maxToolCalls ?? DEFAULT_MAX_SUBAGENT_TOOL_CALLS,
-          hooks?.onUsage,
+          (totalTokens) => {
+            if (!finished) hooks?.onUsage?.(totalTokens);
+          },
         ),
         stopped,
       ]);

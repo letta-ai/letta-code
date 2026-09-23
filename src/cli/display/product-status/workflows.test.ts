@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import stringWidth from "string-width";
 import stripAnsi from "strip-ansi";
 import { renderModPanelLines } from "@/cli/components/ModPanelRow";
 import type { ModContext, ModPanel } from "@/cli/mods/types";
@@ -120,11 +121,36 @@ describe("workflow status panel", () => {
       100,
       createContext(),
     ).map(stripAnsi);
-    expect(lines).toHaveLength(2);
-    expect(lines[0]).toStartWith("○ simple-demo  Quick demo workflow");
+    expect(lines).toHaveLength(4);
+    expect(lines[0]).toStartWith("○ simple-demo");
     expect(lines[0]).toEndWith("1/3 agents done · 9s · 133.6k tokens");
-    expect(lines[1]).toStartWith("✗ audit  Audit the listener");
-    expect(lines[1]).toEndWith("3/3 agents done · 9s · failed");
+    expect(lines[1]).toBe("  Quick demo workflow");
+    expect(lines[2]).toStartWith("✗ audit");
+    expect(lines[2]).toEndWith("3/3 agents done · 9s · failed");
+    expect(lines[3]).toBe("  Audit the listener");
+  });
+
+  test("keeps the name and progress legible beside a long description", () => {
+    const run = snapshot({
+      name: "init-history-final",
+      description:
+        "Final history-cohort analysis: compare all twelve agent reports and synthesize findings",
+      agentsTotal: 12,
+      agentsDone: 0,
+      totalTokens: 8_800,
+    });
+    for (const width of [48, 60, 100]) {
+      const lines = renderModPanelLines(
+        createWorkflowStatusPanel([run]),
+        width,
+        createContext(),
+      ).map(stripAnsi);
+      expect(lines).toHaveLength(2);
+      expect(lines[0]).toStartWith("○ init-history-final");
+      expect(lines[0]).toContain("0/12 agents done");
+      expect(lines[1]).toStartWith("  Final history-cohort analysis:");
+      expect(lines.every((line) => stringWidth(line) <= width)).toBe(true);
+    }
   });
 
   test("caps rows and points to /workflows for the rest", () => {
@@ -136,8 +162,32 @@ describe("workflow status panel", () => {
       100,
       createContext(),
     ).map(stripAnsi);
-    expect(lines).toHaveLength(5);
-    expect(lines[4]?.trim()).toBe("+2 more · /workflows");
+    expect(lines).toHaveLength(7);
+    expect(lines[6]?.trim()).toBe("+3 more · /workflows");
+  });
+
+  test("shows active runs before newer completed runs under the panel cap", () => {
+    const now = 100_000;
+    const runs = [
+      ...Array.from({ length: 4 }, (_, index) =>
+        snapshot({
+          taskId: `finished-${index}`,
+          name: `finished-${index}`,
+          status: "completed",
+          finishedAt: now - (4 - index) * 1_000,
+        }),
+      ),
+      snapshot({ taskId: "active", name: "active" }),
+    ];
+    const lines = renderModPanelLines(
+      createWorkflowStatusPanel(visibleWorkflowExecutions(runs, now)),
+      100,
+      createContext(),
+    ).map(stripAnsi);
+    expect(lines[0]).toStartWith("○ active");
+    expect(lines[2]).toStartWith("● finished-3");
+    expect(lines[4]).toStartWith("● finished-2");
+    expect(lines[6]?.trim()).toBe("+2 more · /workflows");
   });
 
   test("withWorkflowStatusPanel adds a below-input panel only when there are runs", () => {
