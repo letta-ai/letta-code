@@ -18,6 +18,7 @@ import type { ContextTracker } from "./context-tracker";
 import { MAX_CONTEXT_HISTORY } from "./context-tracker";
 import { findLastSafeSplitPoint } from "./markdown-split";
 import { trimFinishedReasoningText } from "./reasoning-text";
+import { resolveTextLineId } from "./text-message-identity";
 import { isShellOutputTool } from "./tool-name-mapping";
 import { extractUnifiedExecRunningSessionId } from "./unified-exec-output";
 
@@ -447,81 +448,74 @@ export function upsertStatusLine(
   if (!existing) b.order.push(id);
 }
 
-// Mark a line as finished if it has a phase (immutable update)
-function markAsFinished(b: Buffers, id: string) {
+// Finish text immutably so memoized consumers observe the phase change.
+function markAsFinished(b: Buffers, id: string): void {
   const line = b.byId.get(id);
-  if (line && "phase" in line && line.phase === "streaming") {
-    const updatedLine =
-      line.kind === "reasoning"
-        ? {
-            ...line,
-            text: trimFinishedReasoningText(line.text),
-            phase: "finished" as const,
-            durationMs:
-              line.durationMs ??
-              (line.startedAtMs === undefined
-                ? undefined
-                : Math.max(0, Date.now() - line.startedAtMs)),
-          }
-        : { ...line, phase: "finished" as const };
-    b.byId.set(id, updatedLine);
-
-    // Track last reasoning content for hooks (PostToolUse and Stop will include it)
-    if (
-      updatedLine.kind === "reasoning" &&
-      "text" in updatedLine &&
-      updatedLine.text
-    ) {
+  if (
+    !line ||
+    (line.kind !== "assistant" && line.kind !== "reasoning") ||
+    line.phase !== "streaming"
+  ) {
+    return;
+  }
+  const updatedLine =
+    line.kind === "reasoning"
+      ? {
+          ...line,
+          text: trimFinishedReasoningText(line.text),
+          phase: "finished" as const,
+          durationMs:
+            line.durationMs ??
+            (line.startedAtMs === undefined
+              ? undefined
+              : Math.max(0, Date.now() - line.startedAtMs)),
+        }
+      : { ...line, phase: "finished" as const };
+  b.byId.set(id, updatedLine);
+  // PostToolUse and Stop hooks consume the completed text.
+  if (updatedLine.text) {
+    if (updatedLine.kind === "reasoning") {
       b.lastReasoning = updatedLine.text;
-    }
-    // Track last assistant message for hooks (PostToolUse will include it)
-    if (
-      updatedLine.kind === "assistant" &&
-      "text" in updatedLine &&
-      updatedLine.text
-    ) {
+    } else {
       b.lastAssistantMessage = updatedLine.text;
     }
   }
 }
 
-// Helper to mark previous otid's line as finished when transitioning to new otid
-function handleOtidTransition(b: Buffers, newOtid: string | undefined) {
-  // console.log(`[OTID_TRANSITION] Called with newOtid=${newOtid}, lastOtid=${b.lastOtid}`);
-
-  // If transitioning to a different otid (including null/undefined), finish only assistant/reasoning lines.
-  // Tool calls should finish exclusively when a tool_return arrives (merged by toolCallId).
-  if (b.lastOtid && b.lastOtid !== newOtid) {
-    const prev = b.byId.get(b.lastOtid);
-    // console.log(`[OTID_TRANSITION] Found prev line: kind=${prev?.kind}, phase=${(prev as any)?.phase}`);
-    if (prev && (prev.kind === "assistant" || prev.kind === "reasoning")) {
-      // console.log(`[OTID_TRANSITION] Marking ${b.lastOtid} as finished (was ${(prev as any).phase})`);
+function handleOtidTransition(
+  b: Buffers,
+  newOtid: string | undefined,
+  incomingKind: "assistant" | "reasoning" | "tool" | "user" | "event",
+): void {
+  // Tools and user messages are generation boundaries, even when an intervening
+  // status event replaced lastOtid or the boundary has no OTID.
+  if (incomingKind === "tool" || incomingKind === "user") {
+    markCurrentLineAsFinished(b);
+  } else if (b.lastOtid && b.lastOtid !== newOtid) {
+    const previous = b.byId.get(b.lastOtid);
+    const incoming = newOtid ? b.byId.get(newOtid) : undefined;
+    // An otid-addressable block survives an interleave of the other kind.
+    const previousResumable =
+      [...b.assistantCanonicalByOtid.values()].includes(b.lastOtid) ||
+      [...b.reasoningCanonicalByOtid.values()].includes(b.lastOtid);
+    const isText = incomingKind === "assistant" || incomingKind === "reasoning";
+    const sameKindOrFinished =
+      previous?.kind === incomingKind || !previousResumable;
+    if (isText && !incoming && sameKindOrFinished) {
       markAsFinished(b, b.lastOtid);
     }
   }
-
-  // Update last otid (can be null)
   b.lastOtid = newOtid ?? null;
-  // console.log(`[OTID_TRANSITION] Updated lastOtid to ${b.lastOtid}`);
 }
 
 /**
- * Mark the current (last) line as finished when the stream ends.
- * Call this after stream completion to ensure the final line isn't stuck in "streaming" state.
+ * Finish every open text block at a terminal stream or generation boundary.
+ * Assistant and reasoning blocks can interleave, so lastOtid alone is not enough.
+ * Do not call this before a recoverable stream resume.
  */
-export function markCurrentLineAsFinished(b: Buffers) {
-  // console.log(`[MARK_CURRENT_FINISHED] Called with lastOtid=${b.lastOtid}`);
-  if (!b.lastOtid) {
-    // console.log(`[MARK_CURRENT_FINISHED] No lastOtid, returning`);
-    return;
-  }
-  const prev = b.byId.get(b.lastOtid);
-  // console.log(`[MARK_CURRENT_FINISHED] Found line: kind=${prev?.kind}, phase=${(prev as any)?.phase}`);
-  if (prev && (prev.kind === "assistant" || prev.kind === "reasoning")) {
-    // console.log(`[MARK_CURRENT_FINISHED] Marking ${b.lastOtid} as finished`);
-    markAsFinished(b, b.lastOtid);
-  } else {
-    // console.log(`[MARK_CURRENT_FINISHED] Not marking (not assistant/reasoning or doesn't exist)`);
+export function markCurrentLineAsFinished(b: Buffers): void {
+  for (const id of b.order) {
+    markAsFinished(b, id);
   }
 }
 
@@ -663,195 +657,6 @@ function markCompactionCompleted(ctx?: ContextTracker): void {
   ctx.pendingConversationDescriptionRegeneration = true;
 }
 
-function resolveLineIdForKind(
-  b: Buffers,
-  canonicalId: string,
-  kind: "assistant" | "reasoning",
-): string {
-  const existing = b.byId.get(canonicalId);
-  if (!existing || existing.kind === kind) return canonicalId;
-
-  // Avoid cross-kind collisions when providers reuse the same id/otid.
-  return `${kind}:${canonicalId}`;
-}
-
-function hasExistingOtidAlias(
-  aliasMap: Map<string, string>,
-  canonical: string,
-  nextOtid?: string,
-): boolean {
-  for (const [mappedOtid, mappedCanonical] of aliasMap.entries()) {
-    if (mappedCanonical === canonical && mappedOtid !== nextOtid) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function resolveAssistantLineId(
-  b: Buffers,
-  chunk: LettaStreamingResponse & { id?: string; otid?: string },
-): string | undefined {
-  const messageId = typeof chunk.id === "string" ? chunk.id : undefined;
-  const otid = typeof chunk.otid === "string" ? chunk.otid : undefined;
-
-  const canonicalFromMessageId = messageId
-    ? b.assistantCanonicalByMessageId.get(messageId)
-    : undefined;
-  const canonicalFromOtid = otid
-    ? b.assistantCanonicalByOtid.get(otid)
-    : undefined;
-
-  let canonical =
-    canonicalFromMessageId || canonicalFromOtid || messageId || otid;
-  if (!canonical) return undefined;
-
-  // When a new otid arrives whose messageId maps to an already-finished line,
-  // start a fresh canonical so the new content block gets its own line.
-  // This handles Anthropic responses like [text, thinking, text] where both
-  // text blocks share the same message id but need separate rendering lifecycles
-  // (the first gets committed to static before the second starts streaming).
-  if (otid && !canonicalFromOtid && canonicalFromMessageId) {
-    const existingLineId = resolveLineIdForKind(
-      b,
-      canonicalFromMessageId,
-      "assistant",
-    );
-    const existingLine = b.byId.get(existingLineId);
-    const hasPriorOtidAlias = hasExistingOtidAlias(
-      b.assistantCanonicalByOtid,
-      canonicalFromMessageId,
-      otid,
-    );
-    if (
-      existingLine &&
-      existingLine.kind === "assistant" &&
-      "phase" in existingLine &&
-      (existingLine.phase === "finished" || hasPriorOtidAlias)
-    ) {
-      canonical = otid;
-    }
-  }
-
-  // If both aliases exist but disagree, prefer the one that already has a line.
-  if (
-    canonicalFromMessageId &&
-    canonicalFromOtid &&
-    canonicalFromMessageId !== canonicalFromOtid
-  ) {
-    const messageLineExists = b.byId.has(canonicalFromMessageId);
-    const otidLineExists = b.byId.has(canonicalFromOtid);
-
-    if (messageLineExists && !otidLineExists) {
-      canonical = canonicalFromMessageId;
-    } else if (otidLineExists && !messageLineExists) {
-      canonical = canonicalFromOtid;
-    } else {
-      canonical = canonicalFromMessageId;
-    }
-
-    debugLog(
-      "accumulator",
-      `Assistant id/otid alias conflict resolved to ${canonical}`,
-    );
-  }
-
-  if (messageId) {
-    b.assistantCanonicalByMessageId.set(messageId, canonical);
-  }
-  if (otid) {
-    b.assistantCanonicalByOtid.set(otid, canonical);
-  }
-
-  const lineId = resolveLineIdForKind(b, canonical, "assistant");
-  if (lineId !== canonical) {
-    if (messageId) b.assistantCanonicalByMessageId.set(messageId, lineId);
-    if (otid) b.assistantCanonicalByOtid.set(otid, lineId);
-  }
-
-  return lineId;
-}
-
-function resolveReasoningLineId(
-  b: Buffers,
-  chunk: LettaStreamingResponse & { id?: string; otid?: string },
-): string | undefined {
-  const messageId = typeof chunk.id === "string" ? chunk.id : undefined;
-  const otid = typeof chunk.otid === "string" ? chunk.otid : undefined;
-
-  const canonicalFromMessageId = messageId
-    ? b.reasoningCanonicalByMessageId.get(messageId)
-    : undefined;
-  const canonicalFromOtid = otid
-    ? b.reasoningCanonicalByOtid.get(otid)
-    : undefined;
-
-  let canonical =
-    canonicalFromMessageId || canonicalFromOtid || messageId || otid;
-  if (!canonical) return undefined;
-
-  // Same fix as resolveAssistantLineId: when a new otid maps to a
-  // finished reasoning line via messageId, start a fresh canonical.
-  if (otid && !canonicalFromOtid && canonicalFromMessageId) {
-    const existingLineId = resolveLineIdForKind(
-      b,
-      canonicalFromMessageId,
-      "reasoning",
-    );
-    const existingLine = b.byId.get(existingLineId);
-    const hasPriorOtidAlias = hasExistingOtidAlias(
-      b.reasoningCanonicalByOtid,
-      canonicalFromMessageId,
-      otid,
-    );
-    if (
-      existingLine &&
-      existingLine.kind === "reasoning" &&
-      "phase" in existingLine &&
-      (existingLine.phase === "finished" || hasPriorOtidAlias)
-    ) {
-      canonical = otid;
-    }
-  }
-
-  if (
-    canonicalFromMessageId &&
-    canonicalFromOtid &&
-    canonicalFromMessageId !== canonicalFromOtid
-  ) {
-    const messageLineExists = b.byId.has(canonicalFromMessageId);
-    const otidLineExists = b.byId.has(canonicalFromOtid);
-
-    if (messageLineExists && !otidLineExists) {
-      canonical = canonicalFromMessageId;
-    } else if (otidLineExists && !messageLineExists) {
-      canonical = canonicalFromOtid;
-    } else {
-      canonical = canonicalFromMessageId;
-    }
-
-    debugLog(
-      "accumulator",
-      `Reasoning id/otid alias conflict resolved to ${canonical}`,
-    );
-  }
-
-  if (messageId) {
-    b.reasoningCanonicalByMessageId.set(messageId, canonical);
-  }
-  if (otid) {
-    b.reasoningCanonicalByOtid.set(otid, canonical);
-  }
-
-  const lineId = resolveLineIdForKind(b, canonical, "reasoning");
-  if (lineId !== canonical) {
-    if (messageId) b.reasoningCanonicalByMessageId.set(messageId, lineId);
-    if (otid) b.reasoningCanonicalByOtid.set(otid, lineId);
-  }
-
-  return lineId;
-}
-
 /**
  * Attempts to split content at a paragraph boundary for aggressive static promotion.
  * If split found, creates a committed line for "before" and updates original with "after".
@@ -941,13 +746,13 @@ export function onChunk(
         id?: string;
         otid?: string;
       };
-      const id = resolveReasoningLineId(b, chunkWithIds);
+      const id = resolveTextLineId(b, chunkWithIds, "reasoning");
       if (!id) {
         break;
       }
 
-      // Handle otid transition (mark previous line as finished)
-      handleOtidTransition(b, id);
+      // Track message transitions without finalizing interleaved text
+      handleOtidTransition(b, id, "reasoning");
 
       const delta = chunk.reasoning;
       const messageId =
@@ -986,11 +791,11 @@ export function onChunk(
       };
       // Resolve to a stable line id across mixed streams where some chunks
       // have only id, only otid, or both.
-      const id = resolveAssistantLineId(b, chunkWithIds);
+      const id = resolveTextLineId(b, chunkWithIds, "assistant");
       if (!id) break;
 
-      // Handle otid transition (mark previous line as finished)
-      handleOtidTransition(b, id);
+      // Track message transitions without finalizing interleaved text
+      handleOtidTransition(b, id, "assistant");
 
       const delta = extractTextPart(chunk.content); // NOTE: may be list of parts
       const messageId =
@@ -1037,8 +842,8 @@ export function onChunk(
       const lineId = mappedLineId || otid || messageId;
       if (!lineId) break;
 
-      // Handle otid transition (mark previous line as finished)
-      handleOtidTransition(b, lineId);
+      // Track message transitions without finalizing interleaved text
+      handleOtidTransition(b, lineId, "user");
 
       const rawText = extractTextPart(chunk.content);
       if (!rawText) break;
@@ -1077,8 +882,8 @@ export function onChunk(
 
     case "tool_call_message":
     case "approval_request_message": {
-      // Handle otid transition (mark previous line as finished)
-      handleOtidTransition(b, chunk.otid ?? undefined);
+      // Track message transitions without finalizing interleaved text
+      handleOtidTransition(b, chunk.otid ?? undefined, "tool");
 
       // Use deprecated tool_call or new tool_calls array
       const toolCall =
@@ -1450,8 +1255,8 @@ export function onChunk(
             : undefined);
         if (!id) break;
 
-        // Handle otid transition (mark previous line as finished)
-        handleOtidTransition(b, id);
+        // Track message transitions without finalizing interleaved text
+        handleOtidTransition(b, id, "event");
 
         if (eventType === "retry") {
           upsertStatusLine(b, id, formatRetryEventStatusLines(eventData));

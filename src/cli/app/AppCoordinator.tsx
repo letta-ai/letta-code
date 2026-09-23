@@ -40,7 +40,6 @@ import { SessionStats } from "@/agent/stats";
 import {
   clearSubagentsByIds,
   getActiveBackgroundAgents,
-  getSubagentByToolCallId,
   getSnapshot as getSubagentSnapshot,
   subscribe as subscribeToSubagents,
 } from "@/agent/subagent-state";
@@ -112,11 +111,6 @@ import {
 import { safeJsonParseOr } from "@/cli/helpers/safe-json-parse";
 import { getStartupModelDisplayOverride } from "@/cli/helpers/startup-model-display";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
-import {
-  collectFinishedTaskToolCalls,
-  createSubagentGroupItem,
-  hasInProgressTaskToolCalls,
-} from "@/cli/helpers/subagent-aggregation";
 import { buildStartupSystemPromptWarning } from "@/cli/helpers/system-prompt-warning.ts";
 import { getRandomThinkingVerb } from "@/cli/helpers/thinking-messages";
 import {
@@ -126,7 +120,6 @@ import {
   isShellOutputTool,
   isShellTool,
 } from "@/cli/helpers/tool-name-mapping";
-import { isTaskTool } from "@/cli/helpers/tool-name-mapping.js";
 import { getTuiBlockedReason } from "@/cli/helpers/tui-queue-adapter";
 import { createTuiQueueRuntime } from "@/cli/helpers/tui-queue-runtime";
 import type { WindowTitleData } from "@/cli/helpers/window-title-config";
@@ -216,7 +209,6 @@ import {
   SHELL_PREVIEW_MAX_LINES,
   STABLE_WIDTH_SETTLE_MS,
   TEXT_WRAP_GUTTER,
-  TOOL_CALL_COMMIT_DEFER_MS,
 } from "./constants";
 import { uid } from "./ids";
 import {
@@ -234,6 +226,10 @@ import {
   reasoningEffortLlmConfigPatch,
 } from "./model-config";
 import { prepareSessionExit } from "./session";
+import {
+  collectStaticTranscriptItems,
+  selectLiveTranscriptItems,
+} from "./transcript-promotion";
 import type {
   ActiveOverlay,
   AppProps,
@@ -2052,175 +2048,21 @@ export function App({
   // Commit immutable/finished lines into the historical log
   const commitEligibleLines = useCallback(
     (b: Buffers, opts?: { deferToolCalls?: boolean }) => {
-      const deferToolCalls = opts?.deferToolCalls !== false;
-      const newlyCommitted: StaticItem[] = [];
-      let firstTaskIndex = -1;
-      const deferredCommits = deferredToolCallCommitsRef.current;
-      const now = Date.now();
-      let blockedByDeferred = false;
-      // If we eagerly committed a tall preview for file tools, don't also
-      // commit the successful tool_call line (preview already represents it).
-      const shouldSkipCommittedToolCall = (ln: Line): boolean => {
-        if (ln.kind !== "tool_call") return false;
-        if (!ln.toolCallId || !ln.name) return false;
-        if (ln.phase !== "finished" || ln.resultOk === false) return false;
-        if (!eagerCommittedPreviewsRef.current.has(ln.toolCallId)) return false;
-        return (
-          isFileEditTool(ln.name) ||
-          isFileWriteTool(ln.name) ||
-          isPatchTool(ln.name)
-        );
-      };
-
-      const shouldSkipDeferral = (ln: Line): boolean => {
-        if (ln.kind !== "tool_call") return false;
-        if (ln.phase !== "finished") return false;
-        // Skip deferral when the result is already available: the component height
-        // has already changed (header + result), so deferring only extends the
-        // live-area repaint window that causes ghost lines in the terminal scrollback.
-        return ln.resultText != null;
-      };
-      if (!deferToolCalls && deferredCommits.size > 0) {
-        deferredCommits.clear();
-        setDeferredCommitAt(null);
-      }
-
-      // Check if there are any in-progress Task tool_calls
-      const hasInProgress = hasInProgressTaskToolCalls(
-        b.order,
-        b.byId,
-        emittedIdsRef.current,
+      const result = collectStaticTranscriptItems(
+        b,
+        {
+          emittedIds: emittedIdsRef.current,
+          deferredCommits: deferredToolCallCommitsRef.current,
+          eagerCommittedPreviews: eagerCommittedPreviewsRef.current,
+        },
+        opts,
       );
-
-      // Collect finished Task tool_calls for grouping
-      const finishedTaskToolCalls = collectFinishedTaskToolCalls(
-        b.order,
-        b.byId,
-        emittedIdsRef.current,
-        hasInProgress,
-      );
-
-      // Commit regular lines (non-Task tools)
-      for (const id of b.order) {
-        if (emittedIdsRef.current.has(id)) continue;
-        const ln = b.byId.get(id);
-        if (!ln) continue;
-        if (
-          ln.kind === "user" ||
-          ln.kind === "error" ||
-          ln.kind === "status" ||
-          ln.kind === "trajectory_summary"
-        ) {
-          emittedIdsRef.current.add(id);
-          newlyCommitted.push({ ...ln });
-          continue;
-        }
-        // Events only commit when finished (they have running/finished phases)
-        if (ln.kind === "event" && ln.phase === "finished") {
-          emittedIdsRef.current.add(id);
-          newlyCommitted.push({ ...ln });
-          continue;
-        }
-        // Commands with phase should only commit when finished
-        if (ln.kind === "command" || ln.kind === "bash_command") {
-          if (!ln.phase || ln.phase === "finished") {
-            emittedIdsRef.current.add(id);
-            newlyCommitted.push({ ...ln });
-          }
-          continue;
-        }
-        // Handle Task tool_calls specially - track position but don't add individually
-        // (unless there's no subagent data, in which case commit as regular tool call)
-        if (ln.kind === "tool_call" && ln.name && isTaskTool(ln.name)) {
-          if (hasInProgress && ln.toolCallId) {
-            const subagent = getSubagentByToolCallId(ln.toolCallId);
-            if (subagent) {
-              if (firstTaskIndex === -1) {
-                firstTaskIndex = newlyCommitted.length;
-              }
-              continue;
-            }
-          }
-          // Check if this specific Task tool has subagent data (will be grouped)
-          const hasSubagentData = finishedTaskToolCalls.some(
-            (tc) => tc.lineId === id,
-          );
-          if (hasSubagentData) {
-            // Has subagent data - will be grouped later
-            if (firstTaskIndex === -1) {
-              firstTaskIndex = newlyCommitted.length;
-            }
-            continue;
-          }
-          // No subagent data (e.g., backfilled from history) - commit as regular tool call
-          if (ln.phase === "finished") {
-            emittedIdsRef.current.add(id);
-            newlyCommitted.push({ ...ln });
-          }
-          continue;
-        }
-        if ("phase" in ln && ln.phase === "finished") {
-          if (shouldSkipCommittedToolCall(ln)) {
-            deferredCommits.delete(id);
-            emittedIdsRef.current.add(id);
-            continue;
-          }
-          if (
-            deferToolCalls &&
-            ln.kind === "tool_call" &&
-            (!ln.name || !isTaskTool(ln.name)) &&
-            !shouldSkipDeferral(ln)
-          ) {
-            const commitAt = deferredCommits.get(id);
-            if (commitAt === undefined) {
-              const nextCommitAt = now + TOOL_CALL_COMMIT_DEFER_MS;
-              deferredCommits.set(id, nextCommitAt);
-              setDeferredCommitAt(nextCommitAt);
-              blockedByDeferred = true;
-              break;
-            }
-            if (commitAt > now) {
-              setDeferredCommitAt(commitAt);
-              blockedByDeferred = true;
-              break;
-            }
-            deferredCommits.delete(id);
-          }
-          emittedIdsRef.current.add(id);
-          newlyCommitted.push({ ...ln });
-          // Note: We intentionally don't cleanup precomputedDiffs here because
-          // the Static area renders AFTER this function returns (on next React tick),
-          // and the diff needs to be available for ToolCallMessage to render.
-          // The diffs will be cleaned up when the session ends or on next session start.
-        }
+      setDeferredCommitAt(result.nextCommitAt);
+      if (result.clearedSubagentIds.length > 0) {
+        clearSubagentsByIds(result.clearedSubagentIds);
       }
-
-      // If we collected Task tool_calls (all are finished), create a subagent_group
-      if (!blockedByDeferred && finishedTaskToolCalls.length > 0) {
-        // Mark all as emitted
-        for (const tc of finishedTaskToolCalls) {
-          emittedIdsRef.current.add(tc.lineId);
-        }
-
-        const groupItem = createSubagentGroupItem(finishedTaskToolCalls);
-
-        // Insert at the position of the first Task tool_call
-        newlyCommitted.splice(
-          firstTaskIndex >= 0 ? firstTaskIndex : newlyCommitted.length,
-          0,
-          groupItem,
-        );
-
-        // Clear these agents from the subagent store
-        clearSubagentsByIds(groupItem.agents.map((a) => a.id));
-      }
-
-      if (deferredCommits.size === 0) {
-        setDeferredCommitAt(null);
-      }
-
-      if (newlyCommitted.length > 0) {
-        setStaticItems((prev) => [...prev, ...newlyCommitted]);
+      if (result.items.length > 0) {
+        setStaticItems((prev) => [...prev, ...result.items]);
       }
     },
     [],
@@ -4652,37 +4494,12 @@ export function App({
       withCommandLock,
     });
 
-  // Live area shows only in-progress items
+  // Keep completed items live until their earlier text can also commit.
   // biome-ignore lint/correctness/useExhaustiveDependencies: staticItems.length and deferredCommitAt are intentional triggers to recompute when items are promoted to static or deferred commits complete
   const liveItems = useMemo(() => {
-    return lines.filter((ln) => {
-      if (!("phase" in ln)) return false;
-      if (emittedIdsRef.current.has(ln.id)) return false;
-      if (ln.kind === "command" || ln.kind === "bash_command") {
-        return ln.phase === "running";
-      }
-      if (ln.kind === "tool_call") {
-        // Task tool_calls need special handling:
-        // - Only include if pending approval (phase: "ready" or "streaming")
-        // - Running/finished Task tools are handled by SubagentGroupDisplay
-        if (ln.name && isTaskTool(ln.name)) {
-          // Only show Task tools that are awaiting approval (not running/finished)
-          return ln.phase === "ready" || ln.phase === "streaming";
-        }
-        // Always show other tool calls in progress
-        return (
-          ln.phase !== "finished" ||
-          deferredToolCallCommitsRef.current.has(ln.id)
-        );
-      }
-      // Events (like compaction) show while running
-      if (ln.kind === "event") {
-        if (!showCompactionsEnabled && ln.eventType === "compaction")
-          return false;
-        return ln.phase === "running";
-      }
-      if (!tokenStreamingEnabled && ln.phase === "streaming") return false;
-      return ln.phase === "streaming";
+    return selectLiveTranscriptItems(lines, emittedIdsRef.current, {
+      tokenStreamingEnabled,
+      showCompactionsEnabled,
     });
   }, [
     lines,
