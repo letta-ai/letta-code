@@ -112,6 +112,12 @@ describe("parseJsonReply", () => {
       ),
     ).toEqual({ sessionsRead: ["one"] });
     expect(
+      parseJsonReply('[done] Read items[0].\n{"sessionsRead":["one"]}'),
+    ).toEqual({
+      sessionsRead: ["one"],
+    });
+    expect(parseJsonReply('Example: {"a":1}\nResult: [1,2]')).toEqual([1, 2]);
+    expect(
       parseJsonReply("Here are the findings:\n```json\n[1,2]\n```"),
     ).toEqual([1, 2]);
     expect(() => parseJsonReply('Here: {"a":}')).toThrow();

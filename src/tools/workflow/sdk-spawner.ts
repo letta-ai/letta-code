@@ -54,11 +54,17 @@ export function parseJsonReply(text: string): unknown {
   try {
     return JSON.parse(trimmed);
   } catch (error) {
-    const start = trimmed.search(/[[{]/);
-    if (start < 0) throw error;
     // SDK result text may include an earlier assistant narration before the
-    // final JSON reply. Do not accept trailing prose or a second JSON value.
-    return JSON.parse(trimmed.slice(start));
+    // final JSON reply. Narration can itself contain [links] or object examples,
+    // so try each possible start while requiring the value to consume the end.
+    for (const match of trimmed.matchAll(/[[{]/g)) {
+      try {
+        return JSON.parse(trimmed.slice(match.index));
+      } catch {
+        // This was narration or an earlier value, not the final JSON.
+      }
+    }
+    throw error;
   }
 }
 
