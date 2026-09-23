@@ -678,18 +678,21 @@ describe("local transcript residency", () => {
       agent_id: agentId,
       order: "asc",
     } as ConversationMessageListBody);
-    const oldest = ascending[0];
-    if (!oldest) throw new Error("Expected an oldest message");
+    const cursor = ascending[2];
+    if (!cursor) throw new Error("Expected an early cursor message");
     const beforeDeep = inspectResidency(
       reloaded,
       "default",
       agentId,
     ).projectedIndexSize;
 
+    // `before` the first row is an empty page; an early cursor still forces
+    // the suffix to expand to the start (bootstrap pagination) without
+    // returning nothing.
     const page = reloaded.listConversationMessages("default", {
       agent_id: agentId,
       order: "desc",
-      before: oldest.id,
+      before: cursor.id,
       limit: 2,
     } as ConversationMessageListBody);
     expect(page.length).toBeGreaterThan(0);
@@ -747,7 +750,8 @@ function inspectResidency(
   const key = internals.conversationKey(conversationId, agentId);
   return {
     persistedSnapshots:
-      internals.persistedMessageByMessageIdByConversationKey.get(key)?.size ?? 0,
+      internals.persistedMessageByMessageIdByConversationKey.get(key)?.size ??
+      0,
     projectedIndexSize: internals.messagesById.size,
     residentMessages:
       internals.localMessagesByConversationKey.get(key)?.length ?? 0,
