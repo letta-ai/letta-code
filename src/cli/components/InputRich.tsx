@@ -26,6 +26,7 @@ import {
 import type { StatuslineUiContext } from "@/cli/display/statusline/types";
 import { bytesToTokens, formatCompact } from "@/cli/helpers/format";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
+import { clearPlaceholdersInText } from "@/cli/helpers/paste-registry";
 import {
   type ExecutionPhase,
   getPhaseVisual,
@@ -1333,21 +1334,19 @@ export function Input({
         return;
       }
 
-      if (onEscapeCommandCancel?.()) {
-        return;
-      }
+      if (onEscapeCommandCancel?.()) return;
 
       // When input is non-empty, use double-escape to clear
       if (value) {
+        if (escapeTimerRef.current) clearTimeout(escapeTimerRef.current);
         if (escapePressed) {
           // Second escape - clear input
+          clearPlaceholdersInText(value); // Free abandoned draft's paste registry entries
           setValue("");
           setEscapePressed(false);
-          if (escapeTimerRef.current) clearTimeout(escapeTimerRef.current);
         } else {
           // First escape - start timer to allow double-escape to clear
           setEscapePressed(true);
-          if (escapeTimerRef.current) clearTimeout(escapeTimerRef.current);
           escapeTimerRef.current = setTimeout(() => {
             setEscapePressed(false);
           }, ESC_CLEAR_WINDOW_MS);
@@ -1390,6 +1389,7 @@ export function Input({
       } else {
         // First CTRL-C - wipe input and start 1-second timer
         // Note: In bash mode, this clears input but keeps bash mode active
+        clearPlaceholdersInText(value); // Free abandoned draft's paste registry entries
         setValue("");
         setBashExitArmed(false);
         setCtrlCPressed(true);
