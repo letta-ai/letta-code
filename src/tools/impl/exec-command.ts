@@ -8,7 +8,6 @@ import {
 } from "@/utils/task-notifications.js";
 import { noteExpectedWorktreeForLauncher } from "@/websocket/listener/worktree-ownership";
 import {
-  appendBackgroundProcessOutput,
   appendToOutputFile,
   assertBackgroundProcessCapacity,
   backgroundProcesses,
@@ -390,10 +389,6 @@ function createSessionOutputAppender(params: {
   return (text: string, stream: "stdout" | "stderr") => {
     const sanitizedText = scrubSecretsFromString(text, params.secrets);
     appendSessionOutput(params.session, sanitizedText, stream);
-    const bgProcess = backgroundProcesses.get(params.session.id);
-    if (bgProcess) {
-      appendBackgroundProcessOutput(bgProcess, stream, sanitizedText);
-    }
     const wrote = appendToOutputFile(params.outputFile, sanitizedText);
     if (!wrote && params.session.status === "running") {
       params.session.outputWriteFailed = true;
@@ -616,14 +611,10 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
   backgroundProcesses.set(id, {
     process: runningProcess.process,
     command: args.cmd,
-    stdout: [],
-    stderr: [],
     status: session.status,
     exitCode: session.exitCode,
     startTime: new Date(),
     outputFile,
-    totalStdoutLines: 0,
-    totalStderrLines: 0,
     runtimeScope: args.parentScope,
     secrets: session.secrets,
   });
