@@ -221,7 +221,7 @@ Use AskUserQuestion to gather key information. Bundle questions together:
 
 1. **Research depth**: "Standard or deep research?"
 2. **Related repos**: "Are there other repositories I should know about?"
-3. **Historical sessions** (if data found in step 2): "I found historical coding-agent sessions (name the sources detected, e.g. Claude Code / Codex). Should I analyze them to learn your preferences?" Say that approving means read-only subagents on your current model will read those transcripts, so the user can make an informed choice.
+3. **Historical sessions** (if data found in step 2): "I found historical coding-agent sessions (name the sources detected, e.g. Claude Code / Codex). Should I analyze them to learn your preferences?" Say that approving means read-only subagents will read those transcripts using `deepseek/deepseek-v4.1-flash` if available, otherwise your current model, so the user can make an informed choice.
 4. **Communication style**: "Terse or detailed responses?"
 
 **Don't ask** things you can discover by reading files, git, or history analysis. Rules and preferences should be learned from observation, not asked upfront.
@@ -294,6 +294,7 @@ Load the `workflow-authoring` skill and design the script for this repository an
 - **Ask for evidence-backed specifics.** Identity, hard rules and preferences, corrections (what the agent did, what the human said, what resolved it, how often it repeated), project conventions and gotchas — each with session ids and excerpts. Never copy secrets.
 - **Check code claims against current code.** History describes the code as it was. Verify claims about a cohort's `repo` against the current tree (for example a verify stage chained after each history agent) and report what changed.
 - **Budget time for reading.** Subagents time out after 10 minutes by default; raise `timeoutMs` for history agents that read large cohorts.
+- **Gather on a fast model.** Pass `model: "deepseek/deepseek-v4.1-flash"` on the Workflow call for read-only fan-out: reading cohorts, surveying code areas, checking claims. If `letta model list` does not show that handle, omit `model` so subagents inherit yours; an unknown handle fails every agent. Don't use the fast model to synthesize memory.
 
 If the Workflow tool is unavailable (it is not in your toolset, or it reports that workflow subagents require the API backend), do the same analysis yourself, cohort by cohort and area by area, and account for coverage against `cohorts.json` and `ledger.json` by hand. Do not substitute other subagent types that write memory.
 
@@ -301,7 +302,7 @@ The Workflow runs in the background. **Do not wait idle**: keep reading core cod
 
 ### 8. Curate workflow results into memory
 
-You — not the workflow subagents — decide what becomes memory and write it.
+You — not the workflow subagents — decide what becomes memory and write it. Synthesis shapes durable identity, so do it on a strong model: your current model, or `letta/auto` for any stage you delegate to draft a merge. Never on the fan-out model.
 
 **8a. Check coverage first.** The tool result names the run's `journal.jsonl`:
 
