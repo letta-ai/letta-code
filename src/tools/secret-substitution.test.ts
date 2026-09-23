@@ -9,8 +9,10 @@ import {
   scrubSecretsFromString,
 } from "@/tools/secret-substitution";
 import {
+  __testOverrideSecretsBackend,
   __testSeedSecretsCache,
   clearSecretsCache,
+  initSecretsFromServer,
 } from "@/utils/secrets-store";
 import { createTempRuntimeScriptCommand } from "./runtime-script";
 
@@ -33,6 +35,7 @@ function seedSecret(agentId: string, value: string): void {
 }
 
 afterEach(() => {
+  __testOverrideSecretsBackend(null);
   clearSecretsCache(AGENT_A);
   clearSecretsCache(AGENT_B);
 });
@@ -42,16 +45,16 @@ describe("scoped secret helpers", () => {
     await seedSecret(AGENT_A, SECRET_A);
     await seedSecret(AGENT_B, SECRET_B);
 
-    expect(extractSecretEnvFromCommand(`echo $${SECRET_KEY}`, AGENT_A)).toEqual(
-      {
-        [SECRET_KEY]: SECRET_A,
-      },
-    );
-    expect(extractSecretEnvFromCommand(`echo $${SECRET_KEY}`, AGENT_B)).toEqual(
-      {
-        [SECRET_KEY]: SECRET_B,
-      },
-    );
+    expect(
+      await extractSecretEnvFromCommand(`echo $${SECRET_KEY}`, AGENT_A),
+    ).toEqual({
+      [SECRET_KEY]: SECRET_A,
+    });
+    expect(
+      await extractSecretEnvFromCommand(`echo $${SECRET_KEY}`, AGENT_B),
+    ).toEqual({
+      [SECRET_KEY]: SECRET_B,
+    });
   });
 
   test("extracts env vars from braced shell references", async () => {
@@ -59,16 +62,19 @@ describe("scoped secret helpers", () => {
 
     const expected = { [SECRET_KEY]: SECRET_A };
     expect(
-      extractSecretEnvFromCommand(`echo "\${${SECRET_KEY}}"`, AGENT_A),
+      await extractSecretEnvFromCommand(`echo "\${${SECRET_KEY}}"`, AGENT_A),
     ).toEqual(expected);
     expect(
-      extractSecretEnvFromCommand(`[ -z "\${${SECRET_KEY}:-}" ]`, AGENT_A),
+      await extractSecretEnvFromCommand(
+        `[ -z "\${${SECRET_KEY}:-}" ]`,
+        AGENT_A,
+      ),
     ).toEqual(expected);
     expect(
-      extractSecretEnvFromCommand(`echo "\${#${SECRET_KEY}}"`, AGENT_A),
+      await extractSecretEnvFromCommand(`echo "\${#${SECRET_KEY}}"`, AGENT_A),
     ).toEqual(expected);
     expect(
-      extractSecretEnvFromCommand(`echo "\${!${SECRET_KEY}}"`, AGENT_A),
+      await extractSecretEnvFromCommand(`echo "\${!${SECRET_KEY}}"`, AGENT_A),
     ).toEqual(expected);
   });
 
@@ -76,24 +82,139 @@ describe("scoped secret helpers", () => {
     await seedSecret(AGENT_A, SECRET_A);
 
     expect(
-      extractSecretEnvFromCommand(`printenv ${SECRET_KEY}`, AGENT_A),
+      await extractSecretEnvFromCommand(`printenv ${SECRET_KEY}`, AGENT_A),
     ).toEqual({});
-    expect(extractSecretEnvFromCommand(`echo \${lowercase}`, AGENT_A)).toEqual(
-      {},
-    );
+    expect(
+      await extractSecretEnvFromCommand(`echo \${lowercase}`, AGENT_A),
+    ).toEqual({});
   });
 
   test("extracts env vars from command arrays", async () => {
     await seedSecret(AGENT_A, SECRET_A);
 
     expect(
-      extractSecretEnvFromCommand(
+      await extractSecretEnvFromCommand(
         [process.execPath, "-e", "console.log('ok')", `$${SECRET_KEY}`],
         AGENT_A,
       ),
     ).toEqual({
       [SECRET_KEY]: SECRET_A,
     });
+  });
+
+  test("hydrates a cache miss before extracting env vars", async () => {
+    let calls = 0;
+    __testOverrideSecretsBackend({
+      capabilities: { serverSecrets: true },
+      listAgentSecrets: async () => {
+        calls += 1;
+        return [{ key: SECRET_KEY, value: SECRET_A }];
+      },
+      updateAgent: async () => ({}),
+    });
+
+    expect(
+      await extractSecretEnvFromCommand(`echo $${SECRET_KEY}`, AGENT_A),
+    ).toEqual({
+      [SECRET_KEY]: SECRET_A,
+    });
+    expect(
+      await extractSecretEnvFromCommand(`echo $${SECRET_KEY}`, AGENT_A),
+    ).toEqual({
+      [SECRET_KEY]: SECRET_A,
+    });
+    expect(calls).toBe(1);
+  });
+
+  test("negative-caches an empty hydration result", async () => {
+    let calls = 0;
+    __testOverrideSecretsBackend({
+      capabilities: { serverSecrets: true },
+      listAgentSecrets: async () => {
+        calls += 1;
+        return [];
+      },
+      updateAgent: async () => ({}),
+    });
+
+    expect(
+      await extractSecretEnvFromCommand(`echo $${SECRET_KEY}`, AGENT_A),
+    ).toEqual({});
+    expect(
+      await extractSecretEnvFromCommand(`echo $${SECRET_KEY}`, AGENT_A),
+    ).toEqual({});
+    expect(calls).toBe(1);
+  });
+
+  test("does not hydrate commands without secret references", async () => {
+    let calls = 0;
+    __testOverrideSecretsBackend({
+      capabilities: { serverSecrets: true },
+      listAgentSecrets: async () => {
+        calls += 1;
+        return [{ key: SECRET_KEY, value: SECRET_A }];
+      },
+      updateAgent: async () => ({}),
+    });
+
+    expect(await extractSecretEnvFromCommand("echo hello", AGENT_A)).toEqual(
+      {},
+    );
+    expect(calls).toBe(0);
+  });
+
+  test("retries lazily after a failed startup hydration", async () => {
+    let calls = 0;
+    __testOverrideSecretsBackend({
+      capabilities: { serverSecrets: true },
+      listAgentSecrets: async () => {
+        calls += 1;
+        if (calls === 1) {
+          throw new Error("temporary secrets fetch failure");
+        }
+        return [{ key: SECRET_KEY, value: SECRET_A }];
+      },
+      updateAgent: async () => ({}),
+    });
+
+    await expect(initSecretsFromServer(AGENT_A)).rejects.toThrow(
+      "temporary secrets fetch failure",
+    );
+    expect(
+      await extractSecretEnvFromCommand(`echo $${SECRET_KEY}`, AGENT_A),
+    ).toEqual({
+      [SECRET_KEY]: SECRET_A,
+    });
+    expect(calls).toBe(2);
+  });
+
+  test("coalesces concurrent cache-miss hydrations", async () => {
+    let calls = 0;
+    let resolveFetch:
+      | ((secrets: Array<{ key: string; value: string }>) => void)
+      | undefined;
+    __testOverrideSecretsBackend({
+      capabilities: { serverSecrets: true },
+      listAgentSecrets: async () => {
+        calls += 1;
+        return new Promise((resolve) => {
+          resolveFetch = resolve;
+        });
+      },
+      updateAgent: async () => ({}),
+    });
+
+    const first = extractSecretEnvFromCommand(`echo $${SECRET_KEY}`, AGENT_A);
+    const second = extractSecretEnvFromCommand(`echo $${SECRET_KEY}`, AGENT_A);
+    for (let i = 0; i < 10 && !resolveFetch; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    expect(resolveFetch).toBeDefined();
+    resolveFetch?.([{ key: SECRET_KEY, value: SECRET_A }]);
+
+    await expect(first).resolves.toEqual({ [SECRET_KEY]: SECRET_A });
+    await expect(second).resolves.toEqual({ [SECRET_KEY]: SECRET_A });
+    expect(calls).toBe(1);
   });
 
   test("scrubs secret values using the explicit agent scope", async () => {
