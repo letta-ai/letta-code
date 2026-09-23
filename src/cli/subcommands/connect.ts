@@ -202,15 +202,14 @@ function formatProviderSlot(provider: ProviderSlotSnapshot): string {
 
 /**
  * Whether saving a new connection into an occupied provider slot changes what
- * that slot points at. Re-saving the same slot with a new credential for the
- * same provider type and endpoint is a key rotation, not an overwrite.
+ * that slot points at. Call only after rejecting provider-type collisions:
+ * re-saving the same slot with a new credential for the same endpoint is a
+ * key rotation, not an overwrite.
  */
 function overwriteChangesSlot(
   existing: ProviderSlotSnapshot,
-  providerType: string,
   baseURL: string | undefined,
 ): boolean {
-  if ((existing.provider_type ?? "") !== providerType) return true;
   const existingBaseURL = existing.base_url?.trim() || undefined;
   const effectiveBaseURL = baseURL?.trim() || existingBaseURL;
   return effectiveBaseURL !== existingBaseURL;
@@ -604,11 +603,30 @@ export async function runConnectSubcommand(
       }
       if (
         existingProvider &&
-        overwriteChangesSlot(
-          existingProvider,
-          provider.byokProvider.providerType,
-          connectionOptions.baseURL,
-        )
+        existingProvider.provider_type !== provider.byokProvider.providerType
+      ) {
+        // The API update route PATCHes only the credential and base URL, so a
+        // confirmed overwrite cannot actually change the slot's provider
+        // type. Reject the collision instead of writing credentials whose
+        // stored provider type disagrees with them.
+        io.stderr(
+          `A provider named '${providerName}' already exists in ${io.providerStorageTargetLabel()}.\n` +
+            `  Existing: ${formatProviderSlot(existingProvider)}\n` +
+            `  New:      ${formatProviderSlot({
+              name: providerName,
+              provider_type: provider.byokProvider.providerType,
+              base_url: connectionOptions.baseURL,
+            })}\n` +
+            `Reconnecting cannot change a provider's type.` +
+            (provider.target === "local"
+              ? " Disconnect the existing provider with /connect first."
+              : " Pass a different provider name with --name, or disconnect the existing provider with /connect first."),
+        );
+        return 1;
+      }
+      if (
+        existingProvider &&
+        overwriteChangesSlot(existingProvider, connectionOptions.baseURL)
       ) {
         io.stdout(
           `A provider named '${providerName}' already exists in ${io.providerStorageTargetLabel()}.\n` +
