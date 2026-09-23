@@ -410,6 +410,14 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
     signal: abortController.signal,
     onProgress: (event) => {
       recordWorkflowProgress(taskId, event);
+      // Usage callbacks update the registry, but only the initial transition
+      // to running belongs in the append-only TaskOutput progress log.
+      if (
+        event.kind === "agent" &&
+        event.status === "running" &&
+        event.totalTokens !== undefined
+      )
+        return;
       const line = formatWorkflowProgressLine(event);
       if (!line) return;
       appendBackgroundProcessOutput(processState, "stdout", line);
