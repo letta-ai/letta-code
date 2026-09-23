@@ -67,13 +67,15 @@ export function createWorkflowStatusPanel(
           const name = `${glyph} ${row.name}`;
           const progressBudget = ctx.width - visibleWidth(name) - 1;
           const [count, ...details] = row.progress.split(" · ");
+          const failedSuffix = execution.status === "failed" ? " · failed" : "";
+          const metrics = failedSuffix ? details.slice(0, -1) : details;
           let progressText = count ?? "";
-          for (const detail of details) {
-            const candidate = `${progressText} · ${detail}`;
+          for (const detail of metrics) {
+            const candidate = `${progressText} · ${detail}${failedSuffix}`;
             if (visibleWidth(candidate) > progressBudget) break;
-            progressText = candidate;
+            progressText = `${progressText} · ${detail}`;
           }
-          const progress = ctx.chalk.dim(progressText);
+          const progress = ctx.chalk.dim(`${progressText}${failedSuffix}`);
           const description = `${WORKFLOW_DESCRIPTION_INDENT}${row.description}`;
           // Keep progress on the first line; a long description should not
           // consume the left budget and clip the workflow name.
