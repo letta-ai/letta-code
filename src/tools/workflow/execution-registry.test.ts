@@ -3,9 +3,11 @@ import {
   __resetWorkflowExecutionsForTests,
   finishWorkflowExecution,
   getWorkflowExecution,
+  getWorkflowExecutionsVersion,
   listWorkflowExecutions,
   recordWorkflowProgress,
   registerWorkflowExecution,
+  subscribeToWorkflowExecutions,
 } from "./execution-registry.ts";
 
 const META = {
@@ -91,6 +93,50 @@ describe("workflow execution registry", () => {
     });
   });
 
+  test("sums the latest per-agent usage so running agents count live", () => {
+    register();
+    const running = (callIndex: number, totalTokens?: number) =>
+      recordWorkflowProgress("workflow_1", {
+        kind: "agent",
+        callIndex,
+        label: `a${callIndex}`,
+        phase: null,
+        status: "running",
+        ...(totalTokens === undefined ? {} : { totalTokens }),
+      });
+    running(0);
+    running(1);
+    expect(getWorkflowExecution("workflow_1")?.totalTokens).toBe(0);
+    running(0, 1_000);
+    running(1, 400);
+    expect(getWorkflowExecution("workflow_1")?.totalTokens).toBe(1_400);
+    // Cumulative per agent: the newer figure replaces, never adds to, the old.
+    running(0, 2_500);
+    expect(getWorkflowExecution("workflow_1")?.totalTokens).toBe(2_900);
+    recordWorkflowProgress("workflow_1", {
+      kind: "agent",
+      callIndex: 0,
+      label: "a0",
+      phase: null,
+      status: "done",
+      totalTokens: 3_000,
+    });
+    // A terminal event without a figure keeps the last one seen.
+    recordWorkflowProgress("workflow_1", {
+      kind: "agent",
+      callIndex: 1,
+      label: "a1",
+      phase: null,
+      status: "error",
+      detail: "timed out",
+    });
+    expect(getWorkflowExecution("workflow_1")).toMatchObject({
+      totalTokens: 3_400,
+      agentsDone: 1,
+      agentsFailed: 1,
+    });
+  });
+
   test("finishing marks unreported agents as interrupted and freezes duration", () => {
     register("workflow_1", Date.now() - 5_000);
     recordWorkflowProgress("workflow_1", {
@@ -126,5 +172,35 @@ describe("workflow execution registry", () => {
       "workflow_2",
     ]);
     expect(getWorkflowExecution("workflow_9")).toBeNull();
+  });
+
+  test("coalesces a burst of changes into one notification per tick", async () => {
+    let calls = 0;
+    const unsubscribe = subscribeToWorkflowExecutions(() => {
+      calls += 1;
+    });
+    const before = getWorkflowExecutionsVersion();
+    register();
+    for (let i = 0; i < 40; i++) {
+      recordWorkflowProgress("workflow_1", {
+        kind: "agent",
+        callIndex: i,
+        label: `a${i}`,
+        phase: null,
+        status: "queued",
+      });
+    }
+    finishWorkflowExecution("workflow_1", { status: "completed" });
+    // Synchronous burst: nothing has been published yet, but reads are live.
+    expect(calls).toBe(0);
+    expect(getWorkflowExecution("workflow_1")?.agentsTotal).toBe(40);
+    await Bun.sleep(5);
+    expect(calls).toBe(1);
+    expect(getWorkflowExecutionsVersion()).toBe(before + 1);
+    expect(getWorkflowExecution("workflow_1")?.finishedAt).toBeGreaterThan(0);
+    unsubscribe();
+    recordWorkflowProgress("workflow_1", { kind: "log", message: "later" });
+    await Bun.sleep(5);
+    expect(calls).toBe(1);
   });
 });
