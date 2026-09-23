@@ -114,10 +114,18 @@ describe("Skill tool memory filesystem lookup", () => {
     ).rejects.toThrow('Skill "image-generation" not found');
   });
 
-  test("selects root variants only for API repositories with root MEMORY.md", () => {
+  test("uses root-first init by default and legacy only for detected v1 memory", () => {
     const memoryDir = join(tempRoot, "root-memory");
     const bundledPath = join(tempRoot, "initializing-memory", "SKILL.md");
-    mkdirSync(memoryDir, { recursive: true });
+
+    expect(
+      resolveBundledSkillContentPath({
+        skillId: "initializing-memory",
+        bundledSkillPath: bundledPath,
+        memoryDir: null,
+        localMemfs: false,
+      }),
+    ).toBe(bundledPath);
 
     expect(
       resolveBundledSkillContentPath({
@@ -127,6 +135,16 @@ describe("Skill tool memory filesystem lookup", () => {
         localMemfs: false,
       }),
     ).toBe(bundledPath);
+
+    mkdirSync(memoryDir, { recursive: true });
+    expect(
+      resolveBundledSkillContentPath({
+        skillId: "initializing-memory",
+        bundledSkillPath: bundledPath,
+        memoryDir,
+        localMemfs: false,
+      }),
+    ).toEndWith(join("initializing-memory", "LEGACY_MEMORY.md"));
 
     writeFileSync(join(memoryDir, "MEMORY.md"), "# Memory\n");
     expect(
@@ -136,7 +154,7 @@ describe("Skill tool memory filesystem lookup", () => {
         memoryDir,
         localMemfs: false,
       }),
-    ).toEndWith(join("initializing-memory", "ROOT_MEMORY.md"));
+    ).toBe(bundledPath);
     expect(
       resolveBundledSkillContentPath({
         skillId: "initializing-memory",
@@ -144,10 +162,10 @@ describe("Skill tool memory filesystem lookup", () => {
         memoryDir,
         localMemfs: true,
       }),
-    ).toBe(bundledPath);
+    ).toEndWith(join("initializing-memory", "LEGACY_MEMORY.md"));
   });
 
-  test("selected root skill variants contain no system directory paths", () => {
+  test("hosted init renders root-first memory without system directory paths", async () => {
     const memoryDir = join(tempRoot, "root-skill-memory");
     mkdirSync(memoryDir, { recursive: true });
     writeFileSync(join(memoryDir, "MEMORY.md"), "# Memory\n");
@@ -168,10 +186,54 @@ describe("Skill tool memory filesystem lookup", () => {
       localMemfs: false,
     });
 
-    expect(selectedPath).toEndWith(join(skillId, "ROOT_MEMORY.md"));
+    expect(selectedPath).toBe(bundledSkillPath);
     expect(SYSTEM_DIRECTORY_PATH.test(readFileSync(selectedPath, "utf8"))).toBe(
       false,
     );
+
+    process.env.HOME = tempRoot;
+    const scopedMemoryDir = join(
+      tempRoot,
+      ".letta",
+      "agents",
+      TEST_AGENT_ID,
+      "memory",
+    );
+    mkdirSync(scopedMemoryDir, { recursive: true });
+    writeFileSync(join(scopedMemoryDir, "MEMORY.md"), "# Memory\n");
+    const loaded = await readSkillContent(
+      skillId,
+      currentSkillsDirectory ?? join(tempRoot, ".skills"),
+      TEST_AGENT_ID,
+    );
+    const rendered = renderSkillContent(skillId, loaded.content, loaded.path);
+    expect(loaded.path).toBe(bundledSkillPath);
+    expect(rendered).toContain("root `MEMORY.md`");
+    expect(SYSTEM_DIRECTORY_PATH.test(rendered)).toBe(false);
+  });
+
+  test("existing v1 memory still loads the legacy init instructions", async () => {
+    process.env.HOME = tempRoot;
+    const scopedMemoryDir = join(
+      tempRoot,
+      ".letta",
+      "agents",
+      TEST_AGENT_ID,
+      "memory",
+    );
+    mkdirSync(scopedMemoryDir, { recursive: true });
+
+    const loaded = await readSkillContent(
+      "initializing-memory",
+      currentSkillsDirectory ?? join(tempRoot, ".skills"),
+      TEST_AGENT_ID,
+    );
+    expect(loaded.path).toEndWith(
+      join("initializing-memory", "LEGACY_MEMORY.md"),
+    );
+    expect(
+      renderSkillContent("initializing-memory", loaded.content, loaded.path),
+    ).toContain("system/persona.md");
   });
 
   test("doctor uses the same investigation skill for both memory formats", () => {

@@ -9,7 +9,7 @@ import initV2Prompt from "@/agent/subagents/builtin/init-v2.md";
 import memoryV2Prompt from "@/agent/subagents/builtin/memory-v2.md";
 import reflectionV2Prompt from "@/agent/subagents/builtin/reflection-v2.md";
 import { resolveAndBuildSystemPrompt } from "@/agent/system-prompt-resolution";
-import initializingMemoryRootPrompt from "@/skills/builtin/initializing-memory/ROOT_MEMORY.md";
+import initializingMemoryRootPrompt from "@/skills/builtin/initializing-memory/SKILL.md";
 import memoryApplyPatchV2Prompt from "@/tools/descriptions/MemoryApplyPatchV2.md";
 import memoryV2ToolPrompt from "@/tools/descriptions/MemoryV2.md";
 

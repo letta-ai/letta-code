@@ -110,12 +110,13 @@ export function resolveBundledSkillContentPath(input: {
   localMemfs: boolean;
 }): string {
   if (
-    !input.localMemfs &&
-    input.memoryDir &&
     input.skillId === "initializing-memory" &&
-    detectMemoryFormat(input.memoryDir, false) === "memfs-v2"
+    (input.localMemfs ||
+      (input.memoryDir &&
+        existsSync(input.memoryDir) &&
+        detectMemoryFormat(input.memoryDir, false) === "memfs-v1"))
   ) {
-    return join(dirname(input.bundledSkillPath), "ROOT_MEMORY.md");
+    return join(dirname(input.bundledSkillPath), "LEGACY_MEMORY.md");
   }
   return input.bundledSkillPath;
 }
