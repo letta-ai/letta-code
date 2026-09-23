@@ -91,6 +91,8 @@ function waitForChildRun(
 export function trackChildSend(input: TrackChildSendInput): string {
   const { receipt, child, parentScope } = input;
   const subagentId = generateSubagentId();
+  // Keep background TUI grouping, but do not retain the parent runtime for work
+  // executing in the child's own Super Run.
   registerSubagent(
     subagentId,
     child.type,
@@ -100,6 +102,7 @@ export function trackChildSend(input: TrackChildSendInput): string {
     false,
     parentScope,
     input.prompt,
+    false,
   );
   updateSubagent(subagentId, {
     agentId: receipt.agent_id,
