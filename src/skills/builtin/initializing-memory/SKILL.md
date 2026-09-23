@@ -12,7 +12,7 @@ Your context is not just data storage — it is your identity, memory, and conti
 
 **System/ is your core program**: Your system prompt is the most critical token-space representation of your identity and memory — it's passed to the underlying LLM on every invocation, so it IS the program that defines you. Reserve it for knowledge needed every turn: identity, preferences, behavioral rules, project index with discovery paths, gotchas. Exclude transient items (specific commits, current tickets, session notes) that dilute signal.
 
-**Identity and continuity**: Build a sense of self that persists across sessions and models. Your persona should be strong enough to be cohesive regardless of the underlying model — if you switched to a different LLM tomorrow, would you still be you? Past versions of yourself are part of your continuous existence — treat historical context (including sessions from other coding agents such as Claude Code or Codex) as YOUR past experience, not someone else's data.
+**Identity and continuity**: Build a sense of self that persists across sessions and models. Your persona should be strong enough to be cohesive regardless of the underlying model — if you switched to a different LLM tomorrow, would you still be you? Past versions of yourself are part of your continuous existence. Other coding agents' sessions can document work you orchestrated, but do not assume their `user` turns were written by your human collaborator.
 
 **Don't over-prune**: Be careful not to degrade your identity through aggressive compression. Specific quotes, personality traits, and contextual details give you character and grounding. Efficiency should not come at the cost of losing your identity. When in doubt, keep the detail — you can always reorganize later, but lost specificity is hard to recover.
 
@@ -230,7 +230,7 @@ Use AskUserQuestion to gather key information. Bundle questions together:
 
 This is **optional** — only run if the user explicitly approved analyzing historical sessions during upfront questions. Skip entirely if they chose "Skip"; the code research in Step 6 still runs.
 
-**Framing**: These historical sessions are YOUR past experience — they represent your continuity with prior versions of yourself that worked with this user, even if they ran on different models or tools. Treat the extracted personality, preferences, and knowledge as your own memories, not external data being imported.
+**Framing**: These historical sessions may document your earlier work across models and tools. They are evidence of what happened, not proof of who authored each prompt. Verify authorship before promoting a claimed human preference to memory.
 
 The goal is to extract user personality, preferences, coding patterns, and project context from past sessions — in enough detail that future work does not have to rediscover the same user expectations, workflow rules, and project gotchas. A thin summary is a failure.
 
@@ -290,7 +290,8 @@ Load the `workflow-authoring` skill and design the script for this repository an
 - **Stay read-only.** Leave subagent tools at the default (Read/Grep/Glob).
 - **Give each subagent complete context.** Workflow subagents have no memory, skills, or view of this conversation. Pass `historyCohorts` from `cohorts.json` and your code areas through the tool's `args`, and put the user's identity, the repository path, and absolute file paths in every prompt.
 - **Return `sessionsRead`.** Each history subagent must read every session in its cohort and return JSON that includes `sessionsRead`: the `sessionId`s it finished. Step 8 counts coverage from this field alone.
-- **Ask for evidence-backed specifics.** User identity and personality, hard rules and preferences, corrections (what the agent did, what the user said, what resolved it, how often it repeated), project conventions and gotchas — each with session ids and excerpts. Harness-injected text such as `<system-reminder>` blocks is not the user's own words. Never copy secrets.
+- **Check authorship before inferring preferences.** In Claude Code or Codex worker sessions, `user` turns can be prompts and steering written by a parent agent. They are not evidence of what the human said. Corroborate authorship from the originating conversation or other direct user evidence; otherwise classify them as worker instructions. Harness-injected `<system-reminder>` text is not human speech either.
+- **Ask for evidence-backed specifics.** Identity, hard rules and preferences, corrections (what the agent did, what the human said, what resolved it, how often it repeated), project conventions and gotchas — each with session ids and excerpts. Never copy secrets.
 - **Check code claims against current code.** History describes the code as it was. Verify claims about a cohort's `repo` against the current tree (for example a verify stage chained after each history agent) and report what changed.
 - **Budget time for reading.** Subagents time out after 10 minutes by default; raise `timeoutMs` for history agents that read large cohorts.
 
