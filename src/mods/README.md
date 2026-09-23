@@ -41,7 +41,7 @@ When adding or changing a mod API, ask these in order:
 Good host-owned surfaces:
 
 - registering tools, commands, events, providers, permissions, and panels
-- scoped conversation operations like `fork`, `getHistory`, `sendMessageStream`, and model config changes
+- scoped conversation operations like `fork`, `rotate`, `getHistory`, `sendMessageStream`, and model config changes
 - event effects that alter harness execution, such as tool result synthesis, turn continuation, or provider-request retry
 - diagnostics, stale-handle detection, reload/dispose lifecycle, and safe-mode behavior
 - UI primitives where the host owns rendering across TUI/headless/listener surfaces

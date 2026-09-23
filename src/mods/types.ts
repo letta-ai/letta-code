@@ -135,10 +135,26 @@ export interface ModUpdateLlmConfigOptions {
   scope?: "conversation" | "agent";
 }
 
+export interface ModConversationRotateOptions {
+  /** Title/summary for the new conversation, like `/new <name>`. */
+  name?: string;
+}
+
 export interface ModConversationHandle {
   id: string | null;
   fork: (
     options?: ModConversationForkOptions,
+  ) => Promise<ModConversationHandle>;
+  /**
+   * Create a fresh conversation on the same agent and move the live session
+   * to it — the /new flow, callable from a mod. Agent memory carries over;
+   * conversation history does not. When called mid-turn, the current turn
+   * finishes in the old conversation and the session rebinds when it ends.
+   * Returns a handle to the new conversation. Throws where no live session
+   * can be rebound (headless, listener).
+   */
+  rotate: (
+    options?: ModConversationRotateOptions,
   ) => Promise<ModConversationHandle>;
   getHistory: (options?: ModConversationHistoryOptions) => Promise<Message[]>;
   /** Persist a new conversation title and refresh active local UI consumers. */

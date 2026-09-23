@@ -68,6 +68,9 @@ function createConversation(): ModConversationHandle {
     async fork() {
       return createConversation();
     },
+    async rotate() {
+      return createConversation();
+    },
     async getHistory() {
       return [];
     },

@@ -17,7 +17,6 @@ import {
 } from "react";
 import type { ApprovalResult } from "@/agent/approval-execution";
 import { prefetchAvailableModelHandles } from "@/agent/available-models";
-import { getResumeDataFromBackend } from "@/agent/check-approval";
 import { setCurrentAgentId } from "@/agent/context";
 import { regenerateConversationDescription } from "@/agent/conversation-description";
 import { buildConversationModelCarryoverUpdate } from "@/agent/conversation-model-carryover";
@@ -73,10 +72,7 @@ import { isLocalAgentId } from "@/cli/helpers/app-urls";
 import { backfillBuffers } from "@/cli/helpers/backfill";
 import { chunkLog } from "@/cli/helpers/chunk-log";
 import { buildCliModContext } from "@/cli/helpers/cli-mod-context";
-import {
-  createContextTracker,
-  resetContextHistory,
-} from "@/cli/helpers/context-tracker";
+import { createContextTracker } from "@/cli/helpers/context-tracker";
 import {
   generateConversationTitleFromSummary,
   getConversationTitleSettings,
@@ -233,6 +229,7 @@ import {
   providerTypeFromModelSettings,
   reasoningEffortLlmConfigPatch,
 } from "./model-config";
+import { runQueuedConversationSwitch } from "./new-conversation";
 import { prepareSessionExit } from "./session";
 import type {
   ActiveOverlay,
@@ -4029,6 +4026,7 @@ export function App({
     handleBtwJump,
     handleAgentSelect,
     handleCreateNewAgent,
+    runQueuedRotation,
   } = useConversationSwitching({
     abortControllerRef,
     agentId,
@@ -4051,6 +4049,7 @@ export function App({
     pendingConversationSwitchRef,
     prepareScopedToolExecutionContext,
     recoverRestoredPendingApprovals,
+    refreshDerived,
     resetBootstrapReminderState,
     resetDeferredToolCallCommits,
     resetPendingReasoningCycle,
@@ -4452,68 +4451,25 @@ export function App({
       } else if (action.type === "set_compaction") {
         handleCompactionModeSelect(action.mode, action.commandId);
       } else if (action.type === "switch_conversation") {
-        const cmd = action.commandId
-          ? commandRunner.getHandle(action.commandId, "/resume")
-          : commandRunner.start(
-              "/resume",
-              "Processing queued conversation switch...",
-            );
-        cmd.update({
-          output: "Processing queued conversation switch...",
-          phase: "running",
-        });
-
-        // Execute the conversation switch asynchronously
-        (async () => {
-          setCommandRunning(true);
-          try {
-            if (action.conversationId === conversationId) {
-              cmd.finish("Already on this conversation", true);
-            } else {
-              if (agentState) {
-                const resumeData = await getResumeDataFromBackend(
-                  agentState,
-                  action.conversationId,
-                );
-
-                setConversationIdAndRef(action.conversationId);
-                setConversationAutoTitleEligibility(false);
-
-                pendingConversationSwitchRef.current = {
-                  origin: "resume-selector",
-                  conversationId: action.conversationId,
-                  isDefault: action.conversationId === "default",
-                  messageCount: resumeData.messageHistory.length,
-                  messageHistory: resumeData.messageHistory,
-                };
-
-                settingsManager.persistSession(agentId, action.conversationId);
-
-                // Reset context tokens for new conversation
-                resetContextHistory(contextTrackerRef.current);
-                resetBootstrapReminderState();
-
-                if (resumeData.pendingApprovals.length > 0) {
-                  await recoverRestoredPendingApprovals(
-                    resumeData.pendingApprovals,
-                  );
-                }
-
-                cmd.finish(
-                  `Switched to conversation (${resumeData.messageHistory.length} messages)`,
-                  true,
-                );
-              }
-            }
-          } catch (error) {
-            cmd.fail(
-              `Failed to switch conversation: ${error instanceof Error ? error.message : String(error)}`,
-            );
-          } finally {
-            setCommandRunning(false);
-            refreshDerived();
-          }
-        })();
+        runQueuedConversationSwitch(
+          {
+            agentId,
+            agentState,
+            currentConversationId: conversationId,
+            commandRunner,
+            contextTrackerRef,
+            pendingConversationSwitchRef,
+            recoverRestoredPendingApprovals,
+            refreshDerived,
+            resetBootstrapReminderState,
+            setCommandRunning,
+            setConversationAutoTitleEligibility,
+            setConversationIdAndRef,
+          },
+          action,
+        );
+      } else if (action.type === "rotate_conversation") {
+        runQueuedRotation(action);
       } else if (action.type === "switch_toolset") {
         handleToolsetSelect(action.toolsetId, action.commandId);
       } else if (action.type === "set_experiment") {
@@ -4548,13 +4504,13 @@ export function App({
     conversationId,
     refreshDerived,
     setCommandRunning,
-    commandRunner.getHandle,
-    commandRunner.start,
+    commandRunner,
     recoverRestoredPendingApprovals,
     resetBootstrapReminderState,
     setConversationAutoTitleEligibility,
     setConversationIdAndRef,
     queuedOverlayAction,
+    runQueuedRotation,
   ]);
 
   // Handle escape when profile confirmation is pending

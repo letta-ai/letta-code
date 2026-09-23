@@ -13,6 +13,7 @@ import {
   type MutableRefObject,
   type SetStateAction,
   useCallback,
+  useEffect,
 } from "react";
 import {
   extractConflictDetail,
@@ -51,6 +52,10 @@ import type { ApprovalRequest } from "@/cli/helpers/stream";
 import type { ModConversationCloseReason } from "@/cli/mods/types";
 import type { LocalModAdapter } from "@/cli/mods/use-local-mod-adapter";
 import { runSessionStartHooks } from "@/hooks";
+import {
+  type ConversationRotationRequest,
+  registerConversationRotationHandler,
+} from "@/mods/conversation-rotation";
 import { updateProjectSettings } from "@/settings";
 import { settingsManager } from "@/settings-manager";
 import type { PreparedScopeToolContext } from "@/tools/toolset";
@@ -59,6 +64,10 @@ import { debugLog, debugWarn } from "@/utils/debug";
 import { LLM_API_ERROR_MAX_RETRIES } from "./constants";
 import { uid } from "./ids";
 import { getPreferredAgentModelHandle } from "./model-config";
+import {
+  bindFreshConversation,
+  createFreshConversation,
+} from "./new-conversation";
 import type {
   ActiveOverlay,
   AppCommandRunner,
@@ -96,6 +105,7 @@ type ConversationSwitchingContext = {
     approvals: ApprovalRequest[],
     options?: { notifyOnManualApproval?: boolean },
   ) => Promise<void>;
+  refreshDerived: () => void;
   resetBootstrapReminderState: (pendingConversationBootstrap?: boolean) => void;
   resetDeferredToolCallCommits: () => void;
   resetPendingReasoningCycle: () => void;
@@ -148,6 +158,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
     pendingConversationSwitchRef,
     prepareScopedToolExecutionContext,
     recoverRestoredPendingApprovals,
+    refreshDerived,
     resetBootstrapReminderState,
     resetDeferredToolCallCommits,
     resetPendingReasoningCycle,
@@ -868,10 +879,113 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
     ],
   );
 
+  // Mod conversation rotation (ctx.conversation.rotate): create a fresh
+  // conversation on the active agent and move the live session to it. When a
+  // turn is in flight, the rebind is queued to run when the turn ends so the
+  // current turn finishes in the old conversation. Uses the shared /new
+  // sequence for the rebind itself.
+  const bindRotatedConversation = useCallback(
+    (conversationId: string, name?: string) =>
+      bindFreshConversation(
+        {
+          agentId,
+          agentName,
+          conversationIdRef,
+          contextTrackerRef,
+          pendingConversationSwitchRef,
+          sessionHooksRanRef,
+          sessionStartFeedbackRef,
+          setConversationIdAndRef,
+          setConversationAutoTitleEligibility,
+          maybeCarryOverActiveConversationModel,
+          resetBootstrapReminderState,
+          runEndHooks,
+          modAdapter,
+        },
+        { conversationId, name },
+      ),
+    [
+      agentId,
+      agentName,
+      maybeCarryOverActiveConversationModel,
+      resetBootstrapReminderState,
+      runEndHooks,
+      modAdapter,
+      setConversationAutoTitleEligibility,
+      setConversationIdAndRef,
+      conversationIdRef,
+      contextTrackerRef,
+      pendingConversationSwitchRef,
+      sessionHooksRanRef,
+      sessionStartFeedbackRef,
+    ],
+  );
+
+  const runQueuedRotation = useCallback(
+    (action: { conversationId: string; name?: string }) => {
+      const cmd = commandRunner.start(
+        "rotate",
+        "Rotating to new conversation...",
+      );
+      (async () => {
+        setCommandRunning(true);
+        try {
+          await bindRotatedConversation(action.conversationId, action.name);
+          cmd.finish(
+            "Started new conversation (use /resume to change convos)",
+            true,
+          );
+        } catch (error) {
+          cmd.fail(
+            `Failed to rotate conversation: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        } finally {
+          setCommandRunning(false);
+          refreshDerived();
+        }
+      })();
+    },
+    [bindRotatedConversation, commandRunner, refreshDerived, setCommandRunning],
+  );
+
+  useEffect(() => {
+    return registerConversationRotationHandler(
+      async (request: ConversationRotationRequest) => {
+        const activeAgentId = agentIdRef.current ?? agentId;
+        if (request.agentId && request.agentId !== activeAgentId) {
+          throw new Error(
+            `Mod conversation rotate: agent ${request.agentId} is not the active session agent`,
+          );
+        }
+        const conversationId = await createFreshConversation(
+          activeAgentId,
+          request.name,
+        );
+        if (isAgentBusy()) {
+          setQueuedOverlayAction({
+            type: "rotate_conversation",
+            conversationId,
+            name: request.name,
+          });
+          return { conversationId, queued: true };
+        }
+        await bindRotatedConversation(conversationId, request.name);
+        return { conversationId, queued: false };
+      },
+    );
+  }, [
+    agentId,
+    agentIdRef,
+    isAgentBusy,
+    setQueuedOverlayAction,
+    bindRotatedConversation,
+  ]);
+
   return {
     handleBtwCommand,
     handleBtwJump,
     handleAgentSelect,
     handleCreateNewAgent,
+    runQueuedRotation,
   };
 }
