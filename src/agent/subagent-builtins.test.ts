@@ -97,10 +97,15 @@ Custom prompt body`,
     const hiddenFileTools = ["Read", "Write", "Glob", "Grep"];
 
     expect(configs.reflection?.allowedTools).toContain("Edit");
-    expect(configs.memory?.allowedTools).not.toContain("Edit");
+    expect(configs.memory?.fork).toBe(false);
+    expect(configs.memory?.allowedTools).toEqual([
+      "Bash",
+      "Read",
+      "Edit",
+      "Write",
+    ]);
     for (const tool of hiddenFileTools) {
       expect(configs.reflection?.allowedTools).not.toContain(tool);
-      expect(configs.memory?.allowedTools).not.toContain(tool);
     }
   });
 
@@ -115,7 +120,7 @@ Custom prompt body`,
     expect(configs.init?.systemPrompt).toContain("Commit (1 bash call)");
     expect(configs.init?.systemPrompt).not.toContain("git push");
     expect(configs.memory?.systemPrompt).toContain(
-      'WORKTREE_DIR="$MEMORY_DIR-worktrees"',
+      "background memory subagent",
     );
     expect(configs.memory?.systemPrompt).not.toContain("git push");
     expect(configs.reflection?.systemPrompt).not.toContain("git push");
@@ -133,6 +138,12 @@ Custom prompt body`,
         "memfs-v2",
         false,
       );
+      if (name === "memory") {
+        expect(resolved.fork).toBe(false);
+        expect(resolved.systemPrompt).toContain(
+          "specific missing fact or ambiguity",
+        );
+      }
       expect(resolved.systemPrompt).not.toContain("MemFS v2");
       expect(resolved.systemPrompt).not.toContain("$MEMORY_DIR/system/");
       // shared v2 layout markers
@@ -148,10 +159,7 @@ Custom prompt body`,
         "### 5. Commit (1 bash call)",
         "feat(init): initialize memory for project",
       ],
-      memory: [
-        "### Phase 5: Merge and Clean Up (MANDATORY)",
-        "## Error Handling",
-      ],
+      memory: ["## Updating memory", "## Git"],
     };
     for (const [name, phrases] of Object.entries(opsPhrases)) {
       const config = configs[name];
