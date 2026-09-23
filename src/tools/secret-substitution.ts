@@ -110,6 +110,42 @@ export function createStreamingSecretScrubber(
   };
 }
 
+/** Redacts a process's stdout and stderr, each as its own stream. */
+export interface OutputRedactor {
+  /** Redact the next chunk of one stream and record what is safe to emit. */
+  push(text: string, stream: "stdout" | "stderr"): void;
+  /** Record the text still held back, once the process has ended. */
+  flush(): void;
+}
+
+/**
+ * Redact a process's output as it arrives and pass each non-empty redacted
+ * piece to `record`. The streams are redacted separately because they
+ * interleave: joining them could split a secret, or pair halves printed to
+ * different streams. Call `flush` once the process has ended.
+ */
+export function createOutputRedactor(
+  secrets: Readonly<Record<string, string>>,
+  record: (redactedText: string, stream: "stdout" | "stderr") => void,
+): OutputRedactor {
+  const scrubbers = {
+    stdout: createStreamingSecretScrubber(secrets),
+    stderr: createStreamingSecretScrubber(secrets),
+  };
+  const emit = (text: string, stream: "stdout" | "stderr") => {
+    if (text) record(text, stream);
+  };
+  return {
+    push(text, stream) {
+      emit(scrubbers[stream].push(text), stream);
+    },
+    flush() {
+      emit(scrubbers.stdout.flush(), "stdout");
+      emit(scrubbers.stderr.flush(), "stderr");
+    },
+  };
+}
+
 /**
  * Find how much of the buffered text can be emitted. Everything from the
  * longest suffix that begins a secret is held, and so is any complete secret

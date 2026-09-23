@@ -5,6 +5,7 @@ import {
   releaseToolExecutionContext,
 } from "@/tools/manager";
 import {
+  createOutputRedactor,
   createStreamingSecretScrubber,
   extractSecretEnvFromCommand,
   scrubSecretsFromString,
@@ -305,6 +306,46 @@ describe("streaming secret scrubber", () => {
     expect(scrubber.push("done: secr")).toBe("done: ");
     expect(scrubber.flush()).toBe("secr");
     expect(scrubber.flush()).toBe("");
+  });
+
+  test("redacts stdout and stderr as separate streams", () => {
+    const recorded: Array<[string, "stdout" | "stderr"]> = [];
+    const redactor = createOutputRedactor(
+      { PASSWORD: "he$$o-very-secret" },
+      (text, stream) => recorded.push([text, stream]),
+    );
+
+    redactor.push("out he$$", "stdout");
+    redactor.push("err he$$", "stderr");
+    // The second half on the other stream does not complete either secret.
+    redactor.push("o-very-secret\n", "stderr");
+    redactor.push("o-very-secret\n", "stdout");
+    redactor.flush();
+
+    expect(recorded).toEqual([
+      ["out ", "stdout"],
+      ["err ", "stderr"],
+      ["PASSWORD=<REDACTED>\n", "stderr"],
+      ["PASSWORD=<REDACTED>\n", "stdout"],
+    ]);
+  });
+
+  test("records what each stream still holds when flushed", () => {
+    const recorded: Array<[string, "stdout" | "stderr"]> = [];
+    const redactor = createOutputRedactor(
+      { TOKEN: "secret-value" },
+      (text, stream) => recorded.push([text, stream]),
+    );
+
+    redactor.push("secr", "stdout");
+    redactor.push("sec", "stderr");
+    expect(recorded).toEqual([]);
+    redactor.flush();
+
+    expect(recorded).toEqual([
+      ["secr", "stdout"],
+      ["sec", "stderr"],
+    ]);
   });
 
   test("passes chunks through unchanged without secrets", () => {

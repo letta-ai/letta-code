@@ -1,6 +1,7 @@
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import {
-  createStreamingSecretScrubber,
+  createOutputRedactor,
+  type OutputRedactor,
   scrubSecretsFromString,
 } from "@/tools/secret-substitution";
 import { addToMessageQueue } from "@/utils/message-queue-bridge.js";
@@ -18,7 +19,6 @@ import {
   createBackgroundOutputFile,
   getNextExecSessionId,
   scheduleBackgroundProcessCleanup,
-  scrubCompletedBackgroundOutput,
 } from "./process_manager.js";
 import { resolveShellWorkdir } from "./shell.js";
 import { getShellEnv } from "./shell-env.js";
@@ -385,26 +385,15 @@ function buildExecLaunchers(args: ExecCommandArgs): string[][] {
   });
 }
 
-interface SessionOutputAppender {
-  append(text: string, stream: "stdout" | "stderr"): void;
-  /** Record the output held back for redaction once the process has ended. */
-  flush(): void;
-}
-
 function createSessionOutputAppender(params: {
   session: ExecSession;
   outputFile: string;
   secrets: Readonly<Record<string, string>>;
-}): SessionOutputAppender {
+}): OutputRedactor {
   // Session reads and the output file both see output while the command runs,
   // so a secret printed across several writes must be redacted before any of
   // it is recorded.
-  const scrubbers = {
-    stdout: createStreamingSecretScrubber(params.secrets),
-    stderr: createStreamingSecretScrubber(params.secrets),
-  };
-  const record = (sanitizedText: string, stream: "stdout" | "stderr") => {
-    if (!sanitizedText) return;
+  return createOutputRedactor(params.secrets, (sanitizedText, stream) => {
     appendSessionOutput(params.session, sanitizedText, stream);
     const bgProcess = backgroundProcesses.get(params.session.id);
     if (bgProcess) {
@@ -431,14 +420,7 @@ function createSessionOutputAppender(params: {
         }
       }
     }
-  };
-  return {
-    append: (text, stream) => record(scrubbers[stream].push(text), stream),
-    flush: () => {
-      record(scrubbers.stdout.flush(), "stdout");
-      record(scrubbers.stderr.flush(), "stderr");
-    },
-  };
+  });
 }
 
 function notifyExecCompletion(session: ExecSession): void {
@@ -501,7 +483,6 @@ function markSessionFailed(session: ExecSession, detail: string): void {
   const bgProcess = backgroundProcesses.get(session.id);
   if (bgProcess) {
     bgProcess.status = "failed";
-    scrubCompletedBackgroundOutput(bgProcess);
     scheduleBackgroundProcessCleanup(session.id);
   }
   notifyExecCompletion(session);
@@ -521,7 +502,6 @@ function markSessionClosed(session: ExecSession, code: number | null): void {
   if (bgProcess) {
     bgProcess.status = session.status;
     bgProcess.exitCode = code;
-    scrubCompletedBackgroundOutput(bgProcess);
     scheduleBackgroundProcessCleanup(session.id);
   }
   notifyExecCompletion(session);
@@ -629,7 +609,7 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
       signal: args.signal,
       tty: session.tty,
       captureOutput: false,
-      onOutput: sessionOutput.append,
+      onOutput: sessionOutput.push,
     });
   } catch (error) {
     execSessions.delete(id);
@@ -648,7 +628,6 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
     totalStdoutLines: 0,
     totalStderrLines: 0,
     runtimeScope: args.parentScope,
-    secrets: session.secrets,
   });
   if (session.status !== "running") {
     try {
@@ -666,7 +645,7 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
     },
     (error: unknown) => {
       if (error instanceof ShellExecutionError) {
-        sessionOutput.append(error.message, "stderr");
+        sessionOutput.push(error.message, "stderr");
       }
       sessionOutput.flush();
       markSessionFailed(

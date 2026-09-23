@@ -3,7 +3,7 @@ import stripAnsi from "strip-ansi";
 import { type RawData, WebSocket } from "ws";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import {
-  createStreamingSecretScrubber,
+  createOutputRedactor,
   scrubSecretsFromString,
 } from "@/tools/secret-substitution";
 import { addToMessageQueue } from "@/utils/message-queue-bridge.js";
@@ -27,7 +27,6 @@ import {
   getNextMonitorId,
   notifyBackgroundProcessStateChanged,
   scheduleBackgroundProcessCleanup,
-  scrubCompletedBackgroundOutput,
   unrefTimer,
 } from "./process_manager.js";
 import { getShellEnv } from "./shell-env.js";
@@ -373,7 +372,6 @@ function markMonitorFinished(
 ): void {
   processState.status = status;
   processState.exitCode = exitCode;
-  scrubCompletedBackgroundOutput(processState);
   notifyBackgroundProcessStateChanged(processState.runtimeScope);
   scheduleBackgroundProcessCleanup(taskId);
 }
@@ -421,40 +419,35 @@ function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
   // The output file can be read while the monitor runs, and a persistent
   // monitor may never end, so a secret printed across several writes must be
   // redacted before any of it is written.
-  const scrubbers = {
-    stdout: createStreamingSecretScrubber(secrets),
-    stderr: createStreamingSecretScrubber(secrets),
-  };
-  const recordOutput = (redactedText: string, stream: "stdout" | "stderr") => {
-    const sanitizedText = stripAnsi(redactedText);
-    if (!sanitizedText) return;
-    appendBackgroundProcessOutput(processState, stream, sanitizedText);
-    const wrote = output.append(
-      stream === "stderr" ? `[stderr] ${sanitizedText}` : sanitizedText,
-    );
-    if (!wrote && processState.status === "running") {
-      appendBackgroundProcessOutput(
-        processState,
-        "stderr",
-        "[output file write failed; output may be incomplete]",
+  const outputRedactor = createOutputRedactor(
+    secrets,
+    (redactedText, stream) => {
+      const sanitizedText = stripAnsi(redactedText);
+      if (!sanitizedText) return;
+      appendBackgroundProcessOutput(processState, stream, sanitizedText);
+      const wrote = output.append(
+        stream === "stderr" ? `[stderr] ${sanitizedText}` : sanitizedText,
       );
-      processState.completionNotificationSuppressed = true;
-      markMonitorFinished(taskId, processState, "failed", null);
-      try {
-        runningProcess.process.kill("SIGTERM");
-      } catch {
-        // Process may have already exited.
+      if (!wrote && processState.status === "running") {
+        appendBackgroundProcessOutput(
+          processState,
+          "stderr",
+          "[output file write failed; output may be incomplete]",
+        );
+        processState.completionNotificationSuppressed = true;
+        markMonitorFinished(taskId, processState, "failed", null);
+        try {
+          runningProcess.process.kill("SIGTERM");
+        } catch {
+          // Process may have already exited.
+        }
+        return;
       }
-      return;
-    }
-    if (stream === "stdout") {
-      events.onData(sanitizedText);
-    }
-  };
-  const flushOutput = () => {
-    recordOutput(scrubbers.stdout.flush(), "stdout");
-    recordOutput(scrubbers.stderr.flush(), "stderr");
-  };
+      if (stream === "stdout") {
+        events.onData(sanitizedText);
+      }
+    },
+  );
 
   const runningProcess = startShellProcess(sandboxed.launcher, {
     cwd,
@@ -464,7 +457,7 @@ function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
     captureOutput: false,
     onOutput(text, stream) {
       if (!processState) return;
-      recordOutput(scrubbers[stream].push(text), stream);
+      outputRedactor.push(text, stream);
     },
   });
 
@@ -493,7 +486,6 @@ function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
     description: args.description,
     monitorSource: "command",
     persistent: args.persistent,
-    secrets,
   };
   backgroundProcesses.set(taskId, processState);
   notifyBackgroundProcessStateChanged(scope);
@@ -501,7 +493,7 @@ function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
   void runningProcess.completion.then(
     ({ exitCode }) => {
       if (backgroundProcesses.get(taskId) !== processState) return;
-      flushOutput();
+      outputRedactor.flush();
       events.finish();
       output.append(`\n[exit code: ${exitCode}]\n`);
       if (processState.status !== "running") return;
@@ -522,7 +514,7 @@ function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
     },
     (error: unknown) => {
       if (backgroundProcesses.get(taskId) !== processState) return;
-      flushOutput();
+      outputRedactor.flush();
       events.finish();
       if (processState.status !== "running") return;
       const shellError = error as Error & { killed?: boolean };
@@ -633,7 +625,6 @@ function startWebSocketMonitor(args: NormalizedMonitorArgs): MonitorResult {
     description: args.description,
     monitorSource: "websocket",
     persistent: args.persistent,
-    secrets,
   };
   backgroundProcesses.set(taskId, processState);
   notifyBackgroundProcessStateChanged(scope);
