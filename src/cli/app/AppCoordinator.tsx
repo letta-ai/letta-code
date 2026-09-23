@@ -123,10 +123,13 @@ import {
   isFileEditTool,
   isFileWriteTool,
   isPatchTool,
-  isShellOutputTool,
   isShellTool,
 } from "@/cli/helpers/tool-name-mapping";
 import { isTaskTool } from "@/cli/helpers/tool-name-mapping.js";
+import {
+  findFirstUserLineTitle,
+  findLastShellToolCallId,
+} from "@/cli/helpers/transcript-eviction";
 import { getTuiBlockedReason } from "@/cli/helpers/tui-queue-adapter";
 import { createTuiQueueRuntime } from "@/cli/helpers/tui-queue-runtime";
 import type { WindowTitleData } from "@/cli/helpers/window-title-config";
@@ -1221,6 +1224,9 @@ export function App({
   );
   const isAutoConversationDescriptionInFlightRef = useRef(false);
   const firstUserQueryRef = useRef<string | null>(null);
+  // Title candidate from the first committed user line; survives eviction of
+  // the transcript buffers at turn boundaries.
+  const firstCommittedUserTitleRef = useRef<string | null>(null);
   const setConversationAutoTitleEligibility = useCallback(
     (enabled: boolean) => {
       shouldAutoGenerateConversationTitleRef.current = enabled;
@@ -1228,29 +1234,18 @@ export function App({
       shouldAutoGenerateConversationDescriptionRef.current = enabled;
       isAutoConversationDescriptionInFlightRef.current = false;
       firstUserQueryRef.current = null;
+      firstCommittedUserTitleRef.current = null;
     },
     [],
   );
   useConversationTitleSync(conversationId, setConversationSummary);
-  const deriveAutoConversationTitle = useCallback(() => {
-    if (firstUserQueryRef.current) {
-      return firstUserQueryRef.current;
-    }
-
-    for (const lineId of buffersRef.current.order) {
-      const line = buffersRef.current.byId.get(lineId);
-      if (!line || line.kind !== "user") {
-        continue;
-      }
-
-      const title = normalizeConversationTitle(line.text);
-      if (title) {
-        return title;
-      }
-    }
-
-    return null;
-  }, []);
+  const deriveAutoConversationTitle = useCallback(
+    () =>
+      firstUserQueryRef.current ??
+      firstCommittedUserTitleRef.current ??
+      findFirstUserLineTitle(buffersRef.current),
+    [],
+  );
   const generateConversationTitle = useCallback(async () => {
     const fallback = deriveAutoConversationTitle();
 
@@ -2111,6 +2106,16 @@ export function App({
           ln.kind === "status" ||
           ln.kind === "trajectory_summary"
         ) {
+          // Remember the first committed user line's title candidate; buffer
+          // eviction at turn boundaries makes this ref the durable source.
+          if (
+            ln.kind === "user" &&
+            firstCommittedUserTitleRef.current === null
+          ) {
+            firstCommittedUserTitleRef.current = normalizeConversationTitle(
+              ln.text,
+            );
+          }
           emittedIdsRef.current.add(id);
           newlyCommitted.push({ ...ln });
           continue;
@@ -4586,26 +4591,14 @@ export function App({
   }, []);
 
   // The ID of the last finished shell tool call — used for the ctrl+o hint and handler.
+  // Committed lines are evicted from the buffers at turn boundaries, so the
+  // helper falls back to scanning the committed static items (always older).
   // lines is intentionally in the dep array to recompute when buffers change (buffersRef is a ref).
   // biome-ignore lint/correctness/useExhaustiveDependencies: lines triggers recompute when buffer changes
-  const lastShellToolCallId = useMemo(() => {
-    const order = buffersRef.current.order;
-    for (let i = order.length - 1; i >= 0; i--) {
-      const id = order[i];
-      if (!id) continue;
-      const ln = buffersRef.current.byId.get(id);
-      if (
-        ln?.kind === "tool_call" &&
-        ln.phase === "finished" &&
-        ln.resultText &&
-        ln.name &&
-        isShellOutputTool(ln.name)
-      ) {
-        return id;
-      }
-    }
-    return null;
-  }, [lines]);
+  const lastShellToolCallId = useMemo(
+    () => findLastShellToolCallId(buffersRef.current, staticItems),
+    [lines, staticItems],
+  );
 
   // ctrl+o toggles the last shell tool call output
   const handleCtrlO = useCallback(() => {

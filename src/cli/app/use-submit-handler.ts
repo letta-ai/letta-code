@@ -105,6 +105,7 @@ import {
   setSystemPromptDoctorState,
 } from "@/cli/helpers/system-prompt-warning.ts";
 import { getRandomThinkingVerb } from "@/cli/helpers/thinking-messages";
+import { prepareBuffersForTurn } from "@/cli/helpers/transcript-eviction";
 import {
   buildModCommandPrompt,
   parseModCommandArgv,
@@ -3545,19 +3546,18 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       const contentParts =
         overrideContentParts ?? buildMessageContentFromDisplay(msg);
 
-      // Append the optimistic user message and trigger a render immediately —
-      // before any async work (reminder building, hooks, etc.) so the user
-      // sees their message appear without delay. Ink uses React legacy mode
-      // which doesn't auto-batch async state updates, so we do this synchronously
-      // while still inside the React event handler to get a single render cycle.
+      // Turn boundary: reset per-turn state + evict committed lines (precedes append/index capture).
+      prepareBuffersForTurn(buffersRef.current, emittedIdsRef.current);
+
+      // Append the optimistic user message and render immediately — before any
+      // async work — so the user sees their message without delay. (Ink legacy
+      // mode does not auto-batch async updates, so do this synchronously.)
       const userOtid = createClientOtid();
       const optimisticUserLineId = appendOptimisticUserLine(
         buffersRef.current,
         userTextForInput,
         userOtid,
       );
-      buffersRef.current.tokenCount = 0;
-      buffersRef.current.interrupted = false;
       if (!sessionStatsRef.current.getTrajectorySnapshot()) {
         trajectoryTokenDisplayRef.current = 0;
         setTrajectoryTokenBase(0);
