@@ -4,7 +4,10 @@ import {
   consumeWorkingDirectoryRecovery,
   getCurrentWorkingDirectory,
 } from "@/runtime-context";
-import { scrubSecretsFromString } from "@/tools/secret-substitution";
+import {
+  createSecretStreamScrubber,
+  scrubSecretsFromString,
+} from "@/tools/secret-substitution";
 import {
   addToMessageQueue,
   isQueueBridgeConnected,
@@ -325,6 +328,13 @@ export async function bash(args: BashArgs): Promise<BashResult> {
   const userCwd = getCurrentWorkingDirectory();
   const sanitizeOutput = (text: string) =>
     scrubSecretsFromString(text, secretEnv ?? {});
+  // Per-stream scrubbers hold back potential partial secret matches so a
+  // credential split across output chunks never reaches the retained output,
+  // the output file, or the completion notification unredacted.
+  const streamScrubbers = {
+    stdout: createSecretStreamScrubber(secretEnv ?? {}),
+    stderr: createSecretStreamScrubber(secretEnv ?? {}),
+  };
 
   if (command === "/bg") {
     const processes = Array.from(backgroundProcesses.entries());
@@ -401,11 +411,12 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     signal: run_in_background ? undefined : signal,
     captureOutput: false,
     onOutput(text, stream) {
-      const sanitizedText = sanitizeOutput(text);
+      const sanitizedText = streamScrubbers[stream].push(text);
       if (!run_in_background) {
         foregroundOutput[stream] += text;
         onOutput?.(text, stream);
       }
+      if (!sanitizedText) return;
       appendBackgroundProcessOutput(bgProcess, stream, sanitizedText);
       const wrote = appendToOutputFile(
         outputFile,
@@ -447,8 +458,23 @@ export async function bash(args: BashArgs): Promise<BashResult> {
   // shell exits the turn that launched it is gone, so the process-global
   // agent context may already point at a different conversation.
   const notificationScope = resolveNotificationScope(parentScope);
+  // The completion promise settles after the final stdout/stderr data events,
+  // so this is where held-back partial matches are flushed into the retained
+  // output and the output file before the final whole-file scrub.
+  const flushStreamScrubbers = () => {
+    for (const stream of ["stdout", "stderr"] as const) {
+      const rest = streamScrubbers[stream].flush();
+      if (!rest) continue;
+      appendBackgroundProcessOutput(bgProcess, stream, rest);
+      appendToOutputFile(
+        outputFile,
+        stream === "stderr" ? `[stderr] ${rest}` : rest,
+      );
+    }
+  };
   const settled = runningProcess.completion.then(
     ({ exitCode }) => {
+      flushStreamScrubbers();
       bgProcess.status =
         exitCode === 0 && !outputWriteFailed ? "completed" : "failed";
       bgProcess.exitCode = exitCode;
@@ -468,6 +494,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       };
     },
     (error: unknown) => {
+      flushStreamScrubbers();
       const err = error as Error & { killed?: boolean };
       const message = sanitizeOutput(
         err.killed ? `Command timed out after ${timeout}ms` : err.message,

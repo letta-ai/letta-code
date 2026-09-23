@@ -1,13 +1,22 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { telemetry } from "@/telemetry";
+import { backgroundProcesses } from "@/tools/impl/process_manager";
 import {
   executeTool,
   prepareToolExecutionContextForSpecificTools,
   releaseToolExecutionContext,
 } from "@/tools/manager";
 import {
+  createSecretStreamScrubber,
   extractSecretEnvFromCommand,
+  getAmbientRedactionSecrets,
   scrubSecretsFromString,
 } from "@/tools/secret-substitution";
+import {
+  type QueuedMessage,
+  setMessageQueueAdder,
+} from "@/utils/message-queue-bridge";
 import {
   __testSeedSecretsCache,
   clearSecretsCache,
@@ -205,4 +214,308 @@ describe("scoped shell secret execution", () => {
       }
     });
   }
+});
+
+/**
+ * Ambient runtime credential containment (LET-10106). A Cloud sandbox child
+ * printed the full runtime key to stderr after an env-file parse failure even
+ * though the command never referenced $LETTA_API_KEY; the redaction set only
+ * covered command-referenced agent secrets. These tests use a deterministic
+ * fake env-file parser and a sentinel credential — never a real key.
+ */
+const AMBIENT_SENTINEL = "sk-lettatest-SENTINEL-credential-0123456789abcdef";
+const AMBIENT_PLACEHOLDER = "LETTA_API_KEY=<REDACTED>";
+
+/**
+ * Deterministic stand-in for the incident's env-file parser: reads an env
+ * file, fails to parse it, and echoes its environment (including the ambient
+ * runtime key) to stderr before exiting nonzero. The command line never
+ * references $LETTA_API_KEY.
+ */
+const FAKE_ENV_PARSER_SCRIPT = `
+const fs = require("node:fs");
+const file = process.argv[2];
+let content = "";
+try {
+  content = fs.readFileSync(file, "utf8");
+} catch (err) {
+  process.stderr.write("env-file parse failed: cannot read " + file + "\\n");
+}
+if (!content.includes("=")) {
+  process.stderr.write(
+    "env-file parse failed: invalid line; environment was LETTA_API_KEY=" +
+      (process.env.LETTA_API_KEY ?? "") +
+      "\\n",
+  );
+  process.exit(1);
+}
+process.stdout.write("parsed ok\\n");
+`;
+
+describe("ambient runtime credential redaction", () => {
+  const originalKey = process.env.LETTA_API_KEY;
+
+  beforeEach(() => {
+    process.env.LETTA_API_KEY = AMBIENT_SENTINEL;
+  });
+
+  afterEach(() => {
+    if (originalKey === undefined) {
+      delete process.env.LETTA_API_KEY;
+    } else {
+      process.env.LETTA_API_KEY = originalKey;
+    }
+  });
+
+  test("ambient redaction set includes the runtime key even when unreferenced", () => {
+    const ambient = getAmbientRedactionSecrets();
+    expect(Object.values(ambient)).toContain(AMBIENT_SENTINEL);
+  });
+
+  test("scrubs the ambient runtime key with no invocation secrets", () => {
+    const scrubbed = scrubSecretsFromString(
+      `prefix ${AMBIENT_SENTINEL} suffix`,
+      {},
+    );
+    expect(scrubbed).toBe(`prefix ${AMBIENT_PLACEHOLDER} suffix`);
+  });
+
+  test("ignores short placeholder credentials", () => {
+    process.env.LETTA_API_KEY = "short";
+    const scrubbed = scrubSecretsFromString("a short word stays", {});
+    expect(scrubbed).toBe("a short word stays");
+  });
+
+  test("a same-named agent secret cannot shadow the runtime key", () => {
+    const agentValue = "agent-owned-letta-api-key-value-987654";
+    const scrubbed = scrubSecretsFromString(
+      `${AMBIENT_SENTINEL} and ${agentValue}`,
+      { LETTA_API_KEY: agentValue },
+    );
+    expect(scrubbed).not.toContain(AMBIENT_SENTINEL);
+    expect(scrubbed).not.toContain(agentValue);
+    expect(scrubbed).toContain("LETTA_API_KEY=<REDACTED>");
+  });
+
+  test("stream scrubber redacts a credential split at every chunk boundary", () => {
+    const prefix = "noise before ";
+    const suffix = " noise after";
+    const full = prefix + AMBIENT_SENTINEL + suffix;
+    const expected = scrubSecretsFromString(full, {});
+    expect(expected).not.toContain(AMBIENT_SENTINEL);
+
+    for (let i = 0; i <= full.length; i++) {
+      const scrubber = createSecretStreamScrubber({});
+      const streamed =
+        scrubber.push(full.slice(0, i)) +
+        scrubber.push(full.slice(i)) +
+        scrubber.flush();
+      expect(streamed).not.toContain(AMBIENT_SENTINEL);
+      expect(streamed).toBe(expected);
+    }
+  });
+
+  test("stream scrubber is a passthrough when no secrets exist", () => {
+    process.env.LETTA_API_KEY = "short";
+    const scrubber = createSecretStreamScrubber({});
+    expect(scrubber.push("hello ")).toBe("hello ");
+    expect(scrubber.push("world")).toBe("world");
+    expect(scrubber.flush()).toBe("");
+  });
+
+  test("failing env-file parser never leaks the ambient key to the model or telemetry", async () => {
+    const telemetryCalls: Array<{ errorType?: string; payload?: string }> = [];
+    const originalTrackToolUsage = telemetry.trackToolUsage;
+    telemetry.trackToolUsage = ((
+      _toolName: string,
+      _success: boolean,
+      _duration: number,
+      _responseLength?: number,
+      errorType?: string,
+      stderr?: string,
+    ) => {
+      telemetryCalls.push({ errorType, payload: stderr });
+    }) as typeof telemetry.trackToolUsage;
+
+    const parser = createTempRuntimeScriptCommand(FAKE_ENV_PARSER_SCRIPT);
+    const prepared = await prepareToolExecutionContextForSpecificTools(
+      ["Bash"],
+      {
+        runtimeContext: {
+          agentId: AGENT_A,
+          workingDirectory: process.cwd(),
+        },
+        workingDirectory: process.cwd(),
+      },
+    );
+
+    const streamedChunks: string[] = [];
+    try {
+      const result = await executeTool(
+        "Bash",
+        // The command never references $LETTA_API_KEY; the child prints it.
+        // The env file is deliberately missing so the parse failure is
+        // deterministic regardless of the checkout's contents.
+        { command: `${parser.command} .env-letta-test-missing`, timeout: 5000 },
+        {
+          toolContextId: prepared.contextId,
+          onOutput: (chunk) => streamedChunks.push(chunk),
+        },
+      );
+
+      const text = asText(result.toolReturn);
+      expect(result.status).toBe("error");
+      expect(text).not.toContain(AMBIENT_SENTINEL);
+      expect(text).toContain(AMBIENT_PLACEHOLDER);
+      for (const chunk of streamedChunks) {
+        expect(chunk).not.toContain(AMBIENT_SENTINEL);
+      }
+      for (const call of telemetryCalls) {
+        expect(call.payload ?? "").not.toContain(AMBIENT_SENTINEL);
+      }
+    } finally {
+      telemetry.trackToolUsage = originalTrackToolUsage;
+      releaseToolExecutionContext(prepared.contextId);
+      parser.cleanup();
+    }
+  });
+
+  test("thrown execution errors never leak the ambient key", async () => {
+    const prepared = await prepareToolExecutionContextForSpecificTools(
+      ["shell"],
+      {
+        runtimeContext: {
+          agentId: AGENT_A,
+          workingDirectory: process.cwd(),
+        },
+        workingDirectory: process.cwd(),
+      },
+    );
+
+    try {
+      // A missing executable named after the sentinel forces an execution
+      // error whose message embeds the credential. Depending on whether the
+      // filesystem sandbox wrapper is active this surfaces as a thrown error
+      // (manager catch path) or a failed-spawn result message; both must be
+      // scrubbed.
+      const result = await executeTool(
+        "shell",
+        {
+          command: [`${AMBIENT_SENTINEL}-no-such-executable`],
+          timeout_ms: 5000,
+        },
+        { toolContextId: prepared.contextId },
+      );
+
+      const text = asText(result.toolReturn);
+      expect(text).not.toContain(AMBIENT_SENTINEL);
+      expect(text).toContain("<REDACTED>");
+    } finally {
+      releaseToolExecutionContext(prepared.contextId);
+    }
+  });
+
+  test("background output file and completion notification never leak the ambient key", async () => {
+    const queued: QueuedMessage[] = [];
+    setMessageQueueAdder((message) => {
+      queued.push(message);
+    });
+
+    const parser = createTempRuntimeScriptCommand(FAKE_ENV_PARSER_SCRIPT);
+    const prepared = await prepareToolExecutionContextForSpecificTools(
+      ["Bash"],
+      {
+        runtimeContext: {
+          agentId: AGENT_A,
+          workingDirectory: process.cwd(),
+        },
+        workingDirectory: process.cwd(),
+      },
+    );
+
+    try {
+      const result = await executeTool(
+        "Bash",
+        {
+          command: `${parser.command} .env-letta-test-missing`,
+          run_in_background: true,
+          timeout: 5000,
+        },
+        { toolContextId: prepared.contextId },
+      );
+
+      const text = asText(result.toolReturn);
+      const bashId = text.match(/bash_\d+/)?.[0];
+      expect(bashId).toBeDefined();
+      if (!bashId) throw new Error("Expected background Bash id");
+
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if (backgroundProcesses.get(bashId)?.status !== "running") break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      // The completion notification is queued from the settled callback.
+      for (
+        let attempt = 0;
+        attempt < 100 && queued.length === 0;
+        attempt += 1
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+
+      expect(backgroundProcesses.get(bashId)?.status).toBe("failed");
+      const outputFile = backgroundProcesses.get(bashId)?.outputFile;
+      expect(outputFile).toBeDefined();
+      if (!outputFile) throw new Error("Expected output file path");
+      const fileContent = readFileSync(outputFile, "utf8");
+      expect(fileContent).not.toContain(AMBIENT_SENTINEL);
+      expect(fileContent).toContain(AMBIENT_PLACEHOLDER);
+      expect(queued.length).toBeGreaterThan(0);
+      for (const message of queued) {
+        expect(JSON.stringify(message)).not.toContain(AMBIENT_SENTINEL);
+      }
+    } finally {
+      setMessageQueueAdder(null);
+      releaseToolExecutionContext(prepared.contextId);
+      parser.cleanup();
+    }
+  }, 15_000);
+
+  test("overflow files never persist the ambient key", async () => {
+    const parser = createTempRuntimeScriptCommand(
+      `process.stdout.write("x".repeat(31000) + (process.env.LETTA_API_KEY ?? "") + "\\n");`,
+    );
+    const prepared = await prepareToolExecutionContextForSpecificTools(
+      ["Bash"],
+      {
+        runtimeContext: {
+          agentId: AGENT_A,
+          workingDirectory: process.cwd(),
+        },
+        workingDirectory: process.cwd(),
+      },
+    );
+
+    try {
+      const result = await executeTool(
+        "Bash",
+        { command: parser.command, timeout: 5000 },
+        { toolContextId: prepared.contextId },
+      );
+
+      const text = asText(result.toolReturn);
+      expect(result.status).toBe("success");
+      expect(text).not.toContain(AMBIENT_SENTINEL);
+      const overflowPath = text.match(
+        /\[Full output written to: ([^\]]+)\]/,
+      )?.[1];
+      expect(overflowPath).toBeDefined();
+      if (!overflowPath) throw new Error("Expected overflow file pointer");
+      const overflowContent = readFileSync(overflowPath, "utf8");
+      expect(overflowContent).not.toContain(AMBIENT_SENTINEL);
+      expect(overflowContent).toContain(AMBIENT_PLACEHOLDER);
+    } finally {
+      releaseToolExecutionContext(prepared.contextId);
+      parser.cleanup();
+    }
+  }, 15_000);
 });

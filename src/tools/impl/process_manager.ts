@@ -371,12 +371,15 @@ export function appendToOutputFile(filePath: string, content: string): boolean {
 export function scrubCompletedBackgroundOutput(
   processState: BackgroundProcess,
 ): boolean {
-  if (!processState.outputFile || !processState.secrets) return true;
+  // Always scrub, even when the command referenced no secrets:
+  // scrubSecretsFromString covers the ambient runtime auth values (at minimum
+  // the effective LETTA_API_KEY) that every shell child inherits.
+  if (!processState.outputFile) return true;
   try {
     const content = readFileSync(processState.outputFile, "utf8");
     writeFileSync(
       processState.outputFile,
-      scrubSecretsFromString(content, processState.secrets),
+      scrubSecretsFromString(content, processState.secrets ?? {}),
       { mode: 0o600 },
     );
     return true;

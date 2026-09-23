@@ -80,7 +80,12 @@ import {
   type PermissionModeState,
 } from "./permission-mode-state";
 import {
+  createScrubbedOutputStreamer,
   extractSecretEnvFromCommand,
+  getAmbientRedactionSecrets,
+  type ScrubbedOutputStreamer,
+  sanitizeOutputLines,
+  sanitizeToolReturnContent,
   scrubSecretsFromString,
 } from "./secret-substitution";
 import { TOOL_DEFINITIONS, type ToolName } from "./tool-definitions";
@@ -1961,6 +1966,10 @@ async function executeModTool(
       redactions.set(name, value);
     }
   };
+  // Mod-spawned subprocesses inherit the runtime env; redact its auth values.
+  for (const [name, value] of Object.entries(getAmbientRedactionSecrets())) {
+    addRedaction(name, value);
+  }
 
   const run = async (): Promise<ToolExecutionResult> => {
     const preHookResult = await runPreToolUseHooks(
@@ -2399,9 +2408,12 @@ async function executeToolInner(
     }
     if (options?.toolEndArgsRef) options.toolEndArgsRef.current = args;
 
+    // Hoisted so the catch path scrubs thrown errors with the same redaction set.
+    let invocationSecrets: Record<string, string> = {};
+    let outputStreamer: ScrubbedOutputStreamer | null = null;
+
     try {
       let enhancedArgs = args;
-      let invocationSecrets: Record<string, string> = {};
 
       // Cancellation is internal, not part of model-facing tool schemas.
       if (options?.signal) {
@@ -2418,15 +2430,12 @@ async function executeToolInner(
             ? extractSecretEnvFromCommand(command, scopedAgentId)
             : {};
         if (options?.onOutput) {
-          enhancedArgs = {
-            ...enhancedArgs,
-            onOutput: (chunk: string, stream: "stdout" | "stderr") => {
-              options.onOutput?.(
-                stripAnsi(scrubSecretsFromString(chunk, invocationSecrets)),
-                stream,
-              );
-            },
-          };
+          outputStreamer = createScrubbedOutputStreamer(
+            invocationSecrets,
+            options.onOutput,
+            stripAnsi,
+          );
+          enhancedArgs = { ...enhancedArgs, onOutput: outputStreamer.onOutput };
         }
         if (Object.keys(invocationSecrets).length > 0) {
           enhancedArgs = { ...enhancedArgs, secretEnv: invocationSecrets };
@@ -2470,7 +2479,10 @@ async function executeToolInner(
         };
       }
 
-      const result = await tool.fn(enhancedArgs);
+      // finally() emits any tail the scrubbers held back as partial secrets.
+      const result = await tool
+        .fn(enhancedArgs)
+        .finally(() => outputStreamer?.flush());
       const duration = Date.now() - startTime;
 
       // Broadcast file content after file-mutating tools so web clients update
@@ -2505,37 +2517,19 @@ async function executeToolInner(
       // Flatten the response to plain text
       let flattenedResponse = flattenToolResponse(result);
 
-      // Scrub secret values + ANSI escape sequences from tool output so they
-      // don't leak into agent context or render as garbage in downstream UIs.
-      if (STREAMING_SHELL_TOOLS.has(internalName)) {
-        const sanitize = (text: string) =>
-          stripAnsi(scrubSecretsFromString(text, invocationSecrets));
-        if (typeof flattenedResponse === "string") {
-          flattenedResponse = sanitize(flattenedResponse);
-        } else if (Array.isArray(flattenedResponse)) {
-          flattenedResponse = flattenedResponse.map((block) =>
-            block.type === "text"
-              ? { ...block, text: sanitize(block.text) }
-              : block,
-          );
-        }
-        if (stdout) {
-          for (let i = 0; i < stdout.length; i++) {
-            const line = stdout[i];
-            if (line !== undefined) {
-              stdout[i] = sanitize(line);
-            }
-          }
-        }
-        if (stderr) {
-          for (let i = 0; i < stderr.length; i++) {
-            const line = stderr[i];
-            if (line !== undefined) {
-              stderr[i] = sanitize(line);
-            }
-          }
-        }
-      }
+      // Scrub secrets from tool output before it reaches agent context. The
+      // scrub always covers ambient runtime auth values, so it runs for every
+      // tool. ANSI stripping stays shell-only.
+      const stripAnsiEscapes = STREAMING_SHELL_TOOLS.has(internalName);
+      flattenedResponse = sanitizeToolReturnContent(
+        flattenedResponse,
+        invocationSecrets,
+        stripAnsiEscapes,
+      );
+      if (stdout)
+        sanitizeOutputLines(stdout, invocationSecrets, stripAnsiEscapes);
+      if (stderr)
+        sanitizeOutputLines(stderr, invocationSecrets, stripAnsiEscapes);
 
       flattenedResponse = clampToolReturnContent(
         flattenedResponse,
@@ -2599,11 +2593,14 @@ async function executeToolInner(
         : error instanceof Error
           ? error.name
           : "unknown";
+      // Thrown errors can embed child output (e.g. an env-file parser echoing
+      // its environment); scrub before telemetry, hooks, or the model see them.
       const errorMessage = isAbort
         ? INTERRUPTED_BY_USER
-        : error instanceof Error
-          ? error.message
-          : String(error);
+        : scrubSecretsFromString(
+            error instanceof Error ? error.message : String(error),
+            invocationSecrets,
+          );
 
       // Track tool usage error
       telemetry.trackToolUsage(
