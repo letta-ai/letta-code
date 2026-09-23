@@ -24,8 +24,12 @@ export interface BackgroundRuntimeScope {
 export interface BackgroundProcess {
   process: BackgroundProcessHandle;
   command: string;
-  stdout: string[];
-  stderr: string[];
+  /**
+   * Recent output lines that Bash replays in its completion notification.
+   * Other background work keeps its output only in the output file.
+   */
+  stdout?: string[];
+  stderr?: string[];
   status: "running" | "completed" | "failed";
   exitCode: number | null;
   startTime?: Date;
@@ -283,18 +287,22 @@ export function appendBackgroundProcessOutput(
 
   if (stream === "stdout") {
     processState.totalStdoutLines =
-      (processState.totalStdoutLines ?? processState.stdout.length) +
+      (processState.totalStdoutLines ?? processState.stdout?.length ?? 0) +
       lines.length;
-    processState.stdout.push(...lines);
-    processState.stdout = trimBufferedLines(processState.stdout);
+    processState.stdout = trimBufferedLines([
+      ...(processState.stdout ?? []),
+      ...lines,
+    ]);
     return;
   }
 
   processState.totalStderrLines =
-    (processState.totalStderrLines ?? processState.stderr.length) +
+    (processState.totalStderrLines ?? processState.stderr?.length ?? 0) +
     lines.length;
-  processState.stderr.push(...lines);
-  processState.stderr = trimBufferedLines(processState.stderr);
+  processState.stderr = trimBufferedLines([
+    ...(processState.stderr ?? []),
+    ...lines,
+  ]);
 }
 
 /**

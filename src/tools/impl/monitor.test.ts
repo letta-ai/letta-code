@@ -371,8 +371,8 @@ describe("Monitor", () => {
       timeoutMs: 0,
       persistent: true,
     });
-    await waitFor(
-      () => (backgroundProcesses.get(result.taskId)?.totalStdoutLines ?? 0) > 0,
+    await waitFor(() =>
+      readFileSync(outputFileOf(result), "utf8").includes("pending"),
     );
     expect(await task_stop({ task_id: result.taskId })).toEqual({
       killed: true,
@@ -383,6 +383,42 @@ describe("Monitor", () => {
     expect(
       queuedMessages.some((message) => message.text.includes("Monitor event")),
     ).toBe(false);
+  });
+
+  test("reports whether a finished command monitor printed anything to stdout", async () => {
+    const quiet = await monitor({
+      description: "quiet source",
+      timeout_ms: 5000,
+      persistent: false,
+      command: nodeCommand(
+        'process.stderr.write("only stderr\\n"); process.stdout.write("\\n")',
+      ),
+    });
+    const chatty = await monitor({
+      description: "chatty source",
+      timeout_ms: 5000,
+      persistent: false,
+      command: nodeCommand('process.stdout.write("line\\n")'),
+    });
+    await waitFor(() =>
+      [quiet, chatty].every(
+        (result) =>
+          backgroundProcesses.get(result.taskId)?.status === "completed",
+      ),
+    );
+
+    const summaryOf = (taskId: string) =>
+      queuedMessages
+        .find((message) =>
+          message.text.includes(`<task-id>${taskId}</task-id>\n<status>`),
+        )
+        ?.text.match(/<summary>(.*)<\/summary>/)?.[1];
+    expect(summaryOf(quiet.taskId)).toBe(
+      'Monitor "quiet source" ended without producing output (exit 0)',
+    );
+    expect(summaryOf(chatty.taskId)).toBe(
+      'Monitor "chatty source" stream ended',
+    );
   });
 
   test("fails a command monitor when its output file cannot be written", async () => {
@@ -525,12 +561,6 @@ describe("Monitor", () => {
       await waitFor(
         () => backgroundProcesses.get(result.taskId)?.status === "failed",
       );
-      expect(
-        backgroundProcesses
-          .get(result.taskId)
-          ?.stderr.join("")
-          .includes("output file write failed"),
-      ).toBe(true);
     } finally {
       for (const client of server.clients) {
         client.terminate();
@@ -589,9 +619,8 @@ describe("Monitor", () => {
         persistent: true,
         ws: { url: `ws://127.0.0.1:${address.port}` },
       });
-      await waitFor(
-        () =>
-          (backgroundProcesses.get(result.taskId)?.totalStdoutLines ?? 0) > 0,
+      await waitFor(() =>
+        readFileSync(outputFileOf(result), "utf8").includes("pending"),
       );
       expect(await task_stop({ task_id: result.taskId })).toEqual({
         killed: true,

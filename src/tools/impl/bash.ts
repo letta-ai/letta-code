@@ -217,13 +217,13 @@ function formatBackgroundOutputTail(bgProcess: BackgroundProcess): string {
   const sections = [
     formatStreamTail(
       "stdout",
-      bgProcess.stdout,
-      bgProcess.totalStdoutLines ?? bgProcess.stdout.length,
+      bgProcess.stdout ?? [],
+      bgProcess.totalStdoutLines ?? bgProcess.stdout?.length ?? 0,
     ),
     formatStreamTail(
       "stderr",
-      bgProcess.stderr,
-      bgProcess.totalStderrLines ?? bgProcess.stderr.length,
+      bgProcess.stderr ?? [],
+      bgProcess.totalStderrLines ?? bgProcess.stderr?.length ?? 0,
     ),
   ].filter(Boolean);
 
