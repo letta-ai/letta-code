@@ -171,13 +171,15 @@ await patchInkRuntime([
   },
   {
     before: [
+      // Current patched state from this PR's first commit (256 KB cap).
+      "    fullStaticOutput;\n    staticOutputRepaintPending = false;\n    isCi = () => isInCi && !this.options.stdout.isTTY;\n    // Cap the retained static transcript tail (in UTF-16 code units). Ink keeps\n    // fullStaticOutput so overflow frames and static repaints can rewrite the\n    // transcript after clearing the terminal; uncapped it grows linearly with\n    // the whole session transcript and is re-serialized on every overflow frame.\n    staticOutputRetainLimit = 256 * 1024;\n    retainStaticOutput = (value) => {\n        if (value.length <= this.staticOutputRetainLimit) {\n            return value;\n        }\n        const cut = value.indexOf('\\n', value.length - this.staticOutputRetainLimit);\n        return '\\u001B[0m' + (cut === -1 ? value.slice(value.length - this.staticOutputRetainLimit) : value.slice(cut + 1));\n    };\n    exitPromise;",
       // Current patched state from a previous install (transition path).
       "    fullStaticOutput;\n    staticOutputRepaintPending = false;\n    isCi = () => isInCi && !this.options.stdout.isTTY;\n    exitPromise;",
       "    fullStaticOutput;\n    staticOutputRepaintPending = false;\n    exitPromise;",
       "    fullStaticOutput;\n    exitPromise;",
     ],
     after:
-      "    fullStaticOutput;\n    staticOutputRepaintPending = false;\n    isCi = () => isInCi && !this.options.stdout.isTTY;\n    // Cap the retained static transcript tail (in UTF-16 code units). Ink keeps\n    // fullStaticOutput so overflow frames and static repaints can rewrite the\n    // transcript after clearing the terminal; uncapped it grows linearly with\n    // the whole session transcript and is re-serialized on every overflow frame.\n    staticOutputRetainLimit = 256 * 1024;\n    retainStaticOutput = (value) => {\n        if (value.length <= this.staticOutputRetainLimit) {\n            return value;\n        }\n        const cut = value.indexOf('\\n', value.length - this.staticOutputRetainLimit);\n        return '\\u001B[0m' + (cut === -1 ? value.slice(value.length - this.staticOutputRetainLimit) : value.slice(cut + 1));\n    };\n    exitPromise;",
+      "    fullStaticOutput;\n    staticOutputRepaintPending = false;\n    isCi = () => isInCi && !this.options.stdout.isTTY;\n    // Cap the retained static transcript tail (in UTF-16 code units). Ink keeps\n    // fullStaticOutput so overflow frames and static repaints can rewrite the\n    // newest tail after a viewport clear. Overflow uses 2J+H (no 3J) so emulator\n    // scrollback keeps older history; 8 MiB is a UX-sized rewrite window (256 KB\n    // is one large Read/git diff) and bounds per-frame write volume. Uncapped,\n    // the string grows with the whole session and is re-serialized on overflow.\n    staticOutputRetainLimit = 8 * 1024 * 1024;\n    retainStaticOutput = (value) => {\n        if (value.length <= this.staticOutputRetainLimit) {\n            return value;\n        }\n        const cut = value.indexOf('\\n', value.length - this.staticOutputRetainLimit);\n        return '\\u001B[0m' + (cut === -1 ? value.slice(value.length - this.staticOutputRetainLimit) : value.slice(cut + 1));\n    };\n    exitPromise;",
   },
   {
     before: "        if (isInCi) {",
@@ -211,11 +213,17 @@ await patchInkRuntime([
   {
     // Overflow frames: skip the full clear+rewrite when nothing changed since
     // the last frame, so a tall live region does not re-serialize the retained
-    // static history on every throttled render.
-    before:
-      "            this.options.stdout.write(ansiEscapes.clearTerminal + this.fullStaticOutput + output);\n            this.lastOutput = output;\n            return;",
-    after:
+    // static history on every throttled render. Use the #4032 clear sequence
+    // (2J+H, no 3J) so incrementally printed history stays in emulator scrollback;
+    // ansiEscapes.clearTerminal also emits 3J, which wipes that history.
+    before: [
+      // Current PR patch: skip-no-change guard still used clearTerminal (3J).
       "            if (hasStaticOutput || output !== this.lastOutput) {\n                this.options.stdout.write(ansiEscapes.clearTerminal + this.fullStaticOutput + output);\n            }\n            this.lastOutput = output;\n            return;",
+      // Pristine Ink / earlier patched state: always-rewrite overflow.
+      "            this.options.stdout.write(ansiEscapes.clearTerminal + this.fullStaticOutput + output);\n            this.lastOutput = output;\n            return;",
+    ],
+    after:
+      "            if (hasStaticOutput || output !== this.lastOutput) {\n                this.options.stdout.write('\\u001B[2J\\u001B[H' + this.fullStaticOutput + output);\n            }\n            this.lastOutput = output;\n            return;",
   },
   {
     before: "        if (outputHeight >= this.options.stdout.rows) {",
