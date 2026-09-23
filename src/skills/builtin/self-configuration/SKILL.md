@@ -61,6 +61,17 @@ The command uses CLI auth and respects `LETTA_API_KEY`/`LETTA_BASE_URL`, not age
 
 Use `letta model list` for available models; credits and quota buckets do not guarantee inference availability. `letta usage` does not include session token statistics; the interactive `/usage` command is a separate surface. If either lookup fails, the command exits nonzero without partial usage. Treat that as unavailable data, not zero credits or exhausted quota.
 
+### Prefer plan-backed model handles over metered billing
+
+Model handles split into two billing paths:
+
+- Plan-backed handles, such as `chatgpt_oauth/gpt-5.5`, run against a connected provider subscription with allocated quota.
+- Metered handles, such as `openai/gpt-5.2`, bill per token against organization credits or the user's own API key.
+
+When the user asks you to change or configure a model, prefer a plan-backed handle unless they explicitly asked for metered or BYOK billing. A metered choice drains credits while the attached subscription quota sits unused.
+
+If the request does not make the billing path unambiguous, confirm the exact handle and its billing impact with the user before switching. Use `letta model list` (with `--byok`/`--hosted` to filter) to inspect available handles and `letta usage` to check plan and credit state before writing the change.
+
 ### Harness and server settings
 
 Use the secret-safe local/runtime report for harness settings, permissions, and backend diagnostics:
