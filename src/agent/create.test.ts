@@ -25,7 +25,7 @@ describe("created agent MemFS defaults", () => {
         capabilities: remoteMemfsBackend,
         isLettaCloud: true,
       }),
-    ).toEqual({ enableMemfs: true, memoryPromptMode: "memfs" });
+    ).toEqual({ enableMemfs: true, memoryPromptMode: "root-memfs" });
   });
 
   test("defaults to local MemFS on the local backend", () => {
@@ -35,6 +35,36 @@ describe("created agent MemFS defaults", () => {
         isLettaCloud: false,
       }),
     ).toEqual({ enableMemfs: true, memoryPromptMode: "local-memfs" });
+  });
+
+  test("keeps local creation on the supported local memory prompt", () => {
+    expect(
+      resolveCreatedAgentMemfsConfig({
+        capabilities: localMemfsBackend,
+        requestedMemoryPromptMode: "root-memfs",
+        isLettaCloud: false,
+      }),
+    ).toEqual({ enableMemfs: true, memoryPromptMode: "local-memfs" });
+  });
+
+  test("maps an explicit memfs request to the root layout on Letta Cloud", () => {
+    expect(
+      resolveCreatedAgentMemfsConfig({
+        capabilities: remoteMemfsBackend,
+        requestedMemoryPromptMode: "memfs",
+        isLettaCloud: true,
+      }),
+    ).toEqual({ enableMemfs: true, memoryPromptMode: "root-memfs" });
+  });
+
+  test("keeps an explicit memfs request on self-hosted servers", () => {
+    expect(
+      resolveCreatedAgentMemfsConfig({
+        capabilities: remoteMemfsBackend,
+        requestedMemoryPromptMode: "memfs",
+        isLettaCloud: false,
+      }),
+    ).toEqual({ enableMemfs: true, memoryPromptMode: "memfs" });
   });
 
   test("subagents are stateless: no MemFS even on Letta Cloud", () => {
@@ -54,7 +84,7 @@ describe("created agent MemFS defaults", () => {
         requestedMemoryPromptMode: "standard",
         isLettaCloud: true,
       }),
-    ).toEqual({ enableMemfs: true, memoryPromptMode: "memfs" });
+    ).toEqual({ enableMemfs: true, memoryPromptMode: "root-memfs" });
   });
 
   test("self-hosted servers without memfs support stay standard", () => {

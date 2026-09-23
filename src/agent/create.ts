@@ -189,17 +189,26 @@ export function resolveCreatedAgentMemfsConfig(
     options.capabilities.localMemfs ||
     (options.capabilities.remoteMemfs && options.isLettaCloud) ||
     options.requestedMemoryPromptMode === "memfs" ||
+    options.requestedMemoryPromptMode === "root-memfs" ||
     options.requestedMemoryPromptMode === "local-memfs";
   const enableMemfs = options.isSubagent ? false : supported;
-  const memoryPromptMode =
-    (options.requestedMemoryPromptMode !== "standard"
+  const requestedMemoryPromptMode =
+    options.requestedMemoryPromptMode !== "standard"
       ? options.requestedMemoryPromptMode
-      : undefined) ??
-    (enableMemfs
-      ? options.capabilities.localMemfs
-        ? "local-memfs"
-        : "memfs"
-      : "standard");
+      : undefined;
+  // New Letta Cloud agents are born on the MemFS v2 root layout: an explicit
+  // "memfs" request selects git-backed memory, not the legacy system/ layout.
+  // Local backends stay on local-memfs (local root-layout compilation is not
+  // supported), and self-hosted API servers keep the caller's explicit mode.
+  const memoryPromptMode = !enableMemfs
+    ? "standard"
+    : options.capabilities.localMemfs
+      ? "local-memfs"
+      : options.isLettaCloud
+        ? requestedMemoryPromptMode === "local-memfs"
+          ? "local-memfs"
+          : "root-memfs"
+        : (requestedMemoryPromptMode ?? "memfs");
 
   return { enableMemfs, memoryPromptMode };
 }
