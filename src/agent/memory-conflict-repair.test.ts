@@ -1,11 +1,12 @@
 import { afterEach, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   createTempGitRepo,
   type TempGitRepo,
 } from "@/test-utils/temp-git-repo";
+import { tryAcquireFileLock } from "@/utils/file-lock";
 import {
   claimMemoryConflictRepair,
   clearMemoryConflictRepair,
@@ -98,6 +99,21 @@ test("a stale worker cannot clear or complete a newer attempt", async () => {
   expect(await claimMemoryConflictRepair(root)).toEqual({
     status: "attempted",
   });
+});
+
+test("marker transitions wait for each other rather than racing", async () => {
+  const root = repository();
+  writeFileSync(join(root, ".git", "MERGE_HEAD"), "a".repeat(40));
+  const token = await claim(root);
+  const marker = join(root, ".git", "letta-memory-repair.json");
+  const release = await tryAcquireFileLock(`${marker}.lock`);
+  expect(release).not.toBeNull();
+  const clearing = clearMemoryConflictRepair(root, token);
+  await Bun.sleep(100);
+  expect(existsSync(marker)).toBe(true);
+  await release?.();
+  await clearing;
+  expect(existsSync(marker)).toBe(false);
 });
 
 test("a checkout that is not a repository is left to the worker", async () => {

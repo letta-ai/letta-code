@@ -4,6 +4,8 @@ import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { getMemoryGitDir } from "@/agent/memory-git-dir";
+import { debugWarn } from "@/utils/debug";
+import { type FileLockOptions, withFileLock } from "@/utils/file-lock";
 import {
   getOwnProcessStartTime,
   isSameProcessRunning,
@@ -86,6 +88,43 @@ async function readAttempt(path: string): Promise<Partial<RepairAttempt>> {
 }
 
 /**
+ * Every transition is a compare-and-set on the marker. They run under this
+ * lock rather than the checkout lease, so a worker forgetting its attempt
+ * after the lease is gone cannot race a claim made under it. Sections last
+ * microseconds; a crashed holder is reaped quickly.
+ */
+const MARKER_LOCK: FileLockOptions = { staleMs: 10_000, timeoutMs: 5_000 };
+
+async function updateAttempt<T>(
+  path: string,
+  fn: (attempt: Partial<RepairAttempt>) => Promise<T>,
+): Promise<T> {
+  return withFileLock(
+    `${path}.lock`,
+    async () => fn(await readAttempt(path)),
+    MARKER_LOCK,
+  );
+}
+
+/** A worker's transition: no record outside a repository, never throws. */
+async function transition(
+  memoryDir: string,
+  fn: (path: string, attempt: Partial<RepairAttempt>) => Promise<void>,
+): Promise<void> {
+  let path: string;
+  try {
+    path = await attemptPath(memoryDir);
+  } catch {
+    return;
+  }
+  try {
+    await updateAttempt(path, (attempt) => fn(path, attempt));
+  } catch (error) {
+    debugWarn("memory-repair", `Repair attempt not updated: ${String(error)}`);
+  }
+}
+
+/**
  * Record that automatic repair is being attempted for the current conflict,
  * unless the same unfinished operation is already handled: a repair worker
  * has run and could not resolve it (reported to the agent instead of
@@ -107,32 +146,33 @@ export async function claimMemoryConflictRepair(
   } catch {
     return { status: "claimed", token };
   }
-  const previous = await readAttempt(path);
-  if (previous.signature === signature) {
-    if (previous.state === "done") return { status: "attempted" };
-    if (
-      typeof previous.pid === "number" &&
-      (await isSameProcessRunning({
-        pid: previous.pid,
-        ...(typeof previous.started === "string" && {
-          started: previous.started,
-        }),
-      }))
-    ) {
-      return { status: "in_progress" };
+  return updateAttempt(path, async (previous) => {
+    if (previous.signature === signature) {
+      if (previous.state === "done") return { status: "attempted" };
+      if (
+        typeof previous.pid === "number" &&
+        (await isSameProcessRunning({
+          pid: previous.pid,
+          ...(typeof previous.started === "string" && {
+            started: previous.started,
+          }),
+        }))
+      ) {
+        return { status: "in_progress" };
+      }
     }
-  }
-  const started = await getOwnProcessStartTime();
-  const attempt: RepairAttempt = {
-    signature,
-    token,
-    state: "launching",
-    pid: process.pid,
-    ...(started && { started }),
-    attemptedAt: new Date().toISOString(),
-  };
-  await writeFile(path, JSON.stringify(attempt));
-  return { status: "claimed", token };
+    const started = await getOwnProcessStartTime();
+    const attempt: RepairAttempt = {
+      signature,
+      token,
+      state: "launching",
+      pid: process.pid,
+      ...(started && { started }),
+      attemptedAt: new Date().toISOString(),
+    };
+    await writeFile(path, JSON.stringify(attempt));
+    return { status: "claimed", token };
+  });
 }
 
 /** The repair worker ran; the same conflict is not attempted again automatically. */
@@ -140,14 +180,10 @@ export async function completeMemoryConflictRepair(
   memoryDir: string,
   token: string,
 ): Promise<void> {
-  try {
-    const path = await attemptPath(memoryDir);
-    const attempt = await readAttempt(path);
+  await transition(memoryDir, async (path, attempt) => {
     if (attempt.token !== token) return;
     await writeFile(path, JSON.stringify({ ...attempt, state: "done" }));
-  } catch {
-    /* Not a repository; nothing was recorded. */
-  }
+  });
 }
 
 /**
@@ -160,11 +196,7 @@ export async function clearMemoryConflictRepair(
   memoryDir: string,
   token: string,
 ): Promise<void> {
-  try {
-    const path = await attemptPath(memoryDir);
-    if ((await readAttempt(path)).token !== token) return;
-    await rm(path, { force: true });
-  } catch {
-    /* Not a repository; nothing was recorded. */
-  }
+  await transition(memoryDir, async (path, attempt) => {
+    if (attempt.token === token) await rm(path, { force: true });
+  });
 }
