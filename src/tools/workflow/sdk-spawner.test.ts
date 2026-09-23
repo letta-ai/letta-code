@@ -102,11 +102,20 @@ function bashArgs(issue: number): string {
 }
 
 describe("parseJsonReply", () => {
-  test("accepts bare JSON and a fenced block, rejects prose", () => {
+  test("accepts bare JSON and fenced blocks, including after narration", () => {
     expect(parseJsonReply(' {"a":1}\n')).toEqual({ a: 1 });
     expect(parseJsonReply('```json\n{"a":[1,2]}\n```')).toEqual({ a: [1, 2] });
     expect(parseJsonReply("```\n[1]\n```")).toEqual([1]);
-    expect(() => parseJsonReply('Here: {"a":1}')).toThrow();
+    expect(
+      parseJsonReply(
+        'I\'ll start by finding the session files.\n\n{"sessionsRead":["one"]}',
+      ),
+    ).toEqual({ sessionsRead: ["one"] });
+    expect(
+      parseJsonReply("Here are the findings:\n```json\n[1,2]\n```"),
+    ).toEqual([1, 2]);
+    expect(() => parseJsonReply('Here: {"a":}')).toThrow();
+    expect(() => parseJsonReply('Done: {"a":1}\nMore prose')).toThrow();
   });
 });
 
@@ -175,6 +184,23 @@ describe("createSdkSpawner", () => {
     expect(client.calls).toHaveLength(1);
   });
 
+  test("rejects unsupported conversationId instead of silently starting over", async () => {
+    const client = fakeClient([]);
+    const outcome = await createSdkSpawner(client, CONFIG)(
+      request({
+        label: "resume",
+        conversationId: "conv-previous",
+      } as SubagentRequest["options"]),
+      new AbortController().signal,
+    );
+    expect(outcome).toMatchObject({
+      value: null,
+      failed: true,
+      error: expect.stringContaining("cannot resume conversationId"),
+    });
+    expect(client.calls).toHaveLength(0);
+  });
+
   test("json option parses the reply and fails on non-JSON", async () => {
     const good = await createSdkSpawner(
       fakeClient([{ type: "result", success: true, result: '{"n": 1}' }]),
@@ -187,6 +213,28 @@ describe("createSdkSpawner", () => {
     )(request({ json: true }), new AbortController().signal);
     expect(bad).toMatchObject({ value: null, failed: true });
     expect(bad.error).toContain("not valid JSON");
+  });
+
+  test("json option returns a result despite earlier assistant narration", async () => {
+    const outcome = await createSdkSpawner(
+      fakeClient([
+        {
+          type: "assistant",
+          content: "I'll start by finding the session files.\n\n",
+        },
+        {
+          type: "result",
+          success: true,
+          result:
+            'I\'ll start by finding the session files.\n\n{"sessionsRead":["one"]}',
+        },
+      ]),
+      CONFIG,
+    )(request({ json: true }), new AbortController().signal);
+    expect(outcome).toMatchObject({
+      value: { sessionsRead: ["one"] },
+      failed: false,
+    });
   });
 
   test("sums usage_statistics stream events into totalTokens, even on an early stop", async () => {
