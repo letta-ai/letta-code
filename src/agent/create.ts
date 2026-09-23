@@ -155,6 +155,31 @@ export interface CreatedAgentMemfsConfig {
   memoryPromptMode: MemoryPromptMode;
 }
 
+export interface CreatedAgentSystemPromptOptions {
+  isLettaCloud: boolean;
+  systemPromptPreset?: string;
+  systemPromptCustom?: string;
+  memoryPromptMode: MemoryPromptMode;
+}
+
+export async function resolveCreatedAgentSystemPrompt(
+  options: CreatedAgentSystemPromptOptions,
+): Promise<string | null> {
+  if (options.systemPromptCustom !== undefined) {
+    return options.systemPromptCustom;
+  }
+  if (
+    options.isLettaCloud &&
+    (!options.systemPromptPreset || options.systemPromptPreset === "default")
+  ) {
+    return null;
+  }
+  return resolveAndBuildSystemPrompt(
+    options.systemPromptPreset,
+    options.memoryPromptMode,
+  );
+}
+
 export function resolveCreatedAgentMemfsConfig(
   options: CreatedAgentMemfsConfigOptions,
 ): CreatedAgentMemfsConfig {
@@ -164,17 +189,26 @@ export function resolveCreatedAgentMemfsConfig(
     options.capabilities.localMemfs ||
     (options.capabilities.remoteMemfs && options.isLettaCloud) ||
     options.requestedMemoryPromptMode === "memfs" ||
+    options.requestedMemoryPromptMode === "root-memfs" ||
     options.requestedMemoryPromptMode === "local-memfs";
   const enableMemfs = options.isSubagent ? false : supported;
-  const memoryPromptMode =
-    (options.requestedMemoryPromptMode !== "standard"
+  const requestedMemoryPromptMode =
+    options.requestedMemoryPromptMode !== "standard"
       ? options.requestedMemoryPromptMode
-      : undefined) ??
-    (enableMemfs
-      ? options.capabilities.localMemfs
-        ? "local-memfs"
-        : "memfs"
-      : "standard");
+      : undefined;
+  // New Letta Cloud agents are born on the MemFS v2 root layout: an explicit
+  // "memfs" request selects git-backed memory, not the legacy system/ layout.
+  // Local backends stay on local-memfs (local root-layout compilation is not
+  // supported), and self-hosted API servers keep the caller's explicit mode.
+  const memoryPromptMode = !enableMemfs
+    ? "standard"
+    : options.capabilities.localMemfs
+      ? "local-memfs"
+      : options.isLettaCloud
+        ? requestedMemoryPromptMode === "local-memfs"
+          ? "local-memfs"
+          : "root-memfs"
+        : (requestedMemoryPromptMode ?? "memfs");
 
   return { enableMemfs, memoryPromptMode };
 }
@@ -350,11 +384,15 @@ export async function createAgent(
     (modelUpdateArgs?.context_window as number | undefined) ??
     (await getModelContextWindow(modelHandle));
 
-  // Resolve system prompt content
+  // Letta Cloud owns its default prompt. Local and self-hosted backends still
+  // receive the bundled default so their existing behavior remains unchanged.
   const memMode: MemoryPromptMode = memfsConfig.memoryPromptMode;
-  const systemPromptContent = options.systemPromptCustom
-    ? options.systemPromptCustom
-    : await resolveAndBuildSystemPrompt(options.systemPromptPreset, memMode);
+  const systemPromptContent = await resolveCreatedAgentSystemPrompt({
+    isLettaCloud,
+    systemPromptPreset: options.systemPromptPreset,
+    systemPromptCustom: options.systemPromptCustom,
+    memoryPromptMode: memMode,
+  });
 
   // Create agent with inline memory blocks (LET-7101: single API call instead of N+1)
   // - memory_blocks: new blocks to create inline
@@ -428,9 +466,12 @@ export async function createAgent(
   // Persist system prompt preset — only for non-subagents and known presets or custom.
   // Guarded by isReady since settings may not be initialized in direct/test callers.
   if (!isSubagent && settingsManager.isReady) {
-    if (options.systemPromptCustom) {
+    if (options.systemPromptCustom !== undefined) {
       settingsManager.setSystemPromptCustom(fullAgent.id);
-    } else if (isKnownPreset(options.systemPromptPreset ?? "default")) {
+    } else if (
+      systemPromptContent !== null &&
+      isKnownPreset(options.systemPromptPreset ?? "default")
+    ) {
       recordManagedSystemPrompt(
         fullAgent.id,
         options.systemPromptPreset ?? "default",

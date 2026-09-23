@@ -28,6 +28,7 @@ import {
 } from "@/utils/subagent-launch-marker";
 import { TRANSCRIPT_ROOT_ENV } from "@/utils/transcript-paths";
 import type { SubagentLaunchProfile, SubagentMemoryScope } from ".";
+import { MEMORY_WORKER_SESSION_ENV } from "./memory-worker-session";
 
 interface ResolveSubagentLauncherOptions {
   env?: NodeJS.ProcessEnv;
@@ -232,9 +233,10 @@ export function composeSubagentChildEnv(
     ...(inheritedBaseUrl && { LETTA_BASE_URL: inheritedBaseUrl }),
     ...(actingUserId && { [ACTING_USER_ID_ENV]: actingUserId }),
     LETTA_CODE_AGENT_ROLE: "subagent",
+    [MEMORY_WORKER_SESSION_ENV]: subagentType === "memory" ? "1" : undefined,
     [SUBAGENT_LAUNCH_ENV]: "1",
     [SUBAGENT_LAUNCH_PROFILE_ENV]: launchProfile ?? "default",
-    ...(subagentType === "reflection" && {
+    ...((subagentType === "reflection" || subagentType === "memory") && {
       [LETTA_MOD_CAPABILITY_PROFILE_ENV]: PROVIDERS_ONLY_MOD_CAPABILITY_PROFILE,
     }),
     // Replace inherited parent addresses even when the new scope is unknown.

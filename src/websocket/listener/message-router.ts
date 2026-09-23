@@ -67,6 +67,7 @@ import {
 import { emitLoopErrorNotice } from "./recoverable-notices";
 import { getActiveRuntime, safeEmitWsEvent } from "./runtime";
 import { parseListenerReadyMessage } from "./split-stream-lifecycle";
+import { validateResponseFormat } from "./structured-output";
 import {
   buildTeleportContinuationMessages,
   clearExpectedInboundTeleport,
@@ -276,17 +277,18 @@ export function createListenerMessageHandler(
         return;
       }
 
-      if (parsed.type === "monitor_stop") {
-        const { handleMonitorStopCommand } = await import(
-          "./commands/monitors"
+      if (parsed.type === "launch_subagent" || parsed.type === "monitor_stop") {
+        const { handleTaskControlCommand } = await import(
+          "./commands/task-control"
         );
-        const response = await handleMonitorStopCommand(parsed, runtime);
-        safeSocketSend(
+        await handleTaskControlCommand(parsed, {
+          runtime,
           socket,
-          response,
-          "monitor_stop_response",
-          "monitor_stop",
-        );
+          connectionId,
+          getOrCreateScopedRuntime,
+          runDetachedListenerTask,
+          safeSocketSend,
+        });
         return;
       }
 
@@ -542,6 +544,11 @@ export function createListenerMessageHandler(
           acknowledgeInput(false, "Unsupported input payload kind");
           return;
         }
+        const error = validateResponseFormat(inputPayload.response_format);
+        if (error) {
+          acknowledgeInput(false, error);
+          return;
+        }
         const incoming: IncomingMessage = {
           type: "message",
           connectionId,
@@ -553,6 +560,7 @@ export function createListenerMessageHandler(
           clientToolset: inputPayload.client_toolset,
           externalToolScopeIds: inputPayload.external_tool_scope_ids,
           excludeInteractiveTools: inputPayload.exclude_interactive_tools,
+          responseFormat: inputPayload.response_format,
           imageFailureMode: inputPayload.image_failure_mode,
           messages: inputPayload.messages,
         };

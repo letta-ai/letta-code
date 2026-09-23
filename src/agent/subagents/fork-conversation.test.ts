@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { SubagentConfig } from "@/agent/subagents";
+import { forkParentConversation } from "@/agent/subagents/fork-conversation";
 import type { Backend } from "@/backend";
-import { forkParentConversation } from "./task";
 
 const forkConfig: SubagentConfig = {
   name: "fork",

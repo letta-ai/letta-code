@@ -3,7 +3,6 @@ import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bash } from "@/tools/impl/bash";
-import { bash_output } from "@/tools/impl/bash-output";
 import { kill_bash } from "@/tools/impl/kill-bash";
 import {
   __resetBackgroundRetentionConfigForTests,
@@ -79,34 +78,6 @@ describe.skipIf(isWindows)("Bash background tools", () => {
     expect(backgroundProcesses.get(bashId ?? "")?.status).toBe("failed");
   });
 
-  test("BashOutput retrieves output from background shell", async () => {
-    // Start background process
-    const startResult = await bash({
-      command: "echo 'background output'",
-      description: "Test background",
-      run_in_background: true,
-    });
-
-    // Extract shell_id from the response text
-    const match = startResult.content[0]?.text.match(/bash_(\d+)/);
-    expect(match).toBeDefined();
-    const bashId = `bash_${match?.[1]}`;
-
-    // Wait for command to complete
-    await new Promise((resolve) => setTimeout(resolve, 200));
-
-    // Retrieve output
-    const outputResult = await bash_output({ shell_id: bashId });
-
-    expect(outputResult.message).toContain("background output");
-  });
-
-  test("BashOutput handles non-existent shell_id gracefully", async () => {
-    const result = await bash_output({ shell_id: "nonexistent" });
-
-    expect(result.message).toContain("No background process found");
-  });
-
   test("KillBash terminates background process", async () => {
     // Start long-running process
     const startResult = await bash({
@@ -143,7 +114,6 @@ describe.skipIf(isWindows)("Bash background tools", () => {
       stderr: [],
       status: "completed",
       exitCode: 0,
-      lastReadIndex: { stdout: 0, stderr: 0 },
     });
 
     expect(await kill_bash({ shell_id: "bash_completed" })).toEqual({

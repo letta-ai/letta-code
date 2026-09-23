@@ -1,5 +1,5 @@
 import { Box } from "ink";
-import { memo } from "react";
+import { memo, useSyncExternalStore } from "react";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import {
@@ -11,6 +11,11 @@ import {
 import { extractTaskNotificationsForDisplay } from "@/utils/task-notifications";
 import { colors } from "./colors";
 import { Text } from "./Text";
+import {
+  getSystemRemindersExpanded,
+  getSystemRemindersVisible,
+  subscribeToSystemReminderDisplay,
+} from "./transcript-display-state";
 
 type UserLine = {
   kind: "user";
@@ -22,6 +27,26 @@ type RenderedBlockLine = {
   text: string;
   highlighted: boolean;
 };
+
+export function formatSystemReminderBlock(
+  text: string,
+  expanded: boolean,
+): string {
+  const content = text
+    .replace(SYSTEM_REMINDER_OPEN, "")
+    .replace(SYSTEM_REMINDER_CLOSE, "")
+    .replace(SYSTEM_ALERT_OPEN, "")
+    .replace(SYSTEM_ALERT_CLOSE, "")
+    .trim();
+  const lineCount = content ? content.split("\n").length : 0;
+
+  if (expanded) {
+    return `▾ System reminder (ctrl+r to collapse)\n${text}`;
+  }
+
+  const lineLabel = lineCount === 1 ? "1 line" : `${lineCount} lines`;
+  return `▸ System reminder · ${lineLabel} (ctrl+r to expand)`;
+}
 
 function getCurrentStdoutColumns(): number | null {
   if (typeof process === "undefined") return null;
@@ -262,7 +287,17 @@ export function renderBlock(
  * - System-reminder parts are shown plain (no highlight), user parts highlighted
  */
 export const UserMessage = memo(
-  ({ line, prompt }: { line: UserLine; prompt?: string }) => {
+  ({
+    line,
+    prompt,
+    systemRemindersVisible = false,
+    systemRemindersExpanded = false,
+  }: {
+    line: UserLine;
+    prompt?: string;
+    systemRemindersVisible?: boolean;
+    systemRemindersExpanded?: boolean;
+  }) => {
     const trackedColumns = useTerminalWidth();
     const columns = getCurrentStdoutColumns() ?? trackedColumns;
     const promptPrefix = `${prompt || CLI_GLYPHS.prompt} `;
@@ -286,11 +321,14 @@ export const UserMessage = memo(
 
     for (const block of blocks) {
       if (!block.text.trim()) continue;
+      if (block.isSystemReminder && !systemRemindersVisible) continue;
       if (allLines.length > 0) {
         allLines.push({ text: "", highlighted: false });
       }
       const blockLines = renderBlock(
-        block.text,
+        block.isSystemReminder
+          ? formatSystemReminderBlock(block.text, systemRemindersExpanded)
+          : block.text,
         contentWidth,
         columns,
         !block.isSystemReminder,
@@ -299,6 +337,8 @@ export const UserMessage = memo(
       );
       allLines.push(...blockLines);
     }
+
+    if (allLines.length === 0) return null;
 
     return (
       <Box flexDirection="column">
@@ -317,5 +357,28 @@ export const UserMessage = memo(
     );
   },
 );
+
+export const LiveUserMessage = memo(
+  ({ line, prompt }: { line: UserLine; prompt?: string }) => {
+    const systemRemindersVisible = useSyncExternalStore(
+      subscribeToSystemReminderDisplay,
+      getSystemRemindersVisible,
+    );
+    const systemRemindersExpanded = useSyncExternalStore(
+      subscribeToSystemReminderDisplay,
+      getSystemRemindersExpanded,
+    );
+    return (
+      <UserMessage
+        line={line}
+        prompt={prompt}
+        systemRemindersVisible={systemRemindersVisible}
+        systemRemindersExpanded={systemRemindersExpanded}
+      />
+    );
+  },
+);
+
+LiveUserMessage.displayName = "LiveUserMessage";
 
 UserMessage.displayName = "UserMessage";

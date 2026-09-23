@@ -5,14 +5,14 @@ function readSource(relativePath: string): string {
   return readFileSync(new URL(relativePath, import.meta.url), "utf-8");
 }
 
-describe("local-first setup wiring", () => {
+describe("cloud-default setup wiring", () => {
   test("setup menu offers local mode and persists that choice", () => {
     const source = readSource("../auth/setup-ui.tsx");
 
     expect(source).toContain('const LOCAL_MODE_LABEL = "Proceed locally"');
     expect(source).toContain('const AUTH_LOGIN_LABEL = "Sign in with Letta"');
     expect(source).toContain(
-      'initialMode === "device-code" || localModeDisabled ? 0 : 1',
+      "const [selectedOption, setSelectedOption] = useState(0)",
     );
     expect(source).toContain('configureBackendMode("local")');
     expect(source).toContain(
@@ -52,7 +52,7 @@ describe("local-first setup wiring", () => {
     );
 
     expect(setupSource).toContain(
-      'initialMode === "device-code" || localModeDisabled ? 0 : 1',
+      "const [selectedOption, setSelectedOption] = useState(0)",
     );
     expect(setupSource).toContain('onCancel={() => setMode("menu")}');
     expect(setupRunnerSource).toContain("initialMode?: SetupInitialMode");
@@ -117,46 +117,23 @@ describe("local-first setup wiring", () => {
     }
   });
 
-  test("startup auto-enters local mode for credentialless new users while honoring saved local preference", () => {
+  test("startup honors saved selection without automatically saving local for new users", () => {
     const source = readSource("../index.ts");
-    const start = source.indexOf('settings.preferredBackendMode === "local"');
-    const end = source.indexOf(
-      "await tryConfigureStartupLocalBackend()",
-      start,
+    expect(source).toContain(
+      "const startupBackendMode = resolveSubcommandBackendMode({",
     );
-
-    expect(start).toBeGreaterThan(-1);
-    expect(end).toBeGreaterThan(start);
-
-    const segment = source.slice(start - 120, end + 60);
-    expect(segment).toContain("!explicitBackendMode");
-    expect(segment).toContain("baseURL === LETTA_CLOUD_API_URL");
-    expect(segment).toContain('settings.preferredBackendMode === "local"');
-    expect(segment).not.toContain("!apiKey");
-    expect(segment).not.toContain("!settings.refreshToken");
-
-    const setupStart = source.indexOf(
-      "Local-first new-user flow: if the user has no Letta Cloud credentials",
+    expect(source).toContain(
+      "explicitBackendMode: explicitBackendMode ?? inferredBackendModeFromAgentId",
     );
-    const setupEnd = source.indexOf(
-      "const startupTargetLookupOrder",
-      setupStart,
-    );
-    expect(setupStart).toBeGreaterThan(-1);
-    expect(setupEnd).toBeGreaterThan(setupStart);
-    const setupSegment = source.slice(
-      setupStart,
-      setupEnd + "await settingsManager.flush();".length,
-    );
-    expect(setupSegment).toContain("!explicitBackendMode");
-    expect(setupSegment).toContain("!isHeadless");
-    expect(setupSegment).toContain("!settings.refreshToken");
-    expect(setupSegment).toContain("!apiKey");
-    expect(setupSegment).toContain("await tryConfigureStartupLocalBackend()");
-    expect(setupSegment).toContain(
+    expect(source).toContain("savedBackendMode: settings.preferredBackendMode");
+    expect(source).toContain('if (startupBackendMode === "local")');
+    expect(source).toContain("await tryConfigureStartupLocalBackend()");
+    expect(source).not.toContain(
       'settingsManager.updateSettings({ preferredBackendMode: "local" })',
     );
-    expect(setupSegment).toContain("await settingsManager.flush();");
+    expect(
+      source.match(/persistBackendPreference: !explicitBackendMode/g),
+    ).toHaveLength(3);
   });
 
   test("local transcript migration errors do not block setup login fallback", () => {
@@ -180,8 +157,10 @@ describe("local-first setup wiring", () => {
     expect(router).toContain('case "setup"');
     expect(backendCommand).toContain("letta backend cloud");
     expect(backendCommand).toContain("letta backend local");
-    expect(backendCommand).toContain("resolveStartupBackendDisplay");
-    expect(backendCommand).toContain("Proceed locally selected");
+    expect(backendCommand).toContain(
+      'settingsManager.getSettings().preferredBackendMode ?? "api"',
+    );
+    expect(backendCommand).not.toContain("Proceed locally selected");
     expect(backendCommand).toContain(
       "settingsManager.updateSettings({ preferredBackendMode: backendMode })",
     );

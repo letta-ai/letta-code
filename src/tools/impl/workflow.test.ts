@@ -293,6 +293,7 @@ describe("Workflow tool (background launch)", () => {
     const taskId = taskIdOf(result.toolReturn);
     expect(result.toolReturn).toContain("Script file:");
     expect(result.toolReturn).toContain("journal.jsonl");
+    expect(result.toolReturn).toContain("Output file:");
 
     const processState = backgroundProcesses.get(taskId);
     expect(processState?.kind).toBe("workflow");
@@ -301,7 +302,7 @@ describe("Workflow tool (background launch)", () => {
       "Quick demo workflow with parallel agents",
     );
 
-    // The progress log is also retained in the output file while the run is live.
+    // The progress log is what Read inspects while the run is live.
     await waitFor(() => (processState?.stdout.length ?? 0) >= 3);
     const live = getWorkflowExecution(taskId);
     expect(live).toMatchObject({
@@ -312,7 +313,9 @@ describe("Workflow tool (background launch)", () => {
       logs: ["starting"],
     });
     expect(live?.phases[0]?.title).toBe("Find");
-    expect(processState?.stdout).toContain("» starting");
+    expect(readFileSync(processState?.outputFile as string, "utf8")).toContain(
+      "starting",
+    );
     expect(queuedMessages).toHaveLength(0);
 
     releaseAgents?.();

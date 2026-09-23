@@ -20,8 +20,8 @@ export async function kill_bash(args: KillBashArgs): Promise<KillBashResult> {
 
 export function killBackgroundProcess(shell_id: string): boolean {
   const proc = backgroundProcesses.get(shell_id);
-  // Monitors and workflows keep their entry after a stop (so TaskOutput can
-  // still read what they produced); only a running one can be killed.
+  // Monitors and workflows keep their entry after a stop so their status and
+  // output file remain available; only a running one can be killed.
   const retainsEntry = proc?.kind === "monitor" || proc?.kind === "workflow";
   if (!proc || (retainsEntry && proc.status !== "running")) {
     return false;
