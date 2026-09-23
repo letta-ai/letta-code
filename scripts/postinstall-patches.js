@@ -211,6 +211,26 @@ await patchInkRuntime([
   },
 ]);
 
+// LET-13141: bound Ink's fullStaticOutput. Stock Ink accumulates every
+// committed static frame into one string that is retained for the whole
+// <Static> epoch and rewritten to the terminal on overflow frames, so a long
+// session holds its entire ANSI-rendered transcript in memory. Cap it at the
+// newest 8 MiB, cut at a line boundary so reprint paths never emit a partial
+// escape sequence; older scrollback remains in the terminal's own history.
+await patchInkRuntime([
+  {
+    before: "const noop = () => { };\nexport default class Ink {",
+    after:
+      "const MAX_FULL_STATIC_OUTPUT_CHARS = 8 * 1024 * 1024;\nconst capFullStaticOutput = (value) => {\n    if (value.length <= MAX_FULL_STATIC_OUTPUT_CHARS) return value;\n    const windowStart = value.length - MAX_FULL_STATIC_OUTPUT_CHARS;\n    const newlineIndex = value.indexOf('\\n', windowStart);\n    return value.slice(newlineIndex === -1 ? windowStart : newlineIndex + 1);\n};\nconst noop = () => { };\nexport default class Ink {",
+  },
+  {
+    before: "this.fullStaticOutput += staticOutput;",
+    after:
+      "this.fullStaticOutput = capFullStaticOutput(this.fullStaticOutput + staticOutput);",
+    all: true,
+  },
+]);
+
 // ink-text-input (optional vendor with externalCursorOffset support)
 await copyToResolved(
   "vendor/ink-text-input/build/index.js",
