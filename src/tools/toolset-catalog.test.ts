@@ -109,3 +109,18 @@ test("standard and strict modes ask; explicit denial remains effective", () => {
     ).decision,
   ).toBe("deny");
 });
+
+test.each(["letta", "default", "codex"] as const)(
+  "%s exposes Agent without dedicated memory tools",
+  async (toolsetPreference) => {
+    const prepared = await prepareToolExecutionContextForResolvedTarget({
+      toolsetPreference,
+    });
+    const names = prepared.preparedToolContext.clientTools.map(
+      (tool) => tool.name,
+    );
+    expect(names).toContain("Agent");
+    expect(names).not.toContain("memory");
+    expect(names).not.toContain("memory_apply_patch");
+  },
+);
