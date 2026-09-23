@@ -127,9 +127,16 @@ import {
   isShellTool,
 } from "@/cli/helpers/tool-name-mapping";
 import { isTaskTool } from "@/cli/helpers/tool-name-mapping.js";
+import {
+  commitStaticItems,
+  evictCommittedLines,
+  shouldSkipCommittedToolCall,
+  shouldSkipDeferral,
+} from "@/cli/helpers/transcript-windowing";
 import { getTuiBlockedReason } from "@/cli/helpers/tui-queue-adapter";
 import { createTuiQueueRuntime } from "@/cli/helpers/tui-queue-runtime";
 import type { WindowTitleData } from "@/cli/helpers/window-title-config";
+import { useStaticRenderedCount } from "@/cli/hooks/use-static-rendered-count";
 import { useSyncedState } from "@/cli/hooks/use-synced-state";
 import {
   useTerminalRows,
@@ -1354,6 +1361,7 @@ export function App({
   );
   // Static items (things that are done rendering and can be frozen)
   const [staticItems, setStaticItems] = useState<StaticItem[]>([]);
+  const staticRenderedCountRef = useStaticRenderedCount(staticItems);
 
   // Show in-transcript notification when auto-update applied a significant new version
   const [footerUpdateText, setFooterUpdateText] = useState<string | null>(null);
@@ -2058,28 +2066,6 @@ export function App({
       const deferredCommits = deferredToolCallCommitsRef.current;
       const now = Date.now();
       let blockedByDeferred = false;
-      // If we eagerly committed a tall preview for file tools, don't also
-      // commit the successful tool_call line (preview already represents it).
-      const shouldSkipCommittedToolCall = (ln: Line): boolean => {
-        if (ln.kind !== "tool_call") return false;
-        if (!ln.toolCallId || !ln.name) return false;
-        if (ln.phase !== "finished" || ln.resultOk === false) return false;
-        if (!eagerCommittedPreviewsRef.current.has(ln.toolCallId)) return false;
-        return (
-          isFileEditTool(ln.name) ||
-          isFileWriteTool(ln.name) ||
-          isPatchTool(ln.name)
-        );
-      };
-
-      const shouldSkipDeferral = (ln: Line): boolean => {
-        if (ln.kind !== "tool_call") return false;
-        if (ln.phase !== "finished") return false;
-        // Skip deferral when the result is already available: the component height
-        // has already changed (header + result), so deferring only extends the
-        // live-area repaint window that causes ghost lines in the terminal scrollback.
-        return ln.resultText != null;
-      };
       if (!deferToolCalls && deferredCommits.size > 0) {
         deferredCommits.clear();
         setDeferredCommitAt(null);
@@ -2160,7 +2146,9 @@ export function App({
           continue;
         }
         if ("phase" in ln && ln.phase === "finished") {
-          if (shouldSkipCommittedToolCall(ln)) {
+          if (
+            shouldSkipCommittedToolCall(ln, eagerCommittedPreviewsRef.current)
+          ) {
             deferredCommits.delete(id);
             emittedIdsRef.current.add(id);
             continue;
@@ -2219,11 +2207,20 @@ export function App({
         setDeferredCommitAt(null);
       }
 
+      // Committed lines leave the live buffers; static copies are the record.
+      evictCommittedLines(
+        b,
+        emittedIdsRef.current,
+        eagerCommittedPreviewsRef.current,
+      );
+
       if (newlyCommitted.length > 0) {
-        setStaticItems((prev) => [...prev, ...newlyCommitted]);
+        setStaticItems((prev) =>
+          commitStaticItems(prev, newlyCommitted, staticRenderedCountRef),
+        );
       }
     },
-    [],
+    [staticRenderedCountRef],
   );
 
   // Render-ready transcript
