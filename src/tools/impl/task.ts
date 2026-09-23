@@ -42,7 +42,10 @@ import {
   resolveNotificationScope,
 } from "@/utils/task-notifications.js";
 import { copyGitHubPullRequestTags } from "./github-pull-request-tracker.js";
-import { runBackgroundMemoryTask } from "./memory-task-lifecycle";
+import {
+  ensureMemoryConflictRepair,
+  runBackgroundMemoryTask,
+} from "./memory-task-lifecycle";
 import {
   appendToOutputFile,
   assertBackgroundTaskCapacity,
@@ -105,6 +108,12 @@ export interface SpawnBackgroundSubagentTaskArgs {
    * into the agent's context.
    */
   silentCompletion?: boolean;
+  /**
+   * Harness-triggered conflict repair: the attempt token from
+   * `claimMemoryConflictRepair`. The worker records its outcome under it and
+   * skips if another worker already resolved the conflict.
+   */
+  memoryRepairToken?: string;
   /**
    * Emit a completion notification even when `silentCompletion` is true.
    * Useful when the parent should not stream subagent tokens but still wants
@@ -216,10 +225,10 @@ function writeTaskTranscriptResult(
   outputFile: string,
   result: SubagentResult,
   header: string,
-  options: { reportAlreadyWritten?: boolean } = {},
+  reportAlreadyWritten = false,
 ): void {
   if (result.success) {
-    const report = options.reportAlreadyWritten ? "" : `${result.report}\n\n`;
+    const report = reportAlreadyWritten ? "" : `${result.report}\n\n`;
     appendToOutputFile(outputFile, `${header}\n\n${report}[Task completed]\n`);
     return;
   }
@@ -475,12 +484,19 @@ export function spawnBackgroundSubagentTask(
           ...resolvedParentScope,
           memoryDir: workerMemoryDir,
           assignment: prompt,
+          repairToken: args.memoryRepairToken,
           signal: abortController.signal,
           subagentId,
           outputFile,
           formatHeader: (identity) =>
             buildTaskResultHeader(subagentType, subagentId, identity),
           execute,
+          // Awaited by the worker so a one-shot drain sees the repair task.
+          repair: (result) =>
+            ensureMemoryConflictRepair(
+              { ...resolvedParentScope, actingUserId, result },
+              spawnBackgroundSubagentTask,
+            ),
           getSnapshot: getSubagentSnapshotFn,
         })
       : undefined;
@@ -510,9 +526,7 @@ export function spawnBackgroundSubagentTask(
         result,
         result.success ? "success" : "error",
       );
-      writeTaskTranscriptResult(outputFile, result, header, {
-        reportAlreadyWritten: memoryTask !== undefined,
-      });
+      writeTaskTranscriptResult(outputFile, result, header, !!memoryTask);
       scheduleBackgroundTaskCleanup(taskId);
 
       completeSubagentFn(subagentId, {
@@ -686,13 +700,12 @@ export function spawnBackgroundSubagentTask(
     })
     .finally(unsubscribe);
 
+  // Memory drains wait for the whole lifecycle (sync, cleanup), not just the child.
+  const swallow = () => undefined;
   bgTask.completion =
     subagentType === "memory"
       ? taskLifecycle
-      : subagentExecution.then(
-          () => undefined,
-          () => undefined,
-        );
+      : subagentExecution.then(swallow, swallow);
   return { taskId, outputFile, subagentId };
 }
 

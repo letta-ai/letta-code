@@ -3125,6 +3125,7 @@ export async function handleHeadlessCommand(
   }
 
   await runPostTurnMemorySync({
+    conversationId,
     agentId: agent.id,
     isEnabled: (id) => settingsManager.isMemfsEnabled(id),
     debugLabel: "Post-turn headless memory sync",
@@ -4769,6 +4770,7 @@ async function runBidirectionalMode(
         writeWireMessage(errorResultMsg);
       } finally {
         await runPostTurnMemorySync({
+          conversationId,
           agentId: agent.id,
           isEnabled: (id) => settingsManager.isMemfsEnabled(id),
           debugLabel: "Post-turn headless memory sync",

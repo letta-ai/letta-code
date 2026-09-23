@@ -11,12 +11,11 @@ export interface TempGitRepo {
 }
 
 /**
- * A throwaway repository on `main` with deterministic identity, signing and
- * line-ending settings, so tests behave the same on every developer machine
- * and CI runner.
+ * Initialize `dir` as a repository on `main` with deterministic identity,
+ * signing and line-ending settings, so tests behave the same on every
+ * developer machine and CI runner. `cleanup` removes the directory.
  */
-export function createTempGitRepo(prefix = "letta-test-repo-"): TempGitRepo {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
+export function initGitRepo(dir: string): TempGitRepo {
   const git = (...args: string[]): string =>
     execFileSync("git", ["-C", dir, ...args], {
       encoding: "utf8",
@@ -33,4 +32,9 @@ export function createTempGitRepo(prefix = "letta-test-repo-"): TempGitRepo {
     git,
     cleanup: () => rmSync(dir, { recursive: true, force: true }),
   };
+}
+
+/** A throwaway repository in a fresh temporary directory. */
+export function createTempGitRepo(prefix = "letta-test-repo-"): TempGitRepo {
+  return initGitRepo(mkdtempSync(join(tmpdir(), prefix)));
 }
