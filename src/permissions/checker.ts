@@ -30,6 +30,11 @@ import {
   matchesFilePattern,
   matchesToolPattern,
 } from "./matcher";
+import {
+  isPathWithinRoots,
+  resolveAllowedMemoryRoots,
+  resolveMemoryTargetPath,
+} from "./memory-paths";
 import { permissionMode } from "./mode";
 import { isMemoryDirCommand, isReadOnlyShellCommand } from "./read-only-shell";
 import { sessionPermissions } from "./session";
@@ -59,6 +64,8 @@ const WORKING_DIRECTORY_TOOLS_V1 = [
   "GrepFiles",
 ];
 const FILE_TOOLS_V2 = ["Read", "Write", "Edit", "Glob", "Grep", "ListDir"];
+/** Edits inside the agent's own memory checkout are allowed like memory-dir shell commands. */
+const MEMORY_FILE_WRITE_TOOLS = ["Write", "Edit"];
 const FILE_TOOLS_V1 = [
   "Read",
   "Write",
@@ -509,6 +516,27 @@ function checkPermissionForEngine(
     }
   }
 
+  // File-tool counterpart of the memory-dir shell allowance: the cross-agent
+  // guard above has already confined the path to this agent's own memory, and
+  // the MemFS pre-commit hook still protects read_only files.
+  if (!isStrictMode && MEMORY_FILE_WRITE_TOOLS.includes(canonicalTool)) {
+    const filePath = extractFilePath(toolArgs);
+    if (filePath && isOwnMemoryFile(filePath, workingDirectory, agentId)) {
+      traceEvent(
+        trace,
+        "memory-dir-auto-allow",
+        "Agent memory directory operation",
+      );
+      return {
+        result: {
+          decision: "allow",
+          reason: "Agent memory directory operation",
+        },
+        trace,
+      };
+    }
+  }
+
   if (!isStrictMode && workingDirectoryTools.includes(queryTool)) {
     const filePath = extractFilePath(toolArgs);
     if (
@@ -641,6 +669,23 @@ function getAllowedShellPathRoots(
   return roots;
 }
 
+function isOwnMemoryFile(
+  filePath: string,
+  workingDirectory: string,
+  agentId?: string,
+): boolean {
+  const resolved = resolveMemoryTargetPath(filePath, workingDirectory);
+  if (!resolved) return false;
+  try {
+    const { roots } = resolveAllowedMemoryRoots({
+      currentAgentId: agentId ?? getCurrentAgentId(),
+    });
+    return isPathWithinRoots(resolved, roots);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Build permission query string for a tool execution
  */
@@ -755,6 +800,7 @@ const SAFE_AUTO_APPROVE_SUBAGENT_TYPES = new Set([
   "reflection", // Memory reflection - writes constrained by memory-subagent sandbox
   "Reflection",
   "history-analyzer", // History analysis - writes constrained by memory-subagent sandbox
+  "memory", // Memory worker - edits its private memory worktree under the same sandbox
 ]);
 
 /**

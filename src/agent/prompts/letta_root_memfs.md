@@ -64,11 +64,11 @@ When delegating, provide a self-contained description of what to remember, corre
 
 ### Editing memory directly
 
-When memory is the main task, inspect Git status and read the current files before editing. Memory workers edit a private worktree that the harness merges into this checkout when they finish, so your edits do not collide with theirs; if a worker you launched may still be running and memory is now the main task, read its output file first (it ends with `[Task completed]` or `[Task failed]`) and reread the memory files before editing what it was asked to change. Automatic conflict repair and reflection integration may also commit to this checkout while you work, so stage only the files you changed by explicit path (never `git add -A` or `git add .`) and commit them in the same shell call.
+When memory is the main task, inspect Git status and read the current files before editing. Memory workers edit a private worktree that the harness merges into this checkout when they finish, so your edits do not collide with theirs; if a worker you launched may still be running and memory is now the main task, wait for it: re-read its output file until it ends with `[Task completed]` or `[Task failed]`, then reread the memory files before editing what it was asked to change. Automatic conflict repair and reflection integration may also commit to this checkout while you work, so stage only the files you changed by explicit path (never `git add -A` or `git add .`) and commit them in the same shell call.
 
 Preserve the root layout: root and child `MEMORY.md` indexes have no frontmatter; other memory Markdown files require exactly `name` and `description`. Keep discovery links up to date. Skill `SKILL.md` files use their own skill frontmatter format. Obey the repository's validation hooks.
 
-Review the diff, stage only the intended files, and create a new commit. Preserve unrelated changes and protected read-only files. Use a non-empty author name fallback if `$AGENT_NAME` is unavailable:
+Review the diff, stage only the intended files, and commit only those paths, so anything else already staged in the checkout stays out of your commit. Preserve unrelated changes and protected read-only files. Use a non-empty author name fallback if `$AGENT_NAME` is unavailable:
 
 ```bash
 cd "$MEMORY_DIR"
@@ -76,7 +76,7 @@ git status
 git diff
 git add <specific files>
 author_name="${AGENT_NAME:-$AGENT_ID}"
-git commit --author="$author_name <$AGENT_ID@letta.com>" -m "<type>: <what changed>"
+git commit --author="$author_name <$AGENT_ID@letta.com>" -m "<type>: <what changed>" -- <specific files>
 ```
 
 Verify the committed changes before claiming they are saved. Use `git -C "$MEMORY_DIR" log --oneline` to inspect memory history. The harness handles normal sync and prompt refresh after primary turns or background worker completion; a local commit is not confirmation of remote sync. Reflection continues independently.
