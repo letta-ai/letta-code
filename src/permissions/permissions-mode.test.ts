@@ -109,6 +109,24 @@ test("default mode - treats Agent like Task for safe subagent auto-approval", ()
   expect(result.reason).toBe("Default behavior for tool");
 });
 
+test("default mode - auto-approves the sandboxed memory worker", () => {
+  permissionMode.setMode("standard");
+
+  const result = checkPermission(
+    "Agent",
+    {
+      subagent_type: "memory",
+      prompt: "Remember that the user prefers tabs",
+      description: "Update memory",
+    },
+    { allow: [], deny: [], ask: [] },
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("allow");
+  expect(result.reason).toBe("Default behavior for tool");
+});
+
 // ============================================================================
 // Permission Mode: unrestricted
 // ============================================================================
