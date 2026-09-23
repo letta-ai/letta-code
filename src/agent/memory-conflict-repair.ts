@@ -92,23 +92,23 @@ async function readAttempt(path: string): Promise<Partial<RepairAttempt>> {
  * lock rather than the checkout lease, so a worker forgetting its attempt
  * after the lease is gone cannot race a claim made under it. The lock is
  * reaped only once its holder's process is gone, never by age, so a paused
- * holder keeps exclusivity; sections last microseconds, and a waiter that
- * still cannot get in gives up rather than break it.
+ * holder keeps exclusivity. Sections last microseconds. A claim that still
+ * cannot get in gives up, and the conflict is reported instead of repaired;
+ * a worker's own transitions wait, because dropping one would leave its
+ * record in place and suppress every later repair while this process lives.
  */
-const MARKER_LOCK: FileLockOptions = {
-  reapOnlyDeadOwner: true,
-  timeoutMs: 5_000,
-};
+const MARKER_LOCK: FileLockOptions = { reapOnlyDeadOwner: true };
+const CLAIM_TIMEOUT_MS = 5_000;
 
 async function updateAttempt<T>(
   path: string,
   fn: (attempt: Partial<RepairAttempt>) => Promise<T>,
+  timeoutMs = Number.POSITIVE_INFINITY,
 ): Promise<T> {
-  return withFileLock(
-    `${path}.lock`,
-    async () => fn(await readAttempt(path)),
-    MARKER_LOCK,
-  );
+  return withFileLock(`${path}.lock`, async () => fn(await readAttempt(path)), {
+    ...MARKER_LOCK,
+    timeoutMs,
+  });
 }
 
 /** A worker's transition: no record outside a repository, never throws. */
@@ -125,6 +125,7 @@ async function transition(
   try {
     await updateAttempt(path, (attempt) => fn(path, attempt));
   } catch (error) {
+    // Only a filesystem failure gets here; the wait for the lock is unbounded.
     debugWarn("memory-repair", `Repair attempt not updated: ${String(error)}`);
   }
 }
@@ -151,33 +152,37 @@ export async function claimMemoryConflictRepair(
   } catch {
     return { status: "claimed", token };
   }
-  return updateAttempt(path, async (previous) => {
-    if (previous.signature === signature) {
-      if (previous.state === "done") return { status: "attempted" };
-      if (
-        typeof previous.pid === "number" &&
-        (await isSameProcessRunning({
-          pid: previous.pid,
-          ...(typeof previous.started === "string" && {
-            started: previous.started,
-          }),
-        }))
-      ) {
-        return { status: "in_progress" };
+  return updateAttempt(
+    path,
+    async (previous) => {
+      if (previous.signature === signature) {
+        if (previous.state === "done") return { status: "attempted" };
+        if (
+          typeof previous.pid === "number" &&
+          (await isSameProcessRunning({
+            pid: previous.pid,
+            ...(typeof previous.started === "string" && {
+              started: previous.started,
+            }),
+          }))
+        ) {
+          return { status: "in_progress" };
+        }
       }
-    }
-    const started = await getOwnProcessStartTime();
-    const attempt: RepairAttempt = {
-      signature,
-      token,
-      state: "launching",
-      pid: process.pid,
-      ...(started && { started }),
-      attemptedAt: new Date().toISOString(),
-    };
-    await writeFile(path, JSON.stringify(attempt));
-    return { status: "claimed", token };
-  });
+      const started = await getOwnProcessStartTime();
+      const attempt: RepairAttempt = {
+        signature,
+        token,
+        state: "launching",
+        pid: process.pid,
+        ...(started && { started }),
+        attemptedAt: new Date().toISOString(),
+      };
+      await writeFile(path, JSON.stringify(attempt));
+      return { status: "claimed", token };
+    },
+    CLAIM_TIMEOUT_MS,
+  );
 }
 
 /** The repair worker ran; the same conflict is not attempted again automatically. */
