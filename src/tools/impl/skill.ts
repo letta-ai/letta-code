@@ -150,7 +150,8 @@ function listSkillResources(skillMdPath: string): SkillResources {
         : entry.name;
       if (
         relativePath.toUpperCase() === "SKILL.MD" ||
-        relativePath.toUpperCase() === "ROOT_MEMORY.MD"
+        relativePath.toUpperCase() === "ROOT_MEMORY.MD" ||
+        relativePath.toUpperCase() === "LEGACY_MEMORY.MD"
       ) {
         continue;
       }

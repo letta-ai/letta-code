@@ -210,6 +210,7 @@ describe("Skill tool memory filesystem lookup", () => {
     expect(loaded.path).toBe(bundledSkillPath);
     expect(rendered).toContain("root `MEMORY.md`");
     expect(SYSTEM_DIRECTORY_PATH.test(rendered)).toBe(false);
+    expect(rendered).not.toContain("<file>LEGACY_MEMORY.md</file>");
   });
 
   test("existing v1 memory still loads the legacy init instructions", async () => {
@@ -231,9 +232,13 @@ describe("Skill tool memory filesystem lookup", () => {
     expect(loaded.path).toEndWith(
       join("initializing-memory", "LEGACY_MEMORY.md"),
     );
-    expect(
-      renderSkillContent("initializing-memory", loaded.content, loaded.path),
-    ).toContain("system/persona.md");
+    const rendered = renderSkillContent(
+      "initializing-memory",
+      loaded.content,
+      loaded.path,
+    );
+    expect(rendered).toContain("system/persona.md");
+    expect(rendered).not.toContain("<file>LEGACY_MEMORY.md</file>");
   });
 
   test("doctor uses the same investigation skill for both memory formats", () => {
