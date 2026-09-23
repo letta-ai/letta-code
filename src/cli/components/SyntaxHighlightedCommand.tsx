@@ -1,38 +1,3 @@
-import bashLang from "@shikijs/langs/bash";
-import cLang from "@shikijs/langs/c";
-import cppLang from "@shikijs/langs/cpp";
-import csharpLang from "@shikijs/langs/csharp";
-import cssLang from "@shikijs/langs/css";
-import diffLang from "@shikijs/langs/diff";
-import dockerLang from "@shikijs/langs/docker";
-import goLang from "@shikijs/langs/go";
-import graphqlLang from "@shikijs/langs/graphql";
-import htmlLang from "@shikijs/langs/html";
-import iniLang from "@shikijs/langs/ini";
-import javaLang from "@shikijs/langs/java";
-import javascriptLang from "@shikijs/langs/javascript";
-import jsonLang from "@shikijs/langs/json";
-import kotlinLang from "@shikijs/langs/kotlin";
-import lessLang from "@shikijs/langs/less";
-import luaLang from "@shikijs/langs/lua";
-import makeLang from "@shikijs/langs/make";
-import markdownLang from "@shikijs/langs/markdown";
-import perlLang from "@shikijs/langs/perl";
-import phpLang from "@shikijs/langs/php";
-import pythonLang from "@shikijs/langs/python";
-import rLang from "@shikijs/langs/r";
-import rubyLang from "@shikijs/langs/ruby";
-import rustLang from "@shikijs/langs/rust";
-import scalaLang from "@shikijs/langs/scala";
-import scssLang from "@shikijs/langs/scss";
-import sqlLang from "@shikijs/langs/sql";
-import swiftLang from "@shikijs/langs/swift";
-import tomlLang from "@shikijs/langs/toml";
-import tsxLang from "@shikijs/langs/tsx";
-import typescriptLang from "@shikijs/langs/typescript";
-import wasmLang from "@shikijs/langs/wasm";
-import xmlLang from "@shikijs/langs/xml";
-import yamlLang from "@shikijs/langs/yaml";
 import catppuccinLatte from "@shikijs/themes/catppuccin-latte";
 import catppuccinMocha from "@shikijs/themes/catppuccin-mocha";
 import { Box } from "ink";
@@ -40,7 +5,13 @@ import { memo } from "react";
 import { createHighlighterCoreSync } from "shiki/core";
 import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
 import { colors } from "./colors";
+import {
+  CORE_GRAMMARS,
+  configureSyntaxLanguages,
+  ensureLanguageLoaded,
+} from "./syntax-languages";
 import { Text } from "./Text";
+import { notifyTranscriptDisplayRepaint } from "./transcript-display-state";
 
 // Created lazily on first highlight: grammar parsing costs ~150-250ms of CPU,
 // which shouldn't run at module load on every process start.
@@ -51,44 +22,12 @@ function getShikiHighlighter(): ReturnType<typeof createHighlighterCoreSync> {
   if (shikiHighlighter === null) {
     shikiHighlighter = createHighlighterCoreSync({
       themes: [catppuccinMocha, catppuccinLatte],
-      langs: [
-        bashLang,
-        cLang,
-        cppLang,
-        csharpLang,
-        cssLang,
-        diffLang,
-        dockerLang,
-        goLang,
-        graphqlLang,
-        htmlLang,
-        iniLang,
-        javaLang,
-        javascriptLang,
-        jsonLang,
-        kotlinLang,
-        lessLang,
-        luaLang,
-        makeLang,
-        markdownLang,
-        perlLang,
-        phpLang,
-        pythonLang,
-        rLang,
-        rubyLang,
-        rustLang,
-        scalaLang,
-        scssLang,
-        sqlLang,
-        swiftLang,
-        tomlLang,
-        tsxLang,
-        typescriptLang,
-        wasmLang,
-        xmlLang,
-        yamlLang,
-      ],
+      langs: CORE_GRAMMARS,
       engine: createJavaScriptRegexEngine(),
+    });
+    configureSyntaxLanguages({
+      registerGrammar: (grammar) => shikiHighlighter?.loadLanguageSync(grammar),
+      onTailLanguageLoaded: () => notifyTranscriptDisplayRepaint(),
     });
   }
   return shikiHighlighter;
@@ -301,8 +240,14 @@ export function highlightCode(
   code: string,
   language: string,
 ): StyledSpan[][] | undefined {
+  // Ensure the highlighter (and its lazy-load hooks) exists before any tail
+  // grammar import can resolve, then gate on language readiness: long-tail
+  // grammars load on demand and render plain until a transcript repaint
+  // re-renders this block highlighted.
+  const highlighter = getShikiHighlighter();
+  if (!ensureLanguageLoaded(language)) return undefined;
   try {
-    const result = getShikiHighlighter().codeToTokens(code, {
+    const result = highlighter.codeToTokens(code, {
       lang: language,
       theme:
         colors.shellSyntax === colors.shellSyntaxLight

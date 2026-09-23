@@ -100,7 +100,17 @@ await Bun.build({
   // bundled AbortSignal class during bot.init().
   // But don't make `sharp` external, causes issues with global Bun-based installs
   // ref: #745, #1200
-  external: ["ws", "@vscode/ripgrep", "node-pty", "grammy"],
+  // @shikijs/langs stays external so lazily-imported grammars (LET-13149)
+  // resolve from node_modules on demand instead of being inlined eagerly into
+  // the single-file bundle.
+  external: [
+    "ws",
+    "@vscode/ripgrep",
+    "node-pty",
+    "grammy",
+    "@shikijs/langs",
+    "@shikijs/langs/*",
+  ],
   features: features,
 });
 

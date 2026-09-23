@@ -49,6 +49,14 @@ export function subscribeToTranscriptDisplayRepaint(
   return () => repaintListeners.delete(listener);
 }
 
+/**
+ * Ask subscribers to repaint the transcript (e.g. a lazily loaded syntax
+ * grammar just registered and previously plain code can now highlight).
+ */
+export function notifyTranscriptDisplayRepaint(): void {
+  for (const listener of repaintListeners) listener();
+}
+
 export function toggleSystemReminderDisplay(): void {
   if (!systemRemindersVisible) return;
   expanded["system-reminders"] = !expanded["system-reminders"];
