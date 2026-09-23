@@ -493,3 +493,40 @@ test("a repair whose launch fails forgets its attempt so the next turn retries",
   ).rejects.toThrow("child exited before starting");
   expect(await claimMemoryConflictRepair(root)).toBe(true);
 });
+
+test("a repair cancelled while waiting for the checkout forgets its attempt", async () => {
+  conflict();
+  expect(await claimMemoryConflictRepair(root)).toBe(true);
+  const holder = await claimMemoryOperation(root);
+  const controller = new AbortController();
+  const waiting = runMemoryWorker(
+    { ...scope(true), signal: controller.signal },
+    async () => {
+      throw new Error("must not run");
+    },
+  );
+  await Bun.sleep(30);
+  controller.abort();
+  await expect(waiting).rejects.toThrow();
+  await holder?.();
+  expect(await claimMemoryConflictRepair(root)).toBe(true);
+});
+
+test("a repair whose initial sync throws forgets its attempt", async () => {
+  conflict();
+  expect(await claimMemoryConflictRepair(root)).toBe(true);
+  await expect(
+    runMemoryWorker(
+      scope(true),
+      async () => {
+        throw new Error("must not run");
+      },
+      {
+        sync: async () => {
+          throw new Error("remote unreachable");
+        },
+      },
+    ),
+  ).rejects.toThrow("remote unreachable");
+  expect(await claimMemoryConflictRepair(root)).toBe(true);
+});

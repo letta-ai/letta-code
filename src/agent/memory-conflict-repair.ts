@@ -111,13 +111,12 @@ export async function claimMemoryConflictRepair(
       return false;
     }
   }
+  const started = await getOwnProcessStartTime();
   const attempt: RepairAttempt = {
     signature,
     state: "launching",
     pid: process.pid,
-    ...((await getOwnProcessStartTime()) && {
-      started: (await getOwnProcessStartTime()) ?? undefined,
-    }),
+    ...(started && { started }),
     attemptedAt: new Date().toISOString(),
   };
   await writeFile(path, JSON.stringify(attempt));
@@ -138,12 +137,26 @@ export async function completeMemoryConflictRepair(
   }
 }
 
-/** The attempt never ran (launch failed or was cancelled); let the next turn retry. */
+/**
+ * The attempt never ran (launch failed or was cancelled); let the next turn
+ * retry. With `ownOnly`, only an attempt this process recorded is cleared,
+ * which lets a caller that may not hold the lease clean up after itself
+ * without touching another process's attempt.
+ */
 export async function clearMemoryConflictRepair(
   memoryDir: string,
+  options: { ownOnly?: boolean } = {},
 ): Promise<void> {
   try {
-    await rm(await attemptPath(memoryDir), { force: true });
+    const path = await attemptPath(memoryDir);
+    if (options.ownOnly) {
+      const attempt = await readAttempt(path);
+      const own =
+        attempt.pid === process.pid &&
+        (attempt.started ?? null) === (await getOwnProcessStartTime());
+      if (!own) return;
+    }
+    await rm(path, { force: true });
   } catch {
     /* Not a repository; nothing was recorded. */
   }

@@ -81,14 +81,27 @@ export async function runMemoryWorker(
       );
     }
   };
-  return withMemoryOperation(
-    params.memoryDir,
-    async () =>
-      params.repairOnly
-        ? runRepair(params, execute, { sync, recompile, deps })
-        : runUpdate(params, execute, { sync, recompile, deps }),
-    params.signal,
-  );
+  const helpers = { sync, recompile, deps };
+  if (!params.repairOnly) {
+    return withMemoryOperation(
+      params.memoryDir,
+      () => runUpdate(params, execute, helpers),
+      params.signal,
+    );
+  }
+  try {
+    return await withMemoryOperation(
+      params.memoryDir,
+      () => runRepair(params, execute, helpers),
+      params.signal,
+    );
+  } catch (error) {
+    // Nothing ran: a failure anywhere in the leased run, or cancellation while
+    // still waiting for the lease. Forget this process's attempt so the next
+    // turn retries instead of waiting for this process to exit.
+    await clearMemoryConflictRepair(params.memoryDir, { ownOnly: true });
+    throw error;
+  }
 }
 
 type Helpers = {
@@ -209,16 +222,10 @@ async function runRepair(
       ? { agentId: "", success: true, report: "No memory conflict remains." }
       : { agentId: "", success: false, report: "", error: syncSummary(state) };
   }
-  let result: SubagentResult;
-  try {
-    result = await execute(params.memoryDir, {
-      primaryRoot: params.memoryDir,
-      writableRoots: [params.memoryDir],
-    });
-  } catch (error) {
-    await clearMemoryConflictRepair(params.memoryDir);
-    throw error;
-  }
+  const result = await execute(params.memoryDir, {
+    primaryRoot: params.memoryDir,
+    writableRoots: [params.memoryDir],
+  });
   if (params.signal?.aborted) {
     await clearMemoryConflictRepair(params.memoryDir);
     return {
