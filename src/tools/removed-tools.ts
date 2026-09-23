@@ -12,6 +12,9 @@ const REMOVED_TOOL_NAMES = new Set([
   "list_dir",
   "LS",
   "MultiEdit",
+  // Never registered under this name, but the approval and transcript
+  // classifiers still treat it as MultiEdit, so it must stay reserved too.
+  "multi_edit",
   "ReadFile",
   "read_file",
   "Shell",
