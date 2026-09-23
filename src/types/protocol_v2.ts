@@ -583,11 +583,11 @@ export interface SubagentSnapshot {
   prompt?: string;
   status: "pending" | "running" | "completed" | "error";
   agent_url: string | null;
-  /** The subagent's own conversation id (for dual-view routing; local agents
-   * have a bare-id agent_url with no ?conversation= param to parse). */
+  /** Own conversation id; local agent URLs do not carry it. */
   conversation_id?: string | null;
   model?: string;
   is_background?: boolean;
+  claims_parent_runtime?: boolean;
   silent?: boolean;
   tool_call_id?: string;
   parent_agent_id?: string;

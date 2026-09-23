@@ -828,6 +828,7 @@ export function buildSubagentSnapshot(
       conversation_id: a.conversationId ?? null,
       model: a.model,
       is_background: a.isBackground,
+      claims_parent_runtime: a.claimsParentRuntime,
       silent: a.silent,
       tool_call_id: a.toolCallId,
       parent_agent_id: a.parentAgentId,
