@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import type { MemoryPostTurnSyncResult } from "@/agent/memory-git";
 import {
   formatAttachedRepositoriesPostTurnSyncReminders,
@@ -182,4 +186,31 @@ describe("shared-memory post-turn reminders", () => {
     expect(memorySyncRan).toBe(false);
     expect(sharedSyncRan).toBe(true);
   });
+});
+
+test("post-turn sync is skipped while another writer owns the checkout", async () => {
+  const home = mkdtempSync(join(tmpdir(), "memory-git-sync-home-"));
+  const originalHome = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    mkdirSync(join(getScopedMemoryFilesystemRoot("agent-test"), ".git"), {
+      recursive: true,
+    });
+    let synced = false;
+    await runPostTurnMemorySync(
+      { agentId: "agent-test" },
+      {
+        claimOperation: async () => null,
+        syncMemory: async () => {
+          synced = true;
+          throw new Error("must not sync a checkout someone else owns");
+        },
+        syncAttachedRepositories: async () => ({ results: [] }),
+      },
+    );
+    expect(synced).toBe(false);
+  } finally {
+    process.env.HOME = originalHome;
+    rmSync(home, { recursive: true, force: true });
+  }
 });

@@ -233,7 +233,7 @@ import {
   providerTypeFromModelSettings,
   reasoningEffortLlmConfigPatch,
 } from "./model-config";
-import { saveLastSessionBeforeExit } from "./session";
+import { prepareSessionExit } from "./session";
 import type {
   ActiveOverlay,
   AppProps,
@@ -3850,7 +3850,7 @@ export function App({
   });
 
   const handleExit = useCallback(async () => {
-    saveLastSessionBeforeExit(conversationIdRef.current);
+    await prepareSessionExit(conversationIdRef.current);
 
     // Run SessionEnd hooks
     await runEndHooks();
