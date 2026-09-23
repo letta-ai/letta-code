@@ -11,6 +11,7 @@ import {
   runPreCompactHooks,
   runPreToolUseHooks,
 } from "@/hooks";
+import { clampToolReturnText } from "@/tools/impl/tool-return-clamp";
 import { debugLog } from "@/utils/debug";
 import { isRecord } from "@/utils/type-guards";
 import { extractCompactionSummary } from "./compaction-utils";
@@ -1196,8 +1197,7 @@ export function onChunk(
     }
 
     case "tool_return_message": {
-      // Tool return is a special case
-      // It will have a different otid than the tool call, but we want to merge into the tool call
+      // Tool returns have a different otid than the tool call; merge into the tool call line
 
       // Handle parallel tool returns: check tool_returns array first, fallback to singular fields
       const toolReturns =
@@ -1223,7 +1223,7 @@ export function onChunk(
           ("tool_return" in toolReturn ? toolReturn.tool_return : undefined);
 
         // Ensure resultText is always a string (guard against SDK returning objects)
-        const resultText =
+        const rawResultText =
           typeof rawResult === "string"
             ? rawResult
             : rawResult != null
@@ -1231,8 +1231,7 @@ export function onChunk(
               : "";
         const status = toolReturn.status;
 
-        // Look up the line by toolCallId
-        // Keep a mapping of toolCallId to line id (otid)
+        // Look up the line id mapped to this toolCallId
         const id = toolCallId
           ? b.toolCallIdToLineId.get(toolCallId)
           : undefined;
@@ -1246,7 +1245,10 @@ export function onChunk(
 
         line = annotateWriteStdinCommandDisplay(b, line);
 
-        // Immutable update: create new object with result
+        const resultText = clampToolReturnText(
+          rawResultText,
+          line.name ?? "tool",
+        );
         const updatedLine = {
           ...line,
           resultText,

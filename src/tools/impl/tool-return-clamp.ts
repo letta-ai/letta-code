@@ -29,6 +29,17 @@ function clampText(text: string, toolName: string): string {
 }
 
 /**
+ * Clamp a tool return string. The TUI display accumulator uses this for
+ * server-side (cloud) tool returns, which never pass through the local tool
+ * manager and would otherwise be pinned unclamped in the line buffers (and
+ * the staticItems copy) for the rest of the session. As with the local clamp,
+ * oversized output is written to an overflow file so nothing is lost.
+ */
+export function clampToolReturnText(text: string, toolName: string): string {
+  return clampText(text, toolName);
+}
+
+/**
  * Bound the total size of a tool return. Strings are clamped directly;
  * multimodal arrays have each text block clamped while image blocks pass
  * through untouched.

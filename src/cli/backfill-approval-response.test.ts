@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import * as fs from "node:fs";
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import { createBuffers } from "@/cli/helpers/accumulator";
 import { backfillBuffers } from "@/cli/helpers/backfill";
+import { LIMITS } from "@/tools/impl/truncation";
 
 describe("backfill approval response handling", () => {
   test("trims trailing newlines from backfilled reasoning messages", () => {
@@ -145,5 +147,47 @@ describe("backfill approval response handling", () => {
       resultOk: true,
       phase: "finished",
     });
+  });
+
+  test("clamps oversized historical cloud tool returns", () => {
+    const buffers = createBuffers();
+    const big = "y".repeat(LIMITS.TOOL_RETURN_MAX_CHARS * 3);
+    const history = [
+      {
+        id: "tool-call-1",
+        message_type: "tool_call_message",
+        tool_call: {
+          tool_call_id: "call-big",
+          name: "web_search",
+          arguments: "{}",
+        },
+      },
+      {
+        id: "tool-return-1",
+        message_type: "tool_return_message",
+        tool_call_id: "call-big",
+        status: "success",
+        tool_return: big,
+      },
+    ] as unknown as Message[];
+
+    backfillBuffers(buffers, history);
+
+    const lineId = buffers.toolCallIdToLineId.get("call-big");
+    const line = lineId ? buffers.byId.get(lineId) : undefined;
+    if (!line || line.kind !== "tool_call") {
+      throw new Error("expected finished tool call line");
+    }
+    const resultText = line.resultText ?? "";
+    expect(resultText).not.toBe(big);
+    expect(resultText.length).toBeLessThan(
+      LIMITS.TOOL_RETURN_MAX_CHARS + 1_000,
+    );
+    expect(resultText).toContain("[Output truncated: showing");
+
+    const match = resultText.match(/Full output written to: (.+\.txt)/);
+    if (match?.[1] && fs.existsSync(match[1])) {
+      fs.unlinkSync(match[1]);
+    }
   });
 });

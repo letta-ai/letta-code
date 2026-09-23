@@ -11,6 +11,7 @@ import {
   SYSTEM_REMINDER_CLOSE,
   SYSTEM_REMINDER_OPEN,
 } from "@/constants";
+import { clampToolReturnText } from "@/tools/impl/tool-return-clamp";
 import { extractTaskNotificationsForDisplay } from "@/utils/task-notifications";
 import type { Buffers } from "./accumulator";
 import { extractCompactionSummary } from "./compaction-utils";
@@ -147,6 +148,12 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
     buffers.byId.set(toolCallLineId, {
       ...existingLine,
       ...result,
+      // Historical cloud tool returns are not clamped server-side; cap what
+      // backfill pins in the line buffers (see clampToolReturnText).
+      resultText: clampToolReturnText(
+        result.resultText,
+        existingLine.name ?? "tool",
+      ),
       phase: "finished",
     });
   };
