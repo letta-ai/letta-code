@@ -26,10 +26,16 @@ import {
 import type { StatuslineUiContext } from "@/cli/display/statusline/types";
 import { bytesToTokens, formatCompact } from "@/cli/helpers/format";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
+import { releaseDiscardedPlaceholders } from "@/cli/helpers/paste-registry";
 import {
   type ExecutionPhase,
   getPhaseVisual,
 } from "@/cli/helpers/phase-visuals";
+import {
+  findCursorLine,
+  getVisualLines,
+  truncateEnd,
+} from "@/cli/helpers/text-layout";
 import { getRandomThinkingTip } from "@/cli/helpers/thinking-messages";
 import { useProductStatusPanels } from "@/cli/hooks/use-product-status-panels";
 import { useShimmerAnimation } from "@/cli/hooks/use-shimmer-animation";
@@ -71,74 +77,6 @@ const EMPTY_COMPOSER_PROMPT_HINTS = [
   'Try "explain what this function does"',
   'Try "review this pull request"',
 ];
-
-function truncateEnd(value: string, maxChars: number): string {
-  if (maxChars <= 0) return "";
-  if (value.length <= maxChars) return value;
-  if (maxChars <= 3) return value.slice(0, maxChars);
-  return `${value.slice(0, maxChars - 3)}...`;
-}
-
-/**
- * Represents a visual line segment in the text.
- * A visual line ends at either a newline character or when it reaches lineWidth.
- */
-interface VisualLine {
-  start: number; // Start index in text
-  end: number; // End index (exclusive, not including \n)
-}
-
-/**
- * Computes visual lines from text, accounting for both hard breaks (\n)
- * and soft wrapping at lineWidth.
- */
-function getVisualLines(text: string, lineWidth: number): VisualLine[] {
-  const lines: VisualLine[] = [];
-  let lineStart = 0;
-
-  for (let i = 0; i <= text.length; i++) {
-    const char = text[i];
-    const lineLength = i - lineStart;
-
-    if (char === "\n" || i === text.length) {
-      // Hard break or end of text
-      lines.push({ start: lineStart, end: i });
-      lineStart = i + 1;
-    } else if (lineLength >= lineWidth && lineWidth > 0) {
-      // Soft wrap - line is full
-      lines.push({ start: lineStart, end: i });
-      lineStart = i;
-    }
-  }
-
-  // Ensure at least one line for empty text
-  if (lines.length === 0) {
-    lines.push({ start: 0, end: 0 });
-  }
-
-  return lines;
-}
-
-/**
- * Finds which visual line the cursor is on and the column within that line.
- */
-function findCursorLine(
-  cursorPos: number,
-  visualLines: VisualLine[],
-): { lineIndex: number; column: number } {
-  for (let i = 0; i < visualLines.length; i++) {
-    const line = visualLines[i];
-    if (line && cursorPos >= line.start && cursorPos <= line.end) {
-      return { lineIndex: i, column: cursorPos - line.start };
-    }
-  }
-  // Fallback to last line
-  const lastLine = visualLines[visualLines.length - 1];
-  return {
-    lineIndex: visualLines.length - 1,
-    column: Math.max(0, cursorPos - (lastLine?.start ?? 0)),
-  };
-}
 
 function formatModeLabel(modeName: string, modeGlyph?: string | null): string {
   if (modeGlyph === "") {
@@ -1139,6 +1077,29 @@ export function Input({
   // Track preferred column for vertical navigation (sticky column behavior)
   const [preferredColumn, setPreferredColumn] = useState<number | null>(null);
 
+  // Display text currently owned by the submit handler; its registry entries
+  // must survive until the handler resolves or restores them.
+  const inFlightSubmitTextRef = useRef<string | null>(null);
+
+  // Free registry entries dropped from the draft (input cleared, placeholder
+  // edited out, draft replaced) unless a live holder still references them:
+  // the parked history draft, queued messages, a pending restored input, or
+  // the in-flight submission. History is excluded on purpose - after a
+  // successful submit the handler frees its entries, so recalled history
+  // placeholders already degrade to literal text.
+  const releaseDiscardedDraftPlaceholders = useCallback(
+    (discarded: string, next: string) => {
+      releaseDiscardedPlaceholders(discarded, [
+        next,
+        temporaryInput,
+        restoredInput,
+        inFlightSubmitTextRef.current,
+        ...(messageQueue?.map((m) => m.text) ?? []),
+      ]);
+    },
+    [temporaryInput, messageQueue, restoredInput],
+  );
+
   // Restore input from error (only if current value is empty)
   useEffect(() => {
     if (restoredInput && value === "") {
@@ -1340,7 +1301,8 @@ export function Input({
       // When input is non-empty, use double-escape to clear
       if (value) {
         if (escapePressed) {
-          // Second escape - clear input
+          // Second escape - clear input (discard: release dropped placeholders)
+          releaseDiscardedDraftPlaceholders(value, "");
           setValue("");
           setEscapePressed(false);
           if (escapeTimerRef.current) clearTimeout(escapeTimerRef.current);
@@ -1390,6 +1352,8 @@ export function Input({
       } else {
         // First CTRL-C - wipe input and start 1-second timer
         // Note: In bash mode, this clears input but keeps bash mode active
+        // Discard: release placeholders dropped with the wiped input
+        releaseDiscardedDraftPlaceholders(value, "");
         setValue("");
         setBashExitArmed(false);
         setCtrlCPressed(true);
@@ -1511,6 +1475,9 @@ export function Input({
           setAtStartBoundary(false);
           const combined = onQueueEdit();
           if (combined) {
+            // The current draft is replaced by the queued texts: release
+            // placeholders only the discarded draft still referenced.
+            releaseDiscardedDraftPlaceholders(value, combined);
             setValue(combined);
             setCursorPos(combined.length);
           }
@@ -1649,6 +1616,9 @@ export function Input({
       setHistoryIndex(-1);
       setTemporaryInput("");
 
+      // Bash runs the display text verbatim and never resolves placeholders,
+      // so the submitted text's registry entries are dead from here on.
+      releaseDiscardedDraftPlaceholders(previousValue, "");
       setValue(""); // Clear immediately for responsiveness
       // Stay in bash mode - user exits with backspace on empty input
       if (onBashSubmit) {
@@ -1670,10 +1640,19 @@ export function Input({
     setTemporaryInput("");
 
     setValue(""); // Clear immediately for responsiveness
-    const result = await onSubmit(previousValue);
-    // If message was NOT submitted (e.g. pending approval), restore it
-    if (!result.submitted) {
-      setValue(previousValue);
+    // Keep the submission's placeholder entries alive while the handler owns
+    // the text (queuing, content-part build, or failure restore).
+    inFlightSubmitTextRef.current = previousValue;
+    try {
+      const result = await onSubmit(previousValue);
+      // If message was NOT submitted (e.g. pending approval), restore it
+      if (!result.submitted) {
+        setValue(previousValue);
+      }
+    } finally {
+      if (inFlightSubmitTextRef.current === previousValue) {
+        inFlightSubmitTextRef.current = null;
+      }
     }
   }, [
     isAutocompleteActive,
@@ -1682,6 +1661,7 @@ export function Input({
     bashRunning,
     onBashSubmit,
     onSubmit,
+    releaseDiscardedDraftPlaceholders,
   ]);
 
   const handleFileAutocompleteApply = useCallback(
@@ -1711,19 +1691,38 @@ export function Input({
       setHistoryIndex(-1);
       setTemporaryInput("");
 
+      // The selected command replaces the current draft
+      releaseDiscardedDraftPlaceholders(value, commandToSubmit);
       setValue(""); // Clear immediately for responsiveness
       await onSubmit(commandToSubmit);
     },
-    [onSubmit],
+    [onSubmit, value, releaseDiscardedDraftPlaceholders],
   );
 
   // Handle slash command autocomplete (Tab key - fill text only)
-  const handleCommandAutocomplete = useCallback((selectedCommand: string) => {
-    // Just fill in the command text without executing
-    // User can then press Enter to execute or continue typing arguments
-    setValue(selectedCommand);
-    setCursorPos(selectedCommand.length);
-  }, []);
+  const handleCommandAutocomplete = useCallback(
+    (selectedCommand: string) => {
+      // Just fill in the command text without executing
+      // User can then press Enter to execute or continue typing arguments
+      // The filled command replaces the current draft
+      releaseDiscardedDraftPlaceholders(value, selectedCommand);
+      setValue(selectedCommand);
+      setCursorPos(selectedCommand.length);
+    },
+    [value, releaseDiscardedDraftPlaceholders],
+  );
+
+  // Genuine draft edits (typing, deletes, paste insertion) can remove
+  // placeholder references from the input. Free entries this edit dropped.
+  // Submit/queue/history handoffs call setValue directly and never pass
+  // through here, so in-flight submissions are not affected.
+  const handleDraftChange = useCallback(
+    (nextValue: string) => {
+      releaseDiscardedDraftPlaceholders(value, nextValue);
+      setValue(nextValue);
+    },
+    [value, releaseDiscardedDraftPlaceholders],
+  );
 
   // Get display name and color for permission mode
   // Memoized to prevent unnecessary footer re-renders
@@ -1939,7 +1938,7 @@ export function Input({
               <Box flexGrow={1} width={contentWidth}>
                 <PasteAwareTextInput
                   value={value}
-                  onChange={setValue}
+                  onChange={handleDraftChange}
                   onSubmit={handleSubmit}
                   placeholder={
                     showInspirationalPlaceholder
@@ -2035,6 +2034,7 @@ export function Input({
     contentWidth,
     value,
     handleSubmit,
+    handleDraftChange,
     showInspirationalPlaceholder,
     cursorPos,
     onEscapeCancel,
