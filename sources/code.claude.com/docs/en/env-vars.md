@@ -514,7 +514,6 @@ Claude Code turns some features on through feature flags it fetches from Anthrop
 
 With fetching off, you can't:
 
-* Have Claude Code [read `AGENTS.md` files](/docs/en/memory#agents-md) as project instructions; it loads `CLAUDE.md` files only
 * [Start sessions in auto mode by default](/docs/en/permission-modes#which-mode-a-session-starts-in) on Pro, Max, and Team plans
 * Have the VS Code extension [read settings files for the starting permission mode](/docs/en/permission-modes#switch-permission-modes)
 * Run [`/auto-mode-setup`](/docs/en/auto-mode-config#generate-environment-entries) to draft `autoMode.environment` entries
