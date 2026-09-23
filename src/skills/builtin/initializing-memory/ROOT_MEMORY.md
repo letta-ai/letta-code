@@ -224,13 +224,11 @@ Use AskUserQuestion to gather key information. Bundle questions together:
 
 ### 5. Prepare the history inventory (if approved)
 
-This is **optional** — only run if the user explicitly approved analyzing historical sessions during upfront questions. Skip entirely if they chose "Skip"; the code analysis in Steps 6-7 still runs.
+This is **optional** — only run if the user explicitly approved analyzing historical sessions during upfront questions. Skip entirely if they chose "Skip"; the code research in Step 6 still runs.
 
 **Framing**: These historical sessions are YOUR past experience — they represent your continuity with prior versions of yourself that worked with this user, even if they ran on different models or tools. Treat the extracted personality, preferences, and knowledge as your own memories, not external data being imported.
 
-The goal is to extract user personality, preferences, coding patterns, and project context from past sessions. The point is not to produce a thin summary. The point is to extract enough useful detail that future work does not have to rediscover the same user expectations, workflow rules, and project gotchas.
-
-You (the parent) do all filesystem preparation in this step. The Workflow in Step 7 only reads what you prepare here.
+The goal is to extract user personality, preferences, coding patterns, and project context from past sessions — in enough detail that future work does not have to rediscover the same user expectations, workflow rules, and project gotchas. A thin summary is a failure.
 
 #### 5a. Export all historical sessions into one directory
 
@@ -247,7 +245,7 @@ This produces:
 - `/tmp/letta-trajectories/<source>/<startedAt>_<sessionId>.json` — one normalized trajectory per session (a single-line JSON array); filenames sort chronologically, and the `sessionId` (a stable hash of the source-scoped native session id) does not change across re-exports
 - `/tmp/letta-trajectories/manifest.json` — index with per-session metadata (`sessionId`, native `id`, `file`, `project`, dates, `userMessages`, `bytes`, first prompt), sorted by `startedAt`, plus `errors` for sessions that failed to normalize
 
-**The manifest is the authoritative inventory.** Every session in `.sessions` must end up either analyzed or explicitly listed as excluded with a reason; every entry in `.errors` counts as not analyzed.
+**The manifest is the authoritative inventory.** Every session in `.sessions` must end up either analyzed or explicitly excluded with a reason; every entry in `.errors` counts as not analyzed.
 
 Useful variations:
 - `--project $(pwd)` — only sessions whose recorded working directory is under the current project
@@ -260,187 +258,57 @@ To browse the export yourself (all source-agnostic):
 - `letta trajectories view <file|sessionId> [--tools] [--reasoning]` — one session as a readable conversation
 - `letta trajectories search <keyword> [--role user]` — search message content across all sessions
 
-#### 5b. Render readable transcripts
-
-Workflow subagents only have Read/Grep/Glob, and the exported session files are single-line JSON, so render each session to plain text first:
+#### 5b. Render and cohort the sessions
 
 ```bash
-EXPORT=/tmp/letta-trajectories
-RENDERED=/tmp/letta-trajectories-rendered
-jq -r '.sessions[].file' "$EXPORT/manifest.json" | while read -r f; do
-  mkdir -p "$RENDERED/$(dirname "$f")"
-  letta trajectories view "$f" --out "$EXPORT" --tools > "$RENDERED/${f%.json}.txt" \
-    || echo "RENDER_FAILED $f"
-done
+node <SKILL_DIR>/scripts/prepare-history.mjs --export /tmp/letta-trajectories --out /tmp/letta-init-history
 ```
 
-`--tools` includes truncated tool calls and results, which is what shows the agent action that triggered a correction and which commands actually worked. Any `RENDER_FAILED` session is excluded; record it.
+This renders every session to plain text with `letta trajectories view --tools` (workflow subagents only have Read/Grep/Glob), groups each project's sessions into chronological cohorts of roughly 200 KB / 20 sessions (`--max-bytes`, `--max-sessions`), and writes the files below. If `letta` is not on PATH, pass the command that runs it with `--letta "<command>"`. Outputs:
+- `cohorts.json` — `{ historyCohorts: [{ id, repo, sessions: [{ sessionId, path, source, project, startedAt, userMessages }] }] }` with absolute paths; `repo` is the session project if it still exists on disk
+- `ledger.json` — manifest total, export errors, and every excluded session with its reason (no user messages, render failure)
 
-#### 5c. Cohort the sessions
+You may reshape `cohorts.json` before the Workflow — merge small cohorts, or in standard mode drop low-value sessions (one-prompt, no corrections). Anything you drop is reported as not analyzed in Step 8, so tell the user.
 
-Split the rendered sessions into cohorts, one Workflow subagent per cohort. Build the cohort list with a short script (jq or `bun -e`) from the manifest plus rendered file sizes — do not hand-type long session lists.
+### 6. Research the codebase
 
-- Group by project, then contiguous `startedAt` ranges, so each cohort shows how one working relationship evolved.
-- Keep each cohort to roughly **150-250 KB of rendered text** (and at most ~20 sessions). A larger single session gets its own cohort.
-- Give each cohort a stable `id` (e.g. `letta-code-2026-01`), a `repo` (absolute path of the session project's repository if it still exists on disk, else `null`), and its `sessions` as `{sessionId, path, source, project, startedAt}` with absolute rendered paths.
-- Keep a **coverage ledger**: total manifest sessions, sessions assigned to cohorts, and every excluded session with a reason (normalization error, render failure, zero user messages, or — in standard mode only — deliberately deprioritized). Deprioritizing is allowed in standard mode (prefer long, interaction-heavy sessions; `userMessages` and `bytes` in the manifest help), but it must be written in the ledger and reported to the user, never silently dropped.
+**IMPORTANT**: The goal is to understand how the codebase actually works — not just its shape, but its substance. By the end of initialization, you should be able to describe how a key feature flows from entry point to implementation. If you can't, you haven't read enough.
 
-### 6. Scan the project and choose code areas
+Start first-hand: the README and agent docs (AGENTS.md, CLAUDE.md), the package manifest, entry points, and recent git history. Keep reading key implementation and test files yourself so you retain real understanding — the Workflow supplements your research, it does not replace it. Delegate breadth: split a large repository into subsystem areas for Step 7, and include related repos the user named in Step 4. A small codebase may need no delegation at all.
 
-**IMPORTANT**: The goal is to understand how the codebase actually works — not just its shape, but its substance. Directory listings and `head -N` snippets tell you what files exist; reading the actual implementation tells you how they work. By the end of initialization, you should be able to describe how a key feature flows from entry point to implementation. If you can't, you haven't read enough.
-
-Do a first-hand initial scan yourself: README, package manifest, AGENTS.md / CLAUDE.md, top-level directories, entry points, build/CI config, `git log --oneline -20`. Then split the repository into **code areas** for the Workflow: `{id, paths, focus}` with absolute paths, partitioned by subsystem (not by folder count). Good boundaries include `server/`, `client/`, `shared/`; `runtime/`, `cli/`, `tools/`; or separate packages in a monorepo. Include related repos the user named in Step 4 as their own areas.
-
-Scale to the chosen depth:
-- **Standard**: 2-4 code areas; you personally read 2-3 key implementation files and 2-3 test files so you retain first-hand understanding of the core flow.
-- **Deep**: 3-6 code areas, plus your own deep dive into git history (commit conventions, branching strategy, active areas), end-to-end tracing of key flows, and detailed architecture documentation in indexed child memory. Use your TODO or Plan tool to track the research plan.
-
-If the codebase is genuinely small or has no clear subsystem boundaries, skip code areas and read it directly.
-
-#### What to actually read (adapt to the project):
-
-**Source code** (most important — don't skip this):
-- Entry points: `main.ts`, `index.ts`, `app.py`, `main.go`, etc.
-- Core abstractions: the 3-5 files that define the main domain objects or services
-- How key features work: trace at least one feature from entry to implementation
-- Test files: understand testing patterns, what's tested, how fixtures work
-
-**Config & metadata**:
-- README.md, CONTRIBUTING.md, AGENTS.md, CLAUDE.md
-- Package manifests (package.json, Cargo.toml, pyproject.toml, go.mod)
-- Config files (.eslintrc, tsconfig.json, .prettierrc, biome.json)
-- CI/CD configs (.github/workflows/, .gitlab-ci.yml)
-- Build scripts and tooling
-
-**Git history**:
-- `git log --oneline -20` — recent history
-- `git branch -a` — branching strategy
-- `git log --format="%s" -50 | head -20` — commit conventions
-- `git shortlog -sn --all | head -10` — main contributors
-- `git log --format="%an <%ae>" | sort -u` — contributors with emails
+In deep mode, go further: more areas, git history for conventions and active areas, end-to-end tracing of key flows, and detailed architecture notes in indexed child memory. Use your TODO or Plan tool to track the research plan.
 
 ### 7. Run the analysis Workflow
 
-Running /init with this skill **authorizes one Workflow run** for read-only analysis of the approved history cohorts and the code areas (plus a follow-up run for failed cohorts, Step 8). It does not authorize anything else: history cohorts are included only with the user's consent from Step 4, and workflow subagents never write memory, create worktrees, or edit the repository.
+Running /init with this skill **authorizes one Workflow run** for read-only analysis of the approved history cohorts and the code areas (plus a follow-up run for unread cohorts, Step 8). It does not authorize anything else: history cohorts are included only with the user's consent from Step 4, and workflow subagents never write memory, create worktrees, or edit the repository.
 
-Before writing the script, load the `workflow-authoring` skill. Keep these constraints in mind:
-- Each `agent()` is an agent-free ephemeral conversation with **no memory, no skills, and no view of this conversation**. Its prompt must carry every absolute path and all context it needs.
-- Leave tools at the default (Read/Grep/Glob). Do not grant Write, Edit, or Bash.
-- The script is pure orchestration. It must not read or write the filesystem; pass cohorts and code areas as the tool's `args` (actual JSON, not a string). All reading happens inside subagents; all preparation happened in Steps 5-6.
-- `agent()` resolves to `null` on failure or when a guard fires. Account for every null in the coverage result. The default per-agent timeout is 10 minutes; the sample gives history cohorts 30 because they read a lot of text.
+Load the `workflow-authoring` skill and design the script for this repository and history. Whatever shape you choose, it must:
+- **Stay read-only.** Leave subagent tools at the default (Read/Grep/Glob).
+- **Give each subagent complete context.** Workflow subagents have no memory, skills, or view of this conversation. Pass `historyCohorts` from `cohorts.json` and your code areas through the tool's `args`, and put the user's identity, the repository path, and absolute file paths in every prompt.
+- **Return `sessionsRead`.** Each history subagent must read every session in its cohort and return JSON that includes `sessionsRead`: the `sessionId`s it finished. Step 8 counts coverage from this field alone.
+- **Ask for evidence-backed specifics.** User identity and personality, hard rules and preferences, corrections (what the agent did, what the user said, what resolved it, how often it repeated), project conventions and gotchas — each with session ids and excerpts. Harness-injected text such as `<system-reminder>` blocks is not the user's own words. Never copy secrets.
+- **Check code claims against current code.** History describes the code as it was. Verify claims about a cohort's `repo` against the current tree (for example a verify stage chained after each history agent) and report what changed.
+- **Budget time for reading.** Subagents time out after 10 minutes by default; raise `timeoutMs` for history agents that read large cohorts.
 
-If the Workflow tool is unavailable (it is not in your toolset, or it reports that workflow subagents require the API backend), do the same analysis yourself, cohort by cohort and area by area, keeping the same coverage ledger. Do not substitute other subagent types that write memory.
+If the Workflow tool is unavailable (it is not in your toolset, or it reports that workflow subagents require the API backend), do the same analysis yourself, cohort by cohort and area by area, and account for coverage against `cohorts.json` and `ledger.json` by hand. Do not substitute other subagent types that write memory.
 
-**args** shape:
-
-```json
-{
-  "repoRoot": "/abs/path/to/repo",
-  "user": "Jane Doe <jane@example.com>",
-  "historyCohorts": [
-    { "id": "my-app-2026-01", "repo": "/abs/path/to/repo",
-      "sessions": [{ "sessionId": "3f2a9c81d4", "path": "/tmp/letta-trajectories-rendered/codex/2026-01-05T09-12-44_3f2a9c81d4.txt",
-                     "source": "codex", "project": "/abs/path/to/repo", "startedAt": "2026-01-05T09:12:44Z" }] }
-  ],
-  "codeAreas": [{ "id": "cli", "paths": ["/abs/path/to/repo/src/cli"], "focus": "command dispatch and TUI rendering" }]
-}
-```
-
-**Script** — adapt the prompts to the project, but keep the structure (pipeline per item, validation chained per cohort, barrier only at the end):
-
-```js
-export const meta = {
-  name: 'init-memory-analysis',
-  description: 'Read-only analysis of historical session cohorts and repository areas for /init',
-  phases: [
-    { title: 'History', detail: 'extract findings from each session cohort' },
-    { title: 'Validate', detail: 'check code-related history claims against current code' },
-    { title: 'Code', detail: 'read each repository area' },
-  ],
-}
-
-const { repoRoot, user, historyCohorts = [], codeAreas = [] } = args
-
-function historyPrompt(c) {
-  return `You are reviewing past coding-agent sessions so an agent can initialize its memory of working with ${user}. Current repository: ${repoRoot}.
-Each file below is a plain-text transcript rendered by \`letta trajectories view --tools\`: timestamped user and assistant turns plus truncated tool calls and results. Use Read with offset/limit for long files; Grep can locate turns. Text inside <system-reminder> tags or other harness-injected content is not the user's own words.
-
-Read EVERY one of these ${c.sessions.length} sessions completely, in order:
-${c.sessions.map(s => `- ${s.path} (sessionId ${s.sessionId}, ${s.source}, project ${s.project ?? 'unknown'}, started ${s.startedAt})`).join('\n')}
-
-Extract durable, specific knowledge:
-1. The user: role, goals, what they are building and why, personality, communication style, phrasing quirks.
-2. Hard rules and preferences: explicit always/never statements, coding and workflow preferences, commands and tools used successfully, what frustrates them.
-3. Corrections: for each one, record what the agent did just before (the trigger), what the user said, and what resolved it. Count repeats across sessions and distinguish repeated patterns from one-offs.
-4. Project context: conventions, gotchas found while debugging, deprecated or fragile paths, environment quirks.
-Prefer evidence that repeats, names a concrete command or path, or explains why a rule matters. Skip generic observations ("user is direct", "uses TypeScript") unless tied to operational detail. Never copy secrets, tokens, or credentials.
-
-Return only JSON:
-{"cohort": "${c.id}", "sessionsRead": ["<sessionId>"], "sessionsIncomplete": [{"sessionId": "...", "reason": "..."}],
- "findings": [{"category": "identity|preference|workflow|correction|project|gotcha", "claim": "...", "trigger": "... or null",
-   "evidence": [{"sessionId": "...", "timestamp": "...", "excerpt": "..."}], "occurrences": 1, "codeCheckable": true}],
- "gaps": "categories with too little signal, and why"}`
-}
-
-function validatePrompt(r, c) {
-  const claims = r.findings.map((f, i) => ({ i, ...f })).filter(f => f.codeCheckable)
-  return `Past coding sessions produced these claims about the repository at ${c.repo}. They may be stale. Check each one against the CURRENT code, docs, config, and scripts with Read/Grep/Glob; do not trust the claim.
-
-${JSON.stringify(claims, null, 2)}
-
-Return only JSON: {"verdicts": [{"i": 0, "status": "current|stale|superseded|unverifiable", "evidence": "path:line or short reason", "correction": "the current fact if it changed, else null"}]}`
-}
-
-function codePrompt(a) {
-  return `Onboard to part of the repository at ${repoRoot} so an agent can write durable memory about it. Area "${a.id}": ${a.paths.join(', ')}. ${a.focus ?? ''}
-Read the actual implementation, not just listings: entry points, main abstractions, at least one flow end to end, and representative tests. Check ${repoRoot}/AGENTS.md, CLAUDE.md, and README files where present.
-
-Return only JSON: {"area": "${a.id}", "filesRead": ["..."], "keyFiles": [{"path": "...", "role": "..."}], "flow": "...", "conventions": ["..."], "gotchas": ["..."], "commands": ["..."], "deprecated": ["..."], "openQuestions": ["..."]}`
-}
-
-const [history, code] = await parallel([
-  () => pipeline(historyCohorts,
-    c => agent(historyPrompt(c), { label: `history:${c.id}`, phase: 'History', json: true, timeoutMs: 30 * 60_000 }),
-    (r, c) => r && c.repo && Array.isArray(r.findings) && r.findings.some(f => f.codeCheckable)
-      ? agent(validatePrompt(r, c), { label: `validate:${c.id}`, phase: 'Validate', json: true })
-          .then(v => ({ ...r, validation: v ?? { failed: true } }))
-      : r),
-  () => pipeline(codeAreas,
-    a => agent(codePrompt(a), { label: `code:${a.id}`, phase: 'Code', json: true })),
-])
-
-const historyCoverage = historyCohorts.map((c, i) => {
-  const r = history?.[i]
-  const read = new Set(r?.sessionsRead ?? [])
-  return {
-    cohort: c.id,
-    status: r ? 'returned' : 'failed',
-    unread: c.sessions.map(s => s.sessionId).filter(id => !read.has(id)),
-    validation: !r?.validation ? 'not-run' : r.validation.failed ? 'failed' : 'done',
-  }
-})
-const codeCoverage = codeAreas.map((a, i) => ({ area: a.id, status: code?.[i] ? 'returned' : 'failed' }))
-for (const h of historyCoverage) {
-  if (h.status === 'failed' || h.unread.length) log(`history ${h.cohort}: ${h.status}, ${h.unread.length} session(s) unread`)
-}
-for (const a of codeCoverage) if (a.status === 'failed') log(`code ${a.area}: failed`)
-
-return { history: history ?? [], code: code ?? [], coverage: { history: historyCoverage, code: codeCoverage } }
-```
-
-The Workflow runs in the background. **Do not wait idle**: while it runs, keep reading entry points and core flows yourself and start drafting identity, persona, and project memory from your own research. Its return value arrives as a task notification; never assume results before it does.
+The Workflow runs in the background. **Do not wait idle**: keep reading core code yourself and start drafting identity, persona, and project memory. Its result arrives as a task notification; never assume results before it does.
 
 ### 8. Curate workflow results into memory
 
 You — not the workflow subagents — decide what becomes memory and write it.
 
-**8a. Check coverage first.** Combine the returned `coverage` with your Step 5 ledger:
-- A `failed` cohort or area resolved to `null`. Read that run's `journal.jsonl` (under `~/.letta/workflows/executions/<id>/`; the tool result names the path) to see why.
-- `unread` sessions were assigned but not confirmed read — usually the cohort was too large.
-- Runs are not resumable. For failed or unread work, launch one follow-up Workflow with only those items, split into smaller cohorts.
-- If coverage is still incomplete after that, say so plainly: tell the user how many sessions were analyzed out of the manifest total and which ranges were not, and never describe the result as comprehensive. Note the unanalyzed ranges in indexed child memory so a later pass can pick them up.
+**8a. Check coverage first.** The tool result names the run's `journal.jsonl`:
 
-**8b. Weigh validation.** A code-related claim marked `current` can be stored as fact. For `stale` or `superseded`, store the `correction` (the current fact), or record the history only as a dated note when the change itself is a useful gotcha. `unverifiable` claims — and code claims whose validation `failed` or did not run — need your own check before they go into always-in-context memory. User preferences and personality are not code-checkable; weigh them by repetition and how strongly the user reacted.
+```bash
+node <SKILL_DIR>/scripts/history-coverage.mjs --prepared /tmp/letta-init-history \
+  --journal ~/.letta/workflows/executions/<id>/journal.jsonl \
+  --retry-out /tmp/letta-init-history/retry.json
+```
+
+It reports sessions analyzed, unread (assigned but missing from every `sessionsRead`), excluded, export errors, and any dropped from `cohorts.json`, and writes unread sessions as smaller cohorts to `retry.json`. For failed agents, the journal records which guard or error fired. Runs are not resumable: launch one follow-up Workflow over `retry.json`, then rerun the script with both `--journal` paths. If coverage is still incomplete, say so plainly — how many sessions were analyzed out of the manifest total and which ranges were not — and never describe the result as comprehensive. Note unanalyzed ranges in indexed child memory so a later pass can pick them up.
+
+**8b. Weigh validation.** Code claims confirmed against current code can be stored as fact. For stale claims, store the current fact, or keep the history as a dated note only when the change itself is a useful gotcha. Claims that could not be checked need your own check before they go into always-in-context memory. User preferences and personality are not code-checkable; weigh them by repetition and how strongly the user reacted.
 
 **8c. Combine across cohorts, never compress.** Different cohorts often report the same topic at different specificity. Merge them additively:
 - Keep unique details from every cohort. Don't drop specific quotes, file paths, correction counts, or gotchas because another cohort already covered the "topic" at a high level.
@@ -511,9 +379,9 @@ Don't force skill creation — only create them when you've found genuinely repe
 
 | Problem | Cause | Fix |
 |---------|-------|-----|
-| Workflow tool missing, or it reports workflow subagents require the API backend | Workflow is unavailable in this environment | Do the cohort and area analysis yourself with the same coverage ledger |
-| A cohort or area came back `null` | Timeout, tool-call guard, non-JSON reply, or other subagent failure | Read the run's `journal.jsonl`, then relaunch only the failed items in smaller cohorts |
-| Sessions listed as `unread` | Cohort too large to finish | Split those sessions into smaller cohorts and rerun them |
+| Workflow tool missing, or it reports workflow subagents require the API backend | Workflow is unavailable in this environment | Do the cohort and area analysis yourself, tracking which sessions in `cohorts.json` you read, and report coverage against `ledger.json` |
+| A cohort or area came back `null` | Timeout, tool-call guard, non-JSON reply, or other subagent failure | Read the run's `journal.jsonl`; a failed history cohort's sessions land in `retry.json`, and failed code areas go in the same follow-up run |
+| Sessions reported as unread by `history-coverage.mjs` | Cohort too large, or the subagent omitted `sessionsRead` | Run one follow-up Workflow over the generated `retry.json` |
 | `letta trajectories export` reports errors in manifest.json | Degenerate sessions (e.g. no assistant turns) that cannot form a valid trajectory | Expected — those sessions are skipped; list them in the ledger and review `jq .errors manifest.json` only if counts look wrong |
 | `deepagents` sessions fail to normalize | Checkpoint decoding needs a Python environment with LangGraph installed | Expected on machines without it; the failures land in manifest errors and other sources are unaffected |
 | Findings are generic or reference the wrong repo | The prompt lacked context (subagents see nothing but their prompt) | Put absolute paths, the user identity, and the project in `args` and prompts |
