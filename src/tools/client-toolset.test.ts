@@ -96,6 +96,7 @@ describe("request-scoped client toolsets", () => {
         "exec_command",
       );
       expect(prepared.preparedToolContext.loadedToolNames).toContain("Monitor");
+      expect(prepared.preparedToolContext.loadedToolNames).toContain("Wake");
     }
   });
 

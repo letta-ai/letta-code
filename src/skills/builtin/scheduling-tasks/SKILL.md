@@ -1,18 +1,20 @@
 ---
 name: scheduling-tasks
-description: Schedules reminders and recurring tasks via the letta cron CLI. Use when the user asks to be reminded of something, wants periodic work or check-ins, or needs to list, inspect, replace, or cancel scheduled tasks.
+description: Advanced scheduling through the letta cron CLI for other conversations, runners, computers, run history, and schedule replacement. Use Wake for ordinary create/list/cancel operations in the current conversation.
 ---
 
 # Scheduling Tasks
 
 This skill lets you create, list, and manage scheduled tasks using the `letta cron` CLI. Scheduled tasks send a prompt to the agent on a timer — useful for reminders, periodic check-ins, and deferred follow-ups.
 
+For ordinary one-shot or recurring work in the current conversation, use Wake instead. Wake is self-bound and covers create, list, and cancel without runner or routing choices.
+
 ## When to Use This Skill
 
-- User asks to be reminded of something ("remind me to X at Y")
-- User wants a recurring check-in ("every morning ask me about X")
-- User wants a one-shot delayed message ("in 30 minutes, check on X")
-- User wants to see or cancel existing scheduled tasks
+- The task should run in a fresh, default, or different conversation
+- The task needs a specific local or Cloud runner or connected computer
+- You need run history, replacement, or broader schedule inspection
+- Wake cannot see or manage the schedule you need
 
 ## Where Schedules Run — Omit the Flags
 

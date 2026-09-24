@@ -1,0 +1,41 @@
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "enum": ["create", "list", "cancel"],
+      "description": "Create a wake, list this conversation's wakes, or cancel one by ID."
+    },
+    "name": {
+      "type": "string",
+      "maxLength": 80,
+      "description": "Short human-readable name. Required for create."
+    },
+    "prompt": {
+      "type": "string",
+      "maxLength": 4000,
+      "description": "Instruction your future turn should act on. Required for create."
+    },
+    "after_seconds": {
+      "type": "integer",
+      "minimum": 60,
+      "maximum": 31536000,
+      "description": "Wake after this many seconds. Preferred for relative delays. Cannot be combined with scheduled_at or cron."
+    },
+    "scheduled_at": {
+      "type": "string",
+      "description": "RFC 3339 timestamp with Z or an explicit UTC offset. Cannot be combined with after_seconds or cron."
+    },
+    "cron": {
+      "type": "string",
+      "description": "Recurring five-field cron expression interpreted in UTC. Minimum interval is 1 hour. Cannot be combined with after_seconds or scheduled_at."
+    },
+    "id": {
+      "type": "string",
+      "description": "Wake ID returned by create or list. Required for cancel."
+    }
+  },
+  "required": ["action"],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}
