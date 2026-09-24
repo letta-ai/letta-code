@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test";
-import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
+import {
+  ACTING_USER_ASSERTION_ENV,
+  ACTING_USER_ID_ENV,
+} from "@/agent/acting-user";
 import { composeSubagentChildEnv } from "@/agent/subagents/subagent-launcher";
 import { buildAgentSendReminder } from "@/backend/api/agent-message";
 import { consumeSubagentLaunch } from "@/utils/subagent-launch-marker";
@@ -12,6 +15,7 @@ test("nested launches use the immediate parent scope without changing the acting
     AGENT_ID: "agent-unrelated",
     CONVERSATION_ID: "conv-unrelated",
     [ACTING_USER_ID_ENV]: "user-owner",
+    [ACTING_USER_ASSERTION_ENV]: "assertion-owner",
   };
   const env = composeSubagentChildEnv({
     parentProcessEnv: inherited,
@@ -19,6 +23,8 @@ test("nested launches use the immediate parent scope without changing the acting
     parentConversationId: "conv-parent",
     launchProfile: "default",
     inheritedPrimaryRoot: null,
+    actingUserId: "user-owner",
+    actingUserAssertion: "assertion-owner",
   });
   expect(
     buildHeadlessSenderReminder(consumeSubagentLaunch(env), undefined, env),
@@ -29,6 +35,7 @@ test("nested launches use the immediate parent scope without changing the acting
     ),
   );
   expect(env[ACTING_USER_ID_ENV]).toBe("user-owner");
+  expect(env[ACTING_USER_ASSERTION_ENV]).toBe("assertion-owner");
   // A CLI command run later by the child is not another launch from its parent.
   expect(
     buildHeadlessSenderReminder(consumeSubagentLaunch(env), undefined, env),

@@ -67,6 +67,14 @@ export function getRuntimeActingUserAssertion(): string | undefined {
   return resolveActingUserAssertion();
 }
 
+export function getRuntimeActingUserAssertionFor(
+  actingUserId: string | undefined,
+): string | undefined {
+  return actingUserId && actingUserId === getRuntimeActingUserId()
+    ? getRuntimeActingUserAssertion()
+    : undefined;
+}
+
 export function runWithRuntimeContext<T>(
   snapshot: RuntimeContextSnapshot,
   fn: () => T,

@@ -1,7 +1,10 @@
-import { resolveActingUserRuntimeScope } from "@/agent/acting-user";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { SYSTEM_REMINDER_OPEN } from "@/constants";
-import { getRuntimeContext } from "@/runtime-context";
+import {
+  getRuntimeActingUserAssertionFor,
+  getRuntimeActingUserId,
+  getRuntimeContext,
+} from "@/runtime-context";
 
 /**
  * Task Notification Formatting
@@ -38,13 +41,12 @@ export function resolveNotificationActingUser(explicitActingUserId?: string): {
   actingUserId?: string;
   actingUserAssertion?: string;
 } {
-  const runtime = resolveActingUserRuntimeScope();
-  const actingUserId = explicitActingUserId ?? runtime.acting_user_id;
+  const currentActingUserId = getRuntimeActingUserId();
+  const actingUserId = explicitActingUserId ?? currentActingUserId;
+  const actingUserAssertion = getRuntimeActingUserAssertionFor(actingUserId);
   return {
     actingUserId,
-    ...(actingUserId === runtime.acting_user_id && runtime.acting_user_assertion
-      ? { actingUserAssertion: runtime.acting_user_assertion }
-      : {}),
+    ...(actingUserAssertion ? { actingUserAssertion } : {}),
   };
 }
 

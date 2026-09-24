@@ -1,9 +1,6 @@
 import { rmSync } from "node:fs";
 import { platform } from "node:os";
-import {
-  resolveActingUserId,
-  resolveActingUserRuntimeScope,
-} from "@/agent/acting-user";
+import { resolveActingUserId } from "@/agent/acting-user";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { detectMemoryFormat } from "@/agent/memory-format";
@@ -28,6 +25,7 @@ import { resolveAllowedMemoryRoots } from "@/permissions/memory-paths";
 import { sessionPermissions } from "@/permissions/session";
 import {
   getCurrentWorkingDirectory,
+  getRuntimeActingUserAssertionFor,
   getRuntimeContext,
   runWithRuntimeContext,
 } from "@/runtime-context";
@@ -388,7 +386,6 @@ async function executeSubagent(
       ),
       USER_CWD: subagentWorkingDirectory,
     };
-    const currentActingUser = resolveActingUserRuntimeScope();
     const childEnv = composeSubagentChildEnv({
       parentProcessEnv,
       listenerConnectionId: getRuntimeContext()?.connectionId,
@@ -404,9 +401,7 @@ async function executeSubagent(
       inheritedBaseUrl,
       actingUserId: actingUserIdOverride,
       actingUserAssertion:
-        actingUserIdOverride === currentActingUser.acting_user_id
-          ? currentActingUser.acting_user_assertion
-          : undefined,
+        getRuntimeActingUserAssertionFor(actingUserIdOverride),
       transcriptPath,
       subagentId,
       subagentName:
