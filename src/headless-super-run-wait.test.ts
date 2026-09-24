@@ -124,6 +124,35 @@ test("an interim waiting final stays pending until the notification continuation
   expect(readMessages).toEqual(["answer-run"]);
 });
 
+test("durable newest run wins when SSE observed it before an older association", async () => {
+  const result = await waitForAcceptedSuperRun(
+    receipt,
+    new AbortController().signal,
+    deps({
+      latest: async () => row(),
+      open: async () =>
+        events(snapshot(true, "run-new"), {
+          type: "super_run_update",
+          data: {
+            ...row("COM"),
+            run_ids: ["run-new", "run-old"],
+          },
+        }),
+      messages: async (id) => [
+        {
+          id: `message-${id}`,
+          date: "now",
+          message_type: "assistant_message",
+          content: id === "run-new" ? "Substantive answer" : "Still waiting",
+          seq_id: 1,
+        },
+      ],
+    }),
+  );
+  expect(result.text).toBe("Substantive answer");
+  expect(result.runIds).toEqual(["run-old", "run-new"]);
+});
+
 test("fast completion reads the exact send's durable run association", async () => {
   const result = await waitForAcceptedSuperRun(
     receipt,

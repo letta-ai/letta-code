@@ -76,7 +76,12 @@ export async function waitForAcceptedSuperRun(
 ): Promise<EnqueuedReply> {
   const runIds = new Set<string>();
   const acceptTerminal = (run: LatestConversationSuperRun) => {
-    for (const id of [...(run.run_ids ?? [])].reverse()) runIds.add(id);
+    if (run.run_ids?.length) {
+      // The exact row's newest-first durable associations outrank the arrival
+      // order of partial SSE mappings, including an already-seen newer run.
+      runIds.clear();
+      for (const id of [...run.run_ids].reverse()) runIds.add(id);
+    }
     return terminal(run, receipt.client_message_id);
   };
   let finished = false;
@@ -130,8 +135,6 @@ export async function waitForAcceptedSuperRun(
           if (status !== undefined) {
             for (const id of getSendRunIds(status, receipt.client_message_id))
               runIds.add(id);
-            // The active feed omits finished sends. Its post-acceptance
-            // snapshot can end tracking even when detailed results are gone.
             // The active feed omits finished sends, but absence is not proof
             // that a queued notification's continuation produced its answer.
             // Only the exact terminal Super Run may close this request.
