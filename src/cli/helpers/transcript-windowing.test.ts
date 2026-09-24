@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createBuffers, type Line } from "./accumulator";
+import { createBuffers, type Line, onChunk } from "./accumulator";
 import {
   commitStaticItems,
   drainBackfilledItems,
@@ -228,5 +228,82 @@ describe("drainBackfilledItems", () => {
     expect(b.order).toEqual([]);
     expect(b.toolCallIdToLineId.size).toBe(0);
     expect(b.assistantCanonicalByMessageId.size).toBe(0);
+  });
+});
+
+describe("drainBackfilledItems with unfinished lines", () => {
+  test("retains pending-approval lines and their tool-call mapping", () => {
+    const b = createBuffers();
+    const emitted = new Set<string>();
+    // Finished history line: drains to static.
+    b.byId.set("u-1", { kind: "user", id: "u-1", text: "hello" });
+    b.order.push("u-1");
+    // Pending approval request at the history tail: must stay live.
+    const pending: Line = {
+      kind: "tool_call",
+      id: "msg-9",
+      toolCallId: "call-9",
+      name: "Bash",
+      argsText: "{}",
+      phase: "ready",
+    };
+    b.byId.set("msg-9", pending);
+    b.order.push("msg-9");
+    b.toolCallIdToLineId.set("call-9", "msg-9");
+
+    const items = drainBackfilledItems(b, emitted);
+
+    expect(items.map((i) => i.id)).toEqual(["u-1"]);
+    expect(emitted.has("u-1")).toBe(true);
+    expect(emitted.has("msg-9")).toBe(false);
+    // The unfinished line and its mapping survive so the tool result can
+    // still attach after the approval is decided.
+    expect(b.order).toEqual(["msg-9"]);
+    expect(b.byId.get("msg-9")).toBe(pending);
+    expect(b.toolCallIdToLineId.get("call-9")).toBe("msg-9");
+  });
+});
+
+describe("evicted-line id reuse", () => {
+  test("a later content block sharing a committed message id gets a fresh line", () => {
+    const b = createBuffers();
+    const emitted = new Set<string>();
+
+    // First text block streams under message id msg-1 / otid ot-1.
+    onChunk(b, {
+      message_type: "assistant_message",
+      id: "msg-1",
+      otid: "ot-1",
+      content: "first block",
+      date: new Date().toISOString(),
+    } as Parameters<typeof onChunk>[1]);
+    const first = b.byId.get("msg-1");
+    expect(first?.kind).toBe("assistant");
+    if (!first || first.kind !== "assistant")
+      throw new Error("expected first block line");
+
+    // The block finishes and commits to static; eviction drops the line.
+    b.byId.set("msg-1", { ...first, phase: "finished" });
+    emitted.add("msg-1");
+    evictCommittedLines(b, emitted);
+    expect(b.byId.has("msg-1")).toBe(false);
+
+    // Anthropic [text, thinking, text]: the second text block shares the
+    // message id but arrives under a new otid. It must get a fresh line —
+    // reusing the emitted id would make the block vanish from the transcript.
+    onChunk(b, {
+      message_type: "assistant_message",
+      id: "msg-1",
+      otid: "ot-2",
+      content: "second block",
+      date: new Date().toISOString(),
+    } as Parameters<typeof onChunk>[1]);
+
+    const second = b.byId.get("ot-2");
+    expect(second?.kind).toBe("assistant");
+    expect(second && "text" in second ? second.text : undefined).toContain(
+      "second block",
+    );
+    expect(b.byId.has("msg-1")).toBe(false);
   });
 });

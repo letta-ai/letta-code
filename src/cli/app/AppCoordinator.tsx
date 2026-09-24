@@ -4583,26 +4583,24 @@ export function App({
   }, []);
 
   // The ID of the last finished shell tool call — used for the ctrl+o hint and handler.
-  // lines is intentionally in the dep array to recompute when buffers change (buffersRef is a ref).
-  // biome-ignore lint/correctness/useExhaustiveDependencies: lines triggers recompute when buffer changes
+  // Scans staticItems (not buffers): finished lines are committed to static and
+  // evicted from the buffers (transcript-windowing), so the static list is the
+  // only place a finished shell call can be found.
   const lastShellToolCallId = useMemo(() => {
-    const order = buffersRef.current.order;
-    for (let i = order.length - 1; i >= 0; i--) {
-      const id = order[i];
-      if (!id) continue;
-      const ln = buffersRef.current.byId.get(id);
+    for (let i = staticItems.length - 1; i >= 0; i--) {
+      const item = staticItems[i];
       if (
-        ln?.kind === "tool_call" &&
-        ln.phase === "finished" &&
-        ln.resultText &&
-        ln.name &&
-        isShellOutputTool(ln.name)
+        item?.kind === "tool_call" &&
+        item.phase === "finished" &&
+        item.resultText &&
+        item.name &&
+        isShellOutputTool(item.name)
       ) {
-        return id;
+        return item.id;
       }
     }
     return null;
-  }, [lines]);
+  }, [staticItems]);
 
   // ctrl+o toggles the last shell tool call output
   const handleCtrlO = useCallback(() => {
