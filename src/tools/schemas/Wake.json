@@ -24,7 +24,7 @@
     },
     "scheduled_at": {
       "type": "string",
-      "description": "RFC 3339 timestamp with Z or an explicit UTC offset. Cannot be combined with after_seconds or cron."
+      "description": "RFC 3339 timestamp with Z or an explicit UTC offset. For calendar requests, resolve the date in the user's inferred timezone and state that timezone in the confirmation. Cannot be combined with after_seconds or cron."
     },
     "cron": {
       "type": "string",

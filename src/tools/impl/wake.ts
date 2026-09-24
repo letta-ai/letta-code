@@ -14,6 +14,7 @@ import {
   deleteTask,
   isValidCron,
   listTasks,
+  parseRfc3339Timestamp,
 } from "@/cron";
 import {
   buildCloudScheduleInput,
@@ -71,7 +72,6 @@ const MAX_ACTIVE_WAKES = 20;
 const MIN_RECURRING_INTERVAL_MS = 60 * 60 * 1000;
 const MAX_NAME_LENGTH = 80;
 const MAX_PROMPT_LENGTH = 4000;
-const RFC3339_WITH_ZONE = /T.*(?:Z|[+-]\d{2}:\d{2})$/i;
 
 function result(
   status: WakeResult["status"],
@@ -148,16 +148,13 @@ function parseCreateTiming(
 
   if (args.scheduled_at !== undefined) {
     const value = args.scheduled_at.trim();
-    if (!RFC3339_WITH_ZONE.test(value)) {
+    const scheduledFor = parseRfc3339Timestamp(value);
+    if (!scheduledFor) {
       throw new Error(
         "Wake scheduled_at must be RFC 3339 with Z or an explicit UTC offset.",
       );
     }
-    const scheduledFor = new Date(value);
-    if (
-      Number.isNaN(scheduledFor.getTime()) ||
-      scheduledFor.getTime() <= now.getTime()
-    ) {
+    if (scheduledFor.getTime() <= now.getTime()) {
       throw new Error("Wake scheduled_at must be a valid future time.");
     }
     return {

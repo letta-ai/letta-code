@@ -5,6 +5,7 @@
  *   --every 5m        → "∗/5 ∗ ∗ ∗ ∗"
  *   --every 2h        → "0 ∗/2 ∗ ∗ ∗"
  *   --every 1d        → "0 0 ∗ ∗ ∗"
+ *   --at "2026-09-24T09:00:00-07:00" → one-shot at an explicit instant
  *   --at "3:00pm"     → one-shot cron + scheduledFor (UTC)
  *   --at "in 45m"     → one-shot cron + scheduledFor (UTC)
  *   --cron "∗/10 ∗ ∗ ∗ ∗"  → passthrough
@@ -121,10 +122,20 @@ export interface ParsedAt {
 
 const TIME_RE = /^(\d{1,2}):(\d{2})\s*(am|pm)$/i;
 const RELATIVE_RE = /^in\s+(\d+)\s*(m|min|mins|minutes?|h|hr|hrs|hours?)$/i;
+const RFC3339_WITH_ZONE_RE =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/i;
+
+/** Parse an RFC 3339 timestamp only when it carries an explicit timezone. */
+export function parseRfc3339Timestamp(input: string): Date | null {
+  const trimmed = input.trim();
+  if (!RFC3339_WITH_ZONE_RE.test(trimmed)) return null;
+  const parsed = new Date(trimmed);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
 
 /**
- * Parse an --at value (e.g. "3:00pm", "in 45m") into an absolute scheduled time.
- * All times are interpreted in the user's local timezone.
+ * Parse an --at value into an absolute scheduled time. RFC 3339 inputs retain
+ * their explicit timezone; bare clock times use the current process timezone.
  */
 export function parseAt(input: string, now?: Date): ParsedAt | null {
   const trimmed = input.trim();
@@ -146,6 +157,16 @@ export function parseAt(input: string, now?: Date): ParsedAt | null {
       scheduledFor,
       cron: dateToCron(scheduledFor),
       note: `Scheduled for ${scheduledFor.toLocaleTimeString()} (in ${value}${unit.charAt(0)})`,
+    };
+  }
+
+  const explicitTime = parseRfc3339Timestamp(trimmed);
+  if (explicitTime) {
+    if (explicitTime.getTime() <= currentTime.getTime()) return null;
+    return {
+      scheduledFor: explicitTime,
+      cron: dateToCron(explicitTime),
+      note: `Scheduled for ${explicitTime.toISOString()}`,
     };
   }
 

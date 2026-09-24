@@ -87,7 +87,8 @@ Usage:
 Add options:
   --prompt <text>        Prompt to send to the agent (required)
   --every <interval>     Recurring interval (e.g. 5m, 2h, 1d)
-  --at <time>            Scheduled time (e.g. "3:00pm", "in 45m")
+  --at <time>            Scheduled time (e.g. "in 45m", "3:00pm", or an
+                         RFC 3339 timestamp with an explicit timezone)
   --once                 Fire once (with --at); default for --at
   --cron <expr>          Raw 5-field cron expression
   --agent <id>           Agent ID (defaults to LETTA_AGENT_ID)
@@ -276,7 +277,7 @@ async function handleAdd(values: CronArgValues): Promise<number> {
     const parsed = parseAt(atValue);
     if (!parsed) {
       console.error(
-        `Error: invalid time "${atValue}". Try: "3:00pm", "in 45m"`,
+        `Error: invalid time "${atValue}". Try: "in 45m", "3:00pm", or "2026-09-24T09:00:00-07:00"`,
       );
       return 1;
     }

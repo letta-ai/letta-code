@@ -131,7 +131,7 @@ describe("Wake", () => {
     });
   });
 
-  test("preserves local fallback placement", async () => {
+  test("preserves local fallback placement and an explicit timezone", async () => {
     let captured: unknown;
     const result = await inScope(() =>
       wake(
@@ -139,7 +139,7 @@ describe("Wake", () => {
           action: "create",
           name: "check worker",
           prompt: "Check the worker.",
-          scheduled_at: "2026-09-24T05:05:00Z",
+          scheduled_at: "2026-09-24T09:00:00-07:00",
         },
         {
           now: () => NOW,
@@ -164,7 +164,7 @@ describe("Wake", () => {
       agent_id: SCOPE.agentId,
       conversation_id: SCOPE.conversationId,
       recurring: false,
-      scheduled_for: new Date("2026-09-24T05:05:00Z"),
+      scheduled_for: new Date("2026-09-24T16:00:00Z"),
     });
     expect(payload(result)).toMatchObject({
       id: "schedule-local",
