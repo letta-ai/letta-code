@@ -219,8 +219,3 @@ An offline saved computer does not trigger a Cloud-sandbox fallback.
   this skill explains the concepts and the common recipes.
 - `finding-agents`: locate agents by name, tags, or search.
 - `working-across-computers`: teleporting and moving files between computers.
-- `dispatching-coding-agents`: driving Claude Code or Codex through their
-  CLIs, including background execution and collecting results. The same
-  pattern applies to a Letta Code instance on another backend: run the
-  waiting-send commands above inside it with a `--from-agent` that exists
-  there.
