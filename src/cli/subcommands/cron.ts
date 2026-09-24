@@ -7,6 +7,7 @@
  *   letta cron add --prompt <text> --cron <expr> [--agent <id>] [--runner local|cloud]
  *   letta cron list [--agent <id>] [--conversation <id>] [--runner local|cloud]
  *   letta cron get <id|name> [--runner local|cloud]
+ *   letta cron update <id|name> [--prompt <text>] [--every <interval>|--at <time>|--cron <expr>] [--runner local|cloud]
  *   letta cron runs --id <id> [--runner local|cloud]
  *   letta cron delete <id|name> [--runner local|cloud]   (alias: remove)
  *   letta cron delete --all [--agent <id>] [--runner local|cloud]
@@ -31,7 +32,6 @@ import { getRuntimeEnvironmentDeviceId } from "@/backend/api/client";
 import type { EnvironmentConnection } from "@/backend/api/environments";
 import { ApiRequestError } from "@/backend/api/request";
 import {
-  type CloudSchedule,
   createCloudSchedule,
   deleteCloudSchedule,
   getCloudSchedule,
@@ -52,6 +52,7 @@ import {
   readCronRunLogEntriesPage,
 } from "@/cron";
 import { getRuntimeActingUserId } from "@/runtime-context";
+import { formatCloudScheduleOutput } from "./cron-output";
 import {
   buildCloudScheduleInput,
   CLOUD_EXECUTION_TARGET,
@@ -70,6 +71,7 @@ import {
   printAmbiguousTaskName,
   resolveTaskName,
 } from "./cron-task-ref";
+import { handleCronUpdate } from "./cron-update";
 
 // ── Usage ───────────────────────────────────────────────────────────
 
@@ -80,6 +82,7 @@ Usage:
   letta cron add --prompt <text> --every <interval> [options]
   letta cron add --prompt <text> --at <time> [--once] [options]
   letta cron add --prompt <text> --cron <expr> [options]
+  letta cron update <id|name> [options]
   letta cron list [options]
   letta cron get <id|name> [--runner local|cloud]
   letta cron runs --id <id> [--limit <n>] [--runner local|cloud]
@@ -115,6 +118,15 @@ Add options:
                          sandbox if the computer is offline at fire time.
                          Managed sandboxes and Desktop-local connections are
                          not currently valid Cloud schedule targets.
+
+Update options:
+  --name, --description, --prompt, --every, --at, --cron, --conversation
+                         Change only supplied fields; keep ID and history.
+                         --once requires --at. Omitted schedule stays unchanged.
+  --runner local|cloud  Select the existing store; never move a task.
+  --computer <id|cloud> Change Cloud execution target; "cloud" clears it.
+                         Omit to preserve routing, even with --runner cloud.
+                         Recurring Cloud cron is UTC; local retains timezone.
 
 List/filter options:
   --agent <id>           Filter by agent ID
@@ -231,39 +243,6 @@ async function lookupEnvironmentForTarget(
   } catch {
     return null;
   }
-}
-
-// ── Cloud output mapping ────────────────────────────────────────────
-
-function extractPromptFromCloudSchedule(
-  schedule: CloudSchedule,
-): string | null {
-  const messages = schedule.message?.messages;
-  if (!Array.isArray(messages)) return null;
-  const first = messages[0];
-  if (!first || typeof first.content !== "string") return null;
-  return first.content;
-}
-
-function formatCloudScheduleOutput(
-  schedule: CloudSchedule,
-): Record<string, unknown> {
-  const targetDeviceId = schedule.target_device_id ?? null;
-  return {
-    id: schedule.id,
-    runner: "cloud",
-    execution_target: targetDeviceId ?? CLOUD_EXECUTION_TARGET,
-    ...(targetDeviceId && { target_device_id: targetDeviceId }),
-    agent_id: schedule.agent_id,
-    conversation_id: schedule.conversation_id ?? "default",
-    name: schedule.name ?? null,
-    description: schedule.description ?? null,
-    prompt: extractPromptFromCloudSchedule(schedule),
-    schedule: schedule.schedule,
-    recurring: schedule.schedule.type === "recurring",
-    next_scheduled_time: schedule.next_scheduled_time,
-    created_at: schedule.created_at ?? null,
-  };
 }
 
 // ── Handlers ────────────────────────────────────────────────────────
@@ -975,6 +954,8 @@ export async function runCronSubcommand(argv: string[]): Promise<number> {
   switch (action) {
     case "add":
       return handleAdd(parsed.values);
+    case "update":
+      return handleCronUpdate(parsed.values, parsed.positionals);
     case "list":
       return handleList(parsed.values);
     case "get":
