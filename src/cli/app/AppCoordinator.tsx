@@ -2952,7 +2952,8 @@ export function App({
           setLlmConfig(agent.llm_config);
           setAgentDescription(agent.description ?? null);
 
-          // Infer preset for footer/selector; null inherits the backend default.
+          // Infer the system prompt id for footer/selector display by matching the
+          // stored agent.system content against our known prompt presets.
           try {
             const agentSystem = (agent as { system?: unknown }).system;
             if (typeof agentSystem === "string") {
@@ -2967,10 +2968,10 @@ export function App({
                 SYSTEM_PROMPTS,
                 SYSTEM_PROMPT,
               } = await import("@/agent/prompt-assets");
-
-              // Allow appended sections when matching presets.
+              // Best-effort preset detection.
+              // Exact match is ideal, but allow prefix-matches because the stored
+              // agent.system may have additional sections appended.
               let matched: string | null = null;
-
               const contentMatches = (content: string): boolean => {
                 const norm = normalize(content);
                 return (
@@ -2979,7 +2980,6 @@ export function App({
                     (sysNorm.startsWith(norm) || norm.startsWith(sysNorm)))
                 );
               };
-
               const promptMatches = (
                 prompt: (typeof SYSTEM_PROMPTS)[number],
               ): boolean =>
