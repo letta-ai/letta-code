@@ -69,11 +69,12 @@ Workflow subagents require the API backend.
 ## Script body hooks
 
 - `agent(prompt, opts?)` → Promise. Spawn one subagent. Resolves to its final
-  text, or with `json: true` to the parsed JSON value (say in the prompt what
-  shape to return — nothing validates it; a reply that is not JSON resolves to
-  `null`). Resolves to `null` on any failure — filter with `.filter(Boolean)`.
-  Options: `label` (display name), `phase` (progress group — use this inside
-  pipeline()/parallel() stages to avoid races on the global phase() state),
+  text, or with `schema` (JSON Schema) to a validated object. Prefer `schema`
+  for shaped results: invalid or missing output is retried, then resolves to
+  `null` with validation detail in the journal. `json: true` still parses
+  without validating; `schema` wins if both are set. Resolves to `null` on
+  failure — filter with `.filter(Boolean)`. Options: `label` (display name),
+  `phase` (progress group — use this inside concurrent stages), `schema`,
   `json`, `model`, `effort` (`'low'` for mechanical stages, higher for the
   hardest verify/judge stages), `allowedTools`, `systemPrompt` (extra system
   prompt for this subagent), `timeoutMs` (default 10 minutes), `maxToolCalls`
