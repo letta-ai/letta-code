@@ -248,6 +248,7 @@ describe("Startup Flow - Invalid Inputs", () => {
 
 describe("Startup Flow - Integration", () => {
   let testAgentId: string | null = null;
+  let testConversationId: string | null = null;
 
   test(
     "--ephemeral uses saved Cloud authentication without creating an agent",
@@ -412,7 +413,7 @@ describe("Startup Flow - Integration", () => {
   );
 
   test(
-    "--conversation with valid ID derives agent and uses conversation",
+    "--new creates a non-default conversation for the selected agent",
     async () => {
       if (!testAgentId) {
         console.log("Skipping: no test agent available");
@@ -442,11 +443,23 @@ describe("Startup Flow - Integration", () => {
       }
       expect(realConversationId).toBeDefined();
       expect(realConversationId).not.toBe("default");
+      testConversationId = realConversationId;
+    },
+    { timeout: 370000 },
+  );
+
+  test(
+    "--conversation with valid ID derives agent and uses conversation",
+    async () => {
+      if (!testAgentId || !testConversationId) {
+        console.log("Skipping: no test conversation available");
+        return;
+      }
 
       const result = await runCliJson(
         [
           "--conversation",
-          realConversationId,
+          testConversationId,
           // The recipient was configured above; enqueue does not reconfigure it.
           "-p",
           "Say OK",
@@ -459,9 +472,9 @@ describe("Startup Flow - Integration", () => {
       expect(result.exitCode).toBe(0);
       const output = result.output;
       expect(output.agent_id).toBe(testAgentId);
-      expect(output.conversation_id).toBe(realConversationId);
+      expect(output.conversation_id).toBe(testConversationId);
     },
-    { timeout: 180000 },
+    { timeout: 370000 },
   );
 
   test(

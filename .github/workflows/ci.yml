@@ -181,7 +181,8 @@ jobs:
     if: ${{ needs.classify.outputs.run_heavy_ci == 'true' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository)) }}
     name: API / ${{ matrix.runner }} / ${{ matrix.shard }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 10
+    # Startup-flow commands can each use a 180-second attempt and one retry.
+    timeout-minutes: 15
     permissions:
       contents: read
     strategy:
