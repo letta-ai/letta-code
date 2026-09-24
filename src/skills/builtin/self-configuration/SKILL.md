@@ -358,32 +358,6 @@ Use skills when the user wants you to become good at a repeatable workflow. Sour
 
 Load `creating-skills` to create or edit a skill. Load `acquiring-skills` when the user asks for a capability you do not already have. Project, global, bundled, and agent-owned skills have different visibility; verify the target scope before changing skills another agent may load.
 
-## Provider connections
-
-Provider connection is agent-executable through `letta connect`. This is separate from `LETTA_API_KEY`, which authenticates Letta API requests. Provider connections may be visible to the same account/server; treat that as credential scope to verify, not as a critical exploit by itself.
-
-Inspect the installed command shape first:
-
-```bash
-letta connect --help
-letta connect <provider> --help
-```
-
-Use the provider-specific command supported by the installed binary. Current examples include:
-
-```bash
-letta connect chatgpt
-letta connect codex --method device-code
-letta connect lmstudio --base-url http://127.0.0.1:1234/v1 --timeout 600s
-letta connect bedrock --method profile --profile "$AWS_PROFILE" --region "$AWS_REGION"
-```
-
-Before connecting, verify whether the target agent/backend is Letta Cloud or local. A provider saved to the wrong backend does not configure the current agent.
-
-Never print provider keys. Shell expansion such as `--api-key "$OPENAI_API_KEY"` still puts the resolved secret in process argv, where process listings may expose it. Prefer the command's interactive secret prompt in a trusted TTY. If no safer input path exists, stop for explicit user approval rather than passing a provider secret autonomously. Browser login, device-code confirmation, or account consent also requires human consent; do not claim success before it completes.
-
-After connecting, verify the provider/model from the same backend and process that will run the agent. Do not infer success from a saved credential alone.
-
 ## Agent secrets
 
 Agent-scoped secrets hold credential values that are referenced as `$NAME` in shell commands. Cloud agents store them server-side on the agent; local agents use OS secure storage. The harness substitutes `$NAME` at exec time and scrubs values from tool output, so values never enter agent context.
