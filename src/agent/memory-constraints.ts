@@ -125,15 +125,10 @@ async function main() {
   const layoutPolicy = readLayoutPolicy();
   activeLayoutPolicy = layoutPolicy;
   const baseArgument = process.argv.indexOf("--base");
-  const configBase = baseArgument >= 0 ? process.argv[baseArgument + 1] : "HEAD";
-  const configChanged = !gitSucceeds([
-    "diff",
-    "--cached",
-    "--quiet",
-    configBase,
-    "--",
-    CONFIG_PATH,
-  ]);
+  const configDiffArgs = ["diff", "--cached", "--quiet"];
+  if (baseArgument >= 0) configDiffArgs.push(process.argv[baseArgument + 1]);
+  configDiffArgs.push("--", CONFIG_PATH);
+  const configChanged = !gitSucceeds(configDiffArgs);
   if (configChanged && process.env[CONFIG_UPDATE_ENV] !== "1") {
     errors.push(
       CONFIG_PATH + " is protected and requires human approval to change",
