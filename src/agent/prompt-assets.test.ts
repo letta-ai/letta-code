@@ -189,6 +189,24 @@ describe("buildSystemPrompt", () => {
     expect(withoutSharedMemoryGuidance(hosted)).toBe(local);
   });
 
+  test("default prompt variants require mid-work replies before more tools", () => {
+    for (const mode of [
+      "standard",
+      "memfs",
+      "root-memfs",
+      "local-memfs",
+    ] as const) {
+      const result = buildSystemPrompt("letta", mode);
+
+      expect(result).toContain(
+        "When a user message arrives while you are working and expects a response from you, reply before your next tool call.",
+      );
+      expect(result).toContain(
+        "A sentence or two is enough and does not require pausing the work.",
+      );
+    }
+  });
+
   test("default prompt variants explain future invocations", () => {
     for (const mode of [
       "standard",
