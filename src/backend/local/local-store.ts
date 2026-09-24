@@ -1479,7 +1479,7 @@ export class LocalStore {
       localMessages.push(localMessage);
     }
     this.localMessagesByConversationKey.set(key, localMessages);
-    this.trimResidentLocalMessages(key);
+    this.trimResidentLocalMessages(conversation.id, agentId);
     this.touchConversationForLocalMessage(
       conversation.id,
       agentId,
@@ -1816,7 +1816,7 @@ export class LocalStore {
     };
     messages.push(message);
     this.localMessagesByConversationKey.set(key, messages);
-    this.trimResidentLocalMessages(key);
+    this.trimResidentLocalMessages(conversation.id, agentId);
     this.touchConversationForLocalMessage(conversation.id, agentId, message);
     return message;
   }
@@ -1993,11 +1993,14 @@ export class LocalStore {
       const normalizedMessages = removeOrphanLocalToolResults(
         transcript.messages.map(normalizeLocalMessageForPi),
       ).messages;
+      // Paged backfill is transient: indexing each sliding window here would
+      // accumulate the whole transcript in messagesById for conversations
+      // that never get marked loaded (rebuild skips them).
       const projected = this.projectLocalMessages(
         normalizedMessages,
         agentId,
         conversationId,
-        { sourceStartIndex: transcript.sourceStartIndex },
+        { sourceStartIndex: transcript.sourceStartIndex, updateIndex: false },
       );
       const cursorFound =
         !before || projected.some((message) => message.id === before);
@@ -2177,12 +2180,11 @@ export class LocalStore {
     ) {
       // Disk-backed conversations keep only a bounded tail resident; older
       // messages are persisted and paged back on demand.
-      messages = messages.slice(
-        messages.length - LOCAL_STORE_RESIDENT_MESSAGE_LIMIT,
-      );
-      this.fullyResidentConversationKeys.delete(key);
+      this.trimResidentLocalMessages(conversationId, agentId);
+      messages = this.localMessagesByConversationKey.get(key) ?? [];
+    } else {
+      this.localMessagesByConversationKey.set(key, messages);
     }
-    this.localMessagesByConversationKey.set(key, messages);
     this.loadedConversationKeys.add(key);
     return messages;
   }
@@ -2248,6 +2250,20 @@ export class LocalStore {
         this.conversationKey(conversationId, resolvedAgentId),
       )?.length ?? 0
     );
+  }
+
+  transcriptIndexSizesForTesting(
+    conversationId: string,
+    agentId?: string,
+  ): { persistedMessages: number; projectedMessages: number } {
+    const resolvedAgentId =
+      agentId ?? this.agentIdForConversation(conversationId);
+    const key = this.conversationKey(conversationId, resolvedAgentId);
+    return {
+      persistedMessages:
+        this.persistedMessageByMessageIdByConversationKey.get(key)?.size ?? 0,
+      projectedMessages: this.messagesById.size,
+    };
   }
 
   /**
@@ -2392,17 +2408,43 @@ export class LocalStore {
     );
   }
 
-  private trimResidentLocalMessages(key: string): void {
+  private trimResidentLocalMessages(
+    conversationId: string,
+    agentId: string,
+  ): void {
     if (this.storageDir === undefined) return;
+    const key = this.conversationKey(conversationId, agentId);
     const messages = this.localMessagesByConversationKey.get(key);
     if (!messages || messages.length <= LOCAL_STORE_RESIDENT_MESSAGE_LIMIT) {
       return;
     }
+    const evicted = messages.slice(
+      0,
+      messages.length - LOCAL_STORE_RESIDENT_MESSAGE_LIMIT,
+    );
     this.localMessagesByConversationKey.set(
       key,
       messages.slice(messages.length - LOCAL_STORE_RESIDENT_MESSAGE_LIMIT),
     );
     this.fullyResidentConversationKeys.delete(key);
+    // Release the evicted messages' projections, or the lookup index would
+    // keep every message that ever passed through the sliding window.
+    for (const message of evicted) {
+      const projected = this.projectLocalMessages(
+        [message],
+        agentId,
+        conversationId,
+        {
+          updateIndex: false,
+        },
+      );
+      for (const [lookupKey] of projectedMessageLookupKeys(
+        message,
+        projected,
+      )) {
+        this.messagesById.delete(lookupKey);
+      }
+    }
   }
 
   private pushLocalMessage(
@@ -2415,7 +2457,7 @@ export class LocalStore {
     const key = this.conversationKey(conversationId, agentId);
     this.localMessagesByConversationKey.set(key, messages);
     this.loadedConversationKeys.add(key);
-    this.trimResidentLocalMessages(key);
+    this.trimResidentLocalMessages(conversationId, agentId);
     this.touchConversationForLocalMessage(conversationId, agentId, message);
     this.persistConversationState(conversationId, agentId, {
       transcript: "append",
@@ -3065,11 +3107,29 @@ export class LocalStore {
   ): void {
     appendFileSync(messagesPath, `${JSON.stringify(entry)}\n`);
     this.sessionEntryIds(key).add(entry.id);
-    this.sessionEntryIdsByMessageId(key).set(entry.message.id, entry.id);
-    this.persistedMessagesByMessageId(key).set(
-      entry.message.id,
-      cloneLocalMessage(entry.message),
-    );
+    // Only the tail window is ever re-persisted, so these dedup indexes stay
+    // bounded to the tail: re-insertions move to the tail, and the oldest
+    // entries are evicted past the resident limit.
+    const entryIdByMessageId = this.sessionEntryIdsByMessageId(key);
+    if (entryIdByMessageId.has(entry.message.id)) {
+      entryIdByMessageId.delete(entry.message.id);
+    }
+    entryIdByMessageId.set(entry.message.id, entry.id);
+    while (entryIdByMessageId.size > LOCAL_STORE_RESIDENT_MESSAGE_LIMIT) {
+      const oldest = entryIdByMessageId.keys().next().value;
+      if (oldest === undefined) break;
+      entryIdByMessageId.delete(oldest);
+    }
+    const persistedMessages = this.persistedMessagesByMessageId(key);
+    if (persistedMessages.has(entry.message.id)) {
+      persistedMessages.delete(entry.message.id);
+    }
+    persistedMessages.set(entry.message.id, cloneLocalMessage(entry.message));
+    while (persistedMessages.size > LOCAL_STORE_RESIDENT_MESSAGE_LIMIT) {
+      const oldest = persistedMessages.keys().next().value;
+      if (oldest === undefined) break;
+      persistedMessages.delete(oldest);
+    }
     this.lastSessionEntryIdByConversationKey.set(key, entry.id);
   }
 

@@ -180,4 +180,36 @@ describe("LocalStore transcript residency", () => {
     seedMessages(store, "default", agentId, total);
     expect(store.listLocalMessages("default", agentId)).toHaveLength(total);
   });
+
+  test("dedup and projection indexes stay bounded as the window slides", async () => {
+    const storageDir = await createStorageDirectory();
+    const agentId = "agent-local-residency-indexes";
+    const store = new LocalStore(agentId, { storageDir });
+    // A single long session: every append touches the dedup index, and
+    // descending list calls index the sliding resident window's projections.
+    const total = 3 * LOCAL_STORE_RESIDENT_MESSAGE_LIMIT;
+    for (let index = 0; index < total; index += 1) {
+      userTurn(store, "default", agentId, `message ${index}`);
+      if (index % 10 === 0) {
+        store.listConversationMessages("default", {
+          agent_id: agentId,
+          order: "desc",
+          limit: 20,
+        } as never);
+      }
+    }
+
+    expect(
+      store.residentLocalMessageCountForTesting("default"),
+    ).toBeLessThanOrEqual(LOCAL_STORE_RESIDENT_MESSAGE_LIMIT);
+    const indexes = store.transcriptIndexSizesForTesting("default");
+    expect(indexes.persistedMessages).toBeLessThanOrEqual(
+      LOCAL_STORE_RESIDENT_MESSAGE_LIMIT,
+    );
+    // Each resident message projects to a handful of lookup keys.
+    expect(indexes.projectedMessages).toBeLessThanOrEqual(
+      4 * LOCAL_STORE_RESIDENT_MESSAGE_LIMIT,
+    );
+    expect(store.listLocalMessages("default", agentId)).toHaveLength(total);
+  });
 });
