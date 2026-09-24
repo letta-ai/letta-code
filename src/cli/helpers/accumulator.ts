@@ -688,19 +688,26 @@ function hasExistingOtidAlias(
   return false;
 }
 
-function resolveAssistantLineId(
+function resolveContentLineId(
   b: Buffers,
   chunk: LettaStreamingResponse & { id?: string; otid?: string },
+  kind: "assistant" | "reasoning",
 ): string | undefined {
   const messageId = typeof chunk.id === "string" ? chunk.id : undefined;
   const otid = typeof chunk.otid === "string" ? chunk.otid : undefined;
+  const canonicalByMessageId =
+    kind === "assistant"
+      ? b.assistantCanonicalByMessageId
+      : b.reasoningCanonicalByMessageId;
+  const canonicalByOtid =
+    kind === "assistant"
+      ? b.assistantCanonicalByOtid
+      : b.reasoningCanonicalByOtid;
 
   const canonicalFromMessageId = messageId
-    ? b.assistantCanonicalByMessageId.get(messageId)
+    ? canonicalByMessageId.get(messageId)
     : undefined;
-  const canonicalFromOtid = otid
-    ? b.assistantCanonicalByOtid.get(otid)
-    : undefined;
+  const canonicalFromOtid = otid ? canonicalByOtid.get(otid) : undefined;
 
   let canonical =
     canonicalFromMessageId || canonicalFromOtid || messageId || otid;
@@ -711,24 +718,27 @@ function resolveAssistantLineId(
   // This handles Anthropic responses like [text, thinking, text] where both
   // text blocks share the same message id but need separate rendering lifecycles
   // (the first gets committed to static before the second starts streaming).
+  // A missing byId entry means the prior block was committed and evicted
+  // (transcript-windowing); a surviving otid alias is then the only evidence,
+  // and is sufficient: it exists only after a prior block streamed.
   if (otid && !canonicalFromOtid && canonicalFromMessageId) {
     const existingLineId = resolveLineIdForKind(
       b,
       canonicalFromMessageId,
-      "assistant",
+      kind,
     );
     const existingLine = b.byId.get(existingLineId);
     const hasPriorOtidAlias = hasExistingOtidAlias(
-      b.assistantCanonicalByOtid,
+      canonicalByOtid,
       canonicalFromMessageId,
       otid,
     );
-    if (
-      existingLine &&
-      existingLine.kind === "assistant" &&
-      "phase" in existingLine &&
-      (existingLine.phase === "finished" || hasPriorOtidAlias)
-    ) {
+    const priorBlockCommitted = existingLine
+      ? existingLine.kind === kind &&
+        "phase" in existingLine &&
+        (existingLine.phase === "finished" || hasPriorOtidAlias)
+      : hasPriorOtidAlias;
+    if (priorBlockCommitted) {
       canonical = otid;
     }
   }
@@ -752,104 +762,38 @@ function resolveAssistantLineId(
 
     debugLog(
       "accumulator",
-      `Assistant id/otid alias conflict resolved to ${canonical}`,
+      `${kind === "assistant" ? "Assistant" : "Reasoning"} id/otid alias conflict resolved to ${canonical}`,
     );
   }
 
   if (messageId) {
-    b.assistantCanonicalByMessageId.set(messageId, canonical);
+    canonicalByMessageId.set(messageId, canonical);
   }
   if (otid) {
-    b.assistantCanonicalByOtid.set(otid, canonical);
+    canonicalByOtid.set(otid, canonical);
   }
 
-  const lineId = resolveLineIdForKind(b, canonical, "assistant");
+  const lineId = resolveLineIdForKind(b, canonical, kind);
   if (lineId !== canonical) {
-    if (messageId) b.assistantCanonicalByMessageId.set(messageId, lineId);
-    if (otid) b.assistantCanonicalByOtid.set(otid, lineId);
+    if (messageId) canonicalByMessageId.set(messageId, lineId);
+    if (otid) canonicalByOtid.set(otid, lineId);
   }
 
   return lineId;
+}
+
+function resolveAssistantLineId(
+  b: Buffers,
+  chunk: LettaStreamingResponse & { id?: string; otid?: string },
+): string | undefined {
+  return resolveContentLineId(b, chunk, "assistant");
 }
 
 function resolveReasoningLineId(
   b: Buffers,
   chunk: LettaStreamingResponse & { id?: string; otid?: string },
 ): string | undefined {
-  const messageId = typeof chunk.id === "string" ? chunk.id : undefined;
-  const otid = typeof chunk.otid === "string" ? chunk.otid : undefined;
-
-  const canonicalFromMessageId = messageId
-    ? b.reasoningCanonicalByMessageId.get(messageId)
-    : undefined;
-  const canonicalFromOtid = otid
-    ? b.reasoningCanonicalByOtid.get(otid)
-    : undefined;
-
-  let canonical =
-    canonicalFromMessageId || canonicalFromOtid || messageId || otid;
-  if (!canonical) return undefined;
-
-  // Same fix as resolveAssistantLineId: when a new otid maps to a
-  // finished reasoning line via messageId, start a fresh canonical.
-  if (otid && !canonicalFromOtid && canonicalFromMessageId) {
-    const existingLineId = resolveLineIdForKind(
-      b,
-      canonicalFromMessageId,
-      "reasoning",
-    );
-    const existingLine = b.byId.get(existingLineId);
-    const hasPriorOtidAlias = hasExistingOtidAlias(
-      b.reasoningCanonicalByOtid,
-      canonicalFromMessageId,
-      otid,
-    );
-    if (
-      existingLine &&
-      existingLine.kind === "reasoning" &&
-      "phase" in existingLine &&
-      (existingLine.phase === "finished" || hasPriorOtidAlias)
-    ) {
-      canonical = otid;
-    }
-  }
-
-  if (
-    canonicalFromMessageId &&
-    canonicalFromOtid &&
-    canonicalFromMessageId !== canonicalFromOtid
-  ) {
-    const messageLineExists = b.byId.has(canonicalFromMessageId);
-    const otidLineExists = b.byId.has(canonicalFromOtid);
-
-    if (messageLineExists && !otidLineExists) {
-      canonical = canonicalFromMessageId;
-    } else if (otidLineExists && !messageLineExists) {
-      canonical = canonicalFromOtid;
-    } else {
-      canonical = canonicalFromMessageId;
-    }
-
-    debugLog(
-      "accumulator",
-      `Reasoning id/otid alias conflict resolved to ${canonical}`,
-    );
-  }
-
-  if (messageId) {
-    b.reasoningCanonicalByMessageId.set(messageId, canonical);
-  }
-  if (otid) {
-    b.reasoningCanonicalByOtid.set(otid, canonical);
-  }
-
-  const lineId = resolveLineIdForKind(b, canonical, "reasoning");
-  if (lineId !== canonical) {
-    if (messageId) b.reasoningCanonicalByMessageId.set(messageId, lineId);
-    if (otid) b.reasoningCanonicalByOtid.set(otid, lineId);
-  }
-
-  return lineId;
+  return resolveContentLineId(b, chunk, "reasoning");
 }
 
 /**

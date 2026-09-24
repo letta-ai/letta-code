@@ -249,26 +249,50 @@ export function evictCommittedLines(
   capSet(emittedIds, EMITTED_IDS_CAP);
 }
 
+/** Mirrors commitEligibleLines eligibility: which backfilled lines are in
+ * their final state and can move to static. Unfinished lines (e.g. a pending
+ * approval request at the history tail) must stay live so their result can
+ * still attach and commit later. */
+function isFinalBackfilledLine(line: Line): boolean {
+  if (!("phase" in line)) return true;
+  return line.phase === undefined || line.phase === "finished";
+}
+
 /**
  * Drain backfilled history lines into static items and reset the per-line
  * buffer state. Used by resume/conversation-switch paths that bulk-commit
  * history; without the reset, every backfilled line would stay resident in
- * the accumulator for the rest of the session.
+ * the accumulator for the rest of the session. Unfinished lines (pending
+ * approvals, in-flight tool calls) stay in the buffers with their id
+ * mappings, matching the startup resume path: their results attach on
+ * arrival and commit through commitEligibleLines.
  */
 export function drainBackfilledItems<T extends { kind: string; id: string }>(
   b: Buffers,
   emittedIds: Set<string>,
 ): T[] {
   const items: T[] = [];
+  const retained: string[] = [];
   for (const id of b.order) {
     const line = b.byId.get(id);
     if (!line) continue;
+    if (!isFinalBackfilledLine(line)) {
+      retained.push(id);
+      continue;
+    }
     emittedIds.add(id);
     items.push({ ...line } as T);
+    b.byId.delete(id);
   }
-  b.byId.clear();
-  b.order = [];
+  b.order = retained;
+  // Rebuild per-line maps so only retained (unfinished) lines keep entries.
   b.toolCallIdToLineId.clear();
+  for (const id of retained) {
+    const line = b.byId.get(id);
+    if (line?.kind === "tool_call" && line.toolCallId) {
+      b.toolCallIdToLineId.set(line.toolCallId, id);
+    }
+  }
   b.userLineIdByOtid.clear();
   b.assistantCanonicalByMessageId.clear();
   b.assistantCanonicalByOtid.clear();
