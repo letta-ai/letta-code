@@ -19,9 +19,10 @@ const OPERATION_HEADS = [
   "CHERRY_PICK_HEAD",
   "REVERT_HEAD",
 ];
+export type MemoryRepairKind = "conflict" | "invalid";
 
 /**
- * The attempt recorded for a conflict. It is claimed under the checkout
+ * The attempt recorded for a repairable memory state. It is claimed under the checkout
  * lease, inside post-turn sync or a worker's sync, and advanced or forgotten
  * by the repair worker launched for it. Every later transition names the
  * attempt's token, so a worker that fails or is cancelled late can only
@@ -73,6 +74,24 @@ async function describeMemoryConflict(
     OPERATION_HEADS.map((name) => readOptional(join(gitDir, name))),
   );
   return [head, ...heads].join("\n");
+}
+
+/** Invalid history stays the same repair attempt while local HEAD is rewritten. */
+async function describeInvalidMemoryHistory(
+  memoryDir: string,
+): Promise<string> {
+  try {
+    const { stdout } = await promisify(execFile)("git", [
+      "-C",
+      memoryDir,
+      "rev-parse",
+      "--verify",
+      "@{u}",
+    ]);
+    return `invalid\n${stdout.trim()}`;
+  } catch {
+    return "invalid";
+  }
 }
 
 async function attemptPath(memoryDir: string): Promise<string> {
@@ -131,8 +150,8 @@ async function transition(
 }
 
 /**
- * Record that automatic repair is being attempted for the current conflict,
- * unless the same unfinished operation is already handled: a repair worker
+ * Record that automatic repair is being attempted for the current conflict or
+ * invalid history, unless the same state is already handled: a repair worker
  * has run and could not resolve it (reported to the agent instead of
  * relaunched every turn), or a repair is still in progress in a running
  * process. An attempt whose process is gone before the worker ran (crashed)
@@ -141,6 +160,7 @@ async function transition(
  */
 export async function claimMemoryConflictRepair(
   memoryDir: string,
+  kind: MemoryRepairKind = "conflict",
 ): Promise<MemoryConflictRepairClaim> {
   const token = randomUUID();
   let path: string;
@@ -148,7 +168,10 @@ export async function claimMemoryConflictRepair(
   try {
     const gitDir = await getMemoryGitDir(memoryDir);
     path = join(gitDir, ATTEMPT_FILE);
-    signature = await describeMemoryConflict(memoryDir, gitDir);
+    signature =
+      kind === "invalid"
+        ? await describeInvalidMemoryHistory(memoryDir)
+        : await describeMemoryConflict(memoryDir, gitDir);
   } catch {
     return { status: "claimed", token };
   }
@@ -185,7 +208,7 @@ export async function claimMemoryConflictRepair(
   );
 }
 
-/** The repair worker ran; the same conflict is not attempted again automatically. */
+/** The repair worker ran; the same state is not attempted again automatically. */
 export async function completeMemoryConflictRepair(
   memoryDir: string,
   token: string,

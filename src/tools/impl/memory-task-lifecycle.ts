@@ -135,7 +135,8 @@ export async function ensureMemoryRepair(
 ): Promise<boolean> {
   let claim: MemoryConflictRepairClaim | undefined;
   try {
-    claim = await claimRepair(params.result.memoryDir);
+    const kind = params.result.status === "invalid" ? "invalid" : "conflict";
+    claim = await claimRepair(params.result.memoryDir, kind);
     if (claim.status !== "claimed") return claim.status === "in_progress";
     const invalid = params.result.status === "invalid";
     spawn({

@@ -138,7 +138,8 @@ async function main() {
   const hasConfig = gitSucceeds(["cat-file", "-e", ":" + CONFIG_PATH]);
   const hasV2Root =
     layoutPolicy === "root-marker" &&
-    (gitSucceeds(["cat-file", "-e", ":MEMORY.md"]) ||
+    (AUDIT_MODE ||
+      gitSucceeds(["cat-file", "-e", ":MEMORY.md"]) ||
       gitSucceeds(["cat-file", "-e", "HEAD:MEMORY.md"]));
   if (!hasConfig && !hasV2Root) {
     report(errors);
@@ -190,7 +191,7 @@ async function main() {
         child.on("close", (code) => code === 0 ? resolveBytes(Buffer.concat(chunks)) : reject(new Error(stderr || "git show failed for " + path)));
       });
     },
-  }, { config, layout: layoutPolicy, requireRootMarker: gitSucceeds(["cat-file", "-e", "HEAD:MEMORY.md"]) }));
+  }, { config, layout: layoutPolicy, requireRootMarker: AUDIT_MODE || gitSucceeds(["cat-file", "-e", "HEAD:MEMORY.md"]) }));
 
   report(errors);
 }
