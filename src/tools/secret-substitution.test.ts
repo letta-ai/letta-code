@@ -437,6 +437,64 @@ describe("ambient runtime credential redaction", () => {
     }
   });
 
+  test("background command stores and reports a pre-rotation credential safely", async () => {
+    const queued: QueuedMessage[] = [];
+    setMessageQueueAdder((message) => queued.push(message));
+    const held = createHeldCredentialScript();
+    const prepared = await prepareToolExecutionContextForSpecificTools(
+      ["Bash"],
+      {
+        runtimeContext: {
+          agentId: AGENT_A,
+          workingDirectory: process.cwd(),
+        },
+        workingDirectory: process.cwd(),
+      },
+    );
+
+    try {
+      const started = await executeTool(
+        "Bash",
+        { command: held.command, run_in_background: true, timeout: 5000 },
+        { toolContextId: prepared.contextId },
+      );
+      const bashId = asText(started.toolReturn).match(/bash_\d+/)?.[0];
+      expect(bashId).toBeDefined();
+      if (!bashId) throw new Error("Expected background Bash id");
+
+      await waitForMarker(held.marker);
+      process.env.LETTA_API_KEY = "sk-lettatest-ROTATED-credential-9876543210";
+      held.release();
+      for (let attempt = 0; attempt < 200; attempt++) {
+        if (
+          backgroundProcesses.get(bashId)?.status !== "running" &&
+          queued.length
+        )
+          break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+
+      const processState = backgroundProcesses.get(bashId);
+      expect(processState?.status).toBe("completed");
+      expect(Object.values(processState?.secrets ?? {})).toContain(
+        AMBIENT_SENTINEL,
+      );
+      const outputFile = processState?.outputFile;
+      expect(outputFile).toBeDefined();
+      if (!outputFile) throw new Error("Expected background output file");
+      expect(readFileSync(outputFile, "utf8")).not.toContain(AMBIENT_SENTINEL);
+      expect(queued.length).toBeGreaterThan(0);
+      for (const message of queued) {
+        expect(JSON.stringify(message)).not.toContain(AMBIENT_SENTINEL);
+      }
+    } finally {
+      held.release();
+      setMessageQueueAdder(null);
+      releaseToolExecutionContext(prepared.contextId);
+      held.cleanup();
+    }
+  }, 10_000);
+
   test("hook output retains the credential captured before rotation", async () => {
     const held = createHeldCredentialScript();
     const execution = executeCommandHook(
