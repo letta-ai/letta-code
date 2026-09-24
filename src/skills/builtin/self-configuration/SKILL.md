@@ -61,6 +61,14 @@ The command uses CLI auth and respects `LETTA_API_KEY`/`LETTA_BASE_URL`, not age
 
 Use `letta model list` for available models; credits and quota buckets do not guarantee inference availability. `letta usage` does not include session token statistics; the interactive `/usage` command is a separate surface. If either lookup fails, the command exits nonzero without partial usage. Treat that as unavailable data, not zero credits or exhausted quota.
 
+### Billing path when changing models
+
+The same model can often be reached through more than one route: a connected subscription (for example a ChatGPT or Grok plan), the Letta plan (`letta/*`), or per-token billing against organization credits or the user's own API key. Users choose provider names, so a handle's prefix does not reliably show which route it bills through.
+
+Before switching models, consider how the current model is billed and keep the user on that route unless they asked to change it. Use the current handle, the labels in `letta model list`, and anything the user has said about billing as evidence. If several available handles serve the requested model and you cannot tell which one uses the user's subscription, list the candidates and ask before switching. Do not silently move a user from a subscription to per-token billing.
+
+`letta model list --byok` includes both connected subscriptions and user API keys, so it does not separate the two. `letta usage` covers only Letta credits and `letta/*` quota, not connected subscriptions.
+
 ### Harness and server settings
 
 Use the secret-safe local/runtime report for harness settings, permissions, and backend diagnostics:
