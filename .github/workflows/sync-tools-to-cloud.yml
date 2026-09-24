@@ -52,7 +52,9 @@ jobs:
         id: prompt
         env:
           EXPECTED_GITHUB_LOGIN: ${{ steps.github-identity.outputs.login }}
+          GH_TOKEN: ${{ github.token }}
           OWNERS: ${{ vars.SYNC_TOOLS_OWNERS }}
+          SOURCE_AUTHOR_SLACK_IDS: ${{ vars.SYNC_TOOLS_SOURCE_AUTHOR_SLACK_IDS }}
         run: |
           jq -e '
             type == "array" and length > 0 and
@@ -61,9 +63,19 @@ jobs:
               ((.slack | type) == "string" and (.slack | test("^U[A-Z0-9]+$")))
             )
           ' <<< "$OWNERS" > /dev/null
+          jq -e '
+            type == "object" and length > 0 and
+            all(to_entries[];
+              ((.key | type) == "string" and (.key | length) > 0) and
+              ((.value | type) == "string" and (.value | test("^U[A-Z0-9]+$")))
+            )
+          ' <<< "$SOURCE_AUTHOR_SLACK_IDS" > /dev/null
           github_reviewers=$(jq -r 'map(.github) | join(",")' <<< "$OWNERS")
-          owner_count=$(jq 'length' <<< "$OWNERS")
-          slack_owner_id=$(jq -r --argjson index "$((RANDOM % owner_count))" '.[$index].slack' <<< "$OWNERS")
+          source_author=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json author --jq '.author.login')
+          if ! slack_owner_id=$(jq -er --arg author "$source_author" '.[$author] // empty' <<< "$SOURCE_AUTHOR_SLACK_IDS"); then
+            echo "No Slack ID configured for source PR author $source_author in SYNC_TOOLS_SOURCE_AUTHOR_SLACK_IDS" >&2
+            exit 1
+          fi
           source_marker="Sync-tools-source: letta-ai/letta-code#$PR_NUMBER"
           branch_name="sync/tools-from-letta-code-pr-$PR_NUMBER-$GITHUB_RUN_ID"
           {
@@ -76,7 +88,8 @@ jobs:
             echo "- Workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
             echo "- Expected GitHub login: $EXPECTED_GITHUB_LOGIN"
             echo "- GitHub reviewers: $github_reviewers"
-            echo "- Slack owner ID: $slack_owner_id"
+            echo "- Source PR author: $source_author"
+            echo "- Source author Slack ID: $slack_owner_id"
             echo "- Source marker: $source_marker"
             echo "- Branch name: $branch_name"
             echo "AMELIA_PROMPT_EOF"
