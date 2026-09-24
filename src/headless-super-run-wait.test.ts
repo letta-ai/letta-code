@@ -24,6 +24,12 @@ function row(status = "STR"): LatestConversationSuperRun {
     completed_at: status === "COM" ? "now" : null,
     cancelled_at: status === "CAN" ? "now" : null,
     errored_at: null,
+    last_loop_state: JSON.stringify({
+      status: "WAITING_ON_INPUT",
+      active_run_ids: [],
+      request_completion_version: 1,
+      pending_request_client_message_ids: [],
+    }),
   };
 }
 function snapshot(active = true, run = "run-1"): ConversationStatusEvent {
@@ -55,8 +61,9 @@ async function* events(
   for (const value of values) yield value;
 }
 function deps(extra: Partial<SuperRunWaitDeps> = {}): SuperRunWaitDeps {
+  let reads = 0;
   return {
-    latest: async () => row(),
+    latest: async () => (++reads === 1 ? row() : row("COM")),
     open: async () => events(snapshot(), snapshot(false)),
     messages: async () => [
       {
@@ -81,19 +88,58 @@ test("existing active-to-idle feed yields one completion and collects an observe
   expect(result.text).toBe("Done");
   expect(result.runIds).toEqual(["run-1"]);
 });
-test("fast completion before subscription still produces a notification without a mandatory reply", async () => {
+test("an interim waiting final stays pending until the notification continuation replies", async () => {
+  const readMessages: string[] = [];
   const result = await waitForAcceptedSuperRun(
     receipt,
     new AbortController().signal,
     deps({
-      latest: async () => row("COM"),
+      latest: async () => row(),
+      open: async () =>
+        events(
+          snapshot(true, "waiting-run"),
+          snapshot(false),
+          snapshot(true, "answer-run"),
+          { type: "super_run_update", data: row("COM") },
+        ),
+      messages: async (id) => {
+        readMessages.push(id);
+        return [
+          {
+            id: id === "waiting-run" ? "waiting" : "answer",
+            date: "now",
+            message_type: "assistant_message",
+            content:
+              id === "waiting-run"
+                ? "Still waiting on recall"
+                : "Here are the PRs",
+            seq_id: 1,
+          },
+        ];
+      },
+    }),
+  );
+  expect(result.text).toBe("Here are the PRs");
+  expect(result.runIds).toEqual(["waiting-run", "answer-run"]);
+  expect(readMessages).toEqual(["answer-run"]);
+});
+
+test("fast completion reads the exact send's durable run association", async () => {
+  const result = await waitForAcceptedSuperRun(
+    receipt,
+    new AbortController().signal,
+    deps({
+      latest: async (_conversationId, _signal, superRunId) => {
+        expect(superRunId).toBe("sr-1");
+        return { ...row("COM"), run_ids: ["run-fast"] };
+      },
       open: async () => {
         throw new Error("must not subscribe");
       },
     }),
   );
-  expect(result.text).toContain("Remote task finished");
-  expect(result.text).toContain("letta messages list");
+  expect(result.text).toBe("Done");
+  expect(result.runIds).toEqual(["run-fast"]);
 });
 test("missing reply after completion never becomes execution failure", async () => {
   const result = await waitForAcceptedSuperRun(
@@ -115,7 +161,7 @@ test("transient status-read failure retries, and listener recovery remains activ
     deps({
       latest: async () => {
         if (++reads === 1) throw new Error("fetch failed");
-        return row();
+        return reads >= 3 ? row("COM") : row();
       },
       open: async () =>
         events(
@@ -132,18 +178,26 @@ test("transient status-read failure retries, and listener recovery remains activ
   expect(reads).toBeGreaterThan(1);
   expect(result.runIds).toEqual(["quota-failed", "recovered"]);
 });
-test("default conversation completes from its existing Cloud snapshot, without unsupported GET", async () => {
+test("default conversation recovers a fast exact completion by agent and run ID", async () => {
   const result = await waitForAcceptedSuperRun(
     { ...receipt, conversation_id: "default" },
     new AbortController().signal,
     deps({
-      latest: async () => {
-        throw new Error("unsupported default GET");
+      latest: async (conversationId, _signal, superRunId, agentId) => {
+        expect([conversationId, superRunId, agentId]).toEqual([
+          "default",
+          "sr-1",
+          "agent-1",
+        ]);
+        return { ...row("COM"), run_ids: ["run-default"] };
       },
-      open: async () => events(snapshot(false)),
+      open: async () => {
+        throw new Error("must not subscribe");
+      },
     }),
   );
-  expect(result.text).toContain("--conversation default");
+  expect(result.text).toBe("Done");
+  expect(result.runIds).toEqual(["run-default"]);
 });
 test("a newer send does not make us wait on unrelated work or collect its messages", async () => {
   const result = await waitForAcceptedSuperRun(
@@ -151,7 +205,8 @@ test("a newer send does not make us wait on unrelated work or collect its messag
     new AbortController().signal,
     deps({
       latest: async () => ({ ...row(), id: "newer-send" }),
-      open: async () => events(snapshot(false)),
+      open: async () =>
+        events(snapshot(false), { type: "super_run_update", data: row("COM") }),
       messages: async () => {
         throw new Error("must not read unrelated messages");
       },
@@ -161,10 +216,12 @@ test("a newer send does not make us wait on unrelated work or collect its messag
 });
 test("dropped stream reconnects and preserves observed run mappings", async () => {
   let opens = 0;
+  let reads = 0;
   const result = await waitForAcceptedSuperRun(
     receipt,
     new AbortController().signal,
     deps({
+      latest: async () => (++reads < 3 ? row() : row("COM")),
       open: async () =>
         ++opens === 1 ? events(snapshot()) : events(snapshot(false)),
     }),
@@ -172,6 +229,16 @@ test("dropped stream reconnects and preserves observed run mappings", async () =
   expect(opens).toBe(2);
   expect(result.text).toBe("Done");
 });
+test("an older listener's completed run is not treated as a final delegated report", async () => {
+  await expect(
+    waitForAcceptedSuperRun(
+      receipt,
+      new AbortController().signal,
+      deps({ latest: async () => ({ ...row("COM"), last_loop_state: null }) }),
+    ),
+  ).rejects.toThrow("without request-scoped completion");
+});
+
 test("explicit terminal cancellation is reported", async () => {
   await expect(
     waitForAcceptedSuperRun(

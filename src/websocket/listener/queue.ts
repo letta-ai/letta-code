@@ -122,8 +122,18 @@ function buildQueuedTurnMessage(
   }
   if (messages.length === 0) return null;
   const scopeItem = batch.items[0];
+  const originClientMessageIds = [
+    ...new Set(
+      batch.items.flatMap((item) =>
+        item.kind === "task_notification"
+          ? (item.originClientMessageIds ?? [])
+          : [],
+      ),
+    ),
+  ];
   return {
     type: "message",
+    ...(originClientMessageIds.length > 0 ? { originClientMessageIds } : {}),
     agentId: scopeItem?.agentId ?? runtime.agentId ?? undefined,
     conversationId: scopeItem?.conversationId ?? runtime.conversationId,
     ...template,
@@ -141,7 +151,9 @@ function getDequeuedClientMessageIds(
     const queuedMessage = runtime.queuedMessagesByItemId.get(item.id);
     const inboundClientMessageIds = queuedMessage
       ? getInboundClientMessageIds(queuedMessage)
-      : [];
+      : item.kind === "task_notification"
+        ? (item.originClientMessageIds ?? [])
+        : [];
     for (const clientMessageId of inboundClientMessageIds.length > 0
       ? inboundClientMessageIds
       : item.clientMessageId

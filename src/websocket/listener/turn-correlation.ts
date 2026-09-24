@@ -44,8 +44,10 @@ export function createTurnCorrelation(
 ): TurnCorrelation {
   const clientMessageIds = new Set([
     ...getInboundClientMessageIds(message),
+    ...(message.originClientMessageIds ?? []),
     ...takeDequeuedClientMessageIds(runtime, batchId),
   ]);
+  runtime.activeTurnClientMessageIds = [...clientMessageIds];
   let correlationsByConversation =
     runtime.listener.clientMessageIdsByRunIdByConversation;
   if (!correlationsByConversation) {
@@ -80,6 +82,7 @@ export function createTurnCorrelation(
       )) {
         clientMessageIds.add(clientMessageId);
       }
+      runtime.activeTurnClientMessageIds = [...clientMessageIds];
     },
     observeRun(runId) {
       if (clientMessageIds.size === 0) return;

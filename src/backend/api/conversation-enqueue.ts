@@ -156,16 +156,30 @@ export interface LatestConversationSuperRun {
   completed_at: string | null;
   cancelled_at: string | null;
   errored_at: string | null;
+  last_loop_state?: string | null;
+  run_ids?: string[];
 }
 
 export async function getLatestConversationSuperRun(
   conversationId: string,
   signal?: AbortSignal,
+  superRunId?: string,
+  agentId?: string,
 ): Promise<LatestConversationSuperRun> {
   return apiRequest(
     "GET",
     `/v1/conversations/${encodeURIComponent(conversationId)}/super-run`,
     undefined,
-    { signal },
+    {
+      signal,
+      ...(superRunId || agentId
+        ? {
+            query: {
+              ...(superRunId ? { super_run_id: superRunId } : {}),
+              ...(agentId ? { agent_id: agentId } : {}),
+            },
+          }
+        : {}),
+    },
   );
 }

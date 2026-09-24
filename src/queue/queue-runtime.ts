@@ -58,6 +58,8 @@ export type MessageQueueItem = QueueItemBase & {
 
 export type TaskNotificationQueueItem = QueueItemBase & {
   kind: "task_notification";
+  /** Original sends served by this continuation, distinct from its fresh OTID. */
+  originClientMessageIds?: string[];
   /** XML notification string. */
   text: string;
 };

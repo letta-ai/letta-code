@@ -17,6 +17,8 @@ export type QueuedMessage = {
   agentId?: string;
   /** Optional parent conversation scope for routing in listener mode. */
   conversationId?: string;
+  /** Original sends served by the notification's continuation (not its OTID). */
+  originClientMessageIds?: string[];
   /** Authenticated human responsible for a notification-triggered turn. */
   actingUserId?: string;
   /** QueueRuntime-assigned ID for targeted remove/edit operations. */

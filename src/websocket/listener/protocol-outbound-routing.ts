@@ -1,4 +1,18 @@
+import type { WsProtocolMessage } from "@/types/protocol_v2";
 import type { OutboundFrameClass } from "./outbound-wire";
+
+export function getProtocolPerfKey(
+  message: Omit<
+    WsProtocolMessage,
+    "runtime" | "event_seq" | "emitted_at" | "idempotency_key"
+  >,
+): string {
+  if (message.type === "stream_delta" && "delta" in message) {
+    const delta = message.delta as { message_type?: unknown };
+    return `${message.type}:${String(delta.message_type ?? "unknown")}`;
+  }
+  return message.type;
+}
 
 type RoutableMessage = {
   type: string;

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { runWithRuntimeContext } from "@/runtime-context";
 import { bash } from "@/tools/impl/bash";
 import { kill_bash } from "@/tools/impl/kill-bash";
 import { backgroundProcesses } from "@/tools/impl/process_manager";
@@ -140,6 +141,40 @@ describe("Background bash completion notifications", () => {
     expect(notification.text).toContain("automatic finish");
     await new Promise((resolve) => setTimeout(resolve, 150));
     expect(notificationsFor(bashId)).toHaveLength(1);
+  });
+
+  test("auto-yielded Bash carries the original send but explicit background is detached", async () => {
+    const scope = { agentId: "agent-a", conversationId: "conv-a" };
+    const yieldedId = await runWithRuntimeContext(
+      { ...scope, originClientMessageIds: ["cm-original"] },
+      () =>
+        startAutomaticBackground({
+          command: command("setTimeout(() => console.log('finished'), 100)"),
+          parentScope: scope,
+        }),
+    );
+    expect(backgroundProcesses.get(yieldedId)?.originClientMessageIds).toEqual([
+      "cm-original",
+    ]);
+    expect(
+      (await waitForNotification(yieldedId)).originClientMessageIds,
+    ).toEqual(["cm-original"]);
+    const detachedId = await runWithRuntimeContext(
+      { ...scope, originClientMessageIds: ["cm-original"] },
+      () =>
+        startBackground({
+          command: command(
+            "setTimeout(() => console.log('server ready'), 100)",
+          ),
+          parentScope: scope,
+        }),
+    );
+    expect(
+      backgroundProcesses.get(detachedId)?.originClientMessageIds,
+    ).toBeUndefined();
+    expect(
+      (await waitForNotification(detachedId)).originClientMessageIds,
+    ).toBeUndefined();
   });
 
   test("reports failure after an ordinary command yields", async () => {

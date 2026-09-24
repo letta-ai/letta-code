@@ -93,6 +93,8 @@ export interface IncomingMessage {
   conversationId?: string;
   /** Queue this message as its own turn; never merge with other messages. */
   noCoalesce?: boolean;
+  /** Sends resumed by a task notification; notification messages retain fresh OTIDs. */
+  originClientMessageIds?: string[];
   /**
    * This turn's output is owned by an in-process caller (the OpenAI-compatible
    * HTTP bridge), not by a relay WebSocket client. Such turns are consumed by
@@ -252,6 +254,8 @@ export type ConversationRuntime = {
   queuedMessagesByItemId: Map<string, IncomingMessage>;
   /** Exact send identities carried by each batch removed from the queue. */
   dequeuedClientMessageIdsByBatchId: Map<string, string[]>;
+  /** Sends whose notification-triggered turn has begun but not finished. */
+  activeTurnClientMessageIds: string[];
   queuePumpActive: boolean;
   queuePumpScheduled: boolean;
   pendingTurns: number;

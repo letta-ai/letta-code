@@ -125,6 +125,7 @@ describe("queued notification identity", () => {
       kind: "task_notification",
       source: "task_notification",
       text: "<task-notification>done</task-notification>",
+      originClientMessageIds: ["cm-original"],
       agentId: "agent-1",
       conversationId: "conv-1",
     } as Omit<TaskNotificationQueueItem, "id" | "enqueuedAt">);
@@ -134,6 +135,16 @@ describe("queued notification identity", () => {
       | MessageCreate
       | undefined;
     expect(message?.otid).toBeString();
+    expect(message?.otid).not.toBe("cm-original");
+    expect(consumed?.queuedTurn.originClientMessageIds).toEqual([
+      "cm-original",
+    ]);
+    expect(
+      consumed?.dequeuedBatch &&
+        runtime.dequeuedClientMessageIdsByBatchId.get(
+          consumed.dequeuedBatch.batchId,
+        ),
+    ).toContain("cm-original");
 
     const socket = new MockSocket();
     if (consumed) {

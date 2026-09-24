@@ -25,6 +25,7 @@ import { debugWarn, isDebugEnabled } from "@/utils/debug";
 import { detectShellContext } from "@/utils/shell-context";
 import { publishChannelRuntimeToolsForTurn } from "./channel-runtime-tools";
 import { getInboundImageFailureModes } from "./image-policy";
+import { getInboundClientMessageIds } from "./inbound-queue";
 import { consumeInterruptQueue } from "./interrupts";
 import {
   createListenerAgentModContext,
@@ -317,6 +318,12 @@ export async function prepareListenerTurn(params: {
     agentId,
     conversationId,
     actingUserId: msg.actingUserId,
+    originClientMessageIds: [
+      ...new Set([
+        ...getInboundClientMessageIds(msg),
+        ...(msg.originClientMessageIds ?? []),
+      ]),
+    ],
     clientToolset: msg.clientToolset,
     clientToolAllowlist: msg.clientToolAllowlist,
     // Headless clients (SDK sessions, automation) opt out of tools that

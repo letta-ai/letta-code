@@ -23,13 +23,18 @@ export interface SuperRunWaitDeps {
   latest: (
     conversationId: string,
     signal: AbortSignal,
+    superRunId: string,
+    agentId: string,
   ) => Promise<LatestConversationSuperRun>;
   messages: (runId: string, signal: AbortSignal) => Promise<Message[]>;
   pollMs?: number;
 }
 class RemoteExecutionFailed extends Error {}
 
-function terminal(run: LatestConversationSuperRun): boolean {
+function terminal(
+  run: LatestConversationSuperRun,
+  clientMessageId: string,
+): boolean {
   if (run.status === "CAN" || run.cancelled_at)
     throw new RemoteExecutionFailed(
       `Remote Super Run ${run.id} was cancelled.`,
@@ -38,6 +43,27 @@ function terminal(run: LatestConversationSuperRun): boolean {
   if (run.errored_at)
     throw new RemoteExecutionFailed(
       `Remote Super Run ${run.id} finished with an error.`,
+    );
+  let loop: {
+    status?: string;
+    request_completion_version?: number;
+    pending_request_client_message_ids?: string[];
+  } | null = null;
+  try {
+    loop = run.last_loop_state ? JSON.parse(run.last_loop_state) : null;
+  } catch {
+    // Unknown loop evidence cannot prove delegated work finished.
+  }
+  if (
+    loop?.request_completion_version !== 1 ||
+    loop.status !== "WAITING_ON_INPUT"
+  )
+    throw new RemoteExecutionFailed(
+      `Remote Super Run ${run.id} completed on a listener without request-scoped completion; its reply may be an interim update. Upgrade the listener before relying on this result.`,
+    );
+  if (loop.pending_request_client_message_ids?.includes(clientMessageId))
+    throw new RemoteExecutionFailed(
+      `Remote Super Run ${run.id} closed while request-scoped work remained; inspect its conversation before using this reply.`,
     );
   return true;
 }
@@ -49,6 +75,10 @@ export async function waitForAcceptedSuperRun(
   deps: SuperRunWaitDeps,
 ): Promise<EnqueuedReply> {
   const runIds = new Set<string>();
+  const acceptTerminal = (run: LatestConversationSuperRun) => {
+    for (const id of [...(run.run_ids ?? [])].reverse()) runIds.add(id);
+    return terminal(run, receipt.client_message_id);
+  };
   let finished = false;
   let failures = 0;
   while (!finished) {
@@ -57,19 +87,19 @@ export async function waitForAcceptedSuperRun(
     const abort = () => controller.abort();
     signal.addEventListener("abort", abort, { once: true });
     try {
-      // Recover fast completion using the existing latest-send read. A later
-      // send's outcome must never be mistaken for this input's outcome.
-      if (receipt.conversation_id !== "default") {
-        try {
-          const latest = await deps.latest(
-            receipt.conversation_id,
-            AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
-          );
-          if (latest.id === receipt.super_run_id) finished = terminal(latest);
-        } catch (error) {
-          if (!(error instanceof ApiRequestError && error.status === 404))
-            throw error;
-        }
+      // The exact row's associations recover a completion missed before SSE.
+      try {
+        const latest = await deps.latest(
+          receipt.conversation_id,
+          AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
+          receipt.super_run_id,
+          receipt.agent_id,
+        );
+        if (latest.id === receipt.super_run_id)
+          finished = acceptTerminal(latest);
+      } catch (error) {
+        if (!(error instanceof ApiRequestError && error.status === 404))
+          throw error;
       }
       if (finished) break;
       const openTimeout = setTimeout(() => controller.abort(), 30_000);
@@ -94,7 +124,7 @@ export async function waitForAcceptedSuperRun(
         const value = event.value;
         if (value.type === "super_run_update") {
           if (value.data.id === receipt.super_run_id)
-            finished = terminal(value.data);
+            finished = acceptTerminal(value.data);
         } else {
           const status = getConversationStatus(value, receipt.conversation_id);
           if (status !== undefined) {
@@ -102,9 +132,23 @@ export async function waitForAcceptedSuperRun(
               runIds.add(id);
             // The active feed omits finished sends. Its post-acceptance
             // snapshot can end tracking even when detailed results are gone.
-            finished = !status?.active_super_runs.some(
-              (run) => run.id === receipt.super_run_id,
-            );
+            // The active feed omits finished sends, but absence is not proof
+            // that a queued notification's continuation produced its answer.
+            // Only the exact terminal Super Run may close this request.
+            if (
+              !status?.active_super_runs.some(
+                (run) => run.id === receipt.super_run_id,
+              )
+            ) {
+              const latest = await deps.latest(
+                receipt.conversation_id,
+                AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
+                receipt.super_run_id,
+                receipt.agent_id,
+              );
+              if (latest.id === receipt.super_run_id)
+                finished = acceptTerminal(latest);
+            }
           }
         }
         if (!finished) {
@@ -129,17 +173,17 @@ export async function waitForAcceptedSuperRun(
   }
   // The combined idle update can precede the row's terminal update on the
   // same stream. Best-effort read its stored classification before reporting.
-  if (receipt.conversation_id !== "default") {
-    try {
-      const latest = await deps.latest(
-        receipt.conversation_id,
-        AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
-      );
-      if (latest.id === receipt.super_run_id) terminal(latest);
-    } catch (error) {
-      signal.throwIfAborted();
-      if (error instanceof RemoteExecutionFailed) throw error;
-    }
+  try {
+    const latest = await deps.latest(
+      receipt.conversation_id,
+      AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
+      receipt.super_run_id,
+      receipt.agent_id,
+    );
+    if (latest.id === receipt.super_run_id) acceptTerminal(latest);
+  } catch (error) {
+    signal.throwIfAborted();
+    if (error instanceof RemoteExecutionFailed) throw error;
   }
   const runId = [...runIds].at(-1);
   if (runId) {

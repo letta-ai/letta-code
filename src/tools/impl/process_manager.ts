@@ -38,6 +38,8 @@ export interface BackgroundProcess {
   totalStderrLines?: number;
   cleanupTimer?: TimerHandle;
   runtimeScope?: BackgroundRuntimeScope;
+  /** Client sends waiting for this yielded process and its continuation. */
+  originClientMessageIds?: string[];
   /** Authenticated Cloud user responsible for launching this process. */
   actingUserId?: string;
   kind?: "monitor" | "workflow";
@@ -67,6 +69,8 @@ export interface BackgroundTask {
   completion?: Promise<void>;
   cleanupTimer?: TimerHandle;
   runtimeScope?: BackgroundRuntimeScope;
+  /** Client sends awaiting this task's notification continuation. */
+  originClientMessageIds?: string[];
   /** Authenticated Cloud user responsible for launching this task. */
   actingUserId?: string;
 }

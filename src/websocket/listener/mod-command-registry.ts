@@ -36,6 +36,14 @@ export function listListenerModCommands(
   );
 }
 
+export function buildModCommandsField(
+  listener: ListenerRuntime,
+  agentId?: string | null,
+): { mod_commands?: ModCommandInfo[] } {
+  const modCommands = listListenerModCommands(listener, agentId);
+  return modCommands.length > 0 ? { mod_commands: modCommands } : {};
+}
+
 export function getListenerModCommand(
   runtime: ListenerRuntime,
   commandId: string,

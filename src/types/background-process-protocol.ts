@@ -5,6 +5,8 @@ export interface BashBackgroundProcessSummary {
   started_at_ms: number | null;
   status: string;
   exit_code: number | null;
+  /** Present only for auto-yielded foreground Bash. */
+  origin_client_message_ids?: string[];
 }
 
 export interface AgentTaskBackgroundProcessSummary {
@@ -15,6 +17,7 @@ export interface AgentTaskBackgroundProcessSummary {
   started_at_ms: number;
   status: string;
   subagent_id: string | null;
+  origin_client_message_ids?: string[];
   error?: string;
 }
 

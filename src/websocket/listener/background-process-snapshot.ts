@@ -6,6 +6,7 @@ import {
   backgroundTasks,
 } from "@/tools/impl/process_manager";
 import type { BackgroundProcessSummary } from "@/types/protocol_v2";
+import type { ConversationRuntime } from "./types";
 
 function belongsToRuntime(
   entry: BackgroundProcess | BackgroundTask,
@@ -43,6 +44,9 @@ export function buildBackgroundProcessSnapshot(
       started_at_ms: proc.startTime?.getTime() ?? null,
       status: proc.status,
       exit_code: proc.exitCode,
+      ...(proc.originClientMessageIds?.length
+        ? { origin_client_message_ids: proc.originClientMessageIds }
+        : {}),
     }));
 
   const monitorProcesses: BackgroundProcessSummary[] = Array.from(
@@ -97,6 +101,9 @@ export function buildBackgroundProcessSnapshot(
       started_at_ms: task.startTime.getTime(),
       status: task.status,
       subagent_id: task.subagentId,
+      ...(task.originClientMessageIds?.length
+        ? { origin_client_message_ids: task.originClientMessageIds }
+        : {}),
       ...(task.error ? { error: task.error } : {}),
     }));
 
@@ -110,4 +117,31 @@ export function buildBackgroundProcessSnapshot(
     const bStart = b.started_at_ms ?? 0;
     return bStart - aStart;
   });
+}
+
+/** One send stays pending across a yielded task, queued notification and turn. */
+export function pendingRequestClientMessageIds(
+  agentId: string | null,
+  conversationId: string,
+  runtime: ConversationRuntime | null | undefined,
+): string[] {
+  return [
+    ...new Set([
+      ...buildBackgroundProcessSnapshot(agentId, conversationId).flatMap(
+        (process) =>
+          "origin_client_message_ids" in process
+            ? (process.origin_client_message_ids ?? [])
+            : [],
+      ),
+      ...(runtime?.queueRuntime.items ?? []).flatMap((item) =>
+        item.kind === "task_notification"
+          ? (item.originClientMessageIds ?? [])
+          : [],
+      ),
+      ...Array.from(
+        runtime?.dequeuedClientMessageIdsByBatchId.values() ?? [],
+      ).flat(),
+      ...(runtime?.activeTurnClientMessageIds ?? []),
+    ]),
+  ];
 }

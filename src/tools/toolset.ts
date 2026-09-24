@@ -287,6 +287,7 @@ export async function prepareToolExecutionContextForScope(params: {
   agentId: string | null;
   conversationId?: string | null;
   actingUserId?: string;
+  originClientMessageIds?: string[];
   overrideModel?: string | null;
   overrideProviderType?: string | null;
   cachedEffectiveModel?: string | null;
@@ -311,6 +312,7 @@ export async function prepareToolExecutionContextForScope(params: {
     agentId,
     conversationId,
     actingUserId,
+    originClientMessageIds,
     overrideModel,
     overrideProviderType,
     cachedEffectiveModel,
@@ -419,6 +421,7 @@ export async function prepareToolExecutionContextForScope(params: {
       agentName: (agent as AgentState | null)?.name ?? null,
       conversationId: scopedConversationId,
       ...(actingUserId ? { actingUserId } : {}),
+      ...(originClientMessageIds ? { originClientMessageIds } : {}),
       workingDirectory,
       ...(skillsDirectory !== undefined ? { skillsDirectory } : {}),
       ...(skillSources !== undefined ? { skillSources } : {}),

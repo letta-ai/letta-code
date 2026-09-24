@@ -45,6 +45,7 @@ export function finishListenerTurn(
   if (!transition.finished) {
     return transition;
   }
+  runtime.activeTurnClientMessageIds = [];
   if (options.stopReason === "end_turn" || options.stopReason === "cancelled") {
     forgetListenerWork(runtime);
   }

@@ -1,9 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import type { TaskNotificationQueueItem } from "@/queue/queue-runtime";
 import {
   type BackgroundProcess,
   backgroundProcesses,
 } from "@/tools/impl/process_manager";
-import { buildBackgroundProcessSnapshot } from "./background-process-snapshot";
+import {
+  buildBackgroundProcessSnapshot,
+  pendingRequestClientMessageIds,
+} from "./background-process-snapshot";
+import { getOrCreateScopedRuntime } from "./conversation-runtime";
+import { createRuntime } from "./lifecycle";
 
 afterEach(() => {
   backgroundProcesses.clear();
@@ -52,6 +58,49 @@ describe("background process snapshots", () => {
       },
     ]);
     expect(buildBackgroundProcessSnapshot("agent-b", "conv-a")).toEqual([]);
+  });
+
+  test("keeps a yielded command pending across its notification handoff", () => {
+    const runtime = getOrCreateScopedRuntime(
+      createRuntime(),
+      "agent-a",
+      "conv-a",
+    );
+    const pending = () =>
+      pendingRequestClientMessageIds("agent-a", "conv-a", runtime);
+    backgroundProcesses.set("bash-yielded", {
+      process: { kill: () => {} },
+      command: "slow check",
+      status: "running",
+      exitCode: null,
+      runtimeScope: { agentId: "agent-a", conversationId: "conv-a" },
+      originClientMessageIds: ["cm-original"],
+    });
+    backgroundProcesses.set("bash-server", {
+      process: { kill: () => {} },
+      command: "dev server",
+      status: "running",
+      exitCode: null,
+      runtimeScope: { agentId: "agent-a", conversationId: "conv-a" },
+    });
+    expect(pending()).toEqual(["cm-original"]);
+    const yielded = backgroundProcesses.get("bash-yielded");
+    if (!yielded) throw new Error("missing yielded process");
+    yielded.status = "completed";
+    runtime.queueRuntime.enqueue({
+      kind: "task_notification",
+      source: "task_notification",
+      text: "done",
+      agentId: "agent-a",
+      conversationId: "conv-a",
+      originClientMessageIds: ["cm-original"],
+    } as Omit<TaskNotificationQueueItem, "id" | "enqueuedAt">);
+    expect(pending()).toEqual(["cm-original"]);
+    runtime.queueRuntime.consumeItems(1);
+    runtime.activeTurnClientMessageIds = ["cm-original"];
+    expect(pending()).toEqual(["cm-original"]);
+    runtime.activeTurnClientMessageIds = [];
+    expect(pending()).toEqual([]);
   });
 
   test("reports running workflows separately from Bash processes", () => {

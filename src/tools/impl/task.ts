@@ -351,6 +351,9 @@ export function spawnBackgroundSubagentTask(
     outputFile,
     abortController,
     runtimeScope: resolvedParentScope,
+    originClientMessageIds: shouldEmitCompletionNotification
+      ? getRuntimeContext()?.originClientMessageIds
+      : undefined,
     actingUserId,
   };
   backgroundTasks.set(taskId, bgTask);
@@ -439,7 +442,6 @@ export function spawnBackgroundSubagentTask(
         resolvedParentScope?.conversationId,
       );
 
-      bgTask.status = result.success ? "completed" : "failed";
       if (result.error) {
         bgTask.error = result.error;
       }
@@ -522,8 +524,11 @@ export function spawnBackgroundSubagentTask(
           agentId: resolvedParentScope?.agentId,
           conversationId: resolvedParentScope?.conversationId,
           actingUserId: bgTask.actingUserId,
+          originClientMessageIds: bgTask.originClientMessageIds,
         });
       }
+      // The queued notification now owns the origin until its continuation ends.
+      bgTask.status = result.success ? "completed" : "failed";
 
       runSubagentStopHooksFn(
         subagentType,
@@ -539,7 +544,6 @@ export function spawnBackgroundSubagentTask(
     .catch(async (error) => {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
-      bgTask.status = "failed";
       bgTask.error = errorMessage;
       appendToOutputFile(
         outputFile,
@@ -608,8 +612,10 @@ export function spawnBackgroundSubagentTask(
           agentId: resolvedParentScope?.agentId,
           conversationId: resolvedParentScope?.conversationId,
           actingUserId: bgTask.actingUserId,
+          originClientMessageIds: bgTask.originClientMessageIds,
         });
       }
+      bgTask.status = "failed";
 
       runSubagentStopHooksFn(
         subagentType,
@@ -650,7 +656,6 @@ export async function launchSubagent(
   const resolvedParentScope = resolveNotificationScope(args.parentScope);
   signal?.throwIfAborted();
 
-  // Determine if deploying an existing agent
   const isDeployingExisting = Boolean(args.agent_id || args.conversation_id);
   const requestedType = args.subagent_type;
   const externalCodingAgentType =
@@ -674,12 +679,9 @@ export async function launchSubagent(
   const mcpValidationError = validateExternalCodingAgentMcpOptions(args.mcp);
   if (mcpValidationError) return { success: false, error: mcpValidationError };
 
-  // Validate required parameters based on mode
   if (isDeployingExisting) {
-    // Deploying existing agent: prompt and description required, subagent_type optional
     validateRequiredParams(args, ["prompt", "description"], "Task");
   } else {
-    // Creating new agent: subagent_type, prompt, and description required
     validateRequiredParams(
       args,
       ["subagent_type", "prompt", "description"],
@@ -687,7 +689,6 @@ export async function launchSubagent(
     );
   }
 
-  // Extract validated params
   const inputPrompt = args.prompt as string;
   const description = args.description as string;
 

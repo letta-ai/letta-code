@@ -14,6 +14,9 @@ export interface LoopState {
   active_run_ids: string[];
   /** Exact send identities consumed by each recently observed run. */
   client_message_ids_by_run_id?: Record<string, string[]>;
+  /** Present only when this listener tracks request-scoped delegated work. */
+  request_completion_version?: 1;
+  pending_request_client_message_ids?: string[];
   /**
    * Tool call ids currently executing client-side. Populated only while
    * `status` is `EXECUTING_CLIENT_SIDE_TOOL`; empty otherwise. Lets

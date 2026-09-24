@@ -26,6 +26,8 @@ export interface RuntimeContextSnapshot {
   agentId?: string | null;
   agentName?: string | null;
   conversationId?: string | null;
+  /** Client sends served by this turn, inherited by blocking delegated work. */
+  originClientMessageIds?: string[];
   /** Authenticated Cloud user responsible for the current turn. */
   actingUserId?: string;
   skillsDirectory?: string | null;

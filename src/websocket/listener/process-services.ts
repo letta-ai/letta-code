@@ -11,6 +11,7 @@ import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import {
   emitDeviceStatusIfOpen,
   emitProtocolV2Message,
+  emitRuntimeStateUpdates,
   emitStreamDelta,
   emitSubagentStateIfOpen,
 } from "./protocol-outbound";
@@ -86,7 +87,7 @@ export function installProcessEventRouting(params: {
   runtime._unsubscribeBackgroundProcessState =
     subscribeToBackgroundProcessState((scope) => {
       if (scope) {
-        emitDeviceStatusIfOpen(runtime, {
+        emitRuntimeStateUpdates(runtime, {
           agent_id: scope.agentId,
           conversation_id: scope.conversationId,
         });
@@ -117,6 +118,7 @@ export function installProcessEventRouting(params: {
       kind: "task_notification",
       source: "task_notification",
       text: queuedMessage.text,
+      originClientMessageIds: queuedMessage.originClientMessageIds,
       actingUserId: queuedMessage.actingUserId,
       agentId: queuedMessage.agentId ?? targetRuntime.agentId ?? undefined,
       conversationId:

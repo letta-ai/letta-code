@@ -3,6 +3,7 @@ import { INTERRUPTED_BY_USER } from "@/constants";
 import {
   consumeWorkingDirectoryRecovery,
   getCurrentWorkingDirectory,
+  getRuntimeContext,
 } from "@/runtime-context";
 import {
   captureSecretRedactions,
@@ -26,6 +27,7 @@ import {
   backgroundProcesses,
   createBackgroundOutputFile,
   getNextBashId,
+  notifyBackgroundProcessStateChanged,
   scheduleBackgroundProcessCleanup,
   scrubCompletedBackgroundOutput,
 } from "./process_manager.js";
@@ -289,6 +291,7 @@ function notifyBackgroundCompletion(params: {
       usage: durationMs === undefined ? undefined : { durationMs },
     }),
     ...scope,
+    originClientMessageIds: bgProcess.originClientMessageIds,
   });
 }
 
@@ -529,6 +532,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
         status,
         detail,
       });
+      notifyBackgroundProcessStateChanged(notificationScope);
       scheduleBackgroundProcessCleanup(bashId);
     });
   };
@@ -610,7 +614,11 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       };
     }
 
+    bgProcess.runtimeScope = notificationScope;
+    bgProcess.originClientMessageIds =
+      getRuntimeContext()?.originClientMessageIds;
     backgroundProcesses.set(bashId, bgProcess);
+    notifyBackgroundProcessStateChanged(notificationScope);
     notifyWhenSettled();
     return {
       content: [

@@ -14,7 +14,6 @@ import type {
   DeviceStatusUpdateMessage,
   LoopState,
   LoopStatusUpdateMessage,
-  ModCommandInfo,
   QueueMessage,
   QueueUpdateMessage,
   RetryMessage,
@@ -29,7 +28,10 @@ import type {
 } from "@/types/protocol_v2";
 import type { QueueRemovalTransition } from "@/types/queue-update-protocol";
 import { debugLog, debugWarn } from "@/utils/debug";
-import { buildBackgroundProcessSnapshot } from "./background-process-snapshot";
+import {
+  buildBackgroundProcessSnapshot,
+  pendingRequestClientMessageIds,
+} from "./background-process-snapshot";
 import {
   nextListenerConnectionEventSeq,
   resolveListenerConnectionTargets,
@@ -44,11 +46,12 @@ import {
 } from "./device-status-cache";
 import { buildDeviceToolsetStatus } from "./device-toolset-status";
 import { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
-import { listListenerModCommands } from "./mod-command-registry";
+import { buildModCommandsField } from "./mod-command-registry";
 import { enqueueOutboundFrame } from "./outbound-wire";
 import { getConversationPermissionModeState } from "./permission-mode";
 import {
   classifyOutboundFrame,
+  getProtocolPerfKey,
   isStreamChannelMessage,
 } from "./protocol-outbound-routing";
 import {
@@ -84,33 +87,6 @@ type PartialRuntimeScope = {
  * device-status update. (LET-8948)
  */
 const FROZEN_SUPPORTED_COMMANDS: string[] = [...SUPPORTED_REMOTE_COMMANDS];
-
-/**
- * Mod-contributed commands for the device status, omitted entirely when no mods
- * register commands so the common case adds no field.
- */
-function buildModCommandsField(
-  listener: ListenerRuntime,
-  agentId?: string | null,
-): {
-  mod_commands?: ModCommandInfo[];
-} {
-  const modCommands = listListenerModCommands(listener, agentId);
-  return modCommands.length > 0 ? { mod_commands: modCommands } : {};
-}
-function getProtocolPerfKey(
-  message: Omit<
-    WsProtocolMessage,
-    "runtime" | "event_seq" | "emitted_at" | "idempotency_key"
-  >,
-): string {
-  if (message.type === "stream_delta" && "delta" in message) {
-    const delta = message.delta as { message_type?: unknown };
-    return `${message.type}:${String(delta.message_type ?? "unknown")}`;
-  }
-  return message.type;
-}
-
 function getListenerRuntime(runtime: RuntimeCarrier): ListenerRuntime | null {
   if (!runtime) return null;
   return "listener" in runtime ? runtime.listener : runtime;
@@ -250,6 +226,11 @@ export function buildDeviceStatus(
       agentId,
       conversationId,
     ),
+    pending_request_client_message_ids: pendingRequestClientMessageIds(
+      agentId,
+      conversationId,
+      conversationRuntime,
+    ),
     pending_control_requests: interruptedCacheActive
       ? []
       : getPendingControlRequests(listener, scope),
@@ -314,6 +295,12 @@ export function buildLoopStatus(
       : (conversationRuntime?.loopStatus ?? "WAITING_ON_INPUT");
   return {
     status,
+    request_completion_version: 1,
+    pending_request_client_message_ids: pendingRequestClientMessageIds(
+      scopedAgentId,
+      scopedConversationId,
+      conversationRuntime,
+    ),
     active_run_ids:
       interruptedCacheActive && !conversationRuntime?.isProcessing
         ? []
@@ -357,6 +344,9 @@ export function buildQueueSnapshot(
     source: item.source,
     content: item.kind === "message" ? item.content : item.text,
     enqueued_at: new Date(item.enqueuedAt).toISOString(),
+    ...(item.kind === "task_notification" && item.originClientMessageIds
+      ? { origin_client_message_ids: item.originClientMessageIds }
+      : {}),
     ...(item.paused ? { paused: true } : {}),
   }));
 }

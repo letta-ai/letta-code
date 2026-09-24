@@ -385,16 +385,15 @@ export interface DeviceStatus {
   current_loaded_tools: string[];
   current_available_skills: AvailableSkillSummary[];
   background_processes: BackgroundProcessSummary[];
+  pending_request_client_message_ids?: string[];
   pending_control_requests: PendingControlRequest[];
   experiments: ExperimentSnapshot[];
   memory_directory: string | null;
   /**
    * Persisted CWD overrides keyed by listener scope key.
-   *
    * Key format:
    * - `conversation:<conversation_id>` for conversation-scoped overrides
    * - `agent:<agent_id>::conversation:default` for an agent's default conversation scope
-   *
    * Example: `conversation:conv_123` or `agent:agent_123::conversation:default`
    */
   cwd_map?: Record<string, string>;
@@ -444,6 +443,7 @@ export interface QueueMessage {
   source: QueueMessageSource;
   content: MessageCreate["content"] | string;
   enqueued_at: string;
+  origin_client_message_ids?: string[];
   paused?: boolean; // parked by abort_message/Esc until resume_queue/next input
 }
 
