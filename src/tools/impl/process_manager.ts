@@ -38,6 +38,8 @@ export interface BackgroundProcess {
   totalStderrLines?: number;
   cleanupTimer?: TimerHandle;
   runtimeScope?: BackgroundRuntimeScope;
+  /** Authenticated Cloud user responsible for launching this process. */
+  actingUserId?: string;
   kind?: "monitor" | "workflow";
   description?: string;
   monitorSource?: "command" | "websocket";
