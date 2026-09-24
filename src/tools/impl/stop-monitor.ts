@@ -43,6 +43,7 @@ export async function stopMonitor(
     conversationId: command.runtime.conversation_id,
     actingUserId: command.runtime.acting_user_id,
     actingUserAssertion: command.runtime.acting_user_assertion,
+    clientMessageId: command.request_id,
     text: formatMonitorEventNotification({
       taskId: command.process_id,
       description: process.description ?? command.process_id,

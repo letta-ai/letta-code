@@ -145,6 +145,7 @@ export async function handleExecuteCommand(
               {
                 type: "message",
                 role: "user",
+                client_message_id: command.request_id,
                 content: [{ type: "text", text: doctorMessage }],
               },
             ],

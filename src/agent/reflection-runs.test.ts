@@ -59,7 +59,7 @@ describe("manual reflection ownership", () => {
     },
   );
 
-  test("captures scope before ownership lookup and preserves acting user on both requests", async () => {
+  test("captures scope before ownership lookup and spends sender proof only on admission", async () => {
     const { backend, requests } = fixture();
     const scope = {
       agentId: "agent-original",
@@ -72,12 +72,12 @@ describe("manual reflection ownership", () => {
     scope.actingUserId = "user-other";
     expect(await pending).toBe("Dreaming...");
     expect(requests.map((request) => request.method)).toEqual(["GET", "POST"]);
-    for (const request of requests) {
-      expect(request.url).toContain("/agents/agent-original/reflection");
-      expect(request.headers.get("X-Letta-Acting-User-Id")).toBe(
-        "user-original",
-      );
-    }
+    expect(requests[0]?.url).toContain("/agents/agent-original/reflection");
+    expect(requests[0]?.headers.get("X-Letta-Acting-User-Id")).toBeNull();
+    expect(requests[1]?.url).toContain("/agents/agent-original/reflection");
+    expect(requests[1]?.headers.get("X-Letta-Acting-User-Id")).toBe(
+      "user-original",
+    );
     expect(await requests[1]?.json()).toEqual({
       conversation_id: "conv-original",
     });

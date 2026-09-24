@@ -27,13 +27,7 @@ export async function requestCloudReflectionRun(
       "Unable to determine reflection ownership on this backend.",
     );
   }
-  const config = await backend.retrieveReflectionConfig(
-    capturedScope.agentId,
-    actingUserRequestOptions(
-      capturedScope.actingUserId,
-      capturedScope.actingUserAssertion,
-    ),
-  );
+  const config = await backend.retrieveReflectionConfig(capturedScope.agentId);
   if (config === null || config.cutover === false) return null;
   if (config.cutover !== true) {
     throw new Error(
