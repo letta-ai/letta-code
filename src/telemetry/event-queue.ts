@@ -1,3 +1,4 @@
+import { ApiRequestError } from "@/backend/api/request";
 import { debugWarn } from "@/utils/debug";
 
 /**
@@ -43,4 +44,19 @@ export class TelemetryEventQueueCap {
     }
     return overflow;
   }
+}
+
+/**
+ * Whether a failed telemetry POST was permanently rejected. A client error
+ * (HTTP 4xx other than 408 Request Timeout and 429 Too Many Requests), such as
+ * a schema-validation 400, fails the same way on every retry, so the flush
+ * drops that group instead of re-queueing it. Network errors, timeouts, 408,
+ * 429 and 5xx stay retryable.
+ */
+export function isPermanentRejection(error: unknown): boolean {
+  if (!(error instanceof ApiRequestError)) {
+    return false;
+  }
+  const { status } = error;
+  return status >= 400 && status < 500 && status !== 408 && status !== 429;
 }

@@ -14,7 +14,7 @@ import {
   type TelemetryAgentOrigin,
 } from "./agent-origin";
 import { extractInputChannel } from "./channel";
-import { TelemetryEventQueueCap } from "./event-queue";
+import { isPermanentRejection, TelemetryEventQueueCap } from "./event-queue";
 import { installFatalErrorHandlers } from "./fatal-error-handler";
 
 export type TelemetrySurface =
@@ -947,7 +947,9 @@ class TelemetryManager {
             },
             { signal: AbortSignal.timeout(5000), actingUserId },
           );
-        } catch {
+        } catch (error) {
+          // Permanent 4xx rejections fail on every retry, so drop the group.
+          if (isPermanentRejection(error)) return;
           for (const event of events) failed.add(event);
         }
       }),
