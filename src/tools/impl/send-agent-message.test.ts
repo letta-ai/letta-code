@@ -262,7 +262,7 @@ test.each(["conv-caller", "default"])(
     );
     expect(result.status).toBe("error");
     expect(JSON.parse(result.content).error).toBe(
-      "Cannot message the current conversation. Use a Monitor or schedule for self-invocation.",
+      "Cannot message the current conversation. Use Monitor for external events or Wake for timed self-invocation.",
     );
     expect(f.submissions).toHaveLength(0);
     expect(f.created).toHaveLength(0);

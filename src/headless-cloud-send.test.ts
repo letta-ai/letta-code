@@ -44,7 +44,7 @@ test.each([
     );
     expect(result).toBe(1);
     expect(JSON.parse(f.stdout.join("")).error).toBe(
-      "Cannot message the current conversation. Use a Monitor or schedule for self-invocation.",
+      "Cannot message the current conversation. Use Monitor for external events or Wake for timed self-invocation.",
     );
     expect(f.submissions).toHaveLength(0);
   },

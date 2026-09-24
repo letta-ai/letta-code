@@ -40,6 +40,7 @@ export {
   type ParsedInterval,
   parseAt,
   parseEvery,
+  parseRfc3339Timestamp,
 } from "./parse-interval";
 export {
   appendCronRunLog,

@@ -6,7 +6,7 @@ import {
   resolveCronRunner,
   resolveInferredTargetDevice,
   validateTargetDevice,
-} from "./cron-runner";
+} from "./runner";
 
 describe("resolveCronRunner", () => {
   test("cloud agent defaults to cloud runner when server supports schedules", () => {

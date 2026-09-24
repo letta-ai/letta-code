@@ -26,6 +26,9 @@ import {
   type EnvironmentConnection,
   isEnvironmentOnline,
 } from "@/backend/api/environments";
+import { ApiRequestError } from "@/backend/api/request";
+import { listCloudSchedules } from "@/backend/api/schedules";
+import { resolveBackendMode } from "@/backend/backend-mode";
 
 export type CronRunner = "local" | "cloud";
 
@@ -99,6 +102,47 @@ export function resolveCronRunner(
         ? "explicit --runner cloud"
         : "cloud agent defaults to durable Cloud schedules",
   };
+}
+
+async function ensureSettingsForCloud(): Promise<void> {
+  const { settingsManager } = await import("@/settings-manager");
+  await settingsManager.initialize();
+}
+
+async function probeCloudScheduleSupport(agentId: string): Promise<boolean> {
+  try {
+    await listCloudSchedules(agentId, { limit: 1 });
+    return true;
+  } catch (error) {
+    if (
+      error instanceof ApiRequestError &&
+      (error.status === 404 || error.status === 405)
+    ) {
+      return false;
+    }
+    return true;
+  }
+}
+
+/** Resolve the same default runner policy for the CLI and model-facing tools. */
+export async function resolveCronRunnerForAgent(
+  explicit: string | undefined,
+  agentId: string,
+): Promise<ResolveCronRunnerResult> {
+  const backendMode = resolveBackendMode();
+  const preliminary = resolveCronRunner({ explicit, agentId, backendMode });
+  if ("error" in preliminary || preliminary.runner === "local") {
+    return preliminary;
+  }
+
+  await ensureSettingsForCloud();
+  const cloudSchedulesSupported = await probeCloudScheduleSupport(agentId);
+  return resolveCronRunner({
+    explicit,
+    agentId,
+    backendMode,
+    cloudSchedulesSupported,
+  });
 }
 
 // ── Target device pre-validation ────────────────────────────────────
@@ -224,6 +268,82 @@ export async function resolveInferredTargetDevice(
   }
 
   return { kind: "device" };
+}
+
+async function lookupEnvironmentForTarget(
+  deviceId: string,
+): Promise<EnvironmentConnection | null> {
+  try {
+    const { getEnvironmentConnection } = await import(
+      "@/backend/api/environments"
+    );
+    return await getEnvironmentConnection(deviceId);
+  } catch {
+    return null;
+  }
+}
+
+export type CronCreatePlacement =
+  | {
+      runner: CronRunner;
+      targetDeviceId?: string;
+      localFallbackNote?: string;
+    }
+  | { error: string };
+
+/**
+ * Resolve where a newly-created schedule should live and execute.
+ *
+ * Both `letta cron` and Wake use this path. Default placement preserves the
+ * current runtime so a scheduled turn cannot race that runtime from another
+ * execution environment. Targeted Cloud schedules remain durable because
+ * they fall back to the agent's Cloud sandbox when the device is offline.
+ */
+export async function resolveCronCreatePlacement(params: {
+  explicitRunner?: string;
+  agentId: string;
+  targetDeviceId?: string;
+}): Promise<CronCreatePlacement> {
+  const resolved = await resolveCronRunnerForAgent(
+    params.explicitRunner,
+    params.agentId,
+  );
+  if ("error" in resolved) return resolved;
+
+  let runner = resolved.runner;
+  let targetDeviceId = params.targetDeviceId?.trim() || undefined;
+  let localFallbackNote: string | undefined;
+
+  if (targetDeviceId && runner !== "cloud") {
+    return {
+      error:
+        "--computer requires the cloud runner. Run `letta cron add` on the target computer itself (with --runner local) to schedule there locally.",
+    };
+  }
+
+  if (targetDeviceId) {
+    const validity = validateTargetDevice(
+      targetDeviceId,
+      await lookupEnvironmentForTarget(targetDeviceId),
+    );
+    if (!validity.ok) return validity;
+  } else if (runner === "cloud" && params.explicitRunner !== "cloud") {
+    const { getRuntimeEnvironmentDeviceId } = await import(
+      "@/backend/api/client"
+    );
+    const inferredDeviceId = getRuntimeEnvironmentDeviceId();
+    const resolution = await resolveInferredTargetDevice(inferredDeviceId, () =>
+      lookupEnvironmentForTarget(inferredDeviceId),
+    );
+    if (resolution.kind === "device") {
+      targetDeviceId = inferredDeviceId;
+    } else if (resolution.kind === "local-fallback") {
+      runner = "local";
+      localFallbackNote = `This schedule is local to this computer (${resolution.reason}): it only fires while a Letta session is running here. For a schedule that fires regardless, pass --runner cloud (runs in the agent's cloud sandbox) or --computer <deviceId> (runs on a connected computer, from \`letta computers list\`).`;
+    }
+  }
+
+  return { runner, targetDeviceId, localFallbackNote };
 }
 
 // ── Cloud payload mapping ───────────────────────────────────────────
