@@ -59,6 +59,7 @@ import {
 } from "./stream-resume";
 import { createStreamStallReconciler } from "./stream-stall-reconciler";
 import { createTerminalEofGuard } from "./stream-terminal-eof-guard";
+import { isEvictedToolCallChunk } from "./transcript-eviction";
 
 export { advanceStreamSequenceCursor };
 export type { ApprovalRequest, StreamSequenceCursor } from "./stream-processor";
@@ -294,7 +295,8 @@ export async function drainStream(
         shouldAccumulate = shouldOutputChunk;
       }
 
-      if (shouldAccumulate) {
+      // Replays of tool calls the TUI already evicted must not re-create them.
+      if (shouldAccumulate && !isEvictedToolCallChunk(buffers, chunk)) {
         recordTuiJsonPayload(
           `stream_accumulate:${chunk.message_type ?? "unknown"}`,
           chunk,

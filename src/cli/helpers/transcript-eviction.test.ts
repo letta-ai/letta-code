@@ -1,9 +1,19 @@
 import { describe, expect, test } from "bun:test";
-import { createBuffers, onChunk } from "@/cli/helpers/accumulator";
+import type { Stream } from "@letta-ai/letta-client/core/streaming";
+import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
+import {
+  createBuffers,
+  markIncompleteToolsAsCancelled,
+  onChunk,
+} from "@/cli/helpers/accumulator";
+import { drainStream } from "@/cli/helpers/stream";
+import { hasInProgressTaskToolCalls } from "@/cli/helpers/subagent-aggregation";
 import {
   evictCommittedLines,
   findFirstUserLineTitle,
   findLastShellToolCallId,
+  isEvictedToolCallChunk,
+  MAX_EVICTED_TOOL_CALL_IDS,
   MAX_LINE_ALIAS_ENTRIES,
   MAX_UNIFIED_EXEC_SESSION_COMMANDS,
   prepareBuffersForTurn,
@@ -221,6 +231,109 @@ describe("prepareBuffersForTurn", () => {
     expect(buffers.order).toEqual([]);
     expect(buffers.tokenCount).toBe(0);
     expect(buffers.interrupted).toBe(false);
+  });
+});
+
+describe("replayed tool chunks for evicted lines", () => {
+  const serverToolCall = {
+    message_type: "tool_call_message",
+    tool_call: {
+      tool_call_id: "tc-server",
+      name: "Bash",
+      arguments: JSON.stringify({ command: "sleep 30" }),
+    },
+  } as LettaStreamingResponse;
+  const taskApproval = {
+    message_type: "approval_request_message",
+    tool_call: {
+      tool_call_id: "tc-task",
+      name: "Task",
+      arguments: JSON.stringify({ prompt: "explore" }),
+    },
+  } as LettaStreamingResponse;
+
+  function replayStream(
+    chunks: LettaStreamingResponse[],
+  ): Stream<LettaStreamingResponse> {
+    return {
+      controller: new AbortController(),
+      async *[Symbol.asyncIterator]() {
+        yield* chunks;
+      },
+    } as unknown as Stream<LettaStreamingResponse>;
+  }
+
+  test("a 409 resume replay does not re-create evicted server tool or Task lines", async () => {
+    const buffers = createBuffers("agent-test");
+    addFinishedToolCall(buffers, "tc-task", "Task");
+    onChunk(buffers, serverToolCall);
+    // ESC while the server tool runs: its line finishes as interrupted.
+    markIncompleteToolsAsCancelled(buffers, true, "user_interrupt");
+    expect(buffers.serverToolCalls.get("tc-server")?.preToolUseTriggered).toBe(
+      true,
+    );
+
+    // Next submit evicts both committed lines.
+    prepareBuffersForTurn(buffers, new Set(["tc-task", "tc-server"]));
+
+    // POST 409 conversation busy: the TUI resumes the still-active previous
+    // run from the start (starting_after: 0) through drainStream.
+    await drainStream(
+      replayStream([
+        serverToolCall,
+        taskApproval,
+        {
+          message_type: "stop_reason",
+          stop_reason: "requires_approval",
+        } as LettaStreamingResponse,
+      ]),
+      buffers,
+      () => {},
+    );
+
+    expect(buffers.order).toEqual([]);
+    expect(buffers.byId.size).toBe(0);
+    // PreToolUse runs when this entry is (re)created; it must not come back.
+    expect(buffers.serverToolCalls.has("tc-server")).toBe(false);
+    expect(
+      hasInProgressTaskToolCalls(buffers.order, buffers.byId, new Set()),
+    ).toBe(false);
+    // ESC now still shows "Interrupted" (no zombie tool to cancel).
+    expect(
+      markIncompleteToolsAsCancelled(buffers, true, "user_interrupt"),
+    ).toBe(false);
+  });
+
+  test("remembers a bounded number of evicted tool-call ids", () => {
+    const buffers = createBuffers();
+    const committed = new Set<string>();
+    for (let i = 0; i <= MAX_EVICTED_TOOL_CALL_IDS; i++) {
+      const id = `tc-${i}`;
+      buffers.byId.set(id, {
+        kind: "tool_call",
+        id,
+        toolCallId: id,
+        phase: "finished",
+      });
+      buffers.order.push(id);
+      committed.add(id);
+    }
+
+    evictCommittedLines(buffers, committed);
+
+    const replayOf = (toolCallId: string) =>
+      ({
+        message_type: "tool_call_message",
+        tool_call: { tool_call_id: toolCallId, name: "Bash" },
+      }) as LettaStreamingResponse;
+    // Oldest-evicted ids are dropped first.
+    expect(isEvictedToolCallChunk(buffers, replayOf("tc-0"))).toBe(false);
+    expect(
+      isEvictedToolCallChunk(
+        buffers,
+        replayOf(`tc-${MAX_EVICTED_TOOL_CALL_IDS}`),
+      ),
+    ).toBe(true);
   });
 });
 

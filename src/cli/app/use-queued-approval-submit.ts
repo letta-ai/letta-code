@@ -29,6 +29,11 @@ type QueuedApprovalSubmitContext = {
   conversationIdRef: MutableRefObject<string>;
   emittedIdsRef: MutableRefObject<Set<string>>;
   interruptQueuedRef: MutableRefObject<boolean>;
+  /**
+   * The turn signals of isAgentBusy() without commandRunning, which the
+   * calling command sets itself. Read at call time, so it must only read refs.
+   */
+  isTurnInFlight: () => boolean;
   needsEagerApprovalCheck: boolean;
   processConversation: ProcessConversation;
   queueApprovalResults: QueueApprovalResults;
@@ -42,26 +47,37 @@ type QueuedApprovalSubmitContext = {
  * lines before the turn starts so those sessions stay bounded the same way as
  * typed Enter. Mid-turn reentry must call `processConversation` directly —
  * eviction here would shift `order` after `transcriptStartLineIndex` is
- * captured.
+ * captured. For the same reason nothing is evicted while a turn is in flight
+ * (busy-safe commands such as /mods can get here mid-stream) or when queued
+ * approval results continue an interrupted turn: processConversation keeps
+ * that turn's saved transcript start index.
  */
 export async function processNewTurnWithQueuedApprovals(args: {
   buffers: Buffers;
   committedIds: ReadonlySet<string>;
   consumeQueuedApprovalInput: () => ApprovalCreate | null;
   input: Array<MessageCreate | ApprovalCreate>;
+  isTurnInFlight: () => boolean;
   options?: ProcessConversationOptions;
   processConversation: ProcessConversation;
 }): Promise<void> {
-  prepareBuffersForTurn(args.buffers, args.committedIds);
   const queuedApprovalInput = args.consumeQueuedApprovalInput();
+  const evict = !queuedApprovalInput && !args.isTurnInFlight();
+  if (evict) prepareBuffersForTurn(args.buffers, args.committedIds);
   const nextInput = queuedApprovalInput
     ? [queuedApprovalInput, ...args.input]
     : args.input;
-  await args.processConversation(nextInput, {
-    ...args.options,
-    // Eviction shifted `order`; a prior turn's slice index is no longer valid.
-    transcriptStartLineIndex: args.options?.transcriptStartLineIndex ?? null,
-  });
+  await args.processConversation(
+    nextInput,
+    evict
+      ? {
+          ...args.options,
+          // Eviction shifted `order`; a prior turn's slice index is no longer valid.
+          transcriptStartLineIndex:
+            args.options?.transcriptStartLineIndex ?? null,
+        }
+      : args.options,
+  );
 }
 
 export function useQueuedApprovalSubmit(ctx: QueuedApprovalSubmitContext) {
@@ -72,6 +88,7 @@ export function useQueuedApprovalSubmit(ctx: QueuedApprovalSubmitContext) {
     conversationIdRef,
     emittedIdsRef,
     interruptQueuedRef,
+    isTurnInFlight,
     needsEagerApprovalCheck,
     processConversation,
     queueApprovalResults,
@@ -173,7 +190,7 @@ export function useQueuedApprovalSubmit(ctx: QueuedApprovalSubmitContext) {
     [queueApprovalResults, interruptQueuedRef],
   );
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: buffer/emitted-id refs are stable objects; .current is read at call time.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: buffer/emitted-id refs are stable objects; .current is read at call time. isTurnInFlight only reads refs.
   const processConversationWithQueuedApprovals = useCallback(
     async (
       input: Array<MessageCreate | ApprovalCreate>,
@@ -185,6 +202,7 @@ export function useQueuedApprovalSubmit(ctx: QueuedApprovalSubmitContext) {
         consumeQueuedApprovalInput:
           consumeQueuedApprovalInputForCurrentConversation,
         input,
+        isTurnInFlight,
         options,
         processConversation,
       });

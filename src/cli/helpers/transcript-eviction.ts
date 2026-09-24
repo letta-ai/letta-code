@@ -19,6 +19,7 @@
  * another content block after an earlier block finished.
  */
 
+import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { Buffers } from "./accumulator";
 import { normalizeConversationTitle } from "./conversation-title";
 import { isShellOutputTool } from "./tool-name-mapping";
@@ -31,13 +32,33 @@ export const MAX_LINE_ALIAS_ENTRIES = 10_000;
 // labels. Sessions older than this lose their label but keep working.
 export const MAX_UNIFIED_EXEC_SESSION_COMMANDS = 500;
 
-/** Drop oldest-inserted entries until the map fits within maxEntries. */
-function trimMapToMaxSize<K, V>(map: Map<K, V>, maxEntries: number): void {
+// Tool-call ids of evicted lines, remembered so a replayed run cannot
+// re-create those lines (see isEvictedToolCallChunk). Only recent runs replay.
+export const MAX_EVICTED_TOOL_CALL_IDS = 10_000;
+
+// Tombstones per Buffers object. Only the TUI evicts, so headless and
+// listener buffers never get an entry.
+const evictedToolCallIdsByBuffers = new WeakMap<Buffers, Set<string>>();
+
+/** Drop oldest-inserted entries until the map or set fits within maxEntries. */
+function trimMapToMaxSize<K, V>(
+  map: Map<K, V> | Set<K>,
+  maxEntries: number,
+): void {
   while (map.size > maxEntries) {
     const oldest = map.keys().next();
     if (oldest.done) break;
     map.delete(oldest.value);
   }
+}
+
+function getEvictedToolCallIds(buffers: Buffers): Set<string> {
+  let ids = evictedToolCallIdsByBuffers.get(buffers);
+  if (!ids) {
+    ids = new Set();
+    evictedToolCallIdsByBuffers.set(buffers, ids);
+  }
+  return ids;
 }
 
 /**
@@ -56,8 +77,12 @@ function trimMapToMaxSize<K, V>(map: Map<K, V>, maxEntries: number): void {
  *   into the accumulator's existing "unmapped echo" drop path.
  * - splitCounters for split streaming lines (only read while a line streams).
  *
+ * Evicted tool-call ids are kept as bounded tombstones: the stream path drops
+ * replayed tool chunks for them (isEvictedToolCallChunk) instead of
+ * re-creating the lines.
+ *
  * A line whose id is committed is removed even if it was re-created after a
- * previous eviction (e.g. a tool_call_message re-sent on stream resume): such
+ * previous eviction (e.g. by a chunk that bypassed the stream path): such
  * zombies are invisible to the live render path (the id is still in the
  * committed set) and are re-evicted here.
  *
@@ -70,6 +95,7 @@ export function evictCommittedLines(
   let evicted = 0;
   if (committedIds.size > 0 && buffers.order.length > 0) {
     const kept: string[] = [];
+    const evictedToolCallIds = getEvictedToolCallIds(buffers);
     for (const id of buffers.order) {
       if (!committedIds.has(id)) {
         kept.push(id);
@@ -82,6 +108,7 @@ export function evictCommittedLines(
           buffers.toolCallIdToLineId.delete(line.toolCallId);
         }
         buffers.serverToolCalls.delete(line.toolCallId);
+        evictedToolCallIds.add(line.toolCallId);
       }
       if (line.kind === "user" && line.otid) {
         if (buffers.userLineIdByOtid.get(line.otid) === id) {
@@ -95,6 +122,7 @@ export function evictCommittedLines(
     if (kept.length !== buffers.order.length) {
       buffers.order = kept;
     }
+    trimMapToMaxSize(evictedToolCallIds, MAX_EVICTED_TOOL_CALL_IDS);
   }
   trimMapToMaxSize(
     buffers.assistantCanonicalByMessageId,
@@ -127,6 +155,40 @@ export function prepareBuffersForTurn(
   evictCommittedLines(buffers, committedIds);
   buffers.tokenCount = 0;
   buffers.interrupted = false;
+}
+
+/**
+ * True when a stream chunk only targets tool calls whose lines were evicted.
+ * The stream path drops such chunks before they reach the accumulator: after
+ * a 409 "conversation busy" the TUI resumes the still-active previous run from
+ * the start (starting_after: 0). Re-creating its evicted tool lines would run
+ * PreToolUse hooks again, hold finished Task groups in the live area, and
+ * hide the "Interrupted" feedback on ESC.
+ */
+export function isEvictedToolCallChunk(
+  buffers: Buffers,
+  chunk: LettaStreamingResponse,
+): boolean {
+  const evictedIds = evictedToolCallIdsByBuffers.get(buffers);
+  if (!evictedIds || evictedIds.size === 0) return false;
+  if (
+    chunk.message_type === "tool_call_message" ||
+    chunk.message_type === "approval_request_message"
+  ) {
+    // Same single tool call the accumulator reads from these chunks.
+    const toolCall =
+      chunk.tool_call ||
+      (Array.isArray(chunk.tool_calls) ? chunk.tool_calls[0] : undefined);
+    const toolCallId = toolCall?.tool_call_id;
+    return !!toolCallId && evictedIds.has(toolCallId);
+  }
+  if (chunk.message_type === "tool_return_message") {
+    const toolCallIds = chunk.tool_returns?.length
+      ? chunk.tool_returns.map((toolReturn) => toolReturn.tool_call_id)
+      : [chunk.tool_call_id];
+    return toolCallIds.every((toolCallId) => evictedIds.has(toolCallId));
+  }
+  return false;
 }
 
 /**

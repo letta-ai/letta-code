@@ -4084,7 +4084,6 @@ export function App({
     tempModelOverrideRef,
     userCancelledRef,
   });
-
   const { handleBashSubmit, handleBashInterrupt } = useBashHandlers({
     bashAbortControllerRef,
     bashCommandCacheRef,
@@ -4105,6 +4104,7 @@ export function App({
     conversationIdRef,
     emittedIdsRef,
     interruptQueuedRef,
+    isTurnInFlight: () => streamingRef.current || !!abortControllerRef.current,
     needsEagerApprovalCheck,
     processConversation,
     queueApprovalResults,

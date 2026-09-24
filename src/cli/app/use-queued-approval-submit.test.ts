@@ -3,12 +3,13 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
+import { appendOptimisticUserLine } from "@/cli/app/ids";
 import type {
   ProcessConversation,
   ProcessConversationOptions,
 } from "@/cli/app/types";
 import { processNewTurnWithQueuedApprovals } from "@/cli/app/use-queued-approval-submit";
-import { createBuffers } from "@/cli/helpers/accumulator";
+import { createBuffers, onChunk } from "@/cli/helpers/accumulator";
 
 function addCommittedUserLine(buffers: ReturnType<typeof createBuffers>): void {
   buffers.byId.set("user-1", {
@@ -42,6 +43,7 @@ describe("processNewTurnWithQueuedApprovals", () => {
       committedIds: new Set(["user-1"]),
       consumeQueuedApprovalInput: () => null,
       input: [userMessage],
+      isTurnInFlight: () => false,
       processConversation: (async (input, options) => {
         seenOrder = [...buffers.order];
         seenInput = input;
@@ -57,7 +59,7 @@ describe("processNewTurnWithQueuedApprovals", () => {
     expect(seenOptions?.transcriptStartLineIndex).toBeNull();
   });
 
-  test("prepends queued approvals after eviction and keeps an explicit transcript index", async () => {
+  test("prepends queued approvals without evicting and keeps an explicit transcript index", async () => {
     const buffers = createBuffers();
     addCommittedUserLine(buffers);
     const queuedApproval = {
@@ -73,9 +75,10 @@ describe("processNewTurnWithQueuedApprovals", () => {
       committedIds: new Set(["user-1"]),
       consumeQueuedApprovalInput: () => queuedApproval,
       input: [userMessage],
+      isTurnInFlight: () => false,
       options: { transcriptStartLineIndex: 0 },
       processConversation: (async (input, options) => {
-        expect(buffers.byId.has("user-1")).toBe(false);
+        expect(buffers.byId.has("user-1")).toBe(true);
         seenInput = input;
         seenOptions = options;
       }) satisfies ProcessConversation,
@@ -83,6 +86,91 @@ describe("processNewTurnWithQueuedApprovals", () => {
 
     expect(seenInput).toEqual([queuedApproval, userMessage]);
     expect(seenOptions?.transcriptStartLineIndex).toBe(0);
+  });
+
+  test("queued approvals keep the interrupted turn's lines and saved transcript index", async () => {
+    const buffers = createBuffers();
+    addCommittedUserLine(buffers);
+    buffers.tokenCount = 42;
+    const queuedApproval = {
+      type: "approval",
+      approvals: [],
+      otid: "otid-approval",
+    } as ApprovalCreate;
+    let seenInput: unknown;
+    let seenOptions: ProcessConversationOptions | undefined;
+
+    // Command paths pass no options.
+    await processNewTurnWithQueuedApprovals({
+      buffers,
+      committedIds: new Set(["user-1"]),
+      consumeQueuedApprovalInput: () => queuedApproval,
+      input: [userMessage],
+      isTurnInFlight: () => false,
+      processConversation: (async (input, options) => {
+        seenInput = input;
+        seenOptions = options;
+      }) satisfies ProcessConversation,
+    });
+
+    expect(seenInput).toEqual([queuedApproval, userMessage]);
+    // No explicit index: with approval input, processConversation keeps the
+    // saved pendingTranscriptStartLineIndexRef of the interrupted turn.
+    expect(seenOptions?.transcriptStartLineIndex).toBeUndefined();
+    expect(buffers.order).toEqual(["user-1"]);
+    expect(buffers.byId.has("user-1")).toBe(true);
+    expect(buffers.tokenCount).toBe(42);
+  });
+
+  test("never evicts while a turn is in flight", async () => {
+    // A turn is streaming: its user line and first text block are committed.
+    const buffers = createBuffers();
+    const userLineId =
+      appendOptimisticUserLine(buffers, "fix the login bug", "otid-u") ?? "";
+    onChunk(buffers, {
+      message_type: "assistant_message",
+      id: "msg-1",
+      otid: "otid-a",
+      content: "First block.",
+    } as never);
+    onChunk(buffers, {
+      message_type: "reasoning_message",
+      id: "msg-r",
+      otid: "otid-r",
+      reasoning: "thinking",
+    } as never);
+    const committedIds = new Set([userLineId, "msg-1"]);
+    const orderBefore = [...buffers.order];
+    const tokenCountBefore = buffers.tokenCount;
+
+    // A busy-safe command (e.g. /mods generate-env) reaches the helper mid-turn.
+    await processNewTurnWithQueuedApprovals({
+      buffers,
+      committedIds,
+      consumeQueuedApprovalInput: () => null,
+      input: [userMessage],
+      isTurnInFlight: () => true,
+      processConversation: (async () => {}) satisfies ProcessConversation,
+    });
+
+    expect(buffers.order).toEqual(orderBefore);
+    expect(buffers.byId.get(userLineId)?.kind).toBe("user");
+    expect(buffers.tokenCount).toBe(tokenCountBefore);
+
+    // The next text block of the same message still opens a visible line.
+    onChunk(buffers, {
+      message_type: "assistant_message",
+      id: "msg-1",
+      otid: "otid-c",
+      content: "Second block.",
+    } as never);
+    const secondBlock = buffers.order
+      .map((id) => buffers.byId.get(id))
+      .find(
+        (line) => line?.kind === "assistant" && line.text === "Second block.",
+      );
+    expect(secondBlock).toBeDefined();
+    expect(committedIds.has(secondBlock?.id ?? "")).toBe(false);
   });
 
   test("keeps uncommitted live lines so mid-turn stragglers survive the next new turn", async () => {
@@ -102,6 +190,7 @@ describe("processNewTurnWithQueuedApprovals", () => {
       committedIds: new Set(["user-1"]),
       consumeQueuedApprovalInput: () => null,
       input: [userMessage],
+      isTurnInFlight: () => false,
       processConversation: (async () => {
         seenOrder = [...buffers.order];
       }) satisfies ProcessConversation,
