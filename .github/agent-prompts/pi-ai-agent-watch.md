@@ -80,7 +80,8 @@ For an upgrade:
    - application changes or explicit reasons none were needed
    - validation performed
 8. Immediately verify `draft: false` and that the PR author matches the Expected GitHub login. If either is wrong, fix or close the PR instead of reporting success.
-9. Request the single GitHub reviewer from the run inputs unless already requested.
+9. Wait for every check on the current PR head to complete successfully. Re-read the head SHA after waiting and verify the checks belong to that exact SHA. Pending, failed, cancelled, or missing expected checks are not green; fix or retry them, or stop without review handoff if they cannot be made green.
+10. Request the single GitHub reviewer from the run inputs unless already requested.
 
 ## Tracker updates
 
@@ -122,7 +123,7 @@ A `pr_created` outcome remains pending and blocks later upgrade PRs until that P
 
 ## Slack notification
 
-Only for `pr_created`, after the tracker update succeeds, call the native `MessageChannel` tool with `action="send"`, `channel="slack"`, and `target="C0871ER46KT"`. Send exactly one line using the selected Slack owner ID and PR URL:
+Only for `pr_created`, after the current PR head is fully green, the reviewer is requested, and the tracker update succeeds, call the native `MessageChannel` tool with `action="send"`, `channel="slack"`, and `target="C0871ER46KT"`. Send exactly one line using the selected Slack owner ID and PR URL:
 
 ```text
 <@U079W8F9Z7G> https://github.com/letta-ai/letta-code/pull/1234

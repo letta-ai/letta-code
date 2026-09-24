@@ -891,8 +891,9 @@ agents/people share worktrees here.
 
 Claude, Codex, and pi-ai watchers run every 2 hours, detect upstream releases,
 and create parity PRs when warranted. Any watcher that requests reviewers or
-posts to `#code-reviews` must mark the PR ready first; drafts are only tagged
-when they are explicitly requesting design review.
+posts to `#code-reviews` must first wait for every check on the current PR head
+to pass, then verify the PR is ready. Drafts and PRs with pending or failing
+checks are never tagged for review.
 
 - Each run uses `--new` for a fresh conversation (isolated runs, no state
   compounding).

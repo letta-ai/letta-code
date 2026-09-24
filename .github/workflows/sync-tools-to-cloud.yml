@@ -150,6 +150,6 @@ jobs:
           jq -e \
             --arg expected "$EXPECTED_GITHUB_LOGIN" \
             --arg marker "$SOURCE_MARKER" \
-            '.author.login == $expected and .isDraft == true and (.body | contains($marker))' \
+            '.author.login == $expected and .isDraft == false and (.body | contains($marker))' \
             "$RUNNER_TEMP/sync-pr.json" > /dev/null
-          echo "Verified Amelia draft PR: $pr_url"
+          echo "Verified Amelia ready-for-review PR: $pr_url"

@@ -46,7 +46,7 @@ Internal refactors with no schema, name, label, preview, or other user-visible U
 
 Before editing, search open and merged `letta-ai/letta-cloud` PRs for the exact Source marker from the run inputs.
 
-- If an open PR already has the marker, do not create or modify another PR. Verify its author and ready-for-review state, ensure the configured reviewers are requested, complete the Slack notification, and use that URL as the result.
+- If an open PR already has the marker, do not create or modify another PR. Verify its author and ready-for-review state, wait for its current head to become fully green, ensure the configured reviewers are requested, complete the Slack notification, and use that URL as the result.
 - If a merged PR already has the marker, the sync is complete. Respond with exactly `NO_SYNC_NEEDED` without a Slack message.
 - A closed, unmerged PR does not count as a completed sync. Use the unique Branch name from the run inputs for a replacement.
 
@@ -66,14 +66,15 @@ When a sync is needed:
 Immediately after creating or recovering the PR:
 
 1. Verify that it is ready for review and its author exactly matches the Expected GitHub login. If the author is wrong, close it instead of reporting success. If it is a draft, mark it ready before proceeding.
-2. GET `repos/letta-ai/letta-cloud/pulls/<number>/requested_reviewers` with the explicit Amelia credential.
-3. Request every configured GitHub reviewer not already present using the REST `requested_reviewers` endpoint. Do not use `gh pr edit --add-reviewer`, which requires unavailable organization scopes.
+2. Wait for every check on the current PR head to complete successfully. Re-read the head SHA after waiting and verify the checks belong to that exact SHA. Pending, failed, cancelled, or missing expected checks are not green; fix or retry them, or stop without review handoff if they cannot be made green.
+3. GET `repos/letta-ai/letta-cloud/pulls/<number>/requested_reviewers` with the explicit Amelia credential.
+4. Request every configured GitHub reviewer not already present using the REST `requested_reviewers` endpoint. Do not use `gh pr edit --add-reviewer`, which requires unavailable organization scopes.
 
 Do not merge the PR, leave GitHub comments, or review other changes.
 
 ## Slack notification
 
-After the ready-for-review PR and reviewers are verified, call the native `MessageChannel` tool with `action="send"`, `channel="slack"`, and `target="C0871ER46KT"`. Do not use `curl` or another Slack API client.
+After the ready-for-review PR head is fully green and reviewers are verified, call the native `MessageChannel` tool with `action="send"`, `channel="slack"`, and `target="C0871ER46KT"`. Do not use `curl` or another Slack API client.
 
 Use the selected Slack owner ID from the run inputs and send exactly one line:
 
