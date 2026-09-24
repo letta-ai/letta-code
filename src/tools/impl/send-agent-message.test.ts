@@ -6,6 +6,11 @@ import { ApiRequestError } from "@/backend/api/request";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { send_agent_message } from "./send-agent-message";
 
+const CLAUDE_SESSION_ID = "11111111-1111-4111-8111-111111111111";
+const CLAUDE_AGENT_ID = `claude_${CLAUDE_SESSION_ID}`;
+const CODEX_THREAD_ID = "22222222-2222-4222-8222-222222222222";
+const CODEX_AGENT_ID = `codex_${CODEX_THREAD_ID}`;
+
 function fixture(targetTags: readonly string[] = []) {
   const submissions: EnqueueConversationInput[] = [];
   const created: unknown[] = [];
@@ -55,6 +60,186 @@ const message = {
   message: "Please check the tests.",
 };
 
+test("resumes an external coding-agent session without the Cloud backend", async () => {
+  const f = fixture();
+  f.backend.capabilities.environmentRouting = false;
+  const launches: unknown[] = [];
+  const result = await runWithRuntimeContext(caller, () =>
+    send_agent_message(
+      {
+        agent_id: CLAUDE_AGENT_ID,
+        message: "Now fix the test.",
+      },
+      {
+        ...f,
+        sendClaudeMessage: async () => ({
+          mode: "resumed",
+          sessionId: CLAUDE_SESSION_ID,
+          completion: Promise.resolve({
+            agentId: CLAUDE_AGENT_ID,
+            report: "done",
+            success: true,
+          }),
+          interrupt: async () => undefined,
+        }),
+        trackExternalFollowup: (input) => {
+          launches.push(input);
+          return {
+            taskId: "task-followup",
+            outputFile: "/tmp/task-followup.log",
+            subagentId: "subagent-followup",
+          };
+        },
+      },
+    ),
+  );
+  expect(result.status).toBe("success");
+  expect(JSON.parse(result.content)).toEqual({
+    status: "accepted",
+    agent_id: CLAUDE_AGENT_ID,
+    delivery: "resume/start",
+    task_id: "task-followup",
+    output_file: "/tmp/task-followup.log",
+  });
+  expect(launches).toHaveLength(1);
+  expect(launches[0]).toMatchObject({
+    type: "claude-code",
+    agentId: CLAUDE_AGENT_ID,
+    message: "Now fix the test.",
+    parentScope: {
+      agentId: "agent-caller",
+      conversationId: "conv-caller",
+    },
+    completion: expect.any(Promise),
+    interrupt: expect.any(Function),
+  });
+  expect(f.submissions).toHaveLength(0);
+});
+
+test("aborts an external turn when background tracking cannot be created", async () => {
+  const f = fixture();
+  let interrupts = 0;
+  const result = await runWithRuntimeContext(caller, () =>
+    send_agent_message(
+      { agent_id: CLAUDE_AGENT_ID, message: "Continue" },
+      {
+        ...f,
+        sendClaudeMessage: async () => ({
+          mode: "resumed",
+          sessionId: CLAUDE_SESSION_ID,
+          completion: new Promise(() => undefined),
+          interrupt: async () => {
+            interrupts++;
+          },
+        }),
+        trackExternalFollowup: () => {
+          throw new Error("Background task limit reached");
+        },
+      },
+    ),
+  );
+  expect(result.status).toBe("error");
+  expect(result.content).toContain("Background task limit reached");
+  expect(interrupts).toBe(1);
+});
+
+test("steers an active Codex app-server turn without exec resume", async () => {
+  const f = fixture();
+  const sends: unknown[] = [];
+  const launches: unknown[] = [];
+  const result = await runWithRuntimeContext(caller, () =>
+    send_agent_message(
+      { agent_id: CODEX_AGENT_ID, message: "Change direction" },
+      {
+        ...f,
+        sendCodexMessage: async (input) => {
+          sends.push(input);
+          return {
+            mode: "steered",
+            threadId: CODEX_THREAD_ID,
+            turnId: "turn-1",
+          };
+        },
+        trackExternalFollowup: (input) => {
+          launches.push(input);
+          throw new Error("must not track a new followup");
+        },
+      },
+    ),
+  );
+  expect(result.status).toBe("success");
+  expect(JSON.parse(result.content)).toMatchObject({
+    delivery: "turn/steer",
+    turn_id: "turn-1",
+  });
+  expect(sends).toHaveLength(1);
+  expect(launches).toHaveLength(0);
+});
+
+test("tracks an idle Codex new turn through background lifecycle", async () => {
+  const f = fixture();
+  const tracked: unknown[] = [];
+  const completion = Promise.resolve({
+    agentId: CODEX_AGENT_ID,
+    runtimeSessionId: CODEX_THREAD_ID,
+    report: "done",
+    success: true,
+  });
+  const result = await runWithRuntimeContext(caller, () =>
+    send_agent_message(
+      { agent_id: CODEX_AGENT_ID, message: "Continue" },
+      {
+        ...f,
+        sendCodexMessage: async () => ({
+          mode: "new_turn",
+          threadId: CODEX_THREAD_ID,
+          turnId: "turn-2",
+          completion,
+          interrupt: async () => undefined,
+        }),
+        trackExternalFollowup: (input) => {
+          tracked.push(input);
+          return {
+            taskId: "task-codex",
+            outputFile: "/tmp/task-codex.log",
+            subagentId: "subagent-codex",
+          };
+        },
+      },
+    ),
+  );
+  expect(JSON.parse(result.content)).toMatchObject({
+    delivery: "turn/start",
+    task_id: "task-codex",
+    output_file: "/tmp/task-codex.log",
+  });
+  expect(tracked).toHaveLength(1);
+  expect(tracked[0]).toMatchObject({
+    agentId: CODEX_AGENT_ID,
+    completion,
+    interrupt: expect.any(Function),
+  });
+});
+
+test.each([{ conversation_id: "conv-target" }, { computer: "cloud" }])(
+  "rejects incompatible external coding-agent routing: %j",
+  async (extra) => {
+    const f = fixture();
+    const result = await runWithRuntimeContext(caller, () =>
+      send_agent_message(
+        {
+          agent_id: CODEX_AGENT_ID,
+          message: "Continue",
+          ...extra,
+        },
+        f,
+      ),
+    );
+    expect(result.status).toBe("error");
+    expect(f.submissions).toHaveLength(0);
+  },
+);
+
 test.each(["conv-caller", "default"])(
   "rejects the tool's current conversation %s before enqueue",
   async (conversationId) => {
@@ -77,7 +262,7 @@ test.each(["conv-caller", "default"])(
     );
     expect(result.status).toBe("error");
     expect(JSON.parse(result.content).error).toBe(
-      "Cannot message the current conversation. Use a Monitor or schedule for self-invocation.",
+      "Cannot message the current conversation. Use Monitor for external events or Wake for timed self-invocation.",
     );
     expect(f.submissions).toHaveLength(0);
     expect(f.created).toHaveLength(0);

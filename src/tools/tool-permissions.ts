@@ -24,6 +24,7 @@ export const TOOL_PERMISSIONS: Record<
   Read: { requiresApproval: false },
   read_artifact_file: { requiresApproval: false },
   ViewImage: { requiresApproval: false },
+  Wake: { requiresApproval: false },
   ReadLSP: { requiresApproval: false },
   SetWorkingDirectory: { requiresApproval: false },
   SendAgentMessage: { requiresApproval: true },

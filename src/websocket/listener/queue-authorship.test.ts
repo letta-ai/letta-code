@@ -109,7 +109,7 @@ test("a principal reminder never blocks later human steering", () => {
   expect(runtime.queueRuntime.length).toBe(0);
 });
 
-test("background notifications use bearer authorship regardless of their initiating human", () => {
+test("mixed-owner background notifications use bearer authorship", () => {
   const runtime = getOrCreateScopedRuntime(
     createRuntime(),
     "agent-a",
@@ -136,6 +136,32 @@ test("background notifications use bearer authorship regardless of their initiat
     });
   }
   expect(consumed?.queuedTurn.actingUserId).toBeUndefined();
+  expect(runtime.queueRuntime.length).toBe(0);
+});
+
+test("same-owner background notifications keep their acting user", () => {
+  const runtime = getOrCreateScopedRuntime(
+    createRuntime(),
+    "agent-a",
+    "conv-a",
+  );
+  for (const text of ["event", "completed"]) {
+    const item: Omit<TaskNotificationQueueItem, "id" | "enqueuedAt"> = {
+      kind: "task_notification",
+      source: "task_notification",
+      agentId: "agent-a",
+      conversationId: "conv-a",
+      text,
+      actingUserId: "human-a",
+    };
+    runtime.queueRuntime.enqueue(item);
+  }
+  const consumed = consumeQueuedTurn(runtime);
+  expect(consumed?.queuedTurn.actingUserId).toBe("human-a");
+  expect(consumed?.queuedTurn.messages).toHaveLength(2);
+  for (const message of consumed?.queuedTurn.messages ?? []) {
+    expect(message).toMatchObject({ attribution: {} });
+  }
   expect(runtime.queueRuntime.length).toBe(0);
 });
 

@@ -11,4 +11,8 @@ describe("tool permissions", () => {
       requiresApproval: true,
     });
   });
+
+  test("allows self-bound wakes without interrupting the turn", () => {
+    expect(TOOL_PERMISSIONS.Wake).toEqual({ requiresApproval: false });
+  });
 });

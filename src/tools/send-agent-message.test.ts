@@ -100,7 +100,7 @@ test.each(computers)("HTTP send: computer %j", async (computer) => {
     );
     expect(selfSend.status).toBe("error");
     expect(JSON.parse(String(selfSend.toolReturn)).error).toBe(
-      "Cannot message the current conversation. Use a Monitor or schedule for self-invocation.",
+      "Cannot message the current conversation. Use Monitor for external events or Wake for timed self-invocation.",
     );
     expect(requests).toHaveLength(0);
     const results = await Promise.all(
