@@ -22,7 +22,7 @@ export interface RunBackgroundMemoryTaskParams {
   conversationId: string;
   memoryDir: string;
   assignment: string;
-  /** Set for a harness-launched conflict repair: its attempt token. */
+  /** Set for a harness-launched Git or validation repair: its attempt token. */
   repairToken?: string;
   signal: AbortSignal;
   subagentId: string;
@@ -40,7 +40,7 @@ export interface RunBackgroundMemoryTaskParams {
     transcriptPath: string | undefined,
     memoryScope: SubagentMemoryScope,
   ) => Promise<SubagentResult>;
-  /** Harness conflict repair, launched when the worker's sync leaves a conflict. */
+  /** Harness repair, launched when the worker's sync leaves a repairable state. */
   repair: (result: MemoryPostTurnSyncResult) => void | Promise<unknown>;
   getSnapshot?: typeof getSubagentSnapshot;
 }
@@ -116,13 +116,14 @@ export function runBackgroundMemoryTask(
 }
 
 /**
- * Launch a repair-only worker for a conflict unless one is already handling
- * it. True while a worker is on the conflict, launched here or still running
- * from an earlier turn, so the primary is told to keep off the checkout;
- * false when a worker has already attempted this conflict, or the launch
- * failed, and the primary must resolve it. Callers hold the checkout lease.
+ * Launch a repair-only worker for a conflict or invalid committed tree unless
+ * one is already handling it. True while a worker is on the problem, launched
+ * here or still running from an earlier turn, so post-turn sync stays silent.
+ * False when a worker already attempted the same state or launch failed, so
+ * the harness can report the blocked update without assigning foreground work.
+ * Callers hold the checkout lease.
  */
-export async function ensureMemoryConflictRepair(
+export async function ensureMemoryRepair(
   params: {
     agentId: string;
     conversationId?: string | null;
@@ -136,10 +137,15 @@ export async function ensureMemoryConflictRepair(
   try {
     claim = await claimRepair(params.result.memoryDir);
     if (claim.status !== "claimed") return claim.status === "in_progress";
+    const invalid = params.result.status === "invalid";
     spawn({
       subagentType: "memory",
-      description: "Repair memory Git conflict",
-      prompt: `Repair only the existing Git conflict in your memory repository. Do not perform unrelated edits or reorganization. If the conflict is already resolved, stop.\n\nMemory directory: ${params.result.memoryDir}\nReported status: ${params.result.summary}`,
+      description: invalid
+        ? "Repair invalid memory history"
+        : "Repair memory Git conflict",
+      prompt: invalid
+        ? `Repair only the unpublished memory history that fails the repository's validation. Do not change or disable the limits, and do not perform unrelated edits or reorganization. Preserve the intended final memory content. Fetch origin/main, back up the rejected local commits, replay a valid final change onto the accepted remote history without retaining an invalid ancestor, run the repository validation, and leave a clean committed checkout for the harness to push. If the invalid history is already gone, stop.\n\nMemory directory: ${params.result.memoryDir}\nReported status: ${params.result.summary}`
+        : `Repair only the existing Git conflict in your memory repository. Do not perform unrelated edits or reorganization. If the conflict is already resolved, stop.\n\nMemory directory: ${params.result.memoryDir}\nReported status: ${params.result.summary}`,
       parentScope: {
         agentId: params.agentId,
         conversationId: params.conversationId ?? "default",
