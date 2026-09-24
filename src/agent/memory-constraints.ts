@@ -124,10 +124,13 @@ async function main() {
   const errors = [];
   const layoutPolicy = readLayoutPolicy();
   activeLayoutPolicy = layoutPolicy;
+  const baseArgument = process.argv.indexOf("--base");
+  const configBase = baseArgument >= 0 ? process.argv[baseArgument + 1] : "HEAD";
   const configChanged = !gitSucceeds([
     "diff",
     "--cached",
     "--quiet",
+    configBase,
     "--",
     CONFIG_PATH,
   ]);
