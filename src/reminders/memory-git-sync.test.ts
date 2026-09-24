@@ -273,10 +273,11 @@ test("invalid committed memory launches history repair and only guards the check
       syncMemory: async () => invalid,
       syncAttachedRepositories: async () => ({ results: [] }),
       repairMemory: (params) =>
-        ensureMemoryRepair(params, spawnInto(jobs), async () => ({
-          status: "claimed",
-          token: "invalid-history",
-        })),
+        ensureMemoryRepair(params, spawnInto(jobs), async (memoryDir, kind) => {
+          expect(memoryDir).toBe(invalid.memoryDir);
+          expect(kind).toBe("invalid");
+          return { status: "claimed", token: "invalid-history" };
+        }),
     },
   );
 
