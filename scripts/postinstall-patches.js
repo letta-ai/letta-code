@@ -213,15 +213,20 @@ await patchInkRuntime([
     all: true,
   },
   {
-    // Overflow frames: do not replay fullStaticOutput. 2J erases display
-    // cells without copying them to xterm.js scrollback, so a just-written
-    // increment must be scrolled off the viewport (rows newlines) before the
-    // live 2J+H replace. Clip the live write to the last stdout.rows lines
-    // (approval/input sit at the bottom of AppView) so a tall live region
-    // cannot scroll another copy of itself into scrollback. Skip when
-    // nothing changed. fullStaticOutput stays for the one-shot #4032 repaint.
+    // Overflow frames: do not replay fullStaticOutput and do not clear the
+    // screen. 2J erases on-screen transcript rows without saving them
+    // (xterm.js) or copies every live frame into history (tmux
+    // scroll-on-clear). Clip the live output to its last rows - 1 lines
+    // (approval/input sit at the bottom of AppView) so log-update's cursor-up
+    // region always fits on screen, then take the normal log-update path:
+    // new static rows scroll into history above the live region, the live
+    // region is rewritten in place, and unchanged frames are skipped.
+    // lastOutput keeps the clipped frame, so console redraws and later diffs
+    // match the screen. fullStaticOutput stays for the one-shot #4032 repaint.
     before: [
-      // Current branch: clip kept the top of the live tree (hides input/approval).
+      // Current branch: 2J+H replace of the live tail clipped to rows lines.
+      "            if (hasStaticOutput) {\n                this.options.stdout.write(staticOutput + '\\n'.repeat(this.options.stdout.rows || 1));\n            }\n            if (hasStaticOutput || output !== this.lastOutput) {\n                const rows = this.options.stdout.rows || 1;\n                const liveLines = output.split('\\n');\n                this.options.stdout.write('\\u001B[2J\\u001B[H' + (liveLines.length > rows ? liveLines.slice(-rows).join('\\n') : output));\n            }\n            this.lastOutput = output;\n            return;",
+      // Earlier: clip kept the top of the live tree (hides input/approval).
       "            if (hasStaticOutput) {\n                this.options.stdout.write(staticOutput + '\\n'.repeat(this.options.stdout.rows || 1));\n            }\n            if (hasStaticOutput || output !== this.lastOutput) {\n                const rows = this.options.stdout.rows || 1;\n                const liveLines = output.split('\\n');\n                this.options.stdout.write('\\u001B[2J\\u001B[H' + (liveLines.length > rows ? liveLines.slice(0, rows).join('\\n') : output));\n            }\n            this.lastOutput = output;\n            return;",
       // Earlier: scroll increment then 2J+H the unclipped live region
       // (still scrolls when outputHeight > rows).
@@ -238,7 +243,7 @@ await patchInkRuntime([
       "            this.options.stdout.write(ansiEscapes.clearTerminal + this.fullStaticOutput + output);\n            this.lastOutput = output;\n            return;",
     ],
     after:
-      "            if (hasStaticOutput) {\n                this.options.stdout.write(staticOutput + '\\n'.repeat(this.options.stdout.rows || 1));\n            }\n            if (hasStaticOutput || output !== this.lastOutput) {\n                const rows = this.options.stdout.rows || 1;\n                const liveLines = output.split('\\n');\n                this.options.stdout.write('\\u001B[2J\\u001B[H' + (liveLines.length > rows ? liveLines.slice(-rows).join('\\n') : output));\n            }\n            this.lastOutput = output;\n            return;",
+      "            const liveOutput = output.split('\\n').slice(-Math.max(1, (this.options.stdout.rows || 1) - 1)).join('\\n');\n            if (hasStaticOutput) {\n                this.log.clear();\n                this.options.stdout.write(staticOutput);\n                this.log(liveOutput);\n            }\n            else if (liveOutput !== this.lastOutput) {\n                this.throttledLog(liveOutput);\n            }\n            this.lastOutput = liveOutput;\n            return;",
   },
   {
     before: "        if (outputHeight >= this.options.stdout.rows) {",
