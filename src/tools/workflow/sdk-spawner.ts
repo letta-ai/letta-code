@@ -47,11 +47,26 @@ Return raw data with no preamble, no markdown framing, and no questions.`;
 const JSON_PREAMBLE = `Your final message must be a single JSON value and \
 nothing else: no prose, no markdown code fence.`;
 
-/** Parse a JSON reply, tolerating a ``` fence the model added anyway. */
+/** Parse one JSON value, tolerating a prose preamble or a ``` fence. */
 export function parseJsonReply(text: string): unknown {
   const trimmed = text.trim();
-  const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/.exec(trimmed);
-  return JSON.parse(fenced?.[1] ?? trimmed);
+  const fenced = /(?:^|\n)```(?:json)?\s*([\s\S]*?)\s*```$/.exec(trimmed);
+  if (fenced) return JSON.parse(fenced[1] ?? "");
+  try {
+    return JSON.parse(trimmed);
+  } catch (error) {
+    // SDK result text may include an earlier assistant narration before the
+    // final JSON reply. Narration can itself contain [links] or object examples,
+    // so try each possible start while requiring the value to consume the end.
+    for (const match of trimmed.matchAll(/[[{]/g)) {
+      try {
+        return JSON.parse(trimmed.slice(match.index));
+      } catch {
+        // This was narration or an earlier value, not the final JSON.
+      }
+    }
+    throw error;
+  }
 }
 
 /**
@@ -305,6 +320,16 @@ export function createSdkSpawner(
     hooks?: SubagentSpawnHooks,
   ): Promise<SubagentOutcome> => {
     const { prompt, options } = request;
+    // The installed Agent SDK creates a new conversation for every query().
+    // Never silently ignore a caller's attempt to resume a previous worker.
+    if ("conversationId" in options) {
+      return {
+        value: null,
+        failed: true,
+        error:
+          "Workflow agent() cannot resume conversationId; this SDK creates a new conversation for every call.",
+      };
+    }
     const model = options.model
       ? (config.resolveModel?.(options.model) ?? null)
       : config.model;
