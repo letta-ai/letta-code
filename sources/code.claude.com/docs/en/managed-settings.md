@@ -236,6 +236,8 @@ Claude Code also applies these checks to parent-supplied values on their own:
 
   On Claude Code v2.1.273 or later, while `allowManagedMcpServersOnly` is on, the `allowedMcpServers` list from the highest-ranked admin source that sets one applies and blocks the parent's, as a [cross-source key](#keys-read-from-every-admin-source). The parent's list applies only when no admin source sets one. The [`managedSourcesBehavior`](/docs/en/settings-reference#managedsourcesbehavior) entry says which source supplies each key under `"merge"`. Before v2.1.223, a value in any admin source blocked the parent's
 * For `availableModels`, Claude Code enforces the value in the managed settings it applies and blocks a parent-supplied list
+* For `strictKnownMarketplaces`, Claude Code likewise enforces the list in the managed settings it applies and blocks a parent-supplied one. The parent's list applies only when no applied managed source sets one. Requires Claude Code v2.1.282 or later
+* A parent-supplied `blockedMarketplaces` applies in addition to any blocklist that a managed source sets. Requires Claude Code v2.1.282 or later
 
 #### Keep Cowork folder access when only managed rules apply
 
