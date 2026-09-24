@@ -109,6 +109,15 @@ describe("parseAt", () => {
     expect(parseAt("2026-09-23T09:00:00-07:00", now)).toBeNull();
   });
 
+  test("RFC 3339 timestamp rejects normalized calendar and clock values", () => {
+    const now = new Date("2026-01-01T00:00:00Z");
+    expect(parseAt("2026-02-30T09:00:00-08:00", now)).toBeNull();
+    expect(parseAt("2026-09-24T24:00:00-07:00", now)).toBeNull();
+    expect(parseAt("2026-09-24T09:60:00-07:00", now)).toBeNull();
+    expect(parseAt("2026-09-24T09:00:00-24:00", now)).toBeNull();
+    expect(parseAt("2028-02-29T09:00:00-08:00", now)).not.toBeNull();
+  });
+
   test("absolute time — future today", () => {
     const result = parseAt("3:00pm", baseTime);
     expect(result).not.toBeNull();

@@ -286,7 +286,7 @@ async function createWake(
   const timing = parseCreateTiming(args, now);
   args.signal?.throwIfAborted();
   const placement = await (deps.resolvePlacement ?? resolveCronCreatePlacement)(
-    { agentId: scope.agentId, preserveRuntimeLocality: false },
+    { agentId: scope.agentId },
   );
   if ("error" in placement) throw new Error(placement.error);
 
@@ -343,6 +343,7 @@ async function createWake(
     name,
     description,
     cron: timing.cron,
+    timezone: "UTC",
     recurring: timing.recurring,
     prompt,
     scheduled_for: timing.scheduledFor,

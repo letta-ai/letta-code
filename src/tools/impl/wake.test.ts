@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CloudSchedule } from "@/backend/api/schedules";
-import type { CronTask } from "@/cron";
+import { type CronTask, listTasks } from "@/cron";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { wake } from "./wake";
 
@@ -107,10 +107,7 @@ describe("Wake", () => {
     );
 
     expect(result.status).toBe("success");
-    expect(capturedPlacement).toEqual({
-      agentId: SCOPE.agentId,
-      preserveRuntimeLocality: false,
-    });
+    expect(capturedPlacement).toEqual({ agentId: SCOPE.agentId });
     expect(capturedActingUser).toBe(SCOPE.actingUserId);
     expect(capturedInput).toMatchObject({
       name: "check deploy",
@@ -163,6 +160,7 @@ describe("Wake", () => {
     expect(captured).toMatchObject({
       agent_id: SCOPE.agentId,
       conversation_id: SCOPE.conversationId,
+      timezone: "UTC",
       recurring: false,
       scheduled_for: new Date("2026-09-24T16:00:00Z"),
     });
@@ -304,6 +302,7 @@ describe("Wake", () => {
     expect(recurringInput).toMatchObject({
       recurring: true,
       cron: "0 * * * *",
+      timezone: "UTC",
     });
 
     const capped = await inScope(() =>
@@ -360,6 +359,7 @@ describe("Wake", () => {
         runner: "local",
         conversation_id: scope.conversationId,
       });
+      expect(listTasks({ agent_id: scope.agentId })[0]?.timezone).toBe("UTC");
 
       const id = String(payload(created).id);
       const listed = await runWithRuntimeContext(scope, () =>

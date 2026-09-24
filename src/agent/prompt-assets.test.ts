@@ -209,6 +209,8 @@ describe("buildSystemPrompt", () => {
         "Use Wake for a future turn in the current conversation",
       );
       expect(result).toContain("advanced `letta cron` schedules");
+      expect(result).not.toContain("Create one-shot or recurring crons");
+      expect(result).not.toContain("proactive in creating crons");
       expect(result).toContain(
         "MUST** be proactive in arranging the appropriate future invocation",
       );

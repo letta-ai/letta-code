@@ -294,16 +294,15 @@ export type CronCreatePlacement =
 /**
  * Resolve where a newly-created schedule should live and execute.
  *
- * Both `letta cron` and Wake use this path. The CLI preserves the current
- * runtime by default; self-bound Wake opts out so Cloud wakes remain durable
- * instead of pinning themselves to the current computer.
+ * Both `letta cron` and Wake use this path. Default placement preserves the
+ * current runtime so a scheduled turn cannot race that runtime from another
+ * execution environment. Targeted Cloud schedules remain durable because
+ * they fall back to the agent's Cloud sandbox when the device is offline.
  */
 export async function resolveCronCreatePlacement(params: {
   explicitRunner?: string;
   agentId: string;
   targetDeviceId?: string;
-  /** False for self-bound Wake, which should remain durable in Cloud. */
-  preserveRuntimeLocality?: boolean;
 }): Promise<CronCreatePlacement> {
   const resolved = await resolveCronRunnerForAgent(
     params.explicitRunner,
@@ -328,11 +327,7 @@ export async function resolveCronCreatePlacement(params: {
       await lookupEnvironmentForTarget(targetDeviceId),
     );
     if (!validity.ok) return validity;
-  } else if (
-    runner === "cloud" &&
-    params.explicitRunner !== "cloud" &&
-    params.preserveRuntimeLocality !== false
-  ) {
+  } else if (runner === "cloud" && params.explicitRunner !== "cloud") {
     const { getRuntimeEnvironmentDeviceId } = await import(
       "@/backend/api/client"
     );
