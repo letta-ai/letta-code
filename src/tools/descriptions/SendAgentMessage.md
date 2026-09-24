@@ -20,6 +20,12 @@ conversations, each with its own message history.
   active on A, selecting B is rejected rather than moving the conversation.
 - If delivery cannot be confirmed, check the recipient's messages before resending
   to avoid duplicates. The tool result includes details for inspecting the send.
+- Keep sends sparse and useful: concise assignments, specific questions, or
+  material updates. Skip status pings and repeated acknowledgments; repeat a
+  point only when you have something new to add.
+- For work already underway, treat the agent doing it as its owner. Send what it
+  needs, then let it decide. Do not take over or redo its work. If you think
+  ownership should change, ask the human instead of declaring it in a message.
 
 Use Agent to launch or resume a managed child task and receive its completion
 notification. SendAgentMessage only sends input; it creates no local task ID and
