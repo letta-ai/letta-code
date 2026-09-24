@@ -45,6 +45,8 @@ export function validateMemoryConstraintsRevision(
         "--layout",
         hasRootMarker ? "root-marker" : "legacy-only",
         "--audit",
+        "--base",
+        revision,
       ],
       {
         cwd: memoryDir,

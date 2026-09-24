@@ -80,6 +80,7 @@ export async function prepareMemoryHandoff(params: {
     prompt: [
       `Memory repository: ${params.memoryDir}`,
       "Use this exact checkout for all memory reads, edits and commits.",
+      `Memory repair mode: ${params.repairOnly ? "enabled" : "disabled"}.`,
       ...(transcriptPath
         ? [
             `Parent transcript (read-only reference): ${transcriptPath}`,
