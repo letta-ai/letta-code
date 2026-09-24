@@ -2952,8 +2952,7 @@ export function App({
           setLlmConfig(agent.llm_config);
           setAgentDescription(agent.description ?? null);
 
-          // Infer the system prompt id for footer/selector display by matching the
-          // stored agent.system content against our known prompt presets.
+          // Infer preset for footer/selector; null inherits the backend default.
           try {
             const agentSystem = (agent as { system?: unknown }).system;
             if (typeof agentSystem === "string") {
@@ -2969,9 +2968,7 @@ export function App({
                 SYSTEM_PROMPT,
               } = await import("@/agent/prompt-assets");
 
-              // Best-effort preset detection.
-              // Exact match is ideal, but allow prefix-matches because the stored
-              // agent.system may have additional sections appended.
+              // Allow appended sections when matching presets.
               let matched: string | null = null;
 
               const contentMatches = (content: string): boolean => {
@@ -3006,7 +3003,10 @@ export function App({
 
               setCurrentSystemPromptId(matched ?? "custom");
             } else {
-              setCurrentSystemPromptId("custom");
+              // A null raw prompt is Cloud's managed default, not a custom preset.
+              setCurrentSystemPromptId(
+                agentSystem === null ? "default" : "custom",
+              );
             }
           } catch {
             // best-effort only
