@@ -216,11 +216,14 @@ await patchInkRuntime([
     // Overflow frames: do not replay fullStaticOutput. 2J erases display
     // cells without copying them to xterm.js scrollback, so a just-written
     // increment must be scrolled off the viewport (rows newlines) before the
-    // live 2J+H replace. Clip the live write to stdout.rows so a tall live
-    // region cannot scroll another copy of itself into scrollback. Skip when
+    // live 2J+H replace. Clip the live write to the last stdout.rows lines
+    // (approval/input sit at the bottom of AppView) so a tall live region
+    // cannot scroll another copy of itself into scrollback. Skip when
     // nothing changed. fullStaticOutput stays for the one-shot #4032 repaint.
     before: [
-      // Current branch: scroll increment then 2J+H the unclipped live region
+      // Current branch: clip kept the top of the live tree (hides input/approval).
+      "            if (hasStaticOutput) {\n                this.options.stdout.write(staticOutput + '\\n'.repeat(this.options.stdout.rows || 1));\n            }\n            if (hasStaticOutput || output !== this.lastOutput) {\n                const rows = this.options.stdout.rows || 1;\n                const liveLines = output.split('\\n');\n                this.options.stdout.write('\\u001B[2J\\u001B[H' + (liveLines.length > rows ? liveLines.slice(0, rows).join('\\n') : output));\n            }\n            this.lastOutput = output;\n            return;",
+      // Earlier: scroll increment then 2J+H the unclipped live region
       // (still scrolls when outputHeight > rows).
       "            if (hasStaticOutput) {\n                this.options.stdout.write(staticOutput + '\\n'.repeat(this.options.stdout.rows || 1));\n            }\n            if (hasStaticOutput || output !== this.lastOutput) {\n                this.options.stdout.write('\\u001B[2J\\u001B[H' + output);\n            }\n            this.lastOutput = output;\n            return;",
       // Earlier: append increment and live with no viewport replace.
@@ -235,7 +238,7 @@ await patchInkRuntime([
       "            this.options.stdout.write(ansiEscapes.clearTerminal + this.fullStaticOutput + output);\n            this.lastOutput = output;\n            return;",
     ],
     after:
-      "            if (hasStaticOutput) {\n                this.options.stdout.write(staticOutput + '\\n'.repeat(this.options.stdout.rows || 1));\n            }\n            if (hasStaticOutput || output !== this.lastOutput) {\n                const rows = this.options.stdout.rows || 1;\n                const liveLines = output.split('\\n');\n                this.options.stdout.write('\\u001B[2J\\u001B[H' + (liveLines.length > rows ? liveLines.slice(0, rows).join('\\n') : output));\n            }\n            this.lastOutput = output;\n            return;",
+      "            if (hasStaticOutput) {\n                this.options.stdout.write(staticOutput + '\\n'.repeat(this.options.stdout.rows || 1));\n            }\n            if (hasStaticOutput || output !== this.lastOutput) {\n                const rows = this.options.stdout.rows || 1;\n                const liveLines = output.split('\\n');\n                this.options.stdout.write('\\u001B[2J\\u001B[H' + (liveLines.length > rows ? liveLines.slice(-rows).join('\\n') : output));\n            }\n            this.lastOutput = output;\n            return;",
   },
   {
     before: "        if (outputHeight >= this.options.stdout.rows) {",

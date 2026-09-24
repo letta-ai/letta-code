@@ -14,6 +14,7 @@ const OVERFLOW_SLACK = 256 * 1024;
 const EARLY_MARKER = "EARLY-STATIC-MARKER";
 const FILLER_MARKER = "FILLER-STATIC-MARKER";
 const LATE_MARKER = "LATE-STATIC-MARKER";
+const LIVE_TOP_MARKER = "STREAM-TOP-HIDDEN";
 const SGR_RESET = "\u001B[0m";
 const CLEAR_SCREEN = "\u001B[2J";
 const CLEAR_SCROLLBACK = "\u001B[3J";
@@ -190,7 +191,20 @@ function OverflowHarness({ items, tick }: { items: Item[]; tick: number }) {
       <Static items={items} style={{ flexDirection: "column" }}>
         {(item: Item) => <Text key={item.id}>{item.text}</Text>}
       </Static>
-      <Box height={10}>
+      <Box flexDirection="column">
+        <Text>{LIVE_TOP_MARKER}</Text>
+        {[
+          "body 0",
+          "body 1",
+          "body 2",
+          "body 3",
+          "body 4",
+          "body 5",
+          "body 6",
+          "body 7",
+        ].map((label) => (
+          <Text key={label}>{label}</Text>
+        ))}
         <Text>{`live ${tick}`}</Text>
       </Box>
     </>
@@ -233,6 +247,7 @@ test("overflow scrolls new static into scrollback and replaces live in place", a
 
   const liveOnly = stdout.chunks.slice(writesAfterCommit).join("");
   expect(liveOnly).toContain("live 5");
+  expect(liveOnly).not.toContain(LIVE_TOP_MARKER);
   expect(liveOnly).not.toContain(EARLY_MARKER);
   expect(liveOnly).not.toContain(LATE_MARKER);
   expect(liveOnly).not.toContain(CLEAR_SCROLLBACK);
@@ -247,6 +262,7 @@ test("overflow scrolls new static into scrollback and replaces live in place", a
   expect(combined).toContain(EARLY_MARKER);
   expect(combined).toContain(LATE_MARKER);
   expect(viewport).toContain("live 5");
+  expect(viewport).not.toContain(LIVE_TOP_MARKER);
   expect(viewport).not.toContain("live 4");
   expect(viewport).not.toContain("live 3");
   // Live-only 2J replaces the previous tall frame; those ticks must not
@@ -304,6 +320,7 @@ test("overflow frames do not replay the retained tail", async () => {
   const liveOnly = stdout.chunks.slice(writesAfterCommit).join("");
   expectNoScrollbackWipe(liveOnly);
   expect(liveOnly).toContain("live 4");
+  expect(liveOnly).not.toContain(LIVE_TOP_MARKER);
   expect(liveOnly).not.toContain(EARLY_MARKER);
   expect(liveOnly).not.toContain(FILLER_MARKER);
   expect(liveOnly).not.toContain(LATE_MARKER);
