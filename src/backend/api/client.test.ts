@@ -41,4 +41,12 @@ describe("getLettaCodeHeaders", () => {
       "X-Letta-Acting-User-Id": "user-requester",
     });
   });
+
+  test("allows a request to suppress the inherited acting user", () => {
+    process.env[ACTING_USER_ID_ENV] = "user-requester";
+
+    expect(getLettaCodeHeaders("test-key", null)).not.toHaveProperty(
+      "X-Letta-Acting-User-Id",
+    );
+  });
 });
