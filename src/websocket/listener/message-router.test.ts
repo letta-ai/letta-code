@@ -388,8 +388,10 @@ describe("listener message router ownership handoff", () => {
     const socket = new MockSocket();
     const sent: unknown[] = [];
     let receivedActingUserId: string | undefined;
+    let receivedActingUserAssertion: string | undefined;
     const processIncomingMessage = mock(async (incoming: IncomingMessage) => {
       receivedActingUserId = incoming.actingUserId;
+      receivedActingUserAssertion = incoming.actingUserAssertion;
     });
     setActiveRuntime(listener);
     const handleMessage = createListenerMessageHandler({
@@ -423,6 +425,7 @@ describe("listener message router ownership handoff", () => {
             agent_id: "agent-1",
             conversation_id: "conv-1",
             acting_user_id: "cloud-user-1",
+            acting_user_assertion: "assertion-1",
           },
           payload: {
             kind: "create_message",
@@ -448,6 +451,7 @@ describe("listener message router ownership handoff", () => {
             agent_id: "agent-1",
             conversation_id: "conv-1",
             acting_user_id: "cloud-user-1",
+            acting_user_assertion: "assertion-1",
           },
           payload: {
             kind: "create_message",
@@ -466,6 +470,7 @@ describe("listener message router ownership handoff", () => {
 
     expect(processIncomingMessage).toHaveBeenCalledTimes(1);
     expect(receivedActingUserId).toBe("cloud-user-1");
+    expect(receivedActingUserAssertion).toBe("assertion-1");
     expect(sent).toContainEqual(
       expect.objectContaining({
         type: "input_accepted",

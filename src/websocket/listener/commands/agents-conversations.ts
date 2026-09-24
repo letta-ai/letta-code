@@ -21,7 +21,10 @@ import type {
   ConversationRetrieveCommand,
   ConversationUpdateCommand,
 } from "@/types/protocol_v2";
-import { isConversationForkCommand } from "@/websocket/listener/management-protocol-inbound";
+import {
+  isConversationCreateCommand,
+  isConversationForkCommand,
+} from "@/websocket/listener/management-protocol-inbound";
 import {
   isAgentCreateCommand,
   isAgentDeleteCommand,
@@ -29,7 +32,6 @@ import {
   isAgentRetrieveCommand,
   isAgentUpdateCommand,
   isConversationCompactCommand,
-  isConversationCreateCommand,
   isConversationListCommand,
   isConversationMessagesListCommand,
   isConversationRecompileCommand,
@@ -368,7 +370,10 @@ export async function handleAgentConversationManagementCommand(
     try {
       const conversation = await backend.createConversation(
         parsed.body,
-        actingUserRequestOptions(parsed.acting_user_id),
+        actingUserRequestOptions(
+          parsed.acting_user_id,
+          parsed.acting_user_assertion,
+        ),
       );
       safeSocketSend(
         socket,
@@ -480,7 +485,10 @@ export async function handleAgentConversationManagementCommand(
           ...(typeof parsed.body?.message_id === "string"
             ? { messageId: parsed.body.message_id }
             : {}),
-          ...(actingUserRequestOptions(parsed.acting_user_id) ?? {}),
+          ...(actingUserRequestOptions(
+            parsed.acting_user_id,
+            parsed.acting_user_assertion,
+          ) ?? {}),
         },
       );
       safeSocketSend(

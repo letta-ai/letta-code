@@ -1,3 +1,4 @@
+import type { ActingUserRuntimeScope } from "@/types/runtime-scope";
 import { getOrCreateProcessTransport } from "./connection";
 import {
   enqueueInboundUserMessage,
@@ -58,7 +59,7 @@ export function dispatchInboundMessageWhenReady(params: {
   options: StartListenerOptions;
   processQueuedTurn: ProcessQueuedTurn;
   processIncomingMessage: typeof handleIncomingMessage;
-  actingUserId?: string;
+  actingUserScope?: ActingUserRuntimeScope;
   trackListenerError: (
     errorType: string,
     error: unknown,
@@ -77,10 +78,12 @@ export function dispatchInboundMessageWhenReady(params: {
     options,
     processQueuedTurn,
     processIncomingMessage,
-    actingUserId,
+    actingUserScope,
     trackListenerError,
     onInputAccepted,
   } = params;
+  const actingUserId = actingUserScope?.acting_user_id;
+  const actingUserAssertion = actingUserScope?.acting_user_assertion;
   const clientMessageId = getInboundClientMessageId(incoming);
   let inputAcknowledged = false;
   const acknowledgeInput = (result: {
@@ -124,6 +127,7 @@ export function dispatchInboundMessageWhenReady(params: {
           runtime,
           incoming,
           actingUserId,
+          actingUserAssertion,
         );
         if (accepted) {
           rememberAcceptedInputDisposition(runtime, clientMessageId, "queued");
@@ -148,8 +152,10 @@ export function dispatchInboundMessageWhenReady(params: {
       // Queued turns store the actor on the queue item. Direct turns skip that
       // item, so carry the actor on the message consumed by turn.ts instead.
       const attributedIncoming =
-        actingUserId && incoming.actingUserId !== actingUserId
-          ? { ...incoming, actingUserId }
+        (actingUserId && incoming.actingUserId !== actingUserId) ||
+        (actingUserAssertion &&
+          incoming.actingUserAssertion !== actingUserAssertion)
+          ? { ...incoming, actingUserId, actingUserAssertion }
           : incoming;
       await processIncomingMessage(
         attributedIncoming,

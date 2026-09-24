@@ -21,7 +21,11 @@ import {
   CLOUD_EXECUTION_TARGET,
   resolveCronCreatePlacement,
 } from "@/cron/runner";
-import { getRuntimeActingUserId, getRuntimeContext } from "@/runtime-context";
+import {
+  getRuntimeActingUserAssertion,
+  getRuntimeActingUserId,
+  getRuntimeContext,
+} from "@/runtime-context";
 
 type WakeAction = "create" | "list" | "cancel";
 
@@ -319,6 +323,7 @@ async function createWake(
       scope.agentId,
       built.input,
       getRuntimeActingUserId(),
+      getRuntimeActingUserAssertion(),
     );
     const targetDeviceId =
       created.target_device_id ?? built.input.target_device_id ?? null;

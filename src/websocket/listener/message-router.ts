@@ -49,7 +49,7 @@ import {
   rememberAcceptedInputDisposition,
 } from "./inbound-dispatch";
 import {
-  enqueueInboundUserMessage,
+  enqueueInboundUserMessageForRuntime,
   getInboundClientMessageId,
 } from "./inbound-queue";
 import {
@@ -601,7 +601,7 @@ export function createListenerMessageHandler(
             options: opts,
             processQueuedTurn,
             processIncomingMessage,
-            actingUserId: parsed.runtime.acting_user_id,
+            actingUserScope: parsed.runtime,
             trackListenerError,
             onInputAccepted: ({ accepted, disposition }) =>
               acknowledgeInput(
@@ -640,10 +640,10 @@ export function createListenerMessageHandler(
             return;
           }
 
-          const enqueued = enqueueInboundUserMessage(
+          const enqueued = enqueueInboundUserMessageForRuntime(
             scopedRuntime,
             stampedIncoming,
-            parsed.runtime.acting_user_id,
+            parsed.runtime,
           );
           if (enqueued) {
             rememberAcceptedInputDisposition(

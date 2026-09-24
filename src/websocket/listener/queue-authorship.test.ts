@@ -48,21 +48,32 @@ test("preserves every input message and author across queue entries", () => {
     runtime,
     { type: "message", ...scope, messages: first },
     "human-a",
+    "assertion-a",
   );
   enqueueInboundUserMessage(
     runtime,
     { type: "message", ...scope, messages: [third] },
     "human-b",
+    "assertion-b",
   );
   const ids = runtime.queueRuntime.peek().map((item) => item.id);
   const consumed = consumeQueuedTurn(runtime);
-  expect(consumed?.queuedTurn.messages).toEqual([...first, third]);
-  expect(consumed?.dequeuedBatch.items.map((item) => item.id)).toEqual(ids);
+  expect(consumed?.queuedTurn.messages).toEqual(first);
+  expect(consumed?.queuedTurn.actingUserId).toBe("human-a");
+  expect(consumed?.queuedTurn.actingUserAssertion).toBe("assertion-a");
+  expect(consumed?.dequeuedBatch.items.map((item) => item.id)).toEqual(
+    ids.slice(0, 1),
+  );
   expect(
     runtime.dequeuedClientMessageIdsByBatchId.get(
       consumed?.dequeuedBatch.batchId ?? "",
     ),
-  ).toEqual(["cm-one", "cm-two", "cm-three"]);
+  ).toEqual(["cm-one", "cm-two"]);
+
+  const next = consumeQueuedTurn(runtime);
+  expect(next?.queuedTurn.messages).toEqual([third]);
+  expect(next?.queuedTurn.actingUserId).toBe("human-b");
+  expect(next?.queuedTurn.actingUserAssertion).toBe("assertion-b");
   expect(runtime.queueRuntime.length).toBe(0);
 });
 
@@ -96,6 +107,7 @@ test("a principal reminder never blocks later human steering", () => {
       messages: [{ role: "user", content: "steer" }],
     },
     "human-b",
+    "assertion-b",
   );
   const consumed = consumeQueuedTurn(runtime);
   expect(consumed?.queuedTurn.messages).toEqual([
@@ -106,10 +118,12 @@ test("a principal reminder never blocks later human steering", () => {
       attribution: { acting_user_id: "human-b" },
     },
   ]);
+  expect(consumed?.queuedTurn.actingUserId).toBe("human-b");
+  expect(consumed?.queuedTurn.actingUserAssertion).toBe("assertion-b");
   expect(runtime.queueRuntime.length).toBe(0);
 });
 
-test("mixed-owner background notifications use bearer authorship", () => {
+test("mixed-owner background notifications keep separate authority", () => {
   const runtime = getOrCreateScopedRuntime(
     createRuntime(),
     "agent-a",
@@ -126,16 +140,22 @@ test("mixed-owner background notifications use bearer authorship", () => {
     };
     runtime.queueRuntime.enqueue(item);
   }
-  const consumed = consumeQueuedTurn(runtime);
-  expect(consumed?.queuedTurn.messages).toHaveLength(3);
-  for (const message of consumed?.queuedTurn.messages ?? []) {
+  const first = consumeQueuedTurn(runtime);
+  expect(first?.queuedTurn.messages).toHaveLength(1);
+  expect(first?.queuedTurn.actingUserId).toBe("human-a");
+  const second = consumeQueuedTurn(runtime);
+  expect(second?.queuedTurn.messages).toHaveLength(2);
+  expect(second?.queuedTurn.actingUserId).toBe("human-b");
+  for (const message of [
+    ...(first?.queuedTurn.messages ?? []),
+    ...(second?.queuedTurn.messages ?? []),
+  ]) {
     expect(message).toMatchObject({
       role: "user",
       content: "completed",
       attribution: {},
     });
   }
-  expect(consumed?.queuedTurn.actingUserId).toBeUndefined();
   expect(runtime.queueRuntime.length).toBe(0);
 });
 
@@ -177,10 +197,22 @@ test("same-author messages stay separate and paused messages stay parked", () =>
     conversationId: "conv-a",
     messages: [{ role: "user" as const, content, otid: content }],
   });
-  enqueueInboundUserMessage(runtime, incoming("first"), "human-a");
-  enqueueInboundUserMessage(runtime, incoming("second"), "human-a");
+  enqueueInboundUserMessage(
+    runtime,
+    incoming("first"),
+    "human-a",
+    "assertion-a-1",
+  );
+  enqueueInboundUserMessage(
+    runtime,
+    incoming("second"),
+    "human-a",
+    "assertion-a-2",
+  );
   const batch = consumeQueuedTurn(runtime);
   expect(batch?.queuedTurn.messages).toHaveLength(2);
+  expect(batch?.queuedTurn.actingUserId).toBe("human-a");
+  expect(batch?.queuedTurn.actingUserAssertion).toBe("assertion-a-1");
   expect(batch?.queuedTurn.messages.map((message) => message.otid)).toEqual([
     "first",
     "second",

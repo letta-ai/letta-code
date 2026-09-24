@@ -57,7 +57,10 @@ import {
   resolveCronRunner,
   resolveCronRunnerForAgent,
 } from "@/cron/runner";
-import { getRuntimeActingUserId } from "@/runtime-context";
+import {
+  getRuntimeActingUserAssertion,
+  getRuntimeActingUserId,
+} from "@/runtime-context";
 import {
   resolveCronAddConversationTarget,
   resolveCronAgentId,
@@ -422,6 +425,7 @@ async function handleCloudAdd(params: CloudAddParams): Promise<number> {
       params.agentId,
       built.input,
       getRuntimeActingUserId(),
+      getRuntimeActingUserAssertion(),
     );
 
     const targetDeviceId =

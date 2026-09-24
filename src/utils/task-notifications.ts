@@ -17,6 +17,7 @@ export interface NotificationScope {
   agentId: string;
   conversationId: string;
   actingUserId?: string;
+  actingUserAssertion?: string;
 }
 
 export interface TaskNotification {
@@ -70,6 +71,7 @@ export function resolveNotificationScope(parentScope?: {
       agentId: parentScope.agentId,
       conversationId: parentScope.conversationId || "default",
       actingUserId: getRuntimeContext()?.actingUserId,
+      actingUserAssertion: getRuntimeContext()?.actingUserAssertion,
     };
   }
 
@@ -78,6 +80,7 @@ export function resolveNotificationScope(parentScope?: {
       agentId: getCurrentAgentId(),
       conversationId: getConversationId() ?? "default",
       actingUserId: getRuntimeContext()?.actingUserId,
+      actingUserAssertion: getRuntimeContext()?.actingUserAssertion,
     };
   } catch {
     return undefined;

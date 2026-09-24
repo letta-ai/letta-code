@@ -84,7 +84,6 @@ import { drainTurnStreamWithEmission } from "./turn-stream";
 import { buildTurnUsage, finishListenerTurn } from "./turn-terminal";
 import { seedInboundUserTranscriptLines } from "./turn-transcript";
 import type { ConversationRuntime, IncomingMessage } from "./types";
-
 export async function handleIncomingMessage(
   msg: IncomingMessage,
   socket: ListenerTransport,
@@ -280,6 +279,7 @@ async function handleIncomingMessageInner(
       overrideModel,
       responseFormat: msg.responseFormat,
       actingUserId: msg.actingUserId,
+      actingUserAssertion: msg.actingUserAssertion,
       getInput: () => turnInput,
       getInterruptedToolCallIds: () =>
         pendingNormalizationInterruptedToolCallIds,

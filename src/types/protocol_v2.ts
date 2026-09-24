@@ -50,6 +50,7 @@ import type {
 } from "./external-tool-protocol";
 import type { LoopState } from "./loop-status-protocol";
 import type {
+  ActingUserRuntimeScope,
   AgentRuntimeScope,
   ConversationRuntimeScope,
 } from "./runtime-scope";
@@ -1623,7 +1624,7 @@ export interface ConversationRetrieveCommand {
   conversation_id: string;
 }
 
-export interface ConversationCreateCommand {
+export interface ConversationCreateCommand extends ActingUserRuntimeScope {
   type: "conversation_create";
   /** Echoed back in the response for request correlation. */
   request_id: string;
@@ -1638,7 +1639,6 @@ export interface ConversationCreateCommand {
    * spawned the sandbox / desktop runtime. Absent for self-hosted or
    * direct (non-relayed) flows.
    */
-  acting_user_id?: string;
 }
 
 export interface ConversationUpdateCommand {
@@ -1659,7 +1659,7 @@ export interface ConversationRecompileCommand {
   body?: ConversationRecompileParams;
 }
 
-export interface ConversationForkCommand {
+export interface ConversationForkCommand extends ActingUserRuntimeScope {
   type: "conversation_fork";
   /** Echoed back in the response for request correlation. */
   request_id: string;
@@ -1670,7 +1670,6 @@ export interface ConversationForkCommand {
    * `ConversationCreateCommand.acting_user_id`. The fork produces a new
    * conversation, so it is attributed the same way.
    */
-  acting_user_id?: string;
 }
 
 export interface ConversationMessagesListCommand {

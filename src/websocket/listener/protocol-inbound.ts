@@ -41,7 +41,6 @@ import type {
   CheckoutBranchCommand,
   ClientToolsetConfig,
   ConversationCompactCommand,
-  ConversationCreateCommand,
   ConversationListCommand,
   ConversationMessagesListCommand,
   ConversationRecompileCommand,
@@ -129,6 +128,7 @@ import {
 } from "./external-tool-protocol";
 import {
   isAppServerInfoCommand,
+  isConversationCreateCommand,
   isConversationForkCommand,
 } from "./management-protocol-inbound";
 import {
@@ -1281,22 +1281,6 @@ export function isConversationRetrieveCommand(
     c.type === "conversation_retrieve" &&
     typeof c.request_id === "string" &&
     typeof c.conversation_id === "string"
-  );
-}
-
-export function isConversationCreateCommand(
-  value: unknown,
-): value is ConversationCreateCommand {
-  if (!value || typeof value !== "object") return false;
-  const c = value as {
-    type?: unknown;
-    request_id?: unknown;
-    body?: unknown;
-  };
-  return (
-    c.type === "conversation_create" &&
-    typeof c.request_id === "string" &&
-    isObjectRecord(c.body)
   );
 }
 

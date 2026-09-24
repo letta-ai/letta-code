@@ -9,6 +9,7 @@ export interface DreamCommandScope {
   agentId: string;
   conversationId?: string | null;
   actingUserId?: string;
+  actingUserAssertion?: string;
 }
 
 /** Null authorizes the existing Code-managed path, never an error fallback. */
@@ -28,7 +29,10 @@ export async function requestCloudReflectionRun(
   }
   const config = await backend.retrieveReflectionConfig(
     capturedScope.agentId,
-    actingUserRequestOptions(capturedScope.actingUserId),
+    actingUserRequestOptions(
+      capturedScope.actingUserId,
+      capturedScope.actingUserAssertion,
+    ),
   );
   if (config === null || config.cutover === false) return null;
   if (config.cutover !== true) {
@@ -51,7 +55,7 @@ export async function requestReflectionRun(
   backend: Backend = getBackend(),
 ): Promise<string> {
   if (args.trim()) throw new Error("/dream does not accept arguments.");
-  const { agentId, conversationId, actingUserId } = scope;
+  const { agentId, conversationId, actingUserId, actingUserAssertion } = scope;
   if (!agentId) throw new Error("/dream requires an active agent.");
   if (!backend.enqueueReflectionRun) throw new Error(REFLECTION_UNSUPPORTED);
   const receipt = await backend.enqueueReflectionRun(
@@ -59,7 +63,7 @@ export async function requestReflectionRun(
     {
       conversation_id: conversationId ?? "default",
     },
-    actingUserRequestOptions(actingUserId),
+    actingUserRequestOptions(actingUserId, actingUserAssertion),
   );
   return formatReflectionReceipt(receipt);
 }

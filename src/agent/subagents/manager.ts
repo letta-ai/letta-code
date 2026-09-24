@@ -1,12 +1,3 @@
-/**
- * Subagent manager for spawning and coordinating subagents
- *
- * This module handles:
- * - Spawning subagents via letta CLI in headless mode
- * - Executing subagents and collecting final reports
- * - Managing parallel subagent execution
- */
-
 import { rmSync } from "node:fs";
 import { platform } from "node:os";
 import { resolveActingUserId } from "@/agent/acting-user";
@@ -408,6 +399,10 @@ async function executeSubagent(
       inheritedApiKey,
       inheritedBaseUrl,
       actingUserId: actingUserIdOverride,
+      actingUserAssertion:
+        actingUserIdOverride === getRuntimeContext()?.actingUserId
+          ? getRuntimeContext()?.actingUserAssertion
+          : undefined,
       transcriptPath,
       subagentId,
       subagentName:

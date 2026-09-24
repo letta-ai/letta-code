@@ -54,6 +54,7 @@ const caller = {
   agentId: "agent-caller",
   conversationId: "conv-caller",
   actingUserId: "user-caller",
+  actingUserAssertion: "assertion-caller",
 };
 const message = {
   conversation_id: "conv-target",
@@ -309,7 +310,10 @@ test("returns acceptance and an explicit return address, with no task or answer"
   expect(receipt).not.toHaveProperty("result");
   expect(receipt.status_command).toContain("--conversation conv-target");
   expect(f.submissions).toHaveLength(1);
-  expect(f.submissions[0]).toMatchObject({ actingUserId: "user-caller" });
+  expect(f.submissions[0]).toMatchObject({
+    actingUserId: "user-caller",
+    actingUserAssertion: "assertion-caller",
+  });
   expect(f.submissions[0]?.content).toEqual([
     {
       type: "text",
@@ -372,17 +376,24 @@ test("overlapping senders keep their own conversation, acting user, and message 
       agentId: "agent-second",
       conversationId: "conv-second",
       actingUserId: "user-second",
+      actingUserAssertion: "assertion-second",
     },
     () => send_agent_message({ ...message, message: "Second sender" }, f),
   );
   await second;
   release();
   await first;
-  expect(f.submissions[0]).toMatchObject({ actingUserId: "user-second" });
+  expect(f.submissions[0]).toMatchObject({
+    actingUserId: "user-second",
+    actingUserAssertion: "assertion-second",
+  });
   expect(JSON.stringify(f.submissions[0]?.content)).toContain(
     "agent-second, conversation conv-second",
   );
-  expect(f.submissions[1]).toMatchObject({ actingUserId: "user-caller" });
+  expect(f.submissions[1]).toMatchObject({
+    actingUserId: "user-caller",
+    actingUserAssertion: "assertion-caller",
+  });
   expect(JSON.stringify(f.submissions[1]?.content)).toContain(
     "agent-caller, conversation conv-caller",
   );

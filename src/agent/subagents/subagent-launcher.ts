@@ -8,7 +8,10 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
+import {
+  ACTING_USER_ASSERTION_ENV,
+  ACTING_USER_ID_ENV,
+} from "@/agent/acting-user";
 import { type BackendMode, getLocalBackendStorageDir } from "@/backend";
 import { getLocalBackendMemoryFilesystemRoot } from "@/backend/local/paths";
 import {
@@ -161,6 +164,8 @@ export interface ComposeSubagentChildEnvOptions {
   inheritedBaseUrl?: string | null;
   /** Authenticated Cloud user responsible for the parent turn. */
   actingUserId?: string | null;
+  /** Cloud-minted proof paired with actingUserId. */
+  actingUserAssertion?: string | null;
   /** Optional path to a transcript payload file, exposed to the child as
    * the TRANSCRIPT_PATH env var. Used by reflection subagents so the prompt
    * can reference `$TRANSCRIPT_PATH` (resolved via Bash) instead of
@@ -224,6 +229,7 @@ export function composeSubagentChildEnv(
     inheritedApiKey,
     inheritedBaseUrl,
     actingUserId,
+    actingUserAssertion,
     transcriptPath,
   } = options;
 
@@ -232,6 +238,9 @@ export function composeSubagentChildEnv(
     ...(inheritedApiKey && { LETTA_API_KEY: inheritedApiKey }),
     ...(inheritedBaseUrl && { LETTA_BASE_URL: inheritedBaseUrl }),
     ...(actingUserId && { [ACTING_USER_ID_ENV]: actingUserId }),
+    ...(actingUserAssertion && {
+      [ACTING_USER_ASSERTION_ENV]: actingUserAssertion,
+    }),
     LETTA_CODE_AGENT_ROLE: "subagent",
     [MEMORY_WORKER_SESSION_ENV]: subagentType === "memory" ? "1" : undefined,
     [SUBAGENT_LAUNCH_ENV]: "1",

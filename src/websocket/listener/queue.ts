@@ -69,15 +69,25 @@ function hasSameQueueScope(a: QueueItem, b: QueueItem): boolean {
   );
 }
 
-function getBatchActingUserId(items: QueueItem[]): string | undefined {
-  const actingUserId = items[0]?.actingUserId;
+function getBatchActingUser(items: QueueItem[]): {
+  actingUserId?: string;
+  actingUserAssertion?: string;
+} {
+  const attributed = items.filter((item) => item.actingUserId);
+  const actingUserId = attributed[0]?.actingUserId;
   if (
     !actingUserId ||
-    items.some((item) => item.actingUserId !== actingUserId)
+    attributed.some((item) => item.actingUserId !== actingUserId)
   ) {
-    return undefined;
+    return {};
   }
-  return actingUserId;
+  const actingUserAssertion = attributed.find(
+    (item) => item.actingUserAssertion,
+  )?.actingUserAssertion;
+  return {
+    actingUserId,
+    ...(actingUserAssertion ? { actingUserAssertion } : {}),
+  };
 }
 
 function buildQueuedTurnMessage(
@@ -91,7 +101,6 @@ function buildQueuedTurnMessage(
     if (item.kind === "message" && incoming) {
       template ??= {
         ...incoming,
-        actingUserId: incoming.actingUserId ?? item.actingUserId,
       };
       messages.push(
         ...incoming.messages.map((message) =>
@@ -122,12 +131,14 @@ function buildQueuedTurnMessage(
   }
   if (messages.length === 0) return null;
   const scopeItem = batch.items[0];
+  const actingUser = getBatchActingUser(batch.items);
   return {
     type: "message",
     agentId: scopeItem?.agentId ?? runtime.agentId ?? undefined,
     conversationId: scopeItem?.conversationId ?? runtime.conversationId,
     ...template,
-    actingUserId: template?.actingUserId ?? getBatchActingUserId(batch.items),
+    actingUserId: actingUser.actingUserId,
+    actingUserAssertion: actingUser.actingUserAssertion,
     messages,
   };
 }
@@ -212,6 +223,7 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
   let hasCronPrompt = false;
   let hasModContinue = false;
   let batchConnectionId: string | undefined;
+  let batchActingUserId: string | undefined;
   let batchImageFailureMode: "strict" | "drop" | null = null;
   const isNoCoalesce = (candidate: (typeof queuedItems)[number]): boolean =>
     candidate.kind === "message" && candidate.noCoalesce === true;
@@ -227,6 +239,16 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
     if (queueLen > 0 && (isNoCoalesce(item) || isNoCoalesce(firstQueuedItem))) {
       break;
     }
+
+    const itemActingUserId = item.actingUserId?.trim() || undefined;
+    if (
+      batchActingUserId &&
+      itemActingUserId &&
+      itemActingUserId !== batchActingUserId
+    ) {
+      break;
+    }
+    batchActingUserId ??= itemActingUserId;
 
     if (item.kind === "message") {
       const itemConnectionId = runtime.queuedMessagesByItemId.get(

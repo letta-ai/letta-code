@@ -53,6 +53,7 @@ function buildListSharedAgentsQuery(
 export async function listSharedAgentsForCurrentUser(
   params: ListSharedAgentsParams,
   actingUserId?: string,
+  actingUserAssertion?: string,
 ): Promise<ListSharedAgentsResponse> {
   return apiRequest<ListSharedAgentsResponse>(
     "GET",
@@ -60,7 +61,7 @@ export async function listSharedAgentsForCurrentUser(
     undefined,
     {
       query: buildListSharedAgentsQuery(params),
-      ...actingUserRequestOptions(actingUserId),
+      ...actingUserRequestOptions(actingUserId, actingUserAssertion),
     },
   );
 }

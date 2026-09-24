@@ -9,7 +9,7 @@ import type {
   Run,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
-import { resolveActingUserId } from "@/agent/acting-user";
+import { resolveActingUserRuntimeScope } from "@/agent/acting-user";
 import { loadPreloadedSkills } from "@/agent/preloaded-skills";
 import { shouldLaunchThroughListener } from "@/agent/subagents/subagent-launcher";
 import { buildHeadlessSenderReminder } from "@/headless-message-sender";
@@ -1981,7 +1981,7 @@ export async function handleHeadlessCommand(
       scope: {
         agent_id: agent.id,
         conversation_id: conversationId,
-        acting_user_id: resolveActingUserId(),
+        ...resolveActingUserRuntimeScope(),
       },
       content: contentParts,
       backend,

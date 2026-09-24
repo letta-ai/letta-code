@@ -33,6 +33,8 @@ type QueueItemBase = {
    * flows where cloud doesn't stamp the field.
    */
   actingUserId?: string;
+  /** Cloud-minted proof retained only while this item remains in-process. */
+  actingUserAssertion?: string;
   source: QueueItemSource;
   enqueuedAt: number;
   /**
@@ -111,6 +113,11 @@ function hasSameScope(a: QueueItem, b: QueueItem): boolean {
     (a.agentId ?? null) === (b.agentId ?? null) &&
     (a.conversationId ?? null) === (b.conversationId ?? null)
   );
+}
+
+function actingUserId(item: QueueItem): string | undefined {
+  const value = item.actingUserId?.trim();
+  return value || undefined;
 }
 
 // ── Batch / callbacks ────────────────────────────────────────────
@@ -307,9 +314,19 @@ export class QueueRuntime {
     const batch: QueueItem[] = [];
     const first = this.store.find((item) => !item.paused);
     if (first && isCoalescable(first.kind)) {
+      let batchActingUserId: string | undefined;
       for (const item of this.store) {
         if (item.paused) continue;
         if (!isCoalescable(item.kind) || !hasSameScope(first, item)) break;
+        const itemActingUserId = actingUserId(item);
+        if (
+          batchActingUserId &&
+          itemActingUserId &&
+          itemActingUserId !== batchActingUserId
+        ) {
+          break;
+        }
+        batchActingUserId ??= itemActingUserId;
         batch.push(item);
       }
     } else if (first) {

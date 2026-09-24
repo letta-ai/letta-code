@@ -3,7 +3,10 @@ import { actingUserRequestOptions } from "@/agent/acting-user";
 import { isLocalAgentId } from "@/agent/agent-id";
 import { isLocalBackendEnabled } from "@/backend";
 import { apiRequest } from "@/backend/api/request";
-import { getRuntimeActingUserId } from "@/runtime-context";
+import {
+  getRuntimeActingUserAssertion,
+  getRuntimeActingUserId,
+} from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 
 type UserDetails = {
@@ -146,10 +149,12 @@ export async function buildPermissionsReport(
   agentId: string,
   request: typeof apiRequest = apiRequest,
   actingUserId: string | undefined = getRuntimeActingUserId(),
+  actingUserAssertion: string | undefined = getRuntimeActingUserAssertion(),
 ): Promise<PermissionsReport> {
   const encodedAgentId = encodeURIComponent(agentId);
   const path = `/v1/agents/${encodedAgentId}`;
-  const options = actingUserRequestOptions(actingUserId) ?? {};
+  const options =
+    actingUserRequestOptions(actingUserId, actingUserAssertion) ?? {};
   const [owner, organizationSharing, sharedUsers, incoming, outgoing] =
     await Promise.all([
       request<OwnerResponse>("GET", `${path}/owner`, undefined, options),

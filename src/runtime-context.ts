@@ -1,6 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { homedir, tmpdir } from "node:os";
-import { resolveActingUserId } from "@/agent/acting-user";
+import {
+  resolveActingUserAssertion,
+  resolveActingUserId,
+} from "@/agent/acting-user";
 import type { SkillSource } from "./agent/skills";
 import { isUsableDirectory } from "./helpers/usable-directory";
 import type { RuntimeExecutionSettings } from "./runtime-execution-settings";
@@ -28,6 +31,8 @@ export interface RuntimeContextSnapshot {
   conversationId?: string | null;
   /** Authenticated Cloud user responsible for the current turn. */
   actingUserId?: string;
+  /** Cloud-minted proof kept in-process for sender-attributed requests. */
+  actingUserAssertion?: string;
   skillsDirectory?: string | null;
   skillSources?: SkillSource[];
   workingDirectory?: string | null;
@@ -52,6 +57,14 @@ export function getRuntimeContext(): RuntimeContextSnapshot | undefined {
 /** Resolve the current turn's customer, including inherited headless env scope. */
 export function getRuntimeActingUserId(): string | undefined {
   return resolveActingUserId(undefined, getRuntimeContext()?.actingUserId);
+}
+
+export function getRuntimeActingUserAssertion(): string | undefined {
+  const context = getRuntimeContext();
+  if (context?.actingUserId !== undefined) {
+    return context.actingUserAssertion;
+  }
+  return resolveActingUserAssertion();
 }
 
 export function runWithRuntimeContext<T>(

@@ -90,6 +90,7 @@ export async function createCloudSchedule(
   agentId: string,
   input: CreateCloudScheduleInput,
   actingUserId?: string,
+  actingUserAssertion?: string,
 ): Promise<CreateCloudScheduleResponse> {
   return apiRequest<CreateCloudScheduleResponse>(
     "POST",
@@ -102,7 +103,7 @@ export async function createCloudSchedule(
       // The server requires use_sandbox for device targets either way.
       use_sandbox: true,
     },
-    actingUserRequestOptions(actingUserId),
+    actingUserRequestOptions(actingUserId, actingUserAssertion),
   );
 }
 

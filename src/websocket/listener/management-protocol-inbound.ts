@@ -1,6 +1,10 @@
 import type { AppServerInfoCommand } from "@/types/app-server-info";
 import type { ConversationForkBody } from "@/types/conversation-fork-protocol";
-import type { ConversationForkCommand } from "@/types/protocol_v2";
+import type {
+  ConversationCreateCommand,
+  ConversationForkCommand,
+} from "@/types/protocol_v2";
+import { hasValidActingUserScope } from "./protocol-validation";
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -37,6 +41,19 @@ export function isConversationForkCommand(
     value.type === "conversation_fork" &&
     typeof value.request_id === "string" &&
     typeof value.conversation_id === "string" &&
-    (value.body === undefined || isConversationForkBody(value.body))
+    (value.body === undefined || isConversationForkBody(value.body)) &&
+    hasValidActingUserScope(value)
+  );
+}
+
+export function isConversationCreateCommand(
+  value: unknown,
+): value is ConversationCreateCommand {
+  if (!isObjectRecord(value)) return false;
+  return (
+    value.type === "conversation_create" &&
+    typeof value.request_id === "string" &&
+    isObjectRecord(value.body) &&
+    hasValidActingUserScope(value)
   );
 }

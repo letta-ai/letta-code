@@ -1,5 +1,6 @@
 import {
   actingUserRequestOptions,
+  resolveActingUserAssertion,
   resolveActingUserId,
 } from "@/agent/acting-user";
 import type { Backend } from "@/backend";
@@ -26,9 +27,10 @@ export function createStartupBackend(
   backend: HeadlessStartupBackend,
   usesRemoteComputer: boolean,
   actingUserId = resolveActingUserId(),
+  actingUserAssertion = resolveActingUserAssertion(),
 ): HeadlessStartupBackend {
   const requestOptions = usesRemoteComputer
-    ? actingUserRequestOptions(actingUserId)
+    ? actingUserRequestOptions(actingUserId, actingUserAssertion)
     : undefined;
 
   return {
