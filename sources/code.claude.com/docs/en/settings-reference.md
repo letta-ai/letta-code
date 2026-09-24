@@ -4170,6 +4170,8 @@ This key takes effect once channels pass the [`channelsEnabled`](#channelsenable
 
 Block plugin marketplace sources for your organization. Claude Code checks the blocklist on marketplace add and on plugin install, update, refresh, and auto-update, so a marketplace someone added before you set the policy can't be used to fetch plugins either. Blocked sources are checked before download, so they never touch the filesystem.
 
+If you set this key in the [claude.ai admin console](/docs/en/server-managed-settings), claude.ai also applies it when anyone in your organization adds a marketplace from a git repository on claude.ai, as [How restrictions work](/docs/en/plugin-marketplaces#how-restrictions-work) describes.
+
 * **Scope**: [`Managed`](#scopes)
 * **Type**: array of marketplace source objects, in the same forms as [`strictKnownMarketplaces`](#allowed-source-types)
 * **Default**: unset, so no marketplace is blocked
@@ -4255,6 +4257,8 @@ Add your organization's own text to the plugin trust warning Claude Code shows b
 ### `strictKnownMarketplaces`
 
 Restrict which plugin marketplace sources people in your organization can add and install plugins from. Claude Code enforces the allowlist on marketplace add and on plugin install, update, refresh, and auto-update, before any network or filesystem operation, so a marketplace someone added before you set the policy can't be used to fetch plugins once its source no longer matches. Blocked users see an error naming the managed policy.
+
+If you set this key in the [claude.ai admin console](/docs/en/server-managed-settings), claude.ai also applies it when anyone in your organization adds a marketplace from a git repository on claude.ai, as [How restrictions work](/docs/en/plugin-marketplaces#how-restrictions-work) describes.
 
 * **Scope**: [`Managed`](#scopes)
 * **Type**: array of marketplace source objects; see [Allowed source types](#allowed-source-types)

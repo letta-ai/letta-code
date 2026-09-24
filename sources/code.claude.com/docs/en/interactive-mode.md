@@ -387,7 +387,7 @@ After Claude responds, Claude Code can suggest your next prompt based on your co
 * Press `Tab` or `Right arrow` to place the suggestion in the prompt input, then `Enter` to submit
 * Start typing to dismiss it
 
-Claude Code generates each of these next-prompt suggestions with a background request that reuses the conversation's prompt cache, so the additional cost is minimal.
+Claude Code generates each of these next-prompt suggestions with a short background request to the same model your session is using. The request counts toward your plan's usage limits or your API costs. Because it reuses the conversation's prompt cache, it is mostly cache reads plus a few output tokens, so the added cost is small.
 
 ### When Claude Code skips suggestions
 
