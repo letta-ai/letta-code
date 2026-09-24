@@ -167,7 +167,10 @@ describe("spawnBackgroundSubagentTask", () => {
     );
 
     const launched = runWithRuntimeContext(
-      { actingUserId: "cloud-user-a" },
+      {
+        actingUserId: "cloud-user-a",
+        actingUserAssertion: "assertion-a",
+      },
       () =>
         spawnBackgroundSubagentTask({
           subagentType: "general-purpose",
@@ -194,6 +197,9 @@ describe("spawnBackgroundSubagentTask", () => {
     expect(backgroundTasks.get(launched.taskId)?.actingUserId).toBe(
       "cloud-user-a",
     );
+    expect(backgroundTasks.get(launched.taskId)?.actingUserAssertion).toBe(
+      "assertion-a",
+    );
     expect(spawnSubagentImpl.mock.calls[0]?.[15]).toBe("cloud-user-a");
 
     runWithRuntimeContext({ actingUserId: "cloud-user-b" }, () => {
@@ -208,6 +214,7 @@ describe("spawnBackgroundSubagentTask", () => {
 
     expect(queueMessages).toHaveLength(1);
     expect(queueMessages[0]?.actingUserId).toBe("cloud-user-a");
+    expect(queueMessages[0]?.actingUserAssertion).toBe("assertion-a");
   });
 
   test("copies PR tags from the Agent conversation to its parent", async () => {

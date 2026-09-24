@@ -69,6 +69,8 @@ export interface BackgroundTask {
   runtimeScope?: BackgroundRuntimeScope;
   /** Authenticated Cloud user responsible for launching this task. */
   actingUserId?: string;
+  /** Cloud-minted proof paired with actingUserId. */
+  actingUserAssertion?: string;
 }
 
 export const backgroundProcesses = new Map<string, BackgroundProcess>();

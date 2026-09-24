@@ -120,6 +120,23 @@ function actingUserId(item: QueueItem): string | undefined {
   return value || undefined;
 }
 
+export function getActingUserBatchSize(items: QueueItem[]): number {
+  const userItems = items.filter((item) => item.source === "user");
+  const usesUserAuthority = userItems.length > 0;
+  const authorityItems = usesUserAuthority ? userItems : items;
+  const batchActingUserId = authorityItems
+    .map(actingUserId)
+    .find((value) => value !== undefined);
+  if (!batchActingUserId) return items.length;
+
+  const boundary = items.findIndex((item) => {
+    if (usesUserAuthority && item.source !== "user") return false;
+    const itemActingUserId = actingUserId(item);
+    return Boolean(itemActingUserId && itemActingUserId !== batchActingUserId);
+  });
+  return boundary === -1 ? items.length : boundary;
+}
+
 // ── Batch / callbacks ────────────────────────────────────────────
 
 export interface DequeuedBatch {
@@ -314,21 +331,13 @@ export class QueueRuntime {
     const batch: QueueItem[] = [];
     const first = this.store.find((item) => !item.paused);
     if (first && isCoalescable(first.kind)) {
-      let batchActingUserId: string | undefined;
+      const candidates: QueueItem[] = [];
       for (const item of this.store) {
         if (item.paused) continue;
         if (!isCoalescable(item.kind) || !hasSameScope(first, item)) break;
-        const itemActingUserId = actingUserId(item);
-        if (
-          batchActingUserId &&
-          itemActingUserId &&
-          itemActingUserId !== batchActingUserId
-        ) {
-          break;
-        }
-        batchActingUserId ??= itemActingUserId;
-        batch.push(item);
+        candidates.push(item);
       }
+      batch.push(...candidates.slice(0, getActingUserBatchSize(candidates)));
     } else if (first) {
       // First ready item is a barrier: dequeue it alone
       batch.push(first);

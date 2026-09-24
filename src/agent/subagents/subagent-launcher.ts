@@ -237,10 +237,6 @@ export function composeSubagentChildEnv(
     ...parentProcessEnv,
     ...(inheritedApiKey && { LETTA_API_KEY: inheritedApiKey }),
     ...(inheritedBaseUrl && { LETTA_BASE_URL: inheritedBaseUrl }),
-    ...(actingUserId && { [ACTING_USER_ID_ENV]: actingUserId }),
-    ...(actingUserAssertion && {
-      [ACTING_USER_ASSERTION_ENV]: actingUserAssertion,
-    }),
     LETTA_CODE_AGENT_ROLE: "subagent",
     [MEMORY_WORKER_SESSION_ENV]: subagentType === "memory" ? "1" : undefined,
     [SUBAGENT_LAUNCH_ENV]: "1",
@@ -253,6 +249,13 @@ export function composeSubagentChildEnv(
     LETTA_PARENT_CONVERSATION_ID: options.parentConversationId,
     ...(transcriptPath && { TRANSCRIPT_PATH: transcriptPath }),
   };
+
+  delete childEnv[ACTING_USER_ID_ENV];
+  delete childEnv[ACTING_USER_ASSERTION_ENV];
+  if (actingUserId) childEnv[ACTING_USER_ID_ENV] = actingUserId;
+  if (actingUserId && actingUserAssertion) {
+    childEnv[ACTING_USER_ASSERTION_ENV] = actingUserAssertion;
+  }
 
   // A nested launch must never reuse its parent's assigned creation name.
   delete childEnv[SUBAGENT_NAME_ENV];

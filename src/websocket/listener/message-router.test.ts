@@ -70,6 +70,8 @@ describe("listener message router ownership handoff", () => {
     const sockets: WebSocket[] = [];
     const tasks: Promise<void>[] = [];
     const transports: ListenerTransport[] = [];
+    let incomingActingUserId: string | undefined;
+    let incomingActingUserAssertion: string | undefined;
     let finishTurn!: () => void;
     const turnFinished = new Promise<void>((resolve) => {
       finishTurn = resolve;
@@ -120,6 +122,8 @@ describe("listener message router ownership handoff", () => {
             expect.objectContaining({ role: "user" }),
           ]);
           expect(conversation).toBe(runtime);
+          incomingActingUserId = incoming.actingUserId;
+          incomingActingUserAssertion = incoming.actingUserAssertion;
           transports.push(transport);
           await turnFinished;
         },
@@ -129,7 +133,11 @@ describe("listener message router ownership handoff", () => {
           JSON.stringify({
             type: "input",
             request_id: "teleport-initial",
-            runtime: scope,
+            runtime: {
+              ...scope,
+              acting_user_id: "user-teleport",
+              acting_user_assertion: "assertion-teleport",
+            },
             payload: {
               kind: "teleport_continue",
               teleport_id: "teleport-reconnect",
@@ -149,6 +157,8 @@ describe("listener message router ownership handoff", () => {
         ),
       );
       await waitFor(() => transports.length === 1);
+      expect(incomingActingUserId).toBe("user-teleport");
+      expect(incomingActingUserAssertion).toBe("assertion-teleport");
       const transport = transports[0];
       if (!transport) throw new Error("Teleport turn did not start");
       expect(isListenerTransportOpen(transport)).toBe(true);

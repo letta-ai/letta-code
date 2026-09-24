@@ -1,5 +1,9 @@
 import { expect, test } from "bun:test";
 import {
+  ACTING_USER_ASSERTION_ENV,
+  ACTING_USER_ID_ENV,
+} from "@/agent/acting-user";
+import {
   LISTENER_CONNECTION_ENV,
   SUBAGENT_LAUNCH_PROFILE_ENV,
 } from "@/utils/subagent-launch-marker";
@@ -87,4 +91,31 @@ test("an ordinary child's caller routes it without changing the parent's environ
   });
   expect(env[LISTENER_CONNECTION_ENV]).toBe("conn-parent");
   expect(parentProcessEnv).toEqual({ USER_CWD: "/workspace" });
+});
+
+test("child acting-user environment replaces inherited fields as one pair", () => {
+  const inherited = {
+    [ACTING_USER_ID_ENV]: "user-parent",
+    [ACTING_USER_ASSERTION_ENV]: "assertion-parent",
+  };
+  const replaced = composeSubagentChildEnv({
+    parentProcessEnv: inherited,
+    subagentType: "general-purpose",
+    parentAgentId: "agent-parent",
+    launchProfile: "default",
+    inheritedPrimaryRoot: null,
+    actingUserId: "user-child",
+  });
+  expect(replaced[ACTING_USER_ID_ENV]).toBe("user-child");
+  expect(replaced[ACTING_USER_ASSERTION_ENV]).toBeUndefined();
+
+  const cleared = composeSubagentChildEnv({
+    parentProcessEnv: inherited,
+    subagentType: "general-purpose",
+    parentAgentId: "agent-parent",
+    launchProfile: "default",
+    inheritedPrimaryRoot: null,
+  });
+  expect(cleared[ACTING_USER_ID_ENV]).toBeUndefined();
+  expect(cleared[ACTING_USER_ASSERTION_ENV]).toBeUndefined();
 });

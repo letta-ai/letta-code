@@ -8,6 +8,7 @@ import type {
   TeleportReadyMessage,
   TeleportRequestCommand,
 } from "@/types/protocol_v2";
+import type { ConversationRuntimeScope } from "@/types/runtime-scope";
 import { toListenerConnection } from "./connection";
 import { createInterruptedTurnStore } from "./interrupted-turn-record";
 import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
@@ -99,6 +100,26 @@ export function buildTeleportContinuationMessages(params: {
     otid: `${params.teleportId}:continue`,
   });
   return messages;
+}
+
+export function buildTeleportContinuationInput(params: {
+  connectionId: string;
+  agentId: string;
+  runtime: ConversationRuntimeScope;
+  teleportId: string;
+  approvals?: TeleportContinuation["approvals"];
+}): IncomingMessage {
+  return {
+    type: "message",
+    connectionId: params.connectionId,
+    agentId: params.agentId,
+    conversationId: params.runtime.conversation_id,
+    actingUserId: params.runtime.acting_user_id,
+    actingUserAssertion: params.runtime.acting_user_id
+      ? params.runtime.acting_user_assertion
+      : undefined,
+    messages: buildTeleportContinuationMessages(params),
+  };
 }
 
 function escapeSystemReminderText(value: string): string {

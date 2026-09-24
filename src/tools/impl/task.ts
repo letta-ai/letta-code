@@ -5,7 +5,6 @@
  * Supports both built-in subagent types and custom subagents defined in .letta/agents/.
  */
 
-import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
@@ -32,10 +31,7 @@ import { forkParentConversation } from "@/agent/subagents/fork-conversation";
 import { spawnSubagent } from "@/agent/subagents/manager";
 import { getBackend } from "@/backend";
 import { runSubagentStopHooks } from "@/hooks";
-import {
-  getCurrentWorkingDirectory,
-  getRuntimeContext,
-} from "@/runtime-context";
+import { getCurrentWorkingDirectory } from "@/runtime-context";
 import type {
   SubagentLaunchArgs,
   SubagentLaunchResult,
@@ -43,6 +39,7 @@ import type {
 import { addToMessageQueue } from "@/utils/message-queue-bridge.js";
 import {
   formatTaskNotification,
+  resolveNotificationActingUser,
   resolveNotificationScope,
 } from "@/utils/task-notifications.js";
 import {
@@ -305,10 +302,8 @@ export function spawnBackgroundSubagentTask(
     (emitCompletionNotification ?? !silentCompletion);
 
   const resolvedParentScope = resolveNotificationScope(parentScope);
-  const actingUserId =
-    explicitActingUserId ??
-    getRuntimeContext()?.actingUserId ??
-    process.env[ACTING_USER_ID_ENV];
+  const { actingUserId, actingUserAssertion } =
+    resolveNotificationActingUser(explicitActingUserId);
 
   const spawnSubagentFn = deps?.spawnSubagentImpl ?? spawnSubagent;
   const copyGitHubPullRequestTagsFn =
@@ -352,6 +347,7 @@ export function spawnBackgroundSubagentTask(
     abortController,
     runtimeScope: resolvedParentScope,
     actingUserId,
+    actingUserAssertion,
   };
   backgroundTasks.set(taskId, bgTask);
   writeTaskTranscriptStart(outputFile, description, subagentType);
@@ -522,6 +518,7 @@ export function spawnBackgroundSubagentTask(
           agentId: resolvedParentScope?.agentId,
           conversationId: resolvedParentScope?.conversationId,
           actingUserId: bgTask.actingUserId,
+          actingUserAssertion: bgTask.actingUserAssertion,
         });
       }
 
@@ -608,6 +605,7 @@ export function spawnBackgroundSubagentTask(
           agentId: resolvedParentScope?.agentId,
           conversationId: resolvedParentScope?.conversationId,
           actingUserId: bgTask.actingUserId,
+          actingUserAssertion: bgTask.actingUserAssertion,
         });
       }
 

@@ -1,3 +1,4 @@
+import { resolveActingUserRuntimeScope } from "@/agent/acting-user";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { SYSTEM_REMINDER_OPEN } from "@/constants";
 import { getRuntimeContext } from "@/runtime-context";
@@ -30,6 +31,20 @@ export interface TaskNotification {
     totalTokens?: number;
     toolUses?: number;
     durationMs?: number;
+  };
+}
+
+export function resolveNotificationActingUser(explicitActingUserId?: string): {
+  actingUserId?: string;
+  actingUserAssertion?: string;
+} {
+  const runtime = resolveActingUserRuntimeScope();
+  const actingUserId = explicitActingUserId ?? runtime.acting_user_id;
+  return {
+    actingUserId,
+    ...(actingUserId === runtime.acting_user_id && runtime.acting_user_assertion
+      ? { actingUserAssertion: runtime.acting_user_assertion }
+      : {}),
   };
 }
 

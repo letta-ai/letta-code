@@ -69,7 +69,7 @@ import { getActiveRuntime, safeEmitWsEvent } from "./runtime";
 import { parseListenerReadyMessage } from "./split-stream-lifecycle";
 import { validateResponseFormat } from "./structured-output";
 import {
-  buildTeleportContinuationMessages,
+  buildTeleportContinuationInput,
   clearExpectedInboundTeleport,
   clearPriorReadyTeleports,
   handleTeleportFailure,
@@ -496,16 +496,13 @@ export function createListenerMessageHandler(
           acknowledgeInput(true, undefined, "started");
           runDetachedListenerTask("teleport_continue", async () => {
             await processIncomingMessage(
-              {
-                type: "message",
+              buildTeleportContinuationInput({
                 connectionId,
                 agentId: teleportAgentId,
-                conversationId: parsed.runtime.conversation_id,
-                messages: buildTeleportContinuationMessages({
-                  teleportId,
-                  approvals,
-                }),
-              },
+                runtime: parsed.runtime,
+                teleportId,
+                approvals,
+              }),
               getOrCreateProcessTransport(runtime),
               scopedRuntime,
               opts.onStatusChange,

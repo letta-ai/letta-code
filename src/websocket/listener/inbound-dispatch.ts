@@ -23,6 +23,20 @@ import type {
 
 const MAX_ACCEPTED_INPUT_DISPOSITIONS = 4096;
 
+export function applyActingUserScope(
+  incoming: IncomingMessage,
+  scope?: ActingUserRuntimeScope,
+): IncomingMessage {
+  if (!scope) return incoming;
+  return {
+    ...incoming,
+    actingUserId: scope?.acting_user_id,
+    actingUserAssertion: scope?.acting_user_id
+      ? scope.acting_user_assertion
+      : undefined,
+  };
+}
+
 export function getAcceptedInputDisposition(
   runtime: ConversationRuntime,
   clientMessageId: string | undefined,
@@ -149,16 +163,8 @@ export function dispatchInboundMessageWhenReady(params: {
       );
       rememberAcceptedInputDisposition(runtime, clientMessageId, "started");
       acknowledgeInput({ accepted: true, disposition: "started" });
-      // Queued turns store the actor on the queue item. Direct turns skip that
-      // item, so carry the actor on the message consumed by turn.ts instead.
-      const attributedIncoming =
-        (actingUserId && incoming.actingUserId !== actingUserId) ||
-        (actingUserAssertion &&
-          incoming.actingUserAssertion !== actingUserAssertion)
-          ? { ...incoming, actingUserId, actingUserAssertion }
-          : incoming;
       await processIncomingMessage(
-        attributedIncoming,
+        applyActingUserScope(incoming, actingUserScope),
         getOrCreateProcessTransport(listener),
         runtime,
         options.onStatusChange,

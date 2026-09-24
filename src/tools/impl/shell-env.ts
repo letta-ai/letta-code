@@ -360,6 +360,8 @@ export function getShellEnv(): NodeJS.ProcessEnv {
   if (listenerConnectionId?.startsWith("conn-")) {
     env[LISTENER_CONNECTION_ENV] = listenerConnectionId;
   }
+  delete env[ACTING_USER_ID_ENV];
+  delete env[ACTING_USER_ASSERTION_ENV];
   const actingUserId = getRuntimeActingUserId();
   if (actingUserId) {
     env[ACTING_USER_ID_ENV] = actingUserId;

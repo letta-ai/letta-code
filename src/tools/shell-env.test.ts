@@ -307,6 +307,23 @@ test("getShellEnv prefers runtime-scoped agent, conversation, and cwd", () => {
   }
 });
 
+test("getShellEnv clears an inherited assertion when the runtime has none", () => {
+  withTemporaryEnv(
+    {
+      LETTA_ACTING_USER_ID: "user-inherited",
+      LETTA_ACTING_USER_ASSERTION: "assertion-inherited",
+    },
+    () => {
+      const env = runWithRuntimeContext({ actingUserId: "user-runtime" }, () =>
+        getShellEnv(),
+      );
+
+      expect(env.LETTA_ACTING_USER_ID).toBe("user-runtime");
+      expect(env.LETTA_ACTING_USER_ASSERTION).toBeUndefined();
+    },
+  );
+});
+
 test("getShellEnv prefers the active listener device over inherited process state", () => {
   withTemporaryEnv(
     { LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID: "device-stale-installation" },

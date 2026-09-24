@@ -7,7 +7,7 @@ import type {
   QueueBlockedReason,
   QueueItem,
 } from "@/queue/queue-runtime";
-import { isCoalescable } from "@/queue/queue-runtime";
+import { getActingUserBatchSize, isCoalescable } from "@/queue/queue-runtime";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { debugWarn } from "@/utils/debug";
 import { getListenerBlockedReason } from "@/websocket/helpers/listener-queue-adapter";
@@ -73,7 +73,9 @@ function getBatchActingUser(items: QueueItem[]): {
   actingUserId?: string;
   actingUserAssertion?: string;
 } {
-  const attributed = items.filter((item) => item.actingUserId);
+  const userItems = items.filter((item) => item.source === "user");
+  const authorityItems = userItems.length > 0 ? userItems : items;
+  const attributed = authorityItems.filter((item) => item.actingUserId);
   const actingUserId = attributed[0]?.actingUserId;
   if (
     !actingUserId ||
@@ -223,7 +225,6 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
   let hasCronPrompt = false;
   let hasModContinue = false;
   let batchConnectionId: string | undefined;
-  let batchActingUserId: string | undefined;
   let batchImageFailureMode: "strict" | "drop" | null = null;
   const isNoCoalesce = (candidate: (typeof queuedItems)[number]): boolean =>
     candidate.kind === "message" && candidate.noCoalesce === true;
@@ -239,16 +240,6 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
     if (queueLen > 0 && (isNoCoalesce(item) || isNoCoalesce(firstQueuedItem))) {
       break;
     }
-
-    const itemActingUserId = item.actingUserId?.trim() || undefined;
-    if (
-      batchActingUserId &&
-      itemActingUserId &&
-      itemActingUserId !== batchActingUserId
-    ) {
-      break;
-    }
-    batchActingUserId ??= itemActingUserId;
 
     if (item.kind === "message") {
       const itemConnectionId = runtime.queuedMessagesByItemId.get(
@@ -288,6 +279,8 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
       hasModContinue = true;
     }
   }
+
+  queueLen = getActingUserBatchSize(queuedItems.slice(0, queueLen));
 
   if (
     (!hasMessage &&
