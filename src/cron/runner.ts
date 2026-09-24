@@ -22,7 +22,6 @@
  * shape says nothing about capability.
  */
 
-import { getRuntimeEnvironmentDeviceId } from "@/backend/api/client";
 import {
   type EnvironmentConnection,
   isEnvironmentOnline,
@@ -334,6 +333,9 @@ export async function resolveCronCreatePlacement(params: {
     params.explicitRunner !== "cloud" &&
     params.preserveRuntimeLocality !== false
   ) {
+    const { getRuntimeEnvironmentDeviceId } = await import(
+      "@/backend/api/client"
+    );
     const inferredDeviceId = getRuntimeEnvironmentDeviceId();
     const resolution = await resolveInferredTargetDevice(inferredDeviceId, () =>
       lookupEnvironmentForTarget(inferredDeviceId),
