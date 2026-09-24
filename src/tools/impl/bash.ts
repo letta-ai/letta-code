@@ -579,7 +579,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
         "Bash",
         {
           workingDirectory: userCwd,
-          secrets: secretEnv,
+          secrets: redactions,
           // Failures keep a head-and-tail excerpt; successes a short prefix.
           ...(failed
             ? { useMiddleTruncation: true }
