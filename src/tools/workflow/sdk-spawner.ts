@@ -192,6 +192,7 @@ interface DrainedTurn {
   finalText: string;
   success: boolean;
   error?: string;
+  structuredOutput?: unknown;
   totalTokens?: number;
 }
 
@@ -228,6 +229,7 @@ async function drainTurn(
   let resultText: string | undefined;
   let success = false;
   let error: string | undefined;
+  let structuredOutput: unknown;
   const guard = createToolCallGuard(maxToolCalls);
   for await (const message of query) {
     if (message.type === "assistant") assistantText += message.content ?? "";
@@ -254,13 +256,15 @@ async function drainTurn(
     if (message.type === "result") {
       success = message.success === true;
       resultText = message.result;
-      error = message.error ?? message.errorCode;
+      error = message.errorDetail ?? message.error ?? message.errorCode;
+      structuredOutput = message.structuredOutput;
     }
   }
   return {
     finalText: (resultText ?? assistantText).trim(),
     success,
     error,
+    structuredOutput,
     totalTokens: usage.totalTokens,
   };
 }
@@ -273,13 +277,16 @@ function buildQueryOptions(
 ): Record<string, unknown> {
   const system = [
     SUBAGENT_PREAMBLE,
-    options.json ? JSON_PREAMBLE : undefined,
+    options.json && !options.schema ? JSON_PREAMBLE : undefined,
     options.systemPrompt,
   ]
     .filter(Boolean)
     .join("\n\n");
   return {
     model,
+    ...(options.schema
+      ? { outputFormat: { type: "json_schema", schema: options.schema } }
+      : {}),
     parentAgentId: config.parentAgentId,
     isSubagent: true,
     name: options.label ?? `Workflow worker ${callIndex + 1}`,
@@ -385,6 +392,9 @@ export function createSdkSpawner(
           error: turn.error ?? "subagent turn failed",
           ...stats,
         };
+      }
+      if (options.schema) {
+        return { value: turn.structuredOutput, failed: false, ...stats };
       }
       if (options.json) {
         try {

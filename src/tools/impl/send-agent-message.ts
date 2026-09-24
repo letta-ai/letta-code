@@ -12,7 +12,14 @@ import {
 } from "@/backend/api/agent-message";
 import { enqueueConversationMessage } from "@/backend/api/conversation-enqueue";
 import { ApiRequestError } from "@/backend/api/request";
-import { getRuntimeContext } from "@/runtime-context";
+import {
+  getCurrentWorkingDirectory,
+  getRuntimeContext,
+} from "@/runtime-context";
+import { sendClaudeMessage } from "./claude-stream-session";
+import { sendCodexMessage } from "./codex-app-server";
+import { parseExternalCodingAgentId } from "./external-coding-agent";
+import { trackExternalFollowupCompletion } from "./external-coding-agent-task";
 
 interface SendAgentMessageArgs {
   message: string;
@@ -32,6 +39,9 @@ interface SendAgentMessageDeps {
   >;
   enqueue?: typeof enqueueConversationMessage;
   trackChildSend?: typeof trackChildSend;
+  sendClaudeMessage?: typeof sendClaudeMessage;
+  sendCodexMessage?: typeof sendCodexMessage;
+  trackExternalFollowup?: typeof trackExternalFollowupCompletion;
 }
 
 export async function send_agent_message(
@@ -42,25 +52,146 @@ export async function send_agent_message(
   let submissionAttempted = false;
   let destination: { agentId: string; conversationId: string } | undefined;
   try {
-    const backend = deps.backend ?? getBackend();
-    if (!backend.capabilities.environmentRouting) {
-      throw new Error("SendAgentMessage requires a Cloud backend.");
-    }
     if (!args.message?.trim()) throw new Error("Message must not be empty.");
-    const computer = normalizeAgentMessageComputer(args.computer);
     const context = getRuntimeContext();
-    const sender = {
-      agentId: validateAddress(context?.agentId ?? undefined, "agent"),
-      conversationId: validateAddress(
-        context?.conversationId ?? undefined,
-        "conversation",
-      ),
-    };
-    if (!sender.agentId || !sender.conversationId) {
+    const senderAgentId = validateAddress(
+      context?.agentId ?? undefined,
+      "agent",
+    );
+    const senderConversationId = validateAddress(
+      context?.conversationId ?? undefined,
+      "conversation",
+    );
+    if (!senderAgentId || !senderConversationId) {
       throw new Error(
         "SendAgentMessage requires the calling agent and conversation.",
       );
     }
+    const sender = {
+      agentId: senderAgentId,
+      conversationId: senderConversationId,
+    };
+    const externalTarget = parseExternalCodingAgentId(args.agent_id);
+    if (externalTarget) {
+      if (args.conversation_id) {
+        throw new Error(
+          "External coding-agent IDs cannot be combined with conversation_id.",
+        );
+      }
+      if (normalizeAgentMessageComputer(args.computer)) {
+        throw new Error(
+          "External coding-agent sessions run on their original computer; omit computer.",
+        );
+      }
+      args.signal?.throwIfAborted();
+      const parentScope = sender;
+      if (externalTarget.type === "codex") {
+        const receipt = await (deps.sendCodexMessage ?? sendCodexMessage)({
+          threadId: externalTarget.sessionId,
+          prompt: args.message,
+          parentAgentId: parentScope.agentId,
+          cwd: getCurrentWorkingDirectory(),
+          signal: args.signal,
+        });
+        if (receipt.mode === "steered") {
+          return {
+            content: JSON.stringify({
+              status: "accepted",
+              agent_id: args.agent_id,
+              delivery: "turn/steer",
+              turn_id: receipt.turnId,
+            }),
+            status: "success",
+          };
+        }
+        if (!receipt.completion || !receipt.interrupt) {
+          throw new Error(
+            "Codex turn/start returned an incomplete background-task receipt",
+          );
+        }
+        let taskReceipt: ReturnType<typeof trackExternalFollowupCompletion>;
+        try {
+          taskReceipt = (
+            deps.trackExternalFollowup ?? trackExternalFollowupCompletion
+          )({
+            type: "codex",
+            agentId: args.agent_id as string,
+            message: args.message,
+            parentScope,
+            completion: receipt.completion,
+            interrupt: receipt.interrupt,
+          });
+        } catch (error) {
+          await receipt.interrupt().catch(() => undefined);
+          throw error;
+        }
+        return {
+          content: JSON.stringify({
+            status: "accepted",
+            agent_id: args.agent_id,
+            delivery: "turn/start",
+            turn_id: receipt.turnId,
+            task_id: taskReceipt.taskId,
+            output_file: taskReceipt.outputFile,
+          }),
+          status: "success",
+        };
+      }
+      const receipt = await (deps.sendClaudeMessage ?? sendClaudeMessage)({
+        sessionId: externalTarget.sessionId,
+        prompt: args.message,
+        parentAgentId: parentScope.agentId,
+        cwd: getCurrentWorkingDirectory(),
+        signal: args.signal,
+      });
+      if (receipt.mode === "steered") {
+        return {
+          content: JSON.stringify({
+            status: "accepted",
+            agent_id: args.agent_id,
+            delivery: "stream/interrupt",
+          }),
+          status: "success",
+        };
+      }
+      if (!receipt.completion || !receipt.interrupt) {
+        throw new Error(
+          "Claude resume returned an incomplete background-task receipt",
+        );
+      }
+      let taskReceipt: ReturnType<typeof trackExternalFollowupCompletion>;
+      try {
+        taskReceipt = (
+          deps.trackExternalFollowup ?? trackExternalFollowupCompletion
+        )({
+          type: "claude-code",
+          agentId: args.agent_id as string,
+          message: args.message,
+          parentScope,
+          completion: receipt.completion,
+          interrupt: receipt.interrupt,
+        });
+      } catch (error) {
+        await receipt.interrupt().catch(() => undefined);
+        throw error;
+      }
+      return {
+        content: JSON.stringify({
+          status: "accepted",
+          agent_id: args.agent_id,
+          delivery: "resume/start",
+          task_id: taskReceipt.taskId,
+          output_file: taskReceipt.outputFile,
+        }),
+        status: "success",
+      };
+    }
+
+    const backend = deps.backend ?? getBackend();
+    if (!backend.capabilities.environmentRouting) {
+      throw new Error("SendAgentMessage requires a Cloud backend.");
+    }
+    const computer = normalizeAgentMessageComputer(args.computer);
     const actingUserId = context?.actingUserId;
     if (!actingUserId) {
       console.info(

@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { appendJournalEntry } from "@/tools/workflow/journal";
 
 const repoRoot = process.cwd();
 const scriptsDir = join(
@@ -253,6 +254,51 @@ describe("history-coverage.mjs", () => {
     writeFileSync(path, entries.map((e) => JSON.stringify(e)).join("\n"));
     return path;
   }
+
+  test("counts SDK schema objects from the real Workflow journal writer, not raw JSON text", () => {
+    const outDir = prepare(makeExport(makeTempDir()));
+    const journal = join(makeTempDir(), "journal.jsonl");
+    appendJournalEntry(journal, {
+      callIndex: 0,
+      label: "history:project-1",
+      prompt: "Read cohort sessions",
+      outcome: {
+        failed: false,
+        value: {
+          sessionsRead: ["aaaa"],
+          findings: [
+            {
+              claim: "Use bun:test",
+              evidence: "Project test",
+              sessionIds: ["aaaa"],
+            },
+          ],
+        },
+      },
+    });
+    appendJournalEntry(journal, {
+      callIndex: 1,
+      label: "history:project-2",
+      prompt: "Read second session",
+      outcome: {
+        failed: true,
+        value: null,
+        error: "structured_output_error: missing sessionsRead",
+      },
+    });
+    const result = runScript("history-coverage.mjs", [
+      "--prepared",
+      outDir,
+      "--journal",
+      journal,
+    ]);
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      analyzed: 1,
+      unread: [{ sessionIds: ["bbbb"] }],
+      allAssignedRead: false,
+    });
+  });
 
   test("reports unread sessions and writes retry cohorts", () => {
     const outDir = prepare(makeExport(makeTempDir()));

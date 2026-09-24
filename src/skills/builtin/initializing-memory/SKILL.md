@@ -5,6 +5,8 @@ description: Comprehensive guide for initializing or reorganizing agent memory. 
 
 # Root-First Memory Initialization
 
+Memory initialization or reorganization is the main task here. The primary agent owns the work through completion: research, ask necessary questions, synthesize findings, edit files, commit, and verify the result before reporting success. You may delegate research, but integrate its results into memory yourself. If a memory worker you launched is still editing this checkout, wait for it to finish before making direct edits, then inspect the current files. Do not report initialization complete merely because a background task was launched.
+
 The user has requested that you initialize or reorganize your memory. Your memory has been projected to a local filesystem (in $MEMORY_DIR) so you can easily edit and restructure your own memory through local filesystem operations. Changes to the memory filesystem will be reflected in your future memory.
 
 ## Context Management Principles
@@ -285,12 +287,40 @@ Running /init with this skill **authorizes one Workflow run** for read-only anal
 Load the `workflow-authoring` skill and design the script for this repository and history. Whatever shape you choose, it must:
 - **Stay read-only.** Leave subagent tools at the default (Read/Grep/Glob).
 - **Give each subagent complete context.** Workflow subagents have no memory, skills, or view of this conversation. Pass `historyCohorts` from `cohorts.json` and your code areas through the tool's `args`, and put the user's identity, the repository path, and absolute file paths in every prompt.
-- **Return `sessionsRead`.** Each history subagent must read every session in its cohort and return JSON that includes `sessionsRead`: the `sessionId`s it finished. Step 8 counts coverage from this field alone.
+- **Validate each result.** Use `agent(prompt, {schema})`, not `json: true`, for both history cohorts and code areas. Each history agent returns `{sessionsRead, findings}`; `sessionsRead` contains only `sessionId`s it actually finished. Step 8 counts coverage from this field alone. A schema-invalid result becomes `null` with its error in the journal, not an empty finding list.
 - **Check authorship before inferring preferences.** In Claude Code or Codex worker sessions, `user` turns can be prompts and steering written by a parent agent. They are not evidence of what the human said. Corroborate authorship from the originating conversation or other direct user evidence; otherwise classify them as worker instructions. Harness-injected `<system-reminder>` text is not human speech either.
 - **Ask for evidence-backed specifics.** Identity, hard rules and preferences, corrections (what the agent did, what the human said, what resolved it, how often it repeated), project conventions and gotchas — each with session ids and excerpts. Never copy secrets.
 - **Check code claims against current code.** History describes the code as it was. Verify claims about a cohort's `repo` against the current tree (for example a verify stage chained after each history agent) and report what changed.
 - **Budget time for reading.** Subagents time out after 10 minutes by default; raise `timeoutMs` for history agents that read large cohorts.
 - **Gather on a fast model.** Pass `model: "deepseek/deepseek-v4.1-flash"` on the Workflow call for read-only fan-out: reading cohorts, surveying code areas, checking claims. If `letta model list` does not show that handle, omit `model` so subagents inherit yours. If inference fails at that model (including quota), use your current model for the follow-up Workflow over unread cohorts instead of retrying the failed route. Don't use the fast model to synthesize memory.
+
+In the script's cohort and area stages, use these result contracts (build complete prompts with the context above):
+
+```js
+const historySchema = cohort => {
+  const sessionId = {type: 'string', enum: cohort.sessions.map(s => s.sessionId)}
+  return {type: 'object', additionalProperties: false, required: ['sessionsRead', 'findings'], properties: {
+    sessionsRead: {type: 'array', uniqueItems: true, items: sessionId},
+    findings: {type: 'array', items: {type: 'object', additionalProperties: false,
+      required: ['claim', 'evidence', 'sessionIds'], properties: {
+        claim: {type: 'string'}, evidence: {type: 'string'},
+        sessionIds: {type: 'array', minItems: 1, uniqueItems: true, items: sessionId},
+      }}},
+  }}
+}
+const codeSchema = {type: 'object', additionalProperties: false,
+  required: ['area', 'findings'], properties: {
+    area: {type: 'string'}, findings: {type: 'array', items: {type: 'object',
+      additionalProperties: false, required: ['claim', 'evidence', 'paths'], properties: {
+        claim: {type: 'string'}, evidence: {type: 'string'},
+        paths: {type: 'array', minItems: 1, items: {type: 'string'}},
+      }}},
+  }}
+const history = await agent(historyPrompt, {label: `history:${cohort.id}`, schema: historySchema(cohort)})
+const code = await agent(codePrompt, {label: `code:${area.name}`, schema: codeSchema})
+```
+
+`history-coverage.mjs` reads the successful history agent's `outcome.value.sessionsRead` from `journal.jsonl`; it ignores failed results. Keep incomplete sessions out of that array even when a finding cites them. Do not use a code-area result to claim history coverage.
 
 If the Workflow tool is unavailable (it is not in your toolset, or it reports that workflow subagents require the API backend), do the same analysis yourself, cohort by cohort and area by area, and account for coverage against `cohorts.json` and `ledger.json` by hand. Do not substitute other subagent types that write memory.
 

@@ -13,7 +13,7 @@ import { dirname, join, resolve } from "node:path";
 const root = process.cwd();
 const app = resolve(process.argv[2]);
 // sharp-electron is only reachable under Electron, never our bundled Node.
-const roots = ["ws", "@vscode/ripgrep", "node-pty", "grammy"];
+const roots = ["ws", "@vscode/ripgrep", "node-pty", "grammy", "@pierre/diffs"];
 
 function locate(name, from) {
   for (let dir = from; ; dir = dirname(dir)) {

@@ -27,8 +27,6 @@
  */
 
 import { parseArgs } from "node:util";
-import { getRuntimeEnvironmentDeviceId } from "@/backend/api/client";
-import type { EnvironmentConnection } from "@/backend/api/environments";
 import { ApiRequestError } from "@/backend/api/request";
 import {
   type CloudSchedule,
@@ -51,15 +49,15 @@ import {
   parseEvery,
   readCronRunLogEntriesPage,
 } from "@/cron";
-import { getRuntimeActingUserId } from "@/runtime-context";
 import {
   buildCloudScheduleInput,
   CLOUD_EXECUTION_TARGET,
   type CronRunner,
+  resolveCronCreatePlacement,
   resolveCronRunner,
-  resolveInferredTargetDevice,
-  validateTargetDevice,
-} from "./cron-runner";
+  resolveCronRunnerForAgent,
+} from "@/cron/runner";
+import { getRuntimeActingUserId } from "@/runtime-context";
 import {
   resolveCronAddConversationTarget,
   resolveCronAgentId,
@@ -89,7 +87,8 @@ Usage:
 Add options:
   --prompt <text>        Prompt to send to the agent (required)
   --every <interval>     Recurring interval (e.g. 5m, 2h, 1d)
-  --at <time>            Scheduled time (e.g. "3:00pm", "in 45m")
+  --at <time>            Scheduled time (e.g. "in 45m", "3:00pm", or an
+                         RFC 3339 timestamp with an explicit timezone)
   --once                 Fire once (with --at); default for --at
   --cron <expr>          Raw 5-field cron expression
   --agent <id>           Agent ID (defaults to LETTA_AGENT_ID)
@@ -171,66 +170,15 @@ function parseCronArgs(argv: string[]) {
  * OSS core); any other response (including auth errors) means the route is
  * there and real requests will surface their own errors.
  */
-async function probeCloudScheduleSupport(agentId: string): Promise<boolean> {
-  try {
-    await listCloudSchedules(agentId, { limit: 1 });
-    return true;
-  } catch (err) {
-    if (
-      err instanceof ApiRequestError &&
-      (err.status === 404 || err.status === 405)
-    ) {
-      return false;
-    }
-    return true;
-  }
-}
-
 async function getRunnerForAgent(
   explicit: string | undefined,
   agentId: string,
 ): Promise<{ runner: CronRunner; reason: string } | { error: string }> {
-  const backendMode = resolveBackendMode();
-
-  // Cheap pass first: explicit local, local-backend agents, and invalid flag
-  // values resolve without touching settings or the network.
-  const preliminary = resolveCronRunner({ explicit, agentId, backendMode });
-  if ("error" in preliminary || preliminary.runner === "local") {
-    return preliminary;
-  }
-
-  await ensureSettingsForCloud();
-  const cloudSchedulesSupported = await probeCloudScheduleSupport(agentId);
-  return resolveCronRunner({
-    explicit,
-    agentId,
-    backendMode,
-    cloudSchedulesSupported,
-  });
+  return resolveCronRunnerForAgent(explicit, agentId);
 }
 
 function isRunnerFlagValid(value: string | undefined): boolean {
   return value === undefined || value === "local" || value === "cloud";
-}
-
-/**
- * Best-effort lookup of a --computer deviceId in the environments registry
- * (through the same base URL the schedule request will use, so Desktop's
- * merged local+cloud view is what gets validated). Returns null when the
- * lookup fails or the device is unknown — the server-side registry check on
- * schedule create remains the backstop for those cases.
- */
-async function lookupEnvironmentForTarget(
-  deviceId: string,
-): Promise<EnvironmentConnection | null> {
-  try {
-    const { getEnvironmentConnection } = await import(
-      "@/backend/api/environments"
-    );
-    return await getEnvironmentConnection(deviceId);
-  } catch {
-    return null;
-  }
 }
 
 // ── Cloud output mapping ────────────────────────────────────────────
@@ -329,7 +277,7 @@ async function handleAdd(values: CronArgValues): Promise<number> {
     const parsed = parseAt(atValue);
     if (!parsed) {
       console.error(
-        `Error: invalid time "${atValue}". Try: "3:00pm", "in 45m"`,
+        `Error: invalid time "${atValue}". Try: "in 45m", "3:00pm", or "2026-09-24T09:00:00-07:00"`,
       );
       return 1;
     }
@@ -357,57 +305,16 @@ async function handleAdd(values: CronArgValues): Promise<number> {
     return 1;
   }
 
-  let targetDeviceId = values.computer?.trim() || undefined;
-
-  const resolved = await getRunnerForAgent(values.runner, agentId);
-  if ("error" in resolved) {
-    console.error(`Error: ${resolved.error}`);
+  const placement = await resolveCronCreatePlacement({
+    explicitRunner: values.runner,
+    agentId,
+    targetDeviceId: values.computer,
+  });
+  if ("error" in placement) {
+    console.error(`Error: ${placement.error}`);
     return 1;
   }
-  let runner = resolved.runner;
-  let localFallbackNote: string | undefined;
-
-  // Device targets are a Cloud-schedule feature: the cloud worker delivers
-  // to the named device's listener (sandbox fallback when offline). A local
-  // task already runs on the device that owns it, so the flag is meaningless
-  // (and likely a mistake) for the local runner.
-  if (targetDeviceId && runner !== "cloud") {
-    console.error(
-      "Error: --computer requires the cloud runner. Run `letta cron add` on the target computer itself (with --runner local) to schedule there locally.",
-    );
-    return 1;
-  }
-
-  // Pre-validate explicit targets against entries that are visible through a
-  // Desktop proxy but cannot be addressed by the Cloud environments registry.
-  if (targetDeviceId) {
-    const validity = validateTargetDevice(
-      targetDeviceId,
-      await lookupEnvironmentForTarget(targetDeviceId),
-    );
-    if (!validity.ok) {
-      console.error(`Error: ${validity.error}`);
-      return 1;
-    }
-  } else if (runner === "cloud" && values.runner !== "cloud") {
-    // The durable default preserves the locality of the current agent turn.
-    // Infer only at create time: old targetless schedules deliberately remain
-    // Cloud-sandbox schedules, and dispatch must never guess a target later.
-    // Managed-sandbox runtimes resolve to an untargeted schedule (the
-    // sandbox IS the untargeted execution environment). Runtimes the Cloud
-    // scheduler cannot reach (desktop-local, unregistered) fall back to the
-    // local runner so the schedule still executes here.
-    const inferredDeviceId = getRuntimeEnvironmentDeviceId();
-    const resolution = await resolveInferredTargetDevice(inferredDeviceId, () =>
-      lookupEnvironmentForTarget(inferredDeviceId),
-    );
-    if (resolution.kind === "device") {
-      targetDeviceId = inferredDeviceId;
-    } else if (resolution.kind === "local-fallback") {
-      runner = "local";
-      localFallbackNote = `This schedule is local to this computer (${resolution.reason}): it only fires while a Letta session is running here. For a schedule that fires regardless, pass --runner cloud (runs in the agent's cloud sandbox) or --computer <deviceId> (runs on a connected computer, from \`letta computers list\`).`;
-    }
-  }
+  const { runner, targetDeviceId, localFallbackNote } = placement;
 
   if (runner === "cloud") {
     return handleCloudAdd({

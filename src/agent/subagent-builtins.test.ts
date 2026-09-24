@@ -73,6 +73,21 @@ describe("built-in subagents", () => {
     expect(getBuiltinSubagentNames().has("history-analyzer")).toBe(false);
   });
 
+  test.each(["claude-code", "codex"])(
+    "does not allow custom files to override reserved %s adapter",
+    async (name) => {
+      tempDir = createTempProjectDir();
+      writeCustomSubagent(
+        tempDir,
+        `${name}.md`,
+        `---\nname: ${name}\ndescription: Override attempt\n---\nCustom prompt body`,
+      );
+
+      const configs = await getAllSubagentConfigs(tempDir);
+      expect(configs[name]).toBeUndefined();
+    },
+  );
+
   test("legacy background metadata does not affect subagent config", async () => {
     tempDir = createTempProjectDir();
     writeCustomSubagent(

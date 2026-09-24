@@ -26,6 +26,12 @@ import {
   workflow,
 } from "./workflow";
 
+/** Progress lines written to a workflow's output file so far. */
+function progressLineCount(outputFile: string | undefined): number {
+  if (!outputFile) return 0;
+  return readFileSync(outputFile, "utf8").split("\n").filter(Boolean).length;
+}
+
 async function waitFor(
   predicate: () => boolean,
   timeoutMs = 4000,
@@ -303,7 +309,7 @@ describe("Workflow tool (background launch)", () => {
     );
 
     // The progress log is what Read inspects while the run is live.
-    await waitFor(() => (processState?.stdout.length ?? 0) >= 3);
+    await waitFor(() => progressLineCount(processState?.outputFile) >= 3);
     const live = getWorkflowExecution(taskId);
     expect(live).toMatchObject({
       status: "running",
@@ -383,9 +389,6 @@ describe("Workflow tool (background launch)", () => {
         totalTokens: 2_400,
       });
       expect(
-        processState?.stdout.filter((line) => line.startsWith("▶ ")),
-      ).toEqual(["▶ a", "▶ b"]);
-      expect(
         readFileSync(processState?.outputFile as string, "utf8")
           .split("\n")
           .filter((line) => line.startsWith("▶ ")),
@@ -396,7 +399,9 @@ describe("Workflow tool (background launch)", () => {
     await waitFor(() => cleanupCalls === 1);
     expect(processState?.status).toBe("completed");
     expect(
-      processState?.stdout.filter((line) => line.startsWith("✓ ")),
+      readFileSync(processState?.outputFile as string, "utf8")
+        .split("\n")
+        .filter((line) => line.startsWith("✓ ")),
     ).toEqual(["✓ a", "✓ b"]);
     expect(getWorkflowExecution(taskId)).toMatchObject({
       status: "completed",
@@ -410,7 +415,7 @@ describe("Workflow tool (background launch)", () => {
     const result = await workflow({ script: SCRIPT });
     const taskId = taskIdOf(result.toolReturn);
     const processState = backgroundProcesses.get(taskId);
-    await waitFor(() => (processState?.stdout.length ?? 0) >= 3);
+    await waitFor(() => progressLineCount(processState?.outputFile) >= 3);
 
     const stopped = await task_stop({ task_id: taskId });
     expect(stopped.killed).toBe(true);

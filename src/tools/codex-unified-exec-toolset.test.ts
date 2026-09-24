@@ -18,6 +18,7 @@ describe("Codex unified exec toolset", () => {
     expect(TOOLSET_CATALOG.codex.tools).toContain("exec_command");
     expect(TOOLSET_CATALOG.codex.tools).toContain("write_stdin");
     expect(TOOLSET_CATALOG.codex.tools).toContain("Monitor");
+    expect(TOOLSET_CATALOG.codex.tools).toContain("Wake");
     expect(TOOLSET_CATALOG.codex.tools).not.toContain("ShellCommand");
   });
 
@@ -57,7 +58,7 @@ describe("Codex unified exec toolset", () => {
         : execCommandDescription,
     );
     expect(TOOL_DEFINITIONS.write_stdin.description).toContain(
-      "create a one-shot scheduled check instead of blocking or polling",
+      "create a one-shot Wake instead of blocking or polling",
     );
   });
 });

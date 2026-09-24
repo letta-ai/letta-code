@@ -212,6 +212,10 @@ describe("Skill tool memory filesystem lookup", () => {
     expect(SYSTEM_DIRECTORY_PATH.test(rendered)).toBe(false);
     expect(rendered).not.toContain("<file>LEGACY_MEMORY.md</file>");
     expect(rendered).toContain("including quota");
+    expect(rendered).toContain("agent(historyPrompt, {label:");
+    expect(rendered).toContain("agent(codePrompt, {label:");
+    expect(rendered).toContain("schema: historySchema(cohort)");
+    expect(rendered).toContain("If the Workflow tool is unavailable");
   });
 
   test("existing v1 memory still loads the legacy init instructions", async () => {
@@ -241,6 +245,9 @@ describe("Skill tool memory filesystem lookup", () => {
     expect(rendered).toContain("system/persona.md");
     expect(rendered).not.toContain("<file>LEGACY_MEMORY.md</file>");
     expect(rendered).toContain("including quota");
+    expect(rendered).toContain("schema: historySchema(cohort)");
+    expect(rendered).toContain("schema: codeSchema");
+    expect(rendered).toContain("If the Workflow tool is unavailable");
   });
 
   test("doctor uses the same investigation skill for both memory formats", () => {

@@ -97,7 +97,8 @@ describe("buildSystemPrompt", () => {
     expect(result).toBe(preset?.localMemfsContent?.trim() ?? "");
     expect(result).not.toBe(buildSystemPrompt("letta", "memfs"));
     expect(result).toContain("$MEMORY_DIR");
-    expect(result).toContain("git commit");
+    expect(result).toContain('subagent_type: "memory"');
+    expect(result).toContain("Continue your current work immediately");
     expect(result).not.toContain("git push");
     expect(result).not.toContain("Shared memory");
   });
@@ -153,14 +154,21 @@ describe("buildSystemPrompt", () => {
     );
   });
 
-  test("memfs prompt documents direct edit commit safeguards", () => {
-    const result = buildSystemPrompt("letta", "memfs");
-
-    expect(result).toContain("description:");
-    expect(result).toContain("MemFS pre-commit hook");
-    expect(result).toContain('author_name="${AGENT_NAME:-$AGENT_ID}"');
-    expect(result).not.toContain('--author="$AGENT_NAME');
-  });
+  test.each(["memfs", "local-memfs", "root-memfs"] as const)(
+    "%s keeps incidental upkeep in the background and primary memory work direct",
+    (mode) => {
+      const result = buildSystemPrompt("letta", mode);
+      expect(result).toContain('subagent_type: "memory"');
+      expect(result).toContain("Continue your current work immediately");
+      expect(result).toContain("**Memory upkeep during another task:**");
+      expect(result).toContain("**Memory as the main task:**");
+      expect(result).toContain("ordinary file tools and shell/Git commands");
+      expect(result).toContain("Complete and verify the requested work");
+      expect(result).toContain("git commit --author=");
+      expect(result).not.toContain("Delegate all memory changes");
+      expect(result).not.toContain("Leave memory writes and Git repair");
+    },
+  );
 
   test("memfs prompt explains shared-memory projections", () => {
     const result = buildSystemPrompt("letta", "memfs");
@@ -195,6 +203,12 @@ describe("buildSystemPrompt", () => {
         "crons (also called schedules) proactively invoke you",
       );
       expect(result).toContain("monitors reactively invoke you");
+      expect(result).toContain(
+        "Use Wake for a future turn in the current conversation",
+      );
+      expect(result).toContain("advanced `letta cron` schedules");
+      expect(result).not.toContain("Create one-shot or recurring crons");
+      expect(result).not.toContain("proactive in creating crons");
       expect(result).toContain(
         "MUST** be proactive in arranging the appropriate future invocation",
       );

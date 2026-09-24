@@ -233,7 +233,10 @@ describe("local system prompt compilation", () => {
     const prompt = await resolveAndBuildSystemPrompt("default", "local-memfs");
 
     expect(prompt).toContain("$MEMORY_DIR");
-    expect(prompt).toContain("git commit");
+    expect(prompt).toContain('subagent_type: "memory"');
+    expect(prompt).toContain("Continue your current work immediately");
+    expect(prompt).toContain("**Memory as the main task:**");
+    expect(prompt).toContain("git commit --author=");
     expect(prompt).not.toContain(
       "Changes you commit and push sync to the Letta server",
     );

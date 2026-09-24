@@ -16,6 +16,8 @@ export interface ApiFetchOptions {
   signal?: AbortSignal;
   baseUrl?: string;
   apiKey?: string;
+  /** `null` suppresses the inherited headless acting user for this request. */
+  actingUserId?: string | null;
   headers?: Record<string, string>;
   query?: Record<string, string | number | boolean | null | undefined>;
 }
@@ -101,7 +103,7 @@ export async function apiFetch(
   return fetch(url, {
     method: options.method ?? "GET",
     headers: {
-      ...getLettaCodeHeaders(apiKey),
+      ...getLettaCodeHeaders(apiKey, options.actingUserId),
       ...options.headers,
     },
     ...(options.body && { body: JSON.stringify(options.body) }),

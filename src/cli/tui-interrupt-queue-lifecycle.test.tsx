@@ -11,7 +11,7 @@
  * turn started by typing has no such callback.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -328,7 +328,10 @@ describe("TUI interrupt queue lifecycle", () => {
     const source = await startMonitor(input);
     source.socket.send("queued before Esc");
     await waitFor(
-      () => source.state.stdout.join("\n").includes("queued before Esc"),
+      () =>
+        readFileSync(source.state.outputFile as string, "utf8").includes(
+          "queued before Esc",
+        ),
       "the real Monitor event to be received",
     );
     // Monitor batches events for 200ms before handing them to the TUI queue.

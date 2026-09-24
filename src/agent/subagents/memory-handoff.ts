@@ -26,11 +26,13 @@ export async function prepareMemoryHandoff(params: {
   conversationId: string;
   memoryDir: string;
   assignment: string;
+  repairOnly?: boolean;
   /** Cancelling the task must also stop a slow export, not just the child. */
   signal?: AbortSignal;
 }): Promise<{ prompt: string; transcriptPath?: string }> {
   let transcriptPath: string | undefined;
-  {
+  // Conflict repair needs the checkout and its Git state, not the parent dialogue.
+  if (!params.repairOnly) {
     const messages = [];
     let after: string | undefined;
     for (;;) {

@@ -14,16 +14,18 @@ The canonical multi-stage pattern — pipeline by default, each item verifies as
     phases: [{ title: 'Review' }, { title: 'Verify' }],
   }
   const DIMENSIONS = [{key: 'bugs', prompt: '...'}, {key: 'perf', prompt: '...'}]
+  const findingsSchema = {type: 'object', properties: {findings: {type: 'array', items: {type: 'object', properties: {file: {type: 'string'}, summary: {type: 'string'}}, required: ['file', 'summary']}}}, required: ['findings']}
+  const verdictSchema = {type: 'object', properties: {real: {type: 'boolean'}, why: {type: 'string'}}, required: ['real', 'why']}
   const results = await pipeline(
     DIMENSIONS,
-    d => agent(d.prompt, {label: `review:${d.key}`, phase: 'Review', json: true}),
+    d => agent(d.prompt, {label: `review:${d.key}`, phase: 'Review', schema: findingsSchema}),
     review => review ? parallel(review.findings.map(f => () =>
-      agent(`Adversarially verify: ${f.summary}. Reply {"real": boolean, "why": string}`, {label: `verify:${f.file}`, phase: 'Verify', json: true})
+      agent(`Adversarially verify: ${f.summary}`, {label: `verify:${f.file}`, phase: 'Verify', schema: verdictSchema})
         .then(v => ({...f, verdict: v})))) : []
   )
   return { confirmed: results.filter(Boolean).flat().filter(Boolean).filter(f => f.verdict?.real) }
 
-Script hooks: agent(prompt, opts?) spawns one subagent and resolves to its final text — or, with opts.json, the parsed JSON value (tell the prompt what shape to return; nothing validates it) — and to null on failure (filter with .filter(Boolean)). Options: label, phase, json, model, effort, allowedTools, systemPrompt, timeoutMs, maxToolCalls. pipeline(items, ...stages) runs each item through all stages independently with NO barrier between stages; each stage receives (prevResult, originalItem, index); a throwing stage drops that item to null. parallel(thunks) runs zero-arg functions concurrently and IS a barrier — use only when a stage genuinely needs all prior results together. phase(title) groups subsequent agents in progress output (inside concurrent stages use opts.phase instead — the global phase races). log(message) emits a progress line. args is the invocation's args input, verbatim.
+Script hooks: agent(prompt, opts?) spawns one subagent and resolves to final text. Prefer opts.schema (JSON Schema) for a validated object; invalid/missing results retry and then resolve to null with the validation error in the journal. opts.json still parses without validating; schema wins if both are supplied. Options: label, phase, schema, json, model, effort, allowedTools, systemPrompt, timeoutMs, maxToolCalls. pipeline(items, ...stages) runs each item through all stages independently with NO barrier between stages; each stage receives (prevResult, originalItem, index); a throwing stage drops that item to null. parallel(thunks) runs zero-arg functions concurrently and IS a barrier — use only when a stage genuinely needs all prior results together. phase(title) groups subsequent agents in progress output (inside concurrent stages use opts.phase instead — the global phase races). log(message) emits a progress line. args is the invocation's args input, verbatim.
 
 Subagents run in isolated agent-free ephemeral conversations with read-only tools by default (Read, Grep, Glob) and no access to your memory or conversation — put ALL context they need in the prompt. Their model defaults to the invoking conversation's model; opts.model or the tool's model input accept any handle or alias from `letta model list`. They are told their final text IS the return value, so they return raw data. Concurrency is capped (excess agent() calls queue); a lifetime cap of 1000 agents per run is the runaway-loop backstop. Each subagent is also guarded: a 10-minute default timeout (override with opts.timeoutMs), at most 1000 unique tool calls by default (override with the positive safe integer opts.maxToolCalls), and a stop after three identical consecutive tool calls — a guarded call resolves to null and the journal records which guard fired.
 

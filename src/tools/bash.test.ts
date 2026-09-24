@@ -271,7 +271,9 @@ describe("Bash tool", () => {
         const processEntry = backgroundProcesses.get(bashId);
         if (
           processEntry?.status !== "running" ||
-          processEntry?.stdout.join("\n").includes("fake-background-powershell")
+          processEntry?.stdout
+            ?.join("\n")
+            .includes("fake-background-powershell")
         ) {
           break;
         }
@@ -279,7 +281,7 @@ describe("Bash tool", () => {
       }
 
       const processEntry = backgroundProcesses.get(bashId);
-      expect(processEntry?.stdout.join("\n")).toContain(
+      expect(processEntry?.stdout?.join("\n")).toContain(
         "fake-background-powershell",
       );
       expect(processEntry?.exitCode).toBe(0);
