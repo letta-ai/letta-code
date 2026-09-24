@@ -6,7 +6,7 @@ import packageJson from "../../../package.json";
  */
 export function getLettaCodeHeaders(
   apiKey?: string,
-  actingUserId = process.env.LETTA_ACTING_USER_ID,
+  actingUserId: string | null | undefined = process.env.LETTA_ACTING_USER_ID,
 ): Record<string, string> {
   const normalizedActingUserId = actingUserId?.trim();
   return {
