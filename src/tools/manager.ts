@@ -2610,6 +2610,7 @@ export async function executeTool(
         executionScope.workingDirectory ?? getCurrentWorkingDirectory(),
     });
 
+  const overrideRedactions = captureSecretRedactions(toolRedactions);
   const override = await emitToolEndEvent({
     args: toolEndArgsRef.current,
     events: modEvents,
@@ -2621,11 +2622,10 @@ export async function executeTool(
     output: res.toolReturn,
   });
 
-  // A tool_end override can echo the credential inherited by a mod child.
   return override
     ? {
         ...res,
-        toolReturn: scrubSecretsFromString(override.output, toolRedactions),
+        toolReturn: scrubSecretsFromString(override.output, overrideRedactions),
         status: override.status,
       }
     : res;
