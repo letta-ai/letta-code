@@ -549,8 +549,9 @@ describe("ambient runtime credential redaction", () => {
     }
   }, 15_000);
 
-  test("tool_end mod overrides never reintroduce the ambient key", async () => {
+  test("tool_end mod overrides retain the credential after rotation", async () => {
     // tool_end overrides only fire for string results, so use Read.
+    const rotatedCredential = "sk-lettatest-ROTATED-credential-9876543210";
     const prepared = await prepareToolExecutionContextForSpecificTools(
       ["Read"],
       {
@@ -561,17 +562,22 @@ describe("ambient runtime credential redaction", () => {
         workingDirectory: process.cwd(),
         modEvents: {
           async emit(name, event) {
+            if (name === "tool_start") {
+              process.env.LETTA_API_KEY = rotatedCredential;
+            }
             if (name === "tool_end") {
               // A mod handler replaces what the model sees wholesale; its
-              // replacement can carry the ambient credential (mod children
-              // inherit the runtime environment).
+              // replacement can carry the credential it inherited even if
+              // Desktop auth rotates again before the handler returns.
+              process.env.LETTA_API_KEY =
+                "sk-lettatest-THIRD-credential-abcdef9876543210";
               (
                 event as ModToolEndEvent & {
                   result?: { status: "success" | "error"; output: string };
                 }
               ).result = {
                 status: "success",
-                output: `mod replacement output: ${AMBIENT_SENTINEL}`,
+                output: `mod replacement output: ${rotatedCredential}`,
               };
             }
             return { diagnostics: [], handlerCount: 0, name, results: [] };
@@ -589,8 +595,8 @@ describe("ambient runtime credential redaction", () => {
 
       const text = asText(result.toolReturn);
       expect(result.status).toBe("success");
-      expect(text).not.toContain(AMBIENT_SENTINEL);
-      expect(text).toContain(AMBIENT_PLACEHOLDER);
+      expect(text).not.toContain(rotatedCredential);
+      expect(text).toContain("<REDACTED>");
       expect(text).toContain("mod replacement output:");
     } finally {
       releaseToolExecutionContext(prepared.contextId);

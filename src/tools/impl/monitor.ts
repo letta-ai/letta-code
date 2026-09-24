@@ -6,6 +6,7 @@ import {
   getRuntimeActingUserId,
 } from "@/runtime-context";
 import {
+  captureSecretRedactions,
   createSecretStreamScrubber,
   scrubSecretsFromString,
 } from "@/tools/secret-substitution";
@@ -411,7 +412,7 @@ function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
   const output = new MonitorOutputWriter(outputFile);
   const scope = resolveNotificationScope(args.parentScope);
   const actingUserId = getRuntimeActingUserId();
-  const secrets = args.secretEnv ?? {};
+  const secrets = captureSecretRedactions(args.secretEnv ?? {});
   // Per-stream scrubbers hold back potential partial secret matches so a
   // credential split across output chunks never reaches the retained output,
   // the output file, or emitted monitor events unredacted.

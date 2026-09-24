@@ -81,6 +81,7 @@ import {
   type PermissionModeState,
 } from "./permission-mode-state";
 import {
+  captureSecretRedactions,
   createScrubbedOutputStreamer,
   extractSecretEnvFromCommand,
   getAmbientRedactionSecrets,
@@ -2325,8 +2326,8 @@ async function executeToolInner(
     }
     if (options?.toolEndArgsRef) options.toolEndArgsRef.current = args;
 
-    // Hoisted so the catch path scrubs thrown errors with the same redaction set.
     let invocationSecrets: Record<string, string> = {};
+    let invocationRedactions = captureSecretRedactions();
     let outputStreamer: ScrubbedOutputStreamer | null = null;
 
     try {
@@ -2346,9 +2347,10 @@ async function executeToolInner(
             command.every((part) => typeof part === "string"))
             ? extractSecretEnvFromCommand(command, scopedAgentId)
             : {};
+        invocationRedactions = captureSecretRedactions(invocationSecrets);
         if (options?.onOutput) {
           outputStreamer = createScrubbedOutputStreamer(
-            invocationSecrets,
+            invocationRedactions,
             options.onOutput,
             stripAnsi,
           );
@@ -2434,19 +2436,17 @@ async function executeToolInner(
       // Flatten the response to plain text
       let flattenedResponse = flattenToolResponse(result);
 
-      // Scrub secrets from tool output before it reaches agent context. The
-      // scrub always covers ambient runtime auth values, so it runs for every
-      // tool. ANSI stripping stays shell-only.
+      // Scrub every tool return, including ambient runtime credentials.
       const stripAnsiEscapes = STREAMING_SHELL_TOOLS.has(internalName);
       flattenedResponse = sanitizeToolReturnContent(
         flattenedResponse,
-        invocationSecrets,
+        invocationRedactions,
         stripAnsiEscapes,
       );
       if (stdout)
-        sanitizeOutputLines(stdout, invocationSecrets, stripAnsiEscapes);
+        sanitizeOutputLines(stdout, invocationRedactions, stripAnsiEscapes);
       if (stderr)
-        sanitizeOutputLines(stderr, invocationSecrets, stripAnsiEscapes);
+        sanitizeOutputLines(stderr, invocationRedactions, stripAnsiEscapes);
 
       flattenedResponse = clampToolReturnContent(
         flattenedResponse,
@@ -2516,7 +2516,7 @@ async function executeToolInner(
         ? INTERRUPTED_BY_USER
         : scrubSecretsFromString(
             error instanceof Error ? error.message : String(error),
-            invocationSecrets,
+            invocationRedactions,
           );
 
       // Track tool usage error
@@ -2577,6 +2577,7 @@ async function executeToolInner(
 export async function executeTool(
   ...params: Parameters<typeof executeToolInner>
 ): Promise<ToolExecutionResult> {
+  const toolRedactions = captureSecretRedactions();
   const [name, args, options] = params;
   const toolEndArgsRef = { current: args };
   const res = await executeToolInner(name, args, {
@@ -2609,6 +2610,7 @@ export async function executeTool(
         executionScope.workingDirectory ?? getCurrentWorkingDirectory(),
     });
 
+  const overrideRedactions = captureSecretRedactions(toolRedactions);
   const override = await emitToolEndEvent({
     args: toolEndArgsRef.current,
     events: modEvents,
@@ -2620,12 +2622,10 @@ export async function executeTool(
     output: res.toolReturn,
   });
 
-  // A tool_end mod handler replaces what the model sees; scrub the ambient
-  // runtime auth values from its output too (mod children inherit them).
   return override
     ? {
         ...res,
-        toolReturn: scrubAmbientSecrets(override.output),
+        toolReturn: scrubSecretsFromString(override.output, overrideRedactions),
         status: override.status,
       }
     : res;

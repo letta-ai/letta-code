@@ -123,7 +123,12 @@ function mergeAmbientSecrets(
   secrets: Readonly<Record<string, string>>,
 ): Record<string, string> {
   const merged: Record<string, string> = {};
+  const knownValues = new Set(Object.values(secrets));
   for (const { name, value } of collectAmbientSecretValues()) {
+    // A launch-time snapshot may already contain this value. Keep its original
+    // placeholder name instead of adding a second, suffixed copy.
+    if (knownValues.has(value)) continue;
+    knownValues.add(value);
     let finalName = name;
     let suffix = 1;
     while (finalName in secrets || finalName in merged) {
@@ -133,6 +138,17 @@ function mergeAmbientSecrets(
     merged[finalName] = value;
   }
   return { ...merged, ...secrets };
+}
+
+/**
+ * Capture the ambient credentials visible when a tool or child process starts.
+ * Keep this map with the invocation: ambient auth may rotate before its output
+ * is returned, saved to a file, or sent in a completion notification.
+ */
+export function captureSecretRedactions(
+  secrets: Readonly<Record<string, string>> = {},
+): Record<string, string> {
+  return mergeAmbientSecrets(secrets);
 }
 
 /**
