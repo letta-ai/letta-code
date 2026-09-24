@@ -5,6 +5,7 @@ import {
   getCurrentWorkingDirectory,
 } from "@/runtime-context";
 import {
+  captureSecretRedactions,
   createSecretStreamScrubber,
   scrubSecretsFromString,
 } from "@/tools/secret-substitution";
@@ -326,14 +327,15 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     foregroundYieldMs = DEFAULT_FOREGROUND_YIELD_MS,
   } = args;
   const userCwd = getCurrentWorkingDirectory();
+  const redactions = captureSecretRedactions(secretEnv ?? {});
   const sanitizeOutput = (text: string) =>
-    scrubSecretsFromString(text, secretEnv ?? {});
+    scrubSecretsFromString(text, redactions);
   // Per-stream scrubbers hold back potential partial secret matches so a
   // credential split across output chunks never reaches the retained output,
   // the output file, or the completion notification unredacted.
   const streamScrubbers = {
-    stdout: createSecretStreamScrubber(secretEnv ?? {}),
-    stderr: createSecretStreamScrubber(secretEnv ?? {}),
+    stdout: createSecretStreamScrubber(redactions),
+    stderr: createSecretStreamScrubber(redactions),
   };
 
   if (command === "/bg") {
@@ -450,7 +452,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     totalStdoutLines: 0,
     totalStderrLines: 0,
     runtimeScope: parentScope,
-    secrets: secretEnv,
+    secrets: redactions,
   };
   backgroundProcesses.set(bashId, bgProcess);
 

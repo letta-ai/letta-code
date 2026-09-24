@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -8,18 +9,23 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { truncateHookFeedback } from "@/hooks/executor";
+import { executeCommandHook, truncateHookFeedback } from "@/hooks/executor";
 import type { ModToolEndEvent } from "@/mods/types";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { monitor } from "@/tools/impl/monitor";
-import { backgroundProcesses } from "@/tools/impl/process_manager";
+import {
+  type BackgroundProcess,
+  backgroundProcesses,
+  scrubCompletedBackgroundOutput,
+} from "@/tools/impl/process_manager";
 import {
   executeTool,
   prepareToolExecutionContextForSpecificTools,
   releaseToolExecutionContext,
 } from "@/tools/manager";
 import {
+  captureSecretRedactions,
   createSecretStreamScrubber,
   extractSecretEnvFromCommand,
   getAmbientRedactionSecrets,
@@ -238,6 +244,43 @@ describe("scoped shell secret execution", () => {
 const AMBIENT_SENTINEL = "sk-lettatest-SENTINEL-credential-0123456789abcdef";
 const AMBIENT_PLACEHOLDER = "LETTA_API_KEY=<REDACTED>";
 
+function createHeldCredentialScript(): {
+  command: string;
+  marker: string;
+  release: () => void;
+  cleanup: () => void;
+} {
+  const directory = mkdtempSync(join(tmpdir(), "letta-rotation-test-"));
+  const marker = join(directory, "started");
+  const releasePath = join(directory, "release");
+  const script = createTempRuntimeScriptCommand(`
+const fs = require("node:fs");
+const credential = process.env.LETTA_API_KEY ?? "";
+fs.writeFileSync(${JSON.stringify(marker)}, "started");
+const timer = setInterval(() => {
+  if (!fs.existsSync(${JSON.stringify(releasePath)})) return;
+  clearInterval(timer);
+  process.stdout.write(credential);
+}, 10);
+`);
+  return {
+    command: script.command,
+    marker,
+    release: () => writeFileSync(releasePath, "go"),
+    cleanup: () => {
+      script.cleanup();
+      rmSync(directory, { recursive: true, force: true });
+    },
+  };
+}
+
+async function waitForMarker(marker: string): Promise<void> {
+  for (let attempt = 0; attempt < 200 && !existsSync(marker); attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  expect(existsSync(marker)).toBe(true);
+}
+
 /**
  * Deterministic stand-in for the incident's env-file parser: reads an env
  * file, fails to parse it, and echoes its environment (including the ambient
@@ -334,6 +377,90 @@ describe("ambient runtime credential redaction", () => {
     expect(scrubber.push("world")).toBe("world");
     expect(scrubber.flush()).toBe("");
   });
+
+  test("tool return retains the credential captured before rotation", async () => {
+    const held = createHeldCredentialScript();
+    const prepared = await prepareToolExecutionContextForSpecificTools(
+      ["Bash"],
+      {
+        runtimeContext: {
+          agentId: AGENT_A,
+          workingDirectory: process.cwd(),
+        },
+        workingDirectory: process.cwd(),
+      },
+    );
+    const execution = executeTool(
+      "Bash",
+      { command: held.command, timeout: 5000 },
+      { toolContextId: prepared.contextId },
+    );
+
+    try {
+      await waitForMarker(held.marker);
+      process.env.LETTA_API_KEY = "sk-lettatest-ROTATED-credential-9876543210";
+      held.release();
+      const result = await execution;
+      const text = asText(result.toolReturn);
+      expect(result.status).toBe("success");
+      expect(text).not.toContain(AMBIENT_SENTINEL);
+      expect(text).toContain(AMBIENT_PLACEHOLDER);
+    } finally {
+      held.release();
+      await execution.catch(() => undefined);
+      releaseToolExecutionContext(prepared.contextId);
+      held.cleanup();
+    }
+  }, 10_000);
+
+  test("background output scrub retains the credential captured before rotation", () => {
+    const directory = mkdtempSync(join(tmpdir(), "letta-rotation-file-"));
+    const outputFile = join(directory, "output.log");
+    const secrets = captureSecretRedactions();
+    process.env.LETTA_API_KEY = "sk-lettatest-ROTATED-credential-9876543210";
+    writeFileSync(outputFile, `child output: ${AMBIENT_SENTINEL}`);
+    const processState: BackgroundProcess = {
+      process: { kill: () => undefined },
+      command: "test",
+      status: "completed",
+      exitCode: 0,
+      outputFile,
+      secrets,
+    };
+    try {
+      expect(scrubCompletedBackgroundOutput(processState)).toBe(true);
+      const content = readFileSync(outputFile, "utf8");
+      expect(content).not.toContain(AMBIENT_SENTINEL);
+      expect(content).toContain(AMBIENT_PLACEHOLDER);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("hook output retains the credential captured before rotation", async () => {
+    const held = createHeldCredentialScript();
+    const execution = executeCommandHook(
+      { type: "command", command: held.command, quiet: true },
+      {
+        event_type: "SessionStart",
+        working_directory: process.cwd(),
+        is_new_session: true,
+      },
+      process.cwd(),
+    );
+    try {
+      await waitForMarker(held.marker);
+      process.env.LETTA_API_KEY = "sk-lettatest-ROTATED-credential-9876543210";
+      held.release();
+      const result = await execution;
+      expect(result.stdout).not.toContain(AMBIENT_SENTINEL);
+      expect(result.stdout).toContain(AMBIENT_PLACEHOLDER);
+    } finally {
+      held.release();
+      await execution.catch(() => undefined);
+      held.cleanup();
+    }
+  }, 10_000);
 
   test("truncateHookFeedback scrubs the ambient key from excerpt and overflow file", () => {
     // Directly covers the scrub point every hook-feedback caller shares,

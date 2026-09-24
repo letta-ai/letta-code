@@ -1,5 +1,6 @@
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import {
+  captureSecretRedactions,
   createSecretStreamScrubber,
   type SecretStreamScrubber,
   scrubSecretsFromString,
@@ -579,6 +580,7 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
   const outputFile = createBackgroundOutputFile(`exec_${id}`);
   const cwd = resolveShellWorkdir(args.workdir);
   const env = { ...getShellEnv(), ...(args.secretEnv ?? {}) };
+  const redactions = captureSecretRedactions(args.secretEnv ?? {});
   const launchers = buildExecLaunchers(args);
   const rawLauncher = selectAvailableShellLauncher(launchers, env);
   if (!rawLauncher) {
@@ -606,10 +608,10 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
     status: "running",
     exitCode: null,
     tty: args.tty ?? false,
-    secrets: args.secretEnv ?? {},
+    secrets: redactions,
     streamScrubbers: {
-      stdout: createSecretStreamScrubber(args.secretEnv ?? {}),
-      stderr: createSecretStreamScrubber(args.secretEnv ?? {}),
+      stdout: createSecretStreamScrubber(redactions),
+      stderr: createSecretStreamScrubber(redactions),
     },
     notificationScope: resolveNotificationScope(args.parentScope),
     notificationArmed: false,
