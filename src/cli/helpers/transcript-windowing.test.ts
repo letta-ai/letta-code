@@ -4,6 +4,9 @@ import {
   commitStaticItems,
   drainBackfilledItems,
   evictCommittedLines,
+  getCommittedLineCount,
+  getTurnTranscriptLog,
+  resetTurnTranscriptLog,
   STATIC_FULL_FIDELITY_WINDOW,
 } from "./transcript-windowing";
 
@@ -305,5 +308,36 @@ describe("evicted-line id reuse", () => {
       "second block",
     );
     expect(b.byId.has("msg-1")).toBe(false);
+  });
+});
+
+describe("turn transcript log", () => {
+  test("captures evicted lines for the current turn and resets per turn", () => {
+    const b = createBuffers();
+    const emitted = new Set<string>();
+
+    b.byId.set("u-1", { kind: "user", id: "u-1", text: "turn one" });
+    b.order.push("u-1");
+    emitted.add("u-1");
+    evictCommittedLines(b, emitted);
+    expect(getTurnTranscriptLog(b).map((l) => l.id)).toEqual(["u-1"]);
+    expect(getCommittedLineCount(b)).toBe(1);
+
+    // Zombie re-creation with the same id is not duplicated into the log.
+    b.byId.set("u-1", { kind: "user", id: "u-1", text: "replayed" });
+    b.order.push("u-1");
+    evictCommittedLines(b, emitted);
+    expect(getTurnTranscriptLog(b)).toHaveLength(1);
+
+    // Next user turn resets the log.
+    resetTurnTranscriptLog(b);
+    expect(getTurnTranscriptLog(b)).toEqual([]);
+    expect(getCommittedLineCount(b)).toBe(2);
+
+    b.byId.set("u-2", { kind: "user", id: "u-2", text: "turn two" });
+    b.order.push("u-2");
+    emitted.add("u-2");
+    evictCommittedLines(b, emitted);
+    expect(getTurnTranscriptLog(b).map((l) => l.id)).toEqual(["u-2"]);
   });
 });

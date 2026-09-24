@@ -45,7 +45,7 @@ import {
 } from "@/cli/commands/mods";
 import type { CommandHandle } from "@/cli/commands/runner";
 import { validateAgentName } from "@/cli/components/PinDialog";
-import { type Buffers, type Line, toLines } from "@/cli/helpers/accumulator";
+import type { Buffers, Line } from "@/cli/helpers/accumulator";
 import { buildChatUrl, isLocalAgentId } from "@/cli/helpers/app-urls";
 import {
   CHDIR_USAGE,
@@ -105,6 +105,7 @@ import {
   setSystemPromptDoctorState,
 } from "@/cli/helpers/system-prompt-warning.ts";
 import { getRandomThinkingVerb } from "@/cli/helpers/thinking-messages";
+import { resetTurnTranscriptLog } from "@/cli/helpers/transcript-windowing";
 import {
   buildModCommandPrompt,
   parseModCommandArgv,
@@ -3670,9 +3671,8 @@ ${SYSTEM_REMINDER_CLOSE}
       // Append task notifications (if any) as event lines before the user message
       appendTaskNotificationEvents(taskNotifications);
 
-      const transcriptStartLineIndex = userTextForInput
-        ? Math.max(0, toLines(buffersRef.current).length - 1)
-        : null;
+      const transcriptStartLineIndex = userTextForInput ? 0 : null;
+      if (userTextForInput) resetTurnTranscriptLog(buffersRef.current);
 
       // Check for pending approvals before sending message (skip if we already have
       // a queued approval response to send first).

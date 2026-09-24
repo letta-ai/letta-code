@@ -18,7 +18,9 @@
 // from the buffers preserves display semantics: those updates were and remain
 // no-ops for rendering.
 
-import type { Buffers, Line } from "./accumulator";
+import { debugWarn } from "@/utils/debug";
+import { type Buffers, type Line, toLines } from "./accumulator";
+import { appendTranscriptDeltaJsonl } from "./reflection-transcript";
 import {
   isFileEditTool,
   isFileWriteTool,
@@ -202,6 +204,69 @@ function capSet<T>(set: Set<T>, cap: number): void {
 }
 
 /**
+ * Per-turn log of evicted lines. The reflection transcript delta and Stop
+ * hooks read the turn's lines from the buffers at end_turn, but eviction
+ * removes them as the turn progresses. The log keeps references (strings are
+ * shared with the static copies, so no extra payload memory) for the current
+ * turn only; it is reset at each user-turn start. `committedLineCounts`
+ * approximates the pre-eviction `order.length` session metric for hooks.
+ */
+const turnTranscriptLogs = new WeakMap<
+  Buffers,
+  { ids: Set<string>; lines: Line[] }
+>();
+const committedLineCounts = new WeakMap<Buffers, number>();
+
+export function resetTurnTranscriptLog(b: Buffers): void {
+  turnTranscriptLogs.delete(b);
+}
+
+export function getTurnTranscriptLog(b: Buffers): Line[] {
+  return turnTranscriptLogs.get(b)?.lines ?? [];
+}
+
+export function getCommittedLineCount(b: Buffers): number {
+  return committedLineCounts.get(b) ?? 0;
+}
+
+/**
+ * Persist the turn's transcript delta at end_turn. Committed lines have been
+ * evicted from the buffers, so the delta comes from the per-turn evicted-line
+ * log plus any still-live buffer lines (e.g. deferred tool commits). Errors
+ * are logged, never thrown — transcript capture must not break turn completion.
+ */
+export async function captureTurnTranscriptDelta(
+  b: Buffers,
+  agentId: string,
+  conversationId: string,
+): Promise<void> {
+  try {
+    const lines = [...getTurnTranscriptLog(b), ...toLines(b)];
+    await appendTranscriptDeltaJsonl(agentId, conversationId, lines);
+  } catch (error) {
+    debugWarn(
+      "memory",
+      `Failed to append transcript delta: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+}
+
+function recordEvictedLine(b: Buffers, id: string, line: Line): void {
+  let log = turnTranscriptLogs.get(b);
+  if (!log) {
+    log = { ids: new Set(), lines: [] };
+    turnTranscriptLogs.set(b, log);
+  }
+  if (!log.ids.has(id)) {
+    log.ids.add(id);
+    log.lines.push(line);
+  }
+  committedLineCounts.set(b, (committedLineCounts.get(b) ?? 0) + 1);
+}
+
+/**
  * Drop committed lines from the accumulator's live buffers. A line is
  * evictable once its id is in `emittedIds` — meaning it was either pushed to
  * the static area or deliberately skipped, and its display state is final.
@@ -232,6 +297,7 @@ export function evictCommittedLines(
       b.userLineIdByOtid.delete(line.otid);
     }
     b.byId.delete(id);
+    recordEvictedLine(b, id, line);
     evictedAny = true;
   }
   if (evictedAny) {
@@ -283,6 +349,7 @@ export function drainBackfilledItems<T extends { kind: string; id: string }>(
     emittedIds.add(id);
     items.push({ ...line } as T);
     b.byId.delete(id);
+    committedLineCounts.set(b, (committedLineCounts.get(b) ?? 0) + 1);
   }
   b.order = retained;
   // Rebuild per-line maps so only retained (unfinished) lines keep entries.
