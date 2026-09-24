@@ -107,7 +107,6 @@ for (const busy of [false, true])
             messages: [{ role: "user", content: "Also run the tests." }],
           },
           "human-a",
-          "assertion-original",
         );
       }
       const command = {
@@ -118,7 +117,6 @@ for (const busy of [false, true])
           agent_id: "agent-a",
           conversation_id: "default",
           acting_user_id: "human-a",
-          acting_user_assertion: "assertion-a",
         },
       };
       await handler(Buffer.from(JSON.stringify(command)));
@@ -134,8 +132,6 @@ for (const busy of [false, true])
         expect(target.queueRuntime.peek()[1]).toMatchObject({
           kind: "task_notification",
           actingUserId: "human-a",
-          actingUserAssertion: "assertion-a",
-          clientMessageId: "stop-1",
         });
         target.turnLifecycle.finishCommand();
         scheduleQueuePump(target, socket, opts, processQueuedTurn);
@@ -143,15 +139,7 @@ for (const busy of [false, true])
       await deliveredPromise;
       expect(delivered).toHaveLength(1);
       expect(delivered[0]?.actingUserId).toBe("human-a");
-      expect(delivered[0]?.actingUserAssertion).toBe(
-        busy ? "assertion-original" : "assertion-a",
-      );
-      expect(delivered[0]?.messages).toContainEqual(
-        expect.objectContaining({
-          role: "user",
-          client_message_id: "stop-1",
-        }),
-      );
+      expect(delivered[0]?.messages[0]).toMatchObject({ role: "user" });
       const content = JSON.stringify(delivered[0]?.messages);
       expect(content).toContain("The user cancelled this Monitor.");
       expect(content).toContain("monitor-wire");

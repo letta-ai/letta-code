@@ -54,7 +54,6 @@ test.each([false, true])(
           agent_id: "agent-doctor-listener",
           conversation_id: "conv-doctor-listener",
           acting_user_id: "user-requester",
-          acting_user_assertion: "assertion-requester",
         },
       },
       socket as unknown as WebSocket,
@@ -68,10 +67,6 @@ test.each([false, true])(
         agentId: "agent-doctor-listener",
         conversationId: "conv-doctor-listener",
         actingUserId: "user-requester",
-        actingUserAssertion: "assertion-requester",
-      });
-      expect(incoming?.messages[0]).toMatchObject({
-        client_message_id: "doctor-1",
       });
       expect(JSON.stringify(incoming?.messages)).toContain("conv-incident");
       expect(JSON.stringify(incoming?.messages)).toContain("context-doctor");

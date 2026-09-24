@@ -125,9 +125,6 @@ function buildQueuedTurnMessage(
       messages.push({
         role: "user",
         content: item.text,
-        ...(item.clientMessageId
-          ? { client_message_id: item.clientMessageId }
-          : {}),
         otid: crypto.randomUUID(),
         attribution: {},
       } satisfies AttributedMessageCreate);
