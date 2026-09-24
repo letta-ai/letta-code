@@ -4,11 +4,11 @@
  * Previously every supported TextMate grammar (~35 languages) was statically
  * imported and evaluated at process start, costing ~11 MB of heap and ~28 MB
  * of RSS before any work happened (LET-13149). Now a small core set loads
- * eagerly and the long tail loads on first use: the first highlight request
- * for an unloaded language renders plain, kicks off the grammar import, and a
- * transcript repaint re-renders it highlighted once the grammar registers.
+ * eagerly and the long tail loads synchronously on first use (a few ms per
+ * grammar), so the first highlight request already renders highlighted.
  */
 
+import { createRequire } from "node:module";
 import bashLang from "@shikijs/langs/bash";
 import diffLang from "@shikijs/langs/diff";
 import javascriptLang from "@shikijs/langs/javascript";
@@ -48,39 +48,46 @@ const CORE_LANG_NAMES = new Set(
 
 type GrammarModule = { default: LanguageRegistration | LanguageRegistration[] };
 
+/**
+ * Loads long-tail grammars synchronously so highlighting never waits on an
+ * async import or a later repaint. The grammars are ESM, which Bun and
+ * Node >= 22.12 can require(); `@shikijs/langs` is external to the bundle.
+ */
+const requireGrammar = createRequire(import.meta.url);
+
 /** Long-tail grammars, loaded on first highlight of that language. */
-const TAIL_LOADERS: Record<string, () => Promise<GrammarModule>> = {
-  c: () => import("@shikijs/langs/c"),
-  cpp: () => import("@shikijs/langs/cpp"),
+const TAIL_LOADERS: Record<string, () => GrammarModule> = {
+  c: () => requireGrammar("@shikijs/langs/c"),
+  cpp: () => requireGrammar("@shikijs/langs/cpp"),
   // Fence aliases that are not file extensions (miss EXT_TO_LANG remapping).
-  "c++": () => import("@shikijs/langs/cpp"),
-  csharp: () => import("@shikijs/langs/csharp"),
-  "c#": () => import("@shikijs/langs/csharp"),
-  css: () => import("@shikijs/langs/css"),
-  docker: () => import("@shikijs/langs/docker"),
-  dockerfile: () => import("@shikijs/langs/docker"),
-  go: () => import("@shikijs/langs/go"),
-  graphql: () => import("@shikijs/langs/graphql"),
-  html: () => import("@shikijs/langs/html"),
-  ini: () => import("@shikijs/langs/ini"),
-  java: () => import("@shikijs/langs/java"),
-  kotlin: () => import("@shikijs/langs/kotlin"),
-  kts: () => import("@shikijs/langs/kotlin"),
-  less: () => import("@shikijs/langs/less"),
-  lua: () => import("@shikijs/langs/lua"),
-  make: () => import("@shikijs/langs/make"),
-  makefile: () => import("@shikijs/langs/make"),
-  perl: () => import("@shikijs/langs/perl"),
-  php: () => import("@shikijs/langs/php"),
-  r: () => import("@shikijs/langs/r"),
-  ruby: () => import("@shikijs/langs/ruby"),
-  rust: () => import("@shikijs/langs/rust"),
-  scala: () => import("@shikijs/langs/scala"),
-  scss: () => import("@shikijs/langs/scss"),
-  sql: () => import("@shikijs/langs/sql"),
-  swift: () => import("@shikijs/langs/swift"),
-  toml: () => import("@shikijs/langs/toml"),
-  wasm: () => import("@shikijs/langs/wasm"),
+  "c++": () => requireGrammar("@shikijs/langs/cpp"),
+  csharp: () => requireGrammar("@shikijs/langs/csharp"),
+  "c#": () => requireGrammar("@shikijs/langs/csharp"),
+  css: () => requireGrammar("@shikijs/langs/css"),
+  docker: () => requireGrammar("@shikijs/langs/docker"),
+  dockerfile: () => requireGrammar("@shikijs/langs/docker"),
+  go: () => requireGrammar("@shikijs/langs/go"),
+  graphql: () => requireGrammar("@shikijs/langs/graphql"),
+  html: () => requireGrammar("@shikijs/langs/html"),
+  ini: () => requireGrammar("@shikijs/langs/ini"),
+  java: () => requireGrammar("@shikijs/langs/java"),
+  kotlin: () => requireGrammar("@shikijs/langs/kotlin"),
+  kts: () => requireGrammar("@shikijs/langs/kotlin"),
+  less: () => requireGrammar("@shikijs/langs/less"),
+  lua: () => requireGrammar("@shikijs/langs/lua"),
+  make: () => requireGrammar("@shikijs/langs/make"),
+  makefile: () => requireGrammar("@shikijs/langs/make"),
+  perl: () => requireGrammar("@shikijs/langs/perl"),
+  php: () => requireGrammar("@shikijs/langs/php"),
+  r: () => requireGrammar("@shikijs/langs/r"),
+  ruby: () => requireGrammar("@shikijs/langs/ruby"),
+  rust: () => requireGrammar("@shikijs/langs/rust"),
+  scala: () => requireGrammar("@shikijs/langs/scala"),
+  scss: () => requireGrammar("@shikijs/langs/scss"),
+  sql: () => requireGrammar("@shikijs/langs/sql"),
+  swift: () => requireGrammar("@shikijs/langs/swift"),
+  toml: () => requireGrammar("@shikijs/langs/toml"),
+  wasm: () => requireGrammar("@shikijs/langs/wasm"),
 };
 
 /**
@@ -95,58 +102,52 @@ const TAIL_ALIASES: Record<string, string> = {
 };
 
 const loadedTail = new Set<string>();
-const inFlight = new Set<string>();
 const unavailable = new Set<string>();
 
 /** Called once by the highlighter owner so tail loads can register grammars. */
 let registerGrammar: ((grammar: LanguageRegistration) => void) | null = null;
-/** Called after a tail grammar registers so committed output re-renders. */
-let onTailLanguageLoaded: (() => void) | null = null;
 
 export function configureSyntaxLanguages(hooks: {
   registerGrammar: (grammar: LanguageRegistration) => void;
-  onTailLanguageLoaded: () => void;
 }): void {
   registerGrammar = hooks.registerGrammar;
-  onTailLanguageLoaded = hooks.onTailLanguageLoaded;
 }
 
 /**
- * Returns true when the language is ready for synchronous highlighting.
- * Otherwise kicks off its grammar load once and returns false so the caller
- * renders plain text until the transcript repaint after registration.
+ * Returns true when the language is ready for highlighting, loading a
+ * long-tail grammar synchronously on first use. Returns false for unknown
+ * languages and grammars that fail to load, so the caller renders plain text.
  */
 export function ensureLanguageLoaded(language: string): boolean {
   const lang = language.toLowerCase();
   if (CORE_LANG_NAMES.has(lang) || loadedTail.has(lang)) return true;
-  if (unavailable.has(lang) || inFlight.has(lang)) return false;
-  const loaderKey = lang in TAIL_LOADERS ? lang : TAIL_ALIASES[lang];
+  if (unavailable.has(lang)) return false;
+  // Own-property lookups: fence languages and file extensions are
+  // user-controlled, so names like "constructor" must not hit Object.prototype.
+  const loaderKey = Object.hasOwn(TAIL_LOADERS, lang)
+    ? lang
+    : Object.hasOwn(TAIL_ALIASES, lang)
+      ? TAIL_ALIASES[lang]
+      : undefined;
   const loader = loaderKey !== undefined ? TAIL_LOADERS[loaderKey] : undefined;
   if (!loader) {
     unavailable.add(lang);
     return false;
   }
-  inFlight.add(lang);
-  loader()
-    .then((mod) => {
-      inFlight.delete(lang);
-      const registrations = Array.isArray(mod.default)
-        ? mod.default
-        : [mod.default];
-      for (const registration of registrations) {
-        registerGrammar?.(registration);
-        for (const name of [
-          registration.name,
-          ...(registration.aliases ?? []),
-        ]) {
-          loadedTail.add(name);
-        }
+  try {
+    const mod = loader();
+    const registrations = Array.isArray(mod.default)
+      ? mod.default
+      : [mod.default];
+    for (const registration of registrations) {
+      registerGrammar?.(registration);
+      for (const name of [registration.name, ...(registration.aliases ?? [])]) {
+        loadedTail.add(name);
       }
-      onTailLanguageLoaded?.();
-    })
-    .catch(() => {
-      inFlight.delete(lang);
-      unavailable.add(lang);
-    });
-  return false;
+    }
+    return true;
+  } catch {
+    unavailable.add(lang);
+    return false;
+  }
 }

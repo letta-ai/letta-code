@@ -11,7 +11,6 @@ import {
   ensureLanguageLoaded,
 } from "./syntax-languages";
 import { Text } from "./Text";
-import { notifyTranscriptDisplayRepaint } from "./transcript-display-state";
 
 // Created lazily on first highlight: grammar parsing costs ~150-250ms of CPU,
 // which shouldn't run at module load on every process start.
@@ -27,7 +26,6 @@ function getShikiHighlighter(): ReturnType<typeof createHighlighterCoreSync> {
     });
     configureSyntaxLanguages({
       registerGrammar: (grammar) => shikiHighlighter?.loadLanguageSync(grammar),
-      onTailLanguageLoaded: () => notifyTranscriptDisplayRepaint(),
     });
   }
   return shikiHighlighter;
@@ -146,7 +144,8 @@ export function languageFromPath(filePath: string): string | undefined {
   const dotIdx = basename.lastIndexOf(".");
   if (dotIdx < 0) return undefined;
   const ext = basename.slice(dotIdx + 1).toLowerCase();
-  return EXT_TO_LANG[ext];
+  // Own-property lookup so "a.constructor" does not resolve to Object.
+  return Object.hasOwn(EXT_TO_LANG, ext) ? EXT_TO_LANG[ext] : undefined;
 }
 
 // Detect heredoc: first line ends with << 'MARKER', << "MARKER", or << MARKER.
@@ -240,13 +239,11 @@ export function highlightCode(
   code: string,
   language: string,
 ): StyledSpan[][] | undefined {
-  // Ensure the highlighter (and its lazy-load hooks) exists before any tail
-  // grammar import can resolve, then gate on language readiness: long-tail
-  // grammars load on demand and render plain until a transcript repaint
-  // re-renders this block highlighted.
-  const highlighter = getShikiHighlighter();
-  if (!ensureLanguageLoaded(language)) return undefined;
   try {
+    // Create the highlighter (and its registration hook) first so a long-tail
+    // grammar loaded on first use registers before tokenizing.
+    const highlighter = getShikiHighlighter();
+    if (!ensureLanguageLoaded(language)) return undefined;
     const result = highlighter.codeToTokens(code, {
       lang: language,
       theme:

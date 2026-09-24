@@ -1,12 +1,11 @@
 import { describe, expect, it } from "bun:test";
-import { highlightCode } from "./SyntaxHighlightedCommand";
+import {
+  highlightCode,
+  highlightCommand,
+  languageFromPath,
+} from "./SyntaxHighlightedCommand";
 import { ensureLanguageLoaded } from "./syntax-languages";
-
-async function waitForLanguage(lang: string): Promise<void> {
-  for (let i = 0; i < 100 && !ensureLanguageLoaded(lang); i++) {
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-}
+import { subscribeToTranscriptDisplayRepaint } from "./transcript-display-state";
 
 describe("syntax-languages", () => {
   it("treats core languages as immediately ready", () => {
@@ -21,26 +20,17 @@ describe("syntax-languages", () => {
     expect(ensureLanguageLoaded("not-a-real-language")).toBe(false);
   });
 
-  it("loads a tail language on first use and highlights afterwards", async () => {
-    // A core highlight first so the highlighter and its registration hooks
-    // exist before the tail import resolves.
-    expect(highlightCode("echo hi", "bash")).toBeDefined();
+  it("highlights a tail language on its first use", () => {
+    const rust = highlightCode('fn main() { println!("hi"); }', "rust");
+    expect(rust?.[0]?.length).toBeGreaterThan(1);
 
-    expect(ensureLanguageLoaded("rust")).toBe(false);
-    await waitForLanguage("rust");
-    expect(ensureLanguageLoaded("rust")).toBe(true);
-
-    const spans = highlightCode('fn main() { println!("hi"); }', "rust");
-    expect(spans).toBeDefined();
-    expect(spans?.[0]?.length).toBeGreaterThan(1);
+    const go = highlightCode("package main", "go");
+    expect(go?.[0]?.length).toBeGreaterThan(1);
   });
 
-  it("loads non-extension fence aliases without requesting the canonical name", async () => {
-    // Highlighter + registration hooks must exist before the tail import
-    // resolves. Do not also request cpp / csharp / kotlin — those loaders
-    // populate loadedTail with aliases after the fact and would hide a miss.
-    expect(highlightCode("echo hi", "bash")).toBeDefined();
-
+  it("loads non-extension fence aliases without requesting the canonical name", () => {
+    // Do not also request cpp / csharp / kotlin — those loads register these
+    // aliases too and would hide a miss.
     const cases = [
       { alias: "c++", code: "int main() { return 0; }" },
       { alias: "c#", code: "class C {}" },
@@ -48,12 +38,34 @@ describe("syntax-languages", () => {
     ];
 
     for (const { alias, code } of cases) {
-      expect(ensureLanguageLoaded(alias)).toBe(false);
-      await waitForLanguage(alias);
-      expect(ensureLanguageLoaded(alias)).toBe(true);
       const spans = highlightCode(code, alias);
-      expect(spans).toBeDefined();
       expect(spans?.[0]?.length).toBeGreaterThan(1);
     }
+  });
+
+  it("does not repaint the transcript when a tail grammar loads", async () => {
+    let repaints = 0;
+    const unsubscribe = subscribeToTranscriptDisplayRepaint(() => {
+      repaints += 1;
+    });
+    try {
+      const spans = highlightCode("local x = 1", "lua");
+      // Give an asynchronous grammar load time to settle and notify.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(repaints).toBe(0);
+      expect(spans?.[0]?.length).toBeGreaterThan(1);
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("treats Object.prototype member names as unknown languages", () => {
+    expect(highlightCode("x", "constructor")).toBeUndefined();
+    expect(highlightCode("x", "__proto__")).toBeUndefined();
+    expect(languageFromPath("a.constructor")).toBeUndefined();
+    expect(languageFromPath("a.__proto__")).toBeUndefined();
+    expect(
+      highlightCommand("cat > a.constructor <<EOF\nhello\nEOF")[1]?.[0]?.text,
+    ).toBe("hello");
   });
 });
