@@ -25,9 +25,9 @@ import {
   renderDefaultStatusline,
 } from "@/cli/display/statusline/renderers/Default";
 import type { StatuslineUiContext } from "@/cli/display/statusline/types";
+import { createDraftPlaceholderDiscards } from "@/cli/helpers/draft-placeholder-discards";
 import { bytesToTokens, formatCompact } from "@/cli/helpers/format";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
-import { releaseDiscardedPlaceholders } from "@/cli/helpers/paste-registry";
 import {
   type ExecutionPhase,
   getPhaseVisual,
@@ -1081,6 +1081,7 @@ export function Input({
   // Display text currently owned by the submit handler; its registry entries
   // must survive until the handler resolves or restores them.
   const inFlightSubmitTextRef = useRef<string | null>(null);
+  const [draftDiscards] = useState(createDraftPlaceholderDiscards);
 
   // Free registry entries dropped from the draft (input cleared, placeholder
   // edited out, draft replaced) unless a live holder still references them:
@@ -1090,7 +1091,7 @@ export function Input({
   // placeholders already degrade to literal text.
   const releaseDiscardedDraftPlaceholders = useCallback(
     (discarded: string, next: string) => {
-      releaseDiscardedPlaceholders(discarded, [
+      draftDiscards.release(discarded, [
         next,
         temporaryInput,
         restoredInput,
@@ -1098,7 +1099,7 @@ export function Input({
         ...(messageQueue?.map((m) => m.text) ?? []),
       ]);
     },
-    [temporaryInput, messageQueue, restoredInput],
+    [temporaryInput, messageQueue, restoredInput, draftDiscards],
   );
 
   // Restore input from error (only if current value is empty)
@@ -1704,16 +1705,15 @@ export function Input({
     [value, releaseDiscardedDraftPlaceholders],
   );
 
-  // Genuine draft edits (typing, deletes, paste insertion) can remove
-  // placeholder references from the input. Free entries this edit dropped.
-  // Submit/queue/history handoffs call setValue directly and never pass
-  // through here, so in-flight submissions are not affected.
+  // Edits only note placeholders that left the draft: a kill-buffer yank or a
+  // retyped bracket can restore them, so the release boundaries above free
+  // them later, once no live holder references them.
   const handleDraftChange = useCallback(
     (nextValue: string) => {
-      releaseDiscardedDraftPlaceholders(value, nextValue);
+      draftDiscards.noteEdit(value, nextValue);
       setValue(nextValue);
     },
-    [value, releaseDiscardedDraftPlaceholders],
+    [value, draftDiscards],
   );
 
   // Get display name and color for permission mode
