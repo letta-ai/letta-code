@@ -761,10 +761,14 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       return result;
     };
 
+    // WS event capture stays explicit opt-in (--debug or LETTA_LOG_WS_EVENTS=1).
+    // Implicit non-TTY plain-log mode must not enable it: under systemd/journald
+    // every payload dump would flood the journal just like Ink repaints did.
     const shouldLogWsEvents =
-      plainLogMode || process.env.LETTA_LOG_WS_EVENTS === "1";
+      debugMode || process.env.LETTA_LOG_WS_EVENTS === "1";
 
-    // WS event logger: writes to file when enabled, console in plain-log mode
+    // WS event logger: writes to file when enabled; console dump only under
+    // explicit --debug, not implicit non-TTY plain-log mode.
     const wsEventLogger = (
       direction: "send" | "recv",
       label: "client" | "protocol" | "control" | "lifecycle",
@@ -774,7 +778,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         return;
       }
       sessionLog.wsEvent(direction, label, event);
-      if (plainLogMode) {
+      if (debugMode) {
         const arrow = direction === "send" ? "\u2192 send" : "\u2190 recv";
         const tag = label === "client" ? "" : ` (${label})`;
         const json = JSON.stringify(event);

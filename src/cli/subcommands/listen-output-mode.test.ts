@@ -8,7 +8,7 @@ import {
   spyOn,
   test,
 } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { settingsManager } from "@/settings-manager";
@@ -60,11 +60,23 @@ mock.module("ink", () => {
 // The listener client is faked so `letta server` startup stops right after the
 // output-mode decision instead of opening a real WebSocket. Throwing keeps the
 // subcommand's own error path in play: it exits 1 quickly without process.exit.
+// The options object is captured so tests can inspect how the subcommand wired
+// the WS event logger (undefined = no capture, defined = file capture on).
 let startListenerClientCalls = 0;
-const startListenerClientMock = mock(async () => {
-  startListenerClientCalls += 1;
-  throw new Error("fixture listener client stopped");
-});
+let capturedListenerOptions: {
+  onWsEvent?: (
+    direction: "send" | "recv",
+    label: "client" | "protocol" | "control" | "lifecycle",
+    event: unknown,
+  ) => void;
+} | null = null;
+const startListenerClientMock = mock(
+  async (options?: typeof capturedListenerOptions) => {
+    startListenerClientCalls += 1;
+    capturedListenerOptions = options ?? null;
+    throw new Error("fixture listener client stopped");
+  },
+);
 
 mock.module("@/websocket/listen-client", () => ({
   __listenClientTestUtils: {},
@@ -135,6 +147,7 @@ describe("listen subcommand output mode", () => {
   beforeEach(async () => {
     originalStdoutIsTTY = process.stdout.isTTY;
     startListenerClientCalls = 0;
+    capturedListenerOptions = null;
     inkRenderCalls.length = 0;
     __listenerIdentityTestUtils.resetCachedSpawnerIdentity();
     delete process.env.LETTA_LISTENER_DEVICE_ID;
@@ -303,6 +316,12 @@ describe("listen subcommand output mode", () => {
     );
     expect(output).toContain("Registered successfully");
     expect(output).toContain("Connecting WebSocket...");
+
+    // WS payload logging stays opt-in: implicit non-TTY plain mode must not
+    // enable WS event capture, so no per-frame dumps reach journald.
+    expect(capturedListenerOptions?.onWsEvent).toBeUndefined();
+    expect(output).not.toContain("\u2192 send");
+    expect(output).not.toContain("\u2190 recv");
   });
 
   test("still renders the Ink status UI when stdout is a TTY", async () => {
@@ -333,6 +352,14 @@ describe("listen subcommand output mode", () => {
     expect(inkRenderCalls.length).toBe(0);
     expect(logs.join("\n")).toContain("Registered successfully");
     expect(process.env.LETTA_DEBUG).toBe("1");
+
+    // Explicit --debug still opts into WS event capture with console dumps.
+    const onWsEvent = capturedListenerOptions?.onWsEvent;
+    expect(onWsEvent).toBeDefined();
+    onWsEvent?.("send", "client", { type: "test_frame" });
+    const output = logs.join("\n");
+    expect(output).toContain("\u2192 send");
+    expect(output).toContain(JSON.stringify({ type: "test_frame" }));
   });
 
   test("--debug keeps forcing the plain-text path when stdout is not a TTY", async () => {
@@ -349,5 +376,53 @@ describe("listen subcommand output mode", () => {
     expect(inkRenderCalls.length).toBe(0);
     expect(logs.join("\n")).toContain("Registered successfully");
     expect(process.env.LETTA_DEBUG).toBe("1");
+  });
+
+  test("LETTA_LOG_WS_EVENTS=1 on a TTY captures WS events to file without console dumps", async () => {
+    setStdoutIsTTY(true);
+    process.env.LETTA_LOG_WS_EVENTS = "1";
+
+    const exitCode = await runListenSubcommand(["--computer-name", "ci-env"]);
+
+    expect(exitCode).toBe(1);
+    // The interactive Ink UI still renders (TTY, no --debug)...
+    expect(inkRenderCalls.length).toBe(1);
+    // ...but the opt-in env var alone enables WS event file capture.
+    const onWsEvent = capturedListenerOptions?.onWsEvent;
+    expect(onWsEvent).toBeDefined();
+
+    // The subcommand echoes the session log file path at startup; invoking the
+    // WS event logger must append there without dumping payloads to console.
+    const logFileLine = logs.find((line) => line.startsWith("Log file: "));
+    expect(logFileLine).toBeDefined();
+    const logFilePath = logFileLine?.slice("Log file: ".length);
+
+    onWsEvent?.("recv", "protocol", { type: "server_state" });
+
+    expect(logs.join("\n")).not.toContain("\u2190 recv");
+    const fileContent = await readFile(logFilePath ?? "", "utf8");
+    expect(fileContent).toContain("\u2190 recv (protocol)");
+    expect(fileContent).toContain(JSON.stringify({ type: "server_state" }));
+  });
+
+  test("LETTA_LOG_WS_EVENTS=1 without --debug captures WS events to file without console dumps on non-TTY stdout", async () => {
+    setStdoutIsTTY(undefined);
+    process.env.LETTA_LOG_WS_EVENTS = "1";
+
+    const exitCode = await runListenSubcommand(["--computer-name", "ci-env"]);
+
+    expect(exitCode).toBe(1);
+    expect(startListenerClientCalls).toBe(1);
+    expect(inkRenderCalls.length).toBe(0);
+    // The env var enables WS event file capture without --debug...
+    const onWsEvent = capturedListenerOptions?.onWsEvent;
+    expect(onWsEvent).toBeDefined();
+    // ...but the console payload dump stays gated on --debug, so systemd's
+    // journald only sees the one-line status logs.
+    onWsEvent?.("send", "client", { type: "test_frame" });
+    expect(logs.join("\n")).not.toContain("\u2192 send");
+    expect(logs.join("\n")).not.toContain(
+      JSON.stringify({ type: "test_frame" }),
+    );
   });
 });
