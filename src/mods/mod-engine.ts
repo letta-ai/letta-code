@@ -40,6 +40,7 @@ import {
   recordModDiagnostic,
   recordStaleHandleUse,
 } from "@/mods/mod-diagnostics";
+import { disposeLocalMods } from "@/mods/mod-engine-dispose";
 import type {
   LocalModSource,
   ResolveLocalModSourcesOptions,
@@ -55,8 +56,11 @@ import {
   type ModPermissionDefinition,
   registerModPermission,
   unregisterModPermission,
-  unregisterModPermissionsForOwner,
 } from "@/mods/permission-registry";
+import {
+  shouldUnregisterLocalProcessGlobalCapability,
+  unregisterProcessGlobalCapabilitiesFromLocalRegistry,
+} from "@/mods/process-global-teardown";
 import { resolveRegistrationConflict } from "@/mods/registration-conflict";
 import { ensureRuntimeDependenciesForModCache } from "@/mods/runtime-dependencies";
 import {
@@ -64,7 +68,6 @@ import {
   type ModToolDefinition,
   registerModTool,
   unregisterModTool,
-  unregisterModToolsForOwner,
 } from "@/mods/tool-registry";
 import { normalizeTurnStartCancelReason } from "@/mods/turn-start-cancel";
 import {
@@ -374,8 +377,11 @@ function removeOwnerCapabilities(
   }
 
   if (registry.registerCapabilitiesGlobally) {
-    unregisterModPermissionsForOwner(owner);
-    unregisterModToolsForOwner(owner);
+    unregisterProcessGlobalCapabilitiesFromLocalRegistry(
+      registry.tools,
+      registry.permissions,
+      owner.id,
+    );
   }
 
   delete registry.owners[owner.id];
@@ -923,7 +929,12 @@ function createLettaModApi(
     const existing = registry.permissions[id];
     if (existing?.owner?.id === owner.id) {
       delete registry.permissions[id];
-      if (registry.registerCapabilitiesGlobally) {
+      if (
+        shouldUnregisterLocalProcessGlobalCapability(
+          registry.registerCapabilitiesGlobally,
+          existing.installedProcessGlobal,
+        )
+      ) {
         unregisterModPermission(id, owner);
       }
       onChange();
@@ -960,7 +971,12 @@ function createLettaModApi(
     const existing = registry.tools[name];
     if (existing?.owner?.id === owner.id) {
       delete registry.tools[name];
-      if (registry.registerCapabilitiesGlobally) {
+      if (
+        shouldUnregisterLocalProcessGlobalCapability(
+          registry.registerCapabilitiesGlobally,
+          existing.installedProcessGlobal,
+        )
+      ) {
         unregisterModTool(name, owner);
       }
       onChange();
@@ -1149,15 +1165,12 @@ function createLettaModApi(
         const definition: ModToolDefinition = {
           ...normalized,
           activationSignal: signal,
+          installedProcessGlobal:
+            registry.registerCapabilitiesGlobally && conflict !== "skip-global",
           recordDiagnostic: recordCapabilityDiagnostic,
         };
         registry.tools[normalized.name] = definition;
-        // Another engine in this process may already hold the identical
-        // global registration; only register genuinely new entries.
-        if (
-          registry.registerCapabilitiesGlobally &&
-          conflict !== "skip-global"
-        ) {
+        if (definition.installedProcessGlobal) {
           registerModTool(definition);
         }
         onChange();
@@ -1201,15 +1214,12 @@ function createLettaModApi(
         const definition: ModPermissionDefinition = {
           ...normalized,
           activationSignal: signal,
+          installedProcessGlobal:
+            registry.registerCapabilitiesGlobally && conflict !== "skip-global",
           recordDiagnostic: recordCapabilityDiagnostic,
         };
         registry.permissions[normalized.id] = definition;
-        // Another engine in this process may already hold the identical
-        // global registration; only register genuinely new entries.
-        if (
-          registry.registerCapabilitiesGlobally &&
-          conflict !== "skip-global"
-        ) {
+        if (definition.installedProcessGlobal) {
           registerModPermission(definition);
         }
         onChange();
@@ -1648,43 +1658,7 @@ export async function emitLocalModEvent<TName extends ModEventName>(
   return { diagnostics, handlerCount: registrations.length, name, results };
 }
 
-export function disposeLocalMods(registry: LocalModRegistry): void {
-  for (const abortController of Object.values(registry.ownerAbortControllers)) {
-    abortController.abort("mod disposed");
-  }
-
-  const disposers = [...registry.disposers].reverse();
-  registry.disposers = [];
-
-  for (const { dispose, owner } of disposers) {
-    try {
-      dispose();
-    } catch (error) {
-      recordModDiagnostic(registry, {
-        error: error instanceof Error ? error : new Error(String(error)),
-        owner,
-        phase: "dispose",
-      });
-    }
-  }
-
-  if (registry.registerCapabilitiesGlobally) {
-    for (const owner of Object.values(registry.owners)) {
-      unregisterPiProvidersForOwner(owner.id);
-      unregisterModPermissionsForOwner(owner);
-      unregisterModToolsForOwner(owner);
-    }
-    clearAvailableModelsCache();
-  }
-
-  registry.commands = {};
-  registry.events = {};
-  registry.ownerAbortControllers = {};
-  registry.owners = {};
-  registry.permissions = {};
-  registry.tools = {};
-  registry.ui.panels = {};
-}
+export { disposeLocalMods } from "@/mods/mod-engine-dispose";
 
 export function createModEngine(options: CreateModEngineOptions): ModEngine {
   const { getBackend, onDiagnostic, ...modOptions } = options;

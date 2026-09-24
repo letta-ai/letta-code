@@ -96,6 +96,42 @@ describe("duplicate mod registration", () => {
     }
   });
 
+  test("disposing or reloading only the duplicate engine keeps the first engine globals", async () => {
+    const root = createTempDir();
+    try {
+      writeMod(root);
+
+      const listenerEngine = createEngine(root);
+      await listenerEngine.reload();
+      const sessionEngine = createEngine(root);
+      await sessionEngine.reload();
+
+      sessionEngine.dispose();
+
+      expect(getModToolDefinition("cruise_tool")?.path).toContain("cruise.js");
+      expect(getModPermissionDefinition("cruise-perm")?.path).toContain(
+        "cruise.js",
+      );
+      expect(listenerEngine.getSnapshot().tools.cruise_tool).toBeDefined();
+      expect(
+        listenerEngine.getSnapshot().permissions["cruise-perm"],
+      ).toBeDefined();
+
+      const sessionEngineReloaded = createEngine(root);
+      await sessionEngineReloaded.reload();
+      await sessionEngineReloaded.reload();
+
+      expect(getModToolDefinition("cruise_tool")).toBeDefined();
+      expect(getModPermissionDefinition("cruise-perm")).toBeDefined();
+      expect(listenerEngine.getSnapshot().tools.cruise_tool).toBeDefined();
+
+      sessionEngineReloaded.dispose();
+      listenerEngine.dispose();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("a different mod file registering the same command id still throws", async () => {
     const root = createTempDir();
     try {
