@@ -27,6 +27,7 @@ interface SetupUIProps {
   onCancel: () => void;
   initialMode?: SetupInitialMode;
   localModeDisabledReason?: string;
+  persistBackendPreference?: boolean;
 }
 
 export function SetupUI({
@@ -34,12 +35,11 @@ export function SetupUI({
   onCancel,
   initialMode = "menu",
   localModeDisabledReason,
+  persistBackendPreference = true,
 }: SetupUIProps) {
   const localModeDisabled = Boolean(localModeDisabledReason);
   const [mode, setMode] = useState<SetupMode>(initialMode);
-  const [selectedOption, setSelectedOption] = useState(
-    initialMode === "device-code" || localModeDisabled ? 0 : 1,
-  );
+  const [selectedOption, setSelectedOption] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [doneMessage, setDoneMessage] = useState("Starting Letta Code...");
   const selectNextOption = (current: number, delta: 1 | -1): number => {
@@ -78,8 +78,10 @@ export function SetupUI({
   const proceedLocally = async () => {
     try {
       configureBackendMode("local");
-      settingsManager.updateSettings({ preferredBackendMode: "local" });
-      await settingsManager.flush();
+      if (persistBackendPreference) {
+        settingsManager.updateSettings({ preferredBackendMode: "local" });
+        await settingsManager.flush();
+      }
       setDoneMessage(
         "Local mode enabled. Agents you create now will be stored on this device. To sign into Letta Cloud later, run `letta setup` or `letta backend cloud`.",
       );
@@ -120,6 +122,7 @@ export function SetupUI({
         <Text> </Text>
         <LettaLoginView
           activateCloudBackend
+          persistBackendPreference={persistBackendPreference}
           onComplete={() => onComplete({ kind: "cloud-login" })}
           onCancel={() => setMode("menu")}
           successMessage="Signed in with Letta. Starting Letta Code..."
@@ -146,7 +149,7 @@ export function SetupUI({
           }
         >
           {selectedOption === 0 ? "> " : "  "}
-          {AUTH_LOGIN_LABEL}
+          {AUTH_LOGIN_LABEL} (default)
         </Text>
       </Box>
       <Box paddingLeft={2}>
@@ -165,7 +168,7 @@ export function SetupUI({
           dimColor={localModeDisabled}
         >
           {selectedOption === 1 ? "> " : "  "}
-          {LOCAL_MODE_LABEL} {localModeDisabled ? "(unavailable)" : "(default)"}
+          {LOCAL_MODE_LABEL} {localModeDisabled ? "(unavailable)" : ""}
         </Text>
       </Box>
       <Box paddingLeft={2}>
@@ -188,6 +191,11 @@ export function SetupUI({
         </Text>
       </Box>
       <Text> </Text>
+      <Text dimColor>
+        {persistBackendPreference
+          ? "Your choice is saved. Use --backend cloud or --backend local to override it."
+          : "This invocation overrides your saved default without changing it."}
+      </Text>
       <Text dimColor>Use ↑/↓ to navigate, Enter to select</Text>
     </Box>
   );

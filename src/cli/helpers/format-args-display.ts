@@ -18,6 +18,7 @@ import {
   isSearchTool,
   isShellTool,
   isTodoTool,
+  isWorkflowTool,
 } from "./tool-name-mapping.js";
 
 function formatItemCount(count: number): string {
@@ -349,7 +350,21 @@ export function formatArgsDisplay(
             return { display, parsed };
           }
 
-          // TaskOutput: show task id with optional non-blocking marker
+          // Workflow: the script is pages long; show its meta description.
+          if (isWorkflowTool(toolName)) {
+            const script = String(parsed.script ?? "");
+            const description =
+              /description\s*:\s*(['"`])((?:\\.|(?!\1).)*)\1/.exec(script)?.[2];
+            display = description
+              ? description
+              : parsed.scriptPath
+                ? formatDisplayPath(String(parsed.scriptPath))
+                : "workflow";
+            return { display, parsed };
+          }
+
+          // TaskOutput (retired; still in saved transcripts): show task id
+          // with optional non-blocking marker
           if (toolName.toLowerCase() === "taskoutput" && parsed.task_id) {
             const taskId = String(parsed.task_id);
             const isNonBlocking = parsed.block === false;

@@ -146,7 +146,7 @@ import {
   getIntendedCronOccurrence,
   getTask,
   handleTaskPreflight,
-  isProcessAlive,
+  hasLiveSchedulerOwner,
   readCronFile,
   safeAppendCronRunLogForTask,
   shouldFireTask,
@@ -233,7 +233,7 @@ import {
   providerTypeFromModelSettings,
   reasoningEffortLlmConfigPatch,
 } from "./model-config";
-import { saveLastSessionBeforeExit } from "./session";
+import { prepareSessionExit } from "./session";
 import type {
   ActiveOverlay,
   AppProps,
@@ -1438,12 +1438,9 @@ export function App({
   }, []);
 
   // ── Shadow cron scheduler ──────────────────────────────────────────
-  // When the tui_cron experiment is enabled, run a lightweight scheduler
-  // that fires cron tasks when the desktop app (WS listener) isn't running.
-  // The TUI never claims the scheduler lease — it defers to any active
-  // lease holder (the desktop app always wins, even old versions).
-  // The experiment check is inside tick() so toggling the experiment
-  // takes effect without restarting the TUI.
+  // Lightweight tui_cron scheduler when no matching WS listener is running.
+  // Defers to a live all-owner or this agent's scoped backend owner.
+  // The experiment check is inside tick() so toggling takes effect live.
   useEffect(() => {
     if (!agentId || agentId === "loading") return;
 
@@ -1467,14 +1464,15 @@ export function App({
         lastMinuteKey = currentMinuteKey;
       }
 
-      // Check if another scheduler (desktop app) is active
+      // Defer to a live all-owner or this agent's scoped backend owner.
       const cronData = readCronFile();
-      if (cronData.scheduler_owner) {
-        const { pid } = cronData.scheduler_owner;
-        if (isProcessAlive(pid, cronData.scheduler_owner)) {
-          // Desktop app is running the scheduler — defer
-          return;
-        }
+      if (
+        hasLiveSchedulerOwner(
+          cronData,
+          isLocalAgentId(agentIdRef.current ?? "") ? "local" : "cloud",
+        )
+      ) {
+        return;
       }
 
       // No active scheduler — process tasks for this agent
@@ -3857,7 +3855,7 @@ export function App({
   });
 
   const handleExit = useCallback(async () => {
-    saveLastSessionBeforeExit(conversationIdRef.current);
+    await prepareSessionExit(conversationIdRef.current);
 
     // Run SessionEnd hooks
     await runEndHooks();

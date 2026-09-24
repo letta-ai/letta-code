@@ -2,7 +2,6 @@ import { defineTool, type ToolAssets } from "./define-tool";
 import ApplyPatchDescription from "./descriptions/ApplyPatch.md";
 import AskUserQuestionDescription from "./descriptions/AskUserQuestion.md";
 import BashDescription from "./descriptions/Bash.md";
-import BashOutputDescription from "./descriptions/BashOutput.md";
 import EditDescription from "./descriptions/Edit.md";
 import EnterWorktreeDescription from "./descriptions/EnterWorktree.md";
 import ExecCommandDescription from "./descriptions/ExecCommand.md";
@@ -32,12 +31,12 @@ import TaskDescription from "./descriptions/Task.md";
 import TaskCreateDescription from "./descriptions/TaskCreate.md";
 import TaskGetDescription from "./descriptions/TaskGet.md";
 import TaskListDescription from "./descriptions/TaskList.md";
-import TaskOutputDescription from "./descriptions/TaskOutput.md";
 import TaskStopDescription from "./descriptions/TaskStop.md";
 import TaskUpdateDescription from "./descriptions/TaskUpdate.md";
 import TodoWriteDescription from "./descriptions/TodoWrite.md";
 import UpdatePlanDescription from "./descriptions/UpdatePlan.md";
 import ViewImageDescription from "./descriptions/ViewImage.md";
+import WorkflowDescription from "./descriptions/Workflow.md";
 import WriteDescription from "./descriptions/Write.md";
 import WriteArtifactFileDescription from "./descriptions/WriteArtifactFile.md";
 import WriteStdinDescription from "./descriptions/WriteStdin.md";
@@ -45,7 +44,6 @@ import { apply_patch } from "./impl/apply-patch";
 import { read_artifact_file, write_artifact_file } from "./impl/artifact-files";
 import { ask_user_question } from "./impl/ask-user-question";
 import { bash } from "./impl/bash";
-import { bash_output } from "./impl/bash-output";
 import { edit } from "./impl/edit";
 import { enter_worktree } from "./impl/enter-worktree";
 import { exec_command, write_stdin } from "./impl/exec-command";
@@ -72,18 +70,17 @@ import { task } from "./impl/task";
 import { task_create } from "./impl/task-create";
 import { task_get } from "./impl/task-get";
 import { task_list } from "./impl/task-list";
-import { task_output } from "./impl/task-output";
 import { task_stop } from "./impl/task-stop";
 import { task_update } from "./impl/task-update";
 import { todo_write } from "./impl/todo-write";
 import { update_plan } from "./impl/update-plan";
 import { view_image } from "./impl/view-image";
+import { workflow } from "./impl/workflow";
 import { write } from "./impl/write";
 
 import ApplyPatchSchema from "./schemas/ApplyPatch.json";
 import AskUserQuestionSchema from "./schemas/AskUserQuestion.json";
 import BashSchema from "./schemas/Bash.json";
-import BashOutputSchema from "./schemas/BashOutput.json";
 import EditSchema from "./schemas/Edit.json";
 import EnterWorktreeSchema from "./schemas/EnterWorktree.json";
 import ExecCommandSchema from "./schemas/ExecCommand.json";
@@ -112,12 +109,12 @@ import TaskSchema from "./schemas/Task.json";
 import TaskCreateSchema from "./schemas/TaskCreate.json";
 import TaskGetSchema from "./schemas/TaskGet.json";
 import TaskListSchema from "./schemas/TaskList.json";
-import TaskOutputSchema from "./schemas/TaskOutput.json";
 import TaskStopSchema from "./schemas/TaskStop.json";
 import TaskUpdateSchema from "./schemas/TaskUpdate.json";
 import TodoWriteSchema from "./schemas/TodoWrite.json";
 import UpdatePlanSchema from "./schemas/UpdatePlan.json";
 import ViewImageSchema from "./schemas/ViewImage.json";
+import WorkflowSchema from "./schemas/Workflow.json";
 import WriteSchema from "./schemas/Write.json";
 import WriteArtifactFileSchema from "./schemas/WriteArtifactFile.json";
 import WriteStdinSchema from "./schemas/WriteStdin.json";
@@ -171,11 +168,6 @@ const toolDefinitions = {
     description: buildBashDescriptionForPlatform(),
     impl: bash,
   }),
-  BashOutput: defineTool({
-    schema: BashOutputSchema,
-    description: BashOutputDescription.trim(),
-    impl: bash_output,
-  }),
   EnterWorktree: defineTool({
     schema: EnterWorktreeSchema,
     description: EnterWorktreeDescription.trim(),
@@ -205,11 +197,6 @@ const toolDefinitions = {
     schema: KillBashSchema,
     description: KillBashDescription.trim(),
     impl: kill_bash,
-  }),
-  TaskOutput: defineTool({
-    schema: TaskOutputSchema,
-    description: TaskOutputDescription.trim(),
-    impl: task_output,
   }),
   TaskStop: defineTool({
     schema: TaskStopSchema,
@@ -306,6 +293,11 @@ const toolDefinitions = {
     schema: TodoWriteSchema,
     description: TodoWriteDescription.trim(),
     impl: todo_write,
+  }),
+  Workflow: defineTool({
+    schema: WorkflowSchema,
+    description: WorkflowDescription.trim(),
+    impl: workflow,
   }),
   Write: defineTool({
     schema: WriteSchema,

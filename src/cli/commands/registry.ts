@@ -5,8 +5,11 @@ import {
   type DreamCommandScope,
   requestCloudReflectionRun,
 } from "@/agent/reflection-runs";
+import { renderWorkflowTree } from "@/cli/helpers/workflow-display";
+import { listWorkflowExecutions } from "@/tools/workflow/execution-registry";
 import { handleMemoryRepositoryCommand } from "./memory-repository";
 import { handleSecretCommand } from "./secret";
+import { handleSystemRemindersCommand } from "./system-reminders";
 
 type CommandHandlerResult =
   | string
@@ -468,6 +471,12 @@ export const commands: Record<string, Command> = {
       return "Managing reasoning Tab shortcut...";
     },
   },
+  "/system-reminders": {
+    desc: "Show or hide system reminders",
+    args: "[on|off|status]",
+    order: 36.8,
+    handler: (args: string[]) => handleSystemRemindersCommand(args),
+  },
   "/terminal": {
     desc: "Setup terminal shortcuts [--revert]",
     order: 37,
@@ -551,6 +560,18 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in App.tsx to show background processes
       return "Showing background processes...";
+    },
+  },
+  "/workflows": {
+    desc: "Show workflow runs, their agents, and token usage",
+    order: 42.5,
+    noArgs: true,
+    handler: () => {
+      const executions = listWorkflowExecutions();
+      if (executions.length === 0) {
+        return "No workflow runs in this session";
+      }
+      return executions.flatMap(renderWorkflowTree).join("\n");
     },
   },
   "/exit": {

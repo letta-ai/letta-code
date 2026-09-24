@@ -24,18 +24,23 @@ export interface BackgroundRuntimeScope {
 export interface BackgroundProcess {
   process: BackgroundProcessHandle;
   command: string;
-  stdout: string[];
-  stderr: string[];
+  /**
+   * Recent output lines that Bash replays in its completion notification.
+   * Other background work keeps its output only in the output file.
+   */
+  stdout?: string[];
+  stderr?: string[];
   status: "running" | "completed" | "failed";
   exitCode: number | null;
-  lastReadIndex: { stdout: number; stderr: number };
   startTime?: Date;
   outputFile?: string; // File path for persistent output
   totalStdoutLines?: number;
   totalStderrLines?: number;
   cleanupTimer?: TimerHandle;
   runtimeScope?: BackgroundRuntimeScope;
-  kind?: "monitor";
+  /** Authenticated Cloud user responsible for launching this process. */
+  actingUserId?: string;
+  kind?: "monitor" | "workflow";
   description?: string;
   monitorSource?: "command" | "websocket";
   persistent?: boolean;
@@ -54,7 +59,6 @@ export interface BackgroundTask {
   displayType?: string;
   subagentId: string;
   status: "running" | "completed" | "failed";
-  output: string[];
   error?: string;
   startTime: Date;
   outputFile: string;
@@ -100,6 +104,11 @@ export function getNextMonitorId() {
   return `monitor_${crypto.randomUUID()}`;
 }
 
+let workflowIdCounter = 1;
+export function getNextWorkflowId() {
+  return `workflow_${workflowIdCounter++}`;
+}
+
 let execSessionIdCounter = 1;
 export function getNextExecSessionId() {
   return String(execSessionIdCounter++);
@@ -119,8 +128,6 @@ interface BackgroundRetentionConfig {
   completedEntryTtlMs: number;
   maxProcessLinesPerStream: number;
   maxProcessCharsPerStream: number;
-  maxTaskOutputChars: number;
-  maxOutputFileReadBytes: number;
   maxRunningProcesses: number;
   maxRunningTasks: number;
 }
@@ -129,8 +136,6 @@ const DEFAULT_BACKGROUND_RETENTION_CONFIG: BackgroundRetentionConfig = {
   completedEntryTtlMs: 5 * 60 * 1000,
   maxProcessLinesPerStream: 500,
   maxProcessCharsPerStream: 30_000,
-  maxTaskOutputChars: 30_000,
-  maxOutputFileReadBytes: 1_000_000,
   maxRunningProcesses: 32,
   maxRunningTasks: 32,
 };
@@ -205,18 +210,6 @@ function trimBufferedLines(lines: string[]): string[] {
   return retained;
 }
 
-function truncateTaskOutput(text: string): string {
-  const maxChars = backgroundRetentionConfig.maxTaskOutputChars;
-  if (text.length <= maxChars) {
-    return text;
-  }
-
-  const notice =
-    "\n\n[Background task output truncated in memory. See the task output file for the full transcript.]";
-  const headLength = Math.max(0, maxChars - notice.length);
-  return `${text.slice(0, headLength)}${notice}`;
-}
-
 export function __setBackgroundRetentionConfigForTests(
   overrides: Partial<BackgroundRetentionConfig>,
 ): void {
@@ -258,10 +251,6 @@ function countRunningEntries<
   return count;
 }
 
-export function getBackgroundOutputFileReadBytes(): number {
-  return backgroundRetentionConfig.maxOutputFileReadBytes;
-}
-
 export function assertBackgroundProcessCapacity(): void {
   const runningCount = countRunningEntries(backgroundProcesses);
   if (runningCount >= backgroundRetentionConfig.maxRunningProcesses) {
@@ -300,25 +289,22 @@ export function appendBackgroundProcessOutput(
 
   if (stream === "stdout") {
     processState.totalStdoutLines =
-      (processState.totalStdoutLines ?? processState.stdout.length) +
+      (processState.totalStdoutLines ?? processState.stdout?.length ?? 0) +
       lines.length;
-    processState.stdout.push(...lines);
-    processState.stdout = trimBufferedLines(processState.stdout);
+    processState.stdout = trimBufferedLines([
+      ...(processState.stdout ?? []),
+      ...lines,
+    ]);
     return;
   }
 
   processState.totalStderrLines =
-    (processState.totalStderrLines ?? processState.stderr.length) +
+    (processState.totalStderrLines ?? processState.stderr?.length ?? 0) +
     lines.length;
-  processState.stderr.push(...lines);
-  processState.stderr = trimBufferedLines(processState.stderr);
-}
-
-export function setBackgroundTaskOutput(
-  task: BackgroundTask,
-  output: string,
-): void {
-  task.output = output.length > 0 ? [truncateTaskOutput(output)] : [];
+  processState.stderr = trimBufferedLines([
+    ...(processState.stderr ?? []),
+    ...lines,
+  ]);
 }
 
 /**
@@ -387,12 +373,15 @@ export function appendToOutputFile(filePath: string, content: string): boolean {
 export function scrubCompletedBackgroundOutput(
   processState: BackgroundProcess,
 ): boolean {
-  if (!processState.outputFile || !processState.secrets) return true;
+  // Always scrub, even when the command referenced no secrets:
+  // scrubSecretsFromString covers the ambient runtime auth values (at minimum
+  // the effective LETTA_API_KEY) that every shell child inherits.
+  if (!processState.outputFile) return true;
   try {
     const content = readFileSync(processState.outputFile, "utf8");
     writeFileSync(
       processState.outputFile,
-      scrubSecretsFromString(content, processState.secrets),
+      scrubSecretsFromString(content, processState.secrets ?? {}),
       { mode: 0o600 },
     );
     return true;

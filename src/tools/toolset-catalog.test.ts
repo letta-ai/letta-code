@@ -49,6 +49,15 @@ test.each(Object.entries(TOOLSET_CATALOG))(
   },
 );
 
+test("does not register removed background output pollers", () => {
+  expect(Object.hasOwn(TOOL_DEFINITIONS, "TaskOutput")).toBe(false);
+  expect(Object.hasOwn(TOOL_DEFINITIONS, "BashOutput")).toBe(false);
+  for (const { tools } of Object.values(TOOLSET_CATALOG)) {
+    expect(tools).not.toContain("TaskOutput");
+    expect(tools).not.toContain("BashOutput");
+  }
+});
+
 test("each nonempty preset exposes SendAgentMessage in the model's tool payload", async () => {
   for (const toolsetPreference of ["letta", "default", "codex"] as const) {
     const prepared = await prepareToolExecutionContextForResolvedTarget({
@@ -100,3 +109,18 @@ test("standard and strict modes ask; explicit denial remains effective", () => {
     ).decision,
   ).toBe("deny");
 });
+
+test.each(["letta", "default", "codex"] as const)(
+  "%s exposes Agent without dedicated memory tools",
+  async (toolsetPreference) => {
+    const prepared = await prepareToolExecutionContextForResolvedTarget({
+      toolsetPreference,
+    });
+    const names = prepared.preparedToolContext.clientTools.map(
+      (tool) => tool.name,
+    );
+    expect(names).toContain("Agent");
+    expect(names).not.toContain("memory");
+    expect(names).not.toContain("memory_apply_patch");
+  },
+);

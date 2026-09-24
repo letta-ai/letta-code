@@ -53,6 +53,7 @@ export function getDisplayToolName(rawName: string): string {
 
   // Additional tools
   if (rawName === "KillBash") return "Kill Bash";
+  // Retired output pollers; kept so saved transcripts still render them.
   if (rawName === "BashOutput") return "Shell Output";
   if (rawName === "TaskOutput") return "Task Output";
   if (rawName === "MultiEdit") return "Update";
@@ -68,6 +69,13 @@ export function isTaskTool(name: string): boolean {
   return (
     name === "Task" || name === "task" || name === "Agent" || name === "agent"
   );
+}
+
+/**
+ * Checks if a tool name represents the background Workflow orchestration tool
+ */
+export function isWorkflowTool(name: string): boolean {
+  return name === "Workflow" || name === "workflow";
 }
 
 /**
@@ -191,7 +199,8 @@ export function isShellTool(name: string): boolean {
 
 /**
  * Checks if a tool should use shell-style streaming output rendering.
- * Includes shell command tools plus TaskOutput/BashOutput pollers.
+ * Includes shell command tools plus the retired TaskOutput/BashOutput pollers,
+ * which saved transcripts still contain.
  */
 export function isShellOutputTool(name: string): boolean {
   const n = name.toLowerCase();

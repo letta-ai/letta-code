@@ -408,7 +408,6 @@ describe("emitProtocolV2Message connection routing", () => {
         stderr: [],
         status: "running",
         exitCode: null,
-        lastReadIndex: { stdout: 0, stderr: 0 },
         startTime: new Date("2026-07-27T12:00:00.000Z"),
         runtimeScope: { agentId: "agent-a", conversationId: "conv-a" },
       });
@@ -417,7 +416,6 @@ describe("emitProtocolV2Message connection routing", () => {
         subagentType: "review",
         subagentId: "subagent-b",
         status: "running",
-        output: [],
         startTime: new Date("2026-07-27T12:01:00.000Z"),
         outputFile: "/tmp/task-agent-b.log",
         runtimeScope: { agentId: "agent-b", conversationId: "conv-b" },
@@ -429,7 +427,6 @@ describe("emitProtocolV2Message connection routing", () => {
         stderr: [],
         status: "running",
         exitCode: null,
-        lastReadIndex: { stdout: 0, stderr: 0 },
       });
 
       emitDeviceStatusUpdateIfChanged(

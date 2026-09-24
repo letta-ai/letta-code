@@ -5,7 +5,11 @@ import {
   LETTA_CODE_ORIGIN_TAG,
   LETTA_CODE_SUBAGENT_TAG,
 } from "@/agent/agent-tags";
-import { resolveCreatedAgentMemfsConfig } from "@/agent/create";
+import {
+  resolveCreatedAgentMemfsConfig,
+  resolveCreatedAgentSystemPrompt,
+} from "@/agent/create";
+import { buildSystemPrompt } from "@/agent/prompt-assets";
 
 const remoteMemfsBackend = { localMemfs: false, remoteMemfs: true } as const;
 const localMemfsBackend = { localMemfs: true, remoteMemfs: false } as const;
@@ -21,7 +25,7 @@ describe("created agent MemFS defaults", () => {
         capabilities: remoteMemfsBackend,
         isLettaCloud: true,
       }),
-    ).toEqual({ enableMemfs: true, memoryPromptMode: "memfs" });
+    ).toEqual({ enableMemfs: true, memoryPromptMode: "root-memfs" });
   });
 
   test("defaults to local MemFS on the local backend", () => {
@@ -31,6 +35,36 @@ describe("created agent MemFS defaults", () => {
         isLettaCloud: false,
       }),
     ).toEqual({ enableMemfs: true, memoryPromptMode: "local-memfs" });
+  });
+
+  test("keeps local creation on the supported local memory prompt", () => {
+    expect(
+      resolveCreatedAgentMemfsConfig({
+        capabilities: localMemfsBackend,
+        requestedMemoryPromptMode: "root-memfs",
+        isLettaCloud: false,
+      }),
+    ).toEqual({ enableMemfs: true, memoryPromptMode: "local-memfs" });
+  });
+
+  test("maps an explicit memfs request to the root layout on Letta Cloud", () => {
+    expect(
+      resolveCreatedAgentMemfsConfig({
+        capabilities: remoteMemfsBackend,
+        requestedMemoryPromptMode: "memfs",
+        isLettaCloud: true,
+      }),
+    ).toEqual({ enableMemfs: true, memoryPromptMode: "root-memfs" });
+  });
+
+  test("keeps an explicit memfs request on self-hosted servers", () => {
+    expect(
+      resolveCreatedAgentMemfsConfig({
+        capabilities: remoteMemfsBackend,
+        requestedMemoryPromptMode: "memfs",
+        isLettaCloud: false,
+      }),
+    ).toEqual({ enableMemfs: true, memoryPromptMode: "memfs" });
   });
 
   test("subagents are stateless: no MemFS even on Letta Cloud", () => {
@@ -50,7 +84,7 @@ describe("created agent MemFS defaults", () => {
         requestedMemoryPromptMode: "standard",
         isLettaCloud: true,
       }),
-    ).toEqual({ enableMemfs: true, memoryPromptMode: "memfs" });
+    ).toEqual({ enableMemfs: true, memoryPromptMode: "root-memfs" });
   });
 
   test("self-hosted servers without memfs support stay standard", () => {
@@ -60,6 +94,54 @@ describe("created agent MemFS defaults", () => {
         isLettaCloud: false,
       }),
     ).toEqual({ enableMemfs: false, memoryPromptMode: "standard" });
+  });
+});
+
+describe("created agent system prompt defaults", () => {
+  test("delegates the default prompt to Letta Cloud", async () => {
+    await expect(
+      resolveCreatedAgentSystemPrompt({
+        isLettaCloud: true,
+        memoryPromptMode: "memfs",
+      }),
+    ).resolves.toBeNull();
+    await expect(
+      resolveCreatedAgentSystemPrompt({
+        isLettaCloud: true,
+        systemPromptPreset: "default",
+        memoryPromptMode: "memfs",
+      }),
+    ).resolves.toBeNull();
+  });
+
+  test("keeps explicit and non-Cloud prompts client-owned", async () => {
+    await expect(
+      resolveCreatedAgentSystemPrompt({
+        isLettaCloud: true,
+        systemPromptCustom: "Custom prompt",
+        memoryPromptMode: "memfs",
+      }),
+    ).resolves.toBe("Custom prompt");
+    await expect(
+      resolveCreatedAgentSystemPrompt({
+        isLettaCloud: true,
+        systemPromptCustom: "",
+        memoryPromptMode: "memfs",
+      }),
+    ).resolves.toBe("");
+    await expect(
+      resolveCreatedAgentSystemPrompt({
+        isLettaCloud: true,
+        systemPromptPreset: "letta",
+        memoryPromptMode: "memfs",
+      }),
+    ).resolves.toBe(buildSystemPrompt("letta", "memfs"));
+    await expect(
+      resolveCreatedAgentSystemPrompt({
+        isLettaCloud: false,
+        memoryPromptMode: "standard",
+      }),
+    ).resolves.toBe(buildSystemPrompt("default", "standard"));
   });
 });
 

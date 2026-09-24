@@ -30,6 +30,7 @@ import {
   matchesFilePattern,
   matchesToolPattern,
 } from "./matcher";
+import { isOwnMemoryWrite } from "./memory-write-allowance";
 import { permissionMode } from "./mode";
 import { isMemoryDirCommand, isReadOnlyShellCommand } from "./read-only-shell";
 import { sessionPermissions } from "./session";
@@ -509,6 +510,25 @@ function checkPermissionForEngine(
     }
   }
 
+  // File-tool counterpart of the memory-dir shell allowance above.
+  if (
+    !isStrictMode &&
+    isOwnMemoryWrite(canonicalTool, toolArgs, workingDirectory, agentId)
+  ) {
+    traceEvent(
+      trace,
+      "memory-dir-auto-allow",
+      "Agent memory directory operation",
+    );
+    return {
+      result: {
+        decision: "allow",
+        reason: "Agent memory directory operation",
+      },
+      trace,
+    };
+  }
+
   if (!isStrictMode && workingDirectoryTools.includes(queryTool)) {
     const filePath = extractFilePath(toolArgs);
     if (
@@ -750,11 +770,12 @@ function matchesPattern(
  * mutations are constrained by the memory-subagent sandbox.
  */
 const SAFE_AUTO_APPROVE_SUBAGENT_TYPES = new Set([
-  "recall", // Conversation history search - Skill, Bash, Read, TaskOutput
+  "recall", // Conversation history search - Skill, Bash, Read
   "Recall",
   "reflection", // Memory reflection - writes constrained by memory-subagent sandbox
   "Reflection",
   "history-analyzer", // History analysis - writes constrained by memory-subagent sandbox
+  "memory", // Memory worker - edits its private memory worktree under the same sandbox
 ]);
 
 /**
@@ -788,7 +809,6 @@ function getDefaultDecision(
     "Glob",
     "Grep",
     "TodoWrite",
-    "TaskOutput",
     "LS",
     // Additional Codex tools - tools that don't require approval
     "read_file",

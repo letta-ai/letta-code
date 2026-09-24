@@ -9,15 +9,11 @@ import {
   getSkillsDirectory,
 } from "@/agent/context";
 import { getModelInfo } from "@/agent/model";
-import { getAllSubagentConfigs } from "@/agent/subagents";
+import { getModelFacingSubagentDescriptors } from "@/agent/subagents";
 import { getBackend } from "@/backend";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { experimentManager } from "@/experiments/manager";
-import {
-  runPostToolUseFailureHooks,
-  runPostToolUseHooks,
-  runPreToolUseHooks,
-} from "@/hooks";
+import { runPreToolUseHooks } from "@/hooks";
 import { buildModInvocationContext } from "@/mods/context";
 import { createModConversationHandle } from "@/mods/conversation-handle";
 import { attachDeprecatedGetContextTrap } from "@/mods/deprecated-api";
@@ -68,6 +64,11 @@ import {
 } from "./client-tool-serialization";
 import { normalizeExternalToolResultContent } from "./external-tool-content";
 import { toolFilter } from "./filter";
+import {
+  appendHookFeedbackToText,
+  appendHookFeedbackToToolReturn,
+  collectPostToolHookFeedback,
+} from "./hook-feedback";
 import { clampToolReturnContent } from "./impl/tool-return-clamp";
 import { resolveBackendSpecificToolAssets } from "./memory-tool-assets";
 import {
@@ -80,7 +81,13 @@ import {
   type PermissionModeState,
 } from "./permission-mode-state";
 import {
+  createScrubbedOutputStreamer,
   extractSecretEnvFromCommand,
+  getAmbientRedactionSecrets,
+  type ScrubbedOutputStreamer,
+  sanitizeOutputLines,
+  sanitizeToolReturnContent,
+  scrubAmbientSecrets,
   scrubSecretsFromString,
 } from "./secret-substitution";
 import { TOOL_DEFINITIONS, type ToolName } from "./tool-definitions";
@@ -112,8 +119,6 @@ function resolvedModelForm(
 
 const STREAMING_SHELL_TOOLS = new Set([
   "Bash",
-  "BashOutput",
-  "TaskOutput",
   "exec_command",
   "write_stdin",
   "shell_command",
@@ -121,7 +126,10 @@ const STREAMING_SHELL_TOOLS = new Set([
   "shell",
   "Shell",
   "Monitor",
+  "Workflow",
 ]);
+/** Background tools whose completion notification targets the invoking scope. */
+const SCOPED_BACKGROUND_TOOLS = new Set(["Monitor", "Workflow"]);
 
 // Tools that write files — used to trigger onFileWrite broadcast after execution.
 const FILE_MUTATING_TOOLS = new Set(["Edit", "Write", "MultiEdit"]);
@@ -134,19 +142,13 @@ const TOOL_NAME_MAPPINGS: Partial<Record<ToolName, string>> = {
   Task: "Agent",
 };
 
-/**
- * Get the server-facing name for a tool (maps internal names to what the model sees)
- */
+/** Get the server-facing name for a tool (maps internal names to what the model sees). */
 export function getServerToolName(internalName: string): string {
   return TOOL_NAME_MAPPINGS[internalName as ToolName] || internalName;
 }
 
-/**
- * Get the internal tool name from a server-facing name
- * Used when the server sends back tool calls/approvals with server names
- */
+/** Get the internal tool name from a server-facing name (tool calls/approvals arrive with server names). */
 export function getInternalToolName(serverName: string): string {
-  // Build reverse mapping
   for (const [internal, server] of Object.entries(TOOL_NAME_MAPPINGS)) {
     if (server === serverName) {
       return internal;
@@ -1280,15 +1282,9 @@ async function buildToolRegistry(
     let { description } = resolvedAssets;
     const { inputSchema } = resolvedAssets;
     if (internalName === "Task") {
-      const configs = await getAllSubagentConfigs(workingDirectory);
-      description = injectSubagentsIntoTaskDescription(
-        description,
-        Object.entries(configs).map(([name, config]) => ({
-          name,
-          description: config.description,
-          recommendedModel: config.recommendedModel,
-        })),
-      );
+      const subagents =
+        await getModelFacingSubagentDescriptors(workingDirectory);
+      description = injectSubagentsIntoTaskDescription(description, subagents);
     }
 
     const toolSchema: ToolSchema = {
@@ -1768,85 +1764,6 @@ function getModToolStatus(result: unknown): "success" | "error" {
   return "success";
 }
 
-type ToolHookContext = {
-  args: Record<string, unknown>;
-  debugLabel: string;
-  scopedAgentId?: string;
-  toolCallId?: string;
-  toolName: string;
-  workingDirectory: string;
-};
-
-async function collectPostToolHookFeedback(
-  context: ToolHookContext,
-  result: {
-    errorType?: string;
-    failureOutput?: string;
-    output: string;
-    status: "success" | "error";
-  },
-): Promise<string[]> {
-  let postToolUseFeedback: string[] = [];
-  try {
-    const postHookResult = await runPostToolUseHooks(
-      context.toolName,
-      context.args,
-      { status: result.status, output: result.output },
-      context.toolCallId,
-      context.workingDirectory,
-      context.scopedAgentId,
-      undefined,
-      undefined,
-    );
-    postToolUseFeedback = postHookResult.feedback;
-  } catch (error) {
-    debugLog("hooks", `PostToolUse hook error (${context.debugLabel})`, error);
-  }
-
-  let postToolUseFailureFeedback: string[] = [];
-  if (result.status === "error") {
-    try {
-      const failureHookResult = await runPostToolUseFailureHooks(
-        context.toolName,
-        context.args,
-        result.failureOutput ?? result.output,
-        result.errorType ?? "tool_error",
-        context.toolCallId,
-        context.workingDirectory,
-        context.scopedAgentId,
-        undefined,
-        undefined,
-      );
-      postToolUseFailureFeedback = failureHookResult.feedback;
-    } catch (error) {
-      debugLog(
-        "hooks",
-        `PostToolUseFailure hook error (${context.debugLabel})`,
-        error,
-      );
-    }
-  }
-
-  return [...postToolUseFeedback, ...postToolUseFailureFeedback];
-}
-
-function appendHookFeedbackToText(text: string, feedback: string[]): string {
-  if (feedback.length === 0) return text;
-  return `${text}\n\n[Hook feedback]:\n${feedback.join("\n")}`;
-}
-
-function appendHookFeedbackToToolReturn(
-  toolReturn: ToolReturnContent,
-  feedback: string[],
-): ToolReturnContent {
-  if (feedback.length === 0) return toolReturn;
-  const feedbackMessage = `\n\n[Hook feedback]:\n${feedback.join("\n")}`;
-  if (typeof toolReturn === "string") {
-    return toolReturn + feedbackMessage;
-  }
-  return [...toolReturn, { type: "text" as const, text: feedbackMessage }];
-}
-
 function cloneToolArgsForModEvent(args: ToolArgs): ToolArgs {
   try {
     return structuredClone(args);
@@ -1966,6 +1883,10 @@ async function executeModTool(
       redactions.set(name, value);
     }
   };
+  // Mod-spawned subprocesses inherit the runtime env; redact its auth values.
+  for (const [name, value] of Object.entries(getAmbientRedactionSecrets())) {
+    addRedaction(name, value);
+  }
 
   const run = async (): Promise<ToolExecutionResult> => {
     const preHookResult = await runPreToolUseHooks(
@@ -1978,7 +1899,7 @@ async function executeModTool(
     if (preHookResult.blocked) {
       const feedback = preHookResult.feedback.join("\n") || "Blocked by hook";
       return {
-        toolReturn: `Error: Tool execution blocked by hook. ${feedback}`,
+        toolReturn: `Error: Tool execution blocked by hook. ${scrubAmbientSecrets(feedback)}`,
         status: "error",
       };
     }
@@ -2390,7 +2311,7 @@ async function executeToolInner(
     if (preHookResult.blocked) {
       const feedback = preHookResult.feedback.join("\n") || "Blocked by hook";
       return {
-        toolReturn: `Error: Tool execution blocked by hook. ${feedback}`,
+        toolReturn: `Error: Tool execution blocked by hook. ${scrubAmbientSecrets(feedback)}`,
         status: "error",
       };
     }
@@ -2404,9 +2325,12 @@ async function executeToolInner(
     }
     if (options?.toolEndArgsRef) options.toolEndArgsRef.current = args;
 
+    // Hoisted so the catch path scrubs thrown errors with the same redaction set.
+    let invocationSecrets: Record<string, string> = {};
+    let outputStreamer: ScrubbedOutputStreamer | null = null;
+
     try {
       let enhancedArgs = args;
-      let invocationSecrets: Record<string, string> = {};
 
       // Cancellation is internal, not part of model-facing tool schemas.
       if (options?.signal) {
@@ -2423,22 +2347,19 @@ async function executeToolInner(
             ? extractSecretEnvFromCommand(command, scopedAgentId)
             : {};
         if (options?.onOutput) {
-          enhancedArgs = {
-            ...enhancedArgs,
-            onOutput: (chunk: string, stream: "stdout" | "stderr") => {
-              options.onOutput?.(
-                stripAnsi(scrubSecretsFromString(chunk, invocationSecrets)),
-                stream,
-              );
-            },
-          };
+          outputStreamer = createScrubbedOutputStreamer(
+            invocationSecrets,
+            options.onOutput,
+            stripAnsi,
+          );
+          enhancedArgs = { ...enhancedArgs, onOutput: outputStreamer.onOutput };
         }
         if (Object.keys(invocationSecrets).length > 0) {
           enhancedArgs = { ...enhancedArgs, secretEnv: invocationSecrets };
         }
         const parentScope =
           options?.parentScope ??
-          (internalName === "Monitor" && scopedAgentId
+          (SCOPED_BACKGROUND_TOOLS.has(internalName) && scopedAgentId
             ? {
                 agentId: scopedAgentId,
                 conversationId: executionScope.conversationId ?? "default",
@@ -2475,7 +2396,10 @@ async function executeToolInner(
         };
       }
 
-      const result = await tool.fn(enhancedArgs);
+      // finally() emits any tail the scrubbers held back as partial secrets.
+      const result = await tool
+        .fn(enhancedArgs)
+        .finally(() => outputStreamer?.flush());
       const duration = Date.now() - startTime;
 
       // Broadcast file content after file-mutating tools so web clients update
@@ -2510,37 +2434,19 @@ async function executeToolInner(
       // Flatten the response to plain text
       let flattenedResponse = flattenToolResponse(result);
 
-      // Scrub secret values + ANSI escape sequences from tool output so they
-      // don't leak into agent context or render as garbage in downstream UIs.
-      if (STREAMING_SHELL_TOOLS.has(internalName)) {
-        const sanitize = (text: string) =>
-          stripAnsi(scrubSecretsFromString(text, invocationSecrets));
-        if (typeof flattenedResponse === "string") {
-          flattenedResponse = sanitize(flattenedResponse);
-        } else if (Array.isArray(flattenedResponse)) {
-          flattenedResponse = flattenedResponse.map((block) =>
-            block.type === "text"
-              ? { ...block, text: sanitize(block.text) }
-              : block,
-          );
-        }
-        if (stdout) {
-          for (let i = 0; i < stdout.length; i++) {
-            const line = stdout[i];
-            if (line !== undefined) {
-              stdout[i] = sanitize(line);
-            }
-          }
-        }
-        if (stderr) {
-          for (let i = 0; i < stderr.length; i++) {
-            const line = stderr[i];
-            if (line !== undefined) {
-              stderr[i] = sanitize(line);
-            }
-          }
-        }
-      }
+      // Scrub secrets from tool output before it reaches agent context. The
+      // scrub always covers ambient runtime auth values, so it runs for every
+      // tool. ANSI stripping stays shell-only.
+      const stripAnsiEscapes = STREAMING_SHELL_TOOLS.has(internalName);
+      flattenedResponse = sanitizeToolReturnContent(
+        flattenedResponse,
+        invocationSecrets,
+        stripAnsiEscapes,
+      );
+      if (stdout)
+        sanitizeOutputLines(stdout, invocationSecrets, stripAnsiEscapes);
+      if (stderr)
+        sanitizeOutputLines(stderr, invocationSecrets, stripAnsiEscapes);
 
       flattenedResponse = clampToolReturnContent(
         flattenedResponse,
@@ -2604,11 +2510,14 @@ async function executeToolInner(
         : error instanceof Error
           ? error.name
           : "unknown";
+      // Thrown errors can embed child output (e.g. an env-file parser echoing
+      // its environment); scrub before telemetry, hooks, or the model see them.
       const errorMessage = isAbort
         ? INTERRUPTED_BY_USER
-        : error instanceof Error
-          ? error.message
-          : String(error);
+        : scrubSecretsFromString(
+            error instanceof Error ? error.message : String(error),
+            invocationSecrets,
+          );
 
       // Track tool usage error
       telemetry.trackToolUsage(
@@ -2711,8 +2620,14 @@ export async function executeTool(
     output: res.toolReturn,
   });
 
+  // A tool_end mod handler replaces what the model sees; scrub the ambient
+  // runtime auth values from its output too (mod children inherit them).
   return override
-    ? { ...res, toolReturn: override.output, status: override.status }
+    ? {
+        ...res,
+        toolReturn: scrubAmbientSecrets(override.output),
+        status: override.status,
+      }
     : res;
 }
 

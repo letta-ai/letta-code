@@ -70,7 +70,7 @@ Narrow based on evidence, but begin with:
 - Claude-derived output behavior: `src/tools/impl/truncation.ts`, `src/tools/impl/read.ts`, `src/tools/impl/bash.ts`
 - permissions: `src/permissions/matcher.ts`, `src/permissions/types.ts`, and tests
 - stream/headless protocol: `src/stream-json-writer.ts`, `src/types/protocol.ts`, `src/integration-tests/headless-stream-json-format.test.ts`
-- tasks/subagents/worktrees: built-in subagent Markdown, Task/TaskCreate/TaskGet/TaskList/TaskUpdate/TaskOutput/TaskStop and EnterWorktree/ExitWorktree schemas, descriptions, implementations, and tests
+- tasks/subagents/worktrees: built-in subagent Markdown, Task/TaskCreate/TaskGet/TaskList/TaskUpdate/TaskStop and EnterWorktree/ExitWorktree schemas, descriptions, implementations, and tests
 
 When the official tool inventory changes, compare both the top-level Letta defaults and every built-in subagent's tool frontmatter/body. Local-only stale names are drift even when the parent toolset is already current.
 
