@@ -1,6 +1,7 @@
 import { updateModelConfig } from "@/agent/modify";
 import type { Backend } from "@/backend";
 import { loadModConversationHistoryFromBackend } from "@/mods/conversation-history";
+import { requestConversationRotation } from "@/mods/conversation-rotation";
 import { publishConversationTitleChange } from "@/mods/conversation-title-events";
 import type {
   ModConversationHandle,
@@ -43,6 +44,17 @@ export function createModConversationHandle(options: {
       return createModConversationHandle({
         ...options,
         conversationId: forked.id,
+      });
+    },
+    async new(newOptions) {
+      const result = await requestConversationRotation({
+        agentId: options.agentId,
+        conversationId: options.conversationId,
+        name: newOptions?.name,
+      });
+      return createModConversationHandle({
+        ...options,
+        conversationId: result.conversationId,
       });
     },
     getHistory(historyOptions) {

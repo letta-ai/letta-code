@@ -26,6 +26,8 @@ function createTempDir(): string {
   return mkdtempSync(path.join(tmpdir(), "letta-mods-"));
 }
 
+const notImplemented = () => Promise.reject(new Error("not implemented"));
+
 function createModContext(): ModContext {
   return buildCliModContext({
     agentName: "Letta Code",
@@ -635,9 +637,8 @@ export default function(letta) {
             command: "review-pr",
             conversation: {
               id: "conversation-1",
-              fork: async () => {
-                throw new Error("not implemented");
-              },
+              fork: notImplemented,
+              new: notImplemented,
               getHistory: async () => [],
               sendMessageStream: async () => (async function* () {})(),
               updateLlmConfig: async () => {},
@@ -692,9 +693,8 @@ export default function(letta) {
                 command: "legacy-command",
                 conversation: {
                   id: "conversation-1",
-                  fork: async () => {
-                    throw new Error("not implemented");
-                  },
+                  fork: notImplemented,
+                  new: notImplemented,
                   getHistory: async () => [],
                   sendMessageStream: async () => (async function* () {})(),
                   updateLlmConfig: async () => {},
@@ -749,9 +749,8 @@ export default function(letta) {
             command: "client-check",
             conversation: {
               id: "conversation-1",
-              fork: async () => {
-                throw new Error("not implemented");
-              },
+              fork: notImplemented,
+              new: notImplemented,
               getHistory: async () => [],
               sendMessageStream: async () => (async function* () {})(),
               updateLlmConfig: async () => {},

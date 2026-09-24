@@ -115,6 +115,13 @@ export type QueuedOverlayAction =
       commandId?: string;
     }
   | {
+      // The conversation is already created; the session rebind is deferred
+      // until the in-flight turn ends (mod conversation rotation).
+      type: "rotate_conversation";
+      conversationId: string;
+      name?: string;
+    }
+  | {
       type: "switch_toolset";
       toolsetId: ToolsetPreference;
       commandId?: string;

@@ -154,6 +154,10 @@ import {
 } from "./command-routing";
 import { buildTextParts } from "./content-parts";
 import { appendOptimisticUserLine, createClientOtid, uid } from "./ids";
+import {
+  bindFreshConversation,
+  createFreshConversation,
+} from "./new-conversation";
 import { prepareSessionExit } from "./session";
 import { handleConnectionCommand } from "./submit-connection-commands";
 import { handleDiagnosticsCommand } from "./submit-diagnostics-commands";
@@ -1750,67 +1754,30 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           resetPendingReasoningCycle();
           setCommandRunning(true);
 
-          const prevConversationId = conversationIdRef.current;
-
-          // Run SessionEnd hooks for current session before starting new one
-          await runEndHooks("new");
-
           try {
-            const backend = getBackend();
-
-            // Create a new conversation for the current agent
-            const conversation = await backend.createConversation({
-              agent_id: agentId,
-              ...(conversationName && { summary: conversationName }),
-            });
-
-            setConversationAutoTitleEligibility(!conversationName);
-            await maybeCarryOverActiveConversationModel(conversation.id);
-
-            // Update conversationId state and ref together so the next turn
-            // cannot observe a stale conversation handoff.
-            setConversationIdAndRef(conversation.id);
-
-            pendingConversationSwitchRef.current = {
-              origin: "new",
-              conversationId: conversation.id,
-              isDefault: false,
-            };
-
-            // Save the new session to settings
-            settingsManager.persistSession(agentId, conversation.id);
-
-            // Reset context tokens for new conversation
-            resetContextHistory(contextTrackerRef.current);
-
-            // Ensure bootstrap reminders are re-injected for the new conversation.
-            resetBootstrapReminderState(true);
-
-            // Re-run SessionStart hooks for new conversation
-            sessionHooksRanRef.current = false;
-            runSessionStartHooks(
-              true, // isNewSession
+            // Create a new conversation for the current agent, then rebind
+            // the session with the shared /new sequence.
+            const newConversationId = await createFreshConversation(
               agentId,
-              agentName ?? undefined,
-              conversation.id,
-            )
-              .then((result) => {
-                if (result.feedback.length > 0) {
-                  sessionStartFeedbackRef.current = result.feedback;
-                }
-              })
-              .catch(() => {});
-            sessionHooksRanRef.current = true;
-            void modAdapter.events.emit(
-              "conversation_open",
+              conversationName,
+            );
+            await bindFreshConversation(
               {
                 agentId,
-                agentName: agentName ?? null,
-                conversationId: conversation.id,
-                previousConversationId: prevConversationId ?? null,
-                reason: "new",
+                agentName,
+                conversationIdRef,
+                contextTrackerRef,
+                pendingConversationSwitchRef,
+                sessionHooksRanRef,
+                sessionStartFeedbackRef,
+                setConversationIdAndRef,
+                setConversationAutoTitleEligibility,
+                maybeCarryOverActiveConversationModel,
+                resetBootstrapReminderState,
+                runEndHooks,
+                modAdapter,
               },
-              modAdapter.context,
+              { conversationId: newConversationId, name: conversationName },
             );
 
             // Update command with success
