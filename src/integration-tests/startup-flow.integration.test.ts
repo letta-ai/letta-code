@@ -449,7 +449,7 @@ describe("Startup Flow - Integration", () => {
   );
 
   test(
-    "--conversation with valid ID derives agent and uses conversation",
+    "--conversation resolves the agent and submits to the selected conversation",
     async () => {
       if (!testAgentId || !testConversationId) {
         console.log("Skipping: no test conversation available");
@@ -460,21 +460,28 @@ describe("Startup Flow - Integration", () => {
         [
           "--conversation",
           testConversationId,
-          // The recipient was configured above; enqueue does not reconfigure it.
+          // The process that created the conversation has exited, so verify
+          // destination resolution and Cloud acceptance without waiting for a receiver.
+          "--no-wait",
           "-p",
           "Say OK",
           "--output-format",
           "json",
         ],
-        { timeoutMs: 180000 },
+        {
+          timeoutMs: 60000,
+          retryOnTimeouts: 0,
+          retryOnParseErrors: 0,
+        },
       );
 
       expect(result.exitCode).toBe(0);
       const output = result.output;
+      expect(output.status).toBe("queued");
       expect(output.agent_id).toBe(testAgentId);
       expect(output.conversation_id).toBe(testConversationId);
     },
-    { timeout: 370000 },
+    { timeout: 70000 },
   );
 
   test(
