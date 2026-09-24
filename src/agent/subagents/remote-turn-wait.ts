@@ -2,7 +2,7 @@ import { updateSubagent } from "@/agent/subagent-state.js";
 import type { SubagentResult } from "@/agent/subagents";
 import {
   type EnqueueReceipt,
-  getLatestConversationSuperRun,
+  getExactSuperRun,
   listEnqueuedRunMessages,
   openConversationStatusStream,
 } from "@/backend/api/conversation-enqueue";
@@ -31,7 +31,7 @@ export async function collectRemoteTurnResult(
   try {
     const reply = await waitForAcceptedSuperRun(receipt, signal, {
       open: openConversationStatusStream,
-      latest: getLatestConversationSuperRun,
+      exact: getExactSuperRun,
       messages: async (runId, readSignal) => {
         const messages = await listEnqueuedRunMessages(runId, readSignal);
         for (const message of messages) {

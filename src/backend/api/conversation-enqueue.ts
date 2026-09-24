@@ -158,6 +158,21 @@ export interface LatestConversationSuperRun {
   errored_at: string | null;
 }
 
+/** Read one accepted Super Run by ID, scoped through its owning agent. */
+export async function getExactSuperRun(
+  agentId: string,
+  superRunId: string,
+  signal?: AbortSignal,
+  request = apiRequest,
+): Promise<LatestConversationSuperRun> {
+  return request(
+    "GET",
+    `/v1/agents/${encodeURIComponent(agentId)}/super-runs/${encodeURIComponent(superRunId)}`,
+    undefined,
+    { signal },
+  );
+}
+
 export async function getLatestConversationSuperRun(
   conversationId: string,
   signal?: AbortSignal,
