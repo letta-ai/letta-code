@@ -25,7 +25,7 @@ describe("interactive reflection transcript wiring", () => {
       'if (stopReasonToHandle === "end_turn")',
     );
     const appendIndex = loopSource.indexOf(
-      "appendTranscriptDeltaJsonl(",
+      "captureTurnTranscriptDelta(",
       endTurnIndex,
     );
     const reflectionIndex = loopSource.indexOf(
@@ -77,13 +77,13 @@ describe("interactive reflection transcript wiring", () => {
       "const transcriptStartLineIndex = userTextForInput",
     );
     expect(submitSource).toContain("transcriptStartLineIndex,");
+    expect(submitSource).toContain("resetTurnTranscriptLog(");
     expect(loopSource).toContain("const transcriptTurnStartLineIndex =");
     expect(loopSource).toContain('if (stopReasonToHandle === "end_turn")');
-    expect(loopSource).toContain("toLines(buffersRef.current).slice(");
-    expect(loopSource).toContain("appendTranscriptDeltaJsonl(");
+    expect(loopSource).toContain("captureTurnTranscriptDelta(");
 
     expect(
       loopSource.indexOf('if (stopReasonToHandle === "end_turn")'),
-    ).toBeLessThan(loopSource.indexOf("appendTranscriptDeltaJsonl("));
+    ).toBeLessThan(loopSource.indexOf("captureTurnTranscriptDelta("));
   });
 });

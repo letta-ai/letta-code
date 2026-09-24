@@ -52,7 +52,6 @@ import {
   markIncompleteToolsAsCancelled,
   onChunk,
   setToolCallsRunning,
-  toLines,
 } from "@/cli/helpers/accumulator";
 import { classifyApprovals } from "@/cli/helpers/approval-classification";
 import type { ContextTracker } from "@/cli/helpers/context-tracker";
@@ -79,7 +78,6 @@ import {
   buildQueuedUserText,
   getQueuedNotificationSummaries,
 } from "@/cli/helpers/queued-message-parts";
-import { appendTranscriptDeltaJsonl } from "@/cli/helpers/reflection-transcript";
 import { safeJsonParseOr } from "@/cli/helpers/safe-json-parse";
 import {
   type ApprovalRequest,
@@ -101,6 +99,11 @@ import {
   isPatchTool,
 } from "@/cli/helpers/tool-name-mapping";
 import { alwaysRequiresUserInput } from "@/cli/helpers/tool-name-mapping.js";
+import {
+  captureTurnTranscriptDelta,
+  getCommittedLineCount,
+  getTurnTranscriptLog,
+} from "@/cli/helpers/transcript-windowing";
 import { finishTuiTurn } from "@/cli/helpers/tui-turn-lifecycle";
 import type { LocalModAdapter } from "@/cli/mods/use-local-mod-adapter";
 import { SYSTEM_ALERT_OPEN, SYSTEM_REMINDER_OPEN } from "@/constants";
@@ -1443,25 +1446,11 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             pendingInterruptRecoveryConversationIdRef.current = null;
 
             if (transcriptTurnStartLineIndex !== null) {
-              try {
-                const transcriptLines = toLines(buffersRef.current).slice(
-                  transcriptTurnStartLineIndex,
-                );
-                await appendTranscriptDeltaJsonl(
-                  agentIdRef.current,
-                  conversationIdRef.current,
-                  transcriptLines,
-                );
-              } catch (transcriptError) {
-                debugWarn(
-                  "memory",
-                  `Failed to append transcript delta: ${
-                    transcriptError instanceof Error
-                      ? transcriptError.message
-                      : String(transcriptError)
-                  }`,
-                );
-              }
+              await captureTurnTranscriptDelta(
+                buffersRef.current,
+                agentIdRef.current,
+                conversationIdRef.current,
+              );
             }
             pendingTranscriptStartLineIndexRef.current = null;
 
@@ -1470,9 +1459,10 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             await maybeRunPostTurnReflection();
 
             // Get last assistant message, user message, and reasoning for Stop hook
-            const bufferedLines = Array.from(
-              buffersRef.current.byId.values(),
-            ) as Line[];
+            const bufferedLines = [
+              ...getTurnTranscriptLog(buffersRef.current),
+              ...buffersRef.current.byId.values(),
+            ] as Line[];
             const lastAssistant = bufferedLines.findLast(
               (item) => item.kind === "assistant" && "text" in item,
             );
@@ -1491,7 +1481,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             // Run Stop hooks - if blocked/errored, continue the conversation with feedback
             const stopHookResult = await runStopHooks(
               stopReasonToHandle,
-              buffersRef.current.order.length,
+              getCommittedLineCount(buffersRef.current) +
+                buffersRef.current.order.length,
               bufferedLines.filter((item) => item.kind === "tool_call").length,
               undefined, // workingDirectory (uses default)
               precedingReasoning,
