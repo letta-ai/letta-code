@@ -269,7 +269,7 @@ function filterExternalToolsByRuntimeContext(
     Array.from(externalTools.entries()).filter(([, tool]) => {
       const matchesRuntime =
         !tool.runtime ||
-        (tool.runtime.agentId === runtimeContext.agentId &&
+        ((tool.runtime.agentId ?? null) === (runtimeContext.agentId ?? null) &&
           tool.runtime.conversationId === runtimeContext.conversationId);
       // An unscoped runtime tool belongs to its agent/conversation. The
       // registration connection remains its execution return path, but turns
