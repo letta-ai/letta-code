@@ -11,6 +11,12 @@
 export interface ConversationRotationRequest {
   /** Agent the rotation targets. A session handler must reject other agents. */
   agentId?: string | null;
+  /**
+   * Conversation the calling handle belongs to. A session handler must
+   * reject when it no longer matches the active session conversation, so a
+   * stale handle cannot rotate a newer conversation on the same agent.
+   */
+  conversationId?: string | null;
   /** Title/summary for the new conversation, like `/new <name>`. */
   name?: string;
 }

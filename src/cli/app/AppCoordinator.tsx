@@ -4049,7 +4049,7 @@ export function App({
     pendingConversationSwitchRef,
     prepareScopedToolExecutionContext,
     recoverRestoredPendingApprovals,
-    refreshDerived,
+    queuedOverlayAction,
     resetBootstrapReminderState,
     resetDeferredToolCallCommits,
     resetPendingReasoningCycle,

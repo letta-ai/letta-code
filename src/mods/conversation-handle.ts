@@ -49,6 +49,7 @@ export function createModConversationHandle(options: {
     async new(newOptions) {
       const result = await requestConversationRotation({
         agentId: options.agentId,
+        conversationId: options.conversationId,
         name: newOptions?.name,
       });
       return createModConversationHandle({

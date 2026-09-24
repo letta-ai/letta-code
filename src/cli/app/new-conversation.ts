@@ -16,8 +16,9 @@ import type { ApprovalRequest } from "@/cli/helpers/stream";
 import type { ModConversationCloseReason } from "@/cli/mods/types";
 import type { LocalModAdapter } from "@/cli/mods/use-local-mod-adapter";
 import { runSessionStartHooks } from "@/hooks";
+import type { ConversationRotationHandler } from "@/mods/conversation-rotation";
 import { settingsManager } from "@/settings-manager";
-import type { AppCommandRunner } from "./types";
+import type { AppCommandRunner, QueuedOverlayAction } from "./types";
 
 export interface NewConversationSessionDeps {
   agentId: string;
@@ -131,6 +132,61 @@ export interface QueuedConversationSwitchDeps {
   setCommandRunning: (value: boolean) => void;
   setConversationAutoTitleEligibility: (enabled: boolean) => void;
   setConversationIdAndRef: (nextConversationId: string) => void;
+}
+
+/**
+ * Build the session's conversation-rotation handler (ctx.conversation.new).
+ * Creates a fresh conversation on the active agent and moves the session to
+ * it; when a turn is in flight, the rebind queues for turn end so the current
+ * turn finishes in the old conversation. Rejects rotations from a stale
+ * conversation handle, and rejects queueing when a user action already holds
+ * the single queued-action slot (overwriting it would silently drop it).
+ */
+export function createSessionRotationHandler(deps: {
+  agentId: string;
+  agentIdRef: MutableRefObject<string>;
+  conversationIdRef: MutableRefObject<string>;
+  isAgentBusy: () => boolean;
+  queuedOverlayAction: QueuedOverlayAction;
+  setQueuedOverlayAction: (action: QueuedOverlayAction) => void;
+  bind: (conversationId: string, name?: string) => Promise<void>;
+}): ConversationRotationHandler {
+  return async (request) => {
+    const activeAgentId = deps.agentIdRef.current ?? deps.agentId;
+    if (request.agentId && request.agentId !== activeAgentId) {
+      throw new Error(
+        `Mod conversation new(): agent ${request.agentId} is not the active session agent`,
+      );
+    }
+    if (
+      request.conversationId &&
+      request.conversationId !== "default" &&
+      request.conversationId !== deps.conversationIdRef.current
+    ) {
+      throw new Error(
+        `Mod conversation new(): conversation ${request.conversationId} is no longer the active session conversation`,
+      );
+    }
+    if (deps.isAgentBusy() && deps.queuedOverlayAction) {
+      throw new Error(
+        "Mod conversation new(): the session already has a queued action pending; retry after it completes",
+      );
+    }
+    const conversationId = await createFreshConversation(
+      activeAgentId,
+      request.name,
+    );
+    if (deps.isAgentBusy()) {
+      deps.setQueuedOverlayAction({
+        type: "rotate_conversation",
+        conversationId,
+        name: request.name,
+      });
+      return { conversationId, queued: true };
+    }
+    await deps.bind(conversationId, request.name);
+    return { conversationId, queued: false };
+  };
 }
 
 /**

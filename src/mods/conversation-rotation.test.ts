@@ -47,7 +47,9 @@ describe("conversation rotation registry", () => {
 
     const rotated = await handle.new({ name: "post-merge" });
 
-    expect(requests).toEqual([{ agentId: "agent-1", name: "post-merge" }]);
+    expect(requests).toEqual([
+      { agentId: "agent-1", conversationId: "conv-1", name: "post-merge" },
+    ]);
     expect(rotated.id).toBe("conv-new");
     // The returned handle behaves like any other conversation handle.
     expect(typeof rotated.getHistory).toBe("function");

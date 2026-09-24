@@ -52,10 +52,7 @@ import type { ApprovalRequest } from "@/cli/helpers/stream";
 import type { ModConversationCloseReason } from "@/cli/mods/types";
 import type { LocalModAdapter } from "@/cli/mods/use-local-mod-adapter";
 import { runSessionStartHooks } from "@/hooks";
-import {
-  type ConversationRotationRequest,
-  registerConversationRotationHandler,
-} from "@/mods/conversation-rotation";
+import { registerConversationRotationHandler } from "@/mods/conversation-rotation";
 import { updateProjectSettings } from "@/settings";
 import { settingsManager } from "@/settings-manager";
 import type { PreparedScopeToolContext } from "@/tools/toolset";
@@ -66,7 +63,7 @@ import { uid } from "./ids";
 import { getPreferredAgentModelHandle } from "./model-config";
 import {
   bindFreshConversation,
-  createFreshConversation,
+  createSessionRotationHandler,
 } from "./new-conversation";
 import type {
   ActiveOverlay,
@@ -105,7 +102,7 @@ type ConversationSwitchingContext = {
     approvals: ApprovalRequest[],
     options?: { notifyOnManualApproval?: boolean },
   ) => Promise<void>;
-  refreshDerived: () => void;
+  queuedOverlayAction: QueuedOverlayAction;
   resetBootstrapReminderState: (pendingConversationBootstrap?: boolean) => void;
   resetDeferredToolCallCommits: () => void;
   resetPendingReasoningCycle: () => void;
@@ -158,7 +155,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
     pendingConversationSwitchRef,
     prepareScopedToolExecutionContext,
     recoverRestoredPendingApprovals,
-    refreshDerived,
+    queuedOverlayAction,
     resetBootstrapReminderState,
     resetDeferredToolCallCommits,
     resetPendingReasoningCycle,
@@ -941,42 +938,30 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
           );
         } finally {
           setCommandRunning(false);
-          refreshDerived();
         }
       })();
     },
-    [bindRotatedConversation, commandRunner, refreshDerived, setCommandRunning],
+    [bindRotatedConversation, commandRunner, setCommandRunning],
   );
 
   useEffect(() => {
     return registerConversationRotationHandler(
-      async (request: ConversationRotationRequest) => {
-        const activeAgentId = agentIdRef.current ?? agentId;
-        if (request.agentId && request.agentId !== activeAgentId) {
-          throw new Error(
-            `Mod conversation new(): agent ${request.agentId} is not the active session agent`,
-          );
-        }
-        const conversationId = await createFreshConversation(
-          activeAgentId,
-          request.name,
-        );
-        if (isAgentBusy()) {
-          setQueuedOverlayAction({
-            type: "rotate_conversation",
-            conversationId,
-            name: request.name,
-          });
-          return { conversationId, queued: true };
-        }
-        await bindRotatedConversation(conversationId, request.name);
-        return { conversationId, queued: false };
-      },
+      createSessionRotationHandler({
+        agentId,
+        agentIdRef,
+        conversationIdRef,
+        isAgentBusy,
+        queuedOverlayAction,
+        setQueuedOverlayAction,
+        bind: bindRotatedConversation,
+      }),
     );
   }, [
     agentId,
     agentIdRef,
+    conversationIdRef,
     isAgentBusy,
+    queuedOverlayAction,
     setQueuedOverlayAction,
     bindRotatedConversation,
   ]);
