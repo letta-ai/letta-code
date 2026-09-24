@@ -206,6 +206,9 @@ describe("buildSystemPrompt", () => {
       );
       expect(result).toContain("monitors reactively invoke you");
       expect(result).toContain(
+        "Use Wake for a future turn in the current conversation",
+      );
+      expect(result).toContain(
         "MUST** be proactive in arranging the appropriate future invocation",
       );
       expect(result).toContain("live in the scheduling-tasks skill");
