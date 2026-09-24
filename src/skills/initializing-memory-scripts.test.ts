@@ -286,6 +286,12 @@ describe("history-coverage.mjs", () => {
         error: "structured_output_error: missing sessionsRead",
       },
     });
+    appendJournalEntry(journal, {
+      callIndex: 2,
+      label: "history:raw-text",
+      prompt: "Unvalidated JSON text must not count",
+      outcome: { failed: false, value: '{"sessionsRead":["bbbb"]}' },
+    });
     const result = runScript("history-coverage.mjs", [
       "--prepared",
       outDir,
