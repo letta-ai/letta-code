@@ -525,6 +525,7 @@ describe("getResumeData", () => {
     const sameDate = "2026-01-01T00:00:02.000Z";
     const conversationsRetrieve = mock(async () => ({
       in_context_message_ids: ["provider-msg-2"],
+      summary: "Persisted title",
     }));
     const conversationsList = mock(async () => ({
       getPaginatedItems: () => [
@@ -581,6 +582,7 @@ describe("getResumeData", () => {
       "tool_return_message",
       "assistant_message",
     ]);
+    expect(resume.conversation?.summary).toBe("Persisted title");
   });
 
   test("default conversation backfill orders equal-timestamp local tool messages before assistant text", async () => {
