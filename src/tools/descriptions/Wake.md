@@ -10,6 +10,6 @@ Use `after_seconds` for ordinary follow-ups such as checking again in five minut
 
 For calendar requests such as “tomorrow at 9am,” resolve the date in the user's timezone and pass `scheduled_at` with an explicit offset. Infer a reasonable timezone from available context instead of asking a redundant follow-up. State the timezone you used in the confirmation (for example, “Scheduled for 9:00 AM PT”) so the user can correct the assumption.
 
-Wakes created in a managed Cloud sandbox survive sandbox shutdown. Wakes created on a user-managed computer or self-hosted runtime use its local scheduler and only fire while a listener is active. The create result warns when no listener currently owns local schedules.
+Wakes created in a managed Cloud sandbox survive sandbox shutdown. Wakes created on a user-managed computer or self-hosted runtime use its local scheduler and only fire while a listener is active. List and cancel include both local and Cloud wakes already bound to this conversation, so older wakes remain manageable. The create result warns when no listener currently owns local schedules.
 
 For advanced scheduling, load the `scheduling-tasks` skill and use `letta cron`. The CLI can target fresh, default, or other conversations and, from managed Cloud, connected computers; it can also inspect run history and manage schedules outside the current conversation.

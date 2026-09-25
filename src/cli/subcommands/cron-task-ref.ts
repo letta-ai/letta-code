@@ -3,13 +3,14 @@
  *
  * `add` requires `--name`, so names are the handle users (and agents)
  * actually remember — but the stores address tasks by ID. This module
- * resolves a positional that didn't match any ID as a task *name* in the
- * store owned by the current execution environment.
+ * resolves a positional that didn't match any ID as a task *name* across
+ * local and Cloud inventory.
  */
 
+import { isLocalAgentId } from "@/agent/agent-id";
 import { listCloudSchedules } from "@/backend/api/schedules";
+import { resolveBackendMode } from "@/backend/backend-mode";
 import { listTasks } from "@/cron";
-import { isManagedCloudSandbox } from "@/cron/runner";
 
 export interface ResolvedTaskRef {
   /** The task/schedule id the reference resolved to. */
@@ -39,6 +40,10 @@ export async function ensureSettingsForCloud(): Promise<void> {
  * - `{ ambiguous }` with the matching ids when several tasks share the name
  * - `null` for no match (callers keep their existing not-found error)
  */
+export function canManageCloudSchedules(agentId: string): boolean {
+  return resolveBackendMode() === "api" && !isLocalAgentId(agentId);
+}
+
 export async function resolveTaskName(
   name: string,
   options: {
@@ -47,13 +52,13 @@ export async function resolveTaskName(
 ): Promise<ResolvedTaskRef | { ambiguous: ResolvedTaskRef[] } | null> {
   const matches: ResolvedTaskRef[] = [];
 
-  if (!isManagedCloudSandbox()) {
-    for (const task of listTasks()) {
-      if (task.name === name) {
-        matches.push({ id: task.id, store: "local" });
-      }
+  for (const task of listTasks()) {
+    if (task.name === name) {
+      matches.push({ id: task.id, store: "local" });
     }
-  } else if (options.agentId) {
+  }
+
+  if (options.agentId && canManageCloudSchedules(options.agentId)) {
     try {
       await ensureSettingsForCloud();
       const response = await listCloudSchedules(options.agentId);

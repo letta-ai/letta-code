@@ -25,6 +25,8 @@ Execution determines schedule ownership; there is no runner selection flag:
 
 From a managed Cloud sandbox, `--computer <deviceId>` can run the scheduled work on a specific connected computer. Get the device ID from `letta computers list`. If that computer is offline at fire time, execution falls back to the Cloud sandbox. Local execution cannot target another computer.
 
+Creation and execution follow those rules, while management commands still show and cancel both local and Cloud inventory. This keeps schedules created by older CLI versions visible without changing where new schedules run.
+
 ## CLI Usage
 
 All commands go through `letta cron` via the Bash tool. Output is JSON.

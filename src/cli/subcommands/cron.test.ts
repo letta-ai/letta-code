@@ -60,6 +60,20 @@ function environment(deviceId: string) {
   };
 }
 
+function legacyCloudSchedule() {
+  return {
+    id: "legacy-cloud-schedule",
+    agent_id: "agent-cloud-test",
+    name: "legacy cloud schedule",
+    description: "created before environment-owned scheduling",
+    conversation_id: "conversation-test",
+    message: { messages: [{ role: "user", content: "legacy work" }] },
+    schedule: { type: "recurring", cron_expression: "0 * * * *" },
+    next_scheduled_time: "2026-09-25T01:00:00.000Z",
+    use_sandbox: true,
+  };
+}
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -70,6 +84,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 function installScheduleApi(options: {
   environments?: Record<string, ReturnType<typeof environment>>;
   scheduleRoutesStatus?: number;
+  scheduledMessages?: unknown[];
 }) {
   const requests: Array<{
     method: string;
@@ -101,7 +116,18 @@ function installScheduleApi(options: {
             { error: "schedule route unavailable" },
             options.scheduleRoutesStatus,
           )
-        : jsonResponse({ scheduled_messages: [], has_next_page: false });
+        : jsonResponse({
+            scheduled_messages: options.scheduledMessages ?? [],
+            has_next_page: false,
+          });
+    }
+
+    if (
+      url.pathname ===
+      "/v1/agents/agent-cloud-test/schedule/legacy-cloud-schedule"
+    ) {
+      if (method === "GET") return jsonResponse(legacyCloudSchedule());
+      if (method === "DELETE") return jsonResponse({ success: true });
     }
 
     if (method === "GET" && url.pathname.startsWith("/v1/environments/")) {
@@ -322,6 +348,50 @@ describe("cron add execution targeting", () => {
     expect(
       requests.find((request) => request.method === "POST")?.actingUserId,
     ).toBe("user-requester");
+  });
+
+  test("local execution can inspect and delete legacy Cloud schedules", async () => {
+    const home = mkdtempSync(join(tmpdir(), "letta-cron-legacy-cloud-"));
+    process.env.LETTA_HOME = home;
+    const requests = installScheduleApi({
+      scheduledMessages: [legacyCloudSchedule()],
+    });
+    const logs: string[] = [];
+    console.log = mock((line: string) => logs.push(String(line)));
+
+    try {
+      expect(
+        await runCronSubcommand(["list", "--agent", "agent-cloud-test"]),
+      ).toBe(0);
+      expect(JSON.parse(logs.at(-1) ?? "[]")).toEqual([
+        expect.objectContaining({
+          id: "legacy-cloud-schedule",
+          runner: "cloud",
+        }),
+      ]);
+
+      expect(
+        await runCronSubcommand([
+          "delete",
+          "legacy-cloud-schedule",
+          "--agent",
+          "agent-cloud-test",
+        ]),
+      ).toBe(0);
+      expect(JSON.parse(logs.at(-1) ?? "{}")).toMatchObject({
+        deleted: "legacy-cloud-schedule",
+        runner: "cloud",
+      });
+      expect(
+        requests.some(
+          (request) =>
+            request.method === "DELETE" &&
+            request.pathname.endsWith("/legacy-cloud-schedule"),
+        ),
+      ).toBe(true);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
   test("--runner is no longer accepted", async () => {

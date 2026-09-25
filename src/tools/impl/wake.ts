@@ -1,4 +1,5 @@
 import { CronExpressionParser } from "cron-parser";
+import { isLocalAgentId } from "@/agent/agent-id";
 import { ApiRequestError } from "@/backend/api/request";
 import {
   type CloudSchedule,
@@ -6,6 +7,7 @@ import {
   deleteCloudSchedule,
   listCloudSchedules,
 } from "@/backend/api/schedules";
+import { resolveBackendMode } from "@/backend/backend-mode";
 import {
   type AddTaskInput,
   addTask,
@@ -18,7 +20,6 @@ import {
 import {
   buildCloudScheduleInput,
   CLOUD_EXECUTION_TARGET,
-  isManagedCloudSandbox,
   resolveCronCreatePlacement,
 } from "@/cron/runner";
 import { getRuntimeActingUserId, getRuntimeContext } from "@/runtime-context";
@@ -213,17 +214,15 @@ async function listCurrentWakes(
   args: WakeArgs,
   deps: WakeDeps,
 ): Promise<{ wakes: WakeRecord[]; warnings: string[] }> {
-  const wakes = isManagedCloudSandbox()
-    ? []
-    : (deps.listLocal ?? listTasks)({
-        agent_id: scope.agentId,
-        conversation_id: scope.conversationId,
-      })
-        .filter((task) => task.status === "active" || task.status === "paused")
-        .map(localWakeRecord);
+  const wakes = (deps.listLocal ?? listTasks)({
+    agent_id: scope.agentId,
+    conversation_id: scope.conversationId,
+  })
+    .filter((task) => task.status === "active" || task.status === "paused")
+    .map(localWakeRecord);
   const warnings: string[] = [];
 
-  if (!isManagedCloudSandbox()) {
+  if (resolveBackendMode() === "local" || isLocalAgentId(scope.agentId)) {
     return { wakes, warnings };
   }
 

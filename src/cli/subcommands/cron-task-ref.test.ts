@@ -45,7 +45,7 @@ afterEach(() => {
 
 function addNamedTask(name: string): string {
   const result = addTask({
-    agent_id: "agent-test",
+    agent_id: "agent-local-test",
     conversation_id: "default",
     name,
     description: `task ${name}`,
@@ -61,7 +61,7 @@ describe("resolveTaskName (local store)", () => {
     const id = addNamedTask("nightly-report");
 
     const resolved = await resolveTaskName("nightly-report", {
-      agentId: "agent-test",
+      agentId: "agent-local-test",
     });
 
     expect(resolved).toEqual({ id, store: "local" });
@@ -71,7 +71,7 @@ describe("resolveTaskName (local store)", () => {
     addNamedTask("nightly-report");
 
     const resolved = await resolveTaskName("does-not-exist", {
-      agentId: "agent-test",
+      agentId: "agent-local-test",
     });
 
     expect(resolved).toBeNull();
@@ -82,7 +82,7 @@ describe("resolveTaskName (local store)", () => {
     const second = addNamedTask("dup-name");
 
     const resolved = await resolveTaskName("dup-name", {
-      agentId: "agent-test",
+      agentId: "agent-local-test",
     });
 
     expect(resolved).toEqual({
@@ -98,7 +98,7 @@ describe("resolveTaskName (local store)", () => {
 
     // The resolver is name-only; ID addressing is the caller's first pass.
     const resolved = await resolveTaskName(id, {
-      agentId: "agent-test",
+      agentId: "agent-local-test",
     });
 
     expect(resolved).toBeNull();

@@ -181,7 +181,7 @@ describe("Wake", () => {
     });
   });
 
-  test("lists only Cloud wakes bound to the current conversation in managed Cloud", async () => {
+  test("lists local and Cloud wakes bound to the current conversation", async () => {
     process.env.DAYTONA_SANDBOX_ID = "sandbox-runtime";
     const result = await inScope(() =>
       wake(
@@ -208,7 +208,10 @@ describe("Wake", () => {
     expect(payload(result)).toMatchObject({
       action: "listed",
       conversation_id: SCOPE.conversationId,
-      wakes: [{ id: "schedule-cloud", runner: "cloud" }],
+      wakes: [
+        { id: "schedule-local", runner: "local" },
+        { id: "schedule-cloud", runner: "cloud" },
+      ],
     });
   });
 
