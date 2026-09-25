@@ -1,4 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
+import { randomUUID } from "node:crypto";
 import {
   recompileAgentSystemPrompt,
   updateAgentSystemPromptMemfs,
@@ -110,15 +111,16 @@ describe("recompileAgentSystemPrompt", () => {
 
 describe("Cloud-managed prompt memory mode", () => {
   test("does not turn a null Cloud system prompt into an empty override", async () => {
+    const agentId = `agent-${randomUUID()}`;
     const updateAgent = mock(() => Promise.resolve());
     __testSetBackend({
       capabilities: { remoteMemfs: true },
-      retrieveAgent: async () => ({ id: "agent-test", system: null }),
+      retrieveAgent: async () => ({ id: agentId, system: null }),
       updateAgent,
     } as unknown as Backend);
 
     try {
-      const result = await updateAgentSystemPromptMemfs("agent-test");
+      const result = await updateAgentSystemPromptMemfs(agentId);
       expect(result.success).toBe(true);
       expect(updateAgent).not.toHaveBeenCalled();
     } finally {
@@ -127,8 +129,9 @@ describe("Cloud-managed prompt memory mode", () => {
   });
 
   test("resets an old bundled Cloud prompt rather than re-pinning it", async () => {
+    const agentId = `agent-${randomUUID()}`;
     const updateAgent = mock(() =>
-      Promise.resolve({ id: "agent-test", system: null }),
+      Promise.resolve({ id: agentId, system: null }),
     );
     __testSetBackend({
       capabilities: {
@@ -137,7 +140,7 @@ describe("Cloud-managed prompt memory mode", () => {
         environmentRouting: true,
       },
       retrieveAgent: async () => ({
-        id: "agent-test",
+        id: agentId,
         system: buildSystemPrompt("default", "memfs"),
         tags: ["origin:letta-code"],
       }),
@@ -145,18 +148,19 @@ describe("Cloud-managed prompt memory mode", () => {
     } as unknown as Backend);
 
     try {
-      const result = await updateAgentSystemPromptMemfs("agent-test");
+      const result = await updateAgentSystemPromptMemfs(agentId);
       expect(result.success).toBe(true);
-      expect(updateAgent).toHaveBeenCalledWith("agent-test", { system: null });
+      expect(updateAgent).toHaveBeenCalledWith(agentId, { system: null });
     } finally {
       __testSetBackend(null);
     }
   });
 
   test("reports when Cloud does not persist a null system prompt", async () => {
+    const agentId = `agent-${randomUUID()}`;
     const oldPrompt = buildSystemPrompt("default", "memfs");
     const updateAgent = mock(() =>
-      Promise.resolve({ id: "agent-test", system: oldPrompt }),
+      Promise.resolve({ id: agentId, system: oldPrompt }),
     );
     __testSetBackend({
       capabilities: {
@@ -165,7 +169,7 @@ describe("Cloud-managed prompt memory mode", () => {
         environmentRouting: true,
       },
       retrieveAgent: async () => ({
-        id: "agent-test",
+        id: agentId,
         system: oldPrompt,
         tags: ["origin:letta-code"],
       }),
@@ -173,7 +177,7 @@ describe("Cloud-managed prompt memory mode", () => {
     } as unknown as Backend);
 
     try {
-      const result = await updateAgentSystemPromptMemfs("agent-test");
+      const result = await updateAgentSystemPromptMemfs(agentId);
       expect(result.success).toBe(false);
       expect(result.message).toContain("did not clear");
     } finally {
@@ -182,20 +186,21 @@ describe("Cloud-managed prompt memory mode", () => {
   });
 
   test("does not change an old default when Cloud prompt preservation is requested", async () => {
+    const agentId = `agent-${randomUUID()}`;
     const previous = process.env.LETTA_CODE_PRESERVE_CLOUD_SYSTEM_PROMPT;
     process.env.LETTA_CODE_PRESERVE_CLOUD_SYSTEM_PROMPT = "1";
     const updateAgent = mock(() => Promise.resolve());
     __testSetBackend({
       capabilities: { remoteMemfs: true, environmentRouting: true },
       retrieveAgent: async () => ({
-        id: "agent-test",
+        id: agentId,
         system: buildSystemPrompt("default", "memfs"),
       }),
       updateAgent,
     } as unknown as Backend);
 
     try {
-      const result = await updateAgentSystemPromptMemfs("agent-test");
+      const result = await updateAgentSystemPromptMemfs(agentId);
       expect(result.success).toBe(true);
       expect(updateAgent).not.toHaveBeenCalled();
     } finally {
