@@ -17,7 +17,7 @@ test.skipIf(!process.env.LETTA_API_KEY)(
       apiKey: process.env.LETTA_API_KEY,
       baseURL,
       timeout: 30000,
-      maxRetries: 0,
+      maxRetries: 2,
     });
     const home = await mkdtemp(join(tmpdir(), "letta-sandbox-transfer-"));
     let agentId: string | undefined;
@@ -86,6 +86,26 @@ test.skipIf(!process.env.LETTA_API_KEY)(
         clearTimeout(timer);
       }
     }
+    function isTransientUploadFailure(
+      result: Awaited<ReturnType<typeof cli>>,
+    ): boolean {
+      const output = `${result.stdout}\n${result.stderr}`;
+      return (
+        result.code === 137 ||
+        /API error \((?:408|429|5\d\d)\)/i.test(output) ||
+        /Request timed out|fetch failed/i.test(output)
+      );
+    }
+    async function uploadWithRetry(
+      args: string[],
+      ambient: NodeJS.ProcessEnv = {},
+    ) {
+      let result = await cli(["upload", ...args], ambient);
+      if (isTransientUploadFailure(result)) {
+        result = await cli(["upload", ...args], ambient);
+      }
+      return result;
+    }
     try {
       const agent = await sdk.agents.create({
         name: "Sandbox transfer integration",
@@ -115,7 +135,7 @@ test.skipIf(!process.env.LETTA_API_KEY)(
       for (const scenario of scenarios) {
         const { target, payload, localPath: uploadPath, flags } = scenario;
         await writeFile(uploadPath, payload);
-        const upload = await cli(["upload", uploadPath, ...flags]);
+        const upload = await uploadWithRetry([uploadPath, ...flags]);
         expect(upload.code, upload.stderr).toBe(0);
         const output = JSON.parse(upload.stdout);
         expect(output).toMatchObject({ agentId, conversationId: target });
@@ -156,7 +176,7 @@ test.skipIf(!process.env.LETTA_API_KEY)(
         AGENT_ID: agentId,
         CONVERSATION_ID: conversationId,
       };
-      const legacy = await cli(["upload", localPath], ambient);
+      const legacy = await uploadWithRetry([localPath], ambient);
       expect(legacy.code, legacy.stderr).toBe(0);
       const ambientPath = JSON.parse(legacy.stdout).files[0].path;
       for (const action of ["upload", "download"]) {
