@@ -1611,8 +1611,8 @@ export class LocalStore {
     );
     const last = messages.at(-1);
     if (last?.role !== "assistant") return;
-    // stop_reason means the turn completed; disk-backed stores also check the
-    // persisted index (prior sessions).
+    // stop_reason means the turn completed; disk stores also check the index.
+    if (this.settledLocalMessageIds.has(last.id)) return;
     if (this.sessionEntryIdsByMessageId(key).has(last.id)) return;
 
     messages.pop();
