@@ -1858,31 +1858,15 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 } else if (isFileEditTool(toolName)) {
                   const filePath = args.file_path as string | undefined;
                   if (filePath) {
-                    // Check if it's a multi-edit (has edits array) or single edit
-                    if (args.edits && Array.isArray(args.edits)) {
-                      const result = computeAdvancedDiff({
-                        kind: "multi_edit",
-                        filePath,
-                        edits: args.edits as Array<{
-                          old_string: string;
-                          new_string: string;
-                          replace_all?: boolean;
-                        }>,
-                      });
-                      if (result.mode === "advanced") {
-                        precomputedDiffsRef.current.set(toolCallId, result);
-                      }
-                    } else {
-                      const result = computeAdvancedDiff({
-                        kind: "edit",
-                        filePath,
-                        oldString: (args.old_string as string) || "",
-                        newString: (args.new_string as string) || "",
-                        replaceAll: args.replace_all as boolean | undefined,
-                      });
-                      if (result.mode === "advanced") {
-                        precomputedDiffsRef.current.set(toolCallId, result);
-                      }
+                    const result = computeAdvancedDiff({
+                      kind: "edit",
+                      filePath,
+                      oldString: (args.old_string as string) || "",
+                      newString: (args.new_string as string) || "",
+                      replaceAll: args.replace_all as boolean | undefined,
+                    });
+                    if (result.mode === "advanced") {
+                      precomputedDiffsRef.current.set(toolCallId, result);
                     }
                   }
                 } else if (isPatchTool(toolName) && args.input) {

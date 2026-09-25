@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setConfiguredBackendMode } from "@/backend/backend-mode";
 import { runCronSubcommand } from "@/cli/subcommands/cron";
+import { listTasks } from "@/cron";
 import { settingsManager } from "@/settings-manager";
 
 const originalFetch = globalThis.fetch;
@@ -16,6 +17,7 @@ const originalConsoleError = console.error;
 const originalBaseUrl = process.env.LETTA_BASE_URL;
 const originalApiKey = process.env.LETTA_API_KEY;
 const originalRuntimeDeviceId = process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID;
+const originalManagedCloudRuntime = process.env.LETTA_MANAGED_CLOUD_RUNTIME;
 const originalConversationId = process.env.LETTA_CONVERSATION_ID;
 const originalActingUserId = process.env.LETTA_ACTING_USER_ID;
 const originalLettaHome = process.env.LETTA_HOME;
@@ -58,6 +60,20 @@ function environment(deviceId: string) {
   };
 }
 
+function legacyCloudSchedule() {
+  return {
+    id: "legacy-cloud-schedule",
+    agent_id: "agent-cloud-test",
+    name: "legacy cloud schedule",
+    description: "created before environment-owned scheduling",
+    conversation_id: "conversation-test",
+    message: { messages: [{ role: "user", content: "legacy work" }] },
+    schedule: { type: "recurring", cron_expression: "0 * * * *" },
+    next_scheduled_time: "2026-09-25T01:00:00.000Z",
+    use_sandbox: true,
+  };
+}
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -67,6 +83,8 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 function installScheduleApi(options: {
   environments?: Record<string, ReturnType<typeof environment>>;
+  scheduleRoutesStatus?: number;
+  scheduledMessages?: unknown[];
 }) {
   const requests: Array<{
     method: string;
@@ -93,7 +111,23 @@ function installScheduleApi(options: {
       method === "GET" &&
       url.pathname === "/v1/agents/agent-cloud-test/schedule"
     ) {
-      return jsonResponse({ scheduled_messages: [], has_next_page: false });
+      return options.scheduleRoutesStatus
+        ? jsonResponse(
+            { error: "schedule route unavailable" },
+            options.scheduleRoutesStatus,
+          )
+        : jsonResponse({
+            scheduled_messages: options.scheduledMessages ?? [],
+            has_next_page: false,
+          });
+    }
+
+    if (
+      url.pathname ===
+      "/v1/agents/agent-cloud-test/schedule/legacy-cloud-schedule"
+    ) {
+      if (method === "GET") return jsonResponse(legacyCloudSchedule());
+      if (method === "DELETE") return jsonResponse({ success: true });
     }
 
     if (method === "GET" && url.pathname.startsWith("/v1/environments/")) {
@@ -129,6 +163,7 @@ beforeEach(() => {
   process.env.LETTA_BASE_URL = "https://example.test";
   process.env.LETTA_API_KEY = "test-key";
   delete process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID;
+  delete process.env.LETTA_MANAGED_CLOUD_RUNTIME;
   delete process.env.LETTA_CONVERSATION_ID;
   delete process.env.LETTA_ACTING_USER_ID;
   settingsManager.initialize = mock(
@@ -161,6 +196,7 @@ afterEach(() => {
     ["LETTA_BASE_URL", originalBaseUrl],
     ["LETTA_API_KEY", originalApiKey],
     ["LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID", originalRuntimeDeviceId],
+    ["LETTA_MANAGED_CLOUD_RUNTIME", originalManagedCloudRuntime],
     ["LETTA_CONVERSATION_ID", originalConversationId],
     ["LETTA_ACTING_USER_ID", originalActingUserId],
     ["LETTA_HOME", originalLettaHome],
@@ -172,16 +208,13 @@ afterEach(() => {
 
 describe("cron add execution targeting", () => {
   test("Cloud schedules default to a new conversation per fire and ignore ambient conversation state", async () => {
+    process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
     process.env.LETTA_CONVERSATION_ID = "ambient-conversation";
     const requests = installScheduleApi({});
 
-    expect(
-      await runCronSubcommand([
-        ...withoutConversationArgument(addArgs),
-        "--runner",
-        "cloud",
-      ]),
-    ).toBe(0);
+    expect(await runCronSubcommand(withoutConversationArgument(addArgs))).toBe(
+      0,
+    );
 
     expect(
       requests.find((request) => request.method === "POST")?.body,
@@ -200,11 +233,7 @@ describe("cron add execution targeting", () => {
 
     try {
       expect(
-        await runCronSubcommand([
-          ...withoutConversationArgument(addArgs),
-          "--runner",
-          "local",
-        ]),
+        await runCronSubcommand(withoutConversationArgument(addArgs)),
       ).toBe(0);
 
       const output = JSON.parse(logs.join("")) as Record<string, unknown>;
@@ -215,6 +244,7 @@ describe("cron add execution targeting", () => {
   });
 
   test("--conversation self captures the current conversation", async () => {
+    process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
     process.env.LETTA_CONVERSATION_ID = "current-conversation";
     const requests = installScheduleApi({});
 
@@ -223,8 +253,6 @@ describe("cron add execution targeting", () => {
         ...withoutConversationArgument(addArgs),
         "--conversation",
         "self",
-        "--runner",
-        "cloud",
       ]),
     ).toBe(0);
 
@@ -243,8 +271,6 @@ describe("cron add execution targeting", () => {
         ...withoutConversationArgument(addArgs),
         "--conversation",
         "self",
-        "--runner",
-        "cloud",
       ]),
     ).toBe(1);
 
@@ -254,13 +280,37 @@ describe("cron add execution targeting", () => {
     expect(requests.some((request) => request.method === "POST")).toBe(false);
   });
 
-  test("default Cloud creation targets the current registered listener at the HTTP boundary", async () => {
+  test("Cloud API-backed local execution creates a local schedule without calling the schedule API", async () => {
+    const home = mkdtempSync(join(tmpdir(), "letta-cron-local-environment-"));
+    process.env.LETTA_HOME = home;
+    process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID = "registered-device";
     const requests = installScheduleApi({
-      environments: { "device-persisted": environment("device-persisted") },
+      environments: { "registered-device": environment("registered-device") },
     });
+    const logs: string[] = [];
+    console.log = mock((line: string) => logs.push(String(line)));
+
+    try {
+      expect(await runCronSubcommand(addArgs)).toBe(0);
+      expect(requests).toHaveLength(0);
+      expect(JSON.parse(logs.join(""))).toMatchObject({ runner: "local" });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("managed sandbox creates an untargeted Cloud schedule even with an unregistered listener device", async () => {
+    process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
+    process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID = "unregistered-device";
+    const requests = installScheduleApi({});
 
     expect(await runCronSubcommand(addArgs)).toBe(0);
 
+    expect(
+      requests.some((request) =>
+        request.pathname.startsWith("/v1/environments/"),
+      ),
+    ).toBe(false);
     expect(requests.find((request) => request.method === "POST")?.body).toEqual(
       {
         name: "boundary-test",
@@ -268,56 +318,29 @@ describe("cron add execution targeting", () => {
         conversation_id: "conversation-test",
         messages: [{ role: "user", content: "do the scheduled work" }],
         schedule: { type: "recurring", cron_expression: "*/5 * * * *" },
-        target_device_id: "device-persisted",
         use_sandbox: true,
       },
     );
   });
 
-  test("runtime identity override wins over the persisted installation id", async () => {
-    process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID = "device-runtime";
-    const requests = installScheduleApi({
-      environments: { "device-runtime": environment("device-runtime") },
-    });
+  test("managed sandbox never falls back to a local schedule when Cloud routes are unavailable", async () => {
+    const home = mkdtempSync(join(tmpdir(), "letta-cron-cloud-failure-"));
+    process.env.LETTA_HOME = home;
+    process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
+    const requests = installScheduleApi({ scheduleRoutesStatus: 404 });
 
-    expect(await runCronSubcommand(addArgs)).toBe(0);
-
-    expect(
-      requests.some(
-        (request) => request.pathname === "/v1/environments/device-persisted",
-      ),
-    ).toBe(false);
-    expect(
-      requests.find((request) => request.method === "POST")?.body,
-    ).toMatchObject({ target_device_id: "device-runtime" });
-  });
-
-  test("default Cloud creation from a managed sandbox falls through to an untargeted schedule", async () => {
-    process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID = "sandbox-agent-example";
-    const requests = installScheduleApi({});
-
-    expect(await runCronSubcommand(addArgs)).toBe(0);
-
-    // No environments lookup: the sandbox check resolves before registry validation.
-    expect(
-      requests.some((request) =>
-        request.pathname.startsWith("/v1/environments/"),
-      ),
-    ).toBe(false);
-    const body = requests.find((request) => request.method === "POST")?.body;
-    expect(body).toEqual({
-      name: "boundary-test",
-      description: "exercise schedule creation",
-      conversation_id: "conversation-test",
-      messages: [{ role: "user", content: "do the scheduled work" }],
-      schedule: { type: "recurring", cron_expression: "*/5 * * * *" },
-      use_sandbox: true,
-    });
+    try {
+      expect(await runCronSubcommand(addArgs)).toBe(1);
+      expect(requests.some((request) => request.method === "POST")).toBe(false);
+      expect(listTasks()).toHaveLength(0);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
   test("Cloud schedule creation preserves the requesting user", async () => {
     process.env.LETTA_ACTING_USER_ID = "user-requester";
-    process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID = "sandbox-agent-example";
+    process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
     const requests = installScheduleApi({});
 
     expect(await runCronSubcommand(addArgs)).toBe(0);
@@ -327,42 +350,64 @@ describe("cron add execution targeting", () => {
     ).toBe("user-requester");
   });
 
-  test("explicit --runner cloud deliberately omits inferred targeting", async () => {
-    process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID = "sandbox-agent-example";
-    const requests = installScheduleApi({});
-
-    expect(await runCronSubcommand([...addArgs, "--runner", "cloud"])).toBe(0);
-
-    expect(
-      requests.some((request) =>
-        request.pathname.startsWith("/v1/environments/"),
-      ),
-    ).toBe(false);
-    const body = requests.find((request) => request.method === "POST")?.body;
-    expect(body).toEqual({
-      name: "boundary-test",
-      description: "exercise schedule creation",
-      conversation_id: "conversation-test",
-      messages: [{ role: "user", content: "do the scheduled work" }],
-      schedule: { type: "recurring", cron_expression: "*/5 * * * *" },
-      use_sandbox: true,
+  test("local execution can inspect and delete legacy Cloud schedules", async () => {
+    const home = mkdtempSync(join(tmpdir(), "letta-cron-legacy-cloud-"));
+    process.env.LETTA_HOME = home;
+    const requests = installScheduleApi({
+      scheduledMessages: [legacyCloudSchedule()],
     });
+    const logs: string[] = [];
+    console.log = mock((line: string) => logs.push(String(line)));
+
+    try {
+      expect(
+        await runCronSubcommand(["list", "--agent", "agent-cloud-test"]),
+      ).toBe(0);
+      expect(JSON.parse(logs.at(-1) ?? "[]")).toEqual([
+        expect.objectContaining({
+          id: "legacy-cloud-schedule",
+          runner: "cloud",
+        }),
+      ]);
+
+      expect(
+        await runCronSubcommand([
+          "delete",
+          "legacy-cloud-schedule",
+          "--agent",
+          "agent-cloud-test",
+        ]),
+      ).toBe(0);
+      expect(JSON.parse(logs.at(-1) ?? "{}")).toMatchObject({
+        deleted: "legacy-cloud-schedule",
+        runner: "cloud",
+      });
+      expect(
+        requests.some(
+          (request) =>
+            request.method === "DELETE" &&
+            request.pathname.endsWith("/legacy-cloud-schedule"),
+        ),
+      ).toBe(true);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
-  test("explicit --computer wins over --runner cloud and runtime inference", async () => {
-    process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID = "sandbox-agent-example";
+  test("--runner is no longer accepted", async () => {
+    const requests = installScheduleApi({});
+    expect(await runCronSubcommand([...addArgs, "--runner", "cloud"])).toBe(1);
+    expect(requests).toHaveLength(0);
+  });
+
+  test("managed Cloud schedule can target an explicit computer", async () => {
+    process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
     const requests = installScheduleApi({
       environments: { "device-explicit": environment("device-explicit") },
     });
 
     expect(
-      await runCronSubcommand([
-        ...addArgs,
-        "--runner",
-        "cloud",
-        "--computer",
-        "device-explicit",
-      ]),
+      await runCronSubcommand([...addArgs, "--computer", "device-explicit"]),
     ).toBe(0);
 
     expect(
@@ -370,19 +415,13 @@ describe("cron add execution targeting", () => {
     ).toMatchObject({ target_device_id: "device-explicit" });
   });
 
-  test("--runner local rejects --computer without touching the schedule API", async () => {
+  test("local execution rejects --computer without touching the schedule API", async () => {
     const home = mkdtempSync(join(tmpdir(), "letta-cron-target-test-"));
     process.env.LETTA_HOME = home;
     const requests = installScheduleApi({});
     try {
       expect(
-        await runCronSubcommand([
-          ...addArgs,
-          "--runner",
-          "local",
-          "--computer",
-          "device-explicit",
-        ]),
+        await runCronSubcommand([...addArgs, "--computer", "device-explicit"]),
       ).toBe(1);
       expect(requests).toHaveLength(0);
     } finally {
@@ -390,58 +429,18 @@ describe("cron add execution targeting", () => {
     }
   });
 
-  test("default creation on an unregistered runtime falls back to a local schedule with a warning", async () => {
-    const home = mkdtempSync(join(tmpdir(), "letta-cron-fallback-test-"));
+  test("unregistered local execution still creates a local schedule", async () => {
+    const home = mkdtempSync(join(tmpdir(), "letta-cron-local-test-"));
     process.env.LETTA_HOME = home;
+    process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID = "unregistered-device";
     const requests = installScheduleApi({});
     const logs: string[] = [];
-    console.log = mock((line: string) => {
-      logs.push(String(line));
-    });
+    console.log = mock((line: string) => logs.push(String(line)));
 
     try {
       expect(await runCronSubcommand(addArgs)).toBe(0);
-
-      // No Cloud schedule was created.
-      expect(requests.some((request) => request.method === "POST")).toBe(false);
-
-      const output = JSON.parse(logs.join("")) as Record<string, unknown>;
-      expect(output.runner).toBe("local");
-      // addArgs uses --every (recurring), so the warning carries both the
-      // fallback reason and the louder recurring durability caution.
-      expect(String(output.warning)).toContain(
-        "This schedule is local to this computer",
-      );
-      expect(String(output.warning)).toContain("Recurring schedules");
-      expect(String(output.warning)).toContain("--runner cloud");
-      expect(String(output.warning)).toContain("--computer <deviceId>");
-    } finally {
-      rmSync(home, { recursive: true, force: true });
-    }
-  });
-
-  test("one-shot fallback warning omits the recurring caution", async () => {
-    const home = mkdtempSync(join(tmpdir(), "letta-cron-fallback-once-"));
-    process.env.LETTA_HOME = home;
-    installScheduleApi({});
-    const logs: string[] = [];
-    console.log = mock((line: string) => {
-      logs.push(String(line));
-    });
-
-    const everyIndex = addArgs.indexOf("--every");
-    const oneShotArgs = [...addArgs];
-    oneShotArgs.splice(everyIndex, 2, "--at", "in 30m");
-
-    try {
-      expect(await runCronSubcommand(oneShotArgs)).toBe(0);
-
-      const output = JSON.parse(logs.join("")) as Record<string, unknown>;
-      expect(output.runner).toBe("local");
-      expect(String(output.warning)).toContain(
-        "This schedule is local to this computer",
-      );
-      expect(String(output.warning)).not.toContain("Recurring schedules");
+      expect(requests).toHaveLength(0);
+      expect(JSON.parse(logs.join(""))).toMatchObject({ runner: "local" });
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

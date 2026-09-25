@@ -138,6 +138,22 @@ test("follows symlinks before allowing a write", () => {
   }
 });
 
+test("LS cannot enumerate a peer workspace through the isolation root", () => {
+  const dirs = fixture();
+  try {
+    expect(
+      evaluateWorkspaceSandboxGuard(
+        "LS",
+        { path: dirs.isolationRoot },
+        dirs.root,
+        { root: dirs.root, isolationRoot: dirs.isolationRoot },
+      )?.matchedRule,
+    ).toBe("workspace sandbox");
+  } finally {
+    rmSync(dirs.base, { recursive: true, force: true });
+  }
+});
+
 test("the permission checker cannot override a workspace denial", () => {
   const dirs = fixture();
   try {

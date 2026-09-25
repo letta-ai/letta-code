@@ -11,8 +11,7 @@ import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { type FileDiffMetadata, parsePatchFiles } from "@pierre/diffs";
-import { preloadFileDiff } from "@pierre/diffs/ssr";
+import type { FileDiffMetadata } from "@pierre/diffs";
 import diffViewerTemplate from "./diff-viewer-template.txt";
 
 const execFile = promisify(execFileCb);
@@ -278,6 +277,12 @@ async function renderDiffFiles(
 ): Promise<RenderedDiffFiles> {
   if (!patch.trim()) return { files: [], insertions: 0, deletions: 0 };
 
+  // @pierre/diffs is external to the letta.js bundle (see build.js); import it
+  // dynamically so its shiki highlighter only loads when a diff is rendered.
+  const [{ parsePatchFiles }, { preloadFileDiff }] = await Promise.all([
+    import("@pierre/diffs"),
+    import("@pierre/diffs/ssr"),
+  ]);
   const parsed = parsePatchFiles(patch);
   const files = parsed
     .flatMap((entry) => entry.files)

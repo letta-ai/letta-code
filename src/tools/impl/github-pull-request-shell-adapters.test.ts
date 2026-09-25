@@ -26,9 +26,6 @@ import { bash } from "./bash";
 import { __clearExecSessionsForTests, exec_command } from "./exec-command";
 import { backgroundProcesses } from "./process_manager";
 
-import { shell } from "./shell";
-import { shell_command } from "./shell-command";
-
 class RecordingBackend {
   tags: string[] = [];
   private readonly tagWaiters = new Map<string, () => void>();
@@ -134,21 +131,6 @@ const adapters: Array<{
   {
     name: "exec_command",
     run: (cmd) => exec_command({ cmd, description: "Create test PR" }),
-  },
-  {
-    name: "shell",
-    run: (command) =>
-      shell({
-        command:
-          process.platform === "win32"
-            ? ["cmd.exe", "/d", "/s", "/c", command]
-            : ["bash", "-c", command],
-      }),
-  },
-  {
-    name: "shell_command",
-    run: (command) =>
-      shell_command({ command, description: "Create test PR", login: false }),
   },
 ];
 

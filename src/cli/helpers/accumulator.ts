@@ -11,6 +11,7 @@ import {
   runPreCompactHooks,
   runPreToolUseHooks,
 } from "@/hooks";
+import { clampRawToolReturn } from "@/tools/impl/tool-return-clamp";
 import { debugLog } from "@/utils/debug";
 import { isRecord } from "@/utils/type-guards";
 import { extractCompactionSummary } from "./compaction-utils";
@@ -1222,13 +1223,11 @@ export function onChunk(
             : undefined) ||
           ("tool_return" in toolReturn ? toolReturn.tool_return : undefined);
 
-        // Ensure resultText is always a string (guard against SDK returning objects)
-        const resultText =
-          typeof rawResult === "string"
-            ? rawResult
-            : rawResult != null
-              ? JSON.stringify(rawResult)
-              : "";
+        // Stringify + clip: cloud returns bypass the tool manager's clamp.
+        const resultText = clampRawToolReturn(
+          rawResult,
+          toolCallId ? b.serverToolCalls.get(toolCallId)?.toolName : undefined,
+        );
         const status = toolReturn.status;
 
         // Look up the line by toolCallId
