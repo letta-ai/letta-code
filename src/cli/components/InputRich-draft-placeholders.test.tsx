@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { render } from "ink";
+import { useState } from "react";
 import {
   allocateImage,
   allocatePaste,
@@ -19,6 +20,8 @@ import { Input } from "./InputRich";
  * Drives the real composer. Edits must not free paste-registry entries: the
  * text input's kill buffer (Ctrl+K / Ctrl+U, then Ctrl+Y) or a retyped bracket
  * brings a removed placeholder back, and the submitted text must still resolve.
+ * Dropping a holder (the parked history draft, an unrestored input) must free
+ * the entries only it referenced.
  */
 const CTRL_A = "\u0001";
 const CTRL_C = "\u0003";
@@ -26,6 +29,8 @@ const CTRL_K = "\u000b";
 const CTRL_Y = "\u0019";
 const BACKSPACE = "\u007f";
 const ENTER = "\r";
+const UP = "\u001b[A";
+const DOWN = "\u001b[B";
 
 class NullOutput extends Writable {
   columns = 100;
@@ -53,35 +58,45 @@ function mountComposer() {
   stdin.setRawMode = () => stdin;
   stdin.ref = () => stdin;
   stdin.unref = () => stdin;
-  const instance = render(
-    <Input
-      streaming={false}
-      tokenCount={0}
-      thinkingMessage=""
-      terminalWidth={100}
-      shouldAnimate={false}
-      onSubmit={async (message) => {
-        submissions.push(buildMessageContentFromDisplay(message ?? ""));
-        return { submitted: true };
-      }}
-      modContext={buildModInvocationContext({ agent: { id: "agent-draft" } })}
-      // Input reads only the registry and load flags from the adapter.
-      modAdapter={
-        {
-          hadModPanels: false,
-          hasModSources: false,
-          isLoading: false,
-        } as unknown as LocalModAdapter
-      }
-    />,
-    {
-      stdin,
-      stdout: new NullOutput() as NullOutput & NodeJS.WriteStream,
-      debug: true,
-      patchConsole: false,
-      exitOnCtrlC: false,
-    },
-  );
+  let setRestoredInput: (text: string | null) => void = () => {};
+  // Like the app, the owner clears a restored input once Input consumes it.
+  function Composer() {
+    const [restoredInput, setRestored] = useState<string | null>(null);
+    setRestoredInput = setRestored;
+    return (
+      <Input
+        streaming={false}
+        tokenCount={0}
+        thinkingMessage=""
+        terminalWidth={100}
+        shouldAnimate={false}
+        onSubmit={async (message) => {
+          submissions.push(buildMessageContentFromDisplay(message ?? ""));
+          return { submitted: true };
+        }}
+        restoredInput={restoredInput}
+        onRestoredInputConsumed={() => setRestored(null)}
+        modContext={buildModInvocationContext({
+          agent: { id: "agent-draft" },
+        })}
+        // Input reads only the registry and load flags from the adapter.
+        modAdapter={
+          {
+            hadModPanels: false,
+            hasModSources: false,
+            isLoading: false,
+          } as unknown as LocalModAdapter
+        }
+      />
+    );
+  }
+  const instance = render(<Composer />, {
+    stdin,
+    stdout: new NullOutput() as NullOutput & NodeJS.WriteStream,
+    debug: true,
+    patchConsole: false,
+    exitOnCtrlC: false,
+  });
   return {
     submissions,
     // One stdin read per key, each in its own tick, like a person typing.
@@ -91,6 +106,11 @@ function mountComposer() {
         stdin.push(key);
         await tick();
       }
+    },
+    // A failed turn hands its text back to the composer.
+    async restore(text: string) {
+      setRestoredInput(text);
+      await tick();
     },
     unmount() {
       instance.unmount();
@@ -169,5 +189,99 @@ describe("Input draft placeholders", () => {
       composer.unmount();
     }
     expect(composer.submissions).toHaveLength(0);
+  });
+});
+
+// Each test first sends "hello" so history has an entry. On a one-line draft
+// the first Up moves the caret to the start; the second parks the draft and
+// recalls "hello".
+describe("Input draft holders", () => {
+  test("typing into a recalled entry drops the parked draft; Ctrl+C leaves its image freed", async () => {
+    const id = allocateImage({ data: "iVBORw0KGgo=", mediaType: "image/png" });
+    const composer = mountComposer();
+    try {
+      await composer.press("hello", ENTER, `[Image #${id}]`, UP, UP);
+      // Parked, not discarded: Down would bring the draft back.
+      expect(getImage(id)).toBeDefined();
+
+      await composer.press("x", CTRL_C);
+      expect(getImage(id)).toBeUndefined();
+    } finally {
+      composer.unmount();
+    }
+  });
+
+  test("re-sending a recalled entry frees the parked draft's image", async () => {
+    const id = allocateImage({ data: "iVBORw0KGgo=", mediaType: "image/png" });
+    const composer = mountComposer();
+    try {
+      await composer.press("hello", ENTER, `[Image #${id}]`, UP, UP, ENTER);
+      expect(getImage(id)).toBeUndefined();
+    } finally {
+      composer.unmount();
+    }
+    const hello: ContentParts = [{ type: "text", text: "hello" }];
+    expect(composer.submissions).toEqual([hello, hello]);
+  });
+
+  test("Ctrl+C while browsing history frees the parked draft's image", async () => {
+    const id = allocateImage({ data: "iVBORw0KGgo=", mediaType: "image/png" });
+    const composer = mountComposer();
+    try {
+      await composer.press("hello", ENTER, `[Image #${id}]`, UP, UP, CTRL_C);
+      expect(getImage(id)).toBeUndefined();
+    } finally {
+      composer.unmount();
+    }
+  });
+
+  test("Down restores the parked draft; deleting it and Ctrl+C frees the image", async () => {
+    const id = allocateImage({ data: "iVBORw0KGgo=", mediaType: "image/png" });
+    const placeholder = `[Image #${id}]`;
+    const composer = mountComposer();
+    try {
+      await composer.press("hello", ENTER, placeholder, UP, UP, DOWN);
+      await composer.press(
+        ...Array.from({ length: placeholder.length }, () => BACKSPACE),
+      );
+      // The restored draft is live again, so the edit only noted it.
+      expect(getImage(id)).toBeDefined();
+
+      await composer.press(CTRL_C);
+      expect(getImage(id)).toBeUndefined();
+    } finally {
+      composer.unmount();
+    }
+  });
+
+  test("Ctrl+K, Up, Down, Ctrl+Y still sends the yanked image", async () => {
+    const id = allocateImage({ data: "iVBORw0KGgo=", mediaType: "image/png" });
+    const composer = mountComposer();
+    try {
+      await composer.press("hello", ENTER, `[Image #${id}] tail`, CTRL_A);
+      await composer.press(CTRL_K, UP, DOWN, CTRL_Y, ENTER);
+    } finally {
+      composer.unmount();
+    }
+    expect(composer.submissions[1]?.map((part) => part.type)).toEqual([
+      "image",
+      "text",
+    ]);
+  });
+
+  test("a restored input dropped because the composer has text is released", async () => {
+    const id = allocateImage({ data: "iVBORw0KGgo=", mediaType: "image/png" });
+    const composer = mountComposer();
+    try {
+      await composer.press("draft");
+      await composer.restore(`[Image #${id}] retry`);
+      expect(getImage(id)).toBeUndefined();
+
+      await composer.press(ENTER);
+    } finally {
+      composer.unmount();
+    }
+    // The typed draft was kept, not clobbered by the restored text.
+    expect(composer.submissions).toEqual([[{ type: "text", text: "draft" }]]);
   });
 });

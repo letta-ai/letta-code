@@ -26,7 +26,12 @@ import {
 } from "@/cli/display/statusline/renderers/Default";
 import type { StatuslineUiContext } from "@/cli/display/statusline/types";
 import { createDraftPlaceholderDiscards } from "@/cli/helpers/draft-placeholder-discards";
-import { bytesToTokens, formatCompact } from "@/cli/helpers/format";
+import {
+  bytesToTokens,
+  formatCompact,
+  formatElapsedLabel,
+  formatModeLabel,
+} from "@/cli/helpers/format";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import {
   type ExecutionPhase,
@@ -78,16 +83,6 @@ const EMPTY_COMPOSER_PROMPT_HINTS = [
   'Try "explain what this function does"',
   'Try "review this pull request"',
 ];
-
-function formatModeLabel(modeName: string, modeGlyph?: string | null): string {
-  if (modeGlyph === "") {
-    return modeName;
-  }
-  if (modeGlyph === "⚡︎") {
-    return `${modeGlyph}${modeName}`;
-  }
-  return `${modeGlyph ?? "⏵⏵"} ${modeName}`;
-}
 
 function getPermissionModeTransientHintInfo(mode: PermissionMode): {
   name: string;
@@ -1082,6 +1077,11 @@ export function Input({
   // must survive until the handler resolves or restores them.
   const inFlightSubmitTextRef = useRef<string | null>(null);
   const [draftDiscards] = useState(createDraftPlaceholderDiscards);
+  // Live holders: a drop site zeroes one, then releases in the same tick.
+  const temporaryInputRef = useRef(temporaryInput);
+  temporaryInputRef.current = temporaryInput;
+  const restoredInputRef = useRef(restoredInput);
+  restoredInputRef.current = restoredInput;
 
   // Free registry entries dropped from the draft (input cleared, placeholder
   // edited out, draft replaced) unless a live holder still references them:
@@ -1093,13 +1093,25 @@ export function Input({
     (discarded: string, next: string) => {
       draftDiscards.release(discarded, [
         next,
-        temporaryInput,
-        restoredInput,
+        temporaryInputRef.current,
+        restoredInputRef.current,
         inFlightSubmitTextRef.current,
         ...(messageQueue?.map((m) => m.text) ?? []),
       ]);
     },
-    [temporaryInput, messageQueue, restoredInput, draftDiscards],
+    [messageQueue, draftDiscards],
+  );
+
+  // Drop the parked history draft and release it against `next`, the draft
+  // replacing it. Down-restore omits `next`: the parked draft is live again.
+  const clearParkedDraft = useCallback(
+    (next?: string) => {
+      const parked = temporaryInputRef.current;
+      temporaryInputRef.current = "";
+      setTemporaryInput("");
+      if (next !== undefined) releaseDiscardedDraftPlaceholders(parked, next);
+    },
+    [releaseDiscardedDraftPlaceholders],
   );
 
   // Restore input from error (only if current value is empty)
@@ -1108,10 +1120,17 @@ export function Input({
       setValue(restoredInput);
       onRestoredInputConsumed?.();
     } else if (restoredInput && value !== "") {
-      // Input has content, don't clobber - just consume the restored value
+      // Input has content, don't clobber - drop the restored value instead
+      restoredInputRef.current = null;
+      releaseDiscardedDraftPlaceholders(restoredInput, value);
       onRestoredInputConsumed?.();
     }
-  }, [restoredInput, value, onRestoredInputConsumed]);
+  }, [
+    restoredInput,
+    value,
+    onRestoredInputConsumed,
+    releaseDiscardedDraftPlaceholders,
+  ]);
 
   useEffect(() => {
     if (!showInspirationalPromptHints || value !== "") {
@@ -1551,6 +1570,7 @@ export function Input({
           setHistoryIndex(-1);
           setValue(temporaryInput);
           setCursorPos(temporaryInput.length); // Cursor at end for user's draft
+          clearParkedDraft();
         }
       }
     }
@@ -1578,9 +1598,9 @@ export function Input({
     // Exit history mode but keep the modified text
     if (historyIndex !== -1 && value !== history[historyIndex]) {
       setHistoryIndex(-1);
-      setTemporaryInput("");
+      clearParkedDraft(value);
     }
-  }, [value, historyIndex, history]);
+  }, [value, historyIndex, history, clearParkedDraft]);
 
   // Clean up timers on unmount
   useEffect(() => {
@@ -1611,9 +1631,8 @@ export function Input({
       // Add to history if not empty and not a duplicate of the last entry
       setHistory((prev) => appendInputHistory(prev, previousValue));
 
-      // Reset history navigation
       setHistoryIndex(-1);
-      setTemporaryInput("");
+      clearParkedDraft("");
 
       // Bash runs the display text verbatim and never resolves placeholders,
       // so the submitted text's registry entries are dead from here on.
@@ -1631,9 +1650,8 @@ export function Input({
       setHistory((prev) => appendInputHistory(prev, previousValue));
     }
 
-    // Reset history navigation
     setHistoryIndex(-1);
-    setTemporaryInput("");
+    clearParkedDraft(previousValue);
 
     setValue(""); // Clear immediately for responsiveness
     // Keep the submission's placeholder entries alive while the handler owns
@@ -1658,6 +1676,7 @@ export function Input({
     onBashSubmit,
     onSubmit,
     releaseDiscardedDraftPlaceholders,
+    clearParkedDraft,
   ]);
 
   const handleFileAutocompleteApply = useCallback(
@@ -1680,16 +1699,15 @@ export function Input({
         setHistory((prev) => appendInputHistory(prev, commandToSubmit));
       }
 
-      // Reset history navigation
       setHistoryIndex(-1);
-      setTemporaryInput("");
+      clearParkedDraft(commandToSubmit);
 
       // The selected command replaces the current draft
       releaseDiscardedDraftPlaceholders(value, commandToSubmit);
       setValue(""); // Clear immediately for responsiveness
       await onSubmit(commandToSubmit);
     },
-    [onSubmit, value, releaseDiscardedDraftPlaceholders],
+    [onSubmit, value, releaseDiscardedDraftPlaceholders, clearParkedDraft],
   );
 
   // Handle slash command autocomplete (Tab key - fill text only)
@@ -2095,22 +2113,4 @@ export function Input({
       {lowerPane}
     </Box>
   );
-}
-
-function formatElapsedLabel(ms: number): string {
-  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
-  const seconds = totalSeconds % 60;
-  const totalMinutes = Math.floor(totalSeconds / 60);
-  if (totalMinutes === 0) {
-    return `${seconds}s`;
-  }
-  const minutes = totalMinutes % 60;
-  const hours = Math.floor(totalMinutes / 60);
-  if (hours > 0) {
-    const parts: string[] = [`${hours}hr`];
-    if (minutes > 0) parts.push(`${minutes}m`);
-    if (seconds > 0) parts.push(`${seconds}s`);
-    return parts.join(" ");
-  }
-  return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
 }
