@@ -3,7 +3,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildClientSkillsPayload } from "@/agent/client-skills";
-import { isSkillAvailableForAgent, type Skill } from "@/agent/skills";
+import {
+  discoverSkills,
+  isSkillAvailableForAgent,
+  type Skill,
+} from "@/agent/skills";
 import { settingsManager } from "@/settings-manager";
 import { readSkillContent } from "@/tools/impl/skill";
 
@@ -65,6 +69,14 @@ describe("curating-memory-palace skill", () => {
 
     expect(offer.listed).toBe(false);
     await expect(offer.content).rejects.toThrow("not found");
+    const discovery = await discoverSkills(
+      "/tmp/no-project-skills",
+      "agent-123",
+      {
+        sources: ["bundled"],
+      },
+    );
+    expect(discovery.skills.some((skill) => skill.id === SKILL_ID)).toBe(false);
   });
 
   test("is listed and readable for cloud and local agents when it is on", async () => {
@@ -77,6 +89,16 @@ describe("curating-memory-palace skill", () => {
       const { content } = await offer.content;
       expect(content).toContain("palace/MEMORY.md");
       expect(content).toContain("palace-action");
+      const discovery = await discoverSkills(
+        "/tmp/no-project-skills",
+        agentId,
+        {
+          sources: ["bundled"],
+        },
+      );
+      expect(discovery.skills.some((skill) => skill.id === SKILL_ID)).toBe(
+        true,
+      );
     }
   });
 

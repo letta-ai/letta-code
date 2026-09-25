@@ -341,7 +341,9 @@ export async function discoverSkills(
   }
 
   return {
-    skills: Array.from(skillsById.values()).sort(compareSkills),
+    skills: Array.from(skillsById.values())
+      .filter((skill) => isSkillAvailableForAgent(skill, agentId))
+      .sort(compareSkills),
     errors: allErrors,
   };
 }
