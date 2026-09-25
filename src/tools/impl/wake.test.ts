@@ -8,17 +8,17 @@ import { runWithRuntimeContext } from "@/runtime-context";
 import { wake } from "./wake";
 
 const NOW = new Date("2026-09-24T05:00:00.000Z");
-const originalDaytonaSandboxId = process.env.DAYTONA_SANDBOX_ID;
+const originalManagedCloudRuntime = process.env.LETTA_MANAGED_CLOUD_RUNTIME;
 
 beforeEach(() => {
-  delete process.env.DAYTONA_SANDBOX_ID;
+  delete process.env.LETTA_MANAGED_CLOUD_RUNTIME;
 });
 
 afterEach(() => {
-  if (originalDaytonaSandboxId) {
-    process.env.DAYTONA_SANDBOX_ID = originalDaytonaSandboxId;
+  if (originalManagedCloudRuntime) {
+    process.env.LETTA_MANAGED_CLOUD_RUNTIME = originalManagedCloudRuntime;
   } else {
-    delete process.env.DAYTONA_SANDBOX_ID;
+    delete process.env.LETTA_MANAGED_CLOUD_RUNTIME;
   }
 });
 const SCOPE = {
@@ -182,7 +182,7 @@ describe("Wake", () => {
   });
 
   test("lists local and Cloud wakes bound to the current conversation", async () => {
-    process.env.DAYTONA_SANDBOX_ID = "sandbox-runtime";
+    process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
     const result = await inScope(() =>
       wake(
         { action: "list" },
@@ -216,7 +216,7 @@ describe("Wake", () => {
   });
 
   test("cancels only a wake visible in the current conversation", async () => {
-    process.env.DAYTONA_SANDBOX_ID = "sandbox-runtime";
+    process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
     const deleted: string[] = [];
     const deps = {
       listLocal: () => [],

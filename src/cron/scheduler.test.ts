@@ -37,7 +37,7 @@ import type { StartListenerOptions } from "@/websocket/listener/types";
 const TEST_DIR = path.join(import.meta.dir, "__scheduler_test_tmp__");
 const origHome = process.env.LETTA_HOME;
 const origCronScope = process.env[CRON_SCHEDULER_SCOPE_ENV];
-const origSandboxId = process.env.DAYTONA_SANDBOX_ID;
+const origSandboxId = process.env.LETTA_MANAGED_CLOUD_RUNTIME;
 
 beforeEach(() => {
   if (existsSync(TEST_DIR)) {
@@ -46,7 +46,7 @@ beforeEach(() => {
   mkdirSync(TEST_DIR, { recursive: true });
   process.env.LETTA_HOME = TEST_DIR;
   delete process.env[CRON_SCHEDULER_SCOPE_ENV];
-  delete process.env.DAYTONA_SANDBOX_ID;
+  delete process.env.LETTA_MANAGED_CLOUD_RUNTIME;
 });
 
 afterEach(() => {
@@ -60,7 +60,7 @@ afterEach(() => {
   else delete process.env.LETTA_HOME;
   if (origCronScope) process.env[CRON_SCHEDULER_SCOPE_ENV] = origCronScope;
   else delete process.env[CRON_SCHEDULER_SCOPE_ENV];
-  if (origSandboxId) process.env.DAYTONA_SANDBOX_ID = origSandboxId;
+  if (origSandboxId) process.env.LETTA_MANAGED_CLOUD_RUNTIME = origSandboxId;
 });
 
 test("routes scheduler lease failures through the listener logger", () => {

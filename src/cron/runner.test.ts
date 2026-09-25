@@ -41,15 +41,16 @@ describe("resolveCronRunner", () => {
     });
   });
 
-  test("Daytona sandbox identity is independent of listener device identity", () => {
+  test("uses only the listener-derived Cloud marker", () => {
     expect(
       isManagedCloudSandbox({
-        DAYTONA_SANDBOX_ID: "sandbox-runtime",
+        LETTA_MANAGED_CLOUD_RUNTIME: "1",
         LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID: "unregistered-device",
       }),
     ).toBe(true);
     expect(
       isManagedCloudSandbox({
+        DAYTONA_SANDBOX_ID: "user-managed-daytona",
         LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID: "sandbox-looking-device",
       }),
     ).toBe(false);

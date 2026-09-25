@@ -11,27 +11,27 @@
  * - Letta-managed Cloud sandboxes use durable Cloud schedules.
  * - User-managed computers and self-hosted runtimes use local schedules.
  *
- * `DAYTONA_SANDBOX_ID` is injected by the managed sandbox platform and inherited
- * by child CLI processes. Device registration is not an execution-environment
- * signal: Cloud API-backed laptops are still local computers, and a managed
- * sandbox may have a transient or unregistered listener device id.
+ * Cloud's owning spawner assigns the listener a `sandbox:` identity. Listener
+ * bootstrap derives an inherited runtime marker before consuming that private
+ * relay identity. Device registration is not an execution-environment signal:
+ * Cloud API-backed laptops are still local computers, and a managed sandbox may
+ * have a transient or unregistered listener device id.
  */
 
 import type { EnvironmentConnection } from "@/backend/api/environments";
 import { ApiRequestError } from "@/backend/api/request";
 import { listCloudSchedules } from "@/backend/api/schedules";
 import { resolveBackendMode } from "@/backend/backend-mode";
+import { isManagedCloudRuntime } from "@/managed-cloud-runtime";
 
 export type CronRunner = "local" | "cloud";
 
 export const CLOUD_EXECUTION_TARGET = "cloud-sandbox";
 
-export const MANAGED_CLOUD_SANDBOX_ID_ENV = "DAYTONA_SANDBOX_ID";
-
 export function isManagedCloudSandbox(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  return Boolean(env[MANAGED_CLOUD_SANDBOX_ID_ENV]?.trim());
+  return isManagedCloudRuntime(env);
 }
 
 export interface ResolveCronRunnerParams {

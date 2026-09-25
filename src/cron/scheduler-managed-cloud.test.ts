@@ -12,13 +12,13 @@ import type { ListenerTransport } from "@/websocket/listener/transport";
 
 const TEST_DIR = path.join(import.meta.dir, "__scheduler_cloud_test_tmp__");
 const originalHome = process.env.LETTA_HOME;
-const originalSandboxId = process.env.DAYTONA_SANDBOX_ID;
+const originalSandboxId = process.env.LETTA_MANAGED_CLOUD_RUNTIME;
 
 beforeEach(() => {
   rmSync(TEST_DIR, { recursive: true, force: true });
   mkdirSync(TEST_DIR, { recursive: true });
   process.env.LETTA_HOME = TEST_DIR;
-  process.env.DAYTONA_SANDBOX_ID = "sandbox-runtime";
+  process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
 });
 
 afterEach(() => {
@@ -26,8 +26,9 @@ afterEach(() => {
   rmSync(TEST_DIR, { recursive: true, force: true });
   if (originalHome) process.env.LETTA_HOME = originalHome;
   else delete process.env.LETTA_HOME;
-  if (originalSandboxId) process.env.DAYTONA_SANDBOX_ID = originalSandboxId;
-  else delete process.env.DAYTONA_SANDBOX_ID;
+  if (originalSandboxId)
+    process.env.LETTA_MANAGED_CLOUD_RUNTIME = originalSandboxId;
+  else delete process.env.LETTA_MANAGED_CLOUD_RUNTIME;
 });
 
 test("managed Cloud sandbox neither starts nor manually runs local schedules", async () => {

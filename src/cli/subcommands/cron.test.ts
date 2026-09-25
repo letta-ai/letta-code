@@ -17,7 +17,7 @@ const originalConsoleError = console.error;
 const originalBaseUrl = process.env.LETTA_BASE_URL;
 const originalApiKey = process.env.LETTA_API_KEY;
 const originalRuntimeDeviceId = process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID;
-const originalDaytonaSandboxId = process.env.DAYTONA_SANDBOX_ID;
+const originalManagedCloudRuntime = process.env.LETTA_MANAGED_CLOUD_RUNTIME;
 const originalConversationId = process.env.LETTA_CONVERSATION_ID;
 const originalActingUserId = process.env.LETTA_ACTING_USER_ID;
 const originalLettaHome = process.env.LETTA_HOME;
@@ -163,7 +163,7 @@ beforeEach(() => {
   process.env.LETTA_BASE_URL = "https://example.test";
   process.env.LETTA_API_KEY = "test-key";
   delete process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID;
-  delete process.env.DAYTONA_SANDBOX_ID;
+  delete process.env.LETTA_MANAGED_CLOUD_RUNTIME;
   delete process.env.LETTA_CONVERSATION_ID;
   delete process.env.LETTA_ACTING_USER_ID;
   settingsManager.initialize = mock(
@@ -196,7 +196,7 @@ afterEach(() => {
     ["LETTA_BASE_URL", originalBaseUrl],
     ["LETTA_API_KEY", originalApiKey],
     ["LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID", originalRuntimeDeviceId],
-    ["DAYTONA_SANDBOX_ID", originalDaytonaSandboxId],
+    ["LETTA_MANAGED_CLOUD_RUNTIME", originalManagedCloudRuntime],
     ["LETTA_CONVERSATION_ID", originalConversationId],
     ["LETTA_ACTING_USER_ID", originalActingUserId],
     ["LETTA_HOME", originalLettaHome],
@@ -208,7 +208,7 @@ afterEach(() => {
 
 describe("cron add execution targeting", () => {
   test("Cloud schedules default to a new conversation per fire and ignore ambient conversation state", async () => {
-    process.env.DAYTONA_SANDBOX_ID = "sandbox-runtime";
+    process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
     process.env.LETTA_CONVERSATION_ID = "ambient-conversation";
     const requests = installScheduleApi({});
 
@@ -244,7 +244,7 @@ describe("cron add execution targeting", () => {
   });
 
   test("--conversation self captures the current conversation", async () => {
-    process.env.DAYTONA_SANDBOX_ID = "sandbox-runtime";
+    process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
     process.env.LETTA_CONVERSATION_ID = "current-conversation";
     const requests = installScheduleApi({});
 
@@ -300,7 +300,7 @@ describe("cron add execution targeting", () => {
   });
 
   test("managed sandbox creates an untargeted Cloud schedule even with an unregistered listener device", async () => {
-    process.env.DAYTONA_SANDBOX_ID = "sandbox-runtime";
+    process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
     process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID = "unregistered-device";
     const requests = installScheduleApi({});
 
@@ -326,7 +326,7 @@ describe("cron add execution targeting", () => {
   test("managed sandbox never falls back to a local schedule when Cloud routes are unavailable", async () => {
     const home = mkdtempSync(join(tmpdir(), "letta-cron-cloud-failure-"));
     process.env.LETTA_HOME = home;
-    process.env.DAYTONA_SANDBOX_ID = "sandbox-runtime";
+    process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
     const requests = installScheduleApi({ scheduleRoutesStatus: 404 });
 
     try {
@@ -340,7 +340,7 @@ describe("cron add execution targeting", () => {
 
   test("Cloud schedule creation preserves the requesting user", async () => {
     process.env.LETTA_ACTING_USER_ID = "user-requester";
-    process.env.DAYTONA_SANDBOX_ID = "sandbox-runtime";
+    process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
     const requests = installScheduleApi({});
 
     expect(await runCronSubcommand(addArgs)).toBe(0);
@@ -401,7 +401,7 @@ describe("cron add execution targeting", () => {
   });
 
   test("managed Cloud schedule can target an explicit computer", async () => {
-    process.env.DAYTONA_SANDBOX_ID = "sandbox-runtime";
+    process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
     const requests = installScheduleApi({
       environments: { "device-explicit": environment("device-explicit") },
     });

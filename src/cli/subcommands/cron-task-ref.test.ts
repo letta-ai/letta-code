@@ -17,7 +17,7 @@ const TEST_DIR = path.join(import.meta.dir, "__cron_task_ref_test_tmp__");
 
 const origHome = process.env.LETTA_HOME;
 const origXdg = process.env.XDG_CONFIG_HOME;
-const origDaytonaSandboxId = process.env.DAYTONA_SANDBOX_ID;
+const origManagedCloudRuntime = process.env.LETTA_MANAGED_CLOUD_RUNTIME;
 
 beforeEach(() => {
   if (existsSync(TEST_DIR)) {
@@ -25,7 +25,7 @@ beforeEach(() => {
   }
   mkdirSync(TEST_DIR, { recursive: true });
   process.env.LETTA_HOME = TEST_DIR;
-  delete process.env.DAYTONA_SANDBOX_ID;
+  delete process.env.LETTA_MANAGED_CLOUD_RUNTIME;
 });
 
 afterEach(() => {
@@ -36,10 +36,10 @@ afterEach(() => {
   else delete process.env.LETTA_HOME;
   if (origXdg) process.env.XDG_CONFIG_HOME = origXdg;
   else delete process.env.XDG_CONFIG_HOME;
-  if (origDaytonaSandboxId) {
-    process.env.DAYTONA_SANDBOX_ID = origDaytonaSandboxId;
+  if (origManagedCloudRuntime) {
+    process.env.LETTA_MANAGED_CLOUD_RUNTIME = origManagedCloudRuntime;
   } else {
-    delete process.env.DAYTONA_SANDBOX_ID;
+    delete process.env.LETTA_MANAGED_CLOUD_RUNTIME;
   }
 });
 
