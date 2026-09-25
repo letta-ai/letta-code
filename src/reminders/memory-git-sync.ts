@@ -131,7 +131,9 @@ ${SYSTEM_REMINDER_CLOSE}`;
  * Deliver at most one copy of a repository's current notice. The same dirty
  * checkout or unresolved conflict would otherwise be re-announced after every
  * turn until someone acts, and the agent already has the first copy in its
- * context. A changed or cleared state resets it.
+ * context. A changed or cleared state resets it. Reminders are remembered
+ * per conversation, since each conversation has its own context to inform;
+ * the user-facing push warning per repository.
  */
 const lastNotices = new Map<string, string>();
 
@@ -166,7 +168,11 @@ async function deliverPostTurnNotice(
     );
     return;
   }
-  await deliverOnce(key, reminder, (text) => params.enqueueReminder?.(text));
+  await deliverOnce(
+    `${params.conversationId ?? ""}\n${key}`,
+    reminder,
+    (text) => params.enqueueReminder?.(text),
+  );
 }
 
 export async function runPostTurnMemorySync(

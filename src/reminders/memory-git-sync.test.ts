@@ -333,6 +333,27 @@ test("a failed push is shown to the user once and never becomes an agent reminde
   expect(sinks.warnings[0]).toContain("401");
 });
 
+test("each conversation of the agent gets its own copy of a reminder", async () => {
+  const dirty: MemoryPostTurnSyncResult = { ...conflict, status: "dirty" };
+  const reminders: string[] = [];
+  for (const conversationId of ["conv-a", "conv-b", "conv-a"]) {
+    await runPostTurnMemorySync(
+      {
+        agentId: "agent-memory-repair-test",
+        conversationId,
+        enqueueReminder: (text) => {
+          reminders.push(text);
+        },
+      },
+      {
+        syncMemory: async () => dirty,
+        syncAttachedRepositories: async () => ({ results: [] }),
+      },
+    );
+  }
+  expect(reminders).toHaveLength(2);
+});
+
 test("an unchanged memory state is reminded once; a changed or cleared state again", async () => {
   const sinks = { reminders: [] as string[], warnings: [] as string[] };
   const dirty: MemoryPostTurnSyncResult = {
