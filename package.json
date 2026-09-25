@@ -138,6 +138,7 @@
     "@modelcontextprotocol/sdk": "1.30.0",
     "@pierre/diffs": "1.2.2",
     "@scarf/scarf": "^1.4.0",
+    "@shikijs/langs": "4.0.2",
     "cron-parser": "^5.6.1",
     "cross-spawn": "^7.0.6",
     "glob": "^13.0.0",
