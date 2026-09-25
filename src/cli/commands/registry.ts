@@ -6,10 +6,7 @@ import {
   requestCloudReflectionRun,
 } from "@/agent/reflection-runs";
 import { getBackend } from "@/backend";
-import {
-  buildTeleportMessage,
-  isCloudTeleportExecution,
-} from "@/cli/helpers/teleport-command";
+import { buildTeleportMessage } from "@/cli/helpers/teleport-command";
 import { renderWorkflowTree } from "@/cli/helpers/workflow-display";
 import { listWorkflowExecutions } from "@/tools/workflow/execution-registry";
 import { handleMemoryRepositoryCommand } from "./memory-repository";
@@ -83,7 +80,7 @@ export const commands: Record<string, Command> = {
     desc: "Move this conversation to another computer",
     order: 12.2,
     noArgs: true,
-    handler: () => buildTeleportMessage(isCloudTeleportExecution()),
+    handler: () => buildTeleportMessage(),
   },
   "/doctor": {
     desc: "Investigate an agent issue in this conversation",

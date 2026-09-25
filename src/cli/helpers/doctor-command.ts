@@ -1,10 +1,7 @@
 import { detectMemoryFormat } from "@/agent/memory-format";
 import { getActiveMemoryDirectory } from "@/agent/memory-runtime";
 import { getBackend } from "@/backend";
-import {
-  buildTeleportMessage,
-  isCloudTeleportExecution,
-} from "@/cli/helpers/teleport-command";
+import { buildTeleportMessage } from "@/cli/helpers/teleport-command";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { getTranscriptRoot } from "@/utils/transcript-paths";
 
@@ -22,7 +19,7 @@ export async function buildDoctorOrTeleportMessage(
   input: string,
 ): Promise<string> {
   if (input === "/teleport") {
-    return buildTeleportMessage(isCloudTeleportExecution());
+    return buildTeleportMessage();
   }
   return buildDoctorMessage({
     agentId,

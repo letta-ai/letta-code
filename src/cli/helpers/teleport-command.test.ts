@@ -1,9 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { EnvironmentConnection } from "@/backend/api/environments";
-import {
-  buildTeleportMessage,
-  isCloudTeleportExecution,
-} from "./teleport-command";
+import { buildTeleportMessage } from "./teleport-command";
 
 function environment(
   deviceId: string,
@@ -25,12 +22,21 @@ function environment(
 }
 
 describe("teleport reminder", () => {
-  test("identifies managed Cloud execution even with an opaque device ID", () => {
-    expect(
-      isCloudTeleportExecution({ DAYTONA_SANDBOX_ID: "sb-1" }, "uuid-1"),
-    ).toBe(true);
-    expect(isCloudTeleportExecution({}, "sandbox-agent-1")).toBe(true);
-    expect(isCloudTeleportExecution({}, "uuid-1")).toBe(false);
+  test("uses the managed Cloud runtime marker with an opaque device ID", async () => {
+    const previous = process.env.LETTA_MANAGED_CLOUD_RUNTIME;
+    process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
+    try {
+      const message = await buildTeleportMessage(undefined, async () => ({
+        hasNextPage: false,
+        connections: [environment("uuid-laptop")],
+      }));
+      expect(message).toContain("uuid-laptop");
+      expect(message).not.toContain("letta teleport cloud");
+    } finally {
+      if (previous === undefined)
+        delete process.env.LETTA_MANAGED_CLOUD_RUNTIME;
+      else process.env.LETTA_MANAGED_CLOUD_RUNTIME = previous;
+    }
   });
 
   test("local execution sends Cloud handoff without listing computers", async () => {
@@ -50,6 +56,7 @@ describe("teleport reminder", () => {
         connections: [
           environment("laptop"),
           environment("sandbox-agent-1"),
+          environment("__letta_cloud__"),
           environment("offline", { lastHeartbeat: Date.now() - 200_000 }),
           environment("desktop-local", { organizationId: "local" }),
           environment("local-connection", { connectionId: "local-123" }),
@@ -60,6 +67,7 @@ describe("teleport reminder", () => {
     expect(message).toContain("laptop");
     expect(message).toContain("Ask which location");
     expect(message).not.toContain("sandbox-agent-1");
+    expect(message).not.toContain("__letta_cloud__");
     expect(message).not.toContain("offline");
     expect(message).not.toContain("desktop-local");
     expect(message).not.toContain("local-connection");

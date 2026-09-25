@@ -3,19 +3,11 @@ import {
   listEnvironments,
 } from "@/backend/api/environments";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
-
-export function isCloudTeleportExecution(
-  env: NodeJS.ProcessEnv = process.env,
-  deviceId = env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID,
-): boolean {
-  return (
-    Boolean(env.DAYTONA_SANDBOX_ID) || Boolean(deviceId?.startsWith("sandbox-"))
-  );
-}
+import { isManagedCloudRuntime } from "@/managed-cloud-runtime";
 
 /** Build a prompt for the primary agent; the command itself never moves the conversation. */
 export async function buildTeleportMessage(
-  cloudExecution: boolean,
+  cloudExecution = isManagedCloudRuntime(),
   list: typeof listEnvironments = listEnvironments,
 ): Promise<string> {
   if (!cloudExecution) {
@@ -31,6 +23,7 @@ export async function buildTeleportMessage(
         isEnvironmentOnline(environment) &&
         environment.organizationId !== "local" &&
         !environment.connectionId?.startsWith("local-") &&
+        environment.deviceId !== "__letta_cloud__" &&
         !environment.deviceId.startsWith("sandbox-")
       ) {
         destinations.push(

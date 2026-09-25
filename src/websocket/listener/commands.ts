@@ -21,10 +21,7 @@ import {
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
 import { parseReflectCommandArgs } from "@/cli/helpers/reflect-command";
 import { launchReflectionSubagent } from "@/cli/helpers/reflection-launcher";
-import {
-  buildTeleportMessage,
-  isCloudTeleportExecution,
-} from "@/cli/helpers/teleport-command";
+import { buildTeleportMessage } from "@/cli/helpers/teleport-command";
 import { buildModCommandPrompt } from "@/cli/mods/command-runtime";
 import { DEFAULT_SUMMARIZATION_MODEL } from "@/constants";
 import { runPreCompactHooks } from "@/hooks";
@@ -165,13 +162,7 @@ export async function handleExecuteCommand(
         }
         const agentId = conversationRuntime.agentId;
         if (!agentId) throw new Error("Teleport requires an active agent.");
-        const deviceId = opts.connectionId
-          ? conversationRuntime.listener.connections.get(opts.connectionId)
-              ?.options.deviceId
-          : process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID;
-        const message = await buildTeleportMessage(
-          isCloudTeleportExecution(process.env, deviceId),
-        );
+        const message = await buildTeleportMessage();
         await handleIncomingMessage(
           {
             type: "message",

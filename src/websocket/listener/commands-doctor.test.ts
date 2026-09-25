@@ -90,8 +90,8 @@ test.each([false, true])(
 test.each([false, true])(
   "listener teleport is available only for API state (local=%s)",
   async (localMemfs) => {
-    const sandboxId = process.env.DAYTONA_SANDBOX_ID;
-    delete process.env.DAYTONA_SANDBOX_ID;
+    const managedCloud = process.env.LETTA_MANAGED_CLOUD_RUNTIME;
+    delete process.env.LETTA_MANAGED_CLOUD_RUNTIME;
     try {
       __testSetBackend({ capabilities: { localMemfs } } as Backend);
       expect(getSupportedRemoteCommands().includes("teleport")).toBe(
@@ -142,8 +142,9 @@ test.each([false, true])(
         }
       }
     } finally {
-      if (sandboxId === undefined) delete process.env.DAYTONA_SANDBOX_ID;
-      else process.env.DAYTONA_SANDBOX_ID = sandboxId;
+      if (managedCloud === undefined)
+        delete process.env.LETTA_MANAGED_CLOUD_RUNTIME;
+      else process.env.LETTA_MANAGED_CLOUD_RUNTIME = managedCloud;
     }
   },
 );
