@@ -798,9 +798,7 @@ export function buildSubagentSnapshot(
 
   return getSubagents()
     .filter((a) => {
-      // Include all statuses (pending, running, completed, error) so the
-      // web UI receives the final state with tool calls and agent URL
-      // before the subagent is cleaned up from the store.
+      // Include final states so the UI gets tool calls and URL before cleanup.
       if (a.silent && a.isBackground !== true) {
         return false;
       }
