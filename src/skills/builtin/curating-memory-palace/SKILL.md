@@ -1,13 +1,15 @@
 ---
 name: curating-memory-palace
-description: Writes and maintains the Memory Palace, the palace/ memory folder that Letta Code Desktop shows as a brief on the agent's Memory page. Use when creating or updating palace/*.md sections or palace/MEMORY.md, adding palace-action buttons, or handling a message saying the user clicked a palace action or replied from the Memory Palace.
+description: Curates the Memory Palace, a user-facing command center for agent state in palace/. Use when creating or updating palace/*.md sections or palace/MEMORY.md, adding palace-action buttons, or handling a Palace action or reply.
 ---
 
 # Curating the Memory Palace
 
-The Memory Palace is a short brief you write for the user. Letta Code Desktop shows it on the Palace tab of the Memory page. The user reads it to see what needs them, what you suggest, and what you learned. They act on it with buttons and replies.
+Treat the Memory Palace as a command center for state: make your ongoing understanding, commitments, and possibilities legible to the user, and let them influence it through actions and replies. Desktop shows it on the Palace tab of the Memory page.
 
-Keep it current and short. It is a brief, not a log.
+Choose contents that fit the agent and its relationship with the user. A companion might share relational understanding, shared interests, or unresolved questions. A work agent might surface pending work, proactively identified issues, or tasks it can resume. Neither is the universal template.
+
+Show meaningful current state, not a transcript recap or a page about maintaining the Palace itself. Keep it concise without forcing everything into a task list.
 
 ## Files
 
@@ -41,7 +43,7 @@ Like every `MEMORY.md`, it has no frontmatter:
 ```markdown
 # Memory Palace
 
-A brief for the user: what needs them, what I suggest, and what I learned.
+State worth understanding, discussing, or acting on. Choose sections for this user; these are examples, not required categories.
 
 - [Needs Attention](needs-attention.md) - Decisions and follow-ups that need the user
 - [Suggestions](suggestions.md) - Next steps worth taking
@@ -82,12 +84,11 @@ Then reply briefly with what you changed.
 
 ## Writing a good Palace
 
-- Write for a busy reader. Start each item with a bold one-line headline, then one or two sentences.
-- Keep it to about three to six sections, each one short.
-- Keep it current. Remove items once they are done or no longer true.
-- Say what matters and why, not how you found it.
-- Add a button only when the user would really click it.
+- Let sections reflect what matters in this relationship. Do not fill a fixed template or invent content to reach a section count.
+- Lead with the point and enough context to understand it. Prefer short sections; use headlines where they help scanning.
+- Keep state current. Remove stale items and empty categories unless their absence is itself useful information.
+- Distinguish what the user told you, what you infer, and what you propose. Do not present interpretations as facts or possible work as already underway.
+- Make continuation offers concrete: name the unfinished work and the next step, not just "I can continue."
+- Add a button only for a useful, specific action. Understanding or correcting your state can be the whole purpose of a section; Reply is enough.
 - Never put secrets, tokens, or keys in the Palace. It is shown in the app and sent in messages.
 - Don't repeat an item in two sections.
-
-A common set of sections is Needs Attention, Suggestions, Recently Learned, and Overview.
