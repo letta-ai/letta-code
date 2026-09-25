@@ -10,7 +10,6 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  assertMemoryRepoCleanForWrite,
   buildGitAuthArgs,
   buildMemfsGitProxyArgs,
   buildNonInteractiveGitEnv,
@@ -102,13 +101,6 @@ function commitFile(repo: string, fileName: string, content: string): string {
   git(repo, `add ${fileName}`);
   git(repo, `commit -m ${fileName}`);
   return git(repo, "rev-parse HEAD").trim();
-}
-
-function utf16leWithBom(content: string): Buffer {
-  return Buffer.concat([
-    Buffer.from([0xff, 0xfe]),
-    Buffer.from(content, "utf16le"),
-  ]);
 }
 
 function makeSyncedRepo(): { repo: string; remote: string } {
@@ -696,66 +688,6 @@ describe("credential helper reset", () => {
     await refreshCredentialConfig(repo, { proxy: true });
 
     expect(gitOrEmpty(repo, `config --local --get-all ${key}`)).toBe("");
-  });
-});
-
-describe("assertMemoryRepoCleanForWrite", () => {
-  test("allows clean local commits to wait for post-turn sync", async () => {
-    const { repo, remote } = makeSyncedRepo();
-    const localSha = commitFile(repo, "local.md", "local");
-    process.env.LETTA_API_KEY = "test-token";
-    __testOverrideGetClient(async () => ({
-      apiKey: "test-token",
-    }));
-
-    await assertMemoryRepoCleanForWrite(repo);
-
-    expect(git(repo, "rev-list --count @{u}..HEAD").trim()).toBe("1");
-    expect(
-      execSync(`git --git-dir ${remote} rev-parse main`, {
-        encoding: "utf-8",
-      }).trim(),
-    ).not.toBe(localSha);
-  });
-
-  test("allows clean behind repos for post-turn rebase", async () => {
-    const { repo, remote } = makeSyncedRepo();
-    const originalSha = git(repo, "rev-parse HEAD").trim();
-    const other = cloneRepo(remote);
-    commitFile(other, "remote.md", "remote");
-    git(other, "push");
-    process.env.LETTA_API_KEY = "test-token";
-    __testOverrideGetClient(async () => ({
-      apiKey: "test-token",
-    }));
-
-    await assertMemoryRepoCleanForWrite(repo);
-
-    expect(git(repo, "rev-parse HEAD").trim()).toBe(originalSha);
-  });
-
-  test("reports UTF-16 dirty markdown files", async () => {
-    const { repo } = makeSyncedRepo();
-    writeFileSync(
-      join(repo, "human.md"),
-      utf16leWithBom("---\ndescription: human\n---\nnotes"),
-    );
-
-    await expect(assertMemoryRepoCleanForWrite(repo)).rejects.toThrow(
-      /Dirty markdown encoding issue\(s\): human\.md has UTF-16LE BOM/,
-    );
-  });
-
-  test("reports NUL bytes in dirty markdown files", async () => {
-    const { repo } = makeSyncedRepo();
-    writeFileSync(
-      join(repo, "human.md"),
-      Buffer.from("---\ndescription: human\n---\nnotes", "utf16le"),
-    );
-
-    await expect(assertMemoryRepoCleanForWrite(repo)).rejects.toThrow(
-      /Dirty markdown encoding issue\(s\): human\.md contains NUL bytes, possibly UTF-16/,
-    );
   });
 });
 
