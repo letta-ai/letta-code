@@ -6,6 +6,7 @@
 // lower-level backend/runtime/shell helpers and shared subagent types, never
 // back on the subagent manager, so the graph stays acyclic.
 
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
@@ -36,6 +37,9 @@ interface ResolveSubagentLauncherOptions {
   execPath?: string;
   platform?: NodeJS.Platform;
   cwd?: string;
+  /** Existence check for the entrypoint this process was started from. Injectable so
+   * launcher resolution is testable without touching the filesystem. */
+  fileExists?: (filePath: string) => boolean;
 }
 
 interface SubagentLauncher {
@@ -82,6 +86,30 @@ export function resolveSubagentWorkingDirectory(
   return env.USER_CWD || fallbackCwd;
 }
 
+/**
+ * True when the entrypoint this process was started from no longer exists.
+ *
+ * An in-place update can remove the entry file out from under a parent process
+ * that is still running. A transient fnm multishell package directory on
+ * Windows is the common case, because that directory is discarded when the
+ * shell session ends. Reusing the stale path fails every later Agent launch
+ * with MODULE_NOT_FOUND, even when a working `letta` is on PATH.
+ *
+ * Only `.ts` and `.js` entrypoints are checked, because those are the only ones
+ * the launcher would otherwise spawn. A compiled-binary launch, where argv[1]
+ * is the executable itself or empty, is deliberately left alone.
+ */
+function isInheritedEntryScriptMissing(
+  currentScript: string,
+  resolvedCurrentScript: string,
+  fileExists: (filePath: string) => boolean,
+): boolean {
+  if (!currentScript) return false;
+  const isScriptEntry =
+    currentScript.endsWith(".ts") || currentScript.endsWith(".js");
+  if (!isScriptEntry) return false;
+  return !fileExists(resolvedCurrentScript);
+}
 export function resolveSubagentLauncher(
   cliArgs: string[],
   options: ResolveSubagentLauncherOptions = {},
@@ -91,6 +119,7 @@ export function resolveSubagentLauncher(
   const execPath = options.execPath ?? process.execPath;
   const platform = options.platform ?? process.platform;
   const cwd = options.cwd ?? process.cwd();
+  const fileExists = options.fileExists ?? existsSync;
 
   const invocation = resolveLettaInvocation(env, argv, execPath, cwd);
   if (invocation) {
@@ -102,6 +131,18 @@ export function resolveSubagentLauncher(
 
   const currentScript = argv[1] || "";
   const resolvedCurrentScript = resolveEntryScriptPath(currentScript, cwd);
+
+  // The inherited entrypoint can disappear while this process is still alive.
+  // Drop the stale path and let the stable `letta` executable on PATH take over
+  // rather than failing every Agent launch with MODULE_NOT_FOUND.
+  const entryScriptMissing = isInheritedEntryScriptMissing(
+    currentScript,
+    resolvedCurrentScript,
+    fileExists,
+  );
+  if (entryScriptMissing) {
+    return { command: "letta", args: cliArgs };
+  }
 
   // Preserve historical subagent behavior: any .ts entrypoint uses runtime binary.
   if (currentScript.endsWith(".ts")) {
