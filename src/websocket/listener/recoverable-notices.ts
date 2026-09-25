@@ -293,7 +293,6 @@ export function emitLoopErrorNotice(
     message: string;
     stopReason: StopReasonType;
     isTerminal: boolean;
-    clientMessageIds?: string[];
     runId?: string | null;
     agentId?: string | null;
     conversationId?: string | null;
@@ -320,7 +319,6 @@ export function emitLoopErrorNotice(
     message: decision.message,
     stopReason: params.stopReason,
     isTerminal: params.isTerminal,
-    clientMessageIds: params.clientMessageIds,
     runId: params.runId,
     agentId: params.agentId,
     conversationId: params.conversationId,

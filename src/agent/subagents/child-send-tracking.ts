@@ -7,7 +7,7 @@ import {
 import type { Backend } from "@/backend";
 import type { EnqueueReceipt } from "@/backend/api/conversation-enqueue";
 import {
-  getExactSuperRun,
+  getLatestConversationSuperRun,
   openConversationStatusStream,
 } from "@/backend/api/conversation-enqueue";
 import { buildAgentReference } from "@/cli/helpers/app-urls";
@@ -75,7 +75,7 @@ function waitForChildRun(
 ): Promise<unknown> {
   return waitForAcceptedSuperRun(receipt, signal, {
     open: openConversationStatusStream,
-    exact: getExactSuperRun,
+    latest: getLatestConversationSuperRun,
     // Only the lifecycle matters here; the reply is never collected.
     messages: async () => [],
   });
