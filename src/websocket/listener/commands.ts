@@ -28,6 +28,10 @@ import type { ModCommand } from "@/mods/types";
 import { markPostCompactionContextRemindersPending } from "@/reminders/state";
 import { settingsManager } from "@/settings-manager";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
+import {
+  findUserInvocableSkillInvocation,
+  renderUserInvocableSkillInvocation,
+} from "@/tools/impl/user-invocable-skill";
 import type {
   ExecuteCommandCommand,
   SlashCommandEndMessage,
@@ -218,6 +222,56 @@ export async function handleExecuteCommand(
           conversationRuntime.agentId,
         );
         if (!modCommand) {
+          const { commands } = await import("@/cli/commands/registry");
+          const listenerOptions = opts.connectionId
+            ? conversationRuntime.listener.connections.get(opts.connectionId)
+                ?.options
+            : conversationRuntime.listener.connections.values().next().value
+                ?.options;
+          const skillInvocation =
+            conversationRuntime.agentId && !commands[`/${command.command_id}`]
+              ? await findUserInvocableSkillInvocation(input, {
+                  agentId: conversationRuntime.agentId,
+                  workingDirectory: getConversationWorkingDirectory(
+                    conversationRuntime.listener,
+                    conversationRuntime.agentId,
+                    conversationRuntime.conversationId,
+                  ),
+                  skillsDirectory: listenerOptions?.skillsDirectory,
+                  skillSources: conversationRuntime.skillSources,
+                })
+              : null;
+          if (skillInvocation) {
+            await handleIncomingMessage(
+              {
+                type: "message",
+                agentId: conversationRuntime.agentId ?? undefined,
+                conversationId: conversationRuntime.conversationId,
+                actingUserId: command.runtime.acting_user_id,
+                messages: [
+                  {
+                    type: "message",
+                    role: "user",
+                    content: [
+                      {
+                        type: "text",
+                        text:
+                          await renderUserInvocableSkillInvocation(
+                            skillInvocation,
+                          ),
+                      },
+                    ],
+                  },
+                ],
+              },
+              socket,
+              conversationRuntime,
+              opts.onStatusChange,
+              opts.connectionId,
+            );
+            output = "";
+            break;
+          }
           emitSlashCommandEnd(socket, conversationRuntime, scope, {
             command_id: command.command_id,
             input,

@@ -3465,57 +3465,40 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             registryCmd.fail(`Unknown command: ${registryCommandName}`);
           }
 
-          const skillCommandName = registryCommandName.slice(1);
-          const { discoverClientSideSkills } = await import(
-            "@/agent/client-skills"
-          );
+          const {
+            findUserInvocableSkillInvocation,
+            renderUserInvocableSkillInvocation,
+          } = await import("@/tools/impl/user-invocable-skill");
           const { getSkillSources } = await import("@/agent/context");
-          const { isUserInvocableSkill } = await import("@/agent/skills");
-          const skillDiscovery = await discoverClientSideSkills({
-            agentId,
-            skillSources: getSkillSources(),
-          });
-          const matchedSkill = skillDiscovery.skills.find(
-            (skill) =>
-              skill.id === skillCommandName && isUserInvocableSkill(skill),
+          const skillInvocation = await findUserInvocableSkillInvocation(
+            trimmed,
+            { agentId, skillSources: getSkillSources() },
           );
 
-          if (matchedSkill) {
+          if (skillInvocation) {
             const cmd = commandRunner.start(
               trimmed,
-              `Running /${matchedSkill.id}...`,
+              `Running /${skillInvocation.skill.id}...`,
             );
 
             const approvalCheck = await checkPendingApprovalsForSlashCommand();
             if (approvalCheck.blocked) {
               cmd.fail(
-                `Pending approval(s). Resolve approvals before running /${matchedSkill.id}.`,
+                `Pending approval(s). Resolve approvals before running /${skillInvocation.skill.id}.`,
               );
               return { submitted: false };
             }
 
-            const userRequest = trimmed
-              .slice(`/${matchedSkill.id}`.length)
-              .trim();
             setCommandRunning(true);
             try {
-              const { loadRenderedSkillContent, wrapSkillPrompt } =
-                await import("@/tools/impl/skill");
-              const skillContent = await loadRenderedSkillContent(
-                matchedSkill.id,
-                {
-                  agentId,
-                  allowDisabledModelInvocation: true,
-                },
-              );
+              const skillPrompt =
+                await renderUserInvocableSkillInvocation(skillInvocation);
               cmd.finish("Running skill...", true);
               await processConversationWithQueuedApprovals([
                 {
                   type: "message",
                   role: "user",
-                  content: buildTextParts(
-                    wrapSkillPrompt(matchedSkill.id, skillContent, userRequest),
-                  ),
+                  content: buildTextParts(skillPrompt),
                   otid: randomUUID(),
                 },
               ]);
