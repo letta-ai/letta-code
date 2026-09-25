@@ -13,6 +13,7 @@ import {
   resolveTelemetryAgentOrigin,
   type TelemetryAgentOrigin,
 } from "./agent-origin";
+import { requeueFailedEvents } from "./bounded-requeue";
 import { extractInputChannel } from "./channel";
 import { installFatalErrorHandlers } from "./fatal-error-handler";
 
@@ -357,6 +358,8 @@ class TelemetryManager {
 
   private readonly FLUSH_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
   private readonly MAX_BATCH_SIZE = 50;
+  /** Cap on queued events; bounds the failed-flush re-queue (LET-13147). */
+  private readonly MAX_QUEUED_EVENTS = 500;
   /** Max time to drain queued events on exit (bounded so we never hang the shell). */
   private readonly DRAIN_TIMEOUT_MS = 3_000;
   private sessionStatsGetter?: () => {
@@ -950,7 +953,11 @@ class TelemetryManager {
     );
     // Keep failed snapshots in their original order, ahead of late arrivals.
     // Successful groups must not be duplicated when another identity fails.
-    this.events.unshift(...eventsToSend.filter((event) => failed.has(event)));
+    requeueFailedEvents(
+      this.events,
+      eventsToSend.filter((event) => failed.has(event)),
+      this.MAX_QUEUED_EVENTS,
+    );
   }
 
   /** Await in-flight flush and drain remaining queue (bounded by DRAIN_TIMEOUT_MS). Replaces fire-and-forget flush on exit. */
