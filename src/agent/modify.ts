@@ -875,6 +875,7 @@ export async function updateAgentSystemPromptMemfs(
       recordManagedSystemPrompt,
     } = await import("@/agent/system-prompt-versioning");
 
+    const backend = getBackend();
     const newMode = getMemoryPromptModeForAgent(agentId);
     const storedPreset = settingsManager.isReady
       ? settingsManager.getSystemPromptPreset(agentId)
@@ -883,9 +884,25 @@ export async function updateAgentSystemPromptMemfs(
       ? settingsManager.getSystemPromptHash(agentId)
       : undefined;
 
+    const agent = await backend.retrieveAgent(agentId);
+    const { reconcileCloudPromptForMemoryMode } = await import(
+      "@/agent/cloud-managed-system-prompt"
+    );
+    const cloudPromptResult = await reconcileCloudPromptForMemoryMode({
+      agent,
+      memoryMode: newMode,
+      storedPreset,
+      storedHash,
+    });
+    if (cloudPromptResult) {
+      return {
+        success: true,
+        message: cloudPromptResult,
+      };
+    }
+
     let nextSystemPrompt: string;
     if (storedPreset && isKnownPreset(storedPreset)) {
-      const agent = await getBackend().retrieveAgent(agentId);
       const currentSystemPrompt = agent.system || "";
       if (storedHash && hashSystemPrompt(currentSystemPrompt) !== storedHash) {
         if (settingsManager.isReady) {
@@ -917,11 +934,10 @@ export async function updateAgentSystemPromptMemfs(
 
       nextSystemPrompt = buildSystemPrompt(storedPreset, newMode);
     } else {
-      const agent = await getBackend().retrieveAgent(agentId);
       nextSystemPrompt = agent.system || "";
     }
 
-    await getBackend().updateAgent(agentId, {
+    await backend.updateAgent(agentId, {
       system: nextSystemPrompt,
     });
 

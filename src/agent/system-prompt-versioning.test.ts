@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents";
 import { buildSystemPrompt } from "@/agent/prompt-assets";
 import {
+  CLOUD_MANAGED_PROMPT_PRESET,
   decideManagedSystemPromptUpdate,
   hashSystemPrompt,
   resolveMemoryPromptMode,
@@ -112,6 +113,154 @@ describe("system prompt versioning", () => {
       kind: "noop",
       reason: "system prompt inherits backend default",
     });
+  });
+
+  test("lets Cloud inherit a bundled default despite stale custom metadata", () => {
+    const decision = decideManagedSystemPromptUpdate({
+      agent: agent(buildSystemPrompt("default", "memfs")),
+      memoryMode: "memfs",
+      isLettaCloud: true,
+      storedPreset: "custom",
+    });
+
+    expect(decision).toMatchObject({
+      kind: "inherit",
+      nextSystemPrompt: null,
+    });
+  });
+
+  test("lets Cloud inherit a still-managed old default", () => {
+    const oldDefault = buildSystemPrompt("default", "standard");
+    const decision = decideManagedSystemPromptUpdate({
+      agent: agent(oldDefault),
+      memoryMode: "root-memfs",
+      isLettaCloud: true,
+      storedPreset: "default",
+      storedHash: hashSystemPrompt(oldDefault),
+      storedVersion: "older-version",
+    });
+
+    expect(decision).toMatchObject({
+      kind: "inherit",
+      nextSystemPrompt: null,
+    });
+  });
+
+  test("does not rewrite a Cloud-managed prompt on later resumes", () => {
+    const inherited = decideManagedSystemPromptUpdate({
+      agent: agent(null),
+      memoryMode: "memfs",
+      isLettaCloud: true,
+      storedPreset: CLOUD_MANAGED_PROMPT_PRESET,
+    });
+    expect(inherited.kind).toBe("noop");
+
+    const customized = decideManagedSystemPromptUpdate({
+      agent: agent("SDK replaced the Cloud default"),
+      memoryMode: "memfs",
+      isLettaCloud: true,
+      storedPreset: CLOUD_MANAGED_PROMPT_PRESET,
+    });
+    expect(customized.kind).toBe("custom");
+  });
+
+  test("does not replace an SDK-created custom system prompt", () => {
+    for (const customPrompt of [
+      "A bespoke SDK system prompt",
+      `${buildSystemPrompt("default", "root-memfs")}\nSDK customization`,
+    ]) {
+      for (const tags of [[], ["origin:letta-code"]]) {
+        const decision = decideManagedSystemPromptUpdate({
+          agent: agent(customPrompt, tags),
+          memoryMode: "root-memfs",
+          isLettaCloud: true,
+        });
+
+        expect(decision.kind).toBe(tags.length ? "custom" : "noop");
+      }
+    }
+  });
+
+  test("does not migrate a bundled default when opted out or off Cloud", () => {
+    const oldDefault = buildSystemPrompt("default", "memfs");
+    for (const settings of [
+      { isLettaCloud: false },
+      { isLettaCloud: true, preserveCloudSystemPrompt: true },
+    ]) {
+      const decision = decideManagedSystemPromptUpdate({
+        agent: agent(oldDefault),
+        memoryMode: "memfs",
+        storedPreset: "custom",
+        ...settings,
+      });
+      expect(decision.kind).toBe("noop");
+    }
+
+    expect(
+      decideManagedSystemPromptUpdate({
+        agent: agent(oldDefault),
+        memoryMode: "root-memfs",
+        isLettaCloud: true,
+        preserveCloudSystemPrompt: true,
+        storedPreset: "default",
+        storedHash: hashSystemPrompt(oldDefault),
+        storedVersion: "older-version",
+      }).kind,
+    ).toBe("noop");
+  });
+
+  test("does not migrate a non-default named preset", () => {
+    const sourcePreset = buildSystemPrompt("source-claude", "standard");
+    const decision = decideManagedSystemPromptUpdate({
+      agent: agent(sourcePreset),
+      memoryMode: "root-memfs",
+      isLettaCloud: true,
+      storedPreset: "source-claude",
+      storedHash: hashSystemPrompt(sourcePreset),
+    });
+
+    expect(decision.kind).not.toBe("inherit");
+  });
+
+  test("keeps an explicitly selected letta preset even when its text matches default", () => {
+    const prompt = buildSystemPrompt("letta", "memfs");
+    const decision = decideManagedSystemPromptUpdate({
+      agent: agent(prompt),
+      memoryMode: "memfs",
+      isLettaCloud: true,
+      storedPreset: "letta",
+      storedHash: hashSystemPrompt(prompt),
+    });
+
+    expect(decision.kind).not.toBe("inherit");
+  });
+
+  test("does not migrate subagents or local-only bundled prompts", () => {
+    const bundled = buildSystemPrompt("default", "memfs");
+    expect(
+      decideManagedSystemPromptUpdate({
+        agent: agent(bundled, ["origin:letta-code", "role:subagent"]),
+        memoryMode: "memfs",
+        isLettaCloud: true,
+      }).kind,
+    ).toBe("noop");
+
+    const managedSubagent = decideManagedSystemPromptUpdate({
+      agent: agent(bundled, ["origin:letta-code", "role:subagent"]),
+      memoryMode: "root-memfs",
+      isLettaCloud: true,
+      storedPreset: "default",
+      storedHash: hashSystemPrompt(bundled),
+    });
+    expect(managedSubagent.kind).toBe("update");
+
+    expect(
+      decideManagedSystemPromptUpdate({
+        agent: agent(buildSystemPrompt("default", "local-memfs")),
+        memoryMode: "local-memfs",
+        isLettaCloud: true,
+      }).kind,
+    ).not.toBe("inherit");
   });
 
   test("does not replace a customized managed prompt when root layout is selected", () => {
