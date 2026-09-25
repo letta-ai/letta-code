@@ -89,6 +89,7 @@ test.skipIf(!process.env.LETTA_API_KEY)(
     function isTransientUploadFailure(
       result: Awaited<ReturnType<typeof cli>>,
     ): boolean {
+      if (result.code === 0) return false;
       const output = `${result.stdout}\n${result.stderr}`;
       return (
         result.code === 137 ||
@@ -102,6 +103,7 @@ test.skipIf(!process.env.LETTA_API_KEY)(
     ) {
       let result = await cli(["upload", ...args], ambient);
       if (isTransientUploadFailure(result)) {
+        await Bun.sleep(1000);
         result = await cli(["upload", ...args], ambient);
       }
       return result;
