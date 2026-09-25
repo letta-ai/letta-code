@@ -254,6 +254,33 @@ export async function prepareListenerTurn(params: {
   const hasUserMessage = messagesToSend.some(
     (message) => "role" in message && message.role === "user",
   );
+  // Snapshot before turn_start so a handler that persists a new conversation
+  // model can be distinguished from one that only injects context. Sending
+  // override_model for an unchanged model makes the server rebuild settings
+  // from the handle and drop stored reasoning effort and temperature.
+  let modelBeforeTurnStart: string | undefined;
+  let snapshottedTurnStartModel = false;
+  if (hasUserMessage && agentId) {
+    const adapters = await ensureListenerModAdaptersForAgent(
+      runtime.listener,
+      agentId,
+    );
+    const hasTurnStartHandler = adapters.some((adapter) => {
+      const handlers = adapter.getSnapshot().registry.events.turn_start;
+      return Array.isArray(handlers) && handlers.length > 0;
+    });
+    if (hasTurnStartHandler) {
+      try {
+        const conversation =
+          await getBackend().retrieveConversation(conversationId);
+        modelBeforeTurnStart = conversation.model ?? undefined;
+        snapshottedTurnStartModel = true;
+      } catch {
+        // A missed snapshot must not force override_model. Omitting it lets
+        // the server keep the conversation's stored model settings.
+      }
+    }
+  }
   const turnStartEmission =
     hasUserMessage && agentId
       ? await emitListenerTurnStart({
@@ -274,11 +301,14 @@ export async function prepareListenerTurn(params: {
   }
 
   let overrideModel: string | undefined;
-  if (turnStartEmission.handlerCount > 0) {
+  if (turnStartEmission.handlerCount > 0 && snapshottedTurnStartModel) {
     try {
       const conversation =
         await getBackend().retrieveConversation(conversationId);
-      overrideModel = conversation.model ?? undefined;
+      const modelAfterTurnStart = conversation.model ?? undefined;
+      if (modelAfterTurnStart && modelAfterTurnStart !== modelBeforeTurnStart) {
+        overrideModel = modelAfterTurnStart;
+      }
     } catch {
       // Model refresh is best-effort; mod failures must not block the turn.
     }
