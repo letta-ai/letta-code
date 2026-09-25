@@ -268,6 +268,11 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
 
   const debugMode = !!values.debug;
   if (debugMode) process.env.LETTA_DEBUG = "1";
+  // The interactive Ink status UI repaints on every status change. When stdout
+  // is not a TTY (systemd units with StandardOutput=journal, CI, pipes) every
+  // repaint becomes new journal lines and floods syslog, so fall back to the
+  // plain-text one-line logging path there. --debug forces it explicitly.
+  const plainLogMode = debugMode || !process.stdout.isTTY;
   const skillsDirectory = values.skills ?? process.env.LETTA_SKILLS_DIRECTORY;
 
   // Show help
@@ -424,9 +429,16 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   const sessionLog = new RemoteSessionLog();
   sessionLog.init();
   console.log(`Log file: ${sessionLog.path}`);
+  // Explain an implicit mode switch once, so operators know why the
+  // interactive UI is absent instead of debugging "total silence".
+  if (plainLogMode && !debugMode) {
+    console.log(
+      "stdout is not a TTY; logging one-line events instead of rendering the interactive status UI (pass --debug for verbose WebSocket event logs)",
+    );
+  }
   const logListenerMessage = (message: string): void => {
     sessionLog.log(message);
-    if (debugMode) console.log(`[${formatTimestamp()}] ${message}`);
+    if (plainLogMode) console.log(`[${formatTimestamp()}] ${message}`);
   };
 
   try {
@@ -560,7 +572,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
           ),
           onLog: (message) => {
             sessionLog.log(message);
-            if (debugMode) console.log(`[${formatTimestamp()}] ${message}`);
+            if (plainLogMode) console.log(`[${formatTimestamp()}] ${message}`);
           },
           onLifecycleEvent: (event) => {
             telemetry.trackChannelGatewayLifecycle({
@@ -652,14 +664,14 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             : undefined,
         onStatusChange: (status) => {
           sessionLog.log(`status: ${status}`);
-          if (debugMode) {
+          if (plainLogMode) {
             console.log(`[${formatTimestamp()}] status: ${status}`);
           }
         },
         onConnected: async () => {
           await startChannelGateway();
           sessionLog.log("Local channel listener ready.");
-          if (debugMode) {
+          if (plainLogMode) {
             console.log(`[${formatTimestamp()}] Local channel listener ready.`);
             console.log("");
           }
@@ -680,7 +692,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       );
     }
 
-    if (debugMode) {
+    if (plainLogMode) {
       console.log(
         `[${formatTimestamp()}] Registering with ${registerOptions.serverUrl}/v1/environments/register`,
       );
@@ -701,7 +713,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         sessionLog.log(
           `Initial registration retry ${attempt} in ${Math.round(delayMs / 1000)}s: ${error.message}`,
         );
-        if (debugMode) {
+        if (plainLogMode) {
           console.log(
             `[${formatTimestamp()}] Initial registration retry ${attempt} in ${Math.round(delayMs / 1000)}s: ${error.message}`,
           );
@@ -712,7 +724,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     sessionLog.log(`Registered: connectionId=${connectionId}`);
     sessionLog.log(`wsUrl: ${wsUrl}`);
 
-    if (debugMode) {
+    if (plainLogMode) {
       console.log(`[${formatTimestamp()}] Registered successfully`);
       console.log(`[${formatTimestamp()}]   connectionId: ${connectionId}`);
       console.log(`[${formatTimestamp()}]   wsUrl: ${wsUrl}`);
@@ -738,7 +750,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
           sessionLog.log(
             `Registration retry ${attempt} in ${Math.round(delayMs / 1000)}s: ${error.message}`,
           );
-          if (debugMode) {
+          if (plainLogMode) {
             console.log(
               `[${formatTimestamp()}] Registration retry ${attempt} in ${Math.round(delayMs / 1000)}s: ${error.message}`,
             );
@@ -749,10 +761,14 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       return result;
     };
 
+    // WS event capture stays explicit opt-in (--debug or LETTA_LOG_WS_EVENTS=1).
+    // Implicit non-TTY plain-log mode must not enable it: under systemd/journald
+    // every payload dump would flood the journal just like Ink repaints did.
     const shouldLogWsEvents =
       debugMode || process.env.LETTA_LOG_WS_EVENTS === "1";
 
-    // WS event logger: optionally writes to file, console only in --debug
+    // WS event logger: writes to file when enabled; console dump only under
+    // explicit --debug, not implicit non-TTY plain-log mode.
     const wsEventLogger = (
       direction: "send" | "recv",
       label: "client" | "protocol" | "control" | "lifecycle",
@@ -770,8 +786,10 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       }
     };
 
-    if (debugMode) {
-      // Debug mode: plain-text event logging, no Ink UI
+    if (plainLogMode) {
+      // Plain-text event logging, no Ink UI: explicit --debug, or stdout is
+      // not a TTY (systemd/journald, CI, pipes) where Ink repaints would flood
+      // the log with one frame per status change.
       const startDebugClient = async (
         connId: string,
         url: string,
@@ -850,8 +868,10 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         supportsPairedListenerGenerations,
       );
     } else {
-      // Normal mode: interactive Ink UI. On a first run keep the welcome banner
-      // and sign-in output on screen instead of clearing them.
+      // Normal mode: interactive Ink UI (only reached on a TTY — non-TTY
+      // stdout runs the plain-text path above so journal pipes don't get one
+      // repaint frame per status change). On a first run keep the welcome
+      // banner and sign-in output on screen instead of clearing them.
       if (!showedFirstRunWelcome) console.clear();
 
       let updateStatusCallback:
