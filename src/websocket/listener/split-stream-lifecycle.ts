@@ -1,6 +1,8 @@
 import { WebSocket } from "ws";
 import { isDebugEnabled } from "@/utils/debug";
 import { LISTENER_STREAM_OPEN_TIMEOUT_MS } from "./constants";
+import { recordListenerPong } from "./heartbeat";
+import { parseServerLifecycleMessage } from "./protocol-inbound";
 import { getActiveRuntime } from "./runtime";
 import type { ListenerTransport } from "./transport";
 import type { ListenerRuntime } from "./types";
@@ -356,6 +358,12 @@ export function attachSplitStreamSocketHandlers(params: {
   streamSocket: WebSocket;
   trackListenerError: TrackListenerError;
 }): void {
+  params.streamSocket.on("message", (data: WebSocket.RawData) => {
+    const lifecycleMessage = parseServerLifecycleMessage(data);
+    if (lifecycleMessage?.type === "pong") {
+      recordListenerPong(params.runtime, params.streamSocket);
+    }
+  });
   params.streamSocket.on("error", (error: Error) => {
     params.trackListenerError(
       "listener_stream_socket_error",
