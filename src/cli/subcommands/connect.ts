@@ -27,9 +27,13 @@ import { runCloudXaiOAuthConnectFlow } from "@/cli/commands/connect-xai-oauth";
 import {
   checkProviderApiKey,
   createOrUpdateProvider,
+  defaultProviderStorageTarget,
+  getProviderByNameStrict,
   isXaiOAuthProvider,
   type ProviderConnectionOptions,
   type ProviderOperationOptions,
+  type ProviderResponse,
+  type ProviderStorageTarget,
   providerStorageTargetLabel,
 } from "@/providers/byok-providers";
 import {
@@ -52,7 +56,12 @@ const CONNECT_OPTIONS = {
   name: { type: "string" },
   timeout: { type: "string" },
   "no-timeout": { type: "boolean" },
+  force: { type: "boolean" },
 } as const;
+
+// Provider names become model-handle prefixes (e.g. `my-endpoint/model`), so
+// restrict them to the same shape used for ChatGPT OAuth provider names.
+const CONNECT_PROVIDER_NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
 
 interface ConnectSubcommandDeps {
   stdout: (message: string) => void;
@@ -77,6 +86,11 @@ interface ConnectSubcommandDeps {
     profile?: string,
     options?: ProviderConnectionOptions,
   ) => Promise<unknown>;
+  getProviderByNameStrict: (
+    providerName: string,
+    options?: ProviderOperationOptions,
+  ) => Promise<ProviderResponse | null>;
+  confirmOverwrite: (message: string) => Promise<boolean>;
   isChatGPTOAuthConnected: (providerName?: string) => Promise<boolean>;
   runChatGPTOAuthConnectFlow: (
     callbacks: ChatGPTOAuthFlowCallbacks,
@@ -107,6 +121,8 @@ const DEFAULT_DEPS: ConnectSubcommandDeps = {
   promptSecret: promptSecret,
   checkProviderApiKey,
   createOrUpdateProvider,
+  getProviderByNameStrict,
+  confirmOverwrite,
   isChatGPTOAuthConnected: (providerName) =>
     isChatGPTOAuthConnected({
       getProvider: () =>
@@ -119,23 +135,31 @@ const DEFAULT_DEPS: ConnectSubcommandDeps = {
   providerStorageTargetLabel,
 };
 
-function formatUsage(): string {
+function formatUsage(
+  target: ProviderStorageTarget = defaultProviderStorageTarget(),
+): string {
+  const isLocal = target === "local";
   return [
     "Usage:",
     "  letta connect <provider> [options]",
     "",
     "Providers:",
-    `  ${listConnectProvidersForHelp().join("\n  ")}`,
+    `  ${listConnectProvidersForHelp(target).join("\n  ")}`,
     "",
     "Examples:",
     "  letta connect chatgpt",
-    "  letta connect chatgpt --name chatgpt-work",
+    ...(isLocal ? [] : ["  letta connect chatgpt --name chatgpt-work"]),
     "  letta connect grok",
     "  letta connect codex",
     "  letta connect codex --method device-code",
     "  letta connect anthropic <api_key>",
     "  letta connect openai --api-key <api_key>",
     "  letta connect openai-compatible --base-url http://localhost:8000/v1 [--api-key <api_key>]",
+    ...(isLocal
+      ? []
+      : [
+          "  letta connect openai-compatible --name my-endpoint --base-url http://localhost:8000/v1",
+        ]),
     "  letta connect ollama --base-url http://192.168.1.50:11434/v1",
     "  letta connect lmstudio --base-url http://127.0.0.1:1234/v1 --timeout 600s",
     "  letta connect llama-cpp --base-url http://localhost:8080/v1",
@@ -162,6 +186,49 @@ function connectionOptionsFromArgs(
 
 function hasConnectionOptions(options: ProviderConnectionOptions): boolean {
   return options.baseURL !== undefined || options.timeout !== undefined;
+}
+
+interface ProviderSlotSnapshot {
+  name: string;
+  provider_type?: string | null;
+  base_url?: string | null;
+}
+
+function formatProviderSlot(provider: ProviderSlotSnapshot): string {
+  const providerType = provider.provider_type?.trim() || "unknown type";
+  const baseURL = provider.base_url?.trim() || "provider default";
+  return `${provider.name} (${providerType}, base URL: ${baseURL})`;
+}
+
+/**
+ * Whether saving a new connection into an occupied provider slot changes what
+ * that slot points at. Call only after rejecting provider-type collisions:
+ * re-saving the same slot with a new credential for the same endpoint is a
+ * key rotation, not an overwrite.
+ */
+function overwriteChangesSlot(
+  existing: ProviderSlotSnapshot,
+  baseURL: string | undefined,
+): boolean {
+  const existingBaseURL = existing.base_url?.trim() || undefined;
+  const effectiveBaseURL = baseURL?.trim() || existingBaseURL;
+  return effectiveBaseURL !== existingBaseURL;
+}
+
+async function confirmOverwrite(message: string): Promise<boolean> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    return false;
+  }
+  const rl = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  try {
+    const answer = (await rl.question(message)).trim().toLowerCase();
+    return answer === "y" || answer === "yes";
+  } finally {
+    rl.close();
+  }
 }
 
 function normalizeOAuthLoginMethod(value: string): string {
@@ -238,7 +305,13 @@ export async function runConnectSubcommand(
   const [providerToken, ...restPositionals] = parsed.positionals;
 
   if (parsed.values.help || !providerToken || providerToken === "help") {
-    io.stdout(formatUsage());
+    const target =
+      (providerToken &&
+        providerToken !== "help" &&
+        (resolveConnectProvider(providerToken)?.target ??
+          resolveConnectProvider(providerToken, "local")?.target)) ||
+      defaultProviderStorageTarget();
+    io.stdout(formatUsage(target));
     return 0;
   }
 
@@ -483,37 +556,132 @@ export async function runConnectSubcommand(
       );
       return 1;
     }
-    apiKey ||= defaultConnectApiKey(provider) ?? "";
-    if (!apiKey && isConnectZaiBaseProvider(provider)) {
-      io.stdout(
-        "Do you have a Z.ai Coding plan?\n" +
-          "  • Coding plan:  letta connect zai-coding [--api-key <key>]\n" +
-          "  • Regular API:  letta connect zai [--api-key <key>]",
-      );
-      return 0;
-    }
-    if (!apiKey) {
-      if (!io.isTTY()) {
-        io.stderr(
-          `Missing API key for ${provider.canonical}. Pass as positional arg or --api-key.`,
-        );
-        return 1;
-      }
-      apiKey = await io.promptSecret(
-        `${provider.byokProvider.displayName} API key: `,
-      );
-    }
 
-    if (!apiKey) {
-      io.stderr("API key cannot be empty.");
+    const nameOption = readStringOption(parsed.values.name);
+    if (nameOption !== undefined && nameOption.trim() === "") {
+      io.stderr("Provider name cannot be empty.");
       return 1;
     }
+    const requestedName = nameOption?.trim();
+    if (requestedName && !CONNECT_PROVIDER_NAME_PATTERN.test(requestedName)) {
+      io.stderr(
+        "Provider name may only contain letters, numbers, dots, underscores, and hyphens.",
+      );
+      return 1;
+    }
+    if (requestedName && provider.target === "local") {
+      // The local runtime resolves endpoint providers through each spec's
+      // fixed localProviderNames, so a custom-named slot would be saved but
+      // never surfaced by /model. Reject instead of writing an unusable slot.
+      io.stderr(
+        `Custom provider names (--name) are not supported for local provider storage yet. Re-run without --name to update '${provider.byokProvider.providerName}'.`,
+      );
+      return 1;
+    }
+    const providerName = requestedName ?? provider.byokProvider.providerName;
 
     try {
-      io.stdout(`Validating ${provider.byokProvider.displayName} API key...`);
       if (provider.target !== "local") {
         await io.ensureSettingsReady();
       }
+
+      // The API-key connect flow writes one provider slot keyed by the
+      // provider name. When that slot is occupied by a different provider
+      // type or endpoint, replacing it silently can repoint models at another
+      // billing account, so the replacement must be explicit. The lookup is
+      // strict: a failed check must abort, not bypass the guard.
+      let existingProvider: ProviderResponse | null;
+      try {
+        existingProvider = await io.getProviderByNameStrict(providerName, {
+          target: provider.target,
+        });
+      } catch (error) {
+        io.stderr(
+          `Could not check for an existing provider named '${providerName}' in ${io.providerStorageTargetLabel()}: ${getErrorMessage(error)}. Nothing was changed.`,
+        );
+        return 1;
+      }
+      if (
+        existingProvider &&
+        existingProvider.provider_type !== provider.byokProvider.providerType
+      ) {
+        // The API update route PATCHes only the credential and base URL, so a
+        // confirmed overwrite cannot actually change the slot's provider
+        // type. Reject the collision instead of writing credentials whose
+        // stored provider type disagrees with them.
+        io.stderr(
+          `A provider named '${providerName}' already exists in ${io.providerStorageTargetLabel()}.\n` +
+            `  Existing: ${formatProviderSlot(existingProvider)}\n` +
+            `  New:      ${formatProviderSlot({
+              name: providerName,
+              provider_type: provider.byokProvider.providerType,
+              base_url: connectionOptions.baseURL,
+            })}\n` +
+            `Reconnecting cannot change a provider's type.` +
+            (provider.target === "local"
+              ? " Disconnect the existing provider with /connect first."
+              : " Pass a different provider name with --name, or disconnect the existing provider with /connect first."),
+        );
+        return 1;
+      }
+      if (
+        existingProvider &&
+        overwriteChangesSlot(existingProvider, connectionOptions.baseURL)
+      ) {
+        io.stdout(
+          `A provider named '${providerName}' already exists in ${io.providerStorageTargetLabel()}.\n` +
+            `  Existing: ${formatProviderSlot(existingProvider)}\n` +
+            `  New:      ${formatProviderSlot({
+              name: providerName,
+              provider_type: provider.byokProvider.providerType,
+              base_url: connectionOptions.baseURL,
+            })}\n` +
+            `Saving will replace the existing provider configuration.`,
+        );
+        const overwrite =
+          parsed.values.force === true ||
+          (await io.confirmOverwrite(
+            `Overwrite provider '${providerName}'? (y/N) `,
+          ));
+        if (!overwrite) {
+          const alternativeAdvice =
+            provider.target === "local"
+              ? "Re-run with --force to overwrite it."
+              : "Re-run with --force to overwrite it, or pass --name to save this connection under a different provider name.";
+          io.stderr(
+            `Aborted. Provider '${providerName}' was not changed. ${alternativeAdvice}`,
+          );
+          return 1;
+        }
+      }
+
+      apiKey ||= defaultConnectApiKey(provider) ?? "";
+      if (!apiKey && isConnectZaiBaseProvider(provider)) {
+        io.stdout(
+          "Do you have a Z.ai Coding plan?\n" +
+            "  • Coding plan:  letta connect zai-coding [--api-key <key>]\n" +
+            "  • Regular API:  letta connect zai [--api-key <key>]",
+        );
+        return 0;
+      }
+      if (!apiKey) {
+        if (!io.isTTY()) {
+          io.stderr(
+            `Missing API key for ${provider.canonical}. Pass as positional arg or --api-key.`,
+          );
+          return 1;
+        }
+        apiKey = await io.promptSecret(
+          `${provider.byokProvider.displayName} API key: `,
+        );
+      }
+
+      if (!apiKey) {
+        io.stderr("API key cannot be empty.");
+        return 1;
+      }
+
+      io.stdout(`Validating ${provider.byokProvider.displayName} API key...`);
       if (hasConnectionOptions(connectionOptions)) {
         // The API key must be validated against the user-supplied endpoint, not
         // the provider's default one, or third-party keys fail with a 401.
@@ -536,7 +704,7 @@ export async function runConnectSubcommand(
       if (hasConnectionOptions(connectionOptions)) {
         await io.createOrUpdateProvider(
           provider.byokProvider.providerType,
-          provider.byokProvider.providerName,
+          providerName,
           apiKey,
           undefined,
           undefined,
@@ -546,13 +714,13 @@ export async function runConnectSubcommand(
       } else {
         await io.createOrUpdateProvider(
           provider.byokProvider.providerType,
-          provider.byokProvider.providerName,
+          providerName,
           apiKey,
         );
       }
 
       io.stdout(
-        `Connected ${provider.byokProvider.displayName} (${provider.byokProvider.providerName}) in ${io.providerStorageTargetLabel()}.`,
+        `Connected ${provider.byokProvider.displayName} (${providerName}) in ${io.providerStorageTargetLabel()}.`,
       );
       return 0;
     } catch (error) {
