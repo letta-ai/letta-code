@@ -9,6 +9,7 @@ import initV2Prompt from "@/agent/subagents/builtin/init-v2.md";
 import memoryV2Prompt from "@/agent/subagents/builtin/memory-v2.md";
 import reflectionV2Prompt from "@/agent/subagents/builtin/reflection-v2.md";
 import { resolveAndBuildSystemPrompt } from "@/agent/system-prompt-resolution";
+import initializingMemoryPrompt from "@/skills/builtin/initializing-memory/SKILL.md";
 import memoryApplyPatchV2Prompt from "@/tools/descriptions/MemoryApplyPatchV2.md";
 import memoryV2ToolPrompt from "@/tools/descriptions/MemoryV2.md";
 
@@ -17,9 +18,8 @@ const HOSTED_EXTERNAL_MEMORY_INTRO =
 const LOCAL_EXTERNAL_MEMORY_INTRO =
   "External memory is stored outside of the system prompt, including both skills (procedural memory) and general-purpose files (markdown files, images, etc.).";
 
-// The initializing-memory skill is deliberately excluded: it is one file that
-// covers both layouts, so it names `system/` when describing legacy v1 memory.
 const ROOT_ONLY_PROMPT_ASSETS = [
+  initializingMemoryPrompt,
   initV2Prompt,
   memoryV2Prompt,
   reflectionV2Prompt,

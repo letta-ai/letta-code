@@ -9,20 +9,11 @@ Your memory is projected to a filesystem at `$MEMORY_DIR`, so you can restructur
 
 **You own this task through completion**: research, ask, synthesize, write, commit, verify. Delegate research, but integrate the results yourself — launching a background task is not completion. If a memory worker you launched is still editing this checkout, wait for it, then re-read before editing.
 
-## Which layout are you on?
-
-Settle this first; the layouts disagree about what is always loaded, how files are formatted, and what is validated.
-
-- **MemFS v2 (root-first)** — hosted MemFS *and* `$MEMORY_DIR/MEMORY.md` exists. Your system prompt describes root Markdown files as its editable segments.
-- **MemFS v1 (legacy)** — everything else: a `system/` directory, `[[wikilink]]` references, memory blocks in your system prompt. **The local backend is always v1, even when a root `MEMORY.md` exists** — the runtime ignores that file when classifying local memory, so a stray root marker does not make the v2 rules apply.
-
-Sections marked (v2) or (v1) apply only to that layout; everything unmarked applies to both. Do not migrate a v1 memory to root-first during `/init` — that is a separate, explicit decision.
-
 ## Principles
 
-**Core memory is your core program.** The core tier compiles into your system prompt on every call — root Markdown under v2, the `system/` blocks under v1. Spend it on what shapes ordinary turns: identity, preferences, behavioral rules, orientation, routes to everything else. Transient items (a ticket, a commit hash, session notes) dilute it.
+**Core memory is your core program.** Root Markdown compiles into your system prompt on every call. Spend it on what shapes ordinary turns: identity, preferences, behavioral rules, orientation, routes to everything else. Transient items (a ticket, a commit hash, session notes) dilute it.
 
-**Progressive disclosure.** Everything outside the core tier is deferred until something reads it — under v2 behind each directory's `MEMORY.md`, under v1 through `[[path]]` links into `reference/`. Each index describes its *immediate* children and when to read them, so you never load a whole topic to answer one question.
+**Progressive disclosure.** Nested Markdown is deferred until something reads it. Each directory's `MEMORY.md` describes its *immediate* children and when to read them, so you never load a whole topic to answer one question.
 
 **Don't duplicate context you can point to.** `AGENTS.md`, `CLAUDE.md`, `README`, and repo skills belong to the environment; any agent there reads them first-hand, and your copy goes stale first. Link the owner and keep only your delta: which rules you keep breaking, what they get wrong or omit. The same fact in two core files is the same tax twice. This is not licence to compress away what only you hold — stable preferences, chronic corrections, and real gotchas earn their space.
 
@@ -30,7 +21,7 @@ Sections marked (v2) or (v1) apply only to that layout; everything unmarked appl
 
 **Generalize, don't memorize, and be specific.** Store the pattern, not the episode, and give every preference or gotcha a concrete command, path, or the failure it prevents. "**Always use `uv` for Python** — chronic failure, never bare `python` or `pip`" is memory; "Prefers terse responses" and "on March 3rd we debugged a crash" are not.
 
-## Harness Constraints (v2)
+## Harness Constraints
 
 Validation enforces these; the rest of the layout is your judgment.
 
@@ -43,20 +34,11 @@ Nothing else is mandated — no filenames, no file count, no minimum depth. Root
 
 **Budget**: keep root under ~10% of your context window (~15-20k tokens). When it crowds that, move detail into an indexed child directory and leave a link — don't delete it.
 
-## Harness Constraints (v1)
-
-None of the v2 rules apply here — no root `MEMORY.md`, no per-directory indexes, no `name` key. Instead:
-
-- **Core tier is `system/`** (`system/persona.md`, `system/human.md`, the other projected blocks). Everything else is deferred, conventionally under `reference/`; the budget argument is the same, so keep `system/` compact.
-- **Every memory file, `system/` included, needs frontmatter with a non-empty `description`.** The only other permitted keys are `read_only` and `limit`, both protected: you may not add, change, or remove them.
-- **Discovery is `[[path]]` wikilinks** — `[[reference/api.md]]`, `[[skills/using-slack/SKILL.md]]` — not relative Markdown links.
-- Validation covers `system/` and `reference/` frontmatter only; it checks no indexes and no tree shape.
-
 ## Structure
 
 Derive structure from what you found. Put material in the core tier by how often you need it, not by how much of it there is. Use the project's real name (`orchard/overview.md`, not `project/overview.md`). Split when a topic needs separate retrieval; combine when splitting leaves two files of three lines each.
 
-**(v2)** Root `MEMORY.md` is a **map to what is not already loaded** — every other root file is in your system prompt already, so listing them back tells yourself what you can see:
+Root `MEMORY.md` is a **map to what is not already loaded** — every other root file is in your system prompt already, so listing them back tells yourself what you can see:
 
 ```markdown
 # MEMORY.md
@@ -70,9 +52,7 @@ Where the rest of what I know lives:
 
 An index pointing at nothing is worse than the content it displaced.
 
-**(v1)** Same discipline on the blocks: keep each `system/` file to what shapes every turn, move detail into `reference/` files with `description` frontmatter, and leave `[[reference/...]]` links behind.
-
-### Example Structures (v2)
+### Example Structures
 
 Illustrations, **not templates to fill in**.
 
@@ -196,9 +176,9 @@ It reports sessions analyzed, unread, excluded, export errors, and any dropped f
 **Consider skills.** If the history surfaces genuinely repeatable multi-step procedures, create them now (load `creating-skills`) or note the candidates in memory. Don't force it.
 
 ### 9. Verify
-- **Structure**: walk the Harness Constraints for your layout and check each one — (v2) root marker, per-directory indexes, frontmatter-free `MEMORY.md`, exactly `name`+`description` elsewhere; (v1) non-empty `description` everywhere, no `read_only`/`limit` added or changed, every `[[path]]` resolving. Either way, no `foo.md` beside `foo/`:
+- **Structure**: check root `MEMORY.md`, per-directory indexes, frontmatter-free `MEMORY.md`, and exactly `name`+`description` elsewhere. Avoid `foo.md` beside `foo/`:
   `find "$MEMORY_DIR" -name '*.md' | sed 's/\.md$//' | while read f; do [ -d "$f" ] && echo "VIOLATION: $f"; done`
-- **The core tier earns its place**: is root `MEMORY.md` (v2) or each `system/` block (v1) mostly pointing at things *not* already in your system prompt? If nearly everything sits in the always-loaded tier with one thin page behind it, you built a flat memory with an index bolted on — move the detail down and keep the links.
+- **Root earns its place**: does root `MEMORY.md` mostly point at things *not* already in your system prompt? If nearly everything sits in root with one thin page behind it, move the detail down and keep the links.
 - **No duplicated documentation**: grep your memory for rules `AGENTS.md`, `CLAUDE.md`, the README, or a repo skill already owns — especially a repo convention that landed in a file about the *human*.
 - **Granularity and naming**: one focused topic per file, named for what is in it using the project's real name; path and description say when to read it.
 - **Persona quality**: read it now. "I'm a coding assistant who follows the user's preferences" is behavior, not identity. Would you be recognizably the same agent on a different model tomorrow?
@@ -220,7 +200,7 @@ git status                        # Your memory changes should no longer be list
 git ls-tree -r --name-only HEAD   # What your future self will actually load
 ```
 
-Do **not** run `git push`. For remote MemFS agents the harness pushes clean committed memory automatically after the turn, so pushing by hand races it; for local-only memory there is nothing to push. Either way, the commit is the finish line.
+Do **not** run `git push`. The harness pushes clean committed memory automatically after the turn, so pushing by hand races it. The commit is the finish line.
 
 Only once the commit is verified, tell the user what you built and whether coverage was complete, then ask whether they want refinement — which means another commit, so repeat this step.
 

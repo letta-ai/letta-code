@@ -106,60 +106,36 @@ describe("Skill tool memory filesystem lookup", () => {
     ).rejects.toThrow('Skill "image-generation" not found');
   });
 
-  // A root `MEMORY.md` under the local backend is still v1 — the skill has to
-  // say so itself, because nothing routes a different file per layout.
-  test.each([
-    ["root-first memory", { rootMarker: true, localBackend: false }],
-    ["legacy v1 memory", { rootMarker: false, localBackend: false }],
-    [
-      "local backend with a root marker",
-      { rootMarker: true, localBackend: true },
-    ],
-  ])(
-    "init loads one skill covering both layouts for %s",
-    async (_label, { rootMarker, localBackend }) => {
-      process.env.HOME = tempRoot;
-      if (localBackend) {
-        process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = "1";
-      }
-      const scopedMemoryDir = join(
-        tempRoot,
-        ".letta",
-        "agents",
-        TEST_AGENT_ID,
-        "memory",
-      );
-      mkdirSync(scopedMemoryDir, { recursive: true });
-      if (rootMarker) {
-        writeFileSync(join(scopedMemoryDir, "MEMORY.md"), "# Memory\n");
-      } else {
-        mkdirSync(join(scopedMemoryDir, "system"), { recursive: true });
-      }
+  test("init loads the bundled v2 memory guidance", async () => {
+    process.env.HOME = tempRoot;
+    const scopedMemoryDir = join(
+      tempRoot,
+      ".letta",
+      "agents",
+      TEST_AGENT_ID,
+      "memory",
+    );
+    mkdirSync(scopedMemoryDir, { recursive: true });
+    writeFileSync(join(scopedMemoryDir, "MEMORY.md"), "# Memory\n");
 
-      const skillId = "initializing-memory";
-      const loaded = await readSkillContent(
-        skillId,
-        currentSkillsDirectory ?? join(tempRoot, ".skills"),
-        TEST_AGENT_ID,
-      );
-      expect(loaded.path).toEndWith(join(skillId, "SKILL.md"));
+    const skillId = "initializing-memory";
+    const loaded = await readSkillContent(
+      skillId,
+      currentSkillsDirectory ?? join(tempRoot, ".skills"),
+      TEST_AGENT_ID,
+    );
+    expect(loaded.path).toEndWith(join(skillId, "SKILL.md"));
 
-      const rendered = renderSkillContent(skillId, loaded.content, loaded.path);
-      expect(rendered).toContain("root `MEMORY.md`");
-      expect(rendered).toContain("## Harness Constraints (v2)");
-      expect(rendered).toContain("## Harness Constraints (v1)");
-      expect(rendered).toContain("Core tier is `system/`");
-      expect(rendered).toContain(
-        "The local backend is always v1, even when a root `MEMORY.md` exists",
-      );
-      expect(rendered).toContain("including quota");
-      expect(rendered).toContain("agent(historyPrompt, {label:");
-      expect(rendered).toContain("agent(codePrompt, {label:");
-      expect(rendered).toContain("schema: historySchema(cohort)");
-      expect(rendered).toContain("schema: codeSchema");
-      expect(rendered).toContain("If the Workflow tool is unavailable");
-    },
-  );
+    const rendered = renderSkillContent(skillId, loaded.content, loaded.path);
+    expect(rendered).toContain("root `MEMORY.md`");
+    expect(rendered).toContain("## Harness Constraints");
+    expect(rendered).toContain("including quota");
+    expect(rendered).toContain("agent(historyPrompt, {label:");
+    expect(rendered).toContain("agent(codePrompt, {label:");
+    expect(rendered).toContain("schema: historySchema(cohort)");
+    expect(rendered).toContain("schema: codeSchema");
+    expect(rendered).toContain("If the Workflow tool is unavailable");
+  });
 
   test("loads skills from MEMORY_DIR/skills", async () => {
     const skillName = "memfs-only-skill";
