@@ -405,6 +405,7 @@ export async function createAgent(
     description: agentDescription,
     model: modelHandle,
     system: systemPromptContent,
+    isLettaCloud,
     memoryPromptMode: memMode,
     memoryBlocks:
       filteredMemoryBlocks.length > 0 ? filteredMemoryBlocks : undefined,

@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   dequeueConversationMessage,
   enqueueConversationMessage,
+  getExactSuperRun,
 } from "./conversation-enqueue";
 import { ApiRequestError, apiRequest } from "./request";
 
@@ -65,6 +66,36 @@ test.each(["default", "conv-1"])(
     ).toMatchObject({ status: "dequeued" });
   },
 );
+
+test("exact Super Run read stays scoped to its owning agent and receipt ID", async () => {
+  const signal = new AbortController().signal;
+  const request: typeof apiRequest = async <T>(
+    method: string,
+    path: string,
+    body?: Record<string, unknown>,
+    options = {},
+  ) => {
+    expect(method).toBe("GET");
+    expect(path).toBe("/v1/agents/agent%2F1/super-runs/sr%2F1");
+    expect(body).toBeUndefined();
+    expect(options).toEqual({ signal });
+    return {
+      id: "sr/1",
+      status: "COM",
+      completed_at: "now",
+      cancelled_at: null,
+      errored_at: null,
+    } as T;
+  };
+
+  expect(await getExactSuperRun("agent/1", "sr/1", signal, request)).toEqual({
+    id: "sr/1",
+    status: "COM",
+    completed_at: "now",
+    cancelled_at: null,
+    errored_at: null,
+  });
+});
 
 test.each([undefined, "My laptop", "cloud"])(
   "enqueue passes the selector and stable message ID: %s",

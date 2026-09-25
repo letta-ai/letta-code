@@ -4,6 +4,7 @@ import type {
   EnqueueReceipt,
   LatestConversationSuperRun,
 } from "@/backend/api/conversation-enqueue";
+import { ApiRequestError } from "@/backend/api/request";
 import {
   type SuperRunWaitDeps,
   waitForAcceptedSuperRun,
@@ -56,8 +57,9 @@ async function* events(
 }
 function deps(extra: Partial<SuperRunWaitDeps> = {}): SuperRunWaitDeps {
   return {
-    latest: async () => row(),
-    open: async () => events(snapshot(), snapshot(false)),
+    exact: async () => row(),
+    open: async () =>
+      events(snapshot(), { type: "super_run_update", data: row("COM") }),
     messages: async () => [
       {
         id: "msg-1",
@@ -72,7 +74,7 @@ function deps(extra: Partial<SuperRunWaitDeps> = {}): SuperRunWaitDeps {
   };
 }
 
-test("existing active-to-idle feed yields one completion and collects an observed reply", async () => {
+test("exact terminal update yields one completion and collects an observed reply", async () => {
   const result = await waitForAcceptedSuperRun(
     receipt,
     new AbortController().signal,
@@ -81,12 +83,16 @@ test("existing active-to-idle feed yields one completion and collects an observe
   expect(result.text).toBe("Done");
   expect(result.runIds).toEqual(["run-1"]);
 });
-test("fast completion before subscription still produces a notification without a mandatory reply", async () => {
+test("exact completed row before subscription produces a notification without a mandatory reply", async () => {
   const result = await waitForAcceptedSuperRun(
     receipt,
     new AbortController().signal,
     deps({
-      latest: async () => row("COM"),
+      exact: async (agentId, superRunId) => {
+        expect(agentId).toBe("agent-1");
+        expect(superRunId).toBe("sr-1");
+        return row("COM");
+      },
       open: async () => {
         throw new Error("must not subscribe");
       },
@@ -113,16 +119,15 @@ test("transient status-read failure retries, and listener recovery remains activ
     receipt,
     new AbortController().signal,
     deps({
-      latest: async () => {
+      exact: async () => {
         if (++reads === 1) throw new Error("fetch failed");
         return row();
       },
       open: async () =>
-        events(
-          snapshot(true, "quota-failed"),
-          snapshot(true, "recovered"),
-          snapshot(false),
-        ),
+        events(snapshot(true, "quota-failed"), snapshot(true, "recovered"), {
+          type: "super_run_update",
+          data: row("COM"),
+        }),
       messages: async (id) => {
         expect(id).toBe("recovered");
         return [];
@@ -132,32 +137,41 @@ test("transient status-read failure retries, and listener recovery remains activ
   expect(reads).toBeGreaterThan(1);
   expect(result.runIds).toEqual(["quota-failed", "recovered"]);
 });
-test("default conversation completes from its existing Cloud snapshot, without unsupported GET", async () => {
+test("default conversation completes from the exact accepted row", async () => {
   const result = await waitForAcceptedSuperRun(
     { ...receipt, conversation_id: "default" },
     new AbortController().signal,
     deps({
-      latest: async () => {
-        throw new Error("unsupported default GET");
+      exact: async (agentId, superRunId) => {
+        expect(agentId).toBe("agent-1");
+        expect(superRunId).toBe("sr-1");
+        return row("COM");
       },
-      open: async () => events(snapshot(false)),
+      open: async () => {
+        throw new Error("must not subscribe");
+      },
     }),
   );
   expect(result.text).toContain("--conversation default");
 });
-test("a newer send does not make us wait on unrelated work or collect its messages", async () => {
+test("an unrelated terminal update cannot complete the accepted send", async () => {
   const result = await waitForAcceptedSuperRun(
     receipt,
     new AbortController().signal,
     deps({
-      latest: async () => ({ ...row(), id: "newer-send" }),
-      open: async () => events(snapshot(false)),
-      messages: async () => {
-        throw new Error("must not read unrelated messages");
-      },
+      open: async () =>
+        events(
+          snapshot(),
+          {
+            type: "super_run_update",
+            data: { ...row("COM"), id: "newer-send" },
+          },
+          { type: "super_run_update", data: row("COM") },
+        ),
     }),
   );
-  expect(result.runIds).toEqual([]);
+  expect(result.text).toBe("Done");
+  expect(result.runIds).toEqual(["run-1"]);
 });
 test("dropped stream reconnects and preserves observed run mappings", async () => {
   let opens = 0;
@@ -166,20 +180,90 @@ test("dropped stream reconnects and preserves observed run mappings", async () =
     new AbortController().signal,
     deps({
       open: async () =>
-        ++opens === 1 ? events(snapshot()) : events(snapshot(false)),
+        ++opens === 1
+          ? events(snapshot())
+          : events({ type: "super_run_update", data: row("COM") }),
     }),
   );
   expect(opens).toBe(2);
   expect(result.text).toBe("Done");
+});
+test("an empty active snapshot cannot report success without exact terminal evidence", async () => {
+  const controller = new AbortController();
+  let reads = 0;
+  await expect(
+    waitForAcceptedSuperRun(
+      receipt,
+      controller.signal,
+      deps({
+        exact: async () => {
+          if (++reads === 2) controller.abort();
+          return row();
+        },
+        open: async () => events(snapshot(false)),
+        messages: async () => {
+          throw new Error("must not collect a reply");
+        },
+      }),
+    ),
+  ).rejects.toThrow();
+  expect(reads).toBeGreaterThan(1);
 });
 test("explicit terminal cancellation is reported", async () => {
   await expect(
     waitForAcceptedSuperRun(
       receipt,
       new AbortController().signal,
-      deps({ latest: async () => row("CAN") }),
+      deps({ exact: async () => row("CAN") }),
     ),
   ).rejects.toThrow("cancelled");
+});
+test("exact terminal error is reported", async () => {
+  await expect(
+    waitForAcceptedSuperRun(
+      receipt,
+      new AbortController().signal,
+      deps({
+        exact: async () => ({ ...row("COM"), errored_at: "now" }),
+      }),
+    ),
+  ).rejects.toThrow("finished with an error");
+});
+test("post-accept error is reported before the row reaches COM", async () => {
+  await expect(
+    waitForAcceptedSuperRun(
+      receipt,
+      new AbortController().signal,
+      deps({
+        exact: async () => ({ ...row("STR"), errored_at: "now" }),
+      }),
+    ),
+  ).rejects.toThrow("finished with an error");
+});
+test("an exact-ID 404 fails instead of retrying forever", async () => {
+  let reads = 0;
+  await expect(
+    waitForAcceptedSuperRun(
+      receipt,
+      new AbortController().signal,
+      deps({
+        exact: async () => {
+          reads++;
+          throw new ApiRequestError("not found", 404, "not found");
+        },
+      }),
+    ),
+  ).rejects.toThrow("was not found for agent agent-1");
+  expect(reads).toBe(1);
+});
+test("a mismatched exact response cannot complete the accepted send", async () => {
+  await expect(
+    waitForAcceptedSuperRun(
+      receipt,
+      new AbortController().signal,
+      deps({ exact: async () => ({ ...row("COM"), id: "another-send" }) }),
+    ),
+  ).rejects.toThrow("another-send");
 });
 test("abort interrupts background retries", async () => {
   const controller = new AbortController();
@@ -188,7 +272,7 @@ test("abort interrupts background retries", async () => {
       receipt,
       controller.signal,
       deps({
-        latest: async () => {
+        exact: async () => {
           controller.abort();
           throw new Error("offline");
         },

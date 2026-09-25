@@ -65,6 +65,7 @@ export interface ExternalCodingAgentProcessResult {
 }
 
 export interface ExternalCodingAgentDependencies {
+  runCodexTurn?: typeof runCodexTurn;
   runProcess?: (
     command: ExternalCodingAgentCommand,
     options: {
@@ -285,9 +286,7 @@ async function defaultRunPreflight(
 }
 
 function preflightArgs(type: ExternalCodingAgentType): string[] {
-  return type === "claude-code"
-    ? ["auth", "status", "--json"]
-    : ["login", "status"];
+  return type === "claude-code" ? ["auth", "status", "--json"] : ["--version"];
 }
 
 function assertPreflightReady(
@@ -306,7 +305,9 @@ function assertPreflightReady(
     return;
   }
   throw new Error(
-    `${type} authentication is not ready${output ? `: ${output}` : ""}`,
+    type === "codex"
+      ? `Codex executable is not ready${output ? `: ${output}` : ""}`
+      : `${type} authentication is not ready${output ? `: ${output}` : ""}`,
   );
 }
 
@@ -390,7 +391,10 @@ export async function runExternalCodingAgent(
         options.signal,
       );
       assertPreflightReady("codex", preflight);
-      return runCodexTurn(
+      // The managed sandbox wrapper authenticates model requests with its
+      // sandbox key, not native `codex login`. A real app-server turn is the
+      // authority on whether the configured provider can answer.
+      return (deps.runCodexTurn ?? runCodexTurn)(
         {
           prompt: options.prompt,
           parentAgentId: options.parentAgentId,
