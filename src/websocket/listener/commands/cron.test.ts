@@ -8,6 +8,7 @@ import type { SafeSocketSend } from "@/websocket/listener/commands/types";
 
 const TEST_DIR = path.join(import.meta.dir, "__cron_command_test_tmp__");
 const originalHome = process.env.LETTA_HOME;
+const originalDaytonaSandboxId = process.env.DAYTONA_SANDBOX_ID;
 
 let messages: unknown[];
 const socket = {} as WebSocket;
@@ -20,6 +21,7 @@ beforeEach(() => {
   if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
   mkdirSync(TEST_DIR, { recursive: true });
   process.env.LETTA_HOME = TEST_DIR;
+  delete process.env.DAYTONA_SANDBOX_ID;
   messages = [];
 });
 
@@ -27,6 +29,11 @@ afterEach(() => {
   if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
   if (originalHome) process.env.LETTA_HOME = originalHome;
   else delete process.env.LETTA_HOME;
+  if (originalDaytonaSandboxId) {
+    process.env.DAYTONA_SANDBOX_ID = originalDaytonaSandboxId;
+  } else {
+    delete process.env.DAYTONA_SANDBOX_ID;
+  }
 });
 
 function addRecurringTask() {
@@ -40,6 +47,36 @@ function addRecurringTask() {
     prompt: "Do the work",
   }).task;
 }
+
+test("managed Cloud sandbox rejects local schedule creation", async () => {
+  process.env.DAYTONA_SANDBOX_ID = "sandbox-runtime";
+
+  await handleCronCommand(
+    {
+      type: "cron_add",
+      request_id: "add-1",
+      agent_id: "agent-1",
+      conversation_id: "conv-1",
+      name: "Local task",
+      description: "Must not persist in Cloud",
+      cron: "*/5 * * * *",
+      timezone: "UTC",
+      recurring: true,
+      prompt: "Do the work",
+    },
+    socket,
+    safeSocketSend,
+  );
+
+  expect(messages).toEqual([
+    expect.objectContaining({
+      type: "cron_add_response",
+      request_id: "add-1",
+      success: false,
+      error: expect.stringContaining("managed Cloud sandbox"),
+    }),
+  ]);
+});
 
 describe("cron pause and resume commands", () => {
   test("pause and resume return the persisted task and emit crons_updated", async () => {

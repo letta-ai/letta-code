@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +8,19 @@ import { runWithRuntimeContext } from "@/runtime-context";
 import { wake } from "./wake";
 
 const NOW = new Date("2026-09-24T05:00:00.000Z");
+const originalDaytonaSandboxId = process.env.DAYTONA_SANDBOX_ID;
+
+beforeEach(() => {
+  delete process.env.DAYTONA_SANDBOX_ID;
+});
+
+afterEach(() => {
+  if (originalDaytonaSandboxId) {
+    process.env.DAYTONA_SANDBOX_ID = originalDaytonaSandboxId;
+  } else {
+    delete process.env.DAYTONA_SANDBOX_ID;
+  }
+});
 const SCOPE = {
   agentId: "agent-test",
   conversationId: "conv-current",
@@ -128,7 +141,7 @@ describe("Wake", () => {
     });
   });
 
-  test("preserves local fallback placement and an explicit timezone", async () => {
+  test("preserves local placement and an explicit timezone", async () => {
     let captured: unknown;
     const result = await inScope(() =>
       wake(
@@ -145,10 +158,7 @@ describe("Wake", () => {
             scheduled_messages: [],
             has_next_page: false,
           }),
-          resolvePlacement: async () => ({
-            runner: "local" as const,
-            localFallbackNote: "This wake needs a local listener.",
-          }),
+          resolvePlacement: async () => ({ runner: "local" as const }),
           addLocal: (input) => {
             captured = input;
             return { task: localTask(), warning: "No listener is running." };
@@ -167,14 +177,12 @@ describe("Wake", () => {
     expect(payload(result)).toMatchObject({
       id: "schedule-local",
       runner: "local",
-      warnings: [
-        "This wake needs a local listener.",
-        "No listener is running.",
-      ],
+      warnings: ["No listener is running."],
     });
   });
 
-  test("lists only wakes bound to the current conversation", async () => {
+  test("lists only Cloud wakes bound to the current conversation in managed Cloud", async () => {
+    process.env.DAYTONA_SANDBOX_ID = "sandbox-runtime";
     const result = await inScope(() =>
       wake(
         { action: "list" },
@@ -200,14 +208,12 @@ describe("Wake", () => {
     expect(payload(result)).toMatchObject({
       action: "listed",
       conversation_id: SCOPE.conversationId,
-      wakes: [
-        { id: "schedule-local", runner: "local" },
-        { id: "schedule-cloud", runner: "cloud" },
-      ],
+      wakes: [{ id: "schedule-cloud", runner: "cloud" }],
     });
   });
 
   test("cancels only a wake visible in the current conversation", async () => {
+    process.env.DAYTONA_SANDBOX_ID = "sandbox-runtime";
     const deleted: string[] = [];
     const deps = {
       listLocal: () => [],

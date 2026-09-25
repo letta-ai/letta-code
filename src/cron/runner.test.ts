@@ -3,111 +3,56 @@ import {
   buildCloudScheduleInput,
   CLOUD_CRON_UTC_NOTE,
   CLOUD_DEVICE_FALLBACK_NOTE,
+  isManagedCloudSandbox,
   resolveCronRunner,
-  resolveInferredTargetDevice,
   validateTargetDevice,
 } from "./runner";
 
 describe("resolveCronRunner", () => {
-  test("cloud agent defaults to cloud runner when server supports schedules", () => {
-    const result = resolveCronRunner({
-      agentId: "agent-123",
-      backendMode: "api",
-      cloudSchedulesSupported: true,
-    });
-    expect(result).toMatchObject({ runner: "cloud" });
+  test("managed Cloud sandbox uses Cloud schedules", () => {
+    expect(
+      resolveCronRunner({
+        managedCloudSandbox: true,
+        backendMode: "api",
+        cloudSchedulesSupported: true,
+      }),
+    ).toMatchObject({ runner: "cloud" });
   });
 
-  test("cloud agent resolves to cloud candidate pre-probe", () => {
-    // Default policy is agent-identity based, not environment based: a cloud
-    // agent scheduled from a VPS/laptop/sandbox still gets the cloud runner.
-    const result = resolveCronRunner({
-      agentId: "agent-abc",
-      backendMode: "api",
-    });
-    expect(result).toMatchObject({ runner: "cloud" });
+  test("Cloud API-backed local execution uses local schedules", () => {
+    expect(
+      resolveCronRunner({
+        managedCloudSandbox: false,
+        backendMode: "api",
+        cloudSchedulesSupported: true,
+      }),
+    ).toMatchObject({ runner: "local" });
   });
 
-  test("--runner local overrides the cloud default", () => {
+  test("managed Cloud sandbox never falls back when schedule routes fail", () => {
     const result = resolveCronRunner({
-      explicit: "local",
-      agentId: "agent-123",
-      backendMode: "api",
-      cloudSchedulesSupported: true,
-    });
-    expect(result).toMatchObject({ runner: "local" });
-  });
-
-  test("local-backend agent defaults to local runner", () => {
-    const result = resolveCronRunner({
-      agentId: "agent-local-123",
-      backendMode: "api",
-    });
-    expect(result).toMatchObject({ runner: "local" });
-  });
-
-  test("local backend mode defaults to local runner", () => {
-    const result = resolveCronRunner({
-      agentId: "agent-123",
-      backendMode: "local",
-    });
-    expect(result).toMatchObject({ runner: "local" });
-  });
-
-  test("server without schedule routes defaults to local runner", () => {
-    const result = resolveCronRunner({
-      agentId: "agent-123",
+      managedCloudSandbox: true,
       backendMode: "api",
       cloudSchedulesSupported: false,
     });
-    expect(result).toMatchObject({ runner: "local" });
+    expect(result).toEqual({
+      error:
+        "Cloud schedules are unavailable in this managed Cloud sandbox. No local schedule was created.",
+    });
   });
 
-  test("--runner cloud errors for local-backend agents", () => {
-    const result = resolveCronRunner({
-      explicit: "cloud",
-      agentId: "agent-local-123",
-      backendMode: "api",
-    });
-    expect("error" in result).toBe(true);
-  });
-
-  test("--runner cloud errors in local backend mode", () => {
-    const result = resolveCronRunner({
-      explicit: "cloud",
-      agentId: "agent-123",
-      backendMode: "local",
-    });
-    expect("error" in result).toBe(true);
-  });
-
-  test("--runner cloud errors when server lacks schedule routes", () => {
-    const result = resolveCronRunner({
-      explicit: "cloud",
-      agentId: "agent-123",
-      backendMode: "api",
-      cloudSchedulesSupported: false,
-    });
-    expect("error" in result).toBe(true);
-  });
-
-  test("--runner cloud is honored for cloud agents", () => {
-    const result = resolveCronRunner({
-      explicit: "cloud",
-      agentId: "agent-123",
-      backendMode: "api",
-      cloudSchedulesSupported: true,
-    });
-    expect(result).toMatchObject({ runner: "cloud" });
-  });
-
-  test("invalid --runner value errors", () => {
-    const result = resolveCronRunner({
-      explicit: "remote",
-      agentId: "agent-123",
-      backendMode: "api",
-    });
-    expect("error" in result).toBe(true);
+  test("Daytona sandbox identity is independent of listener device identity", () => {
+    expect(
+      isManagedCloudSandbox({
+        DAYTONA_SANDBOX_ID: "sandbox-runtime",
+        LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID: "unregistered-device",
+      }),
+    ).toBe(true);
+    expect(
+      isManagedCloudSandbox({
+        LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID: "sandbox-looking-device",
+      }),
+    ).toBe(false);
   });
 });
 
@@ -223,7 +168,7 @@ describe("validateTargetDevice", () => {
     });
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error).toContain("--runner cloud");
+      expect(result.error).toContain("Omit --computer");
     }
   });
 
@@ -245,75 +190,4 @@ describe("validateTargetDevice", () => {
       expect(result.error).toContain("local desktop connection");
     }
   });
-});
-
-describe("resolveInferredTargetDevice", () => {
-  const onlineEnvironment = {
-    id: "environment-1",
-    connectionId: "connection-1",
-    deviceId: "device-external-1",
-    connectionName: "external listener",
-    organizationId: "org-1",
-    podId: null,
-    connectedAt: Date.now(),
-    lastHeartbeat: Date.now(),
-    lastSeenAt: Date.now(),
-    firstSeenAt: Date.now(),
-  };
-
-  test("accepts a registered online external listener", async () => {
-    expect(
-      await resolveInferredTargetDevice(
-        onlineEnvironment.deviceId,
-        async () => onlineEnvironment,
-      ),
-    ).toEqual({ kind: "device" });
-  });
-
-  test("resolves a managed sandbox runtime to the untargeted Cloud sandbox without a registry lookup", async () => {
-    // Sandbox rows can be registered/online in the environments registry, but
-    // individual sandboxes get retired and recreated, so one must never be
-    // pinned as a device target. The lookup must not even run.
-    expect(
-      await resolveInferredTargetDevice("sandbox-agent-example", async () => {
-        throw new Error("registry lookup should not run for sandbox ids");
-      }),
-    ).toEqual({ kind: "cloud-sandbox" });
-  });
-
-  test.each([
-    ["unregistered", "device-missing", null],
-    [
-      "offline",
-      "device-external-1",
-      {
-        ...onlineEnvironment,
-        connectionId: null,
-        lastHeartbeat: Date.now() - 300_000,
-      },
-    ],
-    [
-      "Desktop-local",
-      "device-local-1",
-      {
-        ...onlineEnvironment,
-        deviceId: "device-local-1",
-        organizationId: "local",
-      },
-    ],
-    ["synthetic local", "local", null],
-    ["synthetic Cloud", "__letta_cloud__", null],
-  ])(
-    "resolves %s identities to the local-runner fallback",
-    async (_label, deviceId, environment) => {
-      const result = await resolveInferredTargetDevice(
-        deviceId,
-        async () => environment,
-      );
-      expect(result.kind).toBe("local-fallback");
-      if (result.kind === "local-fallback") {
-        expect(result.reason.length).toBeGreaterThan(0);
-      }
-    },
-  );
 });

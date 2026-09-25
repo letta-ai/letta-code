@@ -6,7 +6,6 @@ import {
   deleteCloudSchedule,
   listCloudSchedules,
 } from "@/backend/api/schedules";
-import { resolveBackendMode } from "@/backend/backend-mode";
 import {
   type AddTaskInput,
   addTask,
@@ -19,6 +18,7 @@ import {
 import {
   buildCloudScheduleInput,
   CLOUD_EXECUTION_TARGET,
+  isManagedCloudSandbox,
   resolveCronCreatePlacement,
 } from "@/cron/runner";
 import { getRuntimeActingUserId, getRuntimeContext } from "@/runtime-context";
@@ -213,19 +213,17 @@ async function listCurrentWakes(
   args: WakeArgs,
   deps: WakeDeps,
 ): Promise<{ wakes: WakeRecord[]; warnings: string[] }> {
-  const localTasks = (deps.listLocal ?? listTasks)({
-    agent_id: scope.agentId,
-    conversation_id: scope.conversationId,
-  });
-  const wakes = localTasks
-    .filter((task) => task.status === "active" || task.status === "paused")
-    .map(localWakeRecord);
+  const wakes = isManagedCloudSandbox()
+    ? []
+    : (deps.listLocal ?? listTasks)({
+        agent_id: scope.agentId,
+        conversation_id: scope.conversationId,
+      })
+        .filter((task) => task.status === "active" || task.status === "paused")
+        .map(localWakeRecord);
   const warnings: string[] = [];
 
-  if (
-    resolveBackendMode() === "local" ||
-    scope.agentId.startsWith("agent-local-")
-  ) {
+  if (!isManagedCloudSandbox()) {
     return { wakes, warnings };
   }
 
@@ -349,11 +347,9 @@ async function createWake(
     scheduled_for: timing.scheduledFor,
   };
   const created = (deps.addLocal ?? addTask)(input);
-  const warnings = [
-    ...current.warnings,
-    placement.localFallbackNote,
-    created.warning,
-  ].filter((warning): warning is string => Boolean(warning));
+  const warnings = [...current.warnings, created.warning].filter(
+    (warning): warning is string => Boolean(warning),
+  );
   return result("success", {
     action: "created",
     id: created.task.id,

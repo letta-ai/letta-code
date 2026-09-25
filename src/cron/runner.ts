@@ -7,25 +7,17 @@
  * - "cloud": durable Cloud schedules (`/v1/agents/:id/schedule`), fired by a
  *   cloud worker into a target listener or the agent's managed Cloud sandbox.
  *
- * Default policy: cloud agents get the cloud runner everywhere. When no runner
- * or computer is explicit, creation preserves execution locality: an external
- * listener becomes the schedule's target, and a managed sandbox runtime keeps
- * the untargeted schedule (which already fires in the agent's Cloud sandbox).
- * `--runner cloud` deliberately selects the managed Cloud sandbox;
- * `--runner local` selects process-local storage. Local-backend agents
- * (`agent-local-*`) always use the local runner, and servers that don't serve
- * the Cloud schedule routes (self-hosted OSS core) fall back to it.
+ * Runner ownership follows the execution environment:
+ * - Letta-managed Cloud sandboxes use durable Cloud schedules.
+ * - User-managed computers and self-hosted runtimes use local schedules.
  *
- * Cloud support is determined by probing the schedule route, not by
- * inspecting the base URL: managed sandboxes and Desktop sessions point
- * LETTA_BASE_URL at a localhost proxy that forwards to the Letta API, so URL
- * shape says nothing about capability.
+ * `DAYTONA_SANDBOX_ID` is injected by the managed sandbox platform and inherited
+ * by child CLI processes. Device registration is not an execution-environment
+ * signal: Cloud API-backed laptops are still local computers, and a managed
+ * sandbox may have a transient or unregistered listener device id.
  */
 
-import {
-  type EnvironmentConnection,
-  isEnvironmentOnline,
-} from "@/backend/api/environments";
+import type { EnvironmentConnection } from "@/backend/api/environments";
 import { ApiRequestError } from "@/backend/api/request";
 import { listCloudSchedules } from "@/backend/api/schedules";
 import { resolveBackendMode } from "@/backend/backend-mode";
@@ -34,18 +26,19 @@ export type CronRunner = "local" | "cloud";
 
 export const CLOUD_EXECUTION_TARGET = "cloud-sandbox";
 
+export const MANAGED_CLOUD_SANDBOX_ID_ENV = "DAYTONA_SANDBOX_ID";
+
+export function isManagedCloudSandbox(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return Boolean(env[MANAGED_CLOUD_SANDBOX_ID_ENV]?.trim());
+}
+
 export interface ResolveCronRunnerParams {
-  /** Explicit `--runner` flag value, if provided. */
-  explicit?: string;
-  agentId: string;
+  managedCloudSandbox: boolean;
   /** Active backend mode ("api" | "local"). */
   backendMode: "api" | "local";
-  /**
-   * Whether the configured server serves the Cloud schedule routes, when
-   * known (from probing `GET /v1/agents/:id/schedule`). Omit for the
-   * pre-probe pass: cloud-eligible agents then resolve to "cloud" as a
-   * candidate, and the caller re-resolves once support is known.
-   */
+  /** Whether the configured server serves the Cloud schedule routes. */
   cloudSchedulesSupported?: boolean;
 }
 
@@ -53,55 +46,30 @@ export type ResolveCronRunnerResult =
   | { runner: CronRunner; reason: string }
   | { error: string };
 
-function isLocalAgent(agentId: string): boolean {
-  return agentId.startsWith("agent-local-");
-}
-
 export function resolveCronRunner(
   params: ResolveCronRunnerParams,
 ): ResolveCronRunnerResult {
-  const { explicit, agentId, backendMode, cloudSchedulesSupported } = params;
+  const { managedCloudSandbox, backendMode, cloudSchedulesSupported } = params;
 
-  if (explicit !== undefined && explicit !== "local" && explicit !== "cloud") {
+  if (!managedCloudSandbox) {
+    return { runner: "local", reason: "local execution environment" };
+  }
+
+  if (backendMode === "local") {
     return {
-      error: `invalid --runner "${explicit}". Expected "local" or "cloud".`,
+      error:
+        "Managed Cloud sandboxes cannot use the local backend for schedules.",
     };
-  }
-
-  if (explicit === "local") {
-    return { runner: "local", reason: "explicit --runner local" };
-  }
-
-  if (backendMode === "local" || isLocalAgent(agentId)) {
-    if (explicit === "cloud") {
-      return {
-        error:
-          "Cloud schedules are not available for local-backend agents. Use --runner local.",
-      };
-    }
-    return { runner: "local", reason: "local-backend agent" };
   }
 
   if (cloudSchedulesSupported === false) {
-    if (explicit === "cloud") {
-      return {
-        error:
-          "This Letta server does not serve Cloud schedule routes (self-hosted?). Use --runner local.",
-      };
-    }
     return {
-      runner: "local",
-      reason: "server does not support Cloud schedules",
+      error:
+        "Cloud schedules are unavailable in this managed Cloud sandbox. No local schedule was created.",
     };
   }
 
-  return {
-    runner: "cloud",
-    reason:
-      explicit === "cloud"
-        ? "explicit --runner cloud"
-        : "cloud agent defaults to durable Cloud schedules",
-  };
+  return { runner: "cloud", reason: "managed Cloud sandbox" };
 }
 
 async function ensureSettingsForCloud(): Promise<void> {
@@ -124,13 +92,13 @@ async function probeCloudScheduleSupport(agentId: string): Promise<boolean> {
   }
 }
 
-/** Resolve the same default runner policy for the CLI and model-facing tools. */
+/** Resolve schedule ownership from the current execution environment. */
 export async function resolveCronRunnerForAgent(
-  explicit: string | undefined,
   agentId: string,
 ): Promise<ResolveCronRunnerResult> {
   const backendMode = resolveBackendMode();
-  const preliminary = resolveCronRunner({ explicit, agentId, backendMode });
+  const managedCloudSandbox = isManagedCloudSandbox();
+  const preliminary = resolveCronRunner({ managedCloudSandbox, backendMode });
   if ("error" in preliminary || preliminary.runner === "local") {
     return preliminary;
   }
@@ -138,8 +106,7 @@ export async function resolveCronRunnerForAgent(
   await ensureSettingsForCloud();
   const cloudSchedulesSupported = await probeCloudScheduleSupport(agentId);
   return resolveCronRunner({
-    explicit,
-    agentId,
+    managedCloudSandbox,
     backendMode,
     cloudSchedulesSupported,
   });
@@ -180,7 +147,7 @@ export function validateTargetDevice(
     return {
       ok: false,
       error:
-        '"Cloud" is not a computer. Pass --runner cloud to run in the agent\'s Cloud sandbox.',
+        '"Cloud" is not a computer. Omit --computer to run in the agent\'s Cloud sandbox.',
     };
   }
 
@@ -202,74 +169,6 @@ export function validateTargetDevice(
   return { ok: true };
 }
 
-/**
- * How a default (no --runner/--computer) schedule should execute:
- * - "device": Cloud schedule targeting the current runtime's device so it
- *   keeps executing where it was created.
- * - "cloud-sandbox": untargeted Cloud schedule; it fires in the agent's
- *   managed Cloud sandbox.
- * - "local-fallback": the current runtime is not reachable by Cloud
- *   scheduling, so the schedule should be stored locally instead — that is
- *   the only way it can keep executing here.
- */
-export type InferredTargetResolution =
-  | { kind: "device" }
-  | { kind: "cloud-sandbox" }
-  | { kind: "local-fallback"; reason: string };
-
-/**
- * A default schedule preserves the current turn's execution locality: work
- * scheduled from a runtime should keep running in that runtime, so a
- * follow-up never races the active conversation from a second execution
- * environment (the two don't share a turn queue).
- *
- * A managed-sandbox runtime (`sandbox-*` device id) resolves to
- * "cloud-sandbox": an untargeted schedule already executes in the agent's
- * managed sandbox, so the untargeted default IS locality-preserving there.
- * The sandbox check must come first — sandbox rows are registered and
- * online in the environments registry, but individual sandboxes get
- * retired and recreated, so pinning one as a device target would be wrong.
- *
- * A runtime that is not a live registered external listener (desktop-local
- * proxy connections, unregistered installations, offline rows) cannot be
- * reached by the Cloud scheduler at all, so the locality-preserving answer
- * is "local-fallback": store the schedule in this computer's local
- * scheduler. The caller surfaces the durability tradeoff to the user.
- */
-export async function resolveInferredTargetDevice(
-  deviceId: string,
-  lookupEnvironment: () => Promise<EnvironmentConnection | null>,
-): Promise<InferredTargetResolution> {
-  if (deviceId.startsWith("sandbox-")) {
-    return { kind: "cloud-sandbox" };
-  }
-
-  const environment = await lookupEnvironment();
-  const basicValidity = validateTargetDevice(deviceId, environment);
-  if (!basicValidity.ok) {
-    return {
-      kind: "local-fallback",
-      reason: "this computer is not connected to your Letta account",
-    };
-  }
-
-  if (!environment) {
-    return {
-      kind: "local-fallback",
-      reason: "this computer is not connected to your Letta account",
-    };
-  }
-
-  if (!isEnvironmentOnline(environment)) {
-    return {
-      kind: "local-fallback",
-      reason: "this computer's connection to Letta is not currently online",
-    };
-  }
-
-  return { kind: "device" };
-}
-
 async function lookupEnvironmentForTarget(
   deviceId: string,
 ): Promise<EnvironmentConnection | null> {
@@ -287,37 +186,28 @@ export type CronCreatePlacement =
   | {
       runner: CronRunner;
       targetDeviceId?: string;
-      localFallbackNote?: string;
     }
   | { error: string };
 
 /**
  * Resolve where a newly-created schedule should live and execute.
  *
- * Both `letta cron` and Wake use this path. Default placement preserves the
- * current runtime so a scheduled turn cannot race that runtime from another
- * execution environment. Targeted Cloud schedules remain durable because
- * they fall back to the agent's Cloud sandbox when the device is offline.
+ * Both `letta cron` and Wake use this path. Managed Cloud sandboxes always
+ * create Cloud schedules; every other execution environment creates local
+ * schedules. `--computer` remains a Cloud-only target override.
  */
 export async function resolveCronCreatePlacement(params: {
-  explicitRunner?: string;
   agentId: string;
   targetDeviceId?: string;
 }): Promise<CronCreatePlacement> {
-  const resolved = await resolveCronRunnerForAgent(
-    params.explicitRunner,
-    params.agentId,
-  );
+  const resolved = await resolveCronRunnerForAgent(params.agentId);
   if ("error" in resolved) return resolved;
 
-  let runner = resolved.runner;
-  let targetDeviceId = params.targetDeviceId?.trim() || undefined;
-  let localFallbackNote: string | undefined;
-
-  if (targetDeviceId && runner !== "cloud") {
+  const targetDeviceId = params.targetDeviceId?.trim() || undefined;
+  if (targetDeviceId && resolved.runner !== "cloud") {
     return {
       error:
-        "--computer requires the cloud runner. Run `letta cron add` on the target computer itself (with --runner local) to schedule there locally.",
+        "--computer is only available from a managed Cloud sandbox. Run the schedule on this computer instead.",
     };
   }
 
@@ -327,23 +217,9 @@ export async function resolveCronCreatePlacement(params: {
       await lookupEnvironmentForTarget(targetDeviceId),
     );
     if (!validity.ok) return validity;
-  } else if (runner === "cloud" && params.explicitRunner !== "cloud") {
-    const { getRuntimeEnvironmentDeviceId } = await import(
-      "@/backend/api/client"
-    );
-    const inferredDeviceId = getRuntimeEnvironmentDeviceId();
-    const resolution = await resolveInferredTargetDevice(inferredDeviceId, () =>
-      lookupEnvironmentForTarget(inferredDeviceId),
-    );
-    if (resolution.kind === "device") {
-      targetDeviceId = inferredDeviceId;
-    } else if (resolution.kind === "local-fallback") {
-      runner = "local";
-      localFallbackNote = `This schedule is local to this computer (${resolution.reason}): it only fires while a Letta session is running here. For a schedule that fires regardless, pass --runner cloud (runs in the agent's cloud sandbox) or --computer <deviceId> (runs on a connected computer, from \`letta computers list\`).`;
-    }
   }
 
-  return { runner, targetDeviceId, localFallbackNote };
+  return { runner: resolved.runner, targetDeviceId };
 }
 
 // ── Cloud payload mapping ───────────────────────────────────────────
