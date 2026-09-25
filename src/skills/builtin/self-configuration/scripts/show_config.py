@@ -225,7 +225,7 @@ def format_settings(
                 rows.append({"scope": scope, "key": key, "value": settings[key]})
         env = settings.get("env")
         if isinstance(env, dict) and env:
-            rows.append({"scope": scope, "key": "env_keys", "value": sorted(env.keys())})
+            rows.append({"scope": scope, "key": "env_keys", "value": sorted(env)})
         experiments = settings.get("experiments")
         if isinstance(experiments, dict) and experiments:
             rows.append({"scope": scope, "key": "experiments", "value": experiments})
