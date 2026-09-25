@@ -4,7 +4,7 @@ import * as Diff from "diff";
 export const ADV_DIFF_CONTEXT_LINES = 1; // easy to adjust later
 export const ADV_DIFF_IGNORE_WHITESPACE = false; // previews must show exact edits, including tab/space-only changes
 
-export type AdvancedDiffVariant = "write" | "edit" | "multi_edit";
+export type AdvancedDiffVariant = "write" | "edit";
 
 export interface AdvancedEditInput {
   kind: "edit";
@@ -20,20 +20,7 @@ export interface AdvancedWriteInput {
   content: string;
 }
 
-export interface AdvancedMultiEditInput {
-  kind: "multi_edit";
-  filePath: string;
-  edits: Array<{
-    old_string: string;
-    new_string: string;
-    replace_all?: boolean;
-  }>;
-}
-
-export type AdvancedDiffInput =
-  | AdvancedEditInput
-  | AdvancedWriteInput
-  | AdvancedMultiEditInput;
+export type AdvancedDiffInput = AdvancedEditInput | AdvancedWriteInput;
 
 export interface AdvancedHunkLine {
   raw: string; // original line from structuredPatch (includes prefix)
@@ -132,40 +119,6 @@ export function computeAdvancedDiff(
       };
     }
     newStr = applied.out;
-  } else if (input.kind === "multi_edit") {
-    let working = oldStr;
-    for (const e of input.edits) {
-      const replaceAll = !!e.replace_all;
-      if (replaceAll) {
-        const occ = working.split(e.old_string).length - 1;
-        if (occ === 0)
-          return { mode: "unpreviewable", reason: "Edit not found in file" };
-        const res = applyAllOccurrences(working, e.old_string, e.new_string);
-        if (!res.ok)
-          return {
-            mode: "unpreviewable",
-            reason: `Edit cannot be previewed: ${res.reason}`,
-          };
-        working = res.out;
-      } else {
-        const occ = working.split(e.old_string).length - 1;
-        if (occ === 0)
-          return { mode: "unpreviewable", reason: "Edit not found in file" };
-        if (occ > 1)
-          return {
-            mode: "unpreviewable",
-            reason: `Multiple matches (${occ}), replace_all=false`,
-          };
-        const res = applyFirstOccurrence(working, e.old_string, e.new_string);
-        if (!res.ok)
-          return {
-            mode: "unpreviewable",
-            reason: `Edit cannot be previewed: ${res.reason}`,
-          };
-        working = res.out;
-      }
-    }
-    newStr = working;
   }
 
   const patch = Diff.structuredPatch(

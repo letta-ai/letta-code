@@ -2377,24 +2377,11 @@ export function App({
             typeof args.chars === "string" && args.chars.length > 0
               ? "Write input to running shell session"
               : "Poll running shell session";
-        } else if (t === "shell") {
-          const cmdVal = args.command;
-          command = Array.isArray(cmdVal)
-            ? cmdVal.join(" ")
-            : typeof cmdVal === "string"
-              ? cmdVal
-              : "(no command)";
-          description =
-            typeof args.justification === "string" ? args.justification : "";
         } else {
           command =
             typeof args.command === "string" ? args.command : "(no command)";
           description =
-            typeof args.description === "string"
-              ? args.description
-              : typeof args.justification === "string"
-                ? args.justification
-                : "";
+            typeof args.description === "string" ? args.description : "";
         }
 
         let lines = 3; // solid line + header + blank line
@@ -2464,19 +2451,6 @@ export function App({
 
         if (diff) {
           diffLines += estimateAdvancedDiffLines(diff, diffWrapWidth);
-          return headerLines + diffLines;
-        }
-
-        if (Array.isArray(args.edits)) {
-          for (const edit of args.edits) {
-            if (!edit || typeof edit !== "object") continue;
-            const oldString =
-              typeof edit.old_string === "string" ? edit.old_string : "";
-            const newString =
-              typeof edit.new_string === "string" ? edit.new_string : "";
-            diffLines += countWrappedLines(oldString, wrapWidth);
-            diffLines += countWrappedLines(newString, wrapWidth);
-          }
           return headerLines + diffLines;
         }
 

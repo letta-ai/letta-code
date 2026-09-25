@@ -34,6 +34,8 @@ export interface AgentCallOptions {
    * schema is enforced; a reply that is not valid JSON resolves to null.
    */
   json?: boolean;
+  /** JSON Schema for a validated result; takes precedence over json. */
+  schema?: Record<string, unknown>;
   /** Model handle or alias for this subagent (defaults to the workflow default). */
   model?: string;
   /** Reasoning effort override ("low" | "medium" | "high" | ...). */
@@ -138,6 +140,8 @@ export interface SdkStreamMessage {
   result?: string;
   error?: string;
   errorCode?: string;
+  errorDetail?: string;
+  structuredOutput?: unknown;
   durationMs?: number;
   /** Raw Letta stream payload for `type: "stream_event"` messages. */
   event?: Record<string, unknown>;

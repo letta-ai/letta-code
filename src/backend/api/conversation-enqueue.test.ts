@@ -3,7 +3,7 @@ import {
   dequeueConversationMessage,
   enqueueConversationMessage,
 } from "./conversation-enqueue";
-import { ApiRequestError, type apiRequest } from "./request";
+import { ApiRequestError, apiRequest } from "./request";
 
 test("enqueue carries the existing trusted acting-user HTTP header", async () => {
   const request: typeof apiRequest = async <T>(
@@ -134,6 +134,163 @@ test.each([400, 404, 409, 503])(
     expect(calls).toBe(1);
   },
 );
+
+test("retries only a typed pre-admission shutdown rejection with the same message ID", async () => {
+  const requests: Array<{
+    body: Record<string, unknown>;
+    actingUser: string | null;
+  }> = [];
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    async fetch(request) {
+      requests.push({
+        body: (await request.json()) as Record<string, unknown>,
+        actingUser: request.headers.get("X-Letta-Acting-User-Id"),
+      });
+      if (requests.length === 1) {
+        return Response.json(
+          {
+            error:
+              "Service temporarily unavailable. Please retry your request.",
+            errorCode: "cloud_api_shutting_down",
+            admitted: false,
+            retryable: true,
+          },
+          { status: 503, headers: { "Retry-After": "0" } },
+        );
+      }
+      return Response.json(
+        {
+          client_message_id: requests[0]?.body.client_message_id,
+          workflow_id: "wf-1",
+          super_run_id: "sr-1",
+        },
+        { status: 202 },
+      );
+    },
+  });
+  const request: typeof apiRequest = (method, path, body, options = {}) =>
+    apiRequest(method, path, body, {
+      ...options,
+      baseUrl: server.url.toString().replace(/\/$/, ""),
+      apiKey: "test-only",
+    });
+  try {
+    const receipt = await enqueueConversationMessage(
+      {
+        agentId: "agent-target",
+        conversationId: "conv-target",
+        clientMessageId: "cm-stable",
+        content: "hello",
+        actingUserId: "user-parent",
+      },
+      undefined,
+      request,
+    );
+    expect(requests).toHaveLength(2);
+    expect(requests[0]).toEqual(requests[1]);
+    expect(requests[0]?.body.client_message_id).toBe("cm-stable");
+    expect(requests[0]?.actingUser).toBe("user-parent");
+    expect(receipt).toMatchObject({
+      status: "queued",
+      client_message_id: "cm-stable",
+      workflow_id: "wf-1",
+      super_run_id: "sr-1",
+    });
+  } finally {
+    server.stop(true);
+  }
+});
+
+test.each([
+  { admitted: true, retryable: true, errorCode: "cloud_api_shutting_down" },
+  { admitted: false, retryable: false, errorCode: "cloud_api_shutting_down" },
+  { admitted: false, retryable: true, errorCode: "other_error" },
+])("does not retry a 503 without proven rejection: %j", async (payload) => {
+  let calls = 0;
+  const request: typeof apiRequest = async () => {
+    calls++;
+    throw new ApiRequestError("rejected", 503, JSON.stringify(payload));
+  };
+  await expect(
+    enqueueConversationMessage(
+      {
+        agentId: "agent-target",
+        conversationId: "conv-target",
+        clientMessageId: "cm-stable",
+        content: "hello",
+      },
+      undefined,
+      request,
+    ),
+  ).rejects.toMatchObject({ status: 503 });
+  expect(calls).toBe(1);
+});
+
+test("cancels a shutdown retry without resending", async () => {
+  const controller = new AbortController();
+  const reason = new Error("cancelled");
+  let calls = 0;
+  const request: typeof apiRequest = async () => {
+    calls++;
+    throw new ApiRequestError(
+      "rejected",
+      503,
+      JSON.stringify({
+        errorCode: "cloud_api_shutting_down",
+        admitted: false,
+        retryable: true,
+      }),
+      new Headers({ "Retry-After": "3" }),
+    );
+  };
+  const pending = enqueueConversationMessage(
+    {
+      agentId: "agent-target",
+      conversationId: "conv-target",
+      clientMessageId: "cm-stable",
+      content: "hello",
+    },
+    controller.signal,
+    request,
+  );
+  await Promise.resolve();
+  controller.abort(reason);
+  await expect(pending).rejects.toBe(reason);
+  expect(calls).toBe(1);
+});
+
+test("stops after three typed pre-admission retries", async () => {
+  let calls = 0;
+  const rejection = new ApiRequestError(
+    "rejected",
+    503,
+    JSON.stringify({
+      errorCode: "cloud_api_shutting_down",
+      admitted: false,
+      retryable: true,
+    }),
+    new Headers({ "Retry-After": "0" }),
+  );
+  const request: typeof apiRequest = async () => {
+    calls++;
+    throw rejection;
+  };
+  await expect(
+    enqueueConversationMessage(
+      {
+        agentId: "agent-target",
+        conversationId: "conv-target",
+        clientMessageId: "cm-stable",
+        content: "hello",
+      },
+      undefined,
+      request,
+    ),
+  ).rejects.toBe(rejection);
+  expect(calls).toBe(4);
+});
 
 test("a mismatched receipt does not confirm the requested send", async () => {
   const request: typeof apiRequest = async <T>() =>

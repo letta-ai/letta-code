@@ -29,6 +29,28 @@ When using the Agent tool, you must specify a subagent_type parameter to select 
 - If the agent description mentions that it should be used proactively, then you should try your best to use it without the user having to ask for it first. Use your judgement.
 - If the user specifies that they want you to run agents "in parallel", you MUST send a single message with multiple Agent tool use content blocks. For example, if you need to launch multiple agents in parallel, send a single message with multiple Agent tool calls.
 
+## External Coding Agents
+
+Use `subagent_type: "claude-code"` or `subagent_type: "codex"` to start a coding worker through the corresponding locally installed CLI. These types use the same background task lifecycle and completion notifications as Letta subagents, but they do not create Letta agents or conversations. Do not combine them with `agent_id` or `conversation_id`. External coding workers always run on the current machine and do not accept the remote-machine option.
+
+The initial receipt includes a synthetic `claude_...` or `codex_...` agent ID as soon as the native session starts. Pass that ID to `SendAgentMessage` to steer active work or start one tracked follow-up turn when idle.
+
+External coding agents can receive the current agent's MCP discovery metadata and use the existing `letta mcp` CLI through their shell:
+
+```typescript
+Agent({
+  subagent_type: "claude-code",
+  description: "Inspect Linear issue",
+  prompt: "Read the issue and trace the relevant implementation.",
+  mcp: {
+    inherit: true,
+    servers: ["linear"],
+  },
+})
+```
+
+`mcp: { inherit: true }` advertises every MCP server currently available to the parent agent. Adding `servers` advertises exactly that named subset and fails before launch if a requested server is unavailable. This passes discovery metadata, not new authorization; the worker calls tools through `letta mcp` under the parent agent identity.
+
 ## Deploying an Existing Agent
 
 Instead of spawning a fresh subagent from a template, you can deploy an existing agent to work in your local codebase.
@@ -164,7 +186,7 @@ Behavior notes:
 
 ## Concurrency and Safety:
 
-- **Safe**: Multiple read-only agents (e.g. recall, history-analyzer) running in parallel
+- **Safe**: Multiple read-only agents (e.g. recall) running in parallel
 - **Safe**: Multiple agents editing different files in parallel
 - **Risky**: Multiple agents editing the same file (conflict detection will handle it, but may lose changes)
 - **Best practice**: Partition work by file or directory boundaries for parallel execution

@@ -13,10 +13,13 @@ import {
 import { claimMemoryOperation } from "@/agent/memory-operation";
 import { isMemoryWorkerSession } from "@/agent/subagents/memory-worker-session";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
+import { ensureMemoryConflictRepair } from "@/tools/impl/memory-task-lifecycle";
+import { spawnBackgroundSubagentTask } from "@/tools/impl/task";
 import { debugWarn } from "@/utils/debug";
 
 export interface RunPostTurnMemorySyncParams {
   agentId: string;
+  conversationId?: string | null;
   isEnabled?: (agentId: string) => boolean;
   enqueueReminder?: (text: string) => void;
   emitWarning?: (text: string) => void | Promise<void>;
@@ -26,29 +29,43 @@ export interface RunPostTurnMemorySyncParams {
 
 export interface RunPostTurnMemorySyncDependencies {
   syncMemory?: typeof syncPendingMemoryCommitsAfterTurn;
+  repairConflict?: (
+    params: Parameters<typeof ensureMemoryConflictRepair>[0],
+  ) => Promise<boolean>;
   claimOperation?: typeof claimMemoryOperation;
   syncAttachedRepositories?: typeof syncPendingAttachedRepositoryCommitsAfterTurn;
 }
 
-export function formatMemoryPostTurnSyncReminder(
+/** A repair worker is editing the checkout in place; the primary must leave it alone until it finishes. */
+export function formatMemoryRepairInProgressReminder(
   result: MemoryPostTurnSyncResult,
-): string | null {
-  if (
-    result.status === "clean" ||
-    result.status === "pushed" ||
-    result.status === "skipped"
-  ) {
-    return null;
-  }
-
-  if (result.status === "conflict") {
-    return `${SYSTEM_REMINDER_OPEN}
-MEMORY GIT CONFLICT: The memory repository needs manual conflict resolution.
+): string {
+  return `${SYSTEM_REMINDER_OPEN}
+MEMORY REPAIR IN PROGRESS: A background worker is resolving an unfinished merge or rebase in the memory repository.
 
 Memory directory: ${result.memoryDir}
 Status: ${result.summary}
 
-Resolve the merge/rebase conflicts in the memory repository, stage the resolved files, and complete the merge/rebase or create the needed commit. The harness will retry remote push after a future turn when the repo is clean.
+Do not edit memory files or run Git commands in the memory repository until the worker's task log ends with [Task completed] or [Task failed]; its changes would be swept into the repair or overwritten. Reading memory is fine.
+${SYSTEM_REMINDER_CLOSE}`;
+}
+
+/**
+ * Reminders for the primary's own post-turn MemFS sync. A conflict is normally
+ * handed to a background repair worker; the conflict reminder is for one no
+ * worker is handling any more.
+ */
+export function formatMemoryPostTurnSyncReminder(
+  result: MemoryPostTurnSyncResult,
+): string | null {
+  if (result.status === "conflict") {
+    return `${SYSTEM_REMINDER_OPEN}
+MEMORY GIT CONFLICT: The memory repository has an unfinished merge or rebase that automatic repair could not resolve.
+
+Memory directory: ${result.memoryDir}
+Status: ${result.summary}
+
+Resolve the conflicts in the memory repository, stage the resolved files, and complete the merge/rebase or create the needed commit. The harness will retry remote push after a future turn when the repo is clean.
 ${SYSTEM_REMINDER_CLOSE}`;
   }
 
@@ -62,11 +79,12 @@ MEMORY COMMIT NEEDED: The memory repository has uncommitted changes.
 Memory directory: ${result.memoryDir}
 Status: ${result.summary}
 
-${action} when appropriate. Do not run \`git push\` for MemFS sync; the harness pushes clean committed memory changes automatically for remote MemFS agents after turns.
+${action} when appropriate, staging only the files you changed. Do not run \`git push\` for MemFS sync; the harness pushes clean committed memory changes automatically for remote MemFS agents after turns.
 ${SYSTEM_REMINDER_CLOSE}`;
   }
 
-  return `${SYSTEM_REMINDER_OPEN}
+  if (result.status === "push_failed") {
+    return `${SYSTEM_REMINDER_OPEN}
 MEMORY SYNC FAILED: The harness could not push pending memory commits.
 
 Memory directory: ${result.memoryDir}
@@ -74,6 +92,9 @@ Status: ${result.summary}
 
 Inspect the memory repository and resolve any local git issue. The harness will retry remote push after a future turn when the repo is clean.
 ${SYSTEM_REMINDER_CLOSE}`;
+  }
+
+  return null;
 }
 
 export function formatAttachedRepositoryPostTurnSyncReminder(
@@ -138,6 +159,10 @@ export async function runPostTurnMemorySync(
   const syncAttachedRepositories =
     dependencies.syncAttachedRepositories ??
     syncPendingAttachedRepositoryCommitsAfterTurn;
+  const repairConflict =
+    dependencies.repairConflict ??
+    ((repair) =>
+      ensureMemoryConflictRepair(repair, spawnBackgroundSubagentTask));
   let memorySyncEnabled = true;
 
   try {
@@ -156,22 +181,23 @@ export async function runPostTurnMemorySync(
 
   if (memorySyncEnabled) {
     try {
-      // Another harness writer (reflection integration, a worker in a later PR)
-      // may own the checkout; skip this turn's sync rather than wait for it.
       const memoryDir = getScopedMemoryFilesystemRoot(params.agentId);
       const release = existsSync(join(memoryDir, ".git"))
         ? await (dependencies.claimOperation ?? claimMemoryOperation)(memoryDir)
         : undefined;
       if (release !== null) {
         try {
-          const syncResult = await syncMemory(params.agentId);
-          if (syncResult.status === "pushed") {
-            params.onMemoryPushed?.();
-          }
-          const syncReminder = formatMemoryPostTurnSyncReminder(syncResult);
-          if (syncReminder) {
-            params.enqueueReminder?.(syncReminder);
-            await params.emitWarning?.(syncReminder);
+          const result = await syncMemory(params.agentId);
+          if (result.status === "pushed") params.onMemoryPushed?.();
+          const repairInProgress =
+            result.status === "conflict" &&
+            (await repairConflict({ ...params, result }));
+          const reminder = repairInProgress
+            ? formatMemoryRepairInProgressReminder(result)
+            : formatMemoryPostTurnSyncReminder(result);
+          if (reminder) {
+            params.enqueueReminder?.(reminder);
+            await params.emitWarning?.(reminder);
           }
         } finally {
           await release?.();

@@ -47,6 +47,7 @@ interface PayloadFile {
 interface LiveReflectionSummary {
   code: number | null;
   signal: NodeJS.Signals | null;
+  scenarioSatisfiedBeforeTermination: boolean;
   tmpRoot: string;
   agentId: string | null;
   conversationId: string | null;
@@ -65,6 +66,28 @@ const TURN_ONE_MARKER = "LIVE_REFLECTION_TURN_ONE_MARKER";
 const TURN_TWO_MARKER = "LIVE_REFLECTION_TURN_TWO_MARKER";
 const DEFAULT_REFLECTION_MODEL = "gpt-5.4-mini-low";
 const MAX_TURN_ATTEMPTS = 4;
+
+export async function terminateAfterScenarioSatisfied(options: {
+  waitForScenarioSatisfied: () => Promise<boolean>;
+  terminate: (signal: "SIGTERM") => void;
+}): Promise<boolean> {
+  if (!(await options.waitForScenarioSatisfied())) return false;
+  options.terminate("SIGTERM");
+  return true;
+}
+
+export function isAcceptedScenarioExit(summary: {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  scenarioSatisfiedBeforeTermination: boolean;
+}): boolean {
+  if (summary.signal === null) return summary.code === 0;
+  return (
+    summary.scenarioSatisfiedBeforeTermination &&
+    summary.code === null &&
+    summary.signal === "SIGTERM"
+  );
+}
 
 function parseArgs(argv: string[]): Args {
   const args: Args = {
@@ -187,6 +210,7 @@ async function runLiveBidirectionalCli(paths: {
     let conversationId: string | null = null;
     let resultCount = 0;
     let closing = false;
+    let scenarioSatisfiedBeforeTermination = false;
     let phase: "first" | "second" = "first";
     let phaseAttempt = 0;
     let sawAssistantMessage = false;
@@ -228,12 +252,19 @@ async function runLiveBidirectionalCli(paths: {
       }, 1_000);
     };
 
-    const closeWhenReflectionPayloadExists = () => {
+    const terminateWhenScenarioSatisfied = () => {
       if (closing) return;
       closing = true;
-      void waitForLaunchArtifacts(transcriptDir, 2, 90_000).finally(() =>
-        proc.stdin.end(),
-      );
+      void terminateAfterScenarioSatisfied({
+        waitForScenarioSatisfied: () =>
+          waitForLaunchArtifacts(transcriptDir, 2, 90_000),
+        terminate: (signal) => {
+          scenarioSatisfiedBeforeTermination = true;
+          proc.kill(signal);
+        },
+      }).then((satisfied) => {
+        if (!satisfied) proc.stdin.end();
+      });
     };
 
     proc.stdout.on("data", (chunk) => {
@@ -292,7 +323,7 @@ async function runLiveBidirectionalCli(paths: {
               },
             );
           } else {
-            closeWhenReflectionPayloadExists();
+            terminateWhenScenarioSatisfied();
           }
         }
       }
@@ -327,6 +358,7 @@ async function runLiveBidirectionalCli(paths: {
       void buildSummary({
         code,
         signal,
+        scenarioSatisfiedBeforeTermination,
         tmpRoot: paths.tmpRoot,
         transcriptDir: transcriptDir(),
         agentId,
@@ -366,6 +398,7 @@ async function waitForLaunchArtifacts(
 async function buildSummary(args: {
   code: number | null;
   signal: NodeJS.Signals | null;
+  scenarioSatisfiedBeforeTermination: boolean;
   tmpRoot: string;
   transcriptDir: string | null;
   agentId: string | null;
@@ -390,6 +423,7 @@ async function buildSummary(args: {
   return {
     code: args.code,
     signal: args.signal,
+    scenarioSatisfiedBeforeTermination: args.scenarioSatisfiedBeforeTermination,
     tmpRoot: args.tmpRoot,
     agentId: args.agentId,
     conversationId: args.conversationId,
@@ -482,6 +516,8 @@ function formatSummary(summary: LiveReflectionSummary): string {
     {
       code: summary.code,
       signal: summary.signal,
+      scenarioSatisfiedBeforeTermination:
+        summary.scenarioSatisfiedBeforeTermination,
       tmpRoot: summary.tmpRoot,
       agentId: summary.agentId,
       conversationId: summary.conversationId,
@@ -508,8 +544,10 @@ function assertTrue(condition: unknown, message: string): asserts condition {
 
 function assertScenario(summary: LiveReflectionSummary): void {
   const details = formatSummary(summary);
-  assertTrue(summary.code === 0, `Expected exit code 0.\n${details}`);
-  assertTrue(summary.signal === null, `Expected no signal.\n${details}`);
+  assertTrue(
+    isAcceptedScenarioExit(summary),
+    `Expected a clean exit or satisfied-scenario SIGTERM.\n${details}`,
+  );
   assertTrue(summary.agentId, `Missing agent id.\n${details}`);
   assertTrue(summary.conversationId, `Missing conversation id.\n${details}`);
   assertTrue(
@@ -590,7 +628,9 @@ async function main(): Promise<void> {
   );
 }
 
-main().catch((error) => {
-  console.error(String(error?.stack || error));
-  process.exit(1);
-});
+if (import.meta.main) {
+  main().catch((error) => {
+    console.error(String(error?.stack || error));
+    process.exit(1);
+  });
+}

@@ -11,6 +11,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { LocalMemoryFormat } from "@/agent/memory-format";
 import { getBackend } from "@/backend";
+import { findRemovedToolNames } from "@/tools/removed-tools";
 import { getErrorMessage } from "@/utils/error";
 import {
   getStringField,
@@ -20,8 +21,6 @@ import {
 // Built-in subagent definitions (embedded at build time)
 import forkAgentMd from "./builtin/fork.md";
 import generalPurposeAgentMd from "./builtin/general-purpose.md";
-import historyAnalyzerAgentMd from "./builtin/history-analyzer.md";
-import historyAnalyzerV2AgentMd from "./builtin/history-analyzer-v2.md";
 import initAgentMd from "./builtin/init.md";
 import initV2AgentMd from "./builtin/init-v2.md";
 import memoryAgentMd from "./builtin/memory.md";
@@ -33,7 +32,6 @@ import reflectionV2AgentMd from "./builtin/reflection-v2.md";
 const STANDARD_BUILTIN_SOURCES = [
   forkAgentMd,
   generalPurposeAgentMd,
-  historyAnalyzerAgentMd,
   initAgentMd,
   memoryAgentMd,
   recallAgentMd,
@@ -43,7 +41,6 @@ const STANDARD_BUILTIN_SOURCES = [
 const LOCAL_MEMFS_BUILTIN_SOURCES = [
   forkAgentMd,
   generalPurposeAgentMd,
-  historyAnalyzerAgentMd,
   initAgentMd,
   memoryAgentMd,
   recallAgentMd,
@@ -51,7 +48,6 @@ const LOCAL_MEMFS_BUILTIN_SOURCES = [
 ];
 
 const MEMFS_V2_BUILTIN_SOURCES = [
-  historyAnalyzerV2AgentMd,
   initV2AgentMd,
   memoryV2AgentMd,
   reflectionV2AgentMd,
@@ -80,6 +76,8 @@ export interface SubagentMemoryScope {
 export interface SubagentResult {
   agentId: string;
   conversationId?: string;
+  /** Native session/thread identifier for a non-Letta execution runtime. */
+  runtimeSessionId?: string;
   model?: string;
   report: string;
   success: boolean;
@@ -122,6 +120,21 @@ export interface SubagentDiscoveryResult {
 // Constants
 // ============================================================================
 
+export const EXTERNAL_CODING_AGENT_DESCRIPTORS = [
+  {
+    name: "claude-code",
+    description:
+      "Run the locally installed Claude Code CLI as a one-shot coding worker",
+    recommendedModel: "configured Claude Code default",
+  },
+  {
+    name: "codex",
+    description:
+      "Start a locally installed Codex coding session with mid-turn steering",
+    recommendedModel: "configured Codex default",
+  },
+] as const;
+
 /**
  * Directory for subagent files (relative to project root)
  */
@@ -138,6 +151,7 @@ function getGlobalAgentsDir(): string {
 }
 
 export const GLOBAL_AGENTS_DIR = getGlobalAgentsDir();
+const RESERVED_EXTERNAL_SUBAGENT_NAMES = new Set(["claude-code", "codex"]);
 
 // ============================================================================
 // Cache
@@ -456,7 +470,7 @@ async function discoverSubagentsFromDir(
 
       try {
         const config = await parseSubagentFile(filePath, configsByName);
-        if (config) {
+        if (config && !RESERVED_EXTERNAL_SUBAGENT_NAMES.has(config.name)) {
           // Check for duplicate names (later directories override earlier ones)
           const existingIndex = subagents.findIndex(
             (s) => s.name === config.name,
@@ -552,6 +566,16 @@ export async function getAllSubagentConfigs(
     console.warn(`[subagent] Warning: ${error.path}: ${error.message}`);
   }
 
+  for (const subagent of subagents) {
+    if (subagent.allowedTools === "all") continue;
+    const removedTools = findRemovedToolNames(subagent.allowedTools);
+    if (removedTools.length > 0) {
+      console.warn(
+        `[subagent] Warning: ${subagent.name}: these tools no longer exist and will be ignored: ${removedTools.join(", ")}`,
+      );
+    }
+  }
+
   // User-defined subagents override built-ins with the same name
   for (const subagent of subagents) {
     configs[subagent.name] = subagent;
@@ -563,6 +587,22 @@ export async function getAllSubagentConfigs(
   cache.localMemfs = localMemfs;
 
   return configs;
+}
+
+export async function getModelFacingSubagentDescriptors(
+  workingDirectory: string,
+): Promise<
+  Array<{ name: string; description: string; recommendedModel: string }>
+> {
+  const configs = await getAllSubagentConfigs(workingDirectory);
+  return [
+    ...Object.entries(configs).map(([name, config]) => ({
+      name,
+      description: config.description,
+      recommendedModel: config.recommendedModel,
+    })),
+    ...EXTERNAL_CODING_AGENT_DESCRIPTORS,
+  ];
 }
 
 /**

@@ -516,7 +516,7 @@ export async function handleApprovalStop(params: {
   }
 
   // Broadcast new file content to web clients when a file-mutating tool
-  // (Edit, Write, MultiEdit) writes to disk, so all windows update immediately.
+  // (Edit, Write) writes to disk, so all windows update immediately.
   const onFileWrite = (filePath: string, content: string) => {
     if (!runtime.turnLifecycle.isCurrent(turnLease)) return;
     emitProtocolV2Message(
