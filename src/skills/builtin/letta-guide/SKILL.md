@@ -1,6 +1,6 @@
 ---
 name: letta-guide
-description: Read the official Letta documentation (docs.letta.com) through its cached, ETag-checked fetch route. Load before ANY docs.letta.com retrieval — answering how Letta works, what Letta (or you) can do, and looking up Letta API, Agent SDK, or Letta Code reference.
+description: Read the official Letta documentation (docs.letta.com) through its cached, ETag-checked fetch route. Load before docs.letta.com retrieval — answering how Letta works, what Letta can do, and looking up Letta API, Agent SDK, or Letta Code reference. To connect, set up, or authenticate a service, model provider, or coding CLI, load `acquiring-integrations` instead; its live catalog answers those.
 ---
 
 # Letta Guide
