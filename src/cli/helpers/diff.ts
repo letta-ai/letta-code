@@ -4,8 +4,6 @@ import * as Diff from "diff";
 export const ADV_DIFF_CONTEXT_LINES = 1; // easy to adjust later
 export const ADV_DIFF_IGNORE_WHITESPACE = false; // previews must show exact edits, including tab/space-only changes
 
-export type AdvancedDiffVariant = "write" | "edit";
-
 export interface AdvancedEditInput {
   kind: "edit";
   filePath: string;
