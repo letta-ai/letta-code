@@ -36,7 +36,6 @@ import {
 } from "@/utils/checkout-readiness";
 import { debugLog, debugWarn } from "@/utils/debug";
 import { withRepositoryCheckout } from "@/utils/repository-checkout";
-import { getUtf16Bom } from "@/utils/text-files";
 import { GIT_MEMORY_ENABLED_TAG } from "./agent-tags";
 import { listAttachedAgentRepositories } from "./attached-repositories";
 import { getAuthToken } from "./memory-auth";
@@ -1237,83 +1236,6 @@ async function unstageMemoryPaths(
   } catch {
     // Best-effort cleanup only.
   }
-}
-
-export async function assertMemoryRepoCleanForWrite(
-  memoryDir: string,
-): Promise<void> {
-  const status = await runGit(memoryDir, ["status", "--porcelain"]);
-  if (status.stdout.trim().length > 0) {
-    const encodingDetails = describeDirtyMarkdownEncodingIssues(
-      memoryDir,
-      status.stdout,
-    );
-    throw new Error(
-      "Memory repo has uncommitted changes. Commit, discard, or sync them before using memory tools." +
-        encodingDetails,
-    );
-  }
-}
-
-function describeDirtyMarkdownEncodingIssues(
-  memoryDir: string,
-  porcelainStatus: string,
-): string {
-  const issues = porcelainStatus
-    .split(/\r?\n/)
-    .map((line) => line.trimEnd())
-    .filter((line) => line.length > 0)
-    .map(parsePorcelainPath)
-    .filter((path): path is string => path?.endsWith(".md") ?? false)
-    .map((path) => describeMarkdownEncodingIssue(memoryDir, path))
-    .filter((issue): issue is string => issue !== null);
-
-  if (issues.length === 0) {
-    return "";
-  }
-
-  return ` Dirty markdown encoding issue(s): ${issues.join("; ")}.`;
-}
-
-function parsePorcelainPath(line: string): string | null {
-  if (line.length < 4) {
-    return null;
-  }
-
-  const status = line.slice(0, 2);
-  if (status === " D" || status === "D " || status === "DD") {
-    return null;
-  }
-
-  const rawPath = line.slice(3);
-  const renameSeparator = " -> ";
-  const path = rawPath.includes(renameSeparator)
-    ? (rawPath.split(renameSeparator).pop() ?? rawPath)
-    : rawPath;
-
-  return path.replace(/^"|"$/g, "");
-}
-
-function describeMarkdownEncodingIssue(
-  memoryDir: string,
-  relativePath: string,
-): string | null {
-  const filePath = join(memoryDir, relativePath);
-  if (!existsSync(filePath)) {
-    return null;
-  }
-
-  const bytes = readFileSync(filePath);
-  const utf16Bom = getUtf16Bom(bytes);
-  if (utf16Bom) {
-    return `${relativePath} has ${utf16Bom} BOM`;
-  }
-
-  if (bytes.includes(0)) {
-    return `${relativePath} contains NUL bytes, possibly UTF-16`;
-  }
-
-  return null;
 }
 
 export async function commitMemoryWrite(

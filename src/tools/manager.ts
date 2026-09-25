@@ -70,7 +70,6 @@ import {
   collectPostToolHookFeedback,
 } from "./hook-feedback";
 import { clampToolReturnContent } from "./impl/tool-return-clamp";
-import { resolveBackendSpecificToolAssets } from "./memory-tool-assets";
 import {
   functionToolForm,
   type JsonSchema,
@@ -91,6 +90,7 @@ import {
   scrubAmbientSecrets,
   scrubSecretsFromString,
 } from "./secret-substitution";
+import { resolveBackendSpecificToolAssets } from "./task-tool-assets";
 import { TOOL_DEFINITIONS, type ToolName } from "./tool-definitions";
 import { TOOL_PERMISSIONS } from "./tool-permissions";
 

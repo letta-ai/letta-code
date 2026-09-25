@@ -3,10 +3,10 @@
 // resolves under another agent's memory directory.
 //
 // SCOPE — this guard now exists ONLY for agent-process IN-PROCESS file
-// tools: Read / Write / Edit / NotebookEdit / Glob / Grep / LS and the ApplyPatch
-// family (all canonicalized via `canonicalToolName`, all carrying an explicit
-// absolute path). These never fork, so the kernel filesystem sandbox
-// (src/sandbox/) cannot see them.
+// tools: Read / Write / Edit / NotebookEdit / Glob / Grep / LS and ApplyPatch
+// (all canonicalized via `canonicalToolName`, all carrying an explicit absolute
+// path). These never fork, so the kernel filesystem sandbox (src/sandbox/)
+// cannot see them.
 //
 // Spawned shell commands are intentionally no longer analyzed here (the old
 // token/raw-command scanner is gone — it was bypassable by symlinks, command
@@ -213,7 +213,7 @@ function classifyPathUnderRoot(
 }
 
 /**
- * Extract file directives from an ApplyPatch / memory_apply_patch input.
+ * Extract file directives from an ApplyPatch input.
  */
 export function extractApplyPatchPaths(input: string): string[] {
   const paths: string[] = [];
@@ -327,8 +327,8 @@ export function extractTargetAgentPaths(
     }
   };
 
-  // Patch tools: extract every file directive.
-  if (toolName === "ApplyPatch" || toolName === "memory_apply_patch") {
+  // ApplyPatch: extract every file directive.
+  if (toolName === "ApplyPatch") {
     if (typeof toolArgs.input === "string") {
       for (const p of extractApplyPatchPaths(toolArgs.input)) {
         addFromPath(p);

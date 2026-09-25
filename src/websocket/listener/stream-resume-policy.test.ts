@@ -169,7 +169,6 @@ describe("listener stream resume policy", () => {
           conversationId: "conversation-1",
           turnLease,
           turnCorrelation: {
-            clientMessageIds: [],
             appendDequeuedBatch: () => {},
             observeRun: () => {},
           },
@@ -235,7 +234,6 @@ describe("listener stream resume policy", () => {
           conversationId: "conversation-1",
           turnLease,
           turnCorrelation: {
-            clientMessageIds: [],
             appendDequeuedBatch: () => {},
             observeRun: () => {},
           },

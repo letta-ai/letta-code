@@ -233,16 +233,6 @@ describe("extractTargetAgentPaths", () => {
     expect(result.anyAgentScoped).toBe(true);
   });
 
-  test("memory_apply_patch behaves like ApplyPatch", () => {
-    const patch = `*** Begin Patch\n*** Update File: ${otherMemory("system/x.md")}\n*** End Patch`;
-    const result = extractTargetAgentPaths(
-      "memory_apply_patch",
-      { input: patch },
-      "/tmp",
-    );
-    expect(result.agentIds).toEqual(new Set([OTHER]));
-  });
-
   test("shell tools are not path-analyzed (the kernel sandbox confines spawned shells)", () => {
     // Shell command analysis was removed: spawned shells run inside the kernel
     // filesystem sandbox, so the guard no longer tokenizes shell commands.

@@ -9,10 +9,6 @@ import ExitWorktreeDescription from "./descriptions/ExitWorktree.md";
 import GlobDescription from "./descriptions/Glob.md";
 import GrepDescription from "./descriptions/Grep.md";
 import LSDescription from "./descriptions/LS.md";
-import MemoryDescription from "./descriptions/Memory.md";
-import MemoryApplyPatchDescription from "./descriptions/MemoryApplyPatch.md";
-import MemoryApplyPatchV2Description from "./descriptions/MemoryApplyPatchV2.md";
-import MemoryV2Description from "./descriptions/MemoryV2.md";
 import MonitorDescription from "./descriptions/Monitor.md";
 import ReadDescription from "./descriptions/Read.md";
 import ReadArtifactFileDescription from "./descriptions/ReadArtifactFile.md";
@@ -44,8 +40,6 @@ import { exit_worktree } from "./impl/exit-worktree";
 import { glob } from "./impl/glob";
 import { grep } from "./impl/grep";
 import { ls } from "./impl/ls";
-import { memory } from "./impl/memory";
-import { memory_apply_patch } from "./impl/memory-apply-patch";
 import { monitor } from "./impl/monitor";
 import { read } from "./impl/read";
 import { read_lsp } from "./impl/read-lsp";
@@ -74,9 +68,6 @@ import ExitWorktreeSchema from "./schemas/ExitWorktree.json";
 import GlobSchema from "./schemas/Glob.json";
 import GrepSchema from "./schemas/Grep.json";
 import LSSchema from "./schemas/LS.json";
-import MemorySchema from "./schemas/Memory.json";
-import MemoryApplyPatchSchema from "./schemas/MemoryApplyPatch.json";
-import MemoryV2Schema from "./schemas/MemoryV2.json";
 import MonitorSchema from "./schemas/Monitor.json";
 import ReadSchema from "./schemas/Read.json";
 import ReadArtifactFileSchema from "./schemas/ReadArtifactFile.json";
@@ -108,17 +99,6 @@ const WINDOWS_BASH_EXECUTION_GUIDANCE = `Windows execution:
 - Write commands using PowerShell-compatible syntax by default. POSIX/bash constructs such as heredocs, \`export VAR=...\`, and Unix-style shell quoting may not work unless you explicitly invoke a POSIX shell.
 
 ${WINDOWS_UNIFIED_EXEC_GUIDANCE}`;
-
-export const ROOT_MEMORY_TOOL_ASSETS = {
-  memory: {
-    schema: MemoryV2Schema,
-    description: MemoryV2Description.trim(),
-  },
-  memory_apply_patch: {
-    schema: MemoryApplyPatchSchema,
-    description: MemoryApplyPatchV2Description.trim(),
-  },
-} as const;
 
 export function buildBashDescriptionForPlatform(
   platform: NodeJS.Platform = process.platform,
@@ -182,16 +162,6 @@ const toolDefinitions = {
     schema: TaskStopSchema,
     description: TaskStopDescription.trim(),
     impl: task_stop,
-  }),
-  memory: defineTool({
-    schema: MemorySchema,
-    description: MemoryDescription.trim(),
-    impl: memory,
-  }),
-  memory_apply_patch: defineTool({
-    schema: MemoryApplyPatchSchema,
-    description: MemoryApplyPatchDescription.trim(),
-    impl: memory_apply_patch,
   }),
   Monitor: defineTool({
     schema: MonitorSchema,

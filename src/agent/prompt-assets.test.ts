@@ -10,8 +10,6 @@ import memoryV2Prompt from "@/agent/subagents/builtin/memory-v2.md";
 import reflectionV2Prompt from "@/agent/subagents/builtin/reflection-v2.md";
 import { resolveAndBuildSystemPrompt } from "@/agent/system-prompt-resolution";
 import initializingMemoryPrompt from "@/skills/builtin/initializing-memory/SKILL.md";
-import memoryApplyPatchV2Prompt from "@/tools/descriptions/MemoryApplyPatchV2.md";
-import memoryV2ToolPrompt from "@/tools/descriptions/MemoryV2.md";
 import { TOOLSET_CATALOG } from "@/tools/toolset-catalog";
 
 const HOSTED_EXTERNAL_MEMORY_INTRO =
@@ -24,8 +22,6 @@ const ROOT_ONLY_PROMPT_ASSETS = [
   initV2Prompt,
   memoryV2Prompt,
   reflectionV2Prompt,
-  memoryV2ToolPrompt,
-  memoryApplyPatchV2Prompt,
 ];
 const SYSTEM_DIRECTORY_PATH = /(^|[^A-Za-z0-9_-])(?:\$MEMORY_DIR\/)?system\//m;
 
@@ -135,22 +131,6 @@ describe("buildSystemPrompt", () => {
     for (const asset of ROOT_ONLY_PROMPT_ASSETS) {
       expect(containsSystemDirectoryPath(asset)).toBe(false);
     }
-  });
-
-  test("root memory tool prompts retain operations and safety guidance", () => {
-    for (const command of [
-      "str_replace",
-      "insert",
-      "delete",
-      "rename",
-      "update_description",
-      "create",
-    ]) {
-      expect(memoryV2ToolPrompt).toContain(`memory(command="${command}"`);
-    }
-    expect(memoryApplyPatchV2Prompt).toContain(
-      "`read_only: true` files cannot be modified",
-    );
   });
 
   test.each(["memfs", "local-memfs", "root-memfs"] as const)(

@@ -227,5 +227,5 @@ Return a report with:
 3. **Be selective** — Few meaningful changes > many trivial ones; few high-quality skills > many trivial ones
 4. **No relative dates** — Use absolute dates like "2026-04-28", not "today"
 5. **Always commit memory changes** — Your work is wasted if it is not committed; if nothing memory-worthy changed, do not commit
-6. **Encoding** — Memory markdown files must remain UTF-8. On Windows, do not use PowerShell redirection, `Out-File`, or `Set-Content` without explicit UTF-8 encoding; prefer `memory_apply_patch` or Node fs writes with UTF-8.
+6. **Encoding** — Memory markdown files must remain UTF-8. On Windows, do not use PowerShell redirection, `Out-File`, or `Set-Content` without explicit UTF-8 encoding; prefer the Edit tool or Node fs writes with UTF-8.
 7. **Report errors clearly** — If something breaks, say what happened and suggest a fix
