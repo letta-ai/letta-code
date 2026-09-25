@@ -159,6 +159,81 @@ describe("listener runtime_start external tool bridge", () => {
     ]);
   });
 
+  test("returns promptly when a registered tool's controller does not respond", async () => {
+    const { runtime, sent } = createMockRuntime();
+    runtime.connections.set("client-1", {
+      id: "client-1",
+      writer: {
+        readyState: 1,
+        send(data: string) {
+          sent.push(JSON.parse(data) as ExternalToolCallRequestMessage);
+        },
+      } as unknown as WebSocket,
+    } as never);
+    installExternalToolBridge(runtime);
+    registerRuntimeExternalTools(
+      runtime,
+      "client-1",
+      { agent_id: "agent-1", conversation_id: "conv-1" },
+      [
+        {
+          tools: [
+            {
+              name: "quick_action",
+              description: "Return a quick receipt",
+              parameters: { type: "object", properties: {} },
+              timeout_ms: 1_000,
+            },
+          ],
+        },
+      ],
+    );
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      {
+        clientToolAllowlist: ["quick_action"],
+        runtimeContext: {
+          connectionId: "client-1",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+        },
+      },
+    );
+    let result: Awaited<ReturnType<typeof executeTool>> | undefined;
+    try {
+      result = await Promise.race([
+        executeTool(
+          "quick_action",
+          {},
+          {
+            toolContextId: prepared.contextId,
+            toolCallId: "call-quick",
+          },
+        ),
+        new Promise<undefined>((resolve) =>
+          setTimeout(() => resolve(undefined), 1_500),
+        ),
+      ]);
+    } finally {
+      rejectPendingExternalToolCallsForConnection(
+        runtime,
+        "client-1",
+        "test cleanup",
+      );
+    }
+    expect(result?.status).toBe("error");
+    expect(String(result?.toolReturn)).toContain("outcome is unknown");
+    expect(sent).toHaveLength(1);
+    expect(runtime.pendingExternalToolCalls.size).toBe(0);
+    expect(
+      handleExternalToolCallResponseCommand(runtime, "client-1", {
+        type: "external_tool_call_response",
+        request_id: sent[0]?.request_id ?? "",
+        result: { content: [] },
+      }),
+    ).toBe(false);
+  });
+
   test("process-owned turns execute unscoped runtime tools through their controller", async () => {
     const runtime = createRuntime();
     const sent: ExternalToolCallRequestMessage[] = [];
