@@ -4,6 +4,7 @@ import type {
   EnqueueReceipt,
   LatestConversationSuperRun,
 } from "@/backend/api/conversation-enqueue";
+import { ApiRequestError } from "@/backend/api/request";
 import {
   type SuperRunWaitDeps,
   waitForAcceptedSuperRun,
@@ -238,6 +239,22 @@ test("post-accept error is reported before the row reaches COM", async () => {
       }),
     ),
   ).rejects.toThrow("finished with an error");
+});
+test("an exact-ID 404 fails instead of retrying forever", async () => {
+  let reads = 0;
+  await expect(
+    waitForAcceptedSuperRun(
+      receipt,
+      new AbortController().signal,
+      deps({
+        exact: async () => {
+          reads++;
+          throw new ApiRequestError("not found", 404, "not found");
+        },
+      }),
+    ),
+  ).rejects.toThrow("was not found for agent agent-1");
+  expect(reads).toBe(1);
 });
 test("a mismatched exact response cannot complete the accepted send", async () => {
   await expect(

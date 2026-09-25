@@ -64,17 +64,19 @@ test("requires a correlated completed child run and assistant result", async () 
 test("recovers a fast completed run from the accepted send's durable OTID", async () => {
   const listConversationMessages = mock(
     async () =>
-      [
-        {
-          id: "user-1",
-          date: "now",
-          message_type: "user_message",
-          content: "work",
-          otid: "cm-1",
-          run_id: "run-1",
-        },
-        assistant,
-      ] as never,
+      ({
+        items: [
+          {
+            id: "user-1",
+            date: "now",
+            message_type: "user_message",
+            content: "work",
+            otid: "cm-1",
+            run_id: "run-1",
+          },
+          assistant,
+        ],
+      }) as never,
   );
   const result = await waitForCorrelatedRemoteResult(
     receipt,
@@ -254,6 +256,87 @@ test("a cancelled correlated child run is an execution failure", async () => {
       }),
     ),
   ).rejects.toThrow("run-1 cancelled");
+});
+
+test("transient exact and child-run reads retry without failing the task", async () => {
+  let exactReads = 0;
+  let runReads = 0;
+  const current = deps({
+    exact: async () => {
+      if (++exactReads === 1) throw new TypeError("fetch failed");
+      return (await deps().exact(
+        "agent-1",
+        "sr-1",
+        new AbortController().signal,
+      )) as never;
+    },
+    backend: {
+      ...deps().backend,
+      retrieveRun: async () => {
+        if (++runReads === 1) throw new TypeError("socket closed");
+        return {
+          id: "run-1",
+          status: "completed",
+          stop_reason: "end_turn",
+        } as never;
+      },
+    },
+  });
+
+  expect(
+    await waitForCorrelatedRemoteResult(
+      receipt,
+      ["run-1"],
+      new AbortController().signal,
+      current,
+    ),
+  ).toMatchObject({ text: "Done" });
+  expect(exactReads).toBe(2);
+  expect(runReads).toBe(2);
+});
+
+test("approval continuation resumes transcript correlation from its last cursor", async () => {
+  const queries: Array<{ after?: string | null }> = [];
+  const listConversationMessages = mock(
+    async (_id: string, query: { after?: string | null }) => {
+      queries.push(query);
+      return (
+        query.after
+          ? [{ id: "continuation-1", run_id: "run-2" }]
+          : [
+              {
+                id: "user-1",
+                message_type: "user_message",
+                otid: "cm-1",
+                run_id: "run-1",
+              },
+            ]
+      ) as never;
+    },
+  );
+  const result = await waitForCorrelatedRemoteResult(
+    receipt,
+    [],
+    new AbortController().signal,
+    deps({
+      backend: {
+        ...deps().backend,
+        listConversationMessages,
+        retrieveRun: async (runId) =>
+          ({
+            id: runId,
+            status: "completed",
+            stop_reason: runId === "run-1" ? "requires_approval" : "end_turn",
+          }) as never,
+      },
+    }),
+  );
+
+  expect(result).toEqual({ text: "Done", runIds: ["run-1", "run-2"] });
+  expect(queries).toEqual([
+    expect.not.objectContaining({ after: expect.anything() }),
+    expect.objectContaining({ after: "user-1" }),
+  ]);
 });
 
 test("waits for a completed run's assistant result to persist", async () => {

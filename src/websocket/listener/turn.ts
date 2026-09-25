@@ -255,6 +255,7 @@ async function handleIncomingMessageInner(
         message: setup.reason,
         stopReason: "cancelled",
         isTerminal: true,
+        clientMessageIds: turnCorrelation.clientMessageIds,
         agentId,
         conversationId,
         cancelRequested: turnAbortSignal.aborted,
@@ -332,7 +333,6 @@ async function handleIncomingMessageInner(
       const stopReason = result.stopReason;
       const approvals = result.approvals || [];
       const fallbackError = result.fallbackError ?? null;
-
       emitStreamRecoveryStatusDeltas(socket, runtime, {
         terminalEofGuardFired: result.terminalEofGuardFired,
         stallReconcilerFired: result.stallReconcilerFired,

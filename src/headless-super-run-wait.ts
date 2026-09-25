@@ -74,8 +74,12 @@ export async function waitForAcceptedSuperRun(
         }
         finished = terminal(accepted);
       } catch (error) {
-        if (!(error instanceof ApiRequestError && error.status === 404))
-          throw error;
+        if (error instanceof ApiRequestError && error.status === 404) {
+          throw new RemoteExecutionFailed(
+            `Remote Super Run ${receipt.super_run_id} was not found for agent ${receipt.agent_id}.`,
+          );
+        }
+        throw error;
       }
       if (finished) break;
       const openTimeout = setTimeout(() => controller.abort(), 30_000);

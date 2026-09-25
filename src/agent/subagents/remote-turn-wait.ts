@@ -1,4 +1,5 @@
 import { setTimeout as delay } from "node:timers/promises";
+import { APIError } from "@letta-ai/letta-client";
 import { updateSubagent } from "@/agent/subagent-state.js";
 import type { SubagentResult } from "@/agent/subagents";
 import { type Backend, getBackend } from "@/backend";
@@ -9,6 +10,7 @@ import {
   listEnqueuedRunMessages,
   openConversationStatusStream,
 } from "@/backend/api/conversation-enqueue";
+import { ApiRequestError } from "@/backend/api/request";
 import { buildAgentReference } from "@/cli/helpers/app-urls";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { cancelAcceptedListenerInput } from "@/headless-listener-launch";
@@ -34,6 +36,41 @@ export interface RemoteResultWaitDeps {
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
 
+interface CorrelationScanState {
+  after?: string;
+  found: boolean;
+  closed: boolean;
+}
+
+function isTransientRemoteReadError(error: unknown): boolean {
+  if (error instanceof ApiRequestError || error instanceof APIError) {
+    return error.status === 408 || error.status === 429 || error.status >= 500;
+  }
+  return (
+    error instanceof TypeError ||
+    (error instanceof Error && error.name === "TimeoutError")
+  );
+}
+
+async function retryRemoteRead<T>(
+  read: () => Promise<T>,
+  signal: AbortSignal,
+  sleep: (ms: number, signal: AbortSignal) => Promise<void>,
+): Promise<T> {
+  let failures = 0;
+  while (true) {
+    signal.throwIfAborted();
+    try {
+      return await read();
+    } catch (error) {
+      signal.throwIfAborted();
+      if (!isTransientRemoteReadError(error)) throw error;
+      failures++;
+      await sleep(Math.min(1_000 * 2 ** (failures - 1), 10_000), signal);
+    }
+  }
+}
+
 function throwIfAcceptedRunFailed(run: LatestConversationSuperRun): void {
   if (run.errored_at)
     throw new Error(`Remote Super Run ${run.id} finished with an error.`);
@@ -41,15 +78,15 @@ function throwIfAcceptedRunFailed(run: LatestConversationSuperRun): void {
     throw new Error(`Remote Super Run ${run.id} was cancelled.`);
 }
 
-/** Recover this accepted send's run IDs from durable transcript history. */
-export async function readCorrelatedRunIds(
+async function scanCorrelatedRunIds(
   receipt: EnqueueReceipt,
   backend: RemoteResultBackend,
   signal: AbortSignal,
-): Promise<string[]> {
+  prior: CorrelationScanState,
+): Promise<{ runIds: string[]; state: CorrelationScanState }> {
   const runIds = new Set<string>();
-  let found = false;
-  let after: string | undefined;
+  let { after, found, closed } = prior;
+  if (closed) return { runIds: [], state: prior };
   while (true) {
     signal.throwIfAborted();
     const query = {
@@ -74,20 +111,45 @@ export async function readCorrelatedRunIds(
     for (const message of messages) {
       if (message.message_type === "user_message") {
         if (message.otid === receipt.client_message_id) found = true;
-        else if (found) return [...runIds];
+        else if (found) {
+          closed = true;
+          return {
+            runIds: [...runIds],
+            state: { after: message.id, found, closed },
+          };
+        }
       }
       if (!found) continue;
       if (typeof message.run_id === "string" && message.run_id) {
         runIds.add(message.run_id);
       }
     }
-    if (messages.length < 100) return [...runIds];
     const cursor = messages.at(-1)?.id;
+    if (messages.length < 100) {
+      return {
+        runIds: [...runIds],
+        state: { after: cursor ?? after, found, closed },
+      };
+    }
     if (!cursor || cursor === after) {
       throw new Error("Remote transcript pagination did not advance.");
     }
     after = cursor;
   }
+}
+
+/** Recover this accepted send's run IDs from durable transcript history. */
+export async function readCorrelatedRunIds(
+  receipt: EnqueueReceipt,
+  backend: RemoteResultBackend,
+  signal: AbortSignal,
+): Promise<string[]> {
+  return (
+    await scanCorrelatedRunIds(receipt, backend, signal, {
+      found: false,
+      closed: false,
+    })
+  ).runIds;
 }
 
 function assistantText(
@@ -125,13 +187,22 @@ export async function waitForCorrelatedRemoteResult(
   const noRunSince = now();
   let completedWithoutText: { runId: string; at: number } | undefined;
   let refreshCorrelation = true;
+  let correlationState: CorrelationScanState = {
+    found: false,
+    closed: false,
+  };
 
   while (true) {
     signal.throwIfAborted();
-    const accepted = await deps.exact(
-      receipt.agent_id,
-      receipt.super_run_id,
-      AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
+    const accepted = await retryRemoteRead(
+      () =>
+        deps.exact(
+          receipt.agent_id,
+          receipt.super_run_id,
+          AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
+        ),
+      signal,
+      sleep,
     );
     if (accepted.id !== receipt.super_run_id) {
       throw new Error(
@@ -140,12 +211,15 @@ export async function waitForCorrelatedRemoteResult(
     }
     throwIfAcceptedRunFailed(accepted);
 
-    if (refreshCorrelation) {
-      for (const runId of await readCorrelatedRunIds(
-        receipt,
-        deps.backend,
+    if (refreshCorrelation && !correlationState.closed) {
+      const scan = await retryRemoteRead(
+        () =>
+          scanCorrelatedRunIds(receipt, deps.backend, signal, correlationState),
         signal,
-      )) {
+        sleep,
+      );
+      correlationState = scan.state;
+      for (const runId of scan.runIds) {
         runIds.add(runId);
       }
       refreshCorrelation = false;
@@ -163,7 +237,11 @@ export async function waitForCorrelatedRemoteResult(
       continue;
     }
 
-    const run = await deps.backend.retrieveRun(runId, { signal });
+    const run = await retryRemoteRead(
+      () => deps.backend.retrieveRun(runId, { signal }),
+      signal,
+      sleep,
+    );
     if (run.status === "failed" || run.status === "cancelled") {
       throw new Error(
         `Remote run ${runId} ${run.status}${run.stop_reason ? ` (${run.stop_reason})` : ""}`,
@@ -179,7 +257,11 @@ export async function waitForCorrelatedRemoteResult(
       continue;
     }
 
-    const messages = await deps.listRunMessages(runId, signal);
+    const messages = await retryRemoteRead(
+      () => deps.listRunMessages(runId, signal),
+      signal,
+      sleep,
+    );
     deps.onMessages?.(messages);
     const text = assistantText(messages);
     if (text !== null) return { text, runIds: [...runIds] };
