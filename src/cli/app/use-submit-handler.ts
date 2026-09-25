@@ -3342,7 +3342,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               },
             ]);
           } catch (error) {
-            cmd.fail(`Doctor failed: ${formatErrorDetails(error, agentId)}`);
+            cmd.fail(`Command failed: ${formatErrorDetails(error, agentId)}`);
           } finally {
             setCommandRunning(false);
           }
