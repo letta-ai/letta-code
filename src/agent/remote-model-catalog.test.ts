@@ -3,7 +3,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { clearAvailableModelsCache } from "@/agent/available-models";
-import { models, resolveModel } from "@/agent/model-catalog";
+import {
+  models,
+  resolveCatalogModel,
+  resolveModel,
+} from "@/agent/model-catalog";
 import {
   __testResetRemoteModelCatalog,
   applyCatalogModels,
@@ -31,6 +35,7 @@ await settingsManager.initialize();
 const originalFetch = globalThis.fetch;
 const originalBaseUrl = process.env.LETTA_BASE_URL;
 const originalApiKey = process.env.LETTA_API_KEY;
+const originalDesktopMode = process.env.LETTA_DESKTOP_MODE;
 const snapshot = models.map((model) => ({ ...model }));
 
 function restoreSnapshot() {
@@ -80,6 +85,7 @@ beforeEach(() => {
   setConfiguredBackendMode("api");
   process.env.LETTA_BASE_URL = "https://api.letta.com";
   process.env.LETTA_API_KEY = "test-key";
+  delete process.env.LETTA_DESKTOP_MODE;
   cacheDir = mkdtempSync(join(tmpdir(), "lc-model-catalog-test-"));
   process.env.LETTA_MODEL_CATALOG_CACHE_DIR = cacheDir;
 });
@@ -101,6 +107,11 @@ afterEach(() => {
     delete process.env.LETTA_API_KEY;
   } else {
     process.env.LETTA_API_KEY = originalApiKey;
+  }
+  if (originalDesktopMode === undefined) {
+    delete process.env.LETTA_DESKTOP_MODE;
+  } else {
+    process.env.LETTA_DESKTOP_MODE = originalDesktopMode;
   }
 });
 
@@ -241,6 +252,7 @@ describe("refreshModelCatalog", () => {
 
   test("local startup uses runtime inventory without requesting the Cloud catalog", async () => {
     setConfiguredBackendMode("local");
+    process.env.LETTA_DESKTOP_MODE = "1";
     __testSetBackend(runtimeCatalogBackend());
     const fetchMock = mock(() => Promise.reject(new Error("unexpected fetch")));
     globalThis.fetch = fetchMock as unknown as typeof fetch;
@@ -260,6 +272,61 @@ describe("refreshModelCatalog", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(resolveModel("haiku")).toBe("anthropic/claude-haiku-4-5");
     expect(() => requireModelCatalog("http://localhost:8283")).not.toThrow();
+  });
+
+  test("Desktop proxy preserves effort presets and fails closed without a catalog", async () => {
+    const paths: string[] = [];
+    let available = true;
+    const proxy = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(request) {
+        paths.push(new URL(request.url).pathname);
+        if (!available) return new Response("Unavailable", { status: 503 });
+        if (new URL(request.url).pathname !== "/v1/models/catalog") {
+          return Response.json([]);
+        }
+        return Response.json({
+          models: [
+            remoteEntry(),
+            remoteEntry({
+              id: "gpt-5.6-luna-plus-pro-max",
+              handle: "chatgpt-plus-pro/gpt-5.6-luna",
+              isDefault: false,
+              config: { reasoning_effort: "max" },
+            }),
+          ],
+        });
+      },
+    });
+    process.env.LETTA_BASE_URL = `http://127.0.0.1:${proxy.port}`;
+    process.env.LETTA_DESKTOP_MODE = "1";
+    try {
+      await initializeModelCatalog();
+      expect(paths).toEqual(["/v1/models/catalog"]);
+      expect(resolveCatalogModel("gpt-5.6-luna-plus-pro-max")).toMatchObject({
+        handle: "chatgpt-plus-pro/gpt-5.6-luna",
+        updateArgs: { reasoning_effort: "max" },
+      });
+
+      available = false;
+      __testResetRemoteModelCatalog();
+      // A proxy outage can still use its last valid catalog.
+      await initializeModelCatalog();
+      expect(resolveModel("gpt-5.6-luna-plus-pro-max")).toBe(
+        "chatgpt-plus-pro/gpt-5.6-luna",
+      );
+
+      __testResetRemoteModelCatalog();
+      rmSync(cacheDir, { recursive: true, force: true });
+      await expect(initializeModelCatalog()).rejects.toThrow(
+        "GET /v1/models/catalog failed and no valid cache exists",
+      );
+      expect(paths).toEqual(Array(3).fill("/v1/models/catalog"));
+      expect(models).toEqual([]);
+    } finally {
+      proxy.stop(true);
+    }
   });
 
   test("projects runtime metadata without requiring a managed default", () => {
