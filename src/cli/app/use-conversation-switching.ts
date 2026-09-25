@@ -369,16 +369,19 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
           conversationId,
         );
 
+        const resumedSummary =
+          resumeData.conversation?.summary?.trim() || undefined;
         await maybeCarryOverActiveConversationModel(conversationId);
         setConversationIdAndRef(conversationId);
         setConversationAutoTitleEligibility(false);
-        setConversationSummary(null);
+        setConversationSummary(resumedSummary ?? null);
 
         pendingConversationSwitchRef.current = {
           origin: "fork",
           conversationId,
           isDefault: false,
           messageCount: resumeData.messageHistory.length,
+          summary: resumedSummary,
           messageHistory: resumeData.messageHistory,
         };
 
