@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "candidate_id": "claude@2.1.282:docs:339812bd7c1d2751a4af199ef4554de0101ff101086801ec4960783c573a625f:runtime:025c5693e28337db76d9d47569d4492e2e78ebb41094495cec29203dfabe772e",
+  "candidate_id": "claude@2.1.282:docs:69ad8fbe73cc2ae370c2d1ef8b743f76914ed4c0b9894f279a7ac72c6fc9e8ce:runtime:025c5693e28337db76d9d47569d4492e2e78ebb41094495cec29203dfabe772e",
   "package_version": "2.1.282",
   "npm_integrity": "sha512-nKh6bevzeUQm7yJzA6WdyvQ92k6/M5muwTUJtI1CbRWzl9drmdGdh61N9y4CIUVXAZhaVam0migsHuqpt8Kvlw==",
   "npm_published_at": "2026-09-24T15:56:22.706Z",
@@ -14,16 +14,10 @@
   },
   "docs": {
     "index_url": "https://code.claude.com/docs/llms.txt",
-    "index_hash": "28a821b6f48e7cc7b53935039a111e76a044153ba907c8bb3fa8a1b63d8bdb02",
+    "index_hash": "502cb77df0df2fea2626745923c17fc8dc3432d00e313ab80108f960c52e0630",
     "full_scan": false,
     "scanned_at": "2026-09-24T20:27:42.679Z",
     "pages": {
-      "https://code.claude.com/docs/_llms/cn.md": {
-        "url": "https://code.claude.com/docs/_llms/cn.md",
-        "hash": "77e8e43cbaaacbc716033f826af746fdd16d22d8858331f49fdca9bdd6bab124",
-        "watched": false,
-        "source_path": null
-      },
       "https://code.claude.com/docs/_llms/de.md": {
         "url": "https://code.claude.com/docs/_llms/de.md",
         "hash": "1a3b4f89b1150555ac5280897fdf6a88ad53ca9798485bad089decefe671a464",
@@ -78,9 +72,15 @@
         "watched": false,
         "source_path": null
       },
-      "https://code.claude.com/docs/_llms/zh-hant.md": {
-        "url": "https://code.claude.com/docs/_llms/zh-hant.md",
-        "hash": "bc304a97d00066b26c55bae9bde732d73495dc899fe0f95c8ced8b3105d25317",
+      "https://code.claude.com/docs/_llms/zh-cn.md": {
+        "url": "https://code.claude.com/docs/_llms/zh-cn.md",
+        "hash": "37888859d92f5b79d7710d1018bb9beaf9379d36f60abcd15a8b54ee282fcdc9",
+        "watched": false,
+        "source_path": null
+      },
+      "https://code.claude.com/docs/_llms/zh-tw.md": {
+        "url": "https://code.claude.com/docs/_llms/zh-tw.md",
+        "hash": "7277c462088265c6216e65ee2b0b85cad964fd93f17aacef6cf525205538e872",
         "watched": false,
         "source_path": null
       },
@@ -1351,7 +1351,7 @@
         "source_path": "sources/raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md"
       }
     },
-    "digest": "339812bd7c1d2751a4af199ef4554de0101ff101086801ec4960783c573a625f"
+    "digest": "69ad8fbe73cc2ae370c2d1ef8b743f76914ed4c0b9894f279a7ac72c6fc9e8ce"
   },
   "runtime": {
     "probe_contract_version": 2,
@@ -1571,7 +1571,7 @@
           {
             "name": "TaskCreate",
             "input": {
-              "description": "Probe task for exercising task tools.",
+              "description": "Probe task for exercising task tools",
               "metadata": {
                 "keep": "yes",
                 "probe": "remove"
@@ -1622,7 +1622,7 @@
         "tool_results": [
           "Task #1 created successfully: probe-task",
           "Updated task #1 metadata",
-          "Task #1: probe-task\nStatus: pending\nDescription: Probe task for exercising task tools.",
+          "Task #1: probe-task\nStatus: pending\nDescription: Probe task for exercising task tools",
           "Updated task #1 deleted",
           "Task not found",
           "No tasks found"
@@ -1633,8 +1633,8 @@
     ],
     "digest": "025c5693e28337db76d9d47569d4492e2e78ebb41094495cec29203dfabe772e"
   },
-  "fetched_at": "2026-09-25T02:34:26.070Z",
-  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/36086698589",
-  "state_commit_parent": "5fb4601a304ae4f49c4e55c886153aff0f59fbaf",
-  "analysis_parent_sha": "5fb4601a304ae4f49c4e55c886153aff0f59fbaf"
+  "fetched_at": "2026-09-25T14:29:40.996Z",
+  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/36147684722",
+  "state_commit_parent": "99b73812ca987c936637fc6151b3df81cc644dc4",
+  "analysis_parent_sha": "99b73812ca987c936637fc6151b3df81cc644dc4"
 }
