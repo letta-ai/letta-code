@@ -7,7 +7,10 @@ import {
   resolveBackendMode,
   setConfiguredBackendMode,
 } from "@/backend/backend-mode";
-import { LOCAL_BACKEND_DIR_ENV } from "@/backend/local/paths";
+import {
+  LOCAL_BACKEND_DIR_ENV,
+  LOCAL_BACKEND_EXPERIMENTAL_ENV,
+} from "@/backend/local/paths";
 import {
   getStartupBackendLookupOrder,
   inferBackendModeFromAgentId,
@@ -92,11 +95,13 @@ describe("startup backend mode inference", () => {
 describe("startup picker backend selection", () => {
   let storageDir: string;
   let originalStorageDir: string | undefined;
+  let originalBackendFlag: string | undefined;
   let originalMode: ReturnType<typeof resolveBackendMode>;
   let originalBackend: ReturnType<typeof getBackend>;
 
   beforeEach(async () => {
     originalStorageDir = process.env[LOCAL_BACKEND_DIR_ENV];
+    originalBackendFlag = process.env[LOCAL_BACKEND_EXPERIMENTAL_ENV];
     originalMode = resolveBackendMode();
     originalBackend = getBackend();
     storageDir = await mkdtemp(join(tmpdir(), "letta-startup-pin-"));
@@ -108,6 +113,11 @@ describe("startup picker backend selection", () => {
       delete process.env[LOCAL_BACKEND_DIR_ENV];
     } else {
       process.env[LOCAL_BACKEND_DIR_ENV] = originalStorageDir;
+    }
+    if (originalBackendFlag === undefined) {
+      delete process.env[LOCAL_BACKEND_EXPERIMENTAL_ENV];
+    } else {
+      process.env[LOCAL_BACKEND_EXPERIMENTAL_ENV] = originalBackendFlag;
     }
     setConfiguredBackendMode(originalMode);
     __testSetBackend(originalBackend);
