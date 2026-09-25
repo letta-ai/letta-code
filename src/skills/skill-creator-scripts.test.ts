@@ -8,10 +8,12 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { inflateRawSync } from "node:zlib";
 import {
   initSkill,
   titleCaseSkillName,
@@ -20,6 +22,42 @@ import { packageSkill } from "@/skills/builtin/creating-skills/scripts/package-s
 import { validateSkill } from "@/skills/builtin/creating-skills/scripts/validate-skill";
 
 const TEST_DIR = join(import.meta.dir, ".test-skill-creator");
+
+function extractLocalZipEntries(archive: Buffer): Map<string, Buffer> {
+  const entries = new Map<string, Buffer>();
+  let offset = 0;
+
+  while (
+    offset + 30 <= archive.length &&
+    archive.readUInt32LE(offset) === 0x04034b50
+  ) {
+    const method = archive.readUInt16LE(offset + 8);
+    const compressedSize = archive.readUInt32LE(offset + 18);
+    const uncompressedSize = archive.readUInt32LE(offset + 22);
+    const nameLength = archive.readUInt16LE(offset + 26);
+    const extraLength = archive.readUInt16LE(offset + 28);
+    const nameStart = offset + 30;
+    const dataStart = nameStart + nameLength + extraLength;
+    const dataEnd = dataStart + compressedSize;
+    const name = archive.subarray(nameStart, nameStart + nameLength).toString();
+    const compressed = archive.subarray(dataStart, dataEnd);
+
+    let data: Buffer;
+    if (method === 0) {
+      data = compressed;
+    } else if (method === 8) {
+      data = inflateRawSync(compressed);
+    } else {
+      throw new Error(`unsupported ZIP compression method ${method}`);
+    }
+
+    expect(data.length).toBe(uncompressedSize);
+    entries.set(name, data);
+    offset = dataEnd;
+  }
+
+  return entries;
+}
 
 describe("validate-skill", () => {
   beforeEach(() => {
@@ -396,9 +434,7 @@ describe("package-skill", () => {
     // Create a valid skill
     const skillDir = join(TEST_DIR, "packagable-skill");
     mkdirSync(skillDir);
-    writeFileSync(
-      join(skillDir, "SKILL.md"),
-      `---
+    const skillContent = `---
 name: packagable-skill
 description: A skill that can be packaged
 ---
@@ -406,12 +442,18 @@ description: A skill that can be packaged
 # Packagable Skill
 
 This skill can be packaged.
-`,
-    );
+`;
+    writeFileSync(join(skillDir, "SKILL.md"), skillContent);
 
     const result = packageSkill(skillDir, TEST_DIR);
     expect(result).not.toBeNull();
+    if (!result) throw new Error("expected packaged skill path");
     expect(existsSync(join(TEST_DIR, "packagable-skill.skill"))).toBe(true);
+
+    const entries = extractLocalZipEntries(readFileSync(result));
+    expect(entries.get("packagable-skill/SKILL.md")?.toString()).toBe(
+      skillContent,
+    );
   });
 
   test("fails when skill directory does not exist", () => {
