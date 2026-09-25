@@ -736,6 +736,42 @@ catalog must use this fixture.
 
 ## Subagent Lifecycle & Reflection
 
+### Harness subagent tracking (Task vs SendAgentMessage)
+
+`subagent-state` (`src/agent/subagent-state.ts`) is the store behind every
+subagent-liveness surface: the roster "Running now", the header badge, the
+listener `update_subagent_state` snapshot, and Cloud's `active_subagent_count`
+sidebar glyph. Only two call sites create entries (`registerSubagent`): a
+`Task`/`Agent(` spawn (`tools/impl/task.ts`) and `SendAgentMessage` to a child
+this agent spawned (`agent/subagents/child-send-tracking.ts`). Peers messaged
+over A2A never register. A child kept working via A2A after its spawning `Agent(` finished is
+still doing the parent's work, so a child's running state must not depend on
+how the parent handed it work.
+
+- **Child gate = the `parent:<id>` tag.** `resolveChildSubagent` retrieves the
+  destination with `include: ["agent.tags"]` — Cloud omits tags unless
+  included, and an empty tag array silently turns every child into a peer
+  (never drop the include). Track only when the destination's `parent:` tag is
+  the sender's agent ID; any other parent, no tag, or a failed lookup is a
+  peer: fire-and-forget, never registered. Peers showing in the sender's
+  roster would double-count work and hold the sender's sandbox for an
+  unrelated agent. `manager.ts` writes the tag at spawn alongside `type:`.
+- **Register only after a successful enqueue and keep the tool fire-and-forget.**
+  Return the receipt immediately; never deliver the reply into the parent's
+  queue. Background-follow that receipt's exact Super Run
+  (`waitForAcceptedSuperRun`, open/exact feed, messages never collected) and
+  `completeSubagent` when it settles — error on failure/cancel. The entry is
+  bound to the receipt (a later direct chat with the child must not light the
+  parent's indicator), scoped to the sending conversation (`parentScope`), and
+  carries `agent_id`/`conversation_id`/`agent_url`.
+- **`isBackground: true` is deliberate for these entries; do not flip the
+  shared flag.** Cloud reads it as a sandbox keep-alive claim and ownership
+  hold on the sender — intentional while the parent follows its child, and
+  what keeps the sidebar glyph lit (`active_subagent_count` needs the claim).
+  Setting it false makes the TUI treat the child as a foreground Task
+  (`hasInProgressTaskToolCalls`), keeping Task cards live until the child
+  finishes.
+
 ### Subagent Lifecycle API
 
 - `ctx.subagents.list()` , returns fuller lifecycle items (type, status,
