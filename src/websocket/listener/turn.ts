@@ -329,7 +329,6 @@ async function handleIncomingMessageInner(
       );
       const result = drained.result;
       runId = drained.runId;
-
       const stopReason = result.stopReason;
       const approvals = result.approvals || [];
       const fallbackError = result.fallbackError ?? null;
@@ -953,6 +952,7 @@ async function handleIncomingMessageInner(
       ...noticeParams,
       stopReason: "error",
       isTerminal: true,
+      clientMessageIds: turnCorrelation.clientMessageIds,
       runId: terminalRunId,
     });
     runtime.lastTerminalLoopErrorMessage = formattedError ?? errorMessage;

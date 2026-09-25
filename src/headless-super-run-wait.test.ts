@@ -228,6 +228,17 @@ test("exact terminal error is reported", async () => {
     ),
   ).rejects.toThrow("finished with an error");
 });
+test("post-accept error is reported before the row reaches COM", async () => {
+  await expect(
+    waitForAcceptedSuperRun(
+      receipt,
+      new AbortController().signal,
+      deps({
+        exact: async () => ({ ...row("STR"), errored_at: "now" }),
+      }),
+    ),
+  ).rejects.toThrow("finished with an error");
+});
 test("a mismatched exact response cannot complete the accepted send", async () => {
   await expect(
     waitForAcceptedSuperRun(

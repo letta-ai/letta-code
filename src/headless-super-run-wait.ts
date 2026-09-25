@@ -31,15 +31,15 @@ export interface SuperRunWaitDeps {
 class RemoteExecutionFailed extends Error {}
 
 function terminal(run: LatestConversationSuperRun): boolean {
+  if (run.errored_at)
+    throw new RemoteExecutionFailed(
+      `Remote Super Run ${run.id} finished with an error.`,
+    );
   if (run.status === "CAN" || run.cancelled_at)
     throw new RemoteExecutionFailed(
       `Remote Super Run ${run.id} was cancelled.`,
     );
   if (run.status !== "COM" && !run.completed_at) return false;
-  if (run.errored_at)
-    throw new RemoteExecutionFailed(
-      `Remote Super Run ${run.id} finished with an error.`,
-    );
   return true;
 }
 

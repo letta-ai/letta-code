@@ -20,6 +20,7 @@ function takeDequeuedClientMessageIds(
 }
 
 export interface TurnCorrelation {
+  readonly clientMessageIds: string[];
   appendDequeuedBatch: (batchId: string) => void;
   observeRun: (runId: string) => void;
 }
@@ -73,6 +74,9 @@ export function createTurnCorrelation(
     }
   }
   return {
+    get clientMessageIds() {
+      return [...clientMessageIds];
+    },
     appendDequeuedBatch(nextBatchId) {
       for (const clientMessageId of takeDequeuedClientMessageIds(
         runtime,

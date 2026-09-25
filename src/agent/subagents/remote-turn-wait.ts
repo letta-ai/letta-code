@@ -1,8 +1,11 @@
+import { setTimeout as delay } from "node:timers/promises";
 import { updateSubagent } from "@/agent/subagent-state.js";
 import type { SubagentResult } from "@/agent/subagents";
+import { type Backend, getBackend } from "@/backend";
 import {
   type EnqueueReceipt,
   getExactSuperRun,
+  type LatestConversationSuperRun,
   listEnqueuedRunMessages,
   openConversationStatusStream,
 } from "@/backend/api/conversation-enqueue";
@@ -12,6 +15,185 @@ import { cancelAcceptedListenerInput } from "@/headless-listener-launch";
 import { waitForAcceptedSuperRun } from "@/headless-super-run-wait";
 import { getErrorMessage } from "@/utils/error";
 import { type ExecutionState, processStreamEvent } from "./subagent-stream";
+
+type RemoteResultBackend = Pick<
+  Backend,
+  "listAgentMessages" | "listConversationMessages" | "retrieveRun"
+>;
+
+export interface RemoteResultWaitDeps {
+  backend: RemoteResultBackend;
+  exact: typeof getExactSuperRun;
+  listRunMessages: typeof listEnqueuedRunMessages;
+  onMessages?: (
+    messages: Awaited<ReturnType<typeof listEnqueuedRunMessages>>,
+  ) => void;
+  pollMs?: number;
+  resultGraceMs?: number;
+  now?: () => number;
+  sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+}
+
+function throwIfAcceptedRunFailed(run: LatestConversationSuperRun): void {
+  if (run.errored_at)
+    throw new Error(`Remote Super Run ${run.id} finished with an error.`);
+  if (run.status === "CAN" || run.cancelled_at)
+    throw new Error(`Remote Super Run ${run.id} was cancelled.`);
+}
+
+/** Recover this accepted send's run IDs from durable transcript history. */
+export async function readCorrelatedRunIds(
+  receipt: EnqueueReceipt,
+  backend: RemoteResultBackend,
+  signal: AbortSignal,
+): Promise<string[]> {
+  const runIds = new Set<string>();
+  let found = false;
+  let after: string | undefined;
+  while (true) {
+    signal.throwIfAborted();
+    const query = {
+      order: "asc" as const,
+      limit: 100,
+      include_err: true,
+      ...(after ? { after } : {}),
+    };
+    const page =
+      receipt.conversation_id === "default"
+        ? await backend.listAgentMessages(
+            receipt.agent_id,
+            { ...query, conversation_id: "default" },
+            { signal },
+          )
+        : await backend.listConversationMessages(
+            receipt.conversation_id,
+            query,
+            { signal },
+          );
+    const messages = Array.isArray(page) ? page : page.items;
+    for (const message of messages) {
+      if (message.message_type === "user_message") {
+        if (message.otid === receipt.client_message_id) found = true;
+        else if (found) return [...runIds];
+      }
+      if (!found) continue;
+      if (typeof message.run_id === "string" && message.run_id) {
+        runIds.add(message.run_id);
+      }
+    }
+    if (messages.length < 100) return [...runIds];
+    const cursor = messages.at(-1)?.id;
+    if (!cursor || cursor === after) {
+      throw new Error("Remote transcript pagination did not advance.");
+    }
+    after = cursor;
+  }
+}
+
+function assistantText(
+  messages: Awaited<ReturnType<typeof listEnqueuedRunMessages>>,
+): string | null {
+  const assistant = messages
+    .filter((message) => message.message_type === "assistant_message")
+    .sort((left, right) => (right.seq_id ?? 0) - (left.seq_id ?? 0))[0];
+  if (assistant?.message_type !== "assistant_message") return null;
+  const text =
+    typeof assistant.content === "string"
+      ? assistant.content
+      : assistant.content
+          .filter((part) => part.type === "text")
+          .map((part) => part.text)
+          .join("\n");
+  return text.trim() ? text : null;
+}
+
+/** Require an exact correlated child run and a persisted Agent result. */
+export async function waitForCorrelatedRemoteResult(
+  receipt: EnqueueReceipt,
+  observedRunIds: string[],
+  signal: AbortSignal,
+  deps: RemoteResultWaitDeps,
+): Promise<{ text: string; runIds: string[] }> {
+  const runIds = new Set(observedRunIds);
+  const now = deps.now ?? Date.now;
+  const graceMs = deps.resultGraceMs ?? 15_000;
+  const pollMs = deps.pollMs ?? 1_000;
+  const sleep =
+    deps.sleep ??
+    ((ms: number, waitSignal: AbortSignal) =>
+      delay(ms, undefined, { signal: waitSignal }));
+  const noRunSince = now();
+  let completedWithoutText: { runId: string; at: number } | undefined;
+  let refreshCorrelation = true;
+
+  while (true) {
+    signal.throwIfAborted();
+    const accepted = await deps.exact(
+      receipt.agent_id,
+      receipt.super_run_id,
+      AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
+    );
+    if (accepted.id !== receipt.super_run_id) {
+      throw new Error(
+        `Exact Super Run read returned ${accepted.id} for ${receipt.super_run_id}.`,
+      );
+    }
+    throwIfAcceptedRunFailed(accepted);
+
+    if (refreshCorrelation) {
+      for (const runId of await readCorrelatedRunIds(
+        receipt,
+        deps.backend,
+        signal,
+      )) {
+        runIds.add(runId);
+      }
+      refreshCorrelation = false;
+    }
+
+    const runId = [...runIds].at(-1);
+    if (!runId) {
+      if (now() - noRunSince >= graceMs) {
+        throw new Error(
+          `Remote Super Run ${receipt.super_run_id} completed without a correlated child run.`,
+        );
+      }
+      refreshCorrelation = true;
+      await sleep(pollMs, signal);
+      continue;
+    }
+
+    const run = await deps.backend.retrieveRun(runId, { signal });
+    if (run.status === "failed" || run.status === "cancelled") {
+      throw new Error(
+        `Remote run ${runId} ${run.status}${run.stop_reason ? ` (${run.stop_reason})` : ""}`,
+      );
+    }
+    if (run.stop_reason === "requires_approval") {
+      refreshCorrelation = true;
+      await sleep(pollMs, signal);
+      continue;
+    }
+    if (run.status !== "completed") {
+      await sleep(pollMs, signal);
+      continue;
+    }
+
+    const messages = await deps.listRunMessages(runId, signal);
+    deps.onMessages?.(messages);
+    const text = assistantText(messages);
+    if (text !== null) return { text, runIds: [...runIds] };
+    if (completedWithoutText?.runId !== runId) {
+      completedWithoutText = { runId, at: now() };
+    }
+    if (now() - completedWithoutText.at >= graceMs) {
+      throw new Error(
+        `Remote run ${runId} completed without an assistant reply (${run.stop_reason ?? "unknown stop reason"})`,
+      );
+    }
+    await sleep(pollMs, signal);
+  }
+}
 
 /** The submitting CLI has exited. The harness follows its Cloud receipt. */
 export async function collectRemoteTurnResult(
@@ -29,23 +211,39 @@ export async function collectRemoteTurnResult(
     }),
   });
   try {
-    const reply = await waitForAcceptedSuperRun(receipt, signal, {
+    const lifecycle = await waitForAcceptedSuperRun(receipt, signal, {
       open: openConversationStatusStream,
       exact: getExactSuperRun,
-      messages: async (runId, readSignal) => {
-        const messages = await listEnqueuedRunMessages(runId, readSignal);
-        for (const message of messages) {
-          if (message.message_type === "tool_call_message") {
-            processStreamEvent(
-              JSON.stringify({ type: "message", ...message }),
-              state,
-              subagentId,
-            );
-          }
-        }
-        return messages;
-      },
+      // The lifecycle helper also serves fire-and-forget child tracking. Agent
+      // success is classified below from the correlated run and result.
+      messages: async () => [],
     });
+    const seenMessages = new Set<string>();
+    const reply = await waitForCorrelatedRemoteResult(
+      receipt,
+      lifecycle.runIds,
+      signal,
+      {
+        backend: getBackend(),
+        exact: getExactSuperRun,
+        listRunMessages: listEnqueuedRunMessages,
+        onMessages: (messages) => {
+          for (const message of messages) {
+            if (
+              message.message_type === "tool_call_message" &&
+              !seenMessages.has(message.id)
+            ) {
+              seenMessages.add(message.id);
+              processStreamEvent(
+                JSON.stringify({ type: "message", ...message }),
+                state,
+                subagentId,
+              );
+            }
+          }
+        },
+      },
+    );
     return {
       agentId: receipt.agent_id,
       conversationId: receipt.conversation_id,
