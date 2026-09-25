@@ -385,7 +385,86 @@ describe("GitHub pull request output tracking", () => {
     ]);
   });
 
-  test("later default work finds persisted parents and preserves known writes during stalled discovery", async () => {
+  for (const conversationId of ["default", "conv-child"] as const) {
+    test(`current task parents suppress saved parents for ${conversationId}`, async () => {
+      const writes: string[] = [];
+      let readSavedParents = false;
+      const backend: ConversationTagBackend = {
+        retrieveAgent: async () => {
+          readSavedParents = true;
+          return {
+            tags: ["parent-conversation:agent-parent/conv-launcher-a"],
+          };
+        },
+        retrieveConversation: async () => {
+          readSavedParents = true;
+          return {
+            tags: ["parent-conversation:agent-parent/conv-launcher-a"],
+          };
+        },
+        updateConversation: async (id, body) => {
+          expect(body.tags_to_add).toEqual([
+            "github:pull-request:letta-ai:letta-code:4008",
+          ]);
+          writes.push(id);
+          return { id };
+        },
+      };
+      const tracker = createGitHubPullRequestOutputTracker(
+        "gh pr create --fill",
+        {
+          agentId: "agent-child",
+          conversationId,
+          attributionConversationIds: ["conv-launcher-b"],
+          backend,
+        },
+      );
+      tracker?.append(
+        "https://github.com/letta-ai/letta-code/pull/4008\n",
+        "stdout",
+      );
+      await tracker?.finish();
+      expect(writes).toEqual(
+        conversationId === "default"
+          ? ["conv-launcher-b"]
+          : ["conv-child", "conv-launcher-b"],
+      );
+      expect(readSavedParents).toBe(false);
+    });
+  }
+
+  test("an explicitly empty current task scope suppresses saved parents", async () => {
+    let readSavedParents = false;
+    const backend: ConversationTagBackend = {
+      retrieveAgent: async () => {
+        readSavedParents = true;
+        return {
+          tags: ["parent-conversation:agent-parent/conv-old-launcher"],
+        };
+      },
+      retrieveConversation: async () => ({ tags: [] }),
+      updateConversation: async () => {
+        throw new Error("No conversation should be attributed");
+      },
+    };
+    const tracker = createGitHubPullRequestOutputTracker(
+      "gh pr create --fill",
+      {
+        agentId: "agent-child",
+        conversationId: "default",
+        attributionConversationIds: [],
+        backend,
+      },
+    );
+    tracker?.append(
+      "https://github.com/letta-ai/letta-code/pull/4010\n",
+      "stdout",
+    );
+    await tracker?.finish();
+    expect(readSavedParents).toBe(false);
+  });
+
+  test("absent current task scope preserves known writes during stalled discovery", async () => {
     const writes: string[] = [];
     const controller = new AbortController();
     const readStarted = Promise.withResolvers<void>();
@@ -410,7 +489,6 @@ describe("GitHub pull request output tracking", () => {
       {
         agentId: "agent-child",
         conversationId: "default",
-        attributionConversationIds: ["conv-launcher"],
         backend,
       },
     );
@@ -422,7 +500,7 @@ describe("GitHub pull request output tracking", () => {
       ?.finish(controller.signal)
       .catch((error: unknown) => error);
     await readStarted.promise;
-    expect(writes).toEqual(["conv-launcher", "conv-persisted"]);
+    expect(writes).toEqual(["conv-persisted"]);
     const reason = new Error("deadline");
     controller.abort(reason);
     expect(await finished).toBe(reason);
@@ -441,7 +519,6 @@ describe("GitHub pull request output tracking", () => {
       {
         agentId: "agent-child",
         conversationId: "conv-child",
-        attributionConversationIds: [],
         backend,
       },
     );

@@ -75,6 +75,7 @@ import type { SkillSource } from "./agent/skills";
 import { SessionStats } from "./agent/stats";
 import {
   type BackendMode,
+  type ConversationCreateBody,
   type ConversationMessageStreamBody,
   getBackend,
 } from "./backend";

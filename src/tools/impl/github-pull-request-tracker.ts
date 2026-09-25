@@ -352,14 +352,18 @@ export function createGitHubPullRequestOutputTracker(
     return undefined;
   }
 
+  const runtimeContext = getRuntimeContext();
   const conversationId =
-    options?.conversationId ?? getRuntimeContext()?.conversationId;
-  const agentId = options?.agentId ?? getRuntimeContext()?.agentId;
-  const attributionConversationIds =
+    options?.conversationId ?? runtimeContext?.conversationId;
+  const agentId = options?.agentId ?? runtimeContext?.agentId;
+  const environmentAttribution = process.env[GITHUB_PR_CONVERSATIONS_ENV];
+  const currentAttributionConversationIds =
     options?.attributionConversationIds ??
-    getRuntimeContext()?.githubPullRequestConversationIds ??
-    process.env[GITHUB_PR_CONVERSATIONS_ENV]?.split(",") ??
-    [];
+    runtimeContext?.githubPullRequestConversationIds ??
+    (environmentAttribution !== undefined
+      ? environmentAttribution.split(",")
+      : undefined);
+  const attributionConversationIds = currentAttributionConversationIds ?? [];
   const targetConversationIds = [conversationId, ...attributionConversationIds]
     .filter(
       (id): id is string =>
@@ -417,6 +421,7 @@ export function createGitHubPullRequestOutputTracker(
         };
         targetConversationIds.forEach(append);
         const discover = async () => {
+          if (currentAttributionConversationIds !== undefined) return;
           for await (const id of getPullRequestParentConversationIds(
             backend,
             { agentId, conversationId },
