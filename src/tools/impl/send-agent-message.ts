@@ -10,7 +10,10 @@ import {
   resolveAgentMessageDestination,
   validateAddress,
 } from "@/backend/api/agent-message";
-import { enqueueConversationMessage } from "@/backend/api/conversation-enqueue";
+import {
+  enqueueConversationMessage,
+  isProvenCloudApiShutdownRejection,
+} from "@/backend/api/conversation-enqueue";
 import { ApiRequestError } from "@/backend/api/request";
 import {
   getCurrentWorkingDirectory,
@@ -265,7 +268,8 @@ export async function send_agent_message(
         error instanceof ApiRequestError &&
         error.status >= 400 &&
         error.status < 500
-      );
+      ) &&
+      !isProvenCloudApiShutdownRejection(error);
     return {
       content: JSON.stringify({
         status: unknown ? "acceptance_unknown" : "submission_failed",
