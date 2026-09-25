@@ -3102,16 +3102,17 @@ export async function handleHeadlessCommand(
     await exitHeadless(1, "headless_runtime_exception");
   }
 
+  const warnOnStderr = (text: string) => {
+    if (outputFormat !== "stream-json") console.error(text);
+  };
   await runPostTurnMemorySync({
     conversationId,
     agentId: agent.id,
     isEnabled: (id) => settingsManager.isMemfsEnabled(id),
     debugLabel: "Post-turn headless memory sync",
-    emitWarning: (text) => {
-      if (outputFormat !== "stream-json") {
-        console.error(text);
-      }
-    },
+    // One-shot runs have no next turn to remind; both go to stderr.
+    enqueueReminder: warnOnStderr,
+    emitWarning: warnOnStderr,
   });
 
   // Update stats with final usage data from buffers
@@ -4757,9 +4758,7 @@ async function runBidirectionalMode(
           enqueueReminder: (text) => {
             enqueueMemoryGitSyncReminder(sharedReminderState, { text });
           },
-          emitWarning: (text) => {
-            debugWarn("memfs-git", text);
-          },
+          emitWarning: (text) => console.error(text),
         });
         turnInProgress = false;
         blockedEmittedThisTurn = false;
