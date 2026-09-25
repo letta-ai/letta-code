@@ -1,7 +1,7 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { basename, join } from "node:path";
+import { basename, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   detectPackageManager,
@@ -24,6 +24,106 @@ type RuntimeResolver = {
   runtimeDir: string;
   resolve: (moduleName: string) => string;
 };
+
+const PACKAGE_NAME_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+function splitPackageSpecifier(moduleName: string): {
+  packageName: string;
+  exportKey: string;
+} | null {
+  const parts = moduleName.split("/");
+  if (moduleName.startsWith("@")) {
+    if (parts.length < 2) return null;
+    const scope = parts[0]?.slice(1) ?? "";
+    const name = parts[1] ?? "";
+    if (!PACKAGE_NAME_SEGMENT.test(scope) || !PACKAGE_NAME_SEGMENT.test(name)) {
+      return null;
+    }
+    return {
+      packageName: `${parts[0]}/${parts[1]}`,
+      exportKey: parts.length > 2 ? `./${parts.slice(2).join("/")}` : ".",
+    };
+  }
+  if (!parts[0] || !PACKAGE_NAME_SEGMENT.test(parts[0])) return null;
+  return {
+    packageName: parts[0],
+    exportKey: parts.length > 1 ? `./${parts.slice(1).join("/")}` : ".",
+  };
+}
+
+function readImportExportTarget(value: unknown): string | null {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const target = readImportExportTarget(entry);
+      if (target) return target;
+    }
+    return null;
+  }
+  if (!value || typeof value !== "object") return null;
+  const conditions = value as Record<string, unknown>;
+  for (const condition of ["import", "node", "default"]) {
+    const target = readImportExportTarget(conditions[condition]);
+    if (target) return target;
+  }
+  return null;
+}
+
+/** Resolve ESM-only packages whose exports omit the `require` condition. */
+function resolveImportOnlyModulePath(
+  runtimeDir: string,
+  moduleName: string,
+): string | null {
+  const specifier = splitPackageSpecifier(moduleName);
+  if (!specifier) return null;
+  const packageRoot = join(
+    runtimeDir,
+    "node_modules",
+    ...specifier.packageName.split("/"),
+  );
+  const packageJsonPath = join(packageRoot, "package.json");
+  if (!existsSync(packageJsonPath)) return null;
+
+  try {
+    const manifest = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as {
+      exports?: unknown;
+      module?: unknown;
+      main?: unknown;
+    };
+    let exportValue: unknown;
+    if (
+      manifest.exports &&
+      typeof manifest.exports === "object" &&
+      !Array.isArray(manifest.exports)
+    ) {
+      const exportsMap = manifest.exports as Record<string, unknown>;
+      const usesSubpathKeys = Object.keys(exportsMap).some((key) =>
+        key.startsWith("."),
+      );
+      exportValue = usesSubpathKeys
+        ? exportsMap[specifier.exportKey]
+        : specifier.exportKey === "."
+          ? manifest.exports
+          : undefined;
+    } else if (specifier.exportKey === ".") {
+      exportValue = manifest.exports;
+    }
+
+    const target =
+      readImportExportTarget(exportValue) ??
+      (specifier.exportKey === "." && typeof manifest.module === "string"
+        ? manifest.module
+        : specifier.exportKey === "." && typeof manifest.main === "string"
+          ? manifest.main
+          : null);
+    if (!target?.startsWith("./")) return null;
+    const resolved = resolve(packageRoot, target);
+    if (!resolved.startsWith(`${resolve(packageRoot)}${sep}`)) return null;
+    return existsSync(resolved) ? resolved : null;
+  } catch {
+    return null;
+  }
+}
 
 let spawnInstallProcessOverride: InstallProcessFactory | null = null;
 let userRuntimeRootOverride: string | null = null;
@@ -106,7 +206,11 @@ function resolveChannelRuntimeModulePath(
     try {
       return resolver.resolve(moduleName);
     } catch {
-      // Try next resolver.
+      const importOnlyPath = resolveImportOnlyModulePath(
+        resolver.runtimeDir,
+        moduleName,
+      );
+      if (importOnlyPath) return importOnlyPath;
     }
   }
 
