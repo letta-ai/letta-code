@@ -29,21 +29,20 @@ export async function ensureSettingsForCloud(): Promise<void> {
   await settingsManager.initialize();
 }
 
+export function canManageCloudSchedules(agentId: string): boolean {
+  return resolveBackendMode() === "api" && !isLocalAgentId(agentId);
+}
+
 /**
  * Resolve a `get`/`delete` positional that didn't match any task ID as a
  * task name. `letta cron delete <name>` failing with "not found" while the
  * schedule keeps firing is a footgun.
  *
- * Searches the store owned by the current execution environment. Exact-match
- * only. Returns:
+ * Searches local and reachable Cloud inventory. Exact-match only. Returns:
  * - `{ id, store }` for exactly one match
  * - `{ ambiguous }` with the matching ids when several tasks share the name
  * - `null` for no match (callers keep their existing not-found error)
  */
-export function canManageCloudSchedules(agentId: string): boolean {
-  return resolveBackendMode() === "api" && !isLocalAgentId(agentId);
-}
-
 export async function resolveTaskName(
   name: string,
   options: {
