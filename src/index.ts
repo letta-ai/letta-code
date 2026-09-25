@@ -65,6 +65,7 @@ import {
   getStartupBackendLookupOrder,
   inferBackendModeFromAgentId,
   resolveSubcommandBackendMode,
+  switchBackendForSelectedStartupAgent,
 } from "./cli/startup-backend-mode";
 import {
   validateConversationDefaultRequiresAgent,
@@ -1594,16 +1595,10 @@ async function main(): Promise<void> {
           modelPrefetchTimer.unref?.();
         }
 
-        // =====================================================================
-        // TOP-LEVEL PATH: --conversation <id>
-        // Conversation ID is unique, so we can derive the agent from it
-        // (except for "default" which requires --agent flag, validated above)
-        // =====================================================================
+        // --conversation identifies its agent unless it is "default".
         if (specifiedConversationId) {
           if (specifiedConversationId === "default") {
-            // "default" requires --agent (validated in flag preprocessing above)
-            // Use the specified agent directly, skip conversation validation
-            // TypeScript can't see the validation above, but specifiedAgentId is guaranteed
+            // --agent was validated before reaching this branch.
             if (!specifiedAgentId) {
               throw new Error("Unreachable: --conv default requires --agent");
             }
@@ -1633,10 +1628,7 @@ async function main(): Promise<void> {
           return;
         }
 
-        // =====================================================================
-        // TOP-LEVEL PATH: --resume
-        // Show conversation selector for last-used agent (local → global fallback)
-        // =====================================================================
+        // --resume selects a conversation for the last-used agent.
         if (shouldResume) {
           const localSession = settingsManager.getLocalLastSession(
             process.cwd(),
@@ -1647,9 +1639,7 @@ async function main(): Promise<void> {
           const globalSession = settingsManager.getGlobalLastSession();
           const globalAgentId = globalSession?.agentId;
 
-          // Both LRU getters already filter by the active server key (which
-          // encodes the backend mode), so no extra compatibility check is
-          // needed here.
+          // LRU getters already filter by active backend.
           const preferredResumeAgentId =
             (startupBackendMode === "local" ? localAgentId : globalAgentId) ??
             null;
@@ -1679,17 +1669,12 @@ async function main(): Promise<void> {
           process.exit(1);
         }
 
-        // =====================================================================
-        // DEFAULT PATH: No special flags
-        // Check local LRU → global LRU → selector → create default
-        // =====================================================================
+        // Default path: local LRU → global LRU → selector → create default.
 
-        // Short-circuit: flags handled by init() skip resolution entirely
         if (forceNew || agentIdArg) {
           // For --agent/--name: restore conversation from local session if the
           // agent matches, so we don't clobber a real conv ID with "default".
           if (agentIdArg && !forceNew && !forceNewConversation) {
-            // loadLocalProjectSettings is cached if already loaded (e.g. --name)
             await settingsManager.loadLocalProjectSettings(process.cwd());
             const localSession = settingsManager.getLocalLastSession(
               process.cwd(),
@@ -2495,8 +2480,23 @@ async function main(): Promise<void> {
         defaultModelHandle: customApiDefaultModel ?? undefined,
         serverBaseUrl: customApiBaseUrl ?? undefined,
         onSelect: (agentId: string) => {
-          setSelectedGlobalAgentId(agentId);
-          setLoadingState("assembling");
+          void switchBackendForSelectedStartupAgent(
+            agentId,
+            tryConfigureStartupLocalBackend,
+          )
+            .then((ready) => {
+              if (!ready) {
+                setFailedAgentMessage("Local backend data needs migration.");
+                return;
+              }
+              setSelectedGlobalAgentId(agentId);
+              setLoadingState("assembling");
+            })
+            .catch((error) => {
+              setFailedAgentMessage(
+                `Unable to select agent: ${error instanceof Error ? error.message : String(error)}`,
+              );
+            });
         },
         onCreateNew: () => {
           setUserRequestedNewAgent(true);

@@ -1,4 +1,8 @@
 import { isLocalAgentId } from "@/agent/agent-id";
+import {
+  configureBackendMode,
+  isExperimentalLocalBackendEnabled,
+} from "@/backend";
 
 export type StartupBackendMode = "api" | "local";
 
@@ -7,6 +11,24 @@ export function inferBackendModeFromAgentId(
 ): StartupBackendMode | undefined {
   if (!agentId) return undefined;
   return isLocalAgentId(agentId) ? "local" : "api";
+}
+
+/** The startup picker lists pins from both backends, even when Cloud is active. */
+export async function switchBackendForSelectedStartupAgent(
+  agentId: string,
+  tryConfigureLocal: () => Promise<boolean>,
+): Promise<boolean> {
+  if (isLocalAgentId(agentId)) {
+    if (isExperimentalLocalBackendEnabled()) return true;
+    try {
+      return await tryConfigureLocal();
+    } catch (error) {
+      configureBackendMode("api");
+      throw error;
+    }
+  }
+  if (isExperimentalLocalBackendEnabled()) configureBackendMode("api");
+  return true;
 }
 
 export function getStartupBackendLookupOrder(
