@@ -1,5 +1,8 @@
+import * as path from "node:path";
+import { isUsableDirectory } from "@/helpers/usable-directory";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import {
+  captureSecretRedactions,
   createSecretStreamScrubber,
   type SecretStreamScrubber,
   scrubSecretsFromString,
@@ -20,7 +23,6 @@ import {
   scheduleBackgroundProcessCleanup,
   scrubCompletedBackgroundOutput,
 } from "./process_manager.js";
-import { resolveShellWorkdir } from "./shell.js";
 import { getShellEnv } from "./shell-env.js";
 import {
   buildPowerShellCommand,
@@ -572,6 +574,17 @@ async function waitForSessionOutput(params: {
   return { output, wallTimeMs: Date.now() - startTime };
 }
 
+function resolveShellWorkdir(workdir?: string): string {
+  const defaultCwd = getCurrentWorkingDirectory();
+  const requestedCwd = workdir
+    ? path.isAbsolute(workdir)
+      ? workdir
+      : path.resolve(defaultCwd, workdir)
+    : defaultCwd;
+
+  return isUsableDirectory(requestedCwd) ? requestedCwd : defaultCwd;
+}
+
 async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
   assertBackgroundProcessCapacity();
 
@@ -579,6 +592,7 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
   const outputFile = createBackgroundOutputFile(`exec_${id}`);
   const cwd = resolveShellWorkdir(args.workdir);
   const env = { ...getShellEnv(), ...(args.secretEnv ?? {}) };
+  const redactions = captureSecretRedactions(args.secretEnv ?? {});
   const launchers = buildExecLaunchers(args);
   const rawLauncher = selectAvailableShellLauncher(launchers, env);
   if (!rawLauncher) {
@@ -606,10 +620,10 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
     status: "running",
     exitCode: null,
     tty: args.tty ?? false,
-    secrets: args.secretEnv ?? {},
+    secrets: redactions,
     streamScrubbers: {
-      stdout: createSecretStreamScrubber(args.secretEnv ?? {}),
-      stderr: createSecretStreamScrubber(args.secretEnv ?? {}),
+      stdout: createSecretStreamScrubber(redactions),
+      stderr: createSecretStreamScrubber(redactions),
     },
     notificationScope: resolveNotificationScope(args.parentScope),
     notificationArmed: false,

@@ -1,8 +1,12 @@
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import stripAnsi from "strip-ansi";
 import { type RawData, WebSocket } from "ws";
-import { getCurrentWorkingDirectory } from "@/runtime-context";
 import {
+  getCurrentWorkingDirectory,
+  getRuntimeActingUserId,
+} from "@/runtime-context";
+import {
+  captureSecretRedactions,
   createSecretStreamScrubber,
   scrubSecretsFromString,
 } from "@/tools/secret-substitution";
@@ -307,9 +311,10 @@ function queueMonitorEvent(params: {
   description: string;
   event: string;
   scope: ReturnType<typeof resolveNotificationScope>;
+  actingUserId?: string;
   secrets: Readonly<Record<string, string>>;
 }): void {
-  const { taskId, description, event, scope, secrets } = params;
+  const { taskId, description, event, scope, actingUserId, secrets } = params;
   const sanitizedEvent = sanitizeMonitorText(event, secrets);
   addToMessageQueue({
     kind: "task_notification",
@@ -319,6 +324,7 @@ function queueMonitorEvent(params: {
       event: sanitizedEvent,
     }),
     ...scope,
+    ...(actingUserId ? { actingUserId } : {}),
   });
 }
 
@@ -368,6 +374,9 @@ function queueCommandCompletion(params: {
       usage: durationMs === undefined ? undefined : { durationMs },
     }),
     ...scope,
+    ...(processState.actingUserId
+      ? { actingUserId: processState.actingUserId }
+      : {}),
   });
 }
 
@@ -402,7 +411,8 @@ function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
   const outputFile = createBackgroundOutputFile(taskId);
   const output = new MonitorOutputWriter(outputFile);
   const scope = resolveNotificationScope(args.parentScope);
-  const secrets = args.secretEnv ?? {};
+  const actingUserId = getRuntimeActingUserId();
+  const secrets = captureSecretRedactions(args.secretEnv ?? {});
   // Per-stream scrubbers hold back potential partial secret matches so a
   // credential split across output chunks never reaches the retained output,
   // the output file, or emitted monitor events unredacted.
@@ -420,6 +430,7 @@ function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
         description: args.description,
         event,
         scope,
+        actingUserId,
         secrets,
       });
     },
@@ -500,6 +511,7 @@ function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
     startTime: new Date(),
     outputFile,
     runtimeScope: scope,
+    actingUserId,
     kind: "monitor",
     description: args.description,
     monitorSource: "command",
@@ -545,6 +557,7 @@ function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
           description: args.description,
           event: "[Monitor timed out — re-arm if needed.]",
           scope,
+          actingUserId,
           secrets,
         });
         processState.completionNotificationSuppressed = true;
@@ -585,6 +598,7 @@ function startWebSocketMonitor(args: NormalizedMonitorArgs): MonitorResult {
   const outputFile = createBackgroundOutputFile(taskId);
   const output = new MonitorOutputWriter(outputFile);
   const scope = resolveNotificationScope(args.parentScope);
+  const actingUserId = getRuntimeActingUserId();
   const secrets: Readonly<Record<string, string>> = {};
   const socket = new WebSocket(source.url, source.protocols, {
     maxPayload: WEBSOCKET_MAX_PAYLOAD_BYTES,
@@ -612,6 +626,7 @@ function startWebSocketMonitor(args: NormalizedMonitorArgs): MonitorResult {
         description: args.description,
         event,
         scope,
+        actingUserId,
         secrets,
       });
     },
@@ -637,6 +652,7 @@ function startWebSocketMonitor(args: NormalizedMonitorArgs): MonitorResult {
     startTime: new Date(),
     outputFile,
     runtimeScope: scope,
+    actingUserId,
     kind: "monitor",
     description: args.description,
     monitorSource: "websocket",
@@ -664,6 +680,7 @@ function startWebSocketMonitor(args: NormalizedMonitorArgs): MonitorResult {
         description: args.description,
         event,
         scope,
+        actingUserId,
         secrets,
       });
       processState.completionNotificationSuppressed = true;
@@ -702,6 +719,7 @@ function startWebSocketMonitor(args: NormalizedMonitorArgs): MonitorResult {
       description: args.description,
       event,
       scope,
+      actingUserId,
       secrets,
     });
     closeSocket();
@@ -729,6 +747,7 @@ function startWebSocketMonitor(args: NormalizedMonitorArgs): MonitorResult {
       description: args.description,
       event,
       scope,
+      actingUserId,
       secrets,
     });
     markMonitorFinished(
@@ -749,6 +768,7 @@ function startWebSocketMonitor(args: NormalizedMonitorArgs): MonitorResult {
         description: args.description,
         event: "[Monitor timed out — re-arm if needed.]",
         scope,
+        actingUserId,
         secrets,
       });
       output.append(`\n[timeout after ${args.timeout_ms}ms]\n`);

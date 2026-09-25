@@ -5,7 +5,11 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { buildShellLaunchers } from "@/tools/impl/shell-launchers";
 import { LIMITS, truncateByChars } from "@/tools/impl/truncation";
-import { scrubAmbientSecrets } from "@/tools/secret-substitution";
+import {
+  captureSecretRedactions,
+  scrubAmbientSecrets,
+  scrubSecretsFromString,
+} from "@/tools/secret-substitution";
 import { executePromptHook } from "./prompt-executor";
 import {
   type CommandHookConfig,
@@ -219,15 +223,26 @@ function executeWithLauncher(
   startTime: number,
   quiet?: boolean,
 ): Promise<HookResult> {
+  // The child inherits the credential present at launch, which may rotate
+  // before the hook exits or its feedback is written to an overflow file.
+  const redactions = captureSecretRedactions();
   return new Promise<HookResult>((resolve, reject) => {
     let stdout = "";
     let stderr = "";
     let timedOut = false;
     let resolved = false;
 
-    const safeResolve = (result: HookResult) => {
+    const safeResolve = (rawResult: HookResult) => {
       if (!resolved) {
         resolved = true;
+        const result: HookResult = {
+          ...rawResult,
+          stdout: scrubSecretsFromString(rawResult.stdout, redactions),
+          stderr: scrubSecretsFromString(rawResult.stderr, redactions),
+          ...(rawResult.error && {
+            error: scrubSecretsFromString(rawResult.error, redactions),
+          }),
+        };
         // Log hook completion with command for context
         // Show exit code with color: green for 0, red for 2, yellow for errors
         const exitCode =

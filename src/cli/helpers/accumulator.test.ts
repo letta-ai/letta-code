@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
+import * as fs from "node:fs";
 import {
   addToolCall,
   clearAllSubagents,
@@ -8,11 +9,12 @@ import {
   registerSubagent,
   updateSubagent,
 } from "@/agent/subagent-state";
-import type { Line } from "@/cli/helpers/accumulator";
+import { createBuffers, type Line, onChunk } from "@/cli/helpers/accumulator";
 import {
   collectFinishedTaskToolCalls,
   createSubagentGroupItem,
 } from "@/cli/helpers/subagent-aggregation";
+import { LIMITS } from "@/tools/impl/truncation";
 
 describe("subagent tool count stability", () => {
   beforeEach(() => {
@@ -104,5 +106,73 @@ describe("subagent tool count stability", () => {
     const group = createSubagentGroupItem(finished);
     expect(group.agents.length).toBe(1);
     expect(group.agents[0]?.toolCount).toBe(2);
+  });
+});
+
+describe("cloud tool return clipping", () => {
+  function sendToolCallAndReturn(
+    buffers: ReturnType<typeof createBuffers>,
+    toolReturn: string,
+  ): Line {
+    onChunk(buffers, {
+      message_type: "tool_call_message",
+      tool_call: {
+        tool_call_id: "cloud-call",
+        name: "web_search",
+        arguments: "{}",
+      },
+    } as never);
+
+    onChunk(buffers, {
+      message_type: "tool_return_message",
+      tool_call_id: "cloud-call",
+      status: "success",
+      tool_return: toolReturn,
+    } as never);
+
+    const line = buffers.byId.get("cloud-call");
+    if (!line || line.kind !== "tool_call") {
+      throw new Error("expected a tool_call line for cloud-call");
+    }
+    return line;
+  }
+
+  test("retains small tool returns unchanged", () => {
+    const line = sendToolCallAndReturn(createBuffers(), "small result");
+    expect(line.kind === "tool_call" && line.resultText).toBe("small result");
+    expect(line.kind === "tool_call" && line.phase).toBe("finished");
+  });
+
+  test("clips oversized server-side tool returns to the shared backstop limit", () => {
+    const big = `HEAD-${"a".repeat(LIMITS.TOOL_RETURN_MAX_CHARS + 50_000)}-TAIL`;
+    const line = sendToolCallAndReturn(createBuffers(), big);
+
+    const resultText = line.kind === "tool_call" ? line.resultText : undefined;
+    if (resultText === undefined) throw new Error("expected resultText");
+
+    expect(resultText.length).toBeLessThan(
+      LIMITS.TOOL_RETURN_MAX_CHARS + 1_000,
+    );
+    expect(resultText).toContain("[Output truncated: showing");
+    // Middle truncation keeps both ends available for display and ctrl+o.
+    expect(resultText.startsWith("HEAD-")).toBe(true);
+    expect(resultText).toContain("-TAIL");
+
+    // The full output lands in an overflow file; verify, then clean it up.
+    const match = resultText.match(/Full output written to: (.+\.txt)/);
+    expect(match).toBeDefined();
+    if (match?.[1]) {
+      expect(fs.existsSync(match[1])).toBe(true);
+      expect(fs.readFileSync(match[1], "utf-8").length).toBe(big.length);
+      fs.unlinkSync(match[1]);
+    }
+  });
+
+  test("passes through output already clamped by a per-tool 30K limit", () => {
+    // Local tool returns arrive pre-clamped (30K + notice) and must not be
+    // re-truncated on the way into the transcript.
+    const alreadyClamped = `${"b".repeat(30_000)}\n\n[Output truncated: showing 30,000 of 100,000 characters.]`;
+    const line = sendToolCallAndReturn(createBuffers(), alreadyClamped);
+    expect(line.kind === "tool_call" && line.resultText).toBe(alreadyClamped);
   });
 });

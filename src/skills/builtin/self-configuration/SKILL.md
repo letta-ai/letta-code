@@ -61,6 +61,14 @@ The command uses CLI auth and respects `LETTA_API_KEY`/`LETTA_BASE_URL`, not age
 
 Use `letta model list` for available models; credits and quota buckets do not guarantee inference availability. `letta usage` does not include session token statistics; the interactive `/usage` command is a separate surface. If either lookup fails, the command exits nonzero without partial usage. Treat that as unavailable data, not zero credits or exhausted quota.
 
+### Billing path when changing models
+
+The same model can often be reached through more than one route: a connected subscription (for example a ChatGPT or Grok plan), the Letta plan (`letta/*`), or per-token billing against organization credits or the user's own API key. Users choose provider names, so a handle's prefix does not reliably show which route it bills through.
+
+Before switching models, consider how the current model is billed and keep the user on that route unless they asked to change it. Use the current handle, the labels in `letta model list`, and anything the user has said about billing as evidence. If several available handles serve the requested model and you cannot tell which one uses the user's subscription, list the candidates and ask before switching. Do not silently move a user from a subscription to per-token billing.
+
+`letta model list --byok` includes both connected subscriptions and user API keys, so it does not separate the two. `letta usage` covers only Letta credits and `letta/*` quota, not connected subscriptions.
+
 ### Harness and server settings
 
 Use the secret-safe local/runtime report for harness settings, permissions, and backend diagnostics:
@@ -349,32 +357,6 @@ Use skills when the user wants you to become good at a repeatable workflow. Sour
 4. Bundled skills
 
 Load `creating-skills` to create or edit a skill. Load `acquiring-skills` when the user asks for a capability you do not already have. Project, global, bundled, and agent-owned skills have different visibility; verify the target scope before changing skills another agent may load.
-
-## Provider connections
-
-Provider connection is agent-executable through `letta connect`. This is separate from `LETTA_API_KEY`, which authenticates Letta API requests. Provider connections may be visible to the same account/server; treat that as credential scope to verify, not as a critical exploit by itself.
-
-Inspect the installed command shape first:
-
-```bash
-letta connect --help
-letta connect <provider> --help
-```
-
-Use the provider-specific command supported by the installed binary. Current examples include:
-
-```bash
-letta connect chatgpt
-letta connect codex --method device-code
-letta connect lmstudio --base-url http://127.0.0.1:1234/v1 --timeout 600s
-letta connect bedrock --method profile --profile "$AWS_PROFILE" --region "$AWS_REGION"
-```
-
-Before connecting, verify whether the target agent/backend is Letta Cloud or local. A provider saved to the wrong backend does not configure the current agent.
-
-Never print provider keys. Shell expansion such as `--api-key "$OPENAI_API_KEY"` still puts the resolved secret in process argv, where process listings may expose it. Prefer the command's interactive secret prompt in a trusted TTY. If no safer input path exists, stop for explicit user approval rather than passing a provider secret autonomously. Browser login, device-code confirmation, or account consent also requires human consent; do not claim success before it completes.
-
-After connecting, verify the provider/model from the same backend and process that will run the agent. Do not infer success from a saved credential alone.
 
 ## Agent secrets
 

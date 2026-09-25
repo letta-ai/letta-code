@@ -38,13 +38,15 @@ export interface BackgroundProcess {
   totalStderrLines?: number;
   cleanupTimer?: TimerHandle;
   runtimeScope?: BackgroundRuntimeScope;
+  /** Authenticated Cloud user responsible for launching this process. */
+  actingUserId?: string;
   kind?: "monitor" | "workflow";
   description?: string;
   monitorSource?: "command" | "websocket";
   persistent?: boolean;
   secrets?: Readonly<Record<string, string>>;
   /**
-   * Set when the agent deliberately stops the shell (KillBash/TaskStop) so the
+   * Set when the agent deliberately stops the shell (TaskStop) so the
    * resulting "exit" event does not wake it with a failure notification for a
    * process it just killed on purpose.
    */

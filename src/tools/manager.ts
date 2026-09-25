@@ -9,7 +9,7 @@ import {
   getSkillsDirectory,
 } from "@/agent/context";
 import { getModelInfo } from "@/agent/model";
-import { getAllSubagentConfigs } from "@/agent/subagents";
+import { getModelFacingSubagentDescriptors } from "@/agent/subagents";
 import { getBackend } from "@/backend";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { experimentManager } from "@/experiments/manager";
@@ -81,6 +81,7 @@ import {
   type PermissionModeState,
 } from "./permission-mode-state";
 import {
+  captureSecretRedactions,
   createScrubbedOutputStreamer,
   extractSecretEnvFromCommand,
   getAmbientRedactionSecrets,
@@ -121,10 +122,6 @@ const STREAMING_SHELL_TOOLS = new Set([
   "Bash",
   "exec_command",
   "write_stdin",
-  "shell_command",
-  "ShellCommand",
-  "shell",
-  "Shell",
   "Monitor",
   "Workflow",
 ]);
@@ -132,7 +129,7 @@ const STREAMING_SHELL_TOOLS = new Set([
 const SCOPED_BACKGROUND_TOOLS = new Set(["Monitor", "Workflow"]);
 
 // Tools that write files — used to trigger onFileWrite broadcast after execution.
-const FILE_MUTATING_TOOLS = new Set(["Edit", "Write", "MultiEdit"]);
+const FILE_MUTATING_TOOLS = new Set(["Edit", "Write"]);
 
 // Maps internal implementation names to the names shown to the model.
 const TOOL_NAME_MAPPINGS: Partial<Record<ToolName, string>> = {
@@ -269,7 +266,7 @@ function filterExternalToolsByRuntimeContext(
     Array.from(externalTools.entries()).filter(([, tool]) => {
       const matchesRuntime =
         !tool.runtime ||
-        (tool.runtime.agentId === runtimeContext.agentId &&
+        ((tool.runtime.agentId ?? null) === (runtimeContext.agentId ?? null) &&
           tool.runtime.conversationId === runtimeContext.conversationId);
       // An unscoped runtime tool belongs to its agent/conversation. The
       // registration connection remains its execution return path, but turns
@@ -1282,15 +1279,9 @@ async function buildToolRegistry(
     let { description } = resolvedAssets;
     const { inputSchema } = resolvedAssets;
     if (internalName === "Task") {
-      const configs = await getAllSubagentConfigs(workingDirectory);
-      description = injectSubagentsIntoTaskDescription(
-        description,
-        Object.entries(configs).map(([name, config]) => ({
-          name,
-          description: config.description,
-          recommendedModel: config.recommendedModel,
-        })),
-      );
+      const subagents =
+        await getModelFacingSubagentDescriptors(workingDirectory);
+      description = injectSubagentsIntoTaskDescription(description, subagents);
     }
 
     const toolSchema: ToolSchema = {
@@ -2114,7 +2105,7 @@ async function executeToolInner(
     onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
     toolContextId?: string;
     parentScope?: { agentId: string; conversationId: string };
-    /** Called after a file-mutating tool (Edit, Write, MultiEdit) writes to disk.
+    /** Called after a file-mutating tool (Edit, Write) writes to disk.
      *  The listener layer uses this to broadcast the new content via WebSocket. */
     onFileWrite?: (filePath: string, content: string) => void;
     toolEndArgsRef?: { current: ToolArgs };
@@ -2331,8 +2322,8 @@ async function executeToolInner(
     }
     if (options?.toolEndArgsRef) options.toolEndArgsRef.current = args;
 
-    // Hoisted so the catch path scrubs thrown errors with the same redaction set.
     let invocationSecrets: Record<string, string> = {};
+    let invocationRedactions = captureSecretRedactions();
     let outputStreamer: ScrubbedOutputStreamer | null = null;
 
     try {
@@ -2352,9 +2343,10 @@ async function executeToolInner(
             command.every((part) => typeof part === "string"))
             ? extractSecretEnvFromCommand(command, scopedAgentId)
             : {};
+        invocationRedactions = captureSecretRedactions(invocationSecrets);
         if (options?.onOutput) {
           outputStreamer = createScrubbedOutputStreamer(
-            invocationSecrets,
+            invocationRedactions,
             options.onOutput,
             stripAnsi,
           );
@@ -2440,19 +2432,17 @@ async function executeToolInner(
       // Flatten the response to plain text
       let flattenedResponse = flattenToolResponse(result);
 
-      // Scrub secrets from tool output before it reaches agent context. The
-      // scrub always covers ambient runtime auth values, so it runs for every
-      // tool. ANSI stripping stays shell-only.
+      // Scrub every tool return, including ambient runtime credentials.
       const stripAnsiEscapes = STREAMING_SHELL_TOOLS.has(internalName);
       flattenedResponse = sanitizeToolReturnContent(
         flattenedResponse,
-        invocationSecrets,
+        invocationRedactions,
         stripAnsiEscapes,
       );
       if (stdout)
-        sanitizeOutputLines(stdout, invocationSecrets, stripAnsiEscapes);
+        sanitizeOutputLines(stdout, invocationRedactions, stripAnsiEscapes);
       if (stderr)
-        sanitizeOutputLines(stderr, invocationSecrets, stripAnsiEscapes);
+        sanitizeOutputLines(stderr, invocationRedactions, stripAnsiEscapes);
 
       flattenedResponse = clampToolReturnContent(
         flattenedResponse,
@@ -2522,7 +2512,7 @@ async function executeToolInner(
         ? INTERRUPTED_BY_USER
         : scrubSecretsFromString(
             error instanceof Error ? error.message : String(error),
-            invocationSecrets,
+            invocationRedactions,
           );
 
       // Track tool usage error
@@ -2583,6 +2573,7 @@ async function executeToolInner(
 export async function executeTool(
   ...params: Parameters<typeof executeToolInner>
 ): Promise<ToolExecutionResult> {
+  const toolRedactions = captureSecretRedactions();
   const [name, args, options] = params;
   const toolEndArgsRef = { current: args };
   const res = await executeToolInner(name, args, {
@@ -2615,6 +2606,7 @@ export async function executeTool(
         executionScope.workingDirectory ?? getCurrentWorkingDirectory(),
     });
 
+  const overrideRedactions = captureSecretRedactions(toolRedactions);
   const override = await emitToolEndEvent({
     args: toolEndArgsRef.current,
     events: modEvents,
@@ -2626,12 +2618,10 @@ export async function executeTool(
     output: res.toolReturn,
   });
 
-  // A tool_end mod handler replaces what the model sees; scrub the ambient
-  // runtime auth values from its output too (mod children inherit them).
   return override
     ? {
         ...res,
-        toolReturn: scrubAmbientSecrets(override.output),
+        toolReturn: scrubSecretsFromString(override.output, overrideRedactions),
         status: override.status,
       }
     : res;
