@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -14,6 +14,7 @@ import {
   LETTA_CODE_AGENT_TYPE,
 } from "@/agent/create-agent-request";
 import { resolveModel } from "@/agent/model-catalog";
+import { updateAgentSystemPromptMemfs } from "@/agent/modify";
 import { buildCreateAgentOptionsForPersonality } from "@/agent/personality";
 import {
   DEFAULT_CREATE_AGENT_PERSONALITIES,
@@ -21,6 +22,7 @@ import {
   getPersonalityOption,
 } from "@/agent/personality-presets";
 import { buildSystemPrompt } from "@/agent/prompt-assets";
+import { getBackend } from "@/backend";
 
 describe("buildCreateAgentRequest", () => {
   test("owns the complete default creation policy without a personality", async () => {
@@ -128,11 +130,35 @@ describe("buildCreateAgentRequest", () => {
     expect(request.memory_blocks).toEqual([customRoot]);
   });
 
-  test("preserves a null system prompt on the outbound wire payload", async () => {
-    const request = await buildCreateAgentRequest({ system: null });
+  test("delegates Cloud defaults, but pins local and explicit overrides", async () => {
+    for (const memoryPromptMode of [
+      "standard",
+      "memfs",
+      "root-memfs",
+    ] as const) {
+      const cloud = await buildCreateAgentRequest({
+        isLettaCloud: true,
+        memoryPromptMode,
+      });
+      expect(JSON.parse(JSON.stringify(cloud))).toHaveProperty("system", null);
 
-    expect(request.system).toBeNull();
-    expect(JSON.parse(JSON.stringify(request))).toHaveProperty("system", null);
+      const local = await buildCreateAgentRequest({ memoryPromptMode });
+      expect(local.system).toBe(buildSystemPrompt("default", memoryPromptMode));
+    }
+    const inherited = await buildCreateAgentRequest({ system: null });
+    expect(JSON.parse(JSON.stringify(inherited))).toHaveProperty(
+      "system",
+      null,
+    );
+
+    const explicit = await buildCreateAgentRequest({
+      isLettaCloud: true,
+      system: "Custom prompt",
+    });
+    expect(JSON.parse(JSON.stringify(explicit))).toHaveProperty(
+      "system",
+      "Custom prompt",
+    );
   });
 
   test("pins exact caller overrides without restoring server defaults", async () => {
@@ -166,6 +192,23 @@ describe("buildCreateAgentRequest", () => {
       compaction_settings: { model: "custom/summarizer" },
     });
   });
+});
+
+test("enabling MemFS leaves a Cloud-inherited system prompt untouched", async () => {
+  const backend = getBackend();
+  const retrieve = spyOn(backend, "retrieveAgent").mockResolvedValue({
+    system: null,
+  } as unknown as Awaited<ReturnType<typeof backend.retrieveAgent>>);
+  const update = spyOn(backend, "updateAgent");
+  try {
+    const result = await updateAgentSystemPromptMemfs("agent-cloud-default");
+    expect(result.success).toBe(true);
+    expect(retrieve).toHaveBeenCalledWith("agent-cloud-default");
+    expect(update).not.toHaveBeenCalled();
+  } finally {
+    retrieve.mockRestore();
+    update.mockRestore();
+  }
 });
 
 describe("buildCreateAgentRequestForPersonality", () => {
@@ -211,6 +254,14 @@ describe("buildCreateAgentRequestForPersonality", () => {
       expect(request.parallel_tool_calls).toBe(true);
       expect(request.compaction_settings).toEqual({ model: "letta/auto" });
     }
+  });
+
+  test("local personality creation sends the bundled default", async () => {
+    const request = await buildCreateAgentRequestForPersonality({
+      personalityId: "memo",
+      isLettaCloud: false,
+    });
+    expect(request.system).toBe(buildSystemPrompt("default", "root-memfs"));
   });
 
   test("onboarding personalities include the cloud onboarding block", async () => {
