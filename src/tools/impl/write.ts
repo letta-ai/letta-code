@@ -6,16 +6,27 @@ import { writeUtf8Text } from "@/utils/text-files";
 import { validateRequiredParams } from "./validation.js";
 
 interface WriteArgs {
-  file_path: string;
-  content: string;
+  file_path?: string;
+  content?: string;
+  path?: string;
+  file_text?: string;
+  file_content?: string;
+  description?: unknown;
 }
 interface WriteResult {
   message: string;
 }
 
 export async function write(args: WriteArgs): Promise<WriteResult> {
-  validateRequiredParams(args, ["file_path", "content"], "Write");
-  const { file_path, content } = args;
+  const aliasedFilePath = args.file_path ?? args.path;
+  const aliasedContent = args.content ?? args.file_text ?? args.file_content;
+  const normalizedArgs = {
+    ...(aliasedFilePath !== undefined && { file_path: aliasedFilePath }),
+    ...(aliasedContent !== undefined && { content: aliasedContent }),
+  };
+  validateRequiredParams(normalizedArgs, ["file_path", "content"], "Write");
+  const file_path = normalizedArgs.file_path!;
+  const content = normalizedArgs.content!;
   const userCwd = getCurrentWorkingDirectory();
   const resolvedPath = expandFilePath(file_path, userCwd);
   try {
