@@ -652,7 +652,10 @@ export function readLocalTranscriptTailWindow(
   minMessages: number,
   storageDir: string,
   conversationDir: string,
-): LocalTranscriptTailReadResult & { reachedStart: boolean } {
+): LocalTranscriptTailReadResult & {
+  reachedStart: boolean;
+  headBytes: number;
+} {
   const targetCount =
     activeMessageIds.length > 0
       ? Math.min(minMessages, activeMessageIds.length)
@@ -668,10 +671,65 @@ export function readLocalTranscriptTailWindow(
       conversationDir,
     );
     if (result.messages.length >= targetCount || tail.reachedStart) {
-      return { ...result, reachedStart: tail.reachedStart };
+      return {
+        ...result,
+        reachedStart: tail.reachedStart,
+        headBytes: tail.reachedStart
+          ? 0
+          : Math.max(0, statSync(messagesPath).size - maxBytes),
+      };
     }
     maxBytes *= 2;
   }
+}
+
+/**
+ * Whether a resident window holds every active id, so readers can serve the
+ * logical list from it without touching disk.
+ */
+export function residentCoversIds(
+  resident: readonly LocalMessage[],
+  activeMessageIds: readonly string[],
+): boolean {
+  if (activeMessageIds.length === 0) return false;
+  const residentIds = new Set(resident.map((message) => message.id));
+  return activeMessageIds.every((id) => residentIds.has(id));
+}
+
+/**
+ * One-time validation of the transcript head a bounded tail read never
+ * parsed, before the first append mutates anything. Parses each head line
+ * (dropping the trailing partial line the tail window started mid-way into)
+ * and applies the legacy-row check, so a corrupt head blocks writes exactly
+ * like the full read it replaces.
+ */
+export function validateUnreadTranscriptHead(
+  messagesPath: string,
+  headBytes: number,
+  storageDir: string,
+  conversationDir: string,
+): void {
+  if (headBytes <= 0) return;
+  let text: string;
+  try {
+    const fd = openSync(messagesPath, "r");
+    try {
+      const buffer = Buffer.alloc(headBytes);
+      readSync(fd, buffer, 0, headBytes, 0);
+      text = buffer.toString("utf8");
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return;
+  }
+  const lastNewline = text.lastIndexOf("\n");
+  if (lastNewline < 0) return;
+  const rows: unknown[] = [];
+  for (const line of text.slice(0, lastNewline + 1).split("\n")) {
+    if (line.trim().length > 0) rows.push(JSON.parse(line));
+  }
+  assertNoLegacyUiMessageRows(rows, storageDir, conversationDir);
 }
 
 /**
@@ -709,29 +767,43 @@ export function restrictLocalTranscriptToResidentMessages(
 
 /**
  * Merge the authoritative on-disk message list with the resident tail window.
- * Resident entries win by id (they may carry newer in-progress content);
- * resident-only ids (not yet persisted) trail the disk list. The resident
- * window is always a suffix of the logical message list, so this reconstructs
- * the full logical list without mutating either input.
+ * The resident window is a suffix of the logical message list: disk rows not
+ * in the window come first, then the window in its own order (resident entries
+ * win by id — they may carry newer in-progress content, and a resident-only
+ * id is a trailing message not yet persisted). Order-preserving merge: the
+ * model must never see history resequenced.
  */
 export function overlayResidentLocalMessageTail(
   diskMessages: readonly LocalMessage[],
   residentTail: readonly LocalMessage[],
 ): LocalMessage[] {
   if (residentTail.length === 0) return [...diskMessages];
-  const residentIndexById = new Map<string, number>();
-  residentTail.forEach((message, index) => {
-    residentIndexById.set(message.id, index);
-  });
-  const merged = diskMessages.map((message) => {
-    const residentIndex = residentIndexById.get(message.id);
-    const resident =
-      residentIndex === undefined ? undefined : residentTail[residentIndex];
-    return resident ?? message;
-  });
   const diskIds = new Set(diskMessages.map((message) => message.id));
-  for (const message of residentTail) {
-    if (!diskIds.has(message.id)) merged.push(message);
+  const merged: LocalMessage[] = [];
+  let residentIndex = 0;
+  for (const message of diskMessages) {
+    // Emit resident-only entries that precede this disk row in the window's
+    // own order. A resident entry whose id has a (later) disk row is held
+    // until that row arrives.
+    while (residentIndex < residentTail.length) {
+      const resident = residentTail[residentIndex];
+      if (resident === undefined) break;
+      if (resident.id === message.id || diskIds.has(resident.id)) break;
+      merged.push(resident);
+      residentIndex += 1;
+    }
+    const resident = residentTail[residentIndex];
+    if (resident !== undefined && resident.id === message.id) {
+      merged.push(resident);
+      residentIndex += 1;
+      continue;
+    }
+    merged.push(message);
+  }
+  while (residentIndex < residentTail.length) {
+    const resident = residentTail[residentIndex];
+    if (resident !== undefined) merged.push(resident);
+    residentIndex += 1;
   }
   return merged;
 }

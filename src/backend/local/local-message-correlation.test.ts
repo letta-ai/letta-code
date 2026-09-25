@@ -419,7 +419,7 @@ describe("local transcript residency", () => {
     expect(reloaded.listLocalMessages("default", agentId)).toEqual(allLocal);
   });
 
-  test("appends without parsing the full transcript", async () => {
+  test("first append validates the unparsed transcript head before writing", async () => {
     const storageDir = await createStorageDirectory();
     const agentId = "agent-local-residency-append";
     const store = new LocalStore(agentId, {
@@ -439,34 +439,275 @@ describe("local transcript residency", () => {
     );
     const original = await readFile(messagesPath, "utf8");
     const firstNewline = original.indexOf("\n");
+    const corrupted = `{corrupt-session-header\n${original.slice(firstNewline + 1)}`;
+    await writeFile(messagesPath, corrupted);
+
+    // The first append in a new session reads only the bounded tail window,
+    // but the unparsed head is validated once before anything is written:
+    // a corrupt head blocks the append (no dangling row), and every retry
+    // throws too.
+    const paged = new LocalStore(agentId, {
+      storageDir,
+      residentMessageTailLimit: 4,
+    });
+    expect(() =>
+      paged.appendTurnInput("default", {
+        agent_id: agentId,
+        messages: [{ role: "user", content: "after corruption" }],
+      } as ConversationMessageCreateBody),
+    ).toThrow();
+    // Retry: still throws, and nothing was appended either time.
+    expect(() =>
+      paged.appendTurnInput("default", {
+        agent_id: agentId,
+        messages: [{ role: "user", content: "retry" }],
+      } as ConversationMessageCreateBody),
+    ).toThrow();
+    const after = await readFile(messagesPath, "utf8");
+    expect(after).toBe(corrupted);
+  });
+
+  test("compaction keeping 100 or more messages preserves summary and all kept ids", async () => {
+    const storageDir = await createStorageDirectory();
+    const agentId = "agent-local-compaction-large-keep";
+    const store = new LocalStore(agentId, {
+      storageDir,
+      residentMessageTailLimit: 100,
+    });
+    // Build 120 messages (60 turns).
+    for (let turn = 0; turn < 60; turn += 1) {
+      appendTurn(store, agentId, `turn-${turn}`);
+    }
+
+    // Compact keeping 105 messages (summary + 104 kept).
+    const messagesBefore = store.listLocalMessages("default", agentId);
+    expect(messagesBefore.length).toBe(120);
+
+    const result = store.compactConversationAll({
+      conversationId: "default",
+      agentId,
+      summary: "summary text",
+      packedSummary: "packed summary",
+      remainingMessages: messagesBefore.slice(-104),
+    });
+
+    expect(result.numMessagesAfter).toBe(105);
+    expect(result.summaryMessage.role).toBe("user");
+
+    // The resident window is trimmed to 100, but in_context_message_ids must
+    // still list all 105.
+    const conversation = store.retrieveConversation("default", agentId);
+    expect(conversation?.in_context_message_ids).toHaveLength(105);
+    expect(conversation?.in_context_message_ids?.[0]).toBe(
+      result.summaryMessage.id,
+    );
+
+    // Reload: persisted state must reflect the full 105 ids, not the trimmed
+    // resident window.
+    const reloaded = new LocalStore(agentId, {
+      storageDir,
+      residentMessageTailLimit: 100,
+    });
+    const reloadedConversation = reloaded.retrieveConversation(
+      "default",
+      agentId,
+    );
+    expect(reloadedConversation?.in_context_message_ids).toHaveLength(105);
+
+    const reloadedMessages = reloaded.listLocalMessages("default", agentId);
+    expect(reloadedMessages.length).toBe(105);
+    expect(reloadedMessages[0]?.id).toBe(result.summaryMessage.id);
+  });
+
+  test("serves compacted reads from the resident window without touching a corrupt disk head", async () => {
+    const storageDir = await createStorageDirectory();
+    const agentId = "agent-local-residency-fast-path";
+    const store = new LocalStore(agentId, {
+      storageDir,
+      residentMessageTailLimit: 100,
+    });
+    appendTurn(store, agentId, `bulk-${"x".repeat(96 * 1024)}`);
+    for (let turn = 0; turn < 3; turn += 1) {
+      appendTurn(store, agentId, `turn-${turn}`);
+    }
+    // Compact to a small active set: the resident window then covers every
+    // in-context id, while the bulky pre-compaction rows stay on disk.
+    const before = store.listLocalMessages("default", agentId);
+    const compacted = store.compactConversationAll({
+      conversationId: "default",
+      agentId,
+      summary: "summary text",
+      packedSummary: "packed summary",
+      remainingMessages: before.slice(-4),
+    });
+    expect(compacted.numMessagesAfter).toBe(5);
+
+    const messagesPath = conversationMessagesPath(
+      storageDir,
+      `default:${agentId}`,
+    );
+
+    // New session: the first append loads the bounded tail window (the head
+    // is still clean, so one-time head validation passes) and the resident
+    // window covers every in-context id.
+    const paged = new LocalStore(agentId, {
+      storageDir,
+      residentMessageTailLimit: 100,
+    });
+    appendTurn(paged, agentId, "turn-3");
+
+    // The head corrupts after the session is resident. Reads must be served
+    // from the resident window without a disk read, so the corrupt line is
+    // never parsed.
+    const original = await readFile(messagesPath, "utf8");
+    const firstNewline = original.indexOf("\n");
     await writeFile(
       messagesPath,
       `{corrupt-session-header\n${original.slice(firstNewline + 1)}`,
     );
 
-    // The first append in a new session reads only the bounded tail window,
-    // so the corrupt transcript head is never parsed.
-    const paged = new LocalStore(agentId, {
-      storageDir,
-      residentMessageTailLimit: 4,
-    });
-    paged.appendTurnInput("default", {
-      agent_id: agentId,
-      messages: [{ role: "user", content: "after corruption" }],
-    } as ConversationMessageCreateBody);
-    const tail = paged.listConversationMessages("default", {
-      agent_id: agentId,
-      order: "desc",
-      limit: 1,
-    } as ConversationMessageListBody);
-    expect(tail[0]).toEqual(
-      expect.objectContaining({ message_type: "user_message" }),
-    );
-    expect(JSON.stringify(tail[0])).toContain("after corruption");
+    const messages = paged.listLocalMessages("default", agentId);
+    expect(messages.length).toBe(7);
+    expect(messages[0]?.id).toBe(compacted.summaryMessage.id);
+    expect(JSON.stringify(messages.at(-1))).toContain("reply: turn-3");
+  });
 
-    // Full-history reads still parse the entire file and surface the
-    // corruption.
-    expect(() => paged.listLocalMessages("default", agentId)).toThrow();
+  test("preserves logical order when a record starts with an empty in-context set", async () => {
+    const storageDir = await createStorageDirectory();
+    const agentId = "agent-local-residency-order-legacy";
+    const store = new LocalStore(agentId, {
+      storageDir,
+      residentMessageTailLimit: 100,
+    });
+    for (let turn = 0; turn < 2; turn += 1) {
+      appendTurn(store, agentId, `turn-${turn}`);
+    }
+
+    // A conversation.json that lost its in-context ids (legacy record) must
+    // not reorder history: the new message goes to the end, and the older
+    // disk rows keep their positions.
+    const conversationDir = join(
+      storageDir,
+      "conversations",
+      Buffer.from(`default:${agentId}`).toString("base64url"),
+    );
+    const record = JSON.parse(
+      await readFile(join(conversationDir, "conversation.json"), "utf8"),
+    );
+    record.in_context_message_ids = [];
+    await writeFile(
+      join(conversationDir, "conversation.json"),
+      JSON.stringify(record, null, 2),
+    );
+
+    const reopened = new LocalStore(agentId, {
+      storageDir,
+      residentMessageTailLimit: 100,
+    });
+    appendTurn(reopened, agentId, "new");
+    const messages = reopened.listLocalMessages("default", agentId);
+    const texts = messages.map((message) =>
+      typeof message.content === "string"
+        ? message.content
+        : message.content
+            .map((part) => (part.type === "text" ? part.text : ""))
+            .join(""),
+    );
+    expect(texts).toEqual([
+      "turn-0",
+      "reply: turn-0",
+      "turn-1",
+      "reply: turn-1",
+      "new",
+      "reply: new",
+    ]);
+  });
+
+  test("drops the stale resident window when another store compacts the conversation", async () => {
+    const storageDir = await createStorageDirectory();
+    const agentId = "agent-local-residency-external-compact";
+    const store1 = new LocalStore(agentId, {
+      storageDir,
+      residentMessageTailLimit: 100,
+    });
+    for (let turn = 0; turn < 6; turn += 1) {
+      appendTurn(store1, agentId, `turn-${turn}`);
+    }
+
+    // A second store compacts; store1's resident window is now stale (it
+    // still holds pre-compaction ids the new active set dropped).
+    const store2 = new LocalStore(agentId, {
+      storageDir,
+      residentMessageTailLimit: 100,
+    });
+    const before = store2.listLocalMessages("default", agentId);
+    const result = store2.compactConversationAll({
+      conversationId: "default",
+      agentId,
+      summary: "summary text",
+      packedSummary: "packed summary",
+      remainingMessages: before.slice(-4),
+    });
+    expect(result.numMessagesAfter).toBe(5);
+
+    // store1 must not serve the stale pre-compaction window.
+    const fromStore1 = store1.listLocalMessages("default", agentId);
+    expect(fromStore1[0]?.id).toBe(result.summaryMessage.id);
+    expect(fromStore1.length).toBe(5);
+    expect(fromStore1.some((message) => message.id === before[0]?.id)).toBe(
+      false,
+    );
+  });
+
+  test("keeps the interrupted-tool-call settlement adjacent to its call across reloads", async () => {
+    const storageDir = await createStorageDirectory();
+    const agentId = "agent-local-residency-esc-settlement";
+    const store = new LocalStore(agentId, {
+      storageDir,
+      residentMessageTailLimit: 100,
+    });
+    appendTurn(store, agentId, "turn-0");
+    // Pending tool call left unsettled (ESC mid-turn).
+    store.appendStreamChunk("default", agentId, {
+      message_type: "approval_request_message",
+      tool_call: {
+        tool_call_id: "tool-esc",
+        name: "Bash",
+        arguments: "{}",
+      },
+    } as LettaStreamingResponse);
+    store.appendStreamChunk("default", agentId, {
+      message_type: "stop_reason",
+      stop_reason: "requires_approval",
+    });
+    const settled = store.settleInterruptedToolCalls("default", {
+      agentId,
+      reason: "esc",
+    });
+    expect(settled).toBe(1);
+    // Later turns after the settled result.
+    appendTurn(store, agentId, "turn-1");
+
+    // Reload: the synthetic result must stay right after its tool call, not
+    // drift to the end of the list every turn.
+    const reopened = new LocalStore(agentId, {
+      storageDir,
+      residentMessageTailLimit: 100,
+    });
+    const messages = reopened.listLocalMessages("default", agentId);
+    const resultIndex = messages.findIndex(
+      (message) =>
+        message.role === "toolResult" && message.toolCallId === "tool-esc",
+    );
+    const callIndex = messages.findIndex(
+      (message) =>
+        message.role === "assistant" &&
+        message.content.some(
+          (part) => part.type === "toolCall" && part.id === "tool-esc",
+        ),
+    );
+    expect(resultIndex).toBe(callIndex + 1);
+    expect(messages.length).toBe(5);
   });
 
   test("approves and settles tail tool calls after older messages are evicted", async () => {
