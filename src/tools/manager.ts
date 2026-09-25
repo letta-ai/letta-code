@@ -29,7 +29,6 @@ import {
   getModToolDefinition,
   isModToolParallelSafe,
   type ModToolDefinition,
-  modToolApprovalPolicy,
   runModTool,
 } from "@/mods/tool-registry";
 import type {
@@ -38,7 +37,6 @@ import type {
   ModToolEndEvent,
   ModToolRunContext,
   ModToolStartEvent,
-  ToolApprovalPolicy,
 } from "@/mods/types";
 import type {
   PermissionDecision,
@@ -92,7 +90,6 @@ import {
   scrubSecretsFromString,
 } from "./secret-substitution";
 import { TOOL_DEFINITIONS, type ToolName } from "./tool-definitions";
-import { TOOL_PERMISSIONS } from "./tool-permissions";
 
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
 
@@ -1015,33 +1012,6 @@ export async function prepareToolExecutionContextForModel(
     },
     options,
   );
-}
-
-/**
- * Get permissions for a specific tool.
- * @param toolName - The name of the tool
- * @returns Tool permissions object with requiresApproval flag
- */
-export function getToolPermissions(toolName: string) {
-  const approvalPolicy = getToolApprovalPolicy(toolName);
-  return { requiresApproval: approvalPolicy !== "auto", approvalPolicy };
-}
-
-export function getToolApprovalPolicy(
-  toolName: string,
-  contextId?: string | null,
-): ToolApprovalPolicy {
-  const context = contextId ? getExecutionContextById(contextId) : undefined;
-  const modPolicy = modToolApprovalPolicy(
-    toolName,
-    context?.modTools ?? getAvailableModToolsRegistry(),
-  );
-  if (modPolicy) return modPolicy;
-
-  const toolPermission = TOOL_PERMISSIONS[toolName as ToolName];
-  if (!toolPermission) return "auto";
-  if (toolPermission.approvalPolicy) return toolPermission.approvalPolicy;
-  return toolPermission.requiresApproval ? "ask" : "auto";
 }
 
 export function isModToolParallelSafeForContext(

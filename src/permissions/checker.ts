@@ -750,9 +750,7 @@ function getDefaultDecision(
     return "ask";
   }
 
-  // Check TOOL_PERMISSIONS to determine if tool requires approval
-  // Import is async so we need to do this synchronously - get the permissions from manager
-  // For now, use a hardcoded check that matches TOOL_PERMISSIONS configuration
+  // Tools that run without asking in standard and acceptEdits modes.
   const autoAllowTools = [
     "Read",
     "Glob",

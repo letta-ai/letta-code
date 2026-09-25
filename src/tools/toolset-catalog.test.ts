@@ -7,7 +7,6 @@ import {
   getServerToolName,
 } from "./manager";
 import { TOOL_DEFINITIONS } from "./tool-definitions";
-import { TOOL_PERMISSIONS } from "./tool-permissions";
 import { prepareToolExecutionContextForResolvedTarget } from "./toolset";
 import { TOOLSET_CATALOG, TOOLSET_OPTIONS } from "./toolset-catalog";
 
@@ -86,7 +85,6 @@ test("none and explicit client allowlists still exclude the tool", async () => {
 });
 
 test("standard and strict modes ask; explicit denial remains effective", () => {
-  expect(TOOL_PERMISSIONS.SendAgentMessage.requiresApproval).toBe(true);
   const args = { conversation_id: "conv-target", message: "hello" };
   for (const mode of ["standard", "strict"] as const) {
     permissionMode.setMode(mode);
