@@ -8,7 +8,6 @@ import {
   getSkillsDirectory,
 } from "@/agent/context";
 import { resolveScopedMemoryDir } from "@/agent/memory-filesystem";
-import { detectMemoryFormat } from "@/agent/memory-format";
 import {
   discoverSharedMemorySkills,
   resolveSharedMemorySkillsContext,
@@ -23,8 +22,6 @@ import {
   PROJECT_SKILLS_DIR,
   SKILLS_DIR,
 } from "@/agent/skills";
-import { getBackend } from "@/backend";
-import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { parseFrontmatter } from "@/utils/frontmatter";
 import { queueSkillContent } from "./skill-content-registry";
@@ -103,31 +100,6 @@ interface SkillResources {
   truncated: boolean;
 }
 
-export function resolveBundledSkillContentPath(input: {
-  skillId: string;
-  bundledSkillPath: string;
-  memoryDir: string | null;
-  localMemfs: boolean;
-}): string {
-  if (
-    !input.localMemfs &&
-    input.memoryDir &&
-    input.skillId === "initializing-memory" &&
-    detectMemoryFormat(input.memoryDir, false) === "memfs-v2"
-  ) {
-    return join(dirname(input.bundledSkillPath), "ROOT_MEMORY.md");
-  }
-  return input.bundledSkillPath;
-}
-
-function isLocalMemfsBackend(): boolean {
-  try {
-    return getBackend().capabilities.localMemfs;
-  } catch {
-    return isLocalBackendEnvEnabled(process.env);
-  }
-}
-
 function listSkillResources(skillMdPath: string): SkillResources {
   const skillDir = dirname(skillMdPath);
   const paths: string[] = [];
@@ -147,10 +119,7 @@ function listSkillResources(skillMdPath: string): SkillResources {
       const relativePath = relativeDirectory
         ? `${relativeDirectory}/${entry.name}`
         : entry.name;
-      if (
-        relativePath.toUpperCase() === "SKILL.MD" ||
-        relativePath.toUpperCase() === "ROOT_MEMORY.MD"
-      ) {
+      if (relativePath.toUpperCase() === "SKILL.MD") {
         continue;
       }
       if (paths.length >= MAX_LISTED_SKILL_RESOURCES) {
@@ -250,12 +219,7 @@ export async function readSkillContent(
   const bundledSkill = bundledSkills.find((s) => s.id === skillId);
   if (bundledSkill?.path && isSkillAvailableForAgent(bundledSkill, agentId)) {
     try {
-      const path = resolveBundledSkillContentPath({
-        skillId,
-        bundledSkillPath: bundledSkill.path,
-        memoryDir: resolveScopedMemoryDir({ agentId }),
-        localMemfs: isLocalMemfsBackend(),
-      });
+      const path = bundledSkill.path;
       const content = await readFile(path, "utf-8");
       return { content, path };
     } catch {

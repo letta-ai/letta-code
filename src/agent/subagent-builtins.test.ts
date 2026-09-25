@@ -12,6 +12,7 @@ import { join } from "node:path";
 import {
   clearSubagentConfigCache,
   getAllSubagentConfigs,
+  getBuiltinSubagentNames,
   resolveSubagentConfigForMemoryFormat,
 } from "@/agent/subagents";
 import { __testSetBackend, type Backend } from "@/backend";
@@ -72,9 +73,12 @@ describe("built-in subagents", () => {
     const configs = await getAllSubagentConfigs();
 
     expect(configs.reflection?.launchProfile).toBe("memory-subagent");
-    expect(configs["history-analyzer"]?.launchProfile).toBe("memory-subagent");
     expect(configs.memory?.launchProfile).toBe("memory-subagent");
     expect(configs.init?.launchProfile).toBe("memory-subagent");
+  });
+
+  test("does not register a built-in history-analyzer", () => {
+    expect(getBuiltinSubagentNames().has("history-analyzer")).toBe(false);
   });
 
   test.each(["claude-code", "codex"])(
@@ -148,7 +152,7 @@ Custom prompt body`,
   test("selects v2 writer prompts only for unchanged API built-ins", async () => {
     const configs = await getAllSubagentConfigs();
 
-    for (const name of ["reflection", "init", "memory", "history-analyzer"]) {
+    for (const name of ["reflection", "init", "memory"]) {
       const config = configs[name];
       expect(config).toBeDefined();
       if (!config) throw new Error(`Missing ${name} config`);
@@ -178,7 +182,6 @@ Custom prompt body`,
         "### 5. Commit (1 bash call)",
         "feat(init): initialize memory for project",
       ],
-      "history-analyzer": ["### 5. Commit", "Do NOT merge into main"],
       memory: ["## Updating memory", "## Git"],
     };
     for (const [name, phrases] of Object.entries(opsPhrases)) {

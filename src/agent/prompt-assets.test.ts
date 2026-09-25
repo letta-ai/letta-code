@@ -5,12 +5,11 @@ import {
   SYSTEM_PROMPTS,
   shouldRecommendDefaultPrompt,
 } from "@/agent/prompt-assets";
-import historyAnalyzerV2Prompt from "@/agent/subagents/builtin/history-analyzer-v2.md";
 import initV2Prompt from "@/agent/subagents/builtin/init-v2.md";
 import memoryV2Prompt from "@/agent/subagents/builtin/memory-v2.md";
 import reflectionV2Prompt from "@/agent/subagents/builtin/reflection-v2.md";
 import { resolveAndBuildSystemPrompt } from "@/agent/system-prompt-resolution";
-import initializingMemoryRootPrompt from "@/skills/builtin/initializing-memory/ROOT_MEMORY.md";
+import initializingMemoryPrompt from "@/skills/builtin/initializing-memory/SKILL.md";
 import memoryApplyPatchV2Prompt from "@/tools/descriptions/MemoryApplyPatchV2.md";
 import memoryV2ToolPrompt from "@/tools/descriptions/MemoryV2.md";
 import { TOOLSET_CATALOG } from "@/tools/toolset-catalog";
@@ -21,11 +20,10 @@ const LOCAL_EXTERNAL_MEMORY_INTRO =
   "External memory is stored outside of the system prompt, including both skills (procedural memory) and general-purpose files (markdown files, images, etc.).";
 
 const ROOT_ONLY_PROMPT_ASSETS = [
-  initializingMemoryRootPrompt,
+  initializingMemoryPrompt,
   initV2Prompt,
   memoryV2Prompt,
   reflectionV2Prompt,
-  historyAnalyzerV2Prompt,
   memoryV2ToolPrompt,
   memoryApplyPatchV2Prompt,
 ];

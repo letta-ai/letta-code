@@ -673,7 +673,7 @@ or writing each other's memory.
 1. **Shell commands:** wrapped per invocation with cross-agent policy (deny
    active agent-memory tree, carve current agent's own memory back out, leave
    repo/home/tmp writable, network open).
-2. **Memory-mode subagents** (reflection, memory, init, history-analyzer):
+2. **Memory-mode subagents** (reflection, memory, init):
    entire process wrapped. Reads broadly, writes restricted.
 3. **In-process file tools** (Read/Edit/Write): cannot fork, so kernel sandbox
    can't see them. Old static cross-agent guard remains: resolves both lexical

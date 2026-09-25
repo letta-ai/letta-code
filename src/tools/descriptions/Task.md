@@ -186,7 +186,7 @@ Behavior notes:
 
 ## Concurrency and Safety:
 
-- **Safe**: Multiple read-only agents (e.g. recall, history-analyzer) running in parallel
+- **Safe**: Multiple read-only agents (e.g. recall) running in parallel
 - **Safe**: Multiple agents editing different files in parallel
 - **Risky**: Multiple agents editing the same file (conflict detection will handle it, but may lose changes)
 - **Best practice**: Partition work by file or directory boundaries for parallel execution
