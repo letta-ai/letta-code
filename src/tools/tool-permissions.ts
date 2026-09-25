@@ -15,8 +15,6 @@ export const TOOL_PERMISSIONS: Record<
   Grep: { requiresApproval: false },
   LS: { requiresApproval: false },
   TaskStop: { requiresApproval: true },
-  memory: { requiresApproval: false },
-  memory_apply_patch: { requiresApproval: false },
   Monitor: { requiresApproval: true },
   Read: { requiresApproval: false },
   read_artifact_file: { requiresApproval: false },

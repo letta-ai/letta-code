@@ -5,6 +5,7 @@
 
 import { isInteractiveApprovalTool } from "@/tools/interactive-policy";
 
+// Retired memory tools; kept so saved transcripts still render them.
 const MEMORY_TOOL_NAMES = new Set(["memory", "memory_apply_patch"]);
 
 /**

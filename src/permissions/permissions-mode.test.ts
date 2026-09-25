@@ -35,56 +35,6 @@ test("default mode - no overrides", () => {
   expect(result.reason).toBe("Default behavior for tool");
 });
 
-test("default mode - auto-allows memory", () => {
-  permissionMode.setMode("standard");
-
-  const permissions: PermissionRules = {
-    allow: [],
-    deny: [],
-    ask: [],
-  };
-
-  const result = checkPermission(
-    "memory",
-    {
-      command: "create",
-      reason: "seed",
-      path: "system/human/profile.md",
-      description: "Profile",
-      file_text: "hello",
-    },
-    permissions,
-    "/Users/test/project",
-  );
-
-  expect(result.decision).toBe("allow");
-  expect(result.reason).toBe("Default behavior for tool");
-});
-
-test("default mode - auto-allows memory_apply_patch", () => {
-  permissionMode.setMode("standard");
-
-  const permissions: PermissionRules = {
-    allow: [],
-    deny: [],
-    ask: [],
-  };
-
-  const result = checkPermission(
-    "memory_apply_patch",
-    {
-      reason: "seed",
-      input:
-        "*** Begin Patch\n*** Add File: system/human/profile.md\n+---\n+description: Profile\n+---\n+hello\n*** End Patch\n",
-    },
-    permissions,
-    "/Users/test/project",
-  );
-
-  expect(result.decision).toBe("allow");
-  expect(result.reason).toBe("Default behavior for tool");
-});
-
 test("default mode - treats Agent like Task for safe subagent auto-approval", () => {
   permissionMode.setMode("standard");
 
@@ -331,58 +281,6 @@ test("acceptEdits mode - allows ApplyPatch", () => {
   expect(result.reason).toBe("Permission mode: acceptEdits");
 });
 
-test("acceptEdits mode - allows memory", () => {
-  permissionMode.setMode("acceptEdits");
-
-  const permissions: PermissionRules = {
-    allow: [],
-    deny: [],
-    ask: [],
-  };
-
-  const result = checkPermission(
-    "memory",
-    {
-      command: "create",
-      reason: "seed",
-      path: "system/human/profile.md",
-      description: "Profile",
-      file_text: "hello",
-    },
-    permissions,
-    "/Users/test/project",
-  );
-
-  expect(result.decision).toBe("allow");
-  expect(result.matchedRule).toBe("acceptEdits mode");
-  expect(result.reason).toBe("Permission mode: acceptEdits");
-});
-
-test("acceptEdits mode - allows memory_apply_patch", () => {
-  permissionMode.setMode("acceptEdits");
-
-  const permissions: PermissionRules = {
-    allow: [],
-    deny: [],
-    ask: [],
-  };
-
-  const result = checkPermission(
-    "memory_apply_patch",
-    {
-      reason: "seed",
-      input:
-        "*** Begin Patch\n*** Add File: system/human/profile.md\n+---\n+description: Profile\n+---\n+hello\n*** End Patch\n",
-    },
-    permissions,
-    "/Users/test/project",
-  );
-
-  expect(result.decision).toBe("allow");
-  expect(result.matchedRule).toBe("acceptEdits mode");
-  expect(result.reason).toBe("Permission mode: acceptEdits");
-});
-
 test("acceptEdits mode - does NOT allow Bash", () => {
   permissionMode.setMode("acceptEdits");
 
@@ -507,33 +405,6 @@ test("strict mode - Skill tool defaults to ask (no auto-allow)", () => {
   );
 
   // In standard mode, Skill auto-allows; strict mode forces "ask"
-  expect(result.decision).toBe("ask");
-  expect(result.reason).toBe("Default behavior for tool");
-});
-
-test("strict mode - memory tool defaults to ask (no auto-allow)", () => {
-  permissionMode.setMode("strict");
-
-  const permissions: PermissionRules = {
-    allow: [],
-    deny: [],
-    ask: [],
-  };
-
-  const result = checkPermission(
-    "memory",
-    {
-      command: "create",
-      reason: "seed",
-      path: "system/human/profile.md",
-      description: "Profile",
-      file_text: "hello",
-    },
-    permissions,
-    "/Users/test/project",
-  );
-
-  // In standard mode, memory auto-allows; strict mode forces "ask"
   expect(result.decision).toBe("ask");
   expect(result.reason).toBe("Default behavior for tool");
 });
