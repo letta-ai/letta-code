@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "candidate_id": "claude@2.1.282:docs:69ad8fbe73cc2ae370c2d1ef8b743f76914ed4c0b9894f279a7ac72c6fc9e8ce:runtime:025c5693e28337db76d9d47569d4492e2e78ebb41094495cec29203dfabe772e",
+  "candidate_id": "claude@2.1.282:docs:80edfa2aa446da60c2c7fe5288135aa3f28dfb71aa023647f994c0c54ae72e52:runtime:025c5693e28337db76d9d47569d4492e2e78ebb41094495cec29203dfabe772e",
   "package_version": "2.1.282",
   "npm_integrity": "sha512-nKh6bevzeUQm7yJzA6WdyvQ92k6/M5muwTUJtI1CbRWzl9drmdGdh61N9y4CIUVXAZhaVam0migsHuqpt8Kvlw==",
   "npm_published_at": "2026-09-24T15:56:22.706Z",
@@ -14,7 +14,7 @@
   },
   "docs": {
     "index_url": "https://code.claude.com/docs/llms.txt",
-    "index_hash": "502cb77df0df2fea2626745923c17fc8dc3432d00e313ab80108f960c52e0630",
+    "index_hash": "38850070df09a08f68dd06c5f08638df185609d6f18d8d88713355d912de8df6",
     "full_scan": false,
     "scanned_at": "2026-09-24T20:27:42.679Z",
     "pages": {
@@ -848,7 +848,7 @@
       },
       "https://code.claude.com/docs/en/plugins/cli-hints.md": {
         "url": "https://code.claude.com/docs/en/plugins/cli-hints.md",
-        "hash": "98a65e1b65b074a14cdf9ad9ff7f3bb23894482d940b718cbf498cab9678f77f",
+        "hash": "6b9ef157bc694261f18da3adec36ec1f19b8092be6c13ae17734c19ef440a283",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/plugins/cli-hints.md"
       },
@@ -1351,7 +1351,7 @@
         "source_path": "sources/raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md"
       }
     },
-    "digest": "69ad8fbe73cc2ae370c2d1ef8b743f76914ed4c0b9894f279a7ac72c6fc9e8ce"
+    "digest": "80edfa2aa446da60c2c7fe5288135aa3f28dfb71aa023647f994c0c54ae72e52"
   },
   "runtime": {
     "probe_contract_version": 2,
@@ -1633,8 +1633,8 @@
     ],
     "digest": "025c5693e28337db76d9d47569d4492e2e78ebb41094495cec29203dfabe772e"
   },
-  "fetched_at": "2026-09-25T14:29:40.996Z",
-  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/36147684722",
-  "state_commit_parent": "99b73812ca987c936637fc6151b3df81cc644dc4",
-  "analysis_parent_sha": "99b73812ca987c936637fc6151b3df81cc644dc4"
+  "fetched_at": "2026-09-25T18:30:54.897Z",
+  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/36173699881",
+  "state_commit_parent": "867bff6cba776efbc98447eee01e6c51e72c766f",
+  "analysis_parent_sha": "867bff6cba776efbc98447eee01e6c51e72c766f"
 }

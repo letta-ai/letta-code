@@ -122,5 +122,5 @@ The dialog names the first word of the shell command Claude ran, so users can sp
 
 ## Next steps
 
-* [Publish and distribute a plugin](/docs/en/plugins/publish): the routes into each marketplace, including the official marketplace, which the hint requires
+* [Publish and distribute a plugin](/docs/en/plugins/publish): the routes for distributing a plugin, including the official marketplace, which the hint requires
 * [Plugin commands reference](/docs/en/plugins/cli-reference#plugin-install): the shell command that installs the same plugin outside a session
