@@ -76,6 +76,7 @@ import {
   isLocalStateChunkOnly,
   toStoredOutputFields,
 } from "./local-stream-chunks";
+import { turnInputMessageForLocalAppend } from "./local-turn-input";
 import type { LocalAgentRecord, StoredMessage } from "./local-types";
 import type { LocalCompiledSystemPrompt } from "./system-prompt-compilation";
 export type { LocalAgentRecord, StoredMessage };
@@ -226,10 +227,7 @@ function textContent(text: string) {
 }
 
 function normalizeContent(content: unknown): unknown {
-  if (typeof content === "string") {
-    return textContent(content);
-  }
-  return content;
+  return typeof content === "string" ? textContent(content) : content;
 }
 
 function localImageContentFromLegacyImage(
@@ -1470,9 +1468,9 @@ export class LocalStore {
         );
         continue;
       }
-      if (message.role === "user") {
-        this.appendUserLocalMessage(conversationId, agentId, message);
-      }
+      const appendable = turnInputMessageForLocalAppend(message);
+      if (appendable)
+        this.appendUserLocalMessage(conversationId, agentId, appendable);
     }
 
     return { agentId, conversationId };
