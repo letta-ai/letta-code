@@ -365,10 +365,11 @@ export function readJsonlFile<T>(path: string): T[] {
 export function readJsonlFileSuffix<T>(
   path: string,
   maxBytes: number,
-): { items: T[]; reachedStart: boolean } {
-  if (!existsSync(path)) return { items: [], reachedStart: true };
+): { items: T[]; reachedStart: boolean; startOffset: number } {
+  if (!existsSync(path))
+    return { items: [], reachedStart: true, startOffset: 0 };
   const size = statSync(path).size;
-  if (size === 0) return { items: [], reachedStart: true };
+  if (size === 0) return { items: [], reachedStart: true, startOffset: 0 };
 
   const bytesToRead = Math.min(size, Math.max(1, maxBytes));
   const start = size - bytesToRead;
@@ -386,6 +387,8 @@ export function readJsonlFileSuffix<T>(
     const firstNewline = text.indexOf("\n");
     text = firstNewline >= 0 ? text.slice(firstNewline + 1) : "";
   }
+  // Byte offset of the first parsed row (the partial first line is skipped).
+  const firstNewlineByte = reachedStart ? -1 : buffer.indexOf(0x0a);
 
   return {
     items: text
@@ -393,6 +396,11 @@ export function readJsonlFileSuffix<T>(
       .filter((line) => line.trim().length > 0)
       .map((line) => JSON.parse(line) as T),
     reachedStart,
+    startOffset: reachedStart
+      ? 0
+      : firstNewlineByte >= 0
+        ? start + firstNewlineByte + 1
+        : size,
   };
 }
 
@@ -636,14 +644,15 @@ export function localTranscriptTailMessages(
 }
 
 /**
- * Read the smallest messages.jsonl suffix that yields at least `minMessages`
- * active messages (or the whole file when it is smaller), starting at a 64 KB
- * window and doubling — the same bounded policy as the resume tail fetch.
+ * Read the smallest messages.jsonl suffix that holds every in-context id (or
+ * `minMessages` messages when there is no in-context list), starting at a
+ * 64 KB window. Compacted-away rows older than the oldest in-context row stay
+ * unread, so a compacted conversation never re-reads its whole history.
  *
- * After compaction `activeMessageIds` is the small in-context set, so the
- * target is `min(minMessages, activeIds.length)`. Expanding until
- * `minMessages` active rows exist would otherwise read the whole JSONL
- * because the file still holds every pre-compaction row.
+ * `liveInContextIds` is the in-context list minus ids the returned messages
+ * lack: ids with no row once the whole file was scanned (an in-flight
+ * assistant id left by a killed process) and orphan tool results the repair
+ * dropped. The returned window covers every live id.
  */
 export function readLocalTranscriptTailWindow(
   messagesPath: string,
@@ -655,11 +664,10 @@ export function readLocalTranscriptTailWindow(
 ): LocalTranscriptTailReadResult & {
   reachedStart: boolean;
   headBytes: number;
+  liveInContextIds: string[];
 } {
   const targetCount =
-    activeMessageIds.length > 0
-      ? Math.min(minMessages, activeMessageIds.length)
-      : minMessages;
+    activeMessageIds.length > 0 ? activeMessageIds.length : minMessages;
   let maxBytes = 64 * 1024;
   for (;;) {
     const tail = readJsonlFileSuffix<unknown>(messagesPath, maxBytes);
@@ -670,17 +678,57 @@ export function readLocalTranscriptTailWindow(
       storageDir,
       conversationDir,
     );
-    if (result.messages.length >= targetCount || tail.reachedStart) {
+    const found = result.transcript.messages.length;
+    if (found >= targetCount || tail.reachedStart) {
+      const returnedIds = new Set(result.messages.map((message) => message.id));
       return {
         ...result,
         reachedStart: tail.reachedStart,
-        headBytes: tail.reachedStart
-          ? 0
-          : Math.max(0, statSync(messagesPath).size - maxBytes),
+        // Everything before the first parsed row, including the partial line
+        // the suffix skipped.
+        headBytes: tail.startOffset,
+        liveInContextIds: activeMessageIds.filter((id) => returnedIds.has(id)),
       };
     }
-    maxBytes *= 2;
+    // Grow toward the window the rows found so far imply (at least double).
+    maxBytes = Math.max(
+      maxBytes * 2,
+      found > 0 ? Math.ceil((maxBytes / found) * targetCount * 1.25) : 0,
+    );
   }
+}
+
+/**
+ * Evict resident messages that left the in-context set, oldest first, while
+ * the window holds more than `floor` messages. In-context messages and the
+ * newest message (appended but not yet recorded as in context) always stay.
+ */
+export function spliceOutOfContextMessages(
+  messages: LocalMessage[],
+  inContextIds: readonly string[],
+  floor: number,
+): LocalMessage[] {
+  const inContext = new Set(inContextIds);
+  const evicted: LocalMessage[] = [];
+  let index = 0;
+  while (index < messages.length - 1 && messages.length > floor) {
+    const message = messages[index];
+    if (message && !inContext.has(message.id)) {
+      evicted.push(...messages.splice(index, 1));
+    } else {
+      index += 1;
+    }
+  }
+  return evicted;
+}
+
+/** Messages of a replaced window whose ids the new window no longer holds. */
+export function messagesMissingFrom(
+  replaced: readonly LocalMessage[] | undefined,
+  next: readonly LocalMessage[],
+): LocalMessage[] {
+  const nextIds = new Set(next.map((message) => message.id));
+  return (replaced ?? []).filter((message) => !nextIds.has(message.id));
 }
 
 /**
@@ -699,15 +747,16 @@ export function residentCoversIds(
 /**
  * One-time validation of the transcript head a bounded tail read never
  * parsed, before the first append mutates anything. Parses each head line
- * (dropping the trailing partial line the tail window started mid-way into)
- * and applies the legacy-row check, so a corrupt head blocks writes exactly
- * like the full read it replaces.
+ * and applies the legacy-row check to raw rows and to the in-context
+ * messages the head holds, so a corrupt head blocks writes like the full
+ * read it replaces.
  */
 export function validateUnreadTranscriptHead(
   messagesPath: string,
   headBytes: number,
   storageDir: string,
   conversationDir: string,
+  activeMessageIds: readonly string[],
 ): void {
   if (headBytes <= 0) return;
   let text: string;
@@ -730,6 +779,16 @@ export function validateUnreadTranscriptHead(
     if (line.trim().length > 0) rows.push(JSON.parse(line));
   }
   assertNoLegacyUiMessageRows(rows, storageDir, conversationDir);
+  // Session entries wrap their message; check the in-context ones.
+  assertNoLegacyUiMessageRows(
+    localTranscriptRowsResult(
+      rows,
+      LOCAL_TRANSCRIPT_MESSAGE_FORMAT,
+      activeMessageIds,
+    ).messages,
+    storageDir,
+    conversationDir,
+  );
 }
 
 /**

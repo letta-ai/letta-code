@@ -93,6 +93,7 @@ import {
   localTranscriptRowsResult,
   localTranscriptSessionEntries,
   localTranscriptTailMessages,
+  messagesMissingFrom,
   normalizeLocalMessageForPi,
   overlayResidentLocalMessageSuffix,
   overlayResidentLocalMessageTail,
@@ -104,6 +105,7 @@ import {
   repairSyntheticLocalMessageTimestamps,
   residentCoversIds,
   restrictLocalTranscriptToResidentMessages,
+  spliceOutOfContextMessages,
   timestampFromIso,
   transcriptManifestPath,
   transcriptMessagesPath,
@@ -128,9 +130,9 @@ const DEFAULT_LOCAL_STORED_MESSAGE_ID_PREFIX = "letta-msg-";
 const DEFAULT_LOCAL_UI_MESSAGE_ID_PREFIX = "ui-msg-";
 
 /**
- * Max local messages kept resident per conversation on disk-backed stores;
- * older ones page back from the transcript on demand. Doubles the cloud
- * BACKFILL_PAGE_LIMIT (50) to cover one in-flight turn of window appends.
+ * Resident floor per conversation on disk-backed stores: the window always
+ * holds every in-context message, and messages that left the context are only
+ * evicted beyond this many. Doubles the cloud BACKFILL_PAGE_LIMIT (50).
  */
 export const DEFAULT_RESIDENT_MESSAGE_TAIL_LIMIT = 100;
 
@@ -356,8 +358,8 @@ export interface LocalStoreOptions {
   storedMessageIdPrefix?: string;
   localMessageIdPrefix?: string;
   /**
-   * Resident-tail bound for disk-backed stores; in-memory stores keep the
-   * full transcript resident (no disk to page from).
+   * Resident floor for disk-backed stores; in-memory stores keep the full
+   * transcript resident (no disk to page from).
    */
   residentMessageTailLimit?: number;
 }
@@ -443,7 +445,7 @@ export class LocalStore {
     LocalMessage[]
   >();
   // A conversation key is fully resident (loadedConversationKeys) or tail
-  // resident (tailResidentConversationKeys — bounded suffix, disk wins).
+  // resident (tailResidentConversationKeys — the in-context window, disk wins).
   private readonly loadedConversationKeys = new Set<string>();
   private readonly tailResidentConversationKeys = new Set<string>();
   // First resident message's logical index (sourceStartIndex convention).
@@ -1185,8 +1187,9 @@ export class LocalStore {
       input.agentId,
     );
     const key = this.conversationKey(conversation.id, input.agentId);
-    // Ensure the resident tail (and its session-entry bookkeeping) first.
+    // Ensure the resident tail first; validate its unread head pre-rewrite.
     this.residentLocalMessagesForConversation(conversation.id, input.agentId);
+    this.validateUnreadTranscriptHeadOnce(key);
     const previousMessages = this.localMessagesForConversation(
       conversation.id,
       input.agentId,
@@ -1215,8 +1218,8 @@ export class LocalStore {
     ];
     const inContextIds = compactedMessages.map((message) => message.id);
     const numMessagesAfter = compactedMessages.length;
-    this.setResidentConversationMessages(key, compactedMessages);
     conversation.in_context_message_ids = inContextIds;
+    this.setResidentConversationMessages(key, compactedMessages);
     conversation.last_message_at = date;
     conversation.updated_at = date;
     this.conversations.set(key, conversation);
@@ -2114,7 +2117,7 @@ export class LocalStore {
   /**
    * The live resident message window for mutation paths (append, rollback,
    * tool settlement, approval application, streaming chunk application).
-   * Bounded tail on disk-backed stores; appends mirror to the transcript.
+   * In-context window on disk-backed stores; appends mirror to the transcript.
    */
   private residentLocalMessagesForConversation(
     conversationId: string,
@@ -2149,7 +2152,6 @@ export class LocalStore {
     | undefined {
     const metadata = this.validateTranscriptMetadata(key);
     if (!metadata) return undefined;
-    this.unreadTranscriptHeadBytesByKey.delete(key);
 
     const rawRows = readJsonlFile<unknown>(metadata.messagesPath);
     const conversation = this.conversations.get(key);
@@ -2163,6 +2165,7 @@ export class LocalStore {
       this.storageDir ?? "",
       metadata.conversationDir,
     );
+    this.unreadTranscriptHeadBytesByKey.delete(key);
     const loadedMessages = repairSyntheticLocalMessageTimestamps(
       transcript.messages.map(normalizeLocalMessageForPi),
       metadata.timing,
@@ -2257,8 +2260,9 @@ export class LocalStore {
   }
 
   /**
-   * Tail load: bounded transcript suffix becomes the resident window; append
-   * dedup, parent chaining, and rollback detection only consult the tail.
+   * Tail load: the transcript suffix holding every in-context message becomes
+   * the resident window; append dedup, parent chaining, and rollback
+   * detection only consult it.
    */
   private loadConversationMessageTail(
     key: string,
@@ -2279,6 +2283,7 @@ export class LocalStore {
       transcript,
       messages: tailMessages,
       headBytes,
+      liveInContextIds,
     } = readLocalTranscriptTailWindow(
       metadata.messagesPath,
       metadata.messageFormat,
@@ -2295,6 +2300,8 @@ export class LocalStore {
       this.loadRepairedConversationKeys.add(key);
     }
     this.localMessagesByConversationKey.set(key, messages);
+    // Ids with no row (killed mid-stream) or dropped as orphans leave context.
+    if (conversation) conversation.in_context_message_ids = liveInContextIds;
     // Track the unparsed head for one-time pre-append validation (F13).
     if (headBytes > 0) this.unreadTranscriptHeadBytesByKey.set(key, headBytes);
     else this.unreadTranscriptHeadBytesByKey.delete(key);
@@ -2328,6 +2335,8 @@ export class LocalStore {
     key: string,
     messages: LocalMessage[],
   ): void {
+    const prior = this.localMessagesByConversationKey.get(key);
+    this.evictResidentHeadMessages(key, messagesMissingFrom(prior, messages));
     this.localMessagesByConversationKey.set(key, messages);
     if (!this.storageDir) {
       this.markConversationFullyResident(key);
@@ -2348,24 +2357,16 @@ export class LocalStore {
     this.trimResidentConversationTail(key);
   }
 
-  /**
-   * Bound the resident window, evicting the oldest messages (still on disk)
-   * from the projection and persisted-snapshot indexes.
-   */
+  /** Evict out-of-context messages (still on disk) beyond the resident floor. */
   private trimResidentConversationTail(key: string): void {
     if (!this.storageDir) return;
     if (!this.tailResidentConversationKeys.has(key)) return;
     const messages = this.localMessagesByConversationKey.get(key);
     if (!messages || messages.length <= this.residentMessageTailLimit) return;
-    const evicted = messages.splice(
-      0,
-      messages.length - this.residentMessageTailLimit,
-    );
-    this.localMessagesByConversationKey.set(key, messages);
-    this.residentTailStartIndexByConversationKey.set(
-      key,
-      (this.residentTailStartIndexByConversationKey.get(key) ?? 0) +
-        evicted.length,
+    const evicted = spliceOutOfContextMessages(
+      messages,
+      this.conversations.get(key)?.in_context_message_ids ?? [],
+      this.residentMessageTailLimit,
     );
     this.evictResidentHeadMessages(key, evicted);
   }
@@ -2408,12 +2409,10 @@ export class LocalStore {
       conversationId,
       agentId,
     );
-    // Post-load, pre-mutation: a corrupt head throws, nothing written.
-    this.validateUnreadTranscriptHeadOnce(
-      this.conversationKey(conversationId, agentId),
-    );
-    messages.push(message);
     const key = this.conversationKey(conversationId, agentId);
+    // Post-load, pre-mutation: a corrupt head throws, nothing written.
+    this.validateUnreadTranscriptHeadOnce(key);
+    messages.push(message);
     this.trimResidentConversationTail(key);
     this.touchConversationForLocalMessage(conversationId, agentId, message);
     this.persistConversationState(conversationId, agentId, {
@@ -2433,6 +2432,7 @@ export class LocalStore {
         headBytes,
         this.storageDir ?? "",
         metadata.conversationDir,
+        this.conversations.get(key)?.in_context_message_ids ?? [],
       );
     }
     this.unreadTranscriptHeadBytesByKey.delete(key);

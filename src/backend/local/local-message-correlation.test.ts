@@ -354,7 +354,7 @@ describe("local transcript residency", () => {
     });
   }
 
-  test("pages older messages from disk while only a bounded tail stays resident", async () => {
+  test("full-history, tail, and retrieve reads agree past the resident floor", async () => {
     const storageDir = await createStorageDirectory();
     const agentId = "agent-local-residency-paging";
     const store = new LocalStore(agentId, {
@@ -365,8 +365,8 @@ describe("local transcript residency", () => {
       appendTurn(store, agentId, `turn-${turn}`);
     }
 
-    // Full-history readers page the whole transcript from disk even though
-    // appends only kept the last 4 messages resident.
+    // Full-history readers see every message: the window keeps all in-context
+    // messages resident even past the 4-message floor.
     const allLocal = store.listLocalMessages("default", agentId);
     expect(allLocal).toHaveLength(12);
     expect(allLocal[0]?.role).toBe("user");
@@ -395,8 +395,8 @@ describe("local transcript residency", () => {
         .map((row) => row.id),
     );
 
-    // retrieveMessage for a message evicted from the resident window pages
-    // through the transcript instead of failing.
+    // retrieveMessage resolves the oldest message and its assistant row (out-
+    // of-context messages would page through the transcript instead).
     const evictedLocalId = allLocal[0]?.id;
     if (!evictedLocalId) throw new Error("Expected a first message");
     const retrieved = store.retrieveMessage(evictedLocalId);
@@ -442,10 +442,10 @@ describe("local transcript residency", () => {
     const corrupted = `{corrupt-session-header\n${original.slice(firstNewline + 1)}`;
     await writeFile(messagesPath, corrupted);
 
-    // The first append in a new session reads only the bounded tail window,
-    // but the unparsed head is validated once before anything is written:
-    // a corrupt head blocks the append (no dangling row), and every retry
-    // throws too.
+    // The first append in a new session fails before anything is written:
+    // the tail load parses every in-context row (here the whole file) and any
+    // unparsed head is validated first, so a corrupt head blocks the append
+    // (no dangling row), and every retry throws too.
     const paged = new LocalStore(agentId, {
       storageDir,
       residentMessageTailLimit: 4,
@@ -659,58 +659,55 @@ describe("local transcript residency", () => {
     );
   });
 
-  test("keeps the interrupted-tool-call settlement adjacent to its call across reloads", async () => {
+  test("keeps an aborted tool call's synthetic result next to its call", async () => {
     const storageDir = await createStorageDirectory();
     const agentId = "agent-local-residency-esc-settlement";
-    const store = new LocalStore(agentId, {
-      storageDir,
-      residentMessageTailLimit: 100,
-    });
+    const store = new LocalStore(agentId, { storageDir });
     appendTurn(store, agentId, "turn-0");
-    // Pending tool call left unsettled (ESC mid-turn).
-    store.appendStreamChunk("default", agentId, {
-      message_type: "approval_request_message",
-      tool_call: {
-        tool_call_id: "tool-esc",
-        name: "Bash",
-        arguments: "{}",
-      },
-    } as LettaStreamingResponse);
+    store.appendTurnInput("default", {
+      agent_id: agentId,
+      messages: [{ role: "user", content: "run the tool" }],
+    } as ConversationMessageCreateBody);
+    // ESC while the tool call streams: the final snapshot is aborted.
+    const aborted = {
+      id: "provider-aborted",
+      role: "assistant",
+      content: [
+        { type: "toolCall", id: "tool-esc", name: "Bash", arguments: {} },
+      ],
+      api: "openai-completions",
+      provider: "openai",
+      model: "test-model",
+      usage: emptyLocalUsage(),
+      stopReason: "aborted",
+      timestamp: Date.now(),
+    } satisfies LocalAssistantMessage;
+    store.appendStreamChunk(
+      "default",
+      agentId,
+      markLocalStateChunkOnly(
+        attachLocalMessage({ message_type: "local_message" }, aborted),
+      ) as unknown as LettaStreamingResponse,
+    );
     store.appendStreamChunk("default", agentId, {
       message_type: "stop_reason",
-      stop_reason: "requires_approval",
-    });
-    const settled = store.settleInterruptedToolCalls("default", {
-      agentId,
-      reason: "esc",
-    });
-    expect(settled).toBe(1);
-    // Later turns after the settled result.
-    appendTurn(store, agentId, "turn-1");
-
-    // Reload: the synthetic result must stay right after its tool call, not
-    // drift to the end of the list every turn.
-    const reopened = new LocalStore(agentId, {
-      storageDir,
-      residentMessageTailLimit: 100,
-    });
-    const messages = reopened.listLocalMessages("default", agentId);
-    const resultIndex = messages.findIndex(
-      (message) =>
-        message.role === "toolResult" && message.toolCallId === "tool-esc",
-    );
-    const callIndex = messages.findIndex(
-      (message) =>
-        message.role === "assistant" &&
-        message.content.some(
-          (part) => part.type === "toolCall" && part.id === "tool-esc",
-        ),
-    );
-    expect(resultIndex).toBe(callIndex + 1);
-    expect(messages.length).toBe(5);
+      stop_reason: "cancelled",
+    } as LettaStreamingResponse);
+    // The next turn start settles the call with a synthetic error result; it
+    // must stay right after its call instead of drifting to the end.
+    expect(store.settleInterruptedToolCalls("default", { agentId })).toBe(1);
+    for (const turn of ["turn-1", "turn-2"]) {
+      appendTurn(store, agentId, turn);
+      const ids = store
+        .listLocalMessages("default", agentId)
+        .map((message) =>
+          message.role === "toolResult" ? message.toolCallId : message.role,
+        );
+      expect(ids.indexOf("tool-esc")).toBe(4); // user, reply, user, call
+    }
   });
 
-  test("approves and settles tail tool calls after older messages are evicted", async () => {
+  test("approves and settles tail tool calls past the resident floor", async () => {
     const storageDir = await createStorageDirectory();
     const agentId = "agent-local-residency-approval";
     const store = new LocalStore(agentId, {
@@ -735,8 +732,8 @@ describe("local transcript residency", () => {
       stop_reason: "requires_approval",
     });
 
-    // The approval response resolves the pending call even though the earlier
-    // turns were evicted from the resident window.
+    // The approval response resolves the pending call; the earlier turns stay
+    // resident past the 3-message floor because they are still in context.
     store.appendTurnInput("default", {
       agent_id: agentId,
       messages: [
@@ -825,7 +822,7 @@ describe("local transcript residency", () => {
     expect(store.listLocalMessages(conversation.id, agentId)).toHaveLength(8);
   });
 
-  test("forks of long conversations page from disk after the rewrite", async () => {
+  test("forks of long conversations stay complete after the rewrite", async () => {
     const storageDir = await createStorageDirectory();
     const agentId = "agent-local-residency-fork";
     const store = new LocalStore(agentId, {
