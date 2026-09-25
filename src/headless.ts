@@ -3108,10 +3108,10 @@ export async function handleHeadlessCommand(
   await runPostTurnMemorySync({
     conversationId,
     agentId: agent.id,
+    agentName: agent.name,
     isEnabled: (id) => settingsManager.isMemfsEnabled(id),
     debugLabel: "Post-turn headless memory sync",
-    // One-shot runs have no next turn to remind; both go to stderr.
-    enqueueReminder: warnOnStderr,
+    enqueueReminder: warnOnStderr, // no next turn to remind in a one-shot run
     emitWarning: warnOnStderr,
   });
 
@@ -4753,6 +4753,7 @@ async function runBidirectionalMode(
         await runPostTurnMemorySync({
           conversationId,
           agentId: agent.id,
+          agentName: agent.name,
           isEnabled: (id) => settingsManager.isMemfsEnabled(id),
           debugLabel: "Post-turn headless memory sync",
           enqueueReminder: (text) => {
