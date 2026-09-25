@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { allocateImage } from "@/cli/helpers/paste-registry";
+import { allocateImage, getImage } from "@/cli/helpers/paste-registry";
 import {
   buildQueuedContentParts,
   buildQueuedUserText,
@@ -27,6 +27,7 @@ describe("queuedMessageParts", () => {
       data: "ZmFrZQ==",
       mediaType: "image/png",
     });
+    const image = getImage(imageId);
     const userText = `before [Image #${imageId}] after`;
     const notificationXml = formatTaskNotification({
       taskId: "task_1",
@@ -44,8 +45,13 @@ describe("queuedMessageParts", () => {
 
     const parts = buildQueuedContentParts(queued);
 
+    expect(Array.isArray(parts)).toBe(true);
+    if (!Array.isArray(parts)) throw new Error("Expected content parts");
     expect(parts).toHaveLength(7);
-    expect(parts[0]).toEqual({ type: "text", text: "before " });
+    expect(parts[0]).toEqual({
+      type: "text",
+      text: `before <system-reminder>Image available at ${JSON.stringify(image?.localPath)}</system-reminder>\n`,
+    });
     expect(parts[1]).toEqual({
       type: "image",
       source: {
