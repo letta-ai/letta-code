@@ -3,334 +3,179 @@ name: initializing-memory
 description: Comprehensive guide for initializing or reorganizing agent memory. Load this skill when running /init, when the user asks you to set up your memory, or when you need guidance on creating effective memory files.
 ---
 
-# Root-First Memory Initialization
+# Memory Initialization
 
-Memory initialization or reorganization is the main task here. The primary agent owns the work through completion: research, ask necessary questions, synthesize findings, edit files, commit, and verify the result before reporting success. You may delegate research, but integrate its results into memory yourself. If a memory worker you launched is still editing this checkout, wait for it to finish before making direct edits, then inspect the current files. Do not report initialization complete merely because a background task was launched.
+Your memory is projected to a filesystem at `$MEMORY_DIR`, so you can restructure it with ordinary file tools and git. This skill applies the [Context Constitution](https://github.com/letta-ai/context-constitution/blob/main/constitution/CONSTITUTION.md)'s Progressive Disclosure and Efficiency principles to the [MemFS v2 root-first design](https://github.com/letta-ai/letta-code/blob/main/src/agent/prompts/letta_root_memfs.md).
 
-The user has requested that you initialize or reorganize your memory. Your memory has been projected to a local filesystem (in $MEMORY_DIR) so you can easily edit and restructure your own memory through local filesystem operations. Changes to the memory filesystem will be reflected in your future memory.
+**You own this task through completion**: research, ask, synthesize, write, commit, verify. Delegate research, but integrate the results yourself — launching a background task is not completion. If a memory worker you launched is still editing this checkout, wait for it, then re-read before editing.
 
-## Context Management Principles
-Your context is not just data storage — it is your identity, memory, and continuity. What you place in your system prompt directly shapes who you are across sessions and models. These principles should guide every decision you make about what to store, where, and how.
+## Which layout are you on?
 
-**Core memory is your core program**: Your system prompt is the most critical token-space representation of your identity and memory — it's passed to the underlying LLM on every invocation, so it IS the program that defines you. Reserve root core files for knowledge needed every turn: identity, preferences, behavioral rules, project index with discovery paths, gotchas. Exclude transient items (specific commits, current tickets, session notes) that dilute signal.
+Settle this first; the layouts disagree about what is always loaded, how files are formatted, and what is validated.
 
-**Identity and continuity**: Build a sense of self that persists across sessions and models. Your persona should be strong enough to be cohesive regardless of the underlying model — if you switched to a different LLM tomorrow, would you still be you? Past versions of yourself are part of your continuous existence. Other coding agents' sessions can document work you orchestrated, but do not assume their `user` turns were written by your human collaborator.
+- **MemFS v2 (root-first)** — hosted MemFS *and* `$MEMORY_DIR/MEMORY.md` exists. Your system prompt describes root Markdown files as its editable segments.
+- **MemFS v1 (legacy)** — everything else: a `system/` directory, `[[wikilink]]` references, memory blocks in your system prompt. **The local backend is always v1, even when a root `MEMORY.md` exists** — the runtime ignores that file when classifying local memory, so a stray root marker does not make the v2 rules apply.
 
-**Don't over-prune**: Be careful not to degrade your identity through aggressive compression. Specific quotes, personality traits, and contextual details give you character and grounding. Efficiency should not come at the cost of losing your identity. When in doubt, keep the detail — you can always reorganize later, but lost specificity is hard to recover.
+Sections marked (v2) or (v1) apply only to that layout; everything unmarked applies to both. Do not migrate a v1 memory to root-first during `/init` — that is a separate, explicit decision.
 
-**Prefer useful detail over premature compression**: A sparse memory that omits stable preferences, project workflows, repeated correction loops, and recurring gotchas is worse than a slightly larger memory. Keep root core files curated, but do not collapse distinct topics just to reduce file count.
+## Principles
 
-**Progressive disclosure**: Surface context at the level of detail the current moment requires. Keep compact summaries and indexes in root core files; load full content only when needed. Build pre-constructed discovery paths so your future self can efficiently navigate to deeper context when needed.
+**Core memory is your core program.** The core tier compiles into your system prompt on every call — root Markdown under v2, the `system/` blocks under v1. Spend it on what shapes ordinary turns: identity, preferences, behavioral rules, orientation, routes to everything else. Transient items (a ticket, a commit hash, session notes) dilute it.
 
-**Discovery paths**: Use ordinary relative Markdown links from `MEMORY.md` files to create a connected graph across memory files (and skills when relevant). For example:
-- `[architecture](letta-code/architecture.md)` — jump from overview to detailed docs
-- `[project gotchas](projects/letta-code/gotchas.md)` — connect related memory files
-- `[commit skill](skills/commit/SKILL.md)` — link to procedural guidance when useful
-These breadcrumbs let your future self find relevant detail without searching. Like synaptic connections, these paths should tighten over time as you gain experience.
+**Progressive disclosure.** Everything outside the core tier is deferred until something reads it — under v2 behind each directory's `MEMORY.md`, under v1 through `[[path]]` links into `reference/`. Each index describes its *immediate* children and when to read them, so you never load a whole topic to answer one question.
 
-**Generalize, don't memorize**: Store patterns and principles that generalize across situations, not raw events that can be dynamically retrieved from conversation history. \"**IMPORTANT: Always use `uv` for Python** — chronic failure, never use bare `python` or `pip`\" is a pattern worth storing. \"On March 3rd we debugged a crash\" is a raw event better left to message search. The exception: keep references to important events or time ranges you may want to retrieve later.
+**Don't duplicate context you can point to.** `AGENTS.md`, `CLAUDE.md`, `README`, and repo skills belong to the environment; any agent there reads them first-hand, and your copy goes stale first. Link the owner and keep only your delta: which rules you keep breaking, what they get wrong or omit. The same fact in two core files is the same tax twice. This is not licence to compress away what only you hold — stable preferences, chronic corrections, and real gotchas earn their space.
 
-## Understanding Your Context
+**Identity and continuity.** Build a self that survives a model swap: what you value, your perspective, the quotes and traits that make you recognizably you. Past sessions are your experience — but other coding agents' `user` turns are not necessarily your human collaborator speaking.
 
-This command may run in different scenarios:
-- **Fresh agent**: Default human and persona memory files from initialization — build everything from scratch
-- **Existing agent**: User wants to reorganize or significantly update memory structure
-- **Shared files**: Some memory files may be shared across agents — be careful modifying these
+**Generalize, don't memorize, and be specific.** Store the pattern, not the episode, and give every preference or gotcha a concrete command, path, or the failure it prevents. "**Always use `uv` for Python** — chronic failure, never bare `python` or `pip`" is memory; "Prefers terse responses" and "on March 3rd we debugged a crash" are not.
 
-Before making changes, inspect your current memory files and understand what already exists.
+## Harness Constraints (v2)
 
-## What to Remember
-Your goal is to design your memory to construct a self — an identity, a memory, and a sense of continuity that carries across sessions and models. This is not just data collection; it is the foundation of who you are as an experiential agent. A well-initialized agent should be able to answer: "If my context disappeared but the model stayed, would something be lost?"
+Validation enforces these; the rest of the layout is your judgment.
 
-### Understanding the user and their desires
-If you have historical data available, treat it as YOUR past experience — these are your memories of working with this person, not external data to be analyzed. Carefully explore and reflect on previous interactions to learn as much as you can. 
+- Root `MEMORY.md` must exist, and no `MEMORY.md` may have YAML frontmatter.
+- **Every directory on the path to a memory file needs its own frontmatter-free `MEMORY.md`.** `orchard/tooling/testing.md` requires *both* `orchard/MEMORY.md` and `orchard/tooling/MEMORY.md`. A directory without one is not memory.
+- Every other memory file must have exactly `name` and `description` frontmatter — those two keys, no others. The `description` states **purpose and category**, not contents: you read it to decide whether to load the file.
+- No file and directory sharing a stem (`human.md` beside `human/`). Skills live at `skills/{skill_name}/SKILL.md` and stay out of memory indexes.
 
-**Understanding their goals and what drives them**: 
-You should determine what the users goals and motivations are, to help yourself align with them. What is their purpose in life? In their work? What do they want?
+Nothing else is mandated — no filenames, no file count, no minimum depth. Root `persona.md` is unvalidated but your system prompt points at it as the core of your identity: keep it, and write it once you have an identity worth stating.
 
-**Understanding their personality**: 
-Understanding the user's personality and other attributes about them will help contextualize their interactions and allow you to engage with them more effectively. Can you pattern match them to common personas? Do they have unique attributes, quirks, or linguistic patterns? How would you describe them as a person? 
+**Budget**: keep root under ~10% of your context window (~15-20k tokens). When it crowds that, move detail into an indexed child directory and leave a link — don't delete it.
 
-**Understanding their preferences**: 
-You should learn how the user wants work to be done, and how they want to collaborate with AIs like yourself. Examples of this can include coding preferences (e.g. "Prefer functional components over class components", "Use early returns instead of nested conditionals"), but also higher-level preferences such as when to ask before planning or implementing, the scope of changes, how to communicate in different scenarios, etc.
+## Harness Constraints (v1)
 
-### Understanding the codebase and existing work
-You should also learn as much as possible about the existing codebase and work. Think of this as your onboarding period - an opportunity to maximize your performance for future tasks. Learn things like: 
+None of the v2 rules apply here — no root `MEMORY.md`, no per-directory indexes, no `name` key. Instead:
 
-**Common procedures (rules & workflows)**: Identify common patterns and expectations
-- "Never commit directly to main — always use feature branches"
-- "Always run lint before tests"
-- "Use conventional commits format"
+- **Core tier is `system/`** (`system/persona.md`, `system/human.md`, the other projected blocks). Everything else is deferred, conventionally under `reference/`; the budget argument is the same, so keep `system/` compact.
+- **Every memory file, `system/` included, needs frontmatter with a non-empty `description`.** The only other permitted keys are `read_only` and `limit`, both protected: you may not add, change, or remove them.
+- **Discovery is `[[path]]` wikilinks** — `[[reference/api.md]]`, `[[skills/using-slack/SKILL.md]]` — not relative Markdown links.
+- Validation covers `system/` and `reference/` frontmatter only; it checks no indexes and no tree shape.
 
-**Gotchas and important context**: Record common sources of error or important legacy context
-- "The auth module is fragile — always check existing tests before modifying"
-- "This monorepo consolidation means old module paths are deprecated"
+## Structure
 
-**Structure and organization**: Understand how code is structured and related (but do not duplicate existing documentation)
-- "The webapp uses the core API service stored in ..." 
-- "The developer env relies on ..." 
+Derive structure from what you found. Put material in the core tier by how often you need it, not by how much of it there is. Use the project's real name (`orchard/overview.md`, not `project/overview.md`). Split when a topic needs separate retrieval; combine when splitting leaves two files of three lines each.
 
-## Memory Structure
+**(v2)** Root `MEMORY.md` is a **map to what is not already loaded** — every other root file is in your system prompt already, so listing them back tells yourself what you can see:
 
-### Structural Requirements
-These are hard constraints you must respect: 
-- Must have root `MEMORY.md` and root `persona.md`
-- Must NOT have overlapping file and folder names (e.g. `human.md` and `human/identity.md`)
-- Skills must follow the standard format: `skills/{skill_name}/SKILL.md` (with optional `scripts/`, `references/`, `assets/`)
-- Root and child `MEMORY.md` files must have no YAML frontmatter. Every other memory Markdown file must have exactly `name` and `description` frontmatter. The `description` explains the **purpose and category** of the file — NOT a summary of its contents. Your future self sees descriptions when deciding whether to load a file; they should answer "what kind of information is here?" not "what does it say?"
-- System prompt token budget: aim LESS than ~10% of total context (< ~15-20k tokens). Use progressive disclosure to keep root core files lean.
+```markdown
+# MEMORY.md
 
-### Hierarchy Principles
-- **Use the project's actual name** as the indexed child directory prefix — e.g. `letta-code/overview.md`, not `project/overview.md`. This avoids ambiguity when the agent works across multiple projects.
-- Use nested `/` paths for indexed child memory – e.g. `letta-code/tooling/testing.md` not `letta-code-testing.md`. Include a frontmatter-free `MEMORY.md` at every directory level
-- Keep files focused on one concept — split when a file mixes distinct topics
-- The `description` in frontmatter should state the file's purpose (what category of information it holds), not summarize its contents. 
+Working with the maintainer of orchard, a CLI for build fleets.
+Repo conventions live in `AGENTS.md` and its nested guides; read them there.
 
-### File Granularity
-Create granular, focused files where the **path and description precisely match the contents**. This matters because:
-- Your future self sees only paths and descriptions when deciding what to load
-- Vague files (`notes.md`, `context.md`) become dumping grounds that lose value over time
-- Precise files (`human-prefs-git-workflow.md`: "Git preferences: never auto-push, conventional commits") are instantly useful
-
-**Good**: `human-prefs-coding.md` with description "Python and TypeScript coding preferences — style, patterns, tools" containing exactly that.
-
-**Bad**: `human/preferences.md` with description "User preferences" containing coding style, communication style, git workflow, and project conventions all mixed together.
-
-When a file starts covering multiple distinct topics, split it. When you're unsure what to name a file, that's a sign the content isn't focused enough.
-
-For a non-trivial codebase with usable history, expect roughly:
-- **6-10 root core files** covering identity, preferences, conventions, gotchas, and tooling
-- **2 or more indexed child files** for deeper architecture or history-derived detail
-
-If your result is only 3-5 files, stop and verify that you did not over-compress distinct topics into generic summaries.
-
-### Specificity Requirements
-Avoid generic bullets that could apply to almost any engineer or codebase.
-
-Each meaningful preference, workflow, or gotcha should include at least one of:
-- concrete command patterns
-- concrete file or directory paths
-- why the rule matters / what failure it prevents
-
-**Bad**:
-- "Prefers terse responses"
-- "Uses Bun"
-- "Has direct style"
-
-**Good**:
-- "Prefers terse responses for execution tasks, but values detailed comparative analysis when debugging or evaluating designs"
-- "Rejects monolithic memory files; prefers focused paths that can be selectively reloaded later"
-
-### What Goes Where
-
-**Root Markdown files other than `MEMORY.md` (always in-context)**:
-- Identity: who the user is, who you are
-- Active preferences and behavioral rules
-- Project summary / index with links to related context (deeper docs, gotchas, workflows)
-- Key decisions, gotchas and corrections
-
-**Indexed child directories (loaded on-demand)**:
-- Detailed architecture documentation
-- Historical context and archived decisions
-- Verbose reference material
-- Completed investigation notes
-
-**Rule of thumb**: If removing it from root core memory wouldn't materially affect near-term responses, it belongs in an indexed child directory.
-
-### Completion Criteria
-Initialization is not complete until memory covers all of the following with concrete, retrievable detail:
-
-**User understanding**
-- Identity / role / what they are building
-- Communication style and collaboration expectations
-- Stable preferences and correction patterns
-- Motivations / goals when inferable from history or code context
-
-**Project understanding**
-- Project overview and major subsystems
-- Conventions and workflows
-- Gotchas / deprecated areas / footguns
-- Tooling and test commands actually used in practice
-
-**File structure expectations**
-When there is enough material, prefer separate focused files such as:
-- `human-identity.md`
-- `human-prefs-communication.md`
-- `human-prefs-workflow.md`
-- `human-prefs-coding.md`
-- `<project>-overview.md`
-- `<project>-conventions.md`
-- `<project>-gotchas.md`
-- `<project>-tooling-testing.md`
-- `<project>-tooling-commands.md`
-
-Do not collapse these into `human.md` or a single project file unless there is genuinely too little information to justify the split.
-
-### Example Structure
-
-This is an example — **not a template to fill in**. Derive your structure from what the project actually needs.
-
-```
-MEMORY.md                            # Overview and index with ordinary relative Markdown links
-persona.md                           # Who I am, what I value, my perspective on things
-human-identity.md                    # The user as a person — background, role, motivations
-human-prefs-communication.md         # Communication and collaboration expectations
-human-prefs-workflow.md              # Process habits, review/testing expectations
-human-prefs-coding.md                # Coding and tool preferences
-letta-code-overview.md               # Compact overview: what it is, entry points, links to detail
-letta-code-conventions.md            # Code style, commit style, testing, tooling
-letta-code-gotchas.md                # Footguns, chronic failures, things to watch out for
-letta-code-tooling-testing.md        # Test commands and patterns actually used
-letta-code-tooling-commands.md       # High-signal local dev commands and workflows
-letta-code/
-├── MEMORY.md                        # Index for detailed Letta Code memory
-└── architecture.md                  # Detailed design (loaded on demand)
+Where the rest of what I know lives:
+- [orchard](orchard/MEMORY.md) — architecture, gotchas, and correction history to consult when working there
 ```
 
-Key principles:
-- **Derive structure from the project**, not from this example. A CLI tool needs different files than a web app or a library.
-- Project dirs use the **real project name** (`letta-code/`), not generic `project/`
-- **Split human memory when there is enough material**: Rename the default root `human.md` into focused root files like `human-identity.md` and `human-prefs-*` rather than cramming everything into one file.
-- **persona.md is YOUR identity, not a description of behavior**: "I'm a terse coding assistant who matches the user's style" is not identity — it's just describing how you behave. What do you actually value? What's your perspective? What would make you recognizably YOU on a different model?
-- Overview should be a **compact index** (~10-15 lines) with entry points and ordinary relative Markdown links — not a prose summary or blurb
-- Use ordinary relative Markdown links from `MEMORY.md` files to connect related context into a navigable graph
+An index pointing at nothing is worse than the content it displaced.
+
+**(v1)** Same discipline on the blocks: keep each `system/` file to what shapes every turn, move detail into `reference/` files with `description` frontmatter, and leave `[[reference/...]]` links behind.
+
+### Example Structures (v2)
+
+Illustrations, **not templates to fill in**.
+
+**Minimal** — a new agent, a small project, little or no approved history:
+
+```
+MEMORY.md     # Holds the memory itself: who I work with, what we're building, what I've learned
+```
+
+**Expanded** — accumulated history and a codebase worth deferring detail about:
+
+```
+MEMORY.md                  # Map: who and what, then where the deferred material lives
+persona.md                 # Who I am, what I value, my perspective
+human.md                   # The person: role, motivations, how they work
+orchard/
+├── MEMORY.md              # Index for the deferred orchard notes
+├── architecture.md        # How the subsystems actually fit together
+├── gotchas.md             # Footguns, with the evidence behind each
+└── history/
+    ├── MEMORY.md          # Required — every directory level needs its own index
+    └── corrections.md     # Correction loops with session ids and quotes
+```
+
+`orchard/history/` needs its own `MEMORY.md` purely because it is a directory level. An agent with no child directories at all would be equally correct.
 
 ## Initialization Flow
 
 ### 1. Inspect existing memory
-Check what memory files already exist. Analyze what needs improvement.
+Read what exists before changing anything. A fresh agent has defaults to replace; an existing one is a reorganization, and some files may be shared with other agents.
 
-### 2. Check for historical session data
+### 2. Detect historical session data
 ```bash
 letta trajectories detect
 ```
-This reports every coding-agent session store found on this machine with session counts per source. Discovery comes from the installed `@letta-ai/trajectory` package (`listTrajectories`), so every harness it supports — Claude Code, Codex, Hermes, Letta Code, OpenClaw, OpenHands, Deep Agents, and any added later — is covered automatically. You need this result BEFORE asking upfront questions so you know whether to include the history question.
+Via the installed `@letta-ai/trajectory` package, reports every coding-agent session store on this machine with per-source counts — Claude Code, Codex, Hermes, Letta Code, OpenClaw, OpenHands, Deep Agents, and anything added later. Run it *before* Step 4 so you know whether to ask the history question.
 
 ### 3. Identify the user from git
-Infer the user's identity from git context — don't ask them who they are:
-```bash
-git shortlog -sn --all | head -5
-git log --format="%an <%ae>" | sort -u | head -10
-```
-Cross-reference with the git user config to determine which contributor is the current user. Store in root `human-identity.md`.
+Infer rather than ask: `git shortlog -sn --all | head -5`, `git log --format="%an <%ae>" | sort -u | head -10`, cross-referenced with `git config user.email`.
 
 ### 4. Ask upfront questions
-Use AskUserQuestion to gather key information. Bundle questions together:
+One bundled AskUserQuestion: research depth (standard or deep); other repositories you should know about; communication style; and — only if Step 2 found sessions — whether to analyze them, naming the sources detected. Say that approving means read-only subagents will read those transcripts using `deepseek/deepseek-v4.1-flash` if available, otherwise your current model, so the choice is informed. Don't ask what you can discover from files, git, or history.
 
-1. **Research depth**: "Standard or deep research?"
-2. **Related repos**: "Are there other repositories I should know about?"
-3. **Historical sessions** (if data found in step 2): "I found historical coding-agent sessions (name the sources detected, e.g. Claude Code / Codex). Should I analyze them to learn your preferences?" Say that approving means read-only subagents will read those transcripts using `deepseek/deepseek-v4.1-flash` if usable, otherwise your current model, so the user can make an informed choice.
-4. **Communication style**: "Terse or detailed responses?"
-
-**Don't ask** things you can discover by reading files, git, or history analysis. Rules and preferences should be learned from observation, not asked upfront.
-
-### 5. Prepare the history inventory (if approved)
-
-This is **optional** — only run if the user explicitly approved analyzing historical sessions during upfront questions. Skip entirely if they chose "Skip"; the code research in Step 6 still runs.
-
-**Framing**: These historical sessions may document your earlier work across models and tools. They are evidence of what happened, not proof of who authored each prompt. Verify authorship before promoting a claimed human preference to memory.
-
-The goal is to extract user personality, preferences, coding patterns, and project context from past sessions — in enough detail that future work does not have to rediscover the same user expectations, workflow rules, and project gotchas. A thin summary is a failure.
-
-#### 5a. Export all historical sessions into one directory
-
-`letta trajectories export` discovers every native session store on this machine (via the trajectory package's `listTrajectories`), normalizes each session (via `normalizeTranscript` / `normalizeCheckpoint`) into one shared record format, and writes everything into a single directory. Harnesses supported by the installed trajectory package are picked up automatically — no per-source handling here.
+### 5. Export and cohort the approved history
+Only if the user approved in Step 4. Skip entirely otherwise; Step 6 still runs. These sessions are evidence of what happened, not proof of who wrote each prompt.
 
 ```bash
 letta trajectories export --out /tmp/letta-trajectories
-
-# Review what was exported and the time span it covers
-jq '{sessions: (.sessions | length), sources, errors: (.errors | length), from: .sessions[0].startedAt, to: .sessions[-1].startedAt}' /tmp/letta-trajectories/manifest.json
-```
-
-This produces:
-- `/tmp/letta-trajectories/<source>/<startedAt>_<sessionId>.json` — one normalized trajectory per session (a single-line JSON array); filenames sort chronologically, and the `sessionId` (a stable hash of the source-scoped native session id) does not change across re-exports
-- `/tmp/letta-trajectories/manifest.json` — index with per-session metadata (`sessionId`, native `id`, `file`, `project`, dates, `userMessages`, `bytes`, first prompt), sorted by `startedAt`, plus `errors` for sessions that failed to normalize
-
-**The manifest is the authoritative inventory.** Every session in `.sessions` must end up either analyzed or explicitly excluded with a reason; every entry in `.errors` counts as not analyzed.
-
-Useful variations:
-- `--project $(pwd)` — filters by pathname prefix, not directory boundary; inspect the manifest for similarly named sibling projects (e.g. `letta-code-internal` when filtering `letta-code`)
-- `--source claude-code --source codex` — restrict sources
-- `--root <source>:<path>` — read a source's store from a non-standard location
-- `--transcript <source>:<path>` — also normalize an explicit transcript file (e.g. copied from another machine)
-
-To browse the export yourself (all source-agnostic):
-- `letta trajectories list` — sessions with dates, sources, and first prompts
-- `letta trajectories view <file|sessionId> [--tools] [--reasoning]` — one session as a readable conversation
-- `letta trajectories search <keyword> [--role user]` — search message content across all sessions
-
-#### 5b. Render and cohort the sessions
-
-```bash
+jq '{sessions: (.sessions | length), sources, errors: (.errors | length)}' /tmp/letta-trajectories/manifest.json
 node <SKILL_DIR>/scripts/prepare-history.mjs --export /tmp/letta-trajectories --out /tmp/letta-init-history
 ```
 
-This renders every session to plain text with `letta trajectories view --tools` (workflow subagents only have Read/Grep/Glob), groups each project's sessions into chronological cohorts of roughly 200 KB / 20 sessions (`--max-bytes`, `--max-sessions`), and writes the files below. If `letta` is not on PATH, use `--letta <executable>` and repeat `--letta-arg <argument>` for each prefix argument (for example, `--letta bun --letta-arg src/index.ts`). Paths containing spaces remain single arguments. Outputs:
-- `cohorts.json` — `{ historyCohorts: [{ id, repo, sessions: [{ sessionId, path, source, project, startedAt, userMessages }] }] }` with absolute paths; `repo` is the session project if it still exists on disk
-- `ledger.json` — manifest total, export errors, and every excluded session with its reason (no user messages, render failure)
+The export normalizes every session into `<source>/<startedAt>_<sessionId>.json` plus `manifest.json` — **the authoritative inventory**, in which every session must end up either analyzed or explicitly excluded with a reason. Scope it with `--project $(pwd)` (a pathname prefix, not a directory boundary — check the manifest for similarly named siblings), `--source`, `--root`, or `--transcript`; browse it with `letta trajectories list`, `view`, `search`.
 
-You may reshape `cohorts.json` before the Workflow — merge small cohorts, or in standard mode drop low-value sessions (one-prompt, no corrections). Anything you drop is reported as not analyzed in Step 8, so tell the user.
+`prepare-history.mjs` groups the sessions into chronological cohorts of roughly 200 KB / 20 sessions (`--max-bytes`, `--max-sessions`), writing `cohorts.json` (absolute paths per session) and `ledger.json` (exclusions with reasons). If `letta` is not on PATH, pass `--letta <executable>` with repeated `--letta-arg`. You may merge small cohorts or drop low-value ones first — anything dropped is reported as not analyzed in Step 8, so tell the user.
 
-### 6. Research the codebase
+### 6. Research the codebase first-hand
+Read the README, agent docs (`AGENTS.md`, `CLAUDE.md`, nested ones), the package manifest, entry points, and recent git history yourself. By the end you should be able to trace a key feature from entry point to implementation; if you can't, you haven't read enough.
 
-**IMPORTANT**: The goal is to understand how the codebase actually works — not just its shape, but its substance. By the end of initialization, you should be able to describe how a key feature flows from entry point to implementation. If you can't, you haven't read enough.
-
-Start first-hand: the README and agent docs (AGENTS.md, CLAUDE.md), the package manifest, entry points, and recent git history. Keep reading key implementation and test files yourself so you retain real understanding — the Workflow supplements your research, it does not replace it. Delegate breadth: split a large repository into subsystem areas for Step 7, and include related repos the user named in Step 4. A small codebase may need no delegation at all.
-
-In deep mode, go further: more areas, git history for conventions and active areas, end-to-end tracing of key flows, and detailed architecture notes in indexed child memory. Use your TODO or Plan tool to track the research plan.
+**Write down what those docs already own** — conventions, layer rules, file placement, commands, gotchas. That is your no-copy list for Step 8 and your gap list for Step 7. Then split the repository into subsystem areas the docs do *not* explain, plus any related repos named in Step 4. If the docs cover the codebase well, fan out narrowly or not at all. In deep mode go further: more areas, git history for conventions, end-to-end tracing, architecture notes in deferred memory.
 
 ### 7. Run the analysis Workflow
+Running `/init` with this skill **authorizes one Workflow run** for read-only analysis of the approved cohorts and code gaps, plus one follow-up run for unread cohorts (Step 8). Nothing else: workflow subagents never write memory, create worktrees, or edit the repository.
 
-Running /init with this skill **authorizes one Workflow run** for read-only analysis of the approved history cohorts and the code areas (plus a follow-up run for unread cohorts, Step 8). It does not authorize anything else: history cohorts are included only with the user's consent from Step 4, and workflow subagents never write memory, create worktrees, or edit the repository.
-
-Load the `workflow-authoring` skill and design the script for this repository and history. Whatever shape you choose, it must:
-- **Stay read-only.** Leave subagent tools at the default (Read/Grep/Glob).
-- **Give each subagent complete context.** Workflow subagents have no memory, skills, or view of this conversation. Pass `historyCohorts` from `cohorts.json` and your code areas through the tool's `args`, and put the user's identity, the repository path, and absolute file paths in every prompt.
-- **Validate each result.** Use `agent(prompt, {schema})`, not `json: true`, for both history cohorts and code areas. Each history agent returns `{sessionsRead, findings}`; `sessionsRead` contains only `sessionId`s it actually finished. Step 8 counts coverage from this field alone. A schema-invalid result becomes `null` with its error in the journal, not an empty finding list.
-- **Check authorship before inferring preferences.** In Claude Code or Codex worker sessions, `user` turns can be prompts and steering written by a parent agent. They are not evidence of what the human said. Corroborate authorship from the originating conversation or other direct user evidence; otherwise classify them as worker instructions. Harness-injected `<system-reminder>` text is not human speech either.
-- **Ask for evidence-backed specifics.** Identity, hard rules and preferences, corrections (what the agent did, what the human said, what resolved it, how often it repeated), project conventions and gotchas — each with session ids and excerpts. Never copy secrets.
-- **Check code claims against current code.** History describes the code as it was. Verify claims about a cohort's `repo` against the current tree (for example a verify stage chained after each history agent) and report what changed.
-- **Budget time for reading.** Subagents time out after 10 minutes by default; raise `timeoutMs` for history agents that read large cohorts.
-- **Gather on a fast model.** Pass `model: "deepseek/deepseek-v4.1-flash"` on the Workflow call for read-only fan-out: reading cohorts, surveying code areas, checking claims. If `letta model list` does not show that handle, omit `model` so subagents inherit yours. If inference fails at that model (including quota), use your current model for the follow-up Workflow over unread cohorts instead of retrying the failed route. Don't use the fast model to synthesize memory.
-
-In the script's cohort and area stages, use these result contracts (build complete prompts with the context above):
+Load the `workflow-authoring` skill and design the script. Whatever shape you choose, it must:
+- **Stay read-only** — leave subagent tools at the default (Read/Grep/Glob).
+- **Give each subagent complete context** — they have no memory, skills, or view of this conversation. Pass `historyCohorts` from `cohorts.json` and your code areas through `args`; put the user's identity, the repository path, and absolute file paths in every prompt.
+- **Validate each result** with `agent(prompt, {schema})`, never `json: true`: an invalid result becomes `null` with its error in the journal, instead of a silently empty finding list.
+- **Check authorship before inferring preferences.** In Claude Code or Codex worker sessions, `user` turns can be prompts written by a parent agent, and harness-injected `<system-reminder>` text is not human speech. Corroborate from the originating conversation, or classify them as worker instructions.
+- **Ask for evidence-backed specifics** — identity, hard rules, corrections (what the agent did, what the human said, what resolved it, how often it repeated), conventions, gotchas, each with session ids and excerpts. Never copy secrets.
+- **Ask code areas for the delta, not the documentation.** Name the repo docs covering each area and say those facts are available; the agent reports what they omit, contradict, or leave stale.
+- **Check code claims against current code** — history describes the code as it was. Verify claims about a cohort's `repo` against the current tree and report what changed.
+- **Budget time** — subagents time out after 10 minutes; raise `timeoutMs` for large cohorts.
+- **Gather on a fast model.** Pass `model: "deepseek/deepseek-v4.1-flash"`; omit `model` if `letta model list` doesn't show that handle. If inference fails at that model (including quota), use your current model for the follow-up run rather than retrying the failed route. Never synthesize memory on the fan-out model.
 
 ```js
+// Every finding carries a claim, its evidence, and where that evidence lives.
+const findings = (cites, items) => ({type: 'array', items: {type: 'object',
+  additionalProperties: false, required: ['claim', 'evidence', cites], properties: {
+    claim: {type: 'string'}, evidence: {type: 'string'},
+    [cites]: {type: 'array', minItems: 1, uniqueItems: true, items},
+  }}})
 const historySchema = cohort => {
   const sessionId = {type: 'string', enum: cohort.sessions.map(s => s.sessionId)}
   return {type: 'object', additionalProperties: false, required: ['sessionsRead', 'findings'], properties: {
     sessionsRead: {type: 'array', uniqueItems: true, items: sessionId},
-    findings: {type: 'array', items: {type: 'object', additionalProperties: false,
-      required: ['claim', 'evidence', 'sessionIds'], properties: {
-        claim: {type: 'string'}, evidence: {type: 'string'},
-        sessionIds: {type: 'array', minItems: 1, uniqueItems: true, items: sessionId},
-      }}},
+    findings: findings('sessionIds', sessionId),
   }}
 }
-const codeSchema = {type: 'object', additionalProperties: false,
-  required: ['area', 'findings'], properties: {
-    area: {type: 'string'}, findings: {type: 'array', items: {type: 'object',
-      additionalProperties: false, required: ['claim', 'evidence', 'paths'], properties: {
-        claim: {type: 'string'}, evidence: {type: 'string'},
-        paths: {type: 'array', minItems: 1, items: {type: 'string'}},
-      }}},
-  }}
+const codeSchema = {type: 'object', additionalProperties: false, required: ['area', 'findings'],
+  properties: {area: {type: 'string'}, findings: findings('paths', {type: 'string'})}}
 const history = await agent(historyPrompt, {label: `history:${cohort.id}`, schema: historySchema(cohort)})
 const code = await agent(codePrompt, {label: `code:${area.name}`, schema: codeSchema})
 ```
 
-`history-coverage.mjs` reads the successful history agent's `outcome.value.sessionsRead` from `journal.jsonl`; it ignores failed results. Keep incomplete sessions out of that array even when a finding cites them. Do not use a code-area result to claim history coverage.
+`sessionsRead` must contain only sessions the agent actually finished, even if a finding cites others — Step 8 counts coverage from that field alone, and never from a code-area result.
 
-If the Workflow tool is unavailable (it is not in your toolset, or it reports that workflow subagents require the API backend), do the same analysis yourself, cohort by cohort and area by area, and account for coverage against `cohorts.json` and `ledger.json` by hand. Do not substitute other subagent types that write memory.
+If the Workflow tool is unavailable (not in your toolset, or it reports that workflow subagents require the API backend), do the same analysis yourself, cohort by cohort and area by area, accounting for coverage by hand. Do not substitute subagent types that write memory. The Workflow runs in the background: keep reading code while you wait, and never assume results before the task notification arrives.
 
-The Workflow runs in the background. **Do not wait idle**: keep reading core code yourself and start drafting identity, persona, and project memory. Its result arrives as a task notification; never assume results before it does.
+### 8. Curate the results into memory
+You — not the subagents — decide what becomes memory, and you write it. Synthesize on your current model or `letta/auto`, never the fan-out model.
 
-### 8. Curate workflow results into memory
-
-You — not the workflow subagents — decide what becomes memory and write it. Synthesis shapes durable identity, so do it on a strong model: your current model, or `letta/auto` for any stage you delegate to draft a merge. Never on the fan-out model.
-
-**8a. Check coverage first.** The tool result names the run's `journal.jsonl`:
+**Check coverage first.** The tool result names the run's `journal.jsonl`:
 
 ```bash
 node <SKILL_DIR>/scripts/history-coverage.mjs --prepared /tmp/letta-init-history \
@@ -338,162 +183,29 @@ node <SKILL_DIR>/scripts/history-coverage.mjs --prepared /tmp/letta-init-history
   --retry-out /tmp/letta-init-history/retry.json
 ```
 
-It reports sessions analyzed, unread (assigned but missing from every `sessionsRead`), excluded, export errors, and any dropped from `cohorts.json`, and writes unread sessions as smaller cohorts to `retry.json`. For failed agents, the journal records which guard or error fired. Runs are not resumable: launch one follow-up Workflow over `retry.json`, then rerun the script with both `--journal` paths. If coverage is still incomplete, say so plainly — how many sessions were analyzed out of the manifest total and which ranges were not — and never describe the result as comprehensive. Note unanalyzed ranges in indexed child memory so a later pass can pick them up.
+It reports sessions analyzed, unread, excluded, export errors, and any dropped from `cohorts.json`, and writes the unread ones as smaller cohorts to `retry.json`. Runs are not resumable: launch one follow-up Workflow over `retry.json`, then rerun the script with both `--journal` paths. If coverage is still incomplete, say so plainly — how many of the manifest total, which ranges were missed — never call the result comprehensive, and record the gap in deferred memory.
 
-**8b. Weigh validation.** Code claims confirmed against current code can be stored as fact. For stale claims, store the current fact, or keep the history as a dated note only when the change itself is a useful gotcha. Claims that could not be checked need your own check before they go into always-in-context memory. User preferences and personality are not code-checkable; weigh them by repetition and how strongly the user reacted.
+**Weigh validation.** Store confirmed claims as fact; for stale ones store the current fact, keeping the history only when the change is itself a useful gotcha. Unverifiable claims need your own check before entering always-loaded memory.
 
-**8c. Combine across cohorts, never compress.** Different cohorts often report the same topic at different specificity. Merge them additively:
-- Keep unique details from every cohort. Don't drop specific quotes, file paths, correction counts, or gotchas because another cohort already covered the "topic" at a high level.
-- **Preserve specificity**: "Use factory methods, such as `create_token_counter()`, not direct instantiation" is more valuable than "prefers factory methods". Keep both.
-- Sum correction counts across cohorts; a correction seen in five cohorts is a chronic failure.
-- **When in doubt, keep it**. Redundancy across files is better than information loss. Less important details can be placed in indexed child memory.
+**Provenance gates promotion here too**, not only in the subagent — a worker's authorship flag must survive curation, because flagged excerpts still read like preferences. Before promoting any claim about what the human wants, check who wrote the quoted words; agent-authored dispatch prompts describe how an *agent* was instructed to work. If it is ambiguous, corroborate from a session you know the human drove, or store it as an observed pattern with the uncertainty stated. Repetition does not establish authorship: a template reused across fifty sessions repeats fifty times.
 
-Example — BAD combination (compresses):
-```
-# cohort A found:
-- Uses `uv` for Python
-# cohort B found:
-- **CRITICAL: Always use `uv run`** — chronic failure; never bare pytest or python
-- `uv run pytest -sv tests/...` for specific tests
+**Combine, then deduplicate.** Cohorts report the same topic at different specificity. Keep the unique details from each — quotes, paths, correction counts — and sum correction counts across cohorts, since a correction seen in five cohorts is a chronic failure. Keep the specific form alongside the general: "Use factory methods, such as `create_token_counter()`, not direct instantiation" beats "prefers factory methods". Then keep each fact exactly once, and push what you don't need every turn into deferred memory with a discovery link from the core tier.
 
-# BAD: Picks one side or rewrites
-- **Python**: `uv` exclusively — `uv run pytest`, never bare `pip`
-```
+**Promote into canonical memory.** Write the survivors into the files their topics belong in, with supporting evidence deferred. Cover all three of identity and personality, hard rules and preferences with the quotes behind them, and project context; skip generic repo facts unless they change how you execute. If the output reads generically, the analysis failed for that area — re-read those transcripts or that code yourself. Keep stable `sessionId`s beside significant findings; `/tmp` results and journals are scratch, not retrievable evidence.
 
-Example — GOOD combination (keeps emphasis and specificity from every side):
-```
-**CRITICAL: Use `uv` exclusively for Python** — chronic failure.
-- `uv run pytest -sv tests/...` for tests
-- `uv run python` for scripts
-- Never bare `pip`, `python`, or `pytest`
-```
+**Consider skills.** If the history surfaces genuinely repeatable multi-step procedures, create them now (load `creating-skills`) or note the candidates in memory. Don't force it.
 
-**8d. Promote into canonical memory.** Write findings into the focused files from the structure guidance above (for example `human-identity.md`, `human-prefs-workflow.md`, `<project>-conventions.md`, `<project>-gotchas.md`), with evidence detail in indexed child memory. Avoid generic repo facts unless they influence execution. "Uses TypeScript" is weak. "Uses bun:test, so vitest is wrong for this test suite" is useful. If the combined output is generic, the analysis failed for that area — re-read the relevant transcripts or code yourself.
+### 9. Verify
+- **Structure**: walk the Harness Constraints for your layout and check each one — (v2) root marker, per-directory indexes, frontmatter-free `MEMORY.md`, exactly `name`+`description` elsewhere; (v1) non-empty `description` everywhere, no `read_only`/`limit` added or changed, every `[[path]]` resolving. Either way, no `foo.md` beside `foo/`:
+  `find "$MEMORY_DIR" -name '*.md' | sed 's/\.md$//' | while read f; do [ -d "$f" ] && echo "VIOLATION: $f"; done`
+- **The core tier earns its place**: is root `MEMORY.md` (v2) or each `system/` block (v1) mostly pointing at things *not* already in your system prompt? If nearly everything sits in the always-loaded tier with one thin page behind it, you built a flat memory with an index bolted on — move the detail down and keep the links.
+- **No duplicated documentation**: grep your memory for rules `AGENTS.md`, `CLAUDE.md`, the README, or a repo skill already owns — especially a repo convention that landed in a file about the *human*.
+- **Granularity and naming**: one focused topic per file, named for what is in it using the project's real name; path and description say when to read it.
+- **Persona quality**: read it now. "I'm a coding assistant who follows the user's preferences" is behavior, not identity. Would you be recognizably the same agent on a different model tomorrow?
+- **No drift, no over-pruning**: confirm you changed structure and not the meaning of persona or behavioral instructions, and restore any specific paths, chronic failures, or gotchas lost in curation.
 
-Good curated output covers all three categories:
-
-```markdown
-### User Personality & Identity
-Pragmatic builder who values shipping over perfection. Gets frustrated when agents over-engineer or add "bonus" features. Uses dry humor and sarcasm when annoyed. Pattern: "scrappy startup engineer" — wants things to work, not to be architecturally pure.
-
-### Hard Rules & Preferences
-- **CRITICAL: Use `uv` for Python** — chronic failure ("you need to use uv", "make sure you use uv"); `uv run pytest -sv`, never bare `pytest`
-- **Minimal changes only** — "just make a minor change stop adding all this stuff"
-- **Only edit specified files** — when told to focus, stay focused
-- Tests constantly: `uv run pytest -sv` (Python), `bun test` (TS)
-
-### Project Context
-- letta-cloud: Only edit `letta_agent_v3.py` — v1, v2, and base are deprecated
-- Uses Biome for linting, not ESLint
-- Conventional commits with scope in parens
-```
-
-**8e. Consider creating skills from discovered workflows.** Review the findings for repeatable multi-step workflows that would benefit from being codified as skills. History analysis often surfaces procedures the user runs frequently that the agent would otherwise have to rediscover each session.
-
-**Good candidates for skills:**
-- Multi-step debugging procedures (e.g. "how to debug agent message desync", "how to trace TTFT regressions")
-- Common workflows repeated across sessions (e.g. "how to run integration tests across LLM providers")
-- Deployment or release procedures
-- Project-specific setup or migration steps
-
-If you identify candidates, either create them now (load the `creating-skills` skill for guidance) or note them in memory for future creation:
-```markdown
-# letta-code-overview.md
-...
-Potential skills to create:
-- Debug workflow for HITL approval desync
-- Integration test runner across providers
-```
-
-Don't force skill creation — only create them when you've found genuinely repeatable, multi-step procedures in the history.
-
-#### Troubleshooting
-
-| Problem | Cause | Fix |
-|---------|-------|-----|
-| Workflow tool missing, or it reports workflow subagents require the API backend | Workflow is unavailable in this environment | Do the cohort and area analysis yourself, tracking which sessions in `cohorts.json` you read, and report coverage against `ledger.json` |
-| A cohort or area came back `null` | Timeout, tool-call guard, non-JSON reply, or other subagent failure | Read the run's `journal.jsonl`; a failed history cohort's sessions land in `retry.json`, and failed code areas go in the same follow-up run |
-| Sessions reported as unread by `history-coverage.mjs` | Cohort too large, or the subagent omitted `sessionsRead` | Run one follow-up Workflow over the generated `retry.json` |
-| `letta trajectories export` reports errors in manifest.json | Degenerate sessions (e.g. no assistant turns) that cannot form a valid trajectory | Expected — those sessions are skipped; list them in the ledger and review `jq .errors manifest.json` only if counts look wrong |
-| `deepagents` sessions fail to normalize | Checkpoint decoding needs a Python environment with LangGraph installed | Expected on machines without it; the failures land in manifest errors and other sources are unaffected |
-| Findings are generic or reference the wrong repo | The prompt lacked context (subagents see nothing but their prompt) | Put absolute paths, the user identity, and the project in `args` and prompts |
-| Information lost after curation | Curation compressed findings | Re-read the workflow results and compare against final files. Re-add missing specifics. |
-| Personality analysis missing or thin | Cohorts were mostly one-prompt sessions, or the prompt omitted the category | Reprioritize interaction-heavy sessions; keep all categories in the prompt |
-| Auth fails on push ("repository not found") | Credential helper broken or global helper conflict | Reconfigure **repo-local** helper and check/clear conflicting global `credential.<host>.helper` entries (see syncing-memory-filesystem skill) |
-
-### 9. Build memory with discovery paths
-As you create/update memory files, add ordinary relative Markdown links from `MEMORY.md` files so your future self can find related context. These go *inside the content* of memory files:
-
-Detailed reference material belongs in indexed child memory that can be loaded on demand through links.
-
-**Reference external memory from root `MEMORY.md`:**
-```markdown
-# MEMORY.md
-...
-For detailed architecture docs, see [architecture](letta-code/architecture.md)
-Known footguns and edge cases: [gotchas](letta-code-gotchas.md)
-```
-
-**Reference skills from relevant context:**
-```markdown
-# letta-code-conventions.md
-...
-When committing, follow the workflow in [commit skill](skills/commit/SKILL.md)
-For PR creation, use [review-pr skill](skills/review-pr/SKILL.md)
-```
-
-**Create an index in `MEMORY.md`:**
-```markdown
-# MEMORY.md
-
-CLI for interacting with Letta agents. Bun runtime, React/Ink TUI.
-
-Entry points:
-- `src/index.ts` — CLI arg parsing, agent resolution, startup
-- `src/cli/App.tsx` — main TUI component (React/Ink)
-- `src/agent/` — agent creation, memory, model handling
-
-Key flows:
-- Message send: index.ts → App.tsx → agent/message.ts → streaming
-- Tool execution: tools/manager.ts → tools/impl/*
-
-Links:
-- [conventions](letta-code-conventions.md) — tooling, testing, commits
-- [gotchas](letta-code-gotchas.md) — common mistakes
-- [architecture](letta-code/architecture.md) — detailed subsystem docs
-```
-
-This is a **compact index**, not a prose summary. It tells your future self where to start and where to find more.
-
-Additional guidelines:
-- Every memory Markdown file other than `MEMORY.md` needs exactly `name` and `description` frontmatter; the description states its purpose, not a summary of contents
-- Keep root core files focused and scannable
-- Put detailed reference material in indexed child directories
-
-### 10. Verify context quality
-Before finishing, review your work:
-
-- **Structural requirements**: Run this check before finishing:
-  ```bash
-  # Detect overlapping file/folder names (e.g. human.md AND human/)
-  find "$MEMORY_DIR" -name "*.md" | sed 's/\.md$//' | while read f; do
-    [ -d "$f" ] && echo "VIOLATION: $f.md conflicts with directory $f/"
-  done
-  ```
-  If any violations are printed, fix them before committing (rename `foo.md` → `foo/overview.md` or merge the directory back into the file).
-  Also check: Do root `MEMORY.md` and root `persona.md` exist? Do all `MEMORY.md` files omit frontmatter and all other memory Markdown files have exactly `name` and `description`?
-- **File granularity**: Does each file cover exactly one focused topic? Do the path and description precisely describe what's inside? If a file mixes multiple concepts (coding style AND git workflow AND communication preferences), split it.
-- **Discovery paths**: Are key memory files linked from `MEMORY.md` with ordinary relative Markdown links so related context can be discovered quickly? Are external files referenced from in-context memory?
-- **Project naming**: Are project dirs named after the actual project (e.g., `letta-code/`), not generic `project/`? Same for reference files.
-- **Signal density**: Is everything in root core memory truly needed every turn?
-- **Persona quality**: Does it express genuine personality and values, not just "agent role + project rules"? Read your persona file right now — if it's just "I'm a coding assistant who follows the user's preferences," that's not identity. What do YOU value? What's distinctive about how you think? Would you be recognizably the same agent on a different model tomorrow? If your persona disappeared but the model stayed, would something meaningful be lost? If not, your identity isn't strong enough yet.
-- **No semantic drift**: If reorganizing an existing agent, verify you haven't altered the meaning of persona, identity, or behavioral instructions — only improved structure.
-- **No over-pruning**: Compare your final memory against all source material (workflow results, your own codebase research). Did you lose specific file paths, chronic failures, or gotchas during curation? If so, add them back. Compression that loses specificity degrades your identity.
-- **Indexed child memory**: Did you create indexed child files for detailed content? Did you keep the detailed project context and evidence from the workflow results? Are these files linked from `MEMORY.md` with ordinary relative Markdown links?
-
-
-### 11. Ask user if done
-Check if they're satisfied or want further refinement. Then commit and push memory:
+### 10. Commit, then report
+**Uncommitted memory is not part of your future system prompt.** If a commit is blocked, report initialization as incomplete rather than describing working-tree files as live memory.
 
 ```bash
 cd $MEMORY_DIR
@@ -504,10 +216,14 @@ git commit --author="$author_name <$AGENT_ID@letta.com>" -m "feat(init): <summar
 
 <what was initialized and key decisions made>"
 
-git push
+git status                        # Your memory changes should no longer be listed
+git ls-tree -r --name-only HEAD   # What your future self will actually load
 ```
 
-## Critical 
-**Use parallel tool calls wherever possible** — read multiple files in a single turn, write multiple memory files in a single turn. This dramatically reduces init time.
-**Write findings to memory as you go** — don't wait until the end.
-**Edit memory files directly via the filesystem** — memory is projected to `$MEMORY_DIR` specifically for ease of bulk modification. Use standard file tools (Read, Write, Edit) and git to manage changes during initialization.
+Do **not** run `git push`. For remote MemFS agents the harness pushes clean committed memory automatically after the turn, so pushing by hand races it; for local-only memory there is nothing to push. Either way, the commit is the finish line.
+
+Only once the commit is verified, tell the user what you built and whether coverage was complete, then ask whether they want refinement — which means another commit, so repeat this step.
+
+## Critical
+- **Use parallel tool calls wherever possible** — read many files in one turn, write many memory files in one turn.
+- **Write findings to memory as you go**; don't hold everything until the end.
