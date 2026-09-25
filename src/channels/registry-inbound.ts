@@ -29,6 +29,7 @@ import type {
 } from "./types";
 import {
   isDiscordChannelAccount,
+  isFeishuChannelAccount,
   isSignalChannelAccount,
   isSlackChannelAccount,
   isTelegramChannelAccount,
@@ -340,6 +341,43 @@ export function createChannelInboundRouter(deps: {
         content: formatChannelNotification(preparedMessage),
         turnSources: [
           buildChannelTurnSource(signalResult.route, preparedMessage),
+        ],
+      });
+      return;
+    }
+
+    // Feishu groups default to mention-only (matching Feishu's default bot
+    // scope). DMs with pairing fall through; account-bound DMs auto-route.
+    if (
+      msg.channel === "feishu" &&
+      isFeishuChannelAccount(config) &&
+      (msg.chatType === "channel" || config.dmPolicy !== "pairing")
+    ) {
+      if (
+        msg.chatType === "channel" &&
+        (config.groupMode ?? "mention-only") === "mention-only" &&
+        !msg.isMention
+      ) {
+        return;
+      }
+      const feishuResult = await deps.routes.ensureFeishuRoute(
+        adapter,
+        msg,
+        config,
+      );
+      if (!feishuResult) {
+        return;
+      }
+      const preparedMessage = adapter.prepareInboundMessage
+        ? await adapter.prepareInboundMessage(msg, {
+            isFirstRouteTurn: feishuResult.isFirstRouteTurn,
+          })
+        : msg;
+      deps.deliver({
+        route: feishuResult.route,
+        content: formatChannelNotification(preparedMessage),
+        turnSources: [
+          buildChannelTurnSource(feishuResult.route, preparedMessage),
         ],
       });
       return;
