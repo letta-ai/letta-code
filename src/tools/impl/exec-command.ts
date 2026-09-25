@@ -1,3 +1,5 @@
+import * as path from "node:path";
+import { isUsableDirectory } from "@/helpers/usable-directory";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import {
   captureSecretRedactions,
@@ -21,7 +23,6 @@ import {
   scheduleBackgroundProcessCleanup,
   scrubCompletedBackgroundOutput,
 } from "./process_manager.js";
-import { resolveShellWorkdir } from "./shell.js";
 import { getShellEnv } from "./shell-env.js";
 import {
   buildPowerShellCommand,
@@ -571,6 +572,17 @@ async function waitForSessionOutput(params: {
   params.session.readOffset = endOffset;
 
   return { output, wallTimeMs: Date.now() - startTime };
+}
+
+function resolveShellWorkdir(workdir?: string): string {
+  const defaultCwd = getCurrentWorkingDirectory();
+  const requestedCwd = workdir
+    ? path.isAbsolute(workdir)
+      ? workdir
+      : path.resolve(defaultCwd, workdir)
+    : defaultCwd;
+
+  return isUsableDirectory(requestedCwd) ? requestedCwd : defaultCwd;
 }
 
 async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {

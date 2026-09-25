@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bash } from "@/tools/impl/bash";
-import { kill_bash } from "@/tools/impl/kill-bash";
+import { killBackgroundProcess } from "@/tools/impl/kill-bash";
 import { backgroundProcesses } from "@/tools/impl/process_manager";
 import {
   clearPendingMessages,
@@ -220,7 +220,7 @@ describe("Background bash completion notifications", () => {
       description: "Cancelled job",
     });
 
-    expect((await kill_bash({ shell_id: bashId })).killed).toBe(true);
+    expect(killBackgroundProcess(bashId)).toBe(true);
     await new Promise((resolve) => setTimeout(resolve, 400));
 
     expect(notificationsFor(bashId)).toHaveLength(0);
@@ -232,7 +232,7 @@ describe("Background bash completion notifications", () => {
       description: "Cancel automatic command",
     });
 
-    expect((await kill_bash({ shell_id: bashId })).killed).toBe(true);
+    expect(killBackgroundProcess(bashId)).toBe(true);
     await new Promise((resolve) => setTimeout(resolve, 400));
     expect(notificationsFor(bashId)).toHaveLength(0);
   });

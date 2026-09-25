@@ -3,10 +3,10 @@
 // resolves under another agent's memory directory.
 //
 // SCOPE — this guard now exists ONLY for agent-process IN-PROCESS file
-// tools: Read / Write / Edit / MultiEdit / NotebookEdit / Glob / ListDir, the
-// ApplyPatch family, and their Codex aliases (all canonicalized via
-// `canonicalToolName`, all carrying an explicit absolute path). These never
-// fork, so the kernel filesystem sandbox (src/sandbox/) cannot see them.
+// tools: Read / Write / Edit / NotebookEdit / Glob / Grep / LS and the ApplyPatch
+// family (all canonicalized via `canonicalToolName`, all carrying an explicit
+// absolute path). These never fork, so the kernel filesystem sandbox
+// (src/sandbox/) cannot see them.
 //
 // Spawned shell commands are intentionally no longer analyzed here (the old
 // token/raw-command scanner is gone — it was bypassable by symlinks, command
@@ -143,7 +143,7 @@ function normalizePathForCompare(path: string): string {
  *  - `agents-root` — path is exactly the tree root (enumeration of every agent
  *                    on the machine).
  *  - `ancestor`    — path is an ancestor of the tree root (e.g. `$HOME`, `/`).
- *                    Recursive tools (Glob/ListDir) entering this path would
+ *                    Directory search tools (Glob/Grep/LS) entering this path would
  *                    walk into other agents' directories.
  *  - `agent`       — path is inside a specific agent's directory (any depth,
  *                    including the bare agent dir). The `id` is the agent ID
@@ -248,13 +248,6 @@ export function extractFilePath(toolArgs: ToolArgs): string | null {
   return null;
 }
 
-function extractMultiEditPaths(toolArgs: ToolArgs): string[] {
-  // MultiEdit uses file_path (singular), but callers occasionally pass an
-  // `edits` array. Either way the paths come from the top-level `file_path`.
-  const single = extractFilePath(toolArgs);
-  return single ? [single] : [];
-}
-
 /**
  * Tools whose semantics imply a recursive walk from the given path
  * (as opposed to touching a single file). When one of these is pointed
@@ -263,7 +256,7 @@ function extractMultiEditPaths(toolArgs: ToolArgs): string[] {
  *
  * Compared against the canonical tool name, including the LS alias.
  */
-const RECURSIVE_CANONICAL_TOOLS = new Set<string>(["Glob", "ListDir", "Grep"]);
+const RECURSIVE_CANONICAL_TOOLS = new Set<string>(["Glob", "Grep", "ListDir"]);
 
 function isRecursivePathTool(toolName: string): boolean {
   return RECURSIVE_CANONICAL_TOOLS.has(canonicalToolName(toolName));
@@ -301,7 +294,7 @@ export function extractTargetAgentPaths(
         return;
       case "ancestor":
         // Only dangerous for tools that recursively walk from the
-        // given path (Glob/ListDir). Single-file tools like Read
+        // given path (Glob/Grep/LS). Single-file tools like Read
         // can't escape their target.
         if (recursive) {
           anyAgentScoped = true;
@@ -344,17 +337,8 @@ export function extractTargetAgentPaths(
     return { agentIds, anyAgentScoped };
   }
 
-  // MultiEdit: same path semantics as Edit.
-  if (toolName === "MultiEdit") {
-    for (const p of extractMultiEditPaths(toolArgs)) {
-      addFromPath(p);
-    }
-    return { agentIds, anyAgentScoped };
-  }
-
-  // All other in-process file tools: Read/Write/Edit/NotebookEdit/Glob/
-  // ListDir + Codex aliases (all converge on file_path / path /
-  // notebook_path after the toolset adapters).
+  // All other in-process file tools: Read/Write/Edit/NotebookEdit/Glob/Grep/LS
+  // (all converge on file_path / path / notebook_path).
   addFromPath(extractFilePath(toolArgs));
 
   // Glob also accepts a `pattern` arg. An absolute pattern like

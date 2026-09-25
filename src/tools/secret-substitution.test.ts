@@ -142,14 +142,9 @@ describe("scoped shell secret execution", () => {
       buildArgs: (command) => ({ command, timeout: 5000 }),
     },
     {
-      name: "shell_command",
-      toolNames: ["shell_command"],
-      buildArgs: (command) => ({ command, login: false, timeout_ms: 5000 }),
-    },
-    {
-      name: "ShellCommand",
-      toolNames: ["ShellCommand"],
-      buildArgs: (command) => ({ command, login: false, timeout_ms: 5000 }),
+      name: "exec_command",
+      toolNames: ["exec_command"],
+      buildArgs: (cmd) => ({ cmd, description: "Print scoped secret" }),
     },
   ];
 
@@ -184,45 +179,6 @@ describe("scoped shell secret execution", () => {
       } finally {
         releaseToolExecutionContext(prepared.contextId);
         runtimeScript.cleanup();
-      }
-    });
-  }
-
-  for (const toolName of ["shell", "Shell"] as const) {
-    test(`${toolName} injects secrets for command arrays within a scoped agent context`, async () => {
-      await seedSecret(AGENT_A, SECRET_A);
-      const prepared = await prepareToolExecutionContextForSpecificTools(
-        [toolName],
-        {
-          runtimeContext: {
-            agentId: AGENT_A,
-            workingDirectory: process.cwd(),
-          },
-          workingDirectory: process.cwd(),
-        },
-      );
-
-      try {
-        const result = await executeTool(
-          toolName,
-          {
-            command: [
-              process.execPath,
-              "-e",
-              `process.stdout.write(process.env.${SECRET_KEY} ?? '')`,
-              `$${SECRET_KEY}`,
-            ],
-            timeout_ms: 5000,
-          },
-          { toolContextId: prepared.contextId },
-        );
-
-        const text = asText(result.toolReturn);
-        expect(result.status).toBe("success");
-        expect(text).toContain(`${SECRET_KEY}=<REDACTED>`);
-        expect(text).not.toContain(SECRET_A);
-      } finally {
-        releaseToolExecutionContext(prepared.contextId);
       }
     });
   }
@@ -412,7 +368,7 @@ describe("ambient runtime credential redaction", () => {
 
   test("thrown execution errors never leak the ambient key", async () => {
     const prepared = await prepareToolExecutionContextForSpecificTools(
-      ["shell"],
+      ["Read"],
       {
         runtimeContext: {
           agentId: AGENT_A,
@@ -423,21 +379,17 @@ describe("ambient runtime credential redaction", () => {
     );
 
     try {
-      // A missing executable named after the sentinel forces an execution
-      // error whose message embeds the credential. Depending on whether the
-      // filesystem sandbox wrapper is active this surfaces as a thrown error
-      // (manager catch path) or a failed-spawn result message; both must be
-      // scrubbed.
+      // Read throws for a missing file and echoes the attempted path, so a
+      // path named after the sentinel yields a thrown execution error whose
+      // message embeds the credential. The manager catch path must scrub it.
       const result = await executeTool(
-        "shell",
-        {
-          command: [`${AMBIENT_SENTINEL}-no-such-executable`],
-          timeout_ms: 5000,
-        },
+        "Read",
+        { file_path: join(process.cwd(), `${AMBIENT_SENTINEL}-no-such-file`) },
         { toolContextId: prepared.contextId },
       );
 
       const text = asText(result.toolReturn);
+      expect(result.status).toBe("error");
       expect(text).not.toContain(AMBIENT_SENTINEL);
       expect(text).toContain("<REDACTED>");
     } finally {

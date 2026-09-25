@@ -13,6 +13,7 @@ import { resolveAndBuildSystemPrompt } from "@/agent/system-prompt-resolution";
 import initializingMemoryRootPrompt from "@/skills/builtin/initializing-memory/ROOT_MEMORY.md";
 import memoryApplyPatchV2Prompt from "@/tools/descriptions/MemoryApplyPatchV2.md";
 import memoryV2ToolPrompt from "@/tools/descriptions/MemoryV2.md";
+import { TOOLSET_CATALOG } from "@/tools/toolset-catalog";
 
 const HOSTED_EXTERNAL_MEMORY_INTRO =
   "External memory is stored outside of the system prompt, including both skills (procedural memory), general-purpose files (markdown files, images, etc.), and shared memory.";
@@ -276,6 +277,11 @@ describe("shouldRecommendDefaultPrompt", () => {
   test("returns true for a different preset", () => {
     const current = buildSystemPrompt("source-claude", "standard");
     expect(shouldRecommendDefaultPrompt(current, "standard")).toBe(true);
+    expect(current).toContain("TaskCreate");
+    expect(current).toContain("TaskUpdate");
+    expect(current).not.toContain("TodoWrite");
+    expect(TOOLSET_CATALOG.default.tools).toContain("TaskCreate");
+    expect(TOOLSET_CATALOG.default.tools).toContain("TaskUpdate");
   });
 
   test("returns true for a fully custom prompt", () => {
