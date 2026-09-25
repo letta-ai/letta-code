@@ -47,7 +47,14 @@ import { evaluateWorkspaceSandboxGuard } from "./workspace-sandbox";
 /**
  * Tools that don't require approval within working directory
  */
-const WORKING_DIRECTORY_TOOLS = ["Read", "Glob", "Grep", "ListDir"];
+const WORKING_DIRECTORY_TOOLS = [
+  "Read",
+  "Glob",
+  "Grep",
+  "ListDir",
+  "ViewImage",
+  "ReadLSP",
+];
 const FILE_TOOLS = ["Read", "Write", "Edit", "Glob", "Grep", "ListDir"];
 
 type ToolArgs = Record<string, unknown>;
@@ -766,6 +773,15 @@ function getDefaultDecision(
     "memory_apply_patch",
     // Channel sends are scoped by routing + parentScope checks in the tool.
     "MessageChannel",
+    // These only touch agent-owned state: the session task list, the
+    // ~/.letta/artifacts store, and prompts scheduled back to this agent.
+    "TaskCreate",
+    "TaskGet",
+    "TaskList",
+    "TaskUpdate",
+    "read_artifact_file",
+    "write_artifact_file",
+    "Wake",
   ];
 
   if (autoAllowTools.includes(toolName)) {
