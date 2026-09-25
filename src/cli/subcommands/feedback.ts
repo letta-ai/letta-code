@@ -1,5 +1,6 @@
 import { parseArgs } from "node:util";
 import {
+  feedbackResultMessage,
   getFeedbackClientType,
   submitFeedbackMetadata,
 } from "@/backend/api/metadata";
@@ -94,7 +95,7 @@ export async function runFeedbackSubcommand(
   const conversationId = (process.env.CONVERSATION_ID || "").trim();
 
   try {
-    await (deps.submitFeedback ?? submitFeedbackMetadata)(
+    const result = await (deps.submitFeedback ?? submitFeedbackMetadata)(
       apiKey,
       (deps.getDeviceId ?? (() => settingsManager.getOrCreateDeviceId()))(),
       {
@@ -108,7 +109,7 @@ export async function runFeedbackSubcommand(
         conversation_id: conversationId || undefined,
       },
     );
-    stdout("Feedback submitted. Thanks for helping improve Letta Code.");
+    stdout(feedbackResultMessage(result));
     return 0;
   } catch {
     stderr("Could not submit feedback right now. Please try again later.");
