@@ -1,7 +1,11 @@
 import { Box, useInput } from "ink";
 import { memo, useMemo, useState } from "react";
+import { fitPreviewLines } from "@/cli/helpers/approval-preview";
 import { useProgressIndicator } from "@/cli/hooks/use-progress-indicator";
-import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
+import {
+  useTerminalRows,
+  useTerminalWidth,
+} from "@/cli/hooks/use-terminal-width";
 import { useTextInputCursor } from "@/cli/hooks/use-text-input-cursor";
 import { colors } from "./colors";
 import { Text } from "./Text";
@@ -25,26 +29,41 @@ const SOLID_LINE = "─";
 
 const SCRIPT_PREVIEW_MAX_LINES = 40;
 
+// Rows the live area needs besides the argument preview while this dialog is
+// shown: rule, header, spacer, options with spacer, hint with spacer, the
+// live-item margin above and the collapsed input margin below, plus slack for
+// wrapped option text. This fallback never gets AppCoordinator's eager
+// preview commit, so the preview must keep the whole dialog on screen.
+const APPROVAL_CHROME_ROWS = 14;
+const MIN_PREVIEW_ROWS = 3;
+
 /**
  * A `script` argument is source the user is approving to run; show it
  * verbatim (not JSON-escaped and cut mid-line) after the other arguments.
  */
-function formatScriptArgs(parsed: Record<string, unknown>): string {
+function formatScriptArgs(
+  parsed: Record<string, unknown>,
+  maxRows: number,
+  width: number,
+): string {
   const { script, ...rest } = parsed;
-  const lines = String(script).split("\n");
-  const shown = lines.slice(0, SCRIPT_PREVIEW_MAX_LINES);
-  if (lines.length > shown.length) {
-    shown.push(`… (${lines.length - shown.length} more lines)`);
-  }
   const header =
     Object.keys(rest).length > 0 ? `${JSON.stringify(rest, null, 2)}\n\n` : "";
-  return `${header}${shown.join("\n")}`;
+  const headerLines = header ? header.split("\n").slice(0, -1) : [];
+  const lines = [...headerLines, ...String(script).split("\n")];
+  return fitPreviewLines(
+    lines,
+    maxRows,
+    width,
+    headerLines.length + SCRIPT_PREVIEW_MAX_LINES,
+  ).join("\n");
 }
 
 /**
- * Format tool arguments for display
+ * Format tool arguments for display, keeping the start within `maxRows`
+ * terminal rows at `width` columns.
  */
-function formatArgs(toolArgs: string): string {
+function formatArgs(toolArgs: string, maxRows: number, width: number): string {
   try {
     const parsed = JSON.parse(toolArgs);
     if (
@@ -52,18 +71,23 @@ function formatArgs(toolArgs: string): string {
       typeof parsed === "object" &&
       typeof parsed.script === "string"
     ) {
-      return formatScriptArgs(parsed as Record<string, unknown>);
+      return formatScriptArgs(
+        parsed as Record<string, unknown>,
+        maxRows,
+        width,
+      );
     }
     // Pretty print with 2-space indent, but limit length
-    const formatted = JSON.stringify(parsed, null, 2);
+    let formatted = JSON.stringify(parsed, null, 2);
     // Truncate if too long
     if (formatted.length > 500) {
-      return `${formatted.slice(0, 500)}\n...`;
+      formatted = `${formatted.slice(0, 500)}\n...`;
     }
-    return formatted;
+    return fitPreviewLines(formatted.split("\n"), maxRows, width).join("\n");
   } catch {
     // If not valid JSON, return as-is
-    return toolArgs || "(no arguments)";
+    const raw = toolArgs || "(no arguments)";
+    return fitPreviewLines(raw.split("\n"), maxRows, width).join("\n");
   }
 }
 
@@ -94,6 +118,7 @@ export const InlineGenericApproval = memo(
       clear,
     } = useTextInputCursor();
     const columns = useTerminalWidth();
+    const terminalRows = useTerminalRows();
     useProgressIndicator();
 
     // Custom option index depends on whether "always" option is shown
@@ -172,7 +197,12 @@ export const InlineGenericApproval = memo(
 
     // Generate horizontal line
     const solidLine = SOLID_LINE.repeat(Math.max(columns, 10));
-    const formattedArgs = formatArgs(toolArgs);
+    // The preview box is indented by 2 columns.
+    const formattedArgs = formatArgs(
+      toolArgs,
+      Math.max(MIN_PREVIEW_ROWS, terminalRows - APPROVAL_CHROME_ROWS),
+      columns - 2,
+    );
 
     // Memoize the static tool content so it doesn't re-render on keystroke
     // This prevents flicker when typing feedback in the custom input field
