@@ -281,6 +281,7 @@ directory first. Otherwise the run reads and mutates your real
 - **Extend `@letta-ai/letta-client` types instead of redeclaring them.** Use the SDK's `ToolCall`, `StopReasonType`, and similar wire types directly; do not duplicate wire shapes or cast with `as any`.
 - **Package subpath entrypoints use relative imports and dedicated entry files.** Library entries (`src/agent-presets.ts`, `src/channels-*.ts`, `src/app-server-client.ts`) are bundled separately and their emitted `.d.ts` files go through an alias rewrite in `build.js`; anything reachable from a browser-targeted entry must stay free of node builtins and backend/provider imports. Consumers on `moduleResolution: "node"` resolve subpath types through `typesVersions` in `package.json`, so new subpaths need entries there too.
 - **When changing a function from swallowing errors to throwing**, check every caller; each may need different handling.
+- **Attach rejection handlers to fire-and-forget promises at creation, not at the later `await`.** Bun and Node exit the process on an unhandled rejection. Parallel startup initialization (e.g. the agent-secrets fetch in `src/index.ts` / `src/headless.ts`) must attach its nonfatal `.catch()` when the promise is created (`void promise.catch(...)`); the later `await` then only synchronizes. Deferring the handler lets an early — even expected — rejection (e.g. a denied secrets fetch for a read-only share) crash startup before the handler attaches.
 
 - **Headless duplicates App.tsx logic.** `headless.ts` has its own approval
   handling loop (not shared with App.tsx). When making changes to
@@ -412,6 +413,26 @@ corrupted state is a workaround, not a fix.
    , the fix is speculative.
 4. Boolean terminal outcomes shared across cleanup layers, use a
    discriminated result (`continue | completed | interrupted | error`) instead.
+
+### Acting-User Identity Lost Across Boundaries
+
+`actingUserId` is absent only for turns with genuinely no human sender
+(autonomous schedules). User-originated work must carry it across every
+boundary: shell child environments (`LETTA_ACTING_USER_ID`), outbound Cloud
+requests (`X-Letta-Acting-User-Id`), subagents, background tasks, and delayed
+completions. A user-originated turn that degrades to the sandbox or agent
+principal's broader role is a permissions bug, not a feature.
+
+- **Review signal:** a new child-process spawn or outbound request path on a
+  user-originated turn that omits `actingUserId`; schedule creation that does
+  not send the requester header.
+
+### Tests Assert Behavior, Not Log Text
+
+Diagnostics are for operators, not test assertions. When a diagnostic is added
+to surface a propagation or state gap, extend the existing behavior tests; do
+not add tests that pin a log line's text. Log *capture* surfaces (e.g.
+startup-log boundaries) are behavior and may be tested; message text is not.
 
 ### pi-ai Ownership Boundary
 
