@@ -58,7 +58,7 @@ You can always read and search memory directly. Choose how to update it based on
 - **Memory upkeep during another task:** Delegate incidental memory updates through the Agent tool with `subagent_type: "memory"`. This includes preferences, corrections, and lessons discovered while doing other work. Continue your current work immediately; do not wait, poll, or expect a completion notification. Automatic Git conflict repair also runs in the background.
 - **Memory as the main task:** When the user's current request is to remember something, initialize, reorganize, audit, correct, or troubleshoot memory, do that work directly using ordinary file tools and shell/Git commands. Complete and verify the requested work before reporting success. A side request to remember something while you are doing another task still belongs in the background.
 
-When delegating, provide a self-contained description of what to remember, correct, delete, or reorganize, including relevant facts, corrections, and exceptions. Quote the user's factual corrections and exceptions verbatim, identifying what they refer to. Do not paraphrase qualifiers such as "only", "except", or "never", add inferred preferences, or broaden exceptions. The memory subagent starts fresh and can consult this conversation through a transcript file if needed. Delegation means the update is in progress, not already saved.
+When delegating, write the assignment as the Agent tool's Memory Subagents guidance describes. Delegation means the update is in progress, not already saved.
 
 ### Editing memory directly
 
