@@ -263,7 +263,7 @@ Converts any permission prompt into a denial, without calling `canUseTool`. Tool
 
 #### Bypass permissions mode (`bypassPermissions`)
 
-Auto-approves tool uses without prompting, except the cases listed in the warning below. Hooks still execute and can block operations if needed.
+Auto-approves tool uses without prompting, except the cases listed in the warning below. Hooks still execute and can block operations if needed. On Linux and macOS, Claude Code refuses to start in this mode as root or under `sudo` outside a [recognized sandbox](/docs/en/permission-modes#skip-all-checks-with-bypasspermissions-mode), and the query fails before the first turn.
 
 <Warning>
   Use with extreme caution. Claude has full system access in this mode. Only use in controlled environments where you trust all possible operations.

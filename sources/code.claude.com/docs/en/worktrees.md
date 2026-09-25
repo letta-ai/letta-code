@@ -226,7 +226,7 @@ Configure a [`WorktreeCreate` hook](/docs/en/hooks#worktreecreate) to replace th
 A worktree gets its own files and branch, but it shares the following with the main checkout:
 
 * **The repository's `.git` directory**: git commands in a worktree write to the main repository's shared `.git` directory, and [sandboxing](/docs/en/sandboxing#filesystem-isolation) allows those writes, so commands such as `git commit` work from inside a worktree with the sandbox enabled.
-* **Plugins**: plugins installed at [project scope](/docs/en/plugins-reference#plugin-installation-scopes) from the main checkout also load in worktrees of the same repository, so you don't need to reinstall them per worktree. Requires Claude Code v2.1.200 or later.
+* **Plugins**: plugins installed at [project scope](/docs/en/plugins/loading#find-where-a-plugin-is-enabled) from the main checkout also load in worktrees of the same repository, so you don't need to reinstall them per worktree. Requires Claude Code v2.1.200 or later.
 * **Permission approvals**: choosing "Yes, and don't ask again" for a Bash command in a worktree session saves the rule to the main checkout's `.claude/settings.local.json`, so it applies in the main checkout and in every other worktree of the repository, and it survives the worktree's removal. On Windows and in the other cases where Claude Code [doesn't use the repository root](/docs/en/settings#where-claude-code-looks-for-each-file), the rule stays with that worktree. Before v2.1.211, an approval granted in a worktree was saved inside that worktree, didn't apply elsewhere, and was lost when the worktree was removed. See [where approvals are saved](/docs/en/permissions#permission-system).
 * **Untracked skills, agents, and commands**: when the worktree checkout has no `.claude/skills` directory at its root, for example because your `.claude/skills` is gitignored, Claude Code loads the main checkout's [project skills](/docs/en/skills#where-skills-live) in the worktree session. In a worktree with its own `.claude/skills` directory, only that copy loads.
 
@@ -295,6 +295,8 @@ This `WorktreeCreate` hook reads the worktree name from the JSON on stdin with `
 ```
 
 Pair it with a `WorktreeRemove` hook to clean up when the session ends. See the [hooks reference](/docs/en/hooks#worktreecreate) for the input schema and a removal example.
+
+A `WorktreeCreate` hook also lets you run [`/batch`](/docs/en/commands#all-commands) outside a git repository. Each `/batch` subagent then publishes its change with your project's version-control commands and, when it can't open a pull request, reports what it published instead. Running `/batch` outside a git repository requires Claude Code v2.1.281 or later.
 
 ## Troubleshooting
 
