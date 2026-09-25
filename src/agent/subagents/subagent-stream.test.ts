@@ -148,6 +148,48 @@ function freshState(): ExecutionState {
 }
 
 describe("result envelope parsing", () => {
+  test("a successful terminal result clears an earlier stream error", () => {
+    const state = freshState();
+    processEvent(state, {
+      type: "error",
+      message: "The output producer is no longer reporting activity.",
+    });
+    processEvent(state, {
+      type: "result",
+      result: "Recovered final report",
+    });
+
+    expect(state.finalResult).toBe("Recovered final report");
+    expect(state.finalError).toBeNull();
+  });
+
+  test("a failed terminal result replaces an earlier stream error", () => {
+    const state = freshState();
+    processEvent(state, {
+      type: "error",
+      message: "Earlier stream error",
+    });
+    processEvent(state, {
+      type: "result",
+      subtype: "error",
+      result: "Terminal failure",
+    });
+
+    expect(state.finalResult).toBe("Terminal failure");
+    expect(state.finalError).toBe("Terminal failure");
+  });
+
+  test("keeps a stream error when no terminal result arrives", () => {
+    const state = freshState();
+    processEvent(state, {
+      type: "error",
+      message: "Stream failed before completion",
+    });
+
+    expect(state.finalResult).toBeNull();
+    expect(state.finalError).toBe("Stream failed before completion");
+  });
+
   test("reads the error text of a Cloud-routed failure from `error`, not `result`", () => {
     // Cloud sends emit `{ result: null, error: "<text>" }`; reading `result`
     // turned every such failure into "Unknown error".
