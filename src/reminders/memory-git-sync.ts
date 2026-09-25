@@ -9,6 +9,7 @@ import {
   type MemoryPostTurnSyncResult,
   syncPendingMemoryCommitsAfterTurn,
 } from "@/agent/memory-git";
+import { commitLeftoverMemoryChanges } from "@/agent/memory-leftovers";
 import { claimMemoryOperation } from "@/agent/memory-operation";
 import { isMemoryWorkerSession } from "@/agent/subagents/memory-worker-session";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
@@ -18,6 +19,8 @@ import { debugWarn } from "@/utils/debug";
 
 export interface RunPostTurnMemorySyncParams {
   agentId: string;
+  /** Commit author for changes the turn left uncommitted; the id when absent. */
+  agentName?: string | null;
   conversationId?: string | null;
   isEnabled?: (agentId: string) => boolean;
   /** Deliver a reminder to the agent on its next turn. */
@@ -30,6 +33,7 @@ export interface RunPostTurnMemorySyncParams {
 
 export interface RunPostTurnMemorySyncDependencies {
   syncMemory?: typeof syncPendingMemoryCommitsAfterTurn;
+  commitLeftovers?: typeof commitLeftoverMemoryChanges;
   repairConflict?: (
     params: Parameters<typeof ensureMemoryConflictRepair>[0],
   ) => Promise<boolean>;
@@ -190,6 +194,8 @@ export async function runPostTurnMemorySync(
     dependencies.repairConflict ??
     ((repair) =>
       ensureMemoryConflictRepair(repair, spawnBackgroundSubagentTask));
+  const commitLeftovers =
+    dependencies.commitLeftovers ?? commitLeftoverMemoryChanges;
   let memorySyncEnabled = true;
 
   try {
@@ -214,7 +220,21 @@ export async function runPostTurnMemorySync(
         : undefined;
       if (release !== null) {
         try {
-          const result = await syncMemory(params.agentId);
+          let result = await syncMemory(params.agentId);
+          if (result.status === "dirty") {
+            // The turn is over and this process holds the checkout, so what
+            // is left is complete: save it as the agent, then sync again to
+            // push it. Only what the pre-commit hook rejects is reported.
+            const saved = await commitLeftovers({
+              memoryDir: result.memoryDir,
+              agentId: params.agentId,
+              authorName: params.agentName,
+              localOnly: result.localOnly,
+            });
+            result = saved.committed
+              ? await syncMemory(params.agentId)
+              : { ...result, summary: `${result.summary} ${saved.error}` };
+          }
           if (result.status === "pushed") params.onMemoryPushed?.();
           const repairInProgress =
             result.status === "conflict" &&

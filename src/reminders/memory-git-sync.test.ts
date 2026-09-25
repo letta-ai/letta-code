@@ -5,10 +5,12 @@ import { join } from "node:path";
 import type { MemoryConflictRepairClaim } from "@/agent/memory-conflict-repair";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import type { MemoryPostTurnSyncResult } from "@/agent/memory-git";
+import type { commitLeftoverMemoryChanges } from "@/agent/memory-leftovers";
 import { ensureMemoryConflictRepair } from "@/tools/impl/memory-task-lifecycle";
 import type { SpawnBackgroundSubagentTaskArgs } from "@/tools/impl/task";
 import {
   formatAttachedRepositoryPostTurnSyncReminder,
+  type RunPostTurnMemorySyncDependencies,
   resetPostTurnMemorySyncNotices,
   runPostTurnMemorySync,
 } from "./memory-git-sync";
@@ -62,6 +64,7 @@ describe("post-turn memory push notification", () => {
         },
         {
           repairConflict: async () => true,
+          commitLeftovers: async () => ({ committed: false, error: "stub" }),
           syncMemory: async () => ({
             status,
             summary: status,
@@ -284,14 +287,24 @@ test("post-turn conflict launches the memory task and warns the primary, without
   expect(reminders[0]).toContain("MEMORY REPAIR IN PROGRESS");
   expect(reminders[0]).not.toContain("MEMORY GIT CONFLICT");
 });
-/** Run post-turn sync against a fixed MemFS result, collecting what it delivers. */
+/**
+ * Run post-turn sync against fixed MemFS results (one per sync call),
+ * collecting what it delivers. Leftover commits are rejected unless a
+ * `commitLeftovers` stub says otherwise.
+ */
 async function syncWith(
-  result: MemoryPostTurnSyncResult,
+  results: MemoryPostTurnSyncResult | MemoryPostTurnSyncResult[],
   sinks: { reminders: string[]; warnings: string[] },
+  commitLeftovers: RunPostTurnMemorySyncDependencies["commitLeftovers"] = async () => ({
+    committed: false,
+    error: "pre-commit hook: broken.md is missing frontmatter.",
+  }),
 ): Promise<void> {
+  const queue = Array.isArray(results) ? [...results] : [results];
   await runPostTurnMemorySync(
     {
       agentId: "agent-memory-repair-test",
+      agentName: "Ada",
       enqueueReminder: (text) => {
         sinks.reminders.push(text);
       },
@@ -300,7 +313,12 @@ async function syncWith(
       },
     },
     {
-      syncMemory: async () => result,
+      syncMemory: async () => {
+        const next = queue.shift();
+        if (!next) throw new Error("unexpected extra sync");
+        return next;
+      },
+      commitLeftovers,
       syncAttachedRepositories: async () => ({ results: [] }),
       repairConflict: () => {
         throw new Error("must not launch a conflict repair");
@@ -309,12 +327,47 @@ async function syncWith(
   );
 }
 
-test("a dirty primary memory checkout reminds the primary instead of launching repair", async () => {
+test("changes left after the turn are committed as the agent and then pushed", async () => {
+  const sinks = { reminders: [] as string[], warnings: [] as string[] };
+  const commits: Parameters<typeof commitLeftoverMemoryChanges>[0][] = [];
+  await syncWith(
+    [
+      {
+        ...conflict,
+        status: "dirty",
+        summary: "1 uncommitted memory change(s).",
+      },
+      {
+        ...conflict,
+        status: "pushed",
+        summary: "Pushed 1 pending memory commit(s).",
+      },
+    ],
+    sinks,
+    async (params) => {
+      commits.push(params);
+      return { committed: true };
+    },
+  );
+  expect(commits).toEqual([
+    {
+      memoryDir: conflict.memoryDir,
+      agentId: "agent-memory-repair-test",
+      authorName: "Ada",
+      localOnly: true,
+    },
+  ]);
+  expect(sinks.reminders).toEqual([]);
+  expect(sinks.warnings).toEqual([]);
+});
+
+test("what the pre-commit hook rejects is reported to the primary with the reason", async () => {
   const sinks = { reminders: [] as string[], warnings: [] as string[] };
   await syncWith({ ...conflict, status: "dirty" }, sinks);
   expect(sinks.reminders).toHaveLength(1);
   expect(sinks.reminders[0]).toContain("MEMORY COMMIT NEEDED");
   expect(sinks.reminders[0]).toContain(conflict.memoryDir);
+  expect(sinks.reminders[0]).toContain("broken.md is missing frontmatter");
   expect(sinks.warnings).toEqual([]);
 });
 

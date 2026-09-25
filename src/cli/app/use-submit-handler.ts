@@ -3719,6 +3719,7 @@ ${SYSTEM_REMINDER_CLOSE}
       await runPostTurnMemorySync({
         conversationId,
         agentId,
+        agentName,
         isEnabled: isActiveMemfsEnabled,
         enqueueReminder: (text) => {
           enqueueMemoryGitSyncReminder(sharedReminderStateRef.current, {
