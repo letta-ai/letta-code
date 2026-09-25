@@ -150,6 +150,33 @@ describe("pending channel control requests", () => {
     expect(order).toEqual(["lifecycle", "prepare", "deliver"]);
   });
 
+  test("queued lifecycle regrouping preserves listener disposition", async () => {
+    const registry = new ChannelRegistry();
+    const lifecycleEvents: unknown[] = [];
+    const adapter = createAdapter([]);
+    adapter.handleTurnLifecycleEvent = async (event) => {
+      lifecycleEvents.push(event);
+    };
+    registry.registerAdapter(adapter);
+    const source = {
+      channel: "slack",
+      accountId: "acct-slack",
+      chatId: "C123",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    };
+
+    await registry.dispatchTurnLifecycleEvent({
+      type: "queued",
+      source,
+      disposition: "queued",
+    });
+
+    expect(lifecycleEvents).toEqual([
+      { type: "queued", source, disposition: "queued" },
+    ]);
+  });
+
   test("unrouted Slack thread replies do not dispatch assistant status", async () => {
     __testOverrideLoadChannelAccounts(() => [
       {
