@@ -182,3 +182,84 @@ test("turn setup delivers the interrupt recovery notice once, only to the interr
     directory.cleanup();
   }
 });
+
+test("stale tool context preparation does not overwrite replacement turn state", async () => {
+  const directory = new TestDirectory();
+  const agentId = "agent-stale-tool-context";
+  const backend = new FakeHeadlessBackend(agentId);
+  const releaseRetrieve = Promise.withResolvers<void>();
+
+  try {
+    await settingsManager.initialize();
+    const conversation = await backend.createConversation({
+      agent_id: agentId,
+    });
+    __testSetBackend(backend);
+
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, null, conversation.id);
+    runtime.skillSources = [];
+    const originalLease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: directory.path,
+    });
+    const setup = await prepareListenerTurn({
+      msg: {
+        type: "message",
+        conversationId: conversation.id,
+        messages: [{ role: "user", content: "first turn" }],
+        clientToolset: { base: "none" },
+      },
+      runtime,
+      agentId: null,
+      conversationId: conversation.id,
+      workingDirectory: directory.path,
+      permissionModeState: { mode: DEFAULT_PERMISSION_MODE },
+      turnLease: originalLease,
+    });
+    expect(setup.kind).toBe("ready");
+    if (setup.kind !== "ready") {
+      throw new Error("Turn setup was not ready");
+    }
+
+    const replacementPreference =
+      runtime.currentToolsetPreference === "codex" ? "default" : "codex";
+    const retrieveEntered = Promise.withResolvers<void>();
+    const originalRetrieveConversation =
+      backend.retrieveConversation.bind(backend);
+    backend.retrieveConversation = async (conversationId) => {
+      retrieveEntered.resolve();
+      await releaseRetrieve.promise;
+      return originalRetrieveConversation(conversationId);
+    };
+
+    const stalePreparation = setup.prepareToolContext();
+    await retrieveEntered.promise;
+    runtime.turnLifecycle.reset("cancelled");
+    const replacementLease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: directory.path,
+    });
+    const replacementLoadedTools = ["replacement-turn-tool"];
+    runtime.currentToolset = "codex";
+    runtime.currentToolsetPreference = replacementPreference;
+    runtime.currentLoadedTools = replacementLoadedTools;
+
+    releaseRetrieve.resolve();
+    await stalePreparation;
+
+    expect(runtime.turnLifecycle.isCurrent(replacementLease)).toBe(true);
+    expect(runtime.currentToolset).toBe("codex");
+    expect(runtime.currentToolsetPreference).toBe(replacementPreference);
+    expect(runtime.currentLoadedTools).toBe(replacementLoadedTools);
+  } finally {
+    releaseRetrieve.resolve();
+    clearCapturedToolExecutionContexts();
+    setCurrentAgentId(null);
+    setCurrentAgentName(null);
+    setConversationId(null);
+    __testSetBackend(null);
+    await settingsManager.reset();
+    directory.cleanup();
+  }
+});

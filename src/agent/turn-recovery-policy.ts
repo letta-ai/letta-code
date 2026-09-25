@@ -105,6 +105,7 @@ const DEFAULT_TRANSIENT_RETRY_BASE_DELAY_MS = 1000;
 const CLOUDFLARE_EDGE_52X_RETRY_BASE_DELAY_MS = 5000;
 const CONVERSATION_BUSY_RETRY_BASE_DELAY_MS = 10000;
 const EMPTY_RESPONSE_RETRY_BASE_DELAY_MS = 500;
+export const TEMP_QUOTA_OVERRIDE_MODEL = "letta/auto";
 
 function isCloudflareEdge52xDetail(detail: unknown): boolean {
   if (typeof detail !== "string") return false;

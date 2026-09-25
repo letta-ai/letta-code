@@ -4,7 +4,10 @@ import type {
   ApprovalCreate,
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
-import type { sendMessageStream } from "@/agent/message";
+import {
+  getStreamToolContextId,
+  type sendMessageStream,
+} from "@/agent/message";
 import { getRetryDelayMs } from "@/agent/turn-recovery-policy";
 import { getRetryStatusMessage } from "@/cli/helpers/error-formatter";
 import type { StopReasonType } from "@/types/protocol_v2";
@@ -20,6 +23,7 @@ import {
 import {
   type ApprovalContinuationSendResult,
   isApprovalOnlyInput,
+  markAwaitingAcceptedApprovalContinuationRunId,
   sendApprovalContinuationWithRetry,
   sendMessageStreamWithRetry,
 } from "./send";
@@ -31,9 +35,26 @@ import {
   updateTurnInputMessagesPreservingOtids,
 } from "./turn-input-state";
 import type { TurnFinishTransition, TurnLease } from "./turn-lifecycle";
+import { setTurnLoopStatus } from "./turn-status";
 import type { ConversationRuntime } from "./types";
 
 type SendOptions = NonNullable<Parameters<typeof sendMessageStream>[2]>;
+
+export function resolveDynamicTurnSendOptions(params: {
+  getPreparedToolContext?: () => SendOptions["preparedToolContext"];
+  preparedToolContext?: SendOptions["preparedToolContext"];
+  getOverrideModel?: () => SendOptions["overrideModel"];
+  overrideModel?: SendOptions["overrideModel"];
+}) {
+  const getToolContext =
+    params.getPreparedToolContext ?? (() => params.preparedToolContext);
+  const getModel = params.getOverrideModel ?? (() => params.overrideModel);
+  const overrideModel = getModel();
+  return {
+    preparedToolContext: getToolContext(),
+    ...(overrideModel ? { overrideModel } : {}),
+  };
+}
 
 /** Build request options and perform the first send; later continuations read current input state. */
 export async function startTurnInput(
@@ -43,8 +64,10 @@ export async function startTurnInput(
   > & {
     workingDirectory: string;
     permissionModeState: SendOptions["permissionModeState"];
-    preparedToolContext: SendOptions["preparedToolContext"];
-    overrideModel: SendOptions["overrideModel"];
+    preparedToolContext?: SendOptions["preparedToolContext"];
+    getPreparedToolContext?: () => SendOptions["preparedToolContext"];
+    overrideModel?: SendOptions["overrideModel"];
+    getOverrideModel?: () => SendOptions["overrideModel"];
     responseFormat?: SendOptions["responseFormat"];
     actingUserId?: string;
     getInput: () => TurnInputState;
@@ -62,14 +85,13 @@ export async function startTurnInput(
       ...(params.runtime.skillSources !== undefined
         ? { skillSources: params.runtime.skillSources }
         : {}),
-      preparedToolContext: params.preparedToolContext,
+      ...resolveDynamicTurnSendOptions(params),
       ...(params.getInput().imageFailureModesByMessageOtid
         ? {
             imageFailureModesByMessageOtid:
               params.getInput().imageFailureModesByMessageOtid,
           }
         : {}),
-      ...(params.overrideModel ? { overrideModel: params.overrideModel } : {}),
       ...(params.responseFormat
         ? { responseFormat: params.responseFormat }
         : {}),
@@ -212,5 +234,70 @@ export function createTurnInputSender(params: {
       );
       return null;
     },
+  };
+}
+
+export async function sendTurnRetry(params: {
+  turnInput: TurnInputState;
+  turnInputSender: ReturnType<typeof createTurnInputSender>;
+  socket: ListenerTransport;
+  runtime: ConversationRuntime;
+  turnLease: TurnLease;
+  agentId: string | null;
+  conversationId: string;
+  deploymentInterrupted?: boolean;
+}): Promise<{
+  stream: Stream<LettaStreamingResponse> | null;
+  turnInput: TurnInputState;
+  turnToolContextId: string | null;
+}> {
+  setTurnLoopStatus(params.runtime, params.turnLease, "SENDING_API_REQUEST", {
+    agent_id: params.agentId,
+    conversation_id: params.conversationId,
+  });
+  const retryInputWithSkillContent = params.deploymentInterrupted
+    ? params.turnInput.messages
+    : injectQueuedSkillContent(params.turnInput.messages, {
+        socket: params.socket,
+        runtime: params.runtime,
+        agentId: params.agentId,
+        conversationId: params.conversationId,
+      });
+  const retrySendResult = await params.turnInputSender.send(
+    retryInputWithSkillContent,
+  );
+  const updatedTurnInput = updateTurnInputMessagesPreservingOtids(
+    params.turnInput,
+    retryInputWithSkillContent,
+  );
+  const retryStream = params.turnInputSender.accept(retrySendResult);
+  if (!retryStream) {
+    return {
+      stream: null,
+      turnInput: updatedTurnInput,
+      turnToolContextId: null,
+    };
+  }
+  markAwaitingAcceptedApprovalContinuationRunId(
+    params.runtime,
+    params.turnLease,
+    updatedTurnInput.messages,
+  );
+  setTurnLoopStatus(
+    params.runtime,
+    params.turnLease,
+    "PROCESSING_API_RESPONSE",
+    {
+      agent_id: params.agentId,
+      conversation_id: params.conversationId,
+    },
+  );
+  const turnToolContextId = getStreamToolContextId(
+    retryStream as Stream<LettaStreamingResponse>,
+  );
+  return {
+    stream: retryStream,
+    turnInput: updatedTurnInput,
+    turnToolContextId,
   };
 }

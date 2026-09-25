@@ -5,7 +5,9 @@
  * the same models; when a plan reports `usage_limit_reached` the consumers
  * (TUI / listener / headless) call `rotateChatGPTPlanOnQuotaLimit` from
  * their post-stop retry handling to swap the active conversation onto a
- * sibling plan and resend. No swap-back; quota errors only (no auth failover).
+ * sibling plan and resend. No swap-back. Terminal ChatGPT OAuth credential
+ * failures also skip the broken plan so one stale connection does not end the
+ * turn when another compatible account is available.
  */
 
 import {
@@ -50,6 +52,107 @@ export interface ChatGPTPlanRotationResult {
   toProvider: string;
   toHandle: string;
   resetsAt: number | null;
+  failureKind: "quota" | "authentication";
+}
+
+const CHATGPT_OAUTH_REFRESH_FAILURE_PATTERNS = [
+  "failed to refresh chatgpt oauth token",
+  "failed to refresh the chatgpt oauth token",
+  "chatgpt oauth refresh token",
+  "refresh token is invalid or expired",
+  "invalid_grant",
+];
+
+function textContainsChatGPTOAuthRefreshFailure(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  const normalized = value.toLowerCase();
+  if (
+    CHATGPT_OAUTH_REFRESH_FAILURE_PATTERNS.some((pattern) =>
+      normalized.includes(pattern),
+    )
+  ) {
+    return true;
+  }
+  if (
+    normalized.includes("llm_authentication") &&
+    (normalized.includes("chatgpt") ||
+      normalized.includes("refresh token") ||
+      normalized.includes("oauth"))
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/** A terminal ChatGPT connection failure that another connected plan can bypass. */
+export function isChatGPTOAuthCredentialFailure(error: unknown): boolean {
+  if (textContainsChatGPTOAuthRefreshFailure(error)) return true;
+  if (error instanceof Error) {
+    return textContainsChatGPTOAuthRefreshFailure(error.message);
+  }
+  if (!isRecord(error)) return false;
+  if (error.retryable === true) return false;
+
+  const errorType =
+    (typeof error.error_type === "string" && error.error_type) ||
+    (typeof error.type === "string" && error.type) ||
+    null;
+  const errorCode =
+    (typeof error.error_code === "string" && error.error_code) ||
+    (typeof error.errorCode === "string" && error.errorCode) ||
+    null;
+
+  if (
+    (errorType === "llm_authentication" ||
+      errorCode === "llm_authentication") &&
+    (textContainsChatGPTOAuthRefreshFailure(error.message) ||
+      textContainsChatGPTOAuthRefreshFailure(error.detail) ||
+      String(error.message ?? "")
+        .toLowerCase()
+        .includes("chatgpt") ||
+      String(error.detail ?? "")
+        .toLowerCase()
+        .includes("chatgpt") ||
+      String(error.message ?? "")
+        .toLowerCase()
+        .includes("refresh token") ||
+      String(error.detail ?? "")
+        .toLowerCase()
+        .includes("refresh token") ||
+      (!error.message && !error.detail))
+  ) {
+    return true;
+  }
+
+  if (
+    textContainsChatGPTOAuthRefreshFailure(error.message) ||
+    textContainsChatGPTOAuthRefreshFailure(error.detail) ||
+    textContainsChatGPTOAuthRefreshFailure(error.errorCode) ||
+    textContainsChatGPTOAuthRefreshFailure(error.error_code)
+  ) {
+    return true;
+  }
+  if (isRecord(error.error) || typeof error.error === "string") {
+    return isChatGPTOAuthCredentialFailure(error.error);
+  }
+  if (isRecord(error.raw) || typeof error.raw === "string") {
+    return isChatGPTOAuthCredentialFailure(error.raw);
+  }
+  return false;
+}
+
+interface ChatGPTPlanFailure {
+  kind: ChatGPTPlanRotationResult["failureKind"];
+  resetsAt: number | null;
+}
+
+function parseChatGPTPlanFailure(error: unknown): ChatGPTPlanFailure | null {
+  const quota = parseChatGPTUsageLimitDetail(error);
+  if (quota) return { kind: "quota", resetsAt: quota.resetsAt };
+  if (isChatGPTOAuthCredentialFailure(error)) {
+    return { kind: "authentication", resetsAt: null };
+  }
+  return null;
 }
 
 function providerFromHandle(handle: string): string | null {
@@ -187,11 +290,11 @@ async function resolveScopedModelState(
  * Attempt to rotate the active conversation to the same model on a sibling
  * ChatGPT plan. The default conversation still uses the agent's base model,
  * matching the scope rules used by `/model`.
- * Returns null when the detail is not a usage-limit error, the current
+ * Returns null when the detail is not a recoverable failure, the current
  * handle is not a ChatGPT BYOK handle, no eligible sibling exists, or the
  * model update fails; callers fall through to existing error handling.
  */
-export async function rotateChatGPTPlanOnQuotaLimit(params: {
+export async function rotateChatGPTPlanOnRecoverableFailure(params: {
   agentId: string;
   conversationId: string;
   currentHandle: string | null;
@@ -201,8 +304,8 @@ export async function rotateChatGPTPlanOnQuotaLimit(params: {
 }): Promise<ChatGPTPlanRotationResult | null> {
   const { agentId, conversationId, error, exhaustedProviders, signal } = params;
 
-  const parsedDetail = parseChatGPTUsageLimitDetail(error);
-  if (!parsedDetail) return null;
+  const failure = parseChatGPTPlanFailure(error);
+  if (!failure) return null;
 
   let models = getCachedAvailableModels();
   if (!models) {
@@ -229,7 +332,7 @@ export async function rotateChatGPTPlanOnQuotaLimit(params: {
   const fromProvider = providerFromHandle(currentHandle);
   if (!fromProvider) return null;
 
-  // The current plan is out of quota regardless of whether a sibling exists.
+  // The current plan is out of quota or failed authentication.
   exhaustedProviders.add(fromProvider);
 
   // Check candidates before changing the model, not by spending a swap/run on
@@ -301,17 +404,31 @@ export async function rotateChatGPTPlanOnQuotaLimit(params: {
     fromProvider,
     toProvider,
     toHandle,
-    resetsAt: parsedDetail.resetsAt,
+    resetsAt: failure.resetsAt,
+    failureKind: failure.kind,
   };
 }
 
+/** Backward-compatible quota-only entrypoint for callers that require it. */
+export async function rotateChatGPTPlanOnQuotaLimit(
+  params: Parameters<typeof rotateChatGPTPlanOnRecoverableFailure>[0],
+): Promise<ChatGPTPlanRotationResult | null> {
+  if (!parseChatGPTUsageLimitDetail(params.error)) return null;
+  return rotateChatGPTPlanOnRecoverableFailure(params);
+}
+
 // e.g. `chatgpt-caren hit its usage limit (resets 3:40 PM) — switched to chatgpt-jin`
+// or `chatgpt-ari credentials expired — switched to chatgpt-jin`
 export function formatPlanRotationNotice(params: {
   fromProvider: string;
   toProvider: string;
   resetsAt: number | null;
+  failureKind?: ChatGPTPlanRotationResult["failureKind"];
 }): string {
-  const { fromProvider, toProvider, resetsAt } = params;
+  const { fromProvider, toProvider, resetsAt, failureKind } = params;
+  if (failureKind === "authentication") {
+    return `${fromProvider} credentials expired — switched to ${toProvider}`;
+  }
   const resetSuffix =
     resetsAt !== null
       ? ` (resets ${new Date(resetsAt).toLocaleTimeString([], {
