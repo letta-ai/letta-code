@@ -8,24 +8,17 @@ import ExecCommandDescription from "./descriptions/ExecCommand.md";
 import ExitWorktreeDescription from "./descriptions/ExitWorktree.md";
 import GlobDescription from "./descriptions/Glob.md";
 import GrepDescription from "./descriptions/Grep.md";
-import GrepFilesDescription from "./descriptions/GrepFiles.md";
-import KillBashDescription from "./descriptions/KillBash.md";
-import ListDirCodexDescription from "./descriptions/ListDirCodex.md";
 import LSDescription from "./descriptions/LS.md";
 import MemoryDescription from "./descriptions/Memory.md";
 import MemoryApplyPatchDescription from "./descriptions/MemoryApplyPatch.md";
 import MemoryApplyPatchV2Description from "./descriptions/MemoryApplyPatchV2.md";
 import MemoryV2Description from "./descriptions/MemoryV2.md";
 import MonitorDescription from "./descriptions/Monitor.md";
-import MultiEditDescription from "./descriptions/MultiEdit.md";
 import ReadDescription from "./descriptions/Read.md";
 import ReadArtifactFileDescription from "./descriptions/ReadArtifactFile.md";
-import ReadFileCodexDescription from "./descriptions/ReadFileCodex.md";
 import ReadLSPDescription from "./descriptions/ReadLSP.md";
 import SendAgentMessageDescription from "./descriptions/SendAgentMessage.md";
 import SetWorkingDirectoryDescription from "./descriptions/SetWorkingDirectory.md";
-import ShellDescription from "./descriptions/Shell.md";
-import ShellCommandDescription from "./descriptions/ShellCommand.md";
 import SkillDescription from "./descriptions/Skill.md";
 import TaskDescription from "./descriptions/Task.md";
 import TaskCreateDescription from "./descriptions/TaskCreate.md";
@@ -33,7 +26,6 @@ import TaskGetDescription from "./descriptions/TaskGet.md";
 import TaskListDescription from "./descriptions/TaskList.md";
 import TaskStopDescription from "./descriptions/TaskStop.md";
 import TaskUpdateDescription from "./descriptions/TaskUpdate.md";
-import TodoWriteDescription from "./descriptions/TodoWrite.md";
 import UpdatePlanDescription from "./descriptions/UpdatePlan.md";
 import ViewImageDescription from "./descriptions/ViewImage.md";
 import WakeDescription from "./descriptions/Wake.md";
@@ -51,21 +43,14 @@ import { exec_command, write_stdin } from "./impl/exec-command";
 import { exit_worktree } from "./impl/exit-worktree";
 import { glob } from "./impl/glob";
 import { grep } from "./impl/grep";
-import { grep_files } from "./impl/grep-files";
-import { kill_bash } from "./impl/kill-bash";
-import { list_dir } from "./impl/list-dir-codex";
 import { ls } from "./impl/ls";
 import { memory } from "./impl/memory";
 import { memory_apply_patch } from "./impl/memory-apply-patch";
 import { monitor } from "./impl/monitor";
-import { multi_edit } from "./impl/multi-edit";
 import { read } from "./impl/read";
-import { read_file } from "./impl/read-file-codex";
 import { read_lsp } from "./impl/read-lsp";
 import { send_agent_message } from "./impl/send-agent-message";
 import { set_working_directory } from "./impl/set-working-directory";
-import { shell } from "./impl/shell";
-import { shell_command } from "./impl/shell-command";
 import { skill } from "./impl/skill";
 import { task } from "./impl/task";
 import { task_create } from "./impl/task-create";
@@ -73,7 +58,6 @@ import { task_get } from "./impl/task-get";
 import { task_list } from "./impl/task-list";
 import { task_stop } from "./impl/task-stop";
 import { task_update } from "./impl/task-update";
-import { todo_write } from "./impl/todo-write";
 import { update_plan } from "./impl/update-plan";
 import { view_image } from "./impl/view-image";
 import { wake } from "./impl/wake";
@@ -89,23 +73,16 @@ import ExecCommandSchema from "./schemas/ExecCommand.json";
 import ExitWorktreeSchema from "./schemas/ExitWorktree.json";
 import GlobSchema from "./schemas/Glob.json";
 import GrepSchema from "./schemas/Grep.json";
-import GrepFilesSchema from "./schemas/GrepFiles.json";
-import KillBashSchema from "./schemas/KillBash.json";
-import ListDirCodexSchema from "./schemas/ListDirCodex.json";
 import LSSchema from "./schemas/LS.json";
 import MemorySchema from "./schemas/Memory.json";
 import MemoryApplyPatchSchema from "./schemas/MemoryApplyPatch.json";
 import MemoryV2Schema from "./schemas/MemoryV2.json";
 import MonitorSchema from "./schemas/Monitor.json";
-import MultiEditSchema from "./schemas/MultiEdit.json";
 import ReadSchema from "./schemas/Read.json";
 import ReadArtifactFileSchema from "./schemas/ReadArtifactFile.json";
-import ReadFileCodexSchema from "./schemas/ReadFileCodex.json";
 import ReadLSPSchema from "./schemas/ReadLSP.json";
 import SendAgentMessageSchema from "./schemas/SendAgentMessage.json";
 import SetWorkingDirectorySchema from "./schemas/SetWorkingDirectory.json";
-import ShellSchema from "./schemas/Shell.json";
-import ShellCommandSchema from "./schemas/ShellCommand.json";
 import SkillSchema from "./schemas/Skill.json";
 import TaskSchema from "./schemas/Task.json";
 import TaskCreateSchema from "./schemas/TaskCreate.json";
@@ -113,7 +90,6 @@ import TaskGetSchema from "./schemas/TaskGet.json";
 import TaskListSchema from "./schemas/TaskList.json";
 import TaskStopSchema from "./schemas/TaskStop.json";
 import TaskUpdateSchema from "./schemas/TaskUpdate.json";
-import TodoWriteSchema from "./schemas/TodoWrite.json";
 import UpdatePlanSchema from "./schemas/UpdatePlan.json";
 import ViewImageSchema from "./schemas/ViewImage.json";
 import WakeSchema from "./schemas/Wake.json";
@@ -196,20 +172,16 @@ const toolDefinitions = {
     description: GrepDescription.trim(),
     impl: grep,
   }),
-  KillBash: defineTool({
-    schema: KillBashSchema,
-    description: KillBashDescription.trim(),
-    impl: kill_bash,
+  // Used by the Docs Ezra Agent SDK toolset to inspect repository roots.
+  LS: defineTool({
+    schema: LSSchema,
+    description: LSDescription.trim(),
+    impl: ls,
   }),
   TaskStop: defineTool({
     schema: TaskStopSchema,
     description: TaskStopDescription.trim(),
     impl: task_stop,
-  }),
-  LS: defineTool({
-    schema: LSSchema,
-    description: LSDescription.trim(),
-    impl: ls,
   }),
   memory: defineTool({
     schema: MemorySchema,
@@ -225,11 +197,6 @@ const toolDefinitions = {
     schema: MonitorSchema,
     description: MonitorDescription.trim(),
     impl: monitor,
-  }),
-  MultiEdit: defineTool({
-    schema: MultiEditSchema,
-    description: MultiEditDescription.trim(),
-    impl: multi_edit,
   }),
   Read: defineTool({
     schema: ReadSchema,
@@ -297,11 +264,6 @@ const toolDefinitions = {
     description: TaskUpdateDescription.trim(),
     impl: task_update,
   }),
-  TodoWrite: defineTool({
-    schema: TodoWriteSchema,
-    description: TodoWriteDescription.trim(),
-    impl: todo_write,
-  }),
   Workflow: defineTool({
     schema: WorkflowSchema,
     description: WorkflowDescription.trim(),
@@ -317,11 +279,6 @@ const toolDefinitions = {
     description: WriteArtifactFileDescription.trim(),
     impl: write_artifact_file,
   }),
-  shell_command: defineTool({
-    schema: ShellCommandSchema,
-    description: ShellCommandDescription.trim(),
-    impl: shell_command,
-  }),
   exec_command: defineTool({
     schema: ExecCommandSchema,
     description: execCommandDescription(),
@@ -331,52 +288,6 @@ const toolDefinitions = {
     schema: WriteStdinSchema,
     description: WriteStdinDescription.trim(),
     impl: write_stdin,
-  }),
-  shell: defineTool({
-    schema: ShellSchema,
-    description: ShellDescription.trim(),
-    impl: shell,
-  }),
-  read_file: defineTool({
-    schema: ReadFileCodexSchema,
-    description: ReadFileCodexDescription.trim(),
-    impl: read_file,
-  }),
-  list_dir: defineTool({
-    schema: ListDirCodexSchema,
-    description: ListDirCodexDescription.trim(),
-    impl: list_dir,
-  }),
-  grep_files: defineTool({
-    schema: GrepFilesSchema,
-    description: GrepFilesDescription.trim(),
-    impl: grep_files,
-  }),
-  // Additional Codex tools
-  ShellCommand: defineTool({
-    schema: ShellCommandSchema,
-    description: ShellCommandDescription.trim(),
-    impl: shell_command,
-  }),
-  Shell: defineTool({
-    schema: ShellSchema,
-    description: ShellDescription.trim(),
-    impl: shell,
-  }),
-  ReadFile: defineTool({
-    schema: ReadFileCodexSchema,
-    description: ReadFileCodexDescription.trim(),
-    impl: read_file,
-  }),
-  ListDir: defineTool({
-    schema: ListDirCodexSchema,
-    description: ListDirCodexDescription.trim(),
-    impl: list_dir,
-  }),
-  GrepFiles: defineTool({
-    schema: GrepFilesSchema,
-    description: GrepFilesDescription.trim(),
-    impl: grep_files,
   }),
   ApplyPatch: defineTool({
     schema: ApplyPatchSchema,

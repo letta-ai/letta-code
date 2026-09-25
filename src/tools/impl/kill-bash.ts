@@ -4,19 +4,6 @@ import {
   notifyBackgroundProcessStateChanged,
   scheduleBackgroundProcessCleanup,
 } from "./process_manager.js";
-import { validateRequiredParams } from "./validation.js";
-
-interface KillBashArgs {
-  shell_id: string;
-}
-interface KillBashResult {
-  killed: boolean;
-}
-
-export async function kill_bash(args: KillBashArgs): Promise<KillBashResult> {
-  validateRequiredParams(args, ["shell_id"], "KillBash");
-  return { killed: killBackgroundProcess(args.shell_id) };
-}
 
 export function killBackgroundProcess(shell_id: string): boolean {
   const proc = backgroundProcesses.get(shell_id);

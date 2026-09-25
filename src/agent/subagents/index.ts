@@ -11,6 +11,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { LocalMemoryFormat } from "@/agent/memory-format";
 import { getBackend } from "@/backend";
+import { findRemovedToolNames } from "@/tools/removed-tools";
 import { getErrorMessage } from "@/utils/error";
 import {
   getStringField,
@@ -568,6 +569,16 @@ export async function getAllSubagentConfigs(
   // Log any discovery errors
   for (const error of errors) {
     console.warn(`[subagent] Warning: ${error.path}: ${error.message}`);
+  }
+
+  for (const subagent of subagents) {
+    if (subagent.allowedTools === "all") continue;
+    const removedTools = findRemovedToolNames(subagent.allowedTools);
+    if (removedTools.length > 0) {
+      console.warn(
+        `[subagent] Warning: ${subagent.name}: these tools no longer exist and will be ignored: ${removedTools.join(", ")}`,
+      );
+    }
   }
 
   // User-defined subagents override built-ins with the same name

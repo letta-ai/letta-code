@@ -1,3 +1,5 @@
+import { markManagedCloudRuntimeFromListenerIdentity } from "@/managed-cloud-runtime";
+
 /**
  * Spawner-assigned listener identity (LET-10085, minimal scope).
  *
@@ -76,6 +78,11 @@ export function getSpawnerListenerInstanceId(): string | null {
   delete process.env[LISTENER_INSTANCE_ID_ENV];
   cachedSpawnerListenerInstanceId =
     value && isValidListenerInstanceId(value) ? value : null;
+  if (cachedSpawnerListenerInstanceId) {
+    markManagedCloudRuntimeFromListenerIdentity(
+      cachedSpawnerListenerInstanceId,
+    );
+  }
   return cachedSpawnerListenerInstanceId;
 }
 

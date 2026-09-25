@@ -95,10 +95,9 @@ const FALLBACK_TOOL_NAMES = [
   "Read",
   "Edit",
   "Write",
-  "TodoWrite",
   "AskUserQuestion",
   "Skill",
-  "KillBash",
+  "TaskStop",
 ];
 
 // Save location options

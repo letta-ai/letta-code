@@ -380,11 +380,11 @@ resent. Interrupt handler marking tools cancelled even when execution completed.
 
 ### Shell Tool Parity Gap
 
-Policy/UI layer treats all shell variants (`Bash`, `shell_command`,
-`ShellCommand`, `exec_command`) identically, but the implementation
-layer differs. Features added to one tool may be missing from others.
+Policy/UI layer treats both shell tools (`Bash`, `exec_command`) identically,
+but the implementations differ (`impl/bash.ts` vs `impl/exec-command.ts`).
+Features added to one may be missing from the other.
 
-- **Review signal:** any shell tool change, check ALL variants have parity.
+- **Review signal:** any shell tool change, check both tools have parity.
 
 ### Interrupt Lock / State Cleanup
 

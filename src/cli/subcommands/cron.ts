@@ -2,28 +2,18 @@
  * `letta cron` CLI subcommand.
  *
  * Usage:
- *   letta cron add --prompt <text> --every <interval> [--agent <id>] [--conversation <id>] [--runner local|cloud]
- *   letta cron add --prompt <text> --at <time> [--once] [--agent <id>] [--runner local|cloud]
- *   letta cron add --prompt <text> --cron <expr> [--agent <id>] [--runner local|cloud]
- *   letta cron list [--agent <id>] [--conversation <id>] [--runner local|cloud]
- *   letta cron get <id|name> [--runner local|cloud]
- *   letta cron runs --id <id> [--runner local|cloud]
- *   letta cron delete <id|name> [--runner local|cloud]   (alias: remove)
- *   letta cron delete --all [--agent <id>] [--runner local|cloud]
+ *   letta cron add --prompt <text> --every <interval> [--agent <id>] [--conversation <id>]
+ *   letta cron add --prompt <text> --at <time> [--once] [--agent <id>]
+ *   letta cron add --prompt <text> --cron <expr> [--agent <id>]
+ *   letta cron list [--agent <id>] [--conversation <id>]
+ *   letta cron get <id|name>
+ *   letta cron runs --id <id>
+ *   letta cron delete <id|name>   (alias: remove)
+ *   letta cron delete --all [--agent <id>]
  *
- * Runners (LET-9692):
- * - "cloud" (default for cloud agents): durable Cloud schedules stored by the
- *   Letta API. The implicit default keeps executing where it was created
- *   (external listener target, or untargeted from a managed sandbox);
- *   explicit --runner cloud always executes in the agent's Cloud sandbox.
- *   When the current runtime is unreachable by Cloud scheduling
- *   (desktop-local, unregistered), the implicit default falls back to the
- *   local runner with a warning — that is the only placement that preserves
- *   execution locality there.
- * - "local": runtime-local tasks in ~/.letta/crons.json, executed by the WS
- *   listener on this device. Default for local-backend agents and self-hosted
- *   servers; explicit opt-in (--runner local) for schedules that must run on
- *   this specific machine.
+ * Schedule ownership follows execution: managed Cloud sandboxes use durable
+ * Cloud schedules; user-managed computers and self-hosted runtimes use their
+ * local scheduler.
  */
 
 import { parseArgs } from "node:util";
@@ -36,7 +26,6 @@ import {
   listCloudScheduleHistory,
   listCloudSchedules,
 } from "@/backend/api/schedules";
-import { resolveBackendMode } from "@/backend/backend-mode";
 import {
   addTask,
   deleteAllTasks,
@@ -52,10 +41,7 @@ import {
 import {
   buildCloudScheduleInput,
   CLOUD_EXECUTION_TARGET,
-  type CronRunner,
   resolveCronCreatePlacement,
-  resolveCronRunner,
-  resolveCronRunnerForAgent,
 } from "@/cron/runner";
 import { getRuntimeActingUserId } from "@/runtime-context";
 import {
@@ -64,6 +50,7 @@ import {
   resolveCronConversationFilter,
 } from "./cron-scope";
 import {
+  canManageCloudSchedules,
   ensureSettingsForCloud,
   printAmbiguousTaskName,
   resolveTaskName,
@@ -79,10 +66,10 @@ Usage:
   letta cron add --prompt <text> --at <time> [--once] [options]
   letta cron add --prompt <text> --cron <expr> [options]
   letta cron list [options]
-  letta cron get <id|name> [--runner local|cloud]
-  letta cron runs --id <id> [--limit <n>] [--runner local|cloud]
-  letta cron delete <id|name> [--runner local|cloud]   (alias: remove)
-  letta cron delete --all [--agent <id>] [--runner local|cloud]
+  letta cron get <id|name>
+  letta cron runs --id <id> [--limit <n>]
+  letta cron delete <id|name>   (alias: remove)
+  letta cron delete --all [--agent <id>]
 
 Add options:
   --prompt <text>        Prompt to send to the agent (required)
@@ -95,30 +82,14 @@ Add options:
   --conversation <id>    Conversation target (omit or "new" for a fresh
                          conversation per fire; "self" for the current
                          conversation; "default" for the agent default)
-  --runner <runner>      Where the schedule lives and fires (normally omit:
-                         the default keeps the schedule running where it was
-                         created):
-                           cloud - durable Cloud schedule (default for cloud
-                                   agents on Cloud-reachable runtimes:
-                                   external listeners are targeted, managed
-                                   sandboxes stay untargeted). Explicit
-                                   --runner cloud always uses the Cloud sandbox
-                           local - this device's scheduler (~/.letta/crons.json);
-                                   only fires while a session runs here (default
-                                   for local-backend agents / self-hosted, and
-                                   the fallback when Cloud scheduling cannot
-                                   reach this computer)
-  --computer <id>        (cloud runner only) Override execution with a
-                         connected external computer (deviceId from
-                         \`letta computers list\`). Falls back to the Cloud
-                         sandbox if the computer is offline at fire time.
-                         Managed sandboxes and Desktop-local connections are
-                         not currently valid Cloud schedule targets.
+  --computer <id>        (managed Cloud sandbox only) Run on a connected
+                         external computer (deviceId from \`letta computers
+                         list\`). Falls back to the Cloud sandbox if that
+                         computer is offline at fire time.
 
 List/filter options:
   --agent <id>           Filter by agent ID
   --conversation <id>    Filter by conversation ID
-  --runner <runner>      Only show tasks owned by this runner
 
 Delete options:
   --all                  Delete all tasks for the given agent
@@ -145,7 +116,6 @@ const CRON_OPTIONS = {
   id: { type: "string" },
   limit: { type: "string" },
   "run-id": { type: "string" },
-  runner: { type: "string" },
   computer: { type: "string" },
 } as const;
 
@@ -158,27 +128,6 @@ function parseCronArgs(argv: string[]) {
     strict: true,
     allowPositionals: true,
   });
-}
-
-// ── Runner resolution ───────────────────────────────────────────────
-
-/**
- * Probe whether the configured server serves the Cloud schedule routes.
- * Managed sandboxes and Desktop sessions point LETTA_BASE_URL at a localhost
- * proxy that forwards to the Letta API, so this is a capability probe rather
- * than a URL-shape check. A 404/405 means the route doesn't exist (self-hosted
- * OSS core); any other response (including auth errors) means the route is
- * there and real requests will surface their own errors.
- */
-async function getRunnerForAgent(
-  explicit: string | undefined,
-  agentId: string,
-): Promise<{ runner: CronRunner; reason: string } | { error: string }> {
-  return resolveCronRunnerForAgent(explicit, agentId);
-}
-
-function isRunnerFlagValid(value: string | undefined): boolean {
-  return value === undefined || value === "local" || value === "cloud";
 }
 
 // ── Cloud output mapping ────────────────────────────────────────────
@@ -306,7 +255,6 @@ async function handleAdd(values: CronArgValues): Promise<number> {
   }
 
   const placement = await resolveCronCreatePlacement({
-    explicitRunner: values.runner,
     agentId,
     targetDeviceId: values.computer,
   });
@@ -314,7 +262,7 @@ async function handleAdd(values: CronArgValues): Promise<number> {
     console.error(`Error: ${placement.error}`);
     return 1;
   }
-  const { runner, targetDeviceId, localFallbackNote } = placement;
+  const { runner, targetDeviceId } = placement;
 
   if (runner === "cloud") {
     return handleCloudAdd({
@@ -363,16 +311,8 @@ async function handleAdd(values: CronArgValues): Promise<number> {
     if (note) {
       output.note = note;
     }
-    // Recurring jobs pinned to an unregistered computer are usually a
-    // mistake (the user expects "every Monday" to survive this session);
-    // one-shot follow-ups usually aren't (a dead session obviates them).
-    const fallbackWarning =
-      localFallbackNote && recurring
-        ? `${localFallbackNote} Recurring schedules on an unregistered computer stop firing whenever no session is running — strongly consider a durable alternative.`
-        : localFallbackNote;
-    const warnings = [fallbackWarning, result.warning].filter(Boolean);
-    if (warnings.length > 0) {
-      output.warning = warnings.join(" ");
+    if (result.warning) {
+      output.warning = result.warning;
     }
 
     console.log(JSON.stringify(output, null, 2));
@@ -460,95 +400,48 @@ async function handleCloudAdd(params: CloudAddParams): Promise<number> {
     console.error(
       `Error: failed to create Cloud schedule: ${err instanceof Error ? err.message : String(err)}`,
     );
-    console.error(
-      "No schedule was created. Retry, or pass --runner local to schedule on this device instead.",
-    );
+    console.error("No schedule was created. Retry the request.");
     return 1;
   }
 }
 
 async function handleList(values: CronArgValues): Promise<number> {
-  if (!isRunnerFlagValid(values.runner)) {
-    console.error(
-      `Error: invalid --runner "${values.runner}". Expected "local" or "cloud".`,
-    );
-    return 1;
-  }
-
   const agentId = values.agent || process.env.LETTA_AGENT_ID || undefined;
   const conversationId = resolveCronConversationFilter(values.conversation);
   if (conversationId === null) return 1;
 
-  const includeLocal = values.runner !== "cloud";
-  const includeCloud = values.runner !== "local";
+  const output: Array<Record<string, unknown>> = listTasks({
+    agent_id: agentId,
+    conversation_id: conversationId,
+  }).map((task) => ({ ...task, runner: "local" }));
 
-  const output: Array<Record<string, unknown>> = [];
-
-  if (includeLocal) {
-    const tasks = listTasks({
-      agent_id: agentId,
-      conversation_id: conversationId,
-    });
-    for (const task of tasks) {
-      output.push({ ...task, runner: "local" });
-    }
-  }
-
-  if (includeCloud && agentId) {
-    const cloudExplicit = values.runner === "cloud";
-
-    // No capability pre-probe here: the probe maps any 404/405 to "server
-    // doesn't serve Cloud schedules" and would skip this section silently,
-    // hiding real Cloud schedules behind e.g. a transient auth/visibility
-    // 404 (LET-10492). Listing is read-only, so just attempt it — cheap
-    // local-only cases (local-backend agents) still resolve without a
-    // network call, and every failure is surfaced as a warning.
-    const backendMode = resolveBackendMode();
-    const preliminary = resolveCronRunner({ agentId, backendMode });
-    const cloudCandidate =
-      !("error" in preliminary) && preliminary.runner === "cloud";
-
-    if (cloudCandidate || cloudExplicit) {
-      try {
-        await ensureSettingsForCloud();
-        const response = await listCloudSchedules(agentId);
-        for (const schedule of response.scheduled_messages) {
-          if (
-            conversationId &&
-            (schedule.conversation_id ?? "default") !== conversationId
-          ) {
-            continue;
-          }
-          output.push(formatCloudScheduleOutput(schedule));
-        }
-      } catch (err) {
-        // Never skip silently (LET-10492) — but calibrate the tone: a 404/405
-        // usually means the server doesn't serve the schedule routes at all
-        // (self-hosted OSS core), which is an expected steady state, not a
-        // failure. It can also mean the agent isn't visible to the current
-        // credential, so name both.
+  if (agentId && canManageCloudSchedules(agentId)) {
+    try {
+      await ensureSettingsForCloud();
+      const response = await listCloudSchedules(agentId);
+      for (const schedule of response.scheduled_messages) {
         if (
-          err instanceof ApiRequestError &&
-          (err.status === 404 || err.status === 405)
+          conversationId &&
+          (schedule.conversation_id ?? "default") !== conversationId
         ) {
-          console.error(
-            "Note: Cloud schedules not listed (server does not serve the schedule routes, or this agent is not visible to the current credential).",
-          );
-        } else {
-          console.error(
-            `Warning: Cloud schedules not listed: ${err instanceof Error ? err.message : String(err)}`,
-          );
+          continue;
         }
-        if (cloudExplicit) {
-          return 1;
-        }
+        output.push(formatCloudScheduleOutput(schedule));
+      }
+    } catch (err) {
+      if (
+        err instanceof ApiRequestError &&
+        (err.status === 404 || err.status === 405)
+      ) {
+        console.error(
+          "Note: Cloud schedules not listed (server does not serve the schedule routes, or this agent is not visible to the current credential).",
+        );
+      } else {
+        console.error(
+          `Warning: Cloud schedules not listed: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
-  } else if (includeCloud && values.runner === "cloud" && !agentId) {
-    console.error(
-      "Error: --agent or LETTA_AGENT_ID required to list Cloud schedules.",
-    );
-    return 1;
   }
 
   console.log(JSON.stringify(output, null, 2));
@@ -559,13 +452,6 @@ async function handleGet(
   values: CronArgValues,
   positionals: string[],
 ): Promise<number> {
-  if (!isRunnerFlagValid(values.runner)) {
-    console.error(
-      `Error: invalid --runner "${values.runner}". Expected "local" or "cloud".`,
-    );
-    return 1;
-  }
-
   const taskRef = positionals[1];
   if (!taskRef) {
     console.error(
@@ -575,18 +461,13 @@ async function handleGet(
   }
 
   const agentId = resolveCronAgentId(values.agent);
-
-  // Local store is a cheap file read; check it first unless --runner cloud.
-  if (values.runner !== "cloud") {
-    const task = getTask(taskRef);
-    if (task) {
-      console.log(JSON.stringify({ ...task, runner: "local" }, null, 2));
-      return 0;
-    }
+  const task = getTask(taskRef);
+  if (task) {
+    console.log(JSON.stringify({ ...task, runner: "local" }, null, 2));
+    return 0;
   }
 
-  // Cloud lookup by ID (unless --runner local).
-  if (values.runner !== "local" && agentId) {
+  if (agentId && canManageCloudSchedules(agentId)) {
     try {
       await ensureSettingsForCloud();
       const schedule = await getCloudSchedule(agentId, taskRef);
@@ -599,22 +480,10 @@ async function handleGet(
         );
         return 1;
       }
-      // 404 → not an ID; fall through to name resolution.
     }
   }
 
-  if (values.runner !== "local" && !agentId) {
-    console.error(
-      `Error: task ${taskRef} not found locally, and --agent or LETTA_AGENT_ID is required to look up Cloud schedules.`,
-    );
-    return 1;
-  }
-
-  // Not an ID in either store — try it as a task name (LET-10492).
-  const resolved = await resolveTaskName(taskRef, {
-    runner: values.runner,
-    agentId,
-  });
+  const resolved = await resolveTaskName(taskRef, { agentId });
   if (resolved && "ambiguous" in resolved) {
     printAmbiguousTaskName(taskRef, resolved.ambiguous);
     return 1;
@@ -641,13 +510,6 @@ async function handleGet(
 }
 
 async function handleRuns(values: CronArgValues): Promise<number> {
-  if (!isRunnerFlagValid(values.runner)) {
-    console.error(
-      `Error: invalid --runner "${values.runner}". Expected "local" or "cloud".`,
-    );
-    return 1;
-  }
-
   const id = values.id;
   if (!id || typeof id !== "string") {
     console.error("Error: --id is required. Usage: letta cron runs --id <id>");
@@ -658,8 +520,7 @@ async function handleRuns(values: CronArgValues): Promise<number> {
   const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : 50;
   const runId = values["run-id"];
 
-  // Local run log first (cheap file read) unless --runner cloud.
-  if (values.runner !== "cloud" && getTask(id)) {
+  if (getTask(id)) {
     try {
       const logPath = getCronRunLogPath(id);
       const page = readCronRunLogEntriesPage(logPath, {
@@ -677,16 +538,15 @@ async function handleRuns(values: CronArgValues): Promise<number> {
     }
   }
 
-  if (values.runner === "local") {
-    console.error(`Error: task ${id} not found.`);
-    return 1;
-  }
-
   const agentId = resolveCronAgentId(values.agent);
   if (!agentId) {
     console.error(
-      `Error: task ${id} not found locally, and --agent or LETTA_AGENT_ID is required to look up Cloud schedule runs.`,
+      `Error: --agent or LETTA_AGENT_ID is required to look up Cloud schedule runs for task ${id}.`,
     );
+    return 1;
+  }
+  if (!canManageCloudSchedules(agentId)) {
+    console.error(`Error: task ${id} not found.`);
     return 1;
   }
 
@@ -715,13 +575,6 @@ async function handleDelete(
   values: CronArgValues,
   positionals: string[],
 ): Promise<number> {
-  if (!isRunnerFlagValid(values.runner)) {
-    console.error(
-      `Error: invalid --runner "${values.runner}". Expected "local" or "cloud".`,
-    );
-    return 1;
-  }
-
   if (values.all) {
     return handleDeleteAll(values);
   }
@@ -734,24 +587,15 @@ async function handleDelete(
     return 1;
   }
 
-  if (values.runner !== "cloud") {
-    const found = deleteTask(taskRef);
-    if (found) {
-      console.log(JSON.stringify({ deleted: taskRef, runner: "local" }));
-      return 0;
-    }
+  const found = deleteTask(taskRef);
+  if (found) {
+    console.log(JSON.stringify({ deleted: taskRef, runner: "local" }));
+    return 0;
   }
 
   const agentId = resolveCronAgentId(values.agent);
 
-  // Cloud delete by ID (unless --runner local).
-  if (values.runner !== "local") {
-    if (!agentId) {
-      console.error(
-        `Error: task ${taskRef} not found locally, and --agent or LETTA_AGENT_ID is required to delete Cloud schedules.`,
-      );
-      return 1;
-    }
+  if (agentId && canManageCloudSchedules(agentId)) {
     try {
       await ensureSettingsForCloud();
       // Verify existence first: the cloud delete endpoint is a soft-delete
@@ -773,10 +617,7 @@ async function handleDelete(
 
   // Not an ID in either store — try it as a task name (LET-10492): `add`
   // requires --name, so the name is the handle users actually remember.
-  const resolved = await resolveTaskName(taskRef, {
-    runner: values.runner,
-    agentId,
-  });
+  const resolved = await resolveTaskName(taskRef, { agentId });
   if (resolved && "ambiguous" in resolved) {
     printAmbiguousTaskName(taskRef, resolved.ambiguous);
     return 1;
@@ -817,36 +658,24 @@ async function handleDeleteAll(values: CronArgValues): Promise<number> {
     return 1;
   }
 
-  const includeLocal = values.runner !== "cloud";
-  const includeCloud = values.runner !== "local";
-
-  let localDeleted = 0;
-  if (includeLocal) {
-    localDeleted = deleteAllTasks(agentId);
-  }
-
+  const localDeleted = deleteAllTasks(agentId);
   let cloudDeleted = 0;
-  if (includeCloud) {
-    const resolved = await getRunnerForAgent(undefined, agentId);
-    const cloudCapable = !("error" in resolved) && resolved.runner === "cloud";
-    const cloudExplicit = values.runner === "cloud";
-
-    if (cloudCapable || cloudExplicit) {
-      try {
-        const response = await listCloudSchedules(agentId);
-        for (const schedule of response.scheduled_messages) {
-          await deleteCloudSchedule(agentId, schedule.id);
-          cloudDeleted += 1;
-        }
-      } catch (err) {
-        console.error(
-          `Error: failed to delete Cloud schedules: ${err instanceof Error ? err.message : String(err)}`,
-        );
-        console.error(
-          `Deleted so far: ${localDeleted} local, ${cloudDeleted} cloud.`,
-        );
-        return 1;
+  if (canManageCloudSchedules(agentId)) {
+    try {
+      await ensureSettingsForCloud();
+      const response = await listCloudSchedules(agentId);
+      for (const schedule of response.scheduled_messages) {
+        await deleteCloudSchedule(agentId, schedule.id);
+        cloudDeleted += 1;
       }
+    } catch (err) {
+      console.error(
+        `Error: failed to delete Cloud schedules: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      console.error(
+        `Deleted so far: ${localDeleted} local, ${cloudDeleted} cloud.`,
+      );
+      return 1;
     }
   }
 

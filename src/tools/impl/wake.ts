@@ -1,4 +1,5 @@
 import { CronExpressionParser } from "cron-parser";
+import { isLocalAgentId } from "@/agent/agent-id";
 import { ApiRequestError } from "@/backend/api/request";
 import {
   type CloudSchedule,
@@ -213,19 +214,15 @@ async function listCurrentWakes(
   args: WakeArgs,
   deps: WakeDeps,
 ): Promise<{ wakes: WakeRecord[]; warnings: string[] }> {
-  const localTasks = (deps.listLocal ?? listTasks)({
+  const wakes = (deps.listLocal ?? listTasks)({
     agent_id: scope.agentId,
     conversation_id: scope.conversationId,
-  });
-  const wakes = localTasks
+  })
     .filter((task) => task.status === "active" || task.status === "paused")
     .map(localWakeRecord);
   const warnings: string[] = [];
 
-  if (
-    resolveBackendMode() === "local" ||
-    scope.agentId.startsWith("agent-local-")
-  ) {
+  if (resolveBackendMode() === "local" || isLocalAgentId(scope.agentId)) {
     return { wakes, warnings };
   }
 
@@ -349,11 +346,9 @@ async function createWake(
     scheduled_for: timing.scheduledFor,
   };
   const created = (deps.addLocal ?? addTask)(input);
-  const warnings = [
-    ...current.warnings,
-    placement.localFallbackNote,
-    created.warning,
-  ].filter((warning): warning is string => Boolean(warning));
+  const warnings = [...current.warnings, created.warning].filter(
+    (warning): warning is string => Boolean(warning),
+  );
   return result("success", {
     action: "created",
     id: created.task.id,
