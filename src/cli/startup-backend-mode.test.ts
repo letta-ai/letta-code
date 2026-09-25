@@ -12,6 +12,7 @@ import {
   LOCAL_BACKEND_EXPERIMENTAL_ENV,
 } from "@/backend/local/paths";
 import {
+  createStartupAgentPickerHandler,
   getStartupBackendLookupOrder,
   inferBackendModeFromAgentId,
   resolveSubcommandBackendMode,
@@ -140,16 +141,28 @@ describe("startup picker backend selection", () => {
       }),
     );
     configureBackendMode("api");
-
-    const selected = await switchBackendForSelectedStartupAgent(
-      agentId,
+    const selectedAgentIds: string[] = [];
+    let ready = false;
+    const onSelect = createStartupAgentPickerHandler(
       async () => {
         configureBackendMode("local");
         return true;
       },
+      (selected) => {
+        expect(resolveBackendMode()).toBe("local");
+        selectedAgentIds.push(selected);
+      },
+      () => {
+        ready = true;
+      },
+      (message) => {
+        throw new Error(message);
+      },
     );
+    await onSelect(agentId);
 
-    expect(selected).toBe(true);
+    expect(ready).toBe(true);
+    expect(selectedAgentIds).toEqual([agentId]);
     expect(resolveBackendMode()).toBe("local");
     expect((await getBackend().retrieveAgent(agentId)).name).toBe(
       "Pinned Local Agent",

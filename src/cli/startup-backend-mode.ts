@@ -31,6 +31,32 @@ export async function switchBackendForSelectedStartupAgent(
   return true;
 }
 
+export function createStartupAgentPickerHandler(
+  tryConfigureLocal: () => Promise<boolean>,
+  selectAgent: (agentId: string) => void,
+  onReady: () => void,
+  onError: (message: string) => void,
+): (agentId: string) => Promise<void> {
+  return async (agentId) => {
+    try {
+      const ready = await switchBackendForSelectedStartupAgent(
+        agentId,
+        tryConfigureLocal,
+      );
+      if (!ready) {
+        onError("Local backend data needs migration.");
+        return;
+      }
+      selectAgent(agentId);
+      onReady();
+    } catch (error) {
+      onError(
+        `Unable to select agent: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  };
+}
+
 export function getStartupBackendLookupOrder(
   activeMode: StartupBackendMode,
   explicitMode?: StartupBackendMode,

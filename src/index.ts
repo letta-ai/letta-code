@@ -62,10 +62,10 @@ import type { ApprovalRequest } from "./cli/helpers/stream";
 import { initTerminalTheme } from "./cli/helpers/terminal-theme";
 import { ProfileSelectionInline } from "./cli/profile-selection";
 import {
+  createStartupAgentPickerHandler,
   getStartupBackendLookupOrder,
   inferBackendModeFromAgentId,
   resolveSubcommandBackendMode,
-  switchBackendForSelectedStartupAgent,
 } from "./cli/startup-backend-mode";
 import {
   validateConversationDefaultRequiresAgent,
@@ -1595,10 +1595,16 @@ async function main(): Promise<void> {
           modelPrefetchTimer.unref?.();
         }
 
-        // --conversation identifies its agent unless it is "default".
+        // =====================================================================
+        // TOP-LEVEL PATH: --conversation <id>
+        // Conversation ID is unique, so we can derive the agent from it
+        // (except for "default" which requires --agent flag, validated above)
+        // =====================================================================
         if (specifiedConversationId) {
           if (specifiedConversationId === "default") {
-            // --agent was validated before reaching this branch.
+            // "default" requires --agent (validated in flag preprocessing above)
+            // Use the specified agent directly, skip conversation validation
+            // TypeScript can't see the validation above, but specifiedAgentId is guaranteed
             if (!specifiedAgentId) {
               throw new Error("Unreachable: --conv default requires --agent");
             }
@@ -1628,7 +1634,10 @@ async function main(): Promise<void> {
           return;
         }
 
-        // --resume selects a conversation for the last-used agent.
+        // =====================================================================
+        // TOP-LEVEL PATH: --resume
+        // Show conversation selector for last-used agent (local → global fallback)
+        // =====================================================================
         if (shouldResume) {
           const localSession = settingsManager.getLocalLastSession(
             process.cwd(),
@@ -1639,7 +1648,9 @@ async function main(): Promise<void> {
           const globalSession = settingsManager.getGlobalLastSession();
           const globalAgentId = globalSession?.agentId;
 
-          // LRU getters already filter by active backend.
+          // Both LRU getters already filter by the active server key (which
+          // encodes the backend mode), so no extra compatibility check is
+          // needed here.
           const preferredResumeAgentId =
             (startupBackendMode === "local" ? localAgentId : globalAgentId) ??
             null;
@@ -1669,12 +1680,17 @@ async function main(): Promise<void> {
           process.exit(1);
         }
 
-        // Default path: local LRU → global LRU → selector → create default.
+        // =====================================================================
+        // DEFAULT PATH: No special flags
+        // Check local LRU → global LRU → selector → create default
+        // =====================================================================
 
+        // Short-circuit: flags handled by init() skip resolution entirely
         if (forceNew || agentIdArg) {
           // For --agent/--name: restore conversation from local session if the
           // agent matches, so we don't clobber a real conv ID with "default".
           if (agentIdArg && !forceNew && !forceNewConversation) {
+            // loadLocalProjectSettings is cached if already loaded (e.g. --name)
             await settingsManager.loadLocalProjectSettings(process.cwd());
             const localSession = settingsManager.getLocalLastSession(
               process.cwd(),
@@ -2433,7 +2449,6 @@ async function main(): Promise<void> {
     if (showKeybindingSetup === null) {
       return null;
     }
-
     // During initial "selecting" phase, render ProfileSelectionInline with loading state
     // to prevent component tree switch whitespace artifacts
     if (loadingState === "selecting") {
@@ -2446,7 +2461,6 @@ async function main(): Promise<void> {
         onExit: () => process.exit(0),
       });
     }
-
     // Show conversation selector for --resume flag
     if (loadingState === "selecting_conversation" && resumeAgentId) {
       return React.createElement(ConversationSelector, {
@@ -2466,7 +2480,6 @@ async function main(): Promise<void> {
         },
       });
     }
-
     // Show global agent selector in fresh repos with global pinned agents
     if (loadingState === "selecting_global") {
       return React.createElement(ProfileSelectionInline, {
@@ -2479,25 +2492,12 @@ async function main(): Promise<void> {
           availableServerModels.length > 0 ? availableServerModels : undefined,
         defaultModelHandle: customApiDefaultModel ?? undefined,
         serverBaseUrl: customApiBaseUrl ?? undefined,
-        onSelect: (agentId: string) => {
-          void switchBackendForSelectedStartupAgent(
-            agentId,
-            tryConfigureStartupLocalBackend,
-          )
-            .then((ready) => {
-              if (!ready) {
-                setFailedAgentMessage("Local backend data needs migration.");
-                return;
-              }
-              setSelectedGlobalAgentId(agentId);
-              setLoadingState("assembling");
-            })
-            .catch((error) => {
-              setFailedAgentMessage(
-                `Unable to select agent: ${error instanceof Error ? error.message : String(error)}`,
-              );
-            });
-        },
+        onSelect: createStartupAgentPickerHandler(
+          tryConfigureStartupLocalBackend,
+          setSelectedGlobalAgentId,
+          () => setLoadingState("assembling"),
+          setFailedAgentMessage,
+        ),
         onCreateNew: () => {
           setUserRequestedNewAgent(true);
           setLoadingState("assembling");
