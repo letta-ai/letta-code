@@ -756,11 +756,6 @@ export function App({
   const memfsWatcherRef = useRef<ReturnType<
     typeof import("node:fs").watch
   > | null>(null);
-  const pendingGitReminderRef = useRef<{
-    dirty: boolean;
-    aheadOfRemote: boolean;
-    summary: string;
-  } | null>(null);
   const [feedbackPrefill, setFeedbackPrefill] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [modelSelectorOptions, setModelSelectorOptions] = useState<{
@@ -3533,14 +3528,9 @@ export function App({
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         debugWarn("memfs-git", `Startup sync failed: ${errMsg}`);
-        // Warn user visually
+        // The user sees it; the agent cannot fix a failed pull, and post-turn
+        // sync retries it after the next turn.
         appendError(`Memory git sync failed: ${errMsg}`);
-        // Inject reminder so the agent also knows memory isn't synced
-        pendingGitReminderRef.current = {
-          dirty: false,
-          aheadOfRemote: false,
-          summary: `Git memory sync failed on startup: ${errMsg}\nMemory may be stale. Try running: git -C ${getScopedMemoryFilesystemRoot(agentId)} pull`,
-        };
       }
     })();
   }, [agentId, agentName, loadingState, appendError]);
@@ -4136,6 +4126,7 @@ export function App({
     agentLastRunAt,
     agentName,
     agentState,
+    appendError,
     agentStateRef,
     appendTaskNotificationEvents,
     bashCommandCacheRef,
@@ -4172,7 +4163,6 @@ export function App({
     overrideContentPartsRef,
     pendingApprovals,
     pendingConversationSwitchRef,
-    pendingGitReminderRef,
     processConversation,
     processConversationWithQueuedApprovals,
     profileConfirmPending,

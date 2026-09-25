@@ -27,7 +27,6 @@ import {
 import {
   getActiveMemoryDirectory,
   isActiveMemfsEnabled,
-  isLocalMemfsActive,
 } from "@/agent/memory-runtime";
 import { buildReflectionMemoryScope } from "@/agent/memory-worktree";
 import { sendMessageStreamWithBackend } from "@/agent/message";
@@ -162,6 +161,7 @@ import { handleProfileCommand } from "./submit-profile-commands";
 import type {
   ActiveOverlay,
   AppCommandRunner,
+  AppendError,
   ProcessConversation,
   StaticItem,
 } from "./types";
@@ -169,12 +169,6 @@ import type {
 type BashCommandCacheEntry = {
   input: string;
   output: string;
-};
-
-type PendingGitReminder = {
-  dirty: boolean;
-  aheadOfRemote: boolean;
-  summary: string;
 };
 
 type ProfileConfirmPending = {
@@ -207,6 +201,7 @@ type SubmitHandlerContext = {
   agentLastRunAt: string | null;
   agentName: string | null;
   agentState: AgentState | null | undefined;
+  appendError: AppendError;
   agentStateRef: MutableRefObject<AgentState | null | undefined>;
   appendTaskNotificationEvents: (summaries: string[]) => boolean;
   bashCommandCacheRef: MutableRefObject<BashCommandCacheEntry[]>;
@@ -258,7 +253,6 @@ type SubmitHandlerContext = {
   overrideContentPartsRef: MutableRefObject<MessageCreate["content"] | null>;
   pendingApprovals: ApprovalRequest[];
   pendingConversationSwitchRef: MutableRefObject<ConversationSwitchContext | null>;
-  pendingGitReminderRef: MutableRefObject<PendingGitReminder | null>;
   processConversation: ProcessConversation;
   processConversationWithQueuedApprovals: ProcessConversation;
   profileConfirmPending: ProfileConfirmPending | null;
@@ -481,6 +475,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     agentLastRunAt,
     agentName,
     agentState,
+    appendError,
     agentStateRef,
     appendTaskNotificationEvents,
     bashCommandCacheRef,
@@ -517,7 +512,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     overrideContentPartsRef,
     pendingApprovals,
     pendingConversationSwitchRef,
-    pendingGitReminderRef,
     processConversation,
     processConversationWithQueuedApprovals,
     profileConfirmPending,
@@ -3591,29 +3585,6 @@ ${SYSTEM_REMINDER_CLOSE}
         bashCommandCacheRef.current = [];
       }
 
-      // Build git memory sync reminder if uncommitted changes or unpushed commits
-      let memoryGitReminder = "";
-      const gitStatus = pendingGitReminderRef.current;
-      if (gitStatus) {
-        const memoryDir = getScopedMemoryFilesystemRoot(agentId);
-        const localMemfs = isLocalMemfsActive();
-        const syncInstructions = localMemfs
-          ? `Commit memory changes locally when appropriate. Inspect with:\n\`\`\`bash\ngit -C ${JSON.stringify(memoryDir)} status\n\`\`\``
-          : `Inspect and fix the memory repository when appropriate. Commit any intended memory changes locally; the harness pushes clean committed memory changes automatically after turns.\n\`\`\`bash\ngit -C ${JSON.stringify(memoryDir)} status\n\`\`\``;
-        memoryGitReminder = `${SYSTEM_REMINDER_OPEN}
-${localMemfs ? "MEMORY COMMIT" : "MEMORY SYNC"}: Your memory directory has uncommitted changes${localMemfs ? "." : " or is ahead of the remote."}
-
-${gitStatus.summary}
-
-${syncInstructions}
-
-You should do this soon to avoid losing memory updates. It only takes a few seconds.
-${SYSTEM_REMINDER_CLOSE}
-`;
-        // Clear after injecting so it doesn't repeat
-        pendingGitReminderRef.current = null;
-      }
-
       // Combine reminders with content as separate text parts.
       // This preserves each reminder boundary in the API payload.
       // Note: Task notifications now come through queueDisplay directly (added by messageQueueBridge)
@@ -3661,7 +3632,6 @@ ${SYSTEM_REMINDER_CLOSE}
       pushReminder(conversationSwitchAlert);
       pushReminder(bashCommandPrefix);
       pushReminder(userPromptSubmitHookFeedback);
-      pushReminder(memoryGitReminder);
       const messageContent = prependReminderPartsToContent(
         contentParts as MessageCreate["content"],
         reminderParts,
@@ -3755,6 +3725,8 @@ ${SYSTEM_REMINDER_CLOSE}
             text,
           });
         },
+        // A failed push is not the agent's to fix, so it is shown directly.
+        emitWarning: appendError,
       });
 
       // Clean up placeholders after submission

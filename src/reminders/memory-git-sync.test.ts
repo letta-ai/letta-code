@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,10 +8,14 @@ import type { MemoryPostTurnSyncResult } from "@/agent/memory-git";
 import { ensureMemoryConflictRepair } from "@/tools/impl/memory-task-lifecycle";
 import type { SpawnBackgroundSubagentTaskArgs } from "@/tools/impl/task";
 import {
-  formatAttachedRepositoriesPostTurnSyncReminders,
   formatAttachedRepositoryPostTurnSyncReminder,
+  resetPostTurnMemorySyncNotices,
   runPostTurnMemorySync,
 } from "./memory-git-sync";
+
+beforeEach(() => {
+  resetPostTurnMemorySyncNotices();
+});
 
 describe("post-turn memory push notification", () => {
   test("waits for a successful push before notifying readers", async () => {
@@ -98,28 +102,61 @@ describe("shared-memory post-turn reminders", () => {
     expect(reminder).toContain("harness pushes clean committed changes");
   });
 
-  test("only returns reminders that need agent action", () => {
-    const reminders = formatAttachedRepositoriesPostTurnSyncReminders({
-      results: [
-        {
-          name: "published",
-          path: "/tmp/published",
-          permissions: "read_write",
-          status: "pushed",
-          summary: "Pushed 1 pending shared-memory commit.",
-        },
-        {
-          name: "blocked",
-          path: "/tmp/blocked",
-          permissions: "read_write",
-          status: "conflict",
-          summary: "rebase in progress",
-        },
-      ],
-    });
+  test("only states the agent can act on become reminders", () => {
+    const reminder = (status: "pushed" | "push_failed" | "conflict") =>
+      formatAttachedRepositoryPostTurnSyncReminder({
+        name: "blocked",
+        path: "/tmp/blocked",
+        permissions: "read_write",
+        status,
+        summary: "status",
+      });
+    expect(reminder("pushed")).toBeNull();
+    // A failed push is retried by the harness; the agent cannot fix it.
+    expect(reminder("push_failed")).toBeNull();
+    expect(reminder("conflict")).toContain('"blocked"');
+  });
 
-    expect(reminders).toHaveLength(1);
-    expect(reminders[0]).toContain('"blocked"');
+  test("a shared repository push failure is shown to the user once, not to the agent", async () => {
+    const reminders: string[] = [];
+    const warnings: string[] = [];
+    const run = () =>
+      runPostTurnMemorySync(
+        {
+          agentId: "agent-test",
+          enqueueReminder: (text) => {
+            reminders.push(text);
+          },
+          emitWarning: (text) => {
+            warnings.push(text);
+          },
+        },
+        {
+          syncMemory: async () => ({
+            status: "clean",
+            summary: "clean",
+            memoryDir: "/tmp/memory",
+            localOnly: false,
+          }),
+          syncAttachedRepositories: async () => ({
+            results: [
+              {
+                name: "shared-notes",
+                path: "/tmp/shared-notes",
+                permissions: "read_write",
+                status: "push_failed",
+                summary: "remote: 401 Unauthorized.",
+              },
+            ],
+          }),
+        },
+      );
+    await run();
+    await run();
+    expect(reminders).toEqual([]);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('"shared-notes"');
+    expect(warnings[0]).toContain("401");
   });
 
   test("runs attached repository sync after the MemFS sync", async () => {
@@ -247,34 +284,73 @@ test("post-turn conflict launches the memory task and warns the primary, without
   expect(reminders[0]).toContain("MEMORY REPAIR IN PROGRESS");
   expect(reminders[0]).not.toContain("MEMORY GIT CONFLICT");
 });
-test("dirty and failed primary memory sync remind the primary instead of launching repair", async () => {
-  for (const [status, heading] of [
-    ["dirty", "MEMORY COMMIT NEEDED"],
-    ["push_failed", "MEMORY SYNC FAILED"],
-  ] as const) {
-    const messages: string[] = [];
-    await runPostTurnMemorySync(
-      {
-        agentId: "agent-memory-repair-test",
-        enqueueReminder: (text) => {
-          messages.push(text);
-        },
-        emitWarning: (text) => {
-          messages.push(text);
-        },
+/** Run post-turn sync against a fixed MemFS result, collecting what it delivers. */
+async function syncWith(
+  result: MemoryPostTurnSyncResult,
+  sinks: { reminders: string[]; warnings: string[] },
+): Promise<void> {
+  await runPostTurnMemorySync(
+    {
+      agentId: "agent-memory-repair-test",
+      enqueueReminder: (text) => {
+        sinks.reminders.push(text);
       },
-      {
-        syncMemory: async () => ({ ...conflict, status }),
-        syncAttachedRepositories: async () => ({ results: [] }),
-        repairConflict: () => {
-          throw new Error("must not launch a conflict repair");
-        },
+      emitWarning: (text) => {
+        sinks.warnings.push(text);
       },
-    );
-    expect(messages).toHaveLength(2);
-    expect(messages[0]).toContain(heading);
-    expect(messages[0]).toContain(conflict.memoryDir);
-  }
+    },
+    {
+      syncMemory: async () => result,
+      syncAttachedRepositories: async () => ({ results: [] }),
+      repairConflict: () => {
+        throw new Error("must not launch a conflict repair");
+      },
+    },
+  );
+}
+
+test("a dirty primary memory checkout reminds the primary instead of launching repair", async () => {
+  const sinks = { reminders: [] as string[], warnings: [] as string[] };
+  await syncWith({ ...conflict, status: "dirty" }, sinks);
+  expect(sinks.reminders).toHaveLength(1);
+  expect(sinks.reminders[0]).toContain("MEMORY COMMIT NEEDED");
+  expect(sinks.reminders[0]).toContain(conflict.memoryDir);
+  expect(sinks.warnings).toEqual([]);
+});
+
+test("a failed push is shown to the user once and never becomes an agent reminder", async () => {
+  const sinks = { reminders: [] as string[], warnings: [] as string[] };
+  const failed: MemoryPostTurnSyncResult = {
+    ...conflict,
+    status: "push_failed",
+    summary: "remote: 401 Unauthorized.",
+  };
+  await syncWith(failed, sinks);
+  await syncWith(failed, sinks);
+  expect(sinks.reminders).toEqual([]);
+  expect(sinks.warnings).toHaveLength(1);
+  expect(sinks.warnings[0]).toContain("Could not push the memory repository");
+  expect(sinks.warnings[0]).toContain("401");
+});
+
+test("an unchanged memory state is reminded once; a changed or cleared state again", async () => {
+  const sinks = { reminders: [] as string[], warnings: [] as string[] };
+  const dirty: MemoryPostTurnSyncResult = {
+    ...conflict,
+    status: "dirty",
+    summary: "1 uncommitted memory change(s).",
+  };
+  await syncWith(dirty, sinks);
+  await syncWith(dirty, sinks);
+  expect(sinks.reminders).toHaveLength(1);
+  await syncWith(
+    { ...dirty, summary: "2 uncommitted memory change(s)." },
+    sinks,
+  );
+  expect(sinks.reminders).toHaveLength(2);
+  await syncWith({ ...conflict, status: "clean", summary: "clean" }, sinks);
+  await syncWith(dirty, sinks);
+  expect(sinks.reminders).toHaveLength(3);
 });
 
 test("a conflict is reported to the primary only once repair has run on it", async () => {
@@ -309,17 +385,16 @@ test("a conflict is reported to the primary only once repair has run on it", asy
   expect(jobs).toHaveLength(1);
   expect(reminders).toHaveLength(1);
   expect(reminders[0]).toContain("MEMORY REPAIR IN PROGRESS");
-  // The worker is still running: keep the primary off the checkout.
+  // The worker is still running: the primary was already told once.
   await run();
   expect(jobs).toHaveLength(1);
-  expect(reminders).toHaveLength(2);
-  expect(reminders[1]).toContain("MEMORY REPAIR IN PROGRESS");
+  expect(reminders).toHaveLength(1);
   // The worker ran and could not resolve it: hand it to the primary.
   await run();
   expect(jobs).toHaveLength(1);
-  expect(reminders).toHaveLength(3);
-  expect(reminders[2]).toContain("MEMORY GIT CONFLICT");
-  expect(reminders[2]).toContain("automatic repair could not resolve");
+  expect(reminders).toHaveLength(2);
+  expect(reminders[1]).toContain("MEMORY GIT CONFLICT");
+  expect(reminders[1]).toContain("automatic repair could not resolve");
 });
 
 test("post-turn sync is skipped while another writer owns the checkout", async () => {

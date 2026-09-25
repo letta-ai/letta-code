@@ -1,7 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
-  type RepositoriesPostTurnSyncResult,
   type RepositoryPostTurnSyncResult,
   syncPendingAttachedRepositoryCommitsAfterTurn,
 } from "@/agent/attached-repository-git-sync";
@@ -21,7 +20,9 @@ export interface RunPostTurnMemorySyncParams {
   agentId: string;
   conversationId?: string | null;
   isEnabled?: (agentId: string) => boolean;
+  /** Deliver a reminder to the agent on its next turn. */
   enqueueReminder?: (text: string) => void;
+  /** Show the user something the agent cannot act on: a push that failed. */
   emitWarning?: (text: string) => void | Promise<void>;
   onMemoryPushed?: () => void;
   debugLabel?: string;
@@ -53,7 +54,8 @@ ${SYSTEM_REMINDER_CLOSE}`;
 /**
  * Reminders for the primary's own post-turn MemFS sync. A conflict is normally
  * handed to a background repair worker; the conflict reminder is for one no
- * worker is handling any more.
+ * worker is handling any more. A failed push is not the agent's to fix (the
+ * harness retries after the next turn), so it is reported to the user instead.
  */
 export function formatMemoryPostTurnSyncReminder(
   result: MemoryPostTurnSyncResult,
@@ -83,31 +85,23 @@ ${action} when appropriate, staging only the files you changed. Do not run \`git
 ${SYSTEM_REMINDER_CLOSE}`;
   }
 
-  if (result.status === "push_failed") {
-    return `${SYSTEM_REMINDER_OPEN}
-MEMORY SYNC FAILED: The harness could not push pending memory commits.
-
-Memory directory: ${result.memoryDir}
-Status: ${result.summary}
-
-Inspect the memory repository and resolve any local git issue. The harness will retry remote push after a future turn when the repo is clean.
-${SYSTEM_REMINDER_CLOSE}`;
-  }
-
   return null;
+}
+
+/** A push the harness could not complete; shown to the user, not the agent. */
+export function formatMemoryPushFailureNotice(
+  result: MemoryPostTurnSyncResult | RepositoryPostTurnSyncResult,
+): string {
+  const target =
+    "name" in result
+      ? `attached shared-memory repository "${result.name}"`
+      : "memory repository";
+  return `Could not push the ${target}: ${result.summary} The harness will retry after the next turn.`;
 }
 
 export function formatAttachedRepositoryPostTurnSyncReminder(
   result: RepositoryPostTurnSyncResult,
 ): string | null {
-  if (
-    result.status === "clean" ||
-    result.status === "pushed" ||
-    result.status === "skipped"
-  ) {
-    return null;
-  }
-
   if (result.status === "conflict") {
     return `${SYSTEM_REMINDER_OPEN}
 SHARED MEMORY GIT CONFLICT: The attached shared-memory repository "${result.name}" needs manual conflict resolution.
@@ -130,22 +124,49 @@ Commit these changes when appropriate. The harness pushes clean committed change
 ${SYSTEM_REMINDER_CLOSE}`;
   }
 
-  return `${SYSTEM_REMINDER_OPEN}
-SHARED MEMORY SYNC FAILED: The harness could not push pending commits for attached shared-memory repository "${result.name}".
-
-Repository directory: ${result.path}
-Status: ${result.summary}
-
-Inspect the repository and resolve any local git issue. The harness will retry the push after a future turn when the repository is clean.
-${SYSTEM_REMINDER_CLOSE}`;
+  return null;
 }
 
-export function formatAttachedRepositoriesPostTurnSyncReminders(
-  result: RepositoriesPostTurnSyncResult,
-): string[] {
-  return result.results
-    .map(formatAttachedRepositoryPostTurnSyncReminder)
-    .filter((reminder): reminder is string => reminder !== null);
+/**
+ * Deliver at most one copy of a repository's current notice. The same dirty
+ * checkout or unresolved conflict would otherwise be re-announced after every
+ * turn until someone acts, and the agent already has the first copy in its
+ * context. A changed or cleared state resets it.
+ */
+const lastNotices = new Map<string, string>();
+
+async function deliverOnce(
+  key: string,
+  text: string | null,
+  deliver: (text: string) => void | Promise<void>,
+): Promise<void> {
+  if (text === null) {
+    lastNotices.delete(key);
+    return;
+  }
+  if (lastNotices.get(key) === text) return;
+  lastNotices.set(key, text);
+  await deliver(text);
+}
+
+/** Reset the per-repository delivery memory (tests). */
+export function resetPostTurnMemorySyncNotices(): void {
+  lastNotices.clear();
+}
+
+async function deliverPostTurnNotice(
+  params: RunPostTurnMemorySyncParams,
+  key: string,
+  result: MemoryPostTurnSyncResult | RepositoryPostTurnSyncResult,
+  reminder: string | null,
+): Promise<void> {
+  if (result.status === "push_failed") {
+    await deliverOnce(key, formatMemoryPushFailureNotice(result), (text) =>
+      params.emitWarning?.(text),
+    );
+    return;
+  }
+  await deliverOnce(key, reminder, (text) => params.enqueueReminder?.(text));
 }
 
 export async function runPostTurnMemorySync(
@@ -192,13 +213,14 @@ export async function runPostTurnMemorySync(
           const repairInProgress =
             result.status === "conflict" &&
             (await repairConflict({ ...params, result }));
-          const reminder = repairInProgress
-            ? formatMemoryRepairInProgressReminder(result)
-            : formatMemoryPostTurnSyncReminder(result);
-          if (reminder) {
-            params.enqueueReminder?.(reminder);
-            await params.emitWarning?.(reminder);
-          }
+          await deliverPostTurnNotice(
+            params,
+            memoryDir,
+            result,
+            repairInProgress
+              ? formatMemoryRepairInProgressReminder(result)
+              : formatMemoryPostTurnSyncReminder(result),
+          );
         } finally {
           await release?.();
         }
@@ -215,11 +237,13 @@ export async function runPostTurnMemorySync(
 
   try {
     const repositorySyncResult = await syncAttachedRepositories(params.agentId);
-    for (const reminder of formatAttachedRepositoriesPostTurnSyncReminders(
-      repositorySyncResult,
-    )) {
-      params.enqueueReminder?.(reminder);
-      await params.emitWarning?.(reminder);
+    for (const result of repositorySyncResult.results) {
+      await deliverPostTurnNotice(
+        params,
+        result.path,
+        result,
+        formatAttachedRepositoryPostTurnSyncReminder(result),
+      );
     }
   } catch (error) {
     debugWarn(
