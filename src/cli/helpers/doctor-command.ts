@@ -1,6 +1,37 @@
 import { detectMemoryFormat } from "@/agent/memory-format";
+import { getActiveMemoryDirectory } from "@/agent/memory-runtime";
+import { getBackend } from "@/backend";
+import {
+  buildTeleportMessage,
+  isCloudTeleportExecution,
+} from "@/cli/helpers/teleport-command";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { getTranscriptRoot } from "@/utils/transcript-paths";
+
+export function isDoctorOrTeleportCommand(input: string): boolean {
+  return (
+    input === "/doctor" ||
+    input.startsWith("/doctor ") ||
+    (input === "/teleport" && !getBackend().capabilities.localMemfs)
+  );
+}
+
+export async function buildDoctorOrTeleportMessage(
+  agentId: string,
+  conversationId: string | null,
+  input: string,
+): Promise<string> {
+  if (input === "/teleport") {
+    return buildTeleportMessage(isCloudTeleportExecution());
+  }
+  return buildDoctorMessage({
+    agentId,
+    conversationId,
+    memoryDir: getActiveMemoryDirectory(agentId),
+    local: getBackend().capabilities.localMemfs,
+    symptom: input.slice("/doctor".length).trim(),
+  });
+}
 
 /** Start a normal primary-agent investigation in the current conversation. */
 export function buildDoctorMessage(options: {

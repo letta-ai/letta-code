@@ -1,5 +1,6 @@
 import { Box, useInput } from "ink";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { getBackend } from "@/backend";
 import { commands } from "@/cli/commands/registry";
 import { getVersion } from "@/version";
 import { colors } from "./colors";
@@ -51,7 +52,11 @@ export function HelpDialog({ onClose }: HelpDialogProps) {
   // Get all non-hidden commands, sorted by order (includes custom commands)
   const allCommands = useMemo<CommandItem[]>(() => {
     const builtins = Object.entries(commands)
-      .filter(([_, cmd]) => !cmd.hidden)
+      .filter(
+        ([name, cmd]) =>
+          !cmd.hidden &&
+          (name !== "/teleport" || !getBackend().capabilities.localMemfs),
+      )
       .map(([name, cmd]) => ({
         name,
         description: cmd.desc,

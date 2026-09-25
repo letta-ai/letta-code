@@ -1,3 +1,5 @@
+import { getBackend } from "@/backend";
+
 /**
  * Commands that can be dispatched by a remote client (e.g. letta-cloud desktop)
  * via the `execute_command` WebSocket message type.
@@ -9,6 +11,7 @@ export const SUPPORTED_REMOTE_COMMANDS: readonly string[] = [
   "clear",
   "clear-messages",
   "doctor",
+  "teleport",
   "dream",
   "reflect",
   "reflection",
@@ -25,3 +28,13 @@ export const SUPPORTED_REMOTE_COMMANDS: readonly string[] = [
   "secret",
   "monitor_stop",
 ];
+
+const LOCAL_REMOTE_COMMANDS = SUPPORTED_REMOTE_COMMANDS.filter(
+  (command) => command !== "teleport",
+);
+
+export function getSupportedRemoteCommands(): readonly string[] {
+  return getBackend().capabilities.localMemfs
+    ? LOCAL_REMOTE_COMMANDS
+    : SUPPORTED_REMOTE_COMMANDS;
+}

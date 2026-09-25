@@ -55,7 +55,10 @@ import {
 import type { ContextTracker } from "@/cli/helpers/context-tracker";
 import { resetContextHistory } from "@/cli/helpers/context-tracker";
 import type { ConversationSwitchContext } from "@/cli/helpers/conversation-switch-alert";
-import { buildDoctorMessage } from "@/cli/helpers/doctor-command";
+import {
+  buildDoctorOrTeleportMessage,
+  isDoctorOrTeleportCommand,
+} from "@/cli/helpers/doctor-command";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import {
   buildInitMessage,
@@ -3313,25 +3316,22 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           }
           return { submitted: true };
         }
-
-        if (trimmed === "/doctor" || trimmed.startsWith("/doctor ")) {
-          const cmd = commandRunner.start(msg, "Starting doctor...");
+        if (isDoctorOrTeleportCommand(trimmed)) {
+          const cmd = commandRunner.start(msg, "Starting agent...");
           const approvalCheck = await checkPendingApprovalsForSlashCommand();
           if (approvalCheck.blocked) {
             cmd.fail(
-              "Pending approval(s). Resolve approvals before running /doctor.",
+              `Pending approval(s). Resolve approvals before running ${trimmed.split(" ")[0]}.`,
             );
             return { submitted: false };
           }
           setCommandRunning(true);
           try {
-            const doctorMessage = buildDoctorMessage({
+            const doctorMessage = await buildDoctorOrTeleportMessage(
               agentId,
-              conversationId: conversationIdRef.current,
-              memoryDir: getActiveMemoryDirectory(agentId),
-              local: getBackend().capabilities.localMemfs,
-              symptom: trimmed.slice("/doctor".length).trim(),
-            });
+              conversationIdRef.current,
+              trimmed,
+            );
             cmd.finish("", true);
             await processConversationWithQueuedApprovals([
               {
@@ -3348,7 +3348,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           }
           return { submitted: true };
         }
-
         if (trimmed.startsWith("/feedback")) {
           const maybeMsg = msg.slice("/feedback".length).trim();
           setFeedbackPrefill(maybeMsg);

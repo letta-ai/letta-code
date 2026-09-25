@@ -5,6 +5,11 @@ import {
   type DreamCommandScope,
   requestCloudReflectionRun,
 } from "@/agent/reflection-runs";
+import { getBackend } from "@/backend";
+import {
+  buildTeleportMessage,
+  isCloudTeleportExecution,
+} from "@/cli/helpers/teleport-command";
 import { renderWorkflowTree } from "@/cli/helpers/workflow-display";
 import { listWorkflowExecutions } from "@/tools/workflow/execution-registry";
 import { handleMemoryRepositoryCommand } from "./memory-repository";
@@ -73,6 +78,12 @@ export const commands: Record<string, Command> = {
       // Handled specially in App.tsx to send initialization prompt
       return "Initializing memory...";
     },
+  },
+  "/teleport": {
+    desc: "Move this conversation to another computer",
+    order: 12.2,
+    noArgs: true,
+    handler: () => buildTeleportMessage(isCloudTeleportExecution()),
   },
   "/doctor": {
     desc: "Investigate an agent issue in this conversation",
@@ -707,7 +718,10 @@ export async function executeCommand(
     };
   }
 
-  const handler = commands[command];
+  const handler =
+    command === "/teleport" && getBackend().capabilities.localMemfs
+      ? undefined
+      : commands[command];
   if (!handler) {
     return {
       success: false,

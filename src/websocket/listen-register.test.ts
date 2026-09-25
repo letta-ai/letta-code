@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, mock } from "bun:test";
+import { __testSetBackend, type Backend, getBackend } from "@/backend";
 import {
   deriveListenerInstanceId,
   registerWithCloud,
@@ -21,6 +22,34 @@ beforeEach(() => {
 });
 
 describe("registerWithCloud", () => {
+  it("does not advertise teleport for local-state listeners", async () => {
+    const originalBackend = getBackend();
+    __testSetBackend({ capabilities: { localMemfs: true } } as Backend);
+    try {
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            connectionId: "conn-1",
+            wsUrl: "wss://example.com",
+          }),
+          { status: 200 },
+        ),
+      );
+      await registerWithCloud(
+        defaultOpts,
+        mockFetch as unknown as typeof fetch,
+      );
+      const [, init] = mockFetch.mock.calls[0] as unknown as [
+        string,
+        RequestInit,
+      ];
+      const body = JSON.parse(init.body as string);
+      expect(body.metadata.supported_commands).not.toContain("teleport");
+    } finally {
+      __testSetBackend(originalBackend);
+    }
+  });
+
   it("returns connectionId and wsUrl on successful JSON response", async () => {
     mockFetch.mockResolvedValueOnce(
       new Response(

@@ -21,6 +21,10 @@ import {
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
 import { parseReflectCommandArgs } from "@/cli/helpers/reflect-command";
 import { launchReflectionSubagent } from "@/cli/helpers/reflection-launcher";
+import {
+  buildTeleportMessage,
+  isCloudTeleportExecution,
+} from "@/cli/helpers/teleport-command";
 import { buildModCommandPrompt } from "@/cli/mods/command-runtime";
 import { DEFAULT_SUMMARIZATION_MODEL } from "@/constants";
 import { runPreCompactHooks } from "@/hooks";
@@ -143,6 +147,42 @@ export async function handleExecuteCommand(
                 type: "message",
                 role: "user",
                 content: [{ type: "text", text: doctorMessage }],
+              },
+            ],
+          },
+          socket,
+          conversationRuntime,
+          opts.onStatusChange,
+          opts.connectionId,
+        );
+        output = "";
+        break;
+      }
+
+      case "teleport": {
+        if (getBackend().capabilities.localMemfs) {
+          throw new Error("Unknown command: teleport");
+        }
+        const agentId = conversationRuntime.agentId;
+        if (!agentId) throw new Error("Teleport requires an active agent.");
+        const deviceId = opts.connectionId
+          ? conversationRuntime.listener.connections.get(opts.connectionId)
+              ?.options.deviceId
+          : process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID;
+        const message = await buildTeleportMessage(
+          isCloudTeleportExecution(process.env, deviceId),
+        );
+        await handleIncomingMessage(
+          {
+            type: "message",
+            agentId,
+            conversationId: conversationRuntime.conversationId,
+            actingUserId: command.runtime.acting_user_id,
+            messages: [
+              {
+                type: "message",
+                role: "user",
+                content: [{ type: "text", text: message }],
               },
             ],
           },
