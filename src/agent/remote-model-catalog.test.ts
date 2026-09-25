@@ -151,6 +151,22 @@ describe("toCatalogModel", () => {
     });
     expect("isFeatured" in mapped).toBe(false);
     expect("updateArgs" in mapped).toBe(false);
+    expect("supportsStructuredOutputs" in mapped).toBe(false);
+  });
+
+  test("preserves both structured-output values as capability metadata", () => {
+    for (const supported of [true, false]) {
+      const mapped = toCatalogModel({
+        id: "structured-output-model",
+        handle: "openai/example",
+        label: "Example",
+        brand: "openai",
+        maxContextWindow: 100000,
+        supportsStructuredOutputs: supported,
+      });
+      expect(mapped.supportsStructuredOutputs).toBe(supported);
+      expect(mapped.updateArgs).toBeUndefined();
+    }
   });
 });
 

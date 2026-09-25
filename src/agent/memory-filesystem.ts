@@ -561,11 +561,6 @@ export async function applyMemfsFlags(
       if (!promptUpdate.success) {
         throw new Error(promptUpdate.message);
       }
-      // Force recompile of the system message so the updated template
-      // (with the memfs addon) is reflected in the compiled prompt.
-      const { getClient } = await import("@/backend/api/client");
-      const client = await getClient();
-      await client.agents.recompile(agentId, { update_timestamp: false });
     }
     settingsManager.setMemfsEnabled(agentId, true);
   }
@@ -596,6 +591,14 @@ export async function applyMemfsFlags(
       "remote",
       options?.agentTags,
     );
+
+    if (enabling && !options?.skipPromptUpdate) {
+      // Compile after enabling the git-memory tag so Cloud can select the
+      // inherited prompt for the agent's new memory mode.
+      const { getClient } = await import("@/backend/api/client");
+      const client = await getClient();
+      await client.agents.recompile(agentId, { update_timestamp: false });
+    }
 
     // Fetch secrets from the server so they're available for $SECRET_NAME substitution.
     const { initSecretsFromServer } = await import("@/utils/secrets-store");

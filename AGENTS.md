@@ -380,11 +380,11 @@ resent. Interrupt handler marking tools cancelled even when execution completed.
 
 ### Shell Tool Parity Gap
 
-Policy/UI layer treats all shell variants (`Bash`, `shell_command`,
-`ShellCommand`, `exec_command`) identically, but the implementation
-layer differs. Features added to one tool may be missing from others.
+Policy/UI layer treats both shell tools (`Bash`, `exec_command`) identically,
+but the implementations differ (`impl/bash.ts` vs `impl/exec-command.ts`).
+Features added to one may be missing from the other.
 
-- **Review signal:** any shell tool change, check ALL variants have parity.
+- **Review signal:** any shell tool change, check both tools have parity.
 
 ### Interrupt Lock / State Cleanup
 
@@ -673,7 +673,7 @@ or writing each other's memory.
 1. **Shell commands:** wrapped per invocation with cross-agent policy (deny
    active agent-memory tree, carve current agent's own memory back out, leave
    repo/home/tmp writable, network open).
-2. **Memory-mode subagents** (reflection, memory, init, history-analyzer):
+2. **Memory-mode subagents** (reflection, memory, init):
    entire process wrapped. Reads broadly, writes restricted.
 3. **In-process file tools** (Read/Edit/Write): cannot fork, so kernel sandbox
    can't see them. Old static cross-agent guard remains: resolves both lexical

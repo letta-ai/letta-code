@@ -49,6 +49,7 @@ export async function runListenerTurnCleanup(params: {
 
   if (agentId) {
     await runPostTurnMemorySync({
+      conversationId,
       agentId,
       isEnabled: (id) => settingsManager.isMemfsEnabled(id),
       debugLabel: "Post-turn listener memory sync",

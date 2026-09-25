@@ -100,7 +100,19 @@ await Bun.build({
   // bundled AbortSignal class during bot.init().
   // But don't make `sharp` external, causes issues with global Bun-based installs
   // ref: #745, #1200
-  external: ["ws", "@vscode/ripgrep", "node-pty", "grammy"],
+  // @pierre/diffs stays external so the diff viewer's shiki highlighter (its
+  // own nested shiki v3 with the full @shikijs/langs set, ~10 MB of source)
+  // loads from node_modules on demand instead of adding a second inlined copy
+  // to the bundle's resident source string. The diff viewer is only reachable
+  // through dynamic imports, so this costs no startup time.
+  external: [
+    "ws",
+    "@vscode/ripgrep",
+    "node-pty",
+    "grammy",
+    "@pierre/diffs",
+    "@pierre/diffs/*",
+  ],
   features: features,
 });
 

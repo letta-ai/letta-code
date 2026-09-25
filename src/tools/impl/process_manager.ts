@@ -38,13 +38,15 @@ export interface BackgroundProcess {
   totalStderrLines?: number;
   cleanupTimer?: TimerHandle;
   runtimeScope?: BackgroundRuntimeScope;
+  /** Authenticated Cloud user responsible for launching this process. */
+  actingUserId?: string;
   kind?: "monitor" | "workflow";
   description?: string;
   monitorSource?: "command" | "websocket";
   persistent?: boolean;
   secrets?: Readonly<Record<string, string>>;
   /**
-   * Set when the agent deliberately stops the shell (KillBash/TaskStop) so the
+   * Set when the agent deliberately stops the shell (TaskStop) so the
    * resulting "exit" event does not wake it with a failure notification for a
    * process it just killed on purpose.
    */
@@ -371,12 +373,15 @@ export function appendToOutputFile(filePath: string, content: string): boolean {
 export function scrubCompletedBackgroundOutput(
   processState: BackgroundProcess,
 ): boolean {
-  if (!processState.outputFile || !processState.secrets) return true;
+  // Always scrub, even when the command referenced no secrets:
+  // scrubSecretsFromString covers the ambient runtime auth values (at minimum
+  // the effective LETTA_API_KEY) that every shell child inherits.
+  if (!processState.outputFile) return true;
   try {
     const content = readFileSync(processState.outputFile, "utf8");
     writeFileSync(
       processState.outputFile,
-      scrubSecretsFromString(content, processState.secrets),
+      scrubSecretsFromString(content, processState.secrets ?? {}),
       { mode: 0o600 },
     );
     return true;

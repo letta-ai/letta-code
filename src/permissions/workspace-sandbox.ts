@@ -72,7 +72,7 @@ function targetPaths(
     const filePath = extractFilePath(toolArgs);
     if (filePath) rawPaths.push(filePath);
     if (
-      ["Glob", "Grep", "ListDir"].includes(canonicalToolName(toolName)) &&
+      ["Glob", "Grep"].includes(canonicalToolName(toolName)) &&
       typeof toolArgs.pattern === "string" &&
       isAbsolute(toolArgs.pattern)
     ) {

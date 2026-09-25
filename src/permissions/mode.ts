@@ -117,7 +117,6 @@ class PermissionModeManager {
           [
             "Write",
             "Edit",
-            "MultiEdit",
             "NotebookEdit",
             "memory",
             "ApplyPatch",

@@ -8,7 +8,7 @@
     },
     "agent_id": {
       "type": "string",
-      "description": "The agent to start a new conversation with. An agent shares its identity and memory across conversations. Omit when targeting an existing conv-... thread; required with conversation_id: default."
+      "description": "The agent to start a new conversation with. An agent shares its identity and memory across conversations. Omit when targeting an existing conv-... thread; required with conversation_id: default. Claude Code and Codex sessions returned by Agent use claude_... and codex_... IDs; sending to one resumes that native session."
     },
     "conversation_id": {
       "type": "string",

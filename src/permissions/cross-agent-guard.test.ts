@@ -615,9 +615,9 @@ describe("Grep/Glob ancestor-path regression tests", () => {
     expect(result).toBeNull();
   });
 
-  test("ListDir on the agents tree is denied (ListDir is recursive-like for our purposes)", () => {
+  test("LS cannot enumerate the agents tree", () => {
     const result = evaluateCrossAgentGuard(
-      "ListDir",
+      "LS",
       { path: agentsTreeRoot },
       "/tmp",
     );
@@ -828,8 +828,11 @@ describe("local-backend memfs tree", () => {
 
   test("enumerating the local memfs tree root is denied", () => {
     const result = evaluateCrossAgentGuard(
-      "ListDir",
-      { path: join(HOME, ".letta", "lc-local-backend", "memfs") },
+      "Glob",
+      {
+        pattern: "**/*",
+        path: join(HOME, ".letta", "lc-local-backend", "memfs"),
+      },
       "/tmp",
     );
     expect(result).not.toBeNull();

@@ -19,12 +19,6 @@ type FileEditInfo = {
   oldString?: string;
   newString?: string;
   replaceAll?: boolean;
-  // For multi_edit tools
-  edits?: Array<{
-    old_string: string;
-    new_string: string;
-    replace_all?: boolean;
-  }>;
   // For patch tools
   patchInput?: string;
   toolCallId?: string;
@@ -109,25 +103,14 @@ function getHeaderText(fileEdit: FileEditInfo): string {
     return `Update ${displayPath}?`;
   }
 
-  if (t === "multiedit" || t === "multi_edit") {
-    return `Update ${displayPath}? (${fileEdit.edits?.length || 0} edits)`;
-  }
-
   return `Edit ${displayPath}?`;
 }
 
 /**
  * Determine diff kind based on tool name
  */
-function getDiffKind(toolName: string): "write" | "edit" | "multi_edit" {
-  const t = toolName.toLowerCase();
-  if (t === "write") {
-    return "write";
-  }
-  if (t === "multiedit" || t === "multi_edit") {
-    return "multi_edit";
-  }
-  return "edit";
+function getDiffKind(toolName: string): "write" | "edit" {
+  return toolName.toLowerCase() === "write" ? "write" : "edit";
 }
 
 /**
@@ -174,7 +157,7 @@ export const InlineFileEditApproval = memo(
       const diffs = new Map<string, AdvancedDiffSuccess>();
       const toolCallId = fileEdit.toolCallId;
 
-      // For Edit/Write/MultiEdit - single file diff
+      // For Edit/Write - single file diff
       if (precomputedDiff && toolCallId) {
         diffs.set(toolCallId, precomputedDiff);
         return diffs;
@@ -296,7 +279,6 @@ export const InlineFileEditApproval = memo(
 
     // Memoize the static diff content so it doesn't re-render on keystroke
     // This prevents flicker when typing feedback in the custom input field
-    // biome-ignore lint/correctness/useExhaustiveDependencies: JSON.stringify(fileEdit.edits) provides stable value comparison for arrays
     const memoizedDiffContent = useMemo(
       () => (
         <>
@@ -386,14 +368,6 @@ export const InlineFileEditApproval = memo(
                 content={fileEdit.content || ""}
                 showHeader={false}
               />
-            ) : diffKind === "multi_edit" ? (
-              <AdvancedDiffRenderer
-                precomputed={precomputedDiff}
-                kind="multi_edit"
-                filePath={fileEdit.filePath}
-                edits={fileEdit.edits || []}
-                showHeader={false}
-              />
             ) : (
               <AdvancedDiffRenderer
                 precomputed={precomputedDiff}
@@ -412,7 +386,6 @@ export const InlineFileEditApproval = memo(
         </>
       ),
       // Use primitive values to avoid memo invalidation when parent re-renders.
-      // Arrays/objects are compared by reference, so we stringify edits for stable comparison.
       [
         fileEdit.filePath,
         fileEdit.content,
@@ -421,13 +394,11 @@ export const InlineFileEditApproval = memo(
         fileEdit.replaceAll,
         fileEdit.patchInput,
         fileEdit.toolCallId,
-        JSON.stringify(fileEdit.edits),
         precomputedDiff,
         allDiffs,
         solidLine,
         dottedLine,
         headerText,
-        headerOverride,
         diffKind,
       ],
     );
