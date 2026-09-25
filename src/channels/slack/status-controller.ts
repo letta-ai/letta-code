@@ -7,9 +7,7 @@ import { SLACK_ASSISTANT_STARTUP_STATUS } from "./progress";
 import {
   firstNonEmptyString,
   isNonEmptyString,
-  resolveSlackChatType,
   resolveSlackProgressThreadTs,
-  resolveSlackSourceThreadTs,
 } from "./public-utils";
 
 const SLACK_ASSISTANT_STATUS_KEEPALIVE_MS = 90_000;
@@ -36,7 +34,6 @@ export type AgentConvSlackState = {
 export type SlackStatusController = {
   handleLifecycle: (event: ChannelTurnLifecycleEvent) => Promise<void>;
   getUniqueSources: (sources: ChannelTurnSource[]) => ChannelTurnSource[];
-  getLifecycleErrorReplyKey: (source: ChannelTurnSource) => string | null;
   activate: (
     source: ChannelTurnSource,
     footerText: string,
@@ -110,22 +107,6 @@ export function createSlackStatusController(params: {
     return isNonEmptyString(replyToMessageId)
       ? `${source.chatId}:${replyToMessageId}`
       : null;
-  }
-
-  function getLifecycleErrorReplyKey(source: ChannelTurnSource): string | null {
-    if (source.channel !== "slack" || !isNonEmptyString(source.chatId)) {
-      return null;
-    }
-    if (
-      source.chatType === "direct" ||
-      resolveSlackChatType(source.chatId) === "direct"
-    ) {
-      const replyToMessageId = resolveSlackSourceThreadTs(source);
-      return isNonEmptyString(replyToMessageId)
-        ? `${source.chatId}:${replyToMessageId}`
-        : `${source.chatId}:direct`;
-    }
-    return getLifecycleReplyKey(source);
   }
 
   function getUniqueSources(sources: ChannelTurnSource[]): ChannelTurnSource[] {
@@ -425,7 +406,6 @@ export function createSlackStatusController(params: {
   return {
     handleLifecycle,
     getUniqueSources,
-    getLifecycleErrorReplyKey,
     activate,
     deactivate,
     clearStale,

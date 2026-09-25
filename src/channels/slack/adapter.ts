@@ -8,7 +8,6 @@ import type {
   ChannelModelPickerData,
   ChannelTurnLifecycleEvent,
   ChannelTurnProgressEvent,
-  ChannelTurnSource,
   OutboundChannelMessage,
   SlackChannelAccount,
 } from "@/channels/types";
@@ -31,7 +30,6 @@ import {
   buildSlackChatFootnote,
   buildSlackReplyBlocksWithFootnote,
   formatSlackControlRequestBlocks,
-  formatSlackLifecycleErrorMessage,
   resolveSlackConcreteActivity,
   SLACK_ASSISTANT_WORKING_STATUS,
   shouldPostSlackTerminalError,
@@ -180,27 +178,6 @@ export function createSlackAdapter(
     });
   }
 
-  async function sendLifecycleErrorReply(
-    source: ChannelTurnSource,
-    errorText: string,
-  ): Promise<void> {
-    const threadTs = resolveSlackSourceThreadTs(source);
-    const text = formatSlackLifecycleErrorMessage(errorText);
-    const footnote = buildSlackChatFootnote(source);
-    const blocks = footnote
-      ? buildSlackReplyBlocksWithFootnote(text, footnote)
-      : undefined;
-    await ensureApp();
-    const client = await ensureWriteClient();
-    const response = await client.chat.postMessage({
-      channel: source.chatId,
-      text,
-      ...(blocks ? { blocks } : {}),
-      ...(threadTs ? { thread_ts: threadTs } : {}),
-    });
-    ingress.rememberMessageThread(response.ts, threadTs ?? null);
-  }
-
   async function handleTurnLifecycleEvent(
     event: ChannelTurnLifecycleEvent,
   ): Promise<void> {
@@ -218,7 +195,6 @@ export function createSlackAdapter(
       return;
     }
 
-    const sources = status.getUniqueSources(event.sources);
     await status.handleLifecycle(event);
     if (event.type === "processing") return;
     if (event.stopReason === "requires_approval") return;
@@ -231,25 +207,6 @@ export function createSlackAdapter(
       error: errorText || event.stopReason,
       runId: event.runId ?? undefined,
     });
-    const uniqueReplySources = new Map<string, ChannelTurnSource>();
-    for (const source of sources) {
-      const key = status.getLifecycleErrorReplyKey(source);
-      if (key && !uniqueReplySources.has(key)) {
-        uniqueReplySources.set(key, source);
-      }
-    }
-    await Promise.all(
-      Array.from(uniqueReplySources.values()).map(async (source) => {
-        try {
-          await sendLifecycleErrorReply(source, errorText);
-        } catch (error) {
-          console.warn(
-            `[Slack] Failed to post lifecycle error for ${source.chatId}:`,
-            error instanceof Error ? error.message : error,
-          );
-        }
-      }),
-    );
   }
 
   async function sendMessage(

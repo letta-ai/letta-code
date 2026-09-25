@@ -22,9 +22,9 @@ harness may import `adapter.ts`; do not add forwarding exports to the adapter.
 
 ## Progress contract
 
-Slack permanent messages are limited to agent-authored `MessageChannel` output,
-approval widgets, and genuine fatal error lines. Thinking, tools, and lifecycle
-state render only through `assistant.threads.setStatus`.
+Slack permanent messages are limited to agent-authored `MessageChannel` output
+and approval widgets. Thinking, tools, and lifecycle state render only through
+`assistant.threads.setStatus`; automatic turn failures never post to chat.
 
 - Always provide `loading_messages`; otherwise Slack rotates generic defaults.
 - Concrete activity replaces the loading title. Generic/transient activity does
@@ -39,7 +39,8 @@ state render only through `assistant.threads.setStatus`.
 - `end_turn` and `cancelled` post nothing. Clear status only for sources with no
   remaining work; cancelling queued input must not clear a still-active turn.
 - `requires_approval` is a continuation boundary, not a terminal event.
-- `tool_rule` is quiet completion. Fatal stop reasons get one plain error line.
+- `tool_rule` is quiet completion. Fatal stop reasons clear status and emit
+  internal boundary telemetry, but never post a failure line.
 - Do not use `chat.startStream`, `chat.appendStream`, or `chat.stopStream` for
   progress. Do not add fallback progress transports.
 
@@ -59,4 +60,4 @@ not arbitrary line ranges.
 Slack status rendering is invisible to read APIs. Any render-relevant payload
 change requires the pairing-DM visual probe on the exact built commit after the
 listener restart: startup status, concrete title swaps, pinning, message clear,
-reactions, cancellation, fatal error, and the web footnote.
+reactions, cancellation, silent fatal errors, and the web footnote on agent posts.

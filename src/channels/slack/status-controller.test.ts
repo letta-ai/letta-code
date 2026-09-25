@@ -349,7 +349,7 @@ test("slack terminal table: end_turn and cancelled clear without posting", async
   expect(client.chat.postMessage).not.toHaveBeenCalled();
 });
 
-test("slack terminal table: fatal stops post one quiet error with a web footnote", async () => {
+test("slack terminal table: fatal stops clear status without posting, regardless of error text", async () => {
   const adapter = await createStartedSlackAdapter();
   const source = createSlackTurnSource();
   await adapter.handleTurnProgressEvent?.({
@@ -365,47 +365,55 @@ test("slack terminal table: fatal stops post one quiet error with a web footnote
   client.assistant.threads.setStatus.mockClear();
   client.chat.postMessage.mockClear();
 
-  await adapter.handleTurnLifecycleEvent?.({
-    type: "finished",
-    batchId: "batch-1",
-    sources: [source],
-    outcome: "error",
-    stopReason: "llm_api_error",
-    error: "Provider request failed.",
-    runId: "run-1",
-  });
+  for (const error of [
+    "Provider request failed.",
+    "You've reached your quota. Add credits to continue.",
+    "Unexpected stop reason: error",
+    "",
+  ]) {
+    await adapter.handleTurnProgressEvent?.({
+      type: "progress",
+      kind: "tool",
+      state: "started",
+      message: "Running tool",
+      toolName: "Bash",
+      toolDetails: "Doing work",
+      sources: [source],
+    });
+    client.assistant.threads.setStatus.mockClear();
+    await adapter.handleTurnLifecycleEvent?.({
+      type: "finished",
+      batchId: "batch-1",
+      sources: [source],
+      outcome: "error",
+      stopReason: "llm_api_error",
+      error,
+      runId: "run-1",
+    });
+    expect(client.assistant.threads.setStatus).toHaveBeenCalledTimes(1);
+    expect(client.assistant.threads.setStatus).toHaveBeenLastCalledWith({
+      channel_id: "C123",
+      thread_ts: "1712800000.000100",
+      status: "",
+    });
+    expect(client.chat.postMessage).not.toHaveBeenCalled();
+  }
 
-  expect(client.assistant.threads.setStatus).toHaveBeenCalledTimes(1);
-  expect(client.chat.postMessage).toHaveBeenCalledTimes(1);
-  const postCalls = client.chat.postMessage.mock.calls as unknown as Array<
-    Array<{
-      text: string;
-      blocks?: Array<{
-        type: string;
-        text?: string;
-        elements?: Array<{ text: string }>;
-      }>;
-    }>
-  >;
-  const call = postCalls[0]?.[0] as {
-    text: string;
-    blocks?: Array<{
-      type: string;
-      text?: string;
-      elements?: Array<{ text: string }>;
-    }>;
-  };
-  expect(call.text).toBe("Turn failed:\n```\nProvider request failed.\n```");
-  expect(call.blocks?.[0]).toEqual({
-    type: "markdown",
-    text: "Turn failed:\n```\nProvider request failed.\n```",
+  await adapter.sendMessage({
+    channel: "slack",
+    chatId: source.chatId,
+    text: "Agent-authored reply",
+    threadId: source.threadId,
+    agentId: source.agentId,
+    conversationId: source.conversationId,
   });
-  expect(call.blocks?.at(-1)?.elements?.[0]?.text).toBe(
-    "<https://chat.letta.com/chat/agent-1?conversation=conv-1|View on web>",
+  expect(client.chat.postMessage).toHaveBeenCalledTimes(1);
+  expect(client.chat.postMessage).toHaveBeenCalledWith(
+    expect.objectContaining({ text: "Agent-authored reply" }),
   );
 });
 
-test("slack terminal table: tool_rule is quiet, no_tool_call is fatal, and approval is non-terminal", async () => {
+test("slack terminal table: tool_rule and no_tool_call are quiet, and approval is non-terminal", async () => {
   const adapter = await createStartedSlackAdapter();
   const source = createSlackTurnSource();
 
@@ -427,13 +435,7 @@ test("slack terminal table: tool_rule is quiet, no_tool_call is fatal, and appro
     outcome: "error",
     stopReason: "no_tool_call",
   });
-  expect(client.chat.postMessage).toHaveBeenCalledTimes(1);
-  const postCalls = client.chat.postMessage.mock.calls as unknown as Array<
-    Array<{ text: string }>
-  >;
-  expect(postCalls[0]?.[0]?.text).toBe(
-    "Turn failed:\n```\nSomething went wrong while processing that message. Please try again.\n```",
-  );
+  expect(client.chat.postMessage).not.toHaveBeenCalled();
 
   client.assistant.threads.setStatus.mockClear();
   client.chat.postMessage.mockClear();
