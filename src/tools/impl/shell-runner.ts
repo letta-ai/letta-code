@@ -1,6 +1,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { isUsableDirectory } from "@/helpers/usable-directory";
+import { debugLog } from "@/utils/debug";
 import { wrapManagedWorkloadLauncher } from "@/utils/systemd-workload-scope";
 import { noteExpectedWorktreeForLauncher } from "@/websocket/listener/worktree-ownership";
 import {
@@ -17,6 +18,8 @@ export class ShellExecutionError extends Error {
 }
 
 export type ShellOutputStream = "stdout" | "stderr";
+
+export const GITHUB_PR_ATTRIBUTION_TIMEOUT_MS = 2_000;
 
 export type ShellSpawnOptions = {
   cwd: string;
@@ -442,6 +445,38 @@ export function startShellProcess(
     emitDecodedOutput(outputDecoders.stdout.end(), "stdout");
     emitDecodedOutput(outputDecoders.stderr.end(), "stderr");
   };
+  const finishPullRequestTracking = async (): Promise<void> => {
+    if (!pullRequestTracker) return;
+    const controller = new AbortController();
+    let rejectStopped!: (reason: unknown) => void;
+    const stopped = new Promise<never>((_, reject) => {
+      rejectStopped = reject;
+    });
+    const stop = (reason: unknown) => {
+      rejectStopped(reason);
+      controller.abort(reason);
+    };
+    // Own a referenced timer: the shell has exited, and a stalled metadata
+    // backend may neither keep the event loop alive nor honor cancellation.
+    const timer = setTimeout(
+      () => stop(new DOMException("PR attribution timed out", "TimeoutError")),
+      GITHUB_PR_ATTRIBUTION_TIMEOUT_MS,
+    );
+    const onAbort = () => stop(options.signal?.reason);
+    options.signal?.addEventListener("abort", onAbort, { once: true });
+    try {
+      if (options.signal?.aborted) onAbort();
+      await Promise.race([
+        pullRequestTracker.finish(controller.signal),
+        stopped,
+      ]);
+    } catch (error) {
+      debugLog("github-pr-tracking", "PR attribution did not complete", error);
+    } finally {
+      clearTimeout(timer);
+      options.signal?.removeEventListener("abort", onAbort);
+    }
+  };
 
   const events: ProcessEvents = {
     output(data, stream) {
@@ -455,20 +490,20 @@ export function startShellProcess(
       }
       emitDecodedOutput(outputDecoders[stream].write(buffer), stream);
     },
-    error(error) {
+    async error(error) {
       if (completed) return;
       completed = true;
       cleanup();
       flushOutputDecoders();
-      void pullRequestTracker?.finish();
+      await finishPullRequestTracking();
       rejectCompletion(buildSpawnError(error, executable, options.cwd));
     },
-    close(code) {
+    async close(code) {
       if (completed) return;
       completed = true;
       cleanup();
       flushOutputDecoders();
-      void pullRequestTracker?.finish();
+      await finishPullRequestTracking();
       const stdout = Buffer.concat(stdoutChunks).toString("utf8");
       const stderr = Buffer.concat(stderrChunks).toString("utf8");
       if (timedOut) {

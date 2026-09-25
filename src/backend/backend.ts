@@ -74,7 +74,7 @@ export type AgentDeleteParams = Parameters<APIClient["agents"]["delete"]>;
 export type AgentDeleteOptions = AgentDeleteParams[1];
 
 export type AgentUpdateParams = Parameters<APIClient["agents"]["update"]>;
-export type AgentUpdateBody = AgentUpdateParams[1];
+export type AgentUpdateBody = AgentUpdateParams[1] & { tags_to_add?: string[] };
 export type AgentUpdateOptions = AgentUpdateParams[2];
 
 export type AgentCreateParams = Parameters<APIClient["agents"]["create"]>;
@@ -100,7 +100,11 @@ export type ConversationCreateOptions = ConversationCreateParams[1];
 export type ConversationUpdateParams = Parameters<
   APIClient["conversations"]["update"]
 >;
-export type ConversationUpdateBody = ConversationUpdateParams[1];
+export type ConversationUpdateBody = ConversationUpdateParams[1] & {
+  tags?: string[] | null;
+  /** Add tags atomically without replacing existing tags. */
+  tags_to_add?: string[];
+};
 export type ConversationUpdateOptions = ConversationUpdateParams[2];
 
 export type ConversationRecompileParams = Parameters<

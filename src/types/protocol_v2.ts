@@ -663,6 +663,7 @@ export interface InputCreateMessagePayload {
    */
   exclude_interactive_tools?: boolean;
   response_format?: Record<string, unknown>;
+  github_pull_request_conversation_ids?: string[];
 }
 
 export type InputApprovalResponsePayload = {

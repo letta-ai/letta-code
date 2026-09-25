@@ -294,6 +294,7 @@ export async function prepareToolExecutionContextForScope(params: {
   clientToolset?: ClientToolsetConfig;
   clientToolAllowlist?: string[];
   externalToolScopeIds?: string[];
+  githubPullRequestConversationIds?: string[];
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
   skillsDirectory?: string;
@@ -318,6 +319,7 @@ export async function prepareToolExecutionContextForScope(params: {
     clientToolset,
     clientToolAllowlist,
     externalToolScopeIds,
+    githubPullRequestConversationIds,
     workingDirectory,
     permissionModeState,
     skillsDirectory,
@@ -418,6 +420,9 @@ export async function prepareToolExecutionContextForScope(params: {
       agentId,
       agentName: (agent as AgentState | null)?.name ?? null,
       conversationId: scopedConversationId,
+      ...(githubPullRequestConversationIds
+        ? { githubPullRequestConversationIds }
+        : {}),
       ...(actingUserId ? { actingUserId } : {}),
       workingDirectory,
       ...(skillsDirectory !== undefined ? { skillsDirectory } : {}),

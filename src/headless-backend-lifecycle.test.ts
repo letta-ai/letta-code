@@ -39,7 +39,13 @@ describe("headless backend lifecycle wiring", () => {
     expect(source).toContain("createStartupBackend(backend");
     expect(source).toContain("startupBackend.retrieveAgent(");
     expect(source).toContain("startupBackend.retrieveConversation(");
-    expect(source).toContain("startupBackend.createConversation(");
+    expect(source).toContain("resolveHeadlessConversation({");
+    expect(source).toContain("backend: startupBackend");
+    const conversationSource = readSource("./headless-conversation.ts");
+    expect(conversationSource).toContain("backend.createConversation(");
+    expect(conversationSource).toContain("backend.updateConversation(");
+    expect(conversationSource).toContain("backend.updateAgent(");
+    expect(conversationSource).not.toContain("client.");
     expect(startupBackendSource).toContain("backend.retrieveAgent(");
     expect(startupBackendSource).toContain("backend.retrieveConversation(");
     expect(startupBackendSource).toContain("backend.createConversation(");

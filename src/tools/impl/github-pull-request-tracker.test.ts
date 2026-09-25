@@ -1,13 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import type { ConversationUpdateBody } from "@/backend";
+import { runWithRuntimeContext } from "@/runtime-context";
 import {
   type ConversationTagBackend,
-  copyGitHubPullRequestTags,
   createGitHubPullRequestOutputTracker,
   isGitHubPullRequestCreateCommand,
 } from "./github-pull-request-tracker";
 
 class FakeConversationTagBackend implements ConversationTagBackend {
+  async retrieveAgent() {
+    return { tags: [] };
+  }
   tags: string[];
   updates: string[][] = [];
   updateError?: Error;
@@ -27,16 +30,20 @@ class FakeConversationTagBackend implements ConversationTagBackend {
     if (this.updateError) {
       throw this.updateError;
     }
-    const tags = Reflect.get(body, "tags");
+    expect(body).not.toHaveProperty("tags");
+    const tags = body.tags_to_add;
     this.tags = Array.isArray(tags)
-      ? tags.filter((tag): tag is string => typeof tag === "string")
-      : [];
+      ? [...new Set([...this.tags, ...tags])]
+      : this.tags;
     this.updates.push([...this.tags]);
     return { id: _conversationId, tags: [...this.tags] };
   }
 }
 
 class MultiConversationTagBackend implements ConversationTagBackend {
+  async retrieveAgent() {
+    return { tags: [] };
+  }
   readonly tagsByConversation = new Map<string, string[]>();
 
   constructor(conversations: Record<string, string[]>) {
@@ -56,10 +63,16 @@ class MultiConversationTagBackend implements ConversationTagBackend {
     conversationId: string,
     body: ConversationUpdateBody,
   ): Promise<unknown> {
-    const tags = Reflect.get(body, "tags");
+    expect(body).not.toHaveProperty("tags");
+    const tags = body.tags_to_add;
     const nextTags = Array.isArray(tags)
-      ? tags.filter((tag): tag is string => typeof tag === "string")
-      : [];
+      ? [
+          ...new Set([
+            ...(this.tagsByConversation.get(conversationId) ?? []),
+            ...tags,
+          ]),
+        ]
+      : (this.tagsByConversation.get(conversationId) ?? []);
     this.tagsByConversation.set(conversationId, nextTags);
     return { id: conversationId, tags: [...nextTags] };
   }
@@ -201,7 +214,7 @@ describe("GitHub pull request output tracking", () => {
     ]);
   });
 
-  test("serializes updates for the same conversation", async () => {
+  test("adds tags without replacement for concurrent updates to the same conversation", async () => {
     const backend = new FakeConversationTagBackend(["channel:discord"]);
     const first = createGitHubPullRequestOutputTracker("gh pr create --fill", {
       conversationId: "conv-4",
@@ -229,7 +242,322 @@ describe("GitHub pull request output tracking", () => {
     ]);
   });
 
-  test("skips default conversations and commands without PR creation", () => {
+  test.each(["success", "rejection"] as const)(
+    "allows the next PR while a cancelled update ends in late %s",
+    async (lateResult) => {
+      const started = Promise.withResolvers<void>();
+      const stalled = Promise.withResolvers<void>();
+      const controller = new AbortController();
+      let first = true;
+      let tags: string[] = [];
+      const backend: ConversationTagBackend = {
+        retrieveAgent: async () => ({ tags: [] }),
+        retrieveConversation: async () => ({ tags: [] }),
+        updateConversation: async (id, body) => {
+          expect(body).not.toHaveProperty("tags");
+          if (first) {
+            first = false;
+            started.resolve();
+            await stalled.promise;
+          }
+          tags = [...new Set([...tags, ...(body.tags_to_add ?? [])])];
+          return { id, tags };
+        },
+      };
+      const options = {
+        conversationId: `conv-cancel-${lateResult}`,
+        attributionConversationIds: [],
+        backend,
+      };
+      const firstTracker = createGitHubPullRequestOutputTracker(
+        "gh pr create --fill",
+        options,
+      );
+      firstTracker?.append(
+        "https://github.com/letta-ai/letta-code/pull/4006\n",
+        "stdout",
+      );
+      const firstFinished = firstTracker
+        ?.finish(controller.signal)
+        .catch((error: unknown) => error);
+      await started.promise;
+      const reason = new Error("caller cancelled");
+      controller.abort(reason);
+
+      const nextTracker = createGitHubPullRequestOutputTracker(
+        "gh pr create --fill",
+        options,
+      );
+      nextTracker?.append(
+        "https://github.com/letta-ai/letta-code/pull/4007\n",
+        "stdout",
+      );
+      await nextTracker?.finish();
+      expect(await firstFinished).toBe(reason);
+      expect(tags).toEqual(["github:pull-request:letta-ai:letta-code:4007"]);
+
+      // Successful late additions preserve the newer tag. Rejections remain
+      // observed even after the caller has stopped waiting.
+      if (lateResult === "success") stalled.resolve();
+      else stalled.reject(new Error("late backend failure"));
+      await Bun.sleep(0);
+      expect(tags).toEqual([
+        "github:pull-request:letta-ai:letta-code:4007",
+        ...(lateResult === "success"
+          ? ["github:pull-request:letta-ai:letta-code:4006"]
+          : []),
+      ]);
+    },
+  );
+
+  test("attributes a default worker's new PR to every launching conversation", async () => {
+    const backend = new MultiConversationTagBackend({
+      "conv-root": [],
+      "conv-parent": [
+        "github:pull-request:letta-ai:letta-code:3000",
+        "channel:slack",
+      ],
+    });
+    const tracker = createGitHubPullRequestOutputTracker(
+      "gh pr create --fill",
+      {
+        conversationId: "default",
+        attributionConversationIds: ["conv-root", "conv-parent"],
+        backend,
+      },
+    );
+
+    tracker?.append(
+      "https://github.com/letta-ai/letta-code/pull/4000\n",
+      "stdout",
+    );
+    await tracker?.finish();
+
+    expect(backend.tagsByConversation.get("conv-root")).toEqual([
+      "github:pull-request:letta-ai:letta-code:4000",
+    ]);
+    expect(backend.tagsByConversation.get("conv-parent")).toEqual([
+      "github:pull-request:letta-ai:letta-code:3000",
+      "channel:slack",
+      "github:pull-request:letta-ai:letta-code:4000",
+    ]);
+  });
+
+  test("uses request-scoped listener attribution without leaking to the next turn", async () => {
+    const backend = new MultiConversationTagBackend({
+      "conv-launcher": [],
+      "conv-worker": [],
+    });
+    const attributed = runWithRuntimeContext(
+      {
+        conversationId: "default",
+        githubPullRequestConversationIds: ["conv-launcher"],
+      },
+      () =>
+        createGitHubPullRequestOutputTracker("gh pr create --fill", {
+          backend,
+        }),
+    );
+    attributed?.append(
+      "https://github.com/letta-ai/letta-code/pull/4002\n",
+      "stdout",
+    );
+    await attributed?.finish();
+
+    const unrelated = runWithRuntimeContext(
+      { conversationId: "conv-worker" },
+      () =>
+        createGitHubPullRequestOutputTracker("gh pr create --fill", {
+          backend,
+        }),
+    );
+    unrelated?.append(
+      "https://github.com/letta-ai/letta-code/pull/4003\n",
+      "stdout",
+    );
+    await unrelated?.finish();
+
+    expect(backend.tagsByConversation.get("conv-launcher")).toEqual([
+      "github:pull-request:letta-ai:letta-code:4002",
+    ]);
+    expect(backend.tagsByConversation.get("conv-worker")).toEqual([
+      "github:pull-request:letta-ai:letta-code:4003",
+    ]);
+  });
+
+  for (const conversationId of ["default", "conv-child"] as const) {
+    test(`current task parents suppress saved parents for ${conversationId}`, async () => {
+      const writes: string[] = [];
+      let readSavedParents = false;
+      const backend: ConversationTagBackend = {
+        retrieveAgent: async () => {
+          readSavedParents = true;
+          return {
+            tags: ["parent-conversation:agent-parent/conv-launcher-a"],
+          };
+        },
+        retrieveConversation: async () => {
+          readSavedParents = true;
+          return {
+            tags: ["parent-conversation:agent-parent/conv-launcher-a"],
+          };
+        },
+        updateConversation: async (id, body) => {
+          expect(body.tags_to_add).toEqual([
+            "github:pull-request:letta-ai:letta-code:4008",
+          ]);
+          writes.push(id);
+          return { id };
+        },
+      };
+      const tracker = createGitHubPullRequestOutputTracker(
+        "gh pr create --fill",
+        {
+          agentId: "agent-child",
+          conversationId,
+          attributionConversationIds: ["conv-launcher-b"],
+          backend,
+        },
+      );
+      tracker?.append(
+        "https://github.com/letta-ai/letta-code/pull/4008\n",
+        "stdout",
+      );
+      await tracker?.finish();
+      expect(writes).toEqual(
+        conversationId === "default"
+          ? ["conv-launcher-b"]
+          : ["conv-child", "conv-launcher-b"],
+      );
+      expect(readSavedParents).toBe(false);
+    });
+  }
+
+  test("an explicitly empty current task scope suppresses saved parents", async () => {
+    let readSavedParents = false;
+    const backend: ConversationTagBackend = {
+      retrieveAgent: async () => {
+        readSavedParents = true;
+        return {
+          tags: ["parent-conversation:agent-parent/conv-old-launcher"],
+        };
+      },
+      retrieveConversation: async () => ({ tags: [] }),
+      updateConversation: async () => {
+        throw new Error("No conversation should be attributed");
+      },
+    };
+    const tracker = createGitHubPullRequestOutputTracker(
+      "gh pr create --fill",
+      {
+        agentId: "agent-child",
+        conversationId: "default",
+        attributionConversationIds: [],
+        backend,
+      },
+    );
+    tracker?.append(
+      "https://github.com/letta-ai/letta-code/pull/4010\n",
+      "stdout",
+    );
+    await tracker?.finish();
+    expect(readSavedParents).toBe(false);
+  });
+
+  test("absent current task scope preserves known writes during stalled discovery", async () => {
+    const writes: string[] = [];
+    const controller = new AbortController();
+    const readStarted = Promise.withResolvers<void>();
+    const backend: ConversationTagBackend = {
+      retrieveAgent: async () => ({
+        tags: ["parent-conversation:agent-parent/conv-persisted"],
+      }),
+      retrieveConversation: async () => {
+        readStarted.resolve();
+        return new Promise(() => {});
+      },
+      updateConversation: async (id, body) => {
+        expect(body.tags_to_add).toEqual([
+          "github:pull-request:letta-ai:letta-code:4008",
+        ]);
+        writes.push(id);
+        return { id };
+      },
+    };
+    const tracker = createGitHubPullRequestOutputTracker(
+      "gh pr create --fill",
+      {
+        agentId: "agent-child",
+        conversationId: "default",
+        backend,
+      },
+    );
+    tracker?.append(
+      "https://github.com/letta-ai/letta-code/pull/4008\n",
+      "stdout",
+    );
+    const finished = tracker
+      ?.finish(controller.signal)
+      .catch((error: unknown) => error);
+    await readStarted.promise;
+    expect(writes).toEqual(["conv-persisted"]);
+    const reason = new Error("deadline");
+    controller.abort(reason);
+    expect(await finished).toBe(reason);
+  });
+
+  test("later named work uses saved conversation parents without old agent parent tags", async () => {
+    const backend = new MultiConversationTagBackend({
+      "conv-child": ["parent-conversation:agent-parent/conv-parent"],
+      "conv-parent": [],
+    });
+    backend.retrieveAgent = async () => {
+      throw new Error("Named work must not read agent tags");
+    };
+    const tracker = createGitHubPullRequestOutputTracker(
+      "gh pr create --fill",
+      {
+        agentId: "agent-child",
+        conversationId: "conv-child",
+        backend,
+      },
+    );
+    tracker?.append(
+      "https://github.com/letta-ai/letta-code/pull/4009\n",
+      "stdout",
+    );
+    await tracker?.finish();
+    expect(backend.tagsByConversation.get("conv-parent")).toEqual([
+      "github:pull-request:letta-ai:letta-code:4009",
+    ]);
+    expect(backend.tagsByConversation.get("conv-child")).toContain(
+      "github:pull-request:letta-ai:letta-code:4009",
+    );
+  });
+
+  test("deduplicates the active and launching conversation targets", async () => {
+    const backend = new MultiConversationTagBackend({ "conv-parent": [] });
+    const tracker = createGitHubPullRequestOutputTracker(
+      "gh pr create --fill",
+      {
+        conversationId: "conv-parent",
+        attributionConversationIds: ["conv-parent"],
+        backend,
+      },
+    );
+
+    tracker?.append(
+      "https://github.com/letta-ai/letta-code/pull/4001\n",
+      "stdout",
+    );
+    await tracker?.finish();
+
+    expect(backend.tagsByConversation.get("conv-parent")).toEqual([
+      "github:pull-request:letta-ai:letta-code:4001",
+    ]);
+  });
+
+  test("skips default conversations without attribution and commands without PR creation", () => {
     const backend = new FakeConversationTagBackend();
 
     expect(
@@ -241,6 +569,7 @@ describe("GitHub pull request output tracking", () => {
     expect(
       createGitHubPullRequestOutputTracker("gh pr view 3744", {
         conversationId: "conv-5",
+        attributionConversationIds: ["conv-parent"],
         backend,
       }),
     ).toBeUndefined();
@@ -260,89 +589,5 @@ describe("GitHub pull request output tracking", () => {
     );
 
     await expect(tracker?.finish()).resolves.toBeUndefined();
-  });
-});
-
-describe("GitHub pull request tag copying", () => {
-  test("copies only PR tags from an Agent conversation to its parent", async () => {
-    const backend = new MultiConversationTagBackend({
-      "conv-child": [
-        "origin:subagent",
-        "github:pull-request:letta-ai:letta-code:3851",
-        "github:pull-request:letta-ai:letta-code:3853",
-      ],
-      "conv-parent": [
-        "channel:slack",
-        "github:pull-request:letta-ai:letta-code:3852",
-      ],
-    });
-
-    await copyGitHubPullRequestTags("conv-child", "conv-parent", backend);
-
-    expect(backend.tagsByConversation.get("conv-parent")).toEqual([
-      "channel:slack",
-      "github:pull-request:letta-ai:letta-code:3852",
-      "github:pull-request:letta-ai:letta-code:3851",
-      "github:pull-request:letta-ai:letta-code:3853",
-    ]);
-  });
-
-  test("serializes PR tags copied from parallel Agent conversations", async () => {
-    const backend = new MultiConversationTagBackend({
-      "conv-child-a": ["github:pull-request:letta-ai:letta-code:3851"],
-      "conv-child-b": ["github:pull-request:letta-ai:letta-code:3852"],
-      "conv-parent": [],
-    });
-
-    await Promise.all([
-      copyGitHubPullRequestTags("conv-child-a", "conv-parent", backend),
-      copyGitHubPullRequestTags("conv-child-b", "conv-parent", backend),
-    ]);
-
-    expect(backend.tagsByConversation.get("conv-parent")).toEqual([
-      "github:pull-request:letta-ai:letta-code:3851",
-      "github:pull-request:letta-ai:letta-code:3852",
-    ]);
-  });
-
-  test("stops an in-flight tag copy when its Agent turn is interrupted", async () => {
-    const abortController = new AbortController();
-    let targetReadStarted = false;
-    let updateCalled = false;
-    const backend: ConversationTagBackend = {
-      retrieveConversation: async (conversationId, options) => {
-        expect(options?.signal).toBe(abortController.signal);
-        if (conversationId === "conv-child") {
-          return {
-            tags: ["github:pull-request:letta-ai:letta-code:3995"],
-          };
-        }
-        targetReadStarted = true;
-        return await new Promise((_, reject) => {
-          options?.signal?.addEventListener(
-            "abort",
-            () => reject(options.signal?.reason),
-            { once: true },
-          );
-        });
-      },
-      updateConversation: async () => {
-        updateCalled = true;
-        return {};
-      },
-    };
-
-    const copy = copyGitHubPullRequestTags(
-      "conv-child",
-      "conv-parent",
-      backend,
-      abortController.signal,
-    );
-    await Bun.sleep(0);
-    expect(targetReadStarted).toBe(true);
-    abortController.abort();
-
-    await expect(copy).rejects.toMatchObject({ name: "AbortError" });
-    expect(updateCalled).toBe(false);
   });
 });

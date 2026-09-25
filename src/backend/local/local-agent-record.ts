@@ -78,6 +78,25 @@ export function createDefaultAgentRecord(
   };
 }
 
+/** Scalar metadata and tag updates share one record owner for local agents. */
+export function updateLocalAgentMetadata(
+  current: LocalAgentRecord,
+  body: Record<string, unknown>,
+): Partial<LocalAgentRecord> {
+  const tags = isStringArray(body.tags) ? body.tags : current.tags;
+  return {
+    ...(typeof body.name === "string" && { name: body.name }),
+    ...((typeof body.description === "string" || body.description === null) && {
+      description: body.description,
+    }),
+    ...(typeof body.system === "string" && { system: body.system }),
+    ...(typeof body.hidden === "boolean" && { hidden: body.hidden }),
+    tags: isStringArray(body.tags_to_add)
+      ? [...new Set([...tags, ...body.tags_to_add])]
+      : tags,
+  };
+}
+
 export function createLocalAgentRecord(
   body: AgentCreateBody,
   defaultAgentName: string,

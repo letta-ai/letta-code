@@ -38,6 +38,7 @@ import {
   getOrCreateProcessTransport,
   subscribeListenerConnection,
 } from "./connection";
+import { createMessageTurnFields } from "./create-message-fields";
 import { getBootWorkingDirectory } from "./cwd";
 import {
   handleExternalToolCallResponseCommand,
@@ -556,13 +557,7 @@ export function createListenerMessageHandler(
             ? { agentId: parsed.runtime.agent_id }
             : {}),
           conversationId: parsed.runtime.conversation_id,
-          clientToolAllowlist: inputPayload.client_tool_allowlist,
-          clientToolset: inputPayload.client_toolset,
-          externalToolScopeIds: inputPayload.external_tool_scope_ids,
-          excludeInteractiveTools: inputPayload.exclude_interactive_tools,
-          responseFormat: inputPayload.response_format,
-          imageFailureMode: inputPayload.image_failure_mode,
-          messages: inputPayload.messages,
+          ...createMessageTurnFields(inputPayload),
         };
         const hasApprovalPayload = incoming.messages.some(
           (payload): payload is ApprovalCreate =>

@@ -26,6 +26,8 @@ export interface RuntimeContextSnapshot {
   agentId?: string | null;
   agentName?: string | null;
   conversationId?: string | null;
+  /** Durable ancestor conversations that receive PRs created by this task tree. */
+  githubPullRequestConversationIds?: string[] | null;
   /** Authenticated Cloud user responsible for the current turn. */
   actingUserId?: string;
   skillsDirectory?: string | null;

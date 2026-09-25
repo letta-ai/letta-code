@@ -24,6 +24,7 @@ import type {
   RuntimeStartCommand,
   TurnFinishedMessage,
 } from "@/types/protocol_v2";
+import { GITHUB_PR_CONVERSATIONS_ENV } from "@/utils/subagent-launch-marker";
 import {
   type ListenerLaunchResult,
   resolveEnvironmentMaxWaitMs,
@@ -151,6 +152,7 @@ export async function launchListenerConversation(
     cwd?: string;
     mode: RuntimeStartCommand["mode"];
     skillSources?: RuntimeStartCommand["skill_sources"];
+    githubPullRequestConversationIds?: string[];
     onMessage?: (message: MessageDelta) => void;
     signal?: AbortSignal;
     /**
@@ -288,6 +290,9 @@ export async function launchListenerConversation(
         content: params.content,
         computer: params.connectionId,
         actingUserId: params.scope.acting_user_id,
+        githubPullRequestConversationIds:
+          params.githubPullRequestConversationIds ??
+          process.env[GITHUB_PR_CONVERSATIONS_ENV]?.split(","),
       },
       AbortSignal.timeout(30_000),
     );

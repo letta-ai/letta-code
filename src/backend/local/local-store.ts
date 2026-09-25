@@ -39,9 +39,14 @@ import {
   projectLocalAgentState,
   shouldPersistSubagentHiddenBackfill,
   shouldUseDefaultLocalModel,
+  updateLocalAgentMetadata,
 } from "./local-agent-record";
 import { selectLocalMessagesForFork } from "./local-conversation-fork";
 import { listLocalConversations } from "./local-conversation-list";
+import {
+  type StoredConversation,
+  updateLocalConversationRecord,
+} from "./local-conversation-record";
 import {
   emptyLocalUsage,
   type LocalAssistantMessage,
@@ -79,14 +84,6 @@ import {
 import type { LocalAgentRecord, StoredMessage } from "./local-types";
 import type { LocalCompiledSystemPrompt } from "./system-prompt-compilation";
 export type { LocalAgentRecord, StoredMessage };
-
-type StoredConversation = Conversation & {
-  id: string;
-  agent_id: string;
-  in_context_message_ids: string[];
-  hidden?: boolean;
-  tags?: string[];
-};
 
 const DEFAULT_LOCAL_AGENT_NAME = "Letta Code";
 const DEFAULT_LOCAL_MODEL = "local/default";
@@ -167,58 +164,6 @@ function createLocalConversationRecord(
       : {}),
     ...(isStringArray(bodyRecord.tags) ? { tags: bodyRecord.tags } : {}),
   } as StoredConversation;
-}
-
-function updateLocalConversationRecord(
-  current: StoredConversation,
-  body: ConversationUpdateBody,
-  updatedAt: string,
-): StoredConversation {
-  const bodyRecord = body as Record<string, unknown>;
-  const next: StoredConversation = {
-    ...current,
-    updated_at: updatedAt,
-  };
-  const modelSettings = supportedConversationModelSettingsFromBody(bodyRecord);
-  if (typeof bodyRecord.archived === "boolean") {
-    next.archived = bodyRecord.archived;
-    next.archived_at = bodyRecord.archived
-      ? (current.archived_at ?? updatedAt)
-      : null;
-  }
-  if (bodyRecord.archived === null) {
-    next.archived = false;
-    next.archived_at = null;
-  }
-  if (
-    typeof bodyRecord.last_message_at === "string" ||
-    bodyRecord.last_message_at === null
-  ) {
-    next.last_message_at = bodyRecord.last_message_at;
-  }
-  if (typeof bodyRecord.model === "string" || bodyRecord.model === null) {
-    next.model =
-      bodyRecord.model === null
-        ? null
-        : normalizeLocalModelHandle(bodyRecord.model, modelSettings ?? {});
-  }
-  if (modelSettings !== undefined) {
-    next.model_settings = modelSettings as StoredConversation["model_settings"];
-  }
-  if (typeof bodyRecord.context_window_limit === "number") {
-    (next as unknown as Record<string, unknown>).context_window_limit =
-      bodyRecord.context_window_limit;
-  }
-  if (typeof bodyRecord.hidden === "boolean") {
-    next.hidden = bodyRecord.hidden;
-  }
-  if (typeof bodyRecord.summary === "string" || bodyRecord.summary === null) {
-    next.summary = bodyRecord.summary;
-  }
-  if (isStringArray(bodyRecord.tags)) {
-    next.tags = bodyRecord.tags;
-  }
-  return next;
 }
 
 function textContent(text: string) {
@@ -1162,19 +1107,8 @@ export class LocalStore {
     };
     const updated = {
       ...existingRecord,
-      ...(typeof bodyRecord.name === "string" && { name: bodyRecord.name }),
-      ...((typeof bodyRecord.description === "string" ||
-        bodyRecord.description === null) && {
-        description: bodyRecord.description,
-      }),
-      ...(typeof bodyRecord.system === "string" && {
-        system: bodyRecord.system,
-      }),
-      ...(isStringArray(bodyRecord.tags) && { tags: bodyRecord.tags }),
+      ...updateLocalAgentMetadata(existingRecord, bodyRecord),
       ...(nextModel && { model: nextModel }),
-      ...(typeof bodyRecord.hidden === "boolean" && {
-        hidden: bodyRecord.hidden,
-      }),
       model_settings: nextModelSettings,
     };
     this.agents.set(agentId, updated);
