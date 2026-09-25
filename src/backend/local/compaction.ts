@@ -19,8 +19,8 @@ import type { LocalMessage } from "./local-message";
 import { resolveAvailableLocalModelForTurn } from "./local-model-config";
 import type { LocalAgentRecord } from "./local-types";
 
-const ALL_WORD_LIMIT = 500;
-const SLIDING_WORD_LIMIT = 300;
+const ALL_WORD_LIMIT = 1500;
+const SLIDING_WORD_LIMIT = 1000;
 const SUMMARY_TRUNCATION_SUFFIX = "... [summary truncated to fit]";
 export const LOCAL_SUMMARY_TOOL_RETURN_TRUNCATION_CHARS = 2_000;
 const FABLE_5_MODEL_ID = "claude-fable-5";
@@ -69,12 +69,13 @@ This summary should be thorough in capturing technical details, code patterns, a
    - **Preserve identifiers verbatim** (plan filename/path, exact URL, issue/PR number, ticket ID); do not paraphrase or truncate.
    - **Preserve referenced identifiers unless explicitly resolved**: Keep exact URLs/IDs from the conversation unless there is clear evidence they are no longer relevant.
    - Do not omit details likely to be referenced later.
+   - **Delegated work**: For each subagent, background task, or message you sent to another agent, record its full durable handle verbatim (agent ID, conversation ID, task ID, output file path), what it was assigned, what it still owes, its last known state, and how you know that state (task notification, inbound message from that agent, or your own verification). Mark results reported by a worker that you have not independently verified. A failed or missing task notification does not mean the worker or its work is gone; the agent and conversation IDs remain the durable handle.
 
 4. **Errors and fixes**: List all errors that you ran into, and how you fixed them. Pay special attention to specific user feedback that you received and record verbatim if useful.
 
-5. **Current state**:Describe in detail precisely what is currently being worked on, paying special attention to the most recent messages from both user and assistant. Include file names and code snippets where applicable.
+5. **Current state**:Describe in detail precisely what is currently being worked on, paying special attention to the most recent messages from both user and assistant. Include file names and code snippets where applicable. Include delegated work that is still running or awaiting your verification, and messages you sent to other agents that have not been answered.
 
-6.**Optional Next Step**: List the next step that you will take that is related to the most recent work you were doing. IMPORTANT: ensure that this step is DIRECTLY in line with the user's most recent explicit requests and the most current task. If your last task was concluded, then only list next steps if they are explicitly in line with the users request. If there is a next step, include direct quotes from the most recent conversation showing exactly what task you were working on and where you left off.
+6.**Optional Next Step**: List the next step that you will take that is related to the most recent work you were doing. IMPORTANT: ensure that this step is DIRECTLY in line with the user's most recent explicit requests and the most current task. If your last task was concluded, then only list next steps that are explicitly in line with the users request. If there is a next step, include direct quotes from the most recent conversation showing exactly what task you were working on and where you left off.
 
 7. **Lookup hints**: For any detailed content (long lists, extensive data, specific conversations) that couldn't fit in the summary, note the topic and key terms that could be used to find it in message history later.
 
@@ -92,10 +93,13 @@ export const LOCAL_SLIDING_WINDOW_COMPACTION_PROMPT = `The following messages ar
    - **Preserve identifiers verbatim** (plan filename/path, exact URL, issue/PR number, ticket ID); do not paraphrase or truncate.
    - **Preserve referenced identifiers unless explicitly resolved**: Keep exact URLs/IDs from the conversation unless there is clear evidence they are no longer relevant.
    - Do not omit details likely to be referenced later.
+   - **Delegated work**: For each subagent, background task, or message you sent to another agent, record its full durable handle verbatim (agent ID, conversation ID, task ID, output file path), what it was assigned, what it still owes, its last known state, and how you know that state (task notification, inbound message from that agent, or your own verification). Mark results reported by a worker that you have not independently verified. A failed or missing task notification does not mean the worker or its work is gone; the agent and conversation IDs remain the durable handle.
 
 4. **Errors and fixes**: List all errors that you ran into, and how you fixed them. Pay special attention to specific user feedback that you received and record verbatim if useful.
 
-5. **Lookup hints**: For any detailed content (long lists, extensive data, specific conversations) that couldn't fit in the summary, note the topic and key terms that could be used to find it in message history later.
+5. **Current tasks at cutoff**: Describe what was actively being worked on at the end of these messages. List every user request that was still pending or not explicitly completed, including the exact deliverables, constraints, and requested next action. Preserve the user's most recent unresolved request as an active task, not merely as background or a missing detail. Include a direct quote when useful. Include delegated work that is still running or awaiting your verification, and messages you sent to other agents that have not been answered. This is the state at the cutoff; later retained messages may supersede it.
+
+6. **Lookup hints**: For any detailed content (long lists, extensive data, specific conversations) that couldn't fit in the summary, note the topic and key terms that could be used to find it in message history later.
 
 Write in first person as a factual record of what occurred. Be thorough and detailed - the goal is to preserve enough context that the recent messages make sense and important information isn't lost to prevent duplicate work or repeated mistakes.
 
