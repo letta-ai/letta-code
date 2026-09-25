@@ -12,6 +12,7 @@ import type {
   SubagentOutcome,
   SubagentRequest,
   SubagentSpawner,
+  SubagentSpawnHooks,
 } from "./types.ts";
 
 export interface SdkSpawnerConfig {
@@ -221,6 +222,7 @@ async function drainTurn(
   usage: RunningUsage,
   stop: (reason: string) => void,
   maxToolCalls: number,
+  onUsage?: (totalTokens: number) => void,
 ): Promise<DrainedTurn> {
   let assistantText = "";
   let resultText: string | undefined;
@@ -233,6 +235,7 @@ async function drainTurn(
       const tokens = usageTokensFromEvent(message.event);
       if (tokens !== undefined) {
         usage.totalTokens = (usage.totalTokens ?? 0) + tokens;
+        onUsage?.(usage.totalTokens);
       }
     }
     if (message.type === "tool_call") {
@@ -299,6 +302,7 @@ export function createSdkSpawner(
   return async (
     request: SubagentRequest,
     signal: AbortSignal,
+    hooks?: SubagentSpawnHooks,
   ): Promise<SubagentOutcome> => {
     const { prompt, options } = request;
     const model = options.model
@@ -359,6 +363,9 @@ export function createSdkSpawner(
           usage,
           stop,
           options.maxToolCalls ?? DEFAULT_MAX_SUBAGENT_TOOL_CALLS,
+          (totalTokens) => {
+            if (!finished) hooks?.onUsage?.(totalTokens);
+          },
         ),
         stopped,
       ]);

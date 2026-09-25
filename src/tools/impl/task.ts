@@ -14,6 +14,7 @@ import {
   getSnapshot as getSubagentSnapshot,
   getSubagentToolCount,
   registerSubagent,
+  updateSubagent,
 } from "@/agent/subagent-state.js";
 import {
   clearSubagentConfigCache,
@@ -23,6 +24,10 @@ import {
   type SubagentMemoryScope,
   type SubagentResult,
 } from "@/agent/subagents";
+import {
+  waitForBackgroundSubagentAgentId,
+  waitForBackgroundSubagentLink,
+} from "@/agent/subagents/background-link";
 import { forkParentConversation } from "@/agent/subagents/fork-conversation";
 import { spawnSubagent } from "@/agent/subagents/manager";
 import { getBackend } from "@/backend";
@@ -36,12 +41,21 @@ import type {
   SubagentLaunchResult,
 } from "@/types/subagent-protocol";
 import { addToMessageQueue } from "@/utils/message-queue-bridge.js";
-import { sleep } from "@/utils/sleep";
 import {
   formatTaskNotification,
   resolveNotificationScope,
 } from "@/utils/task-notifications.js";
-import { runBackgroundMemoryTask } from "./memory-task-lifecycle";
+import {
+  createExternalCodingAgentConfig,
+  isExternalCodingAgentType,
+  resolveExternalCodingAgentMcpReminder,
+  runExternalCodingAgent,
+  validateExternalCodingAgentMcpOptions,
+} from "./external-coding-agent";
+import {
+  ensureMemoryConflictRepair,
+  runBackgroundMemoryTask,
+} from "./memory-task-lifecycle";
 import {
   appendToOutputFile,
   assertBackgroundTaskCapacity,
@@ -63,7 +77,12 @@ interface TaskArgs extends Partial<SubagentLaunchArgs> {
 
 // Valid subagent_types when deploying an existing agent
 const VALID_DEPLOY_TYPES = new Set(["general-purpose"]);
-const BACKGROUND_STARTUP_POLL_MS = 50;
+
+export {
+  waitForBackgroundSubagentAgentId,
+  waitForBackgroundSubagentConversationId,
+  waitForBackgroundSubagentLink,
+} from "@/agent/subagents/background-link";
 
 export interface SpawnBackgroundSubagentTaskArgs {
   subagentType: string;
@@ -104,6 +123,12 @@ export interface SpawnBackgroundSubagentTaskArgs {
    * into the agent's context.
    */
   silentCompletion?: boolean;
+  /**
+   * Harness-triggered conflict repair: the attempt token from
+   * `claimMemoryConflictRepair`. The worker records its outcome under it and
+   * skips if another worker already resolved the conflict.
+   */
+  memoryRepairToken?: string;
   /**
    * Emit a completion notification even when `silentCompletion` is true.
    * Useful when the parent should not stream subagent tokens but still wants
@@ -183,7 +208,10 @@ async function resolveCompletionSummary(
 function buildTaskResultHeader(
   subagentType: string,
   subagentId: string,
-  result?: Pick<SubagentResult, "agentId" | "conversationId">,
+  result?: Pick<
+    SubagentResult,
+    "agentId" | "conversationId" | "runtimeSessionId"
+  >,
   status?: "success" | "error",
 ): string {
   return [
@@ -193,6 +221,9 @@ function buildTaskResultHeader(
     result?.agentId ? `agent_id=${result.agentId}` : undefined,
     result?.conversationId
       ? `conversation_id=${result.conversationId}`
+      : undefined,
+    result?.runtimeSessionId
+      ? `runtime_session_id=${result.runtimeSessionId}`
       : undefined,
   ]
     .filter(Boolean)
@@ -214,10 +245,10 @@ function writeTaskTranscriptResult(
   outputFile: string,
   result: SubagentResult,
   header: string,
-  options: { reportAlreadyWritten?: boolean } = {},
+  reportAlreadyWritten = false,
 ): void {
   if (result.success) {
-    const report = options.reportAlreadyWritten ? "" : `${result.report}\n\n`;
+    const report = reportAlreadyWritten ? "" : `${result.report}\n\n`;
     appendToOutputFile(outputFile, `${header}\n\n${report}[Task completed]\n`);
     return;
   }
@@ -226,104 +257,6 @@ function writeTaskTranscriptResult(
     outputFile,
     `${header ? `${header}\n\n` : ""}[error] ${result.error || "Subagent execution failed"}\n\n[Task failed]\n`,
   );
-}
-
-/**
- * Wait briefly for a background subagent to publish its agent URL.
- * This keeps Task mostly non-blocking while allowing static transcript rows
- * to include an ADE link in the common case.
- */
-export async function waitForBackgroundSubagentLink(
-  subagentId: string,
-  timeoutMs: number | null = null,
-  signal?: AbortSignal,
-): Promise<void> {
-  const deadline =
-    timeoutMs !== null && timeoutMs > 0 ? Date.now() + timeoutMs : null;
-
-  while (true) {
-    if (signal?.aborted) {
-      return;
-    }
-
-    const agent = getSubagentSnapshot().agents.find((a) => a.id === subagentId);
-    if (!agent) {
-      return;
-    }
-    if (agent.agentURL || agent.conversationId) {
-      return;
-    }
-    if (agent.status === "error" || agent.status === "completed") {
-      return;
-    }
-    if (deadline !== null && Date.now() >= deadline) {
-      return;
-    }
-
-    await sleep(BACKGROUND_STARTUP_POLL_MS);
-  }
-}
-
-export async function waitForBackgroundSubagentAgentId(
-  subagentId: string,
-  timeoutMs: number | null = null,
-  signal?: AbortSignal,
-): Promise<string | null> {
-  const deadline =
-    timeoutMs !== null && timeoutMs > 0 ? Date.now() + timeoutMs : null;
-
-  while (true) {
-    if (signal?.aborted) {
-      return null;
-    }
-
-    const agent = getSubagentSnapshot().agents.find((a) => a.id === subagentId);
-    if (!agent) {
-      return null;
-    }
-    if (agent.agentId) {
-      return agent.agentId;
-    }
-    if (agent.status === "error" || agent.status === "completed") {
-      return agent.agentId ?? null;
-    }
-    if (deadline !== null && Date.now() >= deadline) {
-      return agent.agentId ?? null;
-    }
-
-    await sleep(BACKGROUND_STARTUP_POLL_MS);
-  }
-}
-
-export async function waitForBackgroundSubagentConversationId(
-  subagentId: string,
-  timeoutMs: number | null = null,
-  signal?: AbortSignal,
-): Promise<string | null> {
-  const deadline =
-    timeoutMs !== null && timeoutMs > 0 ? Date.now() + timeoutMs : null;
-
-  while (true) {
-    if (signal?.aborted) {
-      return null;
-    }
-
-    const agent = getSubagentSnapshot().agents.find((a) => a.id === subagentId);
-    if (!agent) {
-      return null;
-    }
-    if (agent.conversationId) {
-      return agent.conversationId;
-    }
-    if (agent.status === "error" || agent.status === "completed") {
-      return agent.conversationId ?? null;
-    }
-    if (deadline !== null && Date.now() >= deadline) {
-      return agent.conversationId ?? null;
-    }
-
-    await sleep(BACKGROUND_STARTUP_POLL_MS);
-  }
 }
 
 /**
@@ -471,12 +404,19 @@ export function spawnBackgroundSubagentTask(
           ...resolvedParentScope,
           memoryDir: workerMemoryDir,
           assignment: prompt,
+          repairToken: args.memoryRepairToken,
           signal: abortController.signal,
           subagentId,
           outputFile,
           formatHeader: (identity) =>
             buildTaskResultHeader(subagentType, subagentId, identity),
           execute,
+          // Awaited by the worker so a one-shot drain sees the repair task.
+          repair: (result) =>
+            ensureMemoryConflictRepair(
+              { ...resolvedParentScope, actingUserId, result },
+              spawnBackgroundSubagentTask,
+            ),
           getSnapshot: getSubagentSnapshotFn,
         })
       : undefined;
@@ -501,9 +441,7 @@ export function spawnBackgroundSubagentTask(
         result,
         result.success ? "success" : "error",
       );
-      writeTaskTranscriptResult(outputFile, result, header, {
-        reportAlreadyWritten: memoryTask !== undefined,
-      });
+      writeTaskTranscriptResult(outputFile, result, header, !!memoryTask);
       scheduleBackgroundTaskCleanup(taskId);
 
       completeSubagentFn(subagentId, {
@@ -677,13 +615,12 @@ export function spawnBackgroundSubagentTask(
     })
     .finally(unsubscribe);
 
+  // Memory drains wait for the whole lifecycle (sync, cleanup), not just the child.
+  const swallow = () => undefined;
   bgTask.completion =
     subagentType === "memory"
       ? taskLifecycle
-      : subagentExecution.then(
-          () => undefined,
-          () => undefined,
-        );
+      : subagentExecution.then(swallow, swallow);
   return { taskId, outputFile, subagentId };
 }
 
@@ -706,6 +643,27 @@ export async function launchSubagent(
 
   // Determine if deploying an existing agent
   const isDeployingExisting = Boolean(args.agent_id || args.conversation_id);
+  const requestedType = args.subagent_type;
+  const externalCodingAgentType =
+    typeof requestedType === "string" &&
+    isExternalCodingAgentType(requestedType)
+      ? requestedType
+      : null;
+  const isExternalCodingAgent = externalCodingAgentType !== null;
+  if (isExternalCodingAgent && isDeployingExisting) {
+    return {
+      success: false,
+      error: `${requestedType} does not accept agent_id or conversation_id at launch; use SendAgentMessage with the synthetic agent ID for follow-up work`,
+    };
+  }
+  if (args.mcp && !isExternalCodingAgent) {
+    return {
+      success: false,
+      error: "mcp is only supported for claude-code and codex subagents",
+    };
+  }
+  const mcpValidationError = validateExternalCodingAgentMcpOptions(args.mcp);
+  if (mcpValidationError) return { success: false, error: mcpValidationError };
 
   // Validate required parameters based on mode
   if (isDeployingExisting) {
@@ -730,21 +688,24 @@ export async function launchSubagent(
     : (args.subagent_type as string);
 
   const prepared = subagent_type === "custom" && isDeployingExisting;
-  const allConfigs = prepared
-    ? {}
-    : await getAllSubagentConfigs(getCurrentWorkingDirectory());
-  const config: SubagentConfig | undefined = prepared
-    ? {
-        name: "custom",
-        description: "Prepared conversation",
-        systemPrompt: "",
-        allowedTools: "all",
-        recommendedModel: "inherit",
-        skills: [],
-        fork: false,
-        launchProfile: "default",
-      }
-    : allConfigs[subagent_type];
+  const allConfigs =
+    prepared || isExternalCodingAgent
+      ? {}
+      : await getAllSubagentConfigs(getCurrentWorkingDirectory());
+  const config: SubagentConfig | undefined = isExternalCodingAgent
+    ? createExternalCodingAgentConfig(externalCodingAgentType)
+    : prepared
+      ? {
+          name: "custom",
+          description: "Prepared conversation",
+          systemPrompt: "",
+          allowedTools: "all",
+          recommendedModel: "inherit",
+          skills: [],
+          fork: false,
+          launchProfile: "default",
+        }
+      : allConfigs[subagent_type];
   if (!config) {
     return {
       success: false,
@@ -803,6 +764,91 @@ export async function launchSubagent(
 
   let effectiveAgentId = args.agent_id;
   let effectiveConversationId = args.conversation_id;
+
+  if (isExternalCodingAgent) {
+    if (typeof args.computer === "string" && args.computer.trim()) {
+      return {
+        success: false,
+        error: `${subagent_type} runs in the current working directory and does not support computer routing`,
+      };
+    }
+    const parentAgentId = resolvedParentScope?.agentId ?? getCurrentAgentId();
+    if (!parentAgentId) {
+      return {
+        success: false,
+        error: `${subagent_type} requires a parent agent identity`,
+      };
+    }
+    let mcpReminder: string | undefined;
+    try {
+      mcpReminder = await resolveExternalCodingAgentMcpReminder(
+        parentAgentId,
+        args.mcp,
+      );
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+
+    const { taskId, outputFile, subagentId } = spawnBackgroundSubagentTask({
+      subagentType: subagent_type,
+      config,
+      prompt: inputPrompt,
+      description,
+      model,
+      toolCallId,
+      parentScope: resolvedParentScope,
+      deps: {
+        spawnSubagentImpl: async (
+          _type,
+          prompt,
+          model,
+          _subagentId,
+          childSignal,
+        ) =>
+          runExternalCodingAgent({
+            type: externalCodingAgentType,
+            prompt,
+            model,
+            parentAgentId,
+            cwd: getCurrentWorkingDirectory(),
+            mcpReminder,
+            signal: childSignal,
+            onStarted: (agentId) =>
+              updateSubagent(subagentId, { agentId, status: "running" }),
+          }),
+      },
+    });
+    let agentId: string | null = null;
+    if (
+      externalCodingAgentType === "codex" ||
+      externalCodingAgentType === "claude-code"
+    ) {
+      const abortStartup = () =>
+        backgroundTasks.get(taskId)?.abortController?.abort(signal?.reason);
+      signal?.addEventListener("abort", abortStartup, { once: true });
+      try {
+        if (signal?.aborted) abortStartup();
+        agentId = await waitForBackgroundSubagentAgentId(
+          subagentId,
+          null,
+          signal,
+        );
+        signal?.throwIfAborted();
+      } finally {
+        signal?.removeEventListener("abort", abortStartup);
+      }
+    }
+    return {
+      success: true,
+      task_id: taskId,
+      output_file: outputFile,
+      agent_id: agentId,
+      conversation_id: null,
+    };
+  }
 
   if (prepared && effectiveConversationId) {
     if (effectiveConversationId === resolvedParentScope?.conversationId) {

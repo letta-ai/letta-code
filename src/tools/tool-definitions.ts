@@ -36,6 +36,7 @@ import TaskUpdateDescription from "./descriptions/TaskUpdate.md";
 import TodoWriteDescription from "./descriptions/TodoWrite.md";
 import UpdatePlanDescription from "./descriptions/UpdatePlan.md";
 import ViewImageDescription from "./descriptions/ViewImage.md";
+import WakeDescription from "./descriptions/Wake.md";
 import WorkflowDescription from "./descriptions/Workflow.md";
 import WriteDescription from "./descriptions/Write.md";
 import WriteArtifactFileDescription from "./descriptions/WriteArtifactFile.md";
@@ -75,6 +76,7 @@ import { task_update } from "./impl/task-update";
 import { todo_write } from "./impl/todo-write";
 import { update_plan } from "./impl/update-plan";
 import { view_image } from "./impl/view-image";
+import { wake } from "./impl/wake";
 import { workflow } from "./impl/workflow";
 import { write } from "./impl/write";
 
@@ -114,6 +116,7 @@ import TaskUpdateSchema from "./schemas/TaskUpdate.json";
 import TodoWriteSchema from "./schemas/TodoWrite.json";
 import UpdatePlanSchema from "./schemas/UpdatePlan.json";
 import ViewImageSchema from "./schemas/ViewImage.json";
+import WakeSchema from "./schemas/Wake.json";
 import WorkflowSchema from "./schemas/Workflow.json";
 import WriteSchema from "./schemas/Write.json";
 import WriteArtifactFileSchema from "./schemas/WriteArtifactFile.json";
@@ -242,6 +245,11 @@ const toolDefinitions = {
     schema: ViewImageSchema,
     description: ViewImageDescription.trim(),
     impl: view_image,
+  }),
+  Wake: defineTool({
+    schema: WakeSchema,
+    description: WakeDescription.trim(),
+    impl: wake,
   }),
   // LSP-enhanced Read - used when LETTA_ENABLE_LSP is set
   ReadLSP: defineTool({

@@ -78,6 +78,87 @@ describe("listener runtime_start external tool bridge", () => {
     setActiveRuntime(null);
   });
 
+  test("agent-free turns can see their runtime-owned SDK tools", async () => {
+    const { runtime, sent } = createMockRuntime();
+    installExternalToolBridge(runtime);
+    registerRuntimeExternalTools(
+      runtime,
+      "client-1",
+      {
+        agent_id: null,
+        conversation_id: "conv-worker",
+      },
+      [
+        {
+          tools: [
+            {
+              name: "StructuredOutput",
+              description: "Submit result",
+              parameters: {
+                type: "object",
+                properties: { answer: { type: "string" } },
+              },
+            },
+          ],
+        },
+      ],
+    );
+    const worker = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-5",
+      {
+        clientToolAllowlist: ["StructuredOutput"],
+        runtimeContext: {
+          connectionId: "client-1",
+          agentId: null,
+          conversationId: "conv-worker",
+        },
+      },
+    );
+    const other = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-5",
+      {
+        clientToolAllowlist: ["StructuredOutput"],
+        runtimeContext: {
+          connectionId: "client-1",
+          agentId: null,
+          conversationId: "conv-other",
+        },
+      },
+    );
+    expect(worker.clientTools.map((tool) => tool.name)).toContain(
+      "StructuredOutput",
+    );
+    expect(other.clientTools).toEqual([]);
+
+    // Process-owned turns carry no connection ID. The tool remains visible
+    // only in its conversation and executes through its captured controller.
+    const queued = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-5",
+      {
+        clientToolAllowlist: ["StructuredOutput"],
+        runtimeContext: { agentId: null, conversationId: "conv-worker" },
+      },
+    );
+    expect(queued.clientTools.map((tool) => tool.name)).toEqual([
+      "StructuredOutput",
+    ]);
+    const result = await executeTool(
+      "StructuredOutput",
+      { answer: "ok" },
+      {
+        toolContextId: queued.contextId,
+        toolCallId: "call-worker",
+      },
+    );
+    expect(result.status).toBe("success");
+    expect(sent).toMatchObject([
+      {
+        runtime: { agent_id: null, conversation_id: "conv-worker" },
+        tool_name: "StructuredOutput",
+      },
+    ]);
+  });
+
   test("process-owned turns execute unscoped runtime tools through their controller", async () => {
     const runtime = createRuntime();
     const sent: ExternalToolCallRequestMessage[] = [];

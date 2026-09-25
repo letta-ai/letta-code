@@ -16,6 +16,7 @@ type StartupBackend = Pick<
 export async function resolveHeadlessConversation(options: {
   backend: StartupBackend;
   agent: { id: string; tags?: string[] | null };
+  conversationModel?: Omit<ConversationCreateBody, "agent_id">;
   ephemeralConversationId?: string | null;
   specifiedConversationId?: string;
   forceNewConversation?: boolean;
@@ -35,6 +36,7 @@ export async function resolveHeadlessConversation(options: {
     forceNewConversation,
     isSubagent,
     fromAgentId,
+    conversationModel,
   } = options;
   let conversationId: string;
   let conversationOpenReason: ModConversationOpenReason;
@@ -58,7 +60,10 @@ export async function resolveHeadlessConversation(options: {
     conversationOpenReason = "resume";
   } else if (forceNewConversation || !isSubagent) {
     // Fresh threads avoid concurrent runs on the same message history.
-    const body: ConversationCreateBody = { agent_id: agent.id };
+    const body: ConversationCreateBody = {
+      agent_id: agent.id,
+      ...conversationModel,
+    };
     if (forceNewConversation && fromAgentId) {
       (body as { hidden?: boolean }).hidden = true;
     }

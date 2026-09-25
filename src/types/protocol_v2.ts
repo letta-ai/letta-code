@@ -1474,9 +1474,9 @@ export interface ListModelsResponseModelEntry {
   isDefault?: boolean;
   isFeatured?: boolean;
   free?: boolean;
+  supportsStructuredOutputs?: boolean;
   updateArgs?: Record<string, unknown>;
 }
-
 export interface ListModelsResponseMessage {
   type: "list_models_response";
   request_id: string;

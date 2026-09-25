@@ -1,5 +1,6 @@
 import { getCurrentAgentId, getCurrentAgentName } from "@/agent/context";
 import { isMemoryDirCommand } from "@/permissions/read-only-shell";
+import { captureSecretRedactions } from "@/tools/secret-substitution";
 import { resolveShellWorkdir, type ShellResult, shell } from "./shell.js";
 import { buildShellLaunchers } from "./shell-launchers.js";
 import { ShellExecutionError } from "./shell-runner.js";
@@ -66,6 +67,7 @@ export async function shell_command(
     onOutput,
     secretEnv,
   } = args;
+  const redactions = captureSecretRedactions(secretEnv ?? {});
   const envOverrides = {
     ...getMemoryGitIdentityEnvOverrides(command, workdir),
     ...(secretEnv ?? {}),
@@ -94,11 +96,7 @@ export async function shell_command(
         signal,
         onOutput,
       });
-      return normalizeShellCommandResult(
-        result,
-        resolvedWorkdir,
-        secretEnv ?? {},
-      );
+      return normalizeShellCommandResult(result, resolvedWorkdir, redactions);
     } catch (error) {
       if (error instanceof ShellExecutionError && error.code === "ENOENT") {
         tried.push(launcher[0] || "");

@@ -10,7 +10,7 @@
 import { listCloudSchedules } from "@/backend/api/schedules";
 import { resolveBackendMode } from "@/backend/backend-mode";
 import { listTasks } from "@/cron";
-import { resolveCronRunner } from "./cron-runner";
+import { resolveCronRunner } from "@/cron/runner";
 
 export interface ResolvedTaskRef {
   /** The task/schedule id the reference resolved to. */

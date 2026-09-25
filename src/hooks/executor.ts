@@ -5,6 +5,11 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { buildShellLaunchers } from "@/tools/impl/shell-launchers";
 import { LIMITS, truncateByChars } from "@/tools/impl/truncation";
+import {
+  captureSecretRedactions,
+  scrubAmbientSecrets,
+  scrubSecretsFromString,
+} from "@/tools/secret-substitution";
 import { executePromptHook } from "./prompt-executor";
 import {
   type CommandHookConfig,
@@ -23,15 +28,24 @@ const DEFAULT_TIMEOUT_MS = 60000;
 /**
  * Cap a model-facing hook string. Oversized text is saved to a file and
  * replaced with a short prefix plus the file path.
+ *
+ * Scrubbed for ambient runtime auth values first: hook children inherit the
+ * runtime environment, and the overflow file path is shown to the model, so
+ * both the excerpt and the persisted file must be credential-free.
  */
 export function truncateHookFeedback(
   text: string,
   workingDirectory: string,
 ): string {
-  return truncateByChars(text, LIMITS.HOOK_OUTPUT_CHARS, "Hook", {
-    workingDirectory,
-    previewChars: LIMITS.OVERFLOW_PREVIEW_CHARS,
-  }).content;
+  return truncateByChars(
+    scrubAmbientSecrets(text),
+    LIMITS.HOOK_OUTPUT_CHARS,
+    "Hook",
+    {
+      workingDirectory,
+      previewChars: LIMITS.OVERFLOW_PREVIEW_CHARS,
+    },
+  ).content;
 }
 
 /**
@@ -209,15 +223,26 @@ function executeWithLauncher(
   startTime: number,
   quiet?: boolean,
 ): Promise<HookResult> {
+  // The child inherits the credential present at launch, which may rotate
+  // before the hook exits or its feedback is written to an overflow file.
+  const redactions = captureSecretRedactions();
   return new Promise<HookResult>((resolve, reject) => {
     let stdout = "";
     let stderr = "";
     let timedOut = false;
     let resolved = false;
 
-    const safeResolve = (result: HookResult) => {
+    const safeResolve = (rawResult: HookResult) => {
       if (!resolved) {
         resolved = true;
+        const result: HookResult = {
+          ...rawResult,
+          stdout: scrubSecretsFromString(rawResult.stdout, redactions),
+          stderr: scrubSecretsFromString(rawResult.stderr, redactions),
+          ...(rawResult.error && {
+            error: scrubSecretsFromString(rawResult.error, redactions),
+          }),
+        };
         // Log hook completion with command for context
         // Show exit code with color: green for 0, red for 2, yellow for errors
         const exitCode =

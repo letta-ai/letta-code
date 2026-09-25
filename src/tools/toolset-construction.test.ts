@@ -111,6 +111,8 @@ describe("shared toolset construction", () => {
       expect(description).toContain("## Available Agents");
       expect(description).toContain("### toolset-auditor");
       expect(description).toContain("Inspect toolset assembly");
+      expect(description).toContain("### claude-code");
+      expect(description).toContain("### codex");
     }
     const other = await prepare({ toolsetPreference: "letta" });
     expect(
