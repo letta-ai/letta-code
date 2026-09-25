@@ -798,7 +798,9 @@ export function buildSubagentSnapshot(
 
   return getSubagents()
     .filter((a) => {
-      // Include final states so the UI gets tool calls and URL before cleanup.
+      // Include all statuses (pending, running, completed, error) so the
+      // web UI receives the final state with tool calls and agent URL
+      // before the subagent is cleaned up from the store.
       if (a.silent && a.isBackground !== true) {
         return false;
       }
@@ -907,8 +909,6 @@ export function emitLoopErrorDelta(
     message: string;
     stopReason: StopReasonType;
     isTerminal: boolean;
-    // Correlates a failure that happened before core run creation.
-    clientMessageIds?: string[];
     runId?: string | null;
     agentId?: string | null;
     conversationId?: string | null;
@@ -923,7 +923,6 @@ export function emitLoopErrorDelta(
       message: params.message,
       stop_reason: params.stopReason,
       is_terminal: params.isTerminal,
-      client_message_ids: params.clientMessageIds,
       ...(params.apiError ? { api_error: params.apiError } : {}),
     } as StreamDelta,
     {
@@ -932,6 +931,7 @@ export function emitLoopErrorDelta(
     },
   );
 }
+
 export function emitRetryDelta(
   socket: ListenerTransport,
   runtime: RuntimeCarrier,
