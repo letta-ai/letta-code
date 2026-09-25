@@ -7,11 +7,74 @@ export interface ImageEntry {
   filename?: string;
 }
 
+// Entries are normally freed by clearPlaceholdersInText when the draft that
+// references them is submitted or cleared. Entries can outlive their draft
+// (placeholder edited out by hand, input reset on conversation switch, dialog
+// dismissed), so both registries are byte-bounded: once over budget, the
+// oldest entries are evicted. Budgets are generous enough that a live draft
+// or queued message is never evicted in practice.
+const MAX_TEXT_REGISTRY_BYTES = 16 * 1024 * 1024; // 16 MB
+const MAX_IMAGE_REGISTRY_BYTES = 32 * 1024 * 1024; // 32 MB
+
+// Insertion-ordered map with oldest-first eviction once over a byte budget.
+// Exported so tests can exercise eviction with small budgets.
+export class BoundedRegistry<V> {
+  private entries = new Map<number, V>();
+  private totalBytes = 0;
+
+  constructor(
+    private maxBytes: number,
+    private byteSize: (value: V) => number,
+  ) {}
+
+  get size(): number {
+    return this.entries.size;
+  }
+
+  get(id: number): V | undefined {
+    return this.entries.get(id);
+  }
+
+  has(id: number): boolean {
+    return this.entries.has(id);
+  }
+
+  set(id: number, value: V): void {
+    this.delete(id);
+    this.entries.set(id, value);
+    this.totalBytes += this.byteSize(value);
+    // Evict oldest first, but always keep the entry just inserted
+    while (this.totalBytes > this.maxBytes && this.entries.size > 1) {
+      const oldest = this.entries.keys().next();
+      if (oldest.done) break;
+      const oldestValue = this.entries.get(oldest.value);
+      if (oldestValue !== undefined) {
+        this.totalBytes -= this.byteSize(oldestValue);
+      }
+      this.entries.delete(oldest.value);
+    }
+  }
+
+  delete(id: number): void {
+    const value = this.entries.get(id);
+    if (value !== undefined) {
+      this.totalBytes -= this.byteSize(value);
+      this.entries.delete(id);
+    }
+  }
+}
+
 // Text placeholder registry (for large pasted text collapsed into a placeholder)
-const textRegistry = new Map<number, string>();
+const textRegistry = new BoundedRegistry<string>(
+  MAX_TEXT_REGISTRY_BYTES,
+  (s) => s.length * 2, // UTF-16 code units
+);
 
 // Image placeholder registry (maps id -> base64 + mediaType)
-const imageRegistry = new Map<number, ImageEntry>();
+const imageRegistry = new BoundedRegistry<ImageEntry>(
+  MAX_IMAGE_REGISTRY_BYTES,
+  (e) => (e.data.length + e.mediaType.length) * 2,
+);
 
 let nextId = 1;
 
