@@ -16,7 +16,6 @@ import {
   type ProviderTurnInput,
   providerLettaChunk,
 } from "@/backend/dev/provider-turn-executor";
-import { TURN_DID_NOT_COMPLETE } from "@/constants";
 
 async function collect(stream: AsyncIterable<unknown>): Promise<unknown[]> {
   const chunks: unknown[] = [];
@@ -221,12 +220,14 @@ describe("FakeHeadlessBackend", () => {
       toolCallId?: string;
     }>;
     const settledResult = messagesAfter.find(
-      (m) =>
-        m.role === "toolResult" &&
-        unsettled.includes(m.toolCallId ?? "") &&
-        m.content?.some((c) => c.text === TURN_DID_NOT_COMPLETE),
+      (m) => m.role === "toolResult" && unsettled.includes(m.toolCallId ?? ""),
     );
     expect(settledResult).toBeDefined();
+    expect(
+      settledResult?.content?.some((c) =>
+        c.text?.includes("outcome is unknown"),
+      ),
+    ).toBe(true);
   });
 
   test("keeps approval turns open when a tool call is emitted", async () => {

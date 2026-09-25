@@ -30,9 +30,11 @@ export const INTERRUPTED_BY_USER = "Interrupted by user";
 /**
  * Synthetic tool result injected when a turn ended without completing all tool calls
  * (e.g. process crash or unhandled stream error). Settled automatically at the start
- * of the next turn so the conversation history stays valid for the provider.
+ * of the next turn so the conversation history stays valid for the provider without
+ * implying whether the interrupted tool's side effects occurred.
  */
-export const TURN_DID_NOT_COMPLETE = "Turn did not complete";
+export const TURN_DID_NOT_COMPLETE =
+  "Tool call outcome is unknown because the turn did not complete";
 
 /**
  * XML tag used to wrap system reminder content injected into messages
