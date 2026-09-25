@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
+import { join, resolve } from "node:path";
 import { checkPermission } from "@/permissions/checker";
 import { cliPermissions } from "@/permissions/cli-permissions-instance";
 import { permissionMode } from "@/permissions/mode";
@@ -673,21 +674,23 @@ test.each([
   ["ReadLSP", "file_path"],
 ])("%s runs without asking only inside the working directory", (tool, key) => {
   permissionMode.setMode("standard");
+  // resolve() keeps these absolute on every platform (drive-rooted on Windows).
+  const project = resolve("/Users/test/project");
 
   const inside = checkPermission(
     tool,
-    { [key]: "/Users/test/project/src/diagram.png" },
+    { [key]: join(project, "src", "diagram.png") },
     NO_RULES,
-    "/Users/test/project",
+    project,
   );
   expect(inside.decision).toBe("allow");
   expect(inside.reason).toBe("Within working directory");
 
   const outside = checkPermission(
     tool,
-    { [key]: "/Users/test/elsewhere/diagram.png" },
+    { [key]: resolve(project, "..", "elsewhere", "diagram.png") },
     NO_RULES,
-    "/Users/test/project",
+    project,
   );
   expect(outside.decision).toBe("ask");
 });
