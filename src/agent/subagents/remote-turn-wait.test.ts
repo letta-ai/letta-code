@@ -41,6 +41,7 @@ function deps(
         completed_at: "now",
         cancelled_at: null,
         errored_at: null,
+        error: null,
       }) as never,
     listRunMessages: async () => [assistant] as never,
     pollMs: 0,
@@ -214,10 +215,16 @@ test("a post-accept pre-run error wins over a COM row", async () => {
             completed_at: "now",
             cancelled_at: null,
             errored_at: "now",
+            error: {
+              code: "LISTENER_TURN_FAILED_BEFORE_RUN",
+              message: "403 Message author is not authorized",
+            },
           }) as never,
       }),
     ),
-  ).rejects.toThrow("finished with an error");
+  ).rejects.toThrow(
+    "Remote task failed after Cloud accepted the send [LISTENER_TURN_FAILED_BEFORE_RUN]: 403 Message author is not authorized",
+  );
 });
 
 test("a failed correlated child run is an execution failure", async () => {

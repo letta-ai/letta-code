@@ -72,8 +72,14 @@ async function retryRemoteRead<T>(
 }
 
 function throwIfAcceptedRunFailed(run: LatestConversationSuperRun): void {
-  if (run.errored_at)
+  if (run.errored_at) {
+    if (run.error) {
+      throw new Error(
+        `Remote task failed after Cloud accepted the send [${run.error.code}]: ${run.error.message}`,
+      );
+    }
     throw new Error(`Remote Super Run ${run.id} finished with an error.`);
+  }
   if (run.status === "CAN" || run.cancelled_at)
     throw new Error(`Remote Super Run ${run.id} was cancelled.`);
 }

@@ -156,6 +156,10 @@ export interface LatestConversationSuperRun {
   completed_at: string | null;
   cancelled_at: string | null;
   errored_at: string | null;
+  error?: {
+    code: string;
+    message: string;
+  } | null;
 }
 
 /** Read one accepted Super Run by ID, scoped through its owning agent. */
