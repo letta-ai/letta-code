@@ -98,8 +98,6 @@ describe("buildSystemPrompt", () => {
     expect(result).toBe(preset?.localMemfsContent?.trim() ?? "");
     expect(result).not.toBe(buildSystemPrompt("letta", "memfs"));
     expect(result).toContain("$MEMORY_DIR");
-    expect(result).toContain('subagent_type: "memory"');
-    expect(result).toContain("Continue your current work immediately");
     expect(result).not.toContain("git push");
     expect(result).not.toContain("Shared memory");
   });
@@ -156,15 +154,11 @@ describe("buildSystemPrompt", () => {
   });
 
   test.each(["memfs", "local-memfs", "root-memfs"] as const)(
-    "%s keeps incidental upkeep in the background and primary memory work direct",
+    "%s defers delegation policy to the Agent tool and keeps direct editing",
     (mode) => {
       const result = buildSystemPrompt("letta", mode);
-      expect(result).toContain('subagent_type: "memory"');
-      expect(result).toContain("Continue your current work immediately");
-      expect(result).toContain("**Memory upkeep during another task:**");
-      expect(result).toContain("**Memory as the main task:**");
-      expect(result).toContain("ordinary file tools and shell/Git commands");
-      expect(result).toContain("Complete and verify the requested work");
+      expect(result).toContain("Memory Subagents guidance");
+      expect(result).not.toContain("**Memory upkeep during another task:**");
       expect(result).toContain("git commit --author=");
       expect(result).not.toContain("Delegate all memory changes");
       expect(result).not.toContain("Leave memory writes and Git repair");

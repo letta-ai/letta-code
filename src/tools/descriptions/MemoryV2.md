@@ -10,7 +10,7 @@ Supported operations on memory files:
 - `rename` (path rename only)
 - `update_description`
 - `create`
-For larger reorganizations, edit the projected files directly and commit the changes yourself (see the syncing instructions in your system prompt).
+Use this tool only for small, targeted edits. Do not use it for larger changes, reorganizations, or Git conflicts: edit the files directly with ordinary file tools and Git, following the memory editing instructions in your system prompt. During another task, delegate those changes to a memory subagent instead.
 
 Path formats accepted:
 - relative memory file paths (e.g. `contacts.md`, `reference/project/team.md`)

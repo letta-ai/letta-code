@@ -192,6 +192,8 @@ Behavior notes:
 
 ## Memory Subagents
 
+Use memory subagents for incidental memory upkeep while you work on another task, such as preferences, corrections, and lessons discovered along the way. A side request to remember something during another task also belongs in the background. When memory itself is the user's request (remember something, initialize, reorganize, audit, correct, or troubleshoot memory), do the work directly with ordinary file tools and shell/Git commands, and verify it before reporting success. Delegation means the update is in progress, not already saved. Git conflict repair runs automatically in the background.
+
 `subagent_type: "memory"` starts a fresh worker that edits or repairs memory in the background. Memory tasks are silent: they send no <task-notification> and return no message, so continue your current work immediately instead of waiting or polling.
 
 The worker can consult this conversation's transcript for reference but does not continue it, so make the assignment self-contained: state what to remember, correct, delete, or reorganize, with the relevant facts, corrections, and exceptions. Quote the user's factual corrections and exceptions verbatim and identify what they refer to. Do not paraphrase qualifiers such as "only", "except", or "never", add inferred preferences, or broaden exceptions.
