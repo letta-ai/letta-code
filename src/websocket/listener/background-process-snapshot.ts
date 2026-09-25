@@ -32,6 +32,7 @@ export function buildBackgroundProcessSnapshot(
     .filter(
       ([, proc]) =>
         proc.kind !== "monitor" &&
+        proc.kind !== "workflow" &&
         proc.status === "running" &&
         (!runtimeScope || belongsToRuntime(proc, runtimeScope)),
     )
@@ -63,6 +64,23 @@ export function buildBackgroundProcessSnapshot(
       persistent: proc.persistent ?? false,
     }));
 
+  const workflowProcesses: BackgroundProcessSummary[] = Array.from(
+    backgroundProcesses.entries(),
+  )
+    .filter(
+      ([, proc]) =>
+        proc.kind === "workflow" &&
+        proc.status === "running" &&
+        (!runtimeScope || belongsToRuntime(proc, runtimeScope)),
+    )
+    .map(([processId, proc]) => ({
+      process_id: processId,
+      kind: "workflow",
+      description: proc.description ?? proc.command,
+      started_at_ms: proc.startTime?.getTime() ?? 0,
+      status: "running",
+    }));
+
   const taskProcesses: BackgroundProcessSummary[] = Array.from(
     backgroundTasks.entries(),
   )
@@ -82,11 +100,14 @@ export function buildBackgroundProcessSnapshot(
       ...(task.error ? { error: task.error } : {}),
     }));
 
-  return [...bashProcesses, ...monitorProcesses, ...taskProcesses].sort(
-    (a, b) => {
-      const aStart = a.started_at_ms ?? 0;
-      const bStart = b.started_at_ms ?? 0;
-      return bStart - aStart;
-    },
-  );
+  return [
+    ...bashProcesses,
+    ...monitorProcesses,
+    ...workflowProcesses,
+    ...taskProcesses,
+  ].sort((a, b) => {
+    const aStart = a.started_at_ms ?? 0;
+    const bStart = b.started_at_ms ?? 0;
+    return bStart - aStart;
+  });
 }

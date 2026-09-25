@@ -2,9 +2,10 @@
  * In-process registry of Workflow tool runs, kept for status reporting.
  *
  * The Workflow tool launches a run in the background and returns at once; the
- * run then reports progress here. The /workflows command and the completion
- * summary read from it. Entries for finished runs are retained for a short
- * while so the final numbers stay visible.
+ * run then reports progress here. The /workflows command, the status rows
+ * under the input, and the completion summary read from it; the TUI
+ * subscribes to change notifications so nothing polls. Entries for finished
+ * runs are retained for a short while so the final numbers stay visible.
  */
 
 import type { WorkflowMeta, WorkflowProgressEvent } from "./types.ts";
@@ -33,7 +34,6 @@ interface WorkflowExecutionRecord {
   phases: string[];
   agents: Map<number, WorkflowAgentRecord>;
   logs: string[];
-  totalTokens: number;
 }
 
 export interface WorkflowExecutionSnapshot {
@@ -44,6 +44,7 @@ export interface WorkflowExecutionSnapshot {
   description: string;
   status: WorkflowExecutionStatus;
   error?: string;
+  finishedAt?: number;
   /** Wall-clock so far (running) or total (finished). */
   durationMs: number;
   agentsTotal: number;
@@ -57,9 +58,50 @@ export interface WorkflowExecutionSnapshot {
 
 const runs = new Map<string, WorkflowExecutionRecord>();
 const cleanupTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const listeners = new Set<() => void>();
 
 const FINISHED_RUN_RETENTION_MS = 5 * 60 * 1000;
 const MAX_LOG_LINES = 50;
+
+let version = 0;
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Coalesce change notifications to one per tick. The engine emits bursts
+ * (every agent of a pipeline is queued in the same tick), and one forced
+ * useSyncExternalStore re-render per event can exceed React's nested-update
+ * limit under Ink ("Maximum update depth exceeded"; see #3964 for the same
+ * failure in the mod registry). Readers see the latest state either way.
+ */
+function notify(): void {
+  if (flushTimer) return;
+  flushTimer = setTimeout(() => {
+    flushTimer = null;
+    version += 1;
+    for (const listener of listeners) listener();
+  }, 0);
+  if (typeof flushTimer === "object" && "unref" in flushTimer) {
+    flushTimer.unref();
+  }
+}
+
+/**
+ * Monotonic change counter; a stable primitive for useSyncExternalStore so
+ * UI subscribers re-render only when the registry actually changes.
+ */
+export function getWorkflowExecutionsVersion(): number {
+  return version;
+}
+
+/** Subscribe to registry changes; returns an unsubscribe function. */
+export function subscribeToWorkflowExecutions(
+  listener: () => void,
+): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
 
 export function registerWorkflowExecution(params: {
   taskId: string;
@@ -83,8 +125,8 @@ export function registerWorkflowExecution(params: {
     phases: (params.meta.phases ?? []).map((p) => p.title),
     agents: new Map(),
     logs: [],
-    totalTokens: 0,
   });
+  notify();
 }
 
 /** Apply one engine progress event to a run. */
@@ -113,14 +155,14 @@ export function recordWorkflowProgress(
         status: event.status,
         detail: event.detail,
         durationMs: event.durationMs ?? previous?.durationMs,
+        // Cumulative per agent: a running event carries usage so far, the
+        // terminal event the final figure.
         totalTokens: event.totalTokens ?? previous?.totalTokens,
       });
-      if (event.status === "done" || event.status === "error") {
-        record.totalTokens += event.totalTokens ?? 0;
-      }
       break;
     }
   }
+  notify();
 }
 
 export function finishWorkflowExecution(
@@ -141,10 +183,14 @@ export function finishWorkflowExecution(
   }
   const timer = setTimeout(() => {
     cleanupTimers.delete(taskId);
-    if (runs.get(taskId) === record) runs.delete(taskId);
+    if (runs.get(taskId) === record) {
+      runs.delete(taskId);
+      notify();
+    }
   }, FINISHED_RUN_RETENTION_MS);
   if (typeof timer === "object" && "unref" in timer) timer.unref();
   cleanupTimers.set(taskId, timer);
+  notify();
 }
 
 function snapshot(
@@ -172,12 +218,13 @@ function snapshot(
     description: record.meta.description,
     status: record.status,
     error: record.error,
+    finishedAt: record.finishedAt,
     durationMs: Math.max(0, (record.finishedAt ?? now) - record.startedAt),
     agentsTotal: agents.length,
     agentsDone: agents.filter((a) => a.status === "done").length,
     agentsFailed: agents.filter((a) => a.status === "error").length,
     agentsRunning: agents.filter((a) => a.status === "running").length,
-    totalTokens: record.totalTokens,
+    totalTokens: agents.reduce((sum, a) => sum + (a.totalTokens ?? 0), 0),
     phases: phaseOrder.map((title) => ({
       title,
       agents: byPhase.get(title) ?? [],
@@ -205,4 +252,8 @@ export function __resetWorkflowExecutionsForTests(): void {
   for (const timer of cleanupTimers.values()) clearTimeout(timer);
   cleanupTimers.clear();
   runs.clear();
+  listeners.clear();
+  if (flushTimer) clearTimeout(flushTimer);
+  flushTimer = null;
+  version = 0;
 }

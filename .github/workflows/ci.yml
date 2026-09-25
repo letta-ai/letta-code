@@ -309,6 +309,9 @@ jobs:
           npm pack
           npm install -g ./letta-ai-letta-code-*.tgz
           letta --help
+          cache_dir="$(mktemp -d)"
+          BUN_RUNTIME_TRANSPILER_CACHE_PATH="$cache_dir" letta --version
+          test -n "$(find "$cache_dir" -type f -name '*.pile' -print -quit)"
 
       - name: Headless smoke test (packaged local backend)
         env:

@@ -7,6 +7,7 @@ import {
 } from "@/agent/available-models";
 import { getReasoningTierOptionsFromCapabilities } from "@/agent/model";
 import {
+  type CatalogModel,
   models,
   resolveCatalogModel,
   resolveModel,
@@ -24,11 +25,11 @@ import { isRecord } from "@/utils/type-guards";
 function printUsage(): void {
   console.log(`Usage:
   letta model get [--default] [--agent <id> | --conversation <id>]
-  letta model list [--byok | --hosted]
+  letta model list [--byok | --hosted] [--structured-outputs]
   letta model set [handle] [--reasoning <level>] [--default] [--agent <id> | --conversation <id>]
 
   get   Show the effective model, context limit, and full redacted model_settings.
-  list  List the active backend's models, catalog IDs, and reasoning levels.
+  list  List the active backend's models, catalog IDs, reasoning levels, and structured-output support.
   set   Select a model handle, catalog ID, or unambiguous alias.
 
 Options:
@@ -38,6 +39,7 @@ Options:
   --reasoning <level>   Use a level advertised by model list for this model
   --byok               List only BYOK/user-configured models
   --hosted             List only hosted (non-BYOK) models
+  --structured-outputs List only models supporting structured outputs
   --help, -h           Show this help
 
 Without target flags, infer AGENT_ID and CONVERSATION_ID from the session.
@@ -46,6 +48,27 @@ agent scope. Agent-default changes do not remove conversation overrides.
 Selecting a model applies its settings/context defaults; reasoning-only updates
 keep the model and other settings. The command does not
 interrupt or restart an in-flight inference. All output is JSON.`);
+}
+
+/** A BYOK row owns its capability even when it shares a catalog preset handle. */
+export function structuredOutputSupport(
+  entry: CatalogModel,
+  byokCapabilities: ReadonlyMap<string, boolean | undefined>,
+): boolean | null {
+  return byokCapabilities.has(entry.handle)
+    ? (byokCapabilities.get(entry.handle) ?? null)
+    : (entry.supportsStructuredOutputs ?? null);
+}
+
+export function filterStructuredOutputRows<
+  T extends { supports_structured_outputs: boolean | null },
+>(rows: readonly T[]): { supported: T[]; unknownCount: number } {
+  let unknownCount = 0;
+  const supported = rows.filter((entry) => {
+    if (entry.supports_structured_outputs === null) unknownCount++;
+    return entry.supports_structured_outputs === true;
+  });
+  return { supported, unknownCount };
 }
 
 async function printJson(value: unknown): Promise<void> {
@@ -71,6 +94,7 @@ export async function runModelSubcommand(argv: string[]): Promise<number> {
         default: { type: "boolean" },
         byok: { type: "boolean" },
         hosted: { type: "boolean" },
+        "structured-outputs": { type: "boolean" },
       },
       strict: true,
       allowPositionals: true,
@@ -97,8 +121,11 @@ export async function runModelSubcommand(argv: string[]): Promise<number> {
       throw new Error("--reasoning is only supported by model set");
     if (values.byok && values.hosted)
       throw new Error("Use either --byok or --hosted, not both");
-    if (action !== "list" && (values.byok || values.hosted))
-      throw new Error("--byok and --hosted are only supported by model list");
+    if (
+      action !== "list" &&
+      (values.byok || values.hosted || values["structured-outputs"])
+    )
+      throw new Error("Model filters are only supported by model list");
     if (action === "list") {
       if (
         values.agent !== undefined ||
@@ -114,6 +141,7 @@ export async function runModelSubcommand(argv: string[]): Promise<number> {
       const local = getBackend().capabilities.localModelCatalog;
       await initializeModelCatalog();
       let catalog = [...models];
+      const byokCapabilities = new Map<string, boolean | undefined>();
       // The local runtime inventory is entirely user-configured, not hosted.
       if (local && values.hosted) catalog = [];
       // Cloud hosted rows only come from /models/catalog. /models adds BYOK
@@ -123,6 +151,14 @@ export async function runModelSubcommand(argv: string[]): Promise<number> {
         const known = new Set(catalog.map((entry) => entry.handle));
         try {
           const available = await getAvailableModelHandles();
+          for (const entry of available.models) {
+            if (entry.providerCategory === "byok") {
+              byokCapabilities.set(
+                entry.handle,
+                entry.supportsStructuredOutputs,
+              );
+            }
+          }
           // BYOK handles can also have catalog presets (e.g. coding plans).
           // Use only BYOK metadata here, never the inventory's hosted/base rows.
           if (values.byok || values.hosted) {
@@ -151,29 +187,49 @@ export async function runModelSubcommand(argv: string[]): Promise<number> {
                 handle: entry.handle,
                 label: entry.label,
                 description: "",
+                supportsStructuredOutputs: entry.supportsStructuredOutputs,
                 updateArgs: { context_window: entry.maxContextWindow },
               })),
           );
         } catch (error) {
           // Never present a failed category lookup as an empty filtered result.
-          if (values.byok || values.hosted) throw error;
+          if (values.byok || values.hosted || values["structured-outputs"])
+            throw error;
           console.error(
             `Warning: BYOK catalog unavailable: ${error instanceof Error ? error.message : String(error)}`,
           );
         }
       }
-      await printJson(
-        catalog.map((entry) => ({
-          id: entry.id,
-          handle: entry.handle,
-          label: entry.label,
-          context_window_limit: entry.updateArgs?.context_window ?? null,
-          reasoning_levels: reasoningLevels(
-            entry.handle,
-            entry.updateArgs?.context_window,
-          ),
-        })),
-      );
+      const rows = catalog.map((entry) => ({
+        id: entry.id,
+        handle: entry.handle,
+        label: entry.label,
+        context_window_limit: entry.updateArgs?.context_window ?? null,
+        reasoning_levels: reasoningLevels(
+          entry.handle,
+          entry.updateArgs?.context_window,
+        ),
+        supports_structured_outputs: structuredOutputSupport(
+          entry,
+          byokCapabilities,
+        ),
+      }));
+      let listedRows = rows;
+      if (values["structured-outputs"]) {
+        const { supported, unknownCount } = filterStructuredOutputRows(rows);
+        if (rows.length > 0 && unknownCount === rows.length) {
+          throw new Error(
+            "Structured-output support is unavailable for these models on this backend",
+          );
+        }
+        if (unknownCount > 0) {
+          console.error(
+            `Warning: ${unknownCount} model(s) without structured-output metadata omitted`,
+          );
+        }
+        listedRows = supported;
+      }
+      await printJson(listedRows);
       return 0;
     }
     return runModelConfigAction(

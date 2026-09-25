@@ -11,6 +11,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
+import type { CreateBlock } from "@letta-ai/letta-client/resources/blocks/blocks";
 import type { Backend } from "@/backend";
 import {
   getLocalBackendMemoryFilesystemRoot,
@@ -22,6 +23,7 @@ import {
   getDirectoryLimits,
 } from "@/utils/directory-limits";
 import { getCurrentAgentId } from "./context";
+import { DEFAULT_ROOT_MEMORY_BLOCK } from "./create-agent-request";
 import { installMemoryGitHooks } from "./memory-git-hooks";
 
 export const MEMORY_FS_ROOT = ".letta";
@@ -145,6 +147,7 @@ export function ensureMemoryFilesystemDirs(
 
 export interface MemfsCreateBodyLike {
   tags?: string[] | null;
+  memory_blocks?: CreateBlock[] | null;
 }
 
 /**
@@ -160,17 +163,32 @@ export function stampMemfsTagOnCreateBody<T extends MemfsCreateBodyLike>(
   return { ...body, tags: [...tags, gitMemoryEnabledTag] };
 }
 
+/** Add the root marker that requests MemFS v2 repository initialization. */
+export function stampRootMemoryOnCreateBody<T extends MemfsCreateBodyLike>(
+  body: T,
+): T {
+  const blocks = Array.isArray(body.memory_blocks) ? body.memory_blocks : [];
+  if (blocks.some((block) => block.label === DEFAULT_ROOT_MEMORY_BLOCK.label)) {
+    return body;
+  }
+  return {
+    ...body,
+    memory_blocks: [{ ...DEFAULT_ROOT_MEMORY_BLOCK }, ...blocks],
+  };
+}
+
 /**
  * Prepare a raw (protocol-forwarded) create-agent body so the created agent
- * is memfs-enabled from birth.
+ * is MemFS v2-enabled from birth.
  *
  * Raw protocol paths (listener `agent_create` / `runtime_start.create_agent`)
  * forward client-provided bodies directly to the backend. Without this,
  * agents created on Letta Cloud are born without GIT_MEMORY_ENABLED_TAG and
  * every downstream tag-based check (isMemfsEnabledOnServer, memfs-sync,
  * hydrateMemfsSettingFromAgent) treats them as non-memfs — on every machine,
- * forever. Stamping the tag atomically with creation guarantees lazy sync
- * paths can finish the setup (clone, tool detach) even if this process dies.
+ * forever. Stamping the tag and the root MEMORY block atomically with
+ * creation guarantees the server seeds a v2 repository and lazy sync paths
+ * can finish the setup (clone, tool detach) even if this process dies.
  *
  * The local backend stamps the tag itself in LocalBackend.createAgent(), and
  * non-cloud remote backends don't support memfs sync, so both pass through.
@@ -185,7 +203,9 @@ export async function prepareRawCreateAgentBodyForMemfs<
   if (!(await isLettaCloud())) return body;
 
   const { GIT_MEMORY_ENABLED_TAG } = await import("@/agent/agent-tags");
-  return stampMemfsTagOnCreateBody(body, GIT_MEMORY_ENABLED_TAG);
+  return stampRootMemoryOnCreateBody(
+    stampMemfsTagOnCreateBody(body, GIT_MEMORY_ENABLED_TAG),
+  );
 }
 
 export async function hydrateMemfsSettingFromAgent(

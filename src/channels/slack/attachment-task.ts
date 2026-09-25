@@ -1,6 +1,5 @@
 import type { ChannelMessageAttachment } from "@/channels/types";
 import {
-  appendBackgroundProcessOutput,
   appendToOutputFile,
   assertBackgroundProcessCapacity,
   type BackgroundProcess,
@@ -65,14 +64,10 @@ export async function runSlackAttachmentDownloadTask(params: {
       },
     },
     command: params.description,
-    stdout: [],
-    stderr: [],
     status: "running",
     exitCode: null,
     startTime: new Date(),
     outputFile,
-    totalStdoutLines: 0,
-    totalStderrLines: 0,
     runtimeScope: params.runtimeScope,
   };
   backgroundProcesses.set(taskId, processState);
@@ -103,7 +98,6 @@ export async function runSlackAttachmentDownloadTask(params: {
       const line = `Slack attachment downloaded (local_path: ${attachment.localPath})`;
       processState.status = "completed";
       processState.exitCode = 0;
-      appendBackgroundProcessOutput(processState, "stdout", line);
       appendToOutputFile(outputFile, `${line}\n`);
       scheduleBackgroundProcessCleanup(taskId);
       notifyIfBackgrounded("completed", line);
@@ -114,7 +108,6 @@ export async function runSlackAttachmentDownloadTask(params: {
       const line = `Slack attachment download failed: ${message}`;
       processState.status = "failed";
       processState.exitCode = 1;
-      appendBackgroundProcessOutput(processState, "stderr", line);
       appendToOutputFile(outputFile, `${line}\n`);
       scheduleBackgroundProcessCleanup(taskId);
       notifyIfBackgrounded("failed", line);

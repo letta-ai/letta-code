@@ -57,7 +57,9 @@ test("fast downloads settle synchronously and complete the registry entry", asyn
   expect(entry?.status).toBe("completed");
   expect(entry?.exitCode).toBe(0);
   expect(entry?.runtimeScope).toEqual(RUNTIME_SCOPE);
-  expect(entry?.stdout.join("\n")).toContain(ATTACHMENT.localPath as string);
+  expect(readFileSync(entry?.outputFile as string, "utf-8")).toContain(
+    ATTACHMENT.localPath as string,
+  );
   // The caller already has the result, so nothing else should wake the agent.
   expect(queued).toHaveLength(0);
 });
@@ -75,7 +77,9 @@ test("failed downloads report the error and fail the registry entry", async () =
   const entry = [...backgroundProcesses.values()][0];
   expect(entry?.status).toBe("failed");
   expect(entry?.exitCode).toBe(1);
-  expect(entry?.stderr.join("\n")).toContain("HTTP 403");
+  expect(readFileSync(entry?.outputFile as string, "utf-8")).toContain(
+    "HTTP 403",
+  );
 });
 
 test("slow downloads yield a background task id and finish afterwards", async () => {
@@ -109,7 +113,6 @@ test("slow downloads yield a background task id and finish afterwards", async ()
 
   const settled = backgroundProcesses.get(result.taskId);
   expect(settled?.status).toBe("completed");
-  expect(settled?.stdout.join("\n")).toContain(ATTACHMENT.localPath as string);
   expect(readFileSync(settled?.outputFile as string, "utf-8")).toContain(
     ATTACHMENT.localPath as string,
   );
@@ -204,5 +207,7 @@ test("killing a backgrounded download aborts the transfer and fails the entry", 
   expect(abortSeen).toBe(true);
   const settled = backgroundProcesses.get(result.taskId);
   expect(settled?.status).toBe("failed");
-  expect(settled?.stderr.join("\n")).toContain("aborted");
+  expect(readFileSync(settled?.outputFile as string, "utf-8")).toContain(
+    "aborted",
+  );
 });

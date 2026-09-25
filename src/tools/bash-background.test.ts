@@ -268,11 +268,11 @@ describe.skipIf(isWindows)("Bash background tools", () => {
 
       const processEntry = backgroundProcesses.get(bashId);
       expect(processEntry?.status).toBe("failed");
-      expect(processEntry?.stderr.join("\n")).toContain(
+      expect(processEntry?.stderr?.join("\n")).toContain(
         "Command timed out after 200ms",
       );
       const descendantPid = Number(
-        processEntry?.stdout.join("\n").match(/descendant:(\d+)/)?.[1],
+        processEntry?.stdout?.join("\n").match(/descendant:(\d+)/)?.[1],
       );
       expect(descendantPid).toBeGreaterThan(0);
       expect(() => process.kill(descendantPid, 0)).toThrow();

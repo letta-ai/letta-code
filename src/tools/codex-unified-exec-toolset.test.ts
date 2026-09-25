@@ -8,6 +8,7 @@ describe("Codex unified exec toolset", () => {
     expect(TOOLSET_CATALOG.codex.tools).toContain("exec_command");
     expect(TOOLSET_CATALOG.codex.tools).toContain("write_stdin");
     expect(TOOLSET_CATALOG.codex.tools).toContain("Monitor");
+    expect(TOOLSET_CATALOG.codex.tools).toContain("Wake");
   });
 
   test("documents LC-specific omission of upstream sandbox fields", () => {
@@ -50,7 +51,7 @@ describe("Codex unified exec toolset", () => {
       process.platform === "win32",
     );
     expect(TOOL_DEFINITIONS.write_stdin.description).toContain(
-      "create a one-shot scheduled check instead of blocking or polling",
+      "create a one-shot Wake instead of blocking or polling",
     );
   });
 });

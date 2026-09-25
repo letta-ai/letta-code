@@ -10,6 +10,7 @@ import {
   buildCreateAgentRequest,
   buildCreateAgentRequestForPersonality,
   DEFAULT_CREATED_AGENT_BASE_TOOLS,
+  DEFAULT_ROOT_MEMORY_BLOCK,
   LETTA_CODE_AGENT_TYPE,
 } from "@/agent/create-agent-request";
 import { resolveModel } from "@/agent/model-catalog";
@@ -34,8 +35,9 @@ describe("buildCreateAgentRequest", () => {
     expect(request).toMatchObject({
       agent_type: LETTA_CODE_AGENT_TYPE,
       model: "openai/gpt-5.2",
-      system: buildSystemPrompt("default", "memfs"),
+      system: buildSystemPrompt("default", "root-memfs"),
       memory_blocks: [
+        DEFAULT_ROOT_MEMORY_BLOCK,
         { label: "persona", value: "You are Ezra." },
         { label: "human", value: "The human reads the docs." },
       ],
@@ -61,6 +63,7 @@ describe("buildCreateAgentRequest", () => {
     });
 
     expect(request.memory_blocks?.map((block) => block.label)).toEqual([
+      "MEMORY",
       "persona",
       "human",
       "project",
@@ -102,6 +105,27 @@ describe("buildCreateAgentRequest", () => {
         memoryPromptMode: "memfs",
       }),
     ).rejects.toThrow("must describe the same memory mode");
+  });
+
+  test("creates an empty root index for root MemFS without identity blocks", async () => {
+    const request = await buildCreateAgentRequest({
+      memoryPromptMode: "root-memfs",
+      enableMemfs: true,
+    });
+
+    expect(request.memory_blocks).toEqual([DEFAULT_ROOT_MEMORY_BLOCK]);
+    expect(request.system).toBe(buildSystemPrompt("default", "root-memfs"));
+  });
+
+  test("preserves a caller-provided root index", async () => {
+    const customRoot = { label: "MEMORY", value: "# Custom index\n" };
+    const request = await buildCreateAgentRequest({
+      memoryPromptMode: "root-memfs",
+      enableMemfs: true,
+      memoryBlocks: [customRoot],
+    });
+
+    expect(request.memory_blocks).toEqual([customRoot]);
   });
 
   test("preserves a null system prompt on the outbound wire payload", async () => {
@@ -158,16 +182,17 @@ describe("buildCreateAgentRequestForPersonality", () => {
       // Same content the CLI's createAgent() would send for this personality.
       expect(request.name).toBe(cliOptions.name as string);
       expect(request.description).toBe(cliOptions.description as string);
-      expect(request.memory_blocks).toEqual(
-        cliOptions.memoryBlocks as typeof request.memory_blocks,
-      );
+      expect(request.memory_blocks).toEqual([
+        DEFAULT_ROOT_MEMORY_BLOCK,
+        ...(cliOptions.memoryBlocks as typeof request.memory_blocks),
+      ]);
       expect(request.model).toBe(
         resolveModel(personality.defaultModel ?? "auto") as string,
       );
 
       // Direct Cloud creation and the CLI Cloud path both delegate the default
       // prompt to the service. Local CLI creation still resolves it client-side.
-      expect(cliOptions.memoryPromptMode).toBe("memfs");
+      expect(cliOptions.memoryPromptMode).toBe("root-memfs");
       expect(request.system).toBeNull();
 
       expect(request.agent_type).toBe(LETTA_CODE_AGENT_TYPE);
@@ -193,6 +218,7 @@ describe("buildCreateAgentRequestForPersonality", () => {
       personalityId: "tutorial",
     });
     expect(request.memory_blocks.map((block) => block.label)).toEqual([
+      "MEMORY",
       "persona",
       "human",
       "onboarding",

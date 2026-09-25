@@ -30,6 +30,7 @@ import {
   matchesFilePattern,
   matchesToolPattern,
 } from "./matcher";
+import { isOwnMemoryWrite } from "./memory-write-allowance";
 import { permissionMode } from "./mode";
 import { isMemoryDirCommand, isReadOnlyShellCommand } from "./read-only-shell";
 import { sessionPermissions } from "./session";
@@ -483,6 +484,25 @@ function checkPermissionForEngine(
     }
   }
 
+  // File-tool counterpart of the memory-dir shell allowance above.
+  if (
+    !isStrictMode &&
+    isOwnMemoryWrite(canonicalTool, toolArgs, workingDirectory, agentId)
+  ) {
+    traceEvent(
+      trace,
+      "memory-dir-auto-allow",
+      "Agent memory directory operation",
+    );
+    return {
+      result: {
+        decision: "allow",
+        reason: "Agent memory directory operation",
+      },
+      trace,
+    };
+  }
+
   if (!isStrictMode && WORKING_DIRECTORY_TOOLS.includes(queryTool)) {
     const filePath = extractFilePath(toolArgs);
     if (
@@ -705,6 +725,7 @@ const SAFE_AUTO_APPROVE_SUBAGENT_TYPES = new Set([
   "reflection", // Memory reflection - writes constrained by memory-subagent sandbox
   "Reflection",
   "history-analyzer", // History analysis - writes constrained by memory-subagent sandbox
+  "memory", // Memory worker - edits its private memory worktree under the same sandbox
 ]);
 
 /**

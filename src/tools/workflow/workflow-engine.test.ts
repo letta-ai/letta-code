@@ -57,6 +57,30 @@ return [a, b]`,
     ]);
   });
 
+  test("relays live usage as running events with cumulative tokens", async () => {
+    const events: WorkflowProgressEvent[] = [];
+    const spawner: SubagentSpawner = async (_request, _signal, hooks) => {
+      hooks?.onUsage?.(500);
+      hooks?.onUsage?.(1_200);
+      return { value: "ok", failed: false, totalTokens: 1_200 };
+    };
+    await executeWorkflow(spawner, {
+      script: `${META}phase('P'); await agent('x', { label: 'L' })`,
+      onProgress: (event) => events.push(event),
+    });
+    const agentEvents = events.filter((e) => e.kind === "agent");
+    expect(agentEvents.map((e) => [e.status, e.totalTokens])).toEqual([
+      ["queued", undefined],
+      ["running", undefined],
+      ["running", 500],
+      ["running", 1_200],
+      ["done", 1_200],
+    ]);
+    expect(agentEvents.every((e) => e.label === "L" && e.phase === "P")).toBe(
+      true,
+    );
+  });
+
   test("a failed subagent resolves to null and reports the error", async () => {
     const events: WorkflowProgressEvent[] = [];
     const run = await executeWorkflow(
