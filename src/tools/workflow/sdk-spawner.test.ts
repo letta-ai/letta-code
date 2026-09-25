@@ -175,6 +175,53 @@ describe("createSdkSpawner", () => {
     expect(client.calls).toHaveLength(1);
   });
 
+  test("schema returns the validated SDK value and takes precedence over json", async () => {
+    const schema = {
+      type: "object",
+      required: ["findings"],
+      properties: {
+        findings: { type: "array", items: { type: "string" } },
+      },
+    };
+    const client = fakeClient([
+      {
+        type: "result",
+        success: true,
+        result: '{"bugs":["wrong shape"]}',
+        structuredOutput: { findings: ["real"] },
+      },
+    ]);
+    const result = await createSdkSpawner(client, CONFIG)(
+      request({ schema, json: true }),
+      new AbortController().signal,
+    );
+    expect(result.value).toEqual({ findings: ["real"] });
+    expect(client.calls[0]?.options).toMatchObject({
+      outputFormat: { type: "json_schema", schema },
+    });
+    expect(client.calls[0]?.options.system).not.toContain("single JSON value");
+  });
+
+  test("schema exhaustion records validation detail as a failed outcome", async () => {
+    const client = fakeClient([
+      {
+        type: "result",
+        success: false,
+        errorCode: "structured_output_error",
+        errorDetail: "missing required property findings",
+      },
+    ]);
+    const result = await createSdkSpawner(client, CONFIG)(
+      request({ schema: { type: "object", required: ["findings"] } }),
+      new AbortController().signal,
+    );
+    expect(result).toMatchObject({
+      value: null,
+      failed: true,
+      error: "missing required property findings",
+    });
+  });
+
   test("json option parses the reply and fails on non-JSON", async () => {
     const good = await createSdkSpawner(
       fakeClient([{ type: "result", success: true, result: '{"n": 1}' }]),

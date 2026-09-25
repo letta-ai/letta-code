@@ -2186,10 +2186,9 @@ export function App({
           }
           emittedIdsRef.current.add(id);
           newlyCommitted.push({ ...ln });
-          // Note: We intentionally don't cleanup precomputedDiffs here because
-          // the Static area renders AFTER this function returns (on next React tick),
-          // and the diff needs to be available for ToolCallMessage to render.
-          // The diffs will be cleaned up when the session ends or on next session start.
+          // precomputedDiffs entries stay cached for Static remounts (resize
+          // repaints, ctrl+o, display toggles re-render committed items);
+          // StaticTranscript releases their oldStr/newStr payloads post-render.
         }
       }
 
@@ -2940,12 +2939,10 @@ export function App({
                 SYSTEM_PROMPTS,
                 SYSTEM_PROMPT,
               } = await import("@/agent/prompt-assets");
-
               // Best-effort preset detection.
               // Exact match is ideal, but allow prefix-matches because the stored
               // agent.system may have additional sections appended.
               let matched: string | null = null;
-
               const contentMatches = (content: string): boolean => {
                 const norm = normalize(content);
                 return (
@@ -2954,7 +2951,6 @@ export function App({
                     (sysNorm.startsWith(norm) || norm.startsWith(sysNorm)))
                 );
               };
-
               const promptMatches = (
                 prompt: (typeof SYSTEM_PROMPTS)[number],
               ): boolean =>
@@ -2978,7 +2974,10 @@ export function App({
 
               setCurrentSystemPromptId(matched ?? "custom");
             } else {
-              setCurrentSystemPromptId("custom");
+              // A null raw prompt is Cloud's managed default, not a custom preset.
+              setCurrentSystemPromptId(
+                agentSystem === null ? "default" : "custom",
+              );
             }
           } catch {
             // best-effort only

@@ -62,6 +62,7 @@ import type { ApprovalRequest } from "./cli/helpers/stream";
 import { initTerminalTheme } from "./cli/helpers/terminal-theme";
 import { ProfileSelectionInline } from "./cli/profile-selection";
 import {
+  createStartupAgentPickerHandler,
   getStartupBackendLookupOrder,
   inferBackendModeFromAgentId,
   resolveSubcommandBackendMode,
@@ -2448,7 +2449,6 @@ async function main(): Promise<void> {
     if (showKeybindingSetup === null) {
       return null;
     }
-
     // During initial "selecting" phase, render ProfileSelectionInline with loading state
     // to prevent component tree switch whitespace artifacts
     if (loadingState === "selecting") {
@@ -2461,7 +2461,6 @@ async function main(): Promise<void> {
         onExit: () => process.exit(0),
       });
     }
-
     // Show conversation selector for --resume flag
     if (loadingState === "selecting_conversation" && resumeAgentId) {
       return React.createElement(ConversationSelector, {
@@ -2481,7 +2480,6 @@ async function main(): Promise<void> {
         },
       });
     }
-
     // Show global agent selector in fresh repos with global pinned agents
     if (loadingState === "selecting_global") {
       return React.createElement(ProfileSelectionInline, {
@@ -2494,10 +2492,12 @@ async function main(): Promise<void> {
           availableServerModels.length > 0 ? availableServerModels : undefined,
         defaultModelHandle: customApiDefaultModel ?? undefined,
         serverBaseUrl: customApiBaseUrl ?? undefined,
-        onSelect: (agentId: string) => {
-          setSelectedGlobalAgentId(agentId);
-          setLoadingState("assembling");
-        },
+        onSelect: createStartupAgentPickerHandler(
+          tryConfigureStartupLocalBackend,
+          setSelectedGlobalAgentId,
+          () => setLoadingState("assembling"),
+          setFailedAgentMessage,
+        ),
         onCreateNew: () => {
           setUserRequestedNewAgent(true);
           setLoadingState("assembling");

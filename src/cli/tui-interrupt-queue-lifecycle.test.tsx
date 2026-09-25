@@ -283,6 +283,13 @@ describe("TUI interrupt queue lifecycle", () => {
     const source = await startMonitor(input);
     // An event drives another complete turn while the source stays connected.
     source.socket.send("normal monitor event");
+    await waitFor(
+      () =>
+        readFileSync(source.state.outputFile as string, "utf8").includes(
+          "normal monitor event",
+        ),
+      "the normal Monitor event to be received",
+    );
     await waitFor(() => inputs.length === 2, "the Monitor notification turn");
     await sleep(300);
     expect(source.state.status).toBe("running");

@@ -148,6 +148,7 @@ test("exhausted deployment recovery emits one audience-safe terminal failure", (
     stopReason: "error",
     isTerminal: true,
     runId: "run-1",
+    clientMessageIds: ["cm-1", "cm-2"],
     agentId: "agent-1",
     conversationId: "conv-1",
     errorInfo,
@@ -163,6 +164,7 @@ test("exhausted deployment recovery emits one audience-safe terminal failure", (
   expect(loopErrors[0]?.delta).toMatchObject({
     message: "Service temporarily unavailable. Please retry your request.",
     is_terminal: true,
+    client_message_ids: ["cm-1", "cm-2"],
   });
   expect(JSON.stringify(payloads)).not.toContain(
     "cloud_api_deployment_interrupted",

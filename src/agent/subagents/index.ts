@@ -21,8 +21,6 @@ import {
 // Built-in subagent definitions (embedded at build time)
 import forkAgentMd from "./builtin/fork.md";
 import generalPurposeAgentMd from "./builtin/general-purpose.md";
-import historyAnalyzerAgentMd from "./builtin/history-analyzer.md";
-import historyAnalyzerV2AgentMd from "./builtin/history-analyzer-v2.md";
 import initAgentMd from "./builtin/init.md";
 import initV2AgentMd from "./builtin/init-v2.md";
 import memoryAgentMd from "./builtin/memory.md";
@@ -34,7 +32,6 @@ import reflectionV2AgentMd from "./builtin/reflection-v2.md";
 const STANDARD_BUILTIN_SOURCES = [
   forkAgentMd,
   generalPurposeAgentMd,
-  historyAnalyzerAgentMd,
   initAgentMd,
   memoryAgentMd,
   recallAgentMd,
@@ -44,7 +41,6 @@ const STANDARD_BUILTIN_SOURCES = [
 const LOCAL_MEMFS_BUILTIN_SOURCES = [
   forkAgentMd,
   generalPurposeAgentMd,
-  historyAnalyzerAgentMd,
   initAgentMd,
   memoryAgentMd,
   recallAgentMd,
@@ -52,7 +48,6 @@ const LOCAL_MEMFS_BUILTIN_SOURCES = [
 ];
 
 const MEMFS_V2_BUILTIN_SOURCES = [
-  historyAnalyzerV2AgentMd,
   initV2AgentMd,
   memoryV2AgentMd,
   reflectionV2AgentMd,

@@ -87,12 +87,7 @@ import {
  * fork/recall are excluded because they deploy the parent agent and
  * never trigger fresh agent creation, so base tools are out of scope.
  */
-const NO_BASE_TOOL_SUBAGENT_TYPES = new Set([
-  "reflection",
-  "memory",
-  "history-analyzer",
-  "init",
-]);
+const NO_BASE_TOOL_SUBAGENT_TYPES = new Set(["reflection", "memory", "init"]);
 
 // ============================================================================
 // Helper Functions

@@ -743,7 +743,7 @@ export interface SystemPromptUpdateResult {
  */
 export async function updateAgentSystemPromptRaw(
   agentId: string,
-  systemPromptContent: string,
+  systemPromptContent: string | null,
 ): Promise<SystemPromptUpdateResult> {
   try {
     await getBackend().updateAgent(agentId, {
@@ -800,11 +800,17 @@ export async function updateAgentSystemPrompt(
       memoryMode,
     );
 
+    const { isLettaCloud } = await import("@/agent/memory-filesystem");
+    const useCloudDefault =
+      systemPromptId === "default" &&
+      backend.capabilities.remoteMemfs &&
+      !backend.capabilities.localMemfs &&
+      (await isLettaCloud());
     debugLog("modify", "systemPromptContent: %s", systemPromptContent);
 
     const updateResult = await updateAgentSystemPromptRaw(
       agentId,
-      systemPromptContent,
+      useCloudDefault ? null : systemPromptContent,
     );
     if (!updateResult.success) {
       return {
@@ -816,7 +822,9 @@ export async function updateAgentSystemPrompt(
 
     // Persist preset for known presets; clear stale preset for subagent/unknown
     if (settingsManager.isReady) {
-      if (isKnownPreset(systemPromptId)) {
+      if (useCloudDefault) {
+        settingsManager.clearSystemPromptPreset(agentId);
+      } else if (isKnownPreset(systemPromptId)) {
         recordManagedSystemPrompt(
           agentId,
           systemPromptId,
@@ -883,10 +891,19 @@ export async function updateAgentSystemPromptMemfs(
       ? settingsManager.getSystemPromptHash(agentId)
       : undefined;
 
+    const agent = await getBackend().retrieveAgent(agentId);
+    // A null prompt is resolved by Cloud at compile time using the current
+    // memory mode. Never turn it into a pinned local variant on MemFS changes.
+    if (agent.system == null) {
+      return {
+        success: true,
+        message: "Backend default system prompt follows memory mode",
+      };
+    }
+
     let nextSystemPrompt: string;
     if (storedPreset && isKnownPreset(storedPreset)) {
-      const agent = await getBackend().retrieveAgent(agentId);
-      const currentSystemPrompt = agent.system || "";
+      const currentSystemPrompt = agent.system;
       if (storedHash && hashSystemPrompt(currentSystemPrompt) !== storedHash) {
         if (settingsManager.isReady) {
           settingsManager.setSystemPromptCustom(agentId);
@@ -917,8 +934,7 @@ export async function updateAgentSystemPromptMemfs(
 
       nextSystemPrompt = buildSystemPrompt(storedPreset, newMode);
     } else {
-      const agent = await getBackend().retrieveAgent(agentId);
-      nextSystemPrompt = agent.system || "";
+      nextSystemPrompt = agent.system;
     }
 
     await getBackend().updateAgent(agentId, {

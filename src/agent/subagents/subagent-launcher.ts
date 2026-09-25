@@ -203,7 +203,7 @@ function resolveMemorySubagentScratchpad(
  *   - MEMORY_DIR / LETTA_MEMORY_DIR are only overridden when the subagent
  *     declares the memory-subagent launch profile. Those subagents operate on
  *     the parent's memory as their working filesystem (reflection, memory,
- *     init, history-analyzer). Other subagents keep whatever MEMORY_DIR they
+ *     init). Other subagents keep whatever MEMORY_DIR they
  *     inherited from the parent process (usually unset).
  *
  * Pure function, no side effects — straightforward to unit-test.
