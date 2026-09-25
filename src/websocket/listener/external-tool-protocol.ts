@@ -26,7 +26,12 @@ function isExternalToolDefinitionPayload(value: unknown): boolean {
     typeof value.name === "string" &&
     (value.label === undefined || typeof value.label === "string") &&
     typeof value.description === "string" &&
-    isRecord(value.parameters)
+    isRecord(value.parameters) &&
+    (value.timeout_ms === undefined ||
+      (typeof value.timeout_ms === "number" &&
+        Number.isSafeInteger(value.timeout_ms) &&
+        value.timeout_ms >= 1_000 &&
+        value.timeout_ms <= 300_000))
   );
 }
 

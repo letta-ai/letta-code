@@ -598,12 +598,12 @@ export interface ClientTool {
 }
 
 // EXTERNAL TOOLS (SDK-side execution)
-
 export interface ExternalToolDefinition {
   name: string;
   label?: string;
   description: string;
   parameters: Record<string, unknown>; // JSON Schema
+  timeoutMs?: number; // Wait for a controller-owned result, not execution time.
   /** Internal registration key; model-facing calls still use name. */
   registrationKey?: string;
   connectionId?: string;

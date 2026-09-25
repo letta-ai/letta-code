@@ -5,6 +5,8 @@ export interface ExternalToolDefinitionPayload {
   label?: string;
   description: string;
   parameters: Record<string, unknown>;
+  /** Controller-requested wait for a result; expiry does not cancel remote work. */
+  timeout_ms?: number;
 }
 
 export interface RuntimeStartExternalToolsGroup {
