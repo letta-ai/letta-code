@@ -4,6 +4,11 @@
 import type { Buffers, Line } from "@/cli/helpers/accumulator";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import type { McpServerConfig } from "@/mcp-client";
+import {
+  listMcpPresets,
+  MCP_SERVER_PRESETS,
+  resolveMcpPreset,
+} from "@/mcp-presets";
 import { replaceClientMcpServers } from "@/mcp-runtime";
 import { settingsManager } from "@/settings-manager";
 
@@ -133,6 +138,8 @@ interface McpAddArgs {
   env: Record<string, string>;
   headers: Record<string, string>;
   authTokenEnv: string | null;
+  /** Durable OAuth opt-out carried through from a preset; see HttpMcpServerConfig.oauth. */
+  oauth?: false;
 }
 
 function parseMcpAddArgs(parts: string[]): McpAddArgs | null {
@@ -235,6 +242,100 @@ function parseMcpAddArgs(parts: string[]): McpAddArgs | null {
   };
 }
 
+/**
+ * The one preset form: a single bare token that names a registered preset,
+ * e.g. `/mcp add anysearch`. Nothing else is treated as a preset request —
+ * any other argument list (a bare word that isn't a registered preset, or
+ * any `--transport ...` invocation, whatever tokens it contains) falls
+ * through to `parseMcpAddArgs` exactly as it did before presets existed.
+ * That deliberately reserves no new flag or token: a stdio child command's
+ * own arguments keep passing through literally, unchanged.
+ *
+ * Existence is checked via `Object.hasOwn` on the preset registry directly
+ * (`MCP_SERVER_PRESETS`) — not plain bracket lookup, which would let an
+ * inherited `Object.prototype` name (`toString`, `constructor`, ...) look
+ * like a registered preset — and not by calling `resolveMcpPreset`, so a
+ * valid request resolves the preset exactly once, in resolveMcpAddArgs
+ * below — never twice.
+ */
+function bareRegisteredPresetId(parts: string[]): string | undefined {
+  const [only] = parts;
+  return parts.length === 1 && only && Object.hasOwn(MCP_SERVER_PRESETS, only)
+    ? only
+    : undefined;
+}
+
+/**
+ * Resolve `/mcp add` arguments, preferring a built-in preset match before
+ * falling back to explicit `--transport <type> <name> <url|command>` parsing.
+ * Exported so preset resolution and the existing explicit-args path can be
+ * unit tested without exercising settings persistence or the MCP runtime.
+ */
+export function resolveMcpAddArgs(
+  parts: string[],
+): { kind: "args"; args: McpAddArgs } | { kind: "invalid" } {
+  const presetId = bareRegisteredPresetId(parts);
+  const preset = presetId ? resolveMcpPreset(presetId) : undefined;
+  if (preset) {
+    return {
+      kind: "args",
+      args: {
+        transport: preset.transport,
+        name: preset.name,
+        url: preset.url,
+        command: null,
+        args: [],
+        cwd: null,
+        env: {},
+        headers: preset.headers ?? {},
+        authTokenEnv: null,
+        oauth: preset.oauth,
+      },
+    };
+  }
+
+  const args = parseMcpAddArgs(parts);
+  return args ? { kind: "args", args } : { kind: "invalid" };
+}
+
+/**
+ * Build the final McpServerConfig from resolved `/mcp add` args — the exact
+ * construction `handleMcpAdd` persists to settings and connects through the
+ * MCP runtime. Exported so the real config `/mcp add` (including any
+ * preset's `oauth` opt-out) actually produces can be regression-tested
+ * directly, rather than re-implemented/approximated in a test.
+ */
+export function buildMcpServerConfig(args: McpAddArgs): McpServerConfig {
+  if (args.transport === "stdio") {
+    if (!args.command) throw new Error("Command is required for stdio");
+    return {
+      name: args.name,
+      transport: "stdio",
+      command: args.command,
+      args: args.args,
+      cwd: args.cwd ?? process.cwd(),
+      ...(Object.keys(args.env).length > 0 ? { env: args.env } : {}),
+    };
+  }
+
+  if (!args.url) throw new Error("URL is required for HTTP/SSE");
+  const headers = {
+    ...args.headers,
+    ...(args.authTokenEnv
+      ? { Authorization: `Bearer \${${args.authTokenEnv}}` }
+      : {}),
+  };
+  const base = {
+    name: args.name,
+    url: args.url,
+    ...(Object.keys(headers).length > 0 ? { headers } : {}),
+    ...(args.oauth === false ? { oauth: false as const } : {}),
+  };
+  return args.transport === "http"
+    ? { ...base, transport: "http" as const }
+    : { ...base, transport: "sse" as const };
+}
+
 // /mcp add --transport <type> <name> <url/command> [options]
 export async function handleMcpAdd(
   ctx: McpCommandContext,
@@ -243,18 +344,20 @@ export async function handleMcpAdd(
 ): Promise<void> {
   // Parse the full command string respecting quotes
   const parts = parseCommandArgs(commandStr);
-  const args = parseMcpAddArgs(parts);
+  const resolved = resolveMcpAddArgs(parts);
 
-  if (!args) {
+  if (resolved.kind === "invalid") {
     addCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      'Usage: /mcp add --transport <http|sse|stdio> <name> <url|command> [--header "key: value"] [--auth-env TOKEN_ENV_VAR]\n\nExamples:\n  /mcp add --transport http notion https://mcp.notion.com/mcp\n  /mcp add --transport http secure-api https://api.example.com/mcp --auth-env MCP_API_TOKEN',
+      'Usage: /mcp add --transport <http|sse|stdio> <name> <url|command> [--header "key: value"] [--auth-env TOKEN_ENV_VAR]\n       /mcp add <preset>\n\nExamples:\n  /mcp add --transport http notion https://mcp.notion.com/mcp\n  /mcp add --transport http secure-api https://api.example.com/mcp --auth-env MCP_API_TOKEN\n  /mcp add anysearch',
       false,
     );
     return;
   }
+
+  const args = resolved.args;
 
   const cmdId = addCommandResult(
     ctx.buffersRef,
@@ -278,32 +381,7 @@ export async function handleMcpAdd(
         `Invalid token environment variable name: ${args.authTokenEnv}`,
       );
     }
-    const headers = {
-      ...args.headers,
-      ...(args.authTokenEnv
-        ? { Authorization: `Bearer \${${args.authTokenEnv}}` }
-        : {}),
-    };
-    let config: McpServerConfig;
-    if (args.transport === "stdio") {
-      if (!args.command) throw new Error("Command is required for stdio");
-      config = {
-        name: args.name,
-        transport: "stdio",
-        command: args.command,
-        args: args.args,
-        cwd: args.cwd ?? process.cwd(),
-        ...(Object.keys(args.env).length > 0 ? { env: args.env } : {}),
-      };
-    } else {
-      if (!args.url) throw new Error("URL is required for HTTP/SSE");
-      config = {
-        name: args.name,
-        transport: args.transport,
-        url: args.url,
-        ...(Object.keys(headers).length > 0 ? { headers } : {}),
-      };
-    }
+    const config = buildMcpServerConfig(args);
 
     const configs = [...existing, config];
     settingsManager.setMcpServers(ctx.agentId, configs);
@@ -352,6 +430,10 @@ export async function handleMcpAdd(
 }
 
 export function mcpHelpText(): string {
+  const presetLines = listMcpPresets().map(
+    (preset) => `  ${preset.id.padEnd(12)} ${preset.description}`,
+  );
+
   return [
     "/mcp help",
     "",
@@ -362,6 +444,7 @@ export function mcpHelpText(): string {
     "USAGE",
     "  /mcp              — open the MCP manager (local + server-side)",
     "  /mcp add ...      — add a client-local server",
+    "  /mcp add <preset> — add a built-in preset server",
     "  /mcp help         — show this help",
     "",
     "OPTIONS FOR /mcp add",
@@ -371,10 +454,14 @@ export function mcpHelpText(): string {
     "  --cwd PATH                   stdio working directory",
     "  --env KEY=VALUE              repeatable stdio environment variable",
     "",
+    "BUILT-IN PRESETS",
+    ...(presetLines.length > 0 ? presetLines : ["  (none)"]),
+    "",
     "EXAMPLES",
     "  /mcp add --transport stdio filesystem npx -y @modelcontextprotocol/server-filesystem .",
     "  /mcp add --transport http notion https://mcp.notion.com/mcp",
     "  /mcp add --transport http private https://mcp.example.com/mcp --auth-env MCP_API_TOKEN",
+    "  /mcp add anysearch",
   ].join("\n");
 }
 

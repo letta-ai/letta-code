@@ -27,12 +27,21 @@ export interface HttpMcpServerConfig extends McpServerConfigBase {
   transport: "http";
   url: string;
   headers?: Record<string, string>;
+  /**
+   * Set to `false` to durably opt this server out of the client-local OAuth
+   * flow (discovery/DCR/PKCE), even though it has no Authorization header.
+   * Omitted/undefined preserves today's default: a header-less http/sse
+   * server is assumed to require OAuth and a session is attempted for it.
+   */
+  oauth?: false;
 }
 
 export interface SseMcpServerConfig extends McpServerConfigBase {
   transport: "sse";
   url: string;
   headers?: Record<string, string>;
+  /** See HttpMcpServerConfig.oauth. */
+  oauth?: false;
 }
 
 export type McpServerConfig =
@@ -221,6 +230,11 @@ function resolveHeaderEnvironment(
         if (resolved === undefined) {
           throw new Error(
             `MCP header ${name} references missing environment variable ${envName}`,
+          );
+        }
+        if (name.toLowerCase() === "authorization" && resolved.trim() === "") {
+          throw new Error(
+            `MCP header ${name} references environment variable ${envName}, which is set but blank`,
           );
         }
         return resolved;

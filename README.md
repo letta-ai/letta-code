@@ -30,6 +30,7 @@ Letta Code can be used interactively, or to power always-on agents that work pro
 | [Crons & Schedules](https://docs.letta.com/letta-code/scheduling) | Configure heartbeats and crons, and let agents work across time with self-managed schedules |
 | [Remote computers](https://docs.letta.com/platform/computers/byom) (requires signing in with Letta) | Agents work across multiple computers. Connect any machine by running `letta server --computer-name "..."` |
 | [Secrets](https://docs.letta.com/letta-code/secrets) (requires signing in with Letta) | Make secrets available as environment variables (across machines) while obfuscating their values from context |
+| [Web search (AnySearch)](docs/integrations/anysearch.md) | Built-in MCP preset for general search, sub-domain discovery, batch search, and page extraction. Connect anonymously or with `ANYSEARCH_API_KEY` via `/mcp add anysearch` |
 
 See the full list of slash commands in our [documentation](https://docs.letta.com/letta-code/slash-commands).
 

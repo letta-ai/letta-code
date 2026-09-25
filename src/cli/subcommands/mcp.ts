@@ -363,6 +363,7 @@ async function oauthForConfig(
 ): Promise<McpOAuthConnection | undefined> {
   if (config.transport !== "http" && config.transport !== "sse")
     return undefined;
+  if (config.oauth === false) return undefined;
   if (hasAuthorizationHeader(config)) return undefined;
   const create = deps.createOAuthSession ?? createMcpOAuthSession;
   return create(agentId, config.name, config.url, {
