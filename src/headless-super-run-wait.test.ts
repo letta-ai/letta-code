@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test";
+import type { Run } from "@letta-ai/letta-client/resources/agents/messages";
 import type {
-  ConversationStatusEvent,
   EnqueueReceipt,
-  LatestConversationSuperRun,
+  ExactSuperRun,
 } from "@/backend/api/conversation-enqueue";
+import { ApiRequestError } from "@/backend/api/request";
 import {
   type SuperRunWaitDeps,
   waitForAcceptedSuperRun,
@@ -17,47 +18,41 @@ const receipt: EnqueueReceipt = {
   super_run_id: "sr-1",
   workflow_id: "wf-1",
 };
-function row(status = "STR"): LatestConversationSuperRun {
+
+function exact(status = "COM"): ExactSuperRun {
   return {
     id: "sr-1",
     status,
     completed_at: status === "COM" ? "now" : null,
     cancelled_at: status === "CAN" ? "now" : null,
     errored_at: null,
+    error: null,
+    run_ids: ["run-1"],
   };
 }
-function snapshot(active = true, run = "run-1"): ConversationStatusEvent {
+
+function run(status = "completed", stopReason = "end_turn"): Run {
   return {
-    type: "conversation_super_run_snapshot",
-    statuses: active
-      ? [
-          {
-            conversation_id: "conv-1",
-            active_super_runs: [{ id: "sr-1", status: "STR" }],
-            runtime_status: {
-              state: "ACTIVE",
-              loop_state: {
-                status: "RETRYING_API_REQUEST",
-                client_message_ids_by_run_id: { [run]: ["cm-1"] },
-              },
-            },
-          },
-        ]
-      : [],
+    id: "run-1",
+    status,
+    stop_reason: stopReason,
+  } as Run;
+}
+
+function makeClock() {
+  let time = 0;
+  return {
+    now: () => time,
+    sleep: async (ms: number) => {
+      time += Math.max(ms, 1);
+    },
   };
 }
-async function* events(
-  ...values: Array<
-    | ConversationStatusEvent
-    | { type: "super_run_update"; data: LatestConversationSuperRun }
-  >
-) {
-  for (const value of values) yield value;
-}
+
 function deps(extra: Partial<SuperRunWaitDeps> = {}): SuperRunWaitDeps {
   return {
-    latest: async () => row(),
-    open: async () => events(snapshot(), snapshot(false)),
+    exact: async () => exact(),
+    run: async () => run(),
     messages: async () => [
       {
         id: "msg-1",
@@ -72,115 +67,169 @@ function deps(extra: Partial<SuperRunWaitDeps> = {}): SuperRunWaitDeps {
   };
 }
 
-test("existing active-to-idle feed yields one completion and collects an observed reply", async () => {
+test("requires the exact accepted Super Run and its newest child run", async () => {
+  const reads: string[] = [];
+  const result = await waitForAcceptedSuperRun(
+    receipt,
+    new AbortController().signal,
+    deps({
+      exact: async (agentId, superRunId) => {
+        reads.push(`${agentId}:${superRunId}`);
+        return { ...exact(), run_ids: ["run-2", "run-1"] };
+      },
+      run: async (runId) => {
+        reads.push(runId);
+        return { ...run(), id: runId } as Run;
+      },
+      messages: async (runId) => {
+        reads.push(`messages:${runId}`);
+        return [];
+      },
+    }),
+  );
+  expect(reads).toEqual(["agent-1:sr-1", "run-2", "messages:run-2"]);
+  expect(result.runIds).toEqual(["run-2", "run-1"]);
+  expect(result.stopReason).toBe("end_turn");
+});
+
+test("a successful child run does not require an assistant message", async () => {
+  const result = await waitForAcceptedSuperRun(
+    receipt,
+    new AbortController().signal,
+    deps({ messages: async () => [] }),
+  );
+  expect(result.text).toContain("Remote task finished");
+  expect(result.text).toContain("letta messages list");
+});
+
+test("returns assistant text when it is available", async () => {
   const result = await waitForAcceptedSuperRun(
     receipt,
     new AbortController().signal,
     deps(),
   );
   expect(result.text).toBe("Done");
-  expect(result.runIds).toEqual(["run-1"]);
 });
-test("fast completion before subscription still produces a notification without a mandatory reply", async () => {
-  const result = await waitForAcceptedSuperRun(
-    receipt,
-    new AbortController().signal,
-    deps({
-      latest: async () => row("COM"),
-      open: async () => {
-        throw new Error("must not subscribe");
-      },
-    }),
+
+test("reports the stored listener pre-run failure stage", async () => {
+  await expect(
+    waitForAcceptedSuperRun(
+      receipt,
+      new AbortController().signal,
+      deps({
+        exact: async () => ({
+          ...exact(),
+          errored_at: "now",
+          error: {
+            code: "LISTENER_TURN_FAILED_BEFORE_RUN",
+            message: "Message author is not authorized",
+          },
+          run_ids: [],
+        }),
+      }),
+    ),
+  ).rejects.toThrow(
+    "LISTENER_TURN_FAILED_BEFORE_RUN: Message author is not authorized",
   );
-  expect(result.text).toContain("Remote task finished");
-  expect(result.text).toContain("letta messages list");
 });
-test("missing reply after completion never becomes execution failure", async () => {
-  const result = await waitForAcceptedSuperRun(
-    receipt,
-    new AbortController().signal,
-    deps({
-      messages: async () => {
-        throw new Error("HTTP 503");
-      },
-    }),
-  );
-  expect(result.text).toContain("reply was not collected");
+
+test("reports cancellation of the exact accepted send", async () => {
+  await expect(
+    waitForAcceptedSuperRun(
+      receipt,
+      new AbortController().signal,
+      deps({ exact: async () => exact("CAN") }),
+    ),
+  ).rejects.toThrow("Super Run sr-1 was cancelled");
 });
-test("transient status-read failure retries, and listener recovery remains active", async () => {
+
+test("retries a transient Cloud read without resubmitting", async () => {
   let reads = 0;
   const result = await waitForAcceptedSuperRun(
     receipt,
     new AbortController().signal,
     deps({
-      latest: async () => {
-        if (++reads === 1) throw new Error("fetch failed");
-        return row();
+      exact: async () => {
+        if (++reads === 1)
+          throw new ApiRequestError("unavailable", 503, "unavailable");
+        return exact();
       },
-      open: async () =>
-        events(
-          snapshot(true, "quota-failed"),
-          snapshot(true, "recovered"),
-          snapshot(false),
-        ),
-      messages: async (id) => {
-        expect(id).toBe("recovered");
-        return [];
-      },
+      sleep: async () => {},
     }),
   );
-  expect(reads).toBeGreaterThan(1);
-  expect(result.runIds).toEqual(["quota-failed", "recovered"]);
-});
-test("default conversation completes from its existing Cloud snapshot, without unsupported GET", async () => {
-  const result = await waitForAcceptedSuperRun(
-    { ...receipt, conversation_id: "default" },
-    new AbortController().signal,
-    deps({
-      latest: async () => {
-        throw new Error("unsupported default GET");
-      },
-      open: async () => events(snapshot(false)),
-    }),
-  );
-  expect(result.text).toContain("--conversation default");
-});
-test("a newer send does not make us wait on unrelated work or collect its messages", async () => {
-  const result = await waitForAcceptedSuperRun(
-    receipt,
-    new AbortController().signal,
-    deps({
-      latest: async () => ({ ...row(), id: "newer-send" }),
-      open: async () => events(snapshot(false)),
-      messages: async () => {
-        throw new Error("must not read unrelated messages");
-      },
-    }),
-  );
-  expect(result.runIds).toEqual([]);
-});
-test("dropped stream reconnects and preserves observed run mappings", async () => {
-  let opens = 0;
-  const result = await waitForAcceptedSuperRun(
-    receipt,
-    new AbortController().signal,
-    deps({
-      open: async () =>
-        ++opens === 1 ? events(snapshot()) : events(snapshot(false)),
-    }),
-  );
-  expect(opens).toBe(2);
+  expect(reads).toBe(2);
   expect(result.text).toBe("Done");
 });
-test("explicit terminal cancellation is reported", async () => {
+
+test("a permanent Cloud read failure is terminal", async () => {
+  let reads = 0;
   await expect(
     waitForAcceptedSuperRun(
       receipt,
       new AbortController().signal,
-      deps({ latest: async () => row("CAN") }),
+      deps({
+        exact: async () => {
+          reads++;
+          throw new ApiRequestError("not found", 404, "not found");
+        },
+      }),
     ),
-  ).rejects.toThrow("cancelled");
+  ).rejects.toThrow(
+    "Cloud status read for accepted Super Run sr-1 failed: not found",
+  );
+  expect(reads).toBe(1);
 });
+
+test("completion without a correlated child run is failure", async () => {
+  await expect(
+    waitForAcceptedSuperRun(
+      receipt,
+      new AbortController().signal,
+      deps({ exact: async () => ({ ...exact(), run_ids: [] }) }),
+    ),
+  ).rejects.toThrow("without a correlated child run");
+});
+
+test("a failed child run is failure", async () => {
+  await expect(
+    waitForAcceptedSuperRun(
+      receipt,
+      new AbortController().signal,
+      deps({ run: async () => run("failed", "provider_error") }),
+    ),
+  ).rejects.toThrow("child run run-1 failed (provider_error)");
+});
+
+test("waits for active work instead of treating time as success", async () => {
+  let reads = 0;
+  const result = await waitForAcceptedSuperRun(
+    receipt,
+    new AbortController().signal,
+    deps({
+      exact: async () => (++reads === 1 ? exact("STR") : exact()),
+      sleep: async () => {},
+    }),
+  );
+  expect(reads).toBe(2);
+  expect(result.text).toBe("Done");
+});
+
+test("fails when a completed Super Run never gets terminal child evidence", async () => {
+  const clock = makeClock();
+  await expect(
+    waitForAcceptedSuperRun(
+      receipt,
+      new AbortController().signal,
+      deps({
+        run: async () => run("running", ""),
+        resultGraceMs: 3,
+        now: clock.now,
+        sleep: clock.sleep,
+      }),
+    ),
+  ).rejects.toThrow("without terminal evidence from child run run-1");
+});
+
 test("abort interrupts background retries", async () => {
   const controller = new AbortController();
   await expect(
@@ -188,9 +237,9 @@ test("abort interrupts background retries", async () => {
       receipt,
       controller.signal,
       deps({
-        latest: async () => {
+        exact: async () => {
           controller.abort();
-          throw new Error("offline");
+          throw new TypeError("offline");
         },
       }),
     ),
