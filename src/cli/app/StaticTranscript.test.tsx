@@ -8,7 +8,9 @@ import {
   toggleSystemReminderDisplay,
   toggleThinkingDisplay,
 } from "@/cli/components/transcript-display-state";
+import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
 import { StaticTranscript } from "./StaticTranscript";
+import type { StaticItem } from "./types";
 
 class CaptureStream extends Writable {
   columns = 100;
@@ -185,6 +187,160 @@ function OverflowTranscript({ overflow }: { overflow: boolean }) {
     </>
   );
 }
+
+function makeDiff(fileName: string): AdvancedDiffSuccess {
+  return {
+    mode: "advanced",
+    fileName,
+    oldStr: "const a = 1;\n",
+    newStr: "const a = 2;\n",
+    hunks: [
+      {
+        oldStart: 1,
+        newStart: 1,
+        lines: [{ raw: "-const a = 1;" }, { raw: "+const a = 2;" }],
+      },
+    ],
+  };
+}
+
+function makeEditToolCall(
+  id: string,
+  toolCallId: string,
+): Extract<StaticItem, { kind: "tool_call" }> {
+  return {
+    kind: "tool_call",
+    id,
+    toolCallId,
+    name: "Edit",
+    argsText: JSON.stringify({
+      file_path: `${toolCallId}.ts`,
+      old_string: "const a = 1;",
+      new_string: "const a = 2;",
+    }),
+    phase: "finished",
+    resultOk: true,
+    resultText: "Success",
+  };
+}
+
+test("committed items release precomputed diff payloads but keep hunks", async () => {
+  const precomputedDiffs = new Map<string, AdvancedDiffSuccess>();
+  precomputedDiffs.set("call-edit", makeDiff("call-edit.ts"));
+  // ApplyPatch-style compound key owned by the same tool call
+  precomputedDiffs.set("call-edit:call-edit.ts", makeDiff("call-edit.ts"));
+  // Eagerly-committed approval previews share the map entry's object reference
+  const previewDiff = makeDiff("preview.ts");
+  precomputedDiffs.set("call-preview", previewDiff);
+  // No committed item owns this entry, so it must stay intact
+  precomputedDiffs.set("call-pending", makeDiff("pending.ts"));
+
+  const items: StaticItem[] = [
+    makeEditToolCall("line-edit", "call-edit"),
+    {
+      kind: "approval_preview",
+      id: "approval-preview-call-preview",
+      toolCallId: "call-preview",
+      toolName: "Edit",
+      toolArgs: JSON.stringify({
+        file_path: "preview.ts",
+        old_string: "const a = 1;",
+        new_string: "const a = 2;",
+      }),
+      precomputedDiff: previewDiff,
+    },
+  ];
+
+  const stdout = new CaptureStream() as CaptureStream & NodeJS.WriteStream;
+  const instance = render(
+    <StaticTranscript
+      renderEpoch={0}
+      items={items}
+      columns={100}
+      statusLinePrompt=">"
+      showCompactionsEnabled={true}
+      precomputedDiffs={precomputedDiffs}
+    />,
+    {
+      stdout,
+      debug: false,
+      patchConsole: false,
+      exitOnCtrlC: false,
+    },
+  );
+
+  await waitForRender();
+
+  // Full before/after contents are released once committed and rendered...
+  expect(precomputedDiffs.get("call-edit")?.oldStr).toBe("");
+  expect(precomputedDiffs.get("call-edit")?.newStr).toBe("");
+  expect(precomputedDiffs.get("call-edit:call-edit.ts")?.oldStr).toBe("");
+  // ...including the reference shared with the approval_preview item...
+  expect(previewDiff.oldStr).toBe("");
+  expect(previewDiff.newStr).toBe("");
+  // ...while hunks stay cached so Static remounts (resize, ctrl+o) can
+  // re-render the identical diff.
+  expect(precomputedDiffs.get("call-edit")?.hunks).toHaveLength(1);
+  expect(previewDiff.hunks).toHaveLength(1);
+  // Entries for tool calls that never committed keep their payloads.
+  expect(precomputedDiffs.get("call-pending")?.oldStr).toBe("const a = 1;\n");
+
+  // The committed diff still renders from its hunks.
+  expect(stripAnsi(stdout.chunks.join(""))).toContain("const a = 2");
+
+  instance.unmount();
+  instance.cleanup();
+});
+
+test("payload release tracks newly committed items across rerenders", async () => {
+  const precomputedDiffs = new Map<string, AdvancedDiffSuccess>();
+  precomputedDiffs.set("call-first", makeDiff("first.ts"));
+  precomputedDiffs.set("call-second", makeDiff("second.ts"));
+
+  const firstItem = makeEditToolCall("line-first", "call-first");
+  const secondItem = makeEditToolCall("line-second", "call-second");
+
+  const stdout = new CaptureStream() as CaptureStream & NodeJS.WriteStream;
+  const options = {
+    stdout,
+    debug: false,
+    patchConsole: false,
+    exitOnCtrlC: false,
+  };
+  const instance = render(
+    <StaticTranscript
+      renderEpoch={0}
+      items={[firstItem]}
+      columns={100}
+      statusLinePrompt=">"
+      showCompactionsEnabled={true}
+      precomputedDiffs={precomputedDiffs}
+    />,
+    options,
+  );
+
+  await waitForRender();
+  expect(precomputedDiffs.get("call-first")?.oldStr).toBe("");
+  expect(precomputedDiffs.get("call-second")?.oldStr).toBe("const a = 1;\n");
+
+  instance.rerender(
+    <StaticTranscript
+      renderEpoch={0}
+      items={[firstItem, secondItem]}
+      columns={100}
+      statusLinePrompt=">"
+      showCompactionsEnabled={true}
+      precomputedDiffs={precomputedDiffs}
+    />,
+  );
+
+  await waitForRender();
+  expect(precomputedDiffs.get("call-second")?.oldStr).toBe("");
+  expect(precomputedDiffs.get("call-second")?.hunks).toHaveLength(1);
+
+  instance.unmount();
+  instance.cleanup();
+});
 
 test("repeated transcript repaints replace Ink static output", async () => {
   setThinkingExpanded(false);

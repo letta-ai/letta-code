@@ -2188,10 +2188,9 @@ export function App({
           }
           emittedIdsRef.current.add(id);
           newlyCommitted.push({ ...ln });
-          // Note: We intentionally don't cleanup precomputedDiffs here because
-          // the Static area renders AFTER this function returns (on next React tick),
-          // and the diff needs to be available for ToolCallMessage to render.
-          // The diffs will be cleaned up when the session ends or on next session start.
+          // precomputedDiffs entries stay cached for Static remounts (resize
+          // repaints, ctrl+o, display toggles re-render committed items);
+          // StaticTranscript releases their oldStr/newStr payloads post-render.
         }
       }
 
