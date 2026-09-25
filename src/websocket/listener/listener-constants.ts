@@ -33,8 +33,12 @@ const LOCAL_REMOTE_COMMANDS = SUPPORTED_REMOTE_COMMANDS.filter(
   (command) => command !== "teleport",
 );
 
-export function getSupportedRemoteCommands(): readonly string[] {
+/** Reuse backend-specific status payloads instead of allocating per routed message. */
+const CACHED_REMOTE_COMMANDS = [...SUPPORTED_REMOTE_COMMANDS];
+const CACHED_LOCAL_REMOTE_COMMANDS = [...LOCAL_REMOTE_COMMANDS];
+
+export function getSupportedRemoteCommands(): string[] {
   return getBackend().capabilities.localMemfs
-    ? LOCAL_REMOTE_COMMANDS
-    : SUPPORTED_REMOTE_COMMANDS;
+    ? CACHED_LOCAL_REMOTE_COMMANDS
+    : CACHED_REMOTE_COMMANDS;
 }

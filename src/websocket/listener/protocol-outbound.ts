@@ -194,7 +194,7 @@ export function buildDeviceStatus(
       boot_working_directory: fallbackCwd,
       should_doctor: false,
       reflection_settings: null,
-      supported_commands: [...getSupportedRemoteCommands()],
+      supported_commands: getSupportedRemoteCommands(),
     };
   }
   const scope = getScopeForRuntime(runtime, params);
@@ -257,7 +257,7 @@ export function buildDeviceStatus(
       : {}),
     cwd_revision: listener.workingDirectoryRevision ?? 0,
     should_doctor: systemPromptDoctorState?.should_doctor ?? false,
-    supported_commands: [...getSupportedRemoteCommands()],
+    supported_commands: getSupportedRemoteCommands(),
     ...buildModCommandsField(listener, agentId),
     reflection_settings: agentId
       ? {

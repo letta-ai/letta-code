@@ -98,6 +98,11 @@ test.each([false, true])(
         !localMemfs,
       );
       const listener = __listenClientTestUtils.createListenerRuntime();
+      const status = __listenClientTestUtils.buildDeviceStatus(listener);
+      expect(status.supported_commands.includes("teleport")).toBe(!localMemfs);
+      expect(
+        __listenClientTestUtils.buildDeviceStatus(listener).supported_commands,
+      ).toBe(status.supported_commands);
       const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
         listener,
         "agent-teleport",
