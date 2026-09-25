@@ -169,10 +169,26 @@ describe("request-scoped client toolsets", () => {
       prepareToolExecutionContextForResolvedTarget({
         modelIdentifier: "anthropic/claude-sonnet-5",
         toolsetPreference: "auto",
-        clientToolset: { include: ["Read", "LS"] },
+        clientToolset: { include: ["Read", "MultiEdit"] },
       }),
     ).rejects.toThrow(
-      "Unknown bundled client tool: LS (removed from Letta Code)",
+      "Unknown bundled client tool: MultiEdit (removed from Letta Code)",
     );
+  });
+
+  test("keeps Docs Ezra's request-scoped read-only tools available", async () => {
+    const prepared = await prepareToolExecutionContextForResolvedTarget({
+      modelIdentifier: "openai/gpt-5.6-sol",
+      toolsetPreference: "auto",
+      clientToolset: { base: "none", include: ["Read", "LS", "Glob", "Grep"] },
+      clientToolAllowlist: ["Read", "LS", "Glob", "Grep"],
+    });
+
+    expect(prepared.preparedToolContext.loadedToolNames).toEqual([
+      "Read",
+      "LS",
+      "Glob",
+      "Grep",
+    ]);
   });
 });

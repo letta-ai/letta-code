@@ -3,7 +3,7 @@
 // resolves under another agent's memory directory.
 //
 // SCOPE — this guard now exists ONLY for agent-process IN-PROCESS file
-// tools: Read / Write / Edit / NotebookEdit / Glob / Grep and the ApplyPatch
+// tools: Read / Write / Edit / NotebookEdit / Glob / Grep / LS and the ApplyPatch
 // family (all canonicalized via `canonicalToolName`, all carrying an explicit
 // absolute path). These never fork, so the kernel filesystem sandbox
 // (src/sandbox/) cannot see them.
@@ -143,7 +143,7 @@ function normalizePathForCompare(path: string): string {
  *  - `agents-root` — path is exactly the tree root (enumeration of every agent
  *                    on the machine).
  *  - `ancestor`    — path is an ancestor of the tree root (e.g. `$HOME`, `/`).
- *                    Recursive tools (Glob/Grep) entering this path would
+ *                    Directory search tools (Glob/Grep/LS) entering this path would
  *                    walk into other agents' directories.
  *  - `agent`       — path is inside a specific agent's directory (any depth,
  *                    including the bare agent dir). The `id` is the agent ID
@@ -254,9 +254,9 @@ export function extractFilePath(toolArgs: ToolArgs): string | null {
  * at an *ancestor* of the agents tree, the walk would expose every
  * agent on disk — so we treat ancestor paths as hits for these tools.
  *
- * Compared against the canonical tool name.
+ * Compared against the canonical tool name, including the LS alias.
  */
-const RECURSIVE_CANONICAL_TOOLS = new Set<string>(["Glob", "Grep"]);
+const RECURSIVE_CANONICAL_TOOLS = new Set<string>(["Glob", "Grep", "ListDir"]);
 
 function isRecursivePathTool(toolName: string): boolean {
   return RECURSIVE_CANONICAL_TOOLS.has(canonicalToolName(toolName));
@@ -294,7 +294,7 @@ export function extractTargetAgentPaths(
         return;
       case "ancestor":
         // Only dangerous for tools that recursively walk from the
-        // given path (Glob/Grep). Single-file tools like Read
+        // given path (Glob/Grep/LS). Single-file tools like Read
         // can't escape their target.
         if (recursive) {
           anyAgentScoped = true;
@@ -337,7 +337,7 @@ export function extractTargetAgentPaths(
     return { agentIds, anyAgentScoped };
   }
 
-  // All other in-process file tools: Read/Write/Edit/NotebookEdit/Glob/Grep
+  // All other in-process file tools: Read/Write/Edit/NotebookEdit/Glob/Grep/LS
   // (all converge on file_path / path / notebook_path).
   addFromPath(extractFilePath(toolArgs));
 

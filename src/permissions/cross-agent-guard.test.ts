@@ -614,6 +614,15 @@ describe("Grep/Glob ancestor-path regression tests", () => {
     // block generic home-dir file reads.
     expect(result).toBeNull();
   });
+
+  test("LS cannot enumerate the agents tree", () => {
+    const result = evaluateCrossAgentGuard(
+      "LS",
+      { path: agentsTreeRoot },
+      "/tmp",
+    );
+    expect(result).not.toBeNull();
+  });
 });
 
 describe("symlink-escape (realpath classification of in-process file tools)", () => {

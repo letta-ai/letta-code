@@ -89,7 +89,7 @@ function isWithin(path: string, root: string): boolean {
 }
 
 function isRecursiveTool(toolName: string): boolean {
-  return ["Glob", "Grep"].includes(canonicalToolName(toolName));
+  return ["Glob", "Grep", "ListDir"].includes(canonicalToolName(toolName));
 }
 
 function isWriteTool(toolName: string): boolean {

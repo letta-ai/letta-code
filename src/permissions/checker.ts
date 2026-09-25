@@ -47,8 +47,8 @@ import { evaluateWorkspaceSandboxGuard } from "./workspace-sandbox";
 /**
  * Tools that don't require approval within working directory
  */
-const WORKING_DIRECTORY_TOOLS = ["Read", "Glob", "Grep"];
-const FILE_TOOLS = ["Read", "Write", "Edit", "Glob", "Grep"];
+const WORKING_DIRECTORY_TOOLS = ["Read", "Glob", "Grep", "ListDir"];
+const FILE_TOOLS = ["Read", "Write", "Edit", "Glob", "Grep", "ListDir"];
 
 type ToolArgs = Record<string, unknown>;
 
@@ -645,7 +645,8 @@ function buildPermissionQuery(toolName: string, toolArgs: ToolArgs): string {
     case "Write":
     case "Edit":
     case "Glob":
-    case "Grep": {
+    case "Grep":
+    case "ListDir": {
       const filePath = extractFilePath(toolArgs);
       return filePath ? `${toolName}(${filePath})` : toolName;
     }
@@ -757,6 +758,7 @@ function getDefaultDecision(
     "Read",
     "Glob",
     "Grep",
+    "LS",
     "write_stdin",
     "UpdatePlan",
     // Memory tools are constrained to the memfs repo and include their

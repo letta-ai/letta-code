@@ -2,7 +2,7 @@
 
 Executes a given bash command from the conversation's current working directory with optional timeout, ensuring proper handling and security measures.
 
-IMPORTANT: This tool is for terminal operations like git, npm, docker, etc. DO NOT use it for file operations (reading, writing, editing, searching, finding files) - use the specialized tools for this instead.
+IMPORTANT: This tool is for terminal operations like git, npm, docker, etc. DO NOT use it for file operations (reading, writing, editing, searching, finding files) - use the specialized tools for this instead. When Glob or Grep is available, prefer those tools over shell commands for repository searches.
 
 Before executing the command, please follow these steps:
 

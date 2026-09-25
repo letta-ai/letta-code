@@ -1,0 +1,19 @@
+{
+  "type": "object",
+  "properties": {
+    "path": {
+      "type": "string",
+      "description": "The directory to list"
+    },
+    "ignore": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Optional list of glob patterns to ignore (e.g. ['node_modules', '*.log'])"
+    }
+  },
+  "required": ["path"],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

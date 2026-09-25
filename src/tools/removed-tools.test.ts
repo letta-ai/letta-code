@@ -6,7 +6,7 @@ describe("removed tools", () => {
   test("reports only the removed names, in order", () => {
     expect(
       findRemovedToolNames(["Read", "LS", "mcp__files__read", "MultiEdit"]),
-    ).toEqual(["LS", "MultiEdit"]);
+    ).toEqual(["MultiEdit"]);
     expect(findRemovedToolNames(["Read", "Bash", "TaskStop"])).toEqual([]);
   });
 

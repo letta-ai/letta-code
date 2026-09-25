@@ -21,9 +21,18 @@ const GLOB_TOOL_NAMES = new Set(["Glob"]);
 
 const GREP_TOOL_NAMES = new Set(["Grep", "grep_files", "GrepFiles"]);
 
+const LIST_TOOL_NAMES = new Set(["list_dir", "ListDir", "LS"]);
+
 const TASK_TOOL_NAMES = new Set(["Task", "task", "Agent", "agent"]);
 
-const FILE_TOOL_FAMILIES = new Set(["Read", "Write", "Edit", "Glob", "Grep"]);
+const FILE_TOOL_FAMILIES = new Set([
+  "Read",
+  "Write",
+  "Edit",
+  "Glob",
+  "Grep",
+  "ListDir",
+]);
 
 export function canonicalToolName(toolName: string): string {
   if (SHELL_TOOL_NAMES.has(toolName)) return "Bash";
@@ -32,6 +41,7 @@ export function canonicalToolName(toolName: string): string {
   if (EDIT_TOOL_NAMES.has(toolName)) return "Edit";
   if (GLOB_TOOL_NAMES.has(toolName)) return "Glob";
   if (GREP_TOOL_NAMES.has(toolName)) return "Grep";
+  if (LIST_TOOL_NAMES.has(toolName)) return "ListDir";
   if (TASK_TOOL_NAMES.has(toolName)) return "Task";
   return toolName;
 }

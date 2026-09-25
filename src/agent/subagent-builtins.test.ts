@@ -265,7 +265,7 @@ Custom prompt body`,
         "MultiEdit",
       ]);
       expect(warn.mock.calls.map((call) => String(call[0]))).toContain(
-        "[subagent] Warning: searcher: these tools no longer exist and will be ignored: LS, MultiEdit",
+        "[subagent] Warning: searcher: these tools no longer exist and will be ignored: MultiEdit",
       );
     } finally {
       warn.mockRestore();

@@ -12,10 +12,10 @@ describe("local mod loader reserved tool names", () => {
     clearModTools();
   });
 
-  // Saved permission rules and older transcripts still read these names as the
-  // removed built-ins, so a mod must not be able to claim them.
+  // Saved permission rules and older transcripts still read the removed names
+  // as built-ins. Live bundled names such as LS must remain reserved too.
   test.each(["MultiEdit", "multi_edit", "shell_command", "LS"])(
-    "rejects a mod tool named after the removed %s tool",
+    "rejects a mod tool named after the reserved %s tool",
     async (toolName) => {
       const root = mkdtempSync(path.join(tmpdir(), "letta-mods-"));
       try {

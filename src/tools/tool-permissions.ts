@@ -13,6 +13,7 @@ export const TOOL_PERMISSIONS: Record<
   Edit: { requiresApproval: true },
   Glob: { requiresApproval: false },
   Grep: { requiresApproval: false },
+  LS: { requiresApproval: false },
   TaskStop: { requiresApproval: true },
   memory: { requiresApproval: false },
   memory_apply_patch: { requiresApproval: false },
