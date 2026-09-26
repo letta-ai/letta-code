@@ -23,7 +23,7 @@ function agent(
 }
 
 describe("system prompt versioning", () => {
-  test("selects the root prompt only for API memory with exact root MEMORY.md", () => {
+  test("selects the root prompt from exact root MEMORY.md on either backend", () => {
     const memoryDir = mkdtempSync(join(tmpdir(), "letta-root-prompt-"));
     try {
       mkdirSync(join(memoryDir, "nested"));
@@ -50,7 +50,7 @@ describe("system prompt versioning", () => {
           memoryDir,
           memfsEnabled: true,
         }),
-      ).toBe("local-memfs");
+      ).toBe("root-memfs");
     } finally {
       rmSync(memoryDir, { recursive: true, force: true });
     }

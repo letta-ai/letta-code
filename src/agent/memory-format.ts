@@ -5,11 +5,9 @@ export type LocalMemoryFormat = "memfs-v1" | "memfs-v2";
 
 export function detectMemoryFormat(
   memoryDir: string,
-  localMemfs: boolean,
+  _localMemfs: boolean,
 ): LocalMemoryFormat {
-  return !localMemfs && existsSync(join(memoryDir, "MEMORY.md"))
-    ? "memfs-v2"
-    : "memfs-v1";
+  return existsSync(join(memoryDir, "MEMORY.md")) ? "memfs-v2" : "memfs-v1";
 }
 
 export function isCoreMemoryPath(

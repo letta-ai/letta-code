@@ -42,9 +42,9 @@ import { getAuthToken } from "./memory-auth";
 import { getScopedMemoryFilesystemRoot } from "./memory-filesystem";
 import { withSerializedGitConfigMutation } from "./memory-git-config-lock";
 import {
+  installLocalMemoryPreCommitHook,
   installMemoryGitHooks,
   installPostCommitHook,
-  installPreCommitHook,
   installSharedMemoryPreCommitHook,
 } from "./memory-git-hooks";
 import { GIT_DISABLE_COMMIT_SIGNING_ARGS } from "./memory-git-signing";
@@ -1144,7 +1144,7 @@ async function prepareLocalOnlyMemoryRepoForGitOps(
   memoryDir: string,
   author: MemoryCommitAuthor,
 ): Promise<void> {
-  installPreCommitHook(memoryDir);
+  installLocalMemoryPreCommitHook(memoryDir);
   installPostCommitHook(memoryDir);
   await setLocalGitConfig(memoryDir, "letta.agentId", author.agentId);
   await setLocalGitConfig(memoryDir, "user.email", author.authorEmail);
@@ -1335,10 +1335,8 @@ export async function initializeLocalMemoryRepo(
     authorName: params.authorName?.trim() || "Letta Agent",
     authorEmail: `${params.agentId}@letta.com`,
   };
-  await prepareLocalOnlyMemoryRepoForGitOps(params.memoryDir, author);
-  installPreCommitHook(params.memoryDir);
-
   if (await hasMemoryHead(params.memoryDir)) {
+    await prepareLocalOnlyMemoryRepoForGitOps(params.memoryDir, author);
     return;
   }
 
@@ -1359,6 +1357,8 @@ export async function initializeLocalMemoryRepo(
     writeFileSync(fullPath, file.content, "utf8");
     pathspecs.push(relativePath);
   }
+
+  await prepareLocalOnlyMemoryRepoForGitOps(params.memoryDir, author);
 
   if (pathspecs.length > 0) {
     const commit = await commitMemoryPaths(

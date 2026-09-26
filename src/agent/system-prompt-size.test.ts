@@ -72,15 +72,15 @@ describe("estimateSystemPromptSize", () => {
     ]);
   });
 
-  test("keeps local MemFS on v1 when root MEMORY.md exists", () => {
+  test("counts local root Markdown when root MEMORY.md selects v2", () => {
     writeFileSync(join(tmpRoot, "MEMORY.md"), "a".repeat(100));
     mkdirSync(join(tmpRoot, "system"));
     writeFileSync(join(tmpRoot, "system", "persona.md"), "abcd");
 
     const result = estimateSystemPromptSize(tmpRoot, true);
 
-    expect(result.total).toBe(1);
-    expect(result.files).toEqual([{ path: "system/persona.md", tokens: 1 }]);
+    expect(result.total).toBe(25);
+    expect(result.files).toEqual([{ path: "MEMORY.md", tokens: 25 }]);
   });
 
   test("sums tokens across files in system/", () => {
