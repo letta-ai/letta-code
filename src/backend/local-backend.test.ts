@@ -34,11 +34,11 @@ import { LocalBackend } from "@/backend/local/local-backend";
 import { emptyLocalUsage } from "@/backend/local/local-message";
 import { LOCAL_REPAIRED_TOOL_RESULT_TEXT_MAX_CHARS } from "@/backend/local/local-message-projection";
 import { listLocalModels } from "@/backend/local/local-model-config";
+import { LocalStore } from "@/backend/local/local-store";
 import {
-  LocalStore,
   LocalTranscriptMigrationRequiredError,
   LocalTranscriptRepairRequiredError,
-} from "@/backend/local/local-store";
+} from "@/backend/local/local-transcript";
 import { LOCAL_BACKEND_DIR_ENV } from "@/backend/local/paths";
 import { migrateLocalBackendTranscripts } from "@/backend/local/transcript-migration";
 import { listLocalAgentsFromDisk } from "@/cli/helpers/local-agent-listing";

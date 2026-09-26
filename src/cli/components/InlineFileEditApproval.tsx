@@ -54,8 +54,8 @@ const DOTTED_LINE = "╌";
 function getHeaderText(fileEdit: FileEditInfo): string {
   const t = fileEdit.toolName.toLowerCase();
 
-  // Handle patch tools (multi-file)
-  if (t === "applypatch" || t === "memory_apply_patch") {
+  // Handle ApplyPatch (multi-file)
+  if (t === "applypatch") {
     if (fileEdit.patchInput) {
       const operations = parsePatchOperations(fileEdit.patchInput);
       if (operations.length > 1) {

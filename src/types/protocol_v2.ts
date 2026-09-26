@@ -538,9 +538,9 @@ export interface LoopErrorMessage extends UmiLifecycleMessageBase {
   message: string;
   stop_reason: StopReasonType;
   is_terminal: boolean;
-  client_message_ids?: string[];
   api_error?: LettaStreamingResponse.LettaErrorMessage;
 }
+
 export type StreamDelta =
   | MessageDelta
   | ApprovalClassificationEndMessage

@@ -20,9 +20,8 @@ export interface SuperRunWaitDeps {
     agentId: string,
     controller: AbortController,
   ) => Promise<AsyncIterable<StatusEvent>>;
-  exact: (
-    agentId: string,
-    superRunId: string,
+  latest: (
+    conversationId: string,
     signal: AbortSignal,
   ) => Promise<LatestConversationSuperRun>;
   messages: (runId: string, signal: AbortSignal) => Promise<Message[]>;
@@ -31,15 +30,15 @@ export interface SuperRunWaitDeps {
 class RemoteExecutionFailed extends Error {}
 
 function terminal(run: LatestConversationSuperRun): boolean {
-  if (run.errored_at)
-    throw new RemoteExecutionFailed(
-      `Remote Super Run ${run.id} finished with an error.`,
-    );
   if (run.status === "CAN" || run.cancelled_at)
     throw new RemoteExecutionFailed(
       `Remote Super Run ${run.id} was cancelled.`,
     );
   if (run.status !== "COM" && !run.completed_at) return false;
+  if (run.errored_at)
+    throw new RemoteExecutionFailed(
+      `Remote Super Run ${run.id} finished with an error.`,
+    );
   return true;
 }
 
@@ -58,28 +57,19 @@ export async function waitForAcceptedSuperRun(
     const abort = () => controller.abort();
     signal.addEventListener("abort", abort, { once: true });
     try {
-      // Read the accepted row itself. Conversation snapshots contain only
-      // active rows, so absence cannot distinguish completion from a send that
-      // has not started or disappeared before execution.
-      try {
-        const accepted = await deps.exact(
-          receipt.agent_id,
-          receipt.super_run_id,
-          AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
-        );
-        if (accepted.id !== receipt.super_run_id) {
-          throw new RemoteExecutionFailed(
-            `Exact Super Run read returned ${accepted.id} for ${receipt.super_run_id}.`,
+      // Recover fast completion using the existing latest-send read. A later
+      // send's outcome must never be mistaken for this input's outcome.
+      if (receipt.conversation_id !== "default") {
+        try {
+          const latest = await deps.latest(
+            receipt.conversation_id,
+            AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
           );
+          if (latest.id === receipt.super_run_id) finished = terminal(latest);
+        } catch (error) {
+          if (!(error instanceof ApiRequestError && error.status === 404))
+            throw error;
         }
-        finished = terminal(accepted);
-      } catch (error) {
-        if (error instanceof ApiRequestError && error.status === 404) {
-          throw new RemoteExecutionFailed(
-            `Remote Super Run ${receipt.super_run_id} was not found for agent ${receipt.agent_id}.`,
-          );
-        }
-        throw error;
       }
       if (finished) break;
       const openTimeout = setTimeout(() => controller.abort(), 30_000);
@@ -110,6 +100,11 @@ export async function waitForAcceptedSuperRun(
           if (status !== undefined) {
             for (const id of getSendRunIds(status, receipt.client_message_id))
               runIds.add(id);
+            // The active feed omits finished sends. Its post-acceptance
+            // snapshot can end tracking even when detailed results are gone.
+            finished = !status?.active_super_runs.some(
+              (run) => run.id === receipt.super_run_id,
+            );
           }
         }
         if (!finished) {
@@ -130,6 +125,20 @@ export async function waitForAcceptedSuperRun(
     } finally {
       signal.removeEventListener("abort", abort);
       controller.abort();
+    }
+  }
+  // The combined idle update can precede the row's terminal update on the
+  // same stream. Best-effort read its stored classification before reporting.
+  if (receipt.conversation_id !== "default") {
+    try {
+      const latest = await deps.latest(
+        receipt.conversation_id,
+        AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
+      );
+      if (latest.id === receipt.super_run_id) terminal(latest);
+    } catch (error) {
+      signal.throwIfAborted();
+      if (error instanceof RemoteExecutionFailed) throw error;
     }
   }
   const runId = [...runIds].at(-1);

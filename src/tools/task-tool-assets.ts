@@ -1,3 +1,4 @@
+import { getBackend } from "@/backend";
 import type { JsonSchema } from "./model-facing-tool";
 
 const COMPUTER_SECTION_HEADING = "## Running on Another Computer";
@@ -33,4 +34,32 @@ export function stripComputerFromTaskDescription(description: string): string {
       ? description.slice(0, start)
       : description.slice(0, start) + description.slice(next + 1);
   return removed.replace(/\n{3,}/g, "\n\n").trimEnd();
+}
+
+/**
+ * Adjust a bundled tool's model-facing assets for the active backend. Only
+ * Task varies today: it advertises `computer` only when the backend can route
+ * work to another environment.
+ */
+export async function resolveBackendSpecificToolAssets(
+  name: string,
+  description: string,
+  inputSchema: JsonSchema,
+): Promise<{ description: string; inputSchema: JsonSchema }> {
+  if (name !== "Task") {
+    return { description, inputSchema };
+  }
+  let environmentRouting = false;
+  try {
+    environmentRouting = getBackend().capabilities.environmentRouting;
+  } catch {
+    environmentRouting = false;
+  }
+  if (environmentRouting) {
+    return { description, inputSchema };
+  }
+  return {
+    description: stripComputerFromTaskDescription(description),
+    inputSchema: stripComputerFromTaskSchema(inputSchema),
+  };
 }

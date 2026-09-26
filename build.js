@@ -105,6 +105,9 @@ await Bun.build({
   // loads from node_modules on demand instead of adding a second inlined copy
   // to the bundle's resident source string. The diff viewer is only reachable
   // through dynamic imports, so this costs no startup time.
+  // @shikijs/langs stays external so lazily-imported grammars (LET-13149)
+  // resolve from node_modules on demand instead of being inlined eagerly into
+  // the single-file bundle.
   external: [
     "ws",
     "@vscode/ripgrep",
@@ -112,6 +115,8 @@ await Bun.build({
     "grammy",
     "@pierre/diffs",
     "@pierre/diffs/*",
+    "@shikijs/langs",
+    "@shikijs/langs/*",
   ],
   features: features,
 });

@@ -111,17 +111,9 @@ class PermissionModeManager {
         return { decision: "allow" };
 
       case "acceptEdits":
-        // Auto-allow edit/write tools across Anthropic and Codex
-        // toolsets, including their memory tools.
+        // Auto-allow edit/write tools across Anthropic and Codex toolsets.
         if (
-          [
-            "Write",
-            "Edit",
-            "NotebookEdit",
-            "memory",
-            "ApplyPatch",
-            "memory_apply_patch",
-          ].includes(toolName)
+          ["Write", "Edit", "NotebookEdit", "ApplyPatch"].includes(toolName)
         ) {
           return { decision: "allow" };
         }

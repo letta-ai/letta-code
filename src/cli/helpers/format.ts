@@ -41,3 +41,34 @@ export function bytesToTokens(bytes: number): number {
 export function estimateTokens(text: string): number {
   return bytesToTokens(Buffer.byteLength(text, "utf8"));
 }
+
+export function formatModeLabel(
+  modeName: string,
+  modeGlyph?: string | null,
+): string {
+  if (modeGlyph === "") {
+    return modeName;
+  }
+  if (modeGlyph === "⚡︎") {
+    return `${modeGlyph}${modeName}`;
+  }
+  return `${modeGlyph ?? "⏵⏵"} ${modeName}`;
+}
+
+export function formatElapsedLabel(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const seconds = totalSeconds % 60;
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  if (totalMinutes === 0) {
+    return `${seconds}s`;
+  }
+  const minutes = totalMinutes % 60;
+  const hours = Math.floor(totalMinutes / 60);
+  if (hours > 0) {
+    const parts: string[] = [`${hours}hr`];
+    if (minutes > 0) parts.push(`${minutes}m`);
+    if (seconds > 0) parts.push(`${seconds}s`);
+    return parts.join(" ");
+  }
+  return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+}

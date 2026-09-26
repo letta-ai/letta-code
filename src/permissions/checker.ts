@@ -758,10 +758,6 @@ function getDefaultDecision(
     "LS",
     "write_stdin",
     "UpdatePlan",
-    // Memory tools are constrained to the memfs repo and include their
-    // own path/read_only guardrails, so allow by default.
-    "memory",
-    "memory_apply_patch",
     // Channel sends are scoped by routing + parentScope checks in the tool.
     "MessageChannel",
   ];
