@@ -11,6 +11,7 @@ import {
 import {
   formatAttemptDiagnostics,
   formatCapturedOutput,
+  summarizeCloudSendExit,
 } from "./process-diagnostics";
 
 /**
@@ -475,7 +476,7 @@ describe("Startup Flow - Integration", () => {
         },
       );
 
-      expect(result.exitCode).toBe(0);
+      expect(result.exitCode, summarizeCloudSendExit(result.output)).toBe(0);
       const output = result.output;
       expect(output.status).toBe("queued");
       expect(output.agent_id).toBe(testAgentId);
