@@ -924,6 +924,11 @@ and create draft parity PRs when warranted.
 - Compact prompt for re-reviews (existing conversation detected).
 - Background agent gets stuck on complex reviews requiring repo setup + extensive
   reading. Do those in the foreground.
+- PR ownership handoff: when another agent or person takes over a PR head
+  (e.g. rebased/repaired branch), stop any monitors or schedules on that PR,
+  make no further pushes, and do not merge until ownership is returned or
+  confirmed. Reply confirming the handoff so agents do not compete on the
+  branch.
 
 ### Secret Injection Syntax
 
@@ -948,6 +953,16 @@ as success if hashes match.
 Cloud API teleport uses a 409 `TELEPORT_SOURCE_NOT_ACTIVE` error when the source
 environment is not active. Rulesets (not branch protection) govern the cloud
 side.
+
+### Acting-User Identity Propagation
+
+Background monitors, their queued task notifications, and teleport API requests
+must retain the acting user's `actingUserId`. If it is dropped (e.g. after
+teleport), the remote box falls back to its local OAuth identity and Cloud API
+records `human_impersonation` rejections, making `letta teleport` unauthorized.
+Key surfaces: `src/tools/impl/monitor.ts`, `src/tools/impl/process_manager.ts`,
+`src/backend/api/http-headers.ts`, and `src/agent/acting-user.ts`
+(`resolveActingUserId`).
 
 ### Desktop Device Selection
 
