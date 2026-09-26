@@ -1624,23 +1624,14 @@ export function App({
   // Strict lock to ensure dequeue submit path is at-most-once while onSubmit is in flight.
   const dequeueInFlightRef = useRef(false);
 
-  // Queue defer mode: when 'defer', queued messages only fire on end_turn stop reason.
-  // Defer mode is only meaningful in API backend mode (local backend fires end_turn
-  // between each sequential tool call, making defer indistinguishable from immediate).
-  const deferModeSupported = !isLocalAgentId(agentId);
-  // When 'immediate' (default), they fire on any turn end.
-  const [queueMode, setQueueMode] = useState<"immediate" | "defer">(
-    "immediate",
-  );
+  // User messages wait for turn completion by default; notifications still steer.
+  const [queueMode, setQueueMode] = useState<"immediate" | "defer">("defer");
   const handleCtrlD = useCallback(() => {
-    if (!deferModeSupported) return;
     setQueueMode((prev) => (prev === "immediate" ? "defer" : "immediate"));
-  }, [deferModeSupported]);
+  }, []);
   // Ref mirror of queueMode so useConversationLoop can read it without stale closures.
-  const queueModeRef = useRef<"immediate" | "defer">("immediate");
+  const queueModeRef = useRef<"immediate" | "defer">("defer");
   queueModeRef.current = queueMode;
-  // Tracks the stop reason of the last completed turn, set by useConversationLoop.
-  const lastStopReasonRef = useRef<string | null>(null);
 
   // Track last dequeued message for restoration on error
   // If an error occurs after dequeue, we restore this to the input field (if input is empty)
@@ -1682,8 +1673,15 @@ export function App({
   const consumeQueuedMessages = useCallback((): QueuedMessage[] | null => {
     const len = tuiQueueRef.current?.length ?? 0;
     if (len === 0) return null;
-    const batch = tuiQueueRef.current?.consumeItems(len);
+    const batch = tuiQueueRef.current?.consumeItems(
+      len,
+      queueModeRef.current === "immediate" ? "all" : "steering",
+    );
     if (!batch) return null;
+    if (queueModeRef.current === "immediate") {
+      queueModeRef.current = "defer";
+      setQueueMode("defer");
+    }
     return batch.items
       .filter(
         (item): item is MessageQueueItem | TaskNotificationQueueItem =>
@@ -3685,7 +3683,6 @@ export function App({
     chatgptExhaustedProvidersRef,
     closeTrajectorySegment,
     consumeQueuedMessages,
-    queueModeRef,
     contextTrackerRef,
     conversationBusyRetriesRef,
     conversationGenerationRef,
@@ -3731,7 +3728,6 @@ export function App({
     setCurrentModelId,
     setDequeueEpoch,
     setInterruptRequested,
-    lastStopReasonRef,
     setIsExecutingTool,
     setLlmConfig,
     setNeedsEagerApprovalCheck,
@@ -3786,7 +3782,6 @@ export function App({
     commandRunner,
     commitEligibleLines,
     consumeQueuedMessages,
-    queueModeRef,
     conversationGenerationRef,
     conversationId,
     conversationIdRef,
@@ -4246,7 +4241,7 @@ export function App({
   useEffect(() => {
     void dequeueEpoch; // explicit dep to satisfy exhaustive-deps lint
 
-    // Esc-parked user messages are skipped: only ready items count here.
+    // Paused user messages are skipped: only ready items count here.
     const queueLen = tuiQueueRef.current?.readyLength ?? 0;
     const hasAnythingQueued = queueLen > 0;
     if (!hasAnythingQueued && (tuiQueueRef.current?.length ?? 0) > 0) {
@@ -4266,12 +4261,8 @@ export function App({
       !userCancelledRef.current && // Don't dequeue if user just cancelled
       !abortControllerRef.current && // Don't dequeue while processConversation is still active
       !dequeueInFlightRef.current && // Don't dequeue while previous dequeue submit is still in flight
-      // In defer mode, only dequeue when the agent is truly done:
-      // - last stop reason was end_turn (not requires_approval or error)
-      // - processingConversationRef === 0 (no nested processConversation calls outstanding)
-      (queueMode === "immediate" ||
-        (lastStopReasonRef.current === "end_turn" &&
-          processingConversationRef.current === 0))
+      // No active or nested turn remains; paused items were already excluded.
+      processingConversationRef.current === 0
     ) {
       // consumeItems(n) fires onDequeued → setQueueDisplay(prev => prev.slice(n)).
       const batch = tuiQueueRef.current?.consumeItems(queueLen);
@@ -4304,8 +4295,8 @@ export function App({
       // Lock prevents re-entrant dequeue if deps churn before processConversation
       // sets abortControllerRef (which is the normal long-term gate).
       dequeueInFlightRef.current = true;
-      // Reset to immediate mode after each dequeue — defer is opt-in per batch.
-      setQueueMode("immediate");
+      // Steering is opt-in for each batch; new user messages wait by default.
+      setQueueMode("defer");
       void onSubmitRef.current(concatenatedMessage).finally(() => {
         dequeueInFlightRef.current = false;
         // If more items arrived while in-flight, bump epoch so the effect re-runs.
@@ -4344,7 +4335,6 @@ export function App({
     anySelectorOpen,
     dequeueEpoch,
     queuedOverlayAction,
-    queueMode,
   ]);
 
   const {
@@ -4990,7 +4980,7 @@ export function App({
         lastShellToolCallId={lastShellToolCallId}
         handleCtrlO={handleCtrlO}
         queueMode={queueMode}
-        deferModeSupported={deferModeSupported}
+        deferModeSupported
         handleCtrlD={handleCtrlD}
         emittedIdsRef={emittedIdsRef}
         feedbackPrefill={feedbackPrefill}

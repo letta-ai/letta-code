@@ -1,5 +1,27 @@
 import type { ConversationRuntimeScope } from "./runtime-scope";
 
+export type QueueControlCommand = ResumeQueueCommand | SteerQueueItemCommand;
+export type QueueControlResponseMessage =
+  | ResumeQueueResponseMessage
+  | SteerQueueItemResponseMessage;
+
+/** Promote one queued user message to the next tool-boundary input. */
+export interface SteerQueueItemCommand {
+  type: "steer_queue_item";
+  runtime: ConversationRuntimeScope;
+  request_id: string;
+  item_id: string;
+}
+
+export interface SteerQueueItemResponseMessage {
+  type: "steer_queue_item_response";
+  request_id: string;
+  runtime: ConversationRuntimeScope;
+  item_id: string;
+  success: boolean;
+  error?: string;
+}
+
 export interface QueueRemovalTransition {
   client_message_id: string;
   disposition: "dequeued" | "cancelled";

@@ -6,6 +6,11 @@
       "reason": "Exercises real MemFS Git pushes and listener notifications with isolated HOME, settings, backend, auth environment, and repository-list fetch."
     },
     {
+      "path": "src/tools/impl/workflow.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Replaces backend methods and process-global HOME, workflow spawner, and message-queue state while constructing SDK clients."
+    },
+    {
       "path": "src/tools/impl/task-fork-receipt.test.ts",
       "timeoutMs": 15000,
       "reason": "Replaces billing I/O and the child process while exercising real fork launch state and task receipts with process-global backend, settings, and subagent state."
@@ -24,6 +29,11 @@
       "path": "src/auth/desktop-credentials.test.ts",
       "timeoutMs": 30000,
       "reason": "Builds Bun and Node child fixtures with Bun.build; running channel imports afterward in the same Bun process produces alias-resolution failures."
+    },
+    {
+      "path": "src/cli/tui-queue-steering.test.tsx",
+      "timeoutMs": 30000,
+      "reason": "Mounts the production TUI and changes process-global backend, settings, and tool context while testing queued input."
     },
     {
       "path": "src/cli/tui-interrupt-queue-lifecycle.test.tsx",

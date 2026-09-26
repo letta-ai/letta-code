@@ -33,8 +33,8 @@ export const QueuedMessages = memo(
             </Box>
             <Box flexGrow={1}>
               <Text dimColor>
-                Queue paused by Esc. Enter to resume, or type to send with your
-                next message.
+                Queue paused. Enter to resume, or type to send with your next
+                message.
               </Text>
             </Box>
           </Box>

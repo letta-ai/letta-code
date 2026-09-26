@@ -36,7 +36,7 @@ type QueueItemBase = {
   source: QueueItemSource;
   enqueuedAt: number;
   /**
-   * Parked by a user interrupt. Paused items stay visible in the queue but
+   * Parked by an interrupt or error. Paused items stay visible in the queue but
    * are skipped by every dequeue path until `resume()` clears the flag.
    * Only user-authored messages are ever paused; system-originated items
    * (task notifications, cron prompts, mod continuations) keep flowing.
@@ -54,6 +54,8 @@ export type MessageQueueItem = QueueItemBase & {
    * run as its own turn so its correlated client request can settle.
    */
   noCoalesce?: boolean;
+  /** Explicitly deliver this user message at the next tool boundary. */
+  steering?: boolean;
 };
 
 export type TaskNotificationQueueItem = QueueItemBase & {
@@ -209,13 +211,17 @@ export class QueueRuntime {
   /**
    * Add an item to the queue. Returns the enqueued item (with assigned id
    * and enqueuedAt), or null if the hard ceiling was reached.
+   * `atFront` keeps an explicitly retried input ahead of waiting follow-ups.
    *
    * - If at soft limit and item is coalescable: drops oldest coalescable item.
    * - If at soft limit and item is a barrier: allows overflow (soft limit only
    *   applies to coalescable items).
    * - If at hard ceiling: rejects all item kinds, fires onDropped("buffer_limit").
    */
-  enqueue(input: Omit<QueueItem, "id" | "enqueuedAt">): QueueItem | null {
+  enqueue(
+    input: Omit<QueueItem, "id" | "enqueuedAt">,
+    atFront = false,
+  ): QueueItem | null {
     // Hard ceiling check
     if (this.store.length >= this.hardMaxItems) {
       const phantom = this.makeItem(input);
@@ -235,7 +241,7 @@ export class QueueRuntime {
         dropIdx !== -1 ? this.store.splice(dropIdx, 1)[0] : undefined;
       if (dropped !== undefined) {
         const item = this.makeItem(input);
-        this.store.push(item);
+        this.store[atFront ? "unshift" : "push"](item);
         // queueLen after: same as before (one dropped, one added)
         this.safeCallback(
           "onDropped",
@@ -249,7 +255,7 @@ export class QueueRuntime {
     }
 
     const item = this.makeItem(input);
-    this.store.push(item);
+    this.store[atFront ? "unshift" : "push"](item);
     this.safeCallback("onEnqueued", item, this.store.length);
 
     // If queue just became non-empty while blocked, blocked-epoch tracking resets
@@ -345,10 +351,12 @@ export class QueueRuntime {
    * headless coalescing loop, listen one-message-per-turn).
    * Returns null if queue is empty or n <= 0.
    */
-  consumeItems(n: number): DequeuedBatch | null {
+  consumeItems(
+    n: number,
+    mode: "all" | "steering" = "all",
+  ): DequeuedBatch | null {
     if (this.store.length === 0 || n <= 0) return null;
-    // Paused items are skipped: the first `n` ready items are consumed.
-    const batch = this.store.filter((item) => !item.paused).slice(0, n);
+    const batch = this.peekReady(mode).slice(0, n);
     const count = batch.length;
     if (count === 0) return null;
     this.removeAll(batch);
@@ -397,8 +405,8 @@ export class QueueRuntime {
   // ── Pause / resume ─────────────────────────────────────────────
 
   /**
-   * Park every queued user message. Called when the user interrupts: the
-   * interrupted turn stops, and the messages the user queued behind it wait
+   * Park every queued user message after an interrupt or terminal error. The
+   * current turn stops, and the messages the user queued behind it wait
    * for an explicit resume or for the user's next message instead of
    * starting the next turn on their own. System-originated items are not
    * affected. Returns the number of items newly paused.
@@ -408,6 +416,7 @@ export class QueueRuntime {
     for (const item of this.store) {
       if (item.kind === "message" && item.source === "user" && !item.paused) {
         item.paused = true;
+        delete item.steering;
         changed += 1;
       }
     }
@@ -433,6 +442,26 @@ export class QueueRuntime {
       this.safeCallback("onPauseChanged", 0, this.store.length);
     }
     return changed;
+  }
+
+  /** Deliver one queued user message at the next tool boundary. */
+  steer(itemId: string): boolean {
+    const item = this.store.find((candidate) => candidate.id === itemId);
+    if (
+      !item ||
+      item.kind !== "message" ||
+      item.source !== "user" ||
+      item.noCoalesce
+    )
+      return false;
+    if (item.steering && !item.paused) return true;
+    const wasPaused = item.paused;
+    item.steering = true;
+    delete item.paused;
+    this.resetBlockedState();
+    if (wasPaused)
+      this.safeCallback("onPauseChanged", this.pausedCount, this.store.length);
+    return true;
   }
 
   // ── Clear ──────────────────────────────────────────────────────
@@ -474,9 +503,15 @@ export class QueueRuntime {
     return this.store.slice();
   }
 
-  /** Like peek(), without paused items. Dequeue planners must use this. */
-  peekReady(): readonly QueueItem[] {
-    return this.store.filter((item) => !item.paused);
+  /** At tool boundaries, skip user messages unless explicitly steered. */
+  peekReady(mode: "all" | "steering" = "all"): readonly QueueItem[] {
+    return this.store.filter(
+      (item) =>
+        !item.paused &&
+        (mode === "all" ||
+          item.kind !== "message" ||
+          (!item.noCoalesce && (item.source !== "user" || item.steering))),
+    );
   }
 
   // ── Internals ──────────────────────────────────────────────────

@@ -863,7 +863,10 @@ export function Input({
   elapsedBaseMs?: number;
   thinkingMessage: string;
   includeSystemPromptUpgradeTip?: boolean;
-  onSubmit: (message?: string) => Promise<{ submitted: boolean }>;
+  onSubmit: (
+    message?: string,
+    isRetry?: boolean,
+  ) => Promise<{ submitted: boolean }>;
   onBashSubmit?: (command: string) => Promise<void>;
   bashRunning?: boolean;
   onBashInterrupt?: () => void;
@@ -1073,6 +1076,7 @@ export function Input({
   // Track preferred column for vertical navigation (sticky column behavior)
   const [preferredColumn, setPreferredColumn] = useState<number | null>(null);
 
+  const isRestoredInputRef = useRef(false);
   // Display text currently owned by the submit handler; its registry entries
   // must survive until the handler resolves or restores them.
   const inFlightSubmitTextRef = useRef<string | null>(null);
@@ -1102,10 +1106,11 @@ export function Input({
     [messageQueue, draftDiscards],
   );
 
-  // Drop the parked history draft and release it against `next`, the draft
-  // replacing it. Down-restore omits `next`: the parked draft is live again.
-  const clearParkedDraft = useCallback(
+  // Exit history and release the parked draft against its replacement `next`.
+  // Down-restore omits `next`: the parked draft is live again.
+  const exitHistory = useCallback(
     (next?: string) => {
+      setHistoryIndex(-1);
       const parked = temporaryInputRef.current;
       temporaryInputRef.current = "";
       setTemporaryInput("");
@@ -1116,15 +1121,17 @@ export function Input({
 
   // Restore input from error (only if current value is empty)
   useEffect(() => {
-    if (restoredInput && value === "") {
-      setValue(restoredInput);
+    if (restoredInput) {
+      if (value === "") {
+        isRestoredInputRef.current = true;
+        setValue(restoredInput);
+      } else {
+        // Input has content, don't clobber - drop the restored value instead
+        restoredInputRef.current = null;
+        releaseDiscardedDraftPlaceholders(restoredInput, value);
+      }
       onRestoredInputConsumed?.();
-    } else if (restoredInput && value !== "") {
-      // Input has content, don't clobber - drop the restored value instead
-      restoredInputRef.current = null;
-      releaseDiscardedDraftPlaceholders(restoredInput, value);
-      onRestoredInputConsumed?.();
-    }
+    } else if (value === "") isRestoredInputRef.current = false;
   }, [
     restoredInput,
     value,
@@ -1567,10 +1574,9 @@ export function Input({
           setCursorPos(newerEntry.length); // Cursor at end (traditional terminal behavior)
         } else {
           // At the end of history - restore temporary input
-          setHistoryIndex(-1);
           setValue(temporaryInput);
           setCursorPos(temporaryInput.length); // Cursor at end for user's draft
-          clearParkedDraft();
+          exitHistory();
         }
       }
     }
@@ -1597,10 +1603,9 @@ export function Input({
     // If user is in history mode and the value changes (they're typing)
     // Exit history mode but keep the modified text
     if (historyIndex !== -1 && value !== history[historyIndex]) {
-      setHistoryIndex(-1);
-      clearParkedDraft(value);
+      exitHistory(value);
     }
-  }, [value, historyIndex, history, clearParkedDraft]);
+  }, [value, historyIndex, history, exitHistory]);
 
   // Clean up timers on unmount
   useEffect(() => {
@@ -1621,46 +1626,33 @@ export function Input({
 
     const previousValue = value;
 
-    // Handle bash mode submission
-    if (isBashMode) {
-      if (!previousValue.trim()) return;
+    // Input locking - don't accept new commands while one is running (LET-7199)
+    if (isBashMode && (!previousValue.trim() || bashRunning)) return;
 
-      // Input locking - don't accept new commands while one is running (LET-7199)
-      if (bashRunning) return;
-
-      // Add to history if not empty and not a duplicate of the last entry
-      setHistory((prev) => appendInputHistory(prev, previousValue));
-
-      setHistoryIndex(-1);
-      clearParkedDraft("");
-
-      // Bash runs the display text verbatim and never resolves placeholders,
-      // so the submitted text's registry entries are dead from here on.
-      releaseDiscardedDraftPlaceholders(previousValue, "");
-      setValue(""); // Clear immediately for responsiveness
-      // Stay in bash mode - user exits with backspace on empty input
-      if (onBashSubmit) {
-        await onBashSubmit(previousValue);
-      }
-      return;
-    }
-
-    // Add to history if not empty and not a duplicate of the last entry
+    // Both submission modes use the bounded input history.
     if (previousValue.trim()) {
       setHistory((prev) => appendInputHistory(prev, previousValue));
     }
 
-    setHistoryIndex(-1);
-    clearParkedDraft(previousValue);
+    exitHistory(isBashMode ? "" : previousValue);
 
+    const isRetry = isRestoredInputRef.current;
     setValue(""); // Clear immediately for responsiveness
+    if (isBashMode) {
+      // Bash runs display text verbatim and never resolves placeholders.
+      releaseDiscardedDraftPlaceholders(previousValue, "");
+      // Stay in bash mode - user exits with backspace on empty input.
+      await onBashSubmit?.(previousValue);
+      return;
+    }
     // Keep the submission's placeholder entries alive while the handler owns
     // the text (queuing, content-part build, or failure restore).
     inFlightSubmitTextRef.current = previousValue;
     try {
-      const result = await onSubmit(previousValue);
+      const result = await onSubmit(previousValue, isRetry);
       // If message was NOT submitted (e.g. pending approval), restore it
       if (!result.submitted) {
+        isRestoredInputRef.current = isRetry;
         setValue(previousValue);
       }
     } finally {
@@ -1676,7 +1668,7 @@ export function Input({
     onBashSubmit,
     onSubmit,
     releaseDiscardedDraftPlaceholders,
-    clearParkedDraft,
+    exitHistory,
   ]);
 
   const handleFileAutocompleteApply = useCallback(
@@ -1699,15 +1691,14 @@ export function Input({
         setHistory((prev) => appendInputHistory(prev, commandToSubmit));
       }
 
-      setHistoryIndex(-1);
-      clearParkedDraft(commandToSubmit);
+      exitHistory(commandToSubmit);
 
       // The selected command replaces the current draft
       releaseDiscardedDraftPlaceholders(value, commandToSubmit);
       setValue(""); // Clear immediately for responsiveness
       await onSubmit(commandToSubmit);
     },
-    [onSubmit, value, releaseDiscardedDraftPlaceholders, clearParkedDraft],
+    [onSubmit, value, releaseDiscardedDraftPlaceholders, exitHistory],
   );
 
   // Handle slash command autocomplete (Tab key - fill text only)

@@ -197,7 +197,6 @@ type ConversationLoopContext = {
   clearApprovalToolContext: () => void;
   closeTrajectorySegment: () => void;
   consumeQueuedMessages: () => QueuedMessage[] | null;
-  queueModeRef: MutableRefObject<"immediate" | "defer">;
   contextTrackerRef: MutableRefObject<ContextTracker>;
   chatgptPlanSwapsRef: MutableRefObject<number>;
   chatgptExhaustedProvidersRef: MutableRefObject<Set<string>>;
@@ -251,7 +250,6 @@ type ConversationLoopContext = {
   setCurrentModelId: Dispatch<SetStateAction<string | null>>;
   setDequeueEpoch: Dispatch<SetStateAction<number>>;
   setInterruptRequested: Dispatch<SetStateAction<boolean>>;
-  lastStopReasonRef: MutableRefObject<string | null>;
   setIsExecutingTool: Dispatch<SetStateAction<boolean>>;
   setLlmConfig: Dispatch<SetStateAction<LlmConfig | null>>;
   setNeedsEagerApprovalCheck: Dispatch<SetStateAction<boolean>>;
@@ -301,7 +299,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     chatgptPlanSwapsRef,
     chatgptExhaustedProvidersRef,
     consumeQueuedMessages,
-    queueModeRef,
     contextTrackerRef,
     conversationBusyRetriesRef,
     conversationGenerationRef,
@@ -347,7 +344,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     setCurrentModelId,
     setDequeueEpoch,
     setInterruptRequested,
-    lastStopReasonRef,
     setIsExecutingTool,
     setLlmConfig,
     setNeedsEagerApprovalCheck,
@@ -1418,9 +1414,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             stopReasonToHandle = "requires_approval";
           }
 
-          // Record the final stop reason so the dequeue gate can check it.
-          lastStopReasonRef.current = stopReasonToHandle;
-
           // Case 1: Turn ended normally
           if (stopReasonToHandle === "end_turn") {
             clearApprovalToolContext();
@@ -2019,13 +2012,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   return;
                 }
 
-                // Append queued messages if any (from 15s append mode).
-                // In defer mode, skip mid-run bundling — let the dequeue gate
-                // handle dispatch after the agent is fully done (end_turn).
-                const queuedItemsToAppend =
-                  queueModeRef.current === "immediate"
-                    ? consumeQueuedMessages()
-                    : null;
+                // Notifications steer even while user messages wait for turn end.
+                const queuedItemsToAppend = consumeQueuedMessages();
                 const queuedNotifications = queuedItemsToAppend
                   ? getQueuedNotificationSummaries(queuedItemsToAppend)
                   : [];
@@ -2632,8 +2620,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               setRestoredInput(lastDequeuedMessageRef.current);
               lastDequeuedMessageRef.current = null;
             }
-            // Clear any remaining queue on error
-            tuiQueueRef.current?.clear("error");
+            // Keep undispatched user messages paused until the user resumes.
+            tuiQueueRef.current?.pause();
 
             setStreaming(false);
             sendDesktopNotification("Stream error", "error"); // Notify user of error
@@ -2751,8 +2739,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 setRestoredInput(lastDequeuedMessageRef.current);
                 lastDequeuedMessageRef.current = null;
               }
-              // Clear any remaining queue on error
-              tuiQueueRef.current?.clear("error");
+              // Keep undispatched user messages paused until the user resumes.
+              tuiQueueRef.current?.pause();
 
               setStreaming(false);
               sendDesktopNotification();
@@ -2786,8 +2774,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             setRestoredInput(lastDequeuedMessageRef.current);
             lastDequeuedMessageRef.current = null;
           }
-          // Clear any remaining queue on error
-          tuiQueueRef.current?.clear("error");
+          // Keep undispatched user messages paused until the user resumes.
+          tuiQueueRef.current?.pause();
 
           setStreaming(false);
           sendDesktopNotification("Execution error", "error"); // Notify user of error
@@ -2832,8 +2820,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           setRestoredInput(lastDequeuedMessageRef.current);
           lastDequeuedMessageRef.current = null;
         }
-        // Clear any remaining queue on error
-        tuiQueueRef.current?.clear("error");
+        // Keep undispatched user messages paused until the user resumes.
+        tuiQueueRef.current?.pause();
 
         setStreaming(false);
         sendDesktopNotification("Processing error", "error"); // Notify user of error

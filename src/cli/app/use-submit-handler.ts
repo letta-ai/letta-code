@@ -582,7 +582,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: moved from AppCoordinator; dependencies are preserved from the original callback.
   const onSubmit = useCallback(
-    async (message?: string): Promise<{ submitted: boolean }> => {
+    async (message?: string, isRetry = false) => {
       const commandScope = {
         agentId: agentIdRef.current,
         conversationId: conversationIdRef.current,
@@ -624,7 +624,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       }
 
       if (!msg && !hasOverrideContent) {
-        // Enter on an empty input resumes a queue parked by Esc (no new message).
+        // Enter on an empty input resumes a paused queue (no new message).
         const paused = tuiQueueRef.current?.pausedCount ?? 0;
         if (paused === 0) return { submitted: false };
         tuiQueueRef.current?.resume();
@@ -737,11 +737,8 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           (!hasOverrideContent && (tuiQueueRef.current?.length ?? 0) > 0))
       ) {
         // Enqueue via QueueRuntime — onEnqueued callback updates queueDisplay.
-        tuiQueueRef.current?.enqueue({
-          kind: "message",
-          source: "user",
-          content: msg,
-        } as Parameters<typeof tuiQueueRef.current.enqueue>[0]);
+        const item = { kind: "message", source: "user", content: msg } as const;
+        tuiQueueRef.current?.enqueue(item, isRetry);
         if (!hasOverrideContent && !isSystemOnly) tuiQueueRef.current?.resume();
         setDequeueEpoch((e: number) => e + 1);
         return { submitted: true }; // Clears input

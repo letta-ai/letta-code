@@ -284,9 +284,9 @@ for (const producer of [
         );
         expect(body).toContain("call-next");
         expect(body).toContain("background complete");
-        expect(body).toContain("Change direction now");
+        expect(body).not.toContain("Change direction now");
         expect(body).toContain('"attribution":{}');
-        expect(runtime.queueRuntime.length).toBe(0);
+        expect(runtime.queueRuntime.length).toBe(1);
       } finally {
         clearProcessServices(listener);
         releaseToolExecutionContext(prepared.contextId);

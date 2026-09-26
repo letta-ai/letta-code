@@ -459,6 +459,30 @@ describe("app-server client", () => {
     expect((await resumePromise).resumed).toBe(2);
   });
 
+  test("steers one queue item and waits for its correlated response", async () => {
+    const { client, control } = createFakeClient();
+    control.open();
+    const runtime = { agent_id: "agent-1", conversation_id: "conv-1" };
+    const pending = client.steerQueueItem({ runtime, item_id: "q-2" });
+    expect(JSON.parse(control.sent[0] ?? "{}")).toEqual({
+      type: "steer_queue_item",
+      request_id: "steer-queue-item-1",
+      runtime,
+      item_id: "q-2",
+    });
+    const response = {
+      type: "steer_queue_item_response" as const,
+      request_id: "steer-queue-item-1",
+      runtime,
+      item_id: "q-2",
+      success: true,
+    };
+    control.receive({ ...response, request_id: "unrelated" });
+    control.receive(response);
+    expect(await pending).toEqual(response);
+    client.close();
+  });
+
   test("wraps conversation list requests", async () => {
     const { client, control } = createFakeClient();
     control.open();

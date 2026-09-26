@@ -196,11 +196,23 @@ export function shouldProcessInboundMessageDirectly(
   );
 }
 
-export function consumeQueuedTurn(runtime: ConversationRuntime): {
+export function consumeQueuedTurn(
+  runtime: ConversationRuntime,
+  mode: "all" | "steering" = "all",
+): {
   dequeuedBatch: DequeuedBatch;
   queuedTurn: IncomingMessage;
 } | null {
-  const queuedItems = runtime.queueRuntime.peekReady();
+  // A turn can finish before its next tool boundary. Honor selected steering
+  // before draining ordinary follow-ups, without pulling them into that input.
+  if (
+    mode === "all" &&
+    runtime.queueRuntime
+      .peekReady("steering")
+      .some((item) => item.kind === "message" && item.steering)
+  )
+    mode = "steering";
+  const queuedItems = runtime.queueRuntime.peekReady(mode);
   const firstQueuedItem = queuedItems[0];
   if (!firstQueuedItem || !isCoalescable(firstQueuedItem.kind)) {
     return null;
@@ -277,7 +289,7 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
     return null;
   }
 
-  const dequeuedBatch = runtime.queueRuntime.consumeItems(queueLen);
+  const dequeuedBatch = runtime.queueRuntime.consumeItems(queueLen, mode);
   if (!dequeuedBatch) {
     return null;
   }
