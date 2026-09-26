@@ -5,6 +5,10 @@ export interface ExternalToolDefinitionPayload {
   label?: string;
   description: string;
   parameters: Record<string, unknown>;
+  /** Controller-requested wait for a result; expiry does not cancel remote work. */
+  timeout_ms?: number;
+  /** Yield to a scoped task notification after 10s by default; false waits inline. */
+  auto_background?: boolean;
 }
 
 export interface RuntimeStartExternalToolsGroup {

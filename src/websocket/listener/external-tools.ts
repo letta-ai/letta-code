@@ -83,6 +83,8 @@ function toExternalToolDefinition(
     ...(tool.label !== undefined ? { label: tool.label } : {}),
     description: tool.description,
     parameters: tool.parameters,
+    ...(tool.timeout_ms !== undefined ? { timeoutMs: tool.timeout_ms } : {}),
+    autoBackground: tool.auto_background ?? true,
     registrationKey: getToolRegistrationKey(
       connectionId,
       runtime,
@@ -136,6 +138,7 @@ export function installExternalToolBridge(runtime: ListenerRuntime): void {
       input,
     };
 
+    const timeoutMs = context?.tool.timeoutMs ?? EXTERNAL_TOOL_CALL_TIMEOUT_MS;
     const result = await new Promise<{
       content: Array<{
         type: string;
@@ -147,8 +150,12 @@ export function installExternalToolBridge(runtime: ListenerRuntime): void {
     }>((resolve, reject) => {
       const timeout = setTimeout(() => {
         getPendingExternalToolCalls(runtime).delete(requestKey);
-        reject(new Error(`External tool call timed out: ${toolName}`));
-      }, EXTERNAL_TOOL_CALL_TIMEOUT_MS);
+        reject(
+          new Error(
+            `External tool call timed out after ${Math.ceil(timeoutMs / 1_000)}s: ${toolName}. The remote tool may still finish; its outcome is unknown. Check the destination before retrying a write.`,
+          ),
+        );
+      }, timeoutMs);
 
       getPendingExternalToolCalls(runtime).set(requestKey, {
         connectionId: connection.id,
