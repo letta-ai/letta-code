@@ -23,4 +23,24 @@ describe("external tool timeout registration", () => {
       ).toBe(false);
     }
   });
+
+  test("accepts an explicit inline override and rejects invalid background flags", () => {
+    expect(
+      isRuntimeStartExternalToolsGroup({
+        tools: [{ ...tool, auto_background: false }],
+      }),
+    ).toBe(true);
+    expect(
+      isRuntimeStartExternalToolsGroup({
+        tools: [{ ...tool, auto_background: true }],
+      }),
+    ).toBe(true);
+    for (const auto_background of [0, null, "false"]) {
+      expect(
+        isRuntimeStartExternalToolsGroup({
+          tools: [{ ...tool, auto_background }],
+        }),
+      ).toBe(false);
+    }
+  });
 });

@@ -27,6 +27,8 @@ function isExternalToolDefinitionPayload(value: unknown): boolean {
     (value.label === undefined || typeof value.label === "string") &&
     typeof value.description === "string" &&
     isRecord(value.parameters) &&
+    (value.auto_background === undefined ||
+      typeof value.auto_background === "boolean") &&
     (value.timeout_ms === undefined ||
       (typeof value.timeout_ms === "number" &&
         Number.isSafeInteger(value.timeout_ms) &&
