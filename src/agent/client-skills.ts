@@ -15,6 +15,7 @@ import {
 import {
   compareSkills,
   discoverSkills,
+  enabledSkillExperiments,
   GLOBAL_SKILLS_DIR,
   getAgentSkillsDir,
   isModelInvocableSkill,
@@ -106,6 +107,7 @@ function getWatcher(): ClientSkillsWatcher {
  *  - legacy and primary project skills directories
  *  - resolved memory skills dirs (scoped or env-fallback)
  *  - attached shared-memory skill dirs and attachment-resolution errors
+ *  - experiments that gate bundled skills
  *
  * Filesystem changes invalidate this cache through ClientSkillsWatcher rather
  * than adding a recursive filesystem revision to this request-time key.
@@ -120,6 +122,7 @@ function computeCacheKey(components: {
   memorySkillsDirs: string[];
   sharedMemorySkillsDirs: string[];
   sharedMemoryErrors: SkillDiscoveryError[];
+  skillExperiments: string;
 }): string {
   return [
     components.agentId ?? "",
@@ -134,6 +137,7 @@ function computeCacheKey(components: {
       .map((error) => `${error.path}:${error.message}`)
       .sort()
       .join(","),
+    components.skillExperiments,
   ].join("|");
 }
 
@@ -637,6 +641,7 @@ export async function buildClientSkillsPayload(
     memorySkillsDirs,
     sharedMemorySkillsDirs: sharedMemoryContext.skillsDirs,
     sharedMemoryErrors: sharedMemoryContext.errors,
+    skillExperiments: enabledSkillExperiments(),
   };
   const cacheKey = computeCacheKey(cacheComponents);
 

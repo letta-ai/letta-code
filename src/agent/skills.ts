@@ -12,6 +12,8 @@ import { existsSync } from "node:fs";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { experimentManager } from "@/experiments/manager";
+import type { ExperimentId } from "@/experiments/types";
 import { parseFrontmatter } from "@/utils/frontmatter";
 import { isLocalAgentId } from "./agent-id";
 import { ALL_SKILL_SOURCES, type SkillSource } from "./skill-sources";
@@ -159,10 +161,33 @@ const LOCAL_AGENT_EXCLUDED_BUNDLED_SKILLS = new Set([
   "working-across-computers",
 ]);
 
+/** Bundled skills that ship only while their experiment is on. */
+const EXPERIMENT_BUNDLED_SKILLS: ReadonlyMap<string, ExperimentId> = new Map([
+  ["curating-memory-palace", "memory_palace"],
+]);
+
+/**
+ * The skill-gating experiments that are on, as a stable string. Skill lists
+ * built under a different set are stale.
+ */
+export function enabledSkillExperiments(): string {
+  return [...new Set(EXPERIMENT_BUNDLED_SKILLS.values())]
+    .filter((id) => experimentManager.isEnabled(id))
+    .sort()
+    .join(",");
+}
+
 export function isSkillAvailableForAgent(
   skill: Skill,
   agentId?: string,
 ): boolean {
+  const experiment =
+    skill.source === "bundled"
+      ? EXPERIMENT_BUNDLED_SKILLS.get(skill.id)
+      : undefined;
+  if (experiment && !experimentManager.isEnabled(experiment)) {
+    return false;
+  }
   if (
     skill.source === "bundled" &&
     agentId &&
@@ -316,7 +341,9 @@ export async function discoverSkills(
   }
 
   return {
-    skills: Array.from(skillsById.values()).sort(compareSkills),
+    skills: Array.from(skillsById.values())
+      .filter((skill) => isSkillAvailableForAgent(skill, agentId))
+      .sort(compareSkills),
     errors: allErrors,
   };
 }
