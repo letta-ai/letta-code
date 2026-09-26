@@ -19,7 +19,10 @@ import { canonicalizeRoot } from "@/permissions/sandbox-policy";
 import { resolveWorkspaceSandbox } from "@/permissions/workspace-sandbox";
 import { settingsManager } from "@/settings-manager";
 import type { RuntimeScope, RuntimeStartCommand } from "@/types/protocol_v2";
-import { subscribeListenerConnection } from "@/websocket/listener/connection";
+import {
+  getOrCreateProcessTransport,
+  subscribeListenerConnection,
+} from "@/websocket/listener/connection";
 import { getBootWorkingDirectory } from "@/websocket/listener/cwd";
 import { switchConversationWorkingDirectory } from "@/websocket/listener/cwd-change";
 import { registerRuntimeExternalTools } from "@/websocket/listener/external-tools";
@@ -27,6 +30,7 @@ import {
   getOrCreateConversationPermissionModeStateRef,
   persistPermissionModeMapForRuntime,
 } from "@/websocket/listener/permission-mode";
+import { scheduleQueuePump } from "@/websocket/listener/queue";
 import { isRuntimeStartCommand } from "@/websocket/listener/runtime-start-validation";
 import { assertRuntimeWorkspaceSandboxChangeAllowed } from "@/websocket/listener/runtime-workspace-sandbox";
 import { expectInboundTeleport } from "@/websocket/listener/teleport";
@@ -34,6 +38,8 @@ import type {
   ConversationRuntime,
   ListenerConnectionId,
   ListenerRuntime,
+  ProcessQueuedTurn,
+  StartListenerOptions,
 } from "@/websocket/listener/types";
 import type {
   GetOrCreateScopedRuntime,
@@ -62,6 +68,8 @@ type RuntimeStartCommandContext = {
   runDetachedListenerTask: RunDetachedListenerTask;
   getOrCreateScopedRuntime: GetOrCreateScopedRuntime;
   replaySyncStateForRuntime: ReplaySyncStateForRuntime;
+  queuePumpOptions?: StartListenerOptions;
+  processQueuedTurn?: ProcessQueuedTurn;
   createEphemeralConversation?: typeof createEphemeralConversation;
   retrieveConversation?: (conversationId: string) => Promise<Conversation>;
 };
@@ -469,6 +477,20 @@ export async function handleRuntimeStartCommand(
     }
     assertConnectionOpen();
     subscribeListenerConnection(context.runtime, connectionId, runtimeScope);
+    // Startup can attempt the queue before a new connection has subscribed.
+    // Retry once this scope has a live recipient; the pump deduplicates itself.
+    if (
+      scopedRuntime.queueRuntime?.isEmpty === false &&
+      context.queuePumpOptions &&
+      context.processQueuedTurn
+    ) {
+      scheduleQueuePump(
+        scopedRuntime,
+        getOrCreateProcessTransport(context.runtime),
+        context.queuePumpOptions,
+        context.processQueuedTurn,
+      );
+    }
     registerRuntimeExternalTools(
       context.runtime,
       connectionId,

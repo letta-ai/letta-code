@@ -1,7 +1,13 @@
 import { afterEach, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import WebSocket from "ws";
+import { __testSetBackend, type AgentCreateBody } from "@/backend";
+import { LocalBackend } from "@/backend/local";
 import {
   getOrCreateProcessTransport,
+  getSubscribedListenerConnections,
   markListenerConnectionInitialized,
   openListenerConnection,
   subscribeListenerConnection,
@@ -9,7 +15,8 @@ import {
 } from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { enqueueInboundUserMessage } from "./inbound-queue";
-import { createRuntime } from "./lifecycle";
+import { createRuntime, startConnectedListenerRuntime } from "./lifecycle";
+import { createListenerMessageHandler } from "./message-router";
 import { scheduleQueuePump } from "./queue";
 import { setActiveRuntime } from "./runtime";
 import { isListenerTransportOpen, LocalListenerTransport } from "./transport";
@@ -201,6 +208,134 @@ test("an unrelated connection cannot drain a disconnected conversation", async (
   expect(runtime.queueRuntime.length).toBe(0);
   expect(newA.sentPayloads.length).toBeGreaterThan(0);
   expect(socketB.sentPayloads).toEqual([]);
+});
+
+test("a new connection's runtime_start resumes queued work after the startup pump found no subscriber", async () => {
+  const storageDir = await mkdtemp(join(tmpdir(), "listener-queue-reconnect-"));
+  try {
+    const backend = new LocalBackend({
+      storageDir,
+      executionMode: "deterministic",
+    });
+    __testSetBackend(backend);
+    const agent = await backend.createAgent({
+      name: "Reconnect",
+      model: "anthropic/claude-sonnet-4-6",
+    } as AgentCreateBody);
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, agent.id, "default");
+    const oldOptions = makeListenerOptions();
+    const oldSocket = new MockSocket();
+    const nextOptions = { ...oldOptions, connectionId: "new-connection" };
+    const nextSocket = new MockSocket();
+    const processed: string[] = [];
+    const processQueuedTurn = async (turn: IncomingMessage) => {
+      const message = turn.messages[0];
+      if (message && "content" in message)
+        processed.push(String(message.content));
+    };
+    setActiveRuntime(listener);
+    openListenerConnection({
+      runtime: listener,
+      connectionId: oldOptions.connectionId,
+      writer: oldSocket as unknown as WebSocket,
+      options: oldOptions,
+    });
+    markListenerConnectionInitialized(listener, oldOptions.connectionId);
+    subscribeListenerConnection(listener, oldOptions.connectionId, {
+      agent_id: agent.id,
+      conversation_id: "default",
+    });
+    runtime.queueRuntime.enqueue({
+      kind: "cron_prompt",
+      source: "cron",
+      text: "queued cron",
+      agentId: agent.id,
+      conversationId: "default",
+    } as Parameters<typeof runtime.queueRuntime.enqueue>[0]);
+    oldSocket.readyState = WebSocket.CLOSED;
+    suspendListenerConnection(listener, oldOptions.connectionId);
+    openListenerConnection({
+      runtime: listener,
+      connectionId: nextOptions.connectionId,
+      writer: nextSocket as unknown as WebSocket,
+      options: nextOptions,
+    });
+    await startConnectedListenerRuntime(
+      listener,
+      nextSocket as unknown as WebSocket,
+      nextOptions,
+      processQueuedTurn,
+      {
+        startHeartbeat: false,
+        startCronScheduler: false,
+        emitInitialState: false,
+      },
+    );
+    await runtime.messageQueue;
+    expect(processed).toEqual([]);
+    expect(runtime.queueRuntime.length).toBe(1);
+    const tasks: Promise<void>[] = [];
+    const responses: unknown[] = [];
+    const handleMessage = createListenerMessageHandler({
+      runtime: listener,
+      socket: nextSocket as unknown as WebSocket,
+      opts: nextOptions,
+      processQueuedTurn,
+      fileCommandSession: { handle: () => false },
+      getParsedRuntimeScope: () => null,
+      replaySyncStateForRuntime: async () => {},
+      getOrCreateScopedRuntime,
+      handleApprovalResponseInput: async () => false,
+      handleChangeDeviceStateInput: async () => false,
+      handleAbortMessageInput: async () => false,
+      stampInboundUserMessageOtids: (incoming) => incoming,
+      safeSocketSend: (_socket, payload) => {
+        responses.push(payload);
+        return true;
+      },
+      runDetachedListenerTask: (_name, task) => {
+        tasks.push(task());
+      },
+      trackListenerError: (error) => {
+        throw error;
+      },
+    });
+    await handleMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "runtime_start",
+          request_id: "reconnect",
+          agent_id: agent.id,
+          conversation_id: "default",
+          recover_approvals: false,
+        }),
+      ),
+    );
+    await Promise.all(tasks);
+    expect(responses).toContainEqual(
+      expect.objectContaining({
+        type: "runtime_start_response",
+        success: true,
+      }),
+    );
+    expect(
+      getSubscribedListenerConnections(listener, {
+        agent_id: agent.id,
+        conversation_id: "default",
+      }).map((connection) => connection.id),
+    ).toEqual([nextOptions.connectionId]);
+    await waitFor(() => processed.length === 1);
+    await runtime.messageQueue;
+    expect(processed).toEqual(["queued cron"]);
+    expect(runtime.queueRuntime.length).toBe(0);
+    expect(oldSocket.sentPayloads).toEqual([]);
+    expect(nextSocket.sentPayloads.length).toBeGreaterThan(0);
+  } finally {
+    setActiveRuntime(null);
+    __testSetBackend(null);
+    await rm(storageDir, { recursive: true, force: true });
+  }
 });
 
 test("a local listener runs queued work without a remote subscriber", async () => {
