@@ -106,3 +106,5 @@ This is handled by `isGeminiModel()` and `isOpenAIModel()` in `src/tools/manager
 **"Handle not found" error**: The model handle is incorrect. Run the validation script to see valid handles.
 
 **Model works but wrong toolset**: Check `src/tools/manager.ts` to ensure the provider prefix is recognized.
+
+**Local/OpenRouter requests fail with HTTP 402 ("This request requires more credits, or fewer max_tokens")**: The request is using the model's advertised max output tokens as the request default. Advertised capability (e.g. GPT-6 Astra 128K) is a provider ceiling, not a default. Keep provider capability, configured request default, and explicit user override as separate values; the local model-selection boundary must preserve the configured `max_output_tokens` instead of substituting the runtime catalog's advertised `maxOutputTokens`.
