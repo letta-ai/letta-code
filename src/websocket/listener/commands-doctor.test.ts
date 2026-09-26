@@ -7,6 +7,7 @@ import { __testSetBackend, type Backend } from "@/backend";
 import { settingsManager } from "@/settings-manager";
 import { __listenClientTestUtils } from "./client";
 import { handleExecuteCommand } from "./commands";
+import { getSupportedRemoteCommands } from "./listener-constants";
 import * as turnModule from "./turn";
 
 const priorHome = process.env.HOME;
@@ -83,5 +84,72 @@ test.each([false, true])(
       success: true,
       output: "",
     });
+  },
+);
+
+test.each([false, true])(
+  "listener teleport is available only for API state (local=%s)",
+  async (localMemfs) => {
+    const managedCloud = process.env.LETTA_MANAGED_CLOUD_RUNTIME;
+    delete process.env.LETTA_MANAGED_CLOUD_RUNTIME;
+    try {
+      __testSetBackend({ capabilities: { localMemfs } } as Backend);
+      expect(getSupportedRemoteCommands().includes("teleport")).toBe(
+        !localMemfs,
+      );
+      const listener = __listenClientTestUtils.createListenerRuntime();
+      const status = __listenClientTestUtils.buildDeviceStatus(listener);
+      expect(status.supported_commands.includes("teleport")).toBe(!localMemfs);
+      expect(
+        __listenClientTestUtils.buildDeviceStatus(listener).supported_commands,
+      ).toBe(status.supported_commands);
+      const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
+        listener,
+        "agent-teleport",
+        "conv-teleport",
+      );
+      turn = spyOn(turnModule, "handleIncomingMessage").mockResolvedValue(
+        undefined,
+      );
+      const sent: string[] = [];
+      const socket = {
+        readyState: 1,
+        send: (value: string) => sent.push(value),
+      };
+      await handleExecuteCommand(
+        {
+          type: "execute_command",
+          command_id: "teleport",
+          request_id: "teleport-command-1",
+          runtime: {
+            agent_id: "agent-teleport",
+            conversation_id: "conv-teleport",
+          },
+        },
+        socket as unknown as WebSocket,
+        runtime,
+        {},
+      );
+      if (localMemfs) {
+        expect(turn).not.toHaveBeenCalled();
+        expect(sent.join("\n")).toContain("Unknown command: teleport");
+      } else {
+        expect(turn).toHaveBeenCalledTimes(1);
+        const incoming = turn.mock.calls[0]?.[0].messages[0];
+        const text =
+          incoming?.type === "message" && Array.isArray(incoming.content)
+            ? incoming.content[0]
+            : null;
+        expect(text).toMatchObject({ type: "text" });
+        if (text?.type === "text") {
+          expect(text.text).toContain("<system-reminder>");
+          expect(text.text).toContain("letta teleport cloud");
+        }
+      }
+    } finally {
+      if (managedCloud === undefined)
+        delete process.env.LETTA_MANAGED_CLOUD_RUNTIME;
+      else process.env.LETTA_MANAGED_CLOUD_RUNTIME = managedCloud;
+    }
   },
 );

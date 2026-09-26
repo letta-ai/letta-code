@@ -43,7 +43,7 @@ import {
   shouldEmitDeviceStatus,
 } from "./device-status-cache";
 import { buildDeviceToolsetStatus } from "./device-toolset-status";
-import { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
+import { getSupportedRemoteCommands } from "./listener-constants";
 import { listListenerModCommands } from "./mod-command-registry";
 import { enqueueOutboundFrame } from "./outbound-wire";
 import { getConversationPermissionModeState } from "./permission-mode";
@@ -78,12 +78,6 @@ type PartialRuntimeScope = {
   agent_id?: string | null;
   conversation_id?: string | null;
 };
-
-/**
- * Frozen copy of the supported commands list. Avoids allocating it for every
- * device-status update. (LET-8948)
- */
-const FROZEN_SUPPORTED_COMMANDS: string[] = [...SUPPORTED_REMOTE_COMMANDS];
 
 /**
  * Mod-contributed commands for the device status, omitted entirely when no mods
@@ -200,7 +194,7 @@ export function buildDeviceStatus(
       boot_working_directory: fallbackCwd,
       should_doctor: false,
       reflection_settings: null,
-      supported_commands: FROZEN_SUPPORTED_COMMANDS,
+      supported_commands: getSupportedRemoteCommands(),
     };
   }
   const scope = getScopeForRuntime(runtime, params);
@@ -263,7 +257,7 @@ export function buildDeviceStatus(
       : {}),
     cwd_revision: listener.workingDirectoryRevision ?? 0,
     should_doctor: systemPromptDoctorState?.should_doctor ?? false,
-    supported_commands: FROZEN_SUPPORTED_COMMANDS,
+    supported_commands: getSupportedRemoteCommands(),
     ...buildModCommandsField(listener, agentId),
     reflection_settings: agentId
       ? {
