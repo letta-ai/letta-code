@@ -30,6 +30,15 @@ import {
   clearTargetStores,
 } from "@/channels/targets";
 import type { ChannelAdapter, InboundChannelMessage } from "@/channels/types";
+import { ChannelGateway } from "./gateway-core";
+import {
+  FakeClient,
+  makeDelivery,
+  makeHooks,
+  makeSource,
+  makeStreamDelta,
+  makeTurnFinished,
+} from "./gateway-test-support";
 
 const createConversation = mock(async () => ({ id: "conv-telegram" }));
 
@@ -139,6 +148,112 @@ describe("telegram channel registry", () => {
     }
     resetState();
   });
+
+  test.each(["end_turn", "cancelled", "llm_api_error"])(
+    "/new cannot overtake an approval waiting behind progress after %s",
+    async (stopReason) => {
+      const { ChannelRegistry } = await import("@/channels/registry");
+      const registry = new ChannelRegistry();
+      const replies: Array<{ chatId: string; text: string }> = [];
+      const adapter = createAdapter(replies);
+      const progressStarted = Promise.withResolvers<void>();
+      const releaseProgress = Promise.withResolvers<void>();
+      const finished = Promise.withResolvers<void>();
+      adapter.handleTurnProgressEvent = async () => {
+        progressStarted.resolve();
+        await releaseProgress.promise;
+      };
+      adapter.handleTurnLifecycleEvent = async (event) => {
+        if (event.type === "finished") finished.resolve();
+      };
+      adapter.handleControlRequestEvent = async () => {};
+      registry.registerAdapter(adapter);
+      const client = new FakeClient();
+      const gateway = new ChannelGateway(
+        client,
+        makeHooks({
+          onProgress: (event) => registry.dispatchTurnProgressEvent(event),
+          onLifecycle: (event) => registry.dispatchTurnLifecycleEvent(event),
+          onControlRequest: (event) =>
+            registry.registerPendingControlRequest(event),
+        }).hooks,
+      );
+      registry.setRuntimeBusyHandler((runtime) =>
+        gateway.isRuntimeBusy(runtime),
+      );
+      registry.setMessageHandler(() => {});
+      registry.setReady();
+      setRouteInMemory("telegram", {
+        accountId: "telegram-bot",
+        chatId: "-100123",
+        threadId: "42",
+        chatType: "channel",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        enabled: true,
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+      try {
+        await gateway.submit(
+          makeDelivery({
+            sources: [
+              makeSource({
+                accountId: "telegram-bot",
+                chatId: "-100123",
+                threadId: "42",
+              }),
+            ],
+          }),
+        );
+        client.emit(
+          makeStreamDelta({
+            message_type: "reasoning_message",
+            run_id: "run-1",
+          }),
+        );
+        await progressStarted.promise;
+        client.emit({
+          type: "control_request",
+          request_id: "ctrl-delayed",
+          agent_id: "agent-1",
+          conversation_id: "conv-1",
+          request: {
+            subtype: "can_use_tool",
+            tool_name: "Bash",
+            input: { command: "ls" },
+            tool_call_id: "call-1",
+            permission_suggestions: [],
+            blocked_path: null,
+          },
+        });
+        client.emit(makeTurnFinished(stopReason));
+        expect(registry.hasPendingControlRequest("ctrl-delayed")).toBe(false);
+        await adapter.onMessage?.(createInboundMessage({ text: "/new" }));
+        expect(
+          getRoute("telegram", "-100123", "telegram-bot", "42")?.conversationId,
+        ).toBe("conv-1");
+        expect(createConversation).not.toHaveBeenCalled();
+        expect(replies.at(-1)?.text).toContain("/cancel");
+        releaseProgress.resolve();
+        await finished.promise;
+        // The gateway hands the guard over to the registry without an idle gap.
+        expect(registry.hasPendingControlRequest("ctrl-delayed")).toBe(true);
+        await adapter.onMessage?.(createInboundMessage({ text: "/new" }));
+        expect(createConversation).not.toHaveBeenCalled();
+        registry.clearPendingControlRequest("ctrl-delayed");
+        await adapter.onMessage?.(createInboundMessage({ text: "/new" }));
+        expect(createConversation).toHaveBeenCalledTimes(1);
+        expect(
+          getRoute("telegram", "-100123", "telegram-bot", "42")?.conversationId,
+        ).toBe("conv-telegram");
+      } finally {
+        releaseProgress.resolve();
+        await finished.promise;
+        registry.clearPendingControlRequest("ctrl-delayed");
+        gateway.close();
+      }
+    },
+  );
 
   test("mention-only Telegram groups ignore ambient messages", async () => {
     __testOverrideLoadChannelAccounts(() => [

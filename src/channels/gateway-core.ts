@@ -129,6 +129,8 @@ type GatewayRuntimeState = {
   routedSources: ChannelTurnSource[];
   replayedControlRequestIds: Set<string>;
   submissionQueue: Promise<void>;
+  pendingSubmissions: number;
+  pendingControlHandoffs: number;
   hookQueue: Promise<void> | null;
   acceptedClientMessageIds: Set<string>;
   modelStatus: ChannelGatewayModelStatus | null;
@@ -148,17 +150,6 @@ function channelTagsForSources(sources: ChannelTurnSource[]): string[] {
   return [...new Set(sources.map((source) => `channel:${source.channel}`))];
 }
 
-function stopReasonFromDelta(
-  message: StreamDeltaMessage,
-): StopReasonType | null {
-  const delta = message.delta;
-  return delta.message_type === "stop_reason" &&
-    "stop_reason" in delta &&
-    typeof delta.stop_reason === "string"
-    ? delta.stop_reason
-    : null;
-}
-
 function runIdFromDelta(message: StreamDeltaMessage): string | undefined {
   const runId = "run_id" in message.delta ? message.delta.run_id : undefined;
   return typeof runId === "string" && runId.length > 0 ? runId : undefined;
@@ -174,16 +165,12 @@ function lifecycleOutcome(
   return "error";
 }
 
-/**
- * Process-neutral Channels bridge. It only speaks the public App Server
- * protocol; channel adapters and credentials stay behind the injected hooks.
- */
+/** Process-neutral App Server bridge; adapters and credentials stay behind hooks. */
 export class ChannelGateway {
   private readonly states = new Map<string, GatewayRuntimeState>();
   private readonly disposers: Array<() => void> = [];
-  // Tool publication and runtime_start both replace the same connection-owned
-  // registration. Keep them ordered so a late runtime_start cannot resurrect a
-  // route that an overlapping route-removal update just revoked.
+  // Serialize tool publication and runtime_start (same connection registration)
+  // so overlapping updates cannot resurrect removed routes.
   private registrationQueue = Promise.resolve();
 
   constructor(
@@ -198,8 +185,7 @@ export class ChannelGateway {
           : undefined;
         const active = state?.active;
         const sources = active?.routingSources ?? state?.routedSources ?? [];
-        // Pass the per-turn idempotency scope only when a turn is active;
-        // process-owned calls (no active batch) are not deduped.
+        // Only active turns have idempotency scopes; process calls are not deduped.
         return hooks.executeExternalTool(
           request,
           sources,
@@ -217,6 +203,7 @@ export class ChannelGateway {
 
   async submit(delivery: ChannelGatewayDelivery): Promise<boolean> {
     const state = this.getState(delivery.runtime);
+    state.pendingSubmissions++;
     const submission = state.submissionQueue.then(() =>
       this.submitDelivery(state, delivery),
     );
@@ -224,7 +211,7 @@ export class ChannelGateway {
       () => undefined,
       () => undefined,
     );
-    return submission;
+    return submission.finally(() => state.pendingSubmissions--);
   }
 
   private async submitDelivery(
@@ -532,7 +519,7 @@ export class ChannelGateway {
         ) {
           throw new Error("Cannot clean up a routed channel runtime");
         }
-        if (state?.active) {
+        if (state?.active || state?.pendingControlHandoffs) {
           throw new Error("Cannot clean up an active channel runtime");
         }
         if ((state?.pendingSourcesByClientMessageId.size ?? 0) > 0) {
@@ -566,6 +553,16 @@ export class ChannelGateway {
 
   setRoutedSources(runtime: RuntimeScope, sources: ChannelTurnSource[]): void {
     this.getState(runtime).routedSources = uniqueRoutedSources(sources);
+  }
+
+  isRuntimeBusy(runtime: RuntimeScope): boolean {
+    const state = this.states.get(runtimeKey(runtime));
+    return Boolean(
+      state?.active ||
+        state?.pendingSubmissions ||
+        state?.pendingControlHandoffs ||
+        state?.pendingSourcesByClientMessageId.size,
+    );
   }
 
   getKnownRuntimes(): RuntimeScope[] {
@@ -621,6 +618,8 @@ export class ChannelGateway {
         routedSources: [],
         replayedControlRequestIds: new Set(),
         submissionQueue: Promise.resolve(),
+        pendingSubmissions: 0,
+        pendingControlHandoffs: 0,
         hookQueue: null,
         acceptedClientMessageIds: new Set(),
         modelStatus: null,
@@ -916,8 +915,12 @@ export class ChannelGateway {
     }
     active.richDraft?.handleDelta(message.delta);
 
-    const stopReason = stopReasonFromDelta(message);
-    if (stopReason === "requires_approval" || stopReason === "end_turn") {
+    const delta = message.delta;
+    if (
+      delta.message_type === "stop_reason" &&
+      (delta.stop_reason === "requires_approval" ||
+        delta.stop_reason === "end_turn")
+    ) {
       void active.richDraft?.flushPending();
     }
     // The listener sends a canonical turn_finished event after it classifies
@@ -975,6 +978,8 @@ export class ChannelGateway {
     if (sourceScopes.size !== 1) return;
     const source = [...sourceScopes.values()][0];
     if (!source) return;
+    // Reserve before queued hooks yield; the registry owns the guard after delivery.
+    state.pendingControlHandoffs++;
     void this.enqueueHook(state, () =>
       this.hooks.onControlRequest({
         requestId: message.request_id,
@@ -985,6 +990,9 @@ export class ChannelGateway {
         toolName: message.request.tool_name,
         input: message.request.input,
       }),
+    ).then(
+      () => state.pendingControlHandoffs--,
+      () => state.pendingControlHandoffs--,
     );
   }
 }

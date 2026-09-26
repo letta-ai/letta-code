@@ -175,7 +175,7 @@ describe("host-extra command definitions", () => {
 
   test("generic help renders extras as a labeled paragraph after the shared list", () => {
     const message = buildChannelHelpMessage(
-      "telegram",
+      "discord",
       defaultChannelDisplayName,
       CLOUD_SURFACE_OPTIONS,
     );
@@ -205,7 +205,7 @@ describe("host-extra command definitions", () => {
         CLOUD_SURFACE_OPTIONS,
       ),
     ).toContain(
-      "Supported slash commands: /help, /status, /whoami, /pause, /resume, /cancel, /chat, /feedback, /model, /reflection, /reload, /agent, /config, /convo.",
+      "Supported slash commands: /help, /status, /whoami, /pause, /resume, /cancel, /chat, /feedback, /model, /reflection, /reload, /agent, /config, /convo, /new.",
     );
     expect(
       buildUnsupportedChannelCommandMessage(
@@ -358,8 +358,8 @@ describe("buildChannelHelpMessage", () => {
   });
 
   test("renders the generic slash command list for other channels", () => {
-    const message = buildChannelHelpMessage("telegram");
-    expect(message).toStartWith("Telegram is connected to Letta Code.");
+    const message = buildChannelHelpMessage("discord");
+    expect(message).toStartWith("Discord is connected to Letta Code.");
     expect(message).toContain(
       "Supported slash commands here: /help, /status, /whoami, /pause, /resume, /cancel, /chat, /feedback, /model, /reflection, /reload.",
     );

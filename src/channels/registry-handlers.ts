@@ -15,6 +15,15 @@ export interface ChannelInboundDelivery {
 
 export type ChannelMessageHandler = (delivery: ChannelInboundDelivery) => void;
 
+/**
+ * Locally tracked channel work, not backend-wide or other-client activity.
+ * Synchronous so route replacement can check and persist without yielding.
+ */
+export type ChannelRuntimeBusyHandler = (runtime: {
+  agent_id: string;
+  conversation_id: string;
+}) => boolean;
+
 export type ChannelCancelHandler = (params: {
   runtime: { agent_id: string; conversation_id: string };
 }) => Promise<boolean>;
