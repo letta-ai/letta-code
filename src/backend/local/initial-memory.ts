@@ -67,8 +67,8 @@ function renderInitialMemoryFile(input: {
   const frontmatter = input.rootLayout
     ? [
         "---",
-        `name: ${JSON.stringify(memoryNameFromPath(relativePath))}`,
-        `description: ${JSON.stringify(description)}`,
+        `name: ${memoryNameFromPath(relativePath)}`,
+        `description: ${description}`,
         "---",
       ]
     : ["---", `description: ${description}`, "---"];
@@ -86,19 +86,6 @@ function memoryBlocks(body: AgentCreateBody): Array<Record<string, unknown>> {
           Boolean(block) && typeof block === "object",
       )
     : [];
-}
-
-export function ensureRootMemoryBlockOnLocalCreateBody(
-  body: AgentCreateBody,
-): AgentCreateBody {
-  const blocks = memoryBlocks(body);
-  if (blocks.some((block) => block.label === DEFAULT_ROOT_MEMORY_BLOCK.label)) {
-    return body;
-  }
-  return {
-    ...(body as Record<string, unknown>),
-    memory_blocks: [{ ...DEFAULT_ROOT_MEMORY_BLOCK }, ...blocks],
-  } as unknown as AgentCreateBody;
 }
 
 export function initialMemoryFilesFromCreateBody(

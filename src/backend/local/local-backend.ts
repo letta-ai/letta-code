@@ -1,4 +1,5 @@
 import { GIT_MEMORY_ENABLED_TAG } from "@/agent/agent-tags";
+import { stampRootMemoryOnCreateBody } from "@/agent/memory-filesystem";
 import {
   type InitializeLocalMemoryRepoFile,
   initializeLocalMemoryRepo,
@@ -43,10 +44,7 @@ import {
   summarizeLocalMessagesAll,
   summarizeLocalMessagesSlidingWindow,
 } from "./compaction";
-import {
-  ensureRootMemoryBlockOnLocalCreateBody,
-  initialMemoryFilesFromCreateBody,
-} from "./initial-memory";
+import { initialMemoryFilesFromCreateBody } from "./initial-memory";
 import {
   createLocalExecutor,
   type LocalBackendExecutionMode,
@@ -325,7 +323,7 @@ export class LocalBackend extends HeadlessBackend {
     let [body, ...restArgs] = args;
     // Stamp local memfs agents so downstream tag checks enable memory sync.
     if (this.isLocalMemfsEnabled()) {
-      body = ensureRootMemoryBlockOnLocalCreateBody(body);
+      body = stampRootMemoryOnCreateBody(body);
       const bodyRecord = body as Record<string, unknown>;
       const existingTags = Array.isArray(bodyRecord.tags)
         ? (bodyRecord.tags as string[])

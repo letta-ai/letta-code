@@ -3,15 +3,13 @@ import { execFileSync } from "node:child_process";
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  ensureRootMemoryBlockOnLocalCreateBody,
-  initialMemoryFilesFromCreateBody,
-} from "@/backend/local/initial-memory";
+import { stampRootMemoryOnCreateBody } from "@/agent/memory-filesystem";
+import { initialMemoryFilesFromCreateBody } from "@/backend/local/initial-memory";
 import { LocalBackend } from "@/backend/local/local-backend";
 
 describe("fresh local agent memory layout", () => {
   test("rejects labels that collapse onto the same root path", () => {
-    const body = ensureRootMemoryBlockOnLocalCreateBody({
+    const body = stampRootMemoryOnCreateBody({
       memory_blocks: [
         { label: "profile/details", value: "nested" },
         { label: "profile_details", value: "flat" },
@@ -55,10 +53,10 @@ describe("fresh local agent memory layout", () => {
         "# Memory\n",
       );
       expect(await readFile(join(memoryDir, "persona.md"), "utf8")).toContain(
-        'name: "Persona"',
+        "name: Persona",
       );
       expect(await readFile(join(memoryDir, "persona.md"), "utf8")).toContain(
-        'description: "Who the agent is"',
+        "description: Who the agent is",
       );
       expect(() =>
         execFileSync("git", ["show", "HEAD:system/persona.md"], {
@@ -74,8 +72,8 @@ describe("fresh local agent memory layout", () => {
         agent_id: agent.id,
         dry_run: true,
       } as never);
-      expect(compiled).toContain('<file name="MEMORY.md">');
-      expect(compiled).toContain('<file name="persona.md">');
+      expect(compiled).toContain("<memory>\n# Memory\n</memory>");
+      expect(compiled).toContain("<persona>");
       expect(compiled).toContain("I am rooted.");
     } finally {
       await rm(storageDir, { recursive: true, force: true });

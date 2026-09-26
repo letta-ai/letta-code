@@ -16,7 +16,6 @@ const MEMORY_DIR_PLACEHOLDER = "$" + "{MEMORY_DIR}";
 interface LocalMemoryFile {
   relativePath: string;
   label: string;
-  raw: string;
   value: string;
   description: string;
 }
@@ -113,7 +112,6 @@ function collectCommittedMemoryFiles(memoryDir: string): {
       files.push({
         relativePath,
         label: labelFromPath(relativePath),
-        raw: "",
         value: "",
         description: "",
       });
@@ -125,7 +123,6 @@ function collectCommittedMemoryFiles(memoryDir: string): {
       files.push({
         relativePath,
         label: labelFromPath(relativePath),
-        raw,
         value: body,
         description:
           typeof frontmatter.description === "string"
@@ -158,7 +155,9 @@ function renderRootMemoryProjection(files: LocalMemoryFile[]): string {
   const allPaths = new Set(files.map((file) => file.relativePath));
   const rootFiles = files
     .filter((file) => isCoreMemoryPath(file.relativePath, "memfs-v2"))
-    .sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+    .filter((file) => file.relativePath !== "MEMORY.md")
+    .sort((left, right) => left.label.localeCompare(right.label));
+  const rootIndex = files.find((file) => file.relativePath === "MEMORY.md");
   const childIndexes = files
     .filter(
       (file) =>
@@ -167,27 +166,23 @@ function renderRootMemoryProjection(files: LocalMemoryFile[]): string {
         isProjectedMemoryPath(file.relativePath, allPaths, "memfs-v2"),
     )
     .sort((left, right) => left.relativePath.localeCompare(right.relativePath));
-
-  const lines = [
-    `<memory root="${MEMORY_DIR_PLACEHOLDER}">`,
-    "<instructions>",
-    "Root Markdown files are core memory and are already loaded below.",
-    "A child directory is memory only when it contains MEMORY.md.",
-    "Nested Markdown remains deferred. Read a child MEMORY.md before selecting deeper files.",
-    "Directories without MEMORY.md remain silent. skills/ follows the Agent Skills format.",
-    "</instructions>",
-  ];
+  const blocks: string[] = [];
 
   for (const file of rootFiles) {
-    lines.push(
-      `<file name="${escapeXmlAttribute(file.relativePath)}">`,
-      file.raw.trimEnd(),
-      "</file>",
-    );
+    const lines = [`<${file.label}>`];
+    const description = file.description.trim();
+    if (description) lines.push(`<description>${description}</description>`);
+    const value = file.value.trimEnd();
+    if (value) lines.push(value);
+    lines.push(`</${file.label}>`);
+    blocks.push(lines.join("\n"));
   }
 
-  if (childIndexes.length > 0) {
-    lines.push("<deferred-memory>");
+  if (rootIndex) {
+    const lines = ["<memory>"];
+    const value = rootIndex.value.trimEnd();
+    if (value) lines.push(value);
+    if (childIndexes.length > 0) lines.push("<deferred-memory>");
     for (const file of childIndexes) {
       const directory = file.relativePath.slice(0, -"/MEMORY.md".length);
       const escaped = escapeXmlAttribute(directory);
@@ -195,11 +190,12 @@ function renderRootMemoryProjection(files: LocalMemoryFile[]): string {
         `<directory path="${escaped}/" index="${escaped}/MEMORY.md" />`,
       );
     }
-    lines.push("</deferred-memory>");
+    if (childIndexes.length > 0) lines.push("</deferred-memory>");
+    lines.push("</memory>");
+    blocks.push(lines.join("\n"));
   }
 
-  lines.push("</memory>");
-  return lines.join("\n");
+  return blocks.join("\n\n");
 }
 
 function renderExternalProjection(files: LocalMemoryFile[]): string {
@@ -308,12 +304,13 @@ function renderSystemTree(files: LocalMemoryFile[]): string {
 
 function renderMemfsProjection(memoryDir: string): {
   content: string;
+  format: LocalMemoryFormat;
   revision?: string;
 } {
   const { files, format, revision } = collectCommittedMemoryFiles(memoryDir);
-  if (files.length === 0) return { content: "", revision };
+  if (files.length === 0) return { content: "", format, revision };
   if (format === "memfs-v2") {
-    return { content: renderRootMemoryProjection(files), revision };
+    return { content: renderRootMemoryProjection(files), format, revision };
   }
 
   const lines = [
@@ -350,7 +347,7 @@ function renderMemfsProjection(memoryDir: string): {
     lines.push("</memory>");
   }
 
-  return { content: lines.join("\n"), revision };
+  return { content: lines.join("\n"), format, revision };
 }
 
 function pad2(value: number): string {
@@ -440,14 +437,17 @@ export function compileLocalSystemPrompt(
     options.memoryDir ?? getScopedMemoryFilesystemRoot(options.agent.id);
   const memfs =
     options.includeMemfs === false
-      ? { content: "", revision: undefined }
+      ? { content: "", format: undefined, revision: undefined }
       : renderMemfsProjection(memoryDir);
-  const metadata = compileMemoryMetadata({
-    agentId: options.agent.id,
-    conversationId: options.conversationId,
-    compiledAt,
-    previousMessageCount: options.previousMessageCount ?? 0,
-  });
+  const metadata =
+    memfs.format === "memfs-v2"
+      ? ""
+      : compileMemoryMetadata({
+          agentId: options.agent.id,
+          conversationId: options.conversationId,
+          compiledAt,
+          previousMessageCount: options.previousMessageCount ?? 0,
+        });
   const coreMemory = [memfs.content, metadata]
     .filter((part) => part.trim().length > 0)
     .join("\n\n");

@@ -95,8 +95,8 @@ describe("local system prompt compilation", () => {
         memoryDir,
       });
 
-      expect(compiled.content).toContain('<file name="MEMORY.md">');
-      expect(compiled.content).toContain('<file name="persona.md">');
+      expect(compiled.content).toContain("<memory>\n# Memory\n");
+      expect(compiled.content).toContain("<persona>");
       expect(compiled.content).toContain("I am a root-layout local agent.");
       expect(compiled.content).toContain(
         '<directory path="reference/" index="reference/MEMORY.md" />',
