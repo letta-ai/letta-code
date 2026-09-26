@@ -7,6 +7,7 @@ import type {
 import { mergeQueuedTurnInput } from "@/queue/turn-queue-runtime";
 import type { QueuedMessage } from "@/utils/message-queue-bridge";
 import { extractTaskNotificationsForDisplay } from "@/utils/task-notifications";
+import { directUserRequest } from "./approval-classification";
 import { buildMessageContentFromDisplay } from "./paste-registry";
 
 export function getQueuedNotificationSummaries(
@@ -38,6 +39,32 @@ export function buildQueuedContentParts(
     return [];
   }
   return merged;
+}
+
+export function getQueuedDisplayText(batch: DequeuedBatch): string {
+  return batch.items
+    .flatMap((item) =>
+      item.kind === "task_notification"
+        ? [item.text]
+        : item.kind === "message" && typeof item.content === "string"
+          ? [item.content]
+          : [],
+    )
+    .filter(Boolean)
+    .join("\n");
+}
+
+export function getQueuedHumanRequest(
+  batch: DequeuedBatch,
+): string | undefined {
+  return directUserRequest(
+    batch.items
+      .filter(
+        (item): item is MessageQueueItem =>
+          item.kind === "message" && item.source === "user",
+      )
+      .map((item) => ({ role: "user", content: item.content })),
+  );
 }
 
 export function buildQueuedUserText(queued: QueuedMessage[]): string {

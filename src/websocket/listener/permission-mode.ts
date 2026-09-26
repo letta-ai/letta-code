@@ -21,6 +21,15 @@ export type ConversationPermissionModeState = {
   mode: PermissionMode;
 };
 
+/** Remote auto is retained for protocol compatibility, but cannot approve tools. */
+export function warnIfRemoteAutoMode(mode: PermissionMode): void {
+  if (mode === "auto") {
+    console.warn(
+      "[Listen] Remote auto permission mode is unavailable: human request origin cannot be verified; unresolved tool approvals require explicit approval.",
+    );
+  }
+}
+
 export function getPermissionModeScopeKey(
   agentId?: string | null,
   conversationId?: string | null,
@@ -164,6 +173,7 @@ export function loadPersistedPermissionModeMap(): Map<
       // Migrate legacy mode values ("default" → "standard", "bypassPermissions" → "unrestricted").
       const rawMode =
         migratePermissionMode(persisted.mode) ?? DEFAULT_PERMISSION_MODE;
+      warnIfRemoteAutoMode(rawMode);
       map.set(key, {
         mode: rawMode,
       });

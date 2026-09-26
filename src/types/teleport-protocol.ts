@@ -60,7 +60,7 @@ export interface TeleportReadyMessage {
   runtime: RuntimeScope;
   success: boolean;
   active_turn: boolean;
-  mode?: "standard" | "acceptEdits" | "unrestricted" | "strict";
+  mode?: "standard" | "auto" | "acceptEdits" | "unrestricted" | "strict";
   continuation?: TeleportContinuation;
   error?: string;
 }

@@ -27,6 +27,7 @@ import { stashRecoveredApprovalInterrupts } from "./interrupts";
 import {
   getOrCreateConversationPermissionModeStateRef,
   persistPermissionModeMapForRuntime,
+  warnIfRemoteAutoMode,
 } from "./permission-mode";
 import {
   emitDeviceStatusUpdate,
@@ -113,6 +114,7 @@ export function handleModeChange(
     }
 
     current.mode = incomingMode;
+    warnIfRemoteAutoMode(incomingMode);
 
     persistPermissionModeMapForRuntime(runtime);
 

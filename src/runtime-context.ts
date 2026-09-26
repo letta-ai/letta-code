@@ -6,6 +6,7 @@ import { isUsableDirectory } from "./helpers/usable-directory";
 import type { RuntimeExecutionSettings } from "./runtime-execution-settings";
 
 export type RuntimePermissionMode =
+  | "auto"
   | "standard"
   | "acceptEdits"
   | "unrestricted"

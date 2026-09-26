@@ -1,8 +1,11 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { classifyApprovals } from "@/cli/helpers/approval-classification";
 import { settingsManager } from "@/settings-manager";
+import { loadTools } from "@/tools/manager";
+import { submitWorkflowDecision } from "@/tools/workflow/decide";
 import { executeWorkflow } from "@/tools/workflow/workflow-engine";
 
 // The CI API integration matrix provides LETTA_API_KEY; a missing key is a
@@ -83,3 +86,83 @@ return await decide(
     await rm(dir, { recursive: true, force: true });
   }
 }, 45_000);
+
+test("auto permission classification calls Jev and conservatively gates the result", async () => {
+  if (!process.env.LETTA_API_KEY) {
+    throw new Error(
+      "LETTA_API_KEY is required for the live auto permission test.",
+    );
+  }
+  await settingsManager.initialize();
+  await loadTools();
+  const dir = await mkdtemp(join(tmpdir(), "auto-jev-live-"));
+  const filePath = join(dir, "note.txt");
+  try {
+    await writeFile(filePath, "hello\n");
+    let response:
+      | Awaited<ReturnType<typeof submitWorkflowDecision>>
+      | undefined;
+    let outboundRequest: unknown;
+    const result = await classifyApprovals(
+      [
+        {
+          toolCallId: "live-auto",
+          toolName: "Edit",
+          toolArgs: JSON.stringify({
+            file_path: filePath,
+            old_string: "hello",
+            new_string: "hello world",
+            replace_all: false,
+          }),
+        },
+      ],
+      {
+        workingDirectory: dir,
+        permissionModeState: { mode: "auto" },
+        trustedUserRequest:
+          "Change hello to hello world in note.txt in this project",
+        requireArgsForAutoApprove: true,
+        decide: async (...args) => {
+          outboundRequest = args[0];
+          response = await submitWorkflowDecision(...args);
+          return response;
+        },
+      },
+    );
+    expect(outboundRequest).toMatchObject({
+      state: {
+        trusted_user_request:
+          "Change hello to hello world in note.txt in this project",
+        untrusted_proposed_tool_call: {
+          tool_name: "Edit",
+          arguments: {
+            file_path: filePath,
+            old_string: "hello",
+            new_string: "hello world",
+            replace_all: false,
+          },
+        },
+      },
+    });
+    expect(JSON.stringify(outboundRequest)).toContain("hello world");
+    expect(await readFile(filePath, "utf8")).toBe("hello\n");
+    expect(response?.model).toMatch(/^typesafe\/jev-/);
+    expect(response?.answers.approval).toMatchObject({
+      type: "choice",
+      calibrated: true,
+    });
+    expect(result.autoDenied).toHaveLength(0);
+    expect(result.autoAllowed.length + result.needsUserInput.length).toBe(1);
+    const answer = response?.answers.approval;
+    // Optional calibration fields gate approval; their absence is an ask.
+    if (result.autoAllowed.length > 0) {
+      expect(answer?.choice).toBe("approve");
+      expect(answer?.confidence as number).toBeGreaterThanOrEqual(0.9);
+      expect(
+        (answer?.probabilities as Record<string, number>).approve,
+      ).toBeGreaterThanOrEqual(0.97);
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}, 20_000);

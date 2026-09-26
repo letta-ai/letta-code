@@ -35,7 +35,10 @@ import {
 } from "@/utils/subagent-launch-marker";
 import { reportSubagentStdoutLoss } from "@/utils/subagent-stdout-failure";
 import { isAgentIdCompatibleWithBackend } from "./agent/agent-id";
-import type { ApprovalResult } from "./agent/approval-execution";
+import type {
+  ApprovalDecision,
+  ApprovalResult,
+} from "./agent/approval-execution";
 import {
   buildFreshDenialApprovals,
   extractConflictDetail,
@@ -96,7 +99,10 @@ import {
   markIncompleteToolsAsCancelled,
   toLines,
 } from "./cli/helpers/accumulator";
-import { classifyApprovals } from "./cli/helpers/approval-classification";
+import {
+  classifyApprovals,
+  directUserRequest,
+} from "./cli/helpers/approval-classification";
 import { createContextTracker } from "./cli/helpers/context-tracker";
 import { formatErrorDetails } from "./cli/helpers/error-formatter";
 import type {
@@ -802,6 +808,12 @@ export async function handleHeadlessCommand(
     computer: explicitEnvironmentSelector,
     ephemeral: values.ephemeral,
   });
+  if (usesRemoteEnvironment && startupPermissionMode.mode === "auto") {
+    console.error(
+      "Error: Auto permission mode needs a local run; remote listener turns require explicit approval.",
+    );
+    process.exit(1);
+  }
   if (values["client-message-id"] !== undefined && !usesRemoteEnvironment)
     throw new Error("--client-message-id requires a Cloud input destination");
   const startupBackend = createStartupBackend(backend, usesRemoteEnvironment);
@@ -2086,6 +2098,9 @@ export async function handleHeadlessCommand(
   }
 
   const responseState = createHeadlessResponseState();
+  const trustedUserRequest = isSubagent
+    ? undefined
+    : directUserRequest([{ role: "user", content: prompt }]);
   let currentInput: Array<MessageCreate | ApprovalCreate> = [
     {
       role: "user",
@@ -2589,24 +2604,7 @@ export async function handleHeadlessCommand(
         }
 
         // Phase 1: Collect decisions for all approvals
-        type Decision =
-          | {
-              type: "approve";
-              approval: {
-                toolCallId: string;
-                toolName: string;
-                toolArgs: string;
-              };
-            }
-          | {
-              type: "deny";
-              approval: {
-                toolCallId: string;
-                toolName: string;
-                toolArgs: string;
-              };
-              reason: string;
-            };
+        type Decision = ApprovalDecision;
 
         const { autoAllowed, autoDenied, needsUserInput } =
           await classifyApprovals(approvals, {
@@ -2614,6 +2612,8 @@ export async function handleHeadlessCommand(
             requireArgsForAutoApprove: true,
             missingNameReason: "Tool call incomplete - missing name",
             toolContextId: turnToolContextId ?? undefined,
+            trustedUserRequest,
+            abortSignal: sigintSignal,
           });
 
         const decisions: Decision[] = [
@@ -4233,6 +4233,9 @@ async function runBidirectionalMode(
         ]);
 
         const responseState = createHeadlessResponseState();
+        const trustedUserRequest = isSubagent
+          ? undefined
+          : directUserRequest([{ role: "user", content: userContent }]);
         let currentInput: Array<MessageCreate | ApprovalCreate> = [
           { role: "user", content: enrichedContent, otid: userOtid },
         ];
@@ -4498,25 +4501,7 @@ async function runBidirectionalMode(
             }
 
             // Check permissions and collect decisions
-            type Decision =
-              | {
-                  type: "approve";
-                  approval: {
-                    toolCallId: string;
-                    toolName: string;
-                    toolArgs: string;
-                  };
-                  matchedRule: string;
-                }
-              | {
-                  type: "deny";
-                  approval: {
-                    toolCallId: string;
-                    toolName: string;
-                    toolArgs: string;
-                  };
-                  reason: string;
-                };
+            type Decision = ApprovalDecision & { matchedRule?: string };
 
             const { autoAllowed, autoDenied, needsUserInput } =
               await classifyApprovals(approvals, {
@@ -4524,6 +4509,8 @@ async function runBidirectionalMode(
                 requireArgsForAutoApprove: true,
                 missingNameReason: "Tool call incomplete - missing name",
                 toolContextId: turnToolContextId ?? undefined,
+                trustedUserRequest,
+                abortSignal: currentAbortController.signal,
               });
 
             const decisions: Decision[] = [

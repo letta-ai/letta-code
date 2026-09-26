@@ -12,6 +12,7 @@ import type { RuntimeStartExternalToolsGroup } from "./external-tool-protocol";
 import type { ConversationRuntimeScope } from "./runtime-scope";
 
 export type DevicePermissionMode =
+  | "auto"
   | "standard"
   | "acceptEdits"
   | "unrestricted"

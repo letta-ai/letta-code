@@ -151,6 +151,7 @@ export type ProcessConversationOptions = {
   allowReentry?: boolean;
   submissionGeneration?: number;
   transcriptStartLineIndex?: number | null;
+  trustedUserRequest?: string;
 };
 
 export type ProcessConversation = (

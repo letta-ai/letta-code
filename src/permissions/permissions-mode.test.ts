@@ -2,7 +2,11 @@ import { afterEach, expect, test } from "bun:test";
 import { join, resolve } from "node:path";
 import { checkPermission } from "@/permissions/checker";
 import { cliPermissions } from "@/permissions/cli-permissions-instance";
-import { permissionMode } from "@/permissions/mode";
+import {
+  migratePermissionMode,
+  permissionMode,
+  VALID_PERMISSION_MODES,
+} from "@/permissions/mode";
 import type { PermissionRules } from "@/permissions/types";
 
 // Clean up after each test
@@ -14,6 +18,40 @@ afterEach(() => {
 // ============================================================================
 // Permission Mode: default
 // ============================================================================
+
+test("auto is a selectable, persistable mode", () => {
+  expect(VALID_PERMISSION_MODES).toContain("auto");
+  expect(migratePermissionMode("auto")).toBe("auto");
+});
+
+test("auto mode retains standard checker precedence and unresolved asks", () => {
+  permissionMode.setMode("auto");
+  const cwd = "/Users/test/project";
+  expect(
+    checkPermission("Bash", { command: "npm run build" }, NO_RULES, cwd)
+      .decision,
+  ).toBe("ask");
+  expect(
+    checkPermission("Read", { file_path: `${cwd}/src/index.ts` }, NO_RULES, cwd)
+      .decision,
+  ).toBe("allow");
+  expect(
+    checkPermission(
+      "Bash",
+      { command: "npm run build" },
+      { deny: ["Bash(npm run build)"], ask: [] },
+      cwd,
+    ).decision,
+  ).toBe("deny");
+  expect(
+    checkPermission(
+      "Bash",
+      { command: "npm run build" },
+      { alwaysAsk: ["Bash(npm run build)"], ask: [] },
+      cwd,
+    ).decision,
+  ).toBe("alwaysAsk");
+});
 
 test("default mode - no overrides", () => {
   permissionMode.setMode("standard");

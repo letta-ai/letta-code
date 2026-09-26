@@ -229,6 +229,10 @@ export async function handleApprovalStop(params: {
     agent_id: agentId,
     conversation_id: conversationId,
   };
+  const effectivePermissionModeState =
+    turnPermissionModeState.mode === "auto"
+      ? { mode: "standard" as const }
+      : turnPermissionModeState;
   const { autoAllowed, autoDenied, needsUserInput } = await classifyApprovals(
     approvals,
     {
@@ -237,7 +241,9 @@ export async function handleApprovalStop(params: {
       requireArgsForAutoApprove: true,
       missingNameReason: "Tool call incomplete - missing name",
       workingDirectory: turnWorkingDirectory,
-      permissionModeState: turnPermissionModeState,
+      // The relay cannot establish human provenance: agent-to-agent messages
+      // also arrive as user-role text with the sender's acting user ID.
+      permissionModeState: effectivePermissionModeState,
       agentId,
       toolContextId: turnToolContextId ?? undefined,
     },
@@ -397,7 +403,7 @@ export async function handleApprovalStop(params: {
                 requireArgsForAutoApprove: true,
                 missingNameReason: "Tool call incomplete - missing name",
                 workingDirectory: turnWorkingDirectory,
-                permissionModeState: turnPermissionModeState,
+                permissionModeState: effectivePermissionModeState,
                 agentId,
                 toolContextId: turnToolContextId ?? undefined,
               },

@@ -157,6 +157,11 @@ const _colors = {
     interrupt: brandColors.statusError,
     processing: brandColors.primaryAccent, // base text color
     processingShimmer: brandColors.primaryAccentLight, // shimmer highlight
+    get autoMode() {
+      return getTerminalTheme() === "light"
+        ? brandColorsLight.primaryAccent
+        : brandColors.primaryAccent;
+    },
   },
 
   // Tool calls

@@ -72,6 +72,14 @@ test("startup CLI permission mode overrides settings", async () => {
   expect(permissionMode.getMode()).toBe("acceptEdits");
 });
 
+test("startup accepts auto mode", async () => {
+  const result = await applyStartupPermissionMode({
+    permissionModeValue: "auto",
+    workingDirectory: testDir,
+  });
+  expect(result).toEqual({ ok: true, mode: "auto", source: "cli" });
+});
+
 test("startup yolo mode overrides explicit permission mode", async () => {
   const result = await applyStartupPermissionMode({
     permissionModeValue: "standard",

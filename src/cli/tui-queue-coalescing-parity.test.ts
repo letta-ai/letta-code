@@ -11,6 +11,8 @@ import { describe, expect, test } from "bun:test";
 import {
   buildContentFromQueueBatch,
   buildQueuedContentParts,
+  getQueuedDisplayText,
+  getQueuedHumanRequest,
 } from "@/cli/helpers/queued-message-parts";
 import { QueueRuntime } from "@/queue/queue-runtime";
 import type { QueuedMessage } from "@/utils/message-queue-bridge";
@@ -51,6 +53,27 @@ function makeQueued(
     text: item.text,
   }));
 }
+
+test("queued human intent excludes task and cron text, while display retains it", () => {
+  const batch = makeBatch(USER_THEN_NOTIF);
+  expect(getQueuedHumanRequest(batch)).toBe("first message");
+  expect(getQueuedDisplayText(batch)).toContain("bg task done");
+  expect(getQueuedHumanRequest(makeBatch(SINGLE_NOTIF))).toBeUndefined();
+  const queue = new QueueRuntime({ maxItems: Infinity });
+  queue.enqueue({
+    kind: "message",
+    source: "cron",
+    content: "scheduled",
+  } as Parameters<typeof queue.enqueue>[0]);
+  queue.enqueue({
+    kind: "message",
+    source: "user",
+    content: "correction",
+  } as Parameters<typeof queue.enqueue>[0]);
+  const mixed = queue.consumeItems(2);
+  if (!mixed) throw new Error("Expected queued messages");
+  expect(getQueuedHumanRequest(mixed)).toBe("correction");
+});
 
 // ── Fixtures ──────────────────────────────────────────────────────
 

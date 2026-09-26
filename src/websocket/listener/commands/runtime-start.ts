@@ -26,6 +26,7 @@ import { registerRuntimeExternalTools } from "@/websocket/listener/external-tool
 import {
   getOrCreateConversationPermissionModeStateRef,
   persistPermissionModeMapForRuntime,
+  warnIfRemoteAutoMode,
 } from "@/websocket/listener/permission-mode";
 import { isRuntimeStartCommand } from "@/websocket/listener/runtime-start-validation";
 import { assertRuntimeWorkspaceSandboxChangeAllowed } from "@/websocket/listener/runtime-workspace-sandbox";
@@ -404,6 +405,7 @@ async function applyRuntimeStartState(
       scope.conversation_id,
     );
     state.mode = mode;
+    warnIfRemoteAutoMode(mode);
     persistPermissionModeMapForRuntime(context.runtime);
   }
 

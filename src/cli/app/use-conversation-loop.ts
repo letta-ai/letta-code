@@ -142,6 +142,7 @@ import type {
   AutoAllowedExecution,
   AutoDeniedApproval,
   AutoHandledToolResult,
+  ProcessConversationOptions,
   QueueApprovalResults,
 } from "./types";
 
@@ -480,10 +481,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
   const processConversation = useCallback(
     async (
       initialInput: Array<MessageCreate | ApprovalCreate>,
-      options?: {
-        allowReentry?: boolean;
-        submissionGeneration?: number;
-        transcriptStartLineIndex?: number | null;
+      options?: ProcessConversationOptions & {
         allowResponseStateReuse?: boolean;
       },
     ): Promise<void> => {
@@ -1833,6 +1831,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 missingNameReason:
                   "Tool call incomplete - missing name or arguments",
                 toolContextId: approvalToolContextIdRef.current,
+                trustedUserRequest: options?.trustedUserRequest,
+                abortSignal: abortControllerRef.current?.signal,
               });
 
             // Precompute diffs for file edit tools before execution (both auto-allowed and needs-user-input)

@@ -1,13 +1,41 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
 import {
   getConversationPermissionModeState,
   getOrCreateConversationPermissionModeStateRef,
   getPermissionModeScopeKey,
   pruneConversationPermissionModeStateIfDefault,
+  warnIfRemoteAutoMode,
 } from "@/websocket/listener/permission-mode";
+import { isRuntimeStartCommand } from "@/websocket/listener/runtime-start-validation";
 
 describe("listener permission mode helpers", () => {
+  test("runtime_start accepts auto mode", () => {
+    expect(
+      isRuntimeStartCommand({
+        type: "runtime_start",
+        request_id: "r1",
+        agent_id: "agent-1",
+        mode: "auto",
+      }),
+    ).toBe(true);
+  });
+  test("remote auto selection warns that unresolved approvals require explicit consent", () => {
+    const warning = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      warnIfRemoteAutoMode("auto");
+      expect(warning).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "unresolved tool approvals require explicit approval",
+        ),
+      );
+      warning.mockClear();
+      warnIfRemoteAutoMode("standard");
+      expect(warning).not.toHaveBeenCalled();
+    } finally {
+      warning.mockRestore();
+    }
+  });
   test("getOrCreate ref preserves identity across legacy default-key migration", () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
     const legacyKey = getPermissionModeScopeKey(null, "default");

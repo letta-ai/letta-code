@@ -93,6 +93,8 @@ import type { ExecutionPhase } from "@/cli/helpers/phase-visuals";
 import { maybeLaunchPostTurnReflection } from "@/cli/helpers/post-turn-reflection";
 import {
   buildContentFromQueueBatch,
+  getQueuedDisplayText,
+  getQueuedHumanRequest,
   toQueuedMsg,
 } from "@/cli/helpers/queued-message-parts";
 import {
@@ -1413,6 +1415,7 @@ export function App({
 
   // Override content parts for queued submissions (to preserve part boundaries)
   const overrideContentPartsRef = useRef<MessageCreate["content"] | null>(null);
+  const queuedHumanRequestRef = useRef<string | null>(null);
 
   // Set up message queue bridge for background tasks
   // This allows non-React code (Task.ts) to add notifications to queueDisplay
@@ -1428,7 +1431,8 @@ export function App({
             } as Parameters<typeof tuiQueueRef.current.enqueue>[0])
           : ({
               kind: "message",
-              source: message.source ?? "user",
+              // Bridge calls are not direct Enter submissions.
+              source: message.source ?? "system",
               content: message.text,
             } as Parameters<typeof tuiQueueRef.current.enqueue>[0]),
       );
@@ -4169,6 +4173,7 @@ export function App({
     needsEagerApprovalCheck,
     openTrajectorySegment,
     overrideContentPartsRef,
+    queuedHumanRequestRef,
     pendingApprovals,
     pendingConversationSwitchRef,
     pendingGitReminderRef,
@@ -4278,19 +4283,9 @@ export function App({
       if (!batch) return;
 
       // Build concatenated text for lastDequeuedMessageRef (error restoration).
-      const concatenatedMessage = batch.items
-        .map((item) => {
-          if (item.kind === "task_notification") return item.text;
-          if (item.kind === "message") {
-            return typeof item.content === "string" ? item.content : "";
-          }
-          return "";
-        })
-        .filter((t) => t.length > 0)
-        .join("\n");
+      const concatenatedMessage = getQueuedDisplayText(batch);
 
       const queuedContentParts = buildContentFromQueueBatch(batch);
-
       debugLog(
         "queue",
         `Dequeuing ${batch.mergedCount} message(s): "${concatenatedMessage.slice(0, 50)}${concatenatedMessage.length > 50 ? "..." : ""}"`,
@@ -4301,6 +4296,7 @@ export function App({
 
       // Submit via normal flow — overrideContentPartsRef carries rich content parts.
       overrideContentPartsRef.current = queuedContentParts;
+      queuedHumanRequestRef.current = getQueuedHumanRequest(batch) ?? "";
       // Lock prevents re-entrant dequeue if deps churn before processConversation
       // sets abortControllerRef (which is the normal long-term gate).
       dequeueInFlightRef.current = true;
