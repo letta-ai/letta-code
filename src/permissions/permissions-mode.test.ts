@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
+import { join, resolve } from "node:path";
 import { checkPermission } from "@/permissions/checker";
 import { cliPermissions } from "@/permissions/cli-permissions-instance";
 import { permissionMode } from "@/permissions/mode";
@@ -514,4 +515,73 @@ test("strict mode - CLI --allowedTools still work", () => {
   expect(result.decision).toBe("allow");
   expect(result.matchedRule).toContain("(CLI)");
   expect(result.reason).toBe("Matched --allowedTools flag");
+});
+
+// ============================================================================
+// Default decisions for tools that only touch agent-owned state
+// ============================================================================
+
+const NO_RULES: PermissionRules = { allow: [], deny: [], ask: [] };
+
+test.each([
+  ["TaskCreate", { subject: "Plan", description: "Outline the work" }],
+  ["TaskGet", { taskId: "1" }],
+  ["TaskList", {}],
+  ["TaskUpdate", { taskId: "1", status: "completed" }],
+  ["read_artifact_file", { path: "notes/today.md" }],
+  ["write_artifact_file", { path: "notes/today.md", content: "hello" }],
+  ["Wake", { action: "create", prompt: "check back", after_seconds: 60 }],
+])("standard and acceptEdits modes run %s without asking", (tool, args) => {
+  for (const mode of ["standard", "acceptEdits"] as const) {
+    permissionMode.setMode(mode);
+    const result = checkPermission(tool, args, NO_RULES, "/Users/test/project");
+    expect(result.decision).toBe("allow");
+    expect(result.reason).toBe("Default behavior for tool");
+  }
+});
+
+test.each([
+  ["ViewImage", "path"],
+  ["ReadLSP", "file_path"],
+])("%s runs without asking only inside the working directory", (tool, key) => {
+  permissionMode.setMode("standard");
+  // resolve() keeps these absolute on every platform (drive-rooted on Windows).
+  const project = resolve("/Users/test/project");
+
+  const inside = checkPermission(
+    tool,
+    { [key]: join(project, "src", "diagram.png") },
+    NO_RULES,
+    project,
+  );
+  expect(inside.decision).toBe("allow");
+  expect(inside.reason).toBe("Within working directory");
+
+  const outside = checkPermission(
+    tool,
+    { [key]: resolve(project, "..", "elsewhere", "diagram.png") },
+    NO_RULES,
+    project,
+  );
+  expect(outside.decision).toBe("ask");
+});
+
+test("standard mode - SetWorkingDirectory still asks", () => {
+  // Moving the working directory widens where file tools run without asking.
+  permissionMode.setMode("standard");
+  const result = checkPermission(
+    "SetWorkingDirectory",
+    { path: "/" },
+    NO_RULES,
+    "/Users/test/project",
+  );
+  expect(result.decision).toBe("ask");
+});
+
+test("strict mode - agent-owned-state tools still ask", () => {
+  permissionMode.setMode("strict");
+  for (const tool of ["TaskCreate", "Wake", "write_artifact_file"]) {
+    const result = checkPermission(tool, {}, NO_RULES, "/Users/test/project");
+    expect(result.decision).toBe("ask");
+  }
 });
