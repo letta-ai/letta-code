@@ -57,8 +57,11 @@ describe("queued notification identity", () => {
     }
     expect(message.content).toEqual([
       { type: "text", text },
-      { type: "text", text: "\n" },
-      ...content,
+      { type: "text", text: "\n<external-tool-result>" },
+      { type: "text", text: "<text>before</text>" },
+      content[1]!,
+      { type: "text", text: "<text>after</text>" },
+      { type: "text", text: "</external-tool-result>" },
     ]);
   });
 
