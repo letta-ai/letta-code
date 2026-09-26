@@ -18,6 +18,12 @@ import type {
   StreamDeltaMessage,
   WsProtocolMessage,
 } from "@/types/app-server-protocol";
+import type { InputCreateMessagePayload } from "@/types/protocol_v2";
+import { buildGatewayInput } from "./gateway-input";
+import {
+  type ChannelGatewayModelStatus,
+  resolveGatewayModelStatus,
+} from "./gateway-model-status";
 import {
   sourceLifecycleKey,
   sourceRouteKey,
@@ -66,6 +72,7 @@ export interface ChannelGatewayDelivery {
   sources: ChannelTurnSource[];
   clientMessageId: string;
   defaultPermissionMode?: ChannelDefaultPermissionMode;
+  inputPayload?: InputCreateMessagePayload;
 }
 
 export type ChannelGatewayHandoffDelivery = Omit<
@@ -98,10 +105,10 @@ export interface ChannelGatewayRichDraft {
   dispose(): void;
 }
 
-export interface ChannelGatewayModelStatus {
-  modelHandle: string | null;
-  scope: "agent" | "conversation";
-}
+type InputAcceptance = Pick<
+  InputAcceptedResponseMessage,
+  "accepted" | "disposition" | "error"
+>;
 
 type ActiveGatewayTurn = {
   batchId: string;
@@ -215,7 +222,22 @@ export class ChannelGateway {
     this.states.clear();
   }
 
+  /** Track an existing caller's full input through the normal channel lifecycle. */
+  async submitInput(
+    delivery: Omit<ChannelGatewayDelivery, "content"> & {
+      inputPayload: InputCreateMessagePayload;
+    },
+  ): Promise<InputAcceptance> {
+    return this.queueSubmission({ ...delivery, content: "" });
+  }
+
   async submit(delivery: ChannelGatewayDelivery): Promise<boolean> {
+    return (await this.queueSubmission(delivery)).accepted;
+  }
+
+  private queueSubmission(
+    delivery: ChannelGatewayDelivery,
+  ): Promise<InputAcceptance> {
     const state = this.getState(delivery.runtime);
     const submission = state.submissionQueue.then(() =>
       this.submitDelivery(state, delivery),
@@ -230,12 +252,13 @@ export class ChannelGateway {
   private async submitDelivery(
     state: GatewayRuntimeState,
     delivery: ChannelGatewayDelivery,
-  ): Promise<boolean> {
+  ): Promise<InputAcceptance> {
     if (state.acceptedClientMessageIds.has(delivery.clientMessageId)) {
       state.acceptedClientMessageIds.delete(delivery.clientMessageId);
       state.acceptedClientMessageIds.add(delivery.clientMessageId);
-      return true;
+      return { accepted: true };
     }
+    const payload = buildGatewayInput(delivery);
     const workAtSubmit =
       state.active || state.pendingSourcesByClientMessageId.size > 0;
     state.pendingSourcesByClientMessageId.set(delivery.clientMessageId, {
@@ -252,23 +275,13 @@ export class ChannelGateway {
       });
       const response = await this.client.submitInput({
         runtime: delivery.runtime,
-        payload: {
-          kind: "create_message",
-          messages: [
-            {
-              role: "user",
-              content: delivery.content,
-              client_message_id: delivery.clientMessageId,
-            },
-          ],
-          image_failure_mode: "drop",
-        },
+        payload,
       });
       if (!response.accepted) {
         state.pendingSourcesByClientMessageId.delete(delivery.clientMessageId);
         if (workAtSubmit && !state.active)
           this.finishRejectedDelivery(state, delivery);
-        return false;
+        return response;
       }
       this.rememberAcceptedClientMessageId(state, delivery.clientMessageId);
       for (const source of delivery.sources) {
@@ -288,7 +301,7 @@ export class ChannelGateway {
         }
         this.reconcileExplicitQueueRemovals(state);
       }
-      return true;
+      return response;
     } catch (error) {
       state.pendingSourcesByClientMessageId.delete(delivery.clientMessageId);
       if (workAtSubmit && !state.active)
@@ -717,32 +730,10 @@ export class ChannelGateway {
             response.error ?? "Failed to register channel runtime",
           );
         }
-        const agentRecord = response.agent as unknown as Record<
-          string,
-          unknown
-        > | null;
-        const conversationRecord = response.conversation as unknown as Record<
-          string,
-          unknown
-        > | null;
-        const agentModel =
-          typeof agentRecord?.model === "string"
-            ? agentRecord.model
-            : (response.agent?.llm_config?.model ?? null);
-        const conversationModel =
-          typeof conversationRecord?.model === "string"
-            ? conversationRecord.model
-            : null;
-        state.modelStatus = {
-          modelHandle:
-            delivery.runtime.conversation_id === "default"
-              ? agentModel
-              : (conversationModel ?? agentModel),
-          scope:
-            delivery.runtime.conversation_id === "default"
-              ? "agent"
-              : "conversation",
-        };
+        state.modelStatus = resolveGatewayModelStatus(
+          delivery.runtime,
+          response,
+        );
       });
     state.registrationSignature = signature;
     state.registration = registration;
