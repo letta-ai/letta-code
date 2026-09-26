@@ -16,6 +16,7 @@ describe("Windows cmd removal guard", () => {
     "cmd /c rd /s /q C:\\",
     "cmd.exe /d /c rmdir /s /q C:\\Users",
     'cmd /c "del /q C:\\Windows\\*"',
+    'cmd /c "del /q C:\\Users\\*.*"',
     "cmd /c erase /q %USERPROFILE%",
     'cmd /c rd /s /q "C:\\Users\\amelia"',
     'cmd /c rd /s /q "C:\\$name"',

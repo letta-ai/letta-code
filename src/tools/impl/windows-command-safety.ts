@@ -114,8 +114,11 @@ function resolveRemovalTarget(
     // literal path component can collapse the target to a protected parent.
     .replace(/(?<=[\\/:])\$(?:env:)?[A-Za-z_][A-Za-z0-9_]*/gi, "")
     .replaceAll("/", "\\");
-  if (target.endsWith("\\*")) target = target.slice(0, -2) || "\\";
   if (!target || target === "*") return null;
+  const basename = win32.basename(target);
+  if (basename.includes("*") || basename.includes("?")) {
+    target = win32.dirname(target);
+  }
   return win32.normalize(win32.resolve(cwd, target));
 }
 
