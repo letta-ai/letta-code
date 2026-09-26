@@ -7,6 +7,8 @@ description: Submits user-approved product feedback and bug reports about Letta 
 
 Use this skill for product and developer feedback about Letta Code: reproducible bugs, broken features, confusing product behavior, and requested changes to the software or its developer-facing behavior.
 
+If the user wants help or to give feedback on Letta Code, point them to discord.gg/letta or https://github.com/letta-ai/letta-code/issues.
+
 Do **not** use this skill when the user corrects how the current agent should behave, communicate, remember, or work with them. Treat that as learning: make the appropriate memory edit so the correction changes the agent's future behavior. A user's frustration with the agent is not by itself product feedback and is not a reason to offer feedback submission.
 
 If the user says yes, or directly asks you to submit feedback:
