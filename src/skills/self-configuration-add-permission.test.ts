@@ -22,6 +22,24 @@ const addPermissionScript = join(
   "add_permission.py",
 );
 const tempDirs: string[] = [];
+const ensureLocalGitignoredProbe = `
+import importlib.util
+import pathlib
+import sys
+
+module_path, working_directory, error_type = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("add_permission", module_path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+def fail_read_text(_path):
+    if error_type == "os":
+        raise OSError("expected I/O failure")
+    raise RuntimeError("unexpected failure")
+
+pathlib.Path.read_text = fail_read_text
+module.ensure_local_gitignored(working_directory)
+`;
 
 function expectPathSuffix(value: unknown, suffixParts: string[]): void {
   expect(typeof value).toBe("string");
@@ -61,6 +79,31 @@ async function runAddPermission(
     cmd: ["python3", addPermissionScript, ...args],
     cwd: repoRoot,
     env: childEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [exitCode, stdout, stderr] = await Promise.all([
+    proc.exited,
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ]);
+  return { exitCode, stdout, stderr };
+}
+
+async function runEnsureLocalGitignored(
+  workingDirectory: string,
+  errorType: "os" | "runtime",
+): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  const proc = Bun.spawn({
+    cmd: [
+      "python3",
+      "-c",
+      ensureLocalGitignoredProbe,
+      addPermissionScript,
+      workingDirectory,
+      errorType,
+    ],
+    cwd: repoRoot,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -184,4 +227,28 @@ test("add_permission confirmed user write succeeds and preserves file mode", asy
     permissions: { allow: ["Bash(git diff:*)"] },
   });
   expect(statSync(settingsPath).mode & 0o777).toBe(beforeMode);
+});
+
+test("add_permission warns when updating .gitignore hits an I/O error", async () => {
+  const cwd = makeTempDir("self-config-add-permission-gitignore-io-");
+  writeFileSync(join(cwd, ".gitignore"), "node_modules/\n", "utf8");
+
+  const result = await runEnsureLocalGitignored(cwd, "os");
+
+  expect(result.exitCode).toBe(0);
+  expect(result.stdout).toBe("");
+  expect(result.stderr).toContain(
+    "Warning: Could not update .gitignore: expected I/O failure",
+  );
+});
+
+test("add_permission propagates unexpected .gitignore failures", async () => {
+  const cwd = makeTempDir("self-config-add-permission-gitignore-runtime-");
+  writeFileSync(join(cwd, ".gitignore"), "node_modules/\n", "utf8");
+
+  const result = await runEnsureLocalGitignored(cwd, "runtime");
+
+  expect(result.exitCode).not.toBe(0);
+  expect(result.stdout).toBe("");
+  expect(result.stderr).toContain("RuntimeError: unexpected failure");
 });
