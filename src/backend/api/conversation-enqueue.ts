@@ -227,6 +227,30 @@ export interface LatestConversationSuperRun {
   errored_at: string | null;
 }
 
+export interface ExactSuperRun extends LatestConversationSuperRun {
+  error: {
+    code: string;
+    message: string;
+  } | null;
+  /** Associated child runs, newest first. */
+  run_ids: string[];
+}
+
+/** Read the accepted Super Run and its server-owned result correlation. */
+export async function getExactSuperRun(
+  agentId: string,
+  superRunId: string,
+  signal?: AbortSignal,
+  request = apiRequest,
+): Promise<ExactSuperRun> {
+  return request(
+    "GET",
+    `/v1/agents/${encodeURIComponent(agentId)}/super-runs/${encodeURIComponent(superRunId)}`,
+    undefined,
+    { signal },
+  );
+}
+
 export async function getLatestConversationSuperRun(
   conversationId: string,
   signal?: AbortSignal,
