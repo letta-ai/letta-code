@@ -81,6 +81,7 @@ test("a tracked child send is running, scoped to the parent, and completes with 
     agentId: "agent-hayt",
     conversationId: "conv-hayt",
     isBackground: true,
+    claimsParentRuntime: false,
     silent: false,
     parentAgentId: "agent-bob",
     parentConversationId: "conv-bob",

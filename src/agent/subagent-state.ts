@@ -38,6 +38,8 @@ export interface SubagentState {
   startTime: number;
   toolCallId?: string; // Links this subagent to its parent Task tool call
   isBackground?: boolean; // True if running in background (fire-and-forget)
+  /** False when the entry is presentation-only and must not retain the parent runtime. */
+  claimsParentRuntime?: boolean;
   silent?: boolean; // True if this subagent should be hidden from SubagentGroupDisplay
   parentAgentId?: string; // Parent runtime scope agent id (for listener-mode WS scoping)
   parentConversationId?: string; // Parent runtime scope conversation id
@@ -202,6 +204,7 @@ export function registerSubagent(
     conversationId?: string | null;
   },
   prompt?: string,
+  claimsParentRuntime?: boolean,
 ): void {
   // Capitalize type for display (recall -> Recall)
   const displayType = type.charAt(0).toUpperCase() + type.slice(1);
@@ -221,6 +224,7 @@ export function registerSubagent(
     startTime: Date.now(),
     toolCallId,
     isBackground,
+    claimsParentRuntime,
     silent,
     parentAgentId: parentScope?.agentId ?? undefined,
     parentConversationId:
