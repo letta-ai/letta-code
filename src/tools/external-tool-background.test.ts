@@ -6,13 +6,14 @@ const scope = {
   conversationId: "conv-1",
   actingUserId: "user-1",
 };
+const listenerTool = { autoBackground: true };
 
 describe("external tool auto-backgrounding", () => {
   test("keeps quick results inline without a notification", async () => {
     const notifications: unknown[] = [];
     const result = await autoBackgroundExternalTool(
       "lookup",
-      undefined,
+      listenerTool,
       Promise.resolve({ status: "success" as const, toolReturn: "found" }),
       {
         yieldMs: 10,
@@ -41,7 +42,7 @@ describe("external tool auto-backgrounding", () => {
     );
     const result = await autoBackgroundExternalTool(
       "reply",
-      undefined,
+      listenerTool,
       operation,
       {
         yieldMs: 10,
@@ -69,7 +70,7 @@ describe("external tool auto-backgrounding", () => {
     const notifications: unknown[] = [];
     const result = await autoBackgroundExternalTool(
       "lookup",
-      undefined,
+      listenerTool,
       Bun.sleep(20).then(() => ({
         status: "success" as const,
         toolReturn: "private result",
@@ -99,6 +100,41 @@ describe("external tool auto-backgrounding", () => {
     expect(notifications).toEqual([]);
   });
 
+  test("keeps headless and direct SDK tools inline without listener opt-in", async () => {
+    const notifications: unknown[] = [];
+    const result = await autoBackgroundExternalTool(
+      "headless_lookup",
+      undefined,
+      Bun.sleep(20).then(() => ({
+        status: "success" as const,
+        toolReturn: "actual result",
+      })),
+      { yieldMs: 10, scope, enqueue: (message) => notifications.push(message) },
+    );
+    expect(result.toolReturn).toBe("actual result");
+    expect(notifications).toEqual([]);
+  });
+
+  test("keeps tool_end mod results inline for redaction before delivery", async () => {
+    const notifications: unknown[] = [];
+    const result = await autoBackgroundExternalTool(
+      "lookup",
+      listenerTool,
+      Bun.sleep(20).then(() => ({
+        status: "success" as const,
+        toolReturn: "private input",
+      })),
+      {
+        yieldMs: 10,
+        scope,
+        canBackground: false,
+        enqueue: (message) => notifications.push(message),
+      },
+    );
+    expect(result.toolReturn).toBe("private input");
+    expect(notifications).toEqual([]);
+  });
+
   test("returns an unknown-outcome failure in the completion notification", async () => {
     let fail!: (result: { status: "error"; toolReturn: string }) => void;
     const notifications: Array<{ text: string }> = [];
@@ -107,7 +143,7 @@ describe("external tool auto-backgrounding", () => {
         fail = resolve;
       },
     );
-    await autoBackgroundExternalTool("reply", undefined, operation, {
+    await autoBackgroundExternalTool("reply", listenerTool, operation, {
       yieldMs: 10,
       scope,
       enqueue: (message) => notifications.push(message),
@@ -117,5 +153,27 @@ describe("external tool auto-backgrounding", () => {
     expect(notifications).toHaveLength(1);
     expect(notifications[0]?.text).toContain("<status>failed</status>");
     expect(notifications[0]?.text).toContain("outcome is unknown");
+  });
+
+  test("marks disconnect after a write as an unknown outcome", async () => {
+    let fail!: (result: { status: "error"; toolReturn: string }) => void;
+    const notifications: Array<{ text: string }> = [];
+    const operation = new Promise<{ status: "error"; toolReturn: string }>(
+      (resolve) => {
+        fail = resolve;
+      },
+    );
+    await autoBackgroundExternalTool("reply", listenerTool, operation, {
+      yieldMs: 10,
+      scope,
+      enqueue: (message) => notifications.push(message),
+    });
+    fail({
+      status: "error",
+      toolReturn: "External tool execution error: Listener connection closed",
+    });
+    await Bun.sleep(0);
+    expect(notifications[0]?.text).toContain("outcome is unknown");
+    expect(notifications[0]?.text).toContain("before retrying a write");
   });
 });
