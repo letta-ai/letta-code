@@ -229,6 +229,14 @@ test("a new connection's runtime_start resumes queued work after the startup pum
     const nextOptions = { ...oldOptions, connectionId: "new-connection" };
     const nextSocket = new MockSocket();
     const processed: string[] = [];
+    let markReplayStarted!: () => void;
+    let finishReplay!: () => void;
+    const replayStarted = new Promise<void>((resolve) => {
+      markReplayStarted = resolve;
+    });
+    const replayBlocked = new Promise<void>((resolve) => {
+      finishReplay = resolve;
+    });
     const processQueuedTurn = async (turn: IncomingMessage) => {
       const message = turn.messages[0];
       if (message && "content" in message)
@@ -284,7 +292,10 @@ test("a new connection's runtime_start resumes queued work after the startup pum
       processQueuedTurn,
       fileCommandSession: { handle: () => false },
       getParsedRuntimeScope: () => null,
-      replaySyncStateForRuntime: async () => {},
+      replaySyncStateForRuntime: async () => {
+        markReplayStarted();
+        await replayBlocked;
+      },
       getOrCreateScopedRuntime,
       handleApprovalResponseInput: async () => false,
       handleChangeDeviceStateInput: async () => false,
@@ -309,9 +320,15 @@ test("a new connection's runtime_start resumes queued work after the startup pum
           agent_id: agent.id,
           conversation_id: "default",
           recover_approvals: false,
+          wait_for_replay: true,
         }),
       ),
     );
+    await replayStarted;
+    await Bun.sleep(0);
+    expect(processed).toEqual([]);
+    expect(responses).toEqual([]);
+    finishReplay();
     await Promise.all(tasks);
     expect(responses).toContainEqual(
       expect.objectContaining({

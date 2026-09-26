@@ -436,7 +436,9 @@ export async function handleRuntimeStartCommand(
   let agent: AgentState | null = null;
   let conversation: Conversation | null = null;
   let runtimeScope: RuntimeStartScope | null = null;
+  let scopedRuntime: ConversationRuntime | null = null;
   let shouldReplayState = false;
+  let startResponseSent = false;
 
   try {
     validateRuntimeStartShape(parsed);
@@ -466,7 +468,7 @@ export async function handleRuntimeStartCommand(
       }
     };
     assertConnectionOpen();
-    const scopedRuntime = context.getOrCreateScopedRuntime(
+    scopedRuntime = context.getOrCreateScopedRuntime(
       context.runtime,
       runtimeScope.agent_id,
       runtimeScope.conversation_id,
@@ -477,20 +479,6 @@ export async function handleRuntimeStartCommand(
     }
     assertConnectionOpen();
     subscribeListenerConnection(context.runtime, connectionId, runtimeScope);
-    // Startup can attempt the queue before a new connection has subscribed.
-    // Retry once this scope has a live recipient; the pump deduplicates itself.
-    if (
-      scopedRuntime.queueRuntime?.isEmpty === false &&
-      context.queuePumpOptions &&
-      context.processQueuedTurn
-    ) {
-      scheduleQueuePump(
-        scopedRuntime,
-        getOrCreateProcessTransport(context.runtime),
-        context.queuePumpOptions,
-        context.processQueuedTurn,
-      );
-    }
     registerRuntimeExternalTools(
       context.runtime,
       connectionId,
@@ -510,14 +498,14 @@ export async function handleRuntimeStartCommand(
         },
       );
     }
-    const sent = sendRuntimeStartResponse(context, parsed, {
+    startResponseSent = sendRuntimeStartResponse(context, parsed, {
       success: true,
       runtime: runtimeScope,
       agent,
       conversation,
       created,
     });
-    shouldReplayState = sent && !parsed.wait_for_replay;
+    shouldReplayState = startResponseSent && !parsed.wait_for_replay;
   } catch (error) {
     sendRuntimeStartResponse(context, parsed, {
       success: false,
@@ -539,6 +527,23 @@ export async function handleRuntimeStartCommand(
         forceDeviceStatus: parsed.force_device_status !== false,
         connectionId: context.connectionId,
       },
+    );
+  }
+
+  // Startup can attempt the queue before a new connection has subscribed.
+  // Retry after this scope's initial replay so accepted work cannot interleave
+  // with approval recovery or execute after a failed runtime_start.
+  if (
+    startResponseSent &&
+    scopedRuntime?.queueRuntime?.isEmpty === false &&
+    context.queuePumpOptions &&
+    context.processQueuedTurn
+  ) {
+    scheduleQueuePump(
+      scopedRuntime,
+      getOrCreateProcessTransport(context.runtime),
+      context.queuePumpOptions,
+      context.processQueuedTurn,
     );
   }
 
