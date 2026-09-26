@@ -137,7 +137,7 @@ describe("buildSystemPrompt", () => {
     "%s defers delegation policy to the Agent tool and keeps direct editing",
     (mode) => {
       const result = buildSystemPrompt("letta", mode);
-      expect(result).toContain("Memory Subagents guidance");
+      expect(result).toContain("`memory` subagent's entry in the Agent tool");
       expect(result).not.toContain("**Memory upkeep during another task:**");
       expect(result).toContain("git commit --author=");
       expect(result).not.toContain("Delegate all memory changes");

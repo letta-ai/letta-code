@@ -44,8 +44,6 @@ describe("stripComputerFromTaskDescription", () => {
     const stripped = stripComputerFromTaskDescription(taskDescription);
     expect(stripped).toContain("## Forking Parent Context");
     expect(stripped).toContain("## Concurrency and Safety:");
-    // Memory delegation policy lives only here now, not in the system prompt.
-    expect(stripped).toContain("incidental memory upkeep");
     expect(stripped).not.toContain("\n\n\n");
   });
 

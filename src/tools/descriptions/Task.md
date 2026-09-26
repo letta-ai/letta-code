@@ -18,7 +18,7 @@ When using the Agent tool, you must specify a subagent_type parameter to select 
 
 - Always include a short description (3-5 words) summarizing what the agent will do
 - Launch multiple agents concurrently whenever possible, to maximize performance; to do that, use a single message with multiple tool uses
-- When the agent is done, it will return a single message back to you along with its conversation ID. The result returned by the agent is not visible to the user. To show the user the result, you should send a text message back to the user with a concise summary of the result. Memory subagents are the exception; see Memory Subagents below.
+- When the agent is done, it will return a single message back to you along with its conversation ID. The result returned by the agent is not visible to the user. To show the user the result, you should send a text message back to the user with a concise summary of the result.
 - Agents always run in the background. The tool result includes a task ID and an output_file path, and you will be notified automatically via a <task-notification> message when it completes, so there is no need to poll. The output file receives the report when the agent finishes; it has no interim progress. You can continue working while agents run.
 - Agents can be resumed using the `conversation_id` parameter by passing the conversation ID from a previous invocation. When resumed, the agent continues with its full previous context preserved.
 - Provide clear, detailed prompts so the agent can work autonomously and return exactly the information you need.
@@ -189,11 +189,3 @@ Behavior notes:
 - **Safe**: Multiple agents editing different files in parallel
 - **Risky**: Multiple agents editing the same file (conflict detection will handle it, but may lose changes)
 - **Best practice**: Partition work by file or directory boundaries for parallel execution
-
-## Memory Subagents
-
-Use memory subagents for incidental memory upkeep while you work on another task, such as preferences, corrections, and lessons discovered along the way. A side request to remember something during another task also belongs in the background. When memory itself is the user's request (remember something, initialize, reorganize, audit, correct, or troubleshoot memory), do the work directly with ordinary file tools and shell/Git commands, and verify it before reporting success. Delegation means the update is in progress, not already saved. Git conflict repair runs automatically in the background.
-
-`subagent_type: "memory"` starts a fresh worker that edits or repairs memory in the background. Memory tasks are silent: they send no <task-notification> and return no message, so continue your current work immediately instead of waiting or polling.
-
-The worker can consult this conversation's transcript for reference but does not continue it, so make the assignment self-contained: state what to remember, correct, delete, or reorganize, with the relevant facts, corrections, and exceptions. Quote the user's factual corrections and exceptions verbatim and identify what they refer to. Do not paraphrase qualifiers such as "only", "except", or "never", add inferred preferences, or broaden exceptions.

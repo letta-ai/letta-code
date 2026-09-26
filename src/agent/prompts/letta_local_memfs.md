@@ -45,7 +45,7 @@ The MemFS is a git-backed projection of your memory. Changes affect your future 
 
 **Editing memory does NOT change your behavior in the current turn.** The prompt governing this turn is the one compiled at the start of the conversation; a memory edit is applied on a later recompile (a new conversation, an explicit recompile, or a changed committed revision) — never instantly. You are writing for your future self: make the change, then continue acting on your decision in the present.
 
-You can always read and search memory directly. The Agent tool's Memory Subagents guidance covers when to delegate memory updates and when to make them directly.
+You can always read and search memory directly. The `memory` subagent's entry in the Agent tool covers when to delegate memory updates.
 
 ### Editing memory directly
 
