@@ -117,6 +117,7 @@ If you create a PR:
 - create a new branch from the checked-out branch
 - use `test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN"` for GitHub CLI commands so the sandbox injects the watcher-specific GitHub credentials
 - verify the created PR author matches the Expected GitHub login from the run inputs; if it does not, close the PR instead of reporting success
+- wait for every check on the current PR head to complete successfully before requesting reviewers, updating the tracker, or notifying Slack. Re-read the head SHA after waiting and verify the checks belong to that exact SHA. Pending, failed, cancelled, or missing expected checks are not green; fix or retry them, or stop without review handoff if they cannot be made green
 - before the tracker update, GET `repos/letta-ai/letta-code/pulls/${PR_URL##*/}/requested_reviewers` with the same explicit Amelia credential, then request each configured reviewer that is not already present with `test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN" gh api --method POST "repos/letta-ai/letta-code/pulls/${PR_URL##*/}/requested_reviewers" -f "reviewers[]=<login>"`
 - keep the diff minimal and focused on this Codex release
 - do not include unrelated cleanup
@@ -127,7 +128,7 @@ If you create a PR:
 
 ## Slack notification
 
-Only for a `pr_created` outcome, after the tracker update succeeds, call the native `MessageChannel` tool with `action="send"`, `channel="slack"`, and `target="C0871ER46KT"` to send exactly one message. Do not use `curl` or another Slack API client.
+Only for a `pr_created` outcome, after the current PR head is fully green, reviewers are requested, and the tracker update succeeds, call the native `MessageChannel` tool with `action="send"`, `channel="slack"`, and `target="C0871ER46KT"` to send exactly one message. Do not use `curl` or another Slack API client.
 
 Use the selected Slack owner ID from the run inputs and the created PR URL. Send exactly one line in this form:
 
