@@ -104,9 +104,14 @@ async function prepareTurnWithMod(modSource: string) {
       permissionModeState: { mode: DEFAULT_PERMISSION_MODE },
       turnLease: lease,
     });
-    const modelAfter = (await backend.retrieveConversation(conversationId))
-      .model;
-    return { result, modelBefore, modelAfter };
+    const conversationAfter =
+      await backend.retrieveConversation(conversationId);
+    return {
+      result,
+      modelBefore,
+      modelAfter: conversationAfter.model,
+      modelSettingsAfter: conversationAfter.model_settings,
+    };
   } finally {
     finishListenerTurn(runtime, lease, {
       stopReason: "end_turn",
@@ -158,4 +163,40 @@ test("turn_start still overrides the model when a handler switches it", async ()
   expect(result.kind).toBe("ready");
   if (result.kind !== "ready") return;
   expect(result.overrideModel).toBe(SWITCHED_MODEL);
+});
+
+test("turn_start does not override the model when a handler changes only reasoning effort", async () => {
+  const { result, modelAfter, modelSettingsAfter } = await prepareTurnWithMod(
+    `export default function activate(letta) {
+      letta.events.on("turn_start", async (_event, ctx) => {
+        await ctx.conversation.updateLlmConfig({ reasoningEffort: "high" });
+      });
+    }`,
+  );
+
+  // The handler did persist new settings, so the override is omitted because
+  // the model is unchanged, not because the handler never ran.
+  expect(modelAfter).toBe(ORIGINAL_MODEL);
+  expect(modelSettingsAfter).toMatchObject({
+    reasoning: { reasoning_effort: "high" },
+  });
+  expect(result.kind).toBe("ready");
+  if (result.kind !== "ready") return;
+  expect(result.overrideModel).toBeUndefined();
+});
+
+test("turn_start ignores a model switch on a forked conversation", async () => {
+  const { result, modelAfter } = await prepareTurnWithMod(
+    `export default function activate(letta) {
+      letta.events.on("turn_start", async (_event, ctx) => {
+        const fork = await ctx.conversation.fork();
+        await fork.updateLlmConfig({ model: ${JSON.stringify(SWITCHED_MODEL)} });
+      });
+    }`,
+  );
+
+  expect(modelAfter).toBe(ORIGINAL_MODEL);
+  expect(result.kind).toBe("ready");
+  if (result.kind !== "ready") return;
+  expect(result.overrideModel).toBeUndefined();
 });

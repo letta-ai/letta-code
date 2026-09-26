@@ -33,7 +33,10 @@ import {
 } from "./mod-adapter";
 import type { ConversationPermissionModeState } from "./permission-mode";
 import { hasInterruptedCacheForScope } from "./runtime";
-import { emitListenerTurnStart } from "./turn-events";
+import {
+  emitListenerTurnStart,
+  type ListenerTurnStartEmission,
+} from "./turn-events";
 import {
   createTurnInputState,
   ensureTurnInputMessageOtids,
@@ -254,33 +257,6 @@ export async function prepareListenerTurn(params: {
   const hasUserMessage = messagesToSend.some(
     (message) => "role" in message && message.role === "user",
   );
-  // Snapshot before turn_start so a handler that persists a new conversation
-  // model can be distinguished from one that only injects context. Sending
-  // override_model for an unchanged model makes the server rebuild settings
-  // from the handle and drop stored reasoning effort and temperature.
-  let modelBeforeTurnStart: string | undefined;
-  let snapshottedTurnStartModel = false;
-  if (hasUserMessage && agentId) {
-    const adapters = await ensureListenerModAdaptersForAgent(
-      runtime.listener,
-      agentId,
-    );
-    const hasTurnStartHandler = adapters.some((adapter) => {
-      const handlers = adapter.getSnapshot().registry.events.turn_start;
-      return Array.isArray(handlers) && handlers.length > 0;
-    });
-    if (hasTurnStartHandler) {
-      try {
-        const conversation =
-          await getBackend().retrieveConversation(conversationId);
-        modelBeforeTurnStart = conversation.model ?? undefined;
-        snapshottedTurnStartModel = true;
-      } catch {
-        // A missed snapshot must not force override_model. Omitting it lets
-        // the server keep the conversation's stored model settings.
-      }
-    }
-  }
   const turnStartEmission =
     hasUserMessage && agentId
       ? await emitListenerTurnStart({
@@ -292,7 +268,11 @@ export async function prepareListenerTurn(params: {
           permissionMode: permissionModeState.mode,
           cachedAgent,
         })
-      : ({ cancelled: false, handlerCount: 0, input: messagesToSend } as const);
+      : ({
+          cancelled: false,
+          handlerCount: 0,
+          input: messagesToSend,
+        } satisfies ListenerTurnStartEmission);
   if (isInterrupted()) {
     return { kind: "interrupted" };
   }
@@ -300,19 +280,10 @@ export async function prepareListenerTurn(params: {
     return { kind: "cancelled", reason: turnStartEmission.reason };
   }
 
-  let overrideModel: string | undefined;
-  if (turnStartEmission.handlerCount > 0 && snapshottedTurnStartModel) {
-    try {
-      const conversation =
-        await getBackend().retrieveConversation(conversationId);
-      const modelAfterTurnStart = conversation.model ?? undefined;
-      if (modelAfterTurnStart && modelAfterTurnStart !== modelBeforeTurnStart) {
-        overrideModel = modelAfterTurnStart;
-      }
-    } catch {
-      // Model refresh is best-effort; mod failures must not block the turn.
-    }
-  }
+  // Refresh the in-flight request only when a handler switched the model.
+  // An unchanged override_model makes the server rebuild settings from the
+  // handle and drop the stored reasoning effort and temperature.
+  const overrideModel = turnStartEmission.modelUpdate;
 
   const currentInput = ensureTurnInputMessageOtids(turnStartEmission.input);
   let turnInput = createTurnInputState(
