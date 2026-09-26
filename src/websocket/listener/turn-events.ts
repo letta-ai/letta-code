@@ -11,6 +11,7 @@ import {
   AUTO_REFLECTION_DESCRIPTION,
   launchReflectionSubagent,
 } from "@/cli/helpers/reflection-launcher";
+import { trackModConversationModelUpdates } from "@/mods/conversation-handle";
 import { getTurnStartCancel } from "@/mods/turn-start-cancel";
 import { settingsManager } from "@/settings-manager";
 import { getListenerTelemetrySurface } from "@/telemetry";
@@ -45,6 +46,8 @@ export type ListenerTurnStartEmission =
       cancelled: false;
       handlerCount: number;
       input: Array<MessageCreate | ApprovalCreate>;
+      /** Model a handler persisted for this conversation via updateLlmConfig. */
+      modelUpdate?: string;
     }
   | { cancelled: true; reason: string };
 
@@ -73,11 +76,10 @@ export async function emitListenerTurnStart(options: {
       conversationId: options.conversationId,
       input: options.input,
     };
-    const emission = await createListenerModEvents(modAdapters).emit(
-      "turn_start",
-      event,
-      context,
-    );
+    const { result: emission, modelUpdates } =
+      await trackModConversationModelUpdates(() =>
+        createListenerModEvents(modAdapters).emit("turn_start", event, context),
+      );
     const cancel = getTurnStartCancel(event);
     if (cancel) {
       return { cancelled: true, reason: cancel.reason };
@@ -86,6 +88,7 @@ export async function emitListenerTurnStart(options: {
       cancelled: false,
       handlerCount: emission.handlerCount,
       input: isTurnInputArray(event.input) ? event.input : options.input,
+      modelUpdate: modelUpdates.get(options.conversationId),
     };
   } catch {
     // Mod turn_start handlers should not block sending the turn.
