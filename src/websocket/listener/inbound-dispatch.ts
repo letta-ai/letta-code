@@ -50,6 +50,25 @@ export function rememberAcceptedInputDisposition(
   }
 }
 
+/** Slash skill commands use the same queue as app messages, not a parallel turn. */
+export function queueSkillCommand(
+  runtime: ConversationRuntime,
+  incoming: IncomingMessage,
+  socket: ListenerTransport,
+  options: StartListenerOptions,
+  processQueuedTurn: ProcessQueuedTurn,
+): boolean {
+  const accepted = enqueueInboundUserMessage(
+    runtime,
+    incoming,
+    incoming.actingUserId,
+  );
+  if (accepted) {
+    scheduleQueuePump(runtime, socket, options, processQueuedTurn);
+  }
+  return accepted;
+}
+
 export function dispatchInboundMessageWhenReady(params: {
   listener: ListenerRuntime;
   runtime: ConversationRuntime;

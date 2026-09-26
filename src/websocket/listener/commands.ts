@@ -21,6 +21,10 @@ import {
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
 import { parseReflectCommandArgs } from "@/cli/helpers/reflect-command";
 import { launchReflectionSubagent } from "@/cli/helpers/reflection-launcher";
+import {
+  estimateActiveMemorySystemPromptTokens,
+  setSystemPromptDoctorState,
+} from "@/cli/helpers/system-prompt-warning";
 import { buildModCommandPrompt } from "@/cli/mods/command-runtime";
 import { DEFAULT_SUMMARIZATION_MODEL } from "@/constants";
 import { runPreCompactHooks } from "@/hooks";
@@ -28,10 +32,7 @@ import type { ModCommand } from "@/mods/types";
 import { markPostCompactionContextRemindersPending } from "@/reminders/state";
 import { settingsManager } from "@/settings-manager";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
-import {
-  findUserInvocableSkillInvocation,
-  renderUserInvocableSkillInvocation,
-} from "@/tools/impl/user-invocable-skill";
+import { findUserInvocableSkillInvocation } from "@/tools/impl/user-invocable-skill";
 import type {
   ExecuteCommandCommand,
   SlashCommandEndMessage,
@@ -62,9 +63,36 @@ import {
   buildMaybeLaunchReflectionSubagent,
   escapeTaskNotificationSummary,
 } from "./turn-events";
-import type { ConversationRuntime, StartListenerOptions } from "./types";
+import type {
+  ConversationRuntime,
+  IncomingMessage,
+  ListenerRuntime,
+  StartListenerOptions,
+} from "./types";
 
 export { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
+
+/** Internal refresh after recompile; it produces a status update, not chat output. */
+export async function handleRefreshDoctorState(
+  command: ExecuteCommandCommand,
+  socket: WebSocket,
+  runtime: ListenerRuntime,
+): Promise<void> {
+  const agentId = command.runtime.agent_id;
+  if (agentId && settingsManager.isMemfsEnabled(agentId)) {
+    try {
+      const { getScopedMemoryFilesystemRoot } = await import(
+        "@/agent/memory-filesystem"
+      );
+      const memoryDir = getScopedMemoryFilesystemRoot(agentId);
+      const tokens = estimateActiveMemorySystemPromptTokens(memoryDir);
+      setSystemPromptDoctorState(agentId, tokens);
+    } catch {
+      // best-effort
+    }
+  }
+  emitDeviceStatusUpdate(socket, runtime, command.runtime);
+}
 
 /**
  * Handle an `execute_command` message from the web app.
@@ -82,6 +110,7 @@ export async function handleExecuteCommand(
     onLog?: StartListenerOptions["onLog"];
     connectionId?: string;
     connectionName?: string;
+    enqueueSkillMessage?: (message: IncomingMessage) => boolean;
   },
 ): Promise<void> {
   const scope = {
@@ -242,33 +271,18 @@ export async function handleExecuteCommand(
                 })
               : null;
           if (skillInvocation) {
-            await handleIncomingMessage(
-              {
-                type: "message",
-                agentId: conversationRuntime.agentId ?? undefined,
-                conversationId: conversationRuntime.conversationId,
-                actingUserId: command.runtime.acting_user_id,
-                messages: [
-                  {
-                    type: "message",
-                    role: "user",
-                    content: [
-                      {
-                        type: "text",
-                        text:
-                          await renderUserInvocableSkillInvocation(
-                            skillInvocation,
-                          ),
-                      },
-                    ],
-                  },
-                ],
-              },
-              socket,
-              conversationRuntime,
-              opts.onStatusChange,
-              opts.connectionId,
-            );
+            const enqueued = opts.enqueueSkillMessage?.({
+              type: "message",
+              connectionId: opts.connectionId,
+              agentId: conversationRuntime.agentId ?? undefined,
+              conversationId: conversationRuntime.conversationId,
+              noCoalesce: true,
+              actingUserId: command.runtime.acting_user_id,
+              messages: [{ type: "message", role: "user", content: input }],
+            });
+            if (!enqueued) {
+              throw new Error("Could not queue skill command");
+            }
             output = "";
             break;
           }

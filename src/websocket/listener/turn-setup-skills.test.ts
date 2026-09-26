@@ -6,6 +6,7 @@ import {
 } from "@/agent/context";
 import { __testSetBackend } from "@/backend";
 import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
+import { createBuffers, onChunk } from "@/cli/helpers/accumulator";
 import { DEFAULT_PERMISSION_MODE } from "@/permissions/mode";
 import { settingsManager } from "@/settings-manager";
 import { TestDirectory } from "@/test-utils/test-fs";
@@ -22,6 +23,7 @@ import { setActiveRuntime } from "./runtime";
 import type { ListenerTransport } from "./transport";
 import { prepareListenerTurn } from "./turn-setup";
 import { finishListenerTurn } from "./turn-terminal";
+import { seedInboundUserTranscriptLines } from "./turn-transcript";
 import { __listenerWarmupTestUtils } from "./warmup";
 
 test("listener expands a user skill before sending the turn, without treating built-in commands as skills", async () => {
@@ -73,6 +75,7 @@ test("listener expands a user skill before sending the turn, without treating bu
   async function prepare(text: string | string[]): Promise<{
     sent: string;
     display: string;
+    afterEchoDisplay: string;
   }> {
     const runtime = getOrCreateScopedRuntime(listener, agentId, conversationId);
     runtime.skillSources = ["project"];
@@ -100,11 +103,30 @@ test("listener expands a user skill before sending the turn, without treating bu
         turnLease: lease,
       });
       if (result.kind !== "ready") throw new Error(`Turn ${result.kind}`);
+      const buffers = createBuffers(agentId);
+      seedInboundUserTranscriptLines(
+        buffers,
+        result.inboundUserTranscriptLines,
+      );
+      for (const message of result.turnInput.messages) {
+        if (!("content" in message) || message.role !== "user") continue;
+        onChunk(buffers, {
+          message_type: "user_message",
+          id: crypto.randomUUID(),
+          otid: message.otid,
+          content: message.content,
+        } as Parameters<typeof onChunk>[1]);
+      }
       return {
         sent: JSON.stringify(result.turnInput.messages),
         display: result.inboundUserTranscriptLines
           .filter((line) => line.kind === "user")
           .map((line) => line.text)
+          .join("\n"),
+        afterEchoDisplay: buffers.order
+          .map((id) => buffers.byId.get(id))
+          .filter((line) => line?.kind === "user")
+          .map((line) => line?.text)
           .join("\n"),
       };
     } finally {
@@ -124,9 +146,13 @@ test("listener expands a user skill before sending the turn, without treating bu
     expect(skillInput.sent).toContain("Ask hard questions.");
     expect(skillInput.sent).toContain("about this spec");
     expect(skillInput.display).toBe("/grill-me about this spec");
+    expect(skillInput.afterEchoDisplay).toBe("/grill-me about this spec");
     const batchedInput = await prepare(["earlier question", "/grill-me later"]);
     expect(batchedInput.sent).toContain("Ask hard questions.");
     expect(batchedInput.display).toBe("earlier question\n/grill-me later");
+    expect(batchedInput.afterEchoDisplay).toBe(
+      "earlier question\n/grill-me later",
+    );
     const builtInInput = await prepare("/doctor why is this broken");
     expect(builtInInput.sent).not.toContain("Wrong command.");
     expect(builtInInput.sent).toContain("/doctor why is this broken");
