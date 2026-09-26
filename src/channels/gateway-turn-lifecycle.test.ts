@@ -5,6 +5,7 @@ import {
   makeDelivery,
   makeHooks,
   makeQueueUpdate,
+  makeSource,
   makeStreamDelta,
   makeTurnFinished,
   TEST_RUNTIME,
@@ -51,6 +52,113 @@ test("rejected submissions do not leave the runtime permanently busy", async () 
   expect(await gateway.submit(makeDelivery())).toBe(false);
   expect(gateway.isRuntimeBusy(TEST_RUNTIME)).toBe(false);
   gateway.close();
+});
+
+test.each([
+  { channel: "telegram", failure: "none", stopReason: "end_turn" },
+  { channel: "telegram", failure: "throw", stopReason: "cancelled" },
+  { channel: "telegram", failure: "reject", stopReason: "llm_api_error" },
+  { channel: "slack", failure: "none", stopReason: "end_turn" },
+  { channel: "slack", failure: "throw", stopReason: "cancelled" },
+  { channel: "slack", failure: "reject", stopReason: "llm_api_error" },
+])(
+  "control handoffs stay busy until all hooks settle: %j",
+  async ({ channel, failure, stopReason }) => {
+    const client = new FakeClient();
+    const progressStarted = Promise.withResolvers<void>();
+    const releaseProgress = Promise.withResolvers<void>();
+    const controlStarted = Promise.withResolvers<void>();
+    const releaseControl = Promise.withResolvers<void>();
+    const finished = Promise.withResolvers<void>();
+    const delivered: string[] = [];
+    const gateway = new ChannelGateway(
+      client,
+      makeHooks({
+        onProgress: () => {
+          progressStarted.resolve();
+          return releaseProgress.promise;
+        },
+        onControlRequest: (event) => {
+          delivered.push(event.requestId);
+          if (event.requestId === "ctrl-first") {
+            if (failure === "throw")
+              throw new Error("synchronous hook failure");
+            if (failure === "reject")
+              return Promise.reject(new Error("async hook failure"));
+            return;
+          }
+          controlStarted.resolve();
+          return releaseControl.promise;
+        },
+        onLifecycle: (event) => {
+          if (event.type === "finished") finished.resolve();
+        },
+      }).hooks,
+    );
+    try {
+      await gateway.submit(
+        makeDelivery({ sources: [makeSource({ channel })] }),
+      );
+      client.emit(makeStreamDelta({ message_type: "reasoning_message" }));
+      await progressStarted.promise;
+      for (const requestId of ["ctrl-first", "ctrl-second"]) {
+        client.emit({
+          type: "control_request",
+          request_id: requestId,
+          agent_id: TEST_RUNTIME.agent_id,
+          conversation_id: TEST_RUNTIME.conversation_id,
+          request: {
+            subtype: "can_use_tool",
+            tool_name: "Bash",
+            input: {},
+            tool_call_id: requestId,
+            permission_suggestions: [],
+            blocked_path: null,
+          },
+        });
+      }
+      client.emit(makeTurnFinished(stopReason));
+      expect(delivered).toEqual([]);
+      expect(gateway.isRuntimeBusy(TEST_RUNTIME)).toBe(true);
+      gateway.setRoutedSources(TEST_RUNTIME, []);
+      await expect(
+        gateway.releaseRuntimeTools(TEST_RUNTIME, [], {
+          cleanupIdleRuntime: true,
+        }),
+      ).rejects.toThrow("active");
+      releaseProgress.resolve();
+      await controlStarted.promise;
+      expect(delivered).toEqual(["ctrl-first", "ctrl-second"]);
+      // Settling the first handoff must not release the second one's reservation.
+      expect(gateway.isRuntimeBusy(TEST_RUNTIME)).toBe(true);
+      releaseControl.resolve();
+      await finished.promise;
+      expect(gateway.isRuntimeBusy(TEST_RUNTIME)).toBe(false);
+      await gateway.releaseRuntimeTools(TEST_RUNTIME, [], {
+        cleanupIdleRuntime: true,
+      });
+      expect(gateway.getKnownRuntimes()).toEqual([]);
+    } finally {
+      releaseProgress.resolve();
+      releaseControl.resolve();
+      gateway.close();
+    }
+  },
+);
+
+test("failed runtime registration releases the submission busy guard", async () => {
+  const client = new FakeClient({
+    startResponse: { success: false, error: "registration failed" },
+  });
+  const gateway = new ChannelGateway(client, makeHooks().hooks);
+  try {
+    await expect(gateway.submit(makeDelivery())).rejects.toThrow(
+      "registration failed",
+    );
+    expect(gateway.isRuntimeBusy(TEST_RUNTIME)).toBe(false);
+  } finally {
+    gateway.close();
+  }
 });
 
 test("stream stop reason waits for turn_finished error detail", async () => {
