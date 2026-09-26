@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import { autoBackgroundExternalTool } from "./external-tool-background";
 
 const scope = {
@@ -64,6 +65,64 @@ describe("external tool auto-backgrounding", () => {
     expect(notifications[0]?.text).toContain("messageId");
     expect(notifications[0]?.text).toContain("123.45");
     expect(notifications[0]?.text).not.toContain("Full transcript available");
+  });
+
+  test("preserves a late tool result's text and image parts in order", async () => {
+    const richResult = [
+      { type: "text", text: "before" },
+      {
+        type: "image",
+        source: { type: "base64", media_type: "image/png", data: "ZmFrZQ==" },
+      },
+      { type: "text", text: "after" },
+    ] satisfies Exclude<MessageCreate["content"], string>;
+    let complete!: (value: {
+      status: "success";
+      toolReturn: typeof richResult;
+    }) => void;
+    const operation = new Promise<{
+      status: "success";
+      toolReturn: typeof richResult;
+    }>((resolve) => {
+      complete = resolve;
+    });
+    const notifications: Array<{ text: string; content?: unknown }> = [];
+    const receipt = await autoBackgroundExternalTool(
+      "fetch_file",
+      listenerTool,
+      operation,
+      {
+        yieldMs: 10,
+        runtimeScope: scope,
+        enqueue: (message) => notifications.push(message),
+      },
+    );
+    expect(receipt.toolReturn).toContain("external_");
+    complete({ status: "success", toolReturn: richResult });
+    await Bun.sleep(0);
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]?.content).toEqual(richResult);
+  });
+
+  test("does not hide a long result's overflow-file path in a second clamp", async () => {
+    const notifications: Array<{ text: string }> = [];
+    const path = "/tmp/external-tool-result.log";
+    await autoBackgroundExternalTool(
+      "lookup",
+      listenerTool,
+      Bun.sleep(20).then(() => ({
+        status: "success" as const,
+        toolReturn: `${"x".repeat(20_000)}\nFull output: ${path}`,
+      })),
+      {
+        yieldMs: 10,
+        runtimeScope: scope,
+        enqueue: (message) => notifications.push(message),
+      },
+    );
+    await Bun.sleep(20);
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]?.text).toContain(path);
   });
 
   test("waits inline when the caller has no agent scope to notify", async () => {

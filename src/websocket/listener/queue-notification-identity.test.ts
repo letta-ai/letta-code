@@ -20,6 +20,48 @@ class MockSocket {
 }
 
 describe("queued notification identity", () => {
+  test("delivers a scoped image result in order after its task notification", () => {
+    const runtime = getOrCreateScopedRuntime(
+      createRuntime(),
+      "agent-image",
+      "conv-image",
+    );
+    const content = [
+      { type: "text", text: "before" },
+      {
+        type: "image",
+        source: { type: "base64", media_type: "image/png", data: "ZmFrZQ==" },
+      },
+      { type: "text", text: "after" },
+    ] satisfies Exclude<MessageCreate["content"], string>;
+    const text = "<task-notification>image ready</task-notification>";
+    runtime.queueRuntime.enqueue({
+      kind: "task_notification",
+      source: "task_notification",
+      text,
+      content,
+      agentId: "agent-image",
+      conversationId: "conv-image",
+      actingUserId: "human-image",
+    } as Omit<TaskNotificationQueueItem, "id" | "enqueuedAt">);
+
+    const consumed = consumeQueuedTurn(runtime);
+    expect(consumed?.queuedTurn).toMatchObject({
+      agentId: "agent-image",
+      conversationId: "conv-image",
+      actingUserId: "human-image",
+    });
+    const message = consumed?.queuedTurn.messages[0];
+    if (!message || !("content" in message)) {
+      throw new Error("Expected a queued notification message");
+    }
+    expect(message.content).toEqual([
+      { type: "text", text },
+      { type: "text", text: "\n" },
+      ...content,
+    ]);
+  });
+
   test("assigns distinct stable OTIDs to visible payloads without IDs", () => {
     const runtime = getOrCreateScopedRuntime(
       createRuntime(),

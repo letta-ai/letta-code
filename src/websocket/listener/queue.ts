@@ -8,6 +8,7 @@ import type {
   QueueItem,
 } from "@/queue/queue-runtime";
 import { isCoalescable } from "@/queue/queue-runtime";
+import { buildTaskNotificationContent } from "@/queue/turn-queue-runtime";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { debugWarn } from "@/utils/debug";
 import { getListenerBlockedReason } from "@/websocket/helpers/listener-queue-adapter";
@@ -113,7 +114,10 @@ function buildQueuedTurnMessage(
     } else if (isCoalescable(item.kind) && "text" in item) {
       messages.push({
         role: "user",
-        content: item.text,
+        content:
+          item.kind === "task_notification"
+            ? buildTaskNotificationContent(item)
+            : item.text,
         otid: crypto.randomUUID(),
         attribution: {},
       } satisfies AttributedMessageCreate);
