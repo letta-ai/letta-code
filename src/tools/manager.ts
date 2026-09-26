@@ -54,6 +54,7 @@ import {
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { messageChannelTelemetry } from "@/telemetry/channel";
+import { autoBackgroundExternalTool } from "@/tools/external-tool-background";
 import { waitForToolCheckouts } from "@/utils/checkout-readiness";
 import { debugLog } from "@/utils/debug";
 import { refreshAndListSecrets } from "@/utils/secrets-store";
@@ -604,6 +605,7 @@ export interface ExternalToolDefinition {
   description: string;
   parameters: Record<string, unknown>; // JSON Schema
   timeoutMs?: number; // Wait for a controller-owned result, not execution time.
+  autoBackground?: boolean;
   /** Internal registration key; model-facing calls still use name. */
   registrationKey?: string;
   connectionId?: string;
@@ -617,7 +619,6 @@ export interface ExternalToolDefinition {
   /** Client-local executor owned by this tool (for example an MCP process). */
   executor?: ExternalToolExecutor;
 }
-
 /**
  * Callback to execute an external tool via SDK
  */
@@ -635,7 +636,6 @@ export type ExternalToolExecutor = (
   }>;
   isError: boolean;
 }>;
-
 // Storage for external tool definitions and executor
 const EXTERNAL_TOOLS_KEY = Symbol.for("@letta/externalTools");
 const EXTERNAL_EXECUTOR_KEY = Symbol.for("@letta/externalToolExecutor");
@@ -750,7 +750,6 @@ export async function executeExternalTool(
       tool ? { tool } : undefined,
     );
     success = !result.isError;
-
     return {
       toolReturn: clampToolReturnContent(
         normalizeExternalToolResultContent(result.content),
@@ -2206,7 +2205,6 @@ async function executeToolInner(
       modContext,
     });
   }
-
   // Check if this is an external tool (SDK-executed)
   if (activeExternalTools.has(name)) {
     const externalTool = activeExternalTools.get(name);
@@ -2220,10 +2218,7 @@ async function executeToolInner(
     });
     if (result) {
       if (options?.toolEndArgsRef) options.toolEndArgsRef.current = eventArgs;
-      return {
-        toolReturn: result.output,
-        status: result.status,
-      };
+      return { toolReturn: result.output, status: result.status };
     }
     if (options?.toolEndArgsRef) options.toolEndArgsRef.current = eventArgs;
     const permissionDecision = await checkModPermissionForContext({
@@ -2234,22 +2229,27 @@ async function executeToolInner(
       toolName: name,
       workingDirectory,
     });
-    if (permissionDecision?.decision !== undefined) {
-      if (permissionDecision.decision !== "allow") {
-        return createModPermissionToolResult(permissionDecision);
-      }
+    if (
+      permissionDecision?.decision !== undefined &&
+      permissionDecision.decision !== "allow"
+    ) {
+      return createModPermissionToolResult(permissionDecision);
     }
     return runWithRuntimeContext(executionScope, () =>
-      executeExternalTool(
-        options?.toolCallId ?? `ext-${Date.now()}`,
+      autoBackgroundExternalTool(
         name,
-        eventArgs as Record<string, unknown>,
-        externalTool?.executor ?? activeExternalExecutor,
         externalTool,
+        executeExternalTool(
+          options?.toolCallId ?? `ext-${Date.now()}`,
+          name,
+          eventArgs as Record<string, unknown>,
+          externalTool?.executor ?? activeExternalExecutor,
+          externalTool,
+        ),
+        { runtimeScope: executionScope },
       ),
     );
   }
-
   const internalName = resolveInternalToolName(name, activeRegistry);
   const tool = internalName ? activeRegistry.get(internalName) : undefined;
   if (!internalName || !tool) {
