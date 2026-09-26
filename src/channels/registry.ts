@@ -450,7 +450,24 @@ export class ChannelRegistry {
   }
 
   setCancelHandler(handler: ChannelCancelHandler | null): void {
-    this.cancelHandler = handler;
+    this.cancelHandler = handler
+      ? async (params) => {
+          // Existing controls only; gateway owns same-turn arrivals during abort.
+          const pending = this.controls
+            .getAll()
+            .filter(
+              ({ event }) =>
+                event.source.agentId === params.runtime.agent_id &&
+                event.source.conversationId === params.runtime.conversation_id,
+            );
+          const cancelled = await handler(params);
+          if (cancelled) {
+            for (const { event } of pending)
+              this.controls.clear(event.requestId);
+          }
+          return cancelled;
+        }
+      : null;
   }
 
   setReflectionHandler(handler: ChannelReflectionHandler | null): void {

@@ -1,5 +1,4 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import { getInteractiveApprovalKind } from "@/tools/interactive-policy";
 import type {
   ApprovalResponseBody,
   ControlRequest,
@@ -18,6 +17,7 @@ import type {
   StreamDeltaMessage,
   WsProtocolMessage,
 } from "@/types/app-server-protocol";
+import { ChannelControlHandoffs } from "./gateway-control-handoffs";
 import {
   sourceLifecycleKey,
   sourceRouteKey,
@@ -130,7 +130,7 @@ type GatewayRuntimeState = {
   replayedControlRequestIds: Set<string>;
   submissionQueue: Promise<void>;
   pendingSubmissions: number;
-  pendingControlHandoffs: number;
+  controlHandoffs: ChannelControlHandoffs;
   hookQueue: Promise<void> | null;
   acceptedClientMessageIds: Set<string>;
   modelStatus: ChannelGatewayModelStatus | null;
@@ -519,7 +519,7 @@ export class ChannelGateway {
         ) {
           throw new Error("Cannot clean up a routed channel runtime");
         }
-        if (state?.active || state?.pendingControlHandoffs) {
+        if (state?.active || state?.controlHandoffs.size) {
           throw new Error("Cannot clean up an active channel runtime");
         }
         if ((state?.pendingSourcesByClientMessageId.size ?? 0) > 0) {
@@ -560,9 +560,20 @@ export class ChannelGateway {
     return Boolean(
       state?.active ||
         state?.pendingSubmissions ||
-        state?.pendingControlHandoffs ||
+        state?.controlHandoffs.size ||
         state?.pendingSourcesByClientMessageId.size,
     );
+  }
+  /** Include handoffs arriving during abort, but never a replacement turn's. */
+  cancelControlHandoffs(
+    runtime: RuntimeScope,
+    cancel: () => Promise<boolean>,
+    clear: (requestId: string) => void,
+  ): Promise<boolean> {
+    const state = this.states.get(runtimeKey(runtime));
+    return state
+      ? state.controlHandoffs.cancel(state.active, cancel, clear)
+      : cancel();
   }
 
   getKnownRuntimes(): RuntimeScope[] {
@@ -619,7 +630,7 @@ export class ChannelGateway {
         replayedControlRequestIds: new Set(),
         submissionQueue: Promise.resolve(),
         pendingSubmissions: 0,
-        pendingControlHandoffs: 0,
+        controlHandoffs: new ChannelControlHandoffs(),
         hookQueue: null,
         acceptedClientMessageIds: new Set(),
         modelStatus: null,
@@ -977,22 +988,13 @@ export class ChannelGateway {
     );
     if (sourceScopes.size !== 1) return;
     const source = [...sourceScopes.values()][0];
-    if (!source) return;
-    // Reserve before queued hooks yield; the registry owns the guard after delivery.
-    state.pendingControlHandoffs++;
-    void this.enqueueHook(state, () =>
-      this.hooks.onControlRequest({
-        requestId: message.request_id,
-        kind:
-          getInteractiveApprovalKind(message.request.tool_name) ??
-          "generic_tool_approval",
-        source,
-        toolName: message.request.tool_name,
-        input: message.request.input,
-      }),
-    ).then(
-      () => state.pendingControlHandoffs--,
-      () => state.pendingControlHandoffs--,
+    if (!source || !state.active) return;
+    state.controlHandoffs.enqueue(
+      message,
+      source,
+      state.active,
+      (hook) => this.enqueueHook(state, hook),
+      (event) => this.hooks.onControlRequest(event),
     );
   }
 }
