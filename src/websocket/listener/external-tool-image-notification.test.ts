@@ -91,7 +91,12 @@ test("a slow external image reaches the original listener completion turn", asyn
       type: "text",
       text: expect.stringContaining("<task-notification>"),
     });
-    expect(parts.slice(2)).toEqual(result);
+    expect(parts.slice(1)).toEqual([
+      { type: "text", text: "\n<external-tool-result>" },
+      { type: "text", text: "<text>image attached</text>" },
+      result[1]!,
+      { type: "text", text: "</external-tool-result>" },
+    ]);
 
     let sent: MessageCreateParams | undefined;
     const backend = {

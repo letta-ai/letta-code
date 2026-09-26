@@ -88,9 +88,10 @@ describe("queuedMessageParts", () => {
     }
     expect(buildQueuedContentParts([toQueuedMsg(item)])).toEqual([
       { type: "text", text: item.text },
-      { type: "text", text: "\n" },
-      { type: "text", text: "caption" },
+      { type: "text", text: "\n<external-tool-result>" },
+      { type: "text", text: "<text>caption</text>" },
       image,
+      { type: "text", text: "</external-tool-result>" },
     ]);
   });
 

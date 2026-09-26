@@ -48,6 +48,13 @@ function appendContentParts(
   target.push(...content);
 }
 
+function escapeResultText(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 export function buildTaskNotificationContent(item: {
   text: string;
   content?: MessageCreate["content"];
@@ -55,9 +62,20 @@ export function buildTaskNotificationContent(item: {
   if (item.content === undefined) return item.text;
   const parts: MessageContentParts = [
     { type: "text", text: item.text },
-    { type: "text", text: "\n" },
+    { type: "text", text: "\n<external-tool-result>" },
   ];
-  appendContentParts(parts, item.content);
+  const content =
+    typeof item.content === "string"
+      ? [{ type: "text" as const, text: item.content }]
+      : item.content;
+  for (const part of content) {
+    parts.push(
+      part.type === "text"
+        ? { type: "text", text: `<text>${escapeResultText(part.text)}</text>` }
+        : part,
+    );
+  }
+  parts.push({ type: "text", text: "</external-tool-result>" });
   return parts;
 }
 
