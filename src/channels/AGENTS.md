@@ -61,3 +61,9 @@ context transition, first map which backends are affected: cloud-backed,
 containerized, or local. A local-backend prompt tweak is not a production fix
 for cloud agents. Prefer backend-agnostic channel-origin metadata or shared
 compaction contracts over per-backend patches.
+
+## Gateway delivery preserves the caller's input
+
+The gateway submits caller-supplied input through the same queue and turn lifecycle as channel messages. Preserve the original message payload (roles, attachments, IDs) instead of rewriting it into one user message, and return the actual acceptance disposition. Remote hosts (for example Cloud) depend on this to run app-server message batches through channel progress and failure handling.
+
+Keep plan/TODO progress generic: emit structured plan updates (the agent's TODO items and statuses) as progress events after `TodoWrite`/`UpdatePlan` succeeds and let the host render them. Do not put Slack-specific rendering in the harness.
