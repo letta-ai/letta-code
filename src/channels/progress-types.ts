@@ -16,6 +16,12 @@ export type ChannelTurnProgressState =
   | "waiting";
 
 export interface ChannelTurnProgressUpdate {
+  /** Validated public plan rows from successful UpdatePlan/TodoWrite only. */
+  plan?: Array<{
+    id: string;
+    title: string;
+    status: "pending" | "in_progress" | "complete";
+  }>;
   kind: ChannelTurnProgressKind;
   state: ChannelTurnProgressState;
   /** Sanitized, user-facing status text. Never include tool args or output. */
