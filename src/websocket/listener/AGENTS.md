@@ -74,6 +74,28 @@ Do not add queue self-healing as the primary fix for an impossible state. Find
 and repair the transition that produced the state. Defensive telemetry is fine
 after the producer path has a regression test.
 
+## Approval Publication And Status Projection
+
+`requestApprovalOverWS` (approval.ts) is the only publisher of a pending
+approval: register the resolver, record `requires_approval`, set
+`WAITING_ON_APPROVAL`, then emit control_request, loop status, and device status
+in that order. `emitLoopStatusIfOpen`/`emitDeviceStatusIfOpen` silently drop the
+frame when the transport is not open at that instant — no retry, no queue.
+Resolution (`resolvePendingApprovalResolver`) removes the resolver, sets
+`WAITING_ON_INPUT` when none remain and the turn is not processing, then emits
+loop status and device status in that order. Reconnect replay
+(`emitInitialConnectionState`) re-emits device status (which carries
+`pending_control_requests`) and loop status per conversation runtime, and
+`replaySubscribedConnectionState` replays pending approval requests to the
+connection before state sync.
+
+`device_status.pending_control_requests` is projected from
+`pendingApprovalResolvers` plus `recoveredApprovalState`, and is zeroed while an
+interrupted cache is active (`hasInterruptedCacheForScope`); `buildLoopStatus`
+masks `WAITING_ON_APPROVAL` to `WAITING_ON_INPUT` under the same condition. An
+empty `pending_control_requests` in a device frame therefore does not prove no
+approval is pending.
+
 ## Module Map
 
 - `turn-lifecycle.ts`: canonical state, leases, and transitions.
