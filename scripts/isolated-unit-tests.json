@@ -108,6 +108,11 @@
       "reason": "Uses a top-level Bun module mock for backend generation."
     },
     {
+      "path": "src/mcp-runtime-oauth.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Uses a top-level Bun module mock for MCP OAuth session creation to prove the AnySearch preset's oauth:false opt-out without real DCR/PKCE."
+    },
+    {
       "path": "src/mcp-client.test.ts",
       "timeoutMs": 30000,
       "reason": "Spawns real stdio MCP server processes."
