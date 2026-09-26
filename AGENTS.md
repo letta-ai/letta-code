@@ -732,6 +732,16 @@ test suite. Use `setupRuntimeModelCatalogFixture()` (bundles setup + cleanup) fr
 `src/test-utils/runtime-model-catalog.ts`. All test files touching the model
 catalog must use this fixture.
 
+**Output-token ceiling is not the request default.** A model's advertised
+`maxTokens` is a capability ceiling, not the value ordinary requests should
+send. Local model selection persists `model.maxTokens` as `max_tokens`
+(`localModelSettingsForHandle` in `src/backend/local/local-model-config.ts`),
+so every request reserves the full ceiling and OpenRouter rejects
+large-ceiling requests it cannot afford with HTTP 402. Keep provider capability
+ceiling, product request default, and explicit override as separate values —
+never persist a capability as the default, and never compensate with a blanket
+client cap; the provider client only serializes the resolved value.
+
 ---
 
 ## Subagent Lifecycle & Reflection
