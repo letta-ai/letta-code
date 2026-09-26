@@ -1,6 +1,6 @@
 /**
  * The workflow engine: parses the meta block, builds the script-facing hooks
- * (agent / parallel / pipeline / phase / log / args), executes the script
+ * (agent / decide / parallel / pipeline / phase / log / args), executes the script
  * body inside a node:vm context, and appends every subagent outcome to the
  * run's journal.
  *
@@ -16,6 +16,7 @@
  */
 
 import vm from "node:vm";
+import { submitWorkflowDecision } from "./decide.ts";
 import { appendJournalEntry } from "./journal.ts";
 import { parseWorkflowMeta, stripMetaExport } from "./meta.ts";
 import type {
@@ -83,14 +84,53 @@ export async function executeWorkflow(
   let agentsSpawned = 0;
   let totalTokens = 0;
 
-  function agent(prompt: unknown, callOptions?: unknown): Promise<unknown> {
-    const pending = callAgent(prompt, callOptions);
+  function trackCall<T>(pending: Promise<T>): Promise<T> {
     // Scripts can forget to await a call; that must not surface as an
     // unhandled rejection. Awaiting it still observes the original error.
     void pending.catch(() => {});
     inFlight.add(pending);
     void pending.finally(() => inFlight.delete(pending)).catch(() => {});
     return pending;
+  }
+
+  function agent(prompt: unknown, callOptions?: unknown): Promise<unknown> {
+    return trackCall(callAgent(prompt, callOptions));
+  }
+
+  function decide(
+    state: unknown,
+    questions: unknown,
+    callOptions?: unknown,
+  ): Promise<unknown> {
+    if (
+      callOptions !== undefined &&
+      (!callOptions ||
+        typeof callOptions !== "object" ||
+        Array.isArray(callOptions))
+    ) {
+      return trackCall(
+        Promise.reject(new Error("decide() options must be an object.")),
+      );
+    }
+    const pending = submitWorkflowDecision(
+      {
+        ...(callOptions as Record<string, unknown> | undefined),
+        state,
+        questions,
+      },
+      signal,
+      (result) => {
+        totalTokens += result.totalTokens;
+        emit({ kind: "decision_usage", totalTokens: result.totalTokens });
+        if (options.journalPath) {
+          appendJournalEntry(options.journalPath, {
+            kind: "decision",
+            ...result,
+          });
+        }
+      },
+    );
+    return trackCall(pending);
   }
 
   async function callAgent(
@@ -243,6 +283,7 @@ export async function executeWorkflow(
 
   const context = vm.createContext({
     agent,
+    decide,
     parallel,
     pipeline,
     phase,

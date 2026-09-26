@@ -3,7 +3,7 @@
  *
  * A workflow is a plain-JavaScript orchestration script that begins with an
  * `export const meta = {...}` pure literal and then drives subagents through
- * the injected hooks: agent(), parallel(), pipeline(), phase(), log().
+ * the injected hooks: agent(), decide(), parallel(), pipeline(), phase(), log().
  *
  * The Letta Agent SDK surface used here is described structurally; the real
  * SDK is loaded lazily at runtime by sdk-loader.ts (see its header for why
@@ -93,6 +93,7 @@ export type SubagentSpawner = (
 export type WorkflowProgressEvent =
   | { kind: "phase"; title: string }
   | { kind: "log"; message: string }
+  | { kind: "decision_usage"; totalTokens: number }
   | {
       kind: "agent";
       callIndex: number;
@@ -126,7 +127,7 @@ export interface WorkflowExecutionResult {
   /** The script's return value. */
   result: unknown;
   agentsSpawned: number;
-  /** Sum of subagent token usage across the run. */
+  /** Sum of subagent and decision API token usage across the run. */
   totalTokens: number;
 }
 

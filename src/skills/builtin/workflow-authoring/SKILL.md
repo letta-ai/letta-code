@@ -95,6 +95,8 @@ Workflow subagents require the API backend.
 - `phase(title)` — start a new phase; subsequent agent() calls are grouped
   under this title in progress output.
 - `log(message)` — emit a progress message to the user.
+- `decide(state, questions, opts?)` → Promise. Ask a calibrated Jev model
+  typed questions about `state` (see below). Not a subagent call.
 - `args` — the value passed as the tool's `args` input, verbatim. Pass
   arrays/objects as actual JSON values, NOT as a JSON-encoded string.
 
@@ -107,6 +109,42 @@ The script runs inside the CLI process with the CLI's own privileges (the
 by reading it. Keep the script to orchestration: decide what runs and combine
 results. All reading, searching, and writing belongs in subagents, where the
 tool allowlist applies.
+
+## Calibrated decisions — `decide()`
+
+`decide(state, questions, opts?)` sends `state` (string, object, or array) and
+a non-empty map of typed questions to the authenticated
+`POST /v1/alpha/decisions`, resolving to
+`{model, answers, usage, id, provider}`. It does NOT spawn a subagent — use it
+for a judgment the script itself must make (gate a stage, rank an item, decide
+whether to loop again) instead of paying for an agent turn.
+
+    const call = await decide({ file: finding.file, summary: finding.summary }, {
+      route: {
+        type: 'choice',
+        instructions: 'Route this finding to the right triage queue.',
+        criteria: { docs: 'wording or documentation only', code: 'touches program behavior' },
+      },
+    })
+    if (!call) { log('decision unavailable'); return }
+    log(`route: ${call.answers.route.choice}`)   // one of the criteria ids; calibrated: true
+
+Every question needs `instructions` and a `type`: `choice` (criteria map of
+option id → description, ≤255; answer has `choice`), `score` (criteria array;
+answer has `score` + `legend`), `noul` (no criteria; answer has `noul`, 0–1).
+`probabilities` and `confidence` appear only when the model returns them.
+
+- Answers always cover exactly the question ids you asked for, each marked
+  `calibrated: true`.
+- Jev only: `opts.model` defaults to `~typesafe/jev-latest`, must be a Jev
+  handle, and fallbacks are disabled — no silent model/provider substitution.
+- An invalid answer is retried once, then the call resolves to `null` — guard
+  with `if (!call)`, as with `agent()`. Transport/API errors throw instead, so
+  an unguarded `decide()` in a `pipeline()` stage drops that item.
+- Other options: `provider`, `session_id` (≤256 chars), `trace`, `user`.
+- The journal records model, cost, calibrated, valid, and totalTokens per
+  decision API attempt, retries included — not your state or questions. The
+  run's totalTokens sums every attempt.
 
 ## Pipeline vs barrier
 

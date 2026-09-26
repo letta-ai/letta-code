@@ -137,6 +137,26 @@ describe("workflow execution registry", () => {
     });
   });
 
+  test("includes decision usage without adding a synthetic agent", () => {
+    register();
+    recordWorkflowProgress("workflow_1", {
+      kind: "agent",
+      callIndex: 0,
+      label: "worker",
+      phase: null,
+      status: "done",
+      totalTokens: 50,
+    });
+    recordWorkflowProgress("workflow_1", {
+      kind: "decision_usage",
+      totalTokens: 37,
+    });
+    expect(getWorkflowExecution("workflow_1")).toMatchObject({
+      agentsTotal: 1,
+      totalTokens: 87,
+    });
+  });
+
   test("finishing marks unreported agents as interrupted and freezes duration", () => {
     register("workflow_1", Date.now() - 5_000);
     recordWorkflowProgress("workflow_1", {

@@ -181,6 +181,8 @@ export function formatWorkflowProgressLine(
       return `── ${event.title} ──`;
     case "log":
       return `» ${event.message}`;
+    case "decision_usage":
+      return null;
     case "agent": {
       // Only status transitions worth a line; "queued" would be noise.
       if (event.status === "queued") return null;
@@ -244,7 +246,7 @@ function formatCompletionResult(
   return [
     payload,
     "",
-    `Per-agent results: ${join(executionDir, "journal.jsonl")} — one line per completed agent with its full return value.`,
+    `Per-call results: ${join(executionDir, "journal.jsonl")} — one line per completed agent call with its full return value, plus one per decide() API attempt (retries included) with its model, cost, calibration, and tokens.`,
     "If the result above is empty or unexpected, read that file BEFORE diagnosing — do not assume agents returned non-empty results.",
   ].join("\n");
 }
@@ -440,7 +442,7 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
       `Workflow launched in background. Task ID: ${taskId}`,
       `Summary: ${meta.description}`,
       `Script file: ${scriptPath}`,
-      `Journal: ${journalPath} (one line per completed agent)`,
+      `Journal: ${journalPath} (one line per completed agent, and per decide() API attempt including retries)`,
       `Output file: ${outputFile}`,
       "",
       "You will be notified when it completes. Do not poll or sleep — keep working or end your turn. Read the output file only when you need interim progress; TaskStop aborts the run; the user can watch live status with /workflows.",
