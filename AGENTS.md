@@ -770,6 +770,34 @@ Harness manages the worktree lifecycle (not the reflection agent):
 - Counter increments on completed assistant steps (not user messages, not tool
   calls, not interrupted turns).
 
+### Agent tool launch vs SendAgentMessage
+
+`Agent(...)` starts a tracked background task: it prepends a fork/delegation
+reminder, exposes progress and cancellation, and notifies the parent on
+completion or error. `SendAgentMessage` only queues a turn with sender
+attribution — it does not create that tracked task and does not return the
+child's final answer. Keep it a plain messaging channel; do not make it
+secretly behave like a task launcher.
+
+Child creation and startup are separable so a caller can configure a child
+between them. Complete setup (binding, role, tools) before the child's first
+turn starts, and only activate the child after the listener accepts the
+initial input; a failed first delivery must not leave a worker running without
+its brief.
+
+### Thread-bound workers: keep Slack policy out of the harness
+
+`Agent` work executes inside the listener; Cloud-defined tools execute on the
+server through the generic external-tool protocol, which is the bridge a host
+uses to invoke `Agent` and pause for setup. Slack thread dispatch (binding a
+persistent worker to a thread, thread-scoped tools, repeat-dispatch policy,
+worker instructions, response text) is host-side policy built on those generic
+hooks. Do not bake Slack `thread_ts`, binding receipts, or worker instructions
+into letta-code's public harness, and do not infer Slack binding by watching
+arbitrary `Agent` calls. The host (for example letta-cloud's
+`start_thread_session`) owns the Slack-specific behavior; letta-code owns only
+generic Agent launch/setup/acceptance support.
+
 ---
 
 ## Cross-Platform Patterns
