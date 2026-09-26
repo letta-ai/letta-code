@@ -148,11 +148,11 @@ Create a `.mcp.json` file at your project root. The file is picked up when the `
 
 Claude Code registers the servers you pass in `options.mcpServers` at startup and emits the [init message](#error-handling) once the first-turn wait, if any, resolves. Whether each `options.mcpServers` server delays the first turn, and when it connects, depends on its type:
 
-| Server type                                                                            | Delays the first turn?                                 | First-turn wait timeout                                                                     |
-| :------------------------------------------------------------------------------------- | :----------------------------------------------------- | :------------------------------------------------------------------------------------------ |
-| stdio server, or HTTP/SSE server without a cached tool list                            | Yes, until it connects                                 | [`MCP_TIMEOUT`](/docs/en/env-vars), 30 seconds by default; the connection fails at that deadline |
-| Remote server with a cached tool list, saved by Claude Code from a previous connection | No; the cached tools are available from the first turn | None; connects on its first tool call, and that deferred connect has its own timeout        |
-| In-process [SDK server](#sdk-mcp-servers)                                              | Yes, until it connects and lists its tools             | None; the connect and tool listing requests each have their own timeout                     |
+| Server type                                                                            | Delays the first turn?                                 | First-turn wait timeout                                                                                          |
+| :------------------------------------------------------------------------------------- | :----------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------- |
+| stdio server, or HTTP/SSE server without a cached tool list                            | Yes, until it connects                                 | [`MCP_TIMEOUT`](/docs/en/env-vars), 30 seconds by default; the connection fails at that deadline                      |
+| Remote server with a cached tool list, saved by Claude Code from a previous connection | No; the cached tools are available from the first turn | None; connects on its first tool call, and that deferred connect has its own timeout                             |
+| In-process [SDK server](#sdk-mcp-servers)                                              | Yes, until it connects and lists its tools             | [`MCP_TIMEOUT`](/docs/en/env-vars), 30 seconds by default, per connect attempt; the connection fails at that deadline |
 
 Servers loaded from [settings files](#from-a-config-file) such as `.mcp.json` or from plugins commonly show `pending` in the init message. When `options.mcpServers` holds a stdio, HTTP, or SSE server, the first turn waits for these pending servers too, up to `MCP_TIMEOUT`. When `options.mcpServers` is empty or holds only SDK servers, the first turn waits up to 2 seconds instead:
 

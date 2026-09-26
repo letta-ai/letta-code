@@ -196,8 +196,17 @@ When part of a payload fails schema validation, Claude Code surfaces a validatio
 
 Server-managed delivery adds these behaviors:
 
-* The cache at `~/.claude/remote-settings.json` stores the salvaged payload with invalid entries removed, apart from invalid `cleanupPeriodDays` and `desktopSessionCleanupPeriodDays` values, which stay in the cached copy and are never applied.
-* When no field in the payload can be salvaged and the payload isn't only those retention keys, Claude Code rejects the payload, keeps the last-accepted cached settings, and writes `Remote settings: Settings validation failed - no fields could be salvaged` to the debug log. With `forceRemoteSettingsRefresh` set, the CLI exits instead.
+* A startup that runs on the cache at `~/.claude/remote-settings.json` treats invalid entries the way the fetch that wrote the cache did:
+  * Entries that failed validation stay dropped.
+  * [Keys that fail closed](/docs/en/managed-settings#keys-that-fail-closed) keep their stricter values.
+  * An invalid `cleanupPeriodDays` or `desktopSessionCleanupPeriodDays` value stays in the cached copy and is never applied.
+* Claude Code applies nothing from a payload and leaves the cache unchanged when all three of these are true:
+
+  * Every setting in the payload fails validation.
+  * None of them falls back to a stricter value.
+  * The payload holds a key other than those two retention keys.
+
+  The startup notice, `/status`, and `claude doctor` then report the [failed load](/docs/en/errors#remote-managed-settings-failed-to-load) with the cause `no setting in the server response could be applied as written`, and that entry says which policy the session runs on. Clients that [enforce fail-closed startup](#enforce-fail-closed-startup) exit at startup instead.
 * The [security approval dialog](#security-approval-dialogs) evaluates the salvaged payload, so a stripped invalid entry is never presented for approval and never executes.
 
 To debug delivery issues, run `claude --debug-file <path>` and search the log for `Remote settings`. Validate a payload change with `claude doctor` on a test machine before rolling it out to the organization.

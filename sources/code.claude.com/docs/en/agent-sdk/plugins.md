@@ -313,7 +313,7 @@ plugins: [
 
 ### Plugin not loading
 
-If your plugin doesn't appear in the init message:
+If your plugin doesn't appear in the init message's `plugins` list, check its [`plugin_errors`](/docs/en/agent-sdk/typescript#sdksystemmessage) field for the reason, then work through these checks:
 
 1. **Check the path**: ensure the path points to the plugin root directory, the parent of `skills/`, `agents/`, `hooks/`, `commands/`, or `.claude-plugin/`
 2. **Validate plugin.json**: if your plugin includes a manifest, ensure it has valid JSON syntax
