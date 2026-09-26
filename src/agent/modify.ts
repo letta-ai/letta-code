@@ -883,6 +883,7 @@ export async function updateAgentSystemPromptMemfs(
       recordManagedSystemPrompt,
     } = await import("@/agent/system-prompt-versioning");
 
+    const backend = getBackend();
     const newMode = getMemoryPromptModeForAgent(agentId);
     const storedPreset = settingsManager.isReady
       ? settingsManager.getSystemPromptPreset(agentId)
@@ -891,13 +892,27 @@ export async function updateAgentSystemPromptMemfs(
       ? settingsManager.getSystemPromptHash(agentId)
       : undefined;
 
-    const agent = await getBackend().retrieveAgent(agentId);
-    // A null prompt is resolved by Cloud at compile time using the current
-    // memory mode. Never turn it into a pinned local variant on MemFS changes.
+    const agent = await backend.retrieveAgent(agentId);
+    // A null prompt follows the backend's current memory mode. Do not pin it.
     if (agent.system == null) {
       return {
         success: true,
         message: "Backend default system prompt follows memory mode",
+      };
+    }
+    const { reconcileCloudPromptForMemoryMode } = await import(
+      "@/agent/cloud-managed-system-prompt"
+    );
+    const cloudPromptResult = await reconcileCloudPromptForMemoryMode({
+      agent,
+      memoryMode: newMode,
+      storedPreset,
+      storedHash,
+    });
+    if (cloudPromptResult) {
+      return {
+        success: true,
+        message: cloudPromptResult,
       };
     }
 
@@ -937,7 +952,7 @@ export async function updateAgentSystemPromptMemfs(
       nextSystemPrompt = agent.system;
     }
 
-    await getBackend().updateAgent(agentId, {
+    await backend.updateAgent(agentId, {
       system: nextSystemPrompt,
     });
 

@@ -5,6 +5,7 @@ import { settingsManager } from "@/settings-manager";
 import { debugLog, debugWarn } from "@/utils/debug";
 import { getVersion } from "@/version";
 import { LETTA_CODE_ORIGIN_TAG, LETTA_CODE_SUBAGENT_TAG } from "./agent-tags";
+import { LEGACY_CLOUD_DEFAULT_PROMPT_HASHES } from "./legacy-default-system-prompt-hashes";
 import { resolveScopedMemoryDir } from "./memory-filesystem";
 import { detectMemoryFormat } from "./memory-format";
 import {
@@ -16,6 +17,16 @@ import {
 } from "./prompt-assets";
 
 const SYSTEM_PROMPT_HASH_PREFIX = "sha256:";
+export const CLOUD_MANAGED_PROMPT_PRESET = "cloud-managed";
+
+export function isCloudPromptBackend(): boolean {
+  const capabilities = getBackend().capabilities;
+  return (
+    capabilities.remoteMemfs &&
+    !capabilities.localMemfs &&
+    capabilities.environmentRouting
+  );
+}
 
 type ManagedPrompt = {
   preset: string;
@@ -28,6 +39,7 @@ type SystemPromptUpdateDecision =
   | { kind: "track"; prompt: ManagedPrompt }
   | { kind: "custom"; reason: string }
   | { kind: "clear"; reason: string }
+  | { kind: "inherit"; nextSystemPrompt: null; reason: string }
   | {
       kind: "update";
       nextSystemPrompt: string;
@@ -121,6 +133,22 @@ function findMatchingCurrentPreset(systemPrompt: string): string | undefined {
   return undefined;
 }
 
+function isBundledDefaultPrompt(systemPrompt: string): boolean {
+  const normalized = systemPrompt.trim();
+  const defaultPreset = SYSTEM_PROMPTS.find(
+    (preset) => preset.id === "default",
+  );
+  return (
+    (defaultPreset !== undefined &&
+      [
+        defaultPreset.content,
+        defaultPreset.memfsContent,
+        defaultPreset.rootMemfsContent,
+      ].some((content) => content?.trim() === normalized)) ||
+    LEGACY_CLOUD_DEFAULT_PROMPT_HASHES.has(hashSystemPrompt(normalized))
+  );
+}
+
 function isValidHash(hash: string | undefined): hash is string {
   return !!hash && hash.startsWith(SYSTEM_PROMPT_HASH_PREFIX);
 }
@@ -128,17 +156,62 @@ function isValidHash(hash: string | undefined): hash is string {
 export function decideManagedSystemPromptUpdate(input: {
   agent: AgentState;
   memoryMode: MemoryPromptMode;
+  isLettaCloud?: boolean;
+  preserveCloudSystemPrompt?: boolean;
   storedPreset?: string;
   storedHash?: string;
   storedVersion?: string;
 }): SystemPromptUpdateDecision {
-  const { agent, memoryMode, storedPreset, storedHash, storedVersion } = input;
+  const {
+    agent,
+    memoryMode,
+    isLettaCloud,
+    preserveCloudSystemPrompt,
+    storedPreset,
+    storedHash,
+    storedVersion,
+  } = input;
   if (agent.system == null) {
     return { kind: "noop", reason: "system prompt inherits backend default" };
+  }
+
+  if (storedPreset === CLOUD_MANAGED_PROMPT_PRESET) {
+    return {
+      kind: "custom",
+      reason: "an explicit prompt replaced the Cloud-managed default",
+    };
   }
   const currentSystemPrompt = agent.system ?? "";
   const currentHash = hashSystemPrompt(currentSystemPrompt);
   const currentVersion = getVersion();
+
+  if (isLettaCloud && preserveCloudSystemPrompt) {
+    return {
+      kind: "noop",
+      reason: "Cloud system prompt preservation requested",
+    };
+  }
+
+  // The Cloud default is maintained by the server. Match actual prompt content
+  // before trusting a stale local "custom" label, but never replace an edited
+  // prompt or an explicitly selected non-default preset (including SDK prompts).
+  if (
+    isLettaCloud &&
+    !(agent.tags ?? []).includes(LETTA_CODE_SUBAGENT_TAG) &&
+    (storedPreset === undefined ||
+      storedPreset === "default" ||
+      storedPreset === "custom") &&
+    (isBundledDefaultPrompt(currentSystemPrompt) ||
+      (storedPreset === "default" &&
+        isValidHash(storedHash) &&
+        currentHash === storedHash))
+  ) {
+    return {
+      kind: "inherit",
+      nextSystemPrompt: null,
+      reason: "stored prompt is a bundled Cloud default",
+    };
+  }
 
   if (storedPreset === "custom") {
     return { kind: "noop", reason: "system prompt is marked custom" };
@@ -279,10 +352,14 @@ export function scheduleManagedSystemPromptUpdate({
   if (!settingsManager.isReady) {
     return;
   }
+  const backend = getBackend();
 
   const decision = decideManagedSystemPromptUpdate({
     agent,
     memoryMode,
+    isLettaCloud: isCloudPromptBackend(),
+    preserveCloudSystemPrompt:
+      process.env.LETTA_CODE_PRESERVE_CLOUD_SYSTEM_PROMPT === "1",
     storedPreset: settingsManager.getSystemPromptPreset(agent.id),
     storedHash: settingsManager.getSystemPromptHash(agent.id),
     storedVersion: settingsManager.getSystemPromptVersion(agent.id),
@@ -314,16 +391,33 @@ export function scheduleManagedSystemPromptUpdate({
     return;
   }
 
-  void getBackend()
+  void backend
     .updateAgent(agent.id, {
       system: decision.nextSystemPrompt,
     })
-    .then(async () => {
-      settingsManager.setManagedSystemPrompt(agent.id, decision.prompt);
-      debugLog(
-        "startup",
-        `Updated managed system prompt ${decision.prompt.preset}@${decision.prompt.version}: ${decision.reason}`,
-      );
+    .then(async (updatedAgent) => {
+      if (decision.kind === "inherit") {
+        if (updatedAgent.system !== null) {
+          const persistedAgent = await backend.retrieveAgent(agent.id);
+          if (persistedAgent.system !== null) {
+            throw new Error("Cloud did not clear the stored system prompt");
+          }
+        }
+        settingsManager.setSystemPromptPreset(
+          agent.id,
+          CLOUD_MANAGED_PROMPT_PRESET,
+        );
+        debugLog(
+          "startup",
+          `Cloud now owns default system prompt: ${decision.reason}`,
+        );
+      } else {
+        settingsManager.setManagedSystemPrompt(agent.id, decision.prompt);
+        debugLog(
+          "startup",
+          `Updated managed system prompt ${decision.prompt.preset}@${decision.prompt.version}: ${decision.reason}`,
+        );
+      }
       if (onUpdated) {
         const updatedAgent = await getBackend().retrieveAgent(agent.id, {
           include: ["agent.tools", "agent.tags"],
