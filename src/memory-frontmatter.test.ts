@@ -10,7 +10,10 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { PRE_COMMIT_HOOK_SCRIPT } from "@/agent/memory-git-hooks";
+import {
+  buildPreCommitHookScript,
+  PRE_COMMIT_HOOK_SCRIPT,
+} from "@/agent/memory-git-hooks";
 import {
   type MemoryFileFrontmatterInput,
   validateMemoryFileFrontmatter,
@@ -272,7 +275,7 @@ test("Node bundle exports the validator and installs a self-contained hook", asy
   );
 });
 
-test("one Node process validates a hundred projected files and reports both ends of the batch", () => {
+test("one runtime process validates a hundred projected files and reports both ends of the batch", () => {
   root = mkdtempSync(join(tmpdir(), "memfs-frontmatter-batch-"));
   const env = {
     PATH: process.env.PATH,
@@ -300,24 +303,26 @@ test("one Node process validates a hundred projected files and reports both ends
     mode: 0o755,
   });
 
-  // Observe launches, then execute the real Node binary and the real hook.
-  const node = execFileSync("node", ["-p", "process.execPath"], {
-    encoding: "utf8",
-  }).trim();
+  // Observe launches through the same executable path that the hook now uses.
   const bin = join(root, "bin");
   mkdirSync(bin);
-  const launches = join(root, "node-launches");
+  const launches = join(root, "runtime-launches");
+  const runtime = join(bin, "letta-runtime");
   writeFileSync(
-    join(bin, "node"),
-    `#!/usr/bin/env bash\nprintf 'node\\n' >> ${JSON.stringify(launches)}\nexec ${JSON.stringify(node)} "$@"\n`,
+    runtime,
+    '#!/usr/bin/env bash\nprintf "runtime\\n" >> runtime-launches\nexec node "$@"\n',
     { mode: 0o755 },
   );
-  const observedEnv = { ...env, PATH: `${bin}:${env.PATH}` };
+  writeFileSync(
+    join(root, ".git/hooks/pre-commit"),
+    buildPreCommitHookScript({ execPath: runtime, electron: false }),
+    { mode: 0o755 },
+  );
   const commit = () =>
     spawnSync(
       "git",
       ["commit", "--allow-empty", "--quiet", "-m", "candidate"],
-      { cwd: root, env: observedEnv, encoding: "utf8", timeout: 15_000 },
+      { cwd: root, env, encoding: "utf8", timeout: 15_000 },
     );
   const accepted = commit();
   expect(accepted.status).toBe(0);

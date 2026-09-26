@@ -40,6 +40,7 @@ describe("MemFS hook runtime", () => {
       GIT_AUTHOR_EMAIL: "test@example.com",
       GIT_COMMITTER_NAME: "Test Agent",
       GIT_COMMITTER_EMAIL: "test@example.com",
+      MEMFS_TEST_RUNTIME_MARKER: "runtime-called",
     };
 
     try {
@@ -48,7 +49,7 @@ describe("MemFS hook runtime", () => {
       mkdirSync(shimDir);
       writeFileSync(
         runtime,
-        '#!/bin/sh\n[ "$ELECTRON_RUN_AS_NODE" = 1 ] || exit 91\nexec bun "$@"\n',
+        '#!/bin/sh\n[ "$ELECTRON_RUN_AS_NODE" = 1 ] || exit 91\nprintf "called\\n" >> "$MEMFS_TEST_RUNTIME_MARKER"\nexec bun "$@"\n',
         { mode: 0o755 },
       );
       writeFileSync(join(repo, "MEMORY.md"), "# Memory\n");
@@ -93,6 +94,9 @@ describe("MemFS hook runtime", () => {
       expect(invalid.stdout + invalid.stderr).toContain(
         "persona.md: missing frontmatter",
       );
+      expect(readFileSync(join(repo, "runtime-called"), "utf8")).toBe(
+        "called\n",
+      );
 
       writeFileSync(
         join(repo, "persona.md"),
@@ -108,6 +112,10 @@ describe("MemFS hook runtime", () => {
       expect(readFileSync(join(repo, "persona.md"), "utf8")).toContain(
         "Valid.",
       );
+      expect(
+        readFileSync(join(repo, "runtime-called"), "utf8").split("called\n")
+          .length,
+      ).toBeGreaterThanOrEqual(4);
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }
