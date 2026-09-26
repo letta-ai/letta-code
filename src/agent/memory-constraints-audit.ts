@@ -1,7 +1,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { MEMORY_CONSTRAINTS_VALIDATOR_SCRIPT } from "./memory-constraints";
 
 export interface MemoryConstraintsValidationResult {
@@ -9,9 +9,52 @@ export interface MemoryConstraintsValidationResult {
   output: string;
 }
 
-/** Validate the committed MemFS tree without changing its index or working tree. */
-export function validateMemoryConstraintsHead(
+export interface InvalidPendingMemory {
+  status: "invalid";
+  summary: string;
+  memoryDir: string;
+  localOnly: boolean;
+}
+
+type MemoryLayoutPolicy = "legacy-only" | "root-marker" | "shared-memory";
+
+function memoryLayoutPolicy(
   memoryDir: string,
+  revision: string,
+): MemoryLayoutPolicy {
+  try {
+    const commonDir = execFileSync("git", ["rev-parse", "--git-common-dir"], {
+      cwd: memoryDir,
+      encoding: "utf8",
+    }).trim();
+    const policy = readFileSync(
+      resolve(memoryDir, commonDir, "letta-memory-layout-policy"),
+      "utf8",
+    ).trim();
+    if (policy === "legacy-only" || policy === "shared-memory") return policy;
+    if (policy === "root-marker") {
+      const v2Started = execFileSync(
+        "git",
+        ["rev-list", "-n", "1", revision, "--", "MEMORY.md"],
+        { cwd: memoryDir, encoding: "utf8" },
+      ).trim();
+      return v2Started ? "root-marker" : "legacy-only";
+    }
+  } catch {
+    /* Repositories created outside the harness have no persistent policy. */
+  }
+  return spawnSync("git", ["cat-file", "-e", `${revision}:MEMORY.md`], {
+    cwd: memoryDir,
+    stdio: "ignore",
+  }).status === 0
+    ? "root-marker"
+    : "legacy-only";
+}
+
+/** Validate one committed MemFS tree without changing its index or working tree. */
+export function validateMemoryConstraintsRevision(
+  memoryDir: string,
+  revision: string,
 ): MemoryConstraintsValidationResult {
   const tempDir = mkdtempSync(join(tmpdir(), "letta-memory-audit-"));
   const indexPath = join(tempDir, "index");
@@ -19,25 +62,16 @@ export function validateMemoryConstraintsHead(
   const env = { ...process.env, GIT_INDEX_FILE: indexPath };
 
   try {
-    execFileSync("git", ["read-tree", "HEAD"], {
+    execFileSync("git", ["read-tree", revision], {
       cwd: memoryDir,
       env,
       stdio: ["ignore", "pipe", "pipe"],
     });
-    const hasRootMarker =
-      spawnSync("git", ["cat-file", "-e", "HEAD:MEMORY.md"], {
-        cwd: memoryDir,
-        stdio: "ignore",
-      }).status === 0;
+    const layoutPolicy = memoryLayoutPolicy(memoryDir, revision);
     writeFileSync(validatorPath, MEMORY_CONSTRAINTS_VALIDATOR_SCRIPT, "utf8");
     const result = spawnSync(
       "node",
-      [
-        validatorPath,
-        "--layout",
-        hasRootMarker ? "root-marker" : "legacy-only",
-        "--audit",
-      ],
+      [validatorPath, "--layout", layoutPolicy, "--audit", "--base", revision],
       {
         cwd: memoryDir,
         encoding: "utf8",
@@ -56,4 +90,36 @@ export function validateMemoryConstraintsHead(
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
+}
+
+/** Validate HEAD without changing its index or working tree. */
+export function validateMemoryConstraintsHead(
+  memoryDir: string,
+): MemoryConstraintsValidationResult {
+  return validateMemoryConstraintsRevision(memoryDir, "HEAD");
+}
+
+export function invalidPendingMemory(
+  memoryDir: string,
+  localOnly: boolean,
+): InvalidPendingMemory | null {
+  const revisions = execFileSync(
+    "git",
+    ["rev-list", "--reverse", "@{u}..HEAD"],
+    { cwd: memoryDir, encoding: "utf8" },
+  )
+    .trim()
+    .split("\n")
+    .filter(Boolean);
+  for (const revision of revisions) {
+    const validation = validateMemoryConstraintsRevision(memoryDir, revision);
+    if (!validation.valid)
+      return {
+        status: "invalid",
+        summary: `Commit ${revision.slice(0, 12)} fails memory validation:\n${validation.output}`,
+        memoryDir,
+        localOnly,
+      };
+  }
+  return null;
 }

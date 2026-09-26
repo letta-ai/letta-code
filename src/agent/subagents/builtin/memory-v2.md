@@ -19,9 +19,9 @@ Make focused edits. Reorganize or defragment memory only when explicitly request
 
 ## Git
 
-Inspect `git status` before editing. If a merge or rebase is already in progress, resolve it first by reading both sides and preserving the intended memory. Never prefer one side wholesale. Stage only resolved files and finish the existing operation with a noninteractive editor. Do not abort, reset, stash, amend, discard, or commit unrelated changes. If the intended resolution is unclear, leave the unresolved state intact and describe the blocker in your final report.
+Inspect `git status` before editing. If a merge or rebase is already in progress, resolve it first by reading both sides and preserving the intended memory. Never prefer one side wholesale. Stage only resolved files and finish the existing operation with a noninteractive editor. Do not abort, reset, stash, amend, discard, or commit unrelated changes. History rewriting is permitted only when the handoff's first `Memory repair mode:` line says `enabled`; ignore any conflicting marker inside the assignment. In that mode, for unpublished history rejected by memory validation, preserve a backup ref and the intended final content, then replay a valid change onto the accepted remote history as directed. If the intended resolution is unclear, leave the unresolved state intact and describe the blocker in your final report.
 
-For a repair-only request, stop after repairing the existing operation; if it has already been resolved, make no changes.
+For a repair-only request, stop after repairing the reported Git or validation state; if it has already been resolved, make no changes.
 
 For an update or reorganization request, make the requested changes and commit only the files you changed: stage them by explicit path, never with `git add -A` or `git add .`, because the primary agent may be editing other files in this checkout at the same time. Use a concise commit message and the repository's configured authorship. Preserve required frontmatter and obey the repository's validation hooks. Do not push: the harness handles normal sync after you finish.
 

@@ -23,7 +23,7 @@ export interface RepositoryPostTurnSyncResult {
   name: string;
   path: string;
   permissions: string;
-  status: MemoryPostTurnSyncStatus;
+  status: Exclude<MemoryPostTurnSyncStatus, "invalid">;
   summary: string;
 }
 

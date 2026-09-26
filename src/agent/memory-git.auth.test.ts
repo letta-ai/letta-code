@@ -713,6 +713,114 @@ describe("syncPendingMemoryCommitsAfterTurn", () => {
     ).toBe(localSha);
   });
 
+  test("validates the combined memory tree after rebasing concurrent commits", async () => {
+    const remote = makeBareGitRepo();
+    const repo = makeGitRepo();
+    git(repo, "config user.name Test");
+    git(repo, "config user.email test@example.com");
+    git(repo, `remote add origin ${remote}`);
+    writeFileSync(join(repo, "MEMORY.md"), "# Memory\n");
+    writeFileSync(
+      join(repo, ".memfs.config.json"),
+      `${JSON.stringify({ version: 1, maxCoreMemoryCharacters: 12 })}\n`,
+    );
+    git(repo, "add MEMORY.md .memfs.config.json");
+    git(repo, "commit -m initial-memory");
+    git(repo, "push -u origin main");
+
+    commitFile(repo, "local.md", "l\n");
+    const other = cloneRepo(remote);
+    const remoteSha = commitFile(other, "remote.md", "r\n");
+    git(other, "push origin main");
+    process.env.LETTA_API_KEY = "test-token";
+    __testOverrideGetClient(async () => ({ apiKey: "test-token" }));
+
+    const result = await syncPendingMemoryCommitsAfterTurn("agent-123", {
+      memoryDir: repo,
+    });
+
+    expect(result.status).toBe("invalid");
+    expect(result.summary).toContain(
+      "core memory: 13 characters exceeds 12 from maxCoreMemoryCharacters",
+    );
+    expect(git(repo, "rev-list --count @{u}..HEAD").trim()).toBe("1");
+    expect(
+      execSync(`git --git-dir ${remote} rev-parse main`, {
+        encoding: "utf-8",
+      }).trim(),
+    ).toBe(remoteSha);
+  });
+
+  test("does not push an invalid committed memory tree", async () => {
+    const remote = makeBareGitRepo();
+    const repo = makeGitRepo();
+    git(repo, "config user.name Test");
+    git(repo, "config user.email test@example.com");
+    git(repo, `remote add origin ${remote}`);
+    writeFileSync(join(repo, "MEMORY.md"), "# Memory\n");
+    writeFileSync(
+      join(repo, ".memfs.config.json"),
+      `${JSON.stringify({ version: 1, maxCoreMemoryCharacters: 10 })}\n`,
+    );
+    git(repo, "add MEMORY.md .memfs.config.json");
+    git(repo, "commit -m initial-memory");
+    git(repo, "push -u origin main");
+    const remoteSha = git(repo, "rev-parse origin/main").trim();
+    commitFile(repo, "local.md", "l\n");
+    process.env.LETTA_API_KEY = "test-token";
+    __testOverrideGetClient(async () => ({ apiKey: "test-token" }));
+
+    const result = await syncPendingMemoryCommitsAfterTurn("agent-123", {
+      memoryDir: repo,
+    });
+
+    expect(result.status).toBe("invalid");
+    expect(result.summary).toContain(
+      "core memory: 11 characters exceeds 10 from maxCoreMemoryCharacters",
+    );
+    expect(
+      execSync(`git --git-dir ${remote} rev-parse main`, {
+        encoding: "utf-8",
+      }).trim(),
+    ).toBe(remoteSha);
+  });
+
+  test("rejects an invalid unpublished ancestor even when HEAD is valid", async () => {
+    const remote = makeBareGitRepo();
+    const repo = makeGitRepo();
+    git(repo, "config user.name Test");
+    git(repo, "config user.email test@example.com");
+    git(repo, `remote add origin ${remote}`);
+    writeFileSync(join(repo, "MEMORY.md"), "# Memory\n");
+    writeFileSync(
+      join(repo, ".memfs.config.json"),
+      `${JSON.stringify({ version: 1, maxCoreMemoryCharacters: 10 })}\n`,
+    );
+    git(repo, "add MEMORY.md .memfs.config.json");
+    git(repo, "commit -m initial-memory");
+    git(repo, "push -u origin main");
+    const remoteSha = git(repo, "rev-parse origin/main").trim();
+    const invalidSha = commitFile(repo, "local.md", "l\n");
+    commitFile(repo, "MEMORY.md", "# M\n");
+    process.env.LETTA_API_KEY = "test-token";
+    __testOverrideGetClient(async () => ({ apiKey: "test-token" }));
+
+    const result = await syncPendingMemoryCommitsAfterTurn("agent-123", {
+      memoryDir: repo,
+    });
+
+    expect(result.status).toBe("invalid");
+    expect(result.summary).toContain(`Commit ${invalidSha.slice(0, 12)}`);
+    expect(result.summary).toContain(
+      "core memory: 11 characters exceeds 10 from maxCoreMemoryCharacters",
+    );
+    expect(
+      execSync(`git --git-dir ${remote} rev-parse main`, {
+        encoding: "utf-8",
+      }).trim(),
+    ).toBe(remoteSha);
+  });
+
   test("returns a dirty reminder state without pushing", async () => {
     const { repo } = makeSyncedRepo();
     writeFileSync(join(repo, "dirty.md"), "dirty", "utf-8");

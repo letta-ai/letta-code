@@ -157,7 +157,8 @@ async function settle(
     if (!SYNCED_STATUSES.has(syncResult.status)) {
       syncError = syncSummary(syncResult);
       debugWarn("memory-worker", syncError);
-      if (syncResult.status === "conflict") await repair?.(syncResult);
+      if (syncResult.status === "conflict" || syncResult.status === "invalid")
+        await repair?.(syncResult);
     }
   } catch (error) {
     syncError = `Memory sync failed: ${String(error)}`;
@@ -233,7 +234,7 @@ async function runRepair(
   // attempt is forgotten: the same operation, if aborted and retried, gets a
   // fresh repair rather than being suppressed while this process lives.
   const state = await helpers.sync();
-  if (state.status !== "conflict") {
+  if (state.status !== "conflict" && state.status !== "invalid") {
     await clearMemoryConflictRepair(params.memoryDir, token);
     if (state.status === "pushed") helpers.onMemoryChanged?.();
     // No worker ran, so there is no worker identity to report.
