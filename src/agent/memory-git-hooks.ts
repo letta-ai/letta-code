@@ -34,12 +34,39 @@ type MemoryLayoutPolicy = "legacy-only" | "root-marker" | "shared-memory";
  * - read_only may exist (from server) but agent must not change it
  * - Optional file-size and depth constraints come from .memfs.config.json
  */
-export const PRE_COMMIT_HOOK_SCRIPT = `#!/usr/bin/env bash
+export function buildPreCommitHookScript(
+  options: {
+    execPath?: string;
+    electron?: boolean;
+    platform?: NodeJS.Platform;
+  } = {},
+): string {
+  const execPath = options.execPath ?? process.execPath;
+  const platform = options.platform ?? process.platform;
+  // Git for Windows executes hooks with Bash, which resolves /c/... rather
+  // than the native C:\... path returned by process.execPath.
+  const bashPath =
+    platform === "win32"
+      ? execPath
+          .replaceAll("\\", "/")
+          .replace(
+            /^([A-Za-z]):\//,
+            (_match, drive: string) => `/${drive.toLowerCase()}/`,
+          )
+      : execPath;
+  const quotedPath = `'${bashPath.replaceAll("'", `'"'"'`)}'`;
+  const electron = options.electron ?? Boolean(process.versions.electron);
+
+  return `#!/usr/bin/env bash
 # Validate frontmatter in staged memory .md files
 # Installed by Letta Code CLI
 
 errors=""
 memory_files=()
+
+run_memory_node() {
+  ${electron ? "ELECTRON_RUN_AS_NODE=1 " : ""}${quotedPath} "$@"
+}
 
 memory_layout_policy_file="$(git rev-parse --git-common-dir 2>/dev/null)/${MEMORY_LAYOUT_POLICY}"
 memory_layout_policy=$(cat "$memory_layout_policy_file" 2>/dev/null || true)
@@ -50,14 +77,14 @@ validate_memory_constraints() {
          git cat-file -e "HEAD:MEMORY.md" 2>/dev/null; }; } || \
      git cat-file -e ":${MEMORY_CONSTRAINTS_CONFIG_PATH}" 2>/dev/null || \
      git cat-file -e "HEAD:${MEMORY_CONSTRAINTS_CONFIG_PATH}" 2>/dev/null; then
-    node "$(git rev-parse --git-common-dir)/hooks/${MEMORY_CONSTRAINTS_VALIDATOR_NAME}" || exit $?
+    run_memory_node "$(git rev-parse --git-common-dir)/hooks/${MEMORY_CONSTRAINTS_VALIDATOR_NAME}" || exit $?
   fi
 }
 
 validate_memory_files() {
   [ "\${#memory_files[@]}" -eq 0 ] && return
   local result
-  result=$(node - "$1" "\${memory_files[@]}" <<'LETTA_MEMORY_FRONTMATTER'
+  result=$(run_memory_node - "$1" "\${memory_files[@]}" <<'LETTA_MEMORY_FRONTMATTER'
 const { execFileSync, spawnSync } = require("node:child_process");
 const validateMemoryFileFrontmatter = ${validateMemoryFileFrontmatter.toString()};
 const [format, ...paths] = process.argv.slice(2);
@@ -156,6 +183,9 @@ if [ -n "$errors" ]; then
 fi
 validate_memory_constraints
 `;
+}
+
+export const PRE_COMMIT_HOOK_SCRIPT = buildPreCommitHookScript();
 
 /**
  * Install the pre-commit hook for frontmatter validation.
