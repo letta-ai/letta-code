@@ -119,7 +119,7 @@ def ensure_local_gitignored(working_directory: str) -> None:
                     f.write("\n")
                 f.write(f"{pattern}\n")
             print(f"Added {pattern} to .gitignore")
-    except Exception as e:
+    except (OSError, UnicodeError) as e:
         print(f"Warning: Could not update .gitignore: {e}", file=sys.stderr)
 
 
