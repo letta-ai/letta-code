@@ -355,9 +355,11 @@ Claude responds to the command output automatically once it lands in the transcr
 
 ## Queue messages while Claude works
 
-Type a message and press `Enter` while Claude is working. Claude Code queues the message instead of interrupting the turn, and lists the queued entries above the input box until it sends them. You can queue `!` [shell commands](#shell-mode-with-prefix) and most [commands](/docs/en/commands) the same way, apart from the commands, such as `/status`, that Claude Code runs as soon as you send them.
+Type a message and press `Enter` while Claude is working. Claude Code queues the message instead of interrupting the turn, and lists the queued entries in the conversation until it sends them. You can queue `!` [shell commands](#shell-mode-with-prefix) and most [commands](/docs/en/commands) the same way, apart from the commands, such as `/status`, that Claude Code runs as soon as you send them.
 
 Sent and queued messages show in gray until Claude starts responding to them, so you can tell which messages Claude hasn't started on yet.
+
+If you queue a message with a selection attached from a [connected IDE](/docs/en/vs-code#the-built-in-ide-mcp-server) or the [diff panel](#diff-panel), it keeps the selection you had when you pressed `Enter`, whatever you select afterward.
 
 ### When Claude Code sends what you queued
 

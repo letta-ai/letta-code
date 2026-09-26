@@ -1109,7 +1109,7 @@ PermissionMode = Literal[
     "plan",  # Planning mode - explore without editing
     "dontAsk",  # Deny anything not pre-approved instead of prompting
     "bypassPermissions",  # Bypass permission checks; explicit ask rules still prompt (use with caution)
-    "auto",  # Model classifier approves or denies permission prompts
+    "auto",  # A model classifier reviews actions such as shell commands and network requests
 ]
 ```
 

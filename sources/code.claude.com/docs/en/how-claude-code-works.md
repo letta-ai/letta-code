@@ -201,7 +201,7 @@ When the first attempt isn't right, you don't start over. You iterate.
 You can redirect Claude at any point without starting over. Do either of these:
 
 * **Press `Esc`** to stop Claude immediately. The running tool call is canceled and Claude waits for your next instruction. If you have messages queued, Claude Code [sends them next](/docs/en/interactive-mode#queue-messages-while-claude-works).
-* **Type a correction and press `Enter`** without stopping Claude. The message shows as queued above the input box. If Claude is running tool calls, it reads the message as soon as those calls finish, within the same turn, and adjusts before its next step. [Queue messages while Claude works](/docs/en/interactive-mode#queue-messages-while-claude-works) covers when other queued entries are sent.
+* **Type a correction and press `Enter`** without stopping Claude. The message shows as queued in the conversation. If Claude is running tool calls, it reads the message as soon as those calls finish, within the same turn, and adjusts before its next step. [Queue messages while Claude works](/docs/en/interactive-mode#queue-messages-while-claude-works) covers when other queued entries are sent.
 
 ### Delegate, don't dictate
 
