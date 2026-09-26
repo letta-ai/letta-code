@@ -3,9 +3,26 @@ import { execFileSync } from "node:child_process";
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  ensureRootMemoryBlockOnLocalCreateBody,
+  initialMemoryFilesFromCreateBody,
+} from "@/backend/local/initial-memory";
 import { LocalBackend } from "@/backend/local/local-backend";
 
 describe("fresh local agent memory layout", () => {
+  test("rejects labels that collapse onto the same root path", () => {
+    const body = ensureRootMemoryBlockOnLocalCreateBody({
+      memory_blocks: [
+        { label: "profile/details", value: "nested" },
+        { label: "profile_details", value: "flat" },
+      ],
+    } as never);
+
+    expect(() => initialMemoryFilesFromCreateBody(body)).toThrow(
+      "Initial memory path collision at profile_details.md",
+    );
+  });
+
   test("creates and compiles the canonical root MemFS layout", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-root-memfs-"));
     try {

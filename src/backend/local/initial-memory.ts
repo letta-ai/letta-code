@@ -125,10 +125,8 @@ export function initialMemoryFilesFromCreateBody(
         path.toLocaleLowerCase("en-US") ===
         file.relativePath.toLocaleLowerCase("en-US"),
     );
-    if (collision && collision !== file.relativePath) {
-      throw new Error(
-        `Initial memory path collision: ${collision} and ${file.relativePath}`,
-      );
+    if (collision) {
+      throw new Error(`Initial memory path collision at ${file.relativePath}`);
     }
     files.set(file.relativePath, file);
   }
