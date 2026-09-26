@@ -17,6 +17,7 @@ import { normalizeReasoningEffortForModel } from "@/utils/openai-reasoning-effor
 import { isRecord } from "@/utils/type-guards";
 import { getModelContextWindow } from "./available-models";
 import { getModelInfo, type ModelReasoningSelection } from "./model";
+import { withReasoningSettings } from "./reasoning-model-settings";
 
 type ModelSettings =
   | OpenAIModelSettings
@@ -361,6 +362,11 @@ export interface UpdateLLMConfigOptions {
    * window (LET-9786).
    */
   contextWindowOverride?: number;
+  /**
+   * Reasoning-only changes: the current model_settings to re-send, with only
+   * the reasoning fields from updateArgs applied (withReasoningSettings).
+   */
+  currentModelSettings?: object;
 }
 
 /**
@@ -437,11 +443,14 @@ export async function updateAgentLLMConfig(
   const backend = getBackend();
   const useBackendModelCatalog = backend.capabilities.localModelCatalog;
 
-  const modelSettings = buildModelSettings(
+  const rebuiltSettings = buildModelSettings(
     modelHandle,
     updateArgsForModelSettings(updateArgs, { useBackendModelCatalog }),
     useBackendModelCatalog,
   );
+  const modelSettings = options?.currentModelSettings
+    ? withReasoningSettings(options.currentModelSettings, rebuiltSettings)
+    : rebuiltSettings;
   const contextWindow = await resolveContextWindowForUpdate({
     modelHandle,
     updateArgs,
@@ -493,11 +502,14 @@ export async function updateConversationLLMConfig(
   const backend = getBackend();
   const useBackendModelCatalog = backend.capabilities.localModelCatalog;
 
-  const modelSettings = buildModelSettings(
+  const rebuiltSettings = buildModelSettings(
     modelHandle,
     updateArgsForModelSettings(updateArgs, { useBackendModelCatalog }),
     useBackendModelCatalog,
   );
+  const modelSettings = options?.currentModelSettings
+    ? withReasoningSettings(options.currentModelSettings, rebuiltSettings)
+    : rebuiltSettings;
   const contextWindow = await resolveContextWindowForUpdate({
     modelHandle,
     updateArgs,
