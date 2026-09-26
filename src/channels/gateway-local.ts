@@ -522,6 +522,7 @@ export async function startLocalChannelGateway(
     },
   };
 
+  registry.setRuntimeBusyHandler((runtime) => gateway.isRuntimeBusy(runtime));
   registry.setCancelHandler(async ({ runtime }) => {
     const result = await runChannelCancelCommand({
       client: runtimeCommandClient,

@@ -129,6 +129,7 @@ type GatewayRuntimeState = {
   routedSources: ChannelTurnSource[];
   replayedControlRequestIds: Set<string>;
   submissionQueue: Promise<void>;
+  pendingSubmissions: number;
   hookQueue: Promise<void> | null;
   acceptedClientMessageIds: Set<string>;
   modelStatus: ChannelGatewayModelStatus | null;
@@ -181,9 +182,8 @@ function lifecycleOutcome(
 export class ChannelGateway {
   private readonly states = new Map<string, GatewayRuntimeState>();
   private readonly disposers: Array<() => void> = [];
-  // Tool publication and runtime_start both replace the same connection-owned
-  // registration. Keep them ordered so a late runtime_start cannot resurrect a
-  // route that an overlapping route-removal update just revoked.
+  // Serialize tool publication and runtime_start (same connection registration)
+  // so overlapping updates cannot resurrect removed routes.
   private registrationQueue = Promise.resolve();
 
   constructor(
@@ -198,8 +198,7 @@ export class ChannelGateway {
           : undefined;
         const active = state?.active;
         const sources = active?.routingSources ?? state?.routedSources ?? [];
-        // Pass the per-turn idempotency scope only when a turn is active;
-        // process-owned calls (no active batch) are not deduped.
+        // Only active turns have idempotency scopes; process calls are not deduped.
         return hooks.executeExternalTool(
           request,
           sources,
@@ -217,6 +216,7 @@ export class ChannelGateway {
 
   async submit(delivery: ChannelGatewayDelivery): Promise<boolean> {
     const state = this.getState(delivery.runtime);
+    state.pendingSubmissions++;
     const submission = state.submissionQueue.then(() =>
       this.submitDelivery(state, delivery),
     );
@@ -224,7 +224,7 @@ export class ChannelGateway {
       () => undefined,
       () => undefined,
     );
-    return submission;
+    return submission.finally(() => state.pendingSubmissions--);
   }
 
   private async submitDelivery(
@@ -568,6 +568,15 @@ export class ChannelGateway {
     this.getState(runtime).routedSources = uniqueRoutedSources(sources);
   }
 
+  isRuntimeBusy(runtime: RuntimeScope): boolean {
+    const state = this.states.get(runtimeKey(runtime));
+    return Boolean(
+      state?.active ||
+        state?.pendingSubmissions ||
+        state?.pendingSourcesByClientMessageId.size,
+    );
+  }
+
   getKnownRuntimes(): RuntimeScope[] {
     return [...this.states.values()].map((state) => state.runtime);
   }
@@ -621,6 +630,7 @@ export class ChannelGateway {
         routedSources: [],
         replayedControlRequestIds: new Set(),
         submissionQueue: Promise.resolve(),
+        pendingSubmissions: 0,
         hookQueue: null,
         acceptedClientMessageIds: new Set(),
         modelStatus: null,

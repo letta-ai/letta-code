@@ -4,10 +4,54 @@ import {
   FakeClient,
   makeDelivery,
   makeHooks,
+  makeQueueUpdate,
   makeStreamDelta,
   makeTurnFinished,
   TEST_RUNTIME,
 } from "./gateway-test-support";
+
+test("runtime stays busy from synchronous submission until terminal completion", async () => {
+  const client = new FakeClient();
+  const gateway = new ChannelGateway(client, makeHooks().hooks);
+  expect(gateway.isRuntimeBusy(TEST_RUNTIME)).toBe(false);
+  const submission = gateway.submit(makeDelivery());
+  // Even before the submission queue microtask runs, /new must not rotate it.
+  expect(gateway.isRuntimeBusy(TEST_RUNTIME)).toBe(true);
+  await submission;
+  expect(gateway.isRuntimeBusy(TEST_RUNTIME)).toBe(true);
+  expect(
+    gateway.isRuntimeBusy({ ...TEST_RUNTIME, conversation_id: "other" }),
+  ).toBe(false);
+  client.emit(
+    makeStreamDelta({ message_type: "stop_reason", stop_reason: "end_turn" }),
+  );
+  expect(gateway.isRuntimeBusy(TEST_RUNTIME)).toBe(true);
+  client.emit(makeTurnFinished("end_turn"));
+  expect(gateway.isRuntimeBusy(TEST_RUNTIME)).toBe(false);
+  gateway.close();
+});
+
+test("queued work blocks reset even without an active turn", async () => {
+  const client = new FakeClient({ inputResponse: { disposition: "queued" } });
+  const gateway = new ChannelGateway(client, makeHooks().hooks);
+  await gateway.submit(makeDelivery());
+  expect(gateway.isRuntimeBusy(TEST_RUNTIME)).toBe(true);
+  client.emit(
+    makeQueueUpdate([], TEST_RUNTIME, [
+      { client_message_id: "cm-test-1", disposition: "cancelled" },
+    ]),
+  );
+  expect(gateway.isRuntimeBusy(TEST_RUNTIME)).toBe(false);
+  gateway.close();
+});
+
+test("rejected submissions do not leave the runtime permanently busy", async () => {
+  const client = new FakeClient({ inputResponse: { accepted: false } });
+  const gateway = new ChannelGateway(client, makeHooks().hooks);
+  expect(await gateway.submit(makeDelivery())).toBe(false);
+  expect(gateway.isRuntimeBusy(TEST_RUNTIME)).toBe(false);
+  gateway.close();
+});
 
 test("stream stop reason waits for turn_finished error detail", async () => {
   const client = new FakeClient();

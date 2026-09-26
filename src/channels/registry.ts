@@ -40,6 +40,7 @@ import type {
   ChannelModelHandler,
   ChannelReflectionHandler,
   ChannelReloadHandler,
+  ChannelRuntimeBusyHandler,
 } from "./registry-handlers";
 import {
   type ChannelInboundRouter,
@@ -164,6 +165,7 @@ export class ChannelRegistry {
   private eventHandler: ((event: ChannelRegistryEvent) => void) | null = null;
   private approvalResponseHandler: ChannelApprovalResponseHandler | null = null;
   private cancelHandler: ChannelCancelHandler | null = null;
+  private runtimeBusyHandler: ChannelRuntimeBusyHandler | null = null;
   private reflectionHandler: ChannelReflectionHandler | null = null;
   private modelHandler: ChannelModelHandler | null = null;
   private reloadHandler: ChannelReloadHandler | null = null;
@@ -195,6 +197,8 @@ export class ChannelRegistry {
       getRoute: (channel, chatId, accountId, threadId) =>
         this.getRoute(channel, chatId, accountId, threadId),
       getCancelHandler: () => this.cancelHandler,
+      getRuntimeBusyHandler: () =>
+        this.ready ? this.runtimeBusyHandler : null,
       getReflectionHandler: () => this.reflectionHandler,
       getReloadHandler: () => this.reloadHandler,
       getModelHandler: () => this.modelHandler,
@@ -429,6 +433,20 @@ export class ChannelRegistry {
     handler: ChannelApprovalResponseHandler | null,
   ): void {
     this.approvalResponseHandler = handler;
+  }
+
+  setRuntimeBusyHandler(handler: ChannelRuntimeBusyHandler | null): void {
+    this.runtimeBusyHandler = handler
+      ? (runtime) =>
+          handler(runtime) ||
+          this.controls
+            .getAll()
+            .some(
+              ({ event }) =>
+                event.source.agentId === runtime.agent_id &&
+                event.source.conversationId === runtime.conversation_id,
+            )
+      : null;
   }
 
   setCancelHandler(handler: ChannelCancelHandler | null): void {
@@ -688,6 +706,7 @@ export class ChannelRegistry {
     this.eventHandler = null;
     this.approvalResponseHandler = null;
     this.cancelHandler = null;
+    this.runtimeBusyHandler = null;
     this.reflectionHandler = null;
     this.modelHandler = null;
     this.reloadHandler = null;
@@ -708,6 +727,7 @@ export class ChannelRegistry {
     this.eventHandler = null;
     this.approvalResponseHandler = null;
     this.cancelHandler = null;
+    this.runtimeBusyHandler = null;
     this.reflectionHandler = null;
     this.modelHandler = null;
     this.reloadHandler = null;

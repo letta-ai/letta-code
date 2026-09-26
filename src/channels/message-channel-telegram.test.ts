@@ -122,6 +122,79 @@ describe("MessageChannel Telegram", () => {
     });
   });
 
+  test("route replacement rejects old-scope sends but does not recall an in-flight reply", async () => {
+    installChannelStateTestOverrides();
+    const registry = new ChannelRegistry();
+    upsertTelegramTestAccount({ richPrivateChatDefault: false });
+    let releaseSend!: () => void;
+    let notifySending!: () => void;
+    const sending = new Promise<void>((resolve) => {
+      notifySending = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      releaseSend = resolve;
+    });
+    const sendMessage = mock(async () => {
+      notifySending();
+      await release;
+      return { messageId: "old-in-flight" };
+    });
+    registry.registerAdapter({
+      id: "telegram:account-1",
+      channelId: "telegram",
+      accountId: "account-1",
+      name: "Telegram",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage,
+      sendDirectReply: async () => {},
+    });
+    const route = {
+      accountId: "account-1",
+      chatId: "7952253975",
+      chatType: "direct" as const,
+      agentId: "agent-1",
+      conversationId: "conv-old",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+    };
+    setRouteInMemory("telegram", route);
+    const args = {
+      action: "send",
+      channel: "telegram",
+      chat_id: route.chatId,
+      accountId: route.accountId,
+      message: "old reply",
+      parentScope: {
+        agentId: route.agentId,
+        conversationId: route.conversationId,
+      },
+    };
+    const oldReply = message_channel(args);
+    await sending;
+    // This is the route-pointer change performed by /new. A Desktop/API turn
+    // keeps its original execution scope; it is neither moved nor cancelled.
+    setRouteInMemory("telegram", { ...route, conversationId: "conv-new" });
+    try {
+      expect(
+        await message_channel({ ...args, message: "later old reply" }),
+      ).toContain("No route");
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+    } finally {
+      releaseSend();
+    }
+    expect(await oldReply).toContain("Message sent to telegram");
+    expect(
+      await message_channel({
+        ...args,
+        message: "new reply",
+        parentScope: { agentId: route.agentId, conversationId: "conv-new" },
+      }),
+    ).toContain("Message sent to telegram");
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+  });
+
   test("suppresses an adjacent repeated Telegram text delivery", async () => {
     installChannelStateTestOverrides();
     const registry = new ChannelRegistry();
