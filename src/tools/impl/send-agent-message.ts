@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { actingUserRequestOptions } from "@/agent/acting-user";
 import {
   resolveChildSubagent,
   trackChildSend,
@@ -17,6 +18,7 @@ import {
 import { ApiRequestError } from "@/backend/api/request";
 import {
   getCurrentWorkingDirectory,
+  getRuntimeActingUserId,
   getRuntimeContext,
 } from "@/runtime-context";
 import { sendClaudeMessage } from "./claude-stream-session";
@@ -195,7 +197,7 @@ export async function send_agent_message(
       throw new Error("SendAgentMessage requires a Cloud backend.");
     }
     const computer = normalizeAgentMessageComputer(args.computer);
-    const actingUserId = context?.actingUserId;
+    const actingUserId = getRuntimeActingUserId();
     if (!actingUserId) {
       console.info(
         "[SendAgentMessage] Sending without X-Letta-Acting-User-Id",
@@ -229,6 +231,7 @@ export async function send_agent_message(
       backend,
       destination.agentId,
       sender.agentId,
+      actingUserRequestOptions(actingUserId),
     );
     signal.throwIfAborted();
     submissionAttempted = true;

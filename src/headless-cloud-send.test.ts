@@ -97,7 +97,10 @@ function fixture() {
     }),
   } as unknown as Backend;
   const deps = {
-    env: { AGENT_ID: "agent-parent", CONVERSATION_ID: "conv-parent" },
+    env: {
+      AGENT_ID: "agent-parent",
+      CONVERSATION_ID: "conv-parent",
+    } as NodeJS.ProcessEnv,
     writeStdout: async (text: string) => {
       stdout.push(text);
     },
@@ -121,6 +124,49 @@ function fixture() {
   };
   return { backend, deps, stdout, stderr, submissions };
 }
+
+test.each([
+  { destination: ["--conversation", "conv-target"], create: false },
+  { destination: ["--agent", "agent-target"], create: true },
+])(
+  "headless send carries inherited actor through destination and enqueue: $destination",
+  async ({ destination, create }) => {
+    const f = fixture();
+    f.deps.env.LETTA_ACTING_USER_ID = "user-inherited";
+    const options: unknown[] = [];
+    f.backend.retrieveConversation = async (_id, requestOptions) => {
+      options.push(requestOptions);
+      return { id: "conv-target", agent_id: "agent-target" } as Awaited<
+        ReturnType<Backend["retrieveConversation"]>
+      >;
+    };
+    f.backend.createConversation = async (_body, requestOptions) => {
+      options.push(requestOptions);
+      return { id: "conv-new" } as Awaited<
+        ReturnType<Backend["createConversation"]>
+      >;
+    };
+    expect(
+      await tryCloudHeadlessSend(
+        flags(...destination, "--no-wait"),
+        "Continue",
+        f.backend,
+        false,
+        f.deps,
+      ),
+    ).toBe(0);
+    expect(options).toEqual([
+      expect.objectContaining({
+        headers: { "X-Letta-Acting-User-Id": "user-inherited" },
+      }),
+    ]);
+    expect(f.submissions).toHaveLength(1);
+    expect(f.submissions[0]?.actingUserId).toBe("user-inherited");
+    expect(f.submissions[0]?.conversationId).toBe(
+      create ? "conv-new" : "conv-target",
+    );
+  },
+);
 
 test.each(["text", "json", "stream-json"])(
   "no-wait %s exits on HTTP acceptance with a receipt and recovery commands",

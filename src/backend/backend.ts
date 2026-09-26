@@ -66,6 +66,7 @@ export type RunRetrieveOptions = RunRetrieveParams[1];
 
 export type AgentRetrieveParams = Parameters<APIClient["agents"]["retrieve"]>;
 export type AgentRetrieveOptions = AgentRetrieveParams[1];
+export type AgentRetrieveRequestOptions = AgentRetrieveParams[2];
 
 export type AgentListParams = Parameters<APIClient["agents"]["list"]>;
 export type AgentListBody = AgentListParams[0];
@@ -193,6 +194,7 @@ export interface Backend {
   retrieveAgent(
     agentId: string,
     options?: AgentRetrieveOptions,
+    requestOptions?: AgentRetrieveRequestOptions,
   ): Promise<Awaited<ReturnType<APIClient["agents"]["retrieve"]>>>;
 
   listAgents(
@@ -389,10 +391,16 @@ export class APIBackend implements Backend {
     return resolveClient();
   }
 
-  async retrieveAgent(agentId: string, options?: AgentRetrieveOptions) {
+  async retrieveAgent(
+    agentId: string,
+    options?: AgentRetrieveOptions,
+    requestOptions?: AgentRetrieveRequestOptions,
+  ) {
     const client = await this.getClient();
-    if (options !== undefined) {
-      return client.agents.retrieve(agentId, options);
+    if (options !== undefined || requestOptions !== undefined) {
+      return requestOptions === undefined
+        ? client.agents.retrieve(agentId, options)
+        : client.agents.retrieve(agentId, options, requestOptions);
     }
 
     const inflight = this.retrieveAgentInflightByKey.get(agentId);

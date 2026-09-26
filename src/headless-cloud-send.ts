@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { resolveActingUserId } from "@/agent/acting-user";
 import type { Backend } from "@/backend";
 import {
   buildAgentSendContent,
@@ -131,6 +132,7 @@ export async function tryCloudHeadlessSend(
     return undefined;
   }
   const env = deps.env ?? process.env;
+  const actingUserId = resolveActingUserId(undefined, undefined, env);
   const format = values["output-format"] ?? "text";
   const noWait = Boolean(values["no-wait"]);
   const started = Date.now();
@@ -217,6 +219,7 @@ export async function tryCloudHeadlessSend(
         agentId,
         conversationId,
         senderAgentId: sender.agentId,
+        actingUserId,
         currentConversation: {
           agentId: ambientSender,
           conversationId: env.CONVERSATION_ID || env.LETTA_CONVERSATION_ID,
@@ -252,6 +255,7 @@ export async function tryCloudHeadlessSend(
         clientMessageId,
         content: buildAgentSendContent(sender, noWait, prompt),
         computer,
+        actingUserId,
       },
       AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]),
     );

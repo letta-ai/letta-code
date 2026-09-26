@@ -4,7 +4,7 @@ import {
   registerSubagent,
   updateSubagent,
 } from "@/agent/subagent-state";
-import type { Backend } from "@/backend";
+import type { AgentRetrieveRequestOptions, Backend } from "@/backend";
 import type { EnqueueReceipt } from "@/backend/api/conversation-enqueue";
 import {
   getLatestConversationSuperRun,
@@ -39,13 +39,18 @@ export async function resolveChildSubagent(
   backend: Pick<Backend, "retrieveAgent">,
   agentId: string,
   parentAgentId: string,
+  requestOptions?: AgentRetrieveRequestOptions,
 ): Promise<ChildSubagentIdentity | null> {
   try {
     // Cloud omits tags unless asked; without this a tagged child looks like a
     // peer and is silently never tracked (same footgun as memfs-sync.ts).
-    const agent = await backend.retrieveAgent(agentId, {
-      include: ["agent.tags"],
-    });
+    const agent = await backend.retrieveAgent(
+      agentId,
+      {
+        include: ["agent.tags"],
+      },
+      requestOptions,
+    );
     if (readTag(agent.tags, "parent:") !== parentAgentId) return null;
     return {
       name: agent.name,

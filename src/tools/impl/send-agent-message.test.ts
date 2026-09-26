@@ -1,8 +1,12 @@
 import { expect, test } from "bun:test";
+import Letta from "@letta-ai/letta-client";
 import type { TrackChildSendInput } from "@/agent/subagents/child-send-tracking";
-import type { AgentRetrieveOptions, Backend } from "@/backend";
-import type { EnqueueConversationInput } from "@/backend/api/conversation-enqueue";
-import { ApiRequestError } from "@/backend/api/request";
+import { type AgentRetrieveOptions, APIBackend, type Backend } from "@/backend";
+import {
+  type EnqueueConversationInput,
+  enqueueConversationMessage,
+} from "@/backend/api/conversation-enqueue";
+import { ApiRequestError, apiRequest } from "@/backend/api/request";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { send_agent_message } from "./send-agent-message";
 
@@ -59,6 +63,145 @@ const message = {
   conversation_id: "conv-target",
   message: "Please check the tests.",
 };
+
+test.each([
+  {
+    name: "inherited runtime actor",
+    contextActor: undefined,
+    envActor: "user-inherited",
+    destination: { conversation_id: "conv-target" },
+    expectedActor: "user-inherited",
+  },
+  {
+    name: "per-turn actor takes precedence over inherited actor",
+    contextActor: "user-turn",
+    envActor: "user-inherited",
+    destination: { agent_id: "agent-target" },
+    expectedActor: "user-turn",
+  },
+  {
+    name: "no actor does not invent one",
+    contextActor: undefined,
+    envActor: undefined,
+    destination: { conversation_id: "conv-target" },
+    expectedActor: undefined,
+  },
+])("Cloud send HTTP protocol: $name", async (scenario) => {
+  const previousActor = process.env.LETTA_ACTING_USER_ID;
+  if (scenario.envActor) {
+    process.env.LETTA_ACTING_USER_ID = scenario.envActor;
+  } else {
+    delete process.env.LETTA_ACTING_USER_ID;
+  }
+  const requests: Array<{
+    method: string;
+    path: string;
+    actor: string | null;
+  }> = [];
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    async fetch(request) {
+      const path = new URL(request.url).pathname;
+      const actor = request.headers.get("X-Letta-Acting-User-Id");
+      requests.push({ method: request.method, path, actor });
+      if (
+        actor !== scenario.expectedActor ||
+        request.headers.get("X-Letta-Source") !== "letta-code" ||
+        !request.headers.get("User-Agent")?.startsWith("letta-code/")
+      ) {
+        return Response.json({ error: "not found" }, { status: 404 });
+      }
+      if (path === "/v1/conversations/conv-target") {
+        return Response.json({ id: "conv-target", agent_id: "agent-target" });
+      }
+      if (path === "/v1/conversations/" && request.method === "POST") {
+        return Response.json({ id: "conv-new", agent_id: "agent-target" });
+      }
+      if (path === "/v1/agents/agent-target") {
+        return Response.json({ id: "agent-target", name: "Peer", tags: [] });
+      }
+      if (path.endsWith("/messages/enqueue") && request.method === "POST") {
+        const body = (await request.json()) as { client_message_id: string };
+        expect(body).not.toHaveProperty("acting_user_id");
+        return Response.json(
+          {
+            client_message_id: body.client_message_id,
+            workflow_id: "wf-local",
+            super_run_id: "sr-local",
+          },
+          { status: 202 },
+        );
+      }
+      return Response.json({ error: "unexpected path" }, { status: 404 });
+    },
+  });
+  const baseUrl = server.url.toString().replace(/\/$/, "");
+  const client = new Letta({
+    apiKey: "test-key",
+    baseURL: baseUrl,
+    maxRetries: 0,
+    defaultHeaders: {
+      "X-Letta-Source": "letta-code",
+      "User-Agent": "letta-code/test",
+    },
+  });
+  const apiBackend = new APIBackend({ getClient: async () => client });
+  const backend = {
+    capabilities: { environmentRouting: true },
+    retrieveConversation: apiBackend.retrieveConversation.bind(apiBackend),
+    createConversation: apiBackend.createConversation.bind(apiBackend),
+    retrieveAgent: apiBackend.retrieveAgent.bind(apiBackend),
+  } as unknown as Backend;
+  try {
+    const result = await runWithRuntimeContext(
+      {
+        agentId: "agent-caller",
+        conversationId: "conv-caller",
+        actingUserId: scenario.contextActor,
+      },
+      () =>
+        send_agent_message(
+          { ...scenario.destination, message: "isolated send" },
+          {
+            backend,
+            enqueue: (input, signal) =>
+              enqueueConversationMessage(
+                input,
+                signal,
+                (method, path, body, options) =>
+                  apiRequest(method, path, body, {
+                    ...options,
+                    baseUrl,
+                    apiKey: "test-key",
+                  }),
+              ),
+          },
+        ),
+    );
+    expect(JSON.parse(result.content).status).toBe(
+      scenario.expectedActor ? "queued" : "submission_failed",
+    );
+    expect(requests[0]?.path).toBe(
+      scenario.destination.agent_id
+        ? "/v1/conversations/"
+        : "/v1/conversations/conv-target",
+    );
+    expect(requests[0]?.actor).toBe(scenario.expectedActor ?? null);
+    expect(
+      requests.filter((request) => request.path.endsWith("/messages/enqueue")),
+    ).toHaveLength(scenario.expectedActor ? 1 : 0);
+    if (scenario.expectedActor) {
+      expect(
+        requests.every((request) => request.actor === scenario.expectedActor),
+      ).toBe(true);
+    }
+  } finally {
+    server.stop(true);
+    if (previousActor === undefined) delete process.env.LETTA_ACTING_USER_ID;
+    else process.env.LETTA_ACTING_USER_ID = previousActor;
+  }
+});
 
 test("resumes an external coding-agent session without the Cloud backend", async () => {
   const f = fixture();
