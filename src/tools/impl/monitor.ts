@@ -37,6 +37,7 @@ import { getShellEnv } from "./shell-env.js";
 import { withStrictShellPrelude } from "./shell-launchers.js";
 import { startShellProcess } from "./shell-runner.js";
 import { applyShellSandbox } from "./shell-sandbox.js";
+import { assertSafeWindowsCommand } from "./windows-command-safety.js";
 
 const MIN_TIMEOUT_MS = 1000;
 const MAX_TIMEOUT_MS = 3_600_000;
@@ -400,6 +401,7 @@ function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
   const env = args.secretEnv
     ? { ...getShellEnv(), ...args.secretEnv }
     : getShellEnv();
+  assertSafeWindowsCommand(command, { cwd, env });
   const commandToRun = withStrictShellPrelude(command, env);
   const launcher = getBackgroundLauncher(commandToRun, env, args.secretEnv);
   if (!launcher[0]) {
