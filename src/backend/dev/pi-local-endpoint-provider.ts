@@ -83,16 +83,41 @@ export function localEndpointOpenAIBaseURL(baseURL: string): string {
 }
 
 export function modelIdsFromOpenAICompatibleList(data: unknown): string[] {
+  return modelMetadataFromOpenAICompatibleList(data).map((model) => model.id);
+}
+
+/**
+ * OpenAI-compatible servers may extend model entries with explicit capability
+ * metadata. Lemonade publishes a `labels` array whose `vision` value means the
+ * model accepts image input. An absent labels field remains unknown so callers
+ * can retain last-known provider metadata instead of incorrectly downgrading it.
+ */
+export function modelMetadataFromOpenAICompatibleList(
+  data: unknown,
+): LocalEndpointModelMetadata[] {
   if (!data || typeof data !== "object") return [];
   const records = (data as { data?: unknown }).data;
   if (!Array.isArray(records)) return [];
   return records
     .map((entry) => {
       if (!entry || typeof entry !== "object") return undefined;
-      const id = (entry as { id?: unknown }).id;
-      return typeof id === "string" && id.length > 0 ? id : undefined;
+      const record = entry as { id?: unknown; labels?: unknown };
+      if (typeof record.id !== "string" || record.id.length === 0) {
+        return undefined;
+      }
+      const labels = Array.isArray(record.labels)
+        ? record.labels.filter(
+            (label): label is string => typeof label === "string",
+          )
+        : undefined;
+      return {
+        id: record.id,
+        ...(labels !== undefined ? { vision: labels.includes("vision") } : {}),
+      };
     })
-    .filter((id): id is string => id !== undefined);
+    .filter(
+      (model): model is LocalEndpointModelMetadata => model !== undefined,
+    );
 }
 
 /**
