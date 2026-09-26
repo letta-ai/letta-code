@@ -1,3 +1,4 @@
+import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import { LIMITS, truncateByChars } from "@/tools/impl/truncation";
 import { scrubAmbientSecrets } from "@/tools/secret-substitution";
 import {
@@ -14,30 +15,16 @@ import {
 // remains the separate, total deadline for the remote result.
 export const DEFAULT_EXTERNAL_TOOL_YIELD_MS = 10_000;
 
-type ExternalResult = { status: "success" | "error"; toolReturn: unknown };
+type ExternalResult = {
+  status: "success" | "error";
+  toolReturn: MessageCreate["content"];
+};
 type Settled<T> =
   | { kind: "result"; result: T }
   | { kind: "error"; error: unknown };
 
 function notificationText(toolReturn: unknown): string {
-  if (typeof toolReturn === "string") return scrubAmbientSecrets(toolReturn);
-  if (!Array.isArray(toolReturn))
-    return scrubAmbientSecrets(String(toolReturn));
-  const text: string[] = [];
-  let nonTextParts = 0;
-  for (const part of toolReturn) {
-    if (part?.type === "text" && typeof part.text === "string") {
-      text.push(part.text);
-    } else {
-      nonTextParts += 1;
-    }
-  }
-  if (nonTextParts > 0) {
-    text.push(
-      `[${nonTextParts} non-text content part(s) cannot be delivered in a task notification. The controller should register this tool with auto_background: false.]`,
-    );
-  }
-  return scrubAmbientSecrets(text.join("\n"));
+  return scrubAmbientSecrets(String(toolReturn));
 }
 
 /** Yield an external result as a scoped notification without starting a second request. */
@@ -101,8 +88,17 @@ export async function autoBackgroundExternalTool<T extends ExternalResult>(
   void settled.then((outcome) => {
     const result = outcome.kind === "result" ? outcome.result : undefined;
     const status = result?.status === "success" ? "completed" : "failed";
+    const richContent = Array.isArray(result?.toolReturn)
+      ? result.toolReturn.map((part) =>
+          part.type === "text"
+            ? { ...part, text: scrubAmbientSecrets(part.text) }
+            : part,
+        )
+      : undefined;
     let raw = result
-      ? notificationText(result.toolReturn)
+      ? richContent
+        ? "The tool result follows this notification as text and image parts."
+        : notificationText(result.toolReturn)
       : scrubAmbientSecrets(
           String(outcome.kind === "error" ? outcome.error : "Unknown error"),
         );
@@ -116,9 +112,11 @@ export async function autoBackgroundExternalTool<T extends ExternalResult>(
       raw +=
         " The remote tool may still finish; its outcome is unknown. Check the destination before retrying a write.";
     }
+    // executeExternalTool has already clamped the result to 32K plus an
+    // overflow-file notice. A smaller notification cap would hide that path.
     const content = truncateByChars(
       raw,
-      LIMITS.BASH_NOTIFICATION_CHARS,
+      LIMITS.TOOL_RETURN_MAX_CHARS + 1_000,
       toolName,
     );
     enqueue({
@@ -130,6 +128,7 @@ export async function autoBackgroundExternalTool<T extends ExternalResult>(
         result: content.content,
         usage: { durationMs: Date.now() - startedAt },
       }),
+      ...(richContent ? { content: richContent } : {}),
       ...scope,
     });
   });
