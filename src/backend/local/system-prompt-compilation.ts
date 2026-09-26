@@ -2,6 +2,11 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import {
+  isCoreMemoryPath,
+  isProjectedMemoryPath,
+  type LocalMemoryFormat,
+} from "@/agent/memory-format";
 import { parseFrontmatter } from "@/utils/frontmatter";
 import type { LocalAgentRecord } from "./local-types";
 
@@ -11,6 +16,7 @@ const MEMORY_DIR_PLACEHOLDER = "$" + "{MEMORY_DIR}";
 interface LocalMemoryFile {
   relativePath: string;
   label: string;
+  raw: string;
   value: string;
   description: string;
 }
@@ -75,10 +81,11 @@ export function getCommittedMemfsRevision(
 
 function collectCommittedMemoryFiles(memoryDir: string): {
   files: LocalMemoryFile[];
+  format: LocalMemoryFormat;
   revision?: string;
 } {
   const revision = getCommittedMemfsRevision(memoryDir);
-  if (!revision) return { files: [], revision };
+  if (!revision) return { files: [], format: "memfs-v1", revision };
 
   const files: LocalMemoryFile[] = [];
   let paths: string[] = [];
@@ -88,16 +95,37 @@ function collectCommittedMemoryFiles(memoryDir: string): {
       .map((path) => normalizePath(path.trim()))
       .filter((path) => path.length > 0 && path.endsWith(".md"));
   } catch {
-    return { files: [], revision };
+    return { files: [], format: "memfs-v1", revision };
   }
 
+  const format: LocalMemoryFormat = paths.includes("MEMORY.md")
+    ? "memfs-v2"
+    : "memfs-v1";
+  const allPaths = new Set(paths);
+
   for (const relativePath of paths) {
+    const shouldRead =
+      format === "memfs-v1" ||
+      isCoreMemoryPath(relativePath, format) ||
+      (/^[^/]+\/MEMORY\.md$/.test(relativePath) &&
+        isProjectedMemoryPath(relativePath, allPaths, format));
+    if (!shouldRead) {
+      files.push({
+        relativePath,
+        label: labelFromPath(relativePath),
+        raw: "",
+        value: "",
+        description: "",
+      });
+      continue;
+    }
     try {
       const raw = gitOutput(memoryDir, ["show", `HEAD:${relativePath}`]);
       const { frontmatter, body } = parseFrontmatter(raw);
       files.push({
         relativePath,
         label: labelFromPath(relativePath),
+        raw,
         value: body,
         description:
           typeof frontmatter.description === "string"
@@ -112,8 +140,66 @@ function collectCommittedMemoryFiles(memoryDir: string): {
 
   return {
     files: files.sort((a, b) => a.label.localeCompare(b.label)),
+    format,
     revision,
   };
+}
+
+function escapeXmlAttribute(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#x27;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function renderRootMemoryProjection(files: LocalMemoryFile[]): string {
+  const allPaths = new Set(files.map((file) => file.relativePath));
+  const rootFiles = files
+    .filter((file) => isCoreMemoryPath(file.relativePath, "memfs-v2"))
+    .sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+  const childIndexes = files
+    .filter(
+      (file) =>
+        /^[^/]+\/MEMORY\.md$/.test(file.relativePath) &&
+        !file.relativePath.startsWith("skills/") &&
+        isProjectedMemoryPath(file.relativePath, allPaths, "memfs-v2"),
+    )
+    .sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+
+  const lines = [
+    `<memory root="${MEMORY_DIR_PLACEHOLDER}">`,
+    "<instructions>",
+    "Root Markdown files are core memory and are already loaded below.",
+    "A child directory is memory only when it contains MEMORY.md.",
+    "Nested Markdown remains deferred. Read a child MEMORY.md before selecting deeper files.",
+    "Directories without MEMORY.md remain silent. skills/ follows the Agent Skills format.",
+    "</instructions>",
+  ];
+
+  for (const file of rootFiles) {
+    lines.push(
+      `<file name="${escapeXmlAttribute(file.relativePath)}">`,
+      file.raw.trimEnd(),
+      "</file>",
+    );
+  }
+
+  if (childIndexes.length > 0) {
+    lines.push("<deferred-memory>");
+    for (const file of childIndexes) {
+      const directory = file.relativePath.slice(0, -"/MEMORY.md".length);
+      const escaped = escapeXmlAttribute(directory);
+      lines.push(
+        `<directory path="${escaped}/" index="${escaped}/MEMORY.md" />`,
+      );
+    }
+    lines.push("</deferred-memory>");
+  }
+
+  lines.push("</memory>");
+  return lines.join("\n");
 }
 
 function renderExternalProjection(files: LocalMemoryFile[]): string {
@@ -224,8 +310,11 @@ function renderMemfsProjection(memoryDir: string): {
   content: string;
   revision?: string;
 } {
-  const { files, revision } = collectCommittedMemoryFiles(memoryDir);
+  const { files, format, revision } = collectCommittedMemoryFiles(memoryDir);
   if (files.length === 0) return { content: "", revision };
+  if (format === "memfs-v2") {
+    return { content: renderRootMemoryProjection(files), revision };
+  }
 
   const lines = [
     "Reminder: <projection> contains the local path of the memory file projection.",

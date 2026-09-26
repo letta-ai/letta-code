@@ -90,14 +90,14 @@ export function resolveMemoryPromptMode(input: {
   memoryDir: string | null;
   memfsEnabled: boolean;
 }): MemoryPromptMode {
-  if (input.localMemfs) {
-    return "local-memfs";
-  }
   if (
     input.memoryDir &&
-    detectMemoryFormat(input.memoryDir, false) === "memfs-v2"
+    detectMemoryFormat(input.memoryDir, input.localMemfs) === "memfs-v2"
   ) {
     return "root-memfs";
+  }
+  if (input.localMemfs) {
+    return "local-memfs";
   }
   return input.memfsEnabled ? "memfs" : "standard";
 }

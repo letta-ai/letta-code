@@ -59,6 +59,56 @@ function initAndCommitMemory(memoryDir: string, message = "initial memory") {
 }
 
 describe("local system prompt compilation", () => {
+  test("loads root core memory and defers indexed children and skills", async () => {
+    const memoryDir = await mkdtemp(join(tmpdir(), "local-prompt-root-memfs-"));
+    try {
+      await writeFile(join(memoryDir, "MEMORY.md"), "# Memory\n", "utf8");
+      await writeMemoryFile(
+        memoryDir,
+        "persona.md",
+        "Who the agent is",
+        "I am a root-layout local agent.",
+      );
+      await mkdir(join(memoryDir, "reference"), { recursive: true });
+      await writeFile(
+        join(memoryDir, "reference", "MEMORY.md"),
+        "# Reference\n",
+        "utf8",
+      );
+      await writeMemoryFile(
+        memoryDir,
+        "reference/details.md",
+        "Deferred details",
+        "This must remain deferred.",
+      );
+      await mkdir(join(memoryDir, "skills", "pdf"), { recursive: true });
+      await writeFile(
+        join(memoryDir, "skills", "pdf", "SKILL.md"),
+        "---\nname: pdf\ndescription: Read PDFs\n---\nSkill body.\n",
+        "utf8",
+      );
+      initAndCommitMemory(memoryDir);
+
+      const compiled = compileLocalSystemPrompt({
+        agent: agent(),
+        conversationId: "local-conv-test",
+        memoryDir,
+      });
+
+      expect(compiled.content).toContain('<file name="MEMORY.md">');
+      expect(compiled.content).toContain('<file name="persona.md">');
+      expect(compiled.content).toContain("I am a root-layout local agent.");
+      expect(compiled.content).toContain(
+        '<directory path="reference/" index="reference/MEMORY.md" />',
+      );
+      expect(compiled.content).not.toContain("This must remain deferred.");
+      expect(compiled.content).not.toContain("Skill body.");
+      expect(compiled.content).not.toContain('path="skills/"');
+    } finally {
+      await rm(memoryDir, { recursive: true, force: true });
+    }
+  });
+
   test("injects MemFS system files and metadata into CORE_MEMORY", async () => {
     const memoryDir = await mkdtemp(join(tmpdir(), "local-prompt-memfs-"));
     try {

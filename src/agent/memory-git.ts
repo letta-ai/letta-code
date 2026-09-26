@@ -1336,7 +1336,7 @@ export async function initializeLocalMemoryRepo(
     authorEmail: `${params.agentId}@letta.com`,
   };
   await prepareLocalOnlyMemoryRepoForGitOps(params.memoryDir, author);
-  installPreCommitHook(params.memoryDir);
+  installPreCommitHook(params.memoryDir, true);
 
   if (await hasMemoryHead(params.memoryDir)) {
     return;

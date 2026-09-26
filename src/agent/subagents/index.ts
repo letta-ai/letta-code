@@ -425,8 +425,8 @@ export function resolveSubagentConfigForMemoryFormat(
   memoryFormat: LocalMemoryFormat,
   localMemfs: boolean,
 ): SubagentConfig {
-  if (localMemfs || memoryFormat !== "memfs-v2") return config;
-  const v1Builtin = getBuiltinSubagents(false)[config.name];
+  if (memoryFormat !== "memfs-v2") return config;
+  const v1Builtin = getBuiltinSubagents(localMemfs)[config.name];
   const v2Builtin = getLocalMemfsV2Builtins()[config.name];
   if (
     !v1Builtin ||
