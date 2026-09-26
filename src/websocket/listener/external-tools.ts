@@ -84,9 +84,7 @@ function toExternalToolDefinition(
     description: tool.description,
     parameters: tool.parameters,
     ...(tool.timeout_ms !== undefined ? { timeoutMs: tool.timeout_ms } : {}),
-    ...(tool.auto_background !== undefined
-      ? { autoBackground: tool.auto_background }
-      : {}),
+    autoBackground: tool.auto_background ?? true,
     registrationKey: getToolRegistrationKey(
       connectionId,
       runtime,

@@ -2216,7 +2216,7 @@ async function executeToolInner(
           externalTool?.executor ?? activeExternalExecutor,
           externalTool,
         ),
-        { runtimeScope: executionScope },
+        { runtimeScope: executionScope, canBackground: !modEvents },
       ),
     );
   }

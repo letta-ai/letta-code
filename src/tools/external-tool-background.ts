@@ -2,6 +2,7 @@ import { LIMITS, truncateByChars } from "@/tools/impl/truncation";
 import { scrubAmbientSecrets } from "@/tools/secret-substitution";
 import {
   addToMessageQueue,
+  isQueueBridgeConnected,
   type QueuedMessage,
 } from "@/utils/message-queue-bridge";
 import {
@@ -52,6 +53,7 @@ export async function autoBackgroundExternalTool<T extends ExternalResult>(
       conversationId?: string | null;
       actingUserId?: string;
     };
+    canBackground?: boolean;
     enqueue?: (message: QueuedMessage) => void;
   },
 ): Promise<T | { status: "success"; toolReturn: string }> {
@@ -65,7 +67,15 @@ export async function autoBackgroundExternalTool<T extends ExternalResult>(
           actingUserId: runtime.actingUserId,
         }
       : undefined);
-  if (tool?.autoBackground === false || !scope) return operation;
+  // Only listener tools opt in. Headless SDK tools share one stdin reader, and
+  // tool_end mods must see the real result before the model does.
+  if (
+    tool?.autoBackground !== true ||
+    options?.canBackground === false ||
+    !scope ||
+    (!options?.enqueue && !isQueueBridgeConnected())
+  )
+    return operation;
 
   const startedAt = Date.now();
   const settled: Promise<Settled<T>> = operation.then(
@@ -91,11 +101,21 @@ export async function autoBackgroundExternalTool<T extends ExternalResult>(
   void settled.then((outcome) => {
     const result = outcome.kind === "result" ? outcome.result : undefined;
     const status = result?.status === "success" ? "completed" : "failed";
-    const raw = result
+    let raw = result
       ? notificationText(result.toolReturn)
       : scrubAmbientSecrets(
           String(outcome.kind === "error" ? outcome.error : "Unknown error"),
         );
+    if (
+      status === "failed" &&
+      (!result ||
+        (typeof result.toolReturn === "string" &&
+          result.toolReturn.startsWith("External tool execution error:"))) &&
+      !raw.includes("outcome is unknown")
+    ) {
+      raw +=
+        " The remote tool may still finish; its outcome is unknown. Check the destination before retrying a write.";
+    }
     const content = truncateByChars(
       raw,
       LIMITS.BASH_NOTIFICATION_CHARS,
