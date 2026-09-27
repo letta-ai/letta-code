@@ -334,3 +334,57 @@ return errors`,
     });
   });
 });
+
+describe("Workflow tool description example", () => {
+  // The example in the tool description is what models copy; keep it runnable.
+  function descriptionExample(): string {
+    const description = readFileSync(
+      new URL("../descriptions/Workflow.md", import.meta.url),
+      "utf8",
+    );
+    const lines = description.split("\n");
+    const start = lines.findIndex((l) =>
+      l.trim().startsWith("export const meta"),
+    );
+    const end = lines.findIndex(
+      (l, i) => i > start && l.trim().startsWith("return "),
+    );
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    return lines.slice(start, end + 1).join("\n");
+  }
+
+  test("runs end to end, tolerating failed subagents", async () => {
+    const seen: SubagentRequest[] = [];
+    const spawner: SubagentSpawner = async (request) => {
+      seen.push(request);
+      const { prompt, options } = request;
+      if (options.phase === "Review") {
+        if (prompt.includes("broken.ts")) return { value: null, failed: true };
+        if (prompt.includes("a.ts")) {
+          return {
+            value: { bugs: ["off by one", "style nit"] },
+            failed: false,
+          };
+        }
+        return { value: { bugs: [] }, failed: false };
+      }
+      if (prompt.includes("style nit"))
+        return { value: { real: false }, failed: false };
+      return { value: { real: true }, failed: false };
+    };
+
+    const run = await executeWorkflow(spawner, {
+      script: descriptionExample(),
+      args: { files: ["a.ts", "broken.ts", "clean.ts"] },
+    });
+
+    expect(run.meta.name).toBe("review-files");
+    expect(run.result).toEqual([{ file: "a.ts", bug: "off by one" }]);
+    expect(seen.filter((r) => r.options.phase === "Review")).toHaveLength(3);
+    expect(seen.filter((r) => r.options.phase === "Verify")).toHaveLength(2);
+    for (const request of seen) {
+      expect(request.options.schema).toMatchObject({ type: "object" });
+    }
+  });
+});

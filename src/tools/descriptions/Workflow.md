@@ -4,14 +4,22 @@ Workflows run in the background: this tool returns immediately with a task ID, a
 
 ONLY call this tool when the user has explicitly opted into multi-agent orchestration — they asked for a workflow or multi-agent orchestration in their own words ("use a workflow", "fan out agents"), or invoked a skill whose instructions call this tool. Workflows can spawn many subagents and cost real money. For any other task, even one that would benefit from parallelism, describe what a workflow could do and ask first.
 
-Scripts are plain JavaScript and must begin with `export const meta = {...}`, a pure literal (no variables, calls, or interpolation):
+Scripts are plain JavaScript and must begin with `export const meta = {...}`, a pure literal (no variables, calls, or interpolation). Pass the work list via `args`. Prefer `pipeline()` so each item moves to its next stage as soon as it is ready; `agent()` resolves to `null` on failure, so guard and filter:
 
   export const meta = {
-    name: 'review-changes',
-    description: 'Review each changed file for bugs',
-    phases: [{ title: 'Review' }],
+    name: 'review-files',
+    description: 'Review each file for bugs, verify each finding',
+    phases: [{ title: 'Review' }, { title: 'Verify' }],
   }
-  const reviews = await pipeline(args.files, f => agent(`Review ${f} for bugs...`, { phase: 'Review' }))
-  return reviews.filter(Boolean)
+  const findings = {type: 'object', properties: {bugs: {type: 'array', items: {type: 'string'}}}, required: ['bugs']}
+  const verdict = {type: 'object', properties: {real: {type: 'boolean'}}, required: ['real']}
+  const results = await pipeline(
+    args.files,
+    f => agent(`Review ${f} for bugs.`, { phase: 'Review', schema: findings }),
+    (review, f) => parallel((review?.bugs ?? []).map(bug => () =>
+      agent(`Is this a real bug in ${f}? ${bug}`, { phase: 'Verify', schema: verdict })
+        .then(v => v?.real ? { file: f, bug } : null))),
+  )
+  return results.filter(Boolean).flat().filter(Boolean)
 
 Before authoring a script, load the `workflow-authoring` skill — the script API, pipeline-vs-barrier rules, quality patterns, worked examples, and how to diagnose a run.
