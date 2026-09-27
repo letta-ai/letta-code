@@ -18,10 +18,7 @@ export interface InvalidPendingMemory {
 
 type MemoryLayoutPolicy = "legacy-only" | "root-marker" | "shared-memory";
 
-function memoryLayoutPolicy(
-  memoryDir: string,
-  revision: string,
-): MemoryLayoutPolicy {
+function memoryLayoutPolicy(memoryDir: string): MemoryLayoutPolicy {
   try {
     const commonDir = execFileSync("git", ["rev-parse", "--git-common-dir"], {
       cwd: memoryDir,
@@ -35,7 +32,7 @@ function memoryLayoutPolicy(
     if (policy === "root-marker") {
       const v2Started = execFileSync(
         "git",
-        ["rev-list", "-n", "1", revision, "--", "MEMORY.md"],
+        ["rev-list", "-n", "1", "HEAD", "--", "MEMORY.md"],
         { cwd: memoryDir, encoding: "utf8" },
       ).trim();
       return v2Started ? "root-marker" : "legacy-only";
@@ -43,7 +40,7 @@ function memoryLayoutPolicy(
   } catch {
     /* Repositories created outside the harness have no persistent policy. */
   }
-  return spawnSync("git", ["cat-file", "-e", `${revision}:MEMORY.md`], {
+  return spawnSync("git", ["cat-file", "-e", "HEAD:MEMORY.md"], {
     cwd: memoryDir,
     stdio: "ignore",
   }).status === 0
@@ -51,10 +48,9 @@ function memoryLayoutPolicy(
     : "legacy-only";
 }
 
-/** Validate one committed MemFS tree without changing its index or working tree. */
-export function validateMemoryConstraintsRevision(
+/** Validate the committed MemFS tree without changing its index or working tree. */
+export function validateMemoryConstraintsHead(
   memoryDir: string,
-  revision: string,
 ): MemoryConstraintsValidationResult {
   const tempDir = mkdtempSync(join(tmpdir(), "letta-memory-audit-"));
   const indexPath = join(tempDir, "index");
@@ -62,16 +58,16 @@ export function validateMemoryConstraintsRevision(
   const env = { ...process.env, GIT_INDEX_FILE: indexPath };
 
   try {
-    execFileSync("git", ["read-tree", revision], {
+    execFileSync("git", ["read-tree", "HEAD"], {
       cwd: memoryDir,
       env,
       stdio: ["ignore", "pipe", "pipe"],
     });
-    const layoutPolicy = memoryLayoutPolicy(memoryDir, revision);
+    const layoutPolicy = memoryLayoutPolicy(memoryDir);
     writeFileSync(validatorPath, MEMORY_CONSTRAINTS_VALIDATOR_SCRIPT, "utf8");
     const result = spawnSync(
       "node",
-      [validatorPath, "--layout", layoutPolicy, "--audit", "--base", revision],
+      [validatorPath, "--layout", layoutPolicy, "--audit"],
       {
         cwd: memoryDir,
         encoding: "utf8",
@@ -92,34 +88,21 @@ export function validateMemoryConstraintsRevision(
   }
 }
 
-/** Validate HEAD without changing its index or working tree. */
-export function validateMemoryConstraintsHead(
-  memoryDir: string,
-): MemoryConstraintsValidationResult {
-  return validateMemoryConstraintsRevision(memoryDir, "HEAD");
-}
-
+/**
+ * Validate the tree post-turn sync would publish. Hosted MemFS validates only
+ * the pushed tip, and the runtime loads only the head of main, so intermediate
+ * commits are not checked.
+ */
 export function invalidPendingMemory(
   memoryDir: string,
   localOnly: boolean,
 ): InvalidPendingMemory | null {
-  const revisions = execFileSync(
-    "git",
-    ["rev-list", "--reverse", "@{u}..HEAD"],
-    { cwd: memoryDir, encoding: "utf8" },
-  )
-    .trim()
-    .split("\n")
-    .filter(Boolean);
-  for (const revision of revisions) {
-    const validation = validateMemoryConstraintsRevision(memoryDir, revision);
-    if (!validation.valid)
-      return {
-        status: "invalid",
-        summary: `Commit ${revision.slice(0, 12)} fails memory validation:\n${validation.output}`,
-        memoryDir,
-        localOnly,
-      };
-  }
-  return null;
+  const validation = validateMemoryConstraintsHead(memoryDir);
+  if (validation.valid) return null;
+  return {
+    status: "invalid",
+    summary: `Committed memory fails validation:\n${validation.output}`,
+    memoryDir,
+    localOnly,
+  };
 }

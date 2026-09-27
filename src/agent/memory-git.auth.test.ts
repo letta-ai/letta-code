@@ -785,7 +785,7 @@ describe("syncPendingMemoryCommitsAfterTurn", () => {
     ).toBe(remoteSha);
   });
 
-  test("rejects an invalid unpublished ancestor even when HEAD is valid", async () => {
+  test("pushes a valid HEAD even when an unpublished intermediate commit is invalid", async () => {
     const remote = makeBareGitRepo();
     const repo = makeGitRepo();
     git(repo, "config user.name Test");
@@ -799,9 +799,8 @@ describe("syncPendingMemoryCommitsAfterTurn", () => {
     git(repo, "add MEMORY.md .memfs.config.json");
     git(repo, "commit -m initial-memory");
     git(repo, "push -u origin main");
-    const remoteSha = git(repo, "rev-parse origin/main").trim();
     const invalidSha = commitFile(repo, "local.md", "l\n");
-    commitFile(repo, "MEMORY.md", "# M\n");
+    const headSha = commitFile(repo, "MEMORY.md", "# M\n");
     process.env.LETTA_API_KEY = "test-token";
     __testOverrideGetClient(async () => ({ apiKey: "test-token" }));
 
@@ -809,16 +808,17 @@ describe("syncPendingMemoryCommitsAfterTurn", () => {
       memoryDir: repo,
     });
 
-    expect(result.status).toBe("invalid");
-    expect(result.summary).toContain(`Commit ${invalidSha.slice(0, 12)}`);
-    expect(result.summary).toContain(
-      "core memory: 11 characters exceeds 10 from maxCoreMemoryCharacters",
-    );
+    expect(result.status).toBe("pushed");
     expect(
       execSync(`git --git-dir ${remote} rev-parse main`, {
         encoding: "utf-8",
       }).trim(),
-    ).toBe(remoteSha);
+    ).toBe(headSha);
+    expect(
+      execSync(`git --git-dir ${remote} rev-parse main~1`, {
+        encoding: "utf-8",
+      }).trim(),
+    ).toBe(invalidSha);
   });
 
   test("returns a dirty reminder state without pushing", async () => {

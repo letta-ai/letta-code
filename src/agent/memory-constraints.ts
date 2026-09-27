@@ -124,11 +124,13 @@ async function main() {
   const errors = [];
   const layoutPolicy = readLayoutPolicy();
   activeLayoutPolicy = layoutPolicy;
-  const baseArgument = process.argv.indexOf("--base");
-  const configDiffArgs = ["diff", "--cached", "--quiet"];
-  if (baseArgument >= 0) configDiffArgs.push(process.argv[baseArgument + 1]);
-  configDiffArgs.push("--", CONFIG_PATH);
-  const configChanged = !gitSucceeds(configDiffArgs);
+  const configChanged = !gitSucceeds([
+    "diff",
+    "--cached",
+    "--quiet",
+    "--",
+    CONFIG_PATH,
+  ]);
   if (configChanged && process.env[CONFIG_UPDATE_ENV] !== "1") {
     errors.push(
       CONFIG_PATH + " is protected and requires human approval to change",

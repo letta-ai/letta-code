@@ -254,7 +254,7 @@ test("post-turn conflict launches a memory task and only guards the checkout", a
   expect(reminders[0]).toContain("Do not inspect, edit, or run Git commands");
 });
 
-test("invalid committed memory launches history repair and only guards the checkout", async () => {
+test("invalid committed memory launches repair and only guards the checkout", async () => {
   const jobs: SpawnBackgroundSubagentTaskArgs[] = [];
   const reminders: string[] = [];
   const invalid: MemoryPostTurnSyncResult = {
@@ -284,11 +284,11 @@ test("invalid committed memory launches history repair and only guards the check
   expect(jobs).toHaveLength(1);
   expect(jobs[0]).toMatchObject({
     subagentType: "memory",
-    description: "Repair invalid memory history",
+    description: "Repair invalid committed memory",
     memoryRepairToken: "invalid-history",
   });
-  expect(jobs[0]?.prompt).toContain("unpublished memory history");
-  expect(jobs[0]?.prompt).toContain("without retaining an invalid ancestor");
+  expect(jobs[0]?.prompt).toContain("committed memory tree fails");
+  expect(jobs[0]?.prompt).toContain("rewrite history");
   expect(reminders).toHaveLength(1);
   expect(reminders[0]).toContain("MEMORY REPAIR RUNNING");
   expect(reminders[0]).toContain("Continue the current task");

@@ -142,10 +142,10 @@ export async function ensureMemoryRepair(
     spawn({
       subagentType: "memory",
       description: invalid
-        ? "Repair invalid memory history"
+        ? "Repair invalid committed memory"
         : "Repair memory Git conflict",
       prompt: invalid
-        ? `Repair only the unpublished memory history that fails the repository's validation. Do not change or disable the limits, and do not perform unrelated edits or reorganization. Preserve the intended final memory content. Fetch origin/main, back up the rejected local commits, replay a valid final change onto the accepted remote history without retaining an invalid ancestor, run the repository validation, and leave a clean committed checkout for the harness to push. If the invalid history is already gone, stop.\n\nMemory directory: ${params.result.memoryDir}\nReported status: ${params.result.summary}`
+        ? `The committed memory tree fails the repository's validation, usually because concurrent memory updates were combined. Make one new commit that brings the current memory within the limits while preserving its information: move detail out of oversized files and behind indexes instead of deleting it. Do not change or disable the limits, rewrite history, or perform unrelated edits. If the committed memory already passes validation, stop.\n\nMemory directory: ${params.result.memoryDir}\nReported status: ${params.result.summary}`
         : `Repair only the existing Git conflict in your memory repository. Do not perform unrelated edits or reorganization. If the conflict is already resolved, stop.\n\nMemory directory: ${params.result.memoryDir}\nReported status: ${params.result.summary}`,
       parentScope: {
         agentId: params.agentId,

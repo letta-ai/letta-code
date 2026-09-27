@@ -76,7 +76,7 @@ async function describeMemoryConflict(
   return [head, ...heads].join("\n");
 }
 
-/** Invalid history stays the same repair attempt while local HEAD is rewritten. */
+/** An invalid tree stays the same repair attempt while local commits are added on the same upstream. */
 async function describeInvalidMemoryHistory(
   memoryDir: string,
 ): Promise<string> {
