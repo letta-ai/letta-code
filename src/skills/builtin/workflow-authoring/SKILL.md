@@ -292,8 +292,7 @@ executions, including continuing a worker whose earlier turn timed out.
   and never broadens on its own — pass tools explicitly for a turn that must
   read or write, and pass `schema` again if you want a validated object this
   turn.
-- Gated on the SDK. Continuation requires a published Agent SDK release with
-  agent-free `query()` resume (SDK #322), verified and pinned. Until then the
-  call fails with an explicit error rather than silently starting a fresh
-  worker (0.8.17 ignores `conversationId`), so write scripts that re-establish
-  context in the prompt.
+- Requires Agent SDK 0.8.20 or newer, the first release with agent-free
+  `query()` resume; the package is pinned there. An older SDK fails closed —
+  the call errors instead of silently starting a fresh worker (0.8.17 accepts
+  `conversationId` and ignores it).
