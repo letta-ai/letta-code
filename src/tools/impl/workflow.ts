@@ -157,6 +157,7 @@ export async function createSdkSpawnerHandle(
       resolveModel,
       allowedTools: args.allowedTools ?? [...DEFAULT_ALLOWED_TOOLS],
       cwd: getCurrentWorkingDirectory(),
+      supportsAgentFreeResume: sdk.supportsAgentFreeResume,
     }),
     cleanup: async () => {
       await client[Symbol.asyncDispose]?.().catch(() => undefined);

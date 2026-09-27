@@ -28,10 +28,29 @@ import type { SdkClient } from "./types.ts";
 
 // Computed so bundlers treat the import as fully dynamic.
 const SDK_PACKAGE = ["@letta-ai", "letta-agent-sdk"].join("/");
+// Pin the first verified published release containing SDK #322 here. Until
+// then only an explicit source-build override may resume; 0.8.17 ignores IDs.
+const MIN_RESUME_SDK_VERSION: string | null = null;
+
+export function supportsPublishedResume(version: string | undefined): boolean {
+  if (!version || !MIN_RESUME_SDK_VERSION) return false;
+  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
+  const minimum = MIN_RESUME_SDK_VERSION.split(".").map(Number);
+  if (!match) return false;
+  const parts = match.slice(1).map(Number);
+  for (let index = 0; index < parts.length; index++) {
+    const part = parts[index];
+    const required = minimum[index];
+    if (part !== required) return (part ?? 0) > (required ?? 0);
+  }
+  return true;
+}
 
 export interface LoadedSdk {
   /** A local client whose subagents run on this computer against the API backend. */
   createLocalClient(): SdkClient;
+  /** Explicit opt-in until SDK #322 is released and the package is upgraded. */
+  supportsAgentFreeResume: boolean;
 }
 
 /**
@@ -51,6 +70,23 @@ function preferRunningCliForSubagents(): void {
 }
 
 /** The package's ESM entry from its package.json, or null if unreadable. */
+function packageVersion(entry: string): string | undefined {
+  for (let dir = dirname(entry); ; dir = dirname(dir)) {
+    try {
+      const manifest = JSON.parse(
+        readFileSync(join(dir, "package.json"), "utf8"),
+      ) as {
+        name?: string;
+        version?: string;
+      };
+      if (manifest.name === SDK_PACKAGE) return manifest.version;
+    } catch {
+      // Continue up from a bundled entry or a source override.
+    }
+    if (dir === dirname(dir)) return undefined;
+  }
+}
+
 function packageEntry(packageDir: string): string | null {
   try {
     const manifest = JSON.parse(
@@ -143,6 +179,15 @@ export async function loadAgentSdk(): Promise<LoadedSdk> {
         continue;
       }
       return {
+        // A source build of SDK #322 can be tested deliberately. This must
+        // never be inferred from query identity: 0.8.17 has that identity but
+        // ignores conversationId and starts a new child.
+        supportsAgentFreeResume:
+          (process.env.LETTA_WORKFLOW_AGENT_FREE_RESUME === "1" &&
+            Boolean(envPath) &&
+            specifier === specifiers[0]) ||
+          (specifier.startsWith("file:") &&
+            supportsPublishedResume(packageVersion(fileURLToPath(specifier)))),
         createLocalClient: () => {
           const client = new sdk.LettaAgentClient({
             backend: "local",
