@@ -111,6 +111,22 @@ test("returns assistant text when it is available", async () => {
   expect(result.text).toBe("Done");
 });
 
+test("a recovered child error does not fail the successful accepted send", async () => {
+  const result = await waitForAcceptedSuperRun(
+    receipt,
+    new AbortController().signal,
+    deps({
+      exact: async () => ({
+        ...exact(),
+        errored_at: null,
+        error: { code: "RUN_FAILED", message: "An earlier child failed" },
+      }),
+    }),
+  );
+  expect(result.text).toBe("Done");
+  expect(result.stopReason).toBe("end_turn");
+});
+
 test("reports the stored listener pre-run failure stage", async () => {
   await expect(
     waitForAcceptedSuperRun(
