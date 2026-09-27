@@ -359,9 +359,54 @@ export function clearRecoveredApprovalState(
   evictConversationRuntimeIfIdle(runtime);
 }
 
+export function invalidateExternalToolNotifications(
+  runtime: ConversationRuntime,
+): void {
+  const notificationEpochs =
+    runtime.listener.externalToolNotificationEpochByConversation;
+  const runtimeKey = getConversationRuntimeKey(
+    runtime.agentId,
+    runtime.conversationId,
+  );
+  notificationEpochs.set(
+    runtimeKey,
+    (notificationEpochs.get(runtimeKey) ?? 0) + 1,
+  );
+}
+
+export function beginExternalToolNotificationReset(
+  runtime: ConversationRuntime,
+): () => void {
+  const barriers =
+    runtime.listener.externalToolNotificationBarrierByConversation;
+  const runtimeKey = getConversationRuntimeKey(
+    runtime.agentId,
+    runtime.conversationId,
+  );
+  const previous = barriers.get(runtimeKey);
+  let releaseCurrent!: () => void;
+  const current = new Promise<void>((resolve) => {
+    releaseCurrent = resolve;
+  });
+  const pending = previous ? previous.then(() => current) : current;
+  barriers.set(runtimeKey, pending);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    releaseCurrent();
+    void pending.then(() => {
+      if (barriers.get(runtimeKey) === pending) {
+        barriers.delete(runtimeKey);
+      }
+    });
+  };
+}
+
 export function clearConversationRuntimeState(
   runtime: ConversationRuntime,
 ): void {
+  invalidateExternalToolNotifications(runtime);
   runtime.turnLifecycle.reset("cancelled");
   releaseListenerTurnContext({
     runtime,

@@ -57,6 +57,7 @@ test("builds proactive Slack for a fresh conversation owned by the account agent
     conversation_id: "conv-schedule-1",
   });
   expect(tool).not.toBeNull();
+  expect(tool?.auto_background).toBe(false);
   expect(tool?.description).not.toContain(
     "currently scoped to a routed external channel turn",
   );
