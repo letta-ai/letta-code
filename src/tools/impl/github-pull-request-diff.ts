@@ -237,16 +237,13 @@ export function diffGitHubPullRequestSnapshots(
     );
     const previousPending = pendingChecks(previous).length;
     const currentPending = pendingChecks(current).length;
-    const startedChecks: string[] = [];
     const currentFailures = current.checks.filter(
       (check) => check.phase === "failure",
     );
     for (const check of current.checks) {
       const old = previousChecks.get(check.key);
-      if (check.phase === "pending" && old?.phase !== "pending") {
-        startedChecks.push(
-          old ? `${check.name} (rerun)` : `${check.name} (new)`,
-        );
+      if (check.phase === "pending" && old && old.phase !== "pending") {
+        events.push(`Check rerun started: ${check.name}.${checkUrl(check)}`);
       }
       if ((!old || old.phase !== "failure") && check.phase === "failure") {
         events.push(
@@ -260,9 +257,6 @@ export function diffGitHubPullRequestSnapshots(
           `Check recovered: ${check.name} (${check.result}).${checkUrl(check)}`,
         );
       }
-    }
-    if (startedChecks.length > 0) {
-      events.push(`Checks started: ${startedChecks.join(", ")}.`);
     }
     if (previousPending > 0 && currentPending === 0) {
       events.push(`Current-head checks finished: ${checkSummary(current)}.`);

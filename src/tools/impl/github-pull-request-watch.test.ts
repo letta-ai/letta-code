@@ -670,7 +670,29 @@ describe("GitHub pull request state diff", () => {
     });
 
     expect(diffGitHubPullRequestSnapshots(previous, current).events).toContain(
-      "Checks started: tests (rerun).",
+      "Check rerun started: tests.",
+    );
+  });
+
+  test("does not notify for checks that first appear as pending", () => {
+    const previous = snapshot({
+      checks: [],
+      reviewDecision: "REVIEW_REQUIRED",
+    });
+    const current = snapshot({
+      reviewDecision: "REVIEW_REQUIRED",
+      checks: [
+        {
+          key: "check:tests",
+          name: "tests",
+          phase: "pending",
+          result: "IN_PROGRESS",
+        },
+      ],
+    });
+
+    expect(diffGitHubPullRequestSnapshots(previous, current).events).toEqual(
+      [],
     );
   });
 
