@@ -6,6 +6,7 @@ import {
   getSubagentByToolCallId,
   registerSubagent,
 } from "@/agent/subagent-state";
+import { trackChildSend } from "@/agent/subagents/child-send-tracking";
 import {
   collectFinishedTaskToolCalls,
   hasInProgressTaskToolCalls,
@@ -104,6 +105,61 @@ describe("subagent turn-start reentry safeguards", () => {
     expect(shouldClearCompletedSubagentsOnTurnStart(true, false)).toBe(false);
     expect(shouldClearCompletedSubagentsOnTurnStart(false, false)).toBe(true);
     expect(shouldClearCompletedSubagentsOnTurnStart(false, true)).toBe(false);
+  });
+
+  test("a continued child run does not hold finished Task output in the foreground", () => {
+    registerSubagent(
+      "finished-task",
+      "general-purpose",
+      "Finished task",
+      "tc-task",
+      false,
+    );
+    completeSubagent("finished-task", { success: true });
+    trackChildSend({
+      receipt: {
+        status: "queued",
+        agent_id: "agent-child",
+        conversation_id: "conv-child",
+        client_message_id: "cm-child",
+        workflow_id: "wf-child",
+        super_run_id: "sr-child",
+      },
+      child: { name: "Child", type: "general-purpose" },
+      prompt: "Continue",
+      parentScope: { agentId: "agent-parent", conversationId: "conv-parent" },
+      waitForRun: () => new Promise<void>(() => {}),
+    });
+    const order = ["line-task"];
+    const byId = new Map<string, MinimalToolCallLine>([
+      [
+        "line-task",
+        {
+          kind: "tool_call",
+          id: "line-task",
+          name: "Task",
+          phase: "finished",
+          toolCallId: "tc-task",
+          resultOk: true,
+        },
+      ],
+    ]);
+    const emitted = new Set<string>();
+
+    const hasInProgress = hasInProgressTaskToolCalls(
+      order,
+      byId as unknown as Map<string, never>,
+      emitted,
+    );
+    expect(hasInProgress).toBe(false);
+    expect(
+      collectFinishedTaskToolCalls(
+        order,
+        byId as unknown as Map<string, never>,
+        emitted,
+        hasInProgress,
+      ),
+    ).toEqual([{ lineId: "line-task", toolCallId: "tc-task" }]);
   });
 
   test("deferred first pass + explicit pre-reentry flush preserves Task grouping", () => {

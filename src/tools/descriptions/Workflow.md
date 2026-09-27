@@ -1,34 +1,25 @@
-Execute a workflow script that orchestrates multiple subagents deterministically. Use for multi-step orchestration where control flow should be deterministic (loops, conditionals, fan-out) rather than model-driven.
+Execute a workflow script that orchestrates multiple subagents deterministically (loops, conditionals, fan-out) rather than model-driven.
 
-Workflows run in the background — this tool validates the script and returns immediately with a task ID (`workflow_N`) and output file path; a <task-notification> arrives when the workflow completes, carrying the script's return value. Do not poll or sleep for it: keep working or end your turn, and never fabricate the result before the notification arrives. Read the output file only when you need interim progress; TaskStop aborts the run.
+Workflows run in the background: this tool returns immediately with a task ID, and a <task-notification> carrying the script's return value arrives when the workflow completes. Do not poll or sleep for it, and never fabricate the result before it arrives. TaskStop aborts the run.
 
-ONLY call this tool when the user has explicitly opted into multi-agent orchestration. Workflows can spawn dozens of subagent sessions and cost real money; the user must request that scale, not have it inferred. Explicit opt-in means: the user directly asked for a workflow or multi-agent orchestration in their own words ("use a workflow", "fan out agents", "orchestrate this with subagents"), asked for a comprehensive audit/sweep at a scale that plainly requires it, or invoked a skill whose instructions call this tool. For any other task — even one that would benefit from parallelism — describe what a workflow could do and ask first.
+ONLY call this tool when the user has explicitly opted into multi-agent orchestration — they asked for a workflow or multi-agent orchestration in their own words ("use a workflow", "fan out agents"), or invoked a skill whose instructions call this tool. Workflows can spawn many subagents and cost real money. For any other task, even one that would benefit from parallelism, describe what a workflow could do and ask first.
 
-Every script must begin with `export const meta = {...}`: a PURE LITERAL (no variables, calls, or interpolation) giving the workflow's `name` (kebab-case), a one-line `description`, and optionally `phases` — one `{ title, detail? }` per phase() call. Scripts are plain JavaScript, not TypeScript. The script runs in the CLI process with the CLI's privileges and the user approves it by reading it, so keep it to orchestration (deciding what runs, combining results); reading, searching, and writing belong in subagents, where the tool allowlist applies.
-
-The canonical multi-stage pattern — pipeline by default, each item verifies as soon as its review completes:
+Scripts are plain JavaScript and must begin with `export const meta = {...}`, a pure literal (no variables, calls, or interpolation). Pass the work list via `args`. Prefer `pipeline()` so each item moves to its next stage as soon as it is ready; `agent()` resolves to `null` on failure, so guard and filter:
 
   export const meta = {
-    name: 'review-changes',
-    description: 'Review changed files across dimensions, verify each finding',
+    name: 'review-files',
+    description: 'Review each file for bugs, verify each finding',
     phases: [{ title: 'Review' }, { title: 'Verify' }],
   }
-  const DIMENSIONS = [{key: 'bugs', prompt: '...'}, {key: 'perf', prompt: '...'}]
-  const findingsSchema = {type: 'object', properties: {findings: {type: 'array', items: {type: 'object', properties: {file: {type: 'string'}, summary: {type: 'string'}}, required: ['file', 'summary']}}}, required: ['findings']}
-  const verdictSchema = {type: 'object', properties: {real: {type: 'boolean'}, why: {type: 'string'}}, required: ['real', 'why']}
+  const findings = {type: 'object', properties: {bugs: {type: 'array', items: {type: 'string'}}}, required: ['bugs']}
+  const verdict = {type: 'object', properties: {real: {type: 'boolean'}}, required: ['real']}
   const results = await pipeline(
-    DIMENSIONS,
-    d => agent(d.prompt, {label: `review:${d.key}`, phase: 'Review', schema: findingsSchema}),
-    review => review ? parallel(review.findings.map(f => () =>
-      agent(`Adversarially verify: ${f.summary}`, {label: `verify:${f.file}`, phase: 'Verify', schema: verdictSchema})
-        .then(v => ({...f, verdict: v})))) : []
+    args.files,
+    f => agent(`Review ${f} for bugs.`, { phase: 'Review', schema: findings }),
+    (review, f) => parallel((review?.bugs ?? []).map(bug => () =>
+      agent(`Is this a real bug in ${f}? ${bug}`, { phase: 'Verify', schema: verdict })
+        .then(v => v?.real ? { file: f, bug } : null))),
   )
-  return { confirmed: results.filter(Boolean).flat().filter(Boolean).filter(f => f.verdict?.real) }
+  return results.filter(Boolean).flat().filter(Boolean)
 
-Script hooks: agent(prompt, opts?) spawns one subagent and resolves to final text. Prefer opts.schema (JSON Schema) for a validated object; invalid/missing results retry and then resolve to null with the validation error in the journal. opts.json still parses without validating; schema wins if both are supplied. Options: label, phase, schema, json, model, effort, allowedTools, systemPrompt, timeoutMs, maxToolCalls. pipeline(items, ...stages) runs each item through all stages independently with NO barrier between stages; each stage receives (prevResult, originalItem, index); a throwing stage drops that item to null. parallel(thunks) runs zero-arg functions concurrently and IS a barrier — use only when a stage genuinely needs all prior results together. phase(title) groups subsequent agents in progress output (inside concurrent stages use opts.phase instead — the global phase races). log(message) emits a progress line. args is the invocation's args input, verbatim.
-
-Subagents run in isolated agent-free ephemeral conversations with read-only tools by default (Read, Grep, Glob). Their cross-agent memory guard is disabled; file tools can read mounted memory, but your memory and conversation are not injected into their prompts — put the context they need in the prompt. Other subagents and the invoking agent remain guarded. Their model defaults to the invoking conversation's model; opts.model or the tool's model input accept any handle or alias from `letta model list`. They are told their final text IS the return value, so they return raw data. Concurrency is capped (excess calls queue); a lifetime cap of 1000 agents per run is the runaway-loop backstop. Each subagent is also guarded: a 10-minute default timeout (override with opts.timeoutMs), at most 1000 unique tool calls by default (override with the positive safe integer opts.maxToolCalls), and a stop after three identical consecutive tool calls — a guarded call resolves to null and the journal records which guard fired.
-
-Every run persists its script and a journal of each subagent's outcome under ~/.letta/workflows/executions/<id>/ (the paths are in the tool result). Before diagnosing an empty or unexpected result, read that run's journal.jsonl; it records each agent's actual return value. Workflow subagents require the API backend.
-
-Before authoring a script, load the `workflow-authoring` skill — the workflow authoring reference: script API and gotchas, pipeline-vs-barrier rules, quality patterns (adversarial verify, judge panel, loop-until-dry), and worked examples.
+Before authoring a script, load the `workflow-authoring` skill — the script API, pipeline-vs-barrier rules, quality patterns, worked examples, and how to diagnose a run.
