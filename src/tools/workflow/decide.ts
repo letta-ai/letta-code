@@ -13,7 +13,6 @@ function isFiniteNumber(value: unknown): value is number {
 }
 
 export interface DecisionRequest {
-  model?: string;
   state: string | RecordValue | unknown[];
   questions: RecordValue;
   provider?: RecordValue;
@@ -32,15 +31,9 @@ export interface DecisionResponse {
 
 function validateRequest(input: unknown): DecisionRequest {
   if (!isRecord(input)) throw new Error("decide() requires a request object.");
-  const { model, state, questions, provider, session_id, trace, user } = input;
-  if (
-    model !== undefined &&
-    (typeof model !== "string" ||
-      (!/^typesafe\/jev-[a-zA-Z0-9][a-zA-Z0-9.-]*$/.test(model) &&
-        model !== DEFAULT_JEV_MODEL))
-  ) {
-    throw new Error("decide() model must be a Jev handle.");
-  }
+  const { state, questions, provider, session_id, trace, user } = input;
+  if (Object.hasOwn(input, "model"))
+    throw new Error("decide() does not accept a model option.");
   if (!(typeof state === "string" || isRecord(state) || Array.isArray(state))) {
     throw new Error("decide() state must be a string, object, or array.");
   }
@@ -197,7 +190,7 @@ export async function submitWorkflowDecision(
   const request = validateRequest(input);
   const body: RecordValue = {
     ...request,
-    model: request.model ?? DEFAULT_JEV_MODEL,
+    model: DEFAULT_JEV_MODEL,
     // Jev is the only supported model; never silently switch provider.
     provider: { ...request.provider, allow_fallbacks: false },
   };

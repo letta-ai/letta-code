@@ -138,8 +138,9 @@ answer has `score` + `legend`), `noul` (no criteria; answer has `noul`, 0–1).
 
 - Answers always cover exactly the question ids you asked for, each marked
   `calibrated: true`.
-- Jev only: `opts.model` defaults to `~typesafe/jev-latest`, must be a Jev
-  handle, and fallbacks are disabled — no silent model/provider substitution.
+- Jev only, chosen internally: `decide()` selects the Jev model itself with
+  fallbacks disabled — no silent model/provider substitution. There is no
+  model option; passing one in `opts` is an error.
 - An invalid answer is retried once, then the call resolves to `null` — guard
   with `if (!call)`, as with `agent()`. Transport/API errors throw instead, so
   an unguarded `decide()` in a `pipeline()` stage drops that item.
