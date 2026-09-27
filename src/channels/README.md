@@ -147,6 +147,58 @@ remain first-party/bundled work for now. Custom plugins can still expose custom
 > called `MessageChannel`, whether the tool result says the message was sent,
 > and whether the route/account IDs match the original chat.
 
+## Opt-in subagent dispatch notices (local gateway)
+
+Dispatch notices are off by default. To enable them, create
+`~/.letta/channels/subagent-notices.json` with exact routes:
+
+```json
+{
+  "version": 1,
+  "routes": [
+    {
+      "channel": "signal",
+      "accountId": "your-account-id",
+      "chatId": "your-chat-id",
+      "threadId": null,
+      "agentId": "your-agent-id",
+      "conversationId": "your-conversation-id"
+    }
+  ]
+}
+```
+
+Use the IDs from your existing channel routing configuration. Every field is
+required; use `null` for an unthreaded chat, or the exact thread ID otherwise.
+Wildcards are rejected. This file grants consent to notices, not outbound access:
+the route must also remain authorized and its account adapter must be running.
+Removing a route, deleting the file, or setting `routes` to `[]` disables notices.
+Malformed configuration fails closed. Changes are read on observation and before
+delivery, so no restart is needed. An already-started network send cannot be revoked.
+
+A notice has a bold **Dispatched subagent** (or **Dispatched subagents**) heading,
+followed by one task description per line. Confirmed spawns observed within a
+50 ms window in the same parent turn are batched, with at most ten descriptions
+per message. Notices use each channel's normal outbound formatting, including
+Signal bold text styles and Telegram HTML.
+
+**Privacy:** enabling a route shares the subagent's original task description
+with that chat. Descriptions are capped at 160 characters, flattened to one line,
+and stripped of formatting, control characters, URLs, mentions, email addresses,
+common filesystem paths, secret-looking assignments, and common token prefixes. This is not a general secret
+detector: write descriptions suitable for the destination's audience. Prompts,
+tool arguments, model handles, child output, errors, and completion results are
+never included. An empty sanitized description falls back to “Delegated task”.
+
+Only fresh pending-to-confirmed-spawn transitions correlated with a tool call in
+the active parent stream qualify. Silent children, ambiguous multi-chat turns,
+recovered/handoff turns, old listeners without `spawned_at`, and replayed snapshots
+are suppressed. Delivery is best-effort and at most once per child during the
+gateway lifetime; failures are not retried. The gateway fails closed after 4,096
+claimed children rather than evicting deduplication keys. Remote gateway hosts
+must provide their own explicit route consent and authorized transport through
+`ChannelGateway`'s notice options; this local file is not a Cloud setting.
+
 ## Local backend channels
 
 Channels can run against the experimental local backend without registering a

@@ -798,9 +798,8 @@ export function buildSubagentSnapshot(
 
   return getSubagents()
     .filter((a) => {
-      // Include all statuses (pending, running, completed, error) so the
-      // web UI receives the final state with tool calls and agent URL
-      // before the subagent is cleaned up from the store.
+      // Include terminal states so the UI receives final tool calls and URL
+      // before cleanup, as well as pending/running states.
       if (a.silent && a.isBackground !== true) {
         return false;
       }
@@ -833,6 +832,7 @@ export function buildSubagentSnapshot(
       parent_agent_id: a.parentAgentId,
       parent_conversation_id: a.parentConversationId,
       start_time: a.startTime,
+      spawned_at: a.spawnedAt,
       tool_calls: a.toolCalls,
       total_tokens: a.totalTokens,
       duration_ms: a.durationMs,

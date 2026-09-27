@@ -25,6 +25,15 @@ import {
   uniqueRoutedSources,
 } from "./gateway-sources";
 import {
+  type ChannelSubagentNoticeOptions,
+  ChannelSubagentNotices,
+} from "./gateway-subagent-notices";
+import {
+  lifecycleOutcome,
+  runIdFromDelta,
+  stopReasonFromDelta,
+} from "./gateway-terminal";
+import {
   createMessageChannelIdempotencyScope,
   type MessageChannelIdempotencyScope,
 } from "./message-channel-idempotency";
@@ -104,6 +113,7 @@ export interface ChannelGatewayModelStatus {
 }
 
 type ActiveGatewayTurn = {
+  startedAt: number;
   batchId: string;
   routingSources: ChannelTurnSource[];
   lifecycleSources: ChannelTurnSource[];
@@ -148,32 +158,6 @@ function channelTagsForSources(sources: ChannelTurnSource[]): string[] {
   return [...new Set(sources.map((source) => `channel:${source.channel}`))];
 }
 
-function stopReasonFromDelta(
-  message: StreamDeltaMessage,
-): StopReasonType | null {
-  const delta = message.delta;
-  return delta.message_type === "stop_reason" &&
-    "stop_reason" in delta &&
-    typeof delta.stop_reason === "string"
-    ? delta.stop_reason
-    : null;
-}
-
-function runIdFromDelta(message: StreamDeltaMessage): string | undefined {
-  const runId = "run_id" in message.delta ? message.delta.run_id : undefined;
-  return typeof runId === "string" && runId.length > 0 ? runId : undefined;
-}
-
-function lifecycleOutcome(
-  stopReason: StopReasonType,
-): "completed" | "error" | "cancelled" {
-  if (stopReason === "cancelled") return "cancelled";
-  if (stopReason === "end_turn" || stopReason === "tool_rule") {
-    return "completed";
-  }
-  return "error";
-}
-
 /**
  * Process-neutral Channels bridge. It only speaks the public App Server
  * protocol; channel adapters and credentials stay behind the injected hooks.
@@ -185,11 +169,14 @@ export class ChannelGateway {
   // registration. Keep them ordered so a late runtime_start cannot resurrect a
   // route that an overlapping route-removal update just revoked.
   private registrationQueue = Promise.resolve();
+  private readonly subagentNotices: ChannelSubagentNotices;
 
   constructor(
     private readonly client: ChannelGatewayClient,
     private readonly hooks: ChannelGatewayHooks,
+    subagentNotices?: ChannelSubagentNoticeOptions,
   ) {
+    this.subagentNotices = new ChannelSubagentNotices(subagentNotices);
     this.disposers.push(
       client.onMessage((message) => this.handleMessage(message)),
       client.onExternalToolCall((request) => {
@@ -210,6 +197,7 @@ export class ChannelGateway {
   }
 
   close(): void {
+    this.subagentNotices.close();
     for (const dispose of this.disposers.splice(0)) dispose();
     this.client.close();
     this.states.clear();
@@ -366,6 +354,7 @@ export class ChannelGateway {
     let recoveredTurn: ActiveGatewayTurn | null = null;
     if (!state.active) {
       recoveredTurn = {
+        startedAt: Number.POSITIVE_INFINITY, // Recovery cannot establish spawn origin.
         batchId: `channel-recovered-${crypto.randomUUID()}`,
         routingSources: uniqueRoutedSources(sources),
         lifecycleSources: uniqueLifecycleSources(sources),
@@ -414,6 +403,7 @@ export class ChannelGateway {
       );
       const routingSources = uniqueRoutedSources(delivery.sources);
       const active: ActiveGatewayTurn = {
+        startedAt: Number.POSITIVE_INFINITY, // Handoff snapshots may be replayed.
         batchId,
         routingSources,
         lifecycleSources: uniqueLifecycleSources(delivery.sources),
@@ -758,6 +748,14 @@ export class ChannelGateway {
   }
 
   private handleMessage(message: WsProtocolMessage): void {
+    if (message.type === "update_subagent_state") {
+      if (hasAgentRuntime(message))
+        this.subagentNotices.handle(
+          message,
+          this.states.get(runtimeKey(message.runtime))?.active ?? null,
+        );
+      return;
+    }
     if (message.type === "update_queue") {
       if (hasAgentRuntime(message)) this.handleQueueUpdate(message);
       return;
@@ -875,6 +873,7 @@ export class ChannelGateway {
     const routingSources = uniqueRoutedSources(sources);
     const lifecycleSources = uniqueLifecycleSources(sources);
     state.active = {
+      startedAt: Date.now(),
       batchId: `channel-${clientMessageId}`,
       routingSources,
       lifecycleSources,
@@ -905,6 +904,8 @@ export class ChannelGateway {
     const runId = runIdFromDelta(message);
     if (runId) active.runId = runId;
     for (const update of active.progress.buildUpdates(message.delta)) {
+      if (update.kind === "tool")
+        this.subagentNotices.observeToolCall(active, update.toolCallId);
       void this.enqueueHook(state, () =>
         this.hooks.onProgress({
           type: "progress",

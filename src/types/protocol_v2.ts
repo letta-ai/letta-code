@@ -583,9 +583,9 @@ export interface SubagentSnapshot {
   prompt?: string;
   status: "pending" | "running" | "completed" | "error";
   agent_url: string | null;
-  /** The subagent's own conversation id (for dual-view routing; local agents
-   * have a bare-id agent_url with no ?conversation= param to parse). */
+  /** Child conversation for dual-view routing; local agent URLs do not encode it. */
   conversation_id?: string | null;
+  spawned_at?: number; // Observed child process spawn time; absent on older listeners.
   model?: string;
   is_background?: boolean;
   silent?: boolean;
