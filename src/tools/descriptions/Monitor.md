@@ -10,18 +10,10 @@ Your script's stdout is the event stream. Each line becomes a notification. Exit
   tail -f /var/log/app.log | grep --line-buffered "ERROR"
   # Each file change is an event
   inotifywait -m --format '%e %f' /watched/dir
-  # Poll GitHub for new PR comments and emit one line per new comment
-  last=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    gh api "repos/owner/repo/issues/123/comments?since=$last" --jq '.[] | "\(.user.login): \(.body)"'
-    last=$now; sleep 30
   # Node script that emits events as they arrive (e.g. WebSocket listener)
   node watch-for-events.js
-  # Per-occurrence with a natural end: emit each CI check as it lands, exit when the run completes
-    s=$(gh pr checks 123 --json name,bucket)
-    cur=$(jq -r '.[] | select(.bucket!="pending") | "\(.name): \(.bucket)"' <<<"$s" | sort)
-    comm -13 <(echo "$prev") <(echo "$cur")
-    jq -e 'all(.bucket!="pending")' <<<"$s" >/dev/null && break
+
+For GitHub pull requests, use WatchPR instead. It already covers current-head checks, comments, reviews, inline threads, conflicts, head changes, and merge state, and keeps watching after CI finishes. Do not compose a partial PR polling loop with Monitor.
 
 **Don't use an unbounded command for a single notification.** `tail -f`, `inotifywait -m`, and `while true` never exit on their own, so the monitor stays armed until timeout even after the event has fired. For "tell me when X is ready," use Bash `run_in_background` with an `until` loop instead (one notification, ends in seconds). Note that `tail -f log | grep -m 1 ...` does *not* fix this: if the log goes quiet after the match, `tail` never receives SIGPIPE and the pipeline hangs anyway.
 

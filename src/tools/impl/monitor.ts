@@ -814,7 +814,7 @@ export function stopMonitorsForProcessExit(): void {
 
 let monitorProcessExitCleanupInstalled = false;
 
-function installMonitorProcessExitCleanup(): void {
+export function installMonitorProcessExitCleanup(): void {
   if (monitorProcessExitCleanupInstalled) return;
   monitorProcessExitCleanupInstalled = true;
   process.once("exit", stopMonitorsForProcessExit);
