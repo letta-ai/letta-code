@@ -5,7 +5,6 @@
  * concurrent calls with different models never touch a shared agent.
  */
 
-import { WORKFLOW_WORKER_ENV } from "@/permissions/cross-agent-guard";
 import type {
   AgentCallOptions,
   SdkClient,
@@ -297,7 +296,7 @@ function buildQueryOptions(
       options.allowedTools ?? config.allowedTools ?? DEFAULT_ALLOWED_TOOLS,
     skillSources: [],
     ...(config.cwd ? { cwd: config.cwd } : {}),
-    env: { [WORKFLOW_WORKER_ENV]: "1" },
+    disableMemoryGuard: true,
     ...(options.effort
       ? { modelSettings: { reasoning_effort: options.effort } }
       : {}),

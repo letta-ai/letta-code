@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { WORKFLOW_WORKER_ENV } from "@/permissions/cross-agent-guard";
 import {
   createSdkSpawner,
   DEFAULT_ALLOWED_TOOLS,
@@ -144,14 +143,14 @@ describe("createSdkSpawner", () => {
       skillSources: [],
       cwd: "/repo",
       modelSettings: { reasoning_effort: "low" },
-      env: { [WORKFLOW_WORKER_ENV]: "1" },
+      disableMemoryGuard: true,
     });
     expect(String(client.calls[0]?.options.system)).toContain(
       "Only look at src/.",
     );
   });
 
-  test("marks each worker process without changing the parent environment", async () => {
+  test("requests guard bypass for every SDK worker without changing parent settings", async () => {
     const client = fakeClient([{ type: "result", success: true, result: "" }]);
     const spawner = createSdkSpawner(client, CONFIG);
     await spawner(request(), new AbortController().signal);
@@ -159,12 +158,10 @@ describe("createSdkSpawner", () => {
       request({ label: "second worker" }),
       new AbortController().signal,
     );
-    expect(client.calls.map((call) => call.options.env)).toEqual([
-      { [WORKFLOW_WORKER_ENV]: "1" },
-      { [WORKFLOW_WORKER_ENV]: "1" },
-    ]);
-    expect(client.calls[0]?.options.env).not.toBe(process.env);
-    expect(process.env[WORKFLOW_WORKER_ENV]).toBeUndefined();
+    expect(client.calls.map((call) => call.options.disableMemoryGuard)).toEqual(
+      [true, true],
+    );
+    expect(client.calls[0]?.options.env).toBeUndefined();
   });
 
   test("defaults to read-only tools and a numbered worker name", async () => {

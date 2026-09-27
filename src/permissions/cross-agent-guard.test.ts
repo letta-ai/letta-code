@@ -17,7 +17,6 @@ import {
   extractTargetAgentPaths,
   isMemoryGuardDisabled,
   resolveAllowedAgents,
-  WORKFLOW_WORKER_ENV,
 } from "@/permissions/cross-agent-guard";
 import { permissionMode } from "@/permissions/mode";
 import { SANDBOX_ENV_VAR } from "@/sandbox/policy";
@@ -729,23 +728,6 @@ describe("symlink-escape (realpath classification of in-process file tools)", ()
     expect(result?.offendingAgentIds).toContain("agent-other");
   });
 
-  test("workflow worker default bypasses Grep dot false positive", () => {
-    const home = makeTempHome();
-    const result = evaluateCrossAgentGuard(
-      "Grep",
-      { path: "." },
-      join(home, "repo"),
-      {
-        env: {
-          HOME: home,
-          [WORKFLOW_WORKER_ENV]: "1",
-        } as NodeJS.ProcessEnv,
-        currentAgentId: "agent-worker",
-      },
-    );
-    expect(result).toBeNull();
-  });
-
   test("a plain (non-symlinked) path outside the tree is not a false positive", () => {
     const home = makeTempHome();
     const projectDir = join(home, "project");
@@ -765,25 +747,6 @@ describe("symlink-escape (realpath classification of in-process file tools)", ()
   });
 });
 
-describe("workflow worker guard policy", () => {
-  test("guard stays enabled in the parent process by default", () => {
-    const home = mkdtempSync(join(tmpdir(), "workflow-parent-guard-test-"));
-    const otherMemoryRoot = join(home, ".letta", "agents", OTHER, "memory");
-    mkdirSync(otherMemoryRoot, { recursive: true });
-    const result = evaluateCrossAgentGuard(
-      "Read",
-      { file_path: join(otherMemoryRoot, "x") },
-      "/tmp",
-      {
-        env: { HOME: home } as NodeJS.ProcessEnv,
-        currentAgentId: "agent-parent",
-      },
-    );
-    expect(result).not.toBeNull();
-    rmSync(home, { recursive: true, force: true });
-  });
-});
-
 describe("sandboxed subagent defers entirely to the kernel", () => {
   // A subagent confined as a whole process by the kernel sandbox (sentinel set)
   // gets cross-agent isolation enforced for every tool, so the guard skips.
@@ -792,28 +755,6 @@ describe("sandboxed subagent defers entirely to the kernel", () => {
     LETTA_PARENT_AGENT_ID: "agent-parent",
   } as NodeJS.ProcessEnv;
   const crossAgentRead = { file_path: otherMemory("secret.md") };
-
-  test("ordinary subagent remains guarded regardless of the workflow marker", () => {
-    const home = mkdtempSync(join(tmpdir(), "ordinary-subagent-guard-test-"));
-    const foreignMemory = join(home, ".letta", "agents", OTHER, "memory");
-    mkdirSync(foreignMemory, { recursive: true });
-    const result = evaluateCrossAgentGuard(
-      "Read",
-      { file_path: join(foreignMemory, "secret.md") },
-      "/tmp",
-      {
-        env: {
-          ...subagentEnv,
-          HOME: home,
-          [WORKFLOW_WORKER_ENV]: "1",
-        },
-        currentAgentId: "agent-self",
-      },
-    );
-    expect(result).not.toBeNull();
-    expect(result?.offendingAgentIds).toContain(OTHER);
-    rmSync(home, { recursive: true, force: true });
-  });
 
   test("without the sandbox sentinel the guard still denies the cross-agent read", () => {
     const result = evaluateCrossAgentGuard("Read", crossAgentRead, "/tmp", {
