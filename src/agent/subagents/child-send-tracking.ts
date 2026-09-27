@@ -107,6 +107,7 @@ export function trackChildSend(input: TrackChildSendInput): string {
   updateSubagent(subagentId, {
     agentId: receipt.agent_id,
     conversationId: receipt.conversation_id,
+    superRunId: receipt.super_run_id,
     agentURL: buildAgentReference(receipt.agent_id, {
       conversationId: receipt.conversation_id,
     }),

@@ -559,8 +559,8 @@ export interface SubagentSnapshot {
   prompt?: string;
   status: "pending" | "running" | "completed" | "error";
   agent_url: string | null;
-  /** Own conversation id; local agent URLs do not carry it. */
-  conversation_id?: string | null;
+  conversation_id?: string | null; // Own conversation; local URLs do not carry it.
+  super_run_id?: string; // Exact accepted Super Run for a remote child send.
   model?: string;
   is_background?: boolean;
   claims_parent_runtime?: boolean;

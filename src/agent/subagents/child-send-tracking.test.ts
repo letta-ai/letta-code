@@ -80,6 +80,7 @@ test("a tracked child send is running, scoped to the parent, and completes with 
     prompt: "Please finish the review.",
     agentId: "agent-hayt",
     conversationId: "conv-hayt",
+    superRunId: receipt.super_run_id,
     isBackground: true,
     claimsParentRuntime: false,
     silent: false,

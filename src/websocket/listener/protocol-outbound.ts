@@ -825,6 +825,7 @@ export function buildSubagentSnapshot(
       status: a.status,
       agent_url: a.agentURL,
       conversation_id: a.conversationId ?? null,
+      super_run_id: a.superRunId,
       model: a.model,
       is_background: a.isBackground,
       claims_parent_runtime: a.claimsParentRuntime,

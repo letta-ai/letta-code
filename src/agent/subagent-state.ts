@@ -28,6 +28,8 @@ export interface SubagentState {
   // desktop dual-view routing: local agents have a bare-id agentURL with no
   // ?conversation= param to parse, so this is the only conversation source.
   conversationId?: string | null;
+  /** Exact accepted Super Run for a remotely executing child send. */
+  superRunId?: string;
   toolCalls: ToolCall[];
   // Monotonic counter to avoid transient regressions in rendered tool usage.
   maxToolCallsSeen: number;
