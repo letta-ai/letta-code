@@ -822,6 +822,8 @@ export async function launchSubagent(
             prompt,
             model,
             parentAgentId,
+            parentConversationId: resolvedParentScope?.conversationId,
+            actingUserId: resolvedParentScope?.actingUserId,
             cwd: getCurrentWorkingDirectory(),
             mcpReminder,
             signal: childSignal,
@@ -831,10 +833,7 @@ export async function launchSubagent(
       },
     });
     let agentId: string | null = null;
-    if (
-      externalCodingAgentType === "codex" ||
-      externalCodingAgentType === "claude-code"
-    ) {
+    if (isExternalCodingAgent) {
       const abortStartup = () =>
         backgroundTasks.get(taskId)?.abortController?.abort(signal?.reason);
       signal?.addEventListener("abort", abortStartup, { once: true });

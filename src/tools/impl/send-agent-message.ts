@@ -120,7 +120,10 @@ export async function send_agent_message(
             type: "codex",
             agentId: args.agent_id as string,
             message: args.message,
-            parentScope,
+            parentScope: {
+              ...parentScope,
+              actingUserId: context?.actingUserId,
+            },
             completion: receipt.completion,
             interrupt: receipt.interrupt,
           });
@@ -170,7 +173,7 @@ export async function send_agent_message(
           type: "claude-code",
           agentId: args.agent_id as string,
           message: args.message,
-          parentScope,
+          parentScope: { ...parentScope, actingUserId: context?.actingUserId },
           completion: receipt.completion,
           interrupt: receipt.interrupt,
         });
