@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import WebSocket from "ws";
+import { clearAllSubagents, registerSubagent } from "@/agent/subagent-state";
 import type { DequeuedBatch } from "@/queue/queue-runtime";
 import {
   backgroundProcesses,
@@ -24,6 +25,7 @@ import {
 } from "@/websocket/listener/mod-adapter";
 import { OUTBOUND_QUEUE_LIMITS } from "@/websocket/listener/outbound-wire";
 import {
+  buildSubagentSnapshot,
   emitDequeuedUserMessage,
   emitDeviceStatusUpdateIfChanged,
   emitProtocolV2Message,
@@ -304,6 +306,40 @@ describe("emitProtocolV2Message connection routing", () => {
 
     expect(socketA.sentPayloads).toEqual([]);
     expect(socketB.sentPayloads).toEqual([]);
+  });
+
+  test("serializes parent runtime claims independently from background grouping", () => {
+    clearAllSubagents();
+    try {
+      registerSubagent(
+        "subagent-child-send",
+        "general-purpose",
+        "Continue child work",
+        undefined,
+        true,
+        false,
+        { agentId: "agent-a", conversationId: "conv-a" },
+        "Finish the task",
+        false,
+      );
+      const listener = createListenerRuntime();
+      const runtime = getOrCreateScopedRuntime(listener, "agent-a", "conv-a");
+
+      expect(
+        buildSubagentSnapshot(runtime, {
+          agent_id: "agent-a",
+          conversation_id: "conv-a",
+        }),
+      ).toEqual([
+        expect.objectContaining({
+          subagent_id: "subagent-child-send",
+          is_background: true,
+          claims_parent_runtime: false,
+        }),
+      ]);
+    } finally {
+      clearAllSubagents();
+    }
   });
 
   test("keeps cron and background snapshots inside their subscribed runtime", () => {
