@@ -144,6 +144,8 @@ answer has `score` + `legend`), `noul` (no criteria; answer has `noul`, 0–1).
   with `if (!call)`, as with `agent()`. Transport/API errors throw instead, so
   an unguarded `decide()` in a `pipeline()` stage drops that item.
 - Other options: `provider`, `session_id` (≤256 chars), `trace`, `user`.
+- Bounded like `agent()`: decisions take slots from the same `maxConcurrent`
+  pool and stop at their own 1000-per-run lifetime cap.
 - The journal records model, cost, calibrated, valid, and totalTokens per
   decision API attempt, retries included — not your state or questions. The
   run's totalTokens sums every attempt.
@@ -165,10 +167,12 @@ A barrier is NOT justified by:
   slowest takes 3× the fastest, a barrier wastes 2/3 of the fast finders'
   idle time.
 
-Concurrent agent() calls are capped per run (`maxConcurrent`, default 16) —
-excess calls queue and run as slots free up, so passing 100 items is fine.
-Total agent count across a run is capped at 1000 — a runaway-loop backstop.
-A single parallel()/pipeline() call accepts at most 4096 items.
+`agent()` and `decide()` share one pool of concurrent slots per run
+(`maxConcurrent`, default 16) — excess calls of either kind queue and run as
+slots free up, so passing 100 items is fine. Each hook also has its own
+lifetime backstop: 1000 agent calls and 1000 decisions per run, counted
+separately, and exceeding either throws. A single parallel()/pipeline() call
+accepts at most 4096 items.
 
 When a barrier IS correct — dedup across all findings before expensive
 verification:

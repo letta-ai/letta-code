@@ -167,6 +167,24 @@ return { done: done.length, capped }`,
     });
   });
 
+  test("caps decisions independently without calling the provider", async () => {
+    const run = await executeWorkflow(echoSpawner(), {
+      script: `${META}
+const errors = []
+for (let i = 0; i < 3; i++) {
+  try { await decide(null, {}) } catch (e) { errors.push(e.message) }
+}
+return errors`,
+      maxTotalDecisions: 2,
+    });
+    expect(run.result).toEqual([
+      "decide() state must be a string, object, or array.",
+      "decide() state must be a string, object, or array.",
+      "Lifetime decision cap of 2 reached.",
+    ]);
+    expect(run.totalTokens).toBe(0);
+  });
+
   test("validates hook arguments", async () => {
     const run = await executeWorkflow(echoSpawner(), {
       script: `${META}

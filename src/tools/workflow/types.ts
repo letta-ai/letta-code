@@ -114,10 +114,12 @@ export interface RunWorkflowOptions {
   script: string;
   /** Value exposed to the script as the `args` global. */
   args?: unknown;
-  /** Max concurrently running subagents. Default 16. */
+  /** Max concurrently running subagents and decisions. Default 16. */
   maxConcurrent?: number;
   /** Lifetime subagent cap (runaway-loop backstop). Default 1000. */
   maxTotalAgents?: number;
+  /** Lifetime decision cap (runaway-loop backstop). Default 1000. */
+  maxTotalDecisions?: number;
   /** JSONL file that receives one line per completed subagent call. */
   journalPath?: string;
   /** Abort signal for the whole run. */
