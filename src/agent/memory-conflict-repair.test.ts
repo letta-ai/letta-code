@@ -56,6 +56,22 @@ test("a conflict that follows new commits is attempted again", async () => {
   await claim(root);
 });
 
+test("an invalid tree is attempted only once while commits are added on the same upstream", async () => {
+  const root = repository();
+  const result = await claimMemoryConflictRepair(root, "invalid");
+  expect(result.status).toBe("claimed");
+  if (result.status !== "claimed") throw new Error("Expected repair claim");
+  await completeMemoryConflictRepair(root, result.token);
+  writeFileSync(join(root, "note.md"), "still invalid\n");
+  execFileSync("git", ["-C", root, "commit", "-q", "-am", "still invalid"], {
+    stdio: "pipe",
+  });
+
+  expect(await claimMemoryConflictRepair(root, "invalid")).toEqual({
+    status: "attempted",
+  });
+});
+
 test("a repair still in progress in a running process is not launched twice", async () => {
   const root = repository();
   writeFileSync(join(root, ".git", "MERGE_HEAD"), "a".repeat(40));

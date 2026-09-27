@@ -776,6 +776,7 @@ function getDefaultDecision(
     "read_artifact_file",
     "write_artifact_file",
     "Wake",
+    "WatchPR",
   ];
 
   if (autoAllowTools.includes(toolName)) {

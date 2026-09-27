@@ -2034,48 +2034,45 @@ describe("listen-client multi-worker concurrency", () => {
       ),
     ).toBe(true);
   });
-  test("pre-stream and approval failures expose safe terminal errors", async () => {
-    const credit = createRuntime("agent-402", "conv-402");
-    const creditSocket = new MockSocket();
-    sendMessageStreamMock.mockRejectedValueOnce(
-      new APIError(
-        402,
-        {
-          error: "Rate limited",
-          reasons: ["not-enough-credits", "requests", "tokens"],
-        },
-        undefined,
-        new Headers(),
-      ),
-    );
-    await __listenClientTestUtils.handleIncomingMessage(
-      makeIncomingMessage("agent-402", "conv-402", "hello"),
-      creditSocket as unknown as WebSocket,
-      credit.runtime,
-    );
-    const creditTerminal = JSON.parse(creditSocket.sentPayloads[0] as string);
-    expect(creditTerminal.error).toBe(
+  test.each([
+    [
+      "pre-stream",
       "Your account does not have credits for this model. Add your own API keys or upgrade your plan to purchase credits.",
-    );
-    expect(JSON.stringify(creditTerminal)).not.toContain("Rate limited");
-    const approval = createRuntime("agent-approval", "conv-approval");
-    const approvalSocket = new MockSocket();
-    drainHandlers.set("conv-approval", async () => ({
-      stopReason: "requires_approval",
-      approvals: [],
-      apiDurationMs: 0,
-    }));
+    ],
+    ["approval", "The request failed. Please try again."],
+  ])("%s failures expose safe terminal errors", async (stage, expected) => {
+    const { runtime } = createRuntime("agent-error", "conv-error");
+    const socket = new MockSocket();
+    if (stage === "pre-stream") {
+      sendMessageStreamMock.mockRejectedValueOnce(
+        new APIError(
+          402,
+          {
+            error: "Rate limited",
+            reasons: ["not-enough-credits", "requests", "tokens"],
+          },
+          undefined,
+          new Headers(),
+        ),
+      );
+    } else {
+      drainHandlers.set("conv-error", async () => ({
+        stopReason: "requires_approval",
+        approvals: [],
+        apiDurationMs: 0,
+      }));
+    }
     await __listenClientTestUtils.handleIncomingMessage(
-      makeIncomingMessage("agent-approval", "conv-approval", "hello"),
-      approvalSocket as unknown as WebSocket,
-      approval.runtime,
+      makeIncomingMessage("agent-error", "conv-error", "hello"),
+      socket as unknown as WebSocket,
+      runtime,
     );
-    const [approvalPayload] = approvalSocket.sentPayloads;
-    const approvalTerminal = JSON.parse(approvalPayload as string);
-    expect(approvalTerminal.error).toBe(
-      "The request failed. Please try again.",
-    );
-    expect(JSON.stringify(approvalTerminal)).not.toContain("requires_approval");
+    const terminal = socket.sentPayloads
+      .map((payload) => JSON.parse(payload))
+      .find((message) => message.type === "turn_finished");
+    expect(terminal?.error).toBe(expected);
+    expect(JSON.stringify(terminal)).not.toContain("Rate limited");
+    expect(JSON.stringify(terminal)).not.toContain("requires_approval");
   });
   test("pre-stream 409 resumes via conversations stream with message otid", async () => {
     const { runtime } = createRuntime("agent-409-otid", "conv-409-otid");

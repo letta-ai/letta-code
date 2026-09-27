@@ -1,10 +1,10 @@
 import { updateSubagent } from "@/agent/subagent-state.js";
 import type { SubagentResult } from "@/agent/subagents";
+import { getBackend } from "@/backend";
 import {
   type EnqueueReceipt,
-  getLatestConversationSuperRun,
+  getExactSuperRun,
   listEnqueuedRunMessages,
-  openConversationStatusStream,
 } from "@/backend/api/conversation-enqueue";
 import { buildAgentReference } from "@/cli/helpers/app-urls";
 import { INTERRUPTED_BY_USER } from "@/constants";
@@ -29,9 +29,11 @@ export async function collectRemoteTurnResult(
     }),
   });
   try {
+    const backend = getBackend();
     const reply = await waitForAcceptedSuperRun(receipt, signal, {
-      open: openConversationStatusStream,
-      latest: getLatestConversationSuperRun,
+      exact: getExactSuperRun,
+      run: (runId, readSignal) =>
+        backend.retrieveRun(runId, { signal: readSignal }),
       messages: async (runId, readSignal) => {
         const messages = await listEnqueuedRunMessages(runId, readSignal);
         for (const message of messages) {

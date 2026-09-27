@@ -54,6 +54,31 @@ describe("background process snapshots", () => {
     expect(buildBackgroundProcessSnapshot("agent-b", "conv-a")).toEqual([]);
   });
 
+  test("reports GitHub PR watchers as persistent monitors", () => {
+    backgroundProcesses.set("monitor-pr", {
+      process: { kill() {} },
+      command: "https://github.com/letta-ai/letta-code/pull/42",
+      status: "running",
+      exitCode: null,
+      startTime: new Date(1000),
+      runtimeScope: { agentId: "agent-a", conversationId: "conv-a" },
+      kind: "monitor",
+      description: "PR letta-ai/letta-code#42",
+      monitorSource: "github_pull_request",
+      persistent: true,
+    });
+
+    expect(buildBackgroundProcessSnapshot("agent-a", "conv-a")).toContainEqual({
+      process_id: "monitor-pr",
+      kind: "monitor",
+      description: "PR letta-ai/letta-code#42",
+      source: "github_pull_request",
+      started_at_ms: 1000,
+      status: "running",
+      persistent: true,
+    });
+  });
+
   test("reports running workflows separately from Bash processes", () => {
     backgroundProcesses.set("workflow_1", {
       process: { kill: () => {} },

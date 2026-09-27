@@ -48,7 +48,12 @@ import type {
   RuntimeExternalToolsUpdateCommand,
   RuntimeExternalToolsUpdateResponseMessage,
 } from "./external-tool-protocol";
-import type { LoopState } from "./loop-status-protocol";
+import type {
+  LoopErrorMessage,
+  LoopState,
+  RetryMessage,
+  StatusMessage,
+} from "./loop-status-protocol";
 import type {
   AgentRuntimeScope,
   ConversationRuntimeScope,
@@ -510,35 +515,6 @@ export interface SlashCommandEndMessage extends UmiLifecycleMessageBase {
   input: string;
   output: string;
   success: boolean;
-}
-
-export interface StatusMessage extends UmiLifecycleMessageBase {
-  message_type: "status";
-  message: string;
-  level: "info" | "success" | "warning";
-}
-
-export interface RetryMessage extends UmiLifecycleMessageBase {
-  message_type: "retry";
-  message: string;
-  reason: StopReasonType;
-  attempt: number;
-  max_attempts: number;
-  delay_ms: number;
-  retry_kind?: "provider_retry" | "transport_fallback";
-  provider?: string;
-  from_transport?: string | null;
-  to_transport?: string | null;
-  error_code?: string | null;
-  step_id?: string | null;
-}
-
-export interface LoopErrorMessage extends UmiLifecycleMessageBase {
-  message_type: "loop_error";
-  message: string;
-  stop_reason: StopReasonType;
-  is_terminal: boolean;
-  api_error?: LettaStreamingResponse.LettaErrorMessage;
 }
 
 export type StreamDelta =

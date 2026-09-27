@@ -7,6 +7,7 @@
  * see memory-git.ts.
  */
 
+import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { validateMemoryFileFrontmatter } from "@/memory-frontmatter";
@@ -219,6 +220,20 @@ export function installPreCommitHook(
   installPreCommitHookWithPolicy(
     dir,
     allowRootMemoryLayout ? "root-marker" : "legacy-only",
+  );
+}
+
+/** Refresh validation for a local-only repository without changing its layout. */
+export function installLocalMemoryPreCommitHook(dir: string): void {
+  const hasRootMarker =
+    existsSync(join(dir, "MEMORY.md")) ||
+    spawnSync("git", ["cat-file", "-e", "HEAD:MEMORY.md"], {
+      cwd: dir,
+      stdio: "ignore",
+    }).status === 0;
+  installPreCommitHookWithPolicy(
+    dir,
+    hasRootMarker ? "root-marker" : "legacy-only",
   );
 }
 

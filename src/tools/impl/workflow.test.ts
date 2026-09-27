@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getBackend } from "@/backend";
@@ -10,6 +16,7 @@ import { TOOLSET_CATALOG } from "@/tools/toolset-catalog";
 import {
   __resetWorkflowExecutionsForTests,
   getWorkflowExecution,
+  listWorkflowExecutions,
 } from "@/tools/workflow/execution-registry";
 import type { SubagentSpawner } from "@/tools/workflow/types";
 import {
@@ -21,6 +28,7 @@ import { backgroundProcesses } from "./process_manager";
 import { task_stop } from "./task-stop";
 import {
   __setWorkflowSpawnerFactoryForTests,
+  __setWorkflowStartupTimeoutForTests,
   createSdkSpawnerHandle,
   normalizeWorkflowArgs,
   workflow,
@@ -159,6 +167,7 @@ describe("Workflow tool (background launch)", () => {
     backgroundProcesses.clear();
     __resetWorkflowExecutionsForTests();
     __setWorkflowSpawnerFactoryForTests(null);
+    __setWorkflowStartupTimeoutForTests(null);
     setMessageQueueAdder(null);
     clearPendingMessages();
     if (previousScratchpad === undefined) {
@@ -290,6 +299,116 @@ describe("Workflow tool (background launch)", () => {
     expect((await workflow({})).status).toBe("error");
     expect(factories).toBe(0);
     expect(backgroundProcesses.size).toBe(0);
+  });
+
+  test("times out a stuck startup at the tool boundary without creating a run", async () => {
+    __setWorkflowStartupTimeoutForTests(40);
+    __setWorkflowSpawnerFactoryForTests(async (_args, setStage) => {
+      setStage("loading Agent SDK");
+      return new Promise<never>(() => {});
+    });
+    const started = Date.now();
+    const result = await workflow({ script: SCRIPT });
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(result).toMatchObject({ status: "error" });
+    expect(result.toolReturn).toContain(
+      "Workflow startup failed during loading Agent SDK",
+    );
+    expect(result.toolReturn).toContain("timed out after 40ms");
+    expect(backgroundProcesses.size).toBe(0);
+    expect(listWorkflowExecutions()).toHaveLength(0);
+    expect(existsSync(join(scratchpad, ".letta", "workflows"))).toBe(false);
+    expect(queuedMessages).toHaveLength(0);
+  });
+
+  test("preserves a non-Error startup rejection and its stage", async () => {
+    __setWorkflowSpawnerFactoryForTests(async (_args, setStage) => {
+      setStage("loading Agent SDK");
+      throw "JavaScript execution terminated.";
+    });
+    expect(await workflow({ script: SCRIPT })).toEqual({
+      status: "error",
+      toolReturn:
+        "Workflow startup failed during loading Agent SDK: JavaScript execution terminated.",
+    });
+    expect(listWorkflowExecutions()).toHaveLength(0);
+  });
+
+  test.each(["timeout", "cancel"])(
+    "a %s during startup disposes its eventual handle without launching workers",
+    async (reason) => {
+      let resolveStartup!: (handle: {
+        spawner: SubagentSpawner;
+        cleanup(): Promise<void>;
+      }) => void;
+      let spawned = 0;
+      const controller = new AbortController();
+      __setWorkflowStartupTimeoutForTests(40);
+      __setWorkflowSpawnerFactoryForTests(
+        () =>
+          new Promise((resolve) => {
+            resolveStartup = resolve;
+          }),
+      );
+      const pending = workflow({ script: SCRIPT, signal: controller.signal });
+      await waitFor(() => typeof resolveStartup === "function");
+      if (reason === "cancel") controller.abort();
+      const result = await pending;
+      expect(result.status).toBe("error");
+      expect(result.toolReturn).toContain(
+        reason === "cancel" ? "cancelled by caller" : "timed out after 40ms",
+      );
+      resolveStartup({
+        spawner: async () => {
+          spawned++;
+          return { value: null, failed: false };
+        },
+        cleanup: async () => {
+          cleanupCalls++;
+          throw new Error("dispose failed");
+        },
+      });
+      await waitFor(() => cleanupCalls === 1);
+      expect(spawned).toBe(0);
+      expect(backgroundProcesses.size).toBe(0);
+      expect(listWorkflowExecutions()).toHaveLength(0);
+      expect(existsSync(join(scratchpad, ".letta", "workflows"))).toBe(false);
+      expect(queuedMessages).toHaveLength(0);
+    },
+  );
+
+  test("abort after factory fulfillment but before launch does not register a run", async () => {
+    const controller = new AbortController();
+    let cleanupCallsForHandle = 0;
+    let spawned = 0;
+    __setWorkflowSpawnerFactoryForTests(() => {
+      const handle = {
+        spawner: async () => {
+          spawned++;
+          return { value: null, failed: false };
+        },
+        cleanup: async () => {
+          cleanupCallsForHandle++;
+        },
+      };
+      // The factory has fulfilled; abort in the microtask before workflow's
+      // await continuation can cross the registration boundary.
+      queueMicrotask(() =>
+        queueMicrotask(() => queueMicrotask(() => controller.abort())),
+      );
+      return Promise.resolve(handle);
+    });
+    const result = await workflow({
+      script: SCRIPT,
+      signal: controller.signal,
+    });
+    expect(controller.signal.aborted).toBe(true);
+    expect(result.status).toBe("error");
+    await waitFor(() => cleanupCallsForHandle === 1);
+    expect(spawned).toBe(0);
+    expect(backgroundProcesses.size).toBe(0);
+    expect(listWorkflowExecutions()).toHaveLength(0);
+    expect(existsSync(join(scratchpad, ".letta", "workflows"))).toBe(false);
   });
 
   test("returns immediately with a task id, streams progress, then notifies", async () => {
