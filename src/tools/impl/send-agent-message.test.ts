@@ -66,7 +66,8 @@ const message = {
 
 test.each([
   {
-    name: "inherited runtime actor",
+    name: "managed Cloud inherits runtime actor",
+    managed: true,
     contextActor: undefined,
     envActor: "user-inherited",
     destination: { conversation_id: "conv-target" },
@@ -74,13 +75,32 @@ test.each([
   },
   {
     name: "per-turn actor takes precedence over inherited actor",
+    managed: true,
     contextActor: "user-turn",
     envActor: "user-inherited",
     destination: { agent_id: "agent-target" },
     expectedActor: "user-turn",
   },
   {
+    name: "personal listener does not borrow an inherited actor",
+    managed: false,
+    contextActor: undefined,
+    envActor: "user-inherited",
+    destination: { conversation_id: "conv-target" },
+    expectedActor: undefined,
+    allowWithoutActor: true,
+  },
+  {
+    name: "personal listener keeps explicit per-turn actor",
+    managed: false,
+    contextActor: "user-turn",
+    envActor: "user-inherited",
+    destination: { conversation_id: "conv-target" },
+    expectedActor: "user-turn",
+  },
+  {
     name: "no actor does not invent one",
+    managed: true,
     contextActor: undefined,
     envActor: undefined,
     destination: { conversation_id: "conv-target" },
@@ -88,6 +108,9 @@ test.each([
   },
 ])("Cloud send HTTP protocol: $name", async (scenario) => {
   const previousActor = process.env.LETTA_ACTING_USER_ID;
+  const previousManaged = process.env.LETTA_MANAGED_CLOUD_RUNTIME;
+  if (scenario.managed) process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
+  else delete process.env.LETTA_MANAGED_CLOUD_RUNTIME;
   if (scenario.envActor) {
     process.env.LETTA_ACTING_USER_ID = scenario.envActor;
   } else {
@@ -106,7 +129,9 @@ test.each([
       const actor = request.headers.get("X-Letta-Acting-User-Id");
       requests.push({ method: request.method, path, actor });
       if (
-        actor !== scenario.expectedActor ||
+        actor !== (scenario.expectedActor ?? null) ||
+        (!scenario.expectedActor && !scenario.allowWithoutActor) ||
+        request.headers.get("Authorization") !== "Bearer test-key" ||
         request.headers.get("X-Letta-Source") !== "letta-code" ||
         !request.headers.get("User-Agent")?.startsWith("letta-code/")
       ) {
@@ -180,7 +205,9 @@ test.each([
         ),
     );
     expect(JSON.parse(result.content).status).toBe(
-      scenario.expectedActor ? "queued" : "submission_failed",
+      scenario.expectedActor || scenario.allowWithoutActor
+        ? "queued"
+        : "submission_failed",
     );
     expect(requests[0]?.path).toBe(
       scenario.destination.agent_id
@@ -190,7 +217,9 @@ test.each([
     expect(requests[0]?.actor).toBe(scenario.expectedActor ?? null);
     expect(
       requests.filter((request) => request.path.endsWith("/messages/enqueue")),
-    ).toHaveLength(scenario.expectedActor ? 1 : 0);
+    ).toHaveLength(
+      scenario.expectedActor || scenario.allowWithoutActor ? 1 : 0,
+    );
     if (scenario.expectedActor) {
       expect(
         requests.every((request) => request.actor === scenario.expectedActor),
@@ -200,6 +229,9 @@ test.each([
     server.stop(true);
     if (previousActor === undefined) delete process.env.LETTA_ACTING_USER_ID;
     else process.env.LETTA_ACTING_USER_ID = previousActor;
+    if (previousManaged === undefined)
+      delete process.env.LETTA_MANAGED_CLOUD_RUNTIME;
+    else process.env.LETTA_MANAGED_CLOUD_RUNTIME = previousManaged;
   }
 });
 

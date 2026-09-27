@@ -105,7 +105,13 @@ export async function enqueueConversationMessage(
         "POST",
         `/v1/conversations/${encodeURIComponent(input.conversationId)}/messages/enqueue`,
         body,
-        { signal, ...actingUserRequestOptions(input.actingUserId) },
+        {
+          signal,
+          // An absent actor means this send uses its own bearer. Do not let
+          // apiFetch silently restore a process-inherited headless actor.
+          actingUserId: input.actingUserId ?? null,
+          ...actingUserRequestOptions(input.actingUserId),
+        },
       );
       break;
     } catch (error) {

@@ -133,6 +133,7 @@ test.each([
   async ({ destination, create }) => {
     const f = fixture();
     f.deps.env.LETTA_ACTING_USER_ID = "user-inherited";
+    f.deps.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
     const options: unknown[] = [];
     f.backend.retrieveConversation = async (_id, requestOptions) => {
       options.push(requestOptions);
@@ -167,6 +168,32 @@ test.each([
     );
   },
 );
+
+test("personal headless send does not borrow an inherited actor", async () => {
+  const f = fixture();
+  f.deps.env.LETTA_ACTING_USER_ID = "user-inherited";
+  delete f.deps.env.LETTA_MANAGED_CLOUD_RUNTIME;
+  const lookups: unknown[] = [];
+  f.backend.retrieveConversation = async (_id, requestOptions) => {
+    lookups.push(requestOptions);
+    return { id: "conv-target", agent_id: "agent-target" } as Awaited<
+      ReturnType<Backend["retrieveConversation"]>
+    >;
+  };
+  expect(
+    await tryCloudHeadlessSend(
+      flags("--conversation", "conv-target", "--no-wait"),
+      "Continue",
+      f.backend,
+      false,
+      f.deps,
+    ),
+  ).toBe(0);
+  expect(lookups).toEqual([
+    expect.not.objectContaining({ headers: expect.anything() }),
+  ]);
+  expect(f.submissions[0]?.actingUserId).toBeUndefined();
+});
 
 test.each(["text", "json", "stream-json"])(
   "no-wait %s exits on HTTP acceptance with a receipt and recovery commands",

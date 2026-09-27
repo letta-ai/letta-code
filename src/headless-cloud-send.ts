@@ -17,6 +17,7 @@ import {
 import { ApiRequestError } from "@/backend/api/request";
 import type { ParsedCliArgs } from "@/cli/args";
 import { normalizeConversationShorthandFlags } from "@/cli/flag-utils";
+import { isManagedCloudRuntime } from "@/managed-cloud-runtime";
 import type { SystemInitMessage } from "@/types/protocol";
 import {
   EnqueuedWaitError,
@@ -132,7 +133,10 @@ export async function tryCloudHeadlessSend(
     return undefined;
   }
   const env = deps.env ?? process.env;
-  const actingUserId = resolveActingUserId(undefined, undefined, env);
+  // A personal computer's credential must not borrow a child's env actor.
+  const actingUserId = isManagedCloudRuntime(env)
+    ? resolveActingUserId(undefined, undefined, env)
+    : undefined;
   const format = values["output-format"] ?? "text";
   const noWait = Boolean(values["no-wait"]);
   const started = Date.now();

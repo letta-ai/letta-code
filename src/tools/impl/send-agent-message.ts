@@ -16,6 +16,7 @@ import {
   isProvenCloudApiShutdownRejection,
 } from "@/backend/api/conversation-enqueue";
 import { ApiRequestError } from "@/backend/api/request";
+import { isManagedCloudRuntime } from "@/managed-cloud-runtime";
 import {
   getCurrentWorkingDirectory,
   getRuntimeActingUserId,
@@ -197,7 +198,11 @@ export async function send_agent_message(
       throw new Error("SendAgentMessage requires a Cloud backend.");
     }
     const computer = normalizeAgentMessageComputer(args.computer);
-    const actingUserId = getRuntimeActingUserId();
+    // Personal listeners use their own bearer when the turn has no actor.
+    // Only managed Cloud runtimes can inherit an actor for this send.
+    const actingUserId =
+      context?.actingUserId ??
+      (isManagedCloudRuntime() ? getRuntimeActingUserId() : undefined);
     if (!actingUserId) {
       console.info(
         "[SendAgentMessage] Sending without X-Letta-Acting-User-Id",
