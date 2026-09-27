@@ -96,9 +96,11 @@ export async function createAgentSandbox(
 ): Promise<CreateAgentSandboxResponse> {
   const conversationId =
     options.conversationId === "default" ? undefined : options.conversationId;
+  // Cloud preserves a named conversation's established sandbox class. Request
+  // a VM for new conversations; leave agent-scoped/default workspaces alone.
   return request<CreateAgentSandboxResponse>(
     "POST",
-    `/v1/agents/${encodeURIComponent(agentId)}/sandboxes`,
+    `/v1/agents/${encodeURIComponent(agentId)}/sandboxes${conversationId ? "/linux-vm" : ""}`,
     conversationId ? { conversationId } : {},
   );
 }

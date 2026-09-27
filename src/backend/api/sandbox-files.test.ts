@@ -43,7 +43,7 @@ describe("sandbox file API", () => {
     expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({});
   });
 
-  test("ensures the conversation-scoped sandbox", async () => {
+  test("requests a Linux VM for conversation-scoped file access", async () => {
     const calls: Array<{ input: string; init?: RequestInit }> = [];
     const result = await ensureConversationSandbox(
       "agent-1",
@@ -63,7 +63,7 @@ describe("sandbox file API", () => {
     expect(result.sandboxId).toBe("sandbox-1");
     expect(calls).toHaveLength(1);
     expect(calls[0]?.input).toBe(
-      "https://api.letta.test/v1/agents/agent-1/sandboxes",
+      "https://api.letta.test/v1/agents/agent-1/sandboxes/linux-vm",
     );
     expect(calls[0]?.init?.method).toBe("POST");
     expect(calls[0]?.init?.body).toBe(

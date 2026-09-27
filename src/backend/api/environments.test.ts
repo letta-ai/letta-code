@@ -158,7 +158,7 @@ describe("Computer environment resolution", () => {
 });
 
 describe("Cloud sandbox environment resolution", () => {
-  test("sends conversationId in the create request body", async () => {
+  test("requests a Linux VM for a named conversation without overriding its size", async () => {
     const calls: Array<{
       method: string;
       path: string;
@@ -182,31 +182,36 @@ describe("Cloud sandbox environment resolution", () => {
     expect(calls).toEqual([
       {
         method: "POST",
-        path: "/v1/agents/agent-1/sandboxes",
+        path: "/v1/agents/agent-1/sandboxes/linux-vm",
         body: { conversationId: "conv-1" },
       },
     ]);
   });
 
-  test("keeps the virtual default conversation agent-scoped", async () => {
-    const bodies: Array<Record<string, unknown> | undefined> = [];
-    const request = (async (
-      _method: string,
-      _path: string,
-      body?: Record<string, unknown>,
-    ) => {
-      bodies.push(body);
-      return {
-        sandboxId: "sandbox-1",
-        deviceId: "device-1",
-        connectionName: "Cloud",
-      };
-    }) as typeof apiRequest;
+  test.each(["default", undefined])(
+    "keeps %s agent-scoped",
+    async (conversationId) => {
+      const bodies: Array<Record<string, unknown> | undefined> = [];
+      const request = (async (
+        method: string,
+        path: string,
+        body?: Record<string, unknown>,
+      ) => {
+        expect(method).toBe("POST");
+        expect(path).toBe("/v1/agents/agent-1/sandboxes");
+        bodies.push(body);
+        return {
+          sandboxId: "sandbox-1",
+          deviceId: "device-1",
+          connectionName: "Cloud",
+        };
+      }) as typeof apiRequest;
 
-    await createAgentSandbox("agent-1", { conversationId: "default" }, request);
+      await createAgentSandbox("agent-1", { conversationId }, request);
 
-    expect(bodies).toEqual([{}]);
-  });
+      expect(bodies).toEqual([{}]);
+    },
+  );
 });
 
 describe("Desktop environment resolution", () => {

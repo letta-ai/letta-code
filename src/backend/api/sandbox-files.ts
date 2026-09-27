@@ -68,12 +68,16 @@ export async function ensureConversationSandbox(
   conversationId: string,
   deps: SandboxFilesApiDeps = defaultDeps,
 ): Promise<ConversationSandbox> {
+  // Match Cloud launches: new named conversations use VMs, while the server
+  // preserves their existing workspaces and default stays agent-scoped.
+  const scopedConversationId =
+    conversationId === "default" ? undefined : conversationId;
   const response = await request(
-    `/v1/agents/${encodeURIComponent(agentId)}/sandboxes`,
+    `/v1/agents/${encodeURIComponent(agentId)}/sandboxes${scopedConversationId ? "/linux-vm" : ""}`,
     {
       method: "POST",
       body: JSON.stringify(
-        conversationId === "default" ? {} : { conversationId },
+        scopedConversationId ? { conversationId: scopedConversationId } : {},
       ),
     },
     deps,
