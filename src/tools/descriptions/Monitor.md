@@ -13,7 +13,7 @@ Your script's stdout is the event stream. Each line becomes a notification. Exit
   # Node script that emits events as they arrive (e.g. WebSocket listener)
   node watch-for-events.js
 
-For GitHub pull requests, use WatchPR instead. It already covers current-head checks, comments, reviews, inline threads, conflicts, head changes, and merge state, and keeps watching after CI finishes. Do not compose a partial PR polling loop with Monitor.
+For open github.com pull requests, use WatchPR instead. It covers the whole PR surface and keeps watching after CI finishes. Use Monitor only when WatchPR does not apply.
 
 **Don't use an unbounded command for a single notification.** `tail -f`, `inotifywait -m`, and `while true` never exit on their own, so the monitor stays armed until timeout even after the event has fired. For "tell me when X is ready," use Bash `run_in_background` with an `until` loop instead (one notification, ends in seconds). Note that `tail -f log | grep -m 1 ...` does *not* fix this: if the log goes quiet after the match, `tail` never receives SIGPIPE and the pipeline hangs anyway.
 
@@ -35,7 +35,7 @@ For poll loops checking job state, emit on every terminal status (`succeeded|fai
 
 Stdout lines within 200ms are batched into a single notification, so multiline output from a single event groups naturally.
 
-The script runs in the same shell environment as Bash. Exit ends the watch (exit code is reported). Timeout → killed. Set `persistent: true` for session-length watches (PR monitoring, log tails) — the monitor runs until you call TaskStop or the session ends. Use TaskStop to cancel early.
+The script runs in the same shell environment as Bash. Exit ends the watch (exit code is reported). Timeout → killed. Set `persistent: true` for session-length watches (log tails, long-lived event streams) — the monitor runs until you call TaskStop or the session ends. Use TaskStop to cancel early.
 
 **ws source** — open a WebSocket and stream each incoming text frame as an event. No shell, no polling: the server pushes, you get notified.
     ws: {url: 'wss://events.example.com/stream', protocols: ['v1']},

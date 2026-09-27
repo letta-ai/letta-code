@@ -3,7 +3,7 @@
   "properties": {
     "url": {
       "type": "string",
-      "description": "Full GitHub pull request URL, for example https://github.com/owner/repo/pull/123."
+      "description": "Open github.com pull request URL ending at the PR number, for example https://github.com/owner/repo/pull/123. Remove sub-page suffixes such as /files or /commits."
     }
   },
   "required": ["url"],
