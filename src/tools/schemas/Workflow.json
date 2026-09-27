@@ -25,11 +25,6 @@
       "type": "array",
       "items": { "type": "string" },
       "description": "Default tool allowlist for subagents (per-call opts.allowedTools overrides). Defaults to read-only: Read, Grep, Glob. Widen deliberately for workflows that must write."
-    },
-    "disableMemoryGuard": {
-      "type": "boolean",
-      "default": true,
-      "description": "Disable cross-agent memory guard in ephemeral workflow workers (default true). Set false to keep workers guarded; per-call agent() opts.disableMemoryGuard overrides this."
     }
   },
   "additionalProperties": false,

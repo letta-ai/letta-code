@@ -167,24 +167,6 @@ return { done: done.length, capped }`,
     });
   });
 
-  test("passes per-call memory guard overrides to the spawner", async () => {
-    const seen: SubagentRequest[] = [];
-    await executeWorkflow(
-      async (request) => {
-        seen.push(request);
-        return { value: null, failed: false };
-      },
-      {
-        script: `${META}\nawait agent('default')\nawait agent('enabled', { disableMemoryGuard: false })\nawait agent('disabled', { disableMemoryGuard: true })`,
-      },
-    );
-    expect(seen.map((request) => request.options.disableMemoryGuard)).toEqual([
-      undefined,
-      false,
-      true,
-    ]);
-  });
-
   test("validates hook arguments", async () => {
     const run = await executeWorkflow(echoSpawner(), {
       script: `${META}
@@ -195,7 +177,6 @@ for (const call of [
   () => agent('x', {maxToolCalls: 0}),
   () => agent('x', {maxToolCalls: 1.5}),
   () => agent('x', {maxToolCalls: Number.MAX_SAFE_INTEGER + 1}),
-  () => agent('x', {disableMemoryGuard: 'false'}),
   () => parallel('nope'),
   () => pipeline('nope'),
   () => phase(''),
@@ -210,7 +191,6 @@ return errors`,
       "agent() maxToolCalls must be a positive safe integer.",
       "agent() maxToolCalls must be a positive safe integer.",
       "agent() maxToolCalls must be a positive safe integer.",
-      "agent() disableMemoryGuard must be a boolean.",
       "parallel() takes an array of zero-arg functions.",
       "pipeline() takes an array of items followed by stage functions.",
       "phase() requires a title string.",

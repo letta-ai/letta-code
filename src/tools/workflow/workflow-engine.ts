@@ -119,12 +119,6 @@ export async function executeWorkflow(
     ) {
       throw new Error("agent() maxToolCalls must be a positive safe integer.");
     }
-    if (
-      opts.disableMemoryGuard !== undefined &&
-      typeof opts.disableMemoryGuard !== "boolean"
-    ) {
-      throw new Error("agent() disableMemoryGuard must be a boolean.");
-    }
     const callIndex = callCounter++;
     const label = opts.label ?? defaultLabel(prompt);
     const phase = opts.phase ?? currentPhase;

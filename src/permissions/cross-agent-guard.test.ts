@@ -17,7 +17,7 @@ import {
   extractTargetAgentPaths,
   isMemoryGuardDisabled,
   resolveAllowedAgents,
-  WORKFLOW_WORKER_MEMORY_GUARD_ENV,
+  WORKFLOW_WORKER_ENV,
 } from "@/permissions/cross-agent-guard";
 import { permissionMode } from "@/permissions/mode";
 import { SANDBOX_ENV_VAR } from "@/sandbox/policy";
@@ -738,32 +738,12 @@ describe("symlink-escape (realpath classification of in-process file tools)", ()
       {
         env: {
           HOME: home,
-          [WORKFLOW_WORKER_MEMORY_GUARD_ENV]: "disabled",
+          [WORKFLOW_WORKER_ENV]: "1",
         } as NodeJS.ProcessEnv,
         currentAgentId: "agent-worker",
       },
     );
     expect(result).toBeNull();
-  });
-
-  test("workflow worker explicit enabled marker restores cross-agent denial", () => {
-    const home = mkdtempSync(join(tmpdir(), "workflow-guard-test-"));
-    const otherMemoryRoot = join(home, ".letta", "agents", OTHER, "memory");
-    mkdirSync(otherMemoryRoot, { recursive: true });
-    const result = evaluateCrossAgentGuard(
-      "Read",
-      { file_path: join(otherMemoryRoot, "secret.md") },
-      "/tmp",
-      {
-        env: {
-          HOME: home,
-          [WORKFLOW_WORKER_MEMORY_GUARD_ENV]: "enabled",
-        } as NodeJS.ProcessEnv,
-        currentAgentId: "agent-worker",
-      },
-    );
-    expect(result?.offendingAgentIds).toContain(OTHER);
-    rmSync(home, { recursive: true, force: true });
   });
 
   test("a plain (non-symlinked) path outside the tree is not a false positive", () => {
@@ -825,7 +805,7 @@ describe("sandboxed subagent defers entirely to the kernel", () => {
         env: {
           ...subagentEnv,
           HOME: home,
-          [WORKFLOW_WORKER_MEMORY_GUARD_ENV]: "disabled",
+          [WORKFLOW_WORKER_ENV]: "1",
         },
         currentAgentId: "agent-self",
       },

@@ -74,8 +74,6 @@ interface WorkflowArgs {
   scriptPath?: string;
   args?: unknown;
   maxConcurrent?: number;
-  /** Cross-agent guard is disabled for ephemeral workers by default. */
-  disableMemoryGuard?: boolean;
   model?: string;
   allowedTools?: string[];
   // Injected by the tool manager; not in the JSON schema.
@@ -170,7 +168,6 @@ export async function createSdkSpawnerHandle(
       resolveModel,
       allowedTools: args.allowedTools ?? [...DEFAULT_ALLOWED_TOOLS],
       cwd: getCurrentWorkingDirectory(),
-      disableMemoryGuard: args.disableMemoryGuard ?? true,
     });
   } catch (error) {
     void client[Symbol.asyncDispose]?.().catch(() => undefined);
@@ -312,16 +309,6 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
       status: "error",
     };
   }
-  if (
-    args.disableMemoryGuard !== undefined &&
-    typeof args.disableMemoryGuard !== "boolean"
-  ) {
-    return {
-      toolReturn: "disableMemoryGuard must be a boolean.",
-      status: "error",
-    };
-  }
-
   // Validate up front so authoring mistakes surface in the tool result
   // instead of as a failed background task.
   let meta: WorkflowMeta;
