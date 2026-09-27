@@ -20,8 +20,6 @@ export interface SuperRunWaitDeps {
   run: (runId: string, signal: AbortSignal) => Promise<Run>;
   messages: (runId: string, signal: AbortSignal) => Promise<Message[]>;
   pollMs?: number;
-  resultGraceMs?: number;
-  now?: () => number;
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
 
@@ -105,13 +103,10 @@ export async function waitForAcceptedSuperRun(
   deps: SuperRunWaitDeps,
 ): Promise<EnqueuedReply> {
   const pollMs = deps.pollMs ?? 1_000;
-  const resultGraceMs = deps.resultGraceMs ?? 15_000;
-  const now = deps.now ?? Date.now;
   const sleep =
     deps.sleep ??
     ((ms: number, waitSignal: AbortSignal) =>
       delay(ms, undefined, { signal: waitSignal }));
-  let missingResultSince: number | undefined;
 
   while (true) {
     signal.throwIfAborted();
@@ -157,12 +152,6 @@ export async function waitForAcceptedSuperRun(
       );
     }
     if (run.status !== "completed" || run.stop_reason === "requires_approval") {
-      missingResultSince ??= now();
-      if (now() - missingResultSince >= resultGraceMs) {
-        throw new RemoteExecutionFailed(
-          `Remote Super Run ${exact.id} completed without terminal evidence from child run ${runId}.`,
-        );
-      }
       await sleep(pollMs, signal);
       continue;
     }

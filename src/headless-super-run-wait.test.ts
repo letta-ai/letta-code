@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import type { Run } from "@letta-ai/letta-client/resources/agents/messages";
 import type {
   EnqueueReceipt,
@@ -214,20 +214,24 @@ test("waits for active work instead of treating time as success", async () => {
   expect(result.text).toBe("Done");
 });
 
-test("fails when a completed Super Run never gets terminal child evidence", async () => {
+test("does not fail active child work after a guessed result deadline", async () => {
   const clock = makeClock();
-  await expect(
-    waitForAcceptedSuperRun(
+  const now = spyOn(Date, "now").mockImplementation(clock.now);
+  let reads = 0;
+  try {
+    const result = await waitForAcceptedSuperRun(
       receipt,
       new AbortController().signal,
       deps({
-        run: async () => run("running", ""),
-        resultGraceMs: 3,
-        now: clock.now,
-        sleep: clock.sleep,
+        run: async () => (++reads < 4 ? run("running", "") : run()),
+        sleep: async () => clock.sleep(60_000),
       }),
-    ),
-  ).rejects.toThrow("without terminal evidence from child run run-1");
+    );
+    expect(reads).toBe(4);
+    expect(result.text).toBe("Done");
+  } finally {
+    now.mockRestore();
+  }
 });
 
 test("abort interrupts background retries", async () => {
