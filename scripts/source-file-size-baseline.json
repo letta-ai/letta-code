@@ -35,11 +35,10 @@
   "src/settings-manager.ts": 2101,
   "src/tools/manager.ts": 2649,
   "src/tools/tool-execution-context.test.ts": 1092,
-  "src/types/protocol_v2.ts": 2574,
-  "src/websocket/listen-client-concurrency.test.ts": 2666,
+  "src/types/protocol_v2.ts": 2550,
+  "src/websocket/listen-client-concurrency.test.ts": 2663,
   "src/websocket/listen-client-protocol.test.ts": 5759,
   "src/websocket/listener/commands/memory.ts": 1114,
   "src/websocket/listener/file-commands.ts": 1053,
-  "src/websocket/listener/protocol-inbound.ts": 2111,
-  "src/websocket/listener/protocol-outbound.ts": 1022
+  "src/websocket/listener/protocol-inbound.ts": 2111
 }

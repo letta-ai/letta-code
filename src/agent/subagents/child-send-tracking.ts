@@ -4,12 +4,9 @@ import {
   registerSubagent,
   updateSubagent,
 } from "@/agent/subagent-state";
-import type { Backend } from "@/backend";
+import { type Backend, getBackend } from "@/backend";
 import type { EnqueueReceipt } from "@/backend/api/conversation-enqueue";
-import {
-  getLatestConversationSuperRun,
-  openConversationStatusStream,
-} from "@/backend/api/conversation-enqueue";
+import { getExactSuperRun } from "@/backend/api/conversation-enqueue";
 import { buildAgentReference } from "@/cli/helpers/app-urls";
 import { waitForAcceptedSuperRun } from "@/headless-super-run-wait";
 import { getErrorMessage } from "@/utils/error";
@@ -73,9 +70,11 @@ function waitForChildRun(
   receipt: EnqueueReceipt,
   signal: AbortSignal,
 ): Promise<unknown> {
+  const backend = getBackend();
   return waitForAcceptedSuperRun(receipt, signal, {
-    open: openConversationStatusStream,
-    latest: getLatestConversationSuperRun,
+    exact: getExactSuperRun,
+    run: (runId, readSignal) =>
+      backend.retrieveRun(runId, { signal: readSignal }),
     // Only the lifecycle matters here; the reply is never collected.
     messages: async () => [],
   });
