@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import { getDesktopAccessToken } from "@/auth/desktop-credentials";
 import { getSelfUpdateStatus } from "@/updater/auto-update";
 import { getVersion } from "@/version.ts";
-import { SUPPORTED_REMOTE_COMMANDS } from "./listener/listener-constants";
+import { getSupportedRemoteCommands } from "./listener/listener-constants";
 
 export interface RegisterResult {
   connectionId: string;
@@ -132,7 +132,7 @@ export async function registerWithCloud(
         nodeVersion: process.version,
         environmentMessageProtocol: "v2-input",
         supportsPairedListenerGenerations: true,
-        supported_commands: SUPPORTED_REMOTE_COMMANDS,
+        supported_commands: getSupportedRemoteCommands(),
         self_update: getSelfUpdateStatus(),
       },
     }),

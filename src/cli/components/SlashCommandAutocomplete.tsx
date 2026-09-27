@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { isLocalAgentId } from "@/agent/agent-id";
 import { commands } from "@/cli/commands/registry";
 import { truncateText } from "@/cli/helpers/truncate-text";
 import { useAutocompleteNavigation } from "@/cli/hooks/use-autocomplete-navigation";
@@ -139,6 +140,7 @@ export function SlashCommandAutocomplete({
         const isPinned = settingsManager.isAgentPinned(agentId);
 
         builtins = _allCommands.filter((cmd) => {
+          if (cmd.cmd === "/teleport" && isLocalAgentId(agentId)) return false;
           // Hide /pin if agent is already pinned
           if (cmd.cmd === "/pin" && isPinned) {
             return false;
