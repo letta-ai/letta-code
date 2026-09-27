@@ -72,10 +72,18 @@ jobs:
           ' <<< "$SOURCE_AUTHOR_SLACK_IDS" > /dev/null
           github_reviewers=$(jq -r 'map(.github) | join(",")' <<< "$OWNERS")
           source_author=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json author --jq '.author.login')
-          if ! slack_owner_id=$(jq -er --arg author "$source_author" '.[$author] // empty' <<< "$SOURCE_AUTHOR_SLACK_IDS"); then
-            echo "No Slack ID configured for source PR author $source_author in SYNC_TOOLS_SOURCE_AUTHOR_SLACK_IDS" >&2
-            exit 1
-          fi
+          case "$source_author" in
+            overlord-letta|app/letta-integration)
+              notification_slack_id=$(jq -er '.[0].slack' <<< "$OWNERS")
+              echo "Service-account PR author $source_author: notifying configured tool owner $(jq -r '.[0].github' <<< "$OWNERS")"
+              ;;
+            *)
+              if ! notification_slack_id=$(jq -er --arg author "$source_author" '.[$author] // empty' <<< "$SOURCE_AUTHOR_SLACK_IDS"); then
+                echo "No Slack ID configured for source PR author $source_author in SYNC_TOOLS_SOURCE_AUTHOR_SLACK_IDS" >&2
+                exit 1
+              fi
+              ;;
+          esac
           source_marker="Sync-tools-source: letta-ai/letta-code#$PR_NUMBER"
           branch_name="sync/tools-from-letta-code-pr-$PR_NUMBER-$GITHUB_RUN_ID"
           {
@@ -89,7 +97,7 @@ jobs:
             echo "- Expected GitHub login: $EXPECTED_GITHUB_LOGIN"
             echo "- GitHub reviewers: $github_reviewers"
             echo "- Source PR author: $source_author"
-            echo "- Source author Slack ID: $slack_owner_id"
+            echo "- Notification Slack ID: $notification_slack_id"
             echo "- Source marker: $source_marker"
             echo "- Branch name: $branch_name"
             echo "AMELIA_PROMPT_EOF"

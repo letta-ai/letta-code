@@ -75,13 +75,13 @@ Do not merge the PR, leave GitHub comments, or review other changes.
 
 After the draft PR and reviewers are verified, call the native `MessageChannel` tool with `action="send"`, `channel="slack"`, and `target="C0871ER46KT"`. Do not use `curl` or another Slack API client.
 
-Use the source author's Slack ID from the run inputs and send exactly one line:
+Use the Notification Slack ID from the run inputs and send exactly one line:
 
 ```text
 <@U079W8F9Z7G> https://github.com/letta-ai/letta-cloud/pull/1234
 ```
 
-Replace the example values with the source author and created PR. Do not include a prefix, source PR, workflow URL, or any other text. Send no Slack message for `NO_SYNC_NEEDED`.
+Replace the example values with that Notification Slack ID and the created PR. The workflow already resolved it — mapped source author for people, configured tool owner for known service-account PRs — so do not derive the recipient yourself. Do not include a prefix, source PR, workflow URL, or any other text. Send no Slack message for `NO_SYNC_NEEDED`.
 
 ## Final response
 
