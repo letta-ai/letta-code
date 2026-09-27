@@ -20,7 +20,7 @@ import {
   LOCAL_TRANSCRIPT_PROVIDER_STACK,
   LOCAL_TRANSCRIPT_SCHEMA_VERSION,
   type LocalTranscriptManifest,
-} from "./local-store";
+} from "./local-transcript";
 
 export interface LocalTranscriptMigrationResult {
   storageDir: string;

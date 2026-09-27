@@ -6,7 +6,6 @@ import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents"
 import { type BackendCapabilities, getBackend } from "@/backend";
 import { apiRequest, getApiRequestConfig } from "@/backend/api/request";
 import { settingsManager } from "@/settings-manager";
-import { debugWarn } from "@/utils/debug";
 import { SUBAGENT_NAME_ENV } from "@/utils/subagent-launch-marker";
 import { getModelContextWindow } from "./available-models";
 import { buildCreateAgentRequest } from "./create-agent-request";
@@ -59,28 +58,12 @@ function isToolsNotFoundError(err: unknown): boolean {
   );
 }
 
-export interface AddBaseToolsOptions {
-  quiet?: boolean;
-}
-
-function reportBaseToolsFailure(message: string, quiet: boolean): void {
-  if (quiet) {
-    debugWarn("bootstrap", message);
-  } else {
-    console.warn(message);
-  }
-}
-
-export async function addBaseToolsToServer(
-  options: AddBaseToolsOptions = {},
-): Promise<boolean> {
+export async function addBaseToolsToServer(): Promise<boolean> {
   const { apiKey } = await getApiRequestConfig();
-  const quiet = options.quiet === true;
 
   if (!apiKey) {
-    reportBaseToolsFailure(
+    console.warn(
       "Cannot auto-populate base tools: missing LETTA_API_KEY for manual endpoint call.",
-      quiet,
     );
     return false;
   }
@@ -89,9 +72,8 @@ export async function addBaseToolsToServer(
     await apiRequest<void>("POST", "/v1/tools/add-base-tools");
     return true;
   } catch (err) {
-    reportBaseToolsFailure(
+    console.warn(
       `Failed to call /v1/tools/add-base-tools: ${err instanceof Error ? err.message : String(err)}`,
-      quiet,
     );
     return false;
   }
@@ -196,14 +178,14 @@ export function resolveCreatedAgentMemfsConfig(
     options.requestedMemoryPromptMode !== "standard"
       ? options.requestedMemoryPromptMode
       : undefined;
-  // New Letta Cloud agents are born on the MemFS v2 root layout: an explicit
-  // "memfs" request selects git-backed memory, not the legacy system/ layout.
-  // Local backends stay on local-memfs (local root-layout compilation is not
-  // supported), and self-hosted API servers keep the caller's explicit mode.
+  // New Letta Cloud and embedded-local agents are born on the MemFS v2 root
+  // layout. An explicit legacy memory mode still means "use git-backed
+  // memory" at creation, not "create another legacy-layout agent".
+  // Self-hosted API servers keep the caller's explicit mode.
   const memoryPromptMode = !enableMemfs
     ? "standard"
     : options.capabilities.localMemfs
-      ? "local-memfs"
+      ? "root-memfs"
       : options.isLettaCloud
         ? requestedMemoryPromptMode === "local-memfs"
           ? "local-memfs"

@@ -54,7 +54,7 @@ You can also download the [**desktop app**](https://docs.letta.com/letta-code/de
 
 ## Letta Cloud
 
-Agents stored in Letta Cloud keep their memory, identity, and conversations there while the Letta Code harness can run on any connected computer: your laptop, [GitHub Actions](https://github.com/letta-ai/letta-code-action), a managed cloud sandbox, a remote VM, or a Mac Mini. You can chat with the same agents through [chat.letta.com](https://chat.letta.com/) or the desktop app.
+Letta Cloud stores agents' memory, identity, and conversations while Letta Code runs on a laptop, [GitHub Actions](https://github.com/letta-ai/letta-code-action), a Cloud sandbox, or a remote computer. Chat with them through [chat.letta.com](https://chat.letta.com/) or Desktop. On resume, bundled default system prompts (including older versions) become Cloud-managed. Custom prompts stay explicit. Set `LETTA_CODE_PRESERVE_CLOUD_SYSTEM_PROMPT=1` to disable automatic prompt updates on Cloud.
 
 ```mermaid
 graph TD

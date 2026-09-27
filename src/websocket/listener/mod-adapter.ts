@@ -287,6 +287,11 @@ export function getLoadedListenerModAdapters(
 
 export function createListenerModEvents(adapters: ModAdapter[]): ModEvents {
   return {
+    hasHandlers(name) {
+      return adapters.some(
+        (adapter) => adapter.events.hasHandlers?.(name) ?? true,
+      );
+    },
     async emit<TName extends ModEventName>(
       name: TName,
       event: ModEventMap[TName],

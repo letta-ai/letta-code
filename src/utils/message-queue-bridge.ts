@@ -1,3 +1,5 @@
+import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+
 /**
  * Message Queue Bridge
  *
@@ -11,6 +13,8 @@
 export type QueuedMessage = {
   kind: "user" | "task_notification";
   text: string;
+  /** Original multimodal result parts for a task notification, after its text header. */
+  content?: MessageCreate["content"];
   /** Preserve scheduled origin even when its prompt is rendered as user text. */
   source?: "cron";
   /** Optional parent agent scope for routing in listener mode. */

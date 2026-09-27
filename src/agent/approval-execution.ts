@@ -74,8 +74,7 @@ const GLOBAL_LOCK_TOOLS = new Set([
   "Bash",
   "exec_command",
   "write_stdin",
-  // Memory tool (file + git side effects)
-  "memory",
+  // Patch tool (can touch several files in one call)
   "ApplyPatch",
 ]);
 

@@ -225,19 +225,24 @@ export interface LatestConversationSuperRun {
   completed_at: string | null;
   cancelled_at: string | null;
   errored_at: string | null;
-  error?: {
+}
+
+export interface ExactSuperRun extends LatestConversationSuperRun {
+  error: {
     code: string;
     message: string;
   } | null;
+  /** Associated child runs, newest first. */
+  run_ids: string[];
 }
 
-/** Read one accepted Super Run by ID, scoped through its owning agent. */
+/** Read the accepted Super Run and its server-owned result correlation. */
 export async function getExactSuperRun(
   agentId: string,
   superRunId: string,
   signal?: AbortSignal,
   request = apiRequest,
-): Promise<LatestConversationSuperRun> {
+): Promise<ExactSuperRun> {
   return request(
     "GET",
     `/v1/agents/${encodeURIComponent(agentId)}/super-runs/${encodeURIComponent(superRunId)}`,

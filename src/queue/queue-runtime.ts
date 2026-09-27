@@ -62,6 +62,8 @@ export type TaskNotificationQueueItem = QueueItemBase & {
   kind: "task_notification";
   /** XML notification string. */
   text: string;
+  /** Original tool content, including image parts, delivered after the XML header. */
+  content?: MessageCreate["content"];
 };
 
 export type ApprovalResultQueueItem = QueueItemBase & {

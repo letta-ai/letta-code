@@ -43,6 +43,7 @@ import {
 import { applyShellSandbox } from "./shell-sandbox.js";
 import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
+import { assertSafeWindowsCommand } from "./windows-command-safety.js";
 
 // Cache the working shell launcher after first successful spawn
 let cachedWorkingLauncher: string[] | null = null;
@@ -105,6 +106,12 @@ export async function spawnCommand(
     secretEnv?: Record<string, string>;
   },
 ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
+  assertSafeWindowsCommand(command, {
+    cwd: options.cwd,
+    env: options.secretEnv
+      ? { ...options.env, ...options.secretEnv }
+      : options.env,
+  });
   const env = options.secretEnv
     ? { ...options.env, ...options.secretEnv }
     : options.env;
@@ -327,6 +334,10 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     foregroundYieldMs = DEFAULT_FOREGROUND_YIELD_MS,
   } = args;
   const userCwd = getCurrentWorkingDirectory();
+  assertSafeWindowsCommand(command, {
+    cwd: userCwd,
+    env: secretEnv ? { ...getShellEnv(), ...secretEnv } : getShellEnv(),
+  });
   const redactions = captureSecretRedactions(secretEnv ?? {});
   const sanitizeOutput = (text: string) =>
     scrubSecretsFromString(text, redactions);

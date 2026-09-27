@@ -54,7 +54,7 @@ import {
 } from "./external-coding-agent";
 import { copyGitHubPullRequestTags } from "./github-pull-request-tracker.js";
 import {
-  ensureMemoryConflictRepair,
+  ensureMemoryRepair,
   runBackgroundMemoryTask,
 } from "./memory-task-lifecycle";
 import {
@@ -417,7 +417,7 @@ export function spawnBackgroundSubagentTask(
           execute,
           // Awaited by the worker so a one-shot drain sees the repair task.
           repair: (result) =>
-            ensureMemoryConflictRepair(
+            ensureMemoryRepair(
               { ...resolvedParentScope, actingUserId, result },
               spawnBackgroundSubagentTask,
             ),

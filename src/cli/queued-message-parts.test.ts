@@ -4,7 +4,12 @@ import {
   buildQueuedContentParts,
   buildQueuedUserText,
   getQueuedNotificationSummaries,
+  toQueuedMsg,
 } from "@/cli/helpers/queued-message-parts";
+import {
+  QueueRuntime,
+  type TaskNotificationQueueItem,
+} from "@/queue/queue-runtime";
 import type { QueuedMessage } from "@/utils/message-queue-bridge";
 import { formatTaskNotification } from "@/utils/task-notifications";
 
@@ -59,6 +64,35 @@ describe("queuedMessageParts", () => {
     expect(parts[4]).toEqual({ type: "text", text: notificationXml });
     expect(parts[5]).toEqual({ type: "text", text: "\n" });
     expect(parts[6]).toEqual({ type: "text", text: "second" });
+  });
+
+  test("TUI display bridge keeps a task notification's image parts", () => {
+    const queue = new QueueRuntime();
+    const image = {
+      type: "image" as const,
+      source: {
+        type: "base64" as const,
+        media_type: "image/png",
+        data: "ZmFrZQ==",
+      },
+    };
+    const notification: Omit<TaskNotificationQueueItem, "id" | "enqueuedAt"> = {
+      kind: "task_notification",
+      source: "task_notification",
+      text: "<task-notification>ready</task-notification>",
+      content: [{ type: "text", text: "caption" }, image],
+    };
+    const item = queue.enqueue(notification);
+    if (!item || item.kind !== "task_notification") {
+      throw new Error("Expected a queued task notification");
+    }
+    expect(buildQueuedContentParts([toQueuedMsg(item)])).toEqual([
+      { type: "text", text: item.text },
+      { type: "text", text: "\n<external-tool-result>" },
+      { type: "text", text: "<text>caption</text>" },
+      image,
+      { type: "text", text: "</external-tool-result>" },
+    ]);
   });
 
   test("getQueuedNotificationSummaries extracts summaries", () => {

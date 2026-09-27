@@ -16,7 +16,8 @@ import {
 } from "@/utils/cloud-api-shutdown";
 import { debugLog } from "@/utils/debug";
 import {
-  emitLoopErrorDelta,
+  createLifecycleMessageBase,
+  emitCanonicalMessageDelta,
   emitRetryDelta,
   emitStatusDelta,
 } from "./protocol-outbound";
@@ -316,16 +317,24 @@ export function emitLoopErrorNotice(
     return null;
   }
 
-  emitLoopErrorDelta(socket, runtime, {
-    message: decision.message,
-    stopReason: params.stopReason,
-    isTerminal: params.isTerminal,
-    clientMessageIds: params.clientMessageIds,
-    runId: params.runId,
-    agentId: params.agentId,
-    conversationId: params.conversationId,
-    apiError: decision.apiError,
-  });
+  emitCanonicalMessageDelta(
+    socket,
+    runtime,
+    {
+      ...createLifecycleMessageBase("loop_error", params.runId),
+      message: decision.message,
+      stop_reason: params.stopReason,
+      is_terminal: params.isTerminal,
+      ...(params.clientMessageIds?.length
+        ? { client_message_ids: params.clientMessageIds }
+        : {}),
+      ...(decision.apiError ? { api_error: decision.apiError } : {}),
+    },
+    {
+      agent_id: params.agentId,
+      conversation_id: params.conversationId,
+    },
+  );
   return decision.message;
 }
 

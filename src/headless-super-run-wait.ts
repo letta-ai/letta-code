@@ -1,164 +1,174 @@
 import { setTimeout as delay } from "node:timers/promises";
-import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
+import { APIError } from "@letta-ai/letta-client";
 import type {
-  ConversationStatusEvent,
+  Message,
+  Run,
+} from "@letta-ai/letta-client/resources/agents/messages";
+import type {
   EnqueueReceipt,
-  LatestConversationSuperRun,
+  ExactSuperRun,
 } from "@/backend/api/conversation-enqueue";
 import { ApiRequestError } from "@/backend/api/request";
-import {
-  type EnqueuedReply,
-  getConversationStatus,
-  getSendRunIds,
-} from "@/headless-enqueue-wait";
+import type { EnqueuedReply } from "@/headless-enqueue-wait";
 
-type StatusEvent =
-  | ConversationStatusEvent
-  | { type: "super_run_update"; data: LatestConversationSuperRun };
 export interface SuperRunWaitDeps {
-  open: (
-    agentId: string,
-    controller: AbortController,
-  ) => Promise<AsyncIterable<StatusEvent>>;
   exact: (
     agentId: string,
     superRunId: string,
     signal: AbortSignal,
-  ) => Promise<LatestConversationSuperRun>;
+  ) => Promise<ExactSuperRun>;
+  run: (runId: string, signal: AbortSignal) => Promise<Run>;
   messages: (runId: string, signal: AbortSignal) => Promise<Message[]>;
   pollMs?: number;
+  sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
+
 class RemoteExecutionFailed extends Error {}
 
-function terminal(run: LatestConversationSuperRun): boolean {
-  if (run.errored_at)
+function isTransientReadError(error: unknown): boolean {
+  if (error instanceof ApiRequestError || error instanceof APIError) {
+    return error.status === 408 || error.status === 429 || error.status >= 500;
+  }
+  return (
+    error instanceof TypeError ||
+    (error instanceof Error && error.name === "TimeoutError")
+  );
+}
+
+async function retryRead<T>(
+  read: () => Promise<T>,
+  signal: AbortSignal,
+  sleep: (ms: number, signal: AbortSignal) => Promise<void>,
+  failureLabel: string,
+): Promise<T> {
+  let failures = 0;
+  while (true) {
+    signal.throwIfAborted();
+    try {
+      return await read();
+    } catch (error) {
+      signal.throwIfAborted();
+      if (!isTransientReadError(error)) {
+        throw new RemoteExecutionFailed(
+          `${failureLabel}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      await sleep(
+        Math.min(30_000, 1_000 * 2 ** Math.min(failures++, 5)),
+        signal,
+      );
+    }
+  }
+}
+
+function throwIfSuperRunFailed(run: ExactSuperRun): void {
+  if (run.errored_at) {
+    const detail = run.error
+      ? ` during ${run.error.code}: ${run.error.message}`
+      : "";
     throw new RemoteExecutionFailed(
-      `Remote Super Run ${run.id} finished with an error.`,
+      `Remote Super Run ${run.id} failed${detail}`,
     );
-  if (run.status === "CAN" || run.cancelled_at)
+  }
+  if (run.status === "CAN" || run.cancelled_at) {
     throw new RemoteExecutionFailed(
       `Remote Super Run ${run.id} was cancelled.`,
     );
-  if (run.status !== "COM" && !run.completed_at) return false;
-  return true;
+  }
 }
 
-/** Observe the existing Cloud feed. A lost read never resubmits the task. */
+function assistantText(messages: Message[]): string | null {
+  const assistant = messages
+    .filter((message) => message.message_type === "assistant_message")
+    .sort((left, right) => (right.seq_id ?? 0) - (left.seq_id ?? 0))[0];
+  if (assistant?.message_type !== "assistant_message") return null;
+  const text =
+    typeof assistant.content === "string"
+      ? assistant.content
+      : assistant.content
+          .filter((part) => part.type === "text")
+          .map((part) => part.text)
+          .join("\n");
+  return text.trim() ? text : null;
+}
+
+function noReplyMessage(receipt: EnqueueReceipt): string {
+  return `Remote task finished. Its reply was not collected. Read the conversation with: letta messages list --agent ${receipt.agent_id} --conversation ${receipt.conversation_id}. Do not launch the task again to retrieve its result.`;
+}
+
+/** Follow the exact accepted send. Reads may retry; the task is never resubmitted. */
 export async function waitForAcceptedSuperRun(
   receipt: EnqueueReceipt,
   signal: AbortSignal,
   deps: SuperRunWaitDeps,
 ): Promise<EnqueuedReply> {
-  const runIds = new Set<string>();
-  let finished = false;
-  let failures = 0;
-  while (!finished) {
+  const pollMs = deps.pollMs ?? 1_000;
+  const sleep =
+    deps.sleep ??
+    ((ms: number, waitSignal: AbortSignal) =>
+      delay(ms, undefined, { signal: waitSignal }));
+
+  while (true) {
     signal.throwIfAborted();
-    const controller = new AbortController();
-    const abort = () => controller.abort();
-    signal.addEventListener("abort", abort, { once: true });
-    try {
-      // Read the accepted row itself. Conversation snapshots contain only
-      // active rows, so absence cannot distinguish completion from a send that
-      // has not started or disappeared before execution.
-      try {
-        const accepted = await deps.exact(
+    const exact = await retryRead(
+      () =>
+        deps.exact(
           receipt.agent_id,
           receipt.super_run_id,
           AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
-        );
-        if (accepted.id !== receipt.super_run_id) {
-          throw new RemoteExecutionFailed(
-            `Exact Super Run read returned ${accepted.id} for ${receipt.super_run_id}.`,
-          );
-        }
-        finished = terminal(accepted);
-      } catch (error) {
-        if (error instanceof ApiRequestError && error.status === 404) {
-          throw new RemoteExecutionFailed(
-            `Remote Super Run ${receipt.super_run_id} was not found for agent ${receipt.agent_id}.`,
-          );
-        }
-        throw error;
-      }
-      if (finished) break;
-      const openTimeout = setTimeout(() => controller.abort(), 30_000);
-      const stream = await deps
-        .open(receipt.agent_id, controller)
-        .finally(() => clearTimeout(openTimeout));
-      const events = stream[Symbol.asyncIterator]();
-      let next = events.next();
-      void next.catch(() => {});
-      while (!finished) {
-        signal.throwIfAborted();
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        const event = await Promise.race([
-          next,
-          new Promise<null>((resolve) => {
-            timer = setTimeout(() => resolve(null), deps.pollMs ?? 30_000);
-          }),
-        ]).finally(() => clearTimeout(timer));
-        if (!event) break;
-        if (event.done) throw new Error("Cloud status stream disconnected");
-        failures = 0;
-        const value = event.value;
-        if (value.type === "super_run_update") {
-          if (value.data.id === receipt.super_run_id)
-            finished = terminal(value.data);
-        } else {
-          const status = getConversationStatus(value, receipt.conversation_id);
-          if (status !== undefined) {
-            for (const id of getSendRunIds(status, receipt.client_message_id))
-              runIds.add(id);
-          }
-        }
-        if (!finished) {
-          next = events.next();
-          void next.catch(() => {});
-        }
-      }
-    } catch (error) {
-      signal.throwIfAborted();
-      if (error instanceof RemoteExecutionFailed) throw error;
-      if (error instanceof ApiRequestError && [401, 403].includes(error.status))
-        throw error;
-      await delay(
-        Math.min(30_000, (deps.pollMs ?? 1000) * 2 ** Math.min(failures++, 5)),
-        undefined,
-        { signal },
+        ),
+      signal,
+      sleep,
+      `Cloud status read for accepted Super Run ${receipt.super_run_id} failed`,
+    );
+    if (exact.id !== receipt.super_run_id) {
+      throw new RemoteExecutionFailed(
+        `Exact Super Run read returned ${exact.id} for ${receipt.super_run_id}.`,
       );
-    } finally {
-      signal.removeEventListener("abort", abort);
-      controller.abort();
     }
-  }
-  const runId = [...runIds].at(-1);
-  if (runId) {
+    throwIfSuperRunFailed(exact);
+    const terminal = exact.status === "COM" || exact.completed_at !== null;
+    if (!terminal) {
+      await sleep(pollMs, signal);
+      continue;
+    }
+
+    const runId = exact.run_ids[0];
+    if (!runId) {
+      throw new RemoteExecutionFailed(
+        `Remote Super Run ${exact.id} completed without a correlated child run.`,
+      );
+    }
+    const run = await retryRead(
+      () =>
+        deps.run(runId, AbortSignal.any([signal, AbortSignal.timeout(30_000)])),
+      signal,
+      sleep,
+      `Remote child run read for ${runId} failed`,
+    );
+    if (run.status === "failed" || run.status === "cancelled") {
+      throw new RemoteExecutionFailed(
+        `Remote child run ${runId} ${run.status}${run.stop_reason ? ` (${run.stop_reason})` : ""}.`,
+      );
+    }
+    if (run.status !== "completed" || run.stop_reason === "requires_approval") {
+      await sleep(pollMs, signal);
+      continue;
+    }
+
+    let messages: Message[] = [];
     try {
-      const messages = await deps.messages(
+      messages = await deps.messages(
         runId,
         AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
       );
-      const last = messages
-        .filter((m) => m.message_type === "assistant_message")
-        .sort((a, b) => (b.seq_id ?? 0) - (a.seq_id ?? 0))[0];
-      if (last?.message_type === "assistant_message") {
-        const text =
-          typeof last.content === "string"
-            ? last.content
-            : last.content
-                .filter((p) => p.type === "text")
-                .map((p) => p.text)
-                .join("\n");
-        if (text.trim()) return { text, runIds: [...runIds], stopReason: null };
-      }
     } catch {
       signal.throwIfAborted();
     }
+    return {
+      text: assistantText(messages) ?? noReplyMessage(receipt),
+      runIds: exact.run_ids,
+      stopReason: run.stop_reason ?? null,
+    };
   }
-  return {
-    text: `Remote task finished. Its reply was not collected. Read the conversation with: letta messages list --agent ${receipt.agent_id} --conversation ${receipt.conversation_id}. Do not launch the task again to retrieve its result.`,
-    runIds: [...runIds],
-    stopReason: null,
-  };
 }

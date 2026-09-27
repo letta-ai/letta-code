@@ -149,7 +149,7 @@ Custom prompt body`,
     expect(configs.reflection?.systemPrompt).not.toContain("git push");
   });
 
-  test("selects v2 writer prompts only for unchanged API built-ins", async () => {
+  test("selects v2 writer prompts for unchanged built-ins on either backend", async () => {
     const configs = await getAllSubagentConfigs();
 
     for (const name of ["reflection", "init", "memory"]) {
@@ -173,6 +173,13 @@ Custom prompt body`,
       expect(resolved.systemPrompt).toContain("MEMORY.md");
       expect(resolved.systemPrompt).toContain("no frontmatter");
       expect(resolved.systemPrompt).toContain("`name` and `description`");
+
+      const localResolved = resolveSubagentConfigForMemoryFormat(
+        config,
+        "memfs-v2",
+        true,
+      );
+      expect(localResolved.systemPrompt).toBe(resolved.systemPrompt);
     }
 
     // per-prompt operational phrases proving copied v1 guidance remains

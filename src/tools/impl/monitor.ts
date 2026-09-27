@@ -37,6 +37,7 @@ import { getShellEnv } from "./shell-env.js";
 import { withStrictShellPrelude } from "./shell-launchers.js";
 import { startShellProcess } from "./shell-runner.js";
 import { applyShellSandbox } from "./shell-sandbox.js";
+import { assertSafeWindowsCommand } from "./windows-command-safety.js";
 
 const MIN_TIMEOUT_MS = 1000;
 const MAX_TIMEOUT_MS = 3_600_000;
@@ -107,7 +108,7 @@ function validUtf8Prefix(buffer: Buffer, maxBytes: number): Buffer {
   return buffer.subarray(0, end);
 }
 
-class MonitorOutputWriter {
+export class MonitorOutputWriter {
   private bytesWritten = 0;
   private truncated = false;
   private writeFailed = false;
@@ -306,7 +307,7 @@ function sanitizeMonitorText(
   return stripAnsi(scrubSecretsFromString(text, secrets));
 }
 
-function queueMonitorEvent(params: {
+export function queueMonitorEvent(params: {
   taskId: string;
   description: string;
   event: string;
@@ -380,7 +381,7 @@ function queueCommandCompletion(params: {
   });
 }
 
-function markMonitorFinished(
+export function markMonitorFinished(
   taskId: string,
   processState: BackgroundProcess,
   status: "completed" | "failed",
@@ -400,6 +401,7 @@ function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
   const env = args.secretEnv
     ? { ...getShellEnv(), ...args.secretEnv }
     : getShellEnv();
+  assertSafeWindowsCommand(command, { cwd, env });
   const commandToRun = withStrictShellPrelude(command, env);
   const launcher = getBackgroundLauncher(commandToRun, env, args.secretEnv);
   if (!launcher[0]) {
@@ -814,7 +816,7 @@ export function stopMonitorsForProcessExit(): void {
 
 let monitorProcessExitCleanupInstalled = false;
 
-function installMonitorProcessExitCleanup(): void {
+export function installMonitorProcessExitCleanup(): void {
   if (monitorProcessExitCleanupInstalled) return;
   monitorProcessExitCleanupInstalled = true;
   process.once("exit", stopMonitorsForProcessExit);

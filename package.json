@@ -1,6 +1,6 @@
 {
   "name": "@letta-ai/letta-code",
-  "version": "0.33.2",
+  "version": "0.33.3",
   "lettaStartupLogProtocol": 1,
   "description": "Letta Code is a CLI tool for interacting with stateful Letta agents from the terminal.",
   "type": "module",
@@ -138,6 +138,7 @@
     "@modelcontextprotocol/sdk": "1.30.0",
     "@pierre/diffs": "1.2.2",
     "@scarf/scarf": "^1.4.0",
+    "@shikijs/langs": "4.0.2",
     "cron-parser": "^5.6.1",
     "cross-spawn": "^7.0.6",
     "glob": "^13.0.0",

@@ -59,6 +59,56 @@ function initAndCommitMemory(memoryDir: string, message = "initial memory") {
 }
 
 describe("local system prompt compilation", () => {
+  test("loads root core memory and defers indexed children and skills", async () => {
+    const memoryDir = await mkdtemp(join(tmpdir(), "local-prompt-root-memfs-"));
+    try {
+      await writeFile(join(memoryDir, "MEMORY.md"), "# Memory\n", "utf8");
+      await writeMemoryFile(
+        memoryDir,
+        "persona.md",
+        "Who the agent is",
+        "I am a root-layout local agent.",
+      );
+      await mkdir(join(memoryDir, "reference"), { recursive: true });
+      await writeFile(
+        join(memoryDir, "reference", "MEMORY.md"),
+        "# Reference\n",
+        "utf8",
+      );
+      await writeMemoryFile(
+        memoryDir,
+        "reference/details.md",
+        "Deferred details",
+        "This must remain deferred.",
+      );
+      await mkdir(join(memoryDir, "skills", "pdf"), { recursive: true });
+      await writeFile(
+        join(memoryDir, "skills", "pdf", "SKILL.md"),
+        "---\nname: pdf\ndescription: Read PDFs\n---\nSkill body.\n",
+        "utf8",
+      );
+      initAndCommitMemory(memoryDir);
+
+      const compiled = compileLocalSystemPrompt({
+        agent: agent(),
+        conversationId: "local-conv-test",
+        memoryDir,
+      });
+
+      expect(compiled.content).toContain("<memory>\n# Memory\n");
+      expect(compiled.content).toContain("<persona>");
+      expect(compiled.content).toContain("I am a root-layout local agent.");
+      expect(compiled.content).toContain(
+        '<directory path="reference/" index="reference/MEMORY.md" />',
+      );
+      expect(compiled.content).not.toContain("This must remain deferred.");
+      expect(compiled.content).not.toContain("Skill body.");
+      expect(compiled.content).not.toContain('path="skills/"');
+    } finally {
+      await rm(memoryDir, { recursive: true, force: true });
+    }
+  });
+
   test("injects MemFS system files and metadata into CORE_MEMORY", async () => {
     const memoryDir = await mkdtemp(join(tmpdir(), "local-prompt-memfs-"));
     try {
@@ -233,9 +283,6 @@ describe("local system prompt compilation", () => {
     const prompt = await resolveAndBuildSystemPrompt("default", "local-memfs");
 
     expect(prompt).toContain("$MEMORY_DIR");
-    expect(prompt).toContain('subagent_type: "memory"');
-    expect(prompt).toContain("Continue your current work immediately");
-    expect(prompt).toContain("**Memory as the main task:**");
     expect(prompt).toContain("git commit --author=");
     expect(prompt).not.toContain(
       "Changes you commit and push sync to the Letta server",

@@ -10,6 +10,8 @@ const REMOVED_TOOL_NAMES = new Set([
   "KillBash",
   "ListDir",
   "list_dir",
+  "memory",
+  "memory_apply_patch",
   "MultiEdit",
   // Never registered under this name, but the approval and transcript
   // classifiers still treat it as MultiEdit, so it must stay reserved too.

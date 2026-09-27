@@ -141,19 +141,15 @@ export const ApprovalPreview = memo(
       toolName === "Write" ||
       toolName === "str_replace_editor" ||
       toolName === "str_replace_based_edit_tool" ||
-      toolName === "ApplyPatch" ||
-      toolName === "memory_apply_patch"
+      toolName === "ApplyPatch"
     ) {
       const headerText = getFileEditHeader(toolName, toolArgs);
 
       try {
         const args = JSON.parse(toolArgs);
 
-        // Handle patch tools (can have multiple files)
-        if (
-          args.input &&
-          (toolName === "ApplyPatch" || toolName === "memory_apply_patch")
-        ) {
+        // Handle ApplyPatch (can have multiple files)
+        if (args.input && toolName === "ApplyPatch") {
           const operations = parsePatchOperations(args.input);
 
           return (
