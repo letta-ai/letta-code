@@ -170,7 +170,12 @@ export async function captureNativeSession(
   // Unknown resumed sessions may predate this process. Never claim their raw
   // transcript for a caller merely because it supplied a native UUID.
   if (!existing || !sameScope(existing.scope, scope)) return;
-  if (existing.pending) return existing.pending;
+  if (existing.pending) {
+    // A later turn can finish while the previous snapshot is still uploading.
+    // Check its new EOF after the in-flight upload settles, even if it failed.
+    await existing.pending.catch(() => undefined);
+    return captureNativeSession(source, sessionId, scope, env, requestOptions);
+  }
   const path =
     existing.path || (await findNativeSessionPath(source, sessionId, env));
   if (!path) return;

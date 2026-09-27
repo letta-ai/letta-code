@@ -59,6 +59,7 @@ async function endpoint(
     actingUser: string | undefined;
   }>,
   fail = false,
+  beforeResponse?: (requestNumber: number) => Promise<void>,
 ) {
   server = createServer(async (request, response) => {
     const parts: Buffer[] = [];
@@ -74,6 +75,7 @@ async function endpoint(
         | string
         | undefined,
     });
+    await beforeResponse?.(calls.length);
     if (fail) {
       response.writeHead(503).end('{"error":"unavailable"}');
       return;
@@ -94,6 +96,46 @@ async function endpoint(
 }
 
 describe("native CLI JSONL capture", () => {
+  test("captures an append while the prior chunk is still uploading", async () => {
+    const { path, env } = await fixture("codex", Buffer.from("first\n"));
+    const calls: Array<{
+      url: string;
+      body: Record<string, unknown>;
+      actingUser: string | undefined;
+    }> = [];
+    let firstReceived!: () => void;
+    let releaseFirst!: () => void;
+    const received = new Promise<void>((resolve) => {
+      firstReceived = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const url = await endpoint(calls, false, async (number) => {
+      if (number === 1) {
+        firstReceived();
+        await release;
+      }
+    });
+    rememberNativeSession("codex", ID, scope, "https://api.letta.com");
+    const options = {
+      baseUrl: url,
+      apiKey: "test",
+      cloudUrl: "https://api.letta.com",
+    };
+    const first = captureNativeSession("codex", ID, scope, env, options);
+    await received;
+    await appendFile(path, "second\n");
+    const second = captureNativeSession("codex", ID, scope, env, options);
+    releaseFirst();
+    await Promise.all([first, second]);
+    expect(
+      calls.map(({ body }) =>
+        Buffer.from(String(body.data_base64), "base64").toString(),
+      ),
+    ).toEqual(["first\n", "second\n"]);
+  });
+
   test.each(["claude_code", "codex"] as const)(
     "uploads exact %s bytes, then only resumed append",
     async (source) => {
