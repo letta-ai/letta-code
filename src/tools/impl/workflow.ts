@@ -309,6 +309,7 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
       status: "error",
     };
   }
+
   // Validate up front so authoring mistakes surface in the tool result
   // instead of as a failed background task.
   let meta: WorkflowMeta;
