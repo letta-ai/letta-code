@@ -107,7 +107,7 @@ function validUtf8Prefix(buffer: Buffer, maxBytes: number): Buffer {
   return buffer.subarray(0, end);
 }
 
-class MonitorOutputWriter {
+export class MonitorOutputWriter {
   private bytesWritten = 0;
   private truncated = false;
   private writeFailed = false;
@@ -306,7 +306,7 @@ function sanitizeMonitorText(
   return stripAnsi(scrubSecretsFromString(text, secrets));
 }
 
-function queueMonitorEvent(params: {
+export function queueMonitorEvent(params: {
   taskId: string;
   description: string;
   event: string;
@@ -380,7 +380,7 @@ function queueCommandCompletion(params: {
   });
 }
 
-function markMonitorFinished(
+export function markMonitorFinished(
   taskId: string,
   processState: BackgroundProcess,
   status: "completed" | "failed",

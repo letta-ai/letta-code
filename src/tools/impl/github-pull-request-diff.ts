@@ -1,11 +1,16 @@
 import {
-  type GitHubPullRequestSnapshot,
-  hasGitHubPullRequestReadyConditions,
+  githubPullRequestBlockerSummary,
+  githubPullRequestCheckSummary,
   isGitHubPullRequestReady,
-  type PullRequestCheck,
-  type PullRequestComment,
-  type PullRequestInlineComment,
-} from "./github-pull-request-watch";
+  pendingGitHubPullRequestChecks,
+  shortGitHubPullRequestSha,
+} from "./github-pull-request-state";
+import type {
+  GitHubPullRequestSnapshot,
+  PullRequestCheck,
+  PullRequestComment,
+  PullRequestInlineComment,
+} from "./github-pull-request-types";
 
 const MAX_SUMMARY_BODY_CHARS = 240;
 
@@ -18,70 +23,6 @@ function normalizedBody(body: string): string {
   const compact = body.replace(/\s+/g, " ").trim();
   if (compact.length <= MAX_SUMMARY_BODY_CHARS) return compact;
   return `${compact.slice(0, MAX_SUMMARY_BODY_CHARS)}…`;
-}
-
-function shortSha(sha: string): string {
-  return sha.slice(0, 12);
-}
-
-function pendingChecks(
-  snapshot: GitHubPullRequestSnapshot,
-): PullRequestCheck[] {
-  return snapshot.checks.filter((check) => check.phase === "pending");
-}
-
-function checkSummary(snapshot: GitHubPullRequestSnapshot): string {
-  const pending = pendingChecks(snapshot).length;
-  const failed = snapshot.checks.filter(
-    (check) => check.phase === "failure",
-  ).length;
-  const completed = snapshot.checks.length - pending;
-  if (snapshot.checks.length === 0) return "no checks reported";
-  return `${completed}/${snapshot.checks.length} checks complete, ${failed} failing, ${pending} pending`;
-}
-
-function unresolvedThreadCount(snapshot: GitHubPullRequestSnapshot): number {
-  return snapshot.reviewThreads.filter((thread) => !thread.isResolved).length;
-}
-
-function blockerSummary(snapshot: GitHubPullRequestSnapshot): string {
-  const blockers: string[] = [];
-  if (snapshot.isDraft) blockers.push("draft");
-  if (snapshot.mergeable === "CONFLICTING") blockers.push("merge conflicts");
-  if (snapshot.mergeable === "UNKNOWN") {
-    blockers.push("mergeability still unknown");
-  }
-  if (
-    snapshot.mergeStateStatus !== "CLEAN" &&
-    snapshot.mergeStateStatus !== "UNKNOWN"
-  ) {
-    blockers.push(`merge state ${snapshot.mergeStateStatus}`);
-  }
-  if (snapshot.mergeStateStatus === "UNKNOWN") {
-    blockers.push("merge state still unknown");
-  }
-  if (
-    snapshot.reviewDecision !== "NONE" &&
-    snapshot.reviewDecision !== "APPROVED"
-  ) {
-    blockers.push(`review decision ${snapshot.reviewDecision}`);
-  }
-  if (!snapshot.snapshotComplete) {
-    blockers.push("GitHub snapshot exceeded a 100-item page");
-  }
-  if (
-    hasGitHubPullRequestReadyConditions(snapshot) &&
-    !snapshot.readinessConfirmed
-  ) {
-    blockers.push("awaiting a second same-head readiness read");
-  }
-  const unresolved = unresolvedThreadCount(snapshot);
-  if (unresolved > 0) {
-    blockers.push(
-      `${unresolved} unresolved review thread${unresolved === 1 ? "" : "s"}`,
-    );
-  }
-  return blockers.length > 0 ? blockers.join(", ") : "no known blockers";
 }
 
 function commentEvent(label: string, comment: PullRequestComment): string {
@@ -128,7 +69,7 @@ export function diffGitHubPullRequestSnapshots(
 
   if (headChanged) {
     events.push(
-      `PR head changed from ${shortSha(previous.headSha)} to ${shortSha(current.headSha)}. ${checkSummary(current)}; ${blockerSummary(current)}.`,
+      `PR head changed from ${shortGitHubPullRequestSha(previous.headSha)} to ${shortGitHubPullRequestSha(current.headSha)}. ${githubPullRequestCheckSummary(current)}; ${githubPullRequestBlockerSummary(current)}.`,
     );
     const currentFailures = current.checks.filter(
       (check) => check.phase === "failure",
@@ -148,10 +89,10 @@ export function diffGitHubPullRequestSnapshots(
   if (previous.state !== current.state) {
     events.push(
       current.state === "MERGED"
-        ? `PR merged at ${shortSha(current.headSha)}: ${current.ref.url}`
+        ? `PR merged at ${shortGitHubPullRequestSha(current.headSha)}: ${current.ref.url}`
         : current.state === "CLOSED"
-          ? `PR closed without merge at ${shortSha(current.headSha)}: ${current.ref.url}`
-          : `PR reopened at ${shortSha(current.headSha)}: ${current.ref.url}`,
+          ? `PR closed without merge at ${shortGitHubPullRequestSha(current.headSha)}: ${current.ref.url}`
+          : `PR reopened at ${shortGitHubPullRequestSha(current.headSha)}: ${current.ref.url}`,
     );
   }
 
@@ -235,8 +176,8 @@ export function diffGitHubPullRequestSnapshots(
     const previousChecks = new Map(
       previous.checks.map((check) => [check.key, check]),
     );
-    const previousPending = pendingChecks(previous).length;
-    const currentPending = pendingChecks(current).length;
+    const previousPending = pendingGitHubPullRequestChecks(previous).length;
+    const currentPending = pendingGitHubPullRequestChecks(current).length;
     const currentFailures = current.checks.filter(
       (check) => check.phase === "failure",
     );
@@ -259,7 +200,9 @@ export function diffGitHubPullRequestSnapshots(
       }
     }
     if (previousPending > 0 && currentPending === 0) {
-      events.push(`Current-head checks finished: ${checkSummary(current)}.`);
+      events.push(
+        `Current-head checks finished: ${githubPullRequestCheckSummary(current)}.`,
+      );
     }
     const previousAttempts = new Set(
       previous.checkAttempts.map((attempt) => attempt.key),
@@ -294,23 +237,15 @@ export function diffGitHubPullRequestSnapshots(
       `Review decision changed from ${previous.reviewDecision} to ${current.reviewDecision}.`,
     );
   }
-  if (previous.snapshotComplete !== current.snapshotComplete) {
-    events.push(
-      current.snapshotComplete
-        ? "GitHub snapshot coverage returned to a complete page."
-        : "GitHub snapshot exceeded a 100-item page; merge readiness is now fail-closed.",
-    );
-  }
-
   const wasReady = isGitHubPullRequestReady(previous);
   const isReady = isGitHubPullRequestReady(current);
   if (!wasReady && isReady) {
     events.push(
-      `PR is merge-ready on head ${shortSha(current.headSha)} after a fresh read: ${current.ref.url}`,
+      `PR is merge-ready on head ${shortGitHubPullRequestSha(current.headSha)} after a fresh read: ${current.ref.url}`,
     );
   } else if (wasReady && !isReady) {
     events.push(
-      `PR is no longer merge-ready on head ${shortSha(current.headSha)}: ${blockerSummary(current)}; ${checkSummary(current)}.`,
+      `PR is no longer merge-ready on head ${shortGitHubPullRequestSha(current.headSha)}: ${githubPullRequestBlockerSummary(current)}; ${githubPullRequestCheckSummary(current)}.`,
     );
   }
 

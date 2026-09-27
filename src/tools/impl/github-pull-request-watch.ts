@@ -5,79 +5,35 @@ import {
   GITHUB_PULL_REQUEST_QUERY,
   GITHUB_REVIEW_THREAD_QUERY,
 } from "./github-pull-request-query";
+import { hasGitHubPullRequestReadyConditions } from "./github-pull-request-state";
+import type {
+  GitHubPullRequestRef,
+  GitHubPullRequestSnapshot,
+  PullRequestCheck,
+  PullRequestCheckPhase,
+  PullRequestComment,
+  PullRequestInlineComment,
+  PullRequestReview,
+  PullRequestReviewThread,
+  PullRequestState,
+} from "./github-pull-request-types";
 
 const execFileAsync = promisify(execFile);
+const MAX_CONSISTENCY_READ_ATTEMPTS = 3;
 
-export interface GitHubPullRequestRef {
-  owner: string;
-  repo: string;
-  number: number;
-  url: string;
-}
-
-export type PullRequestState = "OPEN" | "CLOSED" | "MERGED";
-export type PullRequestCheckPhase =
-  | "pending"
-  | "success"
-  | "neutral"
-  | "failure";
-
-export interface PullRequestCheck {
-  key: string;
-  name: string;
-  phase: PullRequestCheckPhase;
-  result: string;
-  url?: string;
-}
-
-export interface PullRequestComment {
-  id: string;
-  author: string;
-  body: string;
-  url: string;
-  updatedAt: string;
-}
-
-export interface PullRequestReview extends PullRequestComment {
-  state: string;
-  commitSha?: string;
-}
-
-export interface PullRequestInlineComment extends PullRequestComment {
-  path?: string;
-  line?: number;
-  outdated: boolean;
-  commitSha?: string;
-}
-
-export interface PullRequestReviewThread {
-  id: string;
-  isResolved: boolean;
-  comments: PullRequestInlineComment[];
-}
-
-export interface GitHubPullRequestSnapshot {
-  ref: GitHubPullRequestRef;
-  headSha: string;
-  state: PullRequestState;
-  isDraft: boolean;
-  mergeable: string;
-  mergeStateStatus: string;
-  reviewDecision: string;
-  snapshotComplete: boolean;
-  readinessConfirmed: boolean;
-  checks: PullRequestCheck[];
-  checkAttempts: PullRequestCheck[];
-  comments: PullRequestComment[];
-  reviews: PullRequestReview[];
-  reviewThreads: PullRequestReviewThread[];
-}
+class PullRequestChangedDuringReadError extends Error {}
 
 interface GitHubPullRequestWatchDeps {
   runGh?: (
     args: string[],
     options: { cwd: string; signal?: AbortSignal },
   ) => Promise<string>;
+}
+
+interface GitHubPullRequestSnapshotOptions {
+  cwd: string;
+  signal?: AbortSignal;
+  deps?: GitHubPullRequestWatchDeps;
 }
 
 interface GraphQlAuthor {
@@ -204,10 +160,6 @@ interface RestCommitStatus {
   context?: string | null;
   state?: string | null;
   target_url?: string | null;
-}
-
-function shortSha(sha: string): string {
-  return sha.slice(0, 12);
 }
 
 function authorLogin(author?: GraphQlAuthor | null): string {
@@ -428,9 +380,6 @@ function mapSnapshot(
     mergeable: pullRequest.mergeable ?? "UNKNOWN",
     mergeStateStatus: pullRequest.mergeStateStatus ?? "UNKNOWN",
     reviewDecision: pullRequest.reviewDecision ?? "NONE",
-    snapshotComplete: !pullRequest.reviewThreads?.nodes?.some(
-      (thread) => thread?.comments?.pageInfo?.hasPreviousPage,
-    ),
     readinessConfirmed: false,
     checks,
     checkAttempts,
@@ -670,13 +619,9 @@ async function completeReviewThreadComments(
   };
 }
 
-export async function fetchGitHubPullRequestSnapshot(
+async function readGitHubPullRequestSnapshot(
   ref: GitHubPullRequestRef,
-  options: {
-    cwd: string;
-    signal?: AbortSignal;
-    deps?: GitHubPullRequestWatchDeps;
-  },
+  options: GitHubPullRequestSnapshotOptions,
 ): Promise<GitHubPullRequestSnapshot> {
   const runGh = options.deps?.runGh ?? defaultRunGh;
   let pullRequest: GraphQlPullRequest | undefined;
@@ -710,7 +655,9 @@ export async function fetchGitHubPullRequestSnapshot(
       ref,
     );
     if (pullRequest?.headRefOid && page.headRefOid !== pullRequest.headRefOid) {
-      throw new Error("GitHub PR head changed while WatchPR was reading it");
+      throw new PullRequestChangedDuringReadError(
+        "GitHub PR head changed while WatchPR was reading it",
+      );
     }
     pullRequest ??= page;
     comments.push(...(page.comments?.nodes ?? []));
@@ -856,120 +803,26 @@ export async function fetchGitHubPullRequestSnapshot(
       pullRequestMetadataKey(latestMetadata) !==
       pullRequestMetadataKey(pullRequest)
     ) {
-      throw new Error("GitHub PR state changed while WatchPR was reading it");
+      throw new PullRequestChangedDuringReadError(
+        "GitHub PR state changed while WatchPR was reading it",
+      );
     }
   }
   return snapshot;
 }
 
-function failedChecks(snapshot: GitHubPullRequestSnapshot): PullRequestCheck[] {
-  return snapshot.checks.filter((check) => check.phase === "failure");
-}
-
-function pendingChecks(
-  snapshot: GitHubPullRequestSnapshot,
-): PullRequestCheck[] {
-  return snapshot.checks.filter((check) => check.phase === "pending");
-}
-
-function unresolvedThreads(
-  snapshot: GitHubPullRequestSnapshot,
-): PullRequestReviewThread[] {
-  return snapshot.reviewThreads.filter((thread) => !thread.isResolved);
-}
-
-export function hasGitHubPullRequestReadyConditions(
-  snapshot: GitHubPullRequestSnapshot,
-): boolean {
-  return (
-    snapshot.state === "OPEN" &&
-    !snapshot.isDraft &&
-    snapshot.snapshotComplete &&
-    snapshot.mergeable === "MERGEABLE" &&
-    snapshot.mergeStateStatus === "CLEAN" &&
-    (snapshot.reviewDecision === "NONE" ||
-      snapshot.reviewDecision === "APPROVED") &&
-    pendingChecks(snapshot).length === 0 &&
-    failedChecks(snapshot).length === 0 &&
-    unresolvedThreads(snapshot).length === 0
-  );
-}
-
-export function isGitHubPullRequestReady(
-  snapshot: GitHubPullRequestSnapshot,
-): boolean {
-  return (
-    snapshot.readinessConfirmed && hasGitHubPullRequestReadyConditions(snapshot)
-  );
-}
-
-function checkSummary(snapshot: GitHubPullRequestSnapshot): string {
-  const pending = pendingChecks(snapshot).length;
-  const failed = failedChecks(snapshot).length;
-  const completed = snapshot.checks.length - pending;
-  if (snapshot.checks.length === 0) return "no checks reported";
-  return `${completed}/${snapshot.checks.length} checks complete, ${failed} failing, ${pending} pending`;
-}
-
-function blockerSummary(snapshot: GitHubPullRequestSnapshot): string {
-  const blockers: string[] = [];
-  if (snapshot.isDraft) blockers.push("draft");
-  if (snapshot.mergeable === "CONFLICTING") blockers.push("merge conflicts");
-  if (snapshot.mergeable === "UNKNOWN") {
-    blockers.push("mergeability still unknown");
+export async function fetchGitHubPullRequestSnapshot(
+  ref: GitHubPullRequestRef,
+  options: GitHubPullRequestSnapshotOptions,
+): Promise<GitHubPullRequestSnapshot> {
+  let lastConsistencyError: PullRequestChangedDuringReadError | undefined;
+  for (let attempt = 0; attempt < MAX_CONSISTENCY_READ_ATTEMPTS; attempt += 1) {
+    try {
+      return await readGitHubPullRequestSnapshot(ref, options);
+    } catch (error) {
+      if (!(error instanceof PullRequestChangedDuringReadError)) throw error;
+      lastConsistencyError = error;
+    }
   }
-  if (
-    snapshot.mergeStateStatus !== "CLEAN" &&
-    snapshot.mergeStateStatus !== "UNKNOWN"
-  ) {
-    blockers.push(`merge state ${snapshot.mergeStateStatus}`);
-  }
-  if (snapshot.mergeStateStatus === "UNKNOWN") {
-    blockers.push("merge state still unknown");
-  }
-  if (
-    snapshot.reviewDecision !== "NONE" &&
-    snapshot.reviewDecision !== "APPROVED"
-  ) {
-    blockers.push(`review decision ${snapshot.reviewDecision}`);
-  }
-  if (!snapshot.snapshotComplete) {
-    blockers.push("GitHub snapshot exceeded a 100-item page");
-  }
-  if (
-    hasGitHubPullRequestReadyConditions(snapshot) &&
-    !snapshot.readinessConfirmed
-  ) {
-    blockers.push("awaiting a second same-head readiness read");
-  }
-  const unresolved = unresolvedThreads(snapshot).length;
-  if (unresolved > 0) {
-    blockers.push(
-      `${unresolved} unresolved review thread${unresolved === 1 ? "" : "s"}`,
-    );
-  }
-  return blockers.length > 0 ? blockers.join(", ") : "no known blockers";
-}
-
-export function describeGitHubPullRequestSnapshot(
-  snapshot: GitHubPullRequestSnapshot,
-): string {
-  const failing = failedChecks(snapshot);
-  const lines = [
-    `${snapshot.ref.owner}/${snapshot.ref.repo}#${snapshot.ref.number} at ${shortSha(snapshot.headSha)}: ${snapshot.state.toLowerCase()}${snapshot.isDraft ? ", draft" : ""}; ${checkSummary(snapshot)}; ${blockerSummary(snapshot)}; ${isGitHubPullRequestReady(snapshot) ? "merge-ready" : "not merge-ready"}.`,
-  ];
-  if (failing.length > 0) {
-    lines.push(
-      `Failing checks: ${failing.map((check) => check.name).join(", ")}.`,
-    );
-  }
-  const unresolved = unresolvedThreads(snapshot).slice(0, 5);
-  for (const thread of unresolved) {
-    const comment = thread.comments.at(-1);
-    if (!comment) continue;
-    lines.push(
-      `Unresolved review thread${comment.outdated ? " (outdated)" : ""}: ${comment.url}`,
-    );
-  }
-  return lines.join("\n");
+  throw lastConsistencyError;
 }

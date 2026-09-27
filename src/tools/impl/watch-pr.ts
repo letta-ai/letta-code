@@ -5,35 +5,38 @@ import {
   getRuntimeContext,
 } from "@/runtime-context";
 import { scrubSecretsFromString } from "@/tools/secret-substitution";
-import { addToMessageQueue } from "@/utils/message-queue-bridge";
-import {
-  formatMonitorEventNotification,
-  resolveNotificationScope,
-} from "@/utils/task-notifications";
+import { resolveNotificationScope } from "@/utils/task-notifications";
 import { diffGitHubPullRequestSnapshots } from "./github-pull-request-diff";
 import {
   describeGitHubPullRequestSnapshot,
-  fetchGitHubPullRequestSnapshot,
-  type GitHubPullRequestRef,
-  type GitHubPullRequestSnapshot,
   hasGitHubPullRequestReadyConditions,
+} from "./github-pull-request-state";
+import type {
+  GitHubPullRequestRef,
+  GitHubPullRequestSnapshot,
+} from "./github-pull-request-types";
+import {
+  fetchGitHubPullRequestSnapshot,
   parseGitHubPullRequestUrl,
 } from "./github-pull-request-watch";
-import { installMonitorProcessExitCleanup } from "./monitor";
+import {
+  installMonitorProcessExitCleanup,
+  MonitorOutputWriter,
+  markMonitorFinished,
+  queueMonitorEvent,
+} from "./monitor";
 import { createMonitorEventStream } from "./monitor-event-stream";
 import {
-  appendToOutputFile,
   assertBackgroundProcessCapacity,
   type BackgroundProcess,
   backgroundProcesses,
   createBackgroundOutputFile,
   getNextMonitorId,
   notifyBackgroundProcessStateChanged,
-  scheduleBackgroundProcessCleanup,
-  scrubCompletedBackgroundOutput,
 } from "./process_manager";
 
 const WATCH_POLL_MS = 30_000;
+const WATCH_MAX_POLL_MS = 5 * 60_000;
 
 interface WatchPullRequestArgs {
   url: string;
@@ -54,19 +57,7 @@ interface WatchPullRequestDeps {
     ref: GitHubPullRequestRef,
     options: { cwd: string; signal?: AbortSignal },
   ) => Promise<GitHubPullRequestSnapshot>;
-  wait?: (signal: AbortSignal) => Promise<void>;
-}
-
-function markWatchFinished(
-  taskId: string,
-  processState: BackgroundProcess,
-  status: "completed" | "failed",
-): void {
-  processState.status = status;
-  processState.exitCode = status === "completed" ? 0 : null;
-  scrubCompletedBackgroundOutput(processState);
-  notifyBackgroundProcessStateChanged(processState.runtimeScope);
-  scheduleBackgroundProcessCleanup(taskId);
+  wait?: (signal: AbortSignal, milliseconds: number) => Promise<void>;
 }
 
 function errorText(error: unknown): string {
@@ -77,8 +68,15 @@ function errorText(error: unknown): string {
     .slice(0, 500);
 }
 
-async function defaultWait(signal: AbortSignal): Promise<void> {
-  await delay(WATCH_POLL_MS, undefined, { signal });
+function pollDelayMs(failedPolls: number): number {
+  return Math.min(WATCH_POLL_MS * 2 ** failedPolls, WATCH_MAX_POLL_MS);
+}
+
+async function defaultWait(
+  signal: AbortSignal,
+  milliseconds: number,
+): Promise<void> {
+  await delay(milliseconds, undefined, { signal });
 }
 
 export async function watch_pr(
@@ -107,6 +105,7 @@ export async function watch_pr(
   installMonitorProcessExitCleanup();
   const taskId = getNextMonitorId();
   const outputFile = createBackgroundOutputFile(taskId);
+  const output = new MonitorOutputWriter(outputFile);
   const runtimeContext = getRuntimeContext();
   const parentScope =
     args.parentScope ??
@@ -120,27 +119,25 @@ export async function watch_pr(
   const actingUserId = getRuntimeActingUserId();
   const description = `PR ${ref.owner}/${ref.repo}#${ref.number} checks, reviews, and mergeability`;
   const controller = new AbortController();
+  const secrets: Readonly<Record<string, string>> = {};
   let processState: BackgroundProcess;
 
   const events = createMonitorEventStream({
     emit(event) {
-      const sanitized = scrubSecretsFromString(event, {});
-      addToMessageQueue({
-        kind: "task_notification",
-        text: formatMonitorEventNotification({
-          taskId,
-          description,
-          event: sanitized,
-        }),
-        ...scope,
-        ...(actingUserId ? { actingUserId } : {}),
+      queueMonitorEvent({
+        taskId,
+        description,
+        event,
+        scope,
+        actingUserId,
+        secrets,
       });
     },
     stopSource() {
       if (!processState || processState.status !== "running") return;
       processState.completionNotificationSuppressed = true;
-      appendToOutputFile(outputFile, "\n[stopped: output rate too high]\n");
-      markWatchFinished(taskId, processState, "failed");
+      output.append("\n[stopped: output rate too high]\n");
+      markMonitorFinished(taskId, processState, "failed", null);
       controller.abort();
     },
   });
@@ -148,9 +145,9 @@ export async function watch_pr(
   const emit = (lines: readonly string[]): void => {
     if (lines.length === 0 || processState.status !== "running") return;
     const text = scrubSecretsFromString(`${lines.join("\n")}\n`, {});
-    if (!appendToOutputFile(outputFile, text)) {
+    if (!output.append(text)) {
       processState.completionNotificationSuppressed = true;
-      markWatchFinished(taskId, processState, "failed");
+      markMonitorFinished(taskId, processState, "failed", null);
       controller.abort();
       return;
     }
@@ -175,12 +172,11 @@ export async function watch_pr(
     description,
     monitorSource: "github_pull_request",
     persistent: true,
-    secrets: {},
+    secrets,
   };
   backgroundProcesses.set(taskId, processState);
   notifyBackgroundProcessStateChanged(scope);
-  appendToOutputFile(
-    outputFile,
+  output.append(
     `[initial snapshot]\n${describeGitHubPullRequestSnapshot(initial)}\n`,
   );
 
@@ -191,7 +187,7 @@ export async function watch_pr(
     let lastError = "";
     while (processState.status === "running") {
       try {
-        await wait(controller.signal);
+        await wait(controller.signal, pollDelayMs(failedPolls));
         if (processState.status !== "running") return;
         const current = await fetchSnapshot(ref, {
           cwd,
@@ -218,7 +214,7 @@ export async function watch_pr(
         if (diff.terminal) {
           events.finish();
           if (processState.status === "running") {
-            markWatchFinished(taskId, processState, "completed");
+            markMonitorFinished(taskId, processState, "completed", 0);
           }
           return;
         }
@@ -228,10 +224,12 @@ export async function watch_pr(
         }
         failedPolls += 1;
         const message = errorText(error);
-        appendToOutputFile(
-          outputFile,
-          `[poll error ${failedPolls}] ${message}\n`,
-        );
+        if (!output.append(`[poll error ${failedPolls}] ${message}\n`)) {
+          processState.completionNotificationSuppressed = true;
+          markMonitorFinished(taskId, processState, "failed", null);
+          controller.abort();
+          return;
+        }
         if (failedPolls === 1 || message !== lastError) {
           emit([`WatchPR could not refresh ${ref.url}: ${message}. Retrying.`]);
         }
@@ -243,7 +241,7 @@ export async function watch_pr(
     emit([`WatchPR stopped after an unexpected error: ${errorText(error)}`]);
     events.finish();
     if (processState.status === "running") {
-      markWatchFinished(taskId, processState, "failed");
+      markMonitorFinished(taskId, processState, "failed", null);
     }
   });
 

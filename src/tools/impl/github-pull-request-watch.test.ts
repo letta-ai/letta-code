@@ -2,9 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { diffGitHubPullRequestSnapshots } from "./github-pull-request-diff";
 import {
   describeGitHubPullRequestSnapshot,
-  fetchGitHubPullRequestSnapshot,
-  type GitHubPullRequestSnapshot,
   isGitHubPullRequestReady,
+} from "./github-pull-request-state";
+import type { GitHubPullRequestSnapshot } from "./github-pull-request-types";
+import {
+  fetchGitHubPullRequestSnapshot,
   parseGitHubPullRequestUrl,
 } from "./github-pull-request-watch";
 
@@ -26,7 +28,6 @@ function snapshot(
     mergeable: "MERGEABLE",
     mergeStateStatus: "CLEAN",
     reviewDecision: "APPROVED",
-    snapshotComplete: true,
     readinessConfirmed: true,
     checks: [],
     checkAttempts: [],
@@ -341,13 +342,18 @@ describe("GitHub pull request snapshot fetch", () => {
     ).rejects.toThrow("reviewThreads unavailable");
   });
 
-  test("rejects a ready snapshot when PR metadata changes during the read", async () => {
+  test("retries a ready snapshot when PR metadata changes during the read", async () => {
+    let fullReads = 0;
+    let metadataReads = 0;
     const runGh = async (args: string[]): Promise<string> => {
       const endpoint = args.at(-1) ?? "";
       if (args.includes("graphql")) {
         const isMetadataRead = !args.some((arg) =>
           arg.includes("comments(first: 100"),
         );
+        if (isMetadataRead) metadataReads += 1;
+        else fullReads += 1;
+        const hasLateThread = isMetadataRead || fullReads > 1;
         return JSON.stringify({
           data: {
             repository: {
@@ -362,7 +368,7 @@ describe("GitHub pull request snapshot fetch", () => {
                 comments: { nodes: [], pageInfo: { hasNextPage: false } },
                 reviews: { nodes: [], pageInfo: { hasNextPage: false } },
                 reviewThreads: {
-                  nodes: isMetadataRead
+                  nodes: hasLateThread
                     ? [
                         {
                           id: "late-thread",
@@ -371,7 +377,7 @@ describe("GitHub pull request snapshot fetch", () => {
                         },
                       ]
                     : [],
-                  totalCount: isMetadataRead ? 1 : 0,
+                  totalCount: hasLateThread ? 1 : 0,
                   pageInfo: { hasNextPage: false },
                 },
               },
@@ -388,12 +394,16 @@ describe("GitHub pull request snapshot fetch", () => {
       return JSON.stringify([[]]);
     };
 
-    await expect(
-      fetchGitHubPullRequestSnapshot(ref, {
-        cwd: "/repo",
-        deps: { runGh },
-      }),
-    ).rejects.toThrow("state changed while WatchPR was reading it");
+    const result = await fetchGitHubPullRequestSnapshot(ref, {
+      cwd: "/repo",
+      deps: { runGh },
+    });
+
+    expect(fullReads).toBe(2);
+    expect(metadataReads).toBe(1);
+    expect(result.reviewThreads.map((thread) => thread.id)).toEqual([
+      "late-thread",
+    ]);
   });
 
   test("paginates comments inside a review thread", async () => {
@@ -472,7 +482,6 @@ describe("GitHub pull request snapshot fetch", () => {
       "old",
       "new",
     ]);
-    expect(result.snapshotComplete).toBe(true);
   });
 });
 
@@ -762,14 +771,6 @@ describe("GitHub pull request state diff", () => {
       snapshot({ mergeable: "UNKNOWN", mergeStateStatus: "UNKNOWN" }),
     );
     expect(diff.events).toEqual([]);
-  });
-
-  test("fails readiness closed when a GitHub result page is truncated", () => {
-    const current = snapshot({ snapshotComplete: false });
-    expect(isGitHubPullRequestReady(current)).toBe(false);
-    expect(describeGitHubPullRequestSnapshot(current)).toContain(
-      "GitHub snapshot exceeded a 100-item page",
-    );
   });
 
   test("does not call a clean PR ready while review is still required", () => {

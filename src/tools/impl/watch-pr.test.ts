@@ -4,7 +4,7 @@ import { checkPermission } from "@/permissions/checker";
 import { TOOL_DEFINITIONS } from "@/tools/tool-definitions";
 import { TOOLSET_CATALOG } from "@/tools/toolset-catalog";
 import { setMessageQueueAdder } from "@/utils/message-queue-bridge";
-import type { GitHubPullRequestSnapshot } from "./github-pull-request-watch";
+import type { GitHubPullRequestSnapshot } from "./github-pull-request-types";
 import { backgroundProcesses } from "./process_manager";
 import { task_stop } from "./task-stop";
 import { watch_pr } from "./watch-pr";
@@ -22,7 +22,6 @@ function snapshot(
     mergeable: "MERGEABLE",
     mergeStateStatus: "CLEAN",
     reviewDecision: "APPROVED",
-    snapshotComplete: true,
     readinessConfirmed: true,
     checks: [],
     checkAttempts: [],
@@ -130,7 +129,7 @@ describe("WatchPR background lifecycle", () => {
 
   test("reports a refresh error once and reports recovery", async () => {
     let fetchCount = 0;
-    let waitCount = 0;
+    const waits: number[] = [];
     const queued: string[] = [];
     setMessageQueueAdder((message) => queued.push(message.text));
 
@@ -139,14 +138,14 @@ describe("WatchPR background lifecycle", () => {
       {
         fetchSnapshot: async () => {
           fetchCount += 1;
-          if (fetchCount === 2 || fetchCount === 3) {
+          if (fetchCount >= 2 && fetchCount <= 6) {
             throw new Error("GitHub temporarily unavailable");
           }
-          return fetchCount >= 5 ? snapshot({ state: "MERGED" }) : snapshot();
+          return fetchCount >= 8 ? snapshot({ state: "MERGED" }) : snapshot();
         },
-        wait: async () => {
-          waitCount += 1;
-          if (waitCount > 5) throw new Error("test loop escaped");
+        wait: async (_signal, milliseconds) => {
+          waits.push(milliseconds);
+          if (waits.length > 8) throw new Error("test loop escaped");
         },
       },
     );
@@ -154,7 +153,10 @@ describe("WatchPR background lifecycle", () => {
     await Bun.sleep(250);
     const notifications = queued.join("\n");
     expect(notifications.match(/could not refresh/g)).toHaveLength(1);
-    expect(notifications).toContain("recovered after 2 failed polls");
+    expect(notifications).toContain("recovered after 5 failed polls");
+    expect(waits).toEqual([
+      30_000, 60_000, 120_000, 240_000, 300_000, 300_000, 30_000,
+    ]);
     expect(backgroundProcesses.get(result.taskId)?.status).toBe("completed");
   });
 
