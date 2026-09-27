@@ -13,7 +13,7 @@ import {
 import { claimMemoryOperation } from "@/agent/memory-operation";
 import { isMemoryWorkerSession } from "@/agent/subagents/memory-worker-session";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
-import { ensureMemoryConflictRepair } from "@/tools/impl/memory-task-lifecycle";
+import { ensureMemoryRepair } from "@/tools/impl/memory-task-lifecycle";
 import { spawnBackgroundSubagentTask } from "@/tools/impl/task";
 import { debugWarn } from "@/utils/debug";
 
@@ -29,31 +29,31 @@ export interface RunPostTurnMemorySyncParams {
 
 export interface RunPostTurnMemorySyncDependencies {
   syncMemory?: typeof syncPendingMemoryCommitsAfterTurn;
-  repairConflict?: (
-    params: Parameters<typeof ensureMemoryConflictRepair>[0],
+  repairMemory?: (
+    params: Parameters<typeof ensureMemoryRepair>[0],
   ) => Promise<boolean>;
   claimOperation?: typeof claimMemoryOperation;
   syncAttachedRepositories?: typeof syncPendingAttachedRepositoryCommitsAfterTurn;
 }
 
-/** A repair worker is editing the checkout in place; the primary must leave it alone until it finishes. */
+/** Tell the primary only how to avoid colliding with the background writer. */
 export function formatMemoryRepairInProgressReminder(
   result: MemoryPostTurnSyncResult,
 ): string {
   return `${SYSTEM_REMINDER_OPEN}
-MEMORY REPAIR IN PROGRESS: A background worker is resolving an unfinished merge or rebase in the memory repository.
+MEMORY REPAIR RUNNING: A background worker is repairing the memory repository.
 
 Memory directory: ${result.memoryDir}
 Status: ${result.summary}
 
-Do not edit memory files or run Git commands in the memory repository until the worker's task log ends with [Task completed] or [Task failed]; its changes would be swept into the repair or overwritten. Reading memory is fine.
+Continue the current task. Do not inspect, edit, or run Git commands in the memory repository while the background repair is active.
 ${SYSTEM_REMINDER_CLOSE}`;
 }
 
 /**
- * Reminders for the primary's own post-turn MemFS sync. A conflict is normally
- * handed to a background repair worker; the conflict reminder is for one no
- * worker is handling any more.
+ * Reminders for the primary's own post-turn MemFS sync. Repairable states are
+ * normally handed to a background worker. If that worker could not finish,
+ * report the failure without assigning repository work to the foreground.
  */
 export function formatMemoryPostTurnSyncReminder(
   result: MemoryPostTurnSyncResult,
@@ -65,7 +65,18 @@ MEMORY GIT CONFLICT: The memory repository has an unfinished merge or rebase tha
 Memory directory: ${result.memoryDir}
 Status: ${result.summary}
 
-Resolve the conflicts in the memory repository, stage the resolved files, and complete the merge/rebase or create the needed commit. The harness will retry remote push after a future turn when the repo is clean.
+Background repair could not resolve this state. Do not interrupt the current task or edit memory in the foreground. Leave the repository unchanged and report the blocked memory update to the user.
+${SYSTEM_REMINDER_CLOSE}`;
+  }
+
+  if (result.status === "invalid") {
+    return `${SYSTEM_REMINDER_OPEN}
+MEMORY REPAIR FAILED: A background worker could not produce memory history that passes validation.
+
+Memory directory: ${result.memoryDir}
+Status: ${result.summary}
+
+Do not interrupt the current task or edit memory in the foreground. Leave the repository unchanged and report the blocked memory update to the user.
 ${SYSTEM_REMINDER_CLOSE}`;
   }
 
@@ -85,12 +96,12 @@ ${SYSTEM_REMINDER_CLOSE}`;
 
   if (result.status === "push_failed") {
     return `${SYSTEM_REMINDER_OPEN}
-MEMORY SYNC FAILED: The harness could not push pending memory commits.
+MEMORY SYNC RETRY: The harness could not push pending memory commits and will retry after a later turn.
 
 Memory directory: ${result.memoryDir}
 Status: ${result.summary}
 
-Inspect the memory repository and resolve any local git issue. The harness will retry remote push after a future turn when the repo is clean.
+Continue the current task. Do not inspect or repair memory in the foreground.
 ${SYSTEM_REMINDER_CLOSE}`;
   }
 
@@ -159,10 +170,9 @@ export async function runPostTurnMemorySync(
   const syncAttachedRepositories =
     dependencies.syncAttachedRepositories ??
     syncPendingAttachedRepositoryCommitsAfterTurn;
-  const repairConflict =
-    dependencies.repairConflict ??
-    ((repair) =>
-      ensureMemoryConflictRepair(repair, spawnBackgroundSubagentTask));
+  const repairMemory =
+    dependencies.repairMemory ??
+    ((repair) => ensureMemoryRepair(repair, spawnBackgroundSubagentTask));
   let memorySyncEnabled = true;
 
   try {
@@ -190,8 +200,8 @@ export async function runPostTurnMemorySync(
           const result = await syncMemory(params.agentId);
           if (result.status === "pushed") params.onMemoryPushed?.();
           const repairInProgress =
-            result.status === "conflict" &&
-            (await repairConflict({ ...params, result }));
+            (result.status === "conflict" || result.status === "invalid") &&
+            (await repairMemory({ ...params, result }));
           const reminder = repairInProgress
             ? formatMemoryRepairInProgressReminder(result)
             : formatMemoryPostTurnSyncReminder(result);

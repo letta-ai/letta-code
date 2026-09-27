@@ -1,14 +1,6 @@
 /**
- * Git operations for git-backed agent memory.
- *
- * When memFS is enabled, the agent's memory is stored in a git repo
- * on the server at $LETTA_MEMFS_BASE_URL/v1/git/$AGENT_ID/state.git
- * (falling back to api.letta.com when unset). Desktop may route git transport
- * through a localhost proxy transiently, but that URL must not be persisted in
- * the repo's git config.
- * This module provides the CLI harness helpers: clone on first run,
- * pull on startup, commit memory writes, post-turn push for clean pending
- * commits, and status checks for system reminders.
+ * Git operations for agent memory. The remote defaults to api.letta.com;
+ * Desktop may proxy transport through localhost but never persists that URL.
  */
 
 import { execFile as execFileCb } from "node:child_process";
@@ -23,6 +15,7 @@ import {
 import { homedir, platform } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
+import { invalidPendingMemory } from "@/agent/memory-constraints-audit";
 import { getMemoryGitDir } from "@/agent/memory-git-dir";
 import { getDesktopAccessToken } from "@/auth/desktop-credentials";
 import {
@@ -1713,6 +1706,7 @@ export type MemoryPostTurnSyncStatus =
   | "pushed"
   | "dirty"
   | "conflict"
+  | "invalid"
   | "push_failed"
   | "skipped";
 
@@ -1908,6 +1902,9 @@ export async function syncPendingMemoryCommitsAfterTurn(
     };
   }
 
+  const initialValidation = invalidPendingMemory(memoryDir, localOnly);
+  if (initialValidation) return initialValidation;
+
   try {
     await runGitWithRetry(memoryDir, ["push", "-u", "origin", "main"], token, {
       operation: "post-turn push pending memory commits",
@@ -1943,6 +1940,8 @@ export async function syncPendingMemoryCommitsAfterTurn(
           localOnly,
         };
       }
+      const rebasedValidation = invalidPendingMemory(memoryDir, localOnly);
+      if (rebasedValidation) return rebasedValidation;
       await runGitWithRetry(
         memoryDir,
         ["push", "-u", "origin", "main"],
