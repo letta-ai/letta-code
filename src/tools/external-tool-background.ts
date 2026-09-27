@@ -40,8 +40,9 @@ export async function autoBackgroundExternalTool<T extends ExternalResult>(
       conversationId?: string | null;
       actingUserId?: string;
     };
-    canBackground?: boolean;
+    canBackground?: boolean | (() => boolean);
     enqueue?: (message: QueuedMessage) => void;
+    shouldEnqueue?: () => boolean | Promise<boolean>;
   },
 ): Promise<T | { status: "success"; toolReturn: string }> {
   const runtime = options?.runtimeScope;
@@ -56,9 +57,13 @@ export async function autoBackgroundExternalTool<T extends ExternalResult>(
       : undefined);
   // Only listener tools opt in. Headless SDK tools share one stdin reader, and
   // tool_end mods must see the real result before the model does.
+  const canBackground = () =>
+    typeof options?.canBackground === "function"
+      ? options.canBackground()
+      : options?.canBackground !== false;
   if (
     tool?.autoBackground !== true ||
-    options?.canBackground === false ||
+    !canBackground() ||
     !scope ||
     (!options?.enqueue && !isQueueBridgeConnected())
   )
@@ -82,10 +87,14 @@ export async function autoBackgroundExternalTool<T extends ExternalResult>(
   if (timer !== undefined) clearTimeout(timer);
   if (first.kind === "result") return first.result;
   if (first.kind === "error") throw first.error;
+  // A mod may reload while the operation is in the foreground window.
+  // If a tool_end handler became active, wait for the real result inline.
+  if (!canBackground()) return operation;
 
   const taskId = `external_${crypto.randomUUID()}`;
   const enqueue = options?.enqueue ?? addToMessageQueue;
-  void settled.then((outcome) => {
+  void settled.then(async (outcome) => {
+    if ((await options?.shouldEnqueue?.()) === false) return;
     const result = outcome.kind === "result" ? outcome.result : undefined;
     const status = result?.status === "success" ? "completed" : "failed";
     const richContent = Array.isArray(result?.toolReturn)

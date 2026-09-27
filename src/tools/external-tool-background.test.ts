@@ -235,4 +235,32 @@ describe("external tool auto-backgrounding", () => {
     expect(notifications[0]?.text).toContain("outcome is unknown");
     expect(notifications[0]?.text).toContain("before retrying a write");
   });
+
+  test("drops a detached completion after its listener scope is invalidated", async () => {
+    let complete!: (result: { status: "success"; toolReturn: string }) => void;
+    let valid = true;
+    const notifications: Array<{ text: string }> = [];
+    const operation = new Promise<{ status: "success"; toolReturn: string }>(
+      (resolve) => {
+        complete = resolve;
+      },
+    );
+    const receipt = await autoBackgroundExternalTool(
+      "reply",
+      listenerTool,
+      operation,
+      {
+        yieldMs: 10,
+        scope,
+        enqueue: (message) => notifications.push(message),
+        shouldEnqueue: () => valid,
+      },
+    );
+    expect(receipt.toolReturn).toContain("external_");
+
+    valid = false;
+    complete({ status: "success", toolReturn: "stale result" });
+    await Bun.sleep(0);
+    expect(notifications).toEqual([]);
+  });
 });

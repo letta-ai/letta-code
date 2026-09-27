@@ -1,3 +1,5 @@
+import type { ListenerExternalToolNotificationGuard } from "@/tools/external-tool-background-eligibility";
+import { enableListenerExternalToolBackground } from "@/tools/external-tool-background-eligibility";
 import {
   type ExternalToolDefinition,
   registerExternalTools,
@@ -13,6 +15,7 @@ import type {
   RuntimeStartExternalToolsGroup,
 } from "@/types/protocol_v2";
 import { createConnectionRequestKey } from "@/websocket/listener/connection";
+import { getConversationRuntimeKey } from "@/websocket/listener/runtime";
 import { isListenerTransportOpen } from "@/websocket/listener/transport";
 import type {
   ListenerConnectionId,
@@ -28,6 +31,17 @@ const connectionIdByRegistrationKey = new WeakMap<
   ListenerRuntime,
   Map<string, ListenerConnectionId>
 >();
+
+export function createExternalToolNotificationState(): Pick<
+  ListenerRuntime,
+  | "externalToolNotificationEpochByConversation"
+  | "externalToolNotificationBarrierByConversation"
+> {
+  return {
+    externalToolNotificationEpochByConversation: new Map(),
+    externalToolNotificationBarrierByConversation: new Map(),
+  };
+}
 
 function getPendingExternalToolCalls(runtime: ListenerRuntime) {
   return runtime.pendingExternalToolCalls;
@@ -71,13 +85,56 @@ function getToolRegistrationKey(
   ]);
 }
 
+export function captureExternalToolNotificationGuard(
+  listener: ListenerRuntime,
+  runtimeScope: RuntimeScope<string | null>,
+): ListenerExternalToolNotificationGuard | undefined {
+  if (listener.intentionallyClosed || !listener.processServicesStarted) {
+    return undefined;
+  }
+  const processServicesGeneration = listener.processServicesGeneration;
+  const runtimeKey = getConversationRuntimeKey(
+    runtimeScope.agent_id,
+    runtimeScope.conversation_id,
+  );
+  const notificationEpoch =
+    listener.externalToolNotificationEpochByConversation.get(runtimeKey) ?? 0;
+  const isCurrent = () =>
+    !listener.intentionallyClosed &&
+    listener.processServicesStarted &&
+    listener.processServicesGeneration === processServicesGeneration &&
+    (listener.externalToolNotificationEpochByConversation.get(runtimeKey) ??
+      0) === notificationEpoch;
+  return {
+    isCurrent,
+    waitUntilCurrent: async () => {
+      while (true) {
+        const pending =
+          listener.externalToolNotificationBarrierByConversation.get(
+            runtimeKey,
+          );
+        if (!pending) return isCurrent();
+        await pending;
+        if (
+          listener.externalToolNotificationBarrierByConversation.get(
+            runtimeKey,
+          ) === pending
+        ) {
+          return isCurrent();
+        }
+      }
+    },
+  };
+}
+
 function toExternalToolDefinition(
+  listener: ListenerRuntime,
   tool: ExternalToolDefinitionPayload,
   connectionId: ListenerConnectionId,
-  runtime: RuntimeScope<string | null>,
+  runtimeScope: RuntimeScope<string | null>,
   scopeId?: string,
 ): ExternalToolDefinition {
-  return {
+  const toolDefinition: ExternalToolDefinition = {
     name: tool.name,
     connectionId,
     ...(tool.label !== undefined ? { label: tool.label } : {}),
@@ -87,16 +144,20 @@ function toExternalToolDefinition(
     autoBackground: tool.auto_background ?? true,
     registrationKey: getToolRegistrationKey(
       connectionId,
-      runtime,
+      runtimeScope,
       scopeId,
       tool.name,
     ),
     ...(scopeId !== undefined ? { scopeId } : {}),
     runtime: {
-      agentId: runtime.agent_id ?? undefined,
-      conversationId: runtime.conversation_id,
+      agentId: runtimeScope.agent_id ?? undefined,
+      conversationId: runtimeScope.conversation_id,
     },
   };
+  return enableListenerExternalToolBackground(toolDefinition, {
+    createNotificationGuard: () =>
+      captureExternalToolNotificationGuard(listener, runtimeScope),
+  });
 }
 
 export function installExternalToolBridge(runtime: ListenerRuntime): void {
@@ -200,6 +261,7 @@ export function registerRuntimeExternalTools(
   const tools = resolvedGroups.flatMap((group) =>
     group.tools.map((tool) =>
       toExternalToolDefinition(
+        runtime,
         tool,
         connectionId,
         runtimeScope,

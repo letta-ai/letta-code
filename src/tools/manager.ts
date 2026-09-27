@@ -53,6 +53,19 @@ import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { messageChannelTelemetry } from "@/telemetry/channel";
 import { autoBackgroundExternalTool } from "@/tools/external-tool-background";
+import { listenerExternalToolBackgroundOptions } from "@/tools/external-tool-background-eligibility";
+import type {
+  ClientTool,
+  ExternalToolDefinition,
+  ExternalToolExecutor,
+} from "@/tools/external-tool-types";
+
+export type {
+  ClientTool,
+  ExternalToolDefinition,
+  ExternalToolExecutor,
+} from "@/tools/external-tool-types";
+
 import { waitForToolCheckouts } from "@/utils/checkout-readiness";
 import { debugLog } from "@/utils/debug";
 import { refreshAndListSecrets } from "@/utils/secrets-store";
@@ -585,54 +598,7 @@ function resolveInternalToolName(
   return undefined;
 }
 
-/**
- * ClientTool interface matching the Letta SDK's expected format.
- * Used when passing client-side tools via the client_tools field.
- */
-export interface ClientTool {
-  name: string;
-  description?: string | null;
-  parameters?: { [key: string]: unknown } | null;
-}
-
 // EXTERNAL TOOLS (SDK-side execution)
-export interface ExternalToolDefinition {
-  name: string;
-  label?: string;
-  description: string;
-  parameters: Record<string, unknown>; // JSON Schema
-  timeoutMs?: number; // Wait for a controller-owned result, not execution time.
-  autoBackground?: boolean;
-  /** Internal registration key; model-facing calls still use name. */
-  registrationKey?: string;
-  connectionId?: string;
-  /** Optional visibility scope; scoped tools are hidden unless selected for a turn. */
-  scopeId?: string;
-  /** Optional runtime owner; runtime-owned tools are visible only in that runtime. */
-  runtime?: {
-    agentId?: string;
-    conversationId?: string;
-  };
-  /** Client-local executor owned by this tool (for example an MCP process). */
-  executor?: ExternalToolExecutor;
-}
-/**
- * Callback to execute an external tool via SDK
- */
-export type ExternalToolExecutor = (
-  toolCallId: string,
-  toolName: string,
-  input: Record<string, unknown>,
-  context?: { tool: ExternalToolDefinition },
-) => Promise<{
-  content: Array<{
-    type: string;
-    text?: string;
-    data?: string;
-    mimeType?: string;
-  }>;
-  isError: boolean;
-}>;
 // Storage for external tool definitions and executor
 const EXTERNAL_TOOLS_KEY = Symbol.for("@letta/externalTools");
 const EXTERNAL_EXECUTOR_KEY = Symbol.for("@letta/externalToolExecutor");
@@ -2216,7 +2182,11 @@ async function executeToolInner(
           externalTool?.executor ?? activeExternalExecutor,
           externalTool,
         ),
-        { runtimeScope: executionScope, canBackground: !modEvents },
+        listenerExternalToolBackgroundOptions(
+          externalTool,
+          modEvents,
+          executionScope,
+        ),
       ),
     );
   }
