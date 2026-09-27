@@ -143,6 +143,36 @@ test("reports cancellation of the exact accepted send", async () => {
   ).rejects.toThrow("Super Run sr-1 was cancelled");
 });
 
+test("a listener failure wins over the preceding requires_approval child", async () => {
+  let childReads = 0;
+  await expect(
+    waitForAcceptedSuperRun(
+      receipt,
+      new AbortController().signal,
+      deps({
+        exact: async () => ({
+          ...exact(),
+          errored_at: "now",
+          error: {
+            code: "LISTENER_TURN_FAILED",
+            message: "Message author is not authorized",
+          },
+        }),
+        run: async () => {
+          childReads++;
+          return run("completed", "requires_approval");
+        },
+        sleep: async () => {
+          throw new Error(
+            "must not keep waiting after a terminal listener error",
+          );
+        },
+      }),
+    ),
+  ).rejects.toThrow("LISTENER_TURN_FAILED: Message author is not authorized");
+  expect(childReads).toBe(0);
+});
+
 test("retries a transient Cloud read without resubmitting", async () => {
   let reads = 0;
   const result = await waitForAcceptedSuperRun(

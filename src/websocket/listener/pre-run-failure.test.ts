@@ -2,7 +2,9 @@ import { expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import { APIError } from "@letta-ai/letta-client/error";
+import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import * as repositorySync from "@/agent/attached-repository-git-sync";
 import { __testSetBackend } from "@/backend";
 import { LocalBackend } from "@/backend/local/local-backend";
@@ -23,9 +25,14 @@ import { enqueueOutboundFrame, OUTBOUND_QUEUE_LIMITS } from "./outbound-wire";
 import { setActiveRuntime } from "./runtime";
 import { handleIncomingMessage } from "./turn";
 
-test.each([false, true])(
-  "pre-run rejection carries accepted IDs before idle (backpressure=%s)",
-  async (backpressure) => {
+test.each([
+  { backpressure: false, afterTool: false },
+  { backpressure: true, afterTool: false },
+  { backpressure: false, afterTool: true },
+  { backpressure: true, afterTool: true },
+])(
+  "listener rejection carries accepted IDs before idle (%j)",
+  async ({ backpressure, afterTool }) => {
     const storageDir = await mkdtemp(join(tmpdir(), "listener-pre-run-"));
     const sync = spyOn(
       repositorySync,
@@ -47,6 +54,36 @@ test.each([false, true])(
         new Headers(),
       ),
     );
+    if (afterTool) {
+      const path = join(storageDir, "input.txt");
+      await writeFile(path, "Tool execution succeeded");
+      request.mockImplementationOnce(
+        async () =>
+          ({
+            controller: new AbortController(),
+            async *[Symbol.asyncIterator]() {
+              yield {
+                message_type: "approval_request_message",
+                id: "message-tool",
+                date: "2026-09-27T00:00:00Z",
+                run_id: "run-before-rejection",
+                seq_id: 1,
+                tool_call: {
+                  tool_call_id: "call-read",
+                  name: "Read",
+                  arguments: JSON.stringify({ file_path: path }),
+                },
+              };
+              yield {
+                message_type: "stop_reason",
+                run_id: "run-before-rejection",
+                seq_id: 2,
+                stop_reason: "requires_approval",
+              };
+            },
+          }) as unknown as Stream<LettaStreamingResponse>,
+      );
+    }
     const frames: WsProtocolMessage[] = [];
     const socket = {
       kind: "local" as const,
@@ -132,7 +169,7 @@ test.each([false, true])(
         build: () => null,
       });
       expect(accepted).toBe(true);
-      expect(request).toHaveBeenCalledTimes(1);
+      expect(request).toHaveBeenCalledTimes(afterTool ? 2 : 1);
       const failures = frames.filter(
         (frame): frame is StreamDeltaMessage & { delta: LoopErrorMessage } =>
           frame.type === "stream_delta" &&
@@ -146,7 +183,21 @@ test.each([false, true])(
       expect(failures[0]?.delta.message).toContain(
         "Message author is not authorized",
       );
-      expect(failures[0]?.delta.run_id).toBeUndefined();
+      expect(failures[0]?.delta.run_id).toBe(
+        afterTool ? "run-before-rejection" : undefined,
+      );
+      if (afterTool) {
+        expect(frames).toContainEqual(
+          expect.objectContaining({
+            type: "stream_delta",
+            delta: expect.objectContaining({
+              message_type: "client_tool_end",
+              tool_call_id: "call-read",
+              status: "success",
+            }),
+          }),
+        );
+      }
       const idleIndex = frames.findIndex(
         (frame) =>
           frame.type === "update_loop_status" &&
@@ -158,7 +209,7 @@ test.each([false, true])(
       expect(runtime.turnLifecycle.kind).toBe("idle");
       if (process.env.LETTA_TEST_PRE_RUN_FRAMES) {
         await writeFile(
-          `${process.env.LETTA_TEST_PRE_RUN_FRAMES}-${backpressure}.json`,
+          `${process.env.LETTA_TEST_PRE_RUN_FRAMES}${afterTool ? "-after-tool" : ""}-${backpressure}.json`,
           JSON.stringify(frames, null, 2),
         );
       }
