@@ -1,3 +1,4 @@
+import { rmSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   getCurrentWorkingDirectory,
@@ -58,6 +59,7 @@ interface WatchPullRequestDeps {
     options: { cwd: string; signal?: AbortSignal },
   ) => Promise<GitHubPullRequestSnapshot>;
   wait?: (signal: AbortSignal, milliseconds: number) => Promise<void>;
+  createOutputWriter?: (path: string) => { append(text: string): boolean };
 }
 
 function errorText(error: unknown): string {
@@ -105,7 +107,17 @@ export async function watch_pr(
   installMonitorProcessExitCleanup();
   const taskId = getNextMonitorId();
   const outputFile = createBackgroundOutputFile(taskId);
-  const output = new MonitorOutputWriter(outputFile);
+  const output =
+    deps.createOutputWriter?.(outputFile) ??
+    new MonitorOutputWriter(outputFile);
+  if (
+    !output.append(
+      `[initial snapshot]\n${describeGitHubPullRequestSnapshot(initial)}\n`,
+    )
+  ) {
+    rmSync(outputFile, { force: true });
+    throw new Error(`WatchPR could not write its output file: ${outputFile}`);
+  }
   const runtimeContext = getRuntimeContext();
   const parentScope =
     args.parentScope ??
@@ -176,9 +188,6 @@ export async function watch_pr(
   };
   backgroundProcesses.set(taskId, processState);
   notifyBackgroundProcessStateChanged(scope);
-  output.append(
-    `[initial snapshot]\n${describeGitHubPullRequestSnapshot(initial)}\n`,
-  );
 
   const wait = deps.wait ?? defaultWait;
   void (async () => {

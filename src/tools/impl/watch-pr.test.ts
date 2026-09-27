@@ -127,6 +127,19 @@ describe("WatchPR background lifecycle", () => {
     expect(backgroundProcesses.size).toBe(0);
   });
 
+  test("does not start a background watch when its output file cannot be written", async () => {
+    await expect(
+      watch_pr(
+        { url },
+        {
+          fetchSnapshot: async () => snapshot(),
+          createOutputWriter: () => ({ append: () => false }),
+        },
+      ),
+    ).rejects.toThrow("could not write its output file");
+    expect(backgroundProcesses.size).toBe(0);
+  });
+
   test("reports a refresh error once and reports recovery", async () => {
     let fetchCount = 0;
     const waits: number[] = [];
