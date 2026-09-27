@@ -28,9 +28,9 @@ import type { SdkClient } from "./types.ts";
 
 // Computed so bundlers treat the import as fully dynamic.
 const SDK_PACKAGE = ["@letta-ai", "letta-agent-sdk"].join("/");
-// Pin the first verified published release containing SDK #322 here. Until
-// then only an explicit source-build override may resume; 0.8.17 ignores IDs.
-const MIN_RESUME_SDK_VERSION: string | null = null;
+// SDK 0.8.20 is the first published release with agent-free query() resume.
+// Older SDKs ignore conversationId and would silently create another worker.
+const MIN_RESUME_SDK_VERSION: string | null = "0.8.20";
 
 export function supportsPublishedResume(version: string | undefined): boolean {
   if (!version || !MIN_RESUME_SDK_VERSION) return false;
