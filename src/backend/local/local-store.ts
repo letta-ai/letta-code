@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   readdirSync,
+  readFileSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -461,7 +462,7 @@ export class LocalStore {
     string,
     LocalConversationTranscriptMetadata
   >();
-  private readonly conversationRecordMtimeMsByKey = new Map<string, number>();
+  private readonly conversationRecordJsonByKey = new Map<string, string>();
   private readonly sessionEntryIdsByConversationKey = new Map<
     string,
     Set<string>
@@ -590,7 +591,7 @@ export class LocalStore {
         this.residentTailStartIndexByConversationKey.delete(key);
         this.loadRepairedConversationKeys.delete(key);
         this.transcriptMetadataByConversationKey.delete(key);
-        this.conversationRecordMtimeMsByKey.delete(key);
+        this.conversationRecordJsonByKey.delete(key);
         this.sessionEntryIdsByConversationKey.delete(key);
         this.sessionEntryIdByMessageIdByConversationKey.delete(key);
         this.persistedMessageByMessageIdByConversationKey.delete(key);
@@ -2610,7 +2611,7 @@ export class LocalStore {
   private cacheConversationRecord(
     conversationDir: string,
     input: StoredConversation,
-    options: { forceRefresh?: boolean; recordMtimeMs?: number } = {},
+    options: { forceRefresh?: boolean; recordJson: string },
   ): StoredConversation {
     const key = this.conversationKey(input.id, input.agent_id);
     const existing = this.conversations.get(key);
@@ -2637,9 +2638,7 @@ export class LocalStore {
     }
 
     this.conversations.set(key, conversation);
-    this.recordConversationRecordMtime(key, conversationDir, {
-      mtimeMs: options.recordMtimeMs,
-    });
+    this.conversationRecordJsonByKey.set(key, options.recordJson);
     this.transcriptMetadataRecord(key, conversationDir, {
       requiresFullTimestampRepair,
     });
@@ -2654,38 +2653,18 @@ export class LocalStore {
     conversationDir: string,
   ): StoredConversation | undefined {
     try {
-      const conversation = readJsonFile<StoredConversation>(
+      const recordJson = readFileSync(
         join(conversationDir, "conversation.json"),
+        "utf8",
       );
+      const conversation = JSON.parse(recordJson) as StoredConversation;
       if (!conversation?.id || !conversation.agent_id) return undefined;
-      return this.cacheConversationRecord(conversationDir, conversation);
+      return this.cacheConversationRecord(conversationDir, conversation, {
+        recordJson,
+      });
     } catch {
       return undefined;
     }
-  }
-
-  private conversationRecordMtimeMs(
-    conversationDir: string,
-  ): number | undefined {
-    try {
-      return statSync(join(conversationDir, "conversation.json")).mtimeMs;
-    } catch {
-      return undefined;
-    }
-  }
-
-  private recordConversationRecordMtime(
-    key: string,
-    conversationDir: string,
-    options: { mtimeMs?: number } = {},
-  ): void {
-    const mtimeMs =
-      options.mtimeMs ?? this.conversationRecordMtimeMs(conversationDir);
-    if (mtimeMs === undefined) {
-      this.conversationRecordMtimeMsByKey.delete(key);
-      return;
-    }
-    this.conversationRecordMtimeMsByKey.set(key, mtimeMs);
   }
 
   private refreshConversationRecordFromStorage(
@@ -2697,40 +2676,38 @@ export class LocalStore {
       metadata?.conversationDir ?? this.conversationDirForKey(key);
     if (!conversationDir) return existing;
 
-    const mtimeMs = this.conversationRecordMtimeMs(conversationDir);
-    if (mtimeMs === undefined) return existing;
-    const cachedMtimeMs = this.conversationRecordMtimeMsByKey.get(key);
-    if (existing && cachedMtimeMs === mtimeMs) {
-      return existing;
-    }
-    // Externally rewritten record (another store compacted this
-    // conversation): drop the stale resident window (own writes record the
-    // new mtime, so never self-writes).
-    if (existing && cachedMtimeMs !== undefined && cachedMtimeMs !== mtimeMs) {
-      this.evictResidentHeadMessages(
-        key,
-        this.localMessagesByConversationKey.get(key) ?? [],
-      );
-      this.localMessagesByConversationKey.delete(key);
-      this.loadedConversationKeys.delete(key);
-      this.tailResidentConversationKeys.delete(key);
-      this.residentTailStartIndexByConversationKey.delete(key);
-      this.unreadTranscriptHeadBytesByKey.delete(key);
-    }
-
     try {
-      const conversation = readJsonFile<StoredConversation>(
+      // Filesystem timestamps (and byte lengths) can match across compactions.
+      // Compare the record itself; unchanged records retain in-flight state.
+      const recordJson = readFileSync(
         join(conversationDir, "conversation.json"),
+        "utf8",
       );
+      const cachedJson = this.conversationRecordJsonByKey.get(key);
+      if (existing && cachedJson === recordJson) return existing;
+      const conversation = JSON.parse(recordJson) as StoredConversation;
       if (!conversation?.id || !conversation.agent_id) return existing;
       const loadedKey = this.conversationKey(
         conversation.id,
         conversation.agent_id,
       );
       if (loadedKey !== key) return existing;
+      // Own writes cache their serialized record, so only external changes
+      // invalidate the resident transcript window.
+      if (existing && cachedJson !== undefined) {
+        this.evictResidentHeadMessages(
+          key,
+          this.localMessagesByConversationKey.get(key) ?? [],
+        );
+        this.localMessagesByConversationKey.delete(key);
+        this.loadedConversationKeys.delete(key);
+        this.tailResidentConversationKeys.delete(key);
+        this.residentTailStartIndexByConversationKey.delete(key);
+        this.unreadTranscriptHeadBytesByKey.delete(key);
+      }
       return this.cacheConversationRecord(conversationDir, conversation, {
         forceRefresh: true,
-        recordMtimeMs: mtimeMs,
+        recordJson,
       });
     } catch {
       return existing;
@@ -2884,11 +2861,9 @@ export class LocalStore {
       encodePathSegment(key),
     );
     mkdirSync(conversationDir, { recursive: true });
-    writeFileSync(
-      join(conversationDir, "conversation.json"),
-      `${JSON.stringify(conversation, null, 2)}\n`,
-    );
-    this.recordConversationRecordMtime(key, conversationDir);
+    const recordJson = `${JSON.stringify(conversation, null, 2)}\n`;
+    writeFileSync(join(conversationDir, "conversation.json"), recordJson);
+    this.conversationRecordJsonByKey.set(key, recordJson);
     const messagesPath = transcriptMessagesPath(conversationDir);
     let metadata = this.transcriptMetadataRecord(key, conversationDir);
     const manifestPath = transcriptManifestPath(conversationDir);
