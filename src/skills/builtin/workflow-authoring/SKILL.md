@@ -78,7 +78,9 @@ Workflow subagents require the API backend.
   `json`, `model`, `effort` (`'low'` for mechanical stages, higher for the
   hardest verify/judge stages), `allowedTools`, `systemPrompt` (extra system
   prompt for this subagent), `timeoutMs` (default 10 minutes), `maxToolCalls`
-  (positive safe integer; default 1000 unique tool calls for this subagent).
+  (positive safe integer; default 1000 unique tool calls for this subagent),
+  `conversationId` (continue an existing worker — see "Continuing one
+  worker").
 - `pipeline(items, stage1, stage2, ...)` → run each item through all stages
   independently, NO barrier between stages. Item A can be in stage 3 while
   item B is still in stage 1. This is the DEFAULT for multi-stage work.
@@ -254,3 +256,44 @@ diagnosing why a workflow returned an empty or unexpected result, read that
 journal — it records each agent's actual return value and, for a `null`,
 which guard or error produced it. A failed run is not resumable: fix the
 script and launch it again.
+
+## Continuing one worker
+
+The workflow-run JS is not replayable. A run never resumes: the script
+re-executes from the top every time, and nothing replays automatically. The
+only thing that continues is an individual worker —
+`agent(prompt, {conversationId: 'conv-...'})` sends the prompt into an
+existing agent-free worker conversation instead of creating one, so it
+answers with its prior history intact. That works across separate Workflow
+executions, including continuing a worker whose earlier turn timed out.
+
+    // conv id comes from the journal, never from agent()'s return value
+    const more = await agent('Now list every caller you saw', {
+      conversationId: 'conv-abc123', allowedTools: ['Read', 'Grep'],
+    })
+
+- Get the ID from the journal. An `agent_started` line records a worker's
+  conversation ID as soon as it initializes, so the ID is there even when
+  that call later timed out or failed; completed entries carry
+  `outcome.conversationId`, and a continuation is journaled with
+  `resumedConversationId`. `agent()` resolves to the value or `null` and
+  never hands back the ID, so a continuation is a follow-up run you author
+  after reading the previous run's `journal.jsonl`.
+- Inspect before prompting again. The worker's latest persisted Run must be
+  terminal (`completed`, `failed`, `cancelled`); if that can't be confirmed
+  the call errors. Read the journal and any output that landed late after the
+  original call gave up — then decide what the next prompt should say. There
+  is no automatic pickup.
+- What persists: history, model, and system prompt. A model that differs from
+  the persisted one is rejected, as is a `systemPrompt` override or an ID
+  that is not agent-free or belongs to a different parent agent.
+- What is per turn: `allowedTools`, `schema`, and `effort` are NOT inherited
+  from the worker's first call. A resumed turn defaults to `allowedTools: []`
+  and never broadens on its own — pass tools explicitly for a turn that must
+  read or write, and pass `schema` again if you want a validated object this
+  turn.
+- Gated on the SDK. Continuation requires a published Agent SDK release with
+  agent-free `query()` resume (SDK #322), verified and pinned. Until then the
+  call fails with an explicit error rather than silently starting a fresh
+  worker (0.8.17 ignores `conversationId`), so write scripts that re-establish
+  context in the prompt.

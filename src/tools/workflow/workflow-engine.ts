@@ -154,6 +154,13 @@ export async function executeWorkflow(
     }
     const opts: AgentCallOptions = { ...(callOptions as AgentCallOptions) };
     if (
+      opts.conversationId !== undefined &&
+      (typeof opts.conversationId !== "string" ||
+        !/^conv-[A-Za-z0-9_-]+$/.test(opts.conversationId))
+    ) {
+      throw new Error("agent() conversationId must be a conv-... ID.");
+    }
+    if (
       opts.maxToolCalls !== undefined &&
       (!Number.isSafeInteger(opts.maxToolCalls) || opts.maxToolCalls <= 0)
     ) {
@@ -173,6 +180,15 @@ export async function executeWorkflow(
         { prompt, options: opts, callIndex },
         signal,
         {
+          onStarted: (conversationId) => {
+            if (options.journalPath) {
+              appendJournalEntry(options.journalPath, {
+                kind: "agent_started",
+                callIndex,
+                conversationId,
+              });
+            }
+          },
           // Live usage so status rows can show tokens before the agent ends.
           onUsage: (totalTokens) =>
             emit({
@@ -193,6 +209,9 @@ export async function executeWorkflow(
           callIndex,
           label,
           prompt,
+          ...(opts.conversationId
+            ? { resumedConversationId: opts.conversationId }
+            : {}),
           outcome,
         });
       }

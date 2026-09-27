@@ -239,6 +239,52 @@ return errors`,
     }
   });
 
+  test("journals a continuation attempt with the same worker ID and raw result", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "workflow-resume-journal-"));
+    try {
+      const journalPath = join(dir, "journal.jsonl");
+      const seen: SubagentRequest[] = [];
+      const run = await executeWorkflow(
+        async (request, _signal, hooks) => {
+          seen.push(request);
+          hooks?.onStarted?.("conv-same-worker");
+          return {
+            value: request.prompt === "first" ? null : "raw reply",
+            failed: request.prompt === "first",
+            conversationId: "conv-same-worker",
+          };
+        },
+        {
+          script: `${META}
+const failed = await agent('first')
+return await agent('continue', { conversationId: 'conv-same-worker' })`,
+          journalPath,
+        },
+      );
+      expect(run.result).toBe("raw reply");
+      expect(seen.map((r) => r.options.conversationId)).toEqual([
+        undefined,
+        "conv-same-worker",
+      ]);
+      const entries = readFileSync(journalPath, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(entries).toHaveLength(4);
+      expect(entries[0]).toMatchObject({
+        kind: "agent_started",
+        conversationId: "conv-same-worker",
+      });
+      expect(entries[1].outcome.conversationId).toBe("conv-same-worker");
+      expect(entries[3]).toMatchObject({
+        resumedConversationId: "conv-same-worker",
+        outcome: { conversationId: "conv-same-worker", value: "raw reply" },
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("abort rejects the run and interrupts in-flight subagents", async () => {
     const controller = new AbortController();
     let aborted = false;

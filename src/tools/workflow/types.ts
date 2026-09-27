@@ -25,6 +25,8 @@ export interface WorkflowMeta {
 
 /** Options accepted by the in-script agent() hook. */
 export interface AgentCallOptions {
+  /** Continue this existing agent-free worker conversation instead of creating one. */
+  conversationId?: string;
   /** Display label for progress output (defaults to a prompt excerpt). */
   label?: string;
   /** Progress group; overrides the current phase() for this call. */
@@ -75,6 +77,8 @@ export interface SubagentOutcome {
 
 /** Live signals a spawner may report while a subagent runs. */
 export interface SubagentSpawnHooks {
+  /** Worker ID once the SDK initializes, before the turn completes. */
+  onStarted?: (conversationId: string) => void;
   /** Tokens consumed so far by this subagent (cumulative, per model step). */
   onUsage?: (totalTokens: number) => void;
 }
@@ -136,6 +140,7 @@ export interface WorkflowExecutionResult {
 
 export interface SdkStreamMessage {
   type: string;
+  conversationId?: string;
   content?: string;
   success?: boolean;
   result?: string;
