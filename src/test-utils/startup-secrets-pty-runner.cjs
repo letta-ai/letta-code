@@ -83,13 +83,6 @@ async function main() {
       sendJson(response, agent);
       return;
     }
-    if (
-      request.method === "POST" &&
-      requestPath === "/v1/tools/add-base-tools"
-    ) {
-      sendJson(response, []);
-      return;
-    }
     if (requestPath === `/v1/agents/${agent.id}/secrets`) {
       sawSecretsRequest = true;
       sendJson(response, { message: "Agent not found" }, 404);

@@ -6,7 +6,6 @@ import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents"
 import { type BackendCapabilities, getBackend } from "@/backend";
 import { apiRequest, getApiRequestConfig } from "@/backend/api/request";
 import { settingsManager } from "@/settings-manager";
-import { debugWarn } from "@/utils/debug";
 import { SUBAGENT_NAME_ENV } from "@/utils/subagent-launch-marker";
 import { getModelContextWindow } from "./available-models";
 import { buildCreateAgentRequest } from "./create-agent-request";
@@ -59,28 +58,12 @@ function isToolsNotFoundError(err: unknown): boolean {
   );
 }
 
-export interface AddBaseToolsOptions {
-  quiet?: boolean;
-}
-
-function reportBaseToolsFailure(message: string, quiet: boolean): void {
-  if (quiet) {
-    debugWarn("bootstrap", message);
-  } else {
-    console.warn(message);
-  }
-}
-
-export async function addBaseToolsToServer(
-  options: AddBaseToolsOptions = {},
-): Promise<boolean> {
+export async function addBaseToolsToServer(): Promise<boolean> {
   const { apiKey } = await getApiRequestConfig();
-  const quiet = options.quiet === true;
 
   if (!apiKey) {
-    reportBaseToolsFailure(
+    console.warn(
       "Cannot auto-populate base tools: missing LETTA_API_KEY for manual endpoint call.",
-      quiet,
     );
     return false;
   }
@@ -89,9 +72,8 @@ export async function addBaseToolsToServer(
     await apiRequest<void>("POST", "/v1/tools/add-base-tools");
     return true;
   } catch (err) {
-    reportBaseToolsFailure(
+    console.warn(
       `Failed to call /v1/tools/add-base-tools: ${err instanceof Error ? err.message : String(err)}`,
-      quiet,
     );
     return false;
   }

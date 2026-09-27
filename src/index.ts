@@ -1126,25 +1126,6 @@ async function main(): Promise<void> {
       }
       markMilestone("CREDENTIALS_VALIDATED");
 
-      // Bootstrap after credential validation. Only interactive startup
-      // backgrounds the request.
-      if (isValid) {
-        const bootstrapPromise = import("@/agent/bootstrap-tools").then(
-          ({ bootstrapBaseToolsIfNeeded }) =>
-            bootstrapBaseToolsIfNeeded({ quiet: isHeadless }),
-        );
-        if (isHeadless) {
-          await bootstrapPromise;
-        } else {
-          void bootstrapPromise.catch((error) => {
-            debugWarn(
-              "startup",
-              `Failed to bootstrap base tools: ${error instanceof Error ? error.message : String(error)}`,
-            );
-          });
-        }
-      }
-
       if (!isValid) {
         const validationFailure = credentialValidation.ok
           ? null
