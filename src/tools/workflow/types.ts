@@ -48,6 +48,8 @@ export interface AgentCallOptions {
   timeoutMs?: number;
   /** Maximum unique tool calls for this subagent. Default 1000. */
   maxToolCalls?: number;
+  /** Override the workflow's cross-agent memory guard policy for this worker. */
+  disableMemoryGuard?: boolean;
 }
 
 /** A single request to run one subagent, produced by the agent() hook. */

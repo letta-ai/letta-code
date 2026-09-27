@@ -282,6 +282,18 @@ describe("Workflow tool (background launch)", () => {
     });
   });
 
+  test("validates top-level disableMemoryGuard type before starting", async () => {
+    const result = await workflow({
+      script: SCRIPT,
+      disableMemoryGuard: "false" as unknown as boolean,
+    });
+    expect(result).toEqual({
+      status: "error",
+      toolReturn: "disableMemoryGuard must be a boolean.",
+    });
+    expect(backgroundProcesses.size).toBe(0);
+  });
+
   test("rejects an invalid script or concurrency before launching anything", async () => {
     let factories = 0;
     __setWorkflowSpawnerFactoryForTests(async () => {

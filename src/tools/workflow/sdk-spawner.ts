@@ -5,6 +5,7 @@
  * concurrent calls with different models never touch a shared agent.
  */
 
+import { WORKFLOW_WORKER_MEMORY_GUARD_ENV } from "@/permissions/cross-agent-guard";
 import type {
   AgentCallOptions,
   SdkClient,
@@ -26,6 +27,8 @@ export interface SdkSpawnerConfig {
   allowedTools?: string[];
   /** Working directory for subagent sessions. */
   cwd?: string;
+  /** Default cross-agent memory guard policy (default: disabled for workers). */
+  disableMemoryGuard?: boolean;
 }
 
 export const DEFAULT_ALLOWED_TOOLS = ["Read", "Grep", "Glob"];
@@ -296,6 +299,12 @@ function buildQueryOptions(
       options.allowedTools ?? config.allowedTools ?? DEFAULT_ALLOWED_TOOLS,
     skillSources: [],
     ...(config.cwd ? { cwd: config.cwd } : {}),
+    env: {
+      [WORKFLOW_WORKER_MEMORY_GUARD_ENV]:
+        (options.disableMemoryGuard ?? config.disableMemoryGuard ?? true)
+          ? "disabled"
+          : "enabled",
+    },
     ...(options.effort
       ? { modelSettings: { reasoning_effort: options.effort } }
       : {}),

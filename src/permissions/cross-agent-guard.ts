@@ -27,7 +27,8 @@
 //
 // Enabled by default for parent processes and subagents. --disable-memory-guard
 // is parent-process only; subagents always evaluate the guard unless they are
-// already kernel-confined as whole processes.
+// already kernel-confined as whole processes. Agent-free Workflow workers may
+// carry an internal worker-local environment marker controlling their guard.
 
 import { homedir } from "node:os";
 import { getRuntimeContext } from "@/runtime-context";
@@ -41,6 +42,10 @@ import { canonicalToolName, isShellToolName } from "./canonical";
 import { cliPermissions } from "./cli-permissions-instance";
 import { deriveAgentId, resolveMemoryTargetPath } from "./memory-paths";
 import { canonicalizeRoot } from "./sandbox-policy";
+
+/** Internal Workflow policy marker, set only on that SDK query's process. */
+export const WORKFLOW_WORKER_MEMORY_GUARD_ENV =
+  "LETTA_CODE_WORKFLOW_WORKER_MEMORY_GUARD";
 
 // --------------------------------------------------------------------------
 // Allowed agents
@@ -68,7 +73,11 @@ export function isMemoryGuardDisabled(
   const env =
     options.env ??
     getRuntimeExecutionEnv(process.env, getRuntimeContext()?.executionSettings);
+  // Workflow workers are agent-free (not ROLE=subagent). Honor only the
+  // narrowly-scoped marker passed to that worker's own app-server process.
   if (isSubagentProcess(env)) return false;
+  if (env[WORKFLOW_WORKER_MEMORY_GUARD_ENV] === "disabled") return true;
+  if (env[WORKFLOW_WORKER_MEMORY_GUARD_ENV] === "enabled") return false;
   return options.disableMemoryGuard ?? cliPermissions.isMemoryGuardDisabled();
 }
 
