@@ -1,6 +1,6 @@
 ---
 name: workflow-authoring
-description: Reference for writing a Workflow tool script (script API and gotchas, pipeline-vs-barrier rules, quality patterns, worked examples). Load before authoring a script for a workflow the user already opted into; it does not itself authorize running one.
+description: Guides Workflow script authoring, including Jev decisions and worker continuation. Load only after the user opts into a workflow; it does not authorize running one.
 ---
 
 # Workflow authoring reference
@@ -79,8 +79,7 @@ Workflow subagents require the API backend.
   hardest verify/judge stages), `allowedTools`, `systemPrompt` (extra system
   prompt for this subagent), `timeoutMs` (default 10 minutes), `maxToolCalls`
   (positive safe integer; default 1000 unique tool calls for this subagent),
-  `conversationId` (continue an existing worker — see "Continuing one
-  worker").
+  `conversationId` (resume a worker — see "Diagnosing a run").
 - `pipeline(items, stage1, stage2, ...)` → run each item through all stages
   independently, NO barrier between stages. Item A can be in stage 3 while
   item B is still in stage 1. This is the DEFAULT for multi-stage work.
@@ -97,8 +96,12 @@ Workflow subagents require the API backend.
 - `phase(title)` — start a new phase; subsequent agent() calls are grouped
   under this title in progress output.
 - `log(message)` — emit a progress message to the user.
-- `decide(state, questions, opts?)` → Promise. Ask a calibrated Jev model
-  typed questions about `state` (see below). Not a subagent call.
+- `decide(state, questions, opts?)` → Promise; not a subagent call. Ask a
+  calibrated Jev model (chosen internally — no model option) typed questions
+  about `state`. Each needs `instructions` and a `type`: `choice` (criteria
+  map of id → description, ≤255), `score` (criteria array), `noul` (no
+  criteria). Returns a response whose `answers` are calibrated, or `null`
+  after one retried invalid answer — guard `if (!call)`; API errors throw.
 - `args` — the value passed as the tool's `args` input, verbatim. Pass
   arrays/objects as actual JSON values, NOT as a JSON-encoded string.
 
@@ -111,45 +114,6 @@ The script runs inside the CLI process with the CLI's own privileges (the
 by reading it. Keep the script to orchestration: decide what runs and combine
 results. All reading, searching, and writing belongs in subagents, where the
 tool allowlist applies.
-
-## Calibrated decisions — `decide()`
-
-`decide(state, questions, opts?)` sends `state` (string, object, or array) and
-a non-empty map of typed questions to the authenticated
-`POST /v1/alpha/decisions`, resolving to
-`{model, answers, usage, id, provider}`. It does NOT spawn a subagent — use it
-for a judgment the script itself must make (gate a stage, rank an item, decide
-whether to loop again) instead of paying for an agent turn.
-
-    const call = await decide({ file: finding.file, summary: finding.summary }, {
-      route: {
-        type: 'choice',
-        instructions: 'Route this finding to the right triage queue.',
-        criteria: { docs: 'wording or documentation only', code: 'touches program behavior' },
-      },
-    })
-    if (!call) { log('decision unavailable'); return }
-    log(`route: ${call.answers.route.choice}`)   // one of the criteria ids; calibrated: true
-
-Every question needs `instructions` and a `type`: `choice` (criteria map of
-option id → description, ≤255; answer has `choice`), `score` (criteria array;
-answer has `score` + `legend`), `noul` (no criteria; answer has `noul`, 0–1).
-`probabilities` and `confidence` appear only when the model returns them.
-
-- Answers always cover exactly the question ids you asked for, each marked
-  `calibrated: true`.
-- Jev only, chosen internally: `decide()` selects the Jev model itself with
-  fallbacks disabled — no silent model/provider substitution. There is no
-  model option; passing one in `opts` is an error.
-- An invalid answer is retried once, then the call resolves to `null` — guard
-  with `if (!call)`, as with `agent()`. Transport/API errors throw instead, so
-  an unguarded `decide()` in a `pipeline()` stage drops that item.
-- Other options: `provider`, `session_id` (≤256 chars), `trace`, `user`.
-- Bounded like `agent()`: decisions take slots from the same `maxConcurrent`
-  pool and stop at their own 1000-per-run lifetime cap.
-- The journal records model, cost, calibrated, valid, and totalTokens per
-  decision API attempt, retries included — not your state or questions. The
-  run's totalTokens sums every attempt.
 
 ## Pipeline vs barrier
 
@@ -169,11 +133,9 @@ A barrier is NOT justified by:
   idle time.
 
 `agent()` and `decide()` share one pool of concurrent slots per run
-(`maxConcurrent`, default 16) — excess calls of either kind queue and run as
-slots free up, so passing 100 items is fine. Each hook also has its own
-lifetime backstop: 1000 agent calls and 1000 decisions per run, counted
-separately, and exceeding either throws. A single parallel()/pipeline() call
-accepts at most 4096 items.
+(`maxConcurrent`, default 16) — excess calls queue and run as slots free up,
+so passing 100 items is fine. Each has its own 1000-call lifetime backstop.
+A single parallel()/pipeline() call accepts at most 4096 items.
 
 When a barrier IS correct — dedup across all findings before expensive
 verification:
@@ -262,42 +224,7 @@ journal — it records each agent's actual return value and, for a `null`,
 which guard or error produced it. A failed run is not resumable: fix the
 script and launch it again.
 
-## Continuing one worker
-
-The workflow-run JS is not replayable. A run never resumes: the script
-re-executes from the top every time, and nothing replays automatically. The
-only thing that continues is an individual worker —
-`agent(prompt, {conversationId: 'conv-...'})` sends the prompt into an
-existing agent-free worker conversation instead of creating one, so it
-answers with its prior history intact. That works across separate Workflow
-executions, including continuing a worker whose earlier turn timed out.
-
-    // conv id comes from the journal, never from agent()'s return value
-    const more = await agent('Now list every caller you saw', {
-      conversationId: 'conv-abc123', allowedTools: ['Read', 'Grep'],
-    })
-
-- Get the ID from the journal. An `agent_started` line records a worker's
-  conversation ID as soon as it initializes, so the ID is there even when
-  that call later timed out or failed; completed entries carry
-  `outcome.conversationId`, and a continuation is journaled with
-  `resumedConversationId`. `agent()` resolves to the value or `null` and
-  never hands back the ID, so a continuation is a follow-up run you author
-  after reading the previous run's `journal.jsonl`.
-- Inspect before prompting again. The worker's latest persisted Run must be
-  terminal (`completed`, `failed`, `cancelled`); if that can't be confirmed
-  the call errors. Read the journal and any output that landed late after the
-  original call gave up — then decide what the next prompt should say. There
-  is no automatic pickup.
-- What persists: history, model, and system prompt. A model that differs from
-  the persisted one is rejected, as is a `systemPrompt` override or an ID
-  that is not agent-free or belongs to a different parent agent.
-- What is per turn: `allowedTools`, `schema`, and `effort` are NOT inherited
-  from the worker's first call. A resumed turn defaults to `allowedTools: []`
-  and never broadens on its own — pass tools explicitly for a turn that must
-  read or write, and pass `schema` again if you want a validated object this
-  turn.
-- Requires Agent SDK 0.8.20 or newer, the first release with agent-free
-  `query()` resume; the package is pinned there. An older SDK fails closed —
-  the call errors instead of silently starting a fresh worker (0.8.17 accepts
-  `conversationId` and ignores it).
+The script is never replayed, but one worker can continue:
+`agent(prompt, {conversationId})` re-prompts it with history and model intact,
+using a journal ID and only once its last Run is terminal. Tools default to
+`[]`; `schema` and `effort` are chosen per turn. Needs SDK 0.8.20+.
