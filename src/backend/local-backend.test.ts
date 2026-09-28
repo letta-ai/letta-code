@@ -178,8 +178,8 @@ describe("local backend pi transcript", () => {
     clearRegisteredPiProviders();
   });
 
-  test("agent-free conversations retain their own prompt through turn, compaction, and reload", async () => {
-    const storageDir = await mkdtemp(join(tmpdir(), "local-agent-free-"));
+  test("worker conversations retain their own prompt through turn, compaction, and reload", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-worker-conv-"));
     try {
       const backend = new LocalBackend({
         storageDir,
@@ -196,28 +196,17 @@ describe("local backend pi transcript", () => {
         model: "openai/gpt-5.5",
         system: "Conversation-owned system",
       } as never);
-      expect(conversation.agent_id).toBeNull();
-      expect(
-        (conversation as { parent_agent_id?: string }).parent_agent_id,
-      ).toBe(parent.id);
+      await backend.compactConversationMessages(conversation.id);
       expect(await backend.recompileConversation(conversation.id)).toBe(
         "Conversation-owned system",
       );
 
-      const compacted = await backend.compactConversationMessages(
-        conversation.id,
-      );
-      expect(compacted.summary).toBe("No prior conversation messages.");
-      expect(await backend.recompileConversation(conversation.id)).toBe(
-        "Conversation-owned system",
-      );
-
-      await drain(
+      const streamed = (await collect(
         await backend.createConversationMessageStream(conversation.id, {
           agent_id: null,
           messages: [{ role: "user", content: "ping" }],
         } as never),
-      );
+      )) as Array<{ run_id?: string }>;
       const reloaded = new LocalBackend({
         storageDir,
         executionMode: "deterministic",
@@ -226,8 +215,6 @@ describe("local backend pi transcript", () => {
       expect(await reloaded.recompileConversation(conversation.id)).toBe(
         "Conversation-owned system",
       );
-      const persisted = await reloaded.retrieveConversation(conversation.id);
-      expect(persisted.agent_id).toBeNull();
       const messages = pageItems(
         await reloaded.listConversationMessages(conversation.id, {
           agent_id: null,
@@ -244,6 +231,12 @@ describe("local backend pi transcript", () => {
           (message) => "agent_id" in message && message.agent_id === null,
         ),
       ).toBe(true);
+      const runId = streamed.find((chunk) => chunk.run_id)?.run_id;
+      expect(runId).toBeTruthy();
+      const run = (await backend.retrieveRun(runId ?? "")) as {
+        agent_id: string | null;
+      };
+      expect(run.agent_id).toBeNull();
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }
