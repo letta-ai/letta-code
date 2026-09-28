@@ -98,7 +98,8 @@ beforeEach(async () => {
     retrieveAgent: async () => ({ name: "Parent", model: "anthropic/test" }),
     retrieveConversation: async (id: string) => ({
       id,
-      agent_id: "agent-parent",
+      agent_id: id === "conv-fork" ? null : "agent-parent",
+      parent_agent_id: id === "conv-fork" ? "agent-parent" : null,
       model: "anthropic/test",
     }),
   } as unknown as Backend);
@@ -191,7 +192,7 @@ describe("prepared conversation launch", () => {
           );
         } else {
           expect(spawnProcess).toHaveBeenCalledTimes(2);
-          expect(childInputs[1]?.args).toContain("--new-agent");
+          expect(childInputs[1]?.args).toContain("--ephemeral");
           expect(childInputs[1]?.args).toContain("anthropic/test");
         }
       } finally {
@@ -304,7 +305,7 @@ describe("prepared conversation launch", () => {
 
 describe("fork launch receipt", () => {
   test.each(["fork", "recall"])(
-    "%s returns both IDs before the child emits init or completes",
+    "%s returns the child conversation before it emits init or completes",
     async (subagent_type) => {
       const receipt = await runWithRuntimeContext(
         { workingDirectory: testHome },
@@ -317,23 +318,24 @@ describe("fork launch receipt", () => {
       );
 
       expect(forkConversation).toHaveBeenCalledWith("conv-parent", {
-        hidden: true,
+        ephemeral: true,
+        isSubagent: true,
+        name: expect.any(String),
         signal: undefined,
       });
       expect(spawnProcess).toHaveBeenCalledTimes(1);
       expect(backgroundTasks.size).toBe(1);
       expect([...backgroundTasks.values()][0]?.status).toBe("running");
       expect(receipt).toContain("Task running in background with task ID:");
-      expect(receipt).toContain("\nAgent ID: agent-parent\n");
+      expect(receipt).not.toContain("\nAgent ID:");
       expect(receipt).toContain("\nConversation ID: conv-fork\n");
       expect(getSubagentSnapshot().agents).toEqual([
         expect.objectContaining({
-          agentId: "agent-parent",
           conversationId: "conv-fork",
-          agentURL: expect.stringContaining("conv-fork"),
           status: "running",
         }),
       ]);
+      expect(getSubagentSnapshot().agents[0]?.agentId).toBeUndefined();
     },
     2000,
   );
