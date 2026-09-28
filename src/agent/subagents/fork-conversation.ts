@@ -54,7 +54,7 @@ export async function forkParentConversation(
   params: ForkParentConversationParams,
   dependencies: ForkParentConversationDependencies = {},
 ) {
-  // Resolve and validate before creating the subagent conversation. Invalid
+  // Resolve and validate before creating the hidden conversation. Invalid
   // model IDs should not leave an orphan fork behind.
   const modelOverride = await (
     dependencies.resolveModelOverride ??

@@ -124,6 +124,41 @@ class FakeCodexTransport {
 afterEach(() => __resetCodexSessionsForTests());
 
 describe("Codex app-server lifecycle", () => {
+  test("resumed process redacts both launch and rotated secret values", async () => {
+    const fake = new FakeCodexTransport();
+    const oldValue = "codex-old-secret-31724";
+    const newValue = "codex-new-secret-65209";
+    const oldEnv = {
+      LETTA_INHERITED_SECRET_NAMES: '["ROTATING_TOKEN"]',
+      ROTATING_TOKEN: oldValue,
+    };
+    const first = await startCodexTurn(
+      { prompt: "Initial", parentAgentId: "parent", cwd: "/repo" },
+      { env: oldEnv, createTransport: () => fake.transport() },
+    );
+    fake.complete("first");
+    await first.completion;
+    const second = await sendCodexMessage(
+      {
+        threadId: first.threadId,
+        prompt: "Resume",
+        parentAgentId: "parent",
+        cwd: "/repo",
+      },
+      {
+        env: { ...oldEnv, ROTATING_TOKEN: newValue },
+        createTransport: () => {
+          throw new Error("must reuse original process");
+        },
+      },
+    );
+    expect(second.mode).toBe("new_turn");
+    fake.complete(`${oldValue}|${newValue}`);
+    const result = await second.completion;
+    expect(result?.report).not.toContain(oldValue);
+    expect(result?.report).not.toContain(newValue);
+    expect(result?.report).toContain("ROTATING_TOKEN=<REDACTED>");
+  });
   test("starts a native thread and turn, then resolves completion", async () => {
     const fake = new FakeCodexTransport();
     let started: string | undefined;

@@ -96,11 +96,16 @@ import {
   createScrubbedOutputStreamer,
   extractSecretEnvFromCommand,
   getAmbientRedactionSecrets,
+  isSubagentSecretScope,
+  mergeSecretRedactions,
   type ScrubbedOutputStreamer,
   sanitizeOutputLines,
   sanitizeToolReturnContent,
+  scopedAgentSecretEnv,
+  scopedSecretRedactions,
   scrubAmbientSecrets,
   scrubSecretsFromString,
+  scrubToolExecutionResult,
 } from "./secret-substitution";
 import { resolveBackendSpecificToolAssets } from "./task-tool-assets";
 import { TOOL_DEFINITIONS, type ToolName } from "./tool-definitions";
@@ -2275,15 +2280,36 @@ async function executeToolInner(
       }
 
       if (STREAMING_SHELL_TOOLS.has(internalName)) {
-        // Redact only this invocation's secrets.
+        // Parent-linked children receive scoped env; other turns inject references only.
+        const secretScope =
+          executionScope.agentId === null
+            ? (executionScope.conversationId ?? undefined)
+            : scopedAgentId;
         const command = enhancedArgs.command ?? enhancedArgs.cmd;
-        invocationSecrets =
+        const referenced =
           typeof command === "string" ||
           (Array.isArray(command) &&
             command.every((part) => typeof part === "string"))
-            ? extractSecretEnvFromCommand(command, scopedAgentId)
+            ? extractSecretEnvFromCommand(command, secretScope)
             : {};
-        invocationRedactions = captureSecretRedactions(invocationSecrets);
+        invocationSecrets = {
+          ...(isSubagentSecretScope(
+            secretScope,
+            executionScope.agentId === null,
+          )
+            ? scopedAgentSecretEnv(secretScope)
+            : {}),
+          ...referenced,
+        };
+        invocationRedactions = captureSecretRedactions({
+          ...(isSubagentSecretScope(
+            secretScope,
+            executionScope.agentId === null,
+          )
+            ? scopedSecretRedactions(secretScope)
+            : {}),
+          ...invocationSecrets,
+        });
         if (options?.onOutput) {
           outputStreamer = createScrubbedOutputStreamer(
             invocationRedactions,
@@ -2513,22 +2539,12 @@ async function executeToolInner(
 export async function executeTool(
   ...params: Parameters<typeof executeToolInner>
 ): Promise<ToolExecutionResult> {
-  const toolRedactions = captureSecretRedactions();
+  const launchRedactions = captureSecretRedactions();
   const [name, args, options] = params;
   const toolEndArgsRef = { current: args };
-  const res = await executeToolInner(name, args, {
-    ...options,
-    toolEndArgsRef,
-  });
-
   const context = options?.toolContextId
     ? getExecutionContextById(options.toolContextId)
     : undefined;
-  const modEvents = context?.modEvents;
-  if (!modEvents || typeof res.toolReturn !== "string") {
-    return res;
-  }
-
   const executionScope = context?.runtimeContext
     ? buildExecutionRuntimeContextSnapshot({
         workingDirectory: context.runtimeContext.workingDirectory ?? undefined,
@@ -2539,17 +2555,47 @@ export async function executeTool(
         workingDirectory: context?.workingDirectory,
         permissionModeState: context?.permissionModeState,
       });
+  const secretScope =
+    executionScope.agentId === null
+      ? (executionScope.conversationId ?? undefined)
+      : (executionScope.agentId ?? undefined);
+  const inheritedScope = isSubagentSecretScope(
+    secretScope,
+    executionScope.agentId === null,
+  );
+  const scopeAtStart = inheritedScope
+    ? scopedSecretRedactions(secretScope)
+    : {};
+  let seenRedactions = captureSecretRedactions(
+    mergeSecretRedactions(launchRedactions, scopeAtStart),
+  );
+  const scrubResult = (result: ToolExecutionResult): ToolExecutionResult => {
+    // Keep each checkpoint: a mod may rotate an ambient credential between
+    // tool_start, the tool result, and its tool_end replacement.
+    seenRedactions = captureSecretRedactions(
+      mergeSecretRedactions(
+        seenRedactions,
+        inheritedScope ? scopedSecretRedactions(secretScope) : {},
+      ),
+    );
+    return scrubToolExecutionResult(result, seenRedactions);
+  };
+  const res = scrubResult(
+    await executeToolInner(name, args, {
+      ...options,
+      toolEndArgsRef,
+    }),
+  );
+  if (!context?.modEvents || typeof res.toolReturn !== "string") return res;
   const modContext =
-    context?.modContext ??
+    context.modContext ??
     toolExecutionModContext(executionScope, {
       workingDirectory:
         executionScope.workingDirectory ?? getCurrentWorkingDirectory(),
     });
-
-  const overrideRedactions = captureSecretRedactions(toolRedactions);
   const override = await emitToolEndEvent({
     args: toolEndArgsRef.current,
-    events: modEvents,
+    events: context.modEvents,
     executionScope,
     modContext,
     toolCallId: options?.toolCallId,
@@ -2557,13 +2603,12 @@ export async function executeTool(
     status: res.status,
     output: res.toolReturn,
   });
-
   return override
-    ? {
+    ? scrubResult({
         ...res,
-        toolReturn: scrubSecretsFromString(override.output, overrideRedactions),
+        toolReturn: override.output,
         status: override.status,
-      }
+      })
     : res;
 }
 

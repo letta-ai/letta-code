@@ -97,6 +97,10 @@ export function createLocalAgentRecord(
     model: normalizeLocalModelHandle(requestedModel, modelSettings),
     model_settings: modelSettings,
     ...(hidden !== undefined ? { hidden } : {}),
+    ...(hidden === true &&
+    optionalString(bodyRecord.parent_agent_id)?.startsWith("agent-")
+      ? { parent_agent_id: bodyRecord.parent_agent_id as string }
+      : {}),
   };
 }
 
@@ -156,6 +160,10 @@ export function normalizeAgentRecord(
     model,
     model_settings: modelSettings,
     ...(hidden !== undefined ? { hidden } : {}),
+    ...(hidden === true &&
+    optionalString(value.parent_agent_id)?.startsWith("agent-")
+      ? { parent_agent_id: value.parent_agent_id as string }
+      : {}),
     ...(compactionSettings !== undefined
       ? { compaction_settings: compactionSettings }
       : {}),
@@ -201,6 +209,9 @@ export function projectLocalAgentState(
     model: record.model,
     model_settings: record.model_settings,
     ...(hidden !== undefined ? { hidden } : {}),
+    ...(record.parent_agent_id
+      ? { parent_agent_id: record.parent_agent_id }
+      : {}),
     ...(record.compaction_settings !== undefined
       ? { compaction_settings: record.compaction_settings }
       : {}),
