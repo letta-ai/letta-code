@@ -36,7 +36,13 @@ test("a slow external image reaches the original listener completion turn", asyn
       onError() {},
     },
     processQueuedTurn: async (incoming) => {
-      turn = incoming;
+      // Other tests can finish background commands while this listener is active.
+      if (
+        incoming.agentId === "agent-image" &&
+        incoming.conversationId === "conv-image"
+      ) {
+        turn = incoming;
+      }
     },
   });
 
