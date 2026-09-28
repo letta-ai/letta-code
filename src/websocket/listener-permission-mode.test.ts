@@ -1,6 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
 import {
+  effectiveRemotePermissionModeState,
   getConversationPermissionModeState,
   getOrCreateConversationPermissionModeStateRef,
   getPermissionModeScopeKey,
@@ -35,6 +36,15 @@ describe("listener permission mode helpers", () => {
     } finally {
       warning.mockRestore();
     }
+  });
+  test("remote Auto is standard for both live and recovered approval checks", () => {
+    const selected = { mode: "auto" as const };
+    expect(effectiveRemotePermissionModeState(selected)).toEqual({
+      mode: "standard",
+    });
+    expect(selected.mode).toBe("auto");
+    const ordinary = { mode: "acceptEdits" as const };
+    expect(effectiveRemotePermissionModeState(ordinary)).toBe(ordinary);
   });
   test("getOrCreate ref preserves identity across legacy default-key migration", () => {
     const listener = __listenClientTestUtils.createListenerRuntime();

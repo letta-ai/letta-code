@@ -42,6 +42,7 @@ import {
   emitToolExecutionStartedEvents,
   normalizeExecutionResultsForInterruptParity,
 } from "./interrupts";
+import { effectiveRemotePermissionModeState } from "./permission-mode";
 import {
   createLifecycleMessageBase,
   emitCanonicalMessageDelta,
@@ -229,10 +230,9 @@ export async function handleApprovalStop(params: {
     agent_id: agentId,
     conversation_id: conversationId,
   };
-  const effectivePermissionModeState =
-    turnPermissionModeState.mode === "auto"
-      ? { mode: "standard" as const }
-      : turnPermissionModeState;
+  const effectivePermissionModeState = effectiveRemotePermissionModeState(
+    turnPermissionModeState,
+  );
   const { autoAllowed, autoDenied, needsUserInput } = await classifyApprovals(
     approvals,
     {

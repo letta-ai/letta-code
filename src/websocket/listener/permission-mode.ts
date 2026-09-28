@@ -22,6 +22,12 @@ export type ConversationPermissionModeState = {
 };
 
 /** Remote auto is retained for protocol compatibility, but cannot approve tools. */
+export function effectiveRemotePermissionModeState(
+  state: ConversationPermissionModeState,
+): ConversationPermissionModeState {
+  return state.mode === "auto" ? { mode: "standard" } : state;
+}
+
 export function warnIfRemoteAutoMode(mode: PermissionMode): void {
   if (mode === "auto") {
     console.warn(

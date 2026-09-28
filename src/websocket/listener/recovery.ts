@@ -47,7 +47,10 @@ import {
   createListenerModEvents,
   ensureListenerModAdaptersForAgent,
 } from "./mod-adapter";
-import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
+import {
+  effectiveRemotePermissionModeState,
+  getOrCreateConversationPermissionModeStateRef,
+} from "./permission-mode";
 import {
   emitCanonicalMessageDelta,
   emitDequeuedUserMessage,
@@ -569,10 +572,12 @@ export async function resolveRecoveredApprovalResponse(
           requireArgsForAutoApprove: true,
           missingNameReason: "Tool call incomplete - missing name",
           workingDirectory,
-          permissionModeState: getOrCreateConversationPermissionModeStateRef(
-            runtime.listener,
-            recovered.agentId,
-            recovered.conversationId,
+          permissionModeState: effectiveRemotePermissionModeState(
+            getOrCreateConversationPermissionModeStateRef(
+              runtime.listener,
+              recovered.agentId,
+              recovered.conversationId,
+            ),
           ),
           agentId: recovered.agentId,
         },
@@ -799,10 +804,12 @@ async function executeRecoveredApprovalContinuation(params: {
         agentId: recovered.agentId,
         conversationId: recovered.conversationId,
         workingDirectory,
-        permissionModeState: getOrCreateConversationPermissionModeStateRef(
-          runtime.listener,
-          recovered.agentId,
-          recovered.conversationId,
+        permissionModeState: effectiveRemotePermissionModeState(
+          getOrCreateConversationPermissionModeStateRef(
+            runtime.listener,
+            recovered.agentId,
+            recovered.conversationId,
+          ),
         ),
         modContext: createListenerAgentModContext(recovered.agentId),
         modAdapters,
