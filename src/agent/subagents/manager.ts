@@ -67,11 +67,7 @@ import {
   getPrimaryAgentModelHandle,
   resolveSubagentModel,
 } from "./subagent-model";
-import {
-  describeAbortedSubagent,
-  REMOTE_CHILD_CANCEL_GRACE_MS,
-  spawnSubagentProcess,
-} from "./subagent-process";
+import { spawnSubagentProcess } from "./subagent-process";
 import {
   describeSubagentExit,
   type ExecutionState,
@@ -95,10 +91,21 @@ import {
  * never trigger fresh agent creation, so base tools are out of scope.
  */
 const NO_BASE_TOOL_SUBAGENT_TYPES = new Set(["reflection", "memory", "init"]);
+// Listener sync, queue removal, and run abort may each take up to 30 seconds.
+const REMOTE_CHILD_CANCEL_GRACE_MS = 95_000;
 
 // ============================================================================
 // Helper Functions
 // ============================================================================
+
+export function describeAbortedSubagent(
+  remoteAgentFree: boolean,
+  finalError: string | null,
+): string {
+  if (!remoteAgentFree || finalError === "Listener execution cancelled")
+    return INTERRUPTED_BY_USER;
+  return `${INTERRUPTED_BY_USER} (could not confirm listener cancellation; remote execution may still be running${finalError ? `: ${finalError}` : ""})`;
+}
 
 /**
  * Check if an error message indicates an unsupported provider

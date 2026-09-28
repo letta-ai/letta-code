@@ -3,11 +3,27 @@ import {
   LISTENER_CONNECTION_ENV,
   SUBAGENT_LAUNCH_PROFILE_ENV,
 } from "@/utils/subagent-launch-marker";
+import { describeAbortedSubagent } from "./manager";
 import {
   composeSubagentChildEnv,
   resolveSubagentDeploymentAgentId,
   shouldLaunchThroughListener,
 } from "./subagent-launcher";
+
+test("remote conversation cancellation requires listener confirmation", () => {
+  expect(describeAbortedSubagent(true, null)).toContain(
+    "remote execution may still be running",
+  );
+  expect(
+    describeAbortedSubagent(true, "Could not confirm listener cancellation"),
+  ).toContain("Could not confirm listener cancellation");
+  expect(
+    describeAbortedSubagent(true, "Listener execution cancelled"),
+  ).not.toContain("may still be running");
+  expect(describeAbortedSubagent(false, null)).not.toContain(
+    "may still be running",
+  );
+});
 
 test("ordinary children use the existing listener and preserve local execution without one", () => {
   expect(

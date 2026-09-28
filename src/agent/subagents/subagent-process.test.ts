@@ -1,24 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "node:events";
-import {
-  describeAbortedSubagent,
-  spawnSubagentProcess,
-} from "@/agent/subagents/subagent-process";
-
-test("remote agent-free cancellation requires listener confirmation", () => {
-  expect(describeAbortedSubagent(true, null)).toContain(
-    "remote execution may still be running",
-  );
-  expect(
-    describeAbortedSubagent(true, "Could not confirm listener cancellation"),
-  ).toContain("Could not confirm listener cancellation");
-  expect(
-    describeAbortedSubagent(true, "Listener execution cancelled"),
-  ).not.toContain("may still be running");
-  expect(describeAbortedSubagent(false, null)).not.toContain(
-    "may still be running",
-  );
-});
+import { spawnSubagentProcess } from "@/agent/subagents/subagent-process";
 
 async function waitForProcessExit(pid: number): Promise<void> {
   const deadline = Date.now() + 2_000;
