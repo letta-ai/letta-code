@@ -65,7 +65,7 @@ export interface McpOAuthSessionOptions {
 }
 
 export interface StorageInjectedMcpOAuthSessionOptions {
-  /** Consumer-owned opaque key used for every storage operation. */
+  /** Consumer-owned opaque key, unique process-wide across storage backends. */
   credentialKey: string;
   storage: McpOAuthStorage;
   interactive: boolean;
@@ -142,6 +142,8 @@ const bunSecretStorage: McpOAuthStorage = {
 
 class PersistentMcpOAuthProvider implements OAuthClientProvider {
   private stateData: PersistedMcpOAuthState;
+  private clientInformationDirty = false;
+  private discoveryStateDirty = false;
   private readonly credentialKey: string;
   private readonly storage: McpOAuthStorage;
   private readonly interactive: boolean;
@@ -202,6 +204,7 @@ class PersistentMcpOAuthProvider implements OAuthClientProvider {
 
   saveClientInformation(clientInformation: OAuthClientInformationMixed): void {
     this.stateData.clientInformation = clientInformation;
+    this.clientInformationDirty = true;
   }
 
   tokens(): OAuthTokens | undefined {
@@ -237,17 +240,28 @@ class PersistentMcpOAuthProvider implements OAuthClientProvider {
   }
 
   async saveTokens(tokens: OAuthTokens): Promise<void> {
-    this.stateData.tokens = {
-      ...tokens,
-      refresh_token:
-        tokens.refresh_token ?? this.stateData.tokens?.refresh_token,
-    };
-    this.stateData.tokenExpiresAt =
-      tokens.expires_in === undefined
-        ? undefined
-        : Date.now() + tokens.expires_in * 1000;
-    delete this.stateData.codeVerifier;
-    await this.persist();
+    const localClientInformation = this.stateData.clientInformation;
+    const localDiscoveryState = this.stateData.discoveryState;
+    await this.mutatePersistedState((state) => {
+      if (this.clientInformationDirty && localClientInformation) {
+        state.redirectUrl = this.redirectUrl;
+        state.clientInformation = localClientInformation;
+      }
+      if (this.discoveryStateDirty && localDiscoveryState) {
+        state.discoveryState = localDiscoveryState;
+      }
+      state.tokens = {
+        ...tokens,
+        refresh_token: tokens.refresh_token ?? state.tokens?.refresh_token,
+      };
+      state.tokenExpiresAt =
+        tokens.expires_in === undefined
+          ? undefined
+          : Date.now() + tokens.expires_in * 1000;
+      delete state.codeVerifier;
+    });
+    this.clientInformationDirty = false;
+    this.discoveryStateDirty = false;
   }
 
   async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
@@ -275,6 +289,7 @@ class PersistentMcpOAuthProvider implements OAuthClientProvider {
 
   saveDiscoveryState(state: OAuthDiscoveryState): void {
     this.stateData.discoveryState = state;
+    this.discoveryStateDirty = true;
   }
 
   discoveryState(): OAuthDiscoveryState | undefined {
@@ -286,23 +301,37 @@ class PersistentMcpOAuthProvider implements OAuthClientProvider {
   ): Promise<void> {
     if (scope === "all") {
       this.stateData = { redirectUrl: this.redirectUrl };
+      this.clientInformationDirty = false;
+      this.discoveryStateDirty = false;
       await enqueueStorageMutation(this.credentialKey, async () => {
         await this.storage.delete(this.credentialKey);
       });
       return;
     }
-    if (scope === "client") delete this.stateData.clientInformation;
-    if (scope === "tokens") delete this.stateData.tokens;
-    if (scope === "verifier") delete this.stateData.codeVerifier;
-    if (scope === "discovery") delete this.stateData.discoveryState;
-    await this.persist();
+    await this.mutatePersistedState((state) => {
+      if (scope === "client") delete state.clientInformation;
+      if (scope === "tokens") {
+        delete state.tokens;
+        delete state.tokenExpiresAt;
+      }
+      if (scope === "verifier") delete state.codeVerifier;
+      if (scope === "discovery") delete state.discoveryState;
+    });
+    if (scope === "client") this.clientInformationDirty = false;
+    if (scope === "discovery") this.discoveryStateDirty = false;
   }
 
-  private async persist(): Promise<void> {
-    const value = JSON.stringify(this.stateData);
-    await enqueueStorageMutation(this.credentialKey, () =>
-      this.storage.set(this.credentialKey, value),
-    );
+  private async mutatePersistedState(
+    mutate: (state: PersistedMcpOAuthState) => void,
+  ): Promise<void> {
+    await enqueueStorageMutation(this.credentialKey, async () => {
+      const state =
+        (await readStoredState(this.storage, this.credentialKey)) ??
+        ({ ...this.stateData } satisfies PersistedMcpOAuthState);
+      mutate(state);
+      this.stateData = state;
+      await this.storage.set(this.credentialKey, JSON.stringify(state));
+    });
   }
 }
 
@@ -496,6 +525,15 @@ function oauthSecretName(
 }
 
 async function loadState(
+  storage: McpOAuthStorage,
+  credentialKey: string,
+): Promise<PersistedMcpOAuthState | undefined> {
+  return enqueueStorageMutation(credentialKey, () =>
+    readStoredState(storage, credentialKey),
+  );
+}
+
+async function readStoredState(
   storage: McpOAuthStorage,
   credentialKey: string,
 ): Promise<PersistedMcpOAuthState | undefined> {

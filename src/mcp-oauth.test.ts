@@ -61,10 +61,10 @@ describe("storage-injected MCP OAuth", () => {
       scope: "tools resources",
     });
 
-    expect(touchedKeys).toEqual([
-      "desktop-connection-one",
-      "desktop-connection-one",
-    ]);
+    expect(touchedKeys).toHaveLength(3);
+    expect(touchedKeys.every((key) => key === "desktop-connection-one")).toBe(
+      true,
+    );
     expect(oauth.exportCredentials()).toEqual({
       access_token: "access-token",
       refresh_token: "refresh-token",
@@ -212,6 +212,111 @@ describe("storage-injected MCP OAuth", () => {
     expect(values.has("serialized-writes")).toBe(false);
     await oauth.close();
     await secondOauth.close();
+  });
+
+  test("orders state loading and corrupt cleanup after pending writes", async () => {
+    const values = new Map<string, string>();
+    const writeStarted = deferred();
+    const releaseWrite = deferred();
+    let blockWrite = false;
+    const storage: McpOAuthStorage = {
+      get: async (key) => values.get(key),
+      set: async (key, value) => {
+        if (blockWrite) {
+          writeStarted.resolve();
+          await releaseWrite.promise;
+        }
+        values.set(key, value);
+      },
+      delete: async (key) => values.delete(key),
+    };
+    const writer = await createMcpOAuthSessionWithStorage({
+      credentialKey: "ordered-load",
+      storage,
+      interactive: true,
+    });
+    if (!writer) throw new Error("Writer OAuth session was not created");
+
+    values.set("ordered-load", "{malformed-before-valid-write");
+    blockWrite = true;
+    const validWrite = writer.authProvider.saveTokens({
+      access_token: "valid-access-token",
+      token_type: "Bearer",
+    });
+    await writeStarted.promise;
+    const readerPromise = createMcpOAuthSessionWithStorage({
+      credentialKey: "ordered-load",
+      storage,
+      interactive: false,
+    });
+    releaseWrite.resolve();
+
+    const reader = await readerPromise;
+    await validWrite;
+    const readerTokens = await reader?.authProvider.tokens();
+    expect(readerTokens?.access_token).toBe("valid-access-token");
+    expect(values.has("ordered-load")).toBe(true);
+    await writer.close();
+    await reader?.close();
+  });
+
+  test("merges stale session mutations onto the latest stored credentials", async () => {
+    const key = "stale-session-merge";
+    const values = new Map<string, string>([
+      [
+        key,
+        JSON.stringify({
+          redirectUrl: "http://127.0.0.1:45871/callback",
+          tokens: {
+            access_token: "old-access-token",
+            refresh_token: "old-refresh-token",
+            token_type: "Bearer",
+          },
+          discoveryState: { resourceMetadataUrl: "https://old.example" },
+        }),
+      ],
+    ]);
+    const storage = memoryStorage(values);
+    const sessions = await Promise.all(
+      ["token-writer", "discovery-invalidator", "refresh-writer"].map(() =>
+        createMcpOAuthSessionWithStorage({
+          credentialKey: key,
+          storage,
+          interactive: false,
+        }),
+      ),
+    );
+    const [tokenWriter, discoveryInvalidator, refreshWriter] = sessions;
+    if (!tokenWriter || !discoveryInvalidator || !refreshWriter) {
+      throw new Error("Persisted OAuth sessions were not created");
+    }
+
+    await tokenWriter.authProvider.saveTokens({
+      access_token: "new-access-token",
+      refresh_token: "rotated-refresh-token",
+      token_type: "Bearer",
+    });
+    if (!discoveryInvalidator.authProvider.invalidateCredentials) {
+      throw new Error("OAuth provider cannot invalidate credentials");
+    }
+    await discoveryInvalidator.authProvider.invalidateCredentials("discovery");
+    let persisted = JSON.parse(values.get(key) ?? "{}");
+    expect(persisted.tokens).toMatchObject({
+      access_token: "new-access-token",
+      refresh_token: "rotated-refresh-token",
+    });
+    expect(persisted.discoveryState).toBeUndefined();
+
+    await refreshWriter.authProvider.saveTokens({
+      access_token: "newest-access-token",
+      token_type: "Bearer",
+    });
+    persisted = JSON.parse(values.get(key) ?? "{}");
+    expect(persisted.tokens).toMatchObject({
+      access_token: "newest-access-token",
+      refresh_token: "rotated-refresh-token",
+    });
+    await Promise.all(sessions.map((session) => session?.close()));
   });
 
   test("ignores unsolicited callbacks and accepts the expected state", async () => {
