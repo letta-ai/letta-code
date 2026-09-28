@@ -47,10 +47,8 @@ export function supportsPublishedResume(version: string | undefined): boolean {
 }
 
 export interface LoadedSdk {
-  /** A local client whose subagents run on this computer against the API backend. */
-  createLocalClient(): SdkClient;
-  /** Connect to an already-running App Server without changing its backend. */
-  createRemoteClient(url: string): SdkClient;
+  /** Use SDK local query, optionally connecting to our local-backend App Server. */
+  createLocalClient(url?: string): SdkClient;
   /** Explicit opt-in until SDK #322 is released and the package is upgraded. */
   supportsAgentFreeResume: boolean;
 }
@@ -173,8 +171,7 @@ export async function loadAgentSdk(): Promise<LoadedSdk> {
       const sdk = (await import(specifier)) as {
         LettaAgentClient: new (options: {
           backend: string;
-          appServer?: { harnessBackend: "api" | "local" };
-          url?: string;
+          appServer?: { harnessBackend?: "api" | "local"; url?: string };
         }) => SdkClient;
       };
       if (typeof sdk.LettaAgentClient !== "function") {
@@ -208,15 +205,13 @@ export async function loadAgentSdk(): Promise<LoadedSdk> {
             specifier === specifiers[0]) ||
           (specifier.startsWith("file:") &&
             supportsPublishedResume(packageVersion(fileURLToPath(specifier)))),
-        createLocalClient: () =>
+        createLocalClient: (url) =>
           wrapClient(
             new sdk.LettaAgentClient({
               backend: "local",
-              appServer: { harnessBackend: "api" },
+              appServer: url ? { url } : { harnessBackend: "api" },
             }),
           ),
-        createRemoteClient: (url) =>
-          wrapClient(new sdk.LettaAgentClient({ backend: "remote", url })),
       };
     } catch (error) {
       attempts.push(`${specifier}: ${String(error)}`);

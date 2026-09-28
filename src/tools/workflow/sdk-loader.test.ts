@@ -104,7 +104,7 @@ describe("loadAgentSdk after a late install", () => {
       const proc = Bun.spawnSync({
         cmd: [process.execPath, "--no-install", "probe.ts"],
         cwd: root,
-        env: { ...process.env, LETTA_AGENT_SDK_PATH: "" },
+        env: { ...process.env, LETTA_AGENT_SDK_PATH: "", NODE_PATH: "" },
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -149,7 +149,7 @@ describe("loadAgentSdk after a late install", () => {
       const proc = Bun.spawnSync({
         cmd: [process.execPath, "--no-install", "probe.ts"],
         cwd: root,
-        env: { ...process.env, LETTA_AGENT_SDK_PATH: "" },
+        env: { ...process.env, LETTA_AGENT_SDK_PATH: "", NODE_PATH: "" },
         stdout: "pipe",
         stderr: "pipe",
       });

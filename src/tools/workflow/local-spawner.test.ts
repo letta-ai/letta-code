@@ -82,6 +82,54 @@ test("local Workflow workers preserve the invoking turn and report their convers
       error: "Local Workflow worker continuation is not supported yet",
     });
     expect(parentRuntime.turnLifecycle.currentLease).toBe(parentLease);
+
+    const failed = await handle.spawner(
+      {
+        prompt: "use an unavailable model",
+        options: { model: "not-a-model" },
+        callIndex: 2,
+      },
+      new AbortController().signal,
+    );
+    expect(failed).toMatchObject({
+      value: null,
+      failed: true,
+      error: expect.stringContaining('Unknown model "not-a-model"'),
+    });
+
+    const cancelled = new AbortController();
+    cancelled.abort();
+    const interrupted = await handle.spawner(
+      { prompt: "do not start", options: {}, callIndex: 3 },
+      cancelled.signal,
+    );
+    expect(interrupted).toMatchObject({
+      value: null,
+      failed: true,
+      error: "Workflow subagent interrupted",
+    });
+    expect(parentRuntime.turnLifecycle.currentLease).toBe(parentLease);
+
+    const activeCancel = new AbortController();
+    const cancelledIds: string[] = [];
+    const stopped = await handle.spawner(
+      { prompt: "cancel after the worker starts", options: {}, callIndex: 4 },
+      activeCancel.signal,
+      {
+        onStarted: (id) => {
+          cancelledIds.push(id);
+          activeCancel.abort();
+        },
+      },
+    );
+    expect(cancelledIds).toHaveLength(1);
+    expect(stopped).toMatchObject({
+      value: null,
+      failed: true,
+      error: "Workflow subagent interrupted",
+      conversationId: cancelledIds[0],
+    });
+    expect(parentRuntime.turnLifecycle.currentLease).toBe(parentLease);
     await handle.cleanup();
     handle = undefined;
     expect(parentRuntime.turnLifecycle.currentLease).toBe(parentLease);

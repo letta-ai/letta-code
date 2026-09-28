@@ -1,7 +1,7 @@
 /**
  * Use the Agent SDK against a local App Server. The SDK's managed local query
- * path uses the API backend; an explicit server URL keeps these conversations
- * in the already-selected local backend without reimplementing query streaming.
+ * path uses the API backend; an explicit local App Server URL keeps these
+ * conversations in the selected local backend without reimplementing query streaming.
  */
 import { randomUUID } from "node:crypto";
 import { type AppServerHandle, startAppServer } from "@/websocket/app-server";
@@ -29,7 +29,7 @@ export async function createLocalSpawnerHandle(
   });
   try {
     const sdk = await loadAgentSdk();
-    const client = sdk.createRemoteClient(server.controlUrl);
+    const client = sdk.createLocalClient(server.controlUrl);
     const run = createSdkSpawner(client, {
       ...config,
       // An installed SDK may ignore conversationId. Local continuation stays
