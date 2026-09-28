@@ -6,6 +6,7 @@ import {
   describe,
   expect,
   mock,
+  spyOn,
   test,
 } from "bun:test";
 import {
@@ -445,12 +446,13 @@ describe("Discord route reconciliation", () => {
 
   // ── Log assertions ───────────────────────────────────────────
 
-  test("blocked-delivery diagnostics contain key identifiers and reason", async () => {
-    // This test validates the diagnostics format in registry.ts
-    // by checking the inbound delivery gate log output
-    const logSpy = mock(() => {});
-    const originalLog = console.log;
-    console.log = logSpy;
+  test("blocked-delivery debug diagnostics contain key identifiers and reason", async () => {
+    const debug = process.env.LETTA_DEBUG;
+    const debugFile = process.env.LETTA_DEBUG_FILE;
+    process.env.LETTA_DEBUG = "1";
+    delete process.env.LETTA_DEBUG_FILE;
+    const logSpy = spyOn(console, "error").mockImplementation(() => {});
+    const stdoutSpy = spyOn(console, "log").mockImplementation(() => {});
 
     try {
       const { ChannelRegistry } = await import("@/channels/registry");
@@ -522,8 +524,8 @@ describe("Discord route reconciliation", () => {
         isMention: false,
       });
 
-      // The handler first calls ensureDiscordRoute which creates a route,
-      // then checks the delivery-time gate which should block + log
+      // The existing route reaches the delivery-time gate, which logs to stderr.
+      expect(stdoutSpy).not.toHaveBeenCalled();
       const logCall = logSpy.mock.calls.find(
         (call: unknown[]) =>
           typeof call[0] === "string" &&
@@ -532,7 +534,9 @@ describe("Discord route reconciliation", () => {
       expect(logCall).toBeDefined();
 
       if (logCall) {
-        const payload = JSON.parse((logCall as unknown as [string, string])[1]);
+        const json = String(logCall[0]).match(/\{.*\}/)?.[0];
+        expect(json).toBeDefined();
+        const payload = JSON.parse(json ?? "{}");
         expect(payload.accountId).toBe("discord-bot");
         expect(payload.chatId).toBe("channel-gamma");
         expect(payload.threadId).toBeNull();
@@ -540,7 +544,12 @@ describe("Discord route reconciliation", () => {
         expect(payload.reason).toContain("not in allowed_channels");
       }
     } finally {
-      console.log = originalLog;
+      logSpy.mockRestore();
+      stdoutSpy.mockRestore();
+      if (debug === undefined) delete process.env.LETTA_DEBUG;
+      else process.env.LETTA_DEBUG = debug;
+      if (debugFile === undefined) delete process.env.LETTA_DEBUG_FILE;
+      else process.env.LETTA_DEBUG_FILE = debugFile;
     }
   });
 });

@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import type { TrackChildSendInput } from "@/agent/subagents/child-send-tracking";
 import type { AgentRetrieveOptions, Backend } from "@/backend";
 import type { EnqueueConversationInput } from "@/backend/api/conversation-enqueue";
@@ -59,6 +59,52 @@ const message = {
   conversation_id: "conv-target",
   message: "Please check the tests.",
 };
+
+test.each([false, true])(
+  "missing acting user diagnostic respects debug mode: %s",
+  async (debug) => {
+    const env = {
+      LETTA_DEBUG: process.env.LETTA_DEBUG,
+      DEBUG: process.env.DEBUG,
+      LETTA_DEBUG_FILE: process.env.LETTA_DEBUG_FILE,
+    };
+    process.env.LETTA_DEBUG = debug ? "1" : "0";
+    delete process.env.DEBUG;
+    delete process.env.LETTA_DEBUG_FILE;
+    const info = spyOn(console, "info").mockImplementation(() => {});
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    const error = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const f = fixture();
+      const result = await runWithRuntimeContext(
+        { agentId: caller.agentId, conversationId: caller.conversationId },
+        () => send_agent_message(message, f),
+      );
+      expect(result.status).toBe("success");
+      expect(f.submissions).toHaveLength(1);
+      expect(f.submissions[0]?.actingUserId).toBeUndefined();
+      expect(info).not.toHaveBeenCalled();
+      expect(log).not.toHaveBeenCalled();
+      if (debug) {
+        expect(error).toHaveBeenCalledWith(
+          expect.stringContaining(
+            "[SendAgentMessage] Sending without X-Letta-Acting-User-Id",
+          ),
+        );
+      } else {
+        expect(error).not.toHaveBeenCalled();
+      }
+    } finally {
+      info.mockRestore();
+      log.mockRestore();
+      error.mockRestore();
+      for (const [key, value] of Object.entries(env)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  },
+);
 
 test("resumes an external coding-agent session without the Cloud backend", async () => {
   const f = fixture();

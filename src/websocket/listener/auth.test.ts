@@ -130,6 +130,7 @@ describe("listener auth", () => {
       }),
     );
     expect(flushMock).toHaveBeenCalledTimes(1);
+    expect(console.log).not.toHaveBeenCalled();
   });
 
   test("keeps a still-valid token when proactive refresh fails transiently", async () => {
