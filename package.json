@@ -27,6 +27,8 @@
     "dist/memory-constraints.js.map",
     "dist/mcp-client.js",
     "dist/mcp-client.js.map",
+    "dist/mcp-oauth.js",
+    "dist/mcp-oauth.js.map",
     "dist/agent-presets.js",
     "dist/agent-presets.js.map",
     "dist/schedules.js",
@@ -70,6 +72,11 @@
       "types": "./dist/types/mcp-client.d.ts",
       "import": "./dist/mcp-client.js",
       "default": "./dist/mcp-client.js"
+    },
+    "./mcp-oauth": {
+      "types": "./dist/types/mcp-oauth.d.ts",
+      "import": "./dist/mcp-oauth.js",
+      "default": "./dist/mcp-oauth.js"
     },
     "./protocol": {
       "types": "./dist/types/types/protocol.d.ts"
@@ -227,6 +234,9 @@
       ],
       "mcp-client": [
         "./dist/types/mcp-client.d.ts"
+      ],
+      "mcp-oauth": [
+        "./dist/types/mcp-oauth.d.ts"
       ],
       "channels": [
         "./dist/types/channels-public.d.ts"

@@ -189,6 +189,18 @@ await Bun.build({
 });
 
 await Bun.build({
+  entrypoints: ["./src/mcp-oauth.ts"],
+  outdir: "./dist",
+  target: "node",
+  format: "esm",
+  minify: false,
+  sourcemap: "external",
+  naming: {
+    entry: "mcp-oauth.js",
+  },
+});
+
+await Bun.build({
   entrypoints: ["./src/memory-confinement.ts"],
   outdir: "./dist",
   target: "node",
