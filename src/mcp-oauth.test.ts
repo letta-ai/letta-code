@@ -142,7 +142,7 @@ describe("storage-injected MCP OAuth", () => {
     expect(await cancellation).toContain("cancelled");
   });
 
-  test("serializes writes and invalidation for asynchronous storage", async () => {
+  test("serializes same-key writes and invalidation across sessions", async () => {
     const values = new Map<string, string>();
     const blockedWrites = new Map<
       number,
@@ -170,7 +170,14 @@ describe("storage-injected MCP OAuth", () => {
       storage,
       interactive: true,
     });
-    if (!oauth) throw new Error("OAuth session was not created");
+    const secondOauth = await createMcpOAuthSessionWithStorage({
+      credentialKey: "serialized-writes",
+      storage,
+      interactive: true,
+    });
+    if (!oauth || !secondOauth) {
+      throw new Error("OAuth sessions were not created");
+    }
 
     const firstWrite = { started: deferred(), release: deferred() };
     blockedWrites.set(1, firstWrite);
@@ -179,7 +186,7 @@ describe("storage-injected MCP OAuth", () => {
       token_type: "Bearer",
     });
     await firstWrite.started.promise;
-    const newWrite = oauth.authProvider.saveTokens({
+    const newWrite = secondOauth.authProvider.saveTokens({
       access_token: "new-access-token",
       token_type: "Bearer",
     });
@@ -196,14 +203,15 @@ describe("storage-injected MCP OAuth", () => {
       token_type: "Bearer",
     });
     await pendingWrite.started.promise;
-    if (!oauth.authProvider.invalidateCredentials) {
+    if (!secondOauth.authProvider.invalidateCredentials) {
       throw new Error("OAuth provider cannot invalidate credentials");
     }
-    const invalidate = oauth.authProvider.invalidateCredentials("all");
+    const invalidate = secondOauth.authProvider.invalidateCredentials("all");
     pendingWrite.release.resolve();
     await Promise.all([saveBeforeDelete, invalidate]);
     expect(values.has("serialized-writes")).toBe(false);
     await oauth.close();
+    await secondOauth.close();
   });
 
   test("ignores unsolicited callbacks and accepts the expected state", async () => {

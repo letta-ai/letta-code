@@ -16,6 +16,7 @@ import {
 } from "@/utils/secrets";
 
 const CALLBACK_TIMEOUT_MS = 5 * 60 * 1000;
+const storageMutationQueues = new Map<string, Promise<void>>();
 
 interface PersistedMcpOAuthState {
   redirectUrl: string;
@@ -77,7 +78,10 @@ export async function clearMcpOAuthCredentials(
   serverName: string,
   serverUrl: string,
 ): Promise<boolean> {
-  return deleteSecretValue(oauthSecretName(agentId, serverName, serverUrl));
+  const credentialKey = oauthSecretName(agentId, serverName, serverUrl);
+  return enqueueStorageMutation(credentialKey, () =>
+    deleteSecretValue(credentialKey),
+  );
 }
 
 export async function createMcpOAuthSession(
@@ -138,7 +142,6 @@ const bunSecretStorage: McpOAuthStorage = {
 
 class PersistentMcpOAuthProvider implements OAuthClientProvider {
   private stateData: PersistedMcpOAuthState;
-  private storageMutation = Promise.resolve();
   private readonly credentialKey: string;
   private readonly storage: McpOAuthStorage;
   private readonly interactive: boolean;
@@ -283,7 +286,7 @@ class PersistentMcpOAuthProvider implements OAuthClientProvider {
   ): Promise<void> {
     if (scope === "all") {
       this.stateData = { redirectUrl: this.redirectUrl };
-      await this.enqueueStorageMutation(async () => {
+      await enqueueStorageMutation(this.credentialKey, async () => {
         await this.storage.delete(this.credentialKey);
       });
       return;
@@ -297,16 +300,30 @@ class PersistentMcpOAuthProvider implements OAuthClientProvider {
 
   private async persist(): Promise<void> {
     const value = JSON.stringify(this.stateData);
-    await this.enqueueStorageMutation(() =>
+    await enqueueStorageMutation(this.credentialKey, () =>
       this.storage.set(this.credentialKey, value),
     );
   }
+}
 
-  private enqueueStorageMutation(mutation: () => Promise<void>): Promise<void> {
-    const pending = this.storageMutation.then(mutation, mutation);
-    this.storageMutation = pending.catch(() => undefined);
-    return pending;
-  }
+function enqueueStorageMutation<T>(
+  credentialKey: string,
+  mutation: () => Promise<T>,
+): Promise<T> {
+  const previous =
+    storageMutationQueues.get(credentialKey) ?? Promise.resolve();
+  const pending = previous.then(mutation, mutation);
+  const continuation = pending.then(
+    () => undefined,
+    () => undefined,
+  );
+  storageMutationQueues.set(credentialKey, continuation);
+  void continuation.then(() => {
+    if (storageMutationQueues.get(credentialKey) === continuation) {
+      storageMutationQueues.delete(credentialKey);
+    }
+  });
+  return pending;
 }
 
 interface OAuthCallbackServer {
