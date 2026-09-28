@@ -12,7 +12,7 @@ import {
 import { join } from "node:path";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
-import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
+import type { ForkConversationOptions } from "@/backend/api/conversations";
 import type {
   AgentCreateBody,
   AgentListBody,
@@ -40,6 +40,12 @@ import {
 import { selectLocalMessagesForFork } from "./local-conversation-fork";
 import { listLocalConversations } from "./local-conversation-list";
 import {
+  createLocalConversationRecord,
+  createLocalForkRecord,
+  updateLocalConversationRecord,
+  withLocalConversationModelDefaults,
+} from "./local-conversation-record";
+import {
   emptyLocalUsage,
   type LocalAssistantMessage,
   type LocalImageContent,
@@ -64,7 +70,6 @@ import {
 import {
   normalizeLocalModelHandle,
   normalizeStoredLocalModelRecord,
-  supportedConversationModelSettingsFromBody,
   supportedModelSettingsFromBody,
 } from "./local-model-normalization";
 import {
@@ -120,7 +125,10 @@ import type {
   StoredConversation,
   StoredMessage,
 } from "./local-types";
-import type { LocalCompiledSystemPrompt } from "./system-prompt-compilation";
+import {
+  type LocalCompiledSystemPrompt,
+  stripCompiledIdentityMetadata,
+} from "./system-prompt-compilation";
 export type { LocalAgentRecord, StoredMessage };
 
 const DEFAULT_LOCAL_AGENT_NAME = "Letta Code";
@@ -147,105 +155,8 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-function optionalStringOrNull(value: unknown): string | null | undefined {
-  return typeof value === "string" || value === null ? value : undefined;
-}
-
 function currentIsoTimestamp(): string {
   return new Date().toISOString();
-}
-
-function createLocalConversationRecord(
-  conversationId: string,
-  agentId: string,
-  _sequence: number,
-  body: Partial<ConversationCreateBody> = {},
-): StoredConversation {
-  const bodyRecord = body as Record<string, unknown>;
-  const now = currentIsoTimestamp();
-  const modelSettings = supportedConversationModelSettingsFromBody(bodyRecord);
-  return {
-    id: conversationId,
-    agent_id: agentId,
-    archived: false,
-    archived_at: null,
-    created_at: now,
-    updated_at: now,
-    last_message_at: null,
-    summary: optionalStringOrNull(bodyRecord.summary) ?? null,
-    in_context_message_ids: [],
-    ...(typeof bodyRecord.model === "string" || bodyRecord.model === null
-      ? {
-          model:
-            bodyRecord.model === null
-              ? null
-              : normalizeLocalModelHandle(
-                  bodyRecord.model,
-                  modelSettings ?? {},
-                ),
-        }
-      : {}),
-    ...(modelSettings !== undefined ? { model_settings: modelSettings } : {}),
-    ...(typeof bodyRecord.context_window_limit === "number"
-      ? { context_window_limit: bodyRecord.context_window_limit }
-      : {}),
-    ...(typeof bodyRecord.hidden === "boolean"
-      ? { hidden: bodyRecord.hidden }
-      : {}),
-    ...(isStringArray(bodyRecord.tags) ? { tags: bodyRecord.tags } : {}),
-  } as StoredConversation;
-}
-
-function updateLocalConversationRecord(
-  current: StoredConversation,
-  body: ConversationUpdateBody,
-  updatedAt: string,
-): StoredConversation {
-  const bodyRecord = body as Record<string, unknown>;
-  const next: StoredConversation = {
-    ...current,
-    updated_at: updatedAt,
-  };
-  const modelSettings = supportedConversationModelSettingsFromBody(bodyRecord);
-  if (typeof bodyRecord.archived === "boolean") {
-    next.archived = bodyRecord.archived;
-    next.archived_at = bodyRecord.archived
-      ? (current.archived_at ?? updatedAt)
-      : null;
-  }
-  if (bodyRecord.archived === null) {
-    next.archived = false;
-    next.archived_at = null;
-  }
-  if (
-    typeof bodyRecord.last_message_at === "string" ||
-    bodyRecord.last_message_at === null
-  ) {
-    next.last_message_at = bodyRecord.last_message_at;
-  }
-  if (typeof bodyRecord.model === "string" || bodyRecord.model === null) {
-    next.model =
-      bodyRecord.model === null
-        ? null
-        : normalizeLocalModelHandle(bodyRecord.model, modelSettings ?? {});
-  }
-  if (modelSettings !== undefined) {
-    next.model_settings = modelSettings as StoredConversation["model_settings"];
-  }
-  if (typeof bodyRecord.context_window_limit === "number") {
-    (next as unknown as Record<string, unknown>).context_window_limit =
-      bodyRecord.context_window_limit;
-  }
-  if (typeof bodyRecord.hidden === "boolean") {
-    next.hidden = bodyRecord.hidden;
-  }
-  if (typeof bodyRecord.summary === "string" || bodyRecord.summary === null) {
-    next.summary = bodyRecord.summary;
-  }
-  if (isStringArray(bodyRecord.tags)) {
-    next.tags = bodyRecord.tags;
-  }
-  return next;
 }
 
 function textContent(text: string) {
@@ -794,7 +705,10 @@ export class LocalStore {
     };
   }
 
-  retrieveConversation(conversationId: string, agentId?: string): Conversation {
+  retrieveConversation(
+    conversationId: string,
+    agentId?: string,
+  ): StoredConversation {
     const existing = this.findConversation(conversationId, agentId);
     if (existing) return existing;
     if (this.strictConversationAccess) {
@@ -803,14 +717,51 @@ export class LocalStore {
     return this.ensureConversation(conversationId, agentId);
   }
 
-  listConversations(body?: ConversationListBody): Conversation[] {
+  listConversations(body?: ConversationListBody): StoredConversation[] {
     this.loadConversationRecordsFromStorage();
     this.refreshLoadedConversationRecordsFromStorage();
 
     return listLocalConversations(this.conversations.values(), body);
   }
 
-  createConversation(body: ConversationCreateBody): Conversation {
+  /** Internal local-only creation; never synthesizes an agent record. */
+  createDetachedConversation(body: {
+    model: string;
+    system: string;
+    model_settings?: Record<string, unknown>;
+    context_window_limit?: number | null;
+    parent_agent_id?: string;
+    name?: string;
+    is_subagent?: boolean;
+  }): StoredConversation {
+    const parent = body.parent_agent_id
+      ? this.refreshAgentRecordFromStorage(body.parent_agent_id)
+      : undefined;
+    if (body.parent_agent_id && !parent) {
+      throw new LocalBackendNotFoundError("Agent", body.parent_agent_id);
+    }
+    const id = this.nextConversationId();
+    const model = normalizeLocalModelHandle(
+      body.model,
+      body.model_settings ?? {},
+    );
+    const conversation = this.withConversationModelDefaults(
+      createLocalConversationRecord(id, null, {
+        ...body,
+        model_settings: {
+          ...(parent?.model === model ? parent.model_settings : {}),
+          ...(body.model_settings ?? {}),
+        },
+      }),
+    );
+    const key = this.conversationKey(id, id);
+    this.conversations.set(key, conversation);
+    this.markNewConversationResident(key);
+    this.persistConversationState(id, id);
+    return conversation;
+  }
+
+  createConversation(body: ConversationCreateBody): StoredConversation {
     const agentId = body.agent_id ?? this.defaultAgentId;
     if (this.strictAgentAccess && !this.agents.has(agentId)) {
       throw new LocalBackendNotFoundError("Agent", agentId);
@@ -818,12 +769,7 @@ export class LocalStore {
     this.ensureAgent(agentId);
     const conversationId = this.nextConversationId();
     const conversation = this.withConversationModelDefaults(
-      createLocalConversationRecord(
-        conversationId,
-        agentId,
-        this.conversationSeq,
-        body,
-      ),
+      createLocalConversationRecord(conversationId, agentId, body),
     );
     const key = this.conversationKey(conversation.id, agentId);
     this.conversations.set(key, conversation);
@@ -835,7 +781,7 @@ export class LocalStore {
   updateConversation(
     conversationId: string,
     body: ConversationUpdateBody,
-  ): Conversation {
+  ): StoredConversation {
     if (conversationId === "default") {
       throw new Error("Default conversation cannot be updated");
     }
@@ -856,7 +802,10 @@ export class LocalStore {
         this.conversationKey(conversationId, created.agent_id),
         projected,
       );
-      this.persistConversationState(conversationId, created.agent_id);
+      this.persistConversationState(
+        conversationId,
+        created.agent_id ?? created.id,
+      );
       return projected;
     }
     const updated = this.withConversationModelDefaults(
@@ -866,39 +815,24 @@ export class LocalStore {
       this.conversationKey(conversationId, current.agent_id),
       updated,
     );
-    this.persistConversationState(conversationId, current.agent_id);
+    this.persistConversationState(
+      conversationId,
+      current.agent_id ?? current.id,
+    );
     return updated;
   }
 
   private withConversationModelDefaults(
     conversation: StoredConversation,
   ): StoredConversation {
-    const requestedModel = conversation.model;
-    if (typeof requestedModel !== "string") return conversation;
-    const normalizedRequestedModel = normalizeLocalModelHandle(
-      requestedModel,
-      isRecord(conversation.model_settings) ? conversation.model_settings : {},
+    return withLocalConversationModelDefaults(conversation, (model) =>
+      this.modelSettingsDefaultsForModel(model),
     );
-    const defaults = this.modelSettingsDefaultsForModel(
-      normalizedRequestedModel,
-    );
-    if (!defaults || Object.keys(defaults).length === 0) return conversation;
-    const existingSettings = isRecord(conversation.model_settings)
-      ? conversation.model_settings
-      : {};
-    return {
-      ...conversation,
-      model: normalizedRequestedModel,
-      model_settings: {
-        ...defaults,
-        ...existingSettings,
-      },
-    };
   }
 
   forkConversation(
     conversationId: string,
-    options: { agentId?: string; hidden?: boolean; messageId?: string } = {},
+    options: ForkConversationOptions = {},
   ): { id: string } {
     const source = this.findConversation(
       conversationId,
@@ -907,36 +841,58 @@ export class LocalStore {
     if (!source) {
       throw new LocalBackendNotFoundError("Conversation", conversationId);
     }
-    const targetAgentId = options.agentId ?? source.agent_id;
-    if (this.strictAgentAccess && !this.agents.has(targetAgentId)) {
-      throw new LocalBackendNotFoundError("Agent", targetAgentId);
+    if (
+      options.ephemeral === true &&
+      options.agentId &&
+      options.agentId !== source.agent_id
+    ) {
+      throw new LocalBackendNotFoundError("Conversation", conversationId);
     }
-    this.ensureAgent(targetAgentId);
+    const targetAgentId =
+      options.ephemeral === true ? null : (options.agentId ?? source.agent_id);
+    if (targetAgentId !== null) {
+      if (this.strictAgentAccess && !this.agents.has(targetAgentId)) {
+        throw new LocalBackendNotFoundError("Agent", targetAgentId);
+      }
+      this.ensureAgent(targetAgentId);
+    }
     const sourceMessages = selectLocalMessagesForFork(
-      this.localMessagesForConversation(source.id, source.agent_id),
+      this.localMessagesForConversation(
+        source.id,
+        source.agent_id ?? source.id,
+      ),
       options.messageId,
-      source.agent_id,
+      source.agent_id ?? source.id,
       source.id,
     );
     if (!sourceMessages) {
       throw new LocalBackendNotFoundError("Message", options.messageId ?? "");
     }
-    const forkedConversationId = this.nextConversationId(targetAgentId);
-    const forked = createLocalConversationRecord(
-      forkedConversationId,
-      targetAgentId,
-      this.conversationSeq,
-      {
-        summary: source.summary ?? null,
-        ...(source.model !== undefined ? { model: source.model } : {}),
-        ...(source.model_settings !== undefined
-          ? { model_settings: source.model_settings }
-          : {}),
-        ...(typeof options.hidden === "boolean"
-          ? { hidden: options.hidden }
-          : {}),
-      } as Partial<ConversationCreateBody>,
+    const forkedConversationId = this.nextConversationId(
+      targetAgentId ?? undefined,
     );
+    const sourceAgent =
+      targetAgentId === null && source.agent_id
+        ? this.retrieveAgentRecord(source.agent_id)
+        : undefined;
+    const compiledSource = source.agent_id
+      ? this.getCompiledSystemPrompt(source.id, source.agent_id)
+      : undefined;
+    const forked = createLocalForkRecord({
+      id: forkedConversationId,
+      source,
+      owner: targetAgentId,
+      ...(sourceAgent ? { sourceAgent } : {}),
+      ...(targetAgentId === null
+        ? {
+            sourceSystem: compiledSource
+              ? stripCompiledIdentityMetadata(compiledSource)
+              : source.system,
+            name: options.name,
+            isSubagent: options.isSubagent,
+          }
+        : { hidden: options.hidden }),
+    });
     const forkedMessages = sourceMessages.map((message) =>
       this.cloneLocalMessageForConversation(message, forked.id, targetAgentId),
     );
@@ -945,7 +901,7 @@ export class LocalStore {
     this.conversations.set(targetKey, forked);
     this.localMessagesByConversationKey.set(targetKey, forkedMessages);
     this.loadedConversationKeys.add(targetKey);
-    this.persistConversationState(forked.id, targetAgentId, {
+    this.persistConversationState(forked.id, targetAgentId ?? forked.id, {
       transcript: "rewrite",
     });
     // Fork transcript fully persisted: keep only the bounded tail resident.
@@ -963,10 +919,14 @@ export class LocalStore {
     };
     const agentId =
       bodyWithAgent.agent_id ?? this.agentIdForConversation(conversationId);
-    if (this.strictAgentAccess && !this.agents.has(agentId)) {
-      throw new LocalBackendNotFoundError("Agent", agentId);
+    const detached =
+      this.findConversation(conversationId, agentId)?.agent_id === null;
+    if (!detached) {
+      if (this.strictAgentAccess && !this.agents.has(agentId)) {
+        throw new LocalBackendNotFoundError("Agent", agentId);
+      }
+      this.ensureAgent(agentId);
     }
-    this.ensureAgent(agentId);
     if (
       this.strictConversationAccess &&
       !this.findConversation(conversationId, agentId)
@@ -1115,7 +1075,11 @@ export class LocalStore {
     const agentId =
       (body as { agent_id?: string } | undefined)?.agent_id ??
       this.agentIdForConversation(conversationId);
-    if (this.strictAgentAccess && !this.agents.has(agentId)) {
+    if (
+      this.strictAgentAccess &&
+      !this.agents.has(agentId) &&
+      this.findConversation(conversationId, agentId)?.agent_id !== null
+    ) {
       throw new LocalBackendNotFoundError("Agent", agentId);
     }
     const conversation = this.findConversation(conversationId, agentId);
@@ -1203,7 +1167,7 @@ export class LocalStore {
       metadata: {
         created_at: date,
         updated_at: date,
-        agent_id: input.agentId,
+        agent_id: this.persistedAgentId(conversation.id, input.agentId),
         conversation_id: conversation.id,
         compaction: {
           summary: input.summary,
@@ -1256,7 +1220,7 @@ export class LocalStore {
       metadata: {
         created_at: date,
         updated_at: date,
-        agent_id: agentId,
+        agent_id: this.persistedAgentId(conversation.id, agentId),
         conversation_id: conversation.id,
       },
       content: this.localContentFromInputContent(
@@ -1359,7 +1323,7 @@ export class LocalStore {
         ...snapshot.metadata,
         created_at: date,
         updated_at: date,
-        agent_id: agentId,
+        agent_id: this.persistedAgentId(conversation.id, agentId),
         conversation_id: conversation.id,
       },
     };
@@ -1518,7 +1482,7 @@ export class LocalStore {
       metadata: {
         created_at: date,
         updated_at: date,
-        agent_id: input.agentId,
+        agent_id: this.persistedAgentId(conversation.id, input.agentId),
         conversation_id: conversation.id,
       },
     };
@@ -1699,7 +1663,7 @@ export class LocalStore {
       metadata: {
         created_at: date,
         updated_at: date,
-        agent_id: agentId,
+        agent_id: this.persistedAgentId(conversation.id, agentId),
         conversation_id: conversation.id,
       },
       content: [],
@@ -1729,12 +1693,12 @@ export class LocalStore {
     };
     this.touchConversationForLocalMessage(
       storedChunk.conversation_id,
-      storedChunk.agent_id,
+      storedChunk.agent_id ?? storedChunk.conversation_id,
       message,
     );
     this.persistConversationState(
       storedChunk.conversation_id,
-      storedChunk.agent_id,
+      storedChunk.agent_id ?? storedChunk.conversation_id,
       {
         transcript: "skip",
       },
@@ -1777,7 +1741,7 @@ export class LocalStore {
     return {
       id: `${this.storedMessageIdPrefix}${this.messageSeq}`,
       date: currentIsoTimestamp(),
-      agent_id: agentId,
+      agent_id: this.persistedAgentId(conversation.id, agentId),
       conversation_id: conversation.id,
       ...fields,
     } as StoredMessage;
@@ -1839,6 +1803,9 @@ export class LocalStore {
         conversationId,
         sourceIndex,
       );
+      if (this.persistedAgentId(conversationId, agentId) === null) {
+        for (const message of projected) message.agent_id = null;
+      }
       messages.push(...projected);
       if (options.updateIndex === false) continue;
       for (const [lookupKey, lookupMessages] of projectedMessageLookupKeys(
@@ -1871,6 +1838,9 @@ export class LocalStore {
         conversationId,
         sourceStartIndex + index,
       );
+      if (this.persistedAgentId(conversationId, agentId) === null) {
+        for (const message of projected) message.agent_id = null;
+      }
       const lookupEntries = projectedMessageLookupKeys(localMessage, projected);
       if (!lookupEntries.some(([lookupKey]) => lookupKey === messageId)) {
         continue;
@@ -1969,7 +1939,7 @@ export class LocalStore {
       const resident = this.localMessagesByConversationKey.get(key) ?? [];
       this.projectLocalMessages(
         resident,
-        conversation.agent_id,
+        conversation.agent_id ?? conversation.id,
         conversation.id,
         {
           sourceStartIndex: fullyResident
@@ -2016,11 +1986,11 @@ export class LocalStore {
   ): boolean {
     const messages = this.localMessagesForConversation(
       conversation.id,
-      conversation.agent_id,
+      conversation.agent_id ?? conversation.id,
     );
     return this.indexMatchingMessageInList(
       messages,
-      conversation.agent_id,
+      conversation.agent_id ?? conversation.id,
       conversation.id,
       messageId,
       0,
@@ -2071,7 +2041,7 @@ export class LocalStore {
       if (
         this.indexMatchingMessageInList(
           normalizedMessages,
-          conversation.agent_id,
+          conversation.agent_id ?? conversation.id,
           conversation.id,
           messageId,
           transcript.sourceStartIndex,
@@ -2388,7 +2358,7 @@ export class LocalStore {
       // falls back to disk scans for evicted ids).
       const projected = projectLocalMessageToStoredMessages(
         message,
-        conversation.agent_id,
+        conversation.agent_id ?? conversation.id,
         conversation.id,
         "",
       );
@@ -2485,7 +2455,7 @@ export class LocalStore {
   private cloneLocalMessageForConversation(
     message: LocalMessage,
     conversationId: string,
-    agentId: string,
+    agentId: string | null,
   ): LocalMessage {
     const cloned = cloneLocalMessage(message);
     const date = cloned.metadata?.created_at ?? this.nextLocalMessageDate();
@@ -2658,7 +2628,11 @@ export class LocalStore {
         "utf8",
       );
       const conversation = JSON.parse(recordJson) as StoredConversation;
-      if (!conversation?.id || !conversation.agent_id) return undefined;
+      if (
+        !conversation?.id ||
+        (conversation.agent_id !== null && !conversation.agent_id)
+      )
+        return undefined;
       return this.cacheConversationRecord(conversationDir, conversation, {
         recordJson,
       });
@@ -2686,7 +2660,11 @@ export class LocalStore {
       const cachedJson = this.conversationRecordJsonByKey.get(key);
       if (existing && cachedJson === recordJson) return existing;
       const conversation = JSON.parse(recordJson) as StoredConversation;
-      if (!conversation?.id || !conversation.agent_id) return existing;
+      if (
+        !conversation?.id ||
+        (conversation.agent_id !== null && !conversation.agent_id)
+      )
+        return existing;
       const loadedKey = this.conversationKey(
         conversation.id,
         conversation.agent_id,
@@ -3181,7 +3159,6 @@ export class LocalStore {
     const conversation = createLocalConversationRecord(
       conversationId,
       resolvedAgentId,
-      shouldAdvanceSequence ? this.conversationSeq : this.conversationSeq + 1,
     );
     this.conversations.set(key, conversation);
     this.markNewConversationResident(key);
@@ -3209,9 +3186,15 @@ export class LocalStore {
     if (agentId) {
       const key = this.conversationKey(conversationId, agentId);
       const direct = this.refreshConversationRecordFromStorage(key);
-      if (direct || conversationId === "default") return direct;
+      if (direct || conversationId === "default")
+        return direct?.agent_id === null && agentId !== conversationId
+          ? undefined
+          : direct;
       this.loadConversationRecordsFromStorage();
-      return this.refreshConversationRecordFromStorage(key);
+      const loaded = this.refreshConversationRecordFromStorage(key);
+      return loaded?.agent_id === null && agentId !== conversationId
+        ? undefined
+        : loaded;
     }
     if (conversationId === "default") {
       const key = this.conversationKey(conversationId, this.defaultAgentId);
@@ -3234,14 +3217,22 @@ export class LocalStore {
         agentId,
       );
       return conversation
-        ? [{ conversationId: conversation.id, agentId: conversation.agent_id }]
+        ? [
+            {
+              conversationId: conversation.id,
+              agentId: conversation.agent_id ?? conversation.id,
+            },
+          ]
         : [];
     }
 
     const conversation = this.findConversation(conversationIdOrAgentId);
     if (conversation) {
       return [
-        { conversationId: conversation.id, agentId: conversation.agent_id },
+        {
+          conversationId: conversation.id,
+          agentId: conversation.agent_id ?? conversation.id,
+        },
       ];
     }
 
@@ -3253,7 +3244,7 @@ export class LocalStore {
       return [
         {
           conversationId: defaultConversation.id,
-          agentId: defaultConversation.agent_id,
+          agentId: defaultConversation.agent_id ?? defaultConversation.id,
         },
       ];
     }
@@ -3261,14 +3252,26 @@ export class LocalStore {
     return [];
   }
 
-  private agentIdForConversation(conversationId: string): string {
-    if (conversationId === "default") return this.defaultAgentId;
-    return (
-      this.findConversation(conversationId)?.agent_id ?? this.defaultAgentId
-    );
+  private persistedAgentId(
+    conversationId: string,
+    agentId: string,
+  ): string | null {
+    const conversation = this.findConversation(conversationId, agentId);
+    return conversation ? conversation.agent_id : agentId;
   }
 
-  private conversationKey(conversationId: string, agentId: string): string {
+  private agentIdForConversation(conversationId: string): string {
+    if (conversationId === "default") return this.defaultAgentId;
+    const conversation = this.findConversation(conversationId);
+    return conversation
+      ? (conversation.agent_id ?? conversation.id)
+      : this.defaultAgentId;
+  }
+
+  private conversationKey(
+    conversationId: string,
+    agentId: string | null,
+  ): string {
     return conversationId === "default"
       ? `default:${agentId}`
       : `conversation:${conversationId}`;

@@ -399,9 +399,9 @@ function resolveSecretsAgentId(explicitAgentId?: string): string | null {
 const secretScopeOwners = new Map<string, string>();
 const secretScopeRefreshes = new Map<string, object>();
 
-/** Only persisted, successfully hydrated lineage can authorize a conv-* parent. */
+/** Only persisted, successfully hydrated lineage can authorize a null-owned conversation. */
 export function getVerifiedSecretOwner(scopeId: string): string | null {
-  return scopeId.startsWith("conv-")
+  return scopeId.startsWith("conv-") || scopeId.startsWith("local-conv-")
     ? (secretScopeOwners.get(scopeId) ?? null)
     : scopeId.startsWith("agent-")
       ? scopeId
@@ -409,7 +409,7 @@ export function getVerifiedSecretOwner(scopeId: string): string | null {
 }
 
 function assertAgentSecretWriteScope(scopeId: string): void {
-  if (scopeId.startsWith("conv-")) {
+  if (scopeId.startsWith("conv-") || scopeId.startsWith("local-conv-")) {
     throw new Error(
       "Conversation secrets are inherited; edit the parent agent's secrets instead.",
     );
@@ -421,7 +421,7 @@ function assertAgentSecretWriteScope(scopeId: string): void {
  * Agent-free children resolve only the server-authorized persisted parent.
  */
 export async function initSecretsFromServer(agentId: string): Promise<void> {
-  if (agentId.startsWith("conv-")) {
+  if (agentId.startsWith("conv-") || agentId.startsWith("local-conv-")) {
     secretScopeOwners.delete(agentId);
     getCache().delete(agentId);
     const refresh = {};
@@ -431,7 +431,12 @@ export async function initSecretsFromServer(agentId: string): Promise<void> {
       const owner =
         conversation.agent_id ??
         (conversation as { parent_agent_id?: string | null }).parent_agent_id;
-      if (owner?.startsWith("agent-") && !isLocalAgentId(owner)) {
+      if (owner?.startsWith("agent-")) {
+        if (isLocalAgentId(owner)) {
+          // A local parent must exist in the persisted store; never trust an
+          // ambient id or a stale/tampered conversation field for inheritance.
+          await getBackend().retrieveAgent(owner);
+        }
         await initSecretsFromServer(owner);
         // A clear or newer refresh must not be undone by an older request.
         if (secretScopeRefreshes.get(agentId) === refresh) {

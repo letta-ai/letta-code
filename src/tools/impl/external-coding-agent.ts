@@ -376,7 +376,7 @@ export async function prepareExternalCodingAgentEnv(
   for (const name of inheritedSecretNames(env)) delete env[name];
   delete env[INHERITED_SECRET_NAMES_ENV];
   delete env[INHERITED_SECRET_EXECUTION_ID_ENV];
-  if (/^(agent|conv)-/.test(parentAgentId))
+  if (/^(agent|conv|local-conv)-/.test(parentAgentId))
     await initSecretsFromServer(parentAgentId);
   const secrets = filterAgentSecretEnv(
     scopedSecretRedactions(parentAgentId),

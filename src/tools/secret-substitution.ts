@@ -129,7 +129,9 @@ export function isSubagentSecretScope(
 ): boolean {
   return (
     agentFree ||
-    Boolean(agentId?.startsWith("conv-")) ||
+    Boolean(
+      agentId?.startsWith("conv-") || agentId?.startsWith("local-conv-"),
+    ) ||
     (process.env.LETTA_CODE_AGENT_ROLE === "subagent" &&
       Boolean(process.env[INHERITED_SECRET_NAMES_ENV]))
   );

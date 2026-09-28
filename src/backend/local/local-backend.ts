@@ -392,13 +392,54 @@ export class LocalBackend extends HeadlessBackend {
     return agent;
   }
 
+  /** Local-only detached creation, independent of the generated Cloud SDK shape. */
+  async createDetachedConversation(body: {
+    model: string;
+    system: string;
+    model_settings?: Record<string, unknown>;
+    context_window_limit?: number | null;
+    parent_agent_id?: string;
+    name?: string;
+    is_subagent?: boolean;
+  }) {
+    const conversation = this.store.createDetachedConversation(body);
+    await this.compileAndMaybePersistSystemPrompt(
+      conversation.id,
+      conversation.id,
+      {
+        dryRun: false,
+      },
+    );
+    return conversation;
+  }
+
+  protected override executionAgentForConversation(
+    conversationId: string,
+    agentId: string,
+  ): LocalAgentRecord {
+    const conversation = this.store.retrieveConversation(
+      conversationId,
+      agentId,
+    );
+    if (conversation.agent_id !== null)
+      return super.executionAgentForConversation(conversationId, agentId);
+    return {
+      id: conversation.id,
+      name: conversation.name ?? "Ephemeral conversation",
+      system: conversation.system ?? "",
+      model: conversation.model ?? "local/default",
+      model_settings: { ...(conversation.model_settings ?? {}) },
+      tags: [],
+    };
+  }
+
   override async createConversation(
     body: ConversationCreateBody,
   ): ReturnType<HeadlessBackend["createConversation"]> {
     const conversation = await super.createConversation(body);
     await this.compileAndMaybePersistSystemPrompt(
       conversation.id,
-      conversation.agent_id,
+      conversation.agent_id ?? conversation.id,
       { dryRun: false },
     );
     return conversation;
@@ -564,7 +605,7 @@ export class LocalBackend extends HeadlessBackend {
       return (conversationModelSettings as { context_window_limit: number })
         .context_window_limit;
     }
-    const agent = this.store.retrieveAgentRecord(agentId);
+    const agent = this.executionAgentForConversation(conversationId, agentId);
     return typeof agent.model_settings.context_window_limit === "number"
       ? agent.model_settings.context_window_limit
       : undefined;
@@ -583,7 +624,7 @@ export class LocalBackend extends HeadlessBackend {
     conversationId: string,
     agentId: string,
   ): LocalAgentRecord {
-    const agent = this.store.retrieveAgentRecord(agentId);
+    const agent = this.executionAgentForConversation(conversationId, agentId);
     const conversation = this.store.retrieveConversation(
       conversationId,
       agentId,
@@ -861,7 +902,7 @@ export class LocalBackend extends HeadlessBackend {
   private async getOrCompileSystemPrompt(
     conversationId: string,
     agentId: string,
-    agent = this.store.retrieveAgentRecord(agentId),
+    agent = this.executionAgentForConversation(conversationId, agentId),
     previousMessageCount = 0,
   ): Promise<LocalCompiledSystemPrompt> {
     const existing = this.store.getCompiledSystemPrompt(
@@ -869,9 +910,11 @@ export class LocalBackend extends HeadlessBackend {
       agentId,
     );
     const rawSystemHash = hashRawSystemPrompt(agent.system);
-    const memfsRevision = this.isLocalMemfsEnabled()
-      ? getCommittedMemfsRevision(this.memoryDirForAgent(agentId))
-      : undefined;
+    const memfsRevision =
+      this.isLocalMemfsEnabled() &&
+      this.store.retrieveConversation(conversationId, agentId).agent_id !== null
+        ? getCommittedMemfsRevision(this.memoryDirForAgent(agentId))
+        : undefined;
     if (
       existing?.rawSystemHash === rawSystemHash &&
       existing.memfsRevision === memfsRevision
@@ -916,8 +959,11 @@ export class LocalBackend extends HeadlessBackend {
     agentId: string,
     options: { dryRun: boolean; previousMessageCount?: number },
   ): Promise<LocalCompiledSystemPrompt> {
-    const agent = this.store.retrieveAgentRecord(agentId);
-    const memfsEnabled = this.isLocalMemfsEnabled();
+    const agent = this.executionAgentForConversation(conversationId, agentId);
+    const detached =
+      this.store.retrieveConversation(conversationId, agentId).agent_id ===
+      null;
+    const memfsEnabled = !detached && this.isLocalMemfsEnabled();
     if (memfsEnabled) {
       await this.ensureLocalMemoryRepo(agentId, [], agent.name);
     }

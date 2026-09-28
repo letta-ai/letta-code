@@ -413,8 +413,6 @@ async function executeSubagent(
       parentAgentId,
       existingAgentId,
       existingConversationId,
-      localBackend: backendMode === "local",
-      retrieveAgent: (id) => activeBackend.retrieveAgent(id),
       retrieveConversation: (id) => activeBackend.retrieveConversation(id),
     });
     const childEnv = composeSubagentChildEnv({

@@ -3,6 +3,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { APIConnectionError } from "@letta-ai/letta-client/core/error";
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
+import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
 import {
   type ChatGPTUsageSnapshot,
   normalizeCloudChatGPTUsageResponse,
@@ -95,6 +96,12 @@ export type ConversationCreateParams = Parameters<
   APIClient["conversations"]["create"]
 >;
 export type ConversationCreateBody = ConversationCreateParams[0];
+/** The internal backend can return local/Cloud agent-free conversations. */
+export type BackendConversation = Omit<Conversation, "agent_id"> & {
+  agent_id: string | null;
+  parent_agent_id?: string | null;
+  system?: string;
+};
 export type ConversationCreateOptions = ConversationCreateParams[1];
 
 export type ConversationUpdateParams = Parameters<
@@ -162,7 +169,7 @@ export interface ConversationResumeTailOptions {
 }
 
 export interface ConversationResumeTail {
-  conversation?: Awaited<ReturnType<APIClient["conversations"]["retrieve"]>>;
+  conversation?: BackendConversation;
   messages: Message[];
 }
 
@@ -234,7 +241,7 @@ export interface Backend {
   retrieveConversation(
     conversationId: string,
     options?: ConversationRetrieveOptions,
-  ): Promise<Awaited<ReturnType<APIClient["conversations"]["retrieve"]>>>;
+  ): Promise<BackendConversation>;
 
   listConversations(
     body?: ConversationListBody,
@@ -243,7 +250,7 @@ export interface Backend {
   createConversation(
     body: ConversationCreateBody,
     options?: ConversationCreateOptions,
-  ): Promise<Awaited<ReturnType<APIClient["conversations"]["create"]>>>;
+  ): Promise<BackendConversation>;
 
   /** Optional: not all backends support deleting conversations. */
   deleteConversation?(
@@ -254,7 +261,7 @@ export interface Backend {
     conversationId: string,
     body: ConversationUpdateBody,
     options?: ConversationUpdateOptions,
-  ): Promise<Awaited<ReturnType<APIClient["conversations"]["update"]>>>;
+  ): Promise<BackendConversation>;
 
   recompileConversation(
     conversationId: string,

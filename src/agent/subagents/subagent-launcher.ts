@@ -27,7 +27,10 @@ import {
   inheritedSecretNames,
   scopedSecretRedactions,
 } from "@/tools/secret-substitution";
-import { initSecretsFromServer } from "@/utils/secrets-store";
+import {
+  getVerifiedSecretOwner,
+  initSecretsFromServer,
+} from "@/utils/secrets-store";
 import {
   LISTENER_CONNECTION_ENV,
   SUBAGENT_LAUNCH_ENV,
@@ -319,11 +322,6 @@ export async function resolveSubagentSecretEnv(options: {
   parentAgentId?: string;
   existingAgentId?: string;
   existingConversationId?: string;
-  localBackend?: boolean;
-  retrieveAgent?: (id: string) => Promise<{
-    parent_agent_id?: string | null;
-    hidden?: boolean | null;
-  }>;
   retrieveConversation: (id: string) => Promise<{
     agent_id: string | null;
     parent_agent_id?: string | null;
@@ -331,40 +329,30 @@ export async function resolveSubagentSecretEnv(options: {
 }): Promise<Record<string, string>> {
   const { parentAgentId, existingAgentId, existingConversationId } = options;
   if (!parentAgentId) return {};
+  // Nested null-owned scopes inherit the verified resource parent, never a
+  // parent marker supplied by the child process.
   if (
-    options.localBackend &&
-    existingAgentId &&
-    existingAgentId !== parentAgentId
+    parentAgentId.startsWith("conv-") ||
+    parentAgentId.startsWith("local-conv-")
   ) {
-    // The stored child link authorizes agent-scoped `default` and `--new`;
-    // a named conversation must additionally belong to that child.
-    if (!options.retrieveAgent) return {};
-    const agent = await options.retrieveAgent(existingAgentId);
-    if (agent.hidden !== true || agent.parent_agent_id !== parentAgentId)
-      return {};
-    if (existingConversationId && existingConversationId !== "default") {
-      const conversation = await options.retrieveConversation(
-        existingConversationId,
-      );
-      if (conversation.agent_id !== existingAgentId) return {};
-    }
-  } else {
-    if (existingAgentId && existingAgentId !== parentAgentId) return {};
-    if (existingConversationId && existingConversationId !== "default") {
-      const conversation = await options.retrieveConversation(
-        existingConversationId,
-      );
-      if (
-        conversation.agent_id !== parentAgentId &&
-        !(
-          conversation.agent_id === null &&
-          conversation.parent_agent_id === parentAgentId
-        )
-      )
-        return {};
-    }
+    await initSecretsFromServer(parentAgentId);
   }
-  await initSecretsFromServer(parentAgentId);
+  const owner = getVerifiedSecretOwner(parentAgentId);
+  if (!owner) return {};
+  if (existingAgentId && existingAgentId !== owner) return {};
+  if (existingConversationId && existingConversationId !== "default") {
+    const conversation = await options.retrieveConversation(
+      existingConversationId,
+    );
+    if (
+      conversation.agent_id !== owner &&
+      !(
+        conversation.agent_id === null && conversation.parent_agent_id === owner
+      )
+    )
+      return {};
+  }
+  if (owner === parentAgentId) await initSecretsFromServer(owner);
   return scopedSecretRedactions(parentAgentId);
 }
 

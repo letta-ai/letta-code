@@ -4,11 +4,11 @@ import type {
   LettaStreamingResponse,
   Run,
 } from "@letta-ai/letta-client/resources/agents/messages";
-import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
 import { mapModelHandleToLlmConfigPatch } from "@/agent/model-handles";
 import type {
   Backend,
   BackendCapabilities,
+  BackendConversation,
   ConversationCreateBody,
   ConversationMessageCreateBody,
   ConversationMessageListBody,
@@ -23,7 +23,10 @@ import {
   type LocalStoreOptions,
 } from "@/backend/local/local-store";
 import { isLocalStateChunkOnly } from "@/backend/local/local-stream-chunks";
-import type { LocalAgentRecord } from "@/backend/local/local-types";
+import type {
+  LocalAgentRecord,
+  StoredConversation,
+} from "@/backend/local/local-types";
 import { TURN_DID_NOT_COMPLETE } from "@/constants";
 import { isRecord } from "@/utils/type-guards";
 import {
@@ -131,7 +134,7 @@ function localStopReasonChunk(stopReason: string): LettaStreamingResponse {
 
 function effectiveAgentForConversation(
   agent: LocalAgentRecord,
-  conversation: Conversation,
+  conversation: StoredConversation,
 ): LocalAgentRecord {
   const conversationRecord = conversation as unknown as Record<string, unknown>;
   const conversationModelSettings = isRecord(conversationRecord.model_settings)
@@ -255,7 +258,9 @@ export class HeadlessBackend implements Backend {
     return Promise.resolve(this.store.createAgent(body));
   }
 
-  async retrieveConversation(conversationId: string): Promise<Conversation> {
+  async retrieveConversation(
+    conversationId: string,
+  ): Promise<BackendConversation> {
     return this.store.retrieveConversation(conversationId);
   }
 
@@ -266,7 +271,7 @@ export class HeadlessBackend implements Backend {
 
   async createConversation(
     body: ConversationCreateBody,
-  ): Promise<Conversation> {
+  ): Promise<BackendConversation> {
     return this.store.createConversation(body);
   }
 
@@ -396,7 +401,12 @@ export class HeadlessBackend implements Backend {
   async cancelRun(...args: Parameters<Backend["cancelRun"]>) {
     const [agentId, runId] = args;
     const run = this.runs.get(runId);
-    if (!run || run.agent_id !== agentId || isTerminalRun(run)) {
+    if (
+      !run ||
+      isTerminalRun(run) ||
+      (run.agent_id !== agentId &&
+        !(run.agent_id === null && run.conversation_id === agentId))
+    ) {
       return { [runId]: "failed" } as never;
     }
 
@@ -481,12 +491,16 @@ export class HeadlessBackend implements Backend {
       turnInput.conversationId,
       turnInput.agentId,
     );
+    const conversation = this.store.retrieveConversation(
+      turnInput.conversationId,
+      turnInput.agentId,
+    );
     const agent = effectiveAgentForConversation(
-      this.store.retrieveAgentRecord(turnInput.agentId),
-      this.store.retrieveConversation(
+      this.executionAgentForConversation(
         turnInput.conversationId,
         turnInput.agentId,
       ),
+      conversation,
     );
     const resolvedPrompt = await this.resolveSystemPromptForTurn({
       conversationId: turnInput.conversationId,
@@ -508,7 +522,9 @@ export class HeadlessBackend implements Backend {
     try {
       stream = await this.executor.execute({
         conversationId: turnInput.conversationId,
-        agentId: turnInput.agentId,
+        // Provider events and local message metadata identify the child.
+        // Parent resources are projected separately into `agent`.
+        agentId: conversation.agent_id ?? conversation.id,
         agent,
         systemPrompt,
         midConversationSystemPrompt,
@@ -527,6 +543,14 @@ export class HeadlessBackend implements Backend {
       stream,
       run.id,
     );
+  }
+
+  protected executionAgentForConversation(
+    conversationId: string,
+    agentId: string,
+  ): LocalAgentRecord {
+    void conversationId;
+    return this.store.retrieveAgentRecord(agentId);
   }
 
   protected async resolveSystemPromptForTurn(input: {
@@ -551,7 +575,8 @@ export class HeadlessBackend implements Backend {
     const createdAt = timestampForRun(this.runSeq);
     const run = {
       id: `${this.runIdPrefix}${this.runSeq}`,
-      agent_id: agentId,
+      agent_id: this.store.retrieveConversation(conversationId, agentId)
+        .agent_id,
       conversation_id: conversationId,
       status: "running",
       created_at: createdAt,

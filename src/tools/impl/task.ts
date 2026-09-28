@@ -641,11 +641,18 @@ export async function resolveExternalTaskParentAgentId(parentScope?: {
   agentId: string;
   conversationId: string;
 }): Promise<string | null> {
-  if (parentScope?.agentId) return parentScope.agentId;
   const runtime = getRuntimeContext();
-  if (runtime?.agentId === null) {
-    const conversationId = runtime.conversationId;
-    if (!conversationId?.startsWith("conv-")) return null;
+  if (
+    runtime?.agentId === null ||
+    parentScope?.agentId.startsWith("local-conv-") ||
+    parentScope?.agentId.startsWith("conv-")
+  ) {
+    const conversationId =
+      runtime?.agentId === null
+        ? runtime.conversationId
+        : parentScope?.conversationId;
+    if (!conversationId || !/^(?:conv|local-conv)-/.test(conversationId))
+      return null;
     const conversation = (await getBackend().retrieveConversation(
       conversationId,
     )) as {
@@ -656,6 +663,7 @@ export async function resolveExternalTaskParentAgentId(parentScope?: {
       ? (conversation.parent_agent_id ?? null)
       : null;
   }
+  if (parentScope?.agentId) return parentScope.agentId;
   try {
     return getCurrentAgentId();
   } catch {
@@ -680,7 +688,6 @@ export async function launchSubagent(
   const resolvedParentScope = resolveNotificationScope(args.parentScope);
   signal?.throwIfAborted();
 
-  // Determine if deploying an existing agent
   const isDeployingExisting = Boolean(args.agent_id || args.conversation_id);
   const requestedType = args.subagent_type;
   const externalCodingAgentType =
@@ -931,9 +938,8 @@ export async function launchSubagent(
         model,
         signal,
       });
-      effectiveAgentId = getBackend().capabilities.localMemfs
-        ? parentAgentId
-        : undefined;
+      // Forked children are conversation-owned in both backends.
+      effectiveAgentId = undefined;
       effectiveConversationId = forkedConv.id;
     } catch (error) {
       const errorMessage =

@@ -125,7 +125,6 @@ import {
   clearHeadlessClientToolRules,
   createHeadlessEphemeralConversation,
   getHeadlessEphemeralIdentity,
-  prepareHeadlessEphemeralBackend,
   resumeHeadlessEphemeralConversation,
 } from "./headless-ephemeral-startup";
 import { launchListenerConversation } from "./headless-listener-launch";
@@ -758,7 +757,6 @@ export async function handleHeadlessCommand(
     const { configureDevBackend } = await import("@/backend");
     await configureDevBackend(devBackend);
   }
-  prepareHeadlessEphemeralBackend(Boolean(values.ephemeral));
   const backend = getBackend();
   markMilestone("HEADLESS_CLIENT_READY");
   const sendExitCode = await tryCloudHeadlessSend(
