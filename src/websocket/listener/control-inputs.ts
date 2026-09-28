@@ -592,21 +592,25 @@ export async function handleAbortMessageInput(
 
   const cancelConversationId = scopedRuntime.conversationId;
   const cancelAgentId = scopedRuntime.agentId;
-  if (cancelAgentId) {
+  if (cancelAgentId || cancelConversationId !== "default") {
     const cancelRunId = interruptedRunId ?? params.command.run_id ?? null;
     // Target the interrupted run when possible so this abort can never select
     // a replacement turn. Older backends may reject run-scoped cancellation;
     // the lifecycle fence also makes the conversation-wide fallback safe.
-    const backendCancellation = cancelRunId
-      ? resolvedDeps
-          .cancelRun(cancelAgentId, cancelRunId)
-          .catch(() =>
-            resolvedDeps.cancelConversation(
-              cancelAgentId,
-              cancelConversationId,
-            ),
-          )
-      : resolvedDeps.cancelConversation(cancelAgentId, cancelConversationId);
+    const backendCancellation =
+      cancelRunId && cancelAgentId
+        ? resolvedDeps
+            .cancelRun(cancelAgentId, cancelRunId)
+            .catch(() =>
+              resolvedDeps.cancelConversation(
+                cancelAgentId,
+                cancelConversationId,
+              ),
+            )
+        : resolvedDeps.cancelConversation(
+            cancelAgentId ?? "",
+            cancelConversationId,
+          );
     void backendCancellation
       .catch(() => {
         // Fire-and-forget

@@ -14,6 +14,7 @@ import {
   createEphemeralConversation,
   type EphemeralConversationCreateBody,
 } from "@/backend/api/ephemeral-conversations";
+import { resolveBackendMode } from "@/backend/backend-mode";
 import { migratePermissionMode } from "@/permissions/mode";
 import { canonicalizeRoot } from "@/permissions/sandbox-policy";
 import { resolveWorkspaceSandbox } from "@/permissions/workspace-sandbox";
@@ -243,7 +244,7 @@ async function resolveRuntimeStartConversation(
   parsed: RuntimeStartCommand,
   agent: AgentState | null,
   created: CreatedResources,
-  createEphemeral: typeof createEphemeralConversation,
+  createEphemeral: typeof createEphemeralConversation | undefined,
   retrieveConversation: (conversationId: string) => Promise<Conversation>,
 ): Promise<Conversation> {
   const backend = getBackend();
@@ -275,7 +276,15 @@ async function resolveRuntimeStartConversation(
         "Agent-free conversation creation requires body.model and body.system",
       );
     }
-    const conversation = await createEphemeral(body);
+    // Cloud uses the ephemeral endpoint; the local backend persists the same
+    // agent-free conversation directly. Never synthesize a worker agent.
+    const conversation =
+      resolveBackendMode() === "local" && !createEphemeral
+        ? await backend.createConversation({
+            ...body,
+            agent_id: null,
+          } as unknown as ConversationCreateParams)
+        : await (createEphemeral ?? createEphemeralConversation)(body);
     created.conversation = true;
     return conversation as unknown as Conversation;
   }
@@ -447,7 +456,7 @@ export async function handleRuntimeStartCommand(
       parsed,
       agent,
       created,
-      context.createEphemeralConversation ?? createEphemeralConversation,
+      context.createEphemeralConversation,
       context.retrieveConversation ??
         ((id) => getBackend().retrieveConversation(id)),
     );

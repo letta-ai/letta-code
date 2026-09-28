@@ -5,7 +5,7 @@ const FORK_PROJECTION_FALLBACK_DATE = "1970-01-01T00:00:00.000Z";
 
 function projectMessage(
   message: LocalMessage,
-  agentId: string,
+  agentId: string | null,
   conversationId: string,
 ) {
   return projectLocalMessageToStoredMessages(
@@ -19,7 +19,7 @@ function projectMessage(
 function truncateAssistantThroughProjectedMessage(
   message: LocalAssistantMessage,
   projectedMessageId: string,
-  agentId: string,
+  agentId: string | null,
   conversationId: string,
 ): LocalAssistantMessage {
   const selectedProjection = projectMessage(
@@ -54,7 +54,7 @@ function truncateAssistantThroughProjectedMessage(
 export function selectLocalMessagesForFork(
   messages: LocalMessage[],
   messageId: string | undefined,
-  agentId: string,
+  agentId: string | null,
   conversationId: string,
 ): LocalMessage[] | undefined {
   if (!messageId) return messages;

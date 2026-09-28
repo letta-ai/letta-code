@@ -16,7 +16,8 @@ export type HeadlessTurnBody =
 
 export interface HeadlessTurnExecutorInput {
   conversationId: string;
-  agentId: string;
+  agentId: string | null;
+  /** Conversation-owned effective execution settings for agent-free turns. */
   agent: LocalAgentRecord;
   systemPrompt?: string;
   midConversationSystemPrompt?: string;

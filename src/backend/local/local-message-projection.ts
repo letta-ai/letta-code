@@ -42,9 +42,9 @@ function isThinkingContent(
 
 function localMessageAgentId(
   message: LocalMessage,
-  fallbackAgentId: string,
-): string {
-  return typeof message.metadata?.agent_id === "string"
+  fallbackAgentId: string | null,
+): string | null {
+  return message.metadata?.agent_id !== undefined
     ? message.metadata.agent_id
     : fallbackAgentId;
 }
@@ -122,7 +122,7 @@ function projectThinkingContent(
   reasoning: string,
   contentStartIndex: number,
   date: string,
-  agentId: string,
+  agentId: string | null,
   conversationId: string,
 ): StoredMessage | undefined {
   if (reasoning.length === 0) return undefined;
@@ -140,7 +140,7 @@ function projectToolCallContent(
   message: LocalAssistantMessage,
   content: ToolCall,
   date: string,
-  agentId: string,
+  agentId: string | null,
   conversationId: string,
 ): StoredMessage {
   return {
@@ -159,7 +159,7 @@ function projectToolCallContent(
 
 function projectToolResultMessage(
   message: LocalToolResultMessage,
-  fallbackAgentId: string,
+  fallbackAgentId: string | null,
   fallbackConversationId: string,
   fallbackDate: string,
 ): StoredMessage {
@@ -182,7 +182,7 @@ function projectToolResultMessage(
 
 export function projectLocalMessageToStoredMessages(
   message: LocalMessage,
-  fallbackAgentId: string,
+  fallbackAgentId: string | null,
   fallbackConversationId: string,
   fallbackDate: string,
 ): StoredMessage[] {
@@ -317,7 +317,7 @@ export function projectLocalMessageToStoredMessages(
 
 export function projectLocalMessagesToStoredMessages(
   messages: LocalMessage[],
-  fallbackAgentId: string,
+  fallbackAgentId: string | null,
   fallbackConversationId: string,
 ): StoredMessage[] {
   return messages.flatMap((message, index) => {
@@ -341,6 +341,24 @@ export function withProjectedMessageDates(
         ...message,
         date: offsetIsoTimestamp(message.date, projectedIndex),
       }) as StoredMessage,
+  );
+}
+
+/** Project a persisted message at its transcript position for stable dates. */
+export function projectLocalMessageAtSourceIndex(
+  localMessage: LocalMessage,
+  agentId: string | null,
+  conversationId: string,
+  sourceIndex: number,
+): StoredMessage[] {
+  return withProjectedMessageDates(
+    projectLocalMessageToStoredMessages(
+      localMessage,
+      agentId,
+      conversationId,
+      new Date(Date.UTC(2026, 0, 1, 0, 0, sourceIndex + 1)).toISOString(),
+    ),
+    sourceIndex,
   );
 }
 

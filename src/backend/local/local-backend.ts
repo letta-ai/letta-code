@@ -61,6 +61,10 @@ import type {
   StoredMessage,
 } from "./local-store";
 import {
+  listImportedLocalConversations,
+  writeImportedLocalConversation,
+} from "./local-trajectory-import";
+import {
   getLocalBackendMemoryFilesystemRoot,
   isLocalBackendMemfsDisabledForProcess,
 } from "./paths";
@@ -252,9 +256,12 @@ export class LocalBackend extends HeadlessBackend {
 
   private async emitCompactStart(
     conversationId: string,
-    agentId: string,
+    agentId: string | null,
     trigger: string,
   ): Promise<void> {
+    // Mod compact events currently identify an agent; agent-free conversations
+    // must not be attributed to their optional resource parent.
+    if (agentId === null) return;
     const hook = this.modEventHooks?.onCompactStart;
     if (!hook) return;
     try {
@@ -266,10 +273,11 @@ export class LocalBackend extends HeadlessBackend {
 
   private async emitCompactEnd(
     conversationId: string,
-    agentId: string,
+    agentId: string | null,
     trigger: string,
     stats: LocalCompactionStats,
   ): Promise<void> {
+    if (agentId === null) return;
     const hook = this.modEventHooks?.onCompactEnd;
     if (!hook) return;
     try {
@@ -392,6 +400,26 @@ export class LocalBackend extends HeadlessBackend {
     return agent;
   }
 
+  /** Persist a validated trajectory in an out-of-context local conversation. */
+  async importHistoricalConversation(input: {
+    agentId: string;
+    summary: string;
+    tags: string[];
+    messages: LocalMessage[];
+  }): Promise<Awaited<ReturnType<HeadlessBackend["createConversation"]>>> {
+    await this.retrieveAgent(input.agentId);
+    const imported = writeImportedLocalConversation(this.storageDir, input);
+    // The store may have scanned conversations before the external atomic write.
+    // A fresh local store can discover it; the current process can still report
+    // the import receipt while the following headless init runs in a new process.
+    return imported;
+  }
+
+  /** Scan the disk inventory, including conversations imported after store hydration. */
+  listAllLocalAgentConversations(agentId: string) {
+    return listImportedLocalConversations(this.storageDir, agentId);
+  }
+
   override async createConversation(
     body: ConversationCreateBody,
   ): ReturnType<HeadlessBackend["createConversation"]> {
@@ -445,8 +473,8 @@ export class LocalBackend extends HeadlessBackend {
 
   protected override async resolveSystemPromptForTurn(input: {
     conversationId: string;
-    agentId: string;
-    agent: LocalAgentRecord;
+    agentId: string | null;
+    agent: LocalAgentRecord | null;
     body: ConversationMessageCreateBody | ConversationMessageStreamBody;
     history: StoredMessage[];
     uiMessages: LocalMessage[];
@@ -481,6 +509,21 @@ export class LocalBackend extends HeadlessBackend {
     return (
       this.memfsEnabledOverride ?? !isLocalBackendMemfsDisabledForProcess()
     );
+  }
+
+  private conversationSystemPrompt(conversationId: string): string {
+    const conversation = this.store.retrieveConversation(
+      conversationId,
+      null,
+    ) as {
+      system?: unknown;
+    };
+    if (typeof conversation.system !== "string") {
+      throw new Error(
+        `Agent-free conversation ${conversationId} has no system prompt`,
+      );
+    }
+    return conversation.system;
   }
 
   private async ensureLocalMemoryRepo(
@@ -544,7 +587,7 @@ export class LocalBackend extends HeadlessBackend {
 
   private effectiveContextWindow(
     conversationId: string,
-    agentId: string,
+    agentId: string | null,
   ): number | undefined {
     const conversation = this.store.retrieveConversation(
       conversationId,
@@ -564,6 +607,7 @@ export class LocalBackend extends HeadlessBackend {
       return (conversationModelSettings as { context_window_limit: number })
         .context_window_limit;
     }
+    if (agentId === null) return undefined;
     const agent = this.store.retrieveAgentRecord(agentId);
     return typeof agent.model_settings.context_window_limit === "number"
       ? agent.model_settings.context_window_limit
@@ -581,32 +625,57 @@ export class LocalBackend extends HeadlessBackend {
    */
   private effectiveAgentForConversation(
     conversationId: string,
-    agentId: string,
+    agentId: string | null,
   ): LocalAgentRecord {
-    const agent = this.store.retrieveAgentRecord(agentId);
     const conversation = this.store.retrieveConversation(
       conversationId,
       agentId,
-    ) as { model?: unknown; model_settings?: unknown };
+    ) as {
+      model?: unknown;
+      model_settings?: unknown;
+      context_window_limit?: unknown;
+    };
+    // The summarizer takes a model-bearing record, but an agent-free
+    // conversation has no agent to retrieve. Use only its own model and system;
+    // parent_agent_id is a resource/authorization link, never history or prompt
+    // ownership.
+    const agent: LocalAgentRecord =
+      agentId === null
+        ? {
+            id: conversationId,
+            name: "Ephemeral conversation",
+            system: this.conversationSystemPrompt(conversationId),
+            tags: [],
+            model:
+              typeof conversation.model === "string"
+                ? conversation.model
+                : resolveLocalModelConfig(this.storageDir, this.piModelsRuntime)
+                    .handle,
+            model_settings: {},
+          }
+        : this.store.retrieveAgentRecord(agentId);
     const model =
       typeof conversation.model === "string" ? conversation.model : undefined;
     const conversationModelSettings = isRecord(conversation.model_settings)
       ? conversation.model_settings
       : undefined;
-    if (model === undefined && conversationModelSettings === undefined) {
+    if (
+      model === undefined &&
+      conversationModelSettings === undefined &&
+      typeof conversation.context_window_limit !== "number"
+    ) {
       return agent;
     }
     return {
       ...agent,
       ...(model !== undefined ? { model } : {}),
-      ...(conversationModelSettings !== undefined
-        ? {
-            model_settings: {
-              ...agent.model_settings,
-              ...conversationModelSettings,
-            },
-          }
-        : {}),
+      model_settings: {
+        ...agent.model_settings,
+        ...(conversationModelSettings ?? {}),
+        ...(typeof conversation.context_window_limit === "number"
+          ? { context_window_limit: conversation.context_window_limit }
+          : {}),
+      },
     };
   }
 
@@ -669,7 +738,7 @@ export class LocalBackend extends HeadlessBackend {
 
   private async compactLocalConversation(
     conversationId: string,
-    agentId: string,
+    agentId: string | null,
     trigger: string,
     body?: ConversationMessageCompactBody,
   ): Promise<{
@@ -691,7 +760,7 @@ export class LocalBackend extends HeadlessBackend {
 
   private async compactLocalConversationInner(
     conversationId: string,
-    agentId: string,
+    agentId: string | null,
     trigger: string,
     body?: ConversationMessageCompactBody,
   ): Promise<{
@@ -754,7 +823,7 @@ export class LocalBackend extends HeadlessBackend {
 
   private async compactLocalConversationAll(
     conversationId: string,
-    agentId: string,
+    agentId: string | null,
     agent: LocalAgentRecord,
     trigger: string,
     settings: ResolvedLocalCompactionSettings,
@@ -805,7 +874,7 @@ export class LocalBackend extends HeadlessBackend {
 
   private async compactLocalConversationSlidingWindow(
     conversationId: string,
-    agentId: string,
+    agentId: string | null,
     agent: LocalAgentRecord,
     trigger: string,
     settings: ResolvedLocalCompactionSettings,
@@ -860,14 +929,24 @@ export class LocalBackend extends HeadlessBackend {
 
   private async getOrCompileSystemPrompt(
     conversationId: string,
-    agentId: string,
-    agent = this.store.retrieveAgentRecord(agentId),
+    agentId: string | null,
+    agent?: LocalAgentRecord | null,
     previousMessageCount = 0,
   ): Promise<LocalCompiledSystemPrompt> {
     const existing = this.store.getCompiledSystemPrompt(
       conversationId,
       agentId,
     );
+    if (agentId === null) {
+      const system = this.conversationSystemPrompt(conversationId);
+      if (existing?.rawSystemHash === hashRawSystemPrompt(system)) {
+        return existing;
+      }
+      return this.compileAndMaybePersistSystemPrompt(conversationId, null, {
+        dryRun: false,
+      });
+    }
+    agent ??= this.store.retrieveAgentRecord(agentId);
     const rawSystemHash = hashRawSystemPrompt(agent.system);
     const memfsRevision = this.isLocalMemfsEnabled()
       ? getCommittedMemfsRevision(this.memoryDirForAgent(agentId))
@@ -913,9 +992,22 @@ export class LocalBackend extends HeadlessBackend {
 
   private async compileAndMaybePersistSystemPrompt(
     conversationId: string,
-    agentId: string,
+    agentId: string | null,
     options: { dryRun: boolean; previousMessageCount?: number },
   ): Promise<LocalCompiledSystemPrompt> {
+    if (agentId === null) {
+      const system = this.conversationSystemPrompt(conversationId);
+      const compiled: LocalCompiledSystemPrompt = {
+        content: system,
+        coreMemory: "",
+        compiledAt: new Date().toISOString(),
+        rawSystemHash: hashRawSystemPrompt(system),
+      };
+      if (!options.dryRun) {
+        this.store.setCompiledSystemPrompt(conversationId, null, compiled);
+      }
+      return compiled;
+    }
     const agent = this.store.retrieveAgentRecord(agentId);
     const memfsEnabled = this.isLocalMemfsEnabled();
     if (memfsEnabled) {

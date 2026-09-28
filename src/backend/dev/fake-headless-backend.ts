@@ -131,7 +131,7 @@ function localStopReasonChunk(stopReason: string): LettaStreamingResponse {
 
 function effectiveAgentForConversation(
   agent: LocalAgentRecord,
-  conversation: Conversation,
+  conversation: ReturnType<LocalStore["retrieveConversation"]>,
 ): LocalAgentRecord {
   const conversationRecord = conversation as unknown as Record<string, unknown>;
   const conversationModelSettings = isRecord(conversationRecord.model_settings)
@@ -149,6 +149,36 @@ function effectiveAgentForConversation(
         ? { context_window_limit: conversationRecord.context_window_limit }
         : {}),
     },
+  };
+}
+
+/** Execution config is conversation-owned; no agent record is created or read.
+ * The legacy executor shape requires a record, but this id is only an internal
+ * config label and must never be used for resource ownership or attribution.
+ */
+function conversationExecutionConfig(
+  conversation: ReturnType<LocalStore["retrieveConversation"]>,
+): LocalAgentRecord {
+  const record = conversation as unknown as Record<string, unknown>;
+  if (
+    record.agent_id !== null ||
+    typeof record.model !== "string" ||
+    typeof record.system !== "string"
+  ) {
+    throw new Error("Agent-free conversation is missing execution settings");
+  }
+  return {
+    id: conversation.id,
+    name: typeof record.name === "string" ? record.name : "Local worker",
+    system: record.system,
+    model: record.model,
+    model_settings: {
+      ...(isRecord(record.model_settings) ? record.model_settings : {}),
+      ...(typeof record.context_window_limit === "number"
+        ? { context_window_limit: record.context_window_limit }
+        : {}),
+    },
+    tags: [],
   };
 }
 
@@ -256,7 +286,7 @@ export class HeadlessBackend implements Backend {
   }
 
   async retrieveConversation(conversationId: string): Promise<Conversation> {
-    return this.store.retrieveConversation(conversationId);
+    return this.store.retrieveConversation(conversationId) as Conversation;
   }
 
   async listConversations(...args: Parameters<Backend["listConversations"]>) {
@@ -267,12 +297,14 @@ export class HeadlessBackend implements Backend {
   async createConversation(
     body: ConversationCreateBody,
   ): Promise<Conversation> {
-    return this.store.createConversation(body);
+    return this.store.createConversation(body) as Conversation;
   }
 
   updateConversation(...args: Parameters<Backend["updateConversation"]>) {
     const [conversationId, body] = args;
-    return Promise.resolve(this.store.updateConversation(conversationId, body));
+    return Promise.resolve(
+      this.store.updateConversation(conversationId, body) as Conversation,
+    );
   }
 
   async recompileConversation(
@@ -327,7 +359,7 @@ export class HeadlessBackend implements Backend {
         agentId,
       );
       return {
-        conversation,
+        conversation: conversation as Conversation,
         messages: this.store.listConversationMessages(conversation.id, {
           ...body,
           agent_id: agentId,
@@ -374,7 +406,7 @@ export class HeadlessBackend implements Backend {
       this.activeRunByConversation.get(conversationIdOrAgentId) ??
       this.findActiveRunByAgentId(conversationIdOrAgentId);
     const run = runId ? this.runs.get(runId) : undefined;
-    if (run?.conversation_id && run.agent_id) {
+    if (run?.conversation_id) {
       this.store.settleInterruptedToolCalls(run.conversation_id, {
         agentId: run.agent_id,
       });
@@ -481,13 +513,17 @@ export class HeadlessBackend implements Backend {
       turnInput.conversationId,
       turnInput.agentId,
     );
-    const agent = effectiveAgentForConversation(
-      this.store.retrieveAgentRecord(turnInput.agentId),
-      this.store.retrieveConversation(
-        turnInput.conversationId,
-        turnInput.agentId,
-      ),
+    const conversation = this.store.retrieveConversation(
+      turnInput.conversationId,
+      turnInput.agentId,
     );
+    const agent =
+      turnInput.agentId === null
+        ? conversationExecutionConfig(conversation)
+        : effectiveAgentForConversation(
+            this.store.retrieveAgentRecord(turnInput.agentId),
+            conversation,
+          );
     const resolvedPrompt = await this.resolveSystemPromptForTurn({
       conversationId: turnInput.conversationId,
       agentId: turnInput.agentId,
@@ -531,7 +567,7 @@ export class HeadlessBackend implements Backend {
 
   protected async resolveSystemPromptForTurn(input: {
     conversationId: string;
-    agentId: string;
+    agentId: string | null;
     agent: ReturnType<LocalStore["retrieveAgentRecord"]>;
     body: ConversationMessageCreateBody | ConversationMessageStreamBody;
     history: ReturnType<LocalStore["listConversationMessages"]>;
@@ -544,11 +580,13 @@ export class HeadlessBackend implements Backend {
 
   private startRun(
     conversationId: string,
-    agentId: string,
+    agentId: string | null,
     body: ConversationMessageCreateBody | ConversationMessageStreamBody,
   ): Run {
     this.runSeq += 1;
     const createdAt = timestampForRun(this.runSeq);
+    // SDK Run still types agent_id as string. The local wire/persisted value
+    // intentionally remains null for agent-free conversations.
     const run = {
       id: `${this.runIdPrefix}${this.runSeq}`,
       agent_id: agentId,
@@ -655,7 +693,7 @@ export class HeadlessBackend implements Backend {
 
   private persistExecutorStream(
     conversationId: string,
-    agentId: string,
+    agentId: string | null,
     stream: Stream<LettaStreamingResponse>,
     runId: string,
   ): Stream<LettaStreamingResponse> {

@@ -280,7 +280,11 @@ describe("TUI interrupt queue lifecycle", () => {
     await waitFor(() => inputs.length === 1, "the normal turn");
     const input = inputs[0];
     if (!input) throw new Error("Missing first turn");
-    const source = await startMonitor(input);
+    if (input.agentId === null) throw new Error("Expected agent-backed turn");
+    const source = await startMonitor({
+      agentId: input.agentId,
+      conversationId: input.conversationId,
+    });
     // An event drives another complete turn while the source stays connected.
     source.socket.send("normal monitor event");
     await waitFor(
@@ -342,7 +346,11 @@ describe("TUI interrupt queue lifecycle", () => {
 
     const input = executor.inputs[0];
     if (!input) throw new Error("Missing first turn");
-    const source = await startMonitor(input);
+    if (input.agentId === null) throw new Error("Expected agent-backed turn");
+    const source = await startMonitor({
+      agentId: input.agentId,
+      conversationId: input.conversationId,
+    });
     source.socket.send("queued before Esc");
     await waitFor(
       () =>

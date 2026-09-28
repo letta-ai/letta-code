@@ -12,7 +12,6 @@ import {
 import { join } from "node:path";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
-import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
 import type {
   AgentCreateBody,
   AgentListBody,
@@ -40,6 +39,11 @@ import {
 import { selectLocalMessagesForFork } from "./local-conversation-fork";
 import { listLocalConversations } from "./local-conversation-list";
 import {
+  createLocalConversationRecord,
+  localConversationForkBody,
+  updateLocalConversationRecord,
+} from "./local-conversation-record";
+import {
   emptyLocalUsage,
   type LocalAssistantMessage,
   type LocalImageContent,
@@ -56,15 +60,14 @@ import {
   isLocalToolCallContent,
   mergeSnapshotContentWithExistingToolCalls,
   projectedMessageLookupKeys,
+  projectLocalMessageAtSourceIndex,
   projectLocalMessageToStoredMessages,
   removeOrphanLocalToolResults,
   sourceLocalMessageIdFromStoredMessageId,
-  withProjectedMessageDates,
 } from "./local-message-projection";
 import {
   normalizeLocalModelHandle,
   normalizeStoredLocalModelRecord,
-  supportedConversationModelSettingsFromBody,
   supportedModelSettingsFromBody,
 } from "./local-model-normalization";
 import {
@@ -147,105 +150,8 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-function optionalStringOrNull(value: unknown): string | null | undefined {
-  return typeof value === "string" || value === null ? value : undefined;
-}
-
 function currentIsoTimestamp(): string {
   return new Date().toISOString();
-}
-
-function createLocalConversationRecord(
-  conversationId: string,
-  agentId: string,
-  _sequence: number,
-  body: Partial<ConversationCreateBody> = {},
-): StoredConversation {
-  const bodyRecord = body as Record<string, unknown>;
-  const now = currentIsoTimestamp();
-  const modelSettings = supportedConversationModelSettingsFromBody(bodyRecord);
-  return {
-    id: conversationId,
-    agent_id: agentId,
-    archived: false,
-    archived_at: null,
-    created_at: now,
-    updated_at: now,
-    last_message_at: null,
-    summary: optionalStringOrNull(bodyRecord.summary) ?? null,
-    in_context_message_ids: [],
-    ...(typeof bodyRecord.model === "string" || bodyRecord.model === null
-      ? {
-          model:
-            bodyRecord.model === null
-              ? null
-              : normalizeLocalModelHandle(
-                  bodyRecord.model,
-                  modelSettings ?? {},
-                ),
-        }
-      : {}),
-    ...(modelSettings !== undefined ? { model_settings: modelSettings } : {}),
-    ...(typeof bodyRecord.context_window_limit === "number"
-      ? { context_window_limit: bodyRecord.context_window_limit }
-      : {}),
-    ...(typeof bodyRecord.hidden === "boolean"
-      ? { hidden: bodyRecord.hidden }
-      : {}),
-    ...(isStringArray(bodyRecord.tags) ? { tags: bodyRecord.tags } : {}),
-  } as StoredConversation;
-}
-
-function updateLocalConversationRecord(
-  current: StoredConversation,
-  body: ConversationUpdateBody,
-  updatedAt: string,
-): StoredConversation {
-  const bodyRecord = body as Record<string, unknown>;
-  const next: StoredConversation = {
-    ...current,
-    updated_at: updatedAt,
-  };
-  const modelSettings = supportedConversationModelSettingsFromBody(bodyRecord);
-  if (typeof bodyRecord.archived === "boolean") {
-    next.archived = bodyRecord.archived;
-    next.archived_at = bodyRecord.archived
-      ? (current.archived_at ?? updatedAt)
-      : null;
-  }
-  if (bodyRecord.archived === null) {
-    next.archived = false;
-    next.archived_at = null;
-  }
-  if (
-    typeof bodyRecord.last_message_at === "string" ||
-    bodyRecord.last_message_at === null
-  ) {
-    next.last_message_at = bodyRecord.last_message_at;
-  }
-  if (typeof bodyRecord.model === "string" || bodyRecord.model === null) {
-    next.model =
-      bodyRecord.model === null
-        ? null
-        : normalizeLocalModelHandle(bodyRecord.model, modelSettings ?? {});
-  }
-  if (modelSettings !== undefined) {
-    next.model_settings = modelSettings as StoredConversation["model_settings"];
-  }
-  if (typeof bodyRecord.context_window_limit === "number") {
-    (next as unknown as Record<string, unknown>).context_window_limit =
-      bodyRecord.context_window_limit;
-  }
-  if (typeof bodyRecord.hidden === "boolean") {
-    next.hidden = bodyRecord.hidden;
-  }
-  if (typeof bodyRecord.summary === "string" || bodyRecord.summary === null) {
-    next.summary = bodyRecord.summary;
-  }
-  if (isStringArray(bodyRecord.tags)) {
-    next.tags = bodyRecord.tags;
-  }
-  return next;
 }
 
 function textContent(text: string) {
@@ -334,7 +240,7 @@ function getIncludedMessageTypes(
 }
 
 export interface StoredTurnInput {
-  agentId: string;
+  agentId: string | null;
   conversationId: string;
 }
 
@@ -406,23 +312,6 @@ interface LocalTranscriptPersistOptions {
     previousMessages?: readonly LocalMessage[];
     stats?: LocalCompactionStats;
   };
-}
-
-function projectLocalMessageAtSourceIndex(
-  localMessage: LocalMessage,
-  agentId: string,
-  conversationId: string,
-  sourceIndex: number,
-): StoredMessage[] {
-  return withProjectedMessageDates(
-    projectLocalMessageToStoredMessages(
-      localMessage,
-      agentId,
-      conversationId,
-      new Date(Date.UTC(2026, 0, 1, 0, 0, sourceIndex + 1)).toISOString(),
-    ),
-    sourceIndex,
-  );
 }
 
 export class LocalStore {
@@ -794,7 +683,10 @@ export class LocalStore {
     };
   }
 
-  retrieveConversation(conversationId: string, agentId?: string): Conversation {
+  retrieveConversation(
+    conversationId: string,
+    agentId?: string | null,
+  ): StoredConversation {
     const existing = this.findConversation(conversationId, agentId);
     if (existing) return existing;
     if (this.strictConversationAccess) {
@@ -803,20 +695,39 @@ export class LocalStore {
     return this.ensureConversation(conversationId, agentId);
   }
 
-  listConversations(body?: ConversationListBody): Conversation[] {
+  listConversations(body?: ConversationListBody): StoredConversation[] {
     this.loadConversationRecordsFromStorage();
     this.refreshLoadedConversationRecordsFromStorage();
 
     return listLocalConversations(this.conversations.values(), body);
   }
 
-  createConversation(body: ConversationCreateBody): Conversation {
-    const agentId = body.agent_id ?? this.defaultAgentId;
-    if (this.strictAgentAccess && !this.agents.has(agentId)) {
-      throw new LocalBackendNotFoundError("Agent", agentId);
+  createConversation(body: ConversationCreateBody): StoredConversation {
+    const bodyRecord = body as unknown as Record<string, unknown>;
+    const agentId =
+      body.agent_id === null ? null : (body.agent_id ?? this.defaultAgentId);
+    if (agentId === null) {
+      const parentAgentId = bodyRecord.parent_agent_id;
+      if (
+        typeof parentAgentId !== "string" ||
+        parentAgentId.length === 0 ||
+        !this.refreshAgentRecordFromStorage(parentAgentId)
+      ) {
+        throw new LocalBackendNotFoundError("Agent", String(parentAgentId));
+      }
+      if (typeof bodyRecord.model !== "string" || !bodyRecord.model) {
+        throw new Error("Agent-free conversation requires a model");
+      }
+      if (typeof bodyRecord.system !== "string") {
+        throw new Error("Agent-free conversation requires a system prompt");
+      }
+    } else {
+      if (this.strictAgentAccess && !this.agents.has(agentId)) {
+        throw new LocalBackendNotFoundError("Agent", agentId);
+      }
+      this.ensureAgent(agentId);
     }
-    this.ensureAgent(agentId);
-    const conversationId = this.nextConversationId();
+    const conversationId = this.nextConversationId(agentId);
     const conversation = this.withConversationModelDefaults(
       createLocalConversationRecord(
         conversationId,
@@ -835,7 +746,7 @@ export class LocalStore {
   updateConversation(
     conversationId: string,
     body: ConversationUpdateBody,
-  ): Conversation {
+  ): StoredConversation {
     if (conversationId === "default") {
       throw new Error("Default conversation cannot be updated");
     }
@@ -907,11 +818,14 @@ export class LocalStore {
     if (!source) {
       throw new LocalBackendNotFoundError("Conversation", conversationId);
     }
-    const targetAgentId = options.agentId ?? source.agent_id;
-    if (this.strictAgentAccess && !this.agents.has(targetAgentId)) {
-      throw new LocalBackendNotFoundError("Agent", targetAgentId);
+    const targetAgentId =
+      options.agentId === undefined ? source.agent_id : options.agentId;
+    if (targetAgentId !== null) {
+      if (this.strictAgentAccess && !this.agents.has(targetAgentId)) {
+        throw new LocalBackendNotFoundError("Agent", targetAgentId);
+      }
+      this.ensureAgent(targetAgentId);
     }
-    this.ensureAgent(targetAgentId);
     const sourceMessages = selectLocalMessagesForFork(
       this.localMessagesForConversation(source.id, source.agent_id),
       options.messageId,
@@ -926,16 +840,7 @@ export class LocalStore {
       forkedConversationId,
       targetAgentId,
       this.conversationSeq,
-      {
-        summary: source.summary ?? null,
-        ...(source.model !== undefined ? { model: source.model } : {}),
-        ...(source.model_settings !== undefined
-          ? { model_settings: source.model_settings }
-          : {}),
-        ...(typeof options.hidden === "boolean"
-          ? { hidden: options.hidden }
-          : {}),
-      } as Partial<ConversationCreateBody>,
+      localConversationForkBody(source, targetAgentId, options.hidden),
     );
     const forkedMessages = sourceMessages.map((message) =>
       this.cloneLocalMessageForConversation(message, forked.id, targetAgentId),
@@ -958,15 +863,23 @@ export class LocalStore {
     body: ConversationMessageCreateBody | ConversationMessageStreamBody,
   ): StoredTurnInput {
     const bodyWithAgent = body as {
-      agent_id?: string;
+      agent_id?: string | null;
       messages?: Array<Record<string, unknown>>;
     };
     const agentId =
-      bodyWithAgent.agent_id ?? this.agentIdForConversation(conversationId);
-    if (this.strictAgentAccess && !this.agents.has(agentId)) {
-      throw new LocalBackendNotFoundError("Agent", agentId);
+      bodyWithAgent.agent_id === undefined
+        ? this.agentIdForConversation(conversationId)
+        : bodyWithAgent.agent_id;
+    const existingConversation = this.findConversation(conversationId, agentId);
+    if (existingConversation && existingConversation.agent_id !== agentId) {
+      throw new LocalBackendNotFoundError("Conversation", conversationId);
     }
-    this.ensureAgent(agentId);
+    if (agentId !== null) {
+      if (this.strictAgentAccess && !this.agents.has(agentId)) {
+        throw new LocalBackendNotFoundError("Agent", agentId);
+      }
+      this.ensureAgent(agentId);
+    }
     if (
       this.strictConversationAccess &&
       !this.findConversation(conversationId, agentId)
@@ -994,7 +907,7 @@ export class LocalStore {
 
   appendStreamChunk(
     conversationId: string,
-    agentId: string,
+    agentId: string | null,
     chunk: LettaStreamingResponse,
   ): LettaStreamingResponse {
     const localMessageSnapshot = getAttachedLocalMessage(chunk);
@@ -1036,9 +949,14 @@ export class LocalStore {
     ) as unknown as LettaStreamingResponse;
   }
 
-  listLocalMessages(conversationId: string, agentId?: string): LocalMessage[] {
+  listLocalMessages(
+    conversationId: string,
+    agentId?: string | null,
+  ): LocalMessage[] {
     const resolvedAgentId =
-      agentId ?? this.agentIdForConversation(conversationId);
+      agentId === undefined
+        ? this.agentIdForConversation(conversationId)
+        : agentId;
     this.ensureConversation(conversationId, resolvedAgentId);
     return this.localMessagesForConversation(
       conversationId,
@@ -1048,7 +966,7 @@ export class LocalStore {
 
   settleInterruptedToolCalls(
     conversationIdOrAgentId: string,
-    options: { agentId?: string; reason?: string } = {},
+    options: { agentId?: string | null; reason?: string } = {},
   ): number {
     const targets = this.toolSettlementTargets(
       conversationIdOrAgentId,
@@ -1065,13 +983,13 @@ export class LocalStore {
     return settledCount;
   }
 
-  resolveAgentIdForConversation(conversationId: string): string {
+  resolveAgentIdForConversation(conversationId: string): string | null {
     return this.agentIdForConversation(conversationId);
   }
 
   getCompiledSystemPrompt(
     conversationId: string,
-    agentId: string,
+    agentId: string | null,
   ): LocalCompiledSystemPrompt | undefined {
     this.findConversation(conversationId, agentId);
     const key = this.conversationKey(conversationId, agentId);
@@ -1080,7 +998,7 @@ export class LocalStore {
 
   setCompiledSystemPrompt(
     conversationId: string,
-    agentId: string,
+    agentId: string | null,
     prompt: LocalCompiledSystemPrompt,
   ): void {
     const conversation = this.ensureConversation(conversationId, agentId);
@@ -1112,13 +1030,23 @@ export class LocalStore {
     conversationId: string,
     body?: ConversationMessageListBody,
   ): StoredMessage[] {
+    const requestedAgentId = (body as { agent_id?: string | null } | undefined)
+      ?.agent_id;
     const agentId =
-      (body as { agent_id?: string } | undefined)?.agent_id ??
-      this.agentIdForConversation(conversationId);
-    if (this.strictAgentAccess && !this.agents.has(agentId)) {
+      requestedAgentId === undefined
+        ? this.agentIdForConversation(conversationId)
+        : requestedAgentId;
+    if (
+      agentId !== null &&
+      this.strictAgentAccess &&
+      !this.agents.has(agentId)
+    ) {
       throw new LocalBackendNotFoundError("Agent", agentId);
     }
     const conversation = this.findConversation(conversationId, agentId);
+    if (conversation && conversation.agent_id !== agentId) {
+      throw new LocalBackendNotFoundError("Conversation", conversationId);
+    }
     if (!conversation) {
       if (this.strictConversationAccess) {
         throw new LocalBackendNotFoundError("Conversation", conversationId);
@@ -1177,7 +1105,7 @@ export class LocalStore {
 
   compactConversationAll(input: {
     conversationId: string;
-    agentId: string;
+    agentId: string | null;
     summary: string;
     packedSummary: string;
     stats?: LocalCompactionStats;
@@ -1244,7 +1172,7 @@ export class LocalStore {
 
   private appendUserLocalMessage(
     conversationId: string,
-    agentId: string,
+    agentId: string | null,
     message: Record<string, unknown>,
   ): LocalMessage {
     const conversation = this.ensureConversation(conversationId, agentId);
@@ -1270,7 +1198,7 @@ export class LocalStore {
 
   private applyVisibleChunkToLocalMessages(
     conversationId: string,
-    agentId: string,
+    agentId: string | null,
     chunk: LettaStreamingResponse,
     storedChunk: StoredMessage,
   ): void {
@@ -1330,7 +1258,7 @@ export class LocalStore {
 
   private applyFinalAssistantMessage(
     conversationId: string,
-    agentId: string,
+    agentId: string | null,
     message: LocalMessage,
   ): void {
     if (message.role !== "assistant") return;
@@ -1383,7 +1311,7 @@ export class LocalStore {
 
   private appendAssistantText(
     conversationId: string,
-    agentId: string,
+    agentId: string | null,
     text: string,
     storedChunk: StoredMessage,
   ): void {
@@ -1403,7 +1331,7 @@ export class LocalStore {
 
   private appendAssistantReasoning(
     conversationId: string,
-    agentId: string,
+    agentId: string | null,
     text: string,
     storedChunk: StoredMessage,
   ): void {
@@ -1423,7 +1351,7 @@ export class LocalStore {
 
   private appendAssistantToolCall(
     conversationId: string,
-    agentId: string,
+    agentId: string | null,
     toolCall: { toolCallId: string; toolName: string; input: unknown },
     storedChunk: StoredMessage,
   ): void {
@@ -1472,7 +1400,7 @@ export class LocalStore {
 
   private findToolResult(
     conversationId: string,
-    agentId: string,
+    agentId: string | null,
     toolCallId: string,
   ): LocalToolResultMessage | undefined {
     // Only consulted for in-window tool calls; results follow their call.
@@ -1487,7 +1415,7 @@ export class LocalStore {
 
   private appendToolResultMessage(input: {
     conversationId: string;
-    agentId: string;
+    agentId: string | null;
     toolCall: LocalToolCall;
     content: LocalToolResultMessage["content"];
     isError: boolean;
@@ -1527,7 +1455,7 @@ export class LocalStore {
 
   private applyApprovalResults(
     conversationId: string,
-    agentId: string,
+    agentId: string | null,
     approvals: unknown[],
   ): void {
     for (const approval of approvals) {
@@ -1570,7 +1498,7 @@ export class LocalStore {
 
   private settleInterruptedToolCallsForConversation(
     conversationId: string,
-    agentId: string,
+    agentId: string | null,
     reason: string,
   ): number {
     const conversation = this.findConversation(conversationId, agentId);
@@ -1606,7 +1534,7 @@ export class LocalStore {
 
   private rollbackUnpersistedTrailingAssistantMessage(
     conversation: StoredConversation,
-    agentId: string,
+    agentId: string | null,
   ): void {
     const key = this.conversationKey(conversation.id, agentId);
     const messages = this.residentLocalMessagesForConversation(
@@ -1640,7 +1568,7 @@ export class LocalStore {
 
   private findToolCall(
     conversationId: string,
-    agentId: string,
+    agentId: string | null,
     toolCallId: string,
   ):
     | { message: LocalAssistantMessage; content: LocalToolCallContent }
@@ -1677,7 +1605,7 @@ export class LocalStore {
 
   private assistantLocalMessageForAppend(
     conversationId: string,
-    agentId: string,
+    agentId: string | null,
     _storedChunk: StoredMessage,
   ): LocalAssistantMessage {
     const conversation = this.ensureConversation(conversationId, agentId);
@@ -1769,7 +1697,7 @@ export class LocalStore {
 
   private createStoredChunk(
     conversationId: string,
-    agentId: string,
+    agentId: string | null,
     fields: Record<string, unknown>,
   ): StoredMessage {
     const conversation = this.ensureConversation(conversationId, agentId);
@@ -1823,7 +1751,7 @@ export class LocalStore {
 
   private projectLocalMessages(
     localMessages: readonly LocalMessage[],
-    agentId: string,
+    agentId: string | null,
     conversationId: string,
     options: { sourceStartIndex?: number; updateIndex?: boolean } = {},
   ): StoredMessage[] {
@@ -1857,7 +1785,7 @@ export class LocalStore {
    */
   private indexMatchingMessageInList(
     localMessages: readonly LocalMessage[],
-    agentId: string,
+    agentId: string | null,
     conversationId: string,
     messageId: string,
     sourceStartIndex: number,
@@ -1885,7 +1813,7 @@ export class LocalStore {
 
   private projectTailMessagesForConversation(
     conversationId: string,
-    agentId: string,
+    agentId: string | null,
     body?: ConversationMessageListBody,
   ): StoredMessage[] | undefined {
     const limit = getListLimit(body);
@@ -1938,7 +1866,7 @@ export class LocalStore {
 
   private projectedMessagesForConversation(
     conversationId: string,
-    agentId: string,
+    agentId: string | null,
   ): StoredMessage[] {
     const key = this.conversationKey(conversationId, agentId);
     const conversation = this.conversations.get(key);
@@ -2092,7 +2020,7 @@ export class LocalStore {
    */
   private localMessagesForConversation(
     conversationId: string,
-    agentId: string,
+    agentId: string | null,
   ): LocalMessage[] {
     this.findConversation(conversationId, agentId);
     const key = this.conversationKey(conversationId, agentId);
@@ -2122,7 +2050,7 @@ export class LocalStore {
    */
   private residentLocalMessagesForConversation(
     conversationId: string,
-    agentId: string,
+    agentId: string | null,
   ): LocalMessage[] {
     this.findConversation(conversationId, agentId);
     const key = this.conversationKey(conversationId, agentId);
@@ -2143,7 +2071,7 @@ export class LocalStore {
    */
   private readConversationMessagesFromDisk(
     key: string,
-    agentId: string,
+    agentId: string | null,
   ):
     | {
         messages: LocalMessage[];
@@ -2239,7 +2167,7 @@ export class LocalStore {
   private loadConversationMessages(
     key: string,
     conversationId: string,
-    agentId: string,
+    agentId: string | null,
   ): void {
     const read = this.readConversationMessagesFromDisk(key, agentId);
     if (!read) {
@@ -2268,7 +2196,7 @@ export class LocalStore {
   private loadConversationMessageTail(
     key: string,
     conversationId: string,
-    agentId: string,
+    agentId: string | null,
   ): void {
     const metadata = this.validateTranscriptMetadata(key);
     if (
@@ -2403,7 +2331,7 @@ export class LocalStore {
 
   private pushLocalMessage(
     conversationId: string,
-    agentId: string,
+    agentId: string | null,
     message: LocalMessage,
   ): void {
     const messages = this.residentLocalMessagesForConversation(
@@ -2441,7 +2369,7 @@ export class LocalStore {
 
   private persistPendingAssistantMessage(
     conversationId: string,
-    agentId: string,
+    agentId: string | null,
   ): void {
     const messages = this.residentLocalMessagesForConversation(
       conversationId,
@@ -2464,7 +2392,7 @@ export class LocalStore {
 
   private touchConversationForLocalMessage(
     conversationId: string,
-    agentId: string,
+    agentId: string | null,
     message: LocalMessage,
   ): void {
     const key = this.conversationKey(conversationId, agentId);
@@ -2485,7 +2413,7 @@ export class LocalStore {
   private cloneLocalMessageForConversation(
     message: LocalMessage,
     conversationId: string,
-    agentId: string,
+    agentId: string | null,
   ): LocalMessage {
     const cloned = cloneLocalMessage(message);
     const date = cloned.metadata?.created_at ?? this.nextLocalMessageDate();
@@ -2658,7 +2586,7 @@ export class LocalStore {
         "utf8",
       );
       const conversation = JSON.parse(recordJson) as StoredConversation;
-      if (!conversation?.id || !conversation.agent_id) return undefined;
+      if (!this.isValidStoredConversation(conversation)) return undefined;
       return this.cacheConversationRecord(conversationDir, conversation, {
         recordJson,
       });
@@ -2686,7 +2614,7 @@ export class LocalStore {
       const cachedJson = this.conversationRecordJsonByKey.get(key);
       if (existing && cachedJson === recordJson) return existing;
       const conversation = JSON.parse(recordJson) as StoredConversation;
-      if (!conversation?.id || !conversation.agent_id) return existing;
+      if (!this.isValidStoredConversation(conversation)) return existing;
       const loadedKey = this.conversationKey(
         conversation.id,
         conversation.agent_id,
@@ -2736,6 +2664,22 @@ export class LocalStore {
       }
       this.loadConversationRecordFromDir(conversationDir);
     }
+  }
+
+  private isValidStoredConversation(conversation: StoredConversation): boolean {
+    if (!conversation?.id) return false;
+    if (
+      typeof conversation.agent_id === "string" &&
+      conversation.agent_id.length > 0
+    )
+      return true;
+    return (
+      conversation.agent_id === null &&
+      typeof conversation.parent_agent_id === "string" &&
+      conversation.parent_agent_id.length > 0 &&
+      typeof conversation.model === "string" &&
+      typeof conversation.system === "string"
+    );
   }
 
   private refreshLoadedConversationRecordsFromStorage(): void {
@@ -2847,7 +2791,7 @@ export class LocalStore {
 
   private persistConversationState(
     conversationId: string,
-    agentId: string,
+    agentId: string | null,
     options: LocalTranscriptPersistOptions = {},
   ): void {
     if (!this.storageDir) return;
@@ -3146,7 +3090,7 @@ export class LocalStore {
 
   private persistCompiledSystemPrompt(
     conversationId: string,
-    agentId: string,
+    agentId: string | null,
   ): void {
     if (!this.storageDir) return;
     const key = this.conversationKey(conversationId, agentId);
@@ -3166,11 +3110,16 @@ export class LocalStore {
 
   private ensureConversation(
     conversationId: string,
-    agentId?: string,
+    agentId?: string | null,
   ): StoredConversation {
-    const resolvedAgentId = agentId ?? this.defaultAgentId;
+    const resolvedAgentId =
+      agentId === undefined ? this.defaultAgentId : agentId;
     const existing = this.findConversation(conversationId, resolvedAgentId);
     if (existing) return existing;
+    // Never fabricate agent-free conversations without explicit parent provenance.
+    if (resolvedAgentId === null) {
+      throw new LocalBackendNotFoundError("Conversation", conversationId);
+    }
 
     const key = this.conversationKey(conversationId, resolvedAgentId);
 
@@ -3189,8 +3138,9 @@ export class LocalStore {
     return conversation;
   }
 
-  private nextConversationId(agentId?: string): string {
-    const resolvedAgentId = agentId ?? this.defaultAgentId;
+  private nextConversationId(agentId?: string | null): string {
+    const resolvedAgentId =
+      agentId === undefined ? this.defaultAgentId : agentId;
     for (;;) {
       this.conversationSeq += 1;
       const conversationId = `${this.conversationIdPrefix}${this.conversationSeq}`;
@@ -3204,14 +3154,16 @@ export class LocalStore {
 
   private findConversation(
     conversationId: string,
-    agentId?: string,
+    agentId?: string | null,
   ): StoredConversation | undefined {
-    if (agentId) {
+    if (agentId !== undefined) {
       const key = this.conversationKey(conversationId, agentId);
       const direct = this.refreshConversationRecordFromStorage(key);
-      if (direct || conversationId === "default") return direct;
+      if (direct || conversationId === "default")
+        return direct?.agent_id === agentId ? direct : undefined;
       this.loadConversationRecordsFromStorage();
-      return this.refreshConversationRecordFromStorage(key);
+      const loaded = this.refreshConversationRecordFromStorage(key);
+      return loaded?.agent_id === agentId ? loaded : undefined;
     }
     if (conversationId === "default") {
       const key = this.conversationKey(conversationId, this.defaultAgentId);
@@ -3221,14 +3173,19 @@ export class LocalStore {
     const direct = this.refreshConversationRecordFromStorage(key);
     if (direct) return direct;
     this.loadConversationRecordsFromStorage();
-    return this.refreshConversationRecordFromStorage(key);
+    return (
+      this.refreshConversationRecordFromStorage(key) ??
+      this.refreshConversationRecordFromStorage(
+        this.conversationKey(conversationId, null),
+      )
+    );
   }
 
   private toolSettlementTargets(
     conversationIdOrAgentId: string,
-    agentId?: string,
-  ): Array<{ conversationId: string; agentId: string }> {
-    if (agentId) {
+    agentId?: string | null,
+  ): Array<{ conversationId: string; agentId: string | null }> {
+    if (agentId !== undefined) {
       const conversation = this.findConversation(
         conversationIdOrAgentId,
         agentId,
@@ -3261,16 +3218,18 @@ export class LocalStore {
     return [];
   }
 
-  private agentIdForConversation(conversationId: string): string {
+  private agentIdForConversation(conversationId: string): string | null {
     if (conversationId === "default") return this.defaultAgentId;
-    return (
-      this.findConversation(conversationId)?.agent_id ?? this.defaultAgentId
-    );
+    const conversation = this.findConversation(conversationId);
+    return conversation ? conversation.agent_id : this.defaultAgentId;
   }
 
-  private conversationKey(conversationId: string, agentId: string): string {
+  private conversationKey(
+    conversationId: string,
+    agentId: string | null,
+  ): string {
     return conversationId === "default"
-      ? `default:${agentId}`
+      ? `default:${agentId ?? "agent-free"}`
       : `conversation:${conversationId}`;
   }
 }
