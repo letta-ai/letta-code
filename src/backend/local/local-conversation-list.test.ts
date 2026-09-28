@@ -333,8 +333,12 @@ describe("listLocalConversations", () => {
       });
       const compiledChild = await reopened.recompileConversation(detached.id);
       expect(compiledChild.match(/<memory_metadata>/g)).toHaveLength(1);
-      expect(compiledChild).toContain(`- AGENT_ID: ${detached.id}`);
-      expect(compiledChild).not.toContain(`- AGENT_ID: ${parent.id}`);
+      const childMetadata = compiledChild.match(
+        /<memory_metadata>[\s\S]*?<\/memory_metadata>/,
+      )?.[0];
+      expect(childMetadata).toContain(`- CONVERSATION_ID: ${detached.id}`);
+      expect(childMetadata).not.toContain("- AGENT_ID:");
+      expect(childMetadata).not.toContain(parent.id);
       const messages = (
         await reopened.listConversationMessages(detached.id)
       ).getPaginatedItems();
