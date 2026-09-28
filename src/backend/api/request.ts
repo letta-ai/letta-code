@@ -27,6 +27,7 @@ export class ApiRequestError extends Error {
     message: string,
     readonly status: number,
     readonly responseText: string,
+    readonly headers?: Headers,
   ) {
     super(message);
     this.name = "ApiRequestError";
@@ -133,6 +134,7 @@ export async function apiRequest<T>(
       `API error (${response.status}): ${text}`,
       response.status,
       text,
+      response.headers,
     );
   }
 

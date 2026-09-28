@@ -4,6 +4,7 @@ import {
   buildAgentSendContent,
   normalizeAgentMessageComputer,
   resolveAgentMessageDestination,
+  resolveAgentMessagePullRequestConversationIds,
   validateAddress,
 } from "@/backend/api/agent-message";
 import {
@@ -17,6 +18,7 @@ import { ApiRequestError } from "@/backend/api/request";
 import type { ParsedCliArgs } from "@/cli/args";
 import { normalizeConversationShorthandFlags } from "@/cli/flag-utils";
 import type { SystemInitMessage } from "@/types/protocol";
+import { GITHUB_PR_CONVERSATIONS_ENV } from "@/utils/subagent-launch-marker";
 import {
   EnqueuedWaitError,
   waitForEnqueuedReply,
@@ -26,7 +28,11 @@ import { resolveEnvironmentMaxWaitMs } from "./headless-environment-response";
 type SendValues = ParsedCliArgs["values"];
 type SendBackend = Pick<
   Backend,
-  "capabilities" | "retrieveConversation" | "createConversation" | "retrieveRun"
+  | "capabilities"
+  | "retrieveConversation"
+  | "retrieveAgent"
+  | "createConversation"
+  | "retrieveRun"
 >;
 
 export function shouldEnqueueCloudSend(
@@ -244,6 +250,17 @@ export async function tryCloudHeadlessSend(
       throw new Error(
         "Conversation status stream closed before submission; nothing was sent.",
       );
+    const githubPullRequestConversationIds =
+      await resolveAgentMessagePullRequestConversationIds(
+        {
+          sender,
+          target: { agentId, conversationId },
+          inheritedConversationIds:
+            env[GITHUB_PR_CONVERSATIONS_ENV]?.split(","),
+        },
+        backend,
+        controller.signal,
+      );
     submissionAttempted = true;
     receipt = await (deps.enqueue ?? enqueueConversationMessage)(
       {
@@ -252,6 +269,7 @@ export async function tryCloudHeadlessSend(
         clientMessageId,
         content: buildAgentSendContent(sender, noWait, prompt),
         computer,
+        githubPullRequestConversationIds,
       },
       AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]),
     );

@@ -53,6 +53,7 @@ import {
   getIntendedCronOccurrence,
 } from "./prompt";
 import { safeAppendCronRunLogForTask } from "./run-log";
+import { isManagedCloudSandbox } from "./runner";
 import { SCHEDULE_ORIGIN_TAG } from "./scheduled-task-prompt";
 
 export {
@@ -502,6 +503,14 @@ export async function runCronTaskNow(taskId: string): Promise<{
   task?: CronTask;
   error?: string;
 }> {
+  if (isManagedCloudSandbox()) {
+    return {
+      success: false,
+      found: false,
+      error: "Local schedules cannot run in a managed Cloud sandbox",
+    };
+  }
+
   const task = getTask(taskId);
   if (!task) {
     return { success: false, found: false, error: "Schedule not found" };
@@ -688,6 +697,10 @@ export function startScheduler(
   processQueuedTurn: ProcessQueuedTurn,
   _retryCount = 0,
 ): void {
+  if (isManagedCloudSandbox()) {
+    return;
+  }
+
   // Always store the listener context so runCronTaskNow ("Send now") works
   // even when this process doesn't hold the scheduler lease.
   listenerFireContext = { socket, opts, processQueuedTurn };

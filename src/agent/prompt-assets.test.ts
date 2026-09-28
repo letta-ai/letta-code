@@ -5,14 +5,12 @@ import {
   SYSTEM_PROMPTS,
   shouldRecommendDefaultPrompt,
 } from "@/agent/prompt-assets";
-import historyAnalyzerV2Prompt from "@/agent/subagents/builtin/history-analyzer-v2.md";
 import initV2Prompt from "@/agent/subagents/builtin/init-v2.md";
 import memoryV2Prompt from "@/agent/subagents/builtin/memory-v2.md";
 import reflectionV2Prompt from "@/agent/subagents/builtin/reflection-v2.md";
 import { resolveAndBuildSystemPrompt } from "@/agent/system-prompt-resolution";
-import initializingMemoryRootPrompt from "@/skills/builtin/initializing-memory/ROOT_MEMORY.md";
-import memoryApplyPatchV2Prompt from "@/tools/descriptions/MemoryApplyPatchV2.md";
-import memoryV2ToolPrompt from "@/tools/descriptions/MemoryV2.md";
+import initializingMemoryPrompt from "@/skills/builtin/initializing-memory/SKILL.md";
+import { TOOLSET_CATALOG } from "@/tools/toolset-catalog";
 
 const HOSTED_EXTERNAL_MEMORY_INTRO =
   "External memory is stored outside of the system prompt, including both skills (procedural memory), general-purpose files (markdown files, images, etc.), and shared memory.";
@@ -20,13 +18,10 @@ const LOCAL_EXTERNAL_MEMORY_INTRO =
   "External memory is stored outside of the system prompt, including both skills (procedural memory) and general-purpose files (markdown files, images, etc.).";
 
 const ROOT_ONLY_PROMPT_ASSETS = [
-  initializingMemoryRootPrompt,
+  initializingMemoryPrompt,
   initV2Prompt,
   memoryV2Prompt,
   reflectionV2Prompt,
-  historyAnalyzerV2Prompt,
-  memoryV2ToolPrompt,
-  memoryApplyPatchV2Prompt,
 ];
 const SYSTEM_DIRECTORY_PATH = /(^|[^A-Za-z0-9_-])(?:\$MEMORY_DIR\/)?system\//m;
 
@@ -99,8 +94,6 @@ describe("buildSystemPrompt", () => {
     expect(result).toBe(preset?.localMemfsContent?.trim() ?? "");
     expect(result).not.toBe(buildSystemPrompt("letta", "memfs"));
     expect(result).toContain("$MEMORY_DIR");
-    expect(result).toContain('subagent_type: "memory"');
-    expect(result).toContain("Continue your current work immediately");
     expect(result).not.toContain("git push");
     expect(result).not.toContain("Shared memory");
   });
@@ -140,32 +133,12 @@ describe("buildSystemPrompt", () => {
     }
   });
 
-  test("root memory tool prompts retain operations and safety guidance", () => {
-    for (const command of [
-      "str_replace",
-      "insert",
-      "delete",
-      "rename",
-      "update_description",
-      "create",
-    ]) {
-      expect(memoryV2ToolPrompt).toContain(`memory(command="${command}"`);
-    }
-    expect(memoryApplyPatchV2Prompt).toContain(
-      "`read_only: true` files cannot be modified",
-    );
-  });
-
   test.each(["memfs", "local-memfs", "root-memfs"] as const)(
-    "%s keeps incidental upkeep in the background and primary memory work direct",
+    "%s defers delegation policy to the Agent tool and keeps direct editing",
     (mode) => {
       const result = buildSystemPrompt("letta", mode);
-      expect(result).toContain('subagent_type: "memory"');
-      expect(result).toContain("Continue your current work immediately");
-      expect(result).toContain("**Memory upkeep during another task:**");
-      expect(result).toContain("**Memory as the main task:**");
-      expect(result).toContain("ordinary file tools and shell/Git commands");
-      expect(result).toContain("Complete and verify the requested work");
+      expect(result).toContain("`memory` subagent's entry in the Agent tool");
+      expect(result).not.toContain("**Memory upkeep during another task:**");
       expect(result).toContain("git commit --author=");
       expect(result).not.toContain("Delegate all memory changes");
       expect(result).not.toContain("Leave memory writes and Git repair");
@@ -276,6 +249,11 @@ describe("shouldRecommendDefaultPrompt", () => {
   test("returns true for a different preset", () => {
     const current = buildSystemPrompt("source-claude", "standard");
     expect(shouldRecommendDefaultPrompt(current, "standard")).toBe(true);
+    expect(current).toContain("TaskCreate");
+    expect(current).toContain("TaskUpdate");
+    expect(current).not.toContain("TodoWrite");
+    expect(TOOLSET_CATALOG.default.tools).toContain("TaskCreate");
+    expect(TOOLSET_CATALOG.default.tools).toContain("TaskUpdate");
   });
 
   test("returns true for a fully custom prompt", () => {

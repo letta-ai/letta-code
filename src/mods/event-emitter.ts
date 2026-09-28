@@ -9,6 +9,8 @@ import type {
 // implementations are guarded, so lower layers can emit events without
 // depending on adapter lifecycle or registry APIs.
 export type ModEvents = {
+  /** Synchronous capability check used when execution cannot outlive a hook. */
+  hasHandlers?: (name: ModEventName) => boolean;
   emit: <TName extends ModEventName>(
     name: TName,
     event: ModEventMap[TName],

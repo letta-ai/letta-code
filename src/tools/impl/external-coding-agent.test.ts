@@ -176,24 +176,63 @@ describe("external coding agent output and preflight", () => {
     },
   );
 
-  test.each(["claude-code", "codex"] as const)(
-    "returns clear authentication failures for %s",
-    async (type) => {
-      const result = await runExternalCodingAgent(
-        { type, prompt: "test", parentAgentId: "parent" },
-        {
-          runPreflight: async () => ({
-            exitCode: type === "claude-code" ? 0 : 1,
-            stdout:
-              type === "claude-code" ? '{"loggedIn":false}' : "Not logged in",
-            stderr: "",
-          }),
+  test("returns a clear Claude Code authentication failure", async () => {
+    const type = "claude-code";
+    const result = await runExternalCodingAgent(
+      { type, prompt: "test", parentAgentId: "parent" },
+      {
+        runPreflight: async () => ({
+          exitCode: 0,
+          stdout: '{"loggedIn":false}',
+          stderr: "",
+        }),
+      },
+    );
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("authentication is not ready");
+  });
+
+  test("uses the Codex app-server turn even when native login status would fail", async () => {
+    const preflightArgs: string[][] = [];
+    const result = await runExternalCodingAgent(
+      { type: "codex", prompt: "test", parentAgentId: "parent" },
+      {
+        runPreflight: async (_executable, args) => {
+          preflightArgs.push(args);
+          return { exitCode: 0, stdout: "codex-cli 0.151.0", stderr: "" };
         },
-      );
-      expect(result.success).toBe(false);
-      expect(result.error).toContain("authentication is not ready");
-    },
-  );
+        runCodexTurn: async () => ({
+          agentId: "codex_thread-1",
+          report: "completed through configured provider",
+          success: true,
+        }),
+      },
+    );
+    expect(preflightArgs).toEqual([["--version"]]);
+    expect(result.success).toBe(true);
+    expect(result.report).toContain("configured provider");
+  });
+
+  test("reports the real Codex turn's provider failure instead of declaring login success", async () => {
+    const result = await runExternalCodingAgent(
+      { type: "codex", prompt: "test", parentAgentId: "parent" },
+      {
+        runPreflight: async () => ({
+          exitCode: 0,
+          stdout: "codex-cli 0.151.0",
+          stderr: "",
+        }),
+        runCodexTurn: async () => ({
+          agentId: "parent",
+          report: "",
+          success: false,
+          error: "No ChatGPT connection is available",
+        }),
+      },
+    );
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("No ChatGPT connection");
+  });
 
   test.each([
     ["claude-code", '{"loggedIn":true}', '{"result":"done","session_id":"c1"}'],

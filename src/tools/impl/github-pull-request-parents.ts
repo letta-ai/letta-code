@@ -1,4 +1,5 @@
 import { getParentConversationScopes } from "@/agent/subagents/parent-conversation";
+import type { AgentRetrieveOptions } from "@/backend";
 import { debugLog } from "@/utils/debug";
 
 export interface ParentConversationBackend {
@@ -6,7 +7,7 @@ export interface ParentConversationBackend {
     id: string,
     options?: { signal?: AbortSignal },
   ): Promise<unknown>;
-  retrieveAgent(id: string): Promise<unknown>;
+  retrieveAgent(id: string, options?: AgentRetrieveOptions): Promise<unknown>;
 }
 
 /** Yield named parents as they are found, without delaying already-known writes. */
@@ -29,7 +30,9 @@ export async function* getPullRequestParentConversationIds(
       const record =
         current.conversationId === "default"
           ? current.agentId
-            ? await backend.retrieveAgent(current.agentId)
+            ? await backend.retrieveAgent(current.agentId, {
+                include: ["agent.tags"],
+              })
             : undefined
           : await backend.retrieveConversation(current.conversationId, {
               signal,

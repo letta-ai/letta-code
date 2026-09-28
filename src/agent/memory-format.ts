@@ -5,16 +5,9 @@ export type LocalMemoryFormat = "memfs-v1" | "memfs-v2";
 
 export function detectMemoryFormat(
   memoryDir: string,
-  localMemfs: boolean,
+  _localMemfs: boolean,
 ): LocalMemoryFormat {
-  return !localMemfs && existsSync(join(memoryDir, "MEMORY.md"))
-    ? "memfs-v2"
-    : "memfs-v1";
-}
-
-export function isMemoryIndexPath(relativePath: string): boolean {
-  const normalized = relativePath.replace(/\\/g, "/");
-  return normalized === "MEMORY.md" || normalized.endsWith("/MEMORY.md");
+  return existsSync(join(memoryDir, "MEMORY.md")) ? "memfs-v2" : "memfs-v1";
 }
 
 export function isCoreMemoryPath(
@@ -45,26 +38,4 @@ export function isProjectedMemoryPath(
     if (!allPaths.has(`${current}/MEMORY.md`)) return false;
   }
   return true;
-}
-
-export function assertMemfsV2MemoryPathIndexed(
-  memoryDir: string,
-  relativePath: string,
-  markerExists: (relativePath: string) => boolean = (marker) =>
-    existsSync(join(memoryDir, marker)),
-): void {
-  const normalized = relativePath.replace(/\\/g, "/");
-  if (normalized === "MEMORY.md") return;
-  if (!markerExists("MEMORY.md")) {
-    throw new Error("Memory requires a root MEMORY.md index");
-  }
-  const directories = normalized.split("/").slice(0, -1);
-  let current = "";
-  for (const directory of directories) {
-    current = current ? `${current}/${directory}` : directory;
-    const marker = `${current}/MEMORY.md`;
-    if (marker !== normalized && !markerExists(marker)) {
-      throw new Error(`Memory requires ${marker} before writing ${normalized}`);
-    }
-  }
 }

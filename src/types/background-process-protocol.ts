@@ -22,7 +22,7 @@ export interface MonitorBackgroundProcessSummary {
   process_id: string;
   kind: "monitor";
   description: string;
-  source: "command" | "websocket";
+  source: "command" | "websocket" | "github_pull_request";
   started_at_ms: number;
   status: "running";
   persistent: boolean;

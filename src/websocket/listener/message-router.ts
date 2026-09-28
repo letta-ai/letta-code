@@ -297,7 +297,6 @@ export function createListenerMessageHandler(
         handleAppServerInfoCommand(parsed, { socket, safeSocketSend });
         return;
       }
-
       if (
         handleRuntimeStartProtocolCommand(parsed, {
           socket,
@@ -307,11 +306,12 @@ export function createListenerMessageHandler(
           runDetachedListenerTask,
           getOrCreateScopedRuntime,
           replaySyncStateForRuntime,
+          queuePumpOptions: opts,
+          processQueuedTurn,
         })
       ) {
         return;
       }
-
       if (parsed.type === "teleport_probe") {
         handleTeleportProbe(parsed, socket, safeSocketSend);
         return;

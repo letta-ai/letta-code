@@ -67,12 +67,6 @@ function conflict() {
   git("commit", "-q", "-am", "main");
   expect(() => git("merge", "other")).toThrow();
 }
-const conflictSync = async () => ({
-  status: "conflict" as const,
-  summary: "merge in progress",
-  memoryDir: root,
-  localOnly: true,
-});
 const localSync = (status: "skipped" | "clean") => async () => ({
   status,
   summary: status,
@@ -397,27 +391,70 @@ test("a repair that reports success without resolving is caught by the sync", as
   expect(refreshed).toBe(false);
 });
 
-test("a sync conflict after an update triggers repair before the worker completes", async () => {
-  let launched = false;
+test("an invalid committed tree runs its repair worker in place", async () => {
+  const token = await claim();
+  let syncCalls = 0;
+  let executions = 0;
   const result = await runMemoryWorker(
-    scope(),
+    scope(token),
     async (dir) => {
-      writeFileSync(join(dir, "note.md"), "edited\n");
-      gitIn(dir, "commit", "-am", "edit");
-      return { agentId: "agent-worker", success: true, report: "edited" };
+      executions++;
+      expect(dir).toBe(root);
+      return { agentId: "agent-repair", success: true, report: "replayed" };
     },
     {
-      sync: conflictSync,
-      repair: async () => {
-        await Bun.sleep(20);
-        launched = true;
+      sync: async () => {
+        syncCalls++;
+        return syncCalls === 1
+          ? {
+              status: "invalid" as const,
+              summary: "core memory exceeds maxCoreMemoryCharacters",
+              memoryDir: root,
+              localOnly: false,
+            }
+          : {
+              status: "clean" as const,
+              summary: "clean",
+              memoryDir: root,
+              localOnly: false,
+            };
       },
     },
   );
-  expect(launched).toBe(true);
-  expect(result.success).toBe(false);
-  expect(result.error).toContain("conflict");
+
+  expect(executions).toBe(1);
+  expect(result).toMatchObject({ success: true, report: "replayed" });
 });
+
+test.each(["conflict", "invalid"] as const)(
+  "a sync %s after an update triggers repair before the worker completes",
+  async (status) => {
+    let launched = false;
+    const result = await runMemoryWorker(
+      scope(),
+      async (dir) => {
+        writeFileSync(join(dir, "note.md"), "edited\n");
+        gitIn(dir, "commit", "-am", "edit");
+        return { agentId: "agent-worker", success: true, report: "edited" };
+      },
+      {
+        sync: async () => ({
+          status,
+          summary: status,
+          memoryDir: root,
+          localOnly: true,
+        }),
+        repair: async () => {
+          await Bun.sleep(20);
+          launched = true;
+        },
+      },
+    );
+    expect(launched).toBe(true);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain(status);
+  },
+);
 
 test("a queued repair that finds the conflict already pushed notifies without launching", async () => {
   let notified = false;

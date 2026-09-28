@@ -1,5 +1,5 @@
 import { Box, Static, useApp } from "ink";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ApprovalPreview } from "@/cli/components/ApprovalPreview";
 import { AssistantMessage } from "@/cli/components/AssistantMessageRich";
 import { BashCommandMessage } from "@/cli/components/BashCommandMessage";
@@ -23,6 +23,7 @@ import {
 import { UserMessage } from "@/cli/components/UserMessageRich";
 import { WelcomeScreen } from "@/cli/components/WelcomeScreen";
 import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
+import { releaseCommittedDiffPayloads } from "./approval-diffs";
 import type { StaticItem } from "./types";
 
 type InkAppWithStaticOutputReset = ReturnType<typeof useApp> & {
@@ -75,6 +76,21 @@ export function StaticTranscript({
       }),
     [resetStaticOutput],
   );
+
+  // Release the full before/after file contents cached for approval diffs
+  // once their owning item has been committed here and rendered. Running as
+  // an effect guarantees the commit render already consumed the diff; the
+  // release itself is render-neutral because renderers only read hunks, which
+  // stay cached for Static remounts (resize repaints, ctrl+o, display
+  // toggles). See LET-13144.
+  const releasedItemIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    releaseCommittedDiffPayloads(
+      precomputedDiffs,
+      items,
+      releasedItemIdsRef.current,
+    );
+  }, [items, precomputedDiffs]);
 
   return (
     <Static

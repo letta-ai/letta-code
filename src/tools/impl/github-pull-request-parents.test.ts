@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import type { AgentRetrieveOptions } from "@/backend";
 import {
   getPullRequestParentConversationIds,
   type ParentConversationBackend,
@@ -25,9 +26,11 @@ test("follows exact named scopes, default intermediaries and cycles without agen
       reads.push(id);
       return { tags: conversations[id] };
     },
-    retrieveAgent: async (id) => {
+    retrieveAgent: async (id, options?: AgentRetrieveOptions) => {
       reads.push(id);
-      return { tags: agents[id] };
+      return {
+        tags: options?.include?.includes("agent.tags") ? agents[id] : [],
+      };
     },
   };
   const parents: string[] = [];

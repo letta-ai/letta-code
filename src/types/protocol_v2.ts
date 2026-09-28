@@ -48,7 +48,12 @@ import type {
   RuntimeExternalToolsUpdateCommand,
   RuntimeExternalToolsUpdateResponseMessage,
 } from "./external-tool-protocol";
-import type { LoopState } from "./loop-status-protocol";
+import type {
+  LoopErrorMessage,
+  LoopState,
+  RetryMessage,
+  StatusMessage,
+} from "./loop-status-protocol";
 import type {
   AgentRuntimeScope,
   ConversationRuntimeScope,
@@ -512,35 +517,6 @@ export interface SlashCommandEndMessage extends UmiLifecycleMessageBase {
   success: boolean;
 }
 
-export interface StatusMessage extends UmiLifecycleMessageBase {
-  message_type: "status";
-  message: string;
-  level: "info" | "success" | "warning";
-}
-
-export interface RetryMessage extends UmiLifecycleMessageBase {
-  message_type: "retry";
-  message: string;
-  reason: StopReasonType;
-  attempt: number;
-  max_attempts: number;
-  delay_ms: number;
-  retry_kind?: "provider_retry" | "transport_fallback";
-  provider?: string;
-  from_transport?: string | null;
-  to_transport?: string | null;
-  error_code?: string | null;
-  step_id?: string | null;
-}
-
-export interface LoopErrorMessage extends UmiLifecycleMessageBase {
-  message_type: "loop_error";
-  message: string;
-  stop_reason: StopReasonType;
-  is_terminal: boolean;
-  api_error?: LettaStreamingResponse.LettaErrorMessage;
-}
-
 export type StreamDelta =
   | MessageDelta
   | ApprovalClassificationEndMessage
@@ -583,11 +559,11 @@ export interface SubagentSnapshot {
   prompt?: string;
   status: "pending" | "running" | "completed" | "error";
   agent_url: string | null;
-  /** The subagent's own conversation id (for dual-view routing; local agents
-   * have a bare-id agent_url with no ?conversation= param to parse). */
-  conversation_id?: string | null;
+  conversation_id?: string | null; // Own conversation; local URLs do not carry it.
+  super_run_id?: string; // Exact accepted Super Run for a remote child send.
   model?: string;
   is_background?: boolean;
+  claims_parent_runtime?: boolean;
   silent?: boolean;
   tool_call_id?: string;
   parent_agent_id?: string;
@@ -640,11 +616,7 @@ export interface InputCreateMessagePayload {
   messages: Array<MessageCreate & { client_message_id?: string }>;
   /** Handling policy for unsupported or failed image inputs. */
   image_failure_mode?: "strict" | "drop";
-  /**
-   * Optional request-scoped allowlist for locally executed client tools.
-   * Undefined preserves the listener's normal toolset; an empty array means no
-   * client tools for this turn.
-   */
+  /** Request-scoped client tools: undefined preserves defaults; [] disables all. */
   client_tool_allowlist?: string[];
   /**
    * Optional request-scoped built-in toolset selection. The base chooses the

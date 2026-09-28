@@ -1,13 +1,22 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   clearSubagentConfigCache,
   getAllSubagentConfigs,
+  getBuiltinSubagentNames,
   resolveSubagentConfigForMemoryFormat,
 } from "@/agent/subagents";
 import { __testSetBackend, type Backend } from "@/backend";
+import { findRemovedToolNames } from "@/tools/removed-tools";
 
 let tempDir: string | null = null;
 
@@ -64,9 +73,12 @@ describe("built-in subagents", () => {
     const configs = await getAllSubagentConfigs();
 
     expect(configs.reflection?.launchProfile).toBe("memory-subagent");
-    expect(configs["history-analyzer"]?.launchProfile).toBe("memory-subagent");
     expect(configs.memory?.launchProfile).toBe("memory-subagent");
     expect(configs.init?.launchProfile).toBe("memory-subagent");
+  });
+
+  test("does not register a built-in history-analyzer", () => {
+    expect(getBuiltinSubagentNames().has("history-analyzer")).toBe(false);
   });
 
   test.each(["claude-code", "codex"])(
@@ -137,10 +149,10 @@ Custom prompt body`,
     expect(configs.reflection?.systemPrompt).not.toContain("git push");
   });
 
-  test("selects v2 writer prompts only for unchanged API built-ins", async () => {
+  test("selects v2 writer prompts for unchanged built-ins on either backend", async () => {
     const configs = await getAllSubagentConfigs();
 
-    for (const name of ["reflection", "init", "memory", "history-analyzer"]) {
+    for (const name of ["reflection", "init", "memory"]) {
       const config = configs[name];
       expect(config).toBeDefined();
       if (!config) throw new Error(`Missing ${name} config`);
@@ -161,6 +173,13 @@ Custom prompt body`,
       expect(resolved.systemPrompt).toContain("MEMORY.md");
       expect(resolved.systemPrompt).toContain("no frontmatter");
       expect(resolved.systemPrompt).toContain("`name` and `description`");
+
+      const localResolved = resolveSubagentConfigForMemoryFormat(
+        config,
+        "memfs-v2",
+        true,
+      );
+      expect(localResolved.systemPrompt).toBe(resolved.systemPrompt);
     }
 
     // per-prompt operational phrases proving copied v1 guidance remains
@@ -170,7 +189,6 @@ Custom prompt body`,
         "### 5. Commit (1 bash call)",
         "feat(init): initialize memory for project",
       ],
-      "history-analyzer": ["### 5. Commit", "Do NOT merge into main"],
       memory: ["## Updating memory", "## Git"],
     };
     for (const [name, phrases] of Object.entries(opsPhrases)) {
@@ -208,6 +226,60 @@ Custom prompt body`,
     expect(configs.reflection?.systemPrompt).not.toContain(
       "local backend memory filesystem",
     );
+  });
+
+  test("built-ins never list a removed tool", () => {
+    // Read the shipped files directly: every built-in variant (standard,
+    // local-memfs, memfs-v2) lives here, and discovery would also pull in the
+    // developer's own ~/.letta/agents and project subagents.
+    const builtinDir = join(import.meta.dir, "subagents", "builtin");
+    const files = readdirSync(builtinDir).filter((file) =>
+      file.endsWith(".md"),
+    );
+    expect(files.length).toBeGreaterThan(0);
+    for (const file of files) {
+      const source = readFileSync(join(builtinDir, file), "utf-8");
+      const tools = (source.match(/^tools:(.*)$/m)?.[1] ?? "")
+        .split(",")
+        .map((tool) => tool.trim())
+        .filter(Boolean);
+      expect({ file, removed: findRemovedToolNames(tools) }).toEqual({
+        file,
+        removed: [],
+      });
+    }
+  });
+
+  test("warns when a custom subagent lists a removed tool, and still loads it", async () => {
+    tempDir = createTempProjectDir();
+    writeCustomSubagent(
+      tempDir,
+      "searcher.md",
+      [
+        "---",
+        "name: searcher",
+        "description: Read-only searcher",
+        "tools: Read, LS, MultiEdit",
+        "---",
+        "Search the repo.",
+      ].join("\n"),
+    );
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      const configs = await getAllSubagentConfigs(tempDir);
+
+      expect(configs.searcher?.allowedTools).toEqual([
+        "Read",
+        "LS",
+        "MultiEdit",
+      ]);
+      expect(warn.mock.calls.map((call) => String(call[0]))).toContain(
+        "[subagent] Warning: searcher: these tools no longer exist and will be ignored: MultiEdit",
+      );
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   test("custom CRLF reflection override replaces built-in reflection", async () => {

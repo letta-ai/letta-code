@@ -1,3 +1,5 @@
+import * as path from "node:path";
+import { isUsableDirectory } from "@/helpers/usable-directory";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import {
   captureSecretRedactions,
@@ -21,7 +23,6 @@ import {
   scheduleBackgroundProcessCleanup,
   scrubCompletedBackgroundOutput,
 } from "./process_manager.js";
-import { resolveShellWorkdir } from "./shell.js";
 import { getShellEnv } from "./shell-env.js";
 import {
   buildPowerShellCommand,
@@ -37,6 +38,7 @@ import {
 import { applyShellSandbox } from "./shell-sandbox.js";
 import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
+import { assertSafeWindowsCommand } from "./windows-command-safety.js";
 
 const DEFAULT_EXEC_YIELD_TIME_MS = 10_000;
 const DEFAULT_WRITE_STDIN_YIELD_TIME_MS = 250;
@@ -374,6 +376,14 @@ function buildExplicitShellLauncher(
 function buildExecLaunchers(args: ExecCommandArgs): string[][] {
   const login = args.login ?? true;
   const envAliases = args.secretEnv ? Object.keys(args.secretEnv) : undefined;
+  if (!args.shell?.trim() || isPowerShell(args.shell)) {
+    assertSafeWindowsCommand(args.cmd, {
+      cwd: resolveShellWorkdir(args.workdir),
+      env: args.secretEnv
+        ? { ...getShellEnv(), ...args.secretEnv }
+        : getShellEnv(),
+    });
+  }
   if (args.shell?.trim()) {
     return [
       buildExplicitShellLauncher(
@@ -571,6 +581,17 @@ async function waitForSessionOutput(params: {
   params.session.readOffset = endOffset;
 
   return { output, wallTimeMs: Date.now() - startTime };
+}
+
+function resolveShellWorkdir(workdir?: string): string {
+  const defaultCwd = getCurrentWorkingDirectory();
+  const requestedCwd = workdir
+    ? path.isAbsolute(workdir)
+      ? workdir
+      : path.resolve(defaultCwd, workdir)
+    : defaultCwd;
+
+  return isUsableDirectory(requestedCwd) ? requestedCwd : defaultCwd;
 }
 
 async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {

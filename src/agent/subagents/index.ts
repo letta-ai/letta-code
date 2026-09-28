@@ -11,6 +11,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { LocalMemoryFormat } from "@/agent/memory-format";
 import { getBackend } from "@/backend";
+import { findRemovedToolNames } from "@/tools/removed-tools";
 import { getErrorMessage } from "@/utils/error";
 import {
   getStringField,
@@ -20,8 +21,6 @@ import {
 // Built-in subagent definitions (embedded at build time)
 import forkAgentMd from "./builtin/fork.md";
 import generalPurposeAgentMd from "./builtin/general-purpose.md";
-import historyAnalyzerAgentMd from "./builtin/history-analyzer.md";
-import historyAnalyzerV2AgentMd from "./builtin/history-analyzer-v2.md";
 import initAgentMd from "./builtin/init.md";
 import initV2AgentMd from "./builtin/init-v2.md";
 import memoryAgentMd from "./builtin/memory.md";
@@ -33,7 +32,6 @@ import reflectionV2AgentMd from "./builtin/reflection-v2.md";
 const STANDARD_BUILTIN_SOURCES = [
   forkAgentMd,
   generalPurposeAgentMd,
-  historyAnalyzerAgentMd,
   initAgentMd,
   memoryAgentMd,
   recallAgentMd,
@@ -43,7 +41,6 @@ const STANDARD_BUILTIN_SOURCES = [
 const LOCAL_MEMFS_BUILTIN_SOURCES = [
   forkAgentMd,
   generalPurposeAgentMd,
-  historyAnalyzerAgentMd,
   initAgentMd,
   memoryAgentMd,
   recallAgentMd,
@@ -51,7 +48,6 @@ const LOCAL_MEMFS_BUILTIN_SOURCES = [
 ];
 
 const MEMFS_V2_BUILTIN_SOURCES = [
-  historyAnalyzerV2AgentMd,
   initV2AgentMd,
   memoryV2AgentMd,
   reflectionV2AgentMd,
@@ -429,8 +425,8 @@ export function resolveSubagentConfigForMemoryFormat(
   memoryFormat: LocalMemoryFormat,
   localMemfs: boolean,
 ): SubagentConfig {
-  if (localMemfs || memoryFormat !== "memfs-v2") return config;
-  const v1Builtin = getBuiltinSubagents(false)[config.name];
+  if (memoryFormat !== "memfs-v2") return config;
+  const v1Builtin = getBuiltinSubagents(localMemfs)[config.name];
   const v2Builtin = getLocalMemfsV2Builtins()[config.name];
   if (
     !v1Builtin ||
@@ -568,6 +564,16 @@ export async function getAllSubagentConfigs(
   // Log any discovery errors
   for (const error of errors) {
     console.warn(`[subagent] Warning: ${error.path}: ${error.message}`);
+  }
+
+  for (const subagent of subagents) {
+    if (subagent.allowedTools === "all") continue;
+    const removedTools = findRemovedToolNames(subagent.allowedTools);
+    if (removedTools.length > 0) {
+      console.warn(
+        `[subagent] Warning: ${subagent.name}: these tools no longer exist and will be ignored: ${removedTools.join(", ")}`,
+      );
+    }
   }
 
   // User-defined subagents override built-ins with the same name

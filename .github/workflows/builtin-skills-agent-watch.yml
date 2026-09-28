@@ -236,7 +236,8 @@ jobs:
           bun scripts/agent-watch/verify-pr-identity.ts \
             --repo letta-ai/letta-code \
             --marker "$PR_MARKER" \
-            --expected-login "$EXPECTED_GITHUB_LOGIN"
+            --expected-login "$EXPECTED_GITHUB_LOGIN" \
+            --pull-request-state ready
 
       - name: Extract Amelia result
         if: always()

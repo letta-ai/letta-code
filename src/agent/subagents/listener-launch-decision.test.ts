@@ -135,7 +135,7 @@ test("nested children keep the root task's PR attribution conversation", () => {
   );
 });
 
-test("default launch parents do not create an invalid PR attribution target", () => {
+test("default launch parents preserve an explicit empty PR attribution scope", () => {
   const env = composeSubagentChildEnv({
     parentProcessEnv: {},
     subagentType: "general-purpose",
@@ -145,5 +145,53 @@ test("default launch parents do not create an invalid PR attribution target", ()
     launchProfile: "default",
   });
 
-  expect(env.LETTA_GITHUB_PR_CONVERSATION_IDS).toBeUndefined();
+  expect(env.LETTA_GITHUB_PR_CONVERSATION_IDS).toBe("");
+});
+
+test("nested launches discard an earlier scope after an explicitly unattributed turn", () => {
+  const env = composeSubagentChildEnv({
+    parentProcessEnv: { LETTA_GITHUB_PR_CONVERSATION_IDS: "conv-stale" },
+    parentAgentId: "agent-worker",
+    parentConversationId: "default",
+    githubPullRequestConversationIds: [],
+    inheritedPrimaryRoot: null,
+    launchProfile: "default",
+  });
+  expect(env.LETTA_GITHUB_PR_CONVERSATION_IDS).toBe("");
+  const nested = composeSubagentChildEnv({
+    parentProcessEnv: env,
+    parentAgentId: "agent-child",
+    parentConversationId: "conv-child",
+    inheritedPrimaryRoot: null,
+    launchProfile: "default",
+  });
+  expect(nested.LETTA_GITHUB_PR_CONVERSATION_IDS).toBe("conv-child");
+});
+
+test("local backend launches include the local parent conversation", () => {
+  const env = composeSubagentChildEnv({
+    parentProcessEnv: {},
+    parentAgentId: "agent-local-parent",
+    parentConversationId: "local-conv-parent",
+    inheritedPrimaryRoot: null,
+    backendMode: "local",
+    launchProfile: "default",
+  });
+  expect(env.LETTA_GITHUB_PR_CONVERSATION_IDS).toBe("local-conv-parent");
+});
+
+test("deep task chains stay within the enqueue contract's twenty parent limit", () => {
+  const ancestors = Array.from({ length: 20 }, (_, index) => `conv-${index}`);
+  const env = composeSubagentChildEnv({
+    parentProcessEnv: {},
+    parentAgentId: "agent-parent",
+    parentConversationId: "conv-immediate",
+    githubPullRequestConversationIds: ancestors,
+    inheritedPrimaryRoot: null,
+    launchProfile: "default",
+  });
+  expect(env.LETTA_GITHUB_PR_CONVERSATION_IDS?.split(",")).toEqual([
+    ...ancestors.slice(1),
+    "conv-immediate",
+  ]);
 });

@@ -8,14 +8,19 @@ import {
   buildAgentSendContent,
   normalizeAgentMessageComputer,
   resolveAgentMessageDestination,
+  resolveAgentMessagePullRequestConversationIds,
   validateAddress,
 } from "@/backend/api/agent-message";
-import { enqueueConversationMessage } from "@/backend/api/conversation-enqueue";
+import {
+  enqueueConversationMessage,
+  isProvenCloudApiShutdownRejection,
+} from "@/backend/api/conversation-enqueue";
 import { ApiRequestError } from "@/backend/api/request";
 import {
   getCurrentWorkingDirectory,
   getRuntimeContext,
 } from "@/runtime-context";
+import { GITHUB_PR_CONVERSATIONS_ENV } from "@/utils/subagent-launch-marker";
 import { sendClaudeMessage } from "./claude-stream-session";
 import { sendCodexMessage } from "./codex-app-server";
 import { parseExternalCodingAgentId } from "./external-coding-agent";
@@ -228,6 +233,19 @@ export async function send_agent_message(
       sender.agentId,
     );
     signal.throwIfAborted();
+    const githubPullRequestConversationIds =
+      await resolveAgentMessagePullRequestConversationIds(
+        {
+          sender,
+          target: destination,
+          inheritedConversationIds:
+            context?.githubPullRequestConversationIds ??
+            process.env[GITHUB_PR_CONVERSATIONS_ENV]?.split(","),
+          actingUserId,
+        },
+        backend,
+        signal,
+      );
     submissionAttempted = true;
     const receipt = await (deps.enqueue ?? enqueueConversationMessage)(
       {
@@ -236,6 +254,7 @@ export async function send_agent_message(
         content: buildAgentSendContent(sender, true, args.message),
         computer,
         actingUserId,
+        githubPullRequestConversationIds,
       },
       signal,
     );
@@ -265,7 +284,8 @@ export async function send_agent_message(
         error instanceof ApiRequestError &&
         error.status >= 400 &&
         error.status < 500
-      );
+      ) &&
+      !isProvenCloudApiShutdownRejection(error);
     return {
       content: JSON.stringify({
         status: unknown ? "acceptance_unknown" : "submission_failed",

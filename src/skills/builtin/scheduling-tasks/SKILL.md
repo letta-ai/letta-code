@@ -1,39 +1,31 @@
 ---
 name: scheduling-tasks
-description: Advanced scheduling through the letta cron CLI for other conversations, runners, computers, run history, and schedule replacement. Use Wake for ordinary create/list/cancel operations in the current conversation.
+description: Advanced scheduling through the letta cron CLI for other conversations, computers, run history, and schedule replacement. Use Wake for ordinary create/list/cancel operations in the current conversation.
 ---
 
 # Scheduling Tasks
 
 This skill lets you create, list, and manage scheduled tasks using the `letta cron` CLI. Scheduled tasks send a prompt to the agent on a timer — useful for reminders, periodic check-ins, and deferred follow-ups.
 
-For ordinary one-shot or recurring work in the current conversation, use Wake instead. Wake is self-bound and covers create, list, and cancel without runner or routing choices.
+For ordinary one-shot or recurring work in the current conversation, use Wake instead. Wake is self-bound and covers create, list, and cancel without routing choices.
 
 ## When to Use This Skill
 
 - The task should run in a fresh, default, or different conversation
-- The task needs a specific local or Cloud runner or connected computer
+- The task needs a specific connected computer
 - You need run history, replacement, or broader schedule inspection
 - Wake cannot see or manage the schedule you need
 
-## Where Schedules Run — Omit the Flags
+## Where Schedules Run
 
-**Default guidance: omit `--runner` and `--computer`.** The CLI places the schedule so the work keeps running on the computer where it was created. Don't move scheduled work to a different computer than the active conversation without a reason: two computers working the same conversation can conflict.
+Execution determines schedule ownership; there is no runner selection flag:
 
-Pass a flag only when you have a requirement the default can't infer:
+- In a managed Cloud sandbox, schedules are durable Cloud schedules and run in the agent's Cloud sandbox.
+- On a user-managed computer or self-hosted runtime, schedules are local and fire only while a Letta session is running there.
 
-- **`--runner cloud`** — the schedule must fire no matter which computers are online; execute in the agent's cloud sandbox.
-- **`--computer <deviceId>`** — the work needs a specific connected computer (its filesystem, services, or credentials). Get the deviceId from `letta computers list`. If that computer is offline at fire time, execution falls back to the cloud sandbox.
-- **`--runner local`** — the work must only ever run on the current computer, even if that means missing fires while no session is running here.
+From a managed Cloud sandbox, `--computer <deviceId>` can run the scheduled work on a specific connected computer. Get the device ID from `letta computers list`. If that computer is offline at fire time, execution falls back to the Cloud sandbox. Local execution cannot target another computer.
 
-The CLI reports its placement in the command output. If it warns that the schedule is local (this happens when the cloud scheduler cannot reach the current computer), the schedule only fires while a Letta session is running here — read the warning and decide whether that's acceptable.
-
-### Fast Follow-ups vs Recurring Jobs
-
-Two patterns cover most schedules:
-
-- **Fast follow-ups** ("check on the PR in 5m"): the default is right — same computer as the active conversation. If the session dies before it fires, the follow-up usually died with the task anyway.
-- **Recurring jobs** ("every Monday 11am, start the lunch order"): prefer durability. If the CLI warned that a recurring schedule is local, that's usually wrong for the user's intent — recreate it with `--runner cloud`, or `--computer` if the job needs a specific always-on computer. A fresh conversation per run is the default; pass a conversation explicitly when the job needs continuity in one thread.
+Creation and execution follow those rules, while management commands still show and cancel both local and Cloud inventory. This keeps schedules created by older CLI versions visible without changing where new schedules run.
 
 ## CLI Usage
 
@@ -67,8 +59,7 @@ letta cron add --name <short-name> --description <text> --prompt <text> <schedul
 |------|-------------|
 | `--agent <id>` | Agent ID (defaults to `LETTA_AGENT_ID` from the current shell/session) |
 | `--conversation <id>` | Conversation target: omit or pass `new` for a fresh conversation per fire; pass `self` for the current conversation; pass `default` for the agent default; or pass a concrete ID |
-| `--runner <runner>` | `cloud` or `local` — normally omit; see "Where Schedules Run" above |
-| `--computer <id>` | Execute on a specific connected computer — normally omit |
+| `--computer <id>` | From managed Cloud, execute on a specific connected computer |
 | `--once` | Mark `--at` as one-shot (already the default for `--at`) |
 
 ### Listing Tasks
@@ -77,20 +68,20 @@ letta cron add --name <short-name> --description <text> --prompt <text> <schedul
 letta cron list
 ```
 
-Optional filters: `--agent <id>`, `--conversation <id>`, `--runner local|cloud`
+Optional filters: `--agent <id>`, `--conversation <id>`
 
 ### Getting a Single Task
 
 `get` accepts an ID or name:
 
 ```bash
-letta cron get <id-or-name> [--runner local|cloud] [--agent <id>]
+letta cron get <id-or-name> [--agent <id>]
 ```
 
 ### Reading Run History
 
 ```bash
-letta cron runs --id <task-id> [--limit <n>] [--runner local|cloud] [--agent <id>]
+letta cron runs --id <task-id> [--limit <n>] [--agent <id>]
 ```
 
 For local run history, `--run-id <id>` selects one run. Cloud history ignores that flag.
@@ -125,7 +116,7 @@ letta cron list --agent "$LETTA_AGENT_ID" --conversation self
 
 ```bash
 # Delete a specific task
-letta cron delete <id-or-name> [--runner local|cloud] [--agent <id>]
+letta cron delete <id-or-name> [--agent <id>]
 
 # Delete all tasks for one agent
 letta cron delete --all --agent "$AGENT_ID"
@@ -212,7 +203,7 @@ Include context about what the user originally asked for, so you can give a help
 - **Default binding**: `letta cron add` uses `--agent` first, then `LETTA_AGENT_ID`. Omit `--conversation` for a fresh conversation per fire; use `--conversation self` to capture `LETTA_CONVERSATION_ID` explicitly.
 - **Local scheduler requirement**: Local schedules only fire while a Letta session is running on their computer; fires while no session runs are marked as missed. Cloud schedules fire from the cloud regardless.
 - **`--at` for specific times**: prefer RFC 3339 with an explicit offset. A bare `--at "3:00pm"` uses the process timezone and schedules tomorrow if that time has already passed there.
-- **Cloud schedule creation failures are loud**: if creating a cloud schedule fails, no schedule is created — a failed create never silently becomes a local schedule. (The local placement for computers the cloud scheduler can't reach is decided before creation and reported in the output.)
+- **Cloud schedule creation failures are loud**: if creating a Cloud schedule fails in a managed Cloud sandbox, no schedule is created; it never falls back to a local schedule.
 
 ## Cron Expression Reference
 

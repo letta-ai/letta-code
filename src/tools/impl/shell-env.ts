@@ -29,7 +29,10 @@ import {
 } from "@/runtime-context";
 import { getRuntimeExecutionEnv } from "@/runtime-execution-settings";
 import { settingsManager } from "@/settings-manager";
-import { LISTENER_CONNECTION_ENV } from "@/utils/subagent-launch-marker";
+import {
+  GITHUB_PR_CONVERSATIONS_ENV,
+  LISTENER_CONNECTION_ENV,
+} from "@/utils/subagent-launch-marker";
 import { getRipgrepBinDir } from "./ripgrep-manager.js";
 
 /**
@@ -172,7 +175,12 @@ export function getLettaShimDir(env: NodeJS.ProcessEnv = process.env): string {
   return path.join(tmpdir(), SHELL_SHIM_DIR_NAME);
 }
 
-export function ensureLettaShimDir(invocation: LettaInvocation): string | null {
+export function ensureLettaShimDir(
+  invocation: LettaInvocation,
+  electronExecPath: string | undefined = process.versions.electron
+    ? process.execPath
+    : undefined,
+): string | null {
   if (!invocation.command) return null;
 
   const shimDir = getLettaShimDir();
@@ -195,9 +203,17 @@ export function ensureLettaShimDir(invocation: LettaInvocation): string | null {
   const commandWithArgs = [invocation.command, ...invocation.args]
     .map(shellEscape)
     .join(" ");
-  writeFileSync(shimPath, `#!/bin/sh\nexec ${commandWithArgs} "$@"\n`, {
-    mode: 0o755,
-  });
+  // Electron needs this when launched from a fresh shell that did not inherit
+  // Desktop's environment. Do not add it for ordinary Node/Bun launchers.
+  const electronEnv =
+    electronExecPath && invocation.command === electronExecPath
+      ? "export ELECTRON_RUN_AS_NODE=1\n"
+      : "";
+  writeFileSync(
+    shimPath,
+    `#!/bin/sh\n${electronEnv}exec ${commandWithArgs} "$@"\n`,
+    { mode: 0o755 },
+  );
   return shimDir;
 }
 
@@ -355,6 +371,10 @@ export function getShellEnv(): NodeJS.ProcessEnv {
   const listenerConnectionId = getRuntimeContext()?.connectionId;
   if (listenerConnectionId?.startsWith("conn-")) {
     env[LISTENER_CONNECTION_ENV] = listenerConnectionId;
+  }
+  const attribution = getRuntimeContext()?.githubPullRequestConversationIds;
+  if (attribution !== undefined && attribution !== null) {
+    env[GITHUB_PR_CONVERSATIONS_ENV] = attribution.join(",");
   }
   const actingUserId = getRuntimeActingUserId();
   if (actingUserId) {

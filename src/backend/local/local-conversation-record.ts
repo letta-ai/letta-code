@@ -1,17 +1,10 @@
-import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
 import type { ConversationUpdateBody } from "@/backend/backend";
 import {
   normalizeLocalModelHandle,
   supportedConversationModelSettingsFromBody,
 } from "./local-model-normalization";
 
-export type StoredConversation = Conversation & {
-  id: string;
-  agent_id: string;
-  in_context_message_ids: string[];
-  hidden?: boolean;
-  tags?: string[];
-};
+import type { StoredConversation } from "./local-types";
 
 export function updateLocalConversationRecord(
   current: StoredConversation,

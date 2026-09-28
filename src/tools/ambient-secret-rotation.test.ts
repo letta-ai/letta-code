@@ -125,52 +125,47 @@ describe("ambient runtime credential rotation", () => {
     }
   }, 10_000);
 
-  for (const toolName of ["Bash", "shell_command"] as const) {
-    test(`${toolName} foreground overflow file retains the credential captured before rotation`, async () => {
-      const held = createHeldCredentialScript(31_000);
-      const prepared = await prepareToolExecutionContextForSpecificTools(
-        [toolName],
-        {
-          runtimeContext: {
-            agentId: AGENT_A,
-            workingDirectory: process.cwd(),
-          },
+  test("Bash foreground overflow file retains the credential captured before rotation", async () => {
+    const held = createHeldCredentialScript(31_000);
+    const prepared = await prepareToolExecutionContextForSpecificTools(
+      ["Bash"],
+      {
+        runtimeContext: {
+          agentId: AGENT_A,
           workingDirectory: process.cwd(),
         },
-      );
-      const execution = executeTool(
-        toolName,
-        toolName === "Bash"
-          ? { command: held.command, timeout: 5000 }
-          : { command: held.command, login: false, timeout_ms: 5000 },
-        { toolContextId: prepared.contextId },
-      );
+        workingDirectory: process.cwd(),
+      },
+    );
+    const execution = executeTool(
+      "Bash",
+      { command: held.command, timeout: 5000 },
+      { toolContextId: prepared.contextId },
+    );
 
-      try {
-        await waitForMarker(held.marker);
-        process.env.LETTA_API_KEY =
-          "sk-lettatest-ROTATED-credential-9876543210";
-        held.release();
-        const result = await execution;
-        const text = asText(result.toolReturn);
-        expect(result.status).toBe("success");
-        expect(text).not.toContain(AMBIENT_SENTINEL);
-        const overflowPath = text.match(
-          /\[Full output written to: ([^\]]+)\]/,
-        )?.[1];
-        expect(overflowPath).toBeDefined();
-        if (!overflowPath) throw new Error("Expected overflow file pointer");
-        const overflow = readFileSync(overflowPath, "utf8");
-        expect(overflow).not.toContain(AMBIENT_SENTINEL);
-        expect(overflow).toContain(AMBIENT_PLACEHOLDER);
-      } finally {
-        held.release();
-        await execution.catch(() => undefined);
-        releaseToolExecutionContext(prepared.contextId);
-        held.cleanup();
-      }
-    }, 10_000);
-  }
+    try {
+      await waitForMarker(held.marker);
+      process.env.LETTA_API_KEY = "sk-lettatest-ROTATED-credential-9876543210";
+      held.release();
+      const result = await execution;
+      const text = asText(result.toolReturn);
+      expect(result.status).toBe("success");
+      expect(text).not.toContain(AMBIENT_SENTINEL);
+      const overflowPath = text.match(
+        /\[Full output written to: ([^\]]+)\]/,
+      )?.[1];
+      expect(overflowPath).toBeDefined();
+      if (!overflowPath) throw new Error("Expected overflow file pointer");
+      const overflow = readFileSync(overflowPath, "utf8");
+      expect(overflow).not.toContain(AMBIENT_SENTINEL);
+      expect(overflow).toContain(AMBIENT_PLACEHOLDER);
+    } finally {
+      held.release();
+      await execution.catch(() => undefined);
+      releaseToolExecutionContext(prepared.contextId);
+      held.cleanup();
+    }
+  }, 10_000);
 
   test("background output scrub retains the credential captured before rotation", () => {
     const directory = mkdtempSync(join(tmpdir(), "letta-rotation-file-"));

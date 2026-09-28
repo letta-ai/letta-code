@@ -14,9 +14,9 @@ describe("client toolset protocol", () => {
             messages: [{ role: "user", content: "hello" }],
             client_toolset: {
               base: "none",
-              include: ["Read", "LS", "Glob", "Grep"],
+              include: ["Read", "Glob", "Grep"],
             },
-            client_tool_allowlist: ["Read", "LS", "Glob", "Grep"],
+            client_tool_allowlist: ["Read", "Glob", "Grep"],
           },
         }),
       ),
@@ -28,7 +28,7 @@ describe("client toolset protocol", () => {
         kind: "create_message",
         client_toolset: {
           base: "none",
-          include: ["Read", "LS", "Glob", "Grep"],
+          include: ["Read", "Glob", "Grep"],
         },
       },
     });

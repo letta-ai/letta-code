@@ -93,9 +93,14 @@ export interface WorkflowSpawnerHandle {
   cleanup(): Promise<void>;
 }
 
-type SpawnerFactory = (args: WorkflowArgs) => Promise<WorkflowSpawnerHandle>;
+type SpawnerFactory = (
+  args: WorkflowArgs,
+  setStage: (stage: string) => void,
+) => Promise<WorkflowSpawnerHandle>;
 
 const MAX_NOTIFICATION_RESULT_CHARS = 30_000;
+const DEFAULT_STARTUP_TIMEOUT_MS = 30_000;
+let startupTimeoutMs = DEFAULT_STARTUP_TIMEOUT_MS;
 
 async function resolveParentAgentId(
   args: WorkflowArgs,
@@ -122,11 +127,14 @@ async function resolveParentAgentId(
 
 export async function createSdkSpawnerHandle(
   args: WorkflowArgs,
+  setStage: (stage: string) => void = () => {},
 ): Promise<WorkflowSpawnerHandle> {
+  setStage("resolving parent agent");
   const parentAgentId = await resolveParentAgentId(args);
   if (!parentAgentId) {
     throw new Error("Workflow requires an invoking parent agent.");
   }
+  setStage("resolving model");
   let model: string | null;
   if (args.model) {
     model = resolveModel(args.model);
@@ -148,16 +156,26 @@ export async function createSdkSpawnerHandle(
       );
     }
   }
+  setStage("loading Agent SDK");
   const sdk = await loadAgentSdk();
+  setStage("creating SDK client and spawner");
   const client = sdk.createLocalClient();
-  return {
-    spawner: createSdkSpawner(client, {
+  let spawner: SubagentSpawner;
+  try {
+    spawner = createSdkSpawner(client, {
       parentAgentId,
       model,
       resolveModel,
       allowedTools: args.allowedTools ?? [...DEFAULT_ALLOWED_TOOLS],
       cwd: getCurrentWorkingDirectory(),
-    }),
+      supportsAgentFreeResume: sdk.supportsAgentFreeResume,
+    });
+  } catch (error) {
+    void client[Symbol.asyncDispose]?.().catch(() => undefined);
+    throw error;
+  }
+  return {
+    spawner,
     cleanup: async () => {
       await client[Symbol.asyncDispose]?.().catch(() => undefined);
     },
@@ -173,6 +191,12 @@ export function __setWorkflowSpawnerFactoryForTests(
   spawnerFactory = factory ?? createSdkSpawnerHandle;
 }
 
+export function __setWorkflowStartupTimeoutForTests(
+  timeoutMs: number | null,
+): void {
+  startupTimeoutMs = timeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
+}
+
 export function formatWorkflowProgressLine(
   event: WorkflowProgressEvent,
 ): string | null {
@@ -181,6 +205,8 @@ export function formatWorkflowProgressLine(
       return `── ${event.title} ──`;
     case "log":
       return `» ${event.message}`;
+    case "decision_usage":
+      return null;
     case "agent": {
       // Only status transitions worth a line; "queued" would be noise.
       if (event.status === "queued") return null;
@@ -244,7 +270,7 @@ function formatCompletionResult(
   return [
     payload,
     "",
-    `Per-agent results: ${join(executionDir, "journal.jsonl")} — one line per completed agent with its full return value.`,
+    `Per-call results: ${join(executionDir, "journal.jsonl")} — one line per completed agent call with its full return value, plus one per decide() API attempt (retries included) with its model, cost, calibration, and tokens.`,
     "If the result above is empty or unexpected, read that file BEFORE diagnosing — do not assume agents returned non-empty results.",
   ].join("\n");
 }
@@ -290,16 +316,83 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
   // Validate up front so authoring mistakes surface in the tool result
   // instead of as a failed background task.
   let meta: WorkflowMeta;
-  let handle: WorkflowSpawnerHandle;
   try {
     meta = parseWorkflowMeta(script);
     assertBackgroundProcessCapacity();
-    handle = await spawnerFactory(args);
   } catch (error) {
     return {
       toolReturn: error instanceof Error ? error.message : String(error),
       status: "error",
     };
+  }
+
+  // Only the foreground setup is bounded. Once registered, a workflow can run
+  // for as long as its script needs. A timed-out factory may still finish later;
+  // it must never cross the registration/worker-spawn boundary.
+  let stage = "setting up spawner";
+  let abandoned = false;
+  let stopReason: string | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  let disposalStarted = false;
+  const disposeAbandonedHandle = (lateHandle: WorkflowSpawnerHandle) => {
+    if (disposalStarted) return;
+    disposalStarted = true;
+    void Promise.resolve()
+      .then(() => lateHandle.cleanup())
+      .catch(() => undefined);
+  };
+  const startup = Promise.resolve().then(() => {
+    if (abandoned) throw new Error("startup cancelled");
+    return spawnerFactory(args, (currentStage) => {
+      stage = currentStage;
+    });
+  });
+  void startup.then(
+    (lateHandle) => {
+      if (abandoned) disposeAbandonedHandle(lateHandle);
+    },
+    () => undefined,
+  );
+  let handle: WorkflowSpawnerHandle;
+  try {
+    handle = await Promise.race([
+      startup,
+      new Promise<never>((_, reject) => {
+        const timeoutMs = startupTimeoutMs;
+        timer = setTimeout(() => {
+          abandoned = true;
+          stopReason = `timed out after ${timeoutMs}ms`;
+          reject(new Error(stopReason));
+        }, timeoutMs);
+        onAbort = () => {
+          abandoned = true;
+          stopReason = "cancelled by caller";
+          reject(new Error(stopReason));
+        };
+        if (args.signal?.aborted) onAbort();
+        else args.signal?.addEventListener("abort", onAbort, { once: true });
+      }),
+    ]);
+    // The race may have fulfilled before an abort was delivered, while this
+    // continuation was still queued. Do not transfer that handle to a run.
+    if (abandoned || args.signal?.aborted) {
+      abandoned = true;
+      disposeAbandonedHandle(handle);
+      return {
+        toolReturn: `Workflow startup failed during ${stage}: ${stopReason ?? "cancelled by caller"}`,
+        status: "error",
+      };
+    }
+  } catch (error) {
+    abandoned = true;
+    return {
+      toolReturn: `Workflow startup failed during ${stage}: ${error instanceof Error ? error.message : String(error)}`,
+      status: "error",
+    };
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (onAbort) args.signal?.removeEventListener("abort", onAbort);
   }
 
   const taskId = getNextWorkflowId();
@@ -440,7 +533,7 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
       `Workflow launched in background. Task ID: ${taskId}`,
       `Summary: ${meta.description}`,
       `Script file: ${scriptPath}`,
-      `Journal: ${journalPath} (one line per completed agent)`,
+      `Journal: ${journalPath} (one line per completed agent, and per decide() API attempt including retries)`,
       `Output file: ${outputFile}`,
       "",
       "You will be notified when it completes. Do not poll or sleep — keep working or end your turn. Read the output file only when you need interim progress; TaskStop aborts the run; the user can watch live status with /workflows.",

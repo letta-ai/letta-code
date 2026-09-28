@@ -55,6 +55,8 @@ export interface BuildCreateAgentRequestOptions {
   model?: string;
   /** Complete prompt override. Null delegates default selection to the server. */
   system?: string | null;
+  /** Whether the target is Letta Cloud; callers determine this with their backend's cloud detection. */
+  isLettaCloud?: boolean;
   memoryPromptMode?: MemoryPromptMode;
   /**
    * Caller-defined identity. With a personality, matching labels replace its
@@ -195,7 +197,9 @@ export async function buildCreateAgentRequest(
     system:
       options.system !== undefined
         ? options.system
-        : buildSystemPrompt("default", memoryPromptMode),
+        : options.isLettaCloud
+          ? null
+          : buildSystemPrompt("default", memoryPromptMode),
     ...(memoryBlocks !== undefined ? { memory_blocks: memoryBlocks } : {}),
     ...(blockIds && blockIds.length > 0 ? { block_ids: blockIds } : {}),
     tags: buildCreatedAgentTags({
@@ -229,10 +233,12 @@ export async function buildCreateAgentRequestForPersonality(params: {
   description?: string;
   model?: string;
   extraTags?: string[];
+  /** This browser-safe wrapper defaults to Cloud; pass false for a local server. */
+  isLettaCloud?: boolean;
 }): Promise<CreateAgentRequestForPersonality> {
   const request = (await buildCreateAgentRequest({
     ...params,
-    system: null,
+    isLettaCloud: params.isLettaCloud ?? true,
   })) as CreateAgentRequestForPersonality;
   const profilePicture = getPersonalityDefaultMemoryFiles(
     params.personalityId,

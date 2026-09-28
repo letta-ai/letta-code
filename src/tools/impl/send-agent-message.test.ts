@@ -60,6 +60,38 @@ const message = {
   message: "Please check the tests.",
 };
 
+test.each(["default", "conv-target"])(
+  "only exact child scope %s continues the current task's PR attribution",
+  async (conversationId) => {
+    const tags = [
+      "parent-conversation:agent-caller/conv-old",
+      "parent-conversation:agent-caller/conv-caller",
+    ];
+    const f = fixture(tags);
+    f.backend.retrieveConversation = async (id) =>
+      ({ id, agent_id: "agent-target", tags }) as Awaited<
+        ReturnType<Backend["retrieveConversation"]>
+      >;
+    const result = await runWithRuntimeContext(
+      { ...caller, githubPullRequestConversationIds: ["conv-root"] },
+      () =>
+        send_agent_message(
+          {
+            ...message,
+            agent_id: "agent-target",
+            conversation_id: conversationId,
+          },
+          f,
+        ),
+    );
+    expect(result.status).toBe("success");
+    expect(f.submissions[0]?.githubPullRequestConversationIds).toEqual([
+      "conv-root",
+      "conv-caller",
+    ]);
+  },
+);
+
 test("resumes an external coding-agent session without the Cloud backend", async () => {
   const f = fixture();
   f.backend.capabilities.environmentRouting = false;
@@ -494,6 +526,31 @@ test.each([403, 409, 503, "network"])(
     expect(receipt.conversation_id).toBe("conv-target");
   },
 );
+
+test("a typed pre-admission shutdown 503 is a failed submission, not unknown acceptance", async () => {
+  const f = fixture();
+  const result = await runWithRuntimeContext(caller, () =>
+    send_agent_message(message, {
+      ...f,
+      enqueue: async () => {
+        throw new ApiRequestError(
+          "rejected",
+          503,
+          JSON.stringify({
+            errorCode: "cloud_api_shutting_down",
+            admitted: false,
+            retryable: true,
+          }),
+        );
+      },
+    }),
+  );
+  expect(result.status).toBe("error");
+  expect(JSON.parse(result.content)).toMatchObject({
+    status: "submission_failed",
+    http_status: 503,
+  });
+});
 
 test("local backend and cancellation do not dispatch or fall back to execution", async () => {
   const f = fixture();

@@ -10,7 +10,7 @@ import {
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { colors } from "./colors";
-import { EditRenderer, MultiEditRenderer, WriteRenderer } from "./DiffRenderer";
+import { EditRenderer, WriteRenderer } from "./DiffRenderer";
 import {
   highlightCode,
   languageFromPath,
@@ -21,12 +21,6 @@ import { Text } from "./Text";
 const TAB_WIDTH = 4;
 const HIGHLIGHT_MAX_BYTES = 512 * 1024;
 const HIGHLIGHT_MAX_LINES = 10_000;
-
-type EditItem = {
-  old_string: string;
-  new_string: string;
-  replace_all?: boolean;
-};
 
 type Props =
   | {
@@ -42,13 +36,6 @@ type Props =
       oldString: string;
       newString: string;
       replaceAll?: boolean;
-      showHeader?: boolean;
-      oldContentOverride?: string;
-    }
-  | {
-      kind: "multi_edit";
-      filePath: string;
-      edits: EditItem[];
       showHeader?: boolean;
       oldContentOverride?: string;
     };
@@ -343,23 +330,17 @@ export function AdvancedDiffRenderer(
         { kind: "write", filePath: props.filePath, content: props.content },
         { oldStrOverride: props.oldContentOverride },
       );
-    } else if (props.kind === "edit") {
-      return computeAdvancedDiff(
-        {
-          kind: "edit",
-          filePath: props.filePath,
-          oldString: props.oldString,
-          newString: props.newString,
-          replaceAll: props.replaceAll,
-        },
-        { oldStrOverride: props.oldContentOverride },
-      );
-    } else {
-      return computeAdvancedDiff(
-        { kind: "multi_edit", filePath: props.filePath, edits: props.edits },
-        { oldStrOverride: props.oldContentOverride },
-      );
     }
+    return computeAdvancedDiff(
+      {
+        kind: "edit",
+        filePath: props.filePath,
+        oldString: props.oldString,
+        newString: props.newString,
+        replaceAll: props.replaceAll,
+      },
+      { oldStrOverride: props.oldContentOverride },
+    );
   }, [props]);
 
   const showHeader = props.showHeader !== false; // default to true
@@ -372,24 +353,13 @@ export function AdvancedDiffRenderer(
         <WriteRenderer filePath={filePathForFallback} content={props.content} />
       );
     }
-    if (props.kind === "edit") {
-      return (
-        <EditRenderer
-          filePath={filePathForFallback}
-          oldString={props.oldString}
-          newString={props.newString}
-        />
-      );
-    }
-    // multi_edit fallback
-    if (props.kind === "multi_edit") {
-      const edits = (props.edits || []).map((e) => ({
-        old_string: e.old_string,
-        new_string: e.new_string,
-      }));
-      return <MultiEditRenderer filePath={filePathForFallback} edits={edits} />;
-    }
-    return <MultiEditRenderer filePath={filePathForFallback} edits={[]} />;
+    return (
+      <EditRenderer
+        filePath={filePathForFallback}
+        oldString={props.oldString}
+        newString={props.newString}
+      />
+    );
   }
 
   if (result.mode === "unpreviewable") {

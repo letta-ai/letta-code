@@ -8,9 +8,14 @@ import type {
   QueueItem,
 } from "@/queue/queue-runtime";
 import { isCoalescable } from "@/queue/queue-runtime";
+import { buildTaskNotificationContent } from "@/queue/turn-queue-runtime";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { debugWarn } from "@/utils/debug";
 import { getListenerBlockedReason } from "@/websocket/helpers/listener-queue-adapter";
+import {
+  getOrCreateProcessTransport,
+  getSubscribedListenerConnections,
+} from "./connection";
 import { getInboundImageFailureMode } from "./image-policy";
 import { getInboundClientMessageIds } from "./inbound-queue";
 import {
@@ -113,7 +118,10 @@ function buildQueuedTurnMessage(
     } else if (isCoalescable(item.kind) && "text" in item) {
       messages.push({
         role: "user",
-        content: item.text,
+        content:
+          item.kind === "task_notification"
+            ? buildTaskNotificationContent(item)
+            : item.text,
         otid: crypto.randomUUID(),
         attribution: {},
       } satisfies AttributedMessageCreate);
@@ -339,6 +347,45 @@ function emitTurnBoundaryStatus(
   emitLoopStatusUpdate(socket, runtime, scope);
 }
 
+function resolveQueuePumpTransport(
+  runtime: ConversationRuntime,
+  socket: ListenerTransport,
+): ListenerTransport | null {
+  // A scheduled pump may outlive the socket that accepted its input. Route
+  // through the process transport once connections are tracked so a reconnect
+  // can replace the writer without replacing the queue's single pump.
+  if (
+    runtime.listener.connections.size > 0 ||
+    runtime.listener.processTransport !== null
+  ) {
+    const transport = getOrCreateProcessTransport(runtime.listener);
+    if (!isListenerTransportOpen(transport)) return null;
+    // ProcessRuntimeTransport.isOpen() only means *some* connection is open.
+    // Queued input for this scope must have a live recipient before dequeue;
+    // otherwise its user echo and status are silently dropped. Local channel
+    // listeners intentionally execute without a remote subscriber.
+    const localConnection = [...runtime.listener.connections.values()].some(
+      (connection) =>
+        connection.initialized &&
+        "kind" in connection.writer &&
+        connection.writer.kind === "local" &&
+        isListenerTransportOpen(connection.writer),
+    );
+    if (
+      !localConnection &&
+      getSubscribedListenerConnections(runtime.listener, {
+        agent_id: runtime.agentId,
+        conversation_id: runtime.conversationId,
+      }).length === 0
+    ) {
+      return null;
+    }
+    return transport;
+  }
+  // Untracked test/legacy transports have no process connection to follow.
+  return isListenerTransportOpen(socket) ? socket : null;
+}
+
 async function drainQueuedMessages(
   runtime: ConversationRuntime,
   socket: ListenerTransport,
@@ -362,6 +409,11 @@ async function drainQueuedMessages(
         return;
       }
 
+      // Do not consume a batch without a live delivery path. On reconnect,
+      // the next iteration picks up the replacement writer automatically.
+      const turnTransport = resolveQueuePumpTransport(runtime, socket);
+      if (!turnTransport) return;
+
       const blockedReason = computeListenerQueueBlockedReason(runtime);
       if (blockedReason) {
         runtime.queueRuntime.tryDequeue(blockedReason);
@@ -383,9 +435,14 @@ async function drainQueuedMessages(
       }
 
       const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
-      emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
+      emitDequeuedUserMessage(
+        turnTransport,
+        runtime,
+        queuedTurn,
+        dequeuedBatch,
+      );
       // Turn start boundary: unconditional snapshot even when nothing changed.
-      emitTurnBoundaryStatus(runtime, socket);
+      emitTurnBoundaryStatus(runtime, turnTransport);
 
       const preTurnStatus =
         getListenerStatus(runtime.listener) === "processing"
@@ -406,7 +463,8 @@ async function drainQueuedMessages(
       );
       // Turn end boundary: repair any queue/loop frame the turn's own
       // change-driven emissions failed to deliver.
-      emitTurnBoundaryStatus(runtime, socket);
+      const endTransport = resolveQueuePumpTransport(runtime, socket);
+      if (endTransport) emitTurnBoundaryStatus(runtime, endTransport);
       evictConversationRuntimeIfIdle(runtime);
     }
   } finally {
@@ -433,8 +491,7 @@ export function scheduleQueuePump(
       runtime.queuePumpScheduled = false;
       if (
         runtime.listener !== getActiveRuntime() ||
-        runtime.listener.intentionallyClosed ||
-        !isListenerTransportOpen(socket)
+        runtime.listener.intentionallyClosed
       ) {
         return;
       }

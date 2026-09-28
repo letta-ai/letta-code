@@ -1,14 +1,6 @@
 /**
- * Git operations for git-backed agent memory.
- *
- * When memFS is enabled, the agent's memory is stored in a git repo
- * on the server at $LETTA_MEMFS_BASE_URL/v1/git/$AGENT_ID/state.git
- * (falling back to api.letta.com when unset). Desktop may route git transport
- * through a localhost proxy transiently, but that URL must not be persisted in
- * the repo's git config.
- * This module provides the CLI harness helpers: clone on first run,
- * pull on startup, commit memory writes, post-turn push for clean pending
- * commits, and status checks for system reminders.
+ * Git operations for agent memory. The remote defaults to api.letta.com;
+ * Desktop may proxy transport through localhost but never persists that URL.
  */
 
 import { execFile as execFileCb } from "node:child_process";
@@ -23,6 +15,7 @@ import {
 import { homedir, platform } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
+import { invalidPendingMemory } from "@/agent/memory-constraints-audit";
 import { getMemoryGitDir } from "@/agent/memory-git-dir";
 import { getDesktopAccessToken } from "@/auth/desktop-credentials";
 import {
@@ -36,16 +29,15 @@ import {
 } from "@/utils/checkout-readiness";
 import { debugLog, debugWarn } from "@/utils/debug";
 import { withRepositoryCheckout } from "@/utils/repository-checkout";
-import { getUtf16Bom } from "@/utils/text-files";
 import { GIT_MEMORY_ENABLED_TAG } from "./agent-tags";
 import { listAttachedAgentRepositories } from "./attached-repositories";
 import { getAuthToken } from "./memory-auth";
 import { getScopedMemoryFilesystemRoot } from "./memory-filesystem";
 import { withSerializedGitConfigMutation } from "./memory-git-config-lock";
 import {
+  installLocalMemoryPreCommitHook,
   installMemoryGitHooks,
   installPostCommitHook,
-  installPreCommitHook,
   installSharedMemoryPreCommitHook,
 } from "./memory-git-hooks";
 import { GIT_DISABLE_COMMIT_SIGNING_ARGS } from "./memory-git-signing";
@@ -1145,7 +1137,7 @@ async function prepareLocalOnlyMemoryRepoForGitOps(
   memoryDir: string,
   author: MemoryCommitAuthor,
 ): Promise<void> {
-  installPreCommitHook(memoryDir);
+  installLocalMemoryPreCommitHook(memoryDir);
   installPostCommitHook(memoryDir);
   await setLocalGitConfig(memoryDir, "letta.agentId", author.agentId);
   await setLocalGitConfig(memoryDir, "user.email", author.authorEmail);
@@ -1237,83 +1229,6 @@ async function unstageMemoryPaths(
   } catch {
     // Best-effort cleanup only.
   }
-}
-
-export async function assertMemoryRepoCleanForWrite(
-  memoryDir: string,
-): Promise<void> {
-  const status = await runGit(memoryDir, ["status", "--porcelain"]);
-  if (status.stdout.trim().length > 0) {
-    const encodingDetails = describeDirtyMarkdownEncodingIssues(
-      memoryDir,
-      status.stdout,
-    );
-    throw new Error(
-      "Memory repo has uncommitted changes. Commit, discard, or sync them before using memory tools." +
-        encodingDetails,
-    );
-  }
-}
-
-function describeDirtyMarkdownEncodingIssues(
-  memoryDir: string,
-  porcelainStatus: string,
-): string {
-  const issues = porcelainStatus
-    .split(/\r?\n/)
-    .map((line) => line.trimEnd())
-    .filter((line) => line.length > 0)
-    .map(parsePorcelainPath)
-    .filter((path): path is string => path?.endsWith(".md") ?? false)
-    .map((path) => describeMarkdownEncodingIssue(memoryDir, path))
-    .filter((issue): issue is string => issue !== null);
-
-  if (issues.length === 0) {
-    return "";
-  }
-
-  return ` Dirty markdown encoding issue(s): ${issues.join("; ")}.`;
-}
-
-function parsePorcelainPath(line: string): string | null {
-  if (line.length < 4) {
-    return null;
-  }
-
-  const status = line.slice(0, 2);
-  if (status === " D" || status === "D " || status === "DD") {
-    return null;
-  }
-
-  const rawPath = line.slice(3);
-  const renameSeparator = " -> ";
-  const path = rawPath.includes(renameSeparator)
-    ? (rawPath.split(renameSeparator).pop() ?? rawPath)
-    : rawPath;
-
-  return path.replace(/^"|"$/g, "");
-}
-
-function describeMarkdownEncodingIssue(
-  memoryDir: string,
-  relativePath: string,
-): string | null {
-  const filePath = join(memoryDir, relativePath);
-  if (!existsSync(filePath)) {
-    return null;
-  }
-
-  const bytes = readFileSync(filePath);
-  const utf16Bom = getUtf16Bom(bytes);
-  if (utf16Bom) {
-    return `${relativePath} has ${utf16Bom} BOM`;
-  }
-
-  if (bytes.includes(0)) {
-    return `${relativePath} contains NUL bytes, possibly UTF-16`;
-  }
-
-  return null;
 }
 
 export async function commitMemoryWrite(
@@ -1413,10 +1328,8 @@ export async function initializeLocalMemoryRepo(
     authorName: params.authorName?.trim() || "Letta Agent",
     authorEmail: `${params.agentId}@letta.com`,
   };
-  await prepareLocalOnlyMemoryRepoForGitOps(params.memoryDir, author);
-  installPreCommitHook(params.memoryDir);
-
   if (await hasMemoryHead(params.memoryDir)) {
+    await prepareLocalOnlyMemoryRepoForGitOps(params.memoryDir, author);
     return;
   }
 
@@ -1437,6 +1350,8 @@ export async function initializeLocalMemoryRepo(
     writeFileSync(fullPath, file.content, "utf8");
     pathspecs.push(relativePath);
   }
+
+  await prepareLocalOnlyMemoryRepoForGitOps(params.memoryDir, author);
 
   if (pathspecs.length > 0) {
     const commit = await commitMemoryPaths(
@@ -1791,6 +1706,7 @@ export type MemoryPostTurnSyncStatus =
   | "pushed"
   | "dirty"
   | "conflict"
+  | "invalid"
   | "push_failed"
   | "skipped";
 
@@ -1986,6 +1902,9 @@ export async function syncPendingMemoryCommitsAfterTurn(
     };
   }
 
+  const initialValidation = invalidPendingMemory(memoryDir, localOnly);
+  if (initialValidation) return initialValidation;
+
   try {
     await runGitWithRetry(memoryDir, ["push", "-u", "origin", "main"], token, {
       operation: "post-turn push pending memory commits",
@@ -2021,6 +1940,8 @@ export async function syncPendingMemoryCommitsAfterTurn(
           localOnly,
         };
       }
+      const rebasedValidation = invalidPendingMemory(memoryDir, localOnly);
+      if (rebasedValidation) return rebasedValidation;
       await runGitWithRetry(
         memoryDir,
         ["push", "-u", "origin", "main"],

@@ -180,24 +180,19 @@ if (letta.capabilities.events.turns) {
 
 ## Permission overlay
 
-Use a permission overlay, not `tool_start`, for policy. Normalize tool names by family; UI display names and provider-specific tool names drift (`Read`, `read`, `read_file`, `ReadFile`, etc.). Keep pure read-only tools separate from planning coordination tools like `AskUserQuestion` and todo/plan updates so the policy stays honest.
+Use a permission overlay, not `tool_start`, for policy. Normalize tool names by family; UI display names and provider-specific tool names drift (`Read`, `read`, etc.). Keep pure read-only tools separate from planning coordination tools like `AskUserQuestion` and todo/plan updates so the policy stays honest.
 
 ```ts
 const readOnlyToolNames = new Set([
   "glob",
   "grep",
-  "grepfiles",
   "list",
-  "listdir",
-  "ls",
   "notebookread",
   "read",
-  "readfile",
   "readlsp",
   "search",
   "searchfiles",
   "skill",
-  "taskoutput",
   "viewimage",
 ]);
 
@@ -205,7 +200,10 @@ const planningToolNames = new Set([
   "askuserquestion",
   "enterplanmode",
   "exitplanmode",
-  "todowrite",
+  "taskcreate",
+  "taskget",
+  "tasklist",
+  "taskupdate",
   "updateplan",
 ]);
 
@@ -259,7 +257,7 @@ if (letta.capabilities.permissions) {
       return {
         decision: "deny",
         reason:
-          `Plan mode is active. Use direct read-only tools (Read, Grep, Glob, List, Search, Skill, safe read-only Bash), planning tools (AskUserQuestion, TodoWrite/UpdatePlan), or recall-style subagents only. ` +
+          `Plan mode is active. Use direct read-only tools (Read, Grep, Glob, ViewImage, Skill, safe read-only Bash), planning tools (AskUserQuestion, TaskCreate/TaskUpdate, UpdatePlan), or recall-style subagents only. ` +
           `Do not use coding, general-purpose, or fork subagents in plan mode. ` +
           `Write your plan to: ${session.planFilePath}. ` +
           `When ready, read the plan file and include the full current plan text in AskUserQuestion for approval, then call exit_plan_mode after approval.`,

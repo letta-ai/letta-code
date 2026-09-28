@@ -42,11 +42,11 @@ export interface BackgroundProcess {
   actingUserId?: string;
   kind?: "monitor" | "workflow";
   description?: string;
-  monitorSource?: "command" | "websocket";
+  monitorSource?: "command" | "websocket" | "github_pull_request";
   persistent?: boolean;
   secrets?: Readonly<Record<string, string>>;
   /**
-   * Set when the agent deliberately stops the shell (KillBash/TaskStop) so the
+   * Set when the agent deliberately stops the shell (TaskStop) so the
    * resulting "exit" event does not wake it with a failure notification for a
    * process it just killed on purpose.
    */

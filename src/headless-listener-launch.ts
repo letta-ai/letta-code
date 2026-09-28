@@ -292,7 +292,7 @@ export async function launchListenerConversation(
         actingUserId: params.scope.acting_user_id,
         githubPullRequestConversationIds:
           params.githubPullRequestConversationIds ??
-          process.env[GITHUB_PR_CONVERSATIONS_ENV]?.split(","),
+          process.env[GITHUB_PR_CONVERSATIONS_ENV]?.split(",").filter(Boolean),
       },
       AbortSignal.timeout(30_000),
     );

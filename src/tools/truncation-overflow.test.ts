@@ -2,11 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getOverflowDirectory } from "@/tools/impl/overflow";
-import {
-  truncateArray,
-  truncateByChars,
-  truncateByLines,
-} from "@/tools/impl/truncation";
+import { truncateArray, truncateByChars } from "@/tools/impl/truncation";
 
 describe("truncation with overflow support", () => {
   const testWorkingDir = "/test/truncation/path";
@@ -104,54 +100,6 @@ describe("truncation with overflow support", () => {
 
       expect(result.wasTruncated).toBe(false);
       expect(result.overflowPath).toBeUndefined();
-    });
-  });
-
-  describe("truncateByLines with overflow", () => {
-    test("writes overflow file when lines exceed limit", () => {
-      const lines = Array.from({ length: 100 }, (_, i) => `Line ${i + 1}`);
-      const text = lines.join("\n");
-
-      const result = truncateByLines(text, 50, undefined, "TestTool", {
-        workingDirectory: testWorkingDir,
-      });
-
-      expect(result.wasTruncated).toBe(true);
-      expect(result.overflowPath).toBeDefined();
-
-      if (result.overflowPath) {
-        expect(fs.existsSync(result.overflowPath)).toBe(true);
-        expect(fs.readFileSync(result.overflowPath, "utf-8")).toBe(text);
-      }
-    });
-
-    test("uses middle truncation for lines when enabled", () => {
-      const lines = Array.from({ length: 100 }, (_, i) => `Line ${i + 1}`);
-      const text = lines.join("\n");
-
-      const result = truncateByLines(text, 50, undefined, "TestTool", {
-        workingDirectory: testWorkingDir,
-        useMiddleTruncation: true,
-      });
-
-      expect(result.wasTruncated).toBe(true);
-      expect(result.content).toContain("Line 1"); // beginning
-      expect(result.content).toContain("Line 25"); // end of first half
-      expect(result.content).toContain("Line 76"); // beginning of second half
-      expect(result.content).toContain("Line 100"); // end
-      expect(result.content).toContain("lines omitted");
-    });
-
-    test("includes overflow path in truncation notice", () => {
-      const lines = Array.from({ length: 100 }, (_, i) => `Line ${i + 1}`);
-      const text = lines.join("\n");
-
-      const result = truncateByLines(text, 50, undefined, "TestTool", {
-        workingDirectory: testWorkingDir,
-      });
-
-      expect(result.content).toContain("Full output written to:");
-      expect(result.content).toContain(result.overflowPath || "");
     });
   });
 

@@ -22,6 +22,7 @@ import {
   prepareToolExecutionContextForModel,
 } from "./manager";
 import type { PermissionModeState } from "./permission-mode-state";
+import { isRemovedToolName } from "./removed-tools";
 import { TOOL_DEFINITIONS, type ToolName } from "./tool-definitions";
 import type { ToolsetName, ToolsetPreference } from "./toolset-types";
 
@@ -40,7 +41,11 @@ function resolveIncludedToolNames(toolNames: string[] | undefined): ToolName[] {
   return toolNames.map((toolName) => {
     const internalName = getInternalToolName(toolName);
     if (!Object.hasOwn(TOOL_DEFINITIONS, internalName)) {
-      throw new Error(`Unknown bundled client tool: ${toolName}`);
+      throw new Error(
+        isRemovedToolName(toolName)
+          ? `Unknown bundled client tool: ${toolName} (removed from Letta Code)`
+          : `Unknown bundled client tool: ${toolName}`,
+      );
     }
     return internalName as ToolName;
   });

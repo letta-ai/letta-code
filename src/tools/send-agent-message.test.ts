@@ -36,7 +36,23 @@ test.each(computers)("HTTP send: computer %j", async (computer) => {
         body,
         path: new URL(request.url).pathname,
       });
-      if (requests.length === 2) release();
+      if (
+        computer === undefined &&
+        request.headers.get("X-Letta-Acting-User-Id") === "user-first" &&
+        requests.filter((item) => item.user === "user-first").length === 1
+      ) {
+        return Response.json(
+          {
+            error:
+              "Service temporarily unavailable. Please retry your request.",
+            errorCode: "cloud_api_shutting_down",
+            admitted: false,
+            retryable: true,
+          },
+          { status: 503, headers: { "Retry-After": "0" } },
+        );
+      }
+      if (requests.length === (computer === undefined ? 3 : 2)) release();
       await gate;
       return Response.json(
         {
@@ -128,7 +144,14 @@ test.each(computers)("HTTP send: computer %j", async (computer) => {
         conversation_id: "conv-recipient",
       });
     }
-    expect(requests).toHaveLength(2);
+    expect(requests).toHaveLength(computer === undefined ? 3 : 2);
+    if (computer === undefined) {
+      const retried = requests.filter(
+        (request) => request.user === "user-first",
+      );
+      expect(retried).toHaveLength(2);
+      expect(retried[0]).toEqual(retried[1]);
+    }
     for (const id of ["first", "second"]) {
       const request = requests.find((value) => value.user === `user-${id}`);
       expect(request?.path).toBe(

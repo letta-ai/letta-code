@@ -207,7 +207,7 @@ function resolveMemorySubagentScratchpad(
  *   - MEMORY_DIR / LETTA_MEMORY_DIR are only overridden when the subagent
  *     declares the memory-subagent launch profile. Those subagents operate on
  *     the parent's memory as their working filesystem (reflection, memory,
- *     init, history-analyzer). Other subagents keep whatever MEMORY_DIR they
+ *     init). Other subagents keep whatever MEMORY_DIR they
  *     inherited from the parent process (usually unset).
  *
  * Pure function, no side effects — straightforward to unit-test.
@@ -236,10 +236,13 @@ export function composeSubagentChildEnv(
     [];
   const githubPullRequestConversationIds = [
     ...inheritedPrConversationIds,
-    ...(options.parentConversationId?.startsWith("conv-")
+    ...(options.parentConversationId &&
+    /^(?:local-)?conv-/.test(options.parentConversationId)
       ? [options.parentConversationId]
       : []),
-  ].filter((id, index, ids) => ids.indexOf(id) === index);
+  ]
+    .filter((id, index, ids) => id.length > 0 && ids.indexOf(id) === index)
+    .slice(-20);
 
   const childEnv: NodeJS.ProcessEnv = {
     ...parentProcessEnv,
@@ -256,10 +259,9 @@ export function composeSubagentChildEnv(
     // Replace inherited parent addresses even when the new scope is unknown.
     LETTA_PARENT_AGENT_ID: parentAgentId,
     LETTA_PARENT_CONVERSATION_ID: options.parentConversationId,
-    // Carry every durable launcher in this task chain; virtual `default`
-    // conversations are intentionally omitted.
-    [GITHUB_PR_CONVERSATIONS_ENV]:
-      githubPullRequestConversationIds.join(",") || undefined,
+    // Carry up to twenty named launchers, keeping the nearest parents when
+    // the chain exceeds the enqueue contract's limit. Empty means no parents.
+    [GITHUB_PR_CONVERSATIONS_ENV]: githubPullRequestConversationIds.join(","),
     ...(transcriptPath && { TRANSCRIPT_PATH: transcriptPath }),
   };
 

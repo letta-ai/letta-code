@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bash } from "@/tools/impl/bash";
-import { kill_bash } from "@/tools/impl/kill-bash";
+import { killBackgroundProcess } from "@/tools/impl/kill-bash";
 import {
   __resetBackgroundRetentionConfigForTests,
   __setBackgroundRetentionConfigForTests,
@@ -78,7 +78,7 @@ describe.skipIf(isWindows)("Bash background tools", () => {
     expect(backgroundProcesses.get(bashId ?? "")?.status).toBe("failed");
   });
 
-  test("KillBash terminates background process", async () => {
+  test("killBackgroundProcess terminates background process", async () => {
     // Start long-running process
     const startResult = await bash({
       command: "sleep 10",
@@ -89,19 +89,14 @@ describe.skipIf(isWindows)("Bash background tools", () => {
     const match = startResult.content[0]?.text.match(/bash_(\d+)/);
     const bashId = `bash_${match?.[1]}`;
 
-    // Kill it (KillBash uses shell_id parameter)
-    const killResult = await kill_bash({ shell_id: bashId });
-
-    expect(killResult.killed).toBe(true);
+    expect(killBackgroundProcess(bashId)).toBe(true);
   });
 
-  test("KillBash handles non-existent shell_id", async () => {
-    const result = await kill_bash({ shell_id: "nonexistent" });
-
-    expect(result.killed).toBe(false);
+  test("killBackgroundProcess handles non-existent id", () => {
+    expect(killBackgroundProcess("nonexistent")).toBe(false);
   });
 
-  test("KillBash preserves completed-process cleanup behavior", async () => {
+  test("killBackgroundProcess preserves completed-process cleanup behavior", () => {
     let killed = false;
     backgroundProcesses.set("bash_completed", {
       process: {
@@ -116,9 +111,7 @@ describe.skipIf(isWindows)("Bash background tools", () => {
       exitCode: 0,
     });
 
-    expect(await kill_bash({ shell_id: "bash_completed" })).toEqual({
-      killed: true,
-    });
+    expect(killBackgroundProcess("bash_completed")).toBe(true);
     expect(killed).toBe(true);
     expect(backgroundProcesses.has("bash_completed")).toBe(false);
   });

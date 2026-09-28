@@ -323,5 +323,6 @@ export function buildMessageChannelExternalToolDefinition(
     label: "Message Channel",
     description: resolved.description,
     parameters: resolved.schema,
+    auto_background: false,
   };
 }
