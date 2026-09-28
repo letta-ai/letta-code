@@ -59,11 +59,6 @@ pass `allowedTools: []` — a model that can still read files tends to wander,
 and a subagent that re-issues an identical tool call three times is stopped
 and resolves to `null`.
 
-`Read` clips any line over 2000 characters, so a subagent reading generated
-JSON/JSONL evidence sees only the start of long items. Before fanning
-out, check that a representative long item survives a Read intact; if not,
-pretty-print or split the evidence first.
-
 Their model defaults to the invoking conversation's model. `opts.model` (or
 the tool's `model` input) accepts any handle or alias listed by
 `letta model list`; an unknown value resolves that call to `null`. Use a
