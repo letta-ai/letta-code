@@ -7,6 +7,10 @@ import Letta from "@letta-ai/letta-client";
 import { createAuthenticatedCliTestEnv } from "@/test-utils/test-process-env";
 
 type Sandbox = { sandboxId: string; conversationId?: string | null };
+// Cloud sandbox provisioning can outlast 90 seconds (the former child timeout).
+// Two distinct scopes are created in this test, so bound each CLI operation
+// separately while leaving time for both and for cleanup.
+const CLI_TIMEOUT_MS = 240_000;
 
 // Runs in the API integration job; no messages or model inference are needed.
 test.skipIf(!process.env.LETTA_API_KEY)(
@@ -74,7 +78,7 @@ test.skipIf(!process.env.LETTA_API_KEY)(
           stderr: "pipe",
         },
       );
-      const timer = setTimeout(() => child.kill("SIGKILL"), 90000);
+      const timer = setTimeout(() => child.kill("SIGKILL"), CLI_TIMEOUT_MS);
       try {
         const [stdout, stderr, code] = await Promise.all([
           new Response(child.stdout).text(),
@@ -92,7 +96,6 @@ test.skipIf(!process.env.LETTA_API_KEY)(
       if (result.code === 0) return false;
       const output = `${result.stdout}\n${result.stderr}`;
       return (
-        result.code === 137 ||
         /API error \((?:408|429|5\d\d)\)/i.test(output) ||
         /Request timed out|fetch failed/i.test(output)
       );
@@ -236,5 +239,5 @@ test.skipIf(!process.env.LETTA_API_KEY)(
       }
     }
   },
-  360000,
+  600000,
 );
