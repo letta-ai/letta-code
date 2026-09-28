@@ -97,13 +97,28 @@ Workflow subagents require the API backend.
   under this title in progress output.
 - `log(message)` — emit a progress message to the user.
 - `decide(state, questions, opts?)` → Promise; not a subagent call. Ask a
-  calibrated Jev model (chosen internally — no model option) typed questions
-  about `state`. Each needs `instructions` and a `type`: `choice` (criteria
-  map of id → description, ≤255), `score` (criteria array), `noul` (no
-  criteria). Returns a response whose `answers` are calibrated, or `null`
-  after one retried invalid answer — guard `if (!call)`; API errors throw.
+  calibrated Jev model (chosen internally — no model option) questions about
+  `state`. `questions` is a non-empty OBJECT keyed by question id — never an
+  array. Each question needs `instructions` and a `type`: `choice` (criteria
+  map of id → description, ≤255), `score` (criteria array of strings, unlike
+  `questions`), `noul` (no criteria). Returns a response whose `answers` are
+  keyed by the same ids and calibrated, or `null` after one retried invalid
+  answer — guard `if (!call)`; API errors throw.
+
+      const call = await decide(evidence, {
+        behavior: { type: 'choice', instructions: 'Is this behavior a bug?',
+          criteria: { bad: 'Wrong or harmful', not_bad: 'Expected or harmless' } },
+      })
+      const verdict = call?.answers?.behavior?.choice  // 'bad' | 'not_bad'
+
 - `args` — the value passed as the tool's `args` input, verbatim. Pass
   arrays/objects as actual JSON values, NOT as a JSON-encoded string.
+
+`decide()` sees only the `state` you pass; it cannot read files. When compact,
+bounded items are already prepared, pass them via `args` and call `decide()`
+on each directly — don't spawn `agent()` readers just to relay inputs. Raw
+large traces don't belong in `args`: prepare bounded state that preserves the
+user instruction, observed action, and outcome, and mark what was omitted.
 
 Scripts are plain JavaScript, NOT TypeScript — type annotations, interfaces,
 and generics fail to parse. The script body runs in an async context — use
