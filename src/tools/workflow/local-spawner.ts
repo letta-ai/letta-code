@@ -114,6 +114,13 @@ async function runWorker(
 ): Promise<SubagentOutcome> {
   const startedAt = Date.now();
   const { options } = request;
+  if (options.conversationId) {
+    return {
+      value: null,
+      failed: true,
+      error: "Local Workflow worker continuation is not supported yet",
+    };
+  }
   const model = options.model
     ? (config.resolveModel?.(options.model) ?? null)
     : config.model;
@@ -326,6 +333,7 @@ async function runWorker(
       config.parentAgentId,
     );
     const workerScope = created.runtime;
+    hooks?.onStarted?.(workerScope.conversation_id);
     if (terminated || signal.aborted) {
       // An abort during runtime_start can precede knowledge of the scope.
       // Now that the scope exists, issue the scoped abort before disconnect.
