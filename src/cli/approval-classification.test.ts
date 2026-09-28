@@ -489,7 +489,7 @@ describe("classifyApprovals", () => {
     expect(result.autoDenied).toHaveLength(0);
   });
 
-  test("auto respects explicit ask, alwaysAsk, deny and absent user intent", async () => {
+  test("auto delegates ordinary ask but retains alwaysAsk, deny, and absent intent", async () => {
     await loadTools();
     const projectDir = await createTempProjectWithAlwaysAskRule();
     const call = {
@@ -517,7 +517,7 @@ describe("classifyApprovals", () => {
     expect(
       (await classifyApprovals([call], options)).needsUserInput[0]?.permission
         .matchedRule,
-    ).toBe("Bash(npm run build)");
+    ).toBe("auto mode (Jev)");
     const push = {
       toolCallId: "push",
       toolName: "Bash",
@@ -536,6 +536,242 @@ describe("classifyApprovals", () => {
     expect((await classifyApprovals([call], options)).autoDenied).toHaveLength(
       1,
     );
+  });
+
+  test("auto asks Jev about allowed Read, Skill, simple shell, compound shell, and configured allows", async () => {
+    await loadTools();
+    const cwd = await mkdtemp(join(tmpdir(), "letta-auto-all-tools-"));
+    tempDirs.push(cwd);
+    await savePermissionRule("Bash(echo configured)", "allow", "local", cwd);
+    const calls = [
+      {
+        toolCallId: "read",
+        toolName: "Read",
+        toolArgs: JSON.stringify({ file_path: join(cwd, "AGENTS.md") }),
+      },
+      {
+        toolCallId: "skill",
+        toolName: "Skill",
+        toolArgs: JSON.stringify({ skill: "review" }),
+      },
+      {
+        toolCallId: "simple",
+        toolName: "Bash",
+        toolArgs: JSON.stringify({ command: "ls", description: "List files" }),
+      },
+      {
+        toolCallId: "compound",
+        toolName: "Bash",
+        toolArgs: JSON.stringify({
+          command: "ls && pwd",
+          description: "Inspect repository",
+        }),
+      },
+      {
+        toolCallId: "configured",
+        toolName: "Bash",
+        toolArgs: JSON.stringify({
+          command: "echo configured",
+          description: "Check configured command",
+        }),
+      },
+    ];
+    const seen: unknown[] = [];
+    const decide = async (input: unknown) => {
+      seen.push(input);
+      return {
+        id: "decision",
+        model: "typesafe/jev-test",
+        provider: "typesafe",
+        usage: { input_tokens: 1, output_tokens: 1, cost: 0 },
+        answers: {
+          approval: {
+            type: "choice",
+            choice: "ask",
+            calibrated: true as const,
+          },
+        },
+      };
+    };
+    const result = await classifyApprovals(calls, {
+      permissionModeState: { mode: "auto" },
+      trustedUserRequest: "Look around this repo",
+      workingDirectory: cwd,
+      requireArgsForAutoApprove: true,
+      decide,
+    });
+    expect(
+      result.needsUserInput.map((entry) => entry.approval.toolCallId),
+    ).toEqual(calls.map((call) => call.toolCallId));
+    expect(result.autoAllowed).toHaveLength(0);
+    expect(seen).toHaveLength(calls.length);
+    for (const [index, input] of seen.entries()) {
+      expect(input).toMatchObject({
+        state: {
+          trusted_user_request: "Look around this repo",
+          untrusted_proposed_tool_call: {
+            tool_name: calls[index]?.toolName,
+            arguments: JSON.parse(calls[index]?.toolArgs ?? "{}"),
+          },
+        },
+      });
+    }
+  });
+
+  test("auto promotes only individual Jev-approved calls in a mixed batch", async () => {
+    await loadTools();
+    const cwd = await mkdtemp(join(tmpdir(), "letta-auto-batch-"));
+    tempDirs.push(cwd);
+    registerTestModTool("format_file", { approvalPolicy: "ask" });
+    const calls = [
+      {
+        toolCallId: "read",
+        toolName: "Read",
+        toolArgs: JSON.stringify({ file_path: join(cwd, "AGENTS.md") }),
+      },
+      { toolCallId: "mod", toolName: "format_file", toolArgs: "{}" },
+      {
+        toolCallId: "shell",
+        toolName: "Bash",
+        toolArgs: JSON.stringify({
+          command: "ls && pwd",
+          description: "Inspect repository",
+        }),
+      },
+    ];
+    const seen: string[] = [];
+    const result = await classifyApprovals(calls, {
+      permissionModeState: { mode: "auto" },
+      workingDirectory: cwd,
+      trustedUserRequest: "Inspect and format this project",
+      decide: async (input: unknown) => {
+        const state = (
+          input as {
+            state: { untrusted_proposed_tool_call: { tool_name: string } };
+          }
+        ).state;
+        seen.push(state.untrusted_proposed_tool_call.tool_name);
+        return {
+          id: "decision",
+          model: "typesafe/jev-test",
+          provider: "typesafe",
+          usage: { input_tokens: 1, output_tokens: 1, cost: 0 },
+          answers: {
+            approval: {
+              type: "choice",
+              choice: seen.length === 2 ? "ask" : "approve",
+              calibrated: true as const,
+            },
+          },
+        };
+      },
+    });
+    expect(seen).toEqual(["Read", "format_file", "Bash"]);
+    expect(
+      result.autoAllowed.map((entry) => entry.approval.toolCallId),
+    ).toEqual(["read", "shell"]);
+    expect(
+      result.autoAllowed.map((entry) => entry.permission.matchedRule),
+    ).toEqual(["auto mode (Jev)", "auto mode (Jev)"]);
+    expect(
+      result.needsUserInput.map((entry) => entry.approval.toolCallId),
+    ).toEqual(["mod"]);
+  });
+
+  test("auto does not consult Jev for deny, alwaysAsk, or interactive calls", async () => {
+    await loadTools();
+    const cwd = await createTempProjectWithAlwaysAskRule();
+    await savePermissionRule("Bash(rm -rf:*)", "deny", "local", cwd);
+    const calls = [
+      {
+        toolCallId: "deny",
+        toolName: "Bash",
+        toolArgs: JSON.stringify({
+          command: "rm -rf output",
+          description: "Delete output",
+        }),
+      },
+      {
+        toolCallId: "always",
+        toolName: "Bash",
+        toolArgs: JSON.stringify({
+          command: "git push origin main",
+          description: "Push changes",
+        }),
+      },
+      {
+        toolCallId: "interactive",
+        toolName: "AskUserQuestion",
+        toolArgs: JSON.stringify({ questions: [] }),
+      },
+    ];
+    let decisions = 0;
+    const result = await classifyApprovals(calls, {
+      permissionModeState: { mode: "auto" },
+      workingDirectory: cwd,
+      trustedUserRequest: "Inspect the repository",
+      alwaysRequiresUserInput: (name) => name === "AskUserQuestion",
+      decide: async () => {
+        decisions++;
+        throw new Error("Jev must not see mandatory calls");
+      },
+    });
+    expect(decisions).toBe(0);
+    expect(result.autoDenied.map((entry) => entry.approval.toolCallId)).toEqual(
+      ["deny"],
+    );
+    expect(
+      result.needsUserInput.map((entry) => entry.approval.toolCallId),
+    ).toEqual(["always", "interactive"]);
+    expect(result.needsUserInput[0]?.permission.decision).toBe("alwaysAsk");
+  });
+
+  test("auto asks for static allows when trusted request or exact args are unavailable", async () => {
+    await loadTools();
+    const cwd = await mkdtemp(join(tmpdir(), "letta-auto-invalid-"));
+    tempDirs.push(cwd);
+    const read = {
+      toolCallId: "read",
+      toolName: "Read",
+      toolArgs: JSON.stringify({ file_path: join(cwd, "AGENTS.md") }),
+    };
+    let decisions = 0;
+    const options = {
+      permissionModeState: { mode: "auto" as const },
+      workingDirectory: cwd,
+      decide: async () => {
+        decisions++;
+        throw new Error("Unexpected Jev request");
+      },
+    };
+    expect(
+      (await classifyApprovals([read], options)).needsUserInput,
+    ).toHaveLength(1);
+    expect(
+      (
+        await classifyApprovals([read], {
+          ...options,
+          trustedUserRequest: "Read AGENTS.md",
+          abortSignal: AbortSignal.abort(),
+        })
+      ).needsUserInput,
+    ).toHaveLength(1);
+    const oversized = {
+      ...read,
+      toolArgs: JSON.stringify({
+        file_path: join(cwd, "AGENTS.md"),
+        content: "x".repeat(70_000),
+      }),
+    };
+    expect(
+      (
+        await classifyApprovals([oversized], {
+          ...options,
+          trustedUserRequest: "Read AGENTS.md",
+        })
+      ).needsUserInput,
+    ).toHaveLength(1);
+    expect(decisions).toBe(0);
   });
 
   test("auto sends exact edit payloads, rejecting malformed, oversized, and ambiguous shells", () => {

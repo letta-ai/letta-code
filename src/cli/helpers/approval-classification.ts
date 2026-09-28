@@ -1,11 +1,6 @@
-import { getAvailableModToolsRegistry } from "@/mods/tool-registry";
 import type { ApprovalContext } from "@/permissions/analyzer";
 import { permissionMode } from "@/permissions/mode";
-import {
-  checkToolPermission,
-  getExecutionContextById,
-  getToolSchema,
-} from "@/tools/manager";
+import { checkToolPermission, getToolSchema } from "@/tools/manager";
 import type { PermissionModeState } from "@/tools/permission-mode-state";
 import {
   type DecisionResponse,
@@ -402,65 +397,81 @@ export async function classifyApprovals<TContext = ApprovalContext | null>(
     let decision = permission.decision;
 
     const interactiveTool = opts.alwaysRequiresUserInput?.(toolName) ?? false;
-    const modTools = opts.toolContextId
-      ? getExecutionContextById(opts.toolContextId)?.modTools
-      : undefined;
-    const isModTool = (modTools ?? getAvailableModToolsRegistry()).has(
-      toolName,
-    );
     if (interactiveTool && decision === "allow") {
       decision = "ask";
     }
 
-    // Only the checker's unresolved default ask is eligible. A rule, mod,
-    // hook, hard guard, or interactive tool retains its original intent.
+    // Auto checks each eligible invocation, including locally allowed reads,
+    // skills, shell calls, configured allows, and ordinary mod tools. Hard
+    // denials and mandatory human-interaction/alwaysAsk remain authoritative.
+    const autoMode =
+      (opts.permissionModeState?.mode ?? permissionMode.getMode()) === "auto";
     if (
-      decision === "ask" &&
-      !interactiveTool &&
-      !isModTool &&
-      !permission.matchedRule &&
-      permission.reason === "Default behavior for tool" &&
-      (opts.permissionModeState?.mode ?? permissionMode.getMode()) === "auto" &&
-      validAutoInvocation(
-        toolName,
-        parsedArgs,
-        originalToolArgs,
-        argsParse.parseFailed,
-      ) &&
-      invocationUnchanged(
-        approval,
-        toolName,
-        originalToolArgs,
-        parsedArgs,
-        argsSnapshot,
-      ) &&
-      (await shouldAutoApprove(
-        toolName,
-        JSON.parse(argsSnapshot) as Record<string, unknown>,
-        opts.trustedUserRequest,
-        opts.workingDirectory ?? process.cwd(),
-        opts.abortSignal,
-        opts.decide ?? submitWorkflowDecision,
-      )) &&
-      invocationUnchanged(
-        approval,
-        toolName,
-        originalToolArgs,
-        parsedArgs,
-        argsSnapshot,
-      )
+      autoMode &&
+      decision !== "deny" &&
+      decision !== "alwaysAsk" &&
+      !interactiveTool
     ) {
-      decision = "allow";
-      classifiedApproval = {
-        ...approval,
-        toolName,
-        toolArgs: originalToolArgs,
-      };
-      permission = {
-        decision: "allow",
-        matchedRule: "auto mode (Jev)",
-        reason: "Calibrated auto approval",
-      };
+      const validInvocation =
+        validAutoInvocation(
+          toolName,
+          parsedArgs,
+          originalToolArgs,
+          argsParse.parseFailed,
+        ) &&
+        invocationUnchanged(
+          approval,
+          toolName,
+          originalToolArgs,
+          parsedArgs,
+          argsSnapshot,
+        );
+      const approved =
+        validInvocation &&
+        (await shouldAutoApprove(
+          toolName,
+          JSON.parse(argsSnapshot) as Record<string, unknown>,
+          opts.trustedUserRequest,
+          opts.workingDirectory ?? process.cwd(),
+          opts.abortSignal,
+          opts.decide ?? submitWorkflowDecision,
+        )) &&
+        invocationUnchanged(
+          approval,
+          toolName,
+          originalToolArgs,
+          parsedArgs,
+          argsSnapshot,
+        );
+      decision = approved ? "allow" : "ask";
+      permission = approved
+        ? {
+            decision: "allow",
+            matchedRule: "auto mode (Jev)",
+            reason: "Calibrated auto approval",
+          }
+        : {
+            decision: "ask",
+            matchedRule: "auto mode (Jev)",
+            reason: "Auto decision requires human approval",
+          };
+      if (approved)
+        classifiedApproval = {
+          ...approval,
+          toolName,
+          toolArgs: originalToolArgs,
+        };
+      debugLog(
+        "approval-classification",
+        `Auto final for ${toolName} call=${approval.toolCallId}: ` +
+          `source=${validInvocation ? "Jev" : "invalid invocation"} outcome=${decision}`,
+      );
+    } else if (autoMode) {
+      debugLog(
+        "approval-classification",
+        `Auto final for ${toolName} call=${approval.toolCallId}: ` +
+          `source=${interactiveTool ? "interactive" : "checker"} outcome=${decision}`,
+      );
     }
 
     const needsHumanApproval = decision === "ask" || decision === "alwaysAsk";

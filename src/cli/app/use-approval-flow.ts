@@ -125,6 +125,7 @@ type ApprovalFlowContext = {
   setStreaming: (value: boolean) => void;
   setThinkingMessage: Dispatch<SetStateAction<string>>;
   setUiPermissionMode: (mode: PermissionMode) => void;
+  uiPermissionModeRef: MutableRefObject<PermissionMode>;
   startupApproval: ApprovalRequest | null;
   startupApprovals: ApprovalRequest[];
   syncTrajectoryElapsedBase: () => void;
@@ -188,6 +189,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
     setStreaming,
     setThinkingMessage,
     setUiPermissionMode,
+    uiPermissionModeRef,
     startupApproval,
     startupApprovals,
     syncTrajectoryElapsedBase,
@@ -832,7 +834,11 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
       // Re-check remaining approvals against the newly saved permission
       // This allows subsequent approvals that match the new rule to be auto-allowed
       const remainingApprovals = pendingApprovals.slice(currentIndex + 1);
-      if (remainingApprovals.length > 0) {
+      // A saved allow rule cannot bypass Jev for other pending calls in Auto.
+      if (
+        remainingApprovals.length > 0 &&
+        uiPermissionModeRef.current !== "auto"
+      ) {
         const recheckResults = await Promise.all(
           remainingApprovals.map(async (approval) => {
             const parsedArgs = safeJsonParseOr<Record<string, unknown>>(

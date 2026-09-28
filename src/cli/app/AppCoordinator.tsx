@@ -3816,6 +3816,7 @@ export function App({
     setStreaming,
     setThinkingMessage,
     setUiPermissionMode,
+    uiPermissionModeRef,
     startupApproval,
     startupApprovals,
     syncTrajectoryElapsedBase,
