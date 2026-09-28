@@ -10,6 +10,11 @@ import { createSharedReminderState } from "@/reminders/state";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { runClaudeTurn } from "./claude-stream-session";
 import { runCodexTurn } from "./codex-app-server";
+import {
+  captureNativeSession,
+  rememberNativeSession,
+  reportNativeSessionCaptureFailure,
+} from "./native-session-capture";
 
 export const EXTERNAL_CODING_AGENT_TYPES = ["claude-code", "codex"] as const;
 export type ExternalCodingAgentType =
@@ -30,6 +35,8 @@ export interface ExternalCodingAgentRunOptions {
   prompt: string;
   model?: string;
   parentAgentId: string;
+  parentConversationId?: string;
+  actingUserId?: string;
   resumeSessionId?: string;
   cwd?: string;
   mcpReminder?: string;
@@ -370,6 +377,23 @@ export async function runExternalCodingAgent(
     LETTA_AGENT_ID: options.parentAgentId,
   };
   const cwd = options.cwd ?? getCurrentWorkingDirectory();
+  const scope = options.parentConversationId
+    ? {
+        agentId: options.parentAgentId,
+        conversationId: options.parentConversationId,
+        actingUserId: options.actingUserId,
+      }
+    : undefined;
+  const source = options.type === "claude-code" ? "claude_code" : "codex";
+  const capture = (result: SubagentResult): SubagentResult => {
+    const sessionId = result.runtimeSessionId ?? options.resumeSessionId;
+    if (scope && sessionId) {
+      void captureNativeSession(source, sessionId, scope, env).catch((error) =>
+        reportNativeSessionCaptureFailure(source, sessionId, error),
+      );
+    }
+    return result;
+  };
   try {
     options.signal?.throwIfAborted();
   } catch (error) {
@@ -394,29 +418,36 @@ export async function runExternalCodingAgent(
       // The managed sandbox wrapper authenticates model requests with its
       // sandbox key, not native `codex login`. A real app-server turn is the
       // authority on whether the configured provider can answer.
-      return (deps.runCodexTurn ?? runCodexTurn)(
-        {
-          prompt: options.prompt,
-          parentAgentId: options.parentAgentId,
-          cwd,
-          model: options.model,
-          mcpReminder: options.mcpReminder,
-          signal: options.signal,
-          resumeThreadId: options.resumeSessionId,
-          onStarted: (threadId) =>
-            options.onStarted?.(formatExternalCodingAgentId("codex", threadId)),
-        },
-        { env },
+      return capture(
+        await (deps.runCodexTurn ?? runCodexTurn)(
+          {
+            prompt: options.prompt,
+            parentAgentId: options.parentAgentId,
+            cwd,
+            model: options.model,
+            mcpReminder: options.mcpReminder,
+            signal: options.signal,
+            resumeThreadId: options.resumeSessionId,
+            onStarted: (threadId) => {
+              if (scope && !options.resumeSessionId)
+                rememberNativeSession("codex", threadId, scope);
+              options.onStarted?.(
+                formatExternalCodingAgentId("codex", threadId),
+              );
+            },
+          },
+          { env },
+        ),
       );
     } catch (error) {
-      return {
+      return capture({
         agentId: options.parentAgentId,
         model: options.model,
         report: "",
         success: false,
         error: normalizeError(error),
         durationMs: Date.now() - startedAt,
-      };
+      });
     }
   }
   try {
@@ -429,21 +460,25 @@ export async function runExternalCodingAgent(
     assertPreflightReady(options.type, preflight);
     if (options.type === "claude-code" && !deps.runProcess) {
       const sessionId = options.resumeSessionId ?? randomUUID();
+      if (scope && !options.resumeSessionId)
+        rememberNativeSession("claude_code", sessionId, scope);
       options.onStarted?.(
         formatExternalCodingAgentId("claude-code", sessionId),
       );
-      return runClaudeTurn(
-        {
-          prompt: options.prompt,
-          parentAgentId: options.parentAgentId,
-          cwd,
-          model: options.model,
-          mcpReminder: options.mcpReminder,
-          signal: options.signal,
-          resumeSessionId: options.resumeSessionId,
-          sessionId,
-        },
-        { env },
+      return capture(
+        await runClaudeTurn(
+          {
+            prompt: options.prompt,
+            parentAgentId: options.parentAgentId,
+            cwd,
+            model: options.model,
+            mcpReminder: options.mcpReminder,
+            signal: options.signal,
+            resumeSessionId: options.resumeSessionId,
+            sessionId,
+          },
+          { env },
+        ),
       );
     }
     const result = await (deps.runProcess ?? runProcess)(
@@ -461,23 +496,25 @@ export async function runExternalCodingAgent(
         `${options.type} completed without a resumable session ID`,
       );
     }
-    return {
+    if (scope && !options.resumeSessionId)
+      rememberNativeSession(source, parsed.sessionId, scope);
+    return capture({
       agentId: formatExternalCodingAgentId(options.type, parsed.sessionId),
       runtimeSessionId: parsed.sessionId,
       model: options.model,
       report: parsed.report,
       success: true,
       durationMs: Date.now() - startedAt,
-    };
+    });
   } catch (error) {
     const message = normalizeError(error);
-    return {
+    return capture({
       agentId: options.parentAgentId,
       model: options.model,
       report: "",
       success: false,
       error: message,
       durationMs: Date.now() - startedAt,
-    };
+    });
   }
 }
