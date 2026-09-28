@@ -96,6 +96,34 @@ async function endpoint(
 }
 
 describe("native CLI JSONL capture", () => {
+  test("shares discovery and upload when two captures start together", async () => {
+    const { path, env } = await fixture("claude_code", Buffer.from("first\n"));
+    const calls: Array<{
+      url: string;
+      body: Record<string, unknown>;
+      actingUser: string | undefined;
+    }> = [];
+    const url = await endpoint(calls);
+    rememberNativeSession("claude_code", ID, scope, "https://api.letta.com");
+    const options = {
+      baseUrl: url,
+      apiKey: "test",
+      cloudUrl: "https://api.letta.com",
+    };
+    await Promise.all([
+      captureNativeSession("claude_code", ID, scope, env, options),
+      captureNativeSession("claude_code", ID, scope, env, options),
+    ]);
+    expect(calls).toHaveLength(1);
+    await appendFile(path, "second\n");
+    await captureNativeSession("claude_code", ID, scope, env, options);
+    expect(
+      calls.map(({ body }) =>
+        Buffer.from(String(body.data_base64), "base64").toString(),
+      ),
+    ).toEqual(["first\n", "second\n"]);
+  });
+
   test("captures an append while the prior chunk is still uploading", async () => {
     const { path, env } = await fixture("codex", Buffer.from("first\n"));
     const calls: Array<{

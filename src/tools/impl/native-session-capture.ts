@@ -176,15 +176,16 @@ export async function captureNativeSession(
     await existing.pending.catch(() => undefined);
     return captureNativeSession(source, sessionId, scope, env, requestOptions);
   }
-  const path =
-    existing.path || (await findNativeSessionPath(source, sessionId, env));
-  if (!path) return;
-  existing.path = path;
-  existing.pending = drain(existing, source, sessionId, requestOptions).finally(
-    () => {
-      existing.pending = undefined;
-    },
-  );
+  // Claim the session synchronously, before the first filesystem await.
+  existing.pending = (async () => {
+    const path =
+      existing.path || (await findNativeSessionPath(source, sessionId, env));
+    if (!path) return;
+    existing.path = path;
+    await drain(existing, source, sessionId, requestOptions);
+  })().finally(() => {
+    existing.pending = undefined;
+  });
   await existing.pending;
 }
 
