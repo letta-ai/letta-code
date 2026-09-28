@@ -175,6 +175,9 @@ export async function startAppServer(
   const wss = new WebSocketServer({ noServer: true });
   let resolvedInfo: AppServerListeningInfo | null = null;
   let nextConnectionOrdinal = 0;
+  const connectionPrefix = options.connectionName?.startsWith("workflow-")
+    ? `${options.connectionName}-`
+    : "";
   const runtime = options.runtime ?? createRuntime();
   const ownsRuntime = options.runtime === undefined;
   if (ownsRuntime) {
@@ -222,7 +225,9 @@ export async function startAppServer(
   >();
 
   const handleWebSocketConnection = (socket: WebSocket): void => {
-    const connectionId = `app-server-${nextConnectionOrdinal}`;
+    // A local Workflow attaches a second App Server to an existing listener.
+    // Prefix its connections so they cannot replace primary-server scopes.
+    const connectionId = `app-server-${connectionPrefix}${nextConnectionOrdinal}`;
     nextConnectionOrdinal += 1;
     // The `ws` library auto-replies to ping frames with a pong. Leave the pong
     // timestamp unset until a probe is actually answered; the missed-probe

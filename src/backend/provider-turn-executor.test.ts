@@ -27,7 +27,7 @@ function part(value: Record<string, unknown>): ProviderStreamPart {
   return value as unknown as ProviderStreamPart;
 }
 
-function input(): HeadlessTurnExecutorInput {
+function input(): HeadlessTurnExecutorInput & { agentId: string } {
   return {
     conversationId: "local-conv-1",
     agentId: "agent-local-1",

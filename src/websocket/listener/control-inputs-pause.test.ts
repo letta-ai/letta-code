@@ -154,6 +154,70 @@ describe("abort_message parks queued user messages", () => {
     expect(cancelRun).not.toHaveBeenCalled();
   });
 
+  test("worker abort fences replacement turns until conversation cancellation settles", async () => {
+    const listener = createRuntime();
+    setActiveRuntime(listener);
+    const runtime = getOrCreateScopedRuntime(
+      listener,
+      null,
+      "local-conv-worker",
+    );
+    const lease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+    });
+    runtime.turnLifecycle.setRunId(lease, "local-run-worker");
+    const cancelRun = mock(async () => {});
+    const cancellations: Array<{ agentId: string; conversationId: string }> =
+      [];
+    let finishBackendCancellation: (() => void) | undefined;
+    const backendCancellation = new Promise<void>((resolve) => {
+      finishBackendCancellation = resolve;
+    });
+    const cancelled = await handleAbortMessageInput(
+      listener,
+      {
+        command: {
+          type: "abort_message",
+          runtime: { agent_id: null, conversation_id: "local-conv-worker" },
+          run_id: "local-run-worker",
+        },
+        socket: createOpenTransport(),
+        opts: {} as StartListenerOptions,
+        processQueuedTurn: async () => {},
+      },
+      {
+        cancelRun,
+        cancelConversation: async (agentId, conversationId) => {
+          cancellations.push({ agentId, conversationId });
+          await backendCancellation;
+        },
+      },
+    );
+    expect(cancelled).toBe(true);
+    await waitFor(() => cancellations.length === 1);
+    expect(cancellations).toEqual([
+      { agentId: "", conversationId: "local-conv-worker" },
+    ]);
+    expect(cancelRun).not.toHaveBeenCalled();
+    expect(
+      finishListenerTurn(runtime, lease, {
+        stopReason: "cancelled",
+        socket: createOpenTransport(),
+        conversationId: "local-conv-worker",
+      }).finished,
+    ).toBe(true);
+    expect(runtime.turnLifecycle.kind).toBe("cancelling");
+    expect(() =>
+      runtime.turnLifecycle.begin({
+        origin: "message",
+        workingDirectory: process.cwd(),
+      }),
+    ).toThrow("Cannot begin a turn while lifecycle is cancelling");
+    finishBackendCancellation?.();
+    await waitFor(() => runtime.turnLifecycle.kind === "idle");
+  });
+
   test("parked user messages wait while a notification queued during the interrupt drains", async () => {
     const { runtime, processedTurns } = await interruptWithQueuedItems({
       queuedBeforeAbort: (r) => enqueueUser(r, "queued before esc"),

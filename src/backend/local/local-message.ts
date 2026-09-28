@@ -26,7 +26,7 @@ export interface LocalMessageProviderMetadata {
 export interface LocalMessageMetadata {
   created_at?: string;
   updated_at?: string;
-  agent_id?: string;
+  agent_id?: string | null;
   conversation_id?: string;
   provider?: LocalMessageProviderMetadata;
   compaction?: {

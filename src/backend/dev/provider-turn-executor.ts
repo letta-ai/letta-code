@@ -36,7 +36,7 @@ const LOCAL_SMALL_CONTEXT_COMPACTION_RESERVE_RATIO = 0.2;
 
 export interface ProviderTurnInput {
   conversationId: string;
-  agentId: string;
+  agentId: string | null;
   agent: LocalAgentRecord;
   systemPrompt?: string;
   midConversationSystemPrompt?: string;
@@ -49,7 +49,7 @@ export interface ProviderTurnInput {
 
 /** Provider-request start info emitted at the model-call boundary. */
 export interface LlmStartInfo {
-  agentId: string;
+  agentId: string | null;
   conversationId: string;
   model: string;
   messageCount: number;
@@ -65,7 +65,7 @@ export interface LlmEndErrorInfo {
 
 /** Provider-request completion info emitted once a final message is produced. */
 export interface LlmEndInfo {
-  agentId: string;
+  agentId: string | null;
   conversationId: string;
   model: string;
   stopReason: string;

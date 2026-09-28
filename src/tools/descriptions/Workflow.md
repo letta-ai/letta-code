@@ -22,4 +22,6 @@ Scripts are plain JavaScript and must begin with `export const meta = {...}`, a 
   )
   return results.filter(Boolean).flat().filter(Boolean)
 
+Local workflows run workers in their own persisted conversations through the local App Server; Cloud workflows use the Agent SDK.
+
 Before authoring a script, load the `workflow-authoring` skill — the script API, pipeline-vs-barrier rules, quality patterns, worked examples, and how to diagnose a run.

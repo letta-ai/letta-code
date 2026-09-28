@@ -6,12 +6,12 @@
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
 
-export type StoredMessage = Message & {
+export type StoredMessage = Omit<Message, "agent_id"> & {
   id: string;
   message_type: string;
   date: string;
   content?: unknown;
-  agent_id: string;
+  agent_id: string | null;
   conversation_id: string;
 };
 
@@ -27,9 +27,15 @@ export interface LocalAgentRecord {
   compaction_settings?: Record<string, unknown> | null;
 }
 
-export type StoredConversation = Conversation & {
+export type StoredConversation = Omit<Conversation, "agent_id"> & {
   id: string;
-  agent_id: string;
+  agent_id: string | null;
+  /** Parent grants resources but is never the conversation owner. */
+  parent_agent_id?: string | null;
+  is_subagent?: boolean;
+  name?: string | null;
+  system?: string;
+  context_window_limit?: number | null;
   in_context_message_ids: string[];
   hidden?: boolean;
   tags?: string[];

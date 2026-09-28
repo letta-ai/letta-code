@@ -488,7 +488,9 @@ export async function handleAbortMessageInput(
   }
 
   const cancellation = scopedRuntime.turnLifecycle.requestCancellation({
-    waitForExternalSettlement: hasActiveTurn && Boolean(scopedRuntime.agentId),
+    // Worker conversations have no agent ID, but their conversation-wide
+    // backend cancellation must finish before a replacement turn can start.
+    waitForExternalSettlement: hasActiveTurn,
   });
   // Interrupt semantics: the current turn stops and the user's queued messages
   // park until resume_queue or the user's next message. System items (task
@@ -592,21 +594,25 @@ export async function handleAbortMessageInput(
 
   const cancelConversationId = scopedRuntime.conversationId;
   const cancelAgentId = scopedRuntime.agentId;
-  if (cancelAgentId) {
+  if (cancelAgentId || cancelConversationId !== "default") {
     const cancelRunId = interruptedRunId ?? params.command.run_id ?? null;
     // Target the interrupted run when possible so this abort can never select
     // a replacement turn. Older backends may reject run-scoped cancellation;
     // the lifecycle fence also makes the conversation-wide fallback safe.
-    const backendCancellation = cancelRunId
-      ? resolvedDeps
-          .cancelRun(cancelAgentId, cancelRunId)
-          .catch(() =>
-            resolvedDeps.cancelConversation(
-              cancelAgentId,
-              cancelConversationId,
-            ),
-          )
-      : resolvedDeps.cancelConversation(cancelAgentId, cancelConversationId);
+    const backendCancellation =
+      cancelRunId && cancelAgentId
+        ? resolvedDeps
+            .cancelRun(cancelAgentId, cancelRunId)
+            .catch(() =>
+              resolvedDeps.cancelConversation(
+                cancelAgentId,
+                cancelConversationId,
+              ),
+            )
+        : resolvedDeps.cancelConversation(
+            cancelAgentId ?? "",
+            cancelConversationId,
+          );
     void backendCancellation
       .catch(() => {
         // Fire-and-forget

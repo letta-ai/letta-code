@@ -1,8 +1,8 @@
 /**
  * Workflow tool: launches a workflow script that orchestrates multiple
  * subagents deterministically. The engine lives in @/tools/workflow; each
- * agent() call in the script runs in an agent-free ephemeral conversation via
- * @letta-ai/letta-agent-sdk (loaded lazily — see @/tools/workflow/sdk-loader).
+ * agent() call in the script runs in its own persisted conversation.
+ * Cloud uses the Agent SDK; local execution uses the native App Server.
  *
  * The run happens in the background: the tool validates the script, registers
  * a background task, and returns at once with the task id. Progress lines go
@@ -21,6 +21,7 @@ import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { resolveModel } from "@/agent/model-catalog";
 import { getPrimaryAgentModelHandle } from "@/agent/subagents/subagent-model";
 import { apiRequest } from "@/backend/api/request";
+import { getBackend } from "@/backend/backend";
 import { resolveBackendMode } from "@/backend/backend-mode";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import {
@@ -37,6 +38,7 @@ import {
   defaultExecutionsDir,
   newExecutionId,
 } from "@/tools/workflow/journal";
+import { createLocalSpawnerHandle } from "@/tools/workflow/local-spawner";
 import { parseWorkflowMeta } from "@/tools/workflow/meta";
 import { loadAgentSdk } from "@/tools/workflow/sdk-loader";
 import {
@@ -110,12 +112,21 @@ async function resolveParentAgentId(
     args.parentScope?.conversationId ?? getConversationId();
   if (!parentAgentId?.startsWith("agent-")) {
     if (conversationId && conversationId !== "default") {
-      // The invoking conversation may itself be agent-free (a worker of an
+      // The invoking conversation may itself be a worker (of an
       // outer workflow); its parent supplies the lineage then.
-      const conversation = await apiRequest<{
-        agent_id: string | null;
-        parent_agent_id?: string | null;
-      }>("GET", `/v1/conversations/${encodeURIComponent(conversationId)}`);
+      const conversation =
+        resolveBackendMode() === "local"
+          ? ((await getBackend().retrieveConversation(conversationId)) as {
+              agent_id: string | null;
+              parent_agent_id?: string | null;
+            })
+          : await apiRequest<{
+              agent_id: string | null;
+              parent_agent_id?: string | null;
+            }>(
+              "GET",
+              `/v1/conversations/${encodeURIComponent(conversationId)}`,
+            );
       parentAgentId =
         conversation.agent_id ?? conversation.parent_agent_id ?? null;
     } else {
@@ -155,6 +166,16 @@ export async function createSdkSpawnerHandle(
         "Could not resolve the invoking conversation's model; pass `model` explicitly.",
       );
     }
+  }
+  if (resolveBackendMode() === "local") {
+    setStage("starting local App Server");
+    return createLocalSpawnerHandle({
+      parentAgentId,
+      model,
+      resolveModel,
+      allowedTools: args.allowedTools ?? [...DEFAULT_ALLOWED_TOOLS],
+      cwd: getCurrentWorkingDirectory(),
+    });
   }
   setStage("loading Agent SDK");
   const sdk = await loadAgentSdk();
@@ -293,13 +314,6 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
   if (!script) {
     return {
       toolReturn: "Provide `script` (inline source) or `scriptPath`.",
-      status: "error",
-    };
-  }
-  if (resolveBackendMode() !== "api") {
-    return {
-      toolReturn:
-        "Workflow agent() calls require the API backend because agent-free conversations are not supported by the local store.",
       status: "error",
     };
   }

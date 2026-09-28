@@ -178,6 +178,77 @@ describe("local backend pi transcript", () => {
     clearRegisteredPiProviders();
   });
 
+  test("agent-free conversations retain their own prompt through turn, compaction, and reload", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-agent-free-"));
+    try {
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+        memfsEnabled: false,
+      });
+      const parent = await backend.createAgent({
+        name: "Resource parent",
+        system: "Parent system must not become conversation history",
+      } as never);
+      const conversation = await backend.createConversation({
+        agent_id: null,
+        parent_agent_id: parent.id,
+        model: "openai/gpt-5.5",
+        system: "Conversation-owned system",
+      } as never);
+      expect(conversation.agent_id).toBeNull();
+      expect(
+        (conversation as { parent_agent_id?: string }).parent_agent_id,
+      ).toBe(parent.id);
+      expect(await backend.recompileConversation(conversation.id)).toBe(
+        "Conversation-owned system",
+      );
+
+      const compacted = await backend.compactConversationMessages(
+        conversation.id,
+      );
+      expect(compacted.summary).toBe("No prior conversation messages.");
+      expect(await backend.recompileConversation(conversation.id)).toBe(
+        "Conversation-owned system",
+      );
+
+      await drain(
+        await backend.createConversationMessageStream(conversation.id, {
+          agent_id: null,
+          messages: [{ role: "user", content: "ping" }],
+        } as never),
+      );
+      const reloaded = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+        memfsEnabled: false,
+      });
+      expect(await reloaded.recompileConversation(conversation.id)).toBe(
+        "Conversation-owned system",
+      );
+      const persisted = await reloaded.retrieveConversation(conversation.id);
+      expect(persisted.agent_id).toBeNull();
+      const messages = pageItems(
+        await reloaded.listConversationMessages(conversation.id, {
+          agent_id: null,
+          order: "asc",
+        } as never),
+      );
+      expect(
+        messages.some(
+          (message) => message.message_type === "assistant_message",
+        ),
+      ).toBe(true);
+      expect(
+        messages.every(
+          (message) => "agent_id" in message && message.agent_id === null,
+        ),
+      ).toBe(true);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("uses wall-clock timestamps for new local conversations and messages", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-backend-time-"));
     const before = Date.now() - 1_000;
