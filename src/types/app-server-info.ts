@@ -20,6 +20,8 @@ export interface AppServerInfoResponseMessage {
     conversation_management: boolean;
     memory_management: boolean;
     runtime_start: boolean;
+    /** Agent-free conversation creation/resume, including the local backend. */
+    agent_free_conversations?: boolean;
     launch_subagent?: boolean;
     runtime_workspace_sandbox?: boolean;
     runtime_external_tools_update?: boolean;
@@ -59,6 +61,8 @@ export function isAppServerInfoResponseMessage(
     typeof capabilityRecord.conversation_management === "boolean" &&
     typeof capabilityRecord.memory_management === "boolean" &&
     typeof capabilityRecord.runtime_start === "boolean" &&
+    (capabilityRecord.agent_free_conversations === undefined ||
+      typeof capabilityRecord.agent_free_conversations === "boolean") &&
     (capabilityRecord.launch_subagent === undefined ||
       typeof capabilityRecord.launch_subagent === "boolean") &&
     (capabilityRecord.runtime_workspace_sandbox === undefined ||

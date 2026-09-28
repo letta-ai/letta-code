@@ -133,6 +133,8 @@ describe("createSdkSpawner", () => {
     const outcome = await createSdkSpawner(client, {
       ...CONFIG,
       cwd: "/repo",
+      parentModelSettings: { temperature: 0.2, reasoning_effort: "medium" },
+      parentContextWindowLimit: 64_000,
     })(
       request({
         label: "review:a",
@@ -157,7 +159,8 @@ describe("createSdkSpawner", () => {
       allowedTools: ["Read"],
       skillSources: [],
       cwd: "/repo",
-      modelSettings: { reasoning_effort: "low" },
+      modelSettings: { temperature: 0.2, reasoning_effort: "low" },
+      contextWindowLimit: 64_000,
       disableMemoryGuard: true,
     });
     expect(String(client.calls[0]?.options.system)).toContain(

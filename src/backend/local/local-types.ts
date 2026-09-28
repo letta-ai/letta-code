@@ -33,4 +33,11 @@ export type StoredConversation = Conversation & {
   in_context_message_ids: string[];
   hidden?: boolean;
   tags?: string[];
+  /** Complete immutable system snapshot for an agent-free conversation. */
+  system?: string;
+  parent_agent_id?: string | null;
+  is_subagent?: boolean;
+  name?: string;
+  /** Internal marker; public projections expose this ownership as null. */
+  agent_free?: boolean;
 };

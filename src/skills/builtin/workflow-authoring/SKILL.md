@@ -64,7 +64,9 @@ the tool's `model` input) accepts any handle or alias listed by
 `letta model list`; an unknown value resolves that call to `null`. Use a
 cheaper model for mechanical stages only when you know a valid handle.
 
-Workflow subagents require the API backend.
+Use the invoking backend for workflow workers. Local execution requires an Agent
+SDK and App Server with local conversation support; `decide()` still uses the
+Cloud decisions service.
 
 ## Script body hooks
 
@@ -241,5 +243,7 @@ script and launch it again.
 
 The script is never replayed, but one worker can continue:
 `agent(prompt, {conversationId})` re-prompts it with history and model intact,
-using a journal ID and only once its last Run is terminal. Tools default to
-`[]`; `schema` and `effort` are chosen per turn. Needs SDK 0.8.20+.
+using a journal ID and only once its last Run is terminal. Local workers can
+only continue inside the same workflow execution that observed their completed
+turn. Tools default to `[]`; `schema` and `effort` are chosen per turn. Needs
+SDK 0.8.20+.

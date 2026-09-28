@@ -245,6 +245,21 @@ export interface Backend {
     options?: ConversationCreateOptions,
   ): Promise<Awaited<ReturnType<APIClient["conversations"]["create"]>>>;
 
+  /**
+   * Optional agent-free conversation creation used by SDK query() runtimes.
+   * Backends that implement this must preserve `agent_id: null` rather than
+   * materializing a hidden worker agent.
+   */
+  createEphemeralConversation?(body: {
+    model: string;
+    system: string;
+    model_settings?: Record<string, unknown>;
+    context_window_limit?: number | null;
+    parent_agent_id?: string | null;
+    name?: string;
+    is_subagent?: boolean;
+  }): Promise<Awaited<ReturnType<APIClient["conversations"]["create"]>>>;
+
   /** Optional: not all backends support deleting conversations. */
   deleteConversation?(
     conversationId: string,

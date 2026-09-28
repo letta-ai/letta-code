@@ -5,8 +5,7 @@
  * concurrent calls with different models never touch a shared agent.
  */
 
-import { getClient } from "@/backend/api/client";
-import { apiRequest } from "@/backend/api/request";
+import { getBackend } from "@/backend";
 import type {
   AgentCallOptions,
   SdkClient,
@@ -28,8 +27,14 @@ export interface SdkSpawnerConfig {
   allowedTools?: string[];
   /** Working directory for subagent sessions. */
   cwd?: string;
+  /** Local parent provider settings snapshotted when the workflow starts. */
+  parentModelSettings?: Record<string, unknown>;
+  /** Local parent context limit snapshotted when the workflow starts. */
+  parentContextWindowLimit?: number | null;
   /** Resume is gated on a verified SDK release; 0.8.17 silently creates a new child. */
   supportsAgentFreeResume?: boolean;
+  /** Cloud exposes durable Runs; local completion is owned by this spawner. */
+  verifyPersistedRuns?: boolean;
   /** Persisted conversation lookup (injected for focused tests). */
   retrieveConversation?: (id: string) => Promise<WorkerConversation>;
   /** Latest persisted conversation run (injected for focused tests). */
@@ -52,8 +57,8 @@ export interface WorkerRun {
 async function latestWorkerRun(
   conversationId: string,
 ): Promise<WorkerRun | null> {
-  const client = await getClient();
-  const messages = await client.conversations.messages.list(conversationId, {
+  const backend = getBackend();
+  const messages = await backend.listConversationMessages(conversationId, {
     limit: 100,
     order: "desc",
   });
@@ -64,16 +69,13 @@ async function latestWorkerRun(
       (id): id is string => typeof id === "string" && id.startsWith("run-"),
     );
   if (!runId) return null;
-  return client.runs.retrieve(runId);
+  return backend.retrieveRun(runId);
 }
 
 async function retrieveWorkerConversation(
   id: string,
 ): Promise<WorkerConversation> {
-  return apiRequest<WorkerConversation>(
-    "GET",
-    `/v1/conversations/${encodeURIComponent(id)}`,
-  );
+  return getBackend().retrieveConversation(id) as Promise<WorkerConversation>;
 }
 
 export const DEFAULT_ALLOWED_TOOLS = ["Read", "Grep", "Glob"];
@@ -339,6 +341,10 @@ function buildQueryOptions(
   ]
     .filter(Boolean)
     .join("\n\n");
+  const modelSettings = {
+    ...(!options.model ? config.parentModelSettings : {}),
+    ...(options.effort ? { reasoning_effort: options.effort } : {}),
+  };
   return {
     model,
     ...(options.schema
@@ -357,8 +363,9 @@ function buildQueryOptions(
     skillSources: [],
     ...(config.cwd ? { cwd: config.cwd } : {}),
     disableMemoryGuard: true,
-    ...(options.effort
-      ? { modelSettings: { reasoning_effort: options.effort } }
+    ...(Object.keys(modelSettings).length > 0 ? { modelSettings } : {}),
+    ...(!options.model && config.parentContextWindowLimit !== undefined
+      ? { contextWindowLimit: config.parentContextWindowLimit }
       : {}),
   };
 }
@@ -367,6 +374,8 @@ export function createSdkSpawner(
   client: SdkClient,
   config: SdkSpawnerConfig,
 ): SubagentSpawner {
+  const activeResumeIds = new Set<string>();
+  const locallyCompletedIds = new Set<string>();
   return async (
     request: SubagentRequest,
     signal: AbortSignal,
@@ -374,8 +383,13 @@ export function createSdkSpawner(
   ): Promise<SubagentOutcome> => {
     const { prompt, options } = request;
     const resumeId = options.conversationId;
-    if (resumeId !== undefined && !/^conv-[A-Za-z0-9_-]+$/.test(resumeId)) {
-      throw new Error("agent() conversationId must be a conv-... ID.");
+    if (
+      resumeId !== undefined &&
+      !/^(?:conv-|local-conv-)[A-Za-z0-9_-]+$/.test(resumeId)
+    ) {
+      throw new Error(
+        "agent() conversationId must be a conv-... or local-conv-... ID.",
+      );
     }
     // Never hand conversationId to an older SDK: it ignores the option and
     // creates a fresh worker, silently losing the conversation history.
@@ -398,7 +412,18 @@ export function createSdkSpawner(
         "Worker conversation is not agent-free or belongs to another parent agent.",
       );
     }
-    if (persisted && resumeId) {
+    if (
+      persisted &&
+      resumeId &&
+      config.verifyPersistedRuns === false &&
+      !locallyCompletedIds.has(resumeId) &&
+      !activeResumeIds.has(resumeId)
+    ) {
+      throw new Error(
+        "Local worker continuation is only safe within the workflow execution that completed it.",
+      );
+    }
+    if (persisted && resumeId && config.verifyPersistedRuns !== false) {
       // SDK App Server turns have Runs, not Super Runs. If the latest
       // persisted message has no run ID or the run is not terminal, do not
       // risk sending a second prompt into an active conversation.
@@ -452,17 +477,31 @@ export function createSdkSpawner(
       };
     }
 
+    if (resumeId && activeResumeIds.has(resumeId)) {
+      throw new Error(
+        "Worker conversation already has an active workflow turn.",
+      );
+    }
+    if (resumeId) activeResumeIds.add(resumeId);
+    let activeId = resumeId;
     const startedAt = Date.now();
     const usage: RunningUsage = {};
-    const query = client.query({
-      prompt,
-      options: {
-        ...buildQueryOptions(options, model, config, request.callIndex),
-        ...(resumeId ? { conversationId: resumeId } : {}),
-      },
-    });
+    let query: SdkQuery;
+    try {
+      query = client.query({
+        prompt,
+        options: {
+          ...buildQueryOptions(options, model, config, request.callIndex),
+          ...(resumeId ? { conversationId: resumeId } : {}),
+        },
+      });
+    } catch (error) {
+      if (activeId) activeResumeIds.delete(activeId);
+      throw error;
+    }
     if (resumeId && query.conversationId && query.conversationId !== resumeId) {
       query.close();
+      activeResumeIds.delete(resumeId);
       throw new Error(
         "SDK resumed an unexpected worker conversation; refusing continuation.",
       );
@@ -508,12 +547,19 @@ export function createSdkSpawner(
             if (resumeId && id !== resumeId) {
               stop("SDK resumed an unexpected worker conversation");
             } else if (!finished) {
+              if (!activeId) {
+                activeId = id;
+                activeResumeIds.add(id);
+              }
               hooks?.onStarted?.(id);
             }
           },
         ),
         stopped,
       ]);
+      if (!finished && query.conversationId) {
+        locallyCompletedIds.add(query.conversationId);
+      }
       if (resumeId && query.conversationId !== resumeId) {
         throw new Error(
           "SDK did not resume the requested worker conversation.",
@@ -580,6 +626,7 @@ export function createSdkSpawner(
       clearTimeout(timeout);
       signal.removeEventListener("abort", abort);
       query.close();
+      if (activeId) activeResumeIds.delete(activeId);
     }
   };
 }
