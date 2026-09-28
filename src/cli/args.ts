@@ -156,6 +156,15 @@ export const CLI_FLAG_CATALOG = {
       continuationLines: ["Default: text"],
     },
   },
+  "client-message-id": {
+    parser: { type: "string" },
+    mode: "headless",
+    help: {
+      argLabel: "<id>",
+      description:
+        "Client identity for the initial Cloud input (not a command request_id)",
+    },
+  },
   "no-wait": {
     parser: { type: "boolean" },
     mode: "headless",
@@ -404,6 +413,12 @@ export function parseCliArgs(args: string[], strict: boolean) {
     strict,
     allowPositionals: true,
   });
+  const clientMessageId = parsed.values["client-message-id"];
+  if (
+    clientMessageId !== undefined &&
+    (typeof clientMessageId !== "string" || !clientMessageId.trim())
+  )
+    throw new Error("--client-message-id must be a non-empty string");
   return {
     ...parsed,
     values: parsed.values as CliParsedValues,

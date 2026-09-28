@@ -36,7 +36,6 @@ import {
 import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
 import { emitRetryDelta, emitRuntimeStateUpdates } from "./protocol-outbound";
 import {
-  emitLoopErrorNotice,
   emitRecoverableRetryNotice,
   emitRecoverableStatusNotice,
   getConsumerLoopErrorMessage,
@@ -183,6 +182,14 @@ async function handleIncomingMessageInner(
         ...options,
         socket: options.socket ?? socket,
         turnId: activeDequeuedBatchId,
+        ...(options.errorNotice
+          ? {
+              errorNotice: {
+                ...options.errorNotice,
+                clientMessageIds: turnCorrelation.clientMessageIds,
+              },
+            }
+          : {}),
         ...(runtime.executionSettings
           ? { usage: buildTurnUsage(buffers.usage) }
           : {}),
@@ -243,24 +250,16 @@ async function handleIncomingMessageInner(
       return;
     }
     if (setup.kind === "cancelled") {
-      const transition = finishTurn({
+      finishTurn({
         stopReason: "cancelled",
         agentId: agentId || null,
         conversationId,
+        errorNotice: {
+          message: setup.reason,
+          cancelRequested: turnAbortSignal.aborted,
+          abortSignal: turnAbortSignal,
+        },
       });
-      if (!transition.finished) {
-        return;
-      }
-      const formattedError = emitLoopErrorNotice(socket, runtime, {
-        message: setup.reason,
-        stopReason: "cancelled",
-        isTerminal: true,
-        agentId,
-        conversationId,
-        cancelRequested: turnAbortSignal.aborted,
-        abortSignal: turnAbortSignal,
-      });
-      runtime.lastTerminalLoopErrorMessage = formattedError ?? setup.reason;
       return;
     }
     let turnInput = setup.turnInput;
@@ -268,7 +267,6 @@ async function handleIncomingMessageInner(
     const overrideModel = setup.overrideModel;
     let pendingNormalizationInterruptedToolCallIds =
       setup.pendingNormalizationInterruptedToolCallIds;
-    const preparedToolContext = setup.preparedToolContext;
     const initial = await startTurnInput({
       conversationId,
       agentId,
@@ -277,8 +275,9 @@ async function handleIncomingMessageInner(
       turnLease,
       workingDirectory: turnWorkingDirectory,
       permissionModeState: turnPermissionModeState,
-      preparedToolContext: preparedToolContext.preparedToolContext,
+      preparedToolContext: setup.preparedToolContext.preparedToolContext,
       overrideModel,
+      responseFormat: msg.responseFormat,
       actingUserId: msg.actingUserId,
       getInput: () => turnInput,
       getInterruptedToolCallIds: () =>
@@ -353,19 +352,15 @@ async function handleIncomingMessageInner(
         stopReason !== "requires_approval" &&
         !(stopReason === "error" && fallbackError)
       ) {
-        emitLoopErrorNotice(socket, runtime, {
-          message: `Maximum turns limit reached (${buffers.usage.stepCount}/${maxTurns} steps)`,
-          stopReason: "max_steps",
-          isTerminal: true,
-          runId: runId || runtime.activeRunId,
-          agentId,
-          conversationId,
-        });
         finishTurn({
           stopReason: "max_steps",
           socket,
           agentId,
           conversationId,
+          errorNotice: {
+            message: `Maximum turns limit reached (${buffers.usage.stepCount}/${maxTurns} steps)`,
+            runId: runId || runtime.activeRunId,
+          },
         });
         break;
       }
@@ -762,23 +757,13 @@ async function handleIncomingMessageInner(
           abortSignal: turnAbortSignal,
         };
         const terminalError = getConsumerLoopErrorMessage(noticeParams);
-        const transition = finishTurn({
+        finishTurn({
           stopReason: effectiveStopReason,
           agentId,
           conversationId,
           error: terminalError,
+          errorNotice: { ...noticeParams, runId: terminalRunId },
         });
-        if (!transition.finished) {
-          break;
-        }
-        const formattedError = emitLoopErrorNotice(socket, runtime, {
-          ...noticeParams,
-          stopReason: effectiveStopReason,
-          isTerminal: true,
-          runId: terminalRunId,
-        });
-        runtime.lastTerminalLoopErrorMessage = formattedError ?? errorMessage;
-        runtime.lastTerminalLoopErrorRunId = terminalRunId ?? null;
         break;
       }
 
@@ -803,26 +788,16 @@ async function handleIncomingMessageInner(
       });
       if (approvalResult.kind === "error") {
         const terminalRunId = runId || runtime.activeRunId;
-        const transition = finishTurn({
+        finishTurn({
           stopReason: "error",
           agentId,
           conversationId,
           error: getSafeTerminalError({ message: approvalResult.message }),
+          errorNotice: {
+            message: approvalResult.message,
+            runId: terminalRunId,
+          },
         });
-        if (!transition.finished) {
-          return;
-        }
-        const formattedError = emitLoopErrorNotice(socket, runtime, {
-          message: approvalResult.message,
-          stopReason: "error",
-          isTerminal: true,
-          runId: terminalRunId,
-          agentId,
-          conversationId,
-        });
-        runtime.lastTerminalLoopErrorMessage =
-          formattedError ?? approvalResult.message;
-        runtime.lastTerminalLoopErrorRunId = terminalRunId ?? null;
         return;
       }
 
@@ -945,18 +920,11 @@ async function handleIncomingMessageInner(
       agentId: agentId || null,
       conversationId,
       error: terminalError,
+      errorNotice: { ...noticeParams, runId: terminalRunId },
     });
     if (!transition.finished) {
       return;
     }
-    const formattedError = emitLoopErrorNotice(socket, runtime, {
-      ...noticeParams,
-      stopReason: "error",
-      isTerminal: true,
-      runId: terminalRunId,
-    });
-    runtime.lastTerminalLoopErrorMessage = formattedError ?? errorMessage;
-    runtime.lastTerminalLoopErrorRunId = terminalRunId ?? null;
     if (isDebugEnabled()) {
       console.error("[Listen] Error handling message:", error);
     }

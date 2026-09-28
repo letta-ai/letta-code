@@ -30,7 +30,7 @@ import type {
   MessageListParams,
 } from "@letta-ai/letta-client/resources/conversations/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
-import type { ChatGPTOAuthConfig } from "@/types/chatgpt-oauth";
+import type { ConnectProviderOAuthConfig } from "@/types/provider-oauth-config";
 import type {
   AppServerInfoCommand,
   AppServerInfoResponseMessage,
@@ -48,7 +48,12 @@ import type {
   RuntimeExternalToolsUpdateCommand,
   RuntimeExternalToolsUpdateResponseMessage,
 } from "./external-tool-protocol";
-import type { LoopState } from "./loop-status-protocol";
+import type {
+  LoopErrorMessage,
+  LoopState,
+  RetryMessage,
+  StatusMessage,
+} from "./loop-status-protocol";
 import type {
   AgentRuntimeScope,
   ConversationRuntimeScope,
@@ -62,12 +67,18 @@ import type {
   CronProtocolCommand,
   CronProtocolResponseMessage,
 } from "./schedule-protocol";
+import type * as SubagentProtocol from "./subagent-protocol";
 import type {
+  ExecuteCommandCommand,
+  ExecuteCommandResponseMessage,
   MonitorStopCommand,
   MonitorStopResponse,
   RemoveQueueItemCommand,
   RemoveQueueItemResponse,
 } from "./task-control-protocol";
+
+export type * from "./subagent-protocol";
+
 import type * as TeleportProtocol from "./teleport-protocol";
 import type {
   ToolsetName,
@@ -506,35 +517,6 @@ export interface SlashCommandEndMessage extends UmiLifecycleMessageBase {
   success: boolean;
 }
 
-export interface StatusMessage extends UmiLifecycleMessageBase {
-  message_type: "status";
-  message: string;
-  level: "info" | "success" | "warning";
-}
-
-export interface RetryMessage extends UmiLifecycleMessageBase {
-  message_type: "retry";
-  message: string;
-  reason: StopReasonType;
-  attempt: number;
-  max_attempts: number;
-  delay_ms: number;
-  retry_kind?: "provider_retry" | "transport_fallback";
-  provider?: string;
-  from_transport?: string | null;
-  to_transport?: string | null;
-  error_code?: string | null;
-  step_id?: string | null;
-}
-
-export interface LoopErrorMessage extends UmiLifecycleMessageBase {
-  message_type: "loop_error";
-  message: string;
-  stop_reason: StopReasonType;
-  is_terminal: boolean;
-  api_error?: LettaStreamingResponse.LettaErrorMessage;
-}
-
 export type StreamDelta =
   | MessageDelta
   | ApprovalClassificationEndMessage
@@ -577,11 +559,11 @@ export interface SubagentSnapshot {
   prompt?: string;
   status: "pending" | "running" | "completed" | "error";
   agent_url: string | null;
-  /** The subagent's own conversation id (for dual-view routing; local agents
-   * have a bare-id agent_url with no ?conversation= param to parse). */
-  conversation_id?: string | null;
+  conversation_id?: string | null; // Own conversation; local URLs do not carry it.
+  super_run_id?: string; // Exact accepted Super Run for a remote child send.
   model?: string;
   is_background?: boolean;
+  claims_parent_runtime?: boolean;
   silent?: boolean;
   tool_call_id?: string;
   parent_agent_id?: string;
@@ -646,11 +628,7 @@ export interface InputCreateMessagePayload {
    * client tools before the allowlist is applied.
    */
   client_toolset?: ClientToolsetConfig;
-  /**
-   * Optional scoped external tools to expose for this turn. Runtime-start
-   * external tools with a scope_id stay hidden unless selected here; unscoped
-   * external tools for the runtime remain available normally.
-   */
+  /** Scoped runtime-start tools to expose for this turn; unscoped tools remain available. */
   external_tool_scope_ids?: string[];
   /**
    * Exclude interactive user-input tools (AskUserQuestion and friends) from
@@ -660,6 +638,7 @@ export interface InputCreateMessagePayload {
    * interactive tools are covered without client updates.
    */
   exclude_interactive_tools?: boolean;
+  response_format?: Record<string, unknown>;
 }
 
 export type InputApprovalResponsePayload = {
@@ -1277,7 +1256,7 @@ export interface ConnectProviderCommand {
   auth_method_id?: string;
   fields: Record<string, string>;
   provider_name?: string;
-  oauth_config?: ChatGPTOAuthConfig;
+  oauth_config?: ConnectProviderOAuthConfig;
 }
 
 export interface DisconnectProviderCommand {
@@ -1470,9 +1449,9 @@ export interface ListModelsResponseModelEntry {
   isDefault?: boolean;
   isFeatured?: boolean;
   free?: boolean;
+  supportsStructuredOutputs?: boolean;
   updateArgs?: Record<string, unknown>;
 }
-
 export interface ListModelsResponseMessage {
   type: "list_models_response";
   request_id: string;
@@ -2256,30 +2235,6 @@ export interface ChannelTargetsUpdatedMessage {
   channel_id: ChannelId;
 }
 
-/**
- * Generic slash-command dispatch from the web app.
- * The device handles the `command_id` and emits `command_start` /
- * `command_end` stream deltas with the result.
- */
-export interface ExecuteCommandCommand {
-  type: "execute_command";
-  /** Which slash command to run (e.g., "clear") */
-  command_id: string;
-  /** Correlation id (echoed in the response stream deltas) */
-  request_id: string;
-  /** Runtime scope — identifies which agent + conversation this targets */
-  runtime: AgentRuntimeScope;
-  /** Optional command arguments (everything after the command name). */
-  args?: string;
-}
-
-export interface ExecuteCommandResponseMessage {
-  type: "execute_command_response";
-  request_id: string;
-  success: boolean;
-  output: string;
-}
-
 // ─────────────────────────────────────────────────
 //  Git branch commands
 // ─────────────────────────────────────────────────
@@ -2477,6 +2432,7 @@ export type WsProtocolCommand =
   | ChannelRouteUpdateCommand
   | ExecuteCommandCommand
   | RemoveQueueItemCommand
+  | SubagentProtocol.LaunchSubagentCommand
   | MonitorStopCommand
   | SearchBranchesCommand
   | CheckoutBranchCommand
@@ -2586,7 +2542,8 @@ export type WsProtocolMessage =
   | SecretListResponse
   | SecretApplyResponse
   | RemoveQueueItemResponse
-  | MonitorStopResponse;
+  | MonitorStopResponse
+  | SubagentProtocol.LaunchSubagentResponse;
 
 export type WsProtocolMessageType = WsProtocolMessage["type"];
 

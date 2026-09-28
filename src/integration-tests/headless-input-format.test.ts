@@ -671,7 +671,7 @@ describe("input-format stream-json", () => {
                   "Do not read the file yourself or call any other tools. " +
                   "After the Agent tool returns, reply with exactly LAUNCHED and end your turn. " +
                   "The tool return only confirms launch; it does not contain the report. " +
-                  "Do not invent a task-notification or a report, poll, or call TaskOutput. " +
+                  "Do not invent a task-notification or a report, poll, or read the output file. " +
                   "On the next user-role task-notification, copy the SUBAGENT-REPORT line from its result exactly, " +
                   "even if an earlier assistant message claimed to deliver a report. " +
                   "Return only that line, with no commentary or formatting.",

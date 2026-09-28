@@ -30,7 +30,6 @@ import {
 } from "./monitor";
 import { MONITOR_EVENT_BUFFER_CHARS } from "./monitor-event-stream";
 import { backgroundProcesses } from "./process_manager";
-import { task_output } from "./task-output";
 import { task_stop } from "./task-stop";
 
 async function waitFor(
@@ -44,6 +43,13 @@ async function waitFor(
     }
     await Bun.sleep(10);
   }
+}
+
+/** The output file path as the model sees it in the Monitor tool result. */
+function outputFileOf(result: Awaited<ReturnType<typeof monitor>>): string {
+  const outputFile = result.content[0]?.text.match(/^Output file: (.+)$/m)?.[1];
+  if (!outputFile) throw new Error("Monitor result omitted its output file");
+  return outputFile;
 }
 
 describe("Monitor", () => {
@@ -237,10 +243,11 @@ describe("Monitor", () => {
     }
   });
 
-  test("manager-created monitors keep the captured conversation scope", async () => {
+  test("manager-created monitors keep the captured turn identity", async () => {
     const scope = {
       agentId: "agent-captured",
       conversationId: "conv-captured",
+      actingUserId: "user-captured",
     };
     const prepared = await prepareToolExecutionContextForSpecificTools(
       ["Monitor"],
@@ -248,7 +255,11 @@ describe("Monitor", () => {
     );
     try {
       const result = await runWithRuntimeContext(
-        { agentId: "agent-other", conversationId: "conv-other" },
+        {
+          agentId: "agent-other",
+          conversationId: "conv-other",
+          actingUserId: "user-other",
+        },
         () =>
           executeTool(
             "Monitor",
@@ -266,7 +277,8 @@ describe("Monitor", () => {
         queuedMessages.every(
           (message) =>
             message.agentId === scope.agentId &&
-            message.conversationId === scope.conversationId,
+            message.conversationId === scope.conversationId &&
+            message.actingUserId === scope.actingUserId,
         ),
       ).toBe(true);
     } finally {
@@ -318,14 +330,13 @@ describe("Monitor", () => {
     expect(event?.text).toContain("first\nsecond");
     expect(event?.text).not.toContain("warning");
 
-    const output = await task_output({
-      task_id: result.taskId,
-      block: false,
-      timeout: 1000,
-    });
-    expect(output.status).toBe("completed");
-    expect(output.message).toContain("first");
-    expect(output.message).toContain("warning");
+    const outputFile = outputFileOf(result);
+    expect(outputFile).toBe(
+      backgroundProcesses.get(result.taskId)?.outputFile as string,
+    );
+    const output = readFileSync(outputFile, "utf8");
+    expect(output).toContain("first");
+    expect(output).toContain("warning");
   });
 
   test("redacts split invocation secrets from notifications and stored output", async () => {
@@ -347,16 +358,9 @@ describe("Monitor", () => {
     expect(eventText).toContain("PASSWORD=&lt;REDACTED&gt;");
     expect(eventText).not.toContain(secret);
 
-    const output = await task_output({
-      task_id: result.taskId,
-      block: false,
-      timeout: 1000,
-    });
-    expect(output.message).toContain("PASSWORD=<REDACTED>");
-    expect(output.message).not.toContain(secret);
-
-    const outputFile = backgroundProcesses.get(result.taskId)?.outputFile;
-    expect(readFileSync(outputFile as string, "utf8")).not.toContain(secret);
+    const output = readFileSync(outputFileOf(result), "utf8");
+    expect(output).toContain("PASSWORD=<REDACTED>");
+    expect(output).not.toContain(secret);
   });
 
   test("persistent command monitors can be stopped with TaskStop", async () => {
@@ -373,26 +377,54 @@ describe("Monitor", () => {
       timeoutMs: 0,
       persistent: true,
     });
-    await waitFor(
-      () => (backgroundProcesses.get(result.taskId)?.totalStdoutLines ?? 0) > 0,
+    await waitFor(() =>
+      readFileSync(outputFileOf(result), "utf8").includes("pending"),
     );
     expect(await task_stop({ task_id: result.taskId })).toEqual({
       killed: true,
     });
     expect(backgroundProcesses.get(result.taskId)?.status).toBe("failed");
-    expect(
-      (
-        await task_output({
-          task_id: result.taskId,
-          block: false,
-          timeout: 1000,
-        })
-      ).message,
-    ).toContain("pending");
+    expect(readFileSync(outputFileOf(result), "utf8")).toContain("pending");
     await Bun.sleep(250);
     expect(
       queuedMessages.some((message) => message.text.includes("Monitor event")),
     ).toBe(false);
+  });
+
+  test("reports whether a finished command monitor printed anything to stdout", async () => {
+    const quiet = await monitor({
+      description: "quiet source",
+      timeout_ms: 5000,
+      persistent: false,
+      command: nodeCommand(
+        'process.stderr.write("only stderr\\n"); process.stdout.write("\\n")',
+      ),
+    });
+    const chatty = await monitor({
+      description: "chatty source",
+      timeout_ms: 5000,
+      persistent: false,
+      command: nodeCommand('process.stdout.write("line\\n")'),
+    });
+    await waitFor(() =>
+      [quiet, chatty].every(
+        (result) =>
+          backgroundProcesses.get(result.taskId)?.status === "completed",
+      ),
+    );
+
+    const summaryOf = (taskId: string) =>
+      queuedMessages
+        .find((message) =>
+          message.text.includes(`<task-id>${taskId}</task-id>\n<status>`),
+        )
+        ?.text.match(/<summary>(.*)<\/summary>/)?.[1];
+    expect(summaryOf(quiet.taskId)).toBe(
+      'Monitor "quiet source" ended without producing output (exit 0)',
+    );
+    expect(summaryOf(chatty.taskId)).toBe(
+      'Monitor "chatty source" stream ended',
+    );
   });
 
   test("fails a command monitor when its output file cannot be written", async () => {
@@ -468,15 +500,19 @@ describe("Monitor", () => {
     });
 
     try {
-      const result = await monitor({
-        description: "socket events",
-        timeout_ms: 5000,
-        persistent: false,
-        command: "",
-        ws: {
-          url: `ws://127.0.0.1:${address.port}/events?token=secret`,
-        },
-      });
+      const result = await runWithRuntimeContext(
+        { actingUserId: "user-socket" },
+        () =>
+          monitor({
+            description: "socket events",
+            timeout_ms: 5000,
+            persistent: false,
+            command: "",
+            ws: {
+              url: `ws://127.0.0.1:${address.port}/events?token=secret`,
+            },
+          }),
+      );
       await waitFor(
         () => backgroundProcesses.get(result.taskId)?.status === "completed",
       );
@@ -487,19 +523,20 @@ describe("Monitor", () => {
       expect(eventText).toContain("first\nsecond");
       expect(eventText).toContain("[binary frame, 3 bytes]");
       expect(eventText).toContain("[WebSocket closed: 1000 done]");
+      expect(
+        queuedMessages.every(
+          (message) => message.actingUserId === "user-socket",
+        ),
+      ).toBe(true);
       expect(backgroundProcesses.get(result.taskId)?.command).toBe(
         `ws://127.0.0.1:${address.port}/events`,
       );
 
-      const output = await task_output({
-        task_id: result.taskId,
-        block: false,
-        timeout: 1000,
-      });
-      expect(output.message).toContain("first");
-      expect(output.message).toContain("binary frame, 3 bytes");
-      expect(output.message).toContain("[WebSocket closed: 1000 done]");
-      expect(output.message).not.toContain("\u001b[31m");
+      const output = readFileSync(outputFileOf(result), "utf8");
+      expect(output).toContain("first");
+      expect(output).toContain("binary frame, 3 bytes");
+      expect(output).toContain("[WebSocket closed: 1000 done]");
+      expect(output).not.toContain("\u001b[31m");
     } finally {
       for (const client of server.clients) {
         client.terminate();
@@ -539,12 +576,6 @@ describe("Monitor", () => {
       await waitFor(
         () => backgroundProcesses.get(result.taskId)?.status === "failed",
       );
-      expect(
-        backgroundProcesses
-          .get(result.taskId)
-          ?.stderr.join("")
-          .includes("output file write failed"),
-      ).toBe(true);
     } finally {
       for (const client of server.clients) {
         client.terminate();
@@ -603,9 +634,8 @@ describe("Monitor", () => {
         persistent: true,
         ws: { url: `ws://127.0.0.1:${address.port}` },
       });
-      await waitFor(
-        () =>
-          (backgroundProcesses.get(result.taskId)?.totalStdoutLines ?? 0) > 0,
+      await waitFor(() =>
+        readFileSync(outputFileOf(result), "utf8").includes("pending"),
       );
       expect(await task_stop({ task_id: result.taskId })).toEqual({
         killed: true,
@@ -638,7 +668,6 @@ describe("Monitor", () => {
       stderr: [],
       status: "running",
       exitCode: null,
-      lastReadIndex: { stdout: 0, stderr: 0 },
       kind: "monitor",
     });
 

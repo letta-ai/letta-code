@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
+import { MANAGED_CLOUD_RUNTIME_ENV } from "@/managed-cloud-runtime";
 import {
   __listenerIdentityTestUtils,
   getSpawnerDeviceId,
@@ -9,11 +11,13 @@ import {
 
 const originalEnv = process.env[LISTENER_INSTANCE_ID_ENV];
 const originalDeviceId = process.env.LETTA_LISTENER_DEVICE_ID;
+const originalManagedCloudRuntime = process.env[MANAGED_CLOUD_RUNTIME_ENV];
 
 beforeEach(() => {
   __listenerIdentityTestUtils.resetCachedSpawnerIdentity();
   delete process.env[LISTENER_INSTANCE_ID_ENV];
   delete process.env.LETTA_LISTENER_DEVICE_ID;
+  delete process.env[MANAGED_CLOUD_RUNTIME_ENV];
 });
 
 afterEach(() => {
@@ -25,6 +29,11 @@ afterEach(() => {
     delete process.env[LISTENER_INSTANCE_ID_ENV];
   } else {
     process.env[LISTENER_INSTANCE_ID_ENV] = originalEnv;
+  }
+  if (originalManagedCloudRuntime === undefined) {
+    delete process.env[MANAGED_CLOUD_RUNTIME_ENV];
+  } else {
+    process.env[MANAGED_CLOUD_RUNTIME_ENV] = originalManagedCloudRuntime;
   }
 });
 
@@ -57,6 +66,31 @@ describe("getSpawnerListenerInstanceId", () => {
     // Re-registration gets the process-owned cache after the transport env
     // variable is gone.
     expect(getSpawnerListenerInstanceId()).toBe("desktop-primary:install-42");
+  });
+
+  test("derives an inheritable Cloud marker without leaking relay identity", () => {
+    process.env[LISTENER_INSTANCE_ID_ENV] = "sandbox:sandbox-42";
+
+    expect(getSpawnerListenerInstanceId()).toBe("sandbox:sandbox-42");
+    expect(process.env[LISTENER_INSTANCE_ID_ENV]).toBeUndefined();
+    expect(process.env[MANAGED_CLOUD_RUNTIME_ENV]).toBe("1");
+
+    const child = spawnSync(
+      process.execPath,
+      [
+        "-e",
+        `process.stdout.write(JSON.stringify({ marker: process.env.${MANAGED_CLOUD_RUNTIME_ENV}, identity: process.env.${LISTENER_INSTANCE_ID_ENV} }))`,
+      ],
+      { encoding: "utf8", env: process.env },
+    );
+    expect(child.status).toBe(0);
+    expect(JSON.parse(child.stdout)).toEqual({ marker: "1" });
+  });
+
+  test("desktop and manual listeners do not derive a Cloud marker", () => {
+    process.env[LISTENER_INSTANCE_ID_ENV] = "desktop-primary:install-42";
+    expect(getSpawnerListenerInstanceId()).toBe("desktop-primary:install-42");
+    expect(process.env[MANAGED_CLOUD_RUNTIME_ENV]).toBeUndefined();
   });
 
   test("returns and caches null when unset (manual listeners keep legacy identity)", () => {

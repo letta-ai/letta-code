@@ -158,7 +158,7 @@ describe("personality helpers", () => {
         description: PERSONALITY_OPTIONS.find(
           (option) => option.id === personality,
         )?.description,
-        memoryPromptMode: "memfs",
+        memoryPromptMode: "root-memfs",
       });
       expect(personaBlock?.value).toBe(definitions.persona.value);
       expect(humanBlock?.value).toBe(definitions.human.value);
@@ -204,6 +204,7 @@ describe("personality helpers", () => {
     expect(onboardingBlock?.value).not.toContain(
       "Offer to create one yourself.",
     );
+    expect(options.memoryPromptMode).toBe("local-memfs");
     expect(
       getPersonalityBlockDefinitions("tutorial", "local").onboarding
         ?.templatePromptAssetName,

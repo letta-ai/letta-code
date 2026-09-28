@@ -29,6 +29,7 @@ import {
 } from "@/runtime-context";
 import { getRuntimeExecutionEnv } from "@/runtime-execution-settings";
 import { settingsManager } from "@/settings-manager";
+import { inheritedSecretNames } from "@/tools/secret-substitution";
 import { LISTENER_CONNECTION_ENV } from "@/utils/subagent-launch-marker";
 import { getRipgrepBinDir } from "./ripgrep-manager.js";
 
@@ -172,7 +173,12 @@ export function getLettaShimDir(env: NodeJS.ProcessEnv = process.env): string {
   return path.join(tmpdir(), SHELL_SHIM_DIR_NAME);
 }
 
-export function ensureLettaShimDir(invocation: LettaInvocation): string | null {
+export function ensureLettaShimDir(
+  invocation: LettaInvocation,
+  electronExecPath: string | undefined = process.versions.electron
+    ? process.execPath
+    : undefined,
+): string | null {
   if (!invocation.command) return null;
 
   const shimDir = getLettaShimDir();
@@ -195,9 +201,17 @@ export function ensureLettaShimDir(invocation: LettaInvocation): string | null {
   const commandWithArgs = [invocation.command, ...invocation.args]
     .map(shellEscape)
     .join(" ");
-  writeFileSync(shimPath, `#!/bin/sh\nexec ${commandWithArgs} "$@"\n`, {
-    mode: 0o755,
-  });
+  // Electron needs this when launched from a fresh shell that did not inherit
+  // Desktop's environment. Do not add it for ordinary Node/Bun launchers.
+  const electronEnv =
+    electronExecPath && invocation.command === electronExecPath
+      ? "export ELECTRON_RUN_AS_NODE=1\n"
+      : "";
+  writeFileSync(
+    shimPath,
+    `#!/bin/sh\n${electronEnv}exec ${commandWithArgs} "$@"\n`,
+    { mode: 0o755 },
+  );
   return shimDir;
 }
 
@@ -315,6 +329,12 @@ export function getShellEnv(): NodeJS.ProcessEnv {
     getRuntimeContext()?.executionSettings,
   );
   const env = { ...executionEnv };
+  // A listener/app-server may inherit a different child's ambient secret env.
+  // Tool execution reintroduces values only from its verified agent/conversation
+  // scope; never let process-global child values cross a runtime boundary.
+  for (const name of inheritedSecretNames(env)) delete env[name];
+  delete env.LETTA_INHERITED_SECRET_NAMES;
+  delete env.LETTA_INHERITED_SECRET_EXECUTION_ID;
   const desktopAccessToken = getDesktopAccessToken();
   if (desktopAccessToken) env.LETTA_API_KEY = desktopAccessToken;
   const pathKey =
@@ -373,7 +393,12 @@ export function getShellEnv(): NodeJS.ProcessEnv {
     // Context not set yet (e.g., during startup), try env fallback below.
   }
 
-  if (!agentId) {
+  if (!agentId && getRuntimeContext()?.agentId === null) {
+    delete env.AGENT_ID;
+    delete env.LETTA_AGENT_ID;
+    agentId = getRuntimeContext()?.conversationId ?? undefined;
+  }
+  if (!agentId && getRuntimeContext()?.agentId !== null) {
     const fallbackAgentId = env.AGENT_ID || env.LETTA_AGENT_ID;
     if (typeof fallbackAgentId === "string" && fallbackAgentId.trim()) {
       agentId = fallbackAgentId.trim();

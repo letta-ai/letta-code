@@ -13,6 +13,7 @@ interface CloudLoginSettingsWriter {
 
 interface CompleteLettaLoginOptions {
   activateCloudBackend: boolean;
+  persistBackendPreference?: boolean;
   settings?: CloudLoginSettingsWriter;
   now?: () => number;
 }
@@ -27,7 +28,9 @@ export async function completeLettaLogin(
     env: { LETTA_API_KEY: tokens.access_token },
     refreshToken: tokens.refresh_token,
     tokenExpiresAt: now + tokens.expires_in * 1000,
-    preferredBackendMode: "api",
+    ...(options.persistBackendPreference !== false
+      ? { preferredBackendMode: "api" as const }
+      : {}),
   });
   await settings.flush();
 
@@ -38,6 +41,7 @@ export async function completeLettaLogin(
 
 interface LettaLoginViewProps {
   activateCloudBackend: boolean;
+  persistBackendPreference?: boolean;
   onComplete?: () => void;
   onCancel?: () => void;
   successMessage?: string;
@@ -45,6 +49,7 @@ interface LettaLoginViewProps {
 
 export function LettaLoginView({
   activateCloudBackend,
+  persistBackendPreference = true,
   onComplete,
   onCancel,
   successMessage = "Signed in with Letta. Switch agents with /agents.",
@@ -114,7 +119,10 @@ export function LettaLoginView({
           controller.signal,
         );
 
-        await completeLettaLogin(tokens, { activateCloudBackend });
+        await completeLettaLogin(tokens, {
+          activateCloudBackend,
+          persistBackendPreference,
+        });
 
         setDoneMessage(successMessage);
         setTimeout(() => onCompleteRef.current?.(), 500);
@@ -134,7 +142,7 @@ export function LettaLoginView({
       cancelledRef.current = true;
       abortControllerRef.current?.abort();
     };
-  }, [activateCloudBackend, successMessage]);
+  }, [activateCloudBackend, persistBackendPreference, successMessage]);
 
   if (doneMessage) {
     return (

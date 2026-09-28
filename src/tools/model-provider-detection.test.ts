@@ -57,6 +57,31 @@ describe("deriveToolsetFromModel", () => {
     ).toBe("codex");
   });
 
+  test("maps managed OpenAI provider handles to codex toolset via provider type", () => {
+    expect(deriveToolsetFromModel("lc-openai/gpt-6-astra", "openai")).toBe(
+      "codex",
+    );
+  });
+
+  test("maps BYOK OpenAI providers with arbitrary prefixes to codex toolset via provider type", () => {
+    expect(deriveToolsetFromModel("acme-corp/gpt-5.5", "openai")).toBe("codex");
+  });
+
+  test("keeps OpenAI-compatible proxy models on the default toolset", () => {
+    // Generic OpenAI-compatible endpoints report provider_type "openai" but
+    // may serve non-GPT models; the proxy marker excludes them.
+    expect(
+      deriveToolsetFromModel("lc-openai-compatible/llama-3.3-70b", "openai", {
+        openAICompatibleProxy: true,
+      }),
+    ).toBe("default");
+    expect(
+      deriveToolsetFromModel("my-gateway/some-model", "openai", {
+        openAICompatibleProxy: true,
+      }),
+    ).toBe("default");
+  });
+
   test("maps Gemini models to default (anthropic) toolset", () => {
     expect(deriveToolsetFromModel("google_ai/gemini-2.5-pro")).toBe("default");
     expect(deriveToolsetFromModel("gemini-pro")).toBe("default");

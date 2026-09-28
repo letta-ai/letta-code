@@ -383,6 +383,28 @@ describe("mcp subcommand", () => {
     expect(closes.count).toBe(1);
   });
 
+  test("returns a CLI error when stdout cannot accept the result", async () => {
+    const closes = { count: 0 };
+    const harness = localHarness({
+      servers: [localServer],
+      connection: fakeConnection({ closes }),
+    });
+    harness.deps.stdout = async () => {
+      throw new Error("stdout unavailable");
+    };
+
+    expect(
+      await runMcpSubcommand(
+        ["call", "mcp__Mixed_Server__search_exact-name"],
+        harness.deps,
+      ),
+    ).toBe(1);
+    expect(JSON.parse(harness.stderr[0] ?? "{}")).toEqual({
+      error: { code: "mcp_error", message: "stdout unavailable" },
+    });
+    expect(closes.count).toBe(1);
+  });
+
   test("calls a real stdio MCP server through the generated tool name", async () => {
     const stdout: string[] = [];
     const stderr: string[] = [];

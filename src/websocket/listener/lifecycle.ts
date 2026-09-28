@@ -46,6 +46,7 @@ import {
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { loadPersistedCwdMap } from "./cwd";
 import {
+  createExternalToolNotificationState,
   installExternalToolBridge,
   rejectPendingExternalToolCalls,
 } from "./external-tools";
@@ -255,6 +256,7 @@ export function createRuntime(): ListenerRuntime {
     processTransport: null,
     processServicesStarted: false,
     processServicesGeneration: 0,
+    ...createExternalToolNotificationState(),
     processServicesReady: null,
     processServicesReadyGeneration: null,
     serviceCommandHandler: null,
@@ -391,8 +393,7 @@ export async function startConnectedListenerRuntime(
 
   if (options.startProcessServices === false) return;
 
-  // Managed remote listeners adopt an already-open gateway connection rather
-  // than using connectWithRetry. Both paths must resume their local records.
+  // Managed remote listeners adopt an open gateway and resume local records.
   scheduleRecordedTurnRecovery(runtime, options.recoverRecordedWork);
 
   const processTransport = getOrCreateProcessTransport(runtime);

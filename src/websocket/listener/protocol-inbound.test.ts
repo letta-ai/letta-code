@@ -11,6 +11,7 @@ import {
   isUpdateModelCommand,
   parseServerMessage,
 } from "@/websocket/listener/protocol-inbound";
+import { validateResponseFormat } from "@/websocket/listener/structured-output";
 
 describe("app-server protocol hard cut", () => {
   test.each([
@@ -63,6 +64,41 @@ describe("connect provider protocol", () => {
       }),
     ).toBe(false);
   });
+
+  test("accepts subscription OAuth tokens from a client-run device login", () => {
+    expect(
+      isConnectProviderCommand({
+        type: "connect_provider",
+        request_id: "request-1",
+        target: "local",
+        provider_id: "xai",
+        fields: {},
+        oauth_config: {
+          type: "oauth",
+          access: "access-token",
+          refresh: "refresh-token",
+          expires: 2_000_000_000_000,
+        },
+      }),
+    ).toBe(true);
+  });
+
+  test("rejects subscription OAuth tokens that cannot be refreshed", () => {
+    expect(
+      isConnectProviderCommand({
+        type: "connect_provider",
+        request_id: "request-1",
+        target: "local",
+        provider_id: "xai",
+        fields: {},
+        oauth_config: {
+          type: "oauth",
+          access: "access-token",
+          expires: 2_000_000_000_000,
+        },
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("input protocol-inbound validators", () => {
@@ -85,6 +121,22 @@ describe("input protocol-inbound validators", () => {
     if (parsed?.type === "input" && parsed.payload.kind === "create_message") {
       expect(parsed.payload.exclude_interactive_tools).toBe(true);
     }
+  });
+
+  test("validates request-scoped response format contracts", () => {
+    expect(validateResponseFormat(undefined)).toBeNull();
+    expect(validateResponseFormat("json")).toBe(
+      "response_format must be an object",
+    );
+    expect(validateResponseFormat({ type: "text" })).toBe(
+      "response_format.type must be json_schema",
+    );
+    expect(
+      validateResponseFormat({
+        type: "json_schema",
+        json_schema: { schema: { type: "object" } },
+      }),
+    ).toBeNull();
   });
 
   test("rejects non-boolean exclude_interactive_tools", () => {

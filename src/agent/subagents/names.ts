@@ -34,7 +34,6 @@ export const SUBAGENT_NAMES = [
   "Wakako",
   "Padre",
   "El Capitan",
-  "Mr. Hands",
   "Placide",
   "Dum Dum",
   "Nix",
@@ -50,7 +49,6 @@ export const SUBAGENT_NAMES = [
   "Slider",
   "Aguilar",
   // Fallout
-  "Dogmeat",
   "Codsworth",
   "Nick Valentine",
   "Yes Man",

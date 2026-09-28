@@ -22,6 +22,7 @@ import { printFirstRunWelcome } from "@/cli/subcommands/listen-first-run-welcome
 import { applyStartupPermissionMode } from "@/permissions/startup";
 import { settingsManager } from "@/settings-manager";
 import { getListenerTelemetrySurface, telemetry } from "@/telemetry";
+import { cancelBackgroundMemoryTasks } from "@/tools/impl/memory-task-lifecycle";
 import { CHANNEL_SERVICE_COMMAND_TYPES } from "@/types/service-protocol";
 import type { AppServerHandle } from "@/websocket/app-server";
 import { RemoteSessionLog } from "@/websocket/listen-log";
@@ -329,6 +330,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     } catch {
       // Best-effort cleanup — don't block exit
     }
+    await cancelBackgroundMemoryTasks();
     await flushRemoteSettingsWrites();
     await releaseManualListenerLock();
     await flushListenerTelemetryEnd(`listener_${signal.toLowerCase()}`);
@@ -348,6 +350,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     } catch {
       // Best effort — don't block exit on channel cleanup failure
     }
+    await cancelBackgroundMemoryTasks();
     await flushRemoteSettingsWrites();
     await releaseManualListenerLock();
     await flushListenerTelemetryEnd(exitReason);

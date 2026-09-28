@@ -167,6 +167,8 @@ export async function launchListenerConversation(
     connectionId: string;
     scope: ConversationRuntimeScope;
     content: MessageCreate["content"];
+    /** Initial assignment identity, not a control-command request_id. */
+    clientMessageId?: string;
     backend: Pick<Backend, "retrieveRun">;
     settings: RuntimeExecutionSettings;
     cwd?: string;
@@ -198,7 +200,7 @@ export async function launchListenerConversation(
   const client =
     deps.client ??
     (await createListenerClient(params.connectionId, params.scope));
-  const clientMessageId = randomUUID();
+  const clientMessageId = params.clientMessageId ?? randomUUID();
   const runIds = new Set<string>();
   let loop: LoopState | undefined;
   let queue: QueueMessage[] = [];

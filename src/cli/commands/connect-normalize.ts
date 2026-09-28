@@ -14,6 +14,7 @@ const ALIAS_TO_CANONICAL: Record<string, ConnectProviderCanonical> = {
   chatgpt: "chatgpt",
   codex: "chatgpt",
   "openai-codex": "chatgpt",
+  grok: "xai",
   ollama: "ollama",
   "ollama-cloud": "ollama-cloud",
   lmstudio: "lmstudio",
@@ -24,7 +25,6 @@ const ALIAS_TO_CANONICAL: Record<string, ConnectProviderCanonical> = {
 
 const LOCAL_ALIAS_TO_CANONICAL: Record<string, ConnectProviderCanonical> = {
   gemini: "google",
-  grok: "xai",
   "kimi-code": "kimi-coding",
   moonshot: "moonshotai",
   bedrock: "amazon-bedrock",
@@ -110,11 +110,8 @@ export function listConnectProvidersForHelp(
 export function listConnectProviderTokens(
   target: ProviderStorageTarget = defaultProviderStorageTarget(),
 ): string[] {
-  return [
-    ...listConnectProvidersForHelp(target),
-    "codex",
-    ...(target === "local" ? ["grok"] : []),
-  ];
+  const help = listConnectProvidersForHelp(target);
+  return [...help, "codex", ...(help.includes("grok") ? [] : ["grok"])];
 }
 
 export function isConnectOAuthProvider(

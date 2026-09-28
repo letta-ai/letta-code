@@ -1,3 +1,6 @@
+// The shell/read/edit/grep aliases below name tools that no longer exist. They stay
+// because saved permission rules are normalized through this table: a stored
+// `ShellCommand(git push:*)` rule must keep governing Bash and exec_command.
 const SHELL_TOOL_NAMES = new Set([
   "Bash",
   "shell",

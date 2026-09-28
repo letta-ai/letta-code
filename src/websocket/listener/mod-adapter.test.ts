@@ -23,6 +23,7 @@ import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import {
   createListenerModAdapter,
   createListenerModContext,
+  createListenerModEvents,
   LISTENER_MOD_CAPABILITIES,
 } from "@/websocket/listener/mod-adapter";
 
@@ -65,6 +66,7 @@ describe("listener mod adapter", () => {
         panels: false,
       },
     });
+    expect(createListenerModEvents([]).hasHandlers?.("tool_end")).toBe(false);
   });
 
   test("builds a listener-scoped mod context", () => {
@@ -598,7 +600,13 @@ describe("listener mod adapter", () => {
       sessionId: "tool-end-test",
       workingDirectory: root,
     });
-    await adapter.reload();
+    const reload = adapter.reload();
+    expect(adapter.events.hasHandlers?.("tool_end")).toBe(true);
+    await reload;
+    expect(adapter.events.hasHandlers?.("tool_end")).toBe(true);
+    expect(createListenerModEvents([adapter]).hasHandlers?.("tool_end")).toBe(
+      true,
+    );
 
     const context = createListenerModContext({
       sessionId: "conv-tool-end-test",

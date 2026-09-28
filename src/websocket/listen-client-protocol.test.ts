@@ -3164,7 +3164,6 @@ describe("listen-client v2 status builders", () => {
         stderr: [],
         status: "running",
         exitCode: null,
-        lastReadIndex: { stdout: 0, stderr: 0 },
         startTime: new Date("2026-03-27T12:00:00.000Z"),
       });
       backgroundTasks.set("task_1", {
@@ -3172,7 +3171,6 @@ describe("listen-client v2 status builders", () => {
         subagentType: "review",
         subagentId: "subagent-1",
         status: "running",
-        output: [],
         startTime: new Date("2026-03-27T12:01:00.000Z"),
         outputFile: "/tmp/task_1.log",
       });
@@ -3181,7 +3179,6 @@ describe("listen-client v2 status builders", () => {
         subagentType: "reflection",
         subagentId: "subagent-2",
         status: "completed",
-        output: [],
         startTime: new Date("2026-03-27T12:02:00.000Z"),
         outputFile: "/tmp/task_2.log",
       });

@@ -146,7 +146,7 @@ import {
   getIntendedCronOccurrence,
   getTask,
   handleTaskPreflight,
-  isProcessAlive,
+  hasLiveSchedulerOwner,
   readCronFile,
   safeAppendCronRunLogForTask,
   shouldFireTask,
@@ -233,7 +233,7 @@ import {
   providerTypeFromModelSettings,
   reasoningEffortLlmConfigPatch,
 } from "./model-config";
-import { saveLastSessionBeforeExit } from "./session";
+import { prepareSessionExit } from "./session";
 import type {
   ActiveOverlay,
   AppProps,
@@ -1425,6 +1425,7 @@ export function App({
               kind: "task_notification",
               source: "task_notification",
               text: message.text,
+              content: message.content,
             } as Parameters<typeof tuiQueueRef.current.enqueue>[0])
           : ({
               kind: "message",
@@ -1436,14 +1437,10 @@ export function App({
     });
     return () => setMessageQueueAdder(null);
   }, []);
-
   // ── Shadow cron scheduler ──────────────────────────────────────────
-  // When the tui_cron experiment is enabled, run a lightweight scheduler
-  // that fires cron tasks when the desktop app (WS listener) isn't running.
-  // The TUI never claims the scheduler lease — it defers to any active
-  // lease holder (the desktop app always wins, even old versions).
-  // The experiment check is inside tick() so toggling the experiment
-  // takes effect without restarting the TUI.
+  // Lightweight tui_cron scheduler when no matching WS listener is running.
+  // Defers to a live all-owner or this agent's scoped backend owner.
+  // The experiment check is inside tick() so toggling takes effect live.
   useEffect(() => {
     if (!agentId || agentId === "loading") return;
 
@@ -1467,14 +1464,15 @@ export function App({
         lastMinuteKey = currentMinuteKey;
       }
 
-      // Check if another scheduler (desktop app) is active
+      // Defer to a live all-owner or this agent's scoped backend owner.
       const cronData = readCronFile();
-      if (cronData.scheduler_owner) {
-        const { pid } = cronData.scheduler_owner;
-        if (isProcessAlive(pid, cronData.scheduler_owner)) {
-          // Desktop app is running the scheduler — defer
-          return;
-        }
+      if (
+        hasLiveSchedulerOwner(
+          cronData,
+          isLocalAgentId(agentIdRef.current ?? "") ? "local" : "cloud",
+        )
+      ) {
+        return;
       }
 
       // No active scheduler — process tasks for this agent
@@ -2190,10 +2188,9 @@ export function App({
           }
           emittedIdsRef.current.add(id);
           newlyCommitted.push({ ...ln });
-          // Note: We intentionally don't cleanup precomputedDiffs here because
-          // the Static area renders AFTER this function returns (on next React tick),
-          // and the diff needs to be available for ToolCallMessage to render.
-          // The diffs will be cleaned up when the session ends or on next session start.
+          // precomputedDiffs entries stay cached for Static remounts (resize
+          // repaints, ctrl+o, display toggles re-render committed items);
+          // StaticTranscript releases their oldStr/newStr payloads post-render.
         }
       }
 
@@ -2374,24 +2371,11 @@ export function App({
             typeof args.chars === "string" && args.chars.length > 0
               ? "Write input to running shell session"
               : "Poll running shell session";
-        } else if (t === "shell") {
-          const cmdVal = args.command;
-          command = Array.isArray(cmdVal)
-            ? cmdVal.join(" ")
-            : typeof cmdVal === "string"
-              ? cmdVal
-              : "(no command)";
-          description =
-            typeof args.justification === "string" ? args.justification : "";
         } else {
           command =
             typeof args.command === "string" ? args.command : "(no command)";
           description =
-            typeof args.description === "string"
-              ? args.description
-              : typeof args.justification === "string"
-                ? args.justification
-                : "";
+            typeof args.description === "string" ? args.description : "";
         }
 
         let lines = 3; // solid line + header + blank line
@@ -2461,19 +2445,6 @@ export function App({
 
         if (diff) {
           diffLines += estimateAdvancedDiffLines(diff, diffWrapWidth);
-          return headerLines + diffLines;
-        }
-
-        if (Array.isArray(args.edits)) {
-          for (const edit of args.edits) {
-            if (!edit || typeof edit !== "object") continue;
-            const oldString =
-              typeof edit.old_string === "string" ? edit.old_string : "";
-            const newString =
-              typeof edit.new_string === "string" ? edit.new_string : "";
-            diffLines += countWrappedLines(oldString, wrapWidth);
-            diffLines += countWrappedLines(newString, wrapWidth);
-          }
           return headerLines + diffLines;
         }
 
@@ -2970,12 +2941,10 @@ export function App({
                 SYSTEM_PROMPTS,
                 SYSTEM_PROMPT,
               } = await import("@/agent/prompt-assets");
-
               // Best-effort preset detection.
               // Exact match is ideal, but allow prefix-matches because the stored
               // agent.system may have additional sections appended.
               let matched: string | null = null;
-
               const contentMatches = (content: string): boolean => {
                 const norm = normalize(content);
                 return (
@@ -2984,7 +2953,6 @@ export function App({
                     (sysNorm.startsWith(norm) || norm.startsWith(sysNorm)))
                 );
               };
-
               const promptMatches = (
                 prompt: (typeof SYSTEM_PROMPTS)[number],
               ): boolean =>
@@ -3008,7 +2976,10 @@ export function App({
 
               setCurrentSystemPromptId(matched ?? "custom");
             } else {
-              setCurrentSystemPromptId("custom");
+              // A null raw prompt is Cloud's managed default, not a custom preset.
+              setCurrentSystemPromptId(
+                agentSystem === null ? "default" : "custom",
+              );
             }
           } catch {
             // best-effort only
@@ -3857,7 +3828,7 @@ export function App({
   });
 
   const handleExit = useCallback(async () => {
-    saveLastSessionBeforeExit(conversationIdRef.current);
+    await prepareSessionExit(conversationIdRef.current);
 
     // Run SessionEnd hooks
     await runEndHooks();

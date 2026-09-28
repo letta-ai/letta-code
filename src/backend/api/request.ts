@@ -16,6 +16,8 @@ export interface ApiFetchOptions {
   signal?: AbortSignal;
   baseUrl?: string;
   apiKey?: string;
+  /** `null` suppresses the inherited headless acting user for this request. */
+  actingUserId?: string | null;
   headers?: Record<string, string>;
   query?: Record<string, string | number | boolean | null | undefined>;
 }
@@ -25,6 +27,7 @@ export class ApiRequestError extends Error {
     message: string,
     readonly status: number,
     readonly responseText: string,
+    readonly headers?: Headers,
   ) {
     super(message);
     this.name = "ApiRequestError";
@@ -101,7 +104,7 @@ export async function apiFetch(
   return fetch(url, {
     method: options.method ?? "GET",
     headers: {
-      ...getLettaCodeHeaders(apiKey),
+      ...getLettaCodeHeaders(apiKey, options.actingUserId),
       ...options.headers,
     },
     ...(options.body && { body: JSON.stringify(options.body) }),
@@ -131,6 +134,7 @@ export async function apiRequest<T>(
       `API error (${response.status}): ${text}`,
       response.status,
       text,
+      response.headers,
     );
   }
 

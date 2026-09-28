@@ -1,6 +1,50 @@
 import { readFile } from "node:fs/promises";
 import { isRecord } from "@/utils/type-guards";
 
+export type McpOutput = (message: string) => unknown;
+
+function writeMcpOutput(
+  stream: NodeJS.WriteStream,
+  message: string,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const fail = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+    const onError = (error: unknown) => fail(error);
+    stream.once("error", onError);
+
+    try {
+      stream.write(`${message}\n`, (error) => {
+        if (error) {
+          // Keep onError installed because Node can emit the same write failure
+          // after invoking this callback.
+          fail(error);
+          return;
+        }
+        if (settled) return;
+        settled = true;
+        stream.off("error", onError);
+        resolve();
+      });
+    } catch (error) {
+      stream.off("error", onError);
+      fail(error);
+    }
+  });
+}
+
+export function writeMcpStdout(message: string): Promise<void> {
+  return writeMcpOutput(process.stdout, message);
+}
+
+export function writeMcpStderr(message: string): Promise<void> {
+  return writeMcpOutput(process.stderr, message);
+}
+
 export class McpCliError extends Error {
   readonly code: string;
   readonly hint?: string;
@@ -13,10 +57,10 @@ export class McpCliError extends Error {
   }
 }
 
-export function printMcpError(
-  stderr: (message: string) => void,
+export async function printMcpError(
+  stderr: McpOutput,
   error: unknown,
-): void {
+): Promise<void> {
   const normalized =
     error instanceof McpCliError
       ? error
@@ -24,7 +68,7 @@ export function printMcpError(
           "mcp_error",
           error instanceof Error ? error.message : String(error),
         );
-  stderr(
+  await stderr(
     JSON.stringify(
       {
         error: {
@@ -39,8 +83,8 @@ export function printMcpError(
   );
 }
 
-export function printMcpUsage(stdout: (message: string) => void): void {
-  stdout(
+export async function printMcpUsage(stdout: McpOutput): Promise<void> {
+  await stdout(
     `
 Usage:
   letta mcp list [--agent <id>]

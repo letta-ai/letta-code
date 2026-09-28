@@ -14,6 +14,7 @@ import { ACTING_USER_ID_ENV, ACTING_USER_ID_HEADER } from "@/agent/acting-user";
 import type { SkillSource } from "@/agent/skill-sources";
 import { type Backend, getBackend } from "@/backend";
 import { getRuntimeContext } from "@/runtime-context";
+import { trackBoundaryError } from "@/telemetry/error-reporting";
 import {
   type ClientTool,
   getExecutionContextById,
@@ -24,6 +25,7 @@ import {
 import type { PermissionModeState } from "@/tools/permission-mode-state";
 import { isCloudApiShutdownRejection } from "@/utils/cloud-api-shutdown";
 import { debugLog, debugWarn, isDebugEnabled } from "@/utils/debug";
+import { ImageWorkerMissingError } from "@/utils/image-resize";
 import {
   assertSupportedBase64ImageMediaTypes,
   type ImageFailureModesByMessageOtid,
@@ -248,6 +250,8 @@ export type SendMessageStreamOptions = {
    * does not mutate agent/conversation persisted model configuration.
    */
   overrideModel?: string;
+  /** Request-scoped Messages API response format. */
+  responseFormat?: Record<string, unknown>;
   /** Explicit turn-scoped tool snapshot. When present, bypasses the global registry. */
   preparedToolContext?: PreparedToolExecutionContext;
   /**
@@ -325,6 +329,7 @@ function buildRequestBodyFromPreparedMessages(
     client_tools: clientTools,
     include_compaction_messages: true,
     ...(opts.overrideModel ? { override_model: opts.overrideModel } : {}),
+    ...(opts.responseFormat ? { response_format: opts.responseFormat } : {}),
     ...(isDefaultConversation ? { agent_id: opts.agentId } : {}),
   };
 }
@@ -376,12 +381,21 @@ export async function sendMessageStreamWithBackend(
     messages,
     opts.approvalNormalization,
   );
-  const normalizedMessages = await normalizeMessageImageParts(
-    canonicalMessages,
-    {
+  let normalizedMessages: Array<MessageCreate | ApprovalCreate>;
+  try {
+    normalizedMessages = await normalizeMessageImageParts(canonicalMessages, {
       failureModesByMessageOtid: opts.imageFailureModesByMessageOtid,
-    },
-  );
+    });
+  } catch (error) {
+    if (error instanceof ImageWorkerMissingError) {
+      trackBoundaryError({
+        errorType: "image_worker_missing",
+        error,
+        context: "send_message_image_normalization",
+      });
+    }
+    throw error;
+  }
   assertSupportedBase64ImageMediaTypes(normalizedMessages);
 
   const preparedToolContext = opts.preparedToolContext

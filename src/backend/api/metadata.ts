@@ -1,4 +1,3 @@
-import { actingUserRequestOptions } from "@/agent/acting-user";
 import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
 import { isLoopbackUrl } from "@/utils/url";
 import { apiRequest, getApiRequestConfig } from "./request";
@@ -95,15 +94,16 @@ export async function submitTelemetryMetadata(
   apiKey: string | undefined,
   deviceId: string,
   payload: Record<string, unknown>,
-  options?: { signal?: AbortSignal; actingUserId?: string },
+  options?: { signal?: AbortSignal; actingUserId?: string | null },
 ): Promise<void> {
   const config = await getMetadataRequestConfig(apiKey);
   await apiRequest<void>("POST", "/v1/metadata/telemetry", payload, {
     ...config,
+    // Telemetry snapshots the acting user when the event is created. `null`
+    // prevents a later headless env value from replacing an empty snapshot.
+    actingUserId: options?.actingUserId ?? null,
     headers: {
       "X-Letta-Code-Device-ID": deviceId,
-      // Use only the event snapshot, never the caller's current turn or env.
-      ...actingUserRequestOptions(options?.actingUserId)?.headers,
     },
     signal: options?.signal,
   });

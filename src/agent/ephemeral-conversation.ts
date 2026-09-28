@@ -46,7 +46,7 @@ export async function buildEphemeralConversationCreateBody(
     (await getModelContextWindow(request.model));
   return {
     model: request.model,
-    system: request.system,
+    system: request.system ?? system,
     ...(options.parentAgentId
       ? { parent_agent_id: options.parentAgentId }
       : {}),

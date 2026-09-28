@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,6 +24,7 @@ import {
   clearProcessServices,
   installProcessEventRouting,
 } from "./process-services";
+import { setActiveRuntime } from "./runtime";
 import { LocalListenerTransport } from "./transport";
 import { handleApprovalStop } from "./turn-approval";
 
@@ -35,6 +36,12 @@ async function waitFor(predicate: () => boolean): Promise<void> {
   }
 }
 
+const originalActingUserId = process.env.LETTA_ACTING_USER_ID;
+
+beforeEach(() => {
+  delete process.env.LETTA_ACTING_USER_ID;
+});
+
 afterEach(() => {
   for (const process of backgroundProcesses.values()) {
     process.completionNotificationSuppressed = true;
@@ -43,6 +50,12 @@ afterEach(() => {
   backgroundProcesses.clear();
   __clearExecSessionsForTests();
   clearPendingMessages();
+  setActiveRuntime(null);
+  if (originalActingUserId === undefined) {
+    delete process.env.LETTA_ACTING_USER_ID;
+  } else {
+    process.env.LETTA_ACTING_USER_ID = originalActingUserId;
+  }
 });
 
 // Run the production producer, bridge, listener routing and approval continuation.
@@ -285,3 +298,61 @@ for (const producer of [
     }, 15_000);
   }
 }
+
+test("an idle monitor notification starts its turn as the launch user", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "monitor-acting-user-"));
+  const script = join(directory, "complete.cjs");
+  writeFileSync(script, "console.log('monitor complete');");
+  const listener = createRuntime();
+  setActiveRuntime(listener);
+  const scope = { agentId: "agent-monitor", conversationId: "conv-monitor" };
+  const receivedActingUserIds: Array<string | undefined> = [];
+  installProcessEventRouting({
+    runtime: listener,
+    processTransport: new LocalListenerTransport(),
+    opts: {
+      connectionId: "conn-monitor",
+      wsUrl: "ws://test",
+      deviceId: "device-monitor",
+      connectionName: "test",
+      onConnected() {},
+      onDisconnected() {},
+      onError() {},
+    },
+    processQueuedTurn: async (incoming) => {
+      receivedActingUserIds.push(incoming.actingUserId);
+    },
+  });
+  const prepared = await prepareToolExecutionContextForSpecificTools(
+    ["Monitor"],
+    {
+      workingDirectory: directory,
+      runtimeContext: { ...scope, actingUserId: "user-launcher" },
+    },
+  );
+
+  try {
+    const result = await runWithRuntimeContext(
+      { actingUserId: "user-other" },
+      () =>
+        executeTool(
+          "Monitor",
+          {
+            command: `"${process.execPath}" "${script}"`,
+            description: "Monitor acting user",
+            timeout_ms: 5_000,
+          },
+          { toolContextId: prepared.contextId },
+        ),
+    );
+    expect(result.status).toBe("success");
+    await waitFor(() => receivedActingUserIds.length > 0);
+    expect(receivedActingUserIds.every((id) => id === "user-launcher")).toBe(
+      true,
+    );
+  } finally {
+    clearProcessServices(listener);
+    releaseToolExecutionContext(prepared.contextId);
+    rmSync(directory, { recursive: true, force: true });
+  }
+}, 15_000);

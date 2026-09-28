@@ -1,4 +1,8 @@
 import { expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   type WrapSubagentLauncherInput,
@@ -10,6 +14,7 @@ import {
   getDefaultAgentsTreeRoot,
 } from "@/permissions/sandbox-policy";
 import {
+  detectSandboxBackend,
   isFsSandboxEnabled,
   isShellSandboxEnabled,
   type SandboxAvailability,
@@ -26,6 +31,44 @@ const LAUNCHER = {
   command: "bun",
   args: ["run", "src/index.ts", "--headless"],
 };
+
+test("sandboxed shell scratch files are writable while workspace writes stay denied", () => {
+  const availability = detectSandboxBackend();
+  if (!availability.backend) return;
+  const workspace = mkdtempSync(join(tmpdir(), "memory-sandbox-test-"));
+  try {
+    const result = wrapSubagentLauncher({
+      ...baseInput(),
+      availability,
+      launcher: {
+        command: process.execPath,
+        args: [
+          "-e",
+          `const fs = require('node:fs');
+           const path = require('node:path');
+           const scratch = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'letta-background-'));
+           try {
+             fs.writeFileSync(path.join(scratch, 'output.log'), 'shell output');
+             let denied = false;
+             try { fs.writeFileSync(${JSON.stringify(join(workspace, "forbidden"))}, 'no'); }
+             catch (error) { if (['EPERM', 'EACCES', 'EROFS'].includes(error.code)) denied = true; else throw error; }
+             if (!denied) throw new Error('Workspace write was allowed');
+           } finally { fs.rmSync(scratch, { recursive: true }); }`,
+        ],
+      },
+    });
+    if (!result) throw new Error("Expected sandbox launcher");
+    expect(() =>
+      execFileSync(result.command, result.args, {
+        env: { ...process.env, ...result.sandboxEnv },
+        cwd: workspace,
+        stdio: "pipe",
+      }),
+    ).not.toThrow();
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
 
 function baseInput(): WrapSubagentLauncherInput {
   return {

@@ -4,8 +4,15 @@ import {
   consumeWorkingDirectoryRecovery,
   getCurrentWorkingDirectory,
 } from "@/runtime-context";
-import { scrubSecretsFromString } from "@/tools/secret-substitution";
-import { addToMessageQueue } from "@/utils/message-queue-bridge.js";
+import {
+  captureSecretRedactions,
+  createSecretStreamScrubber,
+  scrubSecretsFromString,
+} from "@/tools/secret-substitution";
+import {
+  addToMessageQueue,
+  isQueueBridgeConnected,
+} from "@/utils/message-queue-bridge.js";
 import {
   formatTaskNotification,
   resolveNotificationScope,
@@ -36,6 +43,7 @@ import {
 import { applyShellSandbox } from "./shell-sandbox.js";
 import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
+import { assertSafeWindowsCommand } from "./windows-command-safety.js";
 
 // Cache the working shell launcher after first successful spawn
 let cachedWorkingLauncher: string[] | null = null;
@@ -98,6 +106,12 @@ export async function spawnCommand(
     secretEnv?: Record<string, string>;
   },
 ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
+  assertSafeWindowsCommand(command, {
+    cwd: options.cwd,
+    env: options.secretEnv
+      ? { ...options.env, ...options.secretEnv }
+      : options.env,
+  });
   const env = options.secretEnv
     ? { ...options.env, ...options.secretEnv }
     : options.env;
@@ -214,13 +228,13 @@ function formatBackgroundOutputTail(bgProcess: BackgroundProcess): string {
   const sections = [
     formatStreamTail(
       "stdout",
-      bgProcess.stdout,
-      bgProcess.totalStdoutLines ?? bgProcess.stdout.length,
+      bgProcess.stdout ?? [],
+      bgProcess.totalStdoutLines ?? bgProcess.stdout?.length ?? 0,
     ),
     formatStreamTail(
       "stderr",
-      bgProcess.stderr,
-      bgProcess.totalStderrLines ?? bgProcess.stderr.length,
+      bgProcess.stderr ?? [],
+      bgProcess.totalStderrLines ?? bgProcess.stderr?.length ?? 0,
     ),
   ].filter(Boolean);
 
@@ -320,8 +334,20 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     foregroundYieldMs = DEFAULT_FOREGROUND_YIELD_MS,
   } = args;
   const userCwd = getCurrentWorkingDirectory();
+  assertSafeWindowsCommand(command, {
+    cwd: userCwd,
+    env: secretEnv ? { ...getShellEnv(), ...secretEnv } : getShellEnv(),
+  });
+  const redactions = captureSecretRedactions(secretEnv ?? {});
   const sanitizeOutput = (text: string) =>
-    scrubSecretsFromString(text, secretEnv ?? {});
+    scrubSecretsFromString(text, redactions);
+  // Per-stream scrubbers hold back potential partial secret matches so a
+  // credential split across output chunks never reaches the retained output,
+  // the output file, or the completion notification unredacted.
+  const streamScrubbers = {
+    stdout: createSecretStreamScrubber(redactions),
+    stderr: createSecretStreamScrubber(redactions),
+  };
 
   if (command === "/bg") {
     const processes = Array.from(backgroundProcesses.entries());
@@ -398,11 +424,12 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     signal: run_in_background ? undefined : signal,
     captureOutput: false,
     onOutput(text, stream) {
-      const sanitizedText = sanitizeOutput(text);
+      const sanitizedText = streamScrubbers[stream].push(text);
       if (!run_in_background) {
         foregroundOutput[stream] += text;
         onOutput?.(text, stream);
       }
+      if (!sanitizedText) return;
       appendBackgroundProcessOutput(bgProcess, stream, sanitizedText);
       const wrote = appendToOutputFile(
         outputFile,
@@ -431,13 +458,12 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     stderr: [],
     status: "running",
     exitCode: null,
-    lastReadIndex: { stdout: 0, stderr: 0 },
     startTime: new Date(),
     outputFile,
     totalStdoutLines: 0,
     totalStderrLines: 0,
     runtimeScope: parentScope,
-    secrets: secretEnv,
+    secrets: redactions,
   };
   backgroundProcesses.set(bashId, bgProcess);
 
@@ -445,8 +471,23 @@ export async function bash(args: BashArgs): Promise<BashResult> {
   // shell exits the turn that launched it is gone, so the process-global
   // agent context may already point at a different conversation.
   const notificationScope = resolveNotificationScope(parentScope);
+  // The completion promise settles after the final stdout/stderr data events,
+  // so this is where held-back partial matches are flushed into the retained
+  // output and the output file before the final whole-file scrub.
+  const flushStreamScrubbers = () => {
+    for (const stream of ["stdout", "stderr"] as const) {
+      const rest = streamScrubbers[stream].flush();
+      if (!rest) continue;
+      appendBackgroundProcessOutput(bgProcess, stream, rest);
+      appendToOutputFile(
+        outputFile,
+        stream === "stderr" ? `[stderr] ${rest}` : rest,
+      );
+    }
+  };
   const settled = runningProcess.completion.then(
     ({ exitCode }) => {
+      flushStreamScrubbers();
       bgProcess.status =
         exitCode === 0 && !outputWriteFailed ? "completed" : "failed";
       bgProcess.exitCode = exitCode;
@@ -466,6 +507,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       };
     },
     (error: unknown) => {
+      flushStreamScrubbers();
       const err = error as Error & { killed?: boolean };
       const message = sanitizeOutput(
         err.killed ? `Command timed out after ${timeout}ms` : err.message,
@@ -503,18 +545,32 @@ export async function bash(args: BashArgs): Promise<BashResult> {
   };
 
   if (!run_in_background) {
-    const outcome = await Promise.race([
-      settled.then((result) => ({ type: "settled" as const, result })),
-      new Promise<{ type: "yield" }>((resolve) => {
-        const timer = setTimeout(
-          () => resolve({ type: "yield" }),
-          Math.max(0, foregroundYieldMs),
-        );
-        if (typeof timer === "object" && timer !== null && "unref" in timer) {
-          timer.unref();
-        }
-      }),
-    ]);
+    const settledOutcome = settled.then((result) => ({
+      type: "settled" as const,
+      result,
+    }));
+    // A yielded command reports back only through a task notification. One-shot
+    // headless runs, including every subagent, have no queue consumer, and they
+    // are already background work that nobody waits on interactively, so there
+    // the command simply blocks until it exits or times out.
+    const outcome = isQueueBridgeConnected()
+      ? await Promise.race([
+          settledOutcome,
+          new Promise<{ type: "yield" }>((resolve) => {
+            const timer = setTimeout(
+              () => resolve({ type: "yield" }),
+              Math.max(0, foregroundYieldMs),
+            );
+            if (
+              typeof timer === "object" &&
+              timer !== null &&
+              "unref" in timer
+            ) {
+              timer.unref();
+            }
+          }),
+        ])
+      : await settledOutcome;
 
     if (outcome.type === "settled") {
       backgroundProcesses.delete(bashId);
@@ -523,13 +579,25 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       const output = [foregroundOutput.stdout, foregroundOutput.stderr]
         .filter(Boolean)
         .join("\n");
+      const failed = result.status === "failed";
+      // Both outcomes save the full output. Keeping the file on failure is a
+      // deliberate departure from Claude Code, which omits it: the foreground
+      // output file is already deleted, so the excerpt would be all that is left
+      // of a large failing build or test log.
       const { content: truncatedOutput } = truncateByChars(
         output || "(Command completed with no output)",
-        LIMITS.BASH_OUTPUT_CHARS,
+        failed ? LIMITS.BASH_FAILURE_OUTPUT_CHARS : LIMITS.BASH_OUTPUT_CHARS,
         "Bash",
-        { workingDirectory: userCwd, toolName: "Bash", secrets: secretEnv },
+        {
+          workingDirectory: userCwd,
+          secrets: redactions,
+          // Failures keep a head-and-tail excerpt; successes a short prefix.
+          ...(failed
+            ? { useMiddleTruncation: true }
+            : { previewChars: LIMITS.OVERFLOW_PREVIEW_CHARS }),
+        },
       );
-      if (result.status === "failed") {
+      if (failed) {
         const isAbort =
           signal?.aborted ||
           ("error" in result &&

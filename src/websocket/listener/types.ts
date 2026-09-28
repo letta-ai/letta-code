@@ -110,6 +110,7 @@ export interface IncomingMessage {
   externalToolScopeIds?: string[];
   /** Exclude interactive user-input tools (AskUserQuestion) from this turn's toolset. */
   excludeInteractiveTools?: boolean;
+  responseFormat?: Record<string, unknown>;
   messages: Array<
     (AttributedMessageCreate & { client_message_id?: string }) | ApprovalCreate
   >;
@@ -360,6 +361,10 @@ export type ListenerRuntime = {
   processServicesStarted: boolean;
   /** Invalidates process-service attempts that outlive an outbound connection. */
   processServicesGeneration: number;
+  /** Invalidates detached external-tool notifications after an authoritative reset. */
+  externalToolNotificationEpochByConversation: Map<string, number>;
+  /** Holds detached completions while a conversation reset may still fail. */
+  externalToolNotificationBarrierByConversation: Map<string, Promise<void>>;
   /** Coalesces concurrent connection attempts while process services initialize. */
   processServicesReady: Promise<void> | null;
   /** Generation owned by processServicesReady, or null when no attempt is active. */

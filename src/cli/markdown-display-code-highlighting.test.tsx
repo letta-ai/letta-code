@@ -95,6 +95,17 @@ test("markdown code block fallback renders plain code content", async () => {
   expect(stripAnsi(output)).toContain("bun run check");
 });
 
+test("markdown fences named after Object.prototype members render as plain code", async () => {
+  const output = await renderMarkdown(
+    "```constructor\nconst a = 1;\n```\n\n```__proto__\nconst b = 2;\n```",
+  );
+  const plain = stripAnsi(output);
+
+  expect(plain).not.toContain("ERROR");
+  expect(plain).toContain("const a = 1;");
+  expect(plain).toContain("const b = 2;");
+});
+
 test("markdown renders indented fenced code blocks inside list items", async () => {
   const output = await renderMarkdown(
     [

@@ -15,10 +15,14 @@ import {
   LETTA_CODE_ORIGIN_TAG,
 } from "@/agent/agent-tags";
 import { getBackend } from "@/backend";
+import { isCloudServerUrl } from "@/backend/api/server-url";
 import { settingsManager } from "@/settings-manager";
 import type { CreateAgentOptions } from "./create";
 import { getDefaultMemoryBlocks, parseMdxFrontmatter } from "./memory";
-import { getScopedMemoryFilesystemRoot } from "./memory-filesystem";
+import {
+  getScopedMemoryFilesystemRoot,
+  isLettaCloud,
+} from "./memory-filesystem";
 import { commitMemoryWrite, getMemoryRepoDir, pullMemory } from "./memory-git";
 import {
   buildDefaultMemoryFile,
@@ -101,6 +105,22 @@ function getHumanRelativePathForRepo(repoDir: string): string {
   );
 }
 
+/**
+ * "cloud" environment covers any remote backend; only Letta Cloud gets the
+ * v2 root layout. Self-hosted servers keep the legacy memfs mode.
+ */
+async function resolvePersonalityMemoryPromptMode(
+  environment: PersonalityEnvironment,
+): Promise<CreateAgentOptions["memoryPromptMode"]> {
+  if (environment === "local") return "local-memfs";
+  try {
+    return (await isLettaCloud()) ? "root-memfs" : "memfs";
+  } catch {
+    // Settings may be uninitialized in tests; fall back to the URL check.
+    return isCloudServerUrl() ? "root-memfs" : "memfs";
+  }
+}
+
 export async function buildCreateAgentOptionsForPersonality(params: {
   personalityId: PersonalityId;
   name?: string;
@@ -121,7 +141,7 @@ export async function buildCreateAgentOptionsForPersonality(params: {
     description: description ?? personality.description,
     model: model ?? personality.defaultModel,
     tags: [...getPersonalityCreationTags(personalityId), ...(tags ?? [])],
-    memoryPromptMode: "memfs",
+    memoryPromptMode: await resolvePersonalityMemoryPromptMode(environment),
     memoryBlocks: buildPersonalityMemoryBlocks(
       personalityId,
       defaultMemoryBlocks,

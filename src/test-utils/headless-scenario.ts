@@ -15,6 +15,7 @@ import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import {
   formatAttemptDiagnostics,
   formatCapturedOutput,
@@ -163,8 +164,9 @@ function localScenarioPrompt(): string {
     "I want to test local backend tool calling abilities (do not ask for clarifications; this is an automated CI runner). " +
     "First, run a shell command to output exactly LOCAL_SHELL_ONE. " +
     "Then, try running two shell commands in parallel to output exactly LOCAL_PARALLEL_TWO and LOCAL_PARALLEL_THREE. " +
-    "Then, use whichever memory tool is available (`memory` or `memory_apply_patch`) to create or update `reference/ci/local-backend.md` with description `Local backend CI scenario` and body text `LOCAL_MEMFS_SCENARIO_OK`. " +
-    "IMPORTANT FINAL RESPONSE RULE: If and only if every shell command and memory update above succeeded, your final response must include the uppercase word BANANA. " +
+    'Then, call Agent with subagent_type "memory" and ask it to create or update `reference/ci/local-backend.md` with description `Local backend CI scenario` and body text `LOCAL_MEMFS_SCENARIO_OK`, and commit the change. ' +
+    "Continue immediately after delegation without waiting or polling; the test harness checks the committed memory after the CLI exits. " +
+    "IMPORTANT FINAL RESPONSE RULE: If and only if every shell command succeeded and the memory task was launched, your final response must include the uppercase word BANANA. " +
     "If any step failed, do not include BANANA."
   );
 }
@@ -298,17 +300,37 @@ async function git(cwd: string, args: string[]): Promise<string> {
   return String(stdout ?? "").trim();
 }
 
-async function validateLocalStorage(storageDir: string | undefined) {
+export async function validateLocalStorage(storageDir: string | undefined) {
   if (!storageDir) throw new Error("Missing local storage dir for local run");
   const agentFiles = await readdir(join(storageDir, "agents"));
   if (agentFiles.length === 0) {
     throw new Error("Local backend did not persist an agent record");
   }
-  const agent = JSON.parse(
-    await readFile(join(storageDir, "agents", agentFiles[0] ?? ""), "utf8"),
-  ) as { id?: unknown };
+  const agents: AgentState[] = await Promise.all(
+    agentFiles.map(async (file) =>
+      JSON.parse(await readFile(join(storageDir, "agents", file), "utf8")),
+    ),
+  );
+  // Fresh memory workers persist their own agent records but edit the parent's
+  // checkout. Directory order cannot identify the primary agent.
+  const primaries = agents.filter(
+    (agent) => !agent.tags?.some((tag) => tag.startsWith("parent:")),
+  );
+  const agent = primaries[0];
+  if (primaries.length !== 1 || !agent) {
+    throw new Error(`Expected one primary agent, found ${primaries.length}`);
+  }
   if (typeof agent.id !== "string" || agent.id.length === 0) {
     throw new Error("Persisted local agent record is missing id");
+  }
+  if (
+    !agents.some(
+      (worker) =>
+        worker.tags?.includes("type:memory") &&
+        worker.tags.includes(`parent:${agent.id}`),
+    )
+  ) {
+    throw new Error("Local MemFS scenario did not launch a memory worker");
   }
 
   const memoryDir = join(storageDir, "memfs", agent.id, "memory");
@@ -321,7 +343,7 @@ async function validateLocalStorage(storageDir: string | undefined) {
   );
   if (!Number.isFinite(commitCount) || commitCount < 2) {
     throw new Error(
-      `Expected local MemFS scenario to create a memory-tool commit, found ${commitCount} commit(s)`,
+      `Expected local MemFS scenario to commit the delegated memory update, found ${commitCount} commit(s)`,
     );
   }
   const status = await git(memoryDir, ["status", "--porcelain"]);
@@ -497,7 +519,9 @@ async function main() {
   }
 }
 
-main().catch((e) => {
-  console.error(String(e?.stack || e));
-  process.exit(1);
-});
+if (import.meta.main) {
+  main().catch((e) => {
+    console.error(String(e?.stack || e));
+    process.exit(1);
+  });
+}

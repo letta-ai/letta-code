@@ -1,6 +1,9 @@
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import {
   buildMemorySubagentSandboxPolicy,
   getCrossBackendAgentsTreeRoots,
+  getLettaHomeRoot,
 } from "@/permissions/sandbox-policy";
 import {
   detectSandboxBackend,
@@ -16,7 +19,7 @@ import type { SubagentLaunchProfile } from ".";
 /**
  * Applies an OS-level filesystem sandbox to a subagent child process at spawn.
  *
- * Subagents with the memory-subagent profile (reflection, memory, init, history-analyzer) operate
+ * Subagents with the memory-subagent profile (reflection, memory, init) operate
  * on their parent's memory as their working filesystem. Wrapping the whole child
  * process kernel-enforces the write scope — covering its in-process Write/Edit
  * tools, its Bash commands, and anything those spawn.
@@ -135,10 +138,19 @@ export function wrapSubagentLauncher(
   if (!wrapped || wrapped.length === 0) return null;
 
   const [command, ...args] = wrapped;
+  // Shell output and runtime scripts use os.tmpdir(). Keep their scratch files
+  // inside the existing harness write scope instead of opening the host temp dir.
+  const scratchRoot = join(getLettaHomeRoot(), "tmp");
+  mkdirSync(scratchRoot, { recursive: true });
   return {
     command: command as string,
     args,
-    sandboxEnv: { [SANDBOX_ENV_VAR]: availability.backend },
+    sandboxEnv: {
+      [SANDBOX_ENV_VAR]: availability.backend,
+      TMPDIR: scratchRoot,
+      TMP: scratchRoot,
+      TEMP: scratchRoot,
+    },
     backend: availability.backend,
   };
 }

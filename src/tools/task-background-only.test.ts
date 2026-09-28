@@ -9,6 +9,23 @@ describe("Agent background-only execution", () => {
     expect(taskSchema.additionalProperties).toBe(false);
   });
 
+  test("exposes strict external coding-agent MCP options", () => {
+    expect(taskSchema.properties.mcp).toEqual({
+      type: "object",
+      description: expect.any(String),
+      properties: {
+        inherit: { type: "boolean", description: expect.any(String) },
+        servers: {
+          type: "array",
+          items: { type: "string", minLength: 1 },
+          description: expect.any(String),
+        },
+      },
+      required: ["inherit"],
+      additionalProperties: false,
+    });
+  });
+
   test("routes every Agent launch through the background task helper", () => {
     const taskPath = fileURLToPath(
       new URL("../tools/impl/task.ts", import.meta.url),

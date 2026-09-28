@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
+import { isMemoryWorkerSession } from "@/agent/subagents/memory-worker-session";
 import {
   allocateSubagentName,
   resolveCreatedAgentName,
@@ -20,6 +22,94 @@ const PARENT_ID = "agent-226cd814-09bf-4436-940e-aea9d91d14cb";
 const PARENT_MEMORY_DIR = `/Users/someone/.letta/agents/${PARENT_ID}/memory`;
 
 describe("composeSubagentChildEnv", () => {
+  test("passes authorized secrets to every child profile without overriding runtime variables", () => {
+    for (const profile of ["default", "memory-subagent"] as const) {
+      const parentProcessEnv = {
+        LETTA_API_KEY: "runtime-auth",
+        OLD_SECRET: "stale",
+        LETTA_INHERITED_SECRET_NAMES: '["OLD_SECRET"]',
+      };
+      const child = composeSubagentChildEnv({
+        parentProcessEnv,
+        agentSecretEnv: {
+          CANARY: "new-secret-value",
+          LETTA_API_KEY: "must-not-win",
+          NODE_OPTIONS: "--require /tmp/attacker.js",
+          LD_PRELOAD: "/tmp/attacker.so",
+          GIT_CONFIG_COUNT: "99",
+          LETTA_CODE_BIN: "/tmp/attacker",
+          ORDINARY_CREDENTIAL: "ordinary-secret-value",
+          GITHUB_TOKEN: "github-secret-value",
+          LETTA_FS_SANDBOX: "0",
+          GIT_SSH_COMMAND: "/tmp/attacker",
+          NODE_EXTRA_CA_CERTS: "/tmp/attacker.pem",
+        },
+        parentAgentId: PARENT_ID,
+        launchProfile: profile,
+        inheritedPrimaryRoot: PARENT_MEMORY_DIR,
+      });
+      expect(child.CANARY).toBe("new-secret-value");
+      const processResult = spawnSync(
+        process.execPath,
+        ["-e", "process.stdout.write(process.env.CANARY ?? 'absent')"],
+        { env: child, encoding: "utf8" },
+      );
+      expect(processResult.status).toBe(0);
+      expect(processResult.stdout).toBe("new-secret-value");
+      expect(child.OLD_SECRET).toBeUndefined();
+      expect(child.LETTA_API_KEY).toBe("runtime-auth");
+      expect(child.NODE_OPTIONS).toBeUndefined();
+      expect(child.LD_PRELOAD).toBeUndefined();
+      expect(child.GIT_CONFIG_COUNT).toBeUndefined();
+      expect(child.LETTA_CODE_BIN).toBeUndefined();
+      expect(child.LETTA_FS_SANDBOX).toBeUndefined();
+      expect(child.GIT_SSH_COMMAND).toBeUndefined();
+      expect(child.NODE_EXTRA_CA_CERTS).toBeUndefined();
+      expect(child.ORDINARY_CREDENTIAL).toBe("ordinary-secret-value");
+      expect(child.GITHUB_TOKEN).toBe("github-secret-value");
+      expect(child.LETTA_INHERITED_SECRET_NAMES).toBe(
+        '["CANARY","ORDINARY_CREDENTIAL","GITHUB_TOKEN"]',
+      );
+      expect(parentProcessEnv.OLD_SECRET).toBe("stale");
+    }
+  });
+
+  test("parentless launches discard inherited names and values", () => {
+    const child = composeSubagentChildEnv({
+      parentProcessEnv: {
+        CANARY: "stale-secret",
+        NODE_OPTIONS: "--require /tmp/stale.js",
+        LETTA_INHERITED_SECRET_NAMES: '["CANARY","NODE_OPTIONS"]',
+      },
+      parentAgentId: undefined,
+      launchProfile: "default",
+      inheritedPrimaryRoot: null,
+    });
+    expect(child.CANARY).toBeUndefined();
+    expect(child.NODE_OPTIONS).toBeUndefined();
+    expect(child.LETTA_INHERITED_SECRET_NAMES).toBeUndefined();
+  });
+  test("memory workers suppress worker-side sync without marking other children as memory workers", () => {
+    const worker = composeSubagentChildEnv({
+      parentProcessEnv: {},
+      parentAgentId: PARENT_ID,
+      subagentType: "memory",
+      launchProfile: "memory-subagent",
+      inheritedPrimaryRoot: PARENT_MEMORY_DIR,
+    });
+    expect(isMemoryWorkerSession(worker)).toBe(true);
+    expect(worker[LETTA_MOD_CAPABILITY_PROFILE_ENV]).toBe(
+      PROVIDERS_ONLY_MOD_CAPABILITY_PROFILE,
+    );
+    const other = composeSubagentChildEnv({
+      parentProcessEnv: worker,
+      parentAgentId: PARENT_ID,
+      subagentType: "general-purpose",
+      launchProfile: "default",
+      inheritedPrimaryRoot: PARENT_MEMORY_DIR,
+    });
+    expect(isMemoryWorkerSession(other)).toBe(false);
+  });
   test("carries the reserved generated name through child creation", () => {
     const reservedName = allocateSubagentName("Bob");
     const env = composeSubagentChildEnv({

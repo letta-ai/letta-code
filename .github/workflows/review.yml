@@ -63,7 +63,7 @@ jobs:
           letta_args: --new
           track_progress: ""
           tracking_comment: "false"
-          model: auto
+          model: letta/auto
           prompt: |
             You are reviewing PR #${{ env.PR_NUMBER }} in ${{ github.repository }}.
 
@@ -257,7 +257,7 @@ jobs:
           letta_args: --new
           track_progress: ""
           tracking_comment: "false"
-          model: auto
+          model: letta/auto
           prompt: ${{ steps.expert_review_prompt.outputs.value }}
 
       - name: Report expert review outcome

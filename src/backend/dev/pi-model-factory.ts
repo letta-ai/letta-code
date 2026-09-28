@@ -117,7 +117,9 @@ export function reasoningForSettings(
     ? modelSettings.thinking
     : undefined;
   const modelId = modelIdFromHandle(modelHandle);
-  const preserveMax = modelId?.startsWith("gpt-5.6") === true;
+  const preserveMax =
+    modelId?.startsWith("gpt-5.6") === true ||
+    modelId?.startsWith("gpt-6") === true;
   const nestedReasoning = isRecord(modelSettings.reasoning)
     ? modelSettings.reasoning
     : undefined;

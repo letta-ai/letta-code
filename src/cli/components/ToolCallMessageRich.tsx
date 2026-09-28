@@ -23,8 +23,10 @@ import {
   isTaskCrudTool,
   isTaskTool,
   isTodoTool,
+  isWorkflowTool,
 } from "@/cli/helpers/tool-name-mapping.js";
 import { formatUnifiedExecOutputForTui } from "@/cli/helpers/unified-exec-output.js";
+import { formatWorkflowLaunchLine } from "@/cli/helpers/workflow-display";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { listTasks } from "@/tools/impl/tasks/store.js";
 import { clipToolReturn } from "@/tools/manager.js";
@@ -331,7 +333,6 @@ export const ToolCallMessage = memo(
         return text;
       };
 
-      // Format result for display
       const getResultElement = () => {
         if (!line.resultText) return null;
 
@@ -340,7 +341,6 @@ export const ToolCallMessage = memo(
         const prefixWidth = 5; // Total width of prefix
         const contentWidth = Math.max(0, columns - prefixWidth);
 
-        // Special cases from old ToolReturnBlock (check before truncation)
         if (line.resultText === "Running...") {
           return (
             <Box flexDirection="row">
@@ -369,12 +369,12 @@ export const ToolCallMessage = memo(
           );
         }
 
-        // Truncate the result text for display (UI only, API gets full response)
-        // Strip trailing newlines to avoid extra visual spacing (e.g., from bash echo)
-        const displayResultText = clipToolReturn(extractedText).replace(
-          /\n+$/,
-          "",
-        );
+        // Clip for display only (the API gets the full text). Workflow launches
+        // show a one-line summary instead of the model-facing task notes.
+        const displayResultText =
+          (isWorkflowTool(rawName) &&
+            formatWorkflowLaunchLine(extractedText)) ||
+          clipToolReturn(extractedText).replace(/\n+$/, "");
 
         // Check if this is a todo_write tool with successful result
         if (
@@ -553,45 +553,7 @@ export const ToolCallMessage = memo(
             const parsedArgs = JSON.parse(line.argsText);
             const filePath = parsedArgs.file_path || "";
 
-            // Use AdvancedDiffRenderer if we have a precomputed diff
-            if (diff) {
-              // Multi-edit: has edits array
-              if (parsedArgs.edits && Array.isArray(parsedArgs.edits)) {
-                const edits = parsedArgs.edits.map(
-                  (e: {
-                    old_string?: string;
-                    new_string?: string;
-                    replace_all?: boolean;
-                  }) => ({
-                    old_string: e.old_string || "",
-                    new_string: e.new_string || "",
-                    replace_all: e.replace_all,
-                  }),
-                );
-                return (
-                  <AdvancedDiffRenderer
-                    precomputed={diff}
-                    kind="multi_edit"
-                    filePath={filePath}
-                    edits={edits}
-                  />
-                );
-              }
-              // Single edit
-              return (
-                <AdvancedDiffRenderer
-                  precomputed={diff}
-                  kind="edit"
-                  filePath={filePath}
-                  oldString={parsedArgs.old_string || ""}
-                  newString={parsedArgs.new_string || ""}
-                  replaceAll={parsedArgs.replace_all}
-                />
-              );
-            }
-
-            // Fallback to simple renderers when no precomputed diff
-            // Multi-edit: has edits array
+            // MultiEdit (removed tool) calls in older transcripts: edits array
             if (parsedArgs.edits && Array.isArray(parsedArgs.edits)) {
               const edits = parsedArgs.edits.map(
                 (e: { old_string?: string; new_string?: string }) => ({
@@ -608,6 +570,21 @@ export const ToolCallMessage = memo(
               );
             }
 
+            // Use AdvancedDiffRenderer if we have a precomputed diff
+            if (diff) {
+              return (
+                <AdvancedDiffRenderer
+                  precomputed={diff}
+                  kind="edit"
+                  filePath={filePath}
+                  oldString={parsedArgs.old_string || ""}
+                  newString={parsedArgs.new_string || ""}
+                  replaceAll={parsedArgs.replace_all}
+                />
+              );
+            }
+
+            // Fallback to simple renderers when no precomputed diff
             // Single edit: has old_string/new_string
             if (parsedArgs.old_string !== undefined) {
               return (

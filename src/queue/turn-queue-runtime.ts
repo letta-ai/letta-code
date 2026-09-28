@@ -10,6 +10,7 @@ export type QueuedTurnInput<TUserContent> =
   | {
       kind: "task_notification";
       text: string;
+      content?: MessageCreate["content"];
     }
   | {
       kind: "cron_prompt";
@@ -47,6 +48,37 @@ function appendContentParts(
   target.push(...content);
 }
 
+function escapeResultText(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+export function buildTaskNotificationContent(item: {
+  text: string;
+  content?: MessageCreate["content"];
+}): MessageCreate["content"] {
+  if (item.content === undefined) return item.text;
+  const parts: MessageContentParts = [
+    { type: "text", text: item.text },
+    { type: "text", text: "\n<external-tool-result>" },
+  ];
+  const content =
+    typeof item.content === "string"
+      ? [{ type: "text" as const, text: item.content }]
+      : item.content;
+  for (const part of content) {
+    parts.push(
+      part.type === "text"
+        ? { type: "text", text: `<text>${escapeResultText(part.text)}</text>` }
+        : part,
+    );
+  }
+  parts.push({ type: "text", text: "</external-tool-result>" });
+  return parts;
+}
+
 export function mergeQueuedTurnInput<TUserContent>(
   queued: QueuedTurnInput<TUserContent>[],
   options: MergeQueuedTurnInputOptions<TUserContent>,
@@ -66,7 +98,11 @@ export function mergeQueuedTurnInput<TUserContent>(
     }
     isFirst = false;
 
-    if (item.kind === "task_notification" || item.kind === "cron_prompt") {
+    if (item.kind === "task_notification") {
+      appendContentParts(mergedParts, buildTaskNotificationContent(item));
+      continue;
+    }
+    if (item.kind === "cron_prompt") {
       mergedParts.push({ type: "text", text: item.text });
       continue;
     }

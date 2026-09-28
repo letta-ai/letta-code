@@ -10,7 +10,6 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  assertMemoryRepoCleanForWrite,
   buildGitAuthArgs,
   buildMemfsGitProxyArgs,
   buildNonInteractiveGitEnv,
@@ -102,13 +101,6 @@ function commitFile(repo: string, fileName: string, content: string): string {
   git(repo, `add ${fileName}`);
   git(repo, `commit -m ${fileName}`);
   return git(repo, "rev-parse HEAD").trim();
-}
-
-function utf16leWithBom(content: string): Buffer {
-  return Buffer.concat([
-    Buffer.from([0xff, 0xfe]),
-    Buffer.from(content, "utf16le"),
-  ]);
 }
 
 function makeSyncedRepo(): { repo: string; remote: string } {
@@ -699,66 +691,6 @@ describe("credential helper reset", () => {
   });
 });
 
-describe("assertMemoryRepoCleanForWrite", () => {
-  test("allows clean local commits to wait for post-turn sync", async () => {
-    const { repo, remote } = makeSyncedRepo();
-    const localSha = commitFile(repo, "local.md", "local");
-    process.env.LETTA_API_KEY = "test-token";
-    __testOverrideGetClient(async () => ({
-      apiKey: "test-token",
-    }));
-
-    await assertMemoryRepoCleanForWrite(repo);
-
-    expect(git(repo, "rev-list --count @{u}..HEAD").trim()).toBe("1");
-    expect(
-      execSync(`git --git-dir ${remote} rev-parse main`, {
-        encoding: "utf-8",
-      }).trim(),
-    ).not.toBe(localSha);
-  });
-
-  test("allows clean behind repos for post-turn rebase", async () => {
-    const { repo, remote } = makeSyncedRepo();
-    const originalSha = git(repo, "rev-parse HEAD").trim();
-    const other = cloneRepo(remote);
-    commitFile(other, "remote.md", "remote");
-    git(other, "push");
-    process.env.LETTA_API_KEY = "test-token";
-    __testOverrideGetClient(async () => ({
-      apiKey: "test-token",
-    }));
-
-    await assertMemoryRepoCleanForWrite(repo);
-
-    expect(git(repo, "rev-parse HEAD").trim()).toBe(originalSha);
-  });
-
-  test("reports UTF-16 dirty markdown files", async () => {
-    const { repo } = makeSyncedRepo();
-    writeFileSync(
-      join(repo, "human.md"),
-      utf16leWithBom("---\ndescription: human\n---\nnotes"),
-    );
-
-    await expect(assertMemoryRepoCleanForWrite(repo)).rejects.toThrow(
-      /Dirty markdown encoding issue\(s\): human\.md has UTF-16LE BOM/,
-    );
-  });
-
-  test("reports NUL bytes in dirty markdown files", async () => {
-    const { repo } = makeSyncedRepo();
-    writeFileSync(
-      join(repo, "human.md"),
-      Buffer.from("---\ndescription: human\n---\nnotes", "utf16le"),
-    );
-
-    await expect(assertMemoryRepoCleanForWrite(repo)).rejects.toThrow(
-      /Dirty markdown encoding issue\(s\): human\.md contains NUL bytes, possibly UTF-16/,
-    );
-  });
-});
-
 describe("syncPendingMemoryCommitsAfterTurn", () => {
   test("pushes clean pending memory commits after a turn", async () => {
     const { repo, remote } = makeSyncedRepo();
@@ -779,6 +711,114 @@ describe("syncPendingMemoryCommitsAfterTurn", () => {
         encoding: "utf-8",
       }).trim(),
     ).toBe(localSha);
+  });
+
+  test("validates the combined memory tree after rebasing concurrent commits", async () => {
+    const remote = makeBareGitRepo();
+    const repo = makeGitRepo();
+    git(repo, "config user.name Test");
+    git(repo, "config user.email test@example.com");
+    git(repo, `remote add origin ${remote}`);
+    writeFileSync(join(repo, "MEMORY.md"), "# Memory\n");
+    writeFileSync(
+      join(repo, ".memfs.config.json"),
+      `${JSON.stringify({ version: 1, maxCoreMemoryCharacters: 12 })}\n`,
+    );
+    git(repo, "add MEMORY.md .memfs.config.json");
+    git(repo, "commit -m initial-memory");
+    git(repo, "push -u origin main");
+
+    commitFile(repo, "local.md", "l\n");
+    const other = cloneRepo(remote);
+    const remoteSha = commitFile(other, "remote.md", "r\n");
+    git(other, "push origin main");
+    process.env.LETTA_API_KEY = "test-token";
+    __testOverrideGetClient(async () => ({ apiKey: "test-token" }));
+
+    const result = await syncPendingMemoryCommitsAfterTurn("agent-123", {
+      memoryDir: repo,
+    });
+
+    expect(result.status).toBe("invalid");
+    expect(result.summary).toContain(
+      "core memory: 13 characters exceeds 12 from maxCoreMemoryCharacters",
+    );
+    expect(git(repo, "rev-list --count @{u}..HEAD").trim()).toBe("1");
+    expect(
+      execSync(`git --git-dir ${remote} rev-parse main`, {
+        encoding: "utf-8",
+      }).trim(),
+    ).toBe(remoteSha);
+  });
+
+  test("does not push an invalid committed memory tree", async () => {
+    const remote = makeBareGitRepo();
+    const repo = makeGitRepo();
+    git(repo, "config user.name Test");
+    git(repo, "config user.email test@example.com");
+    git(repo, `remote add origin ${remote}`);
+    writeFileSync(join(repo, "MEMORY.md"), "# Memory\n");
+    writeFileSync(
+      join(repo, ".memfs.config.json"),
+      `${JSON.stringify({ version: 1, maxCoreMemoryCharacters: 10 })}\n`,
+    );
+    git(repo, "add MEMORY.md .memfs.config.json");
+    git(repo, "commit -m initial-memory");
+    git(repo, "push -u origin main");
+    const remoteSha = git(repo, "rev-parse origin/main").trim();
+    commitFile(repo, "local.md", "l\n");
+    process.env.LETTA_API_KEY = "test-token";
+    __testOverrideGetClient(async () => ({ apiKey: "test-token" }));
+
+    const result = await syncPendingMemoryCommitsAfterTurn("agent-123", {
+      memoryDir: repo,
+    });
+
+    expect(result.status).toBe("invalid");
+    expect(result.summary).toContain(
+      "core memory: 11 characters exceeds 10 from maxCoreMemoryCharacters",
+    );
+    expect(
+      execSync(`git --git-dir ${remote} rev-parse main`, {
+        encoding: "utf-8",
+      }).trim(),
+    ).toBe(remoteSha);
+  });
+
+  test("pushes a valid HEAD even when an unpublished intermediate commit is invalid", async () => {
+    const remote = makeBareGitRepo();
+    const repo = makeGitRepo();
+    git(repo, "config user.name Test");
+    git(repo, "config user.email test@example.com");
+    git(repo, `remote add origin ${remote}`);
+    writeFileSync(join(repo, "MEMORY.md"), "# Memory\n");
+    writeFileSync(
+      join(repo, ".memfs.config.json"),
+      `${JSON.stringify({ version: 1, maxCoreMemoryCharacters: 10 })}\n`,
+    );
+    git(repo, "add MEMORY.md .memfs.config.json");
+    git(repo, "commit -m initial-memory");
+    git(repo, "push -u origin main");
+    const invalidSha = commitFile(repo, "local.md", "l\n");
+    const headSha = commitFile(repo, "MEMORY.md", "# M\n");
+    process.env.LETTA_API_KEY = "test-token";
+    __testOverrideGetClient(async () => ({ apiKey: "test-token" }));
+
+    const result = await syncPendingMemoryCommitsAfterTurn("agent-123", {
+      memoryDir: repo,
+    });
+
+    expect(result.status).toBe("pushed");
+    expect(
+      execSync(`git --git-dir ${remote} rev-parse main`, {
+        encoding: "utf-8",
+      }).trim(),
+    ).toBe(headSha);
+    expect(
+      execSync(`git --git-dir ${remote} rev-parse main~1`, {
+        encoding: "utf-8",
+      }).trim(),
+    ).toBe(invalidSha);
   });
 
   test("returns a dirty reminder state without pushing", async () => {

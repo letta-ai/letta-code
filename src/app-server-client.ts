@@ -13,6 +13,8 @@ import type {
   ExternalToolCallResult,
   InputAcceptedResponseMessage,
   InputCommand,
+  LaunchSubagentCommand,
+  LaunchSubagentResponse,
   MonitorStopCommand,
   MonitorStopResponse,
   ResumeQueueCommand,
@@ -490,6 +492,29 @@ export class AppServerClient {
           message.process_id === command.process_id &&
           message.runtime.agent_id === command.runtime.agent_id &&
           message.runtime.conversation_id === command.runtime.conversation_id,
+      },
+    );
+  }
+
+  launchSubagent(
+    command: Omit<LaunchSubagentCommand, "type" | "request_id"> & {
+      request_id?: string;
+    },
+    options: Omit<
+      AppServerRequestOptions<LaunchSubagentResponse>,
+      "predicate"
+    > = {},
+  ): Promise<LaunchSubagentResponse> {
+    return this.request(
+      {
+        ...command,
+        type: "launch_subagent",
+        request_id: command.request_id ?? this.nextRequestId("launch-subagent"),
+      },
+      {
+        ...options,
+        predicate: (message): message is LaunchSubagentResponse =>
+          message.type === "launch_subagent_response",
       },
     );
   }

@@ -74,6 +74,53 @@ describe("app-server client", () => {
     FakeSocket.instances = [];
   });
 
+  test("launches a subagent and correlates success and failure responses", async () => {
+    const { client, control } = createFakeClient();
+    const opened = client.connect();
+    control.open();
+    await opened;
+    const command = {
+      runtime: { agent_id: "parent", conversation_id: "parent-conv" },
+      args: {
+        subagent_type: "custom",
+        conversation_id: "child-conv",
+        client_message_id: "assignment:1",
+        prompt: "work",
+        description: "Worker",
+      },
+    };
+    const pending = client.launchSubagent(command);
+    const sent = JSON.parse(control.sent[0] ?? "{}");
+    expect(sent).toMatchObject({ ...command, type: "launch_subagent" });
+    control.receive({
+      type: "launch_subagent_response",
+      request_id: "other",
+      success: false,
+      error: "wrong request",
+    });
+    const success = {
+      type: "launch_subagent_response",
+      request_id: sent.request_id,
+      success: true,
+      task_id: "task-1",
+      agent_id: "child",
+      conversation_id: "child-conv",
+      output_file: "out",
+    } as const;
+    control.receive(success);
+    expect(await pending).toEqual(success);
+    const failed = client.launchSubagent({ ...command, request_id: "second" });
+    const failure = {
+      type: "launch_subagent_response",
+      request_id: "second",
+      success: false,
+      error: "Unknown conversation",
+    } as const;
+    control.receive(failure);
+    expect(await failed).toEqual(failure);
+    client.close();
+  });
+
   test("stops a Monitor and waits for the matching scoped reply", async () => {
     const { client, control } = createFakeClient();
     const opened = client.connect();

@@ -188,11 +188,9 @@ describe("ephemeral conversation creation", () => {
             systemPromptCustom: "minimal prompt",
           });
         }
-        expect(actingUsers).toEqual(
-          usesRemoteComputer
-            ? ["user-initiator", "user-initiator"]
-            : [null, null],
-        );
+        // apiRequest forwards the headless acting user from the environment
+        // even when this caller does not add per-request headers.
+        expect(actingUsers).toEqual(["user-initiator", "user-initiator"]);
         expect(bodies.every((body) => !("requestOptions" in body))).toBe(true);
         expect(bodies[0]?.parent_agent_id).toBe(
           "agent-11111111-1111-4111-8111-111111111111",

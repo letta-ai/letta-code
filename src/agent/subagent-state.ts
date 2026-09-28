@@ -28,6 +28,8 @@ export interface SubagentState {
   // desktop dual-view routing: local agents have a bare-id agentURL with no
   // ?conversation= param to parse, so this is the only conversation source.
   conversationId?: string | null;
+  /** Exact accepted Super Run for a remotely executing child send. */
+  superRunId?: string;
   toolCalls: ToolCall[];
   // Monotonic counter to avoid transient regressions in rendered tool usage.
   maxToolCallsSeen: number;
@@ -38,6 +40,8 @@ export interface SubagentState {
   startTime: number;
   toolCallId?: string; // Links this subagent to its parent Task tool call
   isBackground?: boolean; // True if running in background (fire-and-forget)
+  /** False when the entry is presentation-only and must not retain the parent runtime. */
+  claimsParentRuntime?: boolean;
   silent?: boolean; // True if this subagent should be hidden from SubagentGroupDisplay
   parentAgentId?: string; // Parent runtime scope agent id (for listener-mode WS scoping)
   parentConversationId?: string; // Parent runtime scope conversation id
@@ -202,6 +206,7 @@ export function registerSubagent(
     conversationId?: string | null;
   },
   prompt?: string,
+  claimsParentRuntime?: boolean,
 ): void {
   // Capitalize type for display (recall -> Recall)
   const displayType = type.charAt(0).toUpperCase() + type.slice(1);
@@ -221,6 +226,7 @@ export function registerSubagent(
     startTime: Date.now(),
     toolCallId,
     isBackground,
+    claimsParentRuntime,
     silent,
     parentAgentId: parentScope?.agentId ?? undefined,
     parentConversationId:
@@ -537,19 +543,14 @@ export function getSnapshot(): {
 // Stream Event Forwarding
 // ============================================================================
 
-/**
- * A raw message-type event from the subagent's stdout (headless format).
- * Shape: { type: "message", message_type: string, ...LettaStreamingResponse fields }
- */
-export interface SubagentStreamEvent {
-  type: "message";
-  message_type: string;
-  [key: string]: unknown;
-}
+/** Worker output or a harness notification after its memory push completes. */
+export type SubagentStreamEvent =
+  | { type: "message"; message_type: string; [key: string]: unknown }
+  | { type: "memory_updated"; affected_paths: string[]; timestamp: number };
 
 /**
  * Callback for forwarding raw subagent stream events to the WS layer.
- * The event is the parsed JSON line from the subagent's stdout.
+ * Events include streamed output and harness-owned memory push notifications.
  */
 export type SubagentStreamEventListener = (
   subagentId: string,

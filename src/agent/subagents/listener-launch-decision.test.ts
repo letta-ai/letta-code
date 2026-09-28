@@ -134,12 +134,19 @@ test("unknown parent scope clears stale resource and conversation addresses", ()
   expect(env.LETTA_PARENT_CONVERSATION_ID).toBeUndefined();
 });
 
-test("nested ephemeral children preserve the inherited resource agent", () => {
+test("nested ephemeral children cannot trust an inherited resource agent marker", () => {
   const env = composeSubagentChildEnv({
-    parentProcessEnv: { LETTA_PARENT_AGENT_ID: "agent-resource" },
+    parentProcessEnv: { LETTA_PARENT_AGENT_ID: "agent-stale" },
     parentAgentId: "conv-parent",
     launchProfile: "default",
     inheritedPrimaryRoot: null,
   });
-  expect(env.LETTA_PARENT_AGENT_ID).toBe("agent-resource");
+  expect(env.LETTA_PARENT_AGENT_ID).toBeUndefined();
+  const linked = composeSubagentChildEnv({
+    parentProcessEnv: { LETTA_PARENT_AGENT_ID: "agent-stale" },
+    parentAgentId: "agent-authorized",
+    launchProfile: "default",
+    inheritedPrimaryRoot: null,
+  });
+  expect(linked.LETTA_PARENT_AGENT_ID).toBe("agent-authorized");
 });

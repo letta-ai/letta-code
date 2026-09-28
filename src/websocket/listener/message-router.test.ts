@@ -484,6 +484,58 @@ describe("listener message router ownership handoff", () => {
     );
   });
 
+  test("rejects an invalid response format through input_accepted", async () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const sent: unknown[] = [];
+    setActiveRuntime(listener);
+    const handleMessage = createListenerMessageHandler({
+      runtime: listener,
+      socket: new MockSocket() as unknown as WebSocket,
+      opts: makeListenerOptions(),
+      processQueuedTurn: async () => {},
+      fileCommandSession: { handle: () => false },
+      getParsedRuntimeScope: () => null,
+      replaySyncStateForRuntime: async () => {},
+      getOrCreateScopedRuntime: () => runtime,
+      handleApprovalResponseInput: async () => false,
+      handleChangeDeviceStateInput: async () => false,
+      handleAbortMessageInput: async () => false,
+      stampInboundUserMessageOtids: (incoming) => incoming,
+      safeSocketSend: (_target, payload) => {
+        sent.push(payload);
+        return true;
+      },
+      runDetachedListenerTask: () => {},
+      trackListenerError: () => {},
+      processIncomingMessage: async () => {},
+    });
+
+    await handleMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          request_id: "invalid-response-format",
+          runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+          payload: {
+            kind: "create_message",
+            messages: [{ role: "user", content: "hello" }],
+            response_format: { type: "text" },
+          },
+        }),
+      ),
+    );
+
+    expect(sent).toContainEqual(
+      expect.objectContaining({
+        type: "input_accepted",
+        request_id: "invalid-response-format",
+        accepted: false,
+        error: "response_format.type must be json_schema",
+      }),
+    );
+  });
+
   test("remove_queue_item broadcasts the queue snapshot even when the item is not found", async () => {
     const listener = createRuntime();
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");

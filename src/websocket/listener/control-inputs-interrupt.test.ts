@@ -154,7 +154,12 @@ describe("listener interrupt queue handoff", () => {
       const commandState = requireFixture(
         backgroundProcesses.get(command.taskId),
       );
-      await waitFor(() => (commandState.totalStdoutLines ?? 0) > 0, 4000);
+      await waitFor(
+        () =>
+          readFileSync(requireFixture(commandState.outputFile), "utf8").trim()
+            .length > 0,
+        4000,
+      );
       const pid = Number(
         readFileSync(requireFixture(commandState.outputFile), "utf8").trim(),
       );
@@ -184,7 +189,13 @@ describe("listener interrupt queue handoff", () => {
       const wsState = requireFixture(
         backgroundProcesses.get(requireFixture(taskIds[1])),
       );
-      await waitFor(() => (wsState.totalStdoutLines ?? 0) > 0, 4000);
+      await waitFor(
+        () =>
+          readFileSync(requireFixture(wsState.outputFile), "utf8").includes(
+            "buffered-before-interrupt",
+          ),
+        4000,
+      );
       // The frame reached the actual source but has not reached its batch timer.
       expect(target.queueRuntime.peek().map((item) => item.id)).toEqual(
         baseline,

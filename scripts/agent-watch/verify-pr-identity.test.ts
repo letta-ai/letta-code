@@ -23,11 +23,13 @@ function pullRequest(
 function enforce(
   pullRequests: WatcherPullRequest[],
   closed: string[] = [],
+  pullRequestState: "draft" | "ready" = "draft",
 ): WatcherPullRequest | null {
   return enforceWatcherPrIdentity({
     repo: "letta-ai/letta-code",
     marker,
     expectedLogin: "amelia-letta",
+    pullRequestState,
     pullRequests,
     closePullRequest: (candidate) => closed.push(candidate.url),
   });
@@ -58,6 +60,20 @@ describe("enforceWatcherPrIdentity", () => {
     expect(closed).toHaveLength(1);
   });
 
+  test("returns the matching Amelia ready PR when ready is required", () => {
+    expect(
+      enforce([pullRequest({ isDraft: false })], [], "ready")?.number,
+    ).toBe(123);
+  });
+
+  test("closes and rejects a draft PR when ready is required", () => {
+    const closed: string[] = [];
+    expect(() => enforce([pullRequest()], closed, "ready")).toThrow(
+      "state=ready",
+    );
+    expect(closed).toHaveLength(1);
+  });
+
   test("rejects duplicate valid PRs", () => {
     expect(() =>
       enforce([
@@ -78,6 +94,19 @@ describe("parseArgs", () => {
     );
   });
 
+  test("requires the expected pull request state", () => {
+    expect(() =>
+      parseArgs([
+        "--repo",
+        "letta-ai/letta-code",
+        "--marker",
+        marker,
+        "--expected-login",
+        "amelia-letta",
+      ]),
+    ).toThrow("--pull-request-state is required");
+  });
+
   test("parses a complete invocation", () => {
     expect(
       parseArgs([
@@ -87,11 +116,34 @@ describe("parseArgs", () => {
         marker,
         "--expected-login",
         "amelia-letta",
+        "--pull-request-state",
+        "draft",
       ]),
     ).toEqual({
       repo: "letta-ai/letta-code",
       marker,
       expectedLogin: "amelia-letta",
+      pullRequestState: "draft",
+    });
+  });
+
+  test("parses a ready pull request requirement", () => {
+    expect(
+      parseArgs([
+        "--repo",
+        "letta-ai/letta-cloud",
+        "--marker",
+        marker,
+        "--expected-login",
+        "amelia-letta",
+        "--pull-request-state",
+        "ready",
+      ]),
+    ).toEqual({
+      repo: "letta-ai/letta-cloud",
+      marker,
+      expectedLogin: "amelia-letta",
+      pullRequestState: "ready",
     });
   });
 });

@@ -138,7 +138,9 @@ describe("spawnBackgroundSubagentTask", () => {
 
     const task = backgroundTasks.get(launched.taskId);
     expect(task?.status).toBe("completed");
-    expect(task?.output[0]).toContain("reflection done");
+    expect(readFileSync(task?.outputFile as string, "utf8")).toContain(
+      "reflection done",
+    );
     expect(completeSubagentImpl).toHaveBeenCalledTimes(1);
     expect(queueMessages.length).toBe(1);
     expect(runSubagentStopHooksImpl).toHaveBeenCalledWith(
@@ -277,7 +279,9 @@ describe("spawnBackgroundSubagentTask", () => {
 
     const task = backgroundTasks.get(launched.taskId);
     expect(task?.status).toBe("completed");
-    expect(task?.output[0]).toContain("init done");
+    expect(readFileSync(task?.outputFile as string, "utf8")).toContain(
+      "init done",
+    );
     expect(completeSubagentImpl).toHaveBeenCalledTimes(1);
     // No notification queued
     expect(queueMessages.length).toBe(0);
