@@ -105,12 +105,64 @@ describe("shouldRunQueuedReflectionLaunch", () => {
 });
 
 describe("launchReflectionSubagent", () => {
+  test.each([
+    ["win32", "step-count", undefined, true],
+    ["win32", "compaction-event", undefined, true],
+    ["win32", "step-count", "0", true],
+    ["win32", "step-count", "true", true],
+    ["win32", "step-count", "1", false],
+    ["win32", "compaction-event", "1", false],
+    ["win32", "manual", undefined, false],
+    ["linux", "step-count", undefined, false],
+    ["linux", "compaction-event", "0", false],
+    ["darwin", "step-count", undefined, false],
+    ["darwin", "compaction-event", "0", false],
+  ] as const)(
+    "%s %s with Windows opt-in %s: skipped=%s",
+    async (platform, triggerSource, optIn, skipped) => {
+      const originalPlatform = Object.getOwnPropertyDescriptor(
+        process,
+        "platform",
+      );
+      const originalOptIn = process.env.LETTA_ENABLE_WINDOWS_AUTO_REFLECTION;
+      // Stop allowed launches at the next gate without API or filesystem work.
+      const isCutover = mock(async () => true);
+      try {
+        Object.defineProperty(process, "platform", { value: platform });
+        if (optIn === undefined) {
+          delete process.env.LETTA_ENABLE_WINDOWS_AUTO_REFLECTION;
+        } else {
+          process.env.LETTA_ENABLE_WINDOWS_AUTO_REFLECTION = optIn;
+        }
+        const result = await launchReflectionSubagent(
+          queuedLaunchOptions({ triggerSource }),
+          { isCutover },
+        );
+        expect(result).toEqual({
+          launched: false,
+          reason: skipped ? "windows_disabled" : "cutover",
+        });
+        expect(isCutover).toHaveBeenCalledTimes(skipped ? 0 : 1);
+      } finally {
+        if (originalPlatform) {
+          Object.defineProperty(process, "platform", originalPlatform);
+        }
+        if (originalOptIn === undefined) {
+          delete process.env.LETTA_ENABLE_WINDOWS_AUTO_REFLECTION;
+        } else {
+          process.env.LETTA_ENABLE_WINDOWS_AUTO_REFLECTION = originalOptIn;
+        }
+      }
+    },
+  );
+
   test("skips client-side reflection after server cutover", async () => {
     const isCutover = mock(async () => true);
 
-    const result = await launchReflectionSubagent(queuedLaunchOptions(), {
-      isCutover,
-    });
+    const result = await launchReflectionSubagent(
+      queuedLaunchOptions({ triggerSource: "manual" }),
+      { isCutover },
+    );
 
     expect(result).toEqual({ launched: false, reason: "cutover" });
     expect(isCutover).toHaveBeenCalledWith("agent-1");
@@ -134,7 +186,7 @@ describe("launchReflectionSubagent", () => {
       writeFileSync(join(memoryDir, "dirty.md"), "dirty\n", "utf-8");
 
       const result = await launchReflectionSubagent(
-        queuedLaunchOptions({ agentId }),
+        queuedLaunchOptions({ agentId, triggerSource: "manual" }),
         { isCutover: async () => false },
       );
 
