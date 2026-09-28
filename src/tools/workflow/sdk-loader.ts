@@ -47,8 +47,8 @@ export function supportsPublishedResume(version: string | undefined): boolean {
 }
 
 export interface LoadedSdk {
-  /** A local client whose subagents run on this computer against the API backend. */
-  createLocalClient(): SdkClient;
+  /** A local SDK client whose spawned harness uses the selected state backend. */
+  createLocalClient(harnessBackend: "api" | "local"): SdkClient;
   /** Explicit opt-in until SDK #322 is released and the package is upgraded. */
   supportsAgentFreeResume: boolean;
 }
@@ -188,10 +188,10 @@ export async function loadAgentSdk(): Promise<LoadedSdk> {
             specifier === specifiers[0]) ||
           (specifier.startsWith("file:") &&
             supportsPublishedResume(packageVersion(fileURLToPath(specifier)))),
-        createLocalClient: () => {
+        createLocalClient: (harnessBackend) => {
           const client = new sdk.LettaAgentClient({
             backend: "local",
-            appServer: { harnessBackend: "api" },
+            appServer: { harnessBackend },
           });
           return {
             query(params) {

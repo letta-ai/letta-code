@@ -197,7 +197,7 @@ describe("Workflow tool (background launch)", () => {
       ).mockResolvedValue({
         id: "conv-child",
         model: "openai/gpt-4.1-mini",
-      } as Awaited<ReturnType<typeof backend.retrieveConversation>>);
+      } as unknown as Awaited<ReturnType<typeof backend.retrieveConversation>>);
       try {
         await runWithRuntimeContext(
           { agentId, conversationId: "conv-ambient" },
@@ -223,6 +223,32 @@ describe("Workflow tool (background launch)", () => {
       }
     },
   );
+
+  test("resolves nested workflow lineage through the active backend", async () => {
+    const backend = getBackend();
+    const retrieveConversation = spyOn(
+      backend,
+      "retrieveConversation",
+    ).mockResolvedValue({
+      id: "conv-child",
+      agent_id: null,
+      parent_agent_id: "agent-parent",
+      model: "openai/gpt-4.1-mini",
+    } as unknown as Awaited<ReturnType<typeof backend.retrieveConversation>>);
+    try {
+      const handle = await createSdkSpawnerHandle({
+        model: "openai/gpt-4.1-mini",
+        parentScope: {
+          agentId: "agent-free:conv-child",
+          conversationId: "conv-child",
+        },
+      });
+      await handle.cleanup();
+      expect(retrieveConversation).toHaveBeenCalledWith("conv-child");
+    } finally {
+      retrieveConversation.mockRestore();
+    }
+  });
 
   test("rejects an unknown default model before creating a client", async () => {
     await expect(

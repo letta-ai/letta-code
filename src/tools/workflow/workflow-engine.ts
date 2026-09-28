@@ -176,9 +176,11 @@ export async function executeWorkflow(
     if (
       opts.conversationId !== undefined &&
       (typeof opts.conversationId !== "string" ||
-        !/^conv-[A-Za-z0-9_-]+$/.test(opts.conversationId))
+        !/^(?:conv-|local-conv-)[A-Za-z0-9_-]+$/.test(opts.conversationId))
     ) {
-      throw new Error("agent() conversationId must be a conv-... ID.");
+      throw new Error(
+        "agent() conversationId must be a conv-... or local-conv-... ID.",
+      );
     }
     if (
       opts.maxToolCalls !== undefined &&

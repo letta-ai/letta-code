@@ -133,6 +133,8 @@ describe("createSdkSpawner", () => {
     const outcome = await createSdkSpawner(client, {
       ...CONFIG,
       cwd: "/repo",
+      parentModelSettings: { temperature: 0.2, reasoning_effort: "medium" },
+      parentContextWindowLimit: 64_000,
     })(
       request({
         label: "review:a",
@@ -157,7 +159,8 @@ describe("createSdkSpawner", () => {
       allowedTools: ["Read"],
       skillSources: [],
       cwd: "/repo",
-      modelSettings: { reasoning_effort: "low" },
+      modelSettings: { temperature: 0.2, reasoning_effort: "low" },
+      contextWindowLimit: 64_000,
       disableMemoryGuard: true,
     });
     expect(String(client.calls[0]?.options.system)).toContain(
@@ -268,6 +271,115 @@ describe("createSdkSpawner", () => {
       ).rejects.toThrow();
     }
     expect(client.calls).toHaveLength(1);
+  });
+
+  test("local continuation relies on the spawner-owned completion boundary", async () => {
+    let latestCalls = 0;
+    const client = fakeClient([
+      { type: "result", success: true, result: "continued locally" },
+    ]);
+    const outcome = await createSdkSpawner(client, {
+      ...CONFIG,
+      supportsAgentFreeResume: true,
+      verifyPersistedRuns: false,
+      retrieveConversation: async () => ({
+        agent_id: null,
+        parent_agent_id: "agent-parent",
+        model: CONFIG.model,
+      }),
+      latestRun: async () => {
+        latestCalls++;
+        return null;
+      },
+    })(
+      request({ conversationId: "conv-worker" }),
+      new AbortController().signal,
+    );
+    expect(outcome).toMatchObject({
+      value: "continued locally",
+      conversationId: "conv-worker",
+    });
+    expect(latestCalls).toBe(0);
+  });
+
+  test("tracks a fresh worker ID before exposing it to continuation callers", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let conversationId: string | undefined;
+    const query: SdkQuery = {
+      get conversationId() {
+        return conversationId;
+      },
+      agentId: null,
+      async *[Symbol.asyncIterator]() {
+        conversationId = "conv-fresh";
+        yield { type: "loop_status", conversationId: "conv-fresh" };
+        await gate;
+        yield { type: "result", success: true, result: "done" };
+      },
+      async interrupt() {},
+      close() {},
+    };
+    const client: SdkClient = { query: () => query };
+    const spawner = createSdkSpawner(client, {
+      ...CONFIG,
+      supportsAgentFreeResume: true,
+      verifyPersistedRuns: false,
+      retrieveConversation: async () => ({
+        agent_id: null,
+        parent_agent_id: "agent-parent",
+        model: CONFIG.model,
+      }),
+    });
+    let started!: () => void;
+    const didStart = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const first = spawner(request(), new AbortController().signal, {
+      onStarted: started,
+    });
+    await didStart;
+    await expect(
+      spawner(
+        request({ conversationId: "conv-fresh" }),
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("already has an active workflow turn");
+    release();
+    expect(await first).toMatchObject({ value: "done" });
+  });
+
+  test("releases a resume lock when the SDK immediately returns the wrong ID", async () => {
+    let calls = 0;
+    const spawner = createSdkSpawner(
+      {
+        query: () => {
+          calls++;
+          return completedQuery([], "conv-wrong");
+        },
+      },
+      {
+        ...CONFIG,
+        supportsAgentFreeResume: true,
+        verifyPersistedRuns: false,
+        retrieveConversation: async () => ({
+          agent_id: null,
+          parent_agent_id: "agent-parent",
+          model: CONFIG.model,
+        }),
+      },
+    );
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await expect(
+        spawner(
+          request({ conversationId: "conv-worker" }),
+          new AbortController().signal,
+        ),
+      ).rejects.toThrow("unexpected worker conversation");
+    }
+    expect(calls).toBe(2);
   });
 
   test("rejects creation-only system and mismatched model overrides", async () => {
