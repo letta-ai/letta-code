@@ -99,10 +99,7 @@ import {
   markIncompleteToolsAsCancelled,
   toLines,
 } from "./cli/helpers/accumulator";
-import {
-  classifyApprovals,
-  directUserRequest,
-} from "./cli/helpers/approval-classification";
+import { classifyApprovals } from "./cli/helpers/approval-classification";
 import { createContextTracker } from "./cli/helpers/context-tracker";
 import { formatErrorDetails } from "./cli/helpers/error-formatter";
 import type {
@@ -712,6 +709,17 @@ export async function handleHeadlessCommand(
     console.error(startupPermissionMode.message);
     process.exit(1);
   }
+  // argv and stream-json input can both be agent-authored (e.g. a nested
+  // letta -p through exec_command). Headless has no verified human-origin signal.
+  if (startupPermissionMode.mode === "auto") {
+    reportAndExitHeadless(
+      "headless_auto_origin_unverified",
+      new Error(
+        "Auto permission mode requires the interactive TUI; headless input cannot verify human origin.",
+      ),
+      "headless_startup_flag_validation",
+    );
+  }
 
   // Set CLI permission overrides if provided
   if (
@@ -808,12 +816,6 @@ export async function handleHeadlessCommand(
     computer: explicitEnvironmentSelector,
     ephemeral: values.ephemeral,
   });
-  if (usesRemoteEnvironment && startupPermissionMode.mode === "auto") {
-    console.error(
-      "Error: Auto permission mode needs a local run; remote listener turns require explicit approval.",
-    );
-    process.exit(1);
-  }
   if (values["client-message-id"] !== undefined && !usesRemoteEnvironment)
     throw new Error("--client-message-id requires a Cloud input destination");
   const startupBackend = createStartupBackend(backend, usesRemoteEnvironment);
@@ -2098,9 +2100,6 @@ export async function handleHeadlessCommand(
   }
 
   const responseState = createHeadlessResponseState();
-  const trustedUserRequest = isSubagent
-    ? undefined
-    : directUserRequest([{ role: "user", content: prompt }]);
   let currentInput: Array<MessageCreate | ApprovalCreate> = [
     {
       role: "user",
@@ -2612,7 +2611,6 @@ export async function handleHeadlessCommand(
             requireArgsForAutoApprove: true,
             missingNameReason: "Tool call incomplete - missing name",
             toolContextId: turnToolContextId ?? undefined,
-            trustedUserRequest,
             abortSignal: sigintSignal,
           });
 
@@ -4233,9 +4231,6 @@ async function runBidirectionalMode(
         ]);
 
         const responseState = createHeadlessResponseState();
-        const trustedUserRequest = isSubagent
-          ? undefined
-          : directUserRequest([{ role: "user", content: userContent }]);
         let currentInput: Array<MessageCreate | ApprovalCreate> = [
           { role: "user", content: enrichedContent, otid: userOtid },
         ];
@@ -4509,7 +4504,6 @@ async function runBidirectionalMode(
                 requireArgsForAutoApprove: true,
                 missingNameReason: "Tool call incomplete - missing name",
                 toolContextId: turnToolContextId ?? undefined,
-                trustedUserRequest,
                 abortSignal: currentAbortController.signal,
               });
 

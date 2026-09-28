@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createIsolatedCliTestEnv } from "@/test-utils/test-process-env";
 
-async function runStartup(args: string[]) {
+async function runStartup(
+  args: string[],
+  options: { permissionMode?: "auto"; inputFormat?: "stream-json" } = {},
+) {
   const home = await mkdtemp(join(tmpdir(), "letta-cloud-startup-"));
   const requestLog = join(home, "requests.jsonl");
   try {
@@ -13,6 +16,9 @@ async function runStartup(args: string[]) {
       join(home, ".letta", "settings.json"),
       JSON.stringify({
         agents: [{ agentId: "agent-named-target", pinned: true }],
+        ...(options.permissionMode
+          ? { permissions: { mode: options.permissionMode } }
+          : {}),
       }),
     );
     await writeFile(requestLog, "");
@@ -23,8 +29,9 @@ async function runStartup(args: string[]) {
         "--preload",
         resolve(import.meta.dir, "test-utils/fixtures/cloud-send-startup.ts"),
         resolve(import.meta.dir, "index.ts"),
-        "-p",
-        "startup target check",
+        ...(options.inputFormat === "stream-json"
+          ? ["-p", "--input-format", "stream-json"]
+          : ["-p", "startup target check"]),
         "--backend",
         "api",
         ...args,
@@ -68,6 +75,47 @@ async function runStartup(args: string[]) {
     await rm(home, { recursive: true, force: true });
   }
 }
+
+test.each([
+  {
+    source: "CLI",
+    args: ["--permission-mode", "auto"],
+    permissionMode: undefined,
+  },
+  { source: "settings", args: [], permissionMode: "auto" as const },
+])("headless rejects $source auto before submitting a turn", async (input) => {
+  const result = await runStartup([...input.args], {
+    permissionMode: input.permissionMode,
+  });
+  expect(result.code).toBe(1);
+  expect(result.stderr).toContain(
+    "Auto permission mode requires the interactive TUI",
+  );
+  expect(
+    result.requests.filter(
+      (request) =>
+        request.path.includes("/v1/alpha/decisions") ||
+        (request.method === "POST" && request.path.includes("/conversations")),
+    ),
+  ).toEqual([]);
+});
+
+test("stream-json headless rejects auto before reading a turn", async () => {
+  const result = await runStartup(["--permission-mode", "auto"], {
+    inputFormat: "stream-json",
+  });
+  expect(result.code).toBe(1);
+  expect(result.stderr).toContain(
+    "Auto permission mode requires the interactive TUI",
+  );
+  expect(
+    result.requests.filter(
+      (request) =>
+        request.path.includes("/v1/alpha/decisions") ||
+        (request.method === "POST" && request.path.includes("/conversations")),
+    ),
+  ).toEqual([]);
+});
 
 test.each(
   ["--computer", "--environment", "--env"].flatMap((selector) =>
