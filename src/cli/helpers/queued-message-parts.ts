@@ -66,7 +66,9 @@ export function getQueuedHumanRequest(
     batch.items
       .filter(
         (item): item is MessageQueueItem =>
-          item.kind === "message" && item.source === "user",
+          item.kind === "message" &&
+          item.source === "user" &&
+          item.clientMessageId !== "bridge",
       )
       .map((item) => ({ role: "user", content: item.content })),
   );

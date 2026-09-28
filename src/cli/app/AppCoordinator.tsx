@@ -1427,8 +1427,8 @@ export function App({
             } as Parameters<typeof tuiQueueRef.current.enqueue>[0])
           : ({
               kind: "message",
-              // Bridge calls are not direct Enter submissions.
-              source: message.source ?? "system",
+              source: message.source ?? "user",
+              clientMessageId: "bridge",
               content: message.text,
             } as Parameters<typeof tuiQueueRef.current.enqueue>[0]),
       );

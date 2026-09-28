@@ -88,6 +88,22 @@ test("queued human intent excludes task and cron text, while display retains it"
   expect(getQueuedHumanRequest(mixed)).toBe("correction");
 });
 
+test("bridge user messages remain pausable but cannot authorize auto approval", () => {
+  const queue = new QueueRuntime({ maxItems: Infinity });
+  queue.enqueue({
+    kind: "message",
+    source: "user",
+    clientMessageId: "bridge",
+    content: "unattributed bridge text",
+  } as Parameters<typeof queue.enqueue>[0]);
+  expect(queue.pause()).toBe(1);
+  expect(queue.consumeItems(1)).toBeNull();
+  queue.resume();
+  const batch = queue.consumeItems(1);
+  if (!batch) throw new Error("Expected resumed bridge message");
+  expect(getQueuedHumanRequest(batch)).toBeUndefined();
+});
+
 test("approval append keeps only source-verified queued human intent", () => {
   const queue = new QueueRuntime({ maxItems: Infinity });
   queue.enqueue({
