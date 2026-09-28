@@ -158,10 +158,25 @@ describe("createSdkSpawner", () => {
       skillSources: [],
       cwd: "/repo",
       modelSettings: { reasoning_effort: "low" },
+      disableMemoryGuard: true,
     });
     expect(String(client.calls[0]?.options.system)).toContain(
       "Only look at src/.",
     );
+  });
+
+  test("requests guard bypass for every SDK worker without changing parent settings", async () => {
+    const client = fakeClient([{ type: "result", success: true, result: "" }]);
+    const spawner = createSdkSpawner(client, CONFIG);
+    await spawner(request(), new AbortController().signal);
+    await spawner(
+      request({ label: "second worker" }),
+      new AbortController().signal,
+    );
+    expect(client.calls.map((call) => call.options.disableMemoryGuard)).toEqual(
+      [true, true],
+    );
+    expect(client.calls[0]?.options.env).toBeUndefined();
   });
 
   test("defaults to read-only tools and a numbered worker name", async () => {

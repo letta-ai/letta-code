@@ -356,6 +356,7 @@ function buildQueryOptions(
         : (config.allowedTools ?? DEFAULT_ALLOWED_TOOLS)),
     skillSources: [],
     ...(config.cwd ? { cwd: config.cwd } : {}),
+    disableMemoryGuard: true,
     ...(options.effort
       ? { modelSettings: { reasoning_effort: options.effort } }
       : {}),
