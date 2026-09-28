@@ -188,8 +188,8 @@ describe("ephemeral conversation creation", () => {
             systemPromptCustom: "minimal prompt",
           });
         }
-        // apiRequest forwards the headless acting user from the environment
-        // even when this caller does not add per-request headers.
+        // Current API request headers inherit the headless acting user even
+        // without an explicit remote-computer override.
         expect(actingUsers).toEqual(["user-initiator", "user-initiator"]);
         expect(bodies.every((body) => !("requestOptions" in body))).toBe(true);
         expect(bodies[0]?.parent_agent_id).toBe(

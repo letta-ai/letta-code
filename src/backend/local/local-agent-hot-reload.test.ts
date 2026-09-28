@@ -10,8 +10,6 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolveSubagentSecretEnv } from "@/agent/subagents/subagent-launcher";
-import { applySecretBatch, clearSecretsCache } from "@/utils/secrets-store";
 import { LocalStore } from "./local-store";
 import type { LocalAgentRecord } from "./local-types";
 
@@ -197,85 +195,6 @@ describe("local agent hot-reload", () => {
       });
     } finally {
       await rm(fixture.storageDir, { recursive: true, force: true });
-    }
-  });
-
-  test("persists hidden child parent and authorizes only its own conversation on resume", async () => {
-    const storageDir = await mkdtemp(join(tmpdir(), "local-child-lineage-"));
-    const previousDir = process.env.LETTA_LOCAL_BACKEND_DIR;
-    process.env.LETTA_LOCAL_BACKEND_DIR = storageDir;
-    try {
-      const store = createStore(storageDir);
-      const parent = store.createAgent({ name: "Parent" } as never);
-      await applySecretBatch(
-        { set: { CHILD_CANARY: "local-fixture" } },
-        parent.id,
-      );
-      const child = store.createAgent({
-        name: "Child",
-        hidden: true,
-        parent_agent_id: parent.id,
-      } as never);
-      const legacy = store.createAgent({
-        name: "Legacy",
-        hidden: true,
-      } as never);
-      const unrelated = store.createAgent({ name: "Other" } as never);
-      const childConversation = store.createConversation({
-        agent_id: child.id,
-      } as never);
-      const otherConversation = store.createConversation({
-        agent_id: unrelated.id,
-      } as never);
-      const reloaded = createStore(storageDir);
-      const retrieveAgent = async (id: string) => reloaded.retrieveAgent(id);
-      const retrieveConversation = async (id: string) =>
-        reloaded.retrieveConversation(id);
-      const resolve = (agentId: string, conversationId: string) =>
-        resolveSubagentSecretEnv({
-          parentAgentId: parent.id,
-          existingAgentId: agentId,
-          existingConversationId: conversationId,
-          localBackend: true,
-          retrieveAgent,
-          retrieveConversation,
-        });
-      expect(reloaded.retrieveAgent(child.id)).toMatchObject({
-        parent_agent_id: parent.id,
-      });
-      expect(await resolve(child.id, childConversation.id)).toEqual({
-        CHILD_CANARY: "local-fixture",
-      });
-      expect(await resolve(child.id, otherConversation.id)).toEqual({});
-      expect(await resolve(legacy.id, childConversation.id)).toEqual({});
-      expect(
-        await resolveSubagentSecretEnv({
-          parentAgentId: unrelated.id,
-          existingAgentId: child.id,
-          existingConversationId: childConversation.id,
-          localBackend: true,
-          retrieveAgent,
-          retrieveConversation,
-        }),
-      ).toEqual({});
-      expect(await resolve(unrelated.id, childConversation.id)).toEqual({});
-      expect(await resolve(child.id, "default")).toEqual({
-        CHILD_CANARY: "local-fixture",
-      });
-      expect(
-        await resolveSubagentSecretEnv({
-          parentAgentId: parent.id,
-          existingAgentId: child.id,
-          localBackend: true,
-          retrieveAgent,
-          retrieveConversation,
-        }),
-      ).toEqual({ CHILD_CANARY: "local-fixture" });
-    } finally {
-      clearSecretsCache(null);
-      if (previousDir === undefined) delete process.env.LETTA_LOCAL_BACKEND_DIR;
-      else process.env.LETTA_LOCAL_BACKEND_DIR = previousDir;
-      await rm(storageDir, { recursive: true, force: true });
     }
   });
 

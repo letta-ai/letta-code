@@ -403,11 +403,6 @@ export async function createAgent(
   const createWithTools = (tools: string[]) =>
     backend.createAgent({
       ...createAgentRequestBase,
-      ...(isSubagent &&
-      backend.capabilities.localMemfs &&
-      process.env.LETTA_PARENT_AGENT_ID?.startsWith("agent-local-")
-        ? { parent_agent_id: process.env.LETTA_PARENT_AGENT_ID }
-        : {}),
       ...(contextWindow && { context_window_limit: contextWindow }),
       tools,
     });

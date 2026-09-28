@@ -8,15 +8,6 @@ import {
 } from "@/reminders/engine";
 import { createSharedReminderState } from "@/reminders/state";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
-import {
-  filterAgentSecretEnv,
-  INHERITED_SECRET_EXECUTION_ID_ENV,
-  INHERITED_SECRET_NAMES_ENV,
-  inheritedSecretNames,
-  scopedSecretRedactions,
-  scrubSecretsFromString,
-} from "@/tools/secret-substitution";
-import { initSecretsFromServer } from "@/utils/secrets-store";
 import { runClaudeTurn } from "./claude-stream-session";
 import { runCodexTurn } from "./codex-app-server";
 
@@ -368,84 +359,28 @@ export function parseExternalCodingAgentOutput(
   };
 }
 
-export async function prepareExternalCodingAgentEnv(
-  parentAgentId: string,
-  inheritedEnv: NodeJS.ProcessEnv = process.env,
-): Promise<{ env: NodeJS.ProcessEnv; secrets: Record<string, string> }> {
-  const env = { ...inheritedEnv };
-  for (const name of inheritedSecretNames(env)) delete env[name];
-  delete env[INHERITED_SECRET_NAMES_ENV];
-  delete env[INHERITED_SECRET_EXECUTION_ID_ENV];
-  if (/^(agent|conv)-/.test(parentAgentId))
-    await initSecretsFromServer(parentAgentId);
-  const secrets = filterAgentSecretEnv(
-    scopedSecretRedactions(parentAgentId),
-    {},
-  );
-  Object.assign(env, secrets, {
-    AGENT_ID: parentAgentId,
-    LETTA_AGENT_ID: parentAgentId,
-    ...(Object.keys(secrets).length && {
-      [INHERITED_SECRET_NAMES_ENV]: JSON.stringify(Object.keys(secrets)),
-      [INHERITED_SECRET_EXECUTION_ID_ENV]: parentAgentId,
-    }),
-  });
-  return { env, secrets };
-}
-
-export function redactExternalCodingAgentResult(
-  result: SubagentResult,
-  secrets: Readonly<Record<string, string>>,
-): SubagentResult {
-  return {
-    ...result,
-    report: scrubSecretsFromString(result.report, secrets),
-    ...(result.error && {
-      error: scrubSecretsFromString(result.error, secrets),
-    }),
-  };
-}
-
 export async function runExternalCodingAgent(
   options: ExternalCodingAgentRunOptions,
   deps: ExternalCodingAgentDependencies = {},
 ): Promise<SubagentResult> {
   const startedAt = Date.now();
-  let prepared: Awaited<ReturnType<typeof prepareExternalCodingAgentEnv>>;
+  const env = {
+    ...(deps.env ?? process.env),
+    AGENT_ID: options.parentAgentId,
+    LETTA_AGENT_ID: options.parentAgentId,
+  };
+  const cwd = options.cwd ?? getCurrentWorkingDirectory();
   try {
     options.signal?.throwIfAborted();
-    prepared = await prepareExternalCodingAgentEnv(
-      options.parentAgentId,
-      deps.env,
-    );
   } catch (error) {
     return {
       agentId: options.parentAgentId,
       model: options.model,
       report: "",
       success: false,
-      error: scrubSecretsFromString(
-        normalizeError(error),
-        scopedSecretRedactions(options.parentAgentId),
-      ),
-      durationMs: Date.now() - startedAt,
-    };
-  }
-  const { env, secrets } = prepared;
-  const redact = (result: SubagentResult) =>
-    redactExternalCodingAgentResult(result, secrets);
-  const cwd = options.cwd ?? getCurrentWorkingDirectory();
-  try {
-    options.signal?.throwIfAborted();
-  } catch (error) {
-    return redact({
-      agentId: options.parentAgentId,
-      model: options.model,
-      report: "",
-      success: false,
       error: normalizeError(error),
       durationMs: Date.now() - startedAt,
-    });
+    };
   }
   if (options.type === "codex") {
     try {
@@ -459,33 +394,29 @@ export async function runExternalCodingAgent(
       // The managed sandbox wrapper authenticates model requests with its
       // sandbox key, not native `codex login`. A real app-server turn is the
       // authority on whether the configured provider can answer.
-      return redact(
-        await (deps.runCodexTurn ?? runCodexTurn)(
-          {
-            prompt: options.prompt,
-            parentAgentId: options.parentAgentId,
-            cwd,
-            model: options.model,
-            mcpReminder: options.mcpReminder,
-            signal: options.signal,
-            resumeThreadId: options.resumeSessionId,
-            onStarted: (threadId) =>
-              options.onStarted?.(
-                formatExternalCodingAgentId("codex", threadId),
-              ),
-          },
-          { env },
-        ),
+      return (deps.runCodexTurn ?? runCodexTurn)(
+        {
+          prompt: options.prompt,
+          parentAgentId: options.parentAgentId,
+          cwd,
+          model: options.model,
+          mcpReminder: options.mcpReminder,
+          signal: options.signal,
+          resumeThreadId: options.resumeSessionId,
+          onStarted: (threadId) =>
+            options.onStarted?.(formatExternalCodingAgentId("codex", threadId)),
+        },
+        { env },
       );
     } catch (error) {
-      return redact({
+      return {
         agentId: options.parentAgentId,
         model: options.model,
         report: "",
         success: false,
         error: normalizeError(error),
         durationMs: Date.now() - startedAt,
-      });
+      };
     }
   }
   try {
@@ -501,20 +432,18 @@ export async function runExternalCodingAgent(
       options.onStarted?.(
         formatExternalCodingAgentId("claude-code", sessionId),
       );
-      return redact(
-        await runClaudeTurn(
-          {
-            prompt: options.prompt,
-            parentAgentId: options.parentAgentId,
-            cwd,
-            model: options.model,
-            mcpReminder: options.mcpReminder,
-            signal: options.signal,
-            resumeSessionId: options.resumeSessionId,
-            sessionId,
-          },
-          { env },
-        ),
+      return runClaudeTurn(
+        {
+          prompt: options.prompt,
+          parentAgentId: options.parentAgentId,
+          cwd,
+          model: options.model,
+          mcpReminder: options.mcpReminder,
+          signal: options.signal,
+          resumeSessionId: options.resumeSessionId,
+          sessionId,
+        },
+        { env },
       );
     }
     const result = await (deps.runProcess ?? runProcess)(
@@ -532,23 +461,23 @@ export async function runExternalCodingAgent(
         `${options.type} completed without a resumable session ID`,
       );
     }
-    return redact({
+    return {
       agentId: formatExternalCodingAgentId(options.type, parsed.sessionId),
       runtimeSessionId: parsed.sessionId,
       model: options.model,
       report: parsed.report,
       success: true,
       durationMs: Date.now() - startedAt,
-    });
+    };
   } catch (error) {
     const message = normalizeError(error);
-    return redact({
+    return {
       agentId: options.parentAgentId,
       model: options.model,
       report: "",
       success: false,
       error: message,
       durationMs: Date.now() - startedAt,
-    });
+    };
   }
 }

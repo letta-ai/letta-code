@@ -63,40 +63,6 @@ const base = { parentAgentId: "parent", cwd: "/repo" };
 afterEach(() => __resetClaudeSessionsForTests());
 
 describe("Claude stream sessions", () => {
-  test("active session redacts its original and rotated secret on resume", async () => {
-    const fixture = transportFixture();
-    const oldValue = "claude-old-secret-72913";
-    const newValue = "claude-new-secret-88214";
-    const oldEnv = {
-      LETTA_INHERITED_SECRET_NAMES: '["ROTATING_TOKEN"]',
-      ROTATING_TOKEN: oldValue,
-    };
-    const running = runClaudeTurn(
-      { ...base, prompt: "first", sessionId: SESSION_ID },
-      { env: oldEnv, createTransport: () => fixture.transport },
-    );
-    await Bun.sleep(0);
-    const resumed = runClaudeTurn(
-      { ...base, prompt: "again", resumeSessionId: SESSION_ID },
-      {
-        env: { ...oldEnv, ROTATING_TOKEN: newValue },
-        createTransport: () => {
-          throw new Error("must reuse original process");
-        },
-      },
-    );
-    await Bun.sleep(0);
-    fixture.emit({
-      type: "result",
-      is_error: false,
-      result: `${oldValue}|${newValue}`,
-    });
-    const result = await resumed;
-    expect(result.report).not.toContain(oldValue);
-    expect(result.report).not.toContain(newValue);
-    expect(result.report).toContain("ROTATING_TOKEN=<REDACTED>");
-    expect((await running).report).toBe(result.report);
-  });
   test("keeps the original task alive through the exact interrupt event sequence", async () => {
     const fixture = transportFixture();
     let completed = false;

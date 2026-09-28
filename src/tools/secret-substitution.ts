@@ -4,7 +4,6 @@
 
 import stripAnsi from "strip-ansi";
 import { getDesktopAccessToken } from "@/auth/desktop-credentials";
-import { getRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { loadSecrets } from "@/utils/secrets-store";
 
@@ -18,179 +17,6 @@ import { loadSecrets } from "@/utils/secrets-store";
  * value and conclude the secret is unset even though it exists.
  */
 const SECRET_PATTERN = /\$(?:\{[#!]?)?([A-Z_][A-Z0-9_]*)/g;
-
-export const INHERITED_SECRET_NAMES_ENV = "LETTA_INHERITED_SECRET_NAMES";
-export const INHERITED_SECRET_EXECUTION_ID_ENV =
-  "LETTA_INHERITED_SECRET_EXECUTION_ID";
-
-// Agent secrets must never replace the harness's identity, authentication, or
-// filesystem boundaries. This applies both to direct shell injection and to
-// child-process inheritance.
-const PROTECTED_ENV_NAMES = new Set([
-  "AGENT_ID",
-  "AGENT_NAME",
-  "CONVERSATION_ID",
-  "HOME",
-  "PATH",
-  "NODE_OPTIONS",
-  "NODE_PATH",
-  "BUN_OPTIONS",
-  "OPENSSL_CONF",
-  "SHELLOPTS",
-  "BASHOPTS",
-  "PYTHONSTARTUP",
-  "PYTHONINSPECT",
-  "PYTHONPATH",
-  "PYTHONHOME",
-  "PERL5OPT",
-  "RUBYOPT",
-  "BASH_ENV",
-  "ENV",
-  "IFS",
-  "SHELL",
-  "PROMPT_COMMAND",
-  "CDPATH",
-  "LETTA_CODE_BIN",
-  "LETTA_CODE_BIN_ARGS_JSON",
-  "LETTA_AGENT_ID",
-  "LETTA_API_KEY",
-  "LETTA_BASE_URL",
-  "LETTA_PARENT_AGENT_ID",
-  "LETTA_PARENT_CONVERSATION_ID",
-  "LETTA_ACTING_USER_ID",
-  "LETTA_CODE_AGENT_ROLE",
-  "LETTA_SUBAGENT_NAME",
-  "LETTA_INHERITED_SECRET_NAMES",
-  "LETTA_INHERITED_SECRET_EXECUTION_ID",
-  "LETTA_MEMORY_DIR",
-  "MEMORY_DIR",
-  "LETTA_LOCAL_BACKEND_DIR",
-  "LETTA_LOCAL_BACKEND_EXPERIMENTAL",
-  "LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID",
-  "LETTA_RUNTIME_LISTENER_CONNECTION_ID",
-  "LETTA_LISTENER_INSTANCE_ID",
-  "LETTA_MANAGED_CLOUD_SANDBOX",
-  "LETTA_MEMFS_BASE_URL",
-  "LETTA_SKILLS_DIRECTORY",
-  "USER_CWD",
-  "TRANSCRIPT_PATH",
-]);
-
-export function filterAgentSecretEnv(
-  secrets: Readonly<Record<string, string>>,
-  env: NodeJS.ProcessEnv = process.env,
-): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(secrets).filter(
-      ([name, value]) =>
-        /^[A-Z_][A-Z0-9_]*$/.test(name) &&
-        !PROTECTED_ENV_NAMES.has(name) &&
-        !/^(?:LD_|DYLD_|GIT_|BUN_|NODE_|LETTA_)/.test(name) &&
-        (env[name] === undefined || env[name] === value),
-    ),
-  );
-}
-
-/** Values inherited by a trusted subagent launch, never sourced from a stale
- * AGENT_ID or LETTA_PARENT_AGENT_ID alone. They are re-scoped per execution. */
-export function inheritedSecretNames(
-  env: NodeJS.ProcessEnv = process.env,
-): string[] {
-  try {
-    const names: unknown = JSON.parse(env[INHERITED_SECRET_NAMES_ENV] ?? "[]");
-    if (!Array.isArray(names)) return [];
-    // The marker describes inherited values to REMOVE, not permission to inject.
-    // Strip even a previously injected process-control name; the allowlist is
-    // applied separately when new values are added to the child environment.
-    return names.filter(
-      (name): name is string =>
-        typeof name === "string" && /^[A-Z_][A-Z0-9_]*$/.test(name),
-    );
-  } catch {
-    return [];
-  }
-}
-
-export function inheritedAgentSecrets(
-  env: NodeJS.ProcessEnv = process.env,
-): Record<string, string> {
-  if (
-    env.LETTA_CODE_AGENT_ROLE !== "subagent" ||
-    !env[INHERITED_SECRET_EXECUTION_ID_ENV] ||
-    env[INHERITED_SECRET_EXECUTION_ID_ENV] !== getRuntimeContext()?.agentId
-  )
-    return {};
-  return filterAgentSecretEnv(snapshotInheritedSecretRedactions(env), {});
-}
-
-export function isSubagentSecretScope(
-  agentId?: string,
-  agentFree = false,
-): boolean {
-  return (
-    agentFree ||
-    Boolean(agentId?.startsWith("conv-")) ||
-    (process.env.LETTA_CODE_AGENT_ROLE === "subagent" &&
-      Boolean(process.env[INHERITED_SECRET_NAMES_ENV]))
-  );
-}
-
-export function scopedAgentSecretEnv(agentId?: string): Record<string, string> {
-  const current = agentId ? loadSecrets(agentId) : {};
-  // A null-owned listener must use its persisted conversation alias; never an
-  // inherited process marker from another runtime hosted in this listener.
-  const inherited = agentId?.startsWith("agent-")
-    ? inheritedAgentSecrets()
-    : {};
-  return filterAgentSecretEnv({ ...inherited, ...current }, {});
-}
-
-export function mergeSecretRedactions(
-  ...snapshots: Readonly<Record<string, string>>[]
-): Record<string, string> {
-  const merged: Record<string, string> = {};
-  for (const snapshot of snapshots) {
-    for (const [name, value] of Object.entries(snapshot)) {
-      if (Object.values(merged).includes(value)) continue;
-      let alias = name;
-      let suffix = 1;
-      while (alias in merged) alias = `${name} (${++suffix})`;
-      merged[alias] = value;
-    }
-  }
-  return merged;
-}
-
-export function snapshotInheritedSecretRedactions(
-  env: NodeJS.ProcessEnv,
-): Record<string, string> {
-  return Object.fromEntries(
-    inheritedSecretNames(env).flatMap((name) =>
-      typeof env[name] === "string" ? [[name, env[name]]] : [],
-    ),
-  );
-}
-
-export function redactSecretBearingResult<
-  T extends { report: string; error?: string },
->(result: T, secrets: Readonly<Record<string, string>>): T {
-  return {
-    ...result,
-    report: scrubSecretsFromString(result.report, secrets),
-    ...(result.error && {
-      error: scrubSecretsFromString(result.error, secrets),
-    }),
-  };
-}
-
-export function scopedSecretRedactions(
-  agentId?: string,
-): Record<string, string> {
-  return {
-    ...(agentId?.startsWith("agent-") ? inheritedAgentSecrets() : {}),
-    ...(agentId ? loadSecrets(agentId) : {}),
-  };
-}
 
 /**
  * Scan a command string or command-argument array for `$SECRET_NAME`
@@ -216,7 +42,7 @@ export function extractSecretEnvFromCommand(
 
   if (typeof command === "string") {
     scan(command);
-    return filterAgentSecretEnv(env, {});
+    return env;
   }
 
   for (const part of command) {
@@ -225,7 +51,7 @@ export function extractSecretEnvFromCommand(
     }
   }
 
-  return filterAgentSecretEnv(env, {});
+  return env;
 }
 
 /**
@@ -510,22 +336,6 @@ export function sanitizeToolReturnContent<
       ? { ...block, text: sanitizeText(block.text, secrets, stripAnsiEscapes) }
       : block,
   ) as T;
-}
-
-export function scrubToolExecutionResult<
-  T extends {
-    toolReturn: string | Array<{ type?: string; text?: unknown }>;
-    stdout?: string[];
-    stderr?: string[];
-  },
->(result: T, secrets: Readonly<Record<string, string>>): T {
-  const scrub = (text: string) => scrubSecretsFromString(text, secrets);
-  return {
-    ...result,
-    toolReturn: sanitizeToolReturnContent(result.toolReturn, secrets, false),
-    ...(result.stdout && { stdout: result.stdout.map(scrub) }),
-    ...(result.stderr && { stderr: result.stderr.map(scrub) }),
-  } as T;
 }
 
 /** Scrub secret values from captured stdout/stderr lines, in place. */

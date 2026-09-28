@@ -189,36 +189,8 @@ function getCache(): SecretsCache {
   return global[SECRETS_CACHE_KEY];
 }
 
-const SECRETS_VERSIONS_KEY = Symbol.for("@letta/secretsCacheVersions");
-function getVersions(): Map<string, number> {
-  const global = globalThis as typeof globalThis & {
-    [key: symbol]: Map<string, number> | undefined;
-  };
-  if (!global[SECRETS_VERSIONS_KEY]) {
-    global[SECRETS_VERSIONS_KEY] = new Map();
-  }
-  return global[SECRETS_VERSIONS_KEY];
-}
-
-function advanceVersion(agentId: string): number {
-  const versions = getVersions();
-  const version = (versions.get(agentId) ?? 0) + 1;
-  versions.set(agentId, version);
-  return version;
-}
-
 function setCache(agentId: string, secrets: Record<string, string>): void {
-  advanceVersion(agentId);
   getCache().set(agentId, { ...secrets });
-}
-
-function setCacheIfCurrent(
-  agentId: string,
-  secrets: Record<string, string>,
-  version: number,
-): void {
-  if (getVersions().get(agentId) === version)
-    getCache().set(agentId, { ...secrets });
 }
 
 const LOCAL_SECRET_NAME_PATTERN = /^[A-Z_][A-Z0-9_]*$/;
@@ -399,15 +371,6 @@ function resolveSecretsAgentId(explicitAgentId?: string): string | null {
 const secretScopeOwners = new Map<string, string>();
 const secretScopeRefreshes = new Map<string, object>();
 
-/** Only persisted, successfully hydrated lineage can authorize a conv-* parent. */
-export function getVerifiedSecretOwner(scopeId: string): string | null {
-  return scopeId.startsWith("conv-")
-    ? (secretScopeOwners.get(scopeId) ?? null)
-    : scopeId.startsWith("agent-")
-      ? scopeId
-      : null;
-}
-
 function assertAgentSecretWriteScope(scopeId: string): void {
   if (scopeId.startsWith("conv-")) {
     throw new Error(
@@ -445,15 +408,14 @@ export async function initSecretsFromServer(agentId: string): Promise<void> {
     }
     return;
   }
-  const version = advanceVersion(agentId);
   if (isLocalAgentId(agentId)) {
-    setCacheIfCurrent(agentId, await loadLocalAgentSecrets(agentId), version);
+    setCache(agentId, await loadLocalAgentSecrets(agentId));
     return;
   }
 
   const backend = getSecretsBackend();
   if (!backend.capabilities.serverSecrets) {
-    setCacheIfCurrent(agentId, {}, version);
+    setCache(agentId, {});
     return;
   }
   const agentSecrets = await backend.listAgentSecrets(agentId);
@@ -467,7 +429,7 @@ export async function initSecretsFromServer(agentId: string): Promise<void> {
     }
   }
 
-  setCacheIfCurrent(agentId, secrets, version);
+  setCache(agentId, secrets);
 }
 
 /**
@@ -639,19 +601,16 @@ export function clearSecretsCache(agentId?: string | null): void {
   // Pending child lookups may depend on the cleared parent.
   secretScopeRefreshes.clear();
   if (agentId === null) {
-    for (const id of getVersions().keys()) advanceVersion(id);
     secretScopeOwners.clear();
     getCache().clear();
     return;
   }
   const resolvedAgentId = resolveSecretsAgentId(agentId);
   if (resolvedAgentId) {
-    advanceVersion(resolvedAgentId);
     secretScopeOwners.delete(resolvedAgentId);
     getCache().delete(resolvedAgentId);
     return;
   }
-  for (const id of getVersions().keys()) advanceVersion(id);
   secretScopeOwners.clear();
   getCache().clear();
 }
