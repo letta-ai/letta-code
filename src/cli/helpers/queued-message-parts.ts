@@ -54,8 +54,9 @@ export function getQueuedDisplayText(batch: DequeuedBatch): string {
     .join("\n");
 }
 
+/** Inspect original queue items before display conversion drops their source. */
 export function getQueuedHumanRequest(
-  batch: DequeuedBatch,
+  batch: Pick<DequeuedBatch, "items">,
 ): string | undefined {
   return directUserRequest(
     batch.items
@@ -65,6 +66,33 @@ export function getQueuedHumanRequest(
       )
       .map((item) => ({ role: "user", content: item.content })),
   );
+}
+
+export function pendingApprovalRequest(
+  pending: {
+    conversationId: string;
+    generation: number;
+    batchKey: string;
+    request: string;
+  } | null,
+  conversationId: string,
+  generation: number,
+  batchKey: string,
+): string | undefined {
+  return pending?.conversationId === conversationId &&
+    pending.generation === generation &&
+    pending.batchKey === batchKey
+    ? pending.request
+    : undefined;
+}
+
+export function selectApprovalContinuationRequest(
+  trustedUserRequest: string | undefined,
+  queuedBatch: DequeuedBatch | null,
+): string | undefined {
+  // An appended batch starts a new authorization context. Never fall back to
+  // old intent when it contains only automated or untrusted messages.
+  return queuedBatch ? getQueuedHumanRequest(queuedBatch) : trustedUserRequest;
 }
 
 export function buildQueuedUserText(queued: QueuedMessage[]): string {

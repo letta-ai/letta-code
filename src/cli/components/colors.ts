@@ -159,8 +159,8 @@ const _colors = {
     processingShimmer: brandColors.primaryAccentLight, // shimmer highlight
     get autoMode() {
       return getTerminalTheme() === "light"
-        ? brandColorsLight.primaryAccent
-        : brandColors.primaryAccent;
+        ? brandColorsLight.statusWarning
+        : brandColors.statusWarning;
     },
   },
 

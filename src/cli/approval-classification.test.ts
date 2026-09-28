@@ -590,7 +590,7 @@ describe("classifyApprovals", () => {
     ).toBe(false);
   });
 
-  test("pure Jev acceptance gate requires coherent high-confidence evidence", () => {
+  test("pure Jev acceptance gate honors the endpoint choice", () => {
     const answer = (
       choice: string,
       confidence?: number,
@@ -613,16 +613,14 @@ describe("classifyApprovals", () => {
     });
     expect(acceptAutoApprovalDecision(answer("approve", 0.98))).toBe(true);
     expect(acceptAutoApprovalDecision(answer("ask", 0.98))).toBe(false);
-    expect(acceptAutoApprovalDecision(answer("approve", undefined))).toBe(
-      false,
-    );
-    expect(acceptAutoApprovalDecision(answer("approve", 0.89))).toBe(false);
+    expect(acceptAutoApprovalDecision(answer("approve", undefined))).toBe(true);
+    expect(acceptAutoApprovalDecision(answer("approve", 0.89))).toBe(true);
     expect(
       acceptAutoApprovalDecision(answer("approve", 0.98, 0.96, 0.04)),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       acceptAutoApprovalDecision(answer("approve", 0.98, 0.99, 0.99)),
-    ).toBe(false);
+    ).toBe(true);
     expect(acceptAutoApprovalDecision(null)).toBe(false);
   });
 

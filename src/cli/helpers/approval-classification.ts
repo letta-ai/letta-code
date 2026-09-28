@@ -11,7 +11,7 @@ import {
   type DecisionResponse,
   submitWorkflowDecision,
 } from "@/tools/workflow/decide";
-import { debugWarn } from "@/utils/debug";
+import { debugLog, debugWarn } from "@/utils/debug";
 import { safeJsonParseOr } from "./safe-json-parse";
 import type { ApprovalRequest } from "./stream-processor";
 
@@ -172,11 +172,6 @@ export function directUserRequest(
 }
 
 const AUTO_DECISION_TIMEOUT_MS = 8_000;
-// Live Jev gave 0.99 probability / 0.98 confidence for an explicitly
-// requested `mkdir output`, but only 0.81 / 0.62 for `npm run build`.
-// Require both signals; never promote ambiguous build/script execution.
-const AUTO_APPROVE_PROBABILITY = 0.97;
-const AUTO_APPROVE_CONFIDENCE = 0.9;
 
 // Auto mode sends the *whole* invocation to Letta Cloud. Do not project a
 // subset: omitted fields (including edit contents, cwd, or shell flags) may
@@ -253,8 +248,13 @@ async function shouldAutoApprove(
     trustedUserRequest.length > 2000 ||
     workingDirectory.length > 500 ||
     signal?.aborted
-  )
+  ) {
+    debugLog(
+      "approval-classification",
+      `Auto decision skipped for ${toolName}: missing or invalid trusted request, cwd, or active signal`,
+    );
     return false;
+  }
   const timeout = AbortSignal.timeout(AUTO_DECISION_TIMEOUT_MS);
   const decisionSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
   try {
@@ -283,44 +283,43 @@ async function shouldAutoApprove(
       },
       decisionSignal,
     );
-    return !decisionSignal.aborted && acceptAutoApprovalDecision(response);
-  } catch {
+    const approved =
+      !decisionSignal.aborted && acceptAutoApprovalDecision(response);
+    const answer = response?.answers.approval;
+    const approveProbability =
+      answer?.probabilities && typeof answer.probabilities === "object"
+        ? (answer.probabilities as Record<string, unknown>).approve
+        : undefined;
+    debugLog(
+      "approval-classification",
+      `Auto decision for ${toolName}: ${approved ? "allow" : "ask"} ` +
+        `choice=${typeof answer?.choice === "string" ? answer.choice : "none"} ` +
+        `model=${response?.model ?? "none"} ` +
+        `confidence=${typeof answer?.confidence === "number" ? answer.confidence : "none"} ` +
+        `approve_probability=${approveProbability ?? "none"} ` +
+        `timed_out=${decisionSignal.aborted}`,
+    );
+    return approved;
+  } catch (error) {
     debugWarn(
       "approval-classification",
-      "Auto decision unavailable; asking user",
+      `Auto decision unavailable for ${toolName}; asking user (${error instanceof Error ? error.name : "unknown error"})`,
     );
     return false;
   }
 }
 
-/** Pure acceptance gate; a malformed or uncertain Jev answer never denies. */
+/** The validated Jev choice is authoritative; unavailable or invalid responses ask. */
 export function acceptAutoApprovalDecision(
   response: DecisionResponse | null,
 ): boolean {
   const answer = response?.answers.approval;
-  if (
-    !response?.model.startsWith("typesafe/jev-") ||
-    answer?.type !== "choice" ||
-    answer.choice !== "approve" ||
-    answer.calibrated !== true ||
-    typeof answer.confidence !== "number" ||
-    answer.confidence < AUTO_APPROVE_CONFIDENCE ||
-    answer.confidence > 1 ||
-    !answer.probabilities ||
-    typeof answer.probabilities !== "object" ||
-    !("approve" in answer.probabilities) ||
-    typeof answer.probabilities.approve !== "number" ||
-    answer.probabilities.approve < AUTO_APPROVE_PROBABILITY ||
-    answer.probabilities.approve > 1 ||
-    !("ask" in answer.probabilities) ||
-    typeof answer.probabilities.ask !== "number" ||
-    answer.probabilities.ask < 0 ||
-    answer.probabilities.ask > 1 - AUTO_APPROVE_PROBABILITY ||
-    Math.abs(answer.probabilities.approve + answer.probabilities.ask - 1) > 0.01
-  ) {
-    return false;
-  }
-  return true;
+  return (
+    response?.model.startsWith("typesafe/jev-") === true &&
+    answer?.type === "choice" &&
+    answer.choice === "approve" &&
+    answer.calibrated === true
+  );
 }
 
 export async function classifyApprovals<TContext = ApprovalContext | null>(

@@ -13,8 +13,7 @@ export const DEFAULT_PERMISSION_MODE: PermissionMode = "unrestricted";
 export const AUTO_PERMISSION_MODE_LABEL =
   "auto (sends user request and full tool args to Letta Cloud)";
 /** Footer variant; shares an 80-column row with model status. */
-export const AUTO_PERMISSION_MODE_SHORT_LABEL =
-  "auto (request + tool args to Cloud)";
+export const AUTO_PERMISSION_MODE_SHORT_LABEL = "auto";
 
 /** All valid current permission mode values. */
 export const VALID_PERMISSION_MODES: readonly PermissionMode[] = [

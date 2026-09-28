@@ -87,7 +87,7 @@ return await decide(
   }
 }, 45_000);
 
-test("auto permission classification calls Jev and conservatively gates the result", async () => {
+test("auto permission classification follows the live Jev choice", async () => {
   if (!process.env.LETTA_API_KEY) {
     throw new Error(
       "LETTA_API_KEY is required for the live auto permission test.",
@@ -99,6 +99,7 @@ test("auto permission classification calls Jev and conservatively gates the resu
   const filePath = join(dir, "note.txt");
   try {
     await writeFile(filePath, "hello\n");
+    const patch = `*** Begin Patch\n*** Update File: ${filePath}\n@@\n-hello\n+hello world\n*** End Patch`;
     let response:
       | Awaited<ReturnType<typeof submitWorkflowDecision>>
       | undefined;
@@ -107,13 +108,8 @@ test("auto permission classification calls Jev and conservatively gates the resu
       [
         {
           toolCallId: "live-auto",
-          toolName: "Edit",
-          toolArgs: JSON.stringify({
-            file_path: filePath,
-            old_string: "hello",
-            new_string: "hello world",
-            replace_all: false,
-          }),
+          toolName: "ApplyPatch",
+          toolArgs: JSON.stringify({ input: patch }),
         },
       ],
       {
@@ -134,13 +130,8 @@ test("auto permission classification calls Jev and conservatively gates the resu
         trusted_user_request:
           "Change hello to hello world in note.txt in this project",
         untrusted_proposed_tool_call: {
-          tool_name: "Edit",
-          arguments: {
-            file_path: filePath,
-            old_string: "hello",
-            new_string: "hello world",
-            replace_all: false,
-          },
+          tool_name: "ApplyPatch",
+          arguments: { input: patch },
         },
       },
     });
@@ -154,14 +145,12 @@ test("auto permission classification calls Jev and conservatively gates the resu
     expect(result.autoDenied).toHaveLength(0);
     expect(result.autoAllowed.length + result.needsUserInput.length).toBe(1);
     const answer = response?.answers.approval;
-    // Optional calibration fields gate approval; their absence is an ask.
-    if (result.autoAllowed.length > 0) {
-      expect(answer?.choice).toBe("approve");
-      expect(answer?.confidence as number).toBeGreaterThanOrEqual(0.9);
-      expect(
-        (answer?.probabilities as Record<string, number>).approve,
-      ).toBeGreaterThanOrEqual(0.97);
-    }
+    expect(result.autoAllowed).toHaveLength(
+      answer?.choice === "approve" ? 1 : 0,
+    );
+    expect(result.needsUserInput).toHaveLength(
+      answer?.choice === "ask" ? 1 : 0,
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

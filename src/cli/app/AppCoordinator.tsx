@@ -95,7 +95,6 @@ import {
   buildContentFromQueueBatch,
   getQueuedDisplayText,
   getQueuedHumanRequest,
-  toQueuedMsg,
 } from "@/cli/helpers/queued-message-parts";
 import {
   buildReflectionArenaChoiceQuestions,
@@ -164,11 +163,7 @@ import {
   isByokHandleForSelector,
   listProviders,
 } from "@/providers/byok-providers";
-import type {
-  MessageQueueItem,
-  QueueRuntime,
-  TaskNotificationQueueItem,
-} from "@/queue/queue-runtime";
+import type { QueueRuntime } from "@/queue/queue-runtime";
 import {
   createSharedReminderState,
   enqueueCommandIoReminder,
@@ -1575,6 +1570,12 @@ export function App({
     null,
   );
   const approvalToolContextIdRef = useRef<string | null>(null);
+  const pendingApprovalIntentRef = useRef<{
+    conversationId: string;
+    generation: number;
+    batchKey: string;
+    request: string;
+  } | null>(null);
   const clearApprovalToolContext = useCallback(() => {
     const contextId = approvalToolContextIdRef.current;
     if (!contextId) return;
@@ -1683,17 +1684,10 @@ export function App({
   );
 
   // Queue callbacks remove consumed display entries by item ID.
-  const consumeQueuedMessages = useCallback((): QueuedMessage[] | null => {
+  const consumeQueuedMessages = useCallback(() => {
     const len = tuiQueueRef.current?.length ?? 0;
     if (len === 0) return null;
-    const batch = tuiQueueRef.current?.consumeItems(len);
-    if (!batch) return null;
-    return batch.items
-      .filter(
-        (item): item is MessageQueueItem | TaskNotificationQueueItem =>
-          item.kind === "message" || item.kind === "task_notification",
-      )
-      .map(toQueuedMsg);
+    return tuiQueueRef.current?.consumeItems(len) ?? null;
   }, []);
 
   // Helper to wrap async handlers that need to close overlay and lock input
@@ -3682,6 +3676,7 @@ export function App({
     appendError,
     appendTaskNotificationEvents,
     approvalToolContextIdRef,
+    pendingApprovalIntentRef,
     autoAllowedExecutionRef,
     buffersRef,
     clearApprovalToolContext,
@@ -3782,6 +3777,7 @@ export function App({
     approvalContexts,
     approvalResults,
     approvalToolContextIdRef,
+    pendingApprovalIntentRef,
     autoDeniedApprovals,
     autoHandledResults,
     buffersRef,
