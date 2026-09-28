@@ -101,13 +101,24 @@ export async function resolveAgentMessageDestination(
     );
     conversationId = conversation.id;
   }
+  assertNotCurrentConversation(
+    { agentId, conversationId },
+    input.currentConversation,
+  );
+  return { agentId, conversationId };
+}
+
+/** Agent-free conversations have no agent identity, but still cannot send to themselves. */
+export function assertNotCurrentConversation(
+  destination: { agentId: string | null; conversationId: string },
+  current?: { agentId?: string; conversationId?: string },
+): void {
   if (
-    agentId === input.currentConversation?.agentId &&
-    conversationId === input.currentConversation?.conversationId
+    destination.conversationId === current?.conversationId &&
+    (destination.agentId === null || destination.agentId === current.agentId)
   ) {
     throw new Error(
       "Cannot message the current conversation. Use Monitor for external events or Wake for timed self-invocation.",
     );
   }
-  return { agentId, conversationId };
 }

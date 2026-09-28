@@ -92,6 +92,32 @@ test.each([false, true])(
   },
 );
 
+test.each(["CONVERSATION_ID", "LETTA_CONVERSATION_ID"])(
+  "ephemeral resume rejects its own busy conversation via %s",
+  async (key) => {
+    const f = fixture();
+    delete (f.deps.env as Record<string, string | undefined>).CONVERSATION_ID;
+    (f.deps.env as Record<string, string | undefined>)[key] = "conv-ephemeral";
+    f.backend.retrieveConversation = async (id) =>
+      ({ id, agent_id: null }) as unknown as Awaited<
+        ReturnType<Backend["retrieveConversation"]>
+      >;
+    expect(
+      await tryCloudHeadlessSend(
+        flags("--conversation", "conv-ephemeral", "--output-format", "json"),
+        "Self send",
+        f.backend,
+        false,
+        f.deps,
+      ),
+    ).toBe(1);
+    expect(JSON.parse(f.stdout.join("")).error).toContain(
+      "Cannot message the current conversation",
+    );
+    expect(f.submissions).toHaveLength(0);
+  },
+);
+
 test("ephemeral resume rejects an explicit conflicting agent owner", async () => {
   const f = fixture();
   f.backend.retrieveConversation = async (id) =>

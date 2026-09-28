@@ -1,6 +1,24 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "node:events";
-import { spawnSubagentProcess } from "@/agent/subagents/subagent-process";
+import {
+  describeAbortedSubagent,
+  spawnSubagentProcess,
+} from "@/agent/subagents/subagent-process";
+
+test("remote agent-free cancellation requires listener confirmation", () => {
+  expect(describeAbortedSubagent(true, null)).toContain(
+    "remote execution may still be running",
+  );
+  expect(
+    describeAbortedSubagent(true, "Could not confirm listener cancellation"),
+  ).toContain("Could not confirm listener cancellation");
+  expect(
+    describeAbortedSubagent(true, "Listener execution cancelled"),
+  ).not.toContain("may still be running");
+  expect(describeAbortedSubagent(false, null)).not.toContain(
+    "may still be running",
+  );
+});
 
 async function waitForProcessExit(pid: number): Promise<void> {
   const deadline = Date.now() + 2_000;
@@ -16,6 +34,31 @@ async function waitForProcessExit(pid: number): Promise<void> {
 }
 
 describe.skipIf(process.platform === "win32")("subagent process", () => {
+  test("waits beyond the default kill window for remote listener cancellation", async () => {
+    const script = [
+      'process.on("SIGINT", () => {',
+      '  setTimeout(() => { process.stdout.write("listener-cancelled\\n"); process.exit(1); }, 2200);',
+      "});",
+      'process.stdout.write("ready\\n");',
+      "setInterval(() => {}, 1000);",
+    ].join("");
+    const controller = new AbortController();
+    const running = spawnSubagentProcess(process.execPath, ["-e", script], {
+      cwd: process.cwd(),
+      env: process.env,
+      signal: controller.signal,
+      forceKillGraceMs: 3_000,
+    });
+    await once(running.process.stdout, "data");
+    const output = once(running.process.stdout, "data");
+    controller.abort();
+    expect(String((await output)[0])).toContain("listener-cancelled");
+    expect(await running.completion).toMatchObject({
+      exitCode: 1,
+      exitSignal: null,
+    });
+  }, 6_000);
+
   test("stops the launcher and a descendant that outlives graceful cancellation", async () => {
     const descendantScript = [
       'process.on("SIGINT", () => {});',

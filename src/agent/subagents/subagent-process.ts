@@ -1,6 +1,19 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { INTERRUPTED_BY_USER } from "@/constants";
 
 const DEFAULT_FORCE_KILL_GRACE_MS = 2_000;
+// Listener sync, queue removal, and run abort may each take up to 30 seconds.
+export const REMOTE_CHILD_CANCEL_GRACE_MS = 95_000;
+
+export function describeAbortedSubagent(
+  remoteAgentFree: boolean,
+  finalError: string | null,
+): string {
+  if (!remoteAgentFree || finalError === "Listener execution cancelled")
+    return INTERRUPTED_BY_USER;
+  return `${INTERRUPTED_BY_USER} (could not confirm listener cancellation; remote execution may still be running${finalError ? `: ${finalError}` : ""})`;
+}
+
 const FORCE_KILL_SETTLE_MS = 500;
 const PROCESS_EXIT_POLL_MS = 20;
 

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Backend } from "@/backend";
 import {
+  assertNotCurrentConversation,
   buildAgentSendContent,
   normalizeAgentMessageComputer,
   resolveAgentMessageDestination,
@@ -188,6 +189,13 @@ export async function tryCloudHeadlessSend(
     controller.signal.throwIfAborted();
     if (resolvedConversation) {
       if (resolvedConversation.agent_id === null) {
+        assertNotCurrentConversation(
+          { agentId: null, conversationId: resolvedConversation.id },
+          {
+            agentId: env.AGENT_ID || env.LETTA_AGENT_ID,
+            conversationId: env.CONVERSATION_ID || env.LETTA_CONVERSATION_ID,
+          },
+        );
         if (resume.specifiedAgentId) {
           throw new Error(
             "An ephemeral conversation cannot be resumed with --agent",

@@ -67,7 +67,11 @@ import {
   getPrimaryAgentModelHandle,
   resolveSubagentModel,
 } from "./subagent-model";
-import { spawnSubagentProcess } from "./subagent-process";
+import {
+  describeAbortedSubagent,
+  REMOTE_CHILD_CANCEL_GRACE_MS,
+  spawnSubagentProcess,
+} from "./subagent-process";
 import {
   describeSubagentExit,
   type ExecutionState,
@@ -465,10 +469,16 @@ async function executeSubagent(
       throw new Error("Subagent executable is required");
     }
     signal?.throwIfAborted();
+    const remoteAgentFree = Boolean(
+      environment && backendMode === "api" && !existingAgentId,
+    );
     const runningProcess = spawnSubagentProcess(managedCommand, managedArgs, {
       cwd: subagentWorkingDirectory,
       env: spawnEnv,
       signal,
+      forceKillGraceMs: remoteAgentFree
+        ? REMOTE_CHILD_CANCEL_GRACE_MS
+        : undefined,
     });
     const proc = runningProcess.process;
     proc.stdin.on("error", () => {});
@@ -547,7 +557,7 @@ async function executeSubagent(
         conversationId: state.conversationId || undefined,
         report: "",
         success: false,
-        error: INTERRUPTED_BY_USER,
+        error: describeAbortedSubagent(remoteAgentFree, state.finalError),
       });
     }
 
