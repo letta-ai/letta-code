@@ -2672,6 +2672,15 @@ export class LocalStore {
         conversation.agent_id,
       );
       if (loadedKey !== key) return existing;
+      // The resource parent and history owner are creation-time identities.
+      // An external record edit must not silently rebind a running child.
+      if (
+        existing &&
+        (conversation.agent_id !== existing.agent_id ||
+          (existing.agent_id === null &&
+            conversation.parent_agent_id !== existing.parent_agent_id))
+      )
+        return existing;
       // Own writes cache their serialized record, so only external changes
       // invalidate the resident transcript window.
       if (existing && cachedJson !== undefined) {

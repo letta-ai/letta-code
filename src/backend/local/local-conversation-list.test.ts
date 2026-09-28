@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
@@ -229,6 +229,23 @@ describe("listLocalConversations", () => {
         agent_id: null,
         parent_agent_id: parent.id,
       });
+      const childRecordPath = join(
+        storageDir,
+        "conversations",
+        Buffer.from(`conversation:${child.id}`).toString("base64url"),
+        "conversation.json",
+      );
+      const childRecord = JSON.parse(
+        await readFile(childRecordPath, "utf8"),
+      ) as Record<string, unknown>;
+      await writeFile(
+        childRecordPath,
+        JSON.stringify({ ...childRecord, parent_agent_id: other.id }),
+      );
+      expect(
+        (await reopened.retrieveConversation(child.id)).parent_agent_id,
+      ).toBe(parent.id);
+      await writeFile(childRecordPath, JSON.stringify(childRecord));
       const stream = await reopened.createConversationMessageStream(child.id, {
         messages: [{ role: "user", content: "hello" }],
       } as ConversationMessageCreateBody);
