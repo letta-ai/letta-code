@@ -8,13 +8,15 @@ import {
   createLocalEphemeralConversation,
   projectResumedEphemeralConversation,
 } from "@/agent/ephemeral-conversation";
-import {
-  configureBackendMode,
-  configureEphemeralLocalBackend,
-} from "@/backend";
+import { configureBackendMode, getBackend } from "@/backend";
 import { createHeadlessEphemeralConversation } from "@/headless-ephemeral-startup";
 import { settingsManager } from "@/settings-manager";
 import { setupRuntimeModelCatalogFixture } from "@/test-utils/runtime-model-catalog";
+import {
+  initSecretsFromServer,
+  loadSecrets,
+  setSecretOnServer,
+} from "@/utils/secrets-store";
 
 setupRuntimeModelCatalogFixture();
 describe("ephemeral conversation creation", () => {
@@ -212,23 +214,65 @@ describe("ephemeral conversation creation", () => {
     },
   );
 
-  test("creates local execution state outside the persistent local store", async () => {
+  test("local secrets inherit only a persisted, verified parent", async () => {
+    const storageDir = mkdtempSync(
+      join(tmpdir(), "letta-local-parent-secrets-"),
+    );
+    const originalStorageDir = process.env.LETTA_LOCAL_BACKEND_DIR;
+    process.env.LETTA_LOCAL_BACKEND_DIR = storageDir;
+    try {
+      configureBackendMode("local");
+      const backend = getBackend();
+      const parent = await backend.createAgent({ name: "Parent" } as never);
+      await setSecretOnServer("CHILD_TEST_SECRET", "parent-only", parent.id);
+      const child = await createLocalEphemeralConversation({
+        model: "openai/gpt-5.6-luna",
+        systemPromptCustom: "child",
+        parentAgentId: parent.id,
+      });
+      const unrelated = await createLocalEphemeralConversation({
+        model: "openai/gpt-5.6-luna",
+        systemPromptCustom: "unrelated",
+      });
+      await initSecretsFromServer(child.conversationId);
+      await initSecretsFromServer(unrelated.conversationId);
+      expect(loadSecrets(child.conversationId).CHILD_TEST_SECRET).toBe(
+        "parent-only",
+      );
+      expect(
+        loadSecrets(unrelated.conversationId).CHILD_TEST_SECRET,
+      ).toBeUndefined();
+    } finally {
+      if (originalStorageDir === undefined)
+        delete process.env.LETTA_LOCAL_BACKEND_DIR;
+      else process.env.LETTA_LOCAL_BACKEND_DIR = originalStorageDir;
+      rmSync(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("persists local execution state without creating an agent", async () => {
     const storageDir = mkdtempSync(join(tmpdir(), "letta-local-persistent-"));
     const originalStorageDir = process.env.LETTA_LOCAL_BACKEND_DIR;
     process.env.LETTA_LOCAL_BACKEND_DIR = storageDir;
 
     try {
       configureBackendMode("local");
-      configureEphemeralLocalBackend();
       const result = await createLocalEphemeralConversation({
         model: "openai/gpt-5.6-luna",
         systemPromptCustom: "isolated local prompt",
       });
 
-      expect(result.agent.id).toStartWith("agent-local-");
+      expect(result.agent.id).toBe(result.conversationId);
       expect(result.conversationId).toStartWith("local-conv-");
+      const persisted = await getBackend().retrieveConversation(
+        result.conversationId,
+      );
+      expect(persisted.agent_id).toBeNull();
+      expect(projectResumedEphemeralConversation(persisted).system).toBe(
+        "isolated local prompt",
+      );
       expect(existsSync(join(storageDir, "agents"))).toBe(false);
-      expect(existsSync(join(storageDir, "conversations"))).toBe(false);
+      expect(existsSync(join(storageDir, "conversations"))).toBe(true);
       expect(existsSync(join(storageDir, "memfs"))).toBe(false);
     } finally {
       if (originalStorageDir === undefined) {

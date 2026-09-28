@@ -5,21 +5,10 @@ import {
 } from "@/agent/acting-user";
 import {
   createEphemeralConversation,
-  createLocalEphemeralConversation,
   projectResumedEphemeralConversation,
 } from "@/agent/ephemeral-conversation";
-import {
-  configureEphemeralLocalBackend,
-  isLocalBackendEnabled,
-} from "@/backend";
 import { clearPersistedClientToolRules } from "@/tools/toolset";
 import { debugLog, debugWarn } from "@/utils/debug";
-
-export function prepareHeadlessEphemeralBackend(enabled: boolean): void {
-  if (enabled && isLocalBackendEnabled()) {
-    configureEphemeralLocalBackend();
-  }
-}
 
 export function getHeadlessEphemeralIdentity(
   env: NodeJS.ProcessEnv = process.env,
@@ -31,7 +20,7 @@ export function getHeadlessEphemeralIdentity(
     // Resource lineage is independent of the child's tool restrictions.
     // Nested ephemeral execution IDs (conv-*) are not agent parents.
     ...(parentAgentId &&
-    /^agent-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    /^agent-(?:local-)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
       parentAgentId,
     )
       ? { parentAgentId }
@@ -88,17 +77,18 @@ export async function createHeadlessEphemeralConversation(params: {
     systemPromptCustom: params.systemPromptCustom,
     memoryPromptMode: "standard" as const,
   };
-  if (params.backendMode === "local") {
-    return createLocalEphemeralConversation(options);
-  }
-  const created = await createEphemeralConversation({
-    ...options,
-    // Match createStartupBackend: remote creation belongs to the initiator,
-    // not the account whose credential started the listener.
-    requestOptions: params.usesRemoteComputer
-      ? actingUserRequestOptions(resolveActingUserId())
-      : undefined,
-  });
+  const created = await createEphemeralConversation(
+    {
+      ...options,
+      // Match createStartupBackend: remote creation belongs to the initiator,
+      // not the account whose credential started the listener.
+      requestOptions:
+        params.backendMode !== "local" && params.usesRemoteComputer
+          ? actingUserRequestOptions(resolveActingUserId())
+          : undefined,
+    },
+    params.backendMode === "local" ? "local" : "api",
+  );
   // Nested launches must not recover a parent deliberately omitted above.
   if (!options.parentAgentId) delete process.env.LETTA_PARENT_AGENT_ID;
   return created;

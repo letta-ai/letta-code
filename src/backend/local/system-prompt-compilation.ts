@@ -377,6 +377,23 @@ function compileMemoryMetadata(input: {
   ].join("\n");
 }
 
+/** Keep a fork's compiled instructions and memory, but regenerate its identity. */
+export function stripCompiledIdentityMetadata(
+  snapshot: Pick<LocalCompiledSystemPrompt, "content" | "coreMemory">,
+): string {
+  const start = snapshot.coreMemory.lastIndexOf("<memory_metadata>");
+  if (start < 0) return snapshot.content;
+  const close = "</memory_metadata>";
+  const end = snapshot.coreMemory.indexOf(close, start);
+  if (end < 0) return snapshot.content;
+  const block = snapshot.coreMemory.slice(start, end + close.length);
+  const offset = snapshot.content.lastIndexOf(block);
+  return offset < 0
+    ? snapshot.content
+    : snapshot.content.slice(0, offset) +
+        snapshot.content.slice(offset + block.length);
+}
+
 function injectCoreMemory(rawSystemPrompt: string, coreMemory: string): string {
   const prompt = rawSystemPrompt.includes(CORE_MEMORY_VARIABLE)
     ? rawSystemPrompt

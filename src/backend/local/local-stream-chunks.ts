@@ -84,7 +84,7 @@ export function canonicalizeLocalStreamChunk(
       : `${message.id}:${chunk.message_type === "assistant_message" ? "assistant" : "reasoning"}:${identity.contentStartIndex}`
     : projectLocalMessageToStoredMessages(
         message,
-        stored.agent_id,
+        stored.agent_id ?? stored.conversation_id,
         stored.conversation_id,
         stored.date,
       )

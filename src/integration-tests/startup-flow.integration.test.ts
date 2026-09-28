@@ -1,7 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { apiRequest } from "@/backend/api/request";
@@ -421,7 +428,7 @@ describe("Startup Flow - Integration", () => {
   );
 
   test(
-    "--ephemeral runs fully locally without Cloud authentication or persistent state",
+    "--ephemeral persists locally and resumes by conversation ID in a new process",
     async () => {
       const homeDir = await mkdtemp(
         join(tmpdir(), "letta-ephemeral-local-home-"),
@@ -431,6 +438,17 @@ describe("Startup Flow - Integration", () => {
       );
 
       try {
+        const env = createIsolatedCliTestEnv({
+          HOME: homeDir,
+          LETTA_LOCAL_BACKEND_DIR: storageDir,
+          LETTA_LOCAL_BACKEND_EXPERIMENTAL: "1",
+          LETTA_LOCAL_BACKEND_EXECUTOR: "deterministic",
+          LETTA_SKIP_KEYCHAIN_CHECK: "1",
+          AGENT_ID: undefined,
+          LETTA_SUBAGENT_LAUNCH: undefined,
+          LETTA_CODE_AGENT_ROLE: undefined,
+          LETTA_PARENT_AGENT_ID: undefined,
+        });
         const result = await runCliJson(
           [
             "--backend",
@@ -438,30 +456,77 @@ describe("Startup Flow - Integration", () => {
             "--ephemeral",
             "-m",
             "openai/gpt-5.6-luna",
+            "--system-custom",
+            "Local snapshot prompt for both turns.",
             "-p",
-            "Reply with EPHEMERAL_LOCAL_OK and nothing else",
+            "FIRST_LOCAL_EPHEMERAL_TURN",
             "--tools=",
             "--output-format",
             "json",
           ],
           {
             timeoutMs: 60000,
+            retryOnParseErrors: 0,
+            retryOnTimeouts: 0,
             includeMemfsStartup: false,
-            env: createIsolatedCliTestEnv({
-              HOME: homeDir,
-              LETTA_LOCAL_BACKEND_DIR: storageDir,
-              LETTA_LOCAL_BACKEND_EXECUTOR: "deterministic",
-              LETTA_SKIP_KEYCHAIN_CHECK: "1",
-            }),
+            env,
           },
         );
-
         expect(result.exitCode).toBe(0);
         expect(result.output.agent_id).toBeNull();
         expect(result.output.conversation_id).toStartWith("local-conv-");
-        expect(result.output.result).toBeDefined();
-        expect(existsSync(join(storageDir, "agents"))).toBe(false);
-        expect(existsSync(join(storageDir, "conversations"))).toBe(false);
+        const conversationId = result.output.conversation_id as string;
+        const resume = await runCliJson(
+          [
+            "--conversation",
+            conversationId,
+            "-p",
+            "SECOND_LOCAL_EPHEMERAL_TURN",
+            "--tools=",
+            "--output-format",
+            "json",
+          ],
+          {
+            timeoutMs: 60000,
+            retryOnParseErrors: 0,
+            retryOnTimeouts: 0,
+            includeMemfsStartup: false,
+            env,
+          },
+        );
+        expect(resume.exitCode).toBe(0);
+        expect(resume.output.agent_id).toBeNull();
+        expect(resume.output.conversation_id).toBe(conversationId);
+        expect(resume.output.result).toBe(result.output.result);
+        const conversationDir = join(
+          storageDir,
+          "conversations",
+          Buffer.from(`conversation:${conversationId}`).toString("base64url"),
+        );
+        const persisted = JSON.parse(
+          await readFile(join(conversationDir, "conversation.json"), "utf8"),
+        ) as Record<string, unknown>;
+        expect(persisted).toMatchObject({
+          id: conversationId,
+          agent_id: null,
+          parent_agent_id: null,
+          system: "Local snapshot prompt for both turns.",
+        });
+        const history = await readFile(
+          join(conversationDir, "messages.jsonl"),
+          "utf8",
+        );
+        expect(history).toContain("FIRST_LOCAL_EPHEMERAL_TURN");
+        expect(history).toContain("SECOND_LOCAL_EPHEMERAL_TURN");
+        const compiledPrompt = JSON.parse(
+          await readFile(join(conversationDir, "system-prompt.json"), "utf8"),
+        ) as { content: string };
+        expect(compiledPrompt.content).toContain(
+          "Local snapshot prompt for both turns.",
+        );
+        expect(
+          await readdir(join(storageDir, "agents")).catch(() => []),
+        ).toEqual([]);
         expect(existsSync(join(storageDir, "memfs"))).toBe(false);
       } finally {
         await Promise.all([

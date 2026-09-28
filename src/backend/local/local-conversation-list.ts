@@ -1,7 +1,8 @@
 import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
 import type { ConversationListBody } from "@/backend/backend";
+import type { StoredConversation } from "./local-types";
 
-type ListableLocalConversation = Conversation & {
+type ListableLocalConversation = (Conversation | StoredConversation) & {
   hidden?: boolean;
 };
 
@@ -24,7 +25,7 @@ function matchesSummarySearch(
 export function listLocalConversations(
   source: Iterable<ListableLocalConversation>,
   body?: ConversationListBody,
-): Conversation[] {
+): StoredConversation[] {
   const bodyRecord = (body ?? {}) as Record<string, unknown>;
   const agentId = optionalString(bodyRecord.agent_id);
   const after = optionalString(bodyRecord.after);
@@ -54,5 +55,5 @@ export function listLocalConversations(
     if (afterIndex >= 0) conversations = conversations.slice(afterIndex + 1);
   }
 
-  return conversations.slice(0, limit);
+  return conversations.slice(0, limit) as StoredConversation[];
 }
