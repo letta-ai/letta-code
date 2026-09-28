@@ -3,7 +3,7 @@
  *
  * A workflow is a plain-JavaScript orchestration script that begins with an
  * `export const meta = {...}` pure literal and then drives subagents through
- * the injected hooks: agent(), parallel(), pipeline(), phase(), log().
+ * the injected hooks: agent(), decide(), parallel(), pipeline(), phase(), log().
  *
  * The Letta Agent SDK surface used here is described structurally; the real
  * SDK is loaded lazily at runtime by sdk-loader.ts (see its header for why
@@ -25,6 +25,8 @@ export interface WorkflowMeta {
 
 /** Options accepted by the in-script agent() hook. */
 export interface AgentCallOptions {
+  /** Continue this existing agent-free worker conversation instead of creating one. */
+  conversationId?: string;
   /** Display label for progress output (defaults to a prompt excerpt). */
   label?: string;
   /** Progress group; overrides the current phase() for this call. */
@@ -75,6 +77,8 @@ export interface SubagentOutcome {
 
 /** Live signals a spawner may report while a subagent runs. */
 export interface SubagentSpawnHooks {
+  /** Worker ID once the SDK initializes, before the turn completes. */
+  onStarted?: (conversationId: string) => void;
   /** Tokens consumed so far by this subagent (cumulative, per model step). */
   onUsage?: (totalTokens: number) => void;
 }
@@ -93,6 +97,7 @@ export type SubagentSpawner = (
 export type WorkflowProgressEvent =
   | { kind: "phase"; title: string }
   | { kind: "log"; message: string }
+  | { kind: "decision_usage"; totalTokens: number }
   | {
       kind: "agent";
       callIndex: number;
@@ -109,10 +114,12 @@ export interface RunWorkflowOptions {
   script: string;
   /** Value exposed to the script as the `args` global. */
   args?: unknown;
-  /** Max concurrently running subagents. Default 16. */
+  /** Max concurrently running subagents and decisions. Default 16. */
   maxConcurrent?: number;
   /** Lifetime subagent cap (runaway-loop backstop). Default 1000. */
   maxTotalAgents?: number;
+  /** Lifetime decision cap (runaway-loop backstop). Default 1000. */
+  maxTotalDecisions?: number;
   /** JSONL file that receives one line per completed subagent call. */
   journalPath?: string;
   /** Abort signal for the whole run. */
@@ -126,7 +133,7 @@ export interface WorkflowExecutionResult {
   /** The script's return value. */
   result: unknown;
   agentsSpawned: number;
-  /** Sum of subagent token usage across the run. */
+  /** Sum of subagent and decision API token usage across the run. */
   totalTokens: number;
 }
 
@@ -135,6 +142,7 @@ export interface WorkflowExecutionResult {
 
 export interface SdkStreamMessage {
   type: string;
+  conversationId?: string;
   content?: string;
   success?: boolean;
   result?: string;

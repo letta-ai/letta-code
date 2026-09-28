@@ -13,12 +13,28 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { SubagentOutcome } from "./types.ts";
 
-export interface JournalEntry {
-  callIndex: number;
-  label: string;
-  prompt: string;
-  outcome: SubagentOutcome;
-}
+export type JournalEntry =
+  | {
+      kind: "agent_started";
+      callIndex: number;
+      conversationId: string;
+    }
+  | {
+      callIndex: number;
+      label: string;
+      prompt: string;
+      /** Present on a continuation attempt; outcome carries the same worker ID. */
+      resumedConversationId?: string;
+      outcome: SubagentOutcome;
+    }
+  | {
+      kind: "decision";
+      model: string;
+      cost?: number;
+      calibrated: boolean;
+      valid: boolean;
+      totalTokens: number;
+    };
 
 export function defaultExecutionsDir(): string {
   return join(homedir(), ".letta", "workflows", "executions");
