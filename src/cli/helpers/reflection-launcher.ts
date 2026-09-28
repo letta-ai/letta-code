@@ -47,6 +47,7 @@ import {
   buildReflectionSubagentPrompt,
   getReflectionTranscriptState,
 } from "@/cli/helpers/reflection-transcript";
+import { isAutoReflectionEnabled } from "@/reflection-settings";
 import { type ReflectionWorktreeCleanupOutcome, telemetry } from "@/telemetry";
 import { maybeSendReflectionThresholdFeedback } from "@/telemetry/reflection-threshold-feedback";
 import { debugLog, debugWarn } from "@/utils/debug";
@@ -84,6 +85,7 @@ export type ReflectionLaunchTriggerSource =
 
 export type ReflectionLaunchSkippedReason =
   | "memfs_disabled"
+  | "windows_disabled"
   | "cutover"
   | "already_active"
   | "configuration_error"
@@ -116,6 +118,7 @@ export function getReflectionLaunchSkippedMessage(
     case "parent_dirty":
       return "Parent memory has uncommitted changes; commit or discard them before reflecting.";
     case "error":
+    case "windows_disabled":
     case "retry_backoff":
       return undefined;
   }
@@ -785,6 +788,9 @@ export async function launchReflectionSubagent(
 
   if (!memfsEnabled) {
     return { launched: false, reason: "memfs_disabled" };
+  }
+  if (triggerSource !== "manual" && !isAutoReflectionEnabled()) {
+    return { launched: false, reason: "windows_disabled" };
   }
 
   if (isReflectionRetryDeferred(agentId, triggerSource)) {

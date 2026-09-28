@@ -31,6 +31,8 @@ Letta Code can be used interactively, or to power always-on agents that work pro
 | [Remote computers](https://docs.letta.com/platform/computers/byom) (requires signing in with Letta) | Agents work across multiple computers. Connect any machine by running `letta server --computer-name "..."` |
 | [Secrets](https://docs.letta.com/letta-code/secrets) (requires signing in with Letta) | Make secrets available as environment variables (across machines) while obfuscating their values from context |
 
+Automatic client-side dreaming is disabled by default on native Windows, including when saved `/sleeptime` settings enable it. Manual `/dream` and `/reflect` commands remain available. To opt in, set `LETTA_ENABLE_WINDOWS_AUTO_REFLECTION=1` in the environment of the Letta Code process. This does not affect macOS, Linux (including WSL), or server-side dreaming.
+
 See the full list of slash commands in our [documentation](https://docs.letta.com/letta-code/slash-commands).
 
 ## Get started
