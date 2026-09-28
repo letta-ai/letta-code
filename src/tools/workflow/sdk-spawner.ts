@@ -375,6 +375,7 @@ export function createSdkSpawner(
   config: SdkSpawnerConfig,
 ): SubagentSpawner {
   const activeResumeIds = new Set<string>();
+  const locallyCompletedIds = new Set<string>();
   return async (
     request: SubagentRequest,
     signal: AbortSignal,
@@ -409,6 +410,17 @@ export function createSdkSpawner(
     ) {
       throw new Error(
         "Worker conversation is not agent-free or belongs to another parent agent.",
+      );
+    }
+    if (
+      persisted &&
+      resumeId &&
+      config.verifyPersistedRuns === false &&
+      !locallyCompletedIds.has(resumeId) &&
+      !activeResumeIds.has(resumeId)
+    ) {
+      throw new Error(
+        "Local worker continuation is only safe within the workflow execution that completed it.",
       );
     }
     if (persisted && resumeId && config.verifyPersistedRuns !== false) {
@@ -545,6 +557,9 @@ export function createSdkSpawner(
         ),
         stopped,
       ]);
+      if (!finished && query.conversationId) {
+        locallyCompletedIds.add(query.conversationId);
+      }
       if (resumeId && query.conversationId !== resumeId) {
         throw new Error(
           "SDK did not resume the requested worker conversation.",

@@ -757,7 +757,9 @@ export class LocalStore {
     name?: string;
     is_subagent?: boolean;
   }): StoredConversation {
-    const conversationId = this.nextConversationId();
+    // SDK queries create their app-server processes concurrently. UUID-backed
+    // worker IDs avoid a cross-process exists-then-create race in numeric IDs.
+    const conversationId = `local-conv-${randomUUID()}`;
     const executionAgentId =
       this.executionAgentIdForConversation(conversationId);
     const conversation = this.withConversationModelDefaults({

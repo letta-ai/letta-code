@@ -12,13 +12,20 @@ function agentIds(store: LocalStore): string[] {
   return items?.map((agent) => agent.id) ?? [];
 }
 
-function persistedConversation(root: string): Record<string, unknown> {
-  const conversationsDir = join(root, "conversations");
-  const entry = readdirSync(conversationsDir)[0];
-  if (!entry) throw new Error("Expected a persisted conversation");
-  return JSON.parse(
-    readFileSync(join(conversationsDir, entry, "conversation.json"), "utf8"),
-  ) as Record<string, unknown>;
+function persistedConversation(
+  root: string,
+  conversationId: string,
+): Record<string, unknown> {
+  for (const entry of readdirSync(join(root, "conversations"))) {
+    const record = JSON.parse(
+      readFileSync(
+        join(root, "conversations", entry, "conversation.json"),
+        "utf8",
+      ),
+    ) as Record<string, unknown>;
+    if (record.id === conversationId) return record;
+  }
+  throw new Error(`Missing persisted conversation ${conversationId}`);
 }
 
 describe("local agent-free conversations", () => {
@@ -38,6 +45,9 @@ describe("local agent-free conversations", () => {
         name: "Workflow worker 1",
       });
 
+      expect(created.id).toMatch(
+        /^local-conv-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      );
       expect(created).toMatchObject({
         agent_id: null,
         model: "openai/gpt-5.6-luna",
@@ -46,7 +56,7 @@ describe("local agent-free conversations", () => {
         is_subagent: true,
       });
       expect(agentIds(initial)).toEqual(agentsBefore);
-      expect(persistedConversation(root)).toMatchObject({
+      expect(persistedConversation(root, created.id)).toMatchObject({
         agent_id: null,
         agent_free: true,
         model: "openai/gpt-5.6-luna",
