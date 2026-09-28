@@ -208,6 +208,15 @@ describe("native CLI JSONL capture", () => {
       expect(Buffer.from(String(calls[1]?.body.data_base64), "base64")).toEqual(
         appended,
       );
+      await appendFile(path, '{"actor":"new"}\n');
+      await captureNativeSession(
+        source,
+        ID,
+        { ...scope, actingUserId: "user-next" },
+        env,
+        { baseUrl: url, apiKey: "test", cloudUrl: "https://api.letta.com" },
+      );
+      expect(calls[2]?.actingUser).toBe("user-next");
       await captureNativeSession(
         source,
         ID,
@@ -215,7 +224,14 @@ describe("native CLI JSONL capture", () => {
         env,
         { baseUrl: url, apiKey: "test", cloudUrl: "https://api.letta.com" },
       );
-      expect(calls).toHaveLength(2);
+      await captureNativeSession(
+        source,
+        ID,
+        { ...scope, conversationId: "conv-other" },
+        env,
+        { baseUrl: url, apiKey: "test", cloudUrl: "https://api.letta.com" },
+      );
+      expect(calls).toHaveLength(3);
     },
   );
 

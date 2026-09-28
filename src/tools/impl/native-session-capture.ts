@@ -167,8 +167,9 @@ export async function captureNativeSession(
     return;
   const id = key(source, sessionId);
   const existing = states.get(id);
-  // Unknown resumed sessions may predate this process. Never claim their raw
-  // transcript for a caller merely because it supplied a native UUID.
+  // Unknown resumed sessions may predate this process. A known native file
+  // contains earlier turns, so never copy it into a different conversation
+  // merely because that caller supplied the session UUID.
   if (!existing || !sameScope(existing.scope, scope)) return;
   if (existing.pending) {
     // A later turn can finish while the previous snapshot is still uploading.
@@ -176,6 +177,9 @@ export async function captureNativeSession(
     await existing.pending.catch(() => undefined);
     return captureNativeSession(source, sessionId, scope, env, requestOptions);
   }
+  // Preserve the conversation binding, but use the actor who ran this turn.
+  // An in-flight drain retains its prior actor until it settles above.
+  existing.scope = scope;
   // Claim the session synchronously, before the first filesystem await.
   existing.pending = (async () => {
     const path =
