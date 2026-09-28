@@ -31,8 +31,7 @@ return await decide(
   {
     color: { type: 'choice', instructions: 'Select blue.', criteria: { blue: 'Blue', green: 'Green' } },
     confidence: { type: 'noul', instructions: 'Was blue selected?' }
-  },
-  { model: 'typesafe/jev-1.13' }
+  }
 )`,
         journalPath,
       },
@@ -45,7 +44,7 @@ return await decide(
       answers: Record<string, Record<string, unknown>>;
       usage: { input_tokens: number; output_tokens: number; cost: number };
     };
-    expect(result.model).toMatch(/^typesafe\/jev-1\.13/);
+    expect(result.model).toMatch(/^typesafe\/jev-/);
     expect(result.id).toBeTruthy();
     expect(result.provider).toBeTruthy();
     expect(Object.keys(result.answers).sort()).toEqual(["color", "confidence"]);

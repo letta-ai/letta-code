@@ -111,6 +111,21 @@ describe("parseJsonReply", () => {
 });
 
 describe("createSdkSpawner", () => {
+  test("records the worker ID from the SDK's first loop_status event", async () => {
+    const started: string[] = [];
+    const client = fakeClient([
+      { type: "loop_status" },
+      { type: "queue_update" },
+      { type: "result", success: true, result: "done" },
+    ]);
+    await createSdkSpawner(client, CONFIG)(
+      request(),
+      new AbortController().signal,
+      { onStarted: (id) => started.push(id) },
+    );
+    expect(started).toEqual(["conv-worker"]);
+  });
+
   test("passes parent lineage, defaults, and per-call options to query()", async () => {
     const client = fakeClient([
       { type: "result", success: true, result: "done" },
@@ -143,10 +158,25 @@ describe("createSdkSpawner", () => {
       skillSources: [],
       cwd: "/repo",
       modelSettings: { reasoning_effort: "low" },
+      disableMemoryGuard: true,
     });
     expect(String(client.calls[0]?.options.system)).toContain(
       "Only look at src/.",
     );
+  });
+
+  test("requests guard bypass for every SDK worker without changing parent settings", async () => {
+    const client = fakeClient([{ type: "result", success: true, result: "" }]);
+    const spawner = createSdkSpawner(client, CONFIG);
+    await spawner(request(), new AbortController().signal);
+    await spawner(
+      request({ label: "second worker" }),
+      new AbortController().signal,
+    );
+    expect(client.calls.map((call) => call.options.disableMemoryGuard)).toEqual(
+      [true, true],
+    );
+    expect(client.calls[0]?.options.env).toBeUndefined();
   });
 
   test("defaults to read-only tools and a numbered worker name", async () => {
@@ -173,6 +203,192 @@ describe("createSdkSpawner", () => {
     expect(unknown.failed).toBe(true);
     expect(unknown.error).toContain("letta model list");
     expect(client.calls).toHaveLength(1);
+  });
+
+  test("continuation is gated before SDK query on an unverified release", async () => {
+    const client = fakeClient([
+      { type: "result", success: true, result: "wrong" },
+    ]);
+    await expect(
+      createSdkSpawner(client, CONFIG)(
+        request({ conversationId: "conv-worker" }),
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("requires an Agent SDK release");
+    expect(client.calls).toHaveLength(0);
+  });
+
+  test("continues only an authorized agent-free worker on its persisted model", async () => {
+    const client = fakeClient([
+      { type: "result", success: true, result: "continued" },
+    ]);
+    const lookup = async () => ({
+      agent_id: null,
+      parent_agent_id: "agent-parent",
+      model: "anthropic/claude-sonnet-5",
+    });
+    const config = {
+      ...CONFIG,
+      supportsAgentFreeResume: true,
+      retrieveConversation: lookup,
+      latestRun: async () => ({
+        id: "run-one",
+        conversation_id: "conv-worker",
+        status: "completed",
+        completed_at: "now",
+      }),
+    };
+    const outcome = await createSdkSpawner(client, config)(
+      request({ conversationId: "conv-worker" }),
+      new AbortController().signal,
+    );
+    expect(outcome).toMatchObject({
+      value: "continued",
+      failed: false,
+      conversationId: "conv-worker",
+    });
+    expect(client.calls[0]?.options).toMatchObject({
+      conversationId: "conv-worker",
+      model: "anthropic/claude-sonnet-5",
+      parentAgentId: "agent-parent",
+    });
+    for (const conversation of [
+      { agent_id: "agent-child", parent_agent_id: "agent-parent", model: "x" },
+      { agent_id: null, parent_agent_id: "agent-other", model: "x" },
+      { agent_id: null, parent_agent_id: "agent-parent", model: null },
+    ]) {
+      await expect(
+        createSdkSpawner(client, {
+          ...config,
+          retrieveConversation: async () => conversation,
+        })(
+          request({ conversationId: "conv-worker" }),
+          new AbortController().signal,
+        ),
+      ).rejects.toThrow();
+    }
+    expect(client.calls).toHaveLength(1);
+  });
+
+  test("rejects creation-only system and mismatched model overrides", async () => {
+    const client = fakeClient([
+      { type: "result", success: true, result: "wrong" },
+    ]);
+    const spawner = createSdkSpawner(client, {
+      ...CONFIG,
+      supportsAgentFreeResume: true,
+      retrieveConversation: async () => ({
+        agent_id: null,
+        parent_agent_id: "agent-parent",
+        model: "anthropic/claude-sonnet-5",
+      }),
+      latestRun: async () => ({
+        id: "run-one",
+        conversation_id: "conv-worker",
+        status: "completed",
+        completed_at: "now",
+      }),
+    });
+    for (const options of [{ model: "nope" }, { systemPrompt: "replace" }]) {
+      await expect(
+        spawner(
+          request({ conversationId: "conv-worker", ...options }),
+          new AbortController().signal,
+        ),
+      ).rejects.toThrow();
+    }
+    expect(client.calls).toHaveLength(0);
+  });
+
+  test("fails closed on a nonterminal or unknown latest run", async () => {
+    const client = fakeClient([
+      { type: "result", success: true, result: "wrong" },
+    ]);
+    for (const status of ["RUN", "QUE", "UNKNOWN"]) {
+      const spawner = createSdkSpawner(client, {
+        ...CONFIG,
+        supportsAgentFreeResume: true,
+        retrieveConversation: async () => ({
+          agent_id: null,
+          parent_agent_id: "agent-parent",
+          model: CONFIG.model,
+        }),
+        latestRun: async () => ({
+          id: "run-one",
+          conversation_id: "conv-worker",
+          status,
+          completed_at: null,
+        }),
+      });
+      await expect(
+        spawner(
+          request({ conversationId: "conv-worker" }),
+          new AbortController().signal,
+        ),
+      ).rejects.toThrow("Cannot confirm");
+    }
+    expect(client.calls).toHaveLength(0);
+  });
+
+  test("continues a timed-out worker from a new spawner once its persisted run is terminal", async () => {
+    const client = fakeClient([
+      { type: "result", success: true, result: "duplicate" },
+    ]);
+    const spawner = createSdkSpawner(client, {
+      ...CONFIG,
+      supportsAgentFreeResume: true,
+      retrieveConversation: async () => ({
+        agent_id: null,
+        parent_agent_id: "agent-parent",
+        model: CONFIG.model,
+      }),
+      latestRun: async () => ({
+        id: "run-one",
+        conversation_id: "conv-worker",
+        status: "completed",
+        completed_at: "now",
+      }),
+    });
+    const outcome = await spawner(
+      request({ conversationId: "conv-worker" }),
+      new AbortController().signal,
+    );
+    expect(outcome).toMatchObject({
+      value: "duplicate",
+      conversationId: "conv-worker",
+    });
+    expect(client.calls[0]?.options.allowedTools).toEqual([]);
+  });
+
+  test("applies explicit per-turn schema and no-tools configuration on continuation", async () => {
+    const schema = { type: "object", properties: { ok: { type: "boolean" } } };
+    const client = fakeClient([
+      { type: "result", success: true, structuredOutput: { ok: true } },
+    ]);
+    const spawner = createSdkSpawner(client, {
+      ...CONFIG,
+      supportsAgentFreeResume: true,
+      retrieveConversation: async () => ({
+        agent_id: null,
+        parent_agent_id: "agent-parent",
+        model: CONFIG.model,
+      }),
+      latestRun: async () => ({
+        id: "run-one",
+        conversation_id: "conv-worker",
+        status: "failed",
+        completed_at: "now",
+      }),
+    });
+    const outcome = await spawner(
+      request({ conversationId: "conv-worker", schema, allowedTools: [] }),
+      new AbortController().signal,
+    );
+    expect(outcome.value).toEqual({ ok: true });
+    expect(client.calls[0]?.options).toMatchObject({
+      allowedTools: [],
+      outputFormat: { type: "json_schema", schema },
+    });
   });
 
   test("schema returns the validated SDK value and takes precedence over json", async () => {

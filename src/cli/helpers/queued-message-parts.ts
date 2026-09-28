@@ -27,7 +27,11 @@ export function buildQueuedContentParts(
 ): MessageCreate["content"] {
   const queueInput = queued.map((item) =>
     item.kind === "task_notification"
-      ? ({ kind: "task_notification", text: item.text } as const)
+      ? ({
+          kind: "task_notification",
+          text: item.text,
+          content: item.content,
+        } as const)
       : ({ kind: "user", content: item.text } as const),
   );
 
@@ -115,7 +119,12 @@ export function toQueuedMsg(
   item: MessageQueueItem | TaskNotificationQueueItem,
 ): QueuedMessage {
   if (item.kind === "task_notification") {
-    return { kind: "task_notification", text: item.text, queueItemId: item.id };
+    return {
+      kind: "task_notification",
+      text: item.text,
+      content: item.content,
+      queueItemId: item.id,
+    };
   }
   const text =
     typeof item.content === "string"
@@ -147,7 +156,11 @@ export function buildContentFromQueueBatch(
     )
     .map((item) =>
       item.kind === "task_notification"
-        ? ({ kind: "task_notification", text: item.text } as const)
+        ? ({
+            kind: "task_notification",
+            text: item.text,
+            content: item.content,
+          } as const)
         : ({
             kind: "user",
             content: item.content,

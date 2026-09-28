@@ -290,14 +290,24 @@ describe("TUI interrupt queue lifecycle", () => {
         ),
       "the normal Monitor event to be received",
     );
-    await waitFor(() => inputs.length === 2, "the Monitor notification turn");
+    // Receipt and TUI delivery are separate stages. On Windows the 200 ms
+    // Monitor batch plus Ink dequeue can exceed the generic fixture deadline.
+    await waitFor(
+      () => inputs.length === 2,
+      "the Monitor notification turn",
+      10_000,
+    );
     await sleep(300);
     expect(source.state.status).toBe("running");
     stdin.push("\u001b");
     await sleep(100);
     expect(source.isClosed()).toBe(false);
     source.socket.send("still watching after idle Esc");
-    await waitFor(() => inputs.length === 3, "the event after idle Esc");
+    await waitFor(
+      () => inputs.length === 3,
+      "the event after idle Esc",
+      10_000,
+    );
     expect(JSON.stringify(inputs[2]?.body)).toContain(
       "still watching after idle Esc",
     );
@@ -305,7 +315,7 @@ describe("TUI interrupt queue lifecycle", () => {
       "Any pending monitors",
     );
     expect(source.state.status).toBe("running");
-  }, 15_000);
+  }, 30_000);
 
   test("an idle Monitor notification starts an agent turn without user input", async () => {
     const executor = new DelayedInterruptExecutor();

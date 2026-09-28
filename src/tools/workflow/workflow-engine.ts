@@ -29,6 +29,7 @@ import type {
 
 export const DEFAULT_MAX_CONCURRENT = 16;
 const DEFAULT_MAX_TOTAL_AGENTS = 1000;
+const DEFAULT_MAX_TOTAL_DECISIONS = 1000;
 const MAX_ITEMS_PER_HELPER = 4096;
 
 class Semaphore {
@@ -75,12 +76,15 @@ export async function executeWorkflow(
   // settle until all of them have, so a completion never precedes a worker.
   const inFlight = new Set<Promise<unknown>>();
   const maxTotalAgents = options.maxTotalAgents ?? DEFAULT_MAX_TOTAL_AGENTS;
+  const maxTotalDecisions =
+    options.maxTotalDecisions ?? DEFAULT_MAX_TOTAL_DECISIONS;
   const semaphore = new Semaphore(
     options.maxConcurrent ?? DEFAULT_MAX_CONCURRENT,
   );
 
   let currentPhase: string | null = null;
   let callCounter = 0;
+  let decisionCounter = 0;
   let agentsSpawned = 0;
   let totalTokens = 0;
 
@@ -102,35 +106,51 @@ export async function executeWorkflow(
     questions: unknown,
     callOptions?: unknown,
   ): Promise<unknown> {
+    return trackCall(callDecision(state, questions, callOptions));
+  }
+
+  async function callDecision(
+    state: unknown,
+    questions: unknown,
+    callOptions?: unknown,
+  ): Promise<unknown> {
+    if (signal.aborted) throw new Error("Workflow aborted.");
+    if (decisionCounter >= maxTotalDecisions) {
+      throw new Error(`Lifetime decision cap of ${maxTotalDecisions} reached.`);
+    }
     if (
       callOptions !== undefined &&
       (!callOptions ||
         typeof callOptions !== "object" ||
         Array.isArray(callOptions))
     ) {
-      return trackCall(
-        Promise.reject(new Error("decide() options must be an object.")),
-      );
+      throw new Error("decide() options must be an object.");
     }
-    const pending = submitWorkflowDecision(
-      {
-        ...(callOptions as Record<string, unknown> | undefined),
-        state,
-        questions,
-      },
-      signal,
-      (result) => {
-        totalTokens += result.totalTokens;
-        emit({ kind: "decision_usage", totalTokens: result.totalTokens });
-        if (options.journalPath) {
-          appendJournalEntry(options.journalPath, {
-            kind: "decision",
-            ...result,
-          });
-        }
-      },
-    );
-    return trackCall(pending);
+    decisionCounter++;
+    await semaphore.acquire();
+    try {
+      if (signal.aborted) throw new Error("Workflow aborted.");
+      return await submitWorkflowDecision(
+        {
+          ...(callOptions as Record<string, unknown> | undefined),
+          state,
+          questions,
+        },
+        signal,
+        (result) => {
+          totalTokens += result.totalTokens;
+          emit({ kind: "decision_usage", totalTokens: result.totalTokens });
+          if (options.journalPath) {
+            appendJournalEntry(options.journalPath, {
+              kind: "decision",
+              ...result,
+            });
+          }
+        },
+      );
+    } finally {
+      semaphore.release();
+    }
   }
 
   async function callAgent(
@@ -154,6 +174,13 @@ export async function executeWorkflow(
     }
     const opts: AgentCallOptions = { ...(callOptions as AgentCallOptions) };
     if (
+      opts.conversationId !== undefined &&
+      (typeof opts.conversationId !== "string" ||
+        !/^conv-[A-Za-z0-9_-]+$/.test(opts.conversationId))
+    ) {
+      throw new Error("agent() conversationId must be a conv-... ID.");
+    }
+    if (
       opts.maxToolCalls !== undefined &&
       (!Number.isSafeInteger(opts.maxToolCalls) || opts.maxToolCalls <= 0)
     ) {
@@ -173,6 +200,15 @@ export async function executeWorkflow(
         { prompt, options: opts, callIndex },
         signal,
         {
+          onStarted: (conversationId) => {
+            if (options.journalPath) {
+              appendJournalEntry(options.journalPath, {
+                kind: "agent_started",
+                callIndex,
+                conversationId,
+              });
+            }
+          },
           // Live usage so status rows can show tokens before the agent ends.
           onUsage: (totalTokens) =>
             emit({
@@ -193,6 +229,9 @@ export async function executeWorkflow(
           callIndex,
           label,
           prompt,
+          ...(opts.conversationId
+            ? { resumedConversationId: opts.conversationId }
+            : {}),
           outcome,
         });
       }

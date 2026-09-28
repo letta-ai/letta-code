@@ -5,6 +5,8 @@
  * concurrent calls with different models never touch a shared agent.
  */
 
+import { getClient } from "@/backend/api/client";
+import { apiRequest } from "@/backend/api/request";
 import type {
   AgentCallOptions,
   SdkClient,
@@ -26,6 +28,52 @@ export interface SdkSpawnerConfig {
   allowedTools?: string[];
   /** Working directory for subagent sessions. */
   cwd?: string;
+  /** Resume is gated on a verified SDK release; 0.8.17 silently creates a new child. */
+  supportsAgentFreeResume?: boolean;
+  /** Persisted conversation lookup (injected for focused tests). */
+  retrieveConversation?: (id: string) => Promise<WorkerConversation>;
+  /** Latest persisted conversation run (injected for focused tests). */
+  latestRun?: (id: string) => Promise<WorkerRun | null>;
+}
+
+export interface WorkerConversation {
+  agent_id: string | null;
+  parent_agent_id?: string | null;
+  model?: string | null;
+}
+
+export interface WorkerRun {
+  id: string;
+  conversation_id?: string | null;
+  status?: string;
+  completed_at?: string | null;
+}
+
+async function latestWorkerRun(
+  conversationId: string,
+): Promise<WorkerRun | null> {
+  const client = await getClient();
+  const messages = await client.conversations.messages.list(conversationId, {
+    limit: 100,
+    order: "desc",
+  });
+  const runId = messages
+    .getPaginatedItems()
+    .map((message) => message.run_id)
+    .find(
+      (id): id is string => typeof id === "string" && id.startsWith("run-"),
+    );
+  if (!runId) return null;
+  return client.runs.retrieve(runId);
+}
+
+async function retrieveWorkerConversation(
+  id: string,
+): Promise<WorkerConversation> {
+  return apiRequest<WorkerConversation>(
+    "GET",
+    `/v1/conversations/${encodeURIComponent(id)}`,
+  );
 }
 
 export const DEFAULT_ALLOWED_TOOLS = ["Read", "Grep", "Glob"];
@@ -224,14 +272,23 @@ async function drainTurn(
   stop: (reason: string) => void,
   maxToolCalls: number,
   onUsage?: (totalTokens: number) => void,
+  onStarted?: (conversationId: string) => void,
 ): Promise<DrainedTurn> {
   let assistantText = "";
   let resultText: string | undefined;
   let success = false;
   let error: string | undefined;
   let structuredOutput: unknown;
+  let startedNotified = false;
   const guard = createToolCallGuard(maxToolCalls);
   for await (const message of query) {
+    // The SDK sends loop_status before inference, not an init message.
+    // Capture the conversation as soon as any stream event exposes it.
+    const id = query.conversationId ?? message.conversationId;
+    if (!startedNotified && id) {
+      startedNotified = true;
+      onStarted?.(id);
+    }
     if (message.type === "assistant") assistantText += message.content ?? "";
     if (message.type === "stream_event") {
       const tokens = usageTokensFromEvent(message.event);
@@ -293,9 +350,13 @@ function buildQueryOptions(
     system,
     permissionMode: "unrestricted",
     allowedTools:
-      options.allowedTools ?? config.allowedTools ?? DEFAULT_ALLOWED_TOOLS,
+      options.allowedTools ??
+      (options.conversationId
+        ? []
+        : (config.allowedTools ?? DEFAULT_ALLOWED_TOOLS)),
     skillSources: [],
     ...(config.cwd ? { cwd: config.cwd } : {}),
+    disableMemoryGuard: true,
     ...(options.effort
       ? { modelSettings: { reasoning_effort: options.effort } }
       : {}),
@@ -312,9 +373,70 @@ export function createSdkSpawner(
     hooks?: SubagentSpawnHooks,
   ): Promise<SubagentOutcome> => {
     const { prompt, options } = request;
-    const model = options.model
+    const resumeId = options.conversationId;
+    if (resumeId !== undefined && !/^conv-[A-Za-z0-9_-]+$/.test(resumeId)) {
+      throw new Error("agent() conversationId must be a conv-... ID.");
+    }
+    // Never hand conversationId to an older SDK: it ignores the option and
+    // creates a fresh worker, silently losing the conversation history.
+    if (resumeId && !config.supportsAgentFreeResume) {
+      throw new Error(
+        "Workflow worker continuation requires an Agent SDK release with agent-free query() resume support.",
+      );
+    }
+    const persisted = resumeId
+      ? await (config.retrieveConversation ?? retrieveWorkerConversation)(
+          resumeId,
+        )
+      : null;
+    if (
+      persisted &&
+      (persisted.agent_id !== null ||
+        persisted.parent_agent_id !== config.parentAgentId)
+    ) {
+      throw new Error(
+        "Worker conversation is not agent-free or belongs to another parent agent.",
+      );
+    }
+    if (persisted && resumeId) {
+      // SDK App Server turns have Runs, not Super Runs. If the latest
+      // persisted message has no run ID or the run is not terminal, do not
+      // risk sending a second prompt into an active conversation.
+      const latest = await (config.latestRun ?? latestWorkerRun)(resumeId);
+      if (
+        !latest ||
+        latest.conversation_id !== resumeId ||
+        !["completed", "failed", "cancelled"].includes(latest.status ?? "")
+      ) {
+        throw new Error(
+          "Cannot confirm worker's latest run is terminal; reconcile it before continuing.",
+        );
+      }
+    }
+    if (
+      persisted &&
+      (!persisted.model || typeof persisted.model !== "string")
+    ) {
+      throw new Error(
+        "Worker conversation has no persisted model; cannot continue safely.",
+      );
+    }
+    const selectedModel = options.model
       ? (config.resolveModel?.(options.model) ?? null)
       : config.model;
+    // System prompt is a creation-time setting; do not imply it changes on
+    // resume. Tool and output choices are explicit per turn, not inherited.
+    if (persisted && options.systemPrompt !== undefined) {
+      throw new Error(
+        "agent() continuation cannot override the worker system prompt.",
+      );
+    }
+    if (persisted && options.model && selectedModel !== persisted.model) {
+      throw new Error(
+        "agent() continuation model must match the persisted worker model.",
+      );
+    }
+    const model = persisted ? persisted.model : selectedModel;
     if (!model) {
       return {
         value: null,
@@ -334,8 +456,17 @@ export function createSdkSpawner(
     const usage: RunningUsage = {};
     const query = client.query({
       prompt,
-      options: buildQueryOptions(options, model, config, request.callIndex),
+      options: {
+        ...buildQueryOptions(options, model, config, request.callIndex),
+        ...(resumeId ? { conversationId: resumeId } : {}),
+      },
     });
+    if (resumeId && query.conversationId && query.conversationId !== resumeId) {
+      query.close();
+      throw new Error(
+        "SDK resumed an unexpected worker conversation; refusing continuation.",
+      );
+    }
     // Stopping early (abort, timeout, runaway) interrupts the turn and
     // settles the outcome; the stream drain then ends on its own.
     let settleStopped!: (turn: DrainedTurn) => void;
@@ -373,9 +504,21 @@ export function createSdkSpawner(
           (totalTokens) => {
             if (!finished) hooks?.onUsage?.(totalTokens);
           },
+          (id) => {
+            if (resumeId && id !== resumeId) {
+              stop("SDK resumed an unexpected worker conversation");
+            } else if (!finished) {
+              hooks?.onStarted?.(id);
+            }
+          },
         ),
         stopped,
       ]);
+      if (resumeId && query.conversationId !== resumeId) {
+        throw new Error(
+          "SDK did not resume the requested worker conversation.",
+        );
+      }
       const stats = {
         durationMs: Date.now() - startedAt,
         ...(turn.totalTokens !== undefined
@@ -386,35 +529,52 @@ export function createSdkSpawner(
           : {}),
       };
       if (!turn.success) {
-        return {
+        const outcome = {
           value: null,
           failed: true,
           error: turn.error ?? "subagent turn failed",
           ...stats,
         };
+        return outcome;
       }
       if (options.schema) {
-        return { value: turn.structuredOutput, failed: false, ...stats };
+        const outcome = {
+          value: turn.structuredOutput,
+          failed: false,
+          ...stats,
+        };
+        return outcome;
       }
       if (options.json) {
         try {
-          return {
+          const outcome = {
             value: parseJsonReply(turn.finalText),
             failed: false,
             ...stats,
           };
+          return outcome;
         } catch {
-          return {
+          const outcome = {
             value: null,
             failed: true,
             error: `Subagent reply was not valid JSON: ${turn.finalText.slice(0, 200)}`,
             ...stats,
           };
+          return outcome;
         }
       }
-      return { value: turn.finalText, failed: false, ...stats };
+      const outcome = { value: turn.finalText, failed: false, ...stats };
+      return outcome;
     } catch (error) {
-      return { value: null, failed: true, error: String(error) };
+      const outcome = {
+        value: null,
+        failed: true,
+        error: String(error),
+        ...(query.conversationId || resumeId
+          ? { conversationId: query.conversationId ?? resumeId }
+          : {}),
+      };
+      return outcome;
     } finally {
       finished = true;
       clearTimeout(timeout);

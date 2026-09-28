@@ -11,57 +11,79 @@ import {
 import type { ListenerTransport } from "./transport";
 import { finishListenerTurn } from "./turn-terminal";
 
-test("finishListenerTurn emits exactly one correlated terminal event", () => {
-  const listener = createRuntime();
-  const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
-  const sent: string[] = [];
-  const socket: ListenerTransport = {
-    kind: "local",
-    bufferedAmount: 0,
-    isOpen: () => true,
-    send: (payload: string) => sent.push(payload),
-  };
-  const lease = runtime.turnLifecycle.begin({
-    origin: "message",
-    workingDirectory: process.cwd(),
-  });
+test.each(["end_turn", "error"] as const)(
+  "finishListenerTurn emits exactly one correlated terminal event (%s)",
+  (stopReason) => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const sent: string[] = [];
+    const socket: ListenerTransport = {
+      kind: "local",
+      bufferedAmount: 0,
+      isOpen: () => true,
+      send: (payload: string) => sent.push(payload),
+    };
+    const lease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+    });
 
-  expect(
-    finishListenerTurn(runtime, lease, {
-      turnId: "turn-1",
-      stopReason: "end_turn",
-      socket,
-      runId: "run-1",
-      agentId: "agent-1",
-      conversationId: "conv-1",
-      usage: { total_tokens: 42, step_count: 2 },
-    }).finished,
-  ).toBe(true);
-  expect(
-    finishListenerTurn(runtime, lease, {
-      turnId: "turn-1",
-      stopReason: "end_turn",
-      socket,
-      runId: "run-1",
-      agentId: "agent-1",
-      conversationId: "conv-1",
-    }).finished,
-  ).toBe(false);
+    expect(
+      finishListenerTurn(runtime, lease, {
+        turnId: "turn-1",
+        stopReason,
+        ...(stopReason === "error"
+          ? {
+              errorNotice: {
+                message: "Message author is not authorized",
+                clientMessageIds: ["cm-1"],
+              },
+            }
+          : {}),
+        socket,
+        runId: "run-1",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        usage: { total_tokens: 42, step_count: 2 },
+      }).finished,
+    ).toBe(true);
+    expect(
+      finishListenerTurn(runtime, lease, {
+        turnId: "turn-1",
+        stopReason,
+        ...(stopReason === "error"
+          ? {
+              errorNotice: {
+                message: "Message author is not authorized",
+                clientMessageIds: ["cm-1"],
+              },
+            }
+          : {}),
+        socket,
+        runId: "run-1",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      }).finished,
+    ).toBe(false);
 
-  const terminalEvents = sent
-    .map((payload) => JSON.parse(payload) as Record<string, unknown>)
-    .filter((message) => message.type === "turn_finished");
-  expect(terminalEvents).toEqual([
-    expect.objectContaining({
-      type: "turn_finished",
-      runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
-      turn_id: "turn-1",
-      run_id: "run-1",
-      stop_reason: "end_turn",
-      usage: { total_tokens: 42, step_count: 2 },
-    }),
-  ]);
-});
+    const terminalEvents = sent
+      .map((payload) => JSON.parse(payload) as Record<string, unknown>)
+      .filter((message) => message.type === "turn_finished");
+    expect(terminalEvents).toEqual([
+      expect.objectContaining({
+        type: "turn_finished",
+        runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+        turn_id: "turn-1",
+        run_id: "run-1",
+        stop_reason: stopReason,
+        usage: { total_tokens: 42, step_count: 2 },
+      }),
+    ]);
+    expect(
+      sent.filter((payload) => payload.includes('"message_type":"loop_error"')),
+    ).toHaveLength(stopReason === "error" ? 1 : 0);
+  },
+);
 
 test("terminal error formatting preserves classifications and rejects raw fallbacks", () => {
   const unknownApiError = new APIError(

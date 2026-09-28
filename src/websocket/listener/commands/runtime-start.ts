@@ -19,7 +19,10 @@ import { canonicalizeRoot } from "@/permissions/sandbox-policy";
 import { resolveWorkspaceSandbox } from "@/permissions/workspace-sandbox";
 import { settingsManager } from "@/settings-manager";
 import type { RuntimeScope, RuntimeStartCommand } from "@/types/protocol_v2";
-import { subscribeListenerConnection } from "@/websocket/listener/connection";
+import {
+  getOrCreateProcessTransport,
+  subscribeListenerConnection,
+} from "@/websocket/listener/connection";
 import { getBootWorkingDirectory } from "@/websocket/listener/cwd";
 import { switchConversationWorkingDirectory } from "@/websocket/listener/cwd-change";
 import { registerRuntimeExternalTools } from "@/websocket/listener/external-tools";
@@ -28,6 +31,7 @@ import {
   persistPermissionModeMapForRuntime,
   warnIfRemoteAutoMode,
 } from "@/websocket/listener/permission-mode";
+import { scheduleQueuePump } from "@/websocket/listener/queue";
 import { isRuntimeStartCommand } from "@/websocket/listener/runtime-start-validation";
 import { assertRuntimeWorkspaceSandboxChangeAllowed } from "@/websocket/listener/runtime-workspace-sandbox";
 import { expectInboundTeleport } from "@/websocket/listener/teleport";
@@ -35,6 +39,8 @@ import type {
   ConversationRuntime,
   ListenerConnectionId,
   ListenerRuntime,
+  ProcessQueuedTurn,
+  StartListenerOptions,
 } from "@/websocket/listener/types";
 import type {
   GetOrCreateScopedRuntime,
@@ -63,6 +69,8 @@ type RuntimeStartCommandContext = {
   runDetachedListenerTask: RunDetachedListenerTask;
   getOrCreateScopedRuntime: GetOrCreateScopedRuntime;
   replaySyncStateForRuntime: ReplaySyncStateForRuntime;
+  queuePumpOptions?: StartListenerOptions;
+  processQueuedTurn?: ProcessQueuedTurn;
   createEphemeralConversation?: typeof createEphemeralConversation;
   retrieveConversation?: (conversationId: string) => Promise<Conversation>;
 };
@@ -430,7 +438,9 @@ export async function handleRuntimeStartCommand(
   let agent: AgentState | null = null;
   let conversation: Conversation | null = null;
   let runtimeScope: RuntimeStartScope | null = null;
+  let scopedRuntime: ConversationRuntime | null = null;
   let shouldReplayState = false;
+  let startResponseSent = false;
 
   try {
     validateRuntimeStartShape(parsed);
@@ -460,7 +470,7 @@ export async function handleRuntimeStartCommand(
       }
     };
     assertConnectionOpen();
-    const scopedRuntime = context.getOrCreateScopedRuntime(
+    scopedRuntime = context.getOrCreateScopedRuntime(
       context.runtime,
       runtimeScope.agent_id,
       runtimeScope.conversation_id,
@@ -490,14 +500,14 @@ export async function handleRuntimeStartCommand(
         },
       );
     }
-    const sent = sendRuntimeStartResponse(context, parsed, {
+    startResponseSent = sendRuntimeStartResponse(context, parsed, {
       success: true,
       runtime: runtimeScope,
       agent,
       conversation,
       created,
     });
-    shouldReplayState = sent && !parsed.wait_for_replay;
+    shouldReplayState = startResponseSent && !parsed.wait_for_replay;
   } catch (error) {
     sendRuntimeStartResponse(context, parsed, {
       success: false,
@@ -519,6 +529,23 @@ export async function handleRuntimeStartCommand(
         forceDeviceStatus: parsed.force_device_status !== false,
         connectionId: context.connectionId,
       },
+    );
+  }
+
+  // Startup can attempt the queue before a new connection has subscribed.
+  // Retry after this scope's initial replay so accepted work cannot interleave
+  // with approval recovery or execute after a failed runtime_start.
+  if (
+    startResponseSent &&
+    scopedRuntime?.queueRuntime?.isEmpty === false &&
+    context.queuePumpOptions &&
+    context.processQueuedTurn
+  ) {
+    scheduleQueuePump(
+      scopedRuntime,
+      getOrCreateProcessTransport(context.runtime),
+      context.queuePumpOptions,
+      context.processQueuedTurn,
     );
   }
 

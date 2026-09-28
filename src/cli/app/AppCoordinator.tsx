@@ -1423,6 +1423,7 @@ export function App({
               kind: "task_notification",
               source: "task_notification",
               text: message.text,
+              content: message.content,
             } as Parameters<typeof tuiQueueRef.current.enqueue>[0])
           : ({
               kind: "message",
@@ -1435,7 +1436,6 @@ export function App({
     });
     return () => setMessageQueueAdder(null);
   }, []);
-
   // ── Shadow cron scheduler ──────────────────────────────────────────
   // Lightweight tui_cron scheduler when no matching WS listener is running.
   // Defers to a live all-owner or this agent's scoped backend owner.

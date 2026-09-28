@@ -47,14 +47,20 @@ describe("workflow decision input validation", () => {
     ).rejects.toThrow(/unsupported type/);
   });
 
-  test("accepts only Jev handles and disallows fallbacks", async () => {
+  test("selects Jev internally and disallows caller models or fallbacks", async () => {
     const questions = { q: { type: "noul", instructions: "Is this valid?" } };
     await expect(
       submitWorkflowDecision(
         { state: "x", questions, model: "openai/gpt-4o" },
         signal,
       ),
-    ).rejects.toThrow(/Jev handle/);
+    ).rejects.toThrow(/does not accept a model/);
+    await expect(
+      submitWorkflowDecision(
+        { state: "x", questions, model: "typesafe/jev-1.13" },
+        signal,
+      ),
+    ).rejects.toThrow(/does not accept a model/);
     await expect(
       submitWorkflowDecision(
         { state: "x", questions, provider: { allow_fallbacks: true } },

@@ -15,6 +15,7 @@ import {
   MEMORY_CONSTRAINTS_UPDATE_ENV,
   MEMORY_CONSTRAINTS_VALIDATOR_NAME,
 } from "./memory-constraints";
+import { commitMemoryWrite, initializeLocalMemoryRepo } from "./memory-git";
 import {
   installPreCommitHook,
   installSharedMemoryPreCommitHook,
@@ -434,6 +435,106 @@ describe("MemFS v2 pre-commit hook", () => {
     expect(deleteResult.stdout + deleteResult.stderr).toContain(
       "requires human approval to change",
     );
+  });
+});
+
+describe("local memory commit hook policy", () => {
+  let repo = "";
+  const author = {
+    agentId: "agent-local-hook-policy",
+    authorName: "Local Hook Test",
+    authorEmail: "local-hook-test@letta.com",
+  };
+
+  afterEach(() => {
+    if (repo) rmSync(repo, { recursive: true, force: true });
+  });
+
+  test("keeps root-marker validation after a local memory write", async () => {
+    repo = mkdtempSync(join(tmpdir(), "local-root-hook-policy-"));
+    await initializeLocalMemoryRepo({
+      memoryDir: repo,
+      agentId: author.agentId,
+      authorName: author.authorName,
+      files: [
+        { relativePath: "MEMORY.md", content: "# Memory\n" },
+        {
+          relativePath: "persona.md",
+          content: v2Memory("Initial.\n", "Persona"),
+        },
+      ],
+    });
+
+    writeFileSync(join(repo, "persona.md"), v2Memory("Updated.\n", "Persona"));
+    const committed = await commitMemoryWrite({
+      memoryDir: repo,
+      pathspecs: ["persona.md"],
+      reason: "test: update root memory",
+      author,
+      syncMode: "local",
+    });
+
+    expect(committed.committed).toBe(true);
+    expect(
+      readFileSync(join(repo, ".git", "letta-memory-layout-policy"), "utf8"),
+    ).toBe("root-marker\n");
+
+    writeFileSync(join(repo, "notes.md"), "Missing frontmatter.\n");
+    await expect(
+      commitMemoryWrite({
+        memoryDir: repo,
+        pathspecs: ["notes.md"],
+        reason: "test: reject invalid root memory",
+        author,
+        syncMode: "local",
+      }),
+    ).rejects.toThrow("Memory validation failed");
+
+    rmSync(join(repo, "MEMORY.md"));
+    await expect(
+      commitMemoryWrite({
+        memoryDir: repo,
+        pathspecs: ["MEMORY.md"],
+        reason: "test: reject root marker deletion",
+        author,
+        syncMode: "local",
+      }),
+    ).rejects.toThrow("root memory index is required for MemFS v2");
+    expect(
+      readFileSync(join(repo, ".git", "letta-memory-layout-policy"), "utf8"),
+    ).toBe("root-marker\n");
+  });
+
+  test("keeps markerless local repositories on legacy validation", async () => {
+    repo = mkdtempSync(join(tmpdir(), "local-legacy-hook-policy-"));
+    await initializeLocalMemoryRepo({
+      memoryDir: repo,
+      agentId: author.agentId,
+      authorName: author.authorName,
+      files: [
+        {
+          relativePath: "system/persona.md",
+          content: "---\ndescription: Persona\n---\nInitial.\n",
+        },
+      ],
+    });
+
+    writeFileSync(
+      join(repo, "system", "persona.md"),
+      "---\ndescription: Persona\n---\nUpdated.\n",
+    );
+    const committed = await commitMemoryWrite({
+      memoryDir: repo,
+      pathspecs: ["system/persona.md"],
+      reason: "test: update legacy memory",
+      author,
+      syncMode: "local",
+    });
+
+    expect(committed.committed).toBe(true);
+    expect(
+      readFileSync(join(repo, ".git", "letta-memory-layout-policy"), "utf8"),
+    ).toBe("legacy-only\n");
   });
 });
 

@@ -704,13 +704,12 @@ describe("local backend pi transcript", () => {
       agent_id: agent.id,
     } as never);
     const memoryDir = join(storageDir, "memfs", agent.id, "memory");
-    await mkdir(join(memoryDir, "system"), { recursive: true });
     await writeFile(
-      join(memoryDir, "system", "persona.md"),
-      "---\ndescription: Persona\n---\nChanged but not explicitly recompiled.\n",
+      join(memoryDir, "persona.md"),
+      '---\nname: "Persona"\ndescription: "Who the agent is"\n---\nChanged but not explicitly recompiled.\n',
       "utf8",
     );
-    execFileSync("git", ["add", "system/persona.md"], { cwd: memoryDir });
+    execFileSync("git", ["add", "persona.md"], { cwd: memoryDir });
     execFileSync("git", ["commit", "-m", "test memory change"], {
       cwd: memoryDir,
     });

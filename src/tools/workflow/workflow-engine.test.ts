@@ -167,6 +167,24 @@ return { done: done.length, capped }`,
     });
   });
 
+  test("caps decisions independently without calling the provider", async () => {
+    const run = await executeWorkflow(echoSpawner(), {
+      script: `${META}
+const errors = []
+for (let i = 0; i < 3; i++) {
+  try { await decide(null, {}) } catch (e) { errors.push(e.message) }
+}
+return errors`,
+      maxTotalDecisions: 2,
+    });
+    expect(run.result).toEqual([
+      "decide() state must be a string, object, or array.",
+      "decide() state must be a string, object, or array.",
+      "Lifetime decision cap of 2 reached.",
+    ]);
+    expect(run.totalTokens).toBe(0);
+  });
+
   test("validates hook arguments", async () => {
     const run = await executeWorkflow(echoSpawner(), {
       script: `${META}
@@ -234,6 +252,52 @@ return errors`,
           outcome: { value: "echo:two", failed: false },
         },
       ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("journals a continuation attempt with the same worker ID and raw result", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "workflow-resume-journal-"));
+    try {
+      const journalPath = join(dir, "journal.jsonl");
+      const seen: SubagentRequest[] = [];
+      const run = await executeWorkflow(
+        async (request, _signal, hooks) => {
+          seen.push(request);
+          hooks?.onStarted?.("conv-same-worker");
+          return {
+            value: request.prompt === "first" ? null : "raw reply",
+            failed: request.prompt === "first",
+            conversationId: "conv-same-worker",
+          };
+        },
+        {
+          script: `${META}
+const failed = await agent('first')
+return await agent('continue', { conversationId: 'conv-same-worker' })`,
+          journalPath,
+        },
+      );
+      expect(run.result).toBe("raw reply");
+      expect(seen.map((r) => r.options.conversationId)).toEqual([
+        undefined,
+        "conv-same-worker",
+      ]);
+      const entries = readFileSync(journalPath, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(entries).toHaveLength(4);
+      expect(entries[0]).toMatchObject({
+        kind: "agent_started",
+        conversationId: "conv-same-worker",
+      });
+      expect(entries[1].outcome.conversationId).toBe("conv-same-worker");
+      expect(entries[3]).toMatchObject({
+        resumedConversationId: "conv-same-worker",
+        outcome: { conversationId: "conv-same-worker", value: "raw reply" },
+      });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

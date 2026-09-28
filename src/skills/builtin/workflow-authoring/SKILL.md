@@ -78,7 +78,8 @@ Workflow subagents require the API backend.
   `json`, `model`, `effort` (`'low'` for mechanical stages, higher for the
   hardest verify/judge stages), `allowedTools`, `systemPrompt` (extra system
   prompt for this subagent), `timeoutMs` (default 10 minutes), `maxToolCalls`
-  (positive safe integer; default 1000 unique tool calls for this subagent).
+  (positive safe integer; default 1000 unique tool calls for this subagent),
+  `conversationId` (resume a worker — see "Diagnosing a run").
 - `pipeline(items, stage1, stage2, ...)` → run each item through all stages
   independently, NO barrier between stages. Item A can be in stage 3 while
   item B is still in stage 1. This is the DEFAULT for multi-stage work.
@@ -95,10 +96,29 @@ Workflow subagents require the API backend.
 - `phase(title)` — start a new phase; subsequent agent() calls are grouped
   under this title in progress output.
 - `log(message)` — emit a progress message to the user.
-- `decide(state, questions, opts?)` → Promise. Ask a calibrated Jev model
-  typed questions about `state` (see below). Not a subagent call.
+- `decide(state, questions, opts?)` → Promise; not a subagent call. Ask a
+  calibrated Jev model (chosen internally — no model option) questions about
+  `state`. `questions` is a non-empty OBJECT keyed by question id — never an
+  array. Each question needs `instructions` and a `type`: `choice` (criteria
+  map of id → description, ≤255), `score` (criteria array of strings, unlike
+  `questions`), `noul` (no criteria). Returns a response whose `answers` are
+  keyed by the same ids and calibrated, or `null` after one retried invalid
+  answer — guard `if (!call)`; API errors throw.
+
+      const call = await decide(evidence, {
+        behavior: { type: 'choice', instructions: 'Is this behavior a bug?',
+          criteria: { bad: 'Wrong or harmful', not_bad: 'Expected or harmless' } },
+      })
+      const verdict = call?.answers?.behavior?.choice  // 'bad' | 'not_bad'
+
 - `args` — the value passed as the tool's `args` input, verbatim. Pass
   arrays/objects as actual JSON values, NOT as a JSON-encoded string.
+
+`decide()` sees only the `state` you pass; it cannot read files. When compact,
+bounded items are already prepared, pass them via `args` and call `decide()`
+on each directly — don't spawn `agent()` readers just to relay inputs. Raw
+large traces don't belong in `args`: prepare bounded state that preserves the
+user instruction, observed action, and outcome, and mark what was omitted.
 
 Scripts are plain JavaScript, NOT TypeScript — type annotations, interfaces,
 and generics fail to parse. The script body runs in an async context — use
@@ -109,42 +129,6 @@ The script runs inside the CLI process with the CLI's own privileges (the
 by reading it. Keep the script to orchestration: decide what runs and combine
 results. All reading, searching, and writing belongs in subagents, where the
 tool allowlist applies.
-
-## Calibrated decisions — `decide()`
-
-`decide(state, questions, opts?)` sends `state` (string, object, or array) and
-a non-empty map of typed questions to the authenticated
-`POST /v1/alpha/decisions`, resolving to
-`{model, answers, usage, id, provider}`. It does NOT spawn a subagent — use it
-for a judgment the script itself must make (gate a stage, rank an item, decide
-whether to loop again) instead of paying for an agent turn.
-
-    const call = await decide({ file: finding.file, summary: finding.summary }, {
-      route: {
-        type: 'choice',
-        instructions: 'Route this finding to the right triage queue.',
-        criteria: { docs: 'wording or documentation only', code: 'touches program behavior' },
-      },
-    })
-    if (!call) { log('decision unavailable'); return }
-    log(`route: ${call.answers.route.choice}`)   // one of the criteria ids; calibrated: true
-
-Every question needs `instructions` and a `type`: `choice` (criteria map of
-option id → description, ≤255; answer has `choice`), `score` (criteria array;
-answer has `score` + `legend`), `noul` (no criteria; answer has `noul`, 0–1).
-`probabilities` and `confidence` appear only when the model returns them.
-
-- Answers always cover exactly the question ids you asked for, each marked
-  `calibrated: true`.
-- Jev only: `opts.model` defaults to `~typesafe/jev-latest`, must be a Jev
-  handle, and fallbacks are disabled — no silent model/provider substitution.
-- An invalid answer is retried once, then the call resolves to `null` — guard
-  with `if (!call)`, as with `agent()`. Transport/API errors throw instead, so
-  an unguarded `decide()` in a `pipeline()` stage drops that item.
-- Other options: `provider`, `session_id` (≤256 chars), `trace`, `user`.
-- The journal records model, cost, calibrated, valid, and totalTokens per
-  decision API attempt, retries included — not your state or questions. The
-  run's totalTokens sums every attempt.
 
 ## Pipeline vs barrier
 
@@ -163,9 +147,9 @@ A barrier is NOT justified by:
   slowest takes 3× the fastest, a barrier wastes 2/3 of the fast finders'
   idle time.
 
-Concurrent agent() calls are capped per run (`maxConcurrent`, default 16) —
-excess calls queue and run as slots free up, so passing 100 items is fine.
-Total agent count across a run is capped at 1000 — a runaway-loop backstop.
+`agent()` and `decide()` share one pool of concurrent slots per run
+(`maxConcurrent`, default 16) — excess calls queue and run as slots free up,
+so passing 100 items is fine. Each has its own 1000-call lifetime backstop.
 A single parallel()/pipeline() call accepts at most 4096 items.
 
 When a barrier IS correct — dedup across all findings before expensive
@@ -254,3 +238,8 @@ diagnosing why a workflow returned an empty or unexpected result, read that
 journal — it records each agent's actual return value and, for a `null`,
 which guard or error produced it. A failed run is not resumable: fix the
 script and launch it again.
+
+The script is never replayed, but one worker can continue:
+`agent(prompt, {conversationId})` re-prompts it with history and model intact,
+using a journal ID and only once its last Run is terminal. Tools default to
+`[]`; `schema` and `effort` are chosen per turn. Needs SDK 0.8.20+.

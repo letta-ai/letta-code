@@ -129,6 +129,8 @@ function createLegacyTestRuntime(): ConversationRuntime & {
   processTransport: ListenerRuntime["processTransport"];
   processServicesStarted: boolean;
   processServicesGeneration: number;
+  externalToolNotificationEpochByConversation: ListenerRuntime["externalToolNotificationEpochByConversation"];
+  externalToolNotificationBarrierByConversation: ListenerRuntime["externalToolNotificationBarrierByConversation"];
   processServicesReady: Promise<void> | null;
   processServicesReadyGeneration: number | null;
   serviceCommandHandler: ListenerRuntime["serviceCommandHandler"];
@@ -181,6 +183,8 @@ function createLegacyTestRuntime(): ConversationRuntime & {
     processTransport: ListenerRuntime["processTransport"];
     processServicesStarted: boolean;
     processServicesGeneration: number;
+    externalToolNotificationEpochByConversation: ListenerRuntime["externalToolNotificationEpochByConversation"];
+    externalToolNotificationBarrierByConversation: ListenerRuntime["externalToolNotificationBarrierByConversation"];
     processServicesReady: Promise<void> | null;
     processServicesReadyGeneration: number | null;
     serviceCommandHandler: ListenerRuntime["serviceCommandHandler"];
@@ -324,6 +328,22 @@ function createLegacyTestRuntime(): ConversationRuntime & {
       get: () => listener.processServicesGeneration,
       set: (value: number) => {
         listener.processServicesGeneration = value;
+      },
+    },
+    externalToolNotificationEpochByConversation: {
+      get: () => listener.externalToolNotificationEpochByConversation,
+      set: (
+        value: ListenerRuntime["externalToolNotificationEpochByConversation"],
+      ) => {
+        listener.externalToolNotificationEpochByConversation = value;
+      },
+    },
+    externalToolNotificationBarrierByConversation: {
+      get: () => listener.externalToolNotificationBarrierByConversation,
+      set: (
+        value: ListenerRuntime["externalToolNotificationBarrierByConversation"],
+      ) => {
+        listener.externalToolNotificationBarrierByConversation = value;
       },
     },
     processServicesReady: {

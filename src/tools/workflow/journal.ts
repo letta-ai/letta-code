@@ -15,9 +15,16 @@ import type { SubagentOutcome } from "./types.ts";
 
 export type JournalEntry =
   | {
+      kind: "agent_started";
+      callIndex: number;
+      conversationId: string;
+    }
+  | {
       callIndex: number;
       label: string;
       prompt: string;
+      /** Present on a continuation attempt; outcome carries the same worker ID. */
+      resumedConversationId?: string;
       outcome: SubagentOutcome;
     }
   | {

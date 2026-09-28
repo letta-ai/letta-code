@@ -1,5 +1,4 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { getSubagents } from "@/agent/subagent-state";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
@@ -826,8 +825,10 @@ export function buildSubagentSnapshot(
       status: a.status,
       agent_url: a.agentURL,
       conversation_id: a.conversationId ?? null,
+      super_run_id: a.superRunId,
       model: a.model,
       is_background: a.isBackground,
+      claims_parent_runtime: a.claimsParentRuntime,
       silent: a.silent,
       tool_call_id: a.toolCallId,
       parent_agent_id: a.parentAgentId,
@@ -900,36 +901,6 @@ export function emitCanonicalMessageDelta(
   },
 ): void {
   emitStreamDelta(socket, runtime, delta, scope);
-}
-
-export function emitLoopErrorDelta(
-  socket: ListenerTransport,
-  runtime: RuntimeCarrier,
-  params: {
-    message: string;
-    stopReason: StopReasonType;
-    isTerminal: boolean;
-    runId?: string | null;
-    agentId?: string | null;
-    conversationId?: string | null;
-    apiError?: LettaStreamingResponse.LettaErrorMessage;
-  },
-): void {
-  emitCanonicalMessageDelta(
-    socket,
-    runtime,
-    {
-      ...createLifecycleMessageBase("loop_error", params.runId),
-      message: params.message,
-      stop_reason: params.stopReason,
-      is_terminal: params.isTerminal,
-      ...(params.apiError ? { api_error: params.apiError } : {}),
-    } as StreamDelta,
-    {
-      agent_id: params.agentId,
-      conversation_id: params.conversationId,
-    },
-  );
 }
 
 export function emitRetryDelta(

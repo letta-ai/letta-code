@@ -25,6 +25,7 @@ import TaskUpdateDescription from "./descriptions/TaskUpdate.md";
 import UpdatePlanDescription from "./descriptions/UpdatePlan.md";
 import ViewImageDescription from "./descriptions/ViewImage.md";
 import WakeDescription from "./descriptions/Wake.md";
+import WatchPRDescription from "./descriptions/WatchPR.md";
 import WorkflowDescription from "./descriptions/Workflow.md";
 import WriteDescription from "./descriptions/Write.md";
 import WriteArtifactFileDescription from "./descriptions/WriteArtifactFile.md";
@@ -55,6 +56,7 @@ import { task_update } from "./impl/task-update";
 import { update_plan } from "./impl/update-plan";
 import { view_image } from "./impl/view-image";
 import { wake } from "./impl/wake";
+import { watch_pr } from "./impl/watch-pr";
 import { workflow } from "./impl/workflow";
 import { write } from "./impl/write";
 
@@ -84,6 +86,7 @@ import TaskUpdateSchema from "./schemas/TaskUpdate.json";
 import UpdatePlanSchema from "./schemas/UpdatePlan.json";
 import ViewImageSchema from "./schemas/ViewImage.json";
 import WakeSchema from "./schemas/Wake.json";
+import WatchPRSchema from "./schemas/WatchPR.json";
 import WorkflowSchema from "./schemas/Workflow.json";
 import WriteSchema from "./schemas/Write.json";
 import WriteArtifactFileSchema from "./schemas/WriteArtifactFile.json";
@@ -167,6 +170,11 @@ const toolDefinitions = {
     schema: MonitorSchema,
     description: MonitorDescription.trim(),
     impl: monitor,
+  }),
+  WatchPR: defineTool({
+    schema: WatchPRSchema,
+    description: WatchPRDescription.trim(),
+    impl: watch_pr,
   }),
   Read: defineTool({
     schema: ReadSchema,

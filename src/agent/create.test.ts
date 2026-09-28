@@ -28,23 +28,23 @@ describe("created agent MemFS defaults", () => {
     ).toEqual({ enableMemfs: true, memoryPromptMode: "root-memfs" });
   });
 
-  test("defaults to local MemFS on the local backend", () => {
+  test("defaults fresh local agents to the root MemFS layout", () => {
     expect(
       resolveCreatedAgentMemfsConfig({
         capabilities: localMemfsBackend,
         isLettaCloud: false,
       }),
-    ).toEqual({ enableMemfs: true, memoryPromptMode: "local-memfs" });
+    ).toEqual({ enableMemfs: true, memoryPromptMode: "root-memfs" });
   });
 
-  test("keeps local creation on the supported local memory prompt", () => {
+  test("maps an explicit legacy local mode to the root layout for fresh agents", () => {
     expect(
       resolveCreatedAgentMemfsConfig({
         capabilities: localMemfsBackend,
-        requestedMemoryPromptMode: "root-memfs",
+        requestedMemoryPromptMode: "local-memfs",
         isLettaCloud: false,
       }),
-    ).toEqual({ enableMemfs: true, memoryPromptMode: "local-memfs" });
+    ).toEqual({ enableMemfs: true, memoryPromptMode: "root-memfs" });
   });
 
   test("maps an explicit memfs request to the root layout on Letta Cloud", () => {

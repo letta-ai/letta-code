@@ -8,6 +8,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import {
   buildContentFromQueueBatch,
   buildQueuedContentParts,
@@ -23,7 +24,11 @@ import type { QueuedMessage } from "@/utils/message-queue-bridge";
 
 /** Build a DequeuedBatch from a list of (kind, text) pairs via QueueRuntime. */
 function makeBatch(
-  items: Array<{ kind: "user" | "task_notification"; text: string }>,
+  items: Array<{
+    kind: "user" | "task_notification";
+    text: string;
+    content?: MessageCreate["content"];
+  }>,
 ) {
   const q = new QueueRuntime({ maxItems: Infinity });
   for (const item of items) {
@@ -32,6 +37,7 @@ function makeBatch(
         kind: "task_notification",
         source: "task_notification",
         text: item.text,
+        content: item.content,
       } as Parameters<typeof q.enqueue>[0]);
     } else {
       q.enqueue({
@@ -48,11 +54,16 @@ function makeBatch(
 
 /** Build the QueuedMessage[] equivalent for the old path. */
 function makeQueued(
-  items: Array<{ kind: "user" | "task_notification"; text: string }>,
+  items: Array<{
+    kind: "user" | "task_notification";
+    text: string;
+    content?: MessageCreate["content"];
+  }>,
 ): QueuedMessage[] {
   return items.map((item) => ({
     kind: item.kind,
     text: item.text,
+    content: item.content,
   }));
 }
 
@@ -208,6 +219,29 @@ describe("buildContentFromQueueBatch parity with buildQueuedContentParts", () =>
     expect(buildContentFromQueueBatch(batch)).toEqual(
       buildQueuedContentParts(queued),
     );
+  });
+
+  test("task notification retains interleaved text and image in both TUI queue paths", () => {
+    const content = [
+      { type: "text", text: "before" },
+      {
+        type: "image",
+        source: { type: "base64", media_type: "image/png", data: "ZmFrZQ==" },
+      },
+      { type: "text", text: "after" },
+    ] satisfies Exclude<MessageCreate["content"], string>;
+    const text = "<task-notification>image ready</task-notification>";
+    const items = [{ kind: "task_notification" as const, text, content }];
+    const merged = buildContentFromQueueBatch(makeBatch(items));
+    expect(merged).toEqual(buildQueuedContentParts(makeQueued(items)));
+    expect(merged).toEqual([
+      { type: "text", text },
+      { type: "text", text: "\n<external-tool-result>" },
+      { type: "text", text: "<text>before</text>" },
+      content[1]!,
+      { type: "text", text: "<text>after</text>" },
+      { type: "text", text: "</external-tool-result>" },
+    ]);
   });
 
   test("user then task_notification (coalesced batch)", () => {

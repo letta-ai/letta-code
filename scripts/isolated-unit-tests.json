@@ -191,6 +191,11 @@
       "reason": "Uses a top-level Bun module mock for the backend client."
     },
     {
+      "path": "src/websocket/app-server-openai.test.ts",
+      "timeoutMs": 30000,
+      "reason": "Starts a real App Server and swaps the process-global backend while exercising persistent LocalBackend conversation state."
+    },
+    {
       "path": "src/websocket/listen-client-concurrency.test.ts",
       "timeoutMs": 30000,
       "reason": "Uses several top-level Bun module mocks and exercises real concurrent listener state."
