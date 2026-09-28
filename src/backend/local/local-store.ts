@@ -1793,6 +1793,7 @@ export class LocalStore {
   ): StoredMessage[] {
     const messages: StoredMessage[] = [];
     const sourceStartIndex = options.sourceStartIndex ?? 0;
+    const detached = this.persistedAgentId(conversationId, agentId) === null;
     for (let index = 0; index < localMessages.length; index++) {
       const localMessage = localMessages[index];
       if (!localMessage) continue;
@@ -1803,7 +1804,7 @@ export class LocalStore {
         conversationId,
         sourceIndex,
       );
-      if (this.persistedAgentId(conversationId, agentId) === null) {
+      if (detached) {
         for (const message of projected) message.agent_id = null;
       }
       messages.push(...projected);
@@ -1829,6 +1830,7 @@ export class LocalStore {
     messageId: string,
     sourceStartIndex: number,
   ): boolean {
+    const detached = this.persistedAgentId(conversationId, agentId) === null;
     for (let index = 0; index < localMessages.length; index += 1) {
       const localMessage = localMessages[index];
       if (!localMessage) continue;
@@ -1838,7 +1840,7 @@ export class LocalStore {
         conversationId,
         sourceStartIndex + index,
       );
-      if (this.persistedAgentId(conversationId, agentId) === null) {
+      if (detached) {
         for (const message of projected) message.agent_id = null;
       }
       const lookupEntries = projectedMessageLookupKeys(localMessage, projected);

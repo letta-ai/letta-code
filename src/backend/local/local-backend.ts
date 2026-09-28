@@ -976,6 +976,7 @@ export class LocalBackend extends HeadlessBackend {
     const compiled = compileLocalSystemPrompt({
       agent,
       conversationId,
+      persistedAgentId: detached ? null : agentId,
       previousMessageCount,
       memoryDir: memfsEnabled ? this.memoryDirForAgent(agentId) : undefined,
       includeMemfs: memfsEnabled,

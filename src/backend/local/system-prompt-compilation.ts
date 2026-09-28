@@ -32,6 +32,8 @@ export interface LocalCompiledSystemPrompt {
 export interface CompileLocalSystemPromptOptions {
   agent: LocalAgentRecord;
   conversationId: string;
+  /** Null-owned conversations have no agent ID to advertise in the prompt. */
+  persistedAgentId?: string | null;
   memoryDir?: string;
   includeMemfs?: boolean;
   now?: Date;
@@ -362,14 +364,14 @@ function formatUtcTimestamp(date: Date): string {
 }
 
 function compileMemoryMetadata(input: {
-  agentId: string;
+  agentId: string | null;
   conversationId: string;
   compiledAt: Date;
   previousMessageCount: number;
 }): string {
   return [
     "<memory_metadata>",
-    `- AGENT_ID: ${input.agentId}`,
+    ...(input.agentId ? [`- AGENT_ID: ${input.agentId}`] : []),
     `- CONVERSATION_ID: ${input.conversationId}`,
     `- System prompt last recompiled: ${formatUtcTimestamp(input.compiledAt)}`,
     `- ${input.previousMessageCount} previous messages between you and the user are stored in recall memory`,
@@ -460,7 +462,7 @@ export function compileLocalSystemPrompt(
     memfs.format === "memfs-v2"
       ? ""
       : compileMemoryMetadata({
-          agentId: options.agent.id,
+          agentId: options.persistedAgentId === null ? null : options.agent.id,
           conversationId: options.conversationId,
           compiledAt,
           previousMessageCount: options.previousMessageCount ?? 0,
