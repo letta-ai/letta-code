@@ -143,3 +143,93 @@ test("local Workflow workers preserve the invoking turn and report their convers
     rmSync(storageDir, { recursive: true, force: true });
   }
 });
+
+for (const concurrent of [false, true]) {
+  test(`local Workflow handles share an owned listener (${concurrent ? "concurrent" : "overlapping"} startup)`, async () => {
+    const storageDir = mkdtempSync(join(tmpdir(), "letta-workflow-owned-"));
+    const previousBackendMode = resolveBackendMode();
+    const previousRuntime = getActiveRuntime();
+    let first: Awaited<ReturnType<typeof createLocalSpawnerHandle>> | undefined;
+    let second:
+      | Awaited<ReturnType<typeof createLocalSpawnerHandle>>
+      | undefined;
+    try {
+      setActiveRuntime(null);
+      setConfiguredBackendMode("local");
+      const backend = new LocalBackend({
+        storageDir,
+        memfsEnabled: false,
+        executionMode: "deterministic",
+      });
+      __testSetBackend(backend);
+      const parent = await backend.createAgent({
+        name: "Parent",
+        model: "openai/gpt-5.5",
+      } as never);
+      const config = {
+        parentAgentId: parent.id,
+        model: "openai/gpt-5.5",
+        allowedTools: ["Read"],
+        cwd: storageDir,
+      };
+      if (concurrent) {
+        [first, second] = await Promise.all([
+          createLocalSpawnerHandle(config),
+          createLocalSpawnerHandle(config),
+        ]);
+      } else {
+        first = await createLocalSpawnerHandle(config);
+        second = await createLocalSpawnerHandle(config);
+      }
+      const sharedRuntime = getActiveRuntime();
+      expect(sharedRuntime).not.toBeNull();
+      if (concurrent) {
+        const [firstOutcome, secondOutcome] = await Promise.all([
+          first.spawner(
+            {
+              prompt: "first worker",
+              options: { timeoutMs: 3000 },
+              callIndex: 0,
+            },
+            new AbortController().signal,
+          ),
+          second.spawner(
+            {
+              prompt: "second worker",
+              options: { timeoutMs: 3000 },
+              callIndex: 0,
+            },
+            new AbortController().signal,
+          ),
+        ]);
+        expect(firstOutcome.failed).toBe(false);
+        expect(secondOutcome.failed).toBe(false);
+        expect(firstOutcome.conversationId).not.toBe(
+          secondOutcome.conversationId,
+        );
+      }
+      await first.cleanup();
+      await first.cleanup(); // Releasing the same handle twice must not drop the borrower.
+      first = undefined;
+      expect(getActiveRuntime()).toBe(sharedRuntime);
+      const outcome = await second.spawner(
+        { prompt: "reply briefly", options: { timeoutMs: 3000 }, callIndex: 0 },
+        new AbortController().signal,
+      );
+      expect(outcome.failed).toBe(false);
+      expect(outcome.conversationId?.startsWith("local-conv-")).toBe(true);
+      expect(getActiveRuntime()).toBe(sharedRuntime);
+      await second.cleanup();
+      await second.cleanup();
+      second = undefined;
+      expect(getActiveRuntime()).toBeNull();
+    } finally {
+      await first?.cleanup();
+      await second?.cleanup();
+      setActiveRuntime(previousRuntime);
+      setConfiguredBackendMode(previousBackendMode);
+      __testSetBackend(null);
+      rmSync(storageDir, { recursive: true, force: true });
+    }
+  });
+}
