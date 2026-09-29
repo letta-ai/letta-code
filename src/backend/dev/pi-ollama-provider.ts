@@ -79,11 +79,24 @@ function parseOllamaTags(data: unknown): OllamaTagEntry[] {
  * `/api/ps` reports `context_length` per *loaded* model, which is the window
  * the engine will actually serve for it. Prefer it whenever it is available.
  */
-export function parseOllamaRunningContexts(data: unknown): Map<string, number> {
-  const contexts = new Map<string, number>();
-  if (!data || typeof data !== "object") return contexts;
+interface OllamaPsEntry {
+  /** `name` and `model`, plus Ollama's implicit `:latest` when a tag is omitted. */
+  ids: string[];
+  /** The id Ollama displays, for refusal text. */
+  displayId?: string;
+  contextLength?: number;
+}
+
+function ollamaIdentityKeys(id: string): string[] {
+  const normalized = normalizeOllamaModelId(id);
+  return normalized === id ? [id] : [id, normalized];
+}
+
+function parseOllamaPsEntries(data: unknown): OllamaPsEntry[] {
+  if (!data || typeof data !== "object") return [];
   const models = (data as { models?: unknown }).models;
-  if (!Array.isArray(models)) return contexts;
+  if (!Array.isArray(models)) return [];
+  const entries: OllamaPsEntry[] = [];
   for (const entry of models) {
     if (!entry || typeof entry !== "object") continue;
     const record = entry as {
@@ -91,17 +104,40 @@ export function parseOllamaRunningContexts(data: unknown): Map<string, number> {
       model?: unknown;
       context_length?: unknown;
     };
-    const id = record.name ?? record.model;
+    const rawIds = [record.name, record.model].filter(
+      (id): id is string => typeof id === "string" && id.length > 0,
+    );
+    if (rawIds.length === 0) continue;
     const contextLength = record.context_length;
-    if (typeof id !== "string" || id.length === 0) continue;
-    if (typeof contextLength !== "number" || contextLength <= 0) continue;
-    contexts.set(id, contextLength);
+    entries.push({
+      ids: [...new Set(rawIds.flatMap(ollamaIdentityKeys))],
+      displayId: rawIds[0],
+      ...(typeof contextLength === "number" && contextLength > 0
+        ? { contextLength }
+        : {}),
+    });
+  }
+  return entries;
+}
+
+export function parseOllamaRunningContexts(data: unknown): Map<string, number> {
+  const contexts = new Map<string, number>();
+  for (const entry of parseOllamaPsEntries(data)) {
+    if (entry.contextLength === undefined) continue;
+    for (const id of entry.ids) contexts.set(id, entry.contextLength);
   }
   return contexts;
 }
 
 const OLLAMA_STATUS_TIMEOUT_MS = 2_000;
 const OLLAMA_MODEL_LOAD_TIMEOUT_MS = 120_000;
+/**
+ * Holds the preflight load across the `/api/ps` read and the chat request that
+ * follows. `OLLAMA_KEEP_ALIVE=0` would otherwise unload the model the moment
+ * the empty generate returns, so `/api/ps` cannot see it.
+ */
+const OLLAMA_PREFLIGHT_KEEP_ALIVE = "5m";
+const OLLAMA_SERVED_CONTEXT_OVERRIDE_ENV = "LETTA_OLLAMA_CONTEXT_LENGTH";
 
 export interface ResolveOllamaServedContextOptions {
   baseURL: string;
@@ -109,6 +145,50 @@ export interface ResolveOllamaServedContextOptions {
   apiKey?: string;
   fetchImpl?: typeof fetch;
   signal?: AbortSignal;
+  /** Defaults to `process.env`. Tests inject a fake env. */
+  env?: Record<string, string | undefined>;
+}
+
+function readOllamaServedContextOverride(
+  env: Record<string, string | undefined>,
+): number | undefined {
+  const raw = env[OLLAMA_SERVED_CONTEXT_OVERRIDE_ENV];
+  if (raw === undefined || raw.trim() === "") return undefined;
+  const trimmed = raw.trim();
+  if (!/^[1-9]\d*$/.test(trimmed) || !Number.isSafeInteger(Number(trimmed))) {
+    throw new Error(
+      `${OLLAMA_SERVED_CONTEXT_OVERRIDE_ENV}=${JSON.stringify(trimmed)} is not a positive integer token count. ` +
+        `Set it to the context window your Ollama daemon actually serves.`,
+    );
+  }
+  return Number(trimmed);
+}
+
+function missingServedContextError(modelId: string, data: unknown): string {
+  const entries = parseOllamaPsEntries(data);
+  const match = entries.find((entry) => entry.ids.includes(modelId));
+  if (match) {
+    return (
+      `Ollama lists "${modelId}" in /api/ps but did not report context_length. ` +
+      `Refusing to send the prompt because Ollama may silently truncate it. ` +
+      `context_length requires Ollama 0.10.0 or newer. ` +
+      `Upgrade Ollama, or set ${OLLAMA_SERVED_CONTEXT_OVERRIDE_ENV} to the window your daemon actually serves.`
+    );
+  }
+  const running = entries
+    .map((entry) => entry.displayId)
+    .filter((id): id is string => id !== undefined);
+  const runningNote =
+    running.length > 0
+      ? ` Running models: ${running.join(", ")}.`
+      : ` /api/ps lists no running models.`;
+  return (
+    `Ollama loaded "${modelId}", but /api/ps does not list it. ` +
+    `Refusing to send the prompt because Ollama may silently truncate it. ` +
+    `If OLLAMA_KEEP_ALIVE=0, the model unloaded before this check.` +
+    runningNote +
+    ` Set ${OLLAMA_SERVED_CONTEXT_OVERRIDE_ENV} to the window your daemon actually serves.`
+  );
 }
 
 async function fetchOllamaNative<T>(
@@ -161,29 +241,34 @@ async function fetchOllamaNative<T>(
  * request uses the daemon default. Use Ollama's documented empty generate
  * request to load the selected model with the same default our turn will use,
  * then require `/api/ps` to report that exact identity before dispatch.
+ *
+ * The generate request pins `keep_alive` so `OLLAMA_KEEP_ALIVE=0` cannot unload
+ * the model before `/api/ps`. A missing `context_length` is not replaced with
+ * GGUF metadata. `LETTA_OLLAMA_CONTEXT_LENGTH` is the only override, and only
+ * when the user states the window the daemon actually serves.
  */
 export async function resolveOllamaServedContext(
   options: ResolveOllamaServedContextOptions,
 ): Promise<number> {
+  const override = readOllamaServedContextOverride(options.env ?? process.env);
+  if (override !== undefined) return override;
+
   const fetchImpl = options.fetchImpl ?? fetch;
   const modelId = normalizeOllamaModelId(options.modelId);
   const nativeBaseURL = localEndpointNativeBaseURL(options.baseURL);
   const psURL = `${nativeBaseURL}/api/ps`;
-  const runningContext = async (): Promise<number | undefined> => {
-    const data = await fetchOllamaNative(fetchImpl, psURL, {
-      ...(options.apiKey ? { apiKey: options.apiKey } : {}),
-      ...(options.signal ? { signal: options.signal } : {}),
-      timeoutMs: OLLAMA_STATUS_TIMEOUT_MS,
-      consume: (response) => response.json(),
-    });
-    return parseOllamaRunningContexts(data).get(modelId);
-  };
+  const overrideHint = `or set ${OLLAMA_SERVED_CONTEXT_OVERRIDE_ENV} to the window your daemon actually serves`;
 
   try {
     await fetchOllamaNative(fetchImpl, `${nativeBaseURL}/api/generate`, {
       ...(options.apiKey ? { apiKey: options.apiKey } : {}),
       ...(options.signal ? { signal: options.signal } : {}),
-      body: { model: modelId, prompt: "", stream: false },
+      body: {
+        model: modelId,
+        prompt: "",
+        stream: false,
+        keep_alive: OLLAMA_PREFLIGHT_KEEP_ALIVE,
+      },
       timeoutMs: OLLAMA_MODEL_LOAD_TIMEOUT_MS,
       consume: (response) => response.text(),
     });
@@ -192,27 +277,30 @@ export async function resolveOllamaServedContext(
     throw new Error(
       `Unable to load Ollama model "${modelId}" to determine its served context window. ` +
         `Refusing to send the prompt because Ollama may silently truncate it. ` +
-        `Check the Ollama endpoint, model installation, and available memory. (${error instanceof Error ? error.message : String(error)})`,
+        `Check the Ollama endpoint, model installation, and available memory, ${overrideHint}. (${error instanceof Error ? error.message : String(error)})`,
     );
   }
 
+  let running: unknown;
   try {
-    const loadedContext = await runningContext();
-    if (loadedContext !== undefined) return loadedContext;
+    running = await fetchOllamaNative(fetchImpl, psURL, {
+      ...(options.apiKey ? { apiKey: options.apiKey } : {}),
+      ...(options.signal ? { signal: options.signal } : {}),
+      timeoutMs: OLLAMA_STATUS_TIMEOUT_MS,
+      consume: (response) => response.json(),
+    });
   } catch (error) {
     if (options.signal?.aborted) throw options.signal.reason ?? error;
     throw new Error(
       `Ollama loaded model "${modelId}", but /api/ps could not verify its served context window. ` +
         `Refusing to send the prompt because Ollama may silently truncate it. ` +
-        `Check that the endpoint supports /api/ps. (${error instanceof Error ? error.message : String(error)})`,
+        `Check that the endpoint supports /api/ps, ${overrideHint}. (${error instanceof Error ? error.message : String(error)})`,
     );
   }
 
-  throw new Error(
-    `Ollama did not report an exact served context window for loaded model "${modelId}" in /api/ps. ` +
-      `Refusing to send the prompt because Ollama may silently truncate it. ` +
-      `Check the model name and Ollama server logs.`,
-  );
+  const loadedContext = parseOllamaRunningContexts(running).get(modelId);
+  if (loadedContext !== undefined) return loadedContext;
+  throw new Error(missingServedContextError(modelId, running));
 }
 
 function parseOllamaShow(
