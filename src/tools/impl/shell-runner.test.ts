@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   __testSetBackend,
   type Backend,
@@ -158,6 +160,47 @@ describe("shared shell process", () => {
         processKill.mockRestore();
       }
     },
+  );
+
+  test.skipIf(process.platform === "win32")(
+    "transient cleanup kills a real native PTY group after its shell parent exits",
+    async () => {
+      const fixtureDir = mkdtempSync(join(tmpdir(), "native-pty-transient-"));
+      const actionFile = join(fixtureDir, "action.txt");
+      const command = `nohup sh -c 'sleep 0.6; printf leaked > ${JSON.stringify(actionFile)}' >/dev/null 2>&1 &`;
+      const running = startShellProcess(["bash", "-c", command], {
+        cwd: process.cwd(),
+        env: process.env,
+        timeoutMs: 2_000,
+        tty: true,
+      });
+      const processId = "native-pty-completed-parent-test";
+
+      try {
+        expect((await running.completion).exitCode).toBe(0);
+        backgroundProcesses.set(processId, {
+          process: running.process,
+          command,
+          status: "completed",
+          exitCode: 0,
+          transientExecutionContextId: "ctx-native-pty-completed",
+        });
+
+        releaseTransientBackgroundProcesses("ctx-native-pty-completed");
+        await Bun.sleep(750);
+
+        expect(existsSync(actionFile)).toBe(false);
+      } finally {
+        try {
+          running.process.killProcessGroup?.("SIGKILL");
+        } catch {
+          // Process group may already be gone.
+        }
+        backgroundProcesses.delete(processId);
+        rmSync(fixtureDir, { recursive: true, force: true });
+      }
+    },
+    5_000,
   );
 
   test("can stream output without retaining a second copy", async () => {
