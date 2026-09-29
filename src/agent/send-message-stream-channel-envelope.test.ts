@@ -13,7 +13,10 @@ import {
   prepareToolExecutionContextForModel,
   registerExternalTools,
 } from "@/tools/manager";
-import { sendMessageStreamWithBackend } from "./message";
+import {
+  NOTIFICATION_SPONSORSHIP_HEADER,
+  sendMessageStreamWithBackend,
+} from "./message";
 
 describe("channel request envelope", () => {
   afterEach(() => {
@@ -68,6 +71,7 @@ describe("channel request envelope", () => {
     );
 
     let recordedBody: MessageCreateParams | undefined;
+    let recordedHeaders: Record<string, string> | undefined;
     const stream = {
       async *[Symbol.asyncIterator]() {},
     } as unknown as Stream<LettaStreamingResponse>;
@@ -75,8 +79,10 @@ describe("channel request envelope", () => {
       createConversationMessageStream: async (
         _conversationId: string,
         body: MessageCreateParams,
+        options?: { headers?: Record<string, string> },
       ) => {
         recordedBody = body;
+        recordedHeaders = options?.headers;
         return stream;
       },
     } as unknown as Backend;
@@ -84,15 +90,26 @@ describe("channel request envelope", () => {
     await sendMessageStreamWithBackend(
       backend,
       "conv-slack",
-      [{ role: "user", content: formatChannelNotification(inboundMessage) }],
+      [
+        {
+          role: "user",
+          content: formatChannelNotification(inboundMessage),
+          otid: "cm-notification-test",
+        },
+      ],
       {
         streamTokens: true,
         background: true,
         skillSources: [],
         preparedToolContext,
+        notificationSponsorship: {
+          capability: "capability-raw-test",
+          clientMessageId: "cm-notification-test",
+        },
       },
     );
 
+    expect(recordedBody?.messages).toHaveLength(1);
     const requestText = JSON.stringify(recordedBody?.messages);
     const messageChannel = recordedBody?.client_tools?.find(
       (tool) => tool.name === "MessageChannel",
@@ -100,6 +117,10 @@ describe("channel request envelope", () => {
     const replyGuidance =
       "Replies to routed Slack threads stay in the current thread automatically.";
 
+    expect(recordedHeaders?.[NOTIFICATION_SPONSORSHIP_HEADER]).toBe(
+      "capability-raw-test",
+    );
+    expect(requestText).not.toContain("capability-raw-test");
     expect(requestText).not.toContain("External slack turn.");
     expect(requestText).not.toContain("Current local time on this device:");
     expect(requestText).toContain('source=\\"slack\\"');
@@ -121,5 +142,19 @@ describe("channel request envelope", () => {
       | Record<string, unknown>
       | undefined;
     expect(properties?.target).toBeDefined();
+
+    recordedHeaders = undefined;
+    await sendMessageStreamWithBackend(
+      backend,
+      "conv-slack",
+      [{ role: "user", content: "ordinary continuation" }],
+      {
+        streamTokens: true,
+        background: true,
+        skillSources: [],
+        preparedToolContext,
+      },
+    );
+    expect(recordedHeaders?.[NOTIFICATION_SPONSORSHIP_HEADER]).toBeUndefined();
   });
 });

@@ -4,8 +4,14 @@ import type {
   ApprovalCreate,
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
-import type { sendMessageStream } from "@/agent/message";
+import { sendMessageStream } from "@/agent/message";
 import { getRetryDelayMs } from "@/agent/turn-recovery-policy";
+import {
+  exchangeNotificationSponsorship,
+  NotificationSponsorshipExchangeError,
+  type NotificationSponsorshipExchangeResult,
+  type NotificationSponsorshipRequest,
+} from "@/backend/api/request";
 import { getRetryStatusMessage } from "@/cli/helpers/error-formatter";
 import type { StopReasonType } from "@/types/protocol_v2";
 import {
@@ -34,12 +40,61 @@ import type { TurnFinishTransition, TurnLease } from "./turn-lifecycle";
 import type { ConversationRuntime } from "./types";
 
 type SendOptions = NonNullable<Parameters<typeof sendMessageStream>[2]>;
+const SPONSORSHIP_EXCHANGE_MAX_ATTEMPTS = 50;
+const SPONSORSHIP_EXCHANGE_RETRY_MS = 100;
+const SPONSORED_REQUEST_MAX_ATTEMPTS = 3;
+
+async function waitForSponsorshipExchangeRetry(
+  signal?: AbortSignal,
+): Promise<void> {
+  if (signal?.aborted) throw new Error("Cancelled by user");
+  await new Promise<void>((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timeout);
+      reject(new Error("Cancelled by user"));
+    };
+    const timeout = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, SPONSORSHIP_EXCHANGE_RETRY_MS);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+export async function exchangeNotificationSponsorshipWhenReady(
+  request: NotificationSponsorshipRequest,
+  signal?: AbortSignal,
+  exchange: (
+    request: NotificationSponsorshipRequest,
+    signal?: AbortSignal,
+  ) => Promise<NotificationSponsorshipExchangeResult> = exchangeNotificationSponsorship,
+): Promise<NotificationSponsorshipExchangeResult> {
+  for (
+    let attempt = 1;
+    attempt <= SPONSORSHIP_EXCHANGE_MAX_ATTEMPTS;
+    attempt++
+  ) {
+    try {
+      return await exchange(request, signal);
+    } catch (error) {
+      if (
+        !(error instanceof NotificationSponsorshipExchangeError) ||
+        error.status !== 409 ||
+        attempt === SPONSORSHIP_EXCHANGE_MAX_ATTEMPTS
+      ) {
+        throw error;
+      }
+      await waitForSponsorshipExchangeRetry(signal);
+    }
+  }
+  throw new Error("Notification sponsorship exchange attempts exhausted");
+}
 
 /** Build request options and perform the first send; later continuations read current input state. */
 export async function startTurnInput(
   params: Omit<
     Parameters<typeof createTurnInputSender>[0],
-    "buildSendOptions"
+    "buildSendOptions" | "notificationSponsorship"
   > & {
     workingDirectory: string;
     permissionModeState: SendOptions["permissionModeState"];
@@ -47,6 +102,10 @@ export async function startTurnInput(
     overrideModel: SendOptions["overrideModel"];
     responseFormat?: SendOptions["responseFormat"];
     actingUserId?: string;
+    notificationSponsorship?: {
+      delivery_id: string;
+      client_message_id: string;
+    };
     getInput: () => TurnInputState;
     getInterruptedToolCallIds: () => string[];
   },
@@ -74,6 +133,7 @@ export async function startTurnInput(
         ? { responseFormat: params.responseFormat }
         : {}),
       ...(params.actingUserId ? { actingUserId: params.actingUserId } : {}),
+      notificationSponsorship: undefined,
       ...(params.getInterruptedToolCallIds().length > 0
         ? {
             approvalNormalization: {
@@ -83,15 +143,105 @@ export async function startTurnInput(
         : {}),
     }),
   };
-  const sender = createTurnInputSender(sendParams);
   const input = params.getInput();
+  const buildSafeSendOptions = () => ({
+    ...sendParams.buildSendOptions(),
+    notificationSponsorship: undefined,
+  });
+  if (params.notificationSponsorship) {
+    const { delivery_id: deliveryId, client_message_id: clientMessageId } =
+      params.notificationSponsorship;
+    // Deferred skill prompts are unrelated user messages. Leave them queued
+    // for the next ordinary turn so the sponsored request stays exactly one
+    // message and no queued skill content is consumed on validation failure.
+    const sponsoredMessages = input.messages;
+    const firstUserMessage = sponsoredMessages.find(
+      (message) =>
+        "role" in message &&
+        message.role === "user" &&
+        "client_message_id" in message &&
+        message.client_message_id === clientMessageId,
+    );
+    if (
+      sponsoredMessages.length !== 1 ||
+      !firstUserMessage ||
+      !("otid" in firstUserMessage) ||
+      firstUserMessage.otid !== clientMessageId
+    ) {
+      throw new Error(
+        "Notification sponsorship does not match the queued initial user message",
+      );
+    }
+    const safeSender = createTurnInputSender({
+      ...sendParams,
+      buildSendOptions: buildSafeSendOptions,
+    });
+    for (
+      let attempt = 1;
+      attempt <= SPONSORED_REQUEST_MAX_ATTEMPTS + 1;
+      attempt++
+    ) {
+      const exchange = await exchangeNotificationSponsorshipWhenReady(
+        { deliveryId, clientMessageId },
+        params.turnLease.signal,
+      );
+      if (exchange.kind === "receipt") {
+        return {
+          sender: safeSender,
+          buildSendOptions: buildSafeSendOptions,
+          input,
+          stream: null,
+          reconciledReceipt: true,
+        };
+      }
+      if (attempt > SPONSORED_REQUEST_MAX_ATTEMPTS) break;
+      try {
+        // Each one-use capability reaches exactly one SDK request with SDK and
+        // Cloud-shutdown retries disabled. An ambiguous failure returns here
+        // for a fresh exchange: a durable receipt suppresses a second send;
+        // otherwise Cloud rotates a new capability for the next attempt.
+        const initialStream = await sendMessageStream(
+          params.conversationId,
+          sponsoredMessages,
+          {
+            ...sendParams.buildSendOptions(),
+            notificationSponsorship: {
+              capability: exchange.capability,
+              clientMessageId,
+            },
+          },
+          params.turnLease.signal
+            ? { maxRetries: 0, signal: params.turnLease.signal }
+            : { maxRetries: 0 },
+        );
+        return {
+          sender: safeSender,
+          buildSendOptions: buildSafeSendOptions,
+          input,
+          stream: initialStream,
+          reconciledReceipt: false,
+        };
+      } catch {
+        // Reconcile through a new exchange before deciding whether another
+        // request is safe. Never reuse the capability from this attempt.
+      }
+    }
+    throw new Error(
+      "The sponsored message could not be confirmed by Cloud after fresh-capability retries.",
+    );
+  }
   const withSkills = injectQueuedSkillContent(input.messages, params);
-  const result = await sender.send(withSkills);
+  const safeSender = createTurnInputSender({
+    ...sendParams,
+    buildSendOptions: buildSafeSendOptions,
+  });
+  const result = await safeSender.send(withSkills);
   return {
-    sender,
-    buildSendOptions: sendParams.buildSendOptions,
+    sender: safeSender,
+    buildSendOptions: buildSafeSendOptions,
     input: updateTurnInputMessagesPreservingOtids(input, withSkills),
-    stream: sender.accept(result),
+    stream: safeSender.accept(result),
+    reconciledReceipt: false,
   };
 }
 
