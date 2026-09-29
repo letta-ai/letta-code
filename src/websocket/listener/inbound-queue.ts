@@ -1,5 +1,9 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import type { ConversationRuntime, IncomingMessage } from "./types";
+import type {
+  ConversationRuntime,
+  IncomingMessage,
+  ListenerRuntime,
+} from "./types";
 
 export function getInboundClientMessageId(
   incoming: IncomingMessage,
@@ -17,6 +21,39 @@ export function getInboundClientMessageIds(
     ).client_message_id;
     return clientMessageId ? [clientMessageId] : [];
   });
+}
+
+function hasRequestScopedContext(incoming: IncomingMessage): boolean {
+  return (
+    incoming.requestScopedClientSkills !== undefined ||
+    incoming.requestScopedSecretEnv !== undefined
+  );
+}
+
+/**
+ * Drop queued capability-bearing inputs owned by a suspended connection.
+ * Ordinary queued messages may survive relay reconnects, but request-scoped
+ * skills and secrets belong to the exact connection generation that supplied
+ * them and must be freshly authorized after replacement.
+ */
+export function dropRequestScopedInputsForConnection(
+  listener: Pick<ListenerRuntime, "conversationRuntimes">,
+  connectionId: string,
+): void {
+  for (const runtime of listener.conversationRuntimes.values()) {
+    for (const [itemId, incoming] of runtime.queuedMessagesByItemId) {
+      if (
+        incoming.connectionId !== connectionId ||
+        !hasRequestScopedContext(incoming)
+      ) {
+        continue;
+      }
+      for (const clientMessageId of getInboundClientMessageIds(incoming)) {
+        runtime.acceptedInputDispositions.delete(clientMessageId);
+      }
+      runtime.queueRuntime.removeItem(itemId);
+    }
+  }
 }
 
 export function enqueueInboundUserMessage(

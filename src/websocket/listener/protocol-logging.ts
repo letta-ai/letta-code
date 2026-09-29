@@ -57,9 +57,7 @@ export function redactV2CommandForLogging(parsed: unknown): unknown {
 }
 
 export function redactRawV2FrameForLogging(raw: string): string {
-  return raw.includes('"secret_env"') || raw.includes('"client_skills"')
-    ? "[REDACTED request-scoped context]"
-    : raw;
+  return `[REDACTED unparseable frame; bytes=${Buffer.byteLength(raw, "utf8")}]`;
 }
 
 function summarizeInputPayload(payload: unknown): string[] {

@@ -191,12 +191,19 @@ describe("input protocol-inbound validators", () => {
     }
   });
 
-  test("redacts request-scoped context from malformed raw frames", () => {
-    const raw = '{"secret_env":{"BROWSER_CONTROL_KEY":"ephemeral-key"}';
-    expect(redactRawV2FrameForLogging(raw)).toBe(
-      "[REDACTED request-scoped context]",
+  test.each([
+    '{"secret_env":{"BROWSER_CONTROL_KEY":"ephemeral-key"}',
+    '{"secret\\u005fenv":{"BROWSER_CONTROL_KEY":"escaped-key"}',
+    '{"client\\u005fskills":[{"description":"escaped-secret"}]',
+    "not-json",
+  ])("never logs an unparseable raw frame: %s", (raw) => {
+    const logged = redactRawV2FrameForLogging(raw);
+    expect(logged).toBe(
+      `[REDACTED unparseable frame; bytes=${Buffer.byteLength(raw, "utf8")}]`,
     );
-    expect(redactRawV2FrameForLogging("not-json")).toBe("not-json");
+    expect(logged).not.toContain("ephemeral-key");
+    expect(logged).not.toContain("escaped-key");
+    expect(logged).not.toContain("escaped-secret");
   });
 
   test.each([
