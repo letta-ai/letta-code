@@ -40,6 +40,7 @@ import type {
   UmiLifecycleMessageBase,
 } from "./approval-classification-protocol";
 import type { BackgroundProcessSummary } from "./background-process-protocol";
+import type { RequestScopedClientSkill } from "./client-skill-protocol";
 import type { ConversationForkBody } from "./conversation-fork-protocol";
 import type * as CwdProtocol from "./cwd-protocol";
 import type {
@@ -88,6 +89,7 @@ import type {
 
 export type * from "./approval-classification-protocol";
 export type * from "./background-process-protocol";
+export type * from "./client-skill-protocol";
 export type * from "./cwd-protocol";
 export type * from "./external-tool-protocol";
 export type * from "./loop-status-protocol";
@@ -606,14 +608,12 @@ export type ApprovalResponseBody =
       error: string;
     };
 
-/**
- * Controller -> execution-environment commands.
- * In v2, the WS server accepts runtime-scoped chat/device commands plus
- * device capability commands (filesystem, memory, cron, terminals).
- */
+/** Controller -> execution-environment input. */
 export interface InputCreateMessagePayload {
   kind: "create_message";
   messages: Array<MessageCreate & { client_message_id?: string }>;
+  client_skills?: RequestScopedClientSkill[];
+  secret_env?: Record<string, string>;
   /** Handling policy for unsupported or failed image inputs. */
   image_failure_mode?: "strict" | "drop";
   /**

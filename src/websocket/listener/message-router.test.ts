@@ -382,14 +382,24 @@ describe("listener message router ownership handoff", () => {
     );
   });
 
-  test("preserves the acting user on a directly-owned input and deduplicates retries", async () => {
+  test("preserves request-scoped input on a directly-owned turn and deduplicates retries", async () => {
     const listener = createRuntime();
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
     const socket = new MockSocket();
     const sent: unknown[] = [];
     let receivedActingUserId: string | undefined;
+    let receivedRequestScopedClientSkills:
+      | IncomingMessage["requestScopedClientSkills"]
+      | undefined;
+    let receivedRequestScopedSecretEnv:
+      | IncomingMessage["requestScopedSecretEnv"]
+      | undefined;
+    let receivedNoCoalesce = false;
     const processIncomingMessage = mock(async (incoming: IncomingMessage) => {
       receivedActingUserId = incoming.actingUserId;
+      receivedRequestScopedClientSkills = incoming.requestScopedClientSkills;
+      receivedRequestScopedSecretEnv = incoming.requestScopedSecretEnv;
+      receivedNoCoalesce = incoming.noCoalesce === true;
     });
     setActiveRuntime(listener);
     const handleMessage = createListenerMessageHandler({
@@ -426,6 +436,14 @@ describe("listener message router ownership handoff", () => {
           },
           payload: {
             kind: "create_message",
+            client_skills: [
+              {
+                name: "temporary-skill",
+                description: "Request-only instructions",
+                location: "/temporary/SKILL.md",
+              },
+            ],
+            secret_env: { BROWSER_CONTROL_KEY: "ephemeral-key-123" },
             messages: [
               {
                 role: "user",
@@ -451,6 +469,14 @@ describe("listener message router ownership handoff", () => {
           },
           payload: {
             kind: "create_message",
+            client_skills: [
+              {
+                name: "temporary-skill",
+                description: "Request-only instructions",
+                location: "/temporary/SKILL.md",
+              },
+            ],
+            secret_env: { BROWSER_CONTROL_KEY: "ephemeral-key-123" },
             messages: [
               {
                 role: "user",
@@ -466,6 +492,17 @@ describe("listener message router ownership handoff", () => {
 
     expect(processIncomingMessage).toHaveBeenCalledTimes(1);
     expect(receivedActingUserId).toBe("cloud-user-1");
+    expect(receivedRequestScopedClientSkills).toEqual([
+      {
+        name: "temporary-skill",
+        description: "Request-only instructions",
+        location: "/temporary/SKILL.md",
+      },
+    ]);
+    expect(receivedNoCoalesce).toBe(true);
+    expect(receivedRequestScopedSecretEnv).toEqual({
+      BROWSER_CONTROL_KEY: "ephemeral-key-123",
+    });
     expect(sent).toContainEqual(
       expect.objectContaining({
         type: "input_accepted",
