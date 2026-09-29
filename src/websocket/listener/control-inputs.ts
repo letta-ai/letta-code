@@ -424,8 +424,11 @@ export async function handleAbortMessageInput(
       agentId: string,
       conversationId: string,
     ) => Promise<void>;
-    cancelConversationById: (conversationId: string) => Promise<void>;
     cancelRun: (agentId: string, runId: string) => Promise<void>;
+    cancelConversationRun: (
+      conversationId: string,
+      runId?: string | null,
+    ) => Promise<void>;
   }> = {},
 ): Promise<boolean> {
   const resolvedDeps = {
@@ -446,13 +449,27 @@ export async function handleAbortMessageInput(
           : conversationId;
       await getBackend().cancelConversation(cancelId);
     },
-    cancelConversationById: async (conversationId: string) => {
-      await getBackend().cancelConversation(conversationId);
-    },
     cancelRun: async (agentId: string, runId: string) => {
       const result = await getBackend().cancelRun(agentId, runId);
       if (result[runId] !== "cancelled") {
         throw new Error(`Backend did not cancel run ${runId}`);
+      }
+    },
+    cancelConversationRun: async (
+      conversationId: string,
+      runId?: string | null,
+    ) => {
+      const result = await getBackend().cancelConversationRun(
+        conversationId,
+        runId,
+      );
+      if (runId && result[runId] !== "cancelled") {
+        throw new Error(`Backend did not cancel run ${runId}`);
+      }
+      if (!runId && !Object.values(result).includes("cancelled")) {
+        throw new Error(
+          `Backend did not cancel the active run for ${conversationId}`,
+        );
       }
     },
     ...deps,
@@ -598,9 +615,9 @@ export async function handleAbortMessageInput(
   const cancelAgentId = scopedRuntime.agentId;
   const cancelRunId = interruptedRunId ?? params.command.run_id ?? null;
   // Target the interrupted run when possible so this abort can never select
-  // a replacement turn. Conversations with agent_id:null cancel by conversation
-  // id instead. Older backends may reject run-scoped cancellation; the lifecycle
-  // fence also makes the fallback safe.
+  // a replacement turn. For conversations with agent_id:null, resolve the
+  // backend's execution owner from that exact run instead of widening the abort
+  // to every active run in the conversation.
   const backendCancellation =
     cancelAgentId && cancelRunId
       ? resolvedDeps
@@ -613,7 +630,7 @@ export async function handleAbortMessageInput(
           )
       : cancelAgentId
         ? resolvedDeps.cancelConversation(cancelAgentId, cancelConversationId)
-        : resolvedDeps.cancelConversationById(cancelConversationId);
+        : resolvedDeps.cancelConversationRun(cancelConversationId, cancelRunId);
   void backendCancellation
     .catch(() => {
       // Fire-and-forget

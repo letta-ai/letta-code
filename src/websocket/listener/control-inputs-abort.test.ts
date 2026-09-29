@@ -187,10 +187,61 @@ async function exerciseCancellation(withAgentOwner: boolean): Promise<void> {
   }
 }
 
-test("abort cancels an agent_id:null conversation run and permits a follow-up", async () => {
+test("abort cancels the exact agent_id:null conversation run and permits a follow-up", async () => {
   await exerciseCancellation(false);
 });
 
 test("abort preserves run-scoped cancellation for an agent-owned conversation", async () => {
   await exerciseCancellation(true);
+});
+
+test("conversation-scoped run cancellation cannot select another conversation's run", async () => {
+  const directory = new TestDirectory();
+  const backend = new LocalBackend({
+    storageDir: directory.path,
+    memfsEnabled: false,
+    executor: new PendingThenSuccessfulExecutor(),
+  });
+  let firstConversationId: string | null = null;
+  let secondConversationId: string | null = null;
+  try {
+    const first = await backend.createEphemeralConversation({
+      model: "openai/gpt-5.6-luna",
+      system: "First conversation",
+    });
+    const second = await backend.createEphemeralConversation({
+      model: "openai/gpt-5.6-luna",
+      system: "Second conversation",
+    });
+    firstConversationId = first.id;
+    secondConversationId = second.id;
+    await backend.createConversationMessageStream(first.id, {
+      messages: [{ role: "user", content: "wait" }],
+    } as never);
+    await backend.createConversationMessageStream(second.id, {
+      messages: [{ role: "user", content: "complete later" }],
+    } as never);
+
+    const mismatchedCancellation = (await backend.cancelConversationRun(
+      first.id,
+      "local-run-2",
+    )) as unknown as Record<string, string>;
+    expect(mismatchedCancellation).toEqual({ "local-run-2": "failed" });
+    expect(await backend.retrieveRun("local-run-1")).toMatchObject({
+      status: "running",
+      conversation_id: first.id,
+    });
+    expect(await backend.retrieveRun("local-run-2")).toMatchObject({
+      status: "running",
+      conversation_id: second.id,
+    });
+  } finally {
+    if (firstConversationId) {
+      await backend.cancelConversation(firstConversationId);
+    }
+    if (secondConversationId) {
+      await backend.cancelConversation(secondConversationId);
+    }
+    directory.cleanup();
+  }
 });

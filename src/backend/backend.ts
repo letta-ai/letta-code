@@ -344,6 +344,11 @@ export interface Backend {
     runId: string,
   ): Promise<Awaited<ReturnType<APIClient["agents"]["messages"]["cancel"]>>>;
 
+  cancelConversationRun(
+    conversationId: string,
+    runId?: string | null,
+  ): Promise<Awaited<ReturnType<APIClient["agents"]["messages"]["cancel"]>>>;
+
   retrieveRun(
     runId: string,
     options?: RunRetrieveOptions,
@@ -659,6 +664,18 @@ export class APIBackend implements Backend {
   async cancelRun(agentId: string, runId: string) {
     const client = await this.getClient();
     return client.agents.messages.cancel(agentId, { run_ids: [runId] });
+  }
+
+  async cancelConversationRun(_conversationId: string, runId?: string | null) {
+    if (!runId) {
+      throw new Error("API backend requires a run id for scoped cancellation");
+    }
+    const run = await this.retrieveRun(runId);
+    const agentId = (run as unknown as { agent_id?: unknown }).agent_id;
+    if (typeof agentId !== "string" || agentId.length === 0) {
+      throw new Error(`Run ${runId} has no cancellation agent id`);
+    }
+    return this.cancelRun(agentId, runId);
   }
 
   async retrieveRun(runId: string, options?: RunRetrieveOptions) {
