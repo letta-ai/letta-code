@@ -3,12 +3,18 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildClientSkillsPayload } from "@/agent/client-skills";
-import { discoverSkills } from "@/agent/skills";
+import {
+  discoverSkills,
+  isSkillAvailableForAgent,
+  type Skill,
+} from "@/agent/skills";
 import { experimentManager } from "@/experiments/manager";
 import { settingsManager } from "@/settings-manager";
 import { readSkillContent } from "@/tools/impl/skill";
 
 const SKILL_ID = "curating-memory-palace";
+const CLOUD_AGENT_ID = "agent-123";
+const LOCAL_AGENT_ID = "agent-local-123";
 
 const originalHome = process.env.HOME;
 const originalUserProfile = process.env.USERPROFILE;
@@ -46,35 +52,54 @@ afterEach(async () => {
   }
 });
 
+async function palaceSkillOffer(agentId: string) {
+  const payload = await buildClientSkillsPayload({
+    agentId,
+    skillSources: ["bundled"],
+    attachedRepositories: [],
+  });
+  const discovery = await discoverSkills("/tmp/no-project-skills", agentId, {
+    sources: ["bundled"],
+  });
+  return {
+    listed: payload.availableSkills.some((skill) => skill.name === SKILL_ID),
+    discovered: discovery.skills.some((skill) => skill.id === SKILL_ID),
+    content: readSkillContent(SKILL_ID, "/tmp/no-project-skills", agentId, {
+      attachedRepositories: [],
+    }),
+  };
+}
+
 describe("curating-memory-palace skill", () => {
-  test("is listed and readable for cloud and local agents with the memory_palace experiment off", async () => {
+  test("is listed and readable for Cloud agents with the memory_palace experiment off", async () => {
     expect(experimentManager.isEnabled("memory_palace")).toBe(false);
 
-    for (const agentId of ["agent-123", "agent-local-123"]) {
-      const payload = await buildClientSkillsPayload({
-        agentId,
-        skillSources: ["bundled"],
-        attachedRepositories: [],
-      });
-      expect(payload.availableSkills.some((s) => s.name === SKILL_ID)).toBe(
-        true,
-      );
+    const offer = await palaceSkillOffer(CLOUD_AGENT_ID);
 
-      const { content } = await readSkillContent(
-        SKILL_ID,
-        "/tmp/no-project-skills",
-        agentId,
-        { attachedRepositories: [] },
-      );
-      expect(content).toContain("palace/MEMORY.md");
-      expect(content).toContain("palace-action");
+    expect(offer.listed).toBe(true);
+    expect(offer.discovered).toBe(true);
+    const { content } = await offer.content;
+    expect(content).toContain("palace/MEMORY.md");
+    expect(content).toContain("palace-action");
+  });
 
-      const discovery = await discoverSkills(
-        "/tmp/no-project-skills",
-        agentId,
-        { sources: ["bundled"] },
-      );
-      expect(discovery.skills.some((s) => s.id === SKILL_ID)).toBe(true);
-    }
+  test("is not offered to local agents", async () => {
+    const offer = await palaceSkillOffer(LOCAL_AGENT_ID);
+
+    expect(offer.listed).toBe(false);
+    expect(offer.discovered).toBe(false);
+    await expect(offer.content).rejects.toThrow("not found");
+  });
+
+  test("keeps a local agent's own copy of the skill", () => {
+    const skill: Skill = {
+      id: SKILL_ID,
+      name: SKILL_ID,
+      description: "Project copy",
+      path: "/tmp/project/SKILL.md",
+      source: "project",
+    };
+
+    expect(isSkillAvailableForAgent(skill, LOCAL_AGENT_ID)).toBe(true);
   });
 });
