@@ -379,13 +379,13 @@
 ## Indexes
 
 - [French (209 pages)](https://code.claude.com/docs/_llms/fr.md): Documentation for French.
-- [German (207 pages)](https://code.claude.com/docs/_llms/de.md): Documentation for German.
+- [German (210 pages)](https://code.claude.com/docs/_llms/de.md): Documentation for German.
 - [Italian (209 pages)](https://code.claude.com/docs/_llms/it.md): Documentation for Italian.
 - [Japanese (209 pages)](https://code.claude.com/docs/_llms/jp.md): Documentation for Japanese.
 - [Spanish (209 pages)](https://code.claude.com/docs/_llms/es.md): Documentation for Spanish.
-- [Korean (209 pages)](https://code.claude.com/docs/_llms/ko.md): Documentation for Korean.
+- [Korean (210 pages)](https://code.claude.com/docs/_llms/ko.md): Documentation for Korean.
 - [Simplified Chinese (210 pages)](https://code.claude.com/docs/_llms/zh-cn.md): Documentation for Simplified Chinese.
-- [Traditional Chinese (209 pages)](https://code.claude.com/docs/_llms/zh-tw.md): Documentation for Traditional Chinese.
+- [Traditional Chinese (210 pages)](https://code.claude.com/docs/_llms/zh-tw.md): Documentation for Traditional Chinese.
 - [Russian (209 pages)](https://code.claude.com/docs/_llms/ru.md): Documentation for Russian.
 - [Indonesian (209 pages)](https://code.claude.com/docs/_llms/id.md): Documentation for Indonesian.
 - [Brazilian Portuguese (208 pages)](https://code.claude.com/docs/_llms/pt-br.md): Documentation for Brazilian Portuguese.

@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "candidate_id": "claude@2.1.284:docs:dd317655719be28a048b8f9b686232e03b4c23971d836e7053e0ae663c213dbf:runtime:d9f80109929bb3c938615765fb151861cad568af7e11023210d79daffcafc03a",
+  "candidate_id": "claude@2.1.284:docs:bb5fcc0863a48517ab41f21050d43d0669073bf18414eab95b2306af82ec5774:runtime:d9f80109929bb3c938615765fb151861cad568af7e11023210d79daffcafc03a",
   "package_version": "2.1.284",
   "npm_integrity": "sha512-IuENsoLa+Y5fx5VaP0Md3n5UO7aYxjbFE/iydSDw6tMo2171oaxaaBa9oIepPG9NILd1owSx74ozsqAkTbEOjw==",
   "npm_published_at": "2026-09-28T17:11:59.750Z",
@@ -14,8 +14,8 @@
   },
   "docs": {
     "index_url": "https://code.claude.com/docs/llms.txt",
-    "index_hash": "f60ec0edc7265105a08bb32595db1bb0a1a1fd2af91d7922fc1e0d54caa0cadf",
-    "full_scan": true,
+    "index_hash": "10171cbcc503ecef415dcc7fe2372dc207bc5afb407739b77fc4a33a793e2f9e",
+    "full_scan": false,
     "scanned_at": "2026-09-29T02:36:38.919Z",
     "pages": {
       "https://code.claude.com/docs/_llms/de.md": {
@@ -1351,7 +1351,7 @@
         "source_path": "sources/raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md"
       }
     },
-    "digest": "dd317655719be28a048b8f9b686232e03b4c23971d836e7053e0ae663c213dbf"
+    "digest": "bb5fcc0863a48517ab41f21050d43d0669073bf18414eab95b2306af82ec5774"
   },
   "runtime": {
     "probe_contract_version": 2,
@@ -1571,7 +1571,7 @@
           {
             "name": "TaskCreate",
             "input": {
-              "description": "Probe task for exercising task tools",
+              "description": "Probe task for exercising task tool metadata operations.",
               "metadata": {
                 "keep": "yes",
                 "probe": "remove"
@@ -1622,7 +1622,7 @@
         "tool_results": [
           "Task #1 created successfully: probe-task",
           "Updated task #1 metadata",
-          "Task #1: probe-task\nStatus: pending\nDescription: Probe task for exercising task tools",
+          "Task #1: probe-task\nStatus: pending\nDescription: Probe task for exercising task tool metadata operations.",
           "Updated task #1 deleted",
           "Task not found",
           "No tasks found"
@@ -1633,8 +1633,8 @@
     ],
     "digest": "d9f80109929bb3c938615765fb151861cad568af7e11023210d79daffcafc03a"
   },
-  "fetched_at": "2026-09-29T02:37:47.060Z",
-  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/36513368298",
-  "state_commit_parent": "d0ed217bc9775f43afc69fb8bfe7382f9ecc9321",
-  "analysis_parent_sha": "d0ed217bc9775f43afc69fb8bfe7382f9ecc9321"
+  "fetched_at": "2026-09-29T04:32:33.050Z",
+  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/36522000039",
+  "state_commit_parent": "88daf2eca76a9413535959d0f78372a596d74582",
+  "analysis_parent_sha": "88daf2eca76a9413535959d0f78372a596d74582"
 }
