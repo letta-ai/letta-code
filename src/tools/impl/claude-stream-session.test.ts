@@ -70,10 +70,11 @@ function flagValue(args: string[], flag: string): string | undefined {
 }
 
 describe("Claude worker launch args", () => {
-  test("loads only worker tools and no user-global MCP servers", () => {
+  test("keeps the coding toolset and drops user-global MCP servers", () => {
     const args = buildClaudeStreamArgs({ sessionId: SESSION_ID });
-    expect(flagValue(args, "--tools")).toBe(
-      "Bash,Edit,Write,Read,Glob,Grep,WebFetch,WebSearch,Skill",
+    expect(args).not.toContain("--tools");
+    expect(flagValue(args, "--disallowed-tools")).toBe(
+      "CronCreate,CronDelete,CronList,ScheduleWakeup,PushNotification,RemoteTrigger",
     );
     expect(flagValue(args, "--allowed-tools")).toBe(
       "Bash,Edit,Write,Read,Glob,Grep,WebFetch,WebSearch",
