@@ -96,7 +96,8 @@ description: Decisions and blockers waiting on you.
 
 ## Writing rules
 
-- Lead with the point. An item is a short bold headline plus one or two sentences; what you need to act goes in the button's instruction.
+- Lead with the point. An item is a short bold headline plus one sentence, two at most; what you need to act goes in the button's instruction.
+- Never paste a raw URL into the text. Name the thing and link the name, such as [LET-13139](https://linear.app/...), and never use a link as the headline.
 - Write in your own voice to the user: "I" for you, "you" for the user.
 - Write absolute dates, with a time zone when it matters, such as "Sep 25, 5pm PT". Never write "today" or "tomorrow": the Palace is read days later.
 - Distinguish what the user said, what you infer, and what you propose. Do not present guesses as facts or proposals as work already underway.
