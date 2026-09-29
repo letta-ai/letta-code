@@ -61,7 +61,7 @@ async function waitFor(
   }
 }
 
-async function exerciseCancellation(agentFree: boolean): Promise<void> {
+async function exerciseCancellation(withAgentOwner: boolean): Promise<void> {
   const directory = new TestDirectory();
   const executor = new PendingThenSuccessfulExecutor();
   const backend = new LocalBackend({
@@ -75,21 +75,21 @@ async function exerciseCancellation(agentFree: boolean): Promise<void> {
 
   let conversationId: string | null = null;
   try {
-    const agent = agentFree
-      ? null
-      : await backend.createAgent({
+    const agent = withAgentOwner
+      ? await backend.createAgent({
           name: "abort comparator",
           model: "openai/gpt-5.6-luna",
           system: "Cancellation test",
           tools: [],
           include_base_tools: false,
-        } as never);
-    const conversation = agentFree
-      ? await backend.createEphemeralConversation({
+        } as never)
+      : null;
+    const conversation = withAgentOwner
+      ? await backend.createConversation({ agent_id: agent?.id } as never)
+      : await backend.createEphemeralConversation({
           model: "openai/gpt-5.6-luna",
           system: "Cancellation test",
-        })
-      : await backend.createConversation({ agent_id: agent?.id } as never);
+        });
     conversationId = conversation.id;
     const stream = await backend.createConversationMessageStream(
       conversation.id,
@@ -187,10 +187,10 @@ async function exerciseCancellation(agentFree: boolean): Promise<void> {
   }
 }
 
-test("agent-free abort cancels the backend run and permits a follow-up", async () => {
-  await exerciseCancellation(true);
+test("abort cancels an agent_id:null conversation run and permits a follow-up", async () => {
+  await exerciseCancellation(false);
 });
 
-test("agent-backed abort preserves run-scoped cancellation and permits a follow-up", async () => {
-  await exerciseCancellation(false);
+test("abort preserves run-scoped cancellation for an agent-owned conversation", async () => {
+  await exerciseCancellation(true);
 });

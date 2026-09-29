@@ -598,9 +598,9 @@ export async function handleAbortMessageInput(
   const cancelAgentId = scopedRuntime.agentId;
   const cancelRunId = interruptedRunId ?? params.command.run_id ?? null;
   // Target the interrupted run when possible so this abort can never select
-  // a replacement turn. Agent-free runtimes have no public agent id, so they
-  // cancel by conversation id instead. Older backends may reject run-scoped
-  // cancellation; the lifecycle fence also makes the fallback safe.
+  // a replacement turn. Conversations with agent_id:null cancel by conversation
+  // id instead. Older backends may reject run-scoped cancellation; the lifecycle
+  // fence also makes the fallback safe.
   const backendCancellation =
     cancelAgentId && cancelRunId
       ? resolvedDeps
