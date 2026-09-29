@@ -430,4 +430,51 @@ describe("listener interrupt queue handoff", () => {
     cancellation.resolve();
     await waitFor(() => runtime.turnLifecycle.kind === "idle");
   });
+
+  test("releases the cancellation fence when exact API cancellation is unavailable", async () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, null, "conv-api");
+    const socket = createOpenTransport();
+    const lease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+    });
+    runtime.turnLifecycle.setRunId(lease, "run-api");
+    const cancelConversationRun = mock(async () => {
+      throw new Error("exact API cancellation is unavailable");
+    });
+    setActiveRuntime(listener);
+
+    expect(
+      await handleAbortMessageInput(
+        listener,
+        {
+          command: {
+            type: "abort_message",
+            runtime: {
+              agent_id: null,
+              conversation_id: "conv-api",
+            },
+            run_id: "run-api",
+          },
+          socket,
+          opts: {} as StartListenerOptions,
+          processQueuedTurn: async () => {},
+        },
+        { cancelConversationRun },
+      ),
+    ).toBe(true);
+
+    expect(
+      finishListenerTurn(runtime, lease, {
+        stopReason: "cancelled",
+        socket,
+        runId: "run-api",
+        agentId: null,
+        conversationId: "conv-api",
+      }).finished,
+    ).toBe(true);
+    await waitFor(() => runtime.turnLifecycle.kind === "idle");
+    expect(cancelConversationRun).toHaveBeenCalledTimes(1);
+  });
 });
