@@ -424,6 +424,7 @@ export async function handleAbortMessageInput(
       agentId: string,
       conversationId: string,
     ) => Promise<void>;
+    cancelConversationById: (conversationId: string) => Promise<void>;
     cancelRun: (agentId: string, runId: string) => Promise<void>;
   }> = {},
 ): Promise<boolean> {
@@ -444,6 +445,9 @@ export async function handleAbortMessageInput(
           ? agentId
           : conversationId;
       await getBackend().cancelConversation(cancelId);
+    },
+    cancelConversationById: async (conversationId: string) => {
+      await getBackend().cancelConversation(conversationId);
     },
     cancelRun: async (agentId: string, runId: string) => {
       const result = await getBackend().cancelRun(agentId, runId);
@@ -488,7 +492,7 @@ export async function handleAbortMessageInput(
   }
 
   const cancellation = scopedRuntime.turnLifecycle.requestCancellation({
-    waitForExternalSettlement: hasActiveTurn && Boolean(scopedRuntime.agentId),
+    waitForExternalSettlement: hasActiveTurn,
   });
   // Interrupt semantics: the current turn stops and the user's queued messages
   // park until resume_queue or the user's next message. System items (task
@@ -592,12 +596,13 @@ export async function handleAbortMessageInput(
 
   const cancelConversationId = scopedRuntime.conversationId;
   const cancelAgentId = scopedRuntime.agentId;
-  if (cancelAgentId) {
-    const cancelRunId = interruptedRunId ?? params.command.run_id ?? null;
-    // Target the interrupted run when possible so this abort can never select
-    // a replacement turn. Older backends may reject run-scoped cancellation;
-    // the lifecycle fence also makes the conversation-wide fallback safe.
-    const backendCancellation = cancelRunId
+  const cancelRunId = interruptedRunId ?? params.command.run_id ?? null;
+  // Target the interrupted run when possible so this abort can never select
+  // a replacement turn. Agent-free runtimes have no public agent id, so they
+  // cancel by conversation id instead. Older backends may reject run-scoped
+  // cancellation; the lifecycle fence also makes the fallback safe.
+  const backendCancellation =
+    cancelAgentId && cancelRunId
       ? resolvedDeps
           .cancelRun(cancelAgentId, cancelRunId)
           .catch(() =>
@@ -606,28 +611,29 @@ export async function handleAbortMessageInput(
               cancelConversationId,
             ),
           )
-      : resolvedDeps.cancelConversation(cancelAgentId, cancelConversationId);
-    void backendCancellation
-      .catch(() => {
-        // Fire-and-forget
-      })
-      .finally(() => {
-        if (!cancellation.lease) {
-          return;
-        }
-        const settlement = scopedRuntime.turnLifecycle.settleCancellation(
-          cancellation.lease,
+      : cancelAgentId
+        ? resolvedDeps.cancelConversation(cancelAgentId, cancelConversationId)
+        : resolvedDeps.cancelConversationById(cancelConversationId);
+  void backendCancellation
+    .catch(() => {
+      // Fire-and-forget
+    })
+    .finally(() => {
+      if (!cancellation.lease) {
+        return;
+      }
+      const settlement = scopedRuntime.turnLifecycle.settleCancellation(
+        cancellation.lease,
+      );
+      if (settlement.released) {
+        resolvedDeps.scheduleQueuePump(
+          scopedRuntime,
+          params.socket,
+          params.opts as StartListenerOptions,
+          params.processQueuedTurn,
         );
-        if (settlement.released) {
-          resolvedDeps.scheduleQueuePump(
-            scopedRuntime,
-            params.socket,
-            params.opts as StartListenerOptions,
-            params.processQueuedTurn,
-          );
-        }
-      });
-  }
+      }
+    });
 
   resolvedDeps.scheduleQueuePump(
     scopedRuntime,
