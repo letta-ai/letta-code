@@ -76,10 +76,14 @@ export async function drainTurnStreamWithEmission(
         runtime.turnLifecycle.setRunId(turnLease, maybeRunId);
         turnCorrelation.observeRun(maybeRunId);
         if (!runIdSent) {
-          recordListenerWork(runtime, {
-            runId: maybeRunId,
-            actingUserId: getStreamRequestContext(stream)?.actingUserId,
-          });
+          recordListenerWork(
+            runtime,
+            {
+              runId: maybeRunId,
+              actingUserId: getStreamRequestContext(stream)?.actingUserId,
+            },
+            "run_observed",
+          );
           runIdSent = true;
           msgRunIds.push(maybeRunId);
           emitLoopStatusUpdate(socket, runtime, {

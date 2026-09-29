@@ -517,6 +517,114 @@ describe("listener turn lifecycle integration", () => {
     expect(sendApprovalContinuation).toHaveBeenCalledTimes(0);
   });
 
+  test("a failed pre-execution state write cannot run or submit an approved tool", async () => {
+    const runtime = getOrCreateScopedRuntime(
+      createRuntime(),
+      "agent-1",
+      "conv-1",
+    );
+    const turnLease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+      initialStatus: "PROCESSING_API_RESPONSE",
+    });
+    const approval = {
+      toolCallId: "call-1",
+      toolName: "MessageChannel",
+      toolArgs: "{}",
+    };
+    const diskFull = Object.assign(new Error("disk full"), { code: "ENOSPC" });
+    const executeApprovalBatch = mock(async () => []);
+    const sendApprovalContinuation = mock(async () => {
+      throw new Error("a failed write must not submit approval results");
+    });
+    const sentPayloads: string[] = [];
+
+    await expect(
+      startQuestionApproval(runtime, turnLease, {
+        approvals: [approval],
+        socket: createOpenTransport(sentPayloads),
+        processOwnedTurn: true,
+        dependencies: {
+          classifyApprovals: async () => ({
+            autoAllowed: [{ approval, parsedArgs: {}, context: null }],
+            autoDenied: [],
+            needsUserInput: [],
+          }),
+          recordListenerWork: () => {
+            throw diskFull;
+          },
+          executeApprovalBatch,
+          sendApprovalContinuation,
+        } as never,
+      }),
+    ).rejects.toBe(diskFull);
+    expect(executeApprovalBatch).not.toHaveBeenCalled();
+    expect(sendApprovalContinuation).not.toHaveBeenCalled();
+    expect(
+      sentPayloads.some((payload) => payload.includes("client_tool_start")),
+    ).toBe(false);
+  });
+
+  test("a failed post-execution state write leaves the tool result unsubmitted", async () => {
+    const runtime = getOrCreateScopedRuntime(
+      createRuntime(),
+      "agent-1",
+      "conv-1",
+    );
+    const turnLease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+      initialStatus: "PROCESSING_API_RESPONSE",
+    });
+    const approval = {
+      toolCallId: "call-1",
+      toolName: "MessageChannel",
+      toolArgs: "{}",
+    };
+    const diskFull = Object.assign(new Error("disk full"), { code: "ENOSPC" });
+    const phases: string[] = [];
+    const executeApprovalBatch = mock(async () => [
+      {
+        type: "tool" as const,
+        tool_call_id: approval.toolCallId,
+        status: "success" as const,
+        tool_return: "done",
+      },
+    ]);
+    const sendApprovalContinuation = mock(async () => {
+      throw new Error("a failed write must not submit approval results");
+    });
+
+    await expect(
+      startQuestionApproval(runtime, turnLease, {
+        approvals: [approval],
+        socket: createOpenTransport(),
+        processOwnedTurn: true,
+        dependencies: {
+          classifyApprovals: async () => ({
+            autoAllowed: [{ approval, parsedArgs: {}, context: null }],
+            autoDenied: [],
+            needsUserInput: [],
+          }),
+          recordListenerWork: (
+            _runtime: unknown,
+            _update: unknown,
+            phase: string,
+          ) => {
+            phases.push(phase);
+            if (phase === "after_tool_execution") throw diskFull;
+          },
+          executeApprovalBatch,
+          sendApprovalContinuation,
+        } as never,
+      }),
+    ).rejects.toBe(diskFull);
+    expect(phases).toEqual(["before_tool_execution", "after_tool_execution"]);
+    expect(executeApprovalBatch).toHaveBeenCalledTimes(1);
+    expect(sendApprovalContinuation).not.toHaveBeenCalled();
+  });
+
   test("a text-only turn becomes ready at its end-turn boundary", () => {
     const listener = createRuntime();
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");

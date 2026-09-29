@@ -38,6 +38,53 @@ export function trackBoundaryError(options: BoundaryErrorOptions): void {
   );
 }
 
+export function reportListenerStateWriteFailure(options: {
+  phase: "run_observed" | "before_tool_execution" | "after_tool_execution";
+  operation: "mkdir" | "write" | "rename" | "cleanup";
+  error: unknown;
+  agentId: string;
+  conversationId: string;
+  runId?: string;
+  toolCallIds: string[];
+}): void {
+  // Filesystem exceptions include private paths. Only forward bounded codes and
+  // opaque correlation IDs, never the exception message, stack, or record.
+  try {
+    const safeId = (id: string | undefined) =>
+      id && /^[a-zA-Z0-9_-]{1,128}$/.test(id) ? id : undefined;
+    const rawCode = (options.error as NodeJS.ErrnoException | null)?.code;
+    const errorCode =
+      typeof rawCode === "string" && /^[A-Z0-9_]{1,32}$/.test(rawCode)
+        ? rawCode
+        : "UNKNOWN";
+    telemetry.trackError(
+      "listener_state_write_failed",
+      "Listener state write failed",
+      JSON.stringify({
+        boundary: "listener_interrupted_turn_record",
+        phase: options.phase,
+        operation: options.operation,
+        error_code: errorCode,
+        agent_id: safeId(options.agentId),
+        conversation_id: safeId(options.conversationId),
+        tool_call_ids: options.toolCallIds
+          .map(safeId)
+          .filter((id) => id !== undefined)
+          .slice(0, 10),
+        tool_call_count: options.toolCallIds.length,
+      }),
+      {
+        runId: safeId(options.runId),
+        omitDebugLogTail: true,
+      },
+    );
+    // Flush promptly if the sandbox may exit. The original error is not delayed.
+    void telemetry.flush().catch(() => {});
+  } catch {
+    // A diagnostic must never mask the original filesystem failure.
+  }
+}
+
 export function trackEndTurnNoAssistant(params: {
   fallbackKind: "reasoning" | "tool_call";
   modelHandle?: string;

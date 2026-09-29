@@ -8,6 +8,7 @@ import {
   type TelemetrySurface,
   telemetry,
 } from "@/telemetry";
+import { reportListenerStateWriteFailure } from "@/telemetry/error-reporting";
 
 type TelemetryTestState = {
   events: unknown[];
@@ -215,6 +216,50 @@ describe("telemetry flush auth", () => {
 
     telemetry.trackError("test_error", "test message", "test_context");
     expect(telemetryState.events).toHaveLength(0);
+  });
+
+  test("listener write failures send a payload-free error event to Cloud", async () => {
+    telemetryState.isCloudUser = () => true;
+    const fetchMock = mock(
+      async (_url: string | URL | Request, init?: RequestInit) => {
+        const payload = JSON.parse(String(init?.body));
+        const event = payload.events[0];
+        expect(event.type).toBe("error");
+        expect(event.data).toMatchObject({
+          error_type: "listener_state_write_failed",
+          run_id: "run-test",
+        });
+        expect(JSON.parse(event.data.context)).toMatchObject({
+          phase: "before_tool_execution",
+          operation: "write",
+          error_code: "ENOSPC",
+          agent_id: "agent-test",
+          conversation_id: "conv-test",
+          tool_call_ids: ["call-test"],
+        });
+        expect(event.data.debug_log_tail).toBeUndefined();
+        expect(JSON.stringify(event.data)).not.toContain("/private/");
+        return new Response(null, { status: 200 });
+      },
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    settingsManager.getSettingsWithSecureTokens = mock(async () => ({
+      env: { LETTA_API_KEY: "settings-key" },
+    })) as unknown as typeof settingsManager.getSettingsWithSecureTokens;
+
+    reportListenerStateWriteFailure({
+      phase: "before_tool_execution",
+      operation: "write",
+      error: Object.assign(new Error("/private/state.json"), {
+        code: "ENOSPC",
+      }),
+      agentId: "agent-test",
+      conversationId: "conv-test",
+      runId: "run-test",
+      toolCallIds: ["call-test"],
+    });
+    await telemetry.flush();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   test("self-hosted users still send usage telemetry", async () => {

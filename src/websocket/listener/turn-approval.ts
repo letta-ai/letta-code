@@ -181,6 +181,7 @@ export async function handleApprovalStop(params: {
     ensureSecretsHydrated?: typeof ensureSecretsHydratedForAgent;
     sendApprovalContinuation?: typeof sendApprovalContinuationWithRetry;
     waitForApprovalTransportOpen?: WaitForApprovalTransportOpen;
+    recordListenerWork?: typeof recordListenerWork;
   };
 }): Promise<ApprovalBranchResult> {
   const {
@@ -213,6 +214,7 @@ export async function handleApprovalStop(params: {
     dependencies?.sendApprovalContinuation ?? sendApprovalContinuationWithRetry;
   const waitForTransportOpen =
     dependencies?.waitForApprovalTransportOpen ?? waitForApprovalTransportOpen;
+  const recordWork = dependencies?.recordListenerWork ?? recordListenerWork;
 
   if (approvals.length === 0) {
     return {
@@ -473,11 +475,15 @@ export async function handleApprovalStop(params: {
   lastExecutingToolCallIds = approvedDecisions.map(
     (decision) => decision.approval.toolCallId,
   );
-  recordListenerWork(runtime, {
-    toolCallIds: decisions.map((decision) => decision.approval.toolCallId),
-    results: [],
-    requestOtid: crypto.randomUUID(),
-  });
+  recordWork(
+    runtime,
+    {
+      toolCallIds: decisions.map((decision) => decision.approval.toolCallId),
+      results: [],
+      requestOtid: crypto.randomUUID(),
+    },
+    "before_tool_execution",
+  );
   runtime.turnLifecycle.setExecutingToolCallIds(
     turnLease,
     lastExecutingToolCallIds,
@@ -600,7 +606,11 @@ export async function handleApprovalStop(params: {
     conversationId,
   });
   lastExecutionResults = persistedExecutionResults;
-  recordListenerWork(runtime, { results: persistedExecutionResults });
+  recordWork(
+    runtime,
+    { results: persistedExecutionResults },
+    "after_tool_execution",
+  );
   emitInterruptToolReturnMessage(
     socket,
     runtime,
