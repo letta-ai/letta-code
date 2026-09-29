@@ -91,15 +91,41 @@ const child = pty.spawn(config.executable, config.args, {
   cwd: config.cwd,
   env: process.env,
 });
-if (typeof process.send === "function") {
-  process.send({ type: "pty_pid", pid: child.pid });
+let pendingExitCode = null;
+let pidReported = typeof process.send !== "function";
+const reportPid = () => {
+  if (typeof process.send !== "function") return;
+  process.send({ type: "pty_pid", pid: child.pid }, () => {
+    pidReported = true;
+    if (pendingExitCode !== null) process.exit(pendingExitCode);
+  });
+};
+const pidReportDelayMs = Number(config.pidReportDelayMs || 0);
+if (Number.isFinite(pidReportDelayMs) && pidReportDelayMs > 0) {
+  setTimeout(reportPid, pidReportDelayMs);
+} else {
+  reportPid();
 }
 child.onData((data) => process.stdout.write(data));
-child.onExit(({ exitCode }) => process.exit(typeof exitCode === "number" ? exitCode : 1));
+child.onExit(({ exitCode }) => {
+  const code = typeof exitCode === "number" ? exitCode : 1;
+  if (pidReported) process.exit(code);
+  pendingExitCode = code;
+});
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (data) => child.write(data));
 process.on("SIGTERM", () => child.kill("SIGTERM"));
 process.on("SIGINT", () => child.kill("SIGINT"));
+if (process.platform !== "win32") {
+  process.on("SIGUSR2", () => {
+    try {
+      process.kill(-child.pid, "SIGKILL");
+    } catch {
+      child.kill("SIGKILL");
+    }
+    process.exit(137);
+  });
+}
 `;
 
 const FORCE_KILL_GRACE_MS = 2000;
@@ -275,7 +301,12 @@ function spawnPtyBridgeProcess(
     [
       "-e",
       NODE_PTY_BRIDGE_SCRIPT,
-      JSON.stringify({ executable, args, cwd: options.cwd }),
+      JSON.stringify({
+        executable,
+        args,
+        cwd: options.cwd,
+        pidReportDelayMs: options.env.LETTA_TEST_PTY_PID_REPORT_DELAY_MS,
+      }),
     ],
     {
       cwd: options.cwd,
@@ -320,6 +351,18 @@ function spawnPtyBridgeProcess(
           process.kill(-ptyProcessGroupId, signal as NodeJS.Signals);
         } catch {
           // The PTY group may already be gone. The bridge still needs cleanup.
+        }
+      } else if (
+        process.platform !== "win32" &&
+        childProcess.exitCode === null
+      ) {
+        try {
+          // The bridge knows the forkpty PID synchronously, even before its IPC
+          // report reaches this process. Let it kill that group before exiting.
+          childProcess.kill("SIGUSR2");
+          return;
+        } catch {
+          // Fall through to bridge-tree cleanup if signaling races with exit.
         }
       }
       killChildProcessTree(childProcess, signal);

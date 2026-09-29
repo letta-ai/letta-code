@@ -214,6 +214,61 @@ describe("shared shell process", () => {
     5_000,
   );
 
+  test.skipIf(process.platform === "win32" || !process.versions.bun)(
+    "transient cleanup beats delayed Bun PTY pid delivery",
+    async () => {
+      const fixtureDir = mkdtempSync(join(tmpdir(), "bun-pty-pid-race-"));
+      const actionFile = join(fixtureDir, "action.txt");
+      const readyFile = join(fixtureDir, "ready.txt");
+      const childScript = join(fixtureDir, "delayed-child.cjs");
+      writeFileSync(
+        childScript,
+        `const fs = require("node:fs"); process.on("SIGHUP", () => {}); fs.writeFileSync(${JSON.stringify(readyFile)}, "ready"); setTimeout(() => fs.writeFileSync(${JSON.stringify(actionFile)}, "leaked"), 600); setInterval(() => {}, 1000);`,
+      );
+      const command = `${JSON.stringify(process.execPath)} ${JSON.stringify(childScript)} >/dev/null 2>&1 & wait`;
+      const running = startShellProcess(["bash", "-c", command], {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          LETTA_TEST_PTY_PID_REPORT_DELAY_MS: "1000",
+        },
+        timeoutMs: 2_000,
+        tty: true,
+      });
+      const processId = "bun-pty-delayed-pid-test";
+
+      try {
+        backgroundProcesses.set(processId, {
+          process: running.process,
+          command,
+          status: "running",
+          exitCode: null,
+          transientExecutionContextId: "ctx-bun-pty-delayed-pid",
+        });
+        const readyDeadline = Date.now() + 750;
+        while (!existsSync(readyFile) && Date.now() < readyDeadline) {
+          await Bun.sleep(10);
+        }
+        expect(existsSync(readyFile)).toBe(true);
+
+        releaseTransientBackgroundProcesses("ctx-bun-pty-delayed-pid");
+        await running.completion;
+        await Bun.sleep(750);
+
+        expect(existsSync(actionFile)).toBe(false);
+      } finally {
+        try {
+          running.process.killProcessGroup?.("SIGKILL");
+        } catch {
+          // Process group may already be gone.
+        }
+        backgroundProcesses.delete(processId);
+        rmSync(fixtureDir, { recursive: true, force: true });
+      }
+    },
+    5_000,
+  );
+
   test("can stream output without retaining a second copy", async () => {
     let streamed = "";
     const running = startShellProcess(
