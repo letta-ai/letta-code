@@ -106,8 +106,9 @@ for (const runtime of ["bun", "node"]) {
 
     test("malformed early frames cannot enter startup capture through unparseable-frame logs", () => {
       const [, content] = expectSealed(run("malformed"));
-      expect(content).toContain("MALFORMED_PRIVATE");
+      expect(content).not.toContain("MALFORMED_PRIVATE");
       expect(content).toContain("_ws_unparseable");
+      expect(content).toContain("[REDACTED unparseable frame; bytes=");
     });
 
     test("ready frames with extra fields seal before their lifecycle event log", () => {

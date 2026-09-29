@@ -104,7 +104,10 @@ describe("listener lifecycle frames", () => {
       {
         direction: "recv",
         label: "lifecycle",
-        event: { type: "_ws_unparseable", raw: "not-json" },
+        event: {
+          type: "_ws_unparseable",
+          raw: "[REDACTED unparseable frame; bytes=8]",
+        },
       },
     ]);
   });
