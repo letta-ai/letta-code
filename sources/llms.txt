@@ -42,7 +42,7 @@
 #### Claude Code in the cloud
 
 - [Get started with Claude Code in the cloud](https://code.claude.com/docs/en/web-quickstart.md): Run Claude Code in the cloud from your browser or phone. Connect a GitHub repository, submit a task, and review the PR without local setup.
-- [Use Claude Code in the cloud](https://code.claude.com/docs/en/claude-code-on-the-web.md): Run Claude Code sessions in the cloud from your browser, phone, desktop app, or terminal, move them with --cloud and --teleport, and auto-fix pull requests.
+- [Use Claude Code in the cloud](https://code.claude.com/docs/en/claude-code-on-the-web.md): Run Claude Code sessions in the cloud from your browser, phone, Desktop app, or terminal, move them with `--cloud` and `--teleport`, and auto-fix pull requests.
 - [Automate work with routines](https://code.claude.com/docs/en/routines.md): Put Claude Code on autopilot. Define routines that run on a schedule, trigger on API calls, or react to GitHub events from cloud infrastructure.
 - [Find bugs with ultrareview](https://code.claude.com/docs/en/ultrareview.md): Run a deep, multi-agent code review in the cloud with /code-review ultra to find and verify bugs before you merge.
 

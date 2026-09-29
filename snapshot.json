@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "candidate_id": "claude@2.1.284:docs:569f63788a339abe9f81c0605b46a0f7dd4c1b5bdc261338dab3c5c5b8a7c583:runtime:d9f80109929bb3c938615765fb151861cad568af7e11023210d79daffcafc03a",
+  "candidate_id": "claude@2.1.284:docs:ac5756e94a3661d45d3acdf275bb914f143f5b98c83d7e15153a471cf8944424:runtime:d9f80109929bb3c938615765fb151861cad568af7e11023210d79daffcafc03a",
   "package_version": "2.1.284",
   "npm_integrity": "sha512-IuENsoLa+Y5fx5VaP0Md3n5UO7aYxjbFE/iydSDw6tMo2171oaxaaBa9oIepPG9NILd1owSx74ozsqAkTbEOjw==",
   "npm_published_at": "2026-09-28T17:11:59.750Z",
@@ -10,11 +10,11 @@
   "dist_tags": {
     "latest": "2.1.284",
     "stable": "2.1.277",
-    "next": "2.1.284"
+    "next": "2.1.285"
   },
   "docs": {
     "index_url": "https://code.claude.com/docs/llms.txt",
-    "index_hash": "10171cbcc503ecef415dcc7fe2372dc207bc5afb407739b77fc4a33a793e2f9e",
+    "index_hash": "1abbe03e4a4fdb98c6a659ca59fab2f51bad5f633cb77ac0e38e698226fa0f72",
     "full_scan": false,
     "scanned_at": "2026-09-29T02:36:38.919Z",
     "pages": {
@@ -1351,7 +1351,7 @@
         "source_path": "sources/raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md"
       }
     },
-    "digest": "569f63788a339abe9f81c0605b46a0f7dd4c1b5bdc261338dab3c5c5b8a7c583"
+    "digest": "ac5756e94a3661d45d3acdf275bb914f143f5b98c83d7e15153a471cf8944424"
   },
   "runtime": {
     "probe_contract_version": 2,
@@ -1633,8 +1633,8 @@
     ],
     "digest": "d9f80109929bb3c938615765fb151861cad568af7e11023210d79daffcafc03a"
   },
-  "fetched_at": "2026-09-29T16:32:26.288Z",
-  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/36598268253",
-  "state_commit_parent": "0d2ab09d2169fb4a258347ff648e0ea57a01d37f",
-  "analysis_parent_sha": "0d2ab09d2169fb4a258347ff648e0ea57a01d37f"
+  "fetched_at": "2026-09-29T18:34:17.992Z",
+  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/36612834091",
+  "state_commit_parent": "64d72a5694bac78f5f061fb4565aa3a0b337ad38",
+  "analysis_parent_sha": "64d72a5694bac78f5f061fb4565aa3a0b337ad38"
 }
