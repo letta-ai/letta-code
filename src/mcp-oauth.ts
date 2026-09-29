@@ -10,21 +10,43 @@ import type {
   OAuthTokens,
 } from "@modelcontextprotocol/sdk/shared/auth.js";
 import {
+  OAuthClientInformationFullSchema,
+  OAuthClientInformationSchema,
+  OAuthMetadataSchema,
+  OAuthProtectedResourceMetadataSchema,
+  OAuthTokensSchema,
+  OpenIdProviderDiscoveryMetadataSchema,
+  SafeUrlSchema,
+} from "@modelcontextprotocol/sdk/shared/auth.js";
+import {
   deleteSecretValue,
   getSecretValue,
   setSecretValue,
 } from "@/utils/secrets";
 
 const CALLBACK_TIMEOUT_MS = 5 * 60 * 1000;
-const storageMutationQueues = new Map<string, Promise<void>>();
+const credentialCoordinators = new Map<string, CredentialCoordinator>();
+
+interface CredentialCoordinator {
+  queue: Promise<void>;
+  generation: number;
+  state?: PersistedMcpOAuthState;
+  clientVersion: number;
+  tokenVersion: number;
+  discoveryVersion: number;
+}
 
 interface PersistedMcpOAuthState {
   redirectUrl: string;
   clientInformation?: OAuthClientInformationMixed;
   tokens?: OAuthTokens;
   tokenExpiresAt?: number;
-  codeVerifier?: string;
   discoveryState?: OAuthDiscoveryState;
+}
+
+interface PendingField<T> {
+  value: T;
+  baseVersion: number;
 }
 
 /** Credentials produced by a completed MCP OAuth flow. */
@@ -48,10 +70,17 @@ export interface McpOAuthSession {
 
 export interface ExportableMcpOAuthSession extends McpOAuthSession {
   /** Export credentials after the MCP client finishes authorization. */
-  exportCredentials(): McpOAuthCredentialSnapshot;
+  exportCredentials(): Promise<McpOAuthCredentialSnapshot>;
 }
 
-/** Async storage for opaque serialized MCP OAuth state. */
+/**
+ * Async storage for completed MCP OAuth credentials.
+ *
+ * Discovery, dynamic registration, and PKCE verifier state remain scoped to an
+ * active callback session and are committed together only after token exchange;
+ * an interrupted browser flow starts over rather than attempting callback
+ * recovery without its original loopback listener.
+ */
 export interface McpOAuthStorage {
   get(credentialKey: string): Promise<string | null | undefined>;
   set(credentialKey: string, value: string): Promise<void>;
@@ -78,10 +107,12 @@ export async function clearMcpOAuthCredentials(
   serverName: string,
   serverUrl: string,
 ): Promise<boolean> {
-  const credentialKey = oauthSecretName(agentId, serverName, serverUrl);
-  return enqueueStorageMutation(credentialKey, () =>
-    deleteSecretValue(credentialKey),
+  const credentialKey = mcpOAuthCredentialKey(agentId, serverName, serverUrl);
+  const { result } = await clearStoredCredentials(
+    bunSecretStorage,
+    credentialKey,
   );
+  return result === true;
 }
 
 export async function createMcpOAuthSession(
@@ -90,7 +121,7 @@ export async function createMcpOAuthSession(
   serverUrl: string,
   options: McpOAuthSessionOptions,
 ): Promise<McpOAuthSession | undefined> {
-  const credentialKey = oauthSecretName(agentId, serverName, serverUrl);
+  const credentialKey = mcpOAuthCredentialKey(agentId, serverName, serverUrl);
   return createMcpOAuthSessionWithStorage({
     credentialKey,
     storage: bunSecretStorage,
@@ -103,7 +134,8 @@ export async function createMcpOAuthSession(
 export async function createMcpOAuthSessionWithStorage(
   options: StorageInjectedMcpOAuthSessionOptions,
 ): Promise<ExportableMcpOAuthSession | undefined> {
-  const persisted = await loadState(options.storage, options.credentialKey);
+  const loaded = await loadState(options.storage, options.credentialKey);
+  const persisted = loaded.state;
   if (!options.interactive && !persisted) return undefined;
 
   const callback = options.interactive
@@ -121,6 +153,7 @@ export async function createMcpOAuthSessionWithStorage(
     onStatus: options.onStatus,
     openBrowser: options.openBrowser ?? openSystemBrowser,
     expectedState: callback?.expectedState,
+    generation: loaded.generation,
   });
 
   return {
@@ -142,8 +175,16 @@ const bunSecretStorage: McpOAuthStorage = {
 
 class PersistentMcpOAuthProvider implements OAuthClientProvider {
   private stateData: PersistedMcpOAuthState;
-  private clientInformationDirty = false;
-  private discoveryStateDirty = false;
+  private pendingClientInformation?: PendingField<OAuthClientInformationMixed>;
+  private pendingDiscoveryState?: PendingField<OAuthDiscoveryState>;
+  private codeVerifierValue?: string;
+  private generation: number;
+  private observedClientVersion: number;
+  private observedTokenVersion: number;
+  private observedDiscoveryVersion: number;
+  private tokenOperationGeneration: number;
+  private tokenOperationVersion: number;
+  private readonly coordinator: CredentialCoordinator;
   private readonly credentialKey: string;
   private readonly storage: McpOAuthStorage;
   private readonly interactive: boolean;
@@ -160,6 +201,7 @@ class PersistentMcpOAuthProvider implements OAuthClientProvider {
     onStatus?: (message: string) => void;
     openBrowser: (url: string) => Promise<void>;
     expectedState?: { value?: string };
+    generation: number;
   }) {
     this.credentialKey = options.credentialKey;
     this.storage = options.storage;
@@ -167,6 +209,13 @@ class PersistentMcpOAuthProvider implements OAuthClientProvider {
     this.onStatus = options.onStatus;
     this.openBrowser = options.openBrowser;
     this.expectedState = options.expectedState;
+    this.generation = options.generation;
+    this.coordinator = getCredentialCoordinator(options.credentialKey);
+    this.observedClientVersion = this.coordinator.clientVersion;
+    this.observedTokenVersion = this.coordinator.tokenVersion;
+    this.observedDiscoveryVersion = this.coordinator.discoveryVersion;
+    this.tokenOperationGeneration = this.coordinator.generation;
+    this.tokenOperationVersion = this.coordinator.tokenVersion;
     this.stateData = {
       ...options.persisted,
       redirectUrl: options.redirectUrl,
@@ -194,74 +243,144 @@ class PersistentMcpOAuthProvider implements OAuthClientProvider {
   }
 
   clientInformation(): OAuthClientInformationMixed | undefined {
-    const client = this.stateData.clientInformation;
+    if (this.generation !== this.coordinator.generation) return undefined;
+    if (
+      this.pendingClientInformation &&
+      this.pendingClientInformation.baseVersion !==
+        this.coordinator.clientVersion
+    ) {
+      this.pendingClientInformation = undefined;
+    }
+    const client =
+      this.pendingClientInformation?.value ??
+      this.coordinator.state?.clientInformation;
+    this.observedClientVersion = this.coordinator.clientVersion;
     return client &&
       "redirect_uris" in client &&
+      Array.isArray(client.redirect_uris) &&
       client.redirect_uris.includes(this.redirectUrl)
       ? client
       : undefined;
   }
 
   saveClientInformation(clientInformation: OAuthClientInformationMixed): void {
+    assertCurrentGeneration(this.credentialKey, this.generation);
     this.stateData.clientInformation = clientInformation;
-    this.clientInformationDirty = true;
+    this.pendingClientInformation = {
+      value: clientInformation,
+      baseVersion: this.coordinator.clientVersion,
+    };
+    if (!this.coordinator.state?.tokens) {
+      this.tokenOperationGeneration = this.coordinator.generation;
+      this.tokenOperationVersion = this.coordinator.tokenVersion;
+    }
   }
 
   tokens(): OAuthTokens | undefined {
-    return this.stateData.tokens;
+    if (this.generation !== this.coordinator.generation) return undefined;
+    this.observedTokenVersion = this.coordinator.tokenVersion;
+    this.tokenOperationGeneration = this.coordinator.generation;
+    this.tokenOperationVersion = this.coordinator.tokenVersion;
+    return this.coordinator.state?.tokens;
   }
 
-  exportCredentials(): McpOAuthCredentialSnapshot {
-    const clientInformation = this.clientInformation();
-    const tokens = this.tokens();
-    if (!clientInformation?.client_id || !tokens?.access_token) {
-      throw new Error("MCP OAuth authorization is not complete");
-    }
-
-    return {
-      access_token: tokens.access_token,
-      ...(tokens.refresh_token ? { refresh_token: tokens.refresh_token } : {}),
-      client_id: clientInformation.client_id,
-      ...(clientInformation.client_secret
-        ? { client_secret: clientInformation.client_secret }
-        : {}),
-      redirect_uri: this.redirectUrl,
-      ...(tokens.token_type ? { token_type: tokens.token_type } : {}),
-      ...(this.stateData.tokenExpiresAt !== undefined
-        ? {
-            expires_in: Math.max(
-              0,
-              Math.ceil((this.stateData.tokenExpiresAt - Date.now()) / 1000),
-            ),
-          }
-        : {}),
-      ...(tokens.scope ? { scope: tokens.scope } : {}),
-    };
+  async exportCredentials(): Promise<McpOAuthCredentialSnapshot> {
+    const expectedGeneration = this.generation;
+    return enqueueStorageMutation(this.credentialKey, async () => {
+      assertCurrentGeneration(this.credentialKey, expectedGeneration);
+      const latest = await readStoredState(this.storage, this.credentialKey);
+      if (!latest) {
+        throw new Error("MCP OAuth authorization is not complete");
+      }
+      this.coordinator.state = latest;
+      this.stateData = latest;
+      return exportCredentialSnapshot(latest);
+    });
   }
 
   async saveTokens(tokens: OAuthTokens): Promise<void> {
-    const localClientInformation = this.stateData.clientInformation;
-    const localDiscoveryState = this.stateData.discoveryState;
-    await this.mutatePersistedState((state) => {
-      if (this.clientInformationDirty && localClientInformation) {
-        state.redirectUrl = this.redirectUrl;
-        state.clientInformation = localClientInformation;
-      }
-      if (this.discoveryStateDirty && localDiscoveryState) {
-        state.discoveryState = localDiscoveryState;
-      }
-      state.tokens = {
-        ...tokens,
-        refresh_token: tokens.refresh_token ?? state.tokens?.refresh_token,
-      };
-      state.tokenExpiresAt =
-        tokens.expires_in === undefined
-          ? undefined
-          : Date.now() + tokens.expires_in * 1000;
-      delete state.codeVerifier;
-    });
-    this.clientInformationDirty = false;
-    this.discoveryStateDirty = false;
+    const expectedGeneration = this.tokenOperationGeneration;
+    const expectedTokenVersion = this.tokenOperationVersion;
+    const tokenExpiresAt =
+      tokens.expires_in === undefined
+        ? undefined
+        : Date.now() + tokens.expires_in * 1000;
+    const pendingClientInformation = this.pendingClientInformation;
+    const pendingDiscoveryState = this.pendingDiscoveryState;
+    const result = await enqueueStorageMutation(
+      this.credentialKey,
+      async () => {
+        assertCurrentGeneration(this.credentialKey, expectedGeneration);
+        if (this.coordinator.tokenVersion !== expectedTokenVersion) {
+          throw new Error(
+            "MCP OAuth token response is stale because credentials changed",
+          );
+        }
+        if (
+          (pendingClientInformation &&
+            this.coordinator.clientVersion !==
+              pendingClientInformation.baseVersion) ||
+          (pendingDiscoveryState &&
+            this.coordinator.discoveryVersion !==
+              pendingDiscoveryState.baseVersion)
+        ) {
+          throw new Error(
+            "MCP OAuth token response is stale because protocol state changed",
+          );
+        }
+        const state =
+          (await readStoredState(this.storage, this.credentialKey)) ??
+          ({ redirectUrl: this.redirectUrl } satisfies PersistedMcpOAuthState);
+        let clientMerged = false;
+        let discoveryMerged = false;
+        if (
+          pendingClientInformation &&
+          this.coordinator.clientVersion ===
+            pendingClientInformation.baseVersion
+        ) {
+          state.redirectUrl = this.redirectUrl;
+          state.clientInformation = pendingClientInformation.value;
+          clientMerged = true;
+        }
+        if (
+          pendingDiscoveryState &&
+          this.coordinator.discoveryVersion ===
+            pendingDiscoveryState.baseVersion
+        ) {
+          state.discoveryState = pendingDiscoveryState.value;
+          discoveryMerged = true;
+        }
+        state.tokens = {
+          ...tokens,
+          refresh_token: tokens.refresh_token ?? state.tokens?.refresh_token,
+        };
+        state.tokenExpiresAt = tokenExpiresAt;
+        await this.storage.set(this.credentialKey, JSON.stringify(state));
+        this.coordinator.state = state;
+        this.coordinator.tokenVersion += 1;
+        if (clientMerged) this.coordinator.clientVersion += 1;
+        if (discoveryMerged) this.coordinator.discoveryVersion += 1;
+        return { state, clientMerged, discoveryMerged };
+      },
+    );
+    this.stateData = result.state;
+    this.observedTokenVersion = this.coordinator.tokenVersion;
+    this.tokenOperationGeneration = this.coordinator.generation;
+    this.tokenOperationVersion = this.coordinator.tokenVersion;
+    this.observedClientVersion = this.coordinator.clientVersion;
+    this.observedDiscoveryVersion = this.coordinator.discoveryVersion;
+    if (this.pendingClientInformation === pendingClientInformation) {
+      this.pendingClientInformation = undefined;
+    } else if (this.pendingClientInformation) {
+      this.pendingClientInformation.baseVersion =
+        this.coordinator.clientVersion;
+    }
+    if (this.pendingDiscoveryState === pendingDiscoveryState) {
+      this.pendingDiscoveryState = undefined;
+    } else if (this.pendingDiscoveryState) {
+      this.pendingDiscoveryState.baseVersion =
+        this.coordinator.discoveryVersion;
+    }
   }
 
   async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
@@ -277,82 +396,260 @@ class PersistentMcpOAuthProvider implements OAuthClientProvider {
   }
 
   saveCodeVerifier(codeVerifier: string): void {
-    this.stateData.codeVerifier = codeVerifier;
+    this.codeVerifierValue = codeVerifier;
   }
 
   codeVerifier(): string {
-    if (!this.stateData.codeVerifier) {
+    if (!this.codeVerifierValue) {
       throw new Error("No MCP OAuth PKCE verifier is available");
     }
-    return this.stateData.codeVerifier;
+    return this.codeVerifierValue;
   }
 
   saveDiscoveryState(state: OAuthDiscoveryState): void {
+    assertCurrentGeneration(this.credentialKey, this.generation);
     this.stateData.discoveryState = state;
-    this.discoveryStateDirty = true;
+    this.pendingDiscoveryState = {
+      value: state,
+      baseVersion: this.coordinator.discoveryVersion,
+    };
+    if (!this.coordinator.state?.tokens) {
+      this.tokenOperationGeneration = this.coordinator.generation;
+      this.tokenOperationVersion = this.coordinator.tokenVersion;
+    }
   }
 
   discoveryState(): OAuthDiscoveryState | undefined {
-    return this.stateData.discoveryState;
+    if (this.generation !== this.coordinator.generation) return undefined;
+    if (
+      this.pendingDiscoveryState &&
+      this.pendingDiscoveryState.baseVersion !==
+        this.coordinator.discoveryVersion
+    ) {
+      this.pendingDiscoveryState = undefined;
+    }
+    this.observedDiscoveryVersion = this.coordinator.discoveryVersion;
+    return (
+      this.pendingDiscoveryState?.value ??
+      this.coordinator.state?.discoveryState
+    );
   }
 
   async invalidateCredentials(
     scope: "all" | "client" | "tokens" | "verifier" | "discovery",
   ): Promise<void> {
-    if (scope === "all") {
-      this.stateData = { redirectUrl: this.redirectUrl };
-      this.clientInformationDirty = false;
-      this.discoveryStateDirty = false;
-      await enqueueStorageMutation(this.credentialKey, async () => {
-        await this.storage.delete(this.credentialKey);
-      });
+    if (scope === "verifier") {
+      this.codeVerifierValue = undefined;
       return;
     }
-    await this.mutatePersistedState((state) => {
-      if (scope === "client") delete state.clientInformation;
-      if (scope === "tokens") {
-        delete state.tokens;
-        delete state.tokenExpiresAt;
+    if (scope === "all") {
+      const redirectUrl = this.redirectUrl;
+      const { generation, cleared } = await clearStoredCredentials(
+        this.storage,
+        this.credentialKey,
+        {
+          generation: this.generation,
+          clientVersion: this.observedClientVersion,
+          tokenVersion: this.observedTokenVersion,
+          discoveryVersion: this.observedDiscoveryVersion,
+        },
+      );
+      if (!cleared) {
+        this.stateData = this.coordinator.state ?? { redirectUrl };
+        this.pendingClientInformation = undefined;
+        this.pendingDiscoveryState = undefined;
+        this.codeVerifierValue = undefined;
+        this.observedClientVersion = this.coordinator.clientVersion;
+        this.observedTokenVersion = this.coordinator.tokenVersion;
+        this.observedDiscoveryVersion = this.coordinator.discoveryVersion;
+        return;
       }
-      if (scope === "verifier") delete state.codeVerifier;
-      if (scope === "discovery") delete state.discoveryState;
-    });
-    if (scope === "client") this.clientInformationDirty = false;
-    if (scope === "discovery") this.discoveryStateDirty = false;
+      this.generation = generation;
+      this.stateData = { redirectUrl };
+      this.pendingClientInformation = undefined;
+      this.pendingDiscoveryState = undefined;
+      this.codeVerifierValue = undefined;
+      this.observedClientVersion = this.coordinator.clientVersion;
+      this.observedTokenVersion = this.coordinator.tokenVersion;
+      this.observedDiscoveryVersion = this.coordinator.discoveryVersion;
+      return;
+    }
+    const expectedGeneration = this.generation;
+    const pendingClientInformation = this.pendingClientInformation;
+    const pendingDiscoveryState = this.pendingDiscoveryState;
+    const expectedVersion =
+      scope === "client"
+        ? this.observedClientVersion
+        : scope === "tokens"
+          ? this.observedTokenVersion
+          : this.observedDiscoveryVersion;
+    const result = await enqueueStorageMutation(
+      this.credentialKey,
+      async () => {
+        assertCurrentGeneration(this.credentialKey, expectedGeneration);
+        const currentVersion =
+          scope === "client"
+            ? this.coordinator.clientVersion
+            : scope === "tokens"
+              ? this.coordinator.tokenVersion
+              : this.coordinator.discoveryVersion;
+        if (currentVersion !== expectedVersion) {
+          return this.coordinator.state;
+        }
+        const state = await readStoredState(this.storage, this.credentialKey);
+        if (state) {
+          if (scope === "client") delete state.clientInformation;
+          if (scope === "tokens") {
+            delete state.tokens;
+            delete state.tokenExpiresAt;
+          }
+          if (scope === "discovery") delete state.discoveryState;
+          await this.storage.set(this.credentialKey, JSON.stringify(state));
+        }
+        this.coordinator.state = state;
+        if (scope === "client") this.coordinator.clientVersion += 1;
+        if (scope === "tokens") this.coordinator.tokenVersion += 1;
+        if (scope === "discovery") this.coordinator.discoveryVersion += 1;
+        return state;
+      },
+    );
+    this.stateData = result ?? { redirectUrl: this.redirectUrl };
+    if (scope === "client") {
+      this.observedClientVersion = this.coordinator.clientVersion;
+      if (this.pendingClientInformation === pendingClientInformation) {
+        this.pendingClientInformation = undefined;
+      } else if (this.pendingClientInformation) {
+        this.pendingClientInformation.baseVersion =
+          this.coordinator.clientVersion;
+      }
+    }
+    if (scope === "tokens") {
+      this.observedTokenVersion = this.coordinator.tokenVersion;
+    }
+    if (scope === "discovery") {
+      this.observedDiscoveryVersion = this.coordinator.discoveryVersion;
+      if (this.pendingDiscoveryState === pendingDiscoveryState) {
+        this.pendingDiscoveryState = undefined;
+      } else if (this.pendingDiscoveryState) {
+        this.pendingDiscoveryState.baseVersion =
+          this.coordinator.discoveryVersion;
+      }
+    }
+  }
+}
+
+function exportCredentialSnapshot(
+  state: PersistedMcpOAuthState,
+): McpOAuthCredentialSnapshot {
+  const clientInformation = state.clientInformation;
+  const tokens = state.tokens;
+  const validClient =
+    clientInformation &&
+    "redirect_uris" in clientInformation &&
+    clientInformation.redirect_uris.includes(state.redirectUrl)
+      ? clientInformation
+      : undefined;
+  if (!validClient?.client_id || !tokens?.access_token) {
+    throw new Error("MCP OAuth authorization is not complete");
   }
 
-  private async mutatePersistedState(
-    mutate: (state: PersistedMcpOAuthState) => void,
-  ): Promise<void> {
-    await enqueueStorageMutation(this.credentialKey, async () => {
-      const state =
-        (await readStoredState(this.storage, this.credentialKey)) ??
-        ({ ...this.stateData } satisfies PersistedMcpOAuthState);
-      mutate(state);
-      this.stateData = state;
-      await this.storage.set(this.credentialKey, JSON.stringify(state));
-    });
-  }
+  return {
+    access_token: tokens.access_token,
+    ...(tokens.refresh_token ? { refresh_token: tokens.refresh_token } : {}),
+    client_id: validClient.client_id,
+    ...(validClient.client_secret
+      ? { client_secret: validClient.client_secret }
+      : {}),
+    redirect_uri: state.redirectUrl,
+    ...(tokens.token_type ? { token_type: tokens.token_type } : {}),
+    ...(state.tokenExpiresAt !== undefined
+      ? {
+          expires_in: Math.max(
+            0,
+            Math.ceil((state.tokenExpiresAt - Date.now()) / 1000),
+          ),
+        }
+      : {}),
+    ...(tokens.scope ? { scope: tokens.scope } : {}),
+  };
 }
 
 function enqueueStorageMutation<T>(
   credentialKey: string,
   mutation: () => Promise<T>,
 ): Promise<T> {
-  const previous =
-    storageMutationQueues.get(credentialKey) ?? Promise.resolve();
-  const pending = previous.then(mutation, mutation);
-  const continuation = pending.then(
+  const coordinator = getCredentialCoordinator(credentialKey);
+  const pending = coordinator.queue.then(mutation, mutation);
+  coordinator.queue = pending.then(
     () => undefined,
     () => undefined,
   );
-  storageMutationQueues.set(credentialKey, continuation);
-  void continuation.then(() => {
-    if (storageMutationQueues.get(credentialKey) === continuation) {
-      storageMutationQueues.delete(credentialKey);
-    }
-  });
   return pending;
+}
+
+function getCredentialCoordinator(
+  credentialKey: string,
+): CredentialCoordinator {
+  const existing = credentialCoordinators.get(credentialKey);
+  if (existing) return existing;
+  const coordinator: CredentialCoordinator = {
+    queue: Promise.resolve(),
+    generation: 0,
+    clientVersion: 0,
+    tokenVersion: 0,
+    discoveryVersion: 0,
+  };
+  credentialCoordinators.set(credentialKey, coordinator);
+  return coordinator;
+}
+
+function assertCurrentGeneration(
+  credentialKey: string,
+  expectedGeneration: number,
+): void {
+  if (
+    getCredentialCoordinator(credentialKey).generation !== expectedGeneration
+  ) {
+    throw new Error(
+      "MCP OAuth session is stale because credentials were cleared",
+    );
+  }
+}
+
+async function clearStoredCredentials(
+  storage: McpOAuthStorage,
+  credentialKey: string,
+  expected?: {
+    generation: number;
+    clientVersion: number;
+    tokenVersion: number;
+    discoveryVersion: number;
+  },
+): Promise<{ result: unknown; generation: number; cleared: boolean }> {
+  return enqueueStorageMutation(credentialKey, async () => {
+    const coordinator = getCredentialCoordinator(credentialKey);
+    if (expected) {
+      assertCurrentGeneration(credentialKey, expected.generation);
+      if (
+        coordinator.clientVersion !== expected.clientVersion ||
+        coordinator.tokenVersion !== expected.tokenVersion ||
+        coordinator.discoveryVersion !== expected.discoveryVersion
+      ) {
+        return {
+          result: false,
+          generation: coordinator.generation,
+          cleared: false,
+        };
+      }
+    }
+    const result = await storage.delete(credentialKey);
+    coordinator.generation += 1;
+    coordinator.clientVersion += 1;
+    coordinator.tokenVersion += 1;
+    coordinator.discoveryVersion += 1;
+    coordinator.state = undefined;
+    return { result, generation: coordinator.generation, cleared: true };
+  });
 }
 
 interface OAuthCallbackServer {
@@ -394,7 +691,14 @@ async function startOAuthCallbackServerOnPort(
   void codePromise.catch(() => undefined);
 
   server = createServer((request, response) => {
-    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    let url: URL;
+    try {
+      url = new URL(request.url ?? "/", "http://127.0.0.1");
+    } catch {
+      response.writeHead(400, { "Content-Type": "text/plain" });
+      response.end("Invalid request target");
+      return;
+    }
     if (url.pathname !== "/callback") {
       response.writeHead(404).end("Not found");
       return;
@@ -434,6 +738,12 @@ async function startOAuthCallbackServerOnPort(
       () => {
         void closeServer(true);
       },
+    );
+  });
+  server.on("clientError", (_error, socket) => {
+    if (!socket.writable) return;
+    socket.end(
+      "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
     );
   });
 
@@ -512,7 +822,7 @@ async function openSystemBrowser(url: string): Promise<void> {
   }
 }
 
-function oauthSecretName(
+export function mcpOAuthCredentialKey(
   agentId: string,
   serverName: string,
   serverUrl: string,
@@ -527,10 +837,13 @@ function oauthSecretName(
 async function loadState(
   storage: McpOAuthStorage,
   credentialKey: string,
-): Promise<PersistedMcpOAuthState | undefined> {
-  return enqueueStorageMutation(credentialKey, () =>
-    readStoredState(storage, credentialKey),
-  );
+): Promise<{ state?: PersistedMcpOAuthState; generation: number }> {
+  return enqueueStorageMutation(credentialKey, async () => {
+    const coordinator = getCredentialCoordinator(credentialKey);
+    const state = await readStoredState(storage, credentialKey);
+    coordinator.state = state;
+    return { state, generation: coordinator.generation };
+  });
 }
 
 async function readStoredState(
@@ -540,9 +853,75 @@ async function readStoredState(
   const value = await storage.get(credentialKey);
   if (!value) return undefined;
   try {
-    return JSON.parse(value) as PersistedMcpOAuthState;
+    const parsed: unknown = JSON.parse(value);
+    if (!isPersistedMcpOAuthState(parsed)) {
+      await storage.delete(credentialKey);
+      return undefined;
+    }
+    return parsed;
   } catch {
     await storage.delete(credentialKey);
     return undefined;
   }
+}
+
+function isPersistedMcpOAuthState(
+  value: unknown,
+): value is PersistedMcpOAuthState {
+  if (
+    !isRecord(value) ||
+    !SafeUrlSchema.safeParse(value.redirectUrl).success ||
+    "codeVerifier" in value
+  ) {
+    return false;
+  }
+  if (value.clientInformation !== undefined) {
+    if (!isRecord(value.clientInformation)) return false;
+    const schema =
+      "redirect_uris" in value.clientInformation
+        ? OAuthClientInformationFullSchema
+        : OAuthClientInformationSchema;
+    if (!schema.safeParse(value.clientInformation).success) return false;
+  }
+  if (
+    value.tokens !== undefined &&
+    !OAuthTokensSchema.safeParse(value.tokens).success
+  ) {
+    return false;
+  }
+  if (
+    value.tokenExpiresAt !== undefined &&
+    (typeof value.tokenExpiresAt !== "number" ||
+      !Number.isFinite(value.tokenExpiresAt))
+  ) {
+    return false;
+  }
+  if (value.discoveryState !== undefined) {
+    if (
+      !isRecord(value.discoveryState) ||
+      !SafeUrlSchema.safeParse(value.discoveryState.authorizationServerUrl)
+        .success ||
+      (value.discoveryState.resourceMetadataUrl !== undefined &&
+        !SafeUrlSchema.safeParse(value.discoveryState.resourceMetadataUrl)
+          .success) ||
+      (value.discoveryState.authorizationServerMetadata !== undefined &&
+        !OAuthMetadataSchema.safeParse(
+          value.discoveryState.authorizationServerMetadata,
+        ).success &&
+        !OpenIdProviderDiscoveryMetadataSchema.safeParse(
+          value.discoveryState.authorizationServerMetadata,
+        ).success) ||
+      (value.discoveryState.resourceMetadata !== undefined &&
+        !OAuthProtectedResourceMetadataSchema.safeParse(
+          value.discoveryState.resourceMetadata,
+        ).success)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
