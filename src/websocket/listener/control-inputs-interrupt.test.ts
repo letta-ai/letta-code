@@ -371,4 +371,110 @@ describe("listener interrupt queue handoff", () => {
     expect(cancelConversation).toHaveBeenCalledTimes(1);
     expect(processQueuedTurn).toHaveBeenCalledTimes(1);
   });
+
+  test("targets the exact run without conversation-wide fallback when agent_id is null", async () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, null, "conv-null-owner");
+    const socket = createOpenTransport();
+    const lease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+    });
+    runtime.turnLifecycle.setRunId(lease, "run-target");
+    const cancellation = createDeferred();
+    const cancelConversationRun = mock(
+      async (_conversationId: string, _runId?: string | null) =>
+        cancellation.promise,
+    );
+    const cancelConversation = mock(
+      async (_agentId: string, _conversationId: string) => {},
+    );
+    setActiveRuntime(listener);
+
+    expect(
+      await handleAbortMessageInput(
+        listener,
+        {
+          command: {
+            type: "abort_message",
+            runtime: {
+              agent_id: null,
+              conversation_id: "conv-null-owner",
+            },
+            run_id: "run-target",
+          },
+          socket,
+          opts: {} as StartListenerOptions,
+          processQueuedTurn: async () => {},
+        },
+        { cancelConversationRun, cancelConversation },
+      ),
+    ).toBe(true);
+
+    expect(
+      finishListenerTurn(runtime, lease, {
+        stopReason: "cancelled",
+        socket,
+        runId: "run-target",
+        agentId: null,
+        conversationId: "conv-null-owner",
+      }).finished,
+    ).toBe(true);
+    expect(runtime.turnLifecycle.kind).toBe("cancelling");
+    expect(cancelConversationRun).toHaveBeenCalledWith(
+      "conv-null-owner",
+      "run-target",
+    );
+    expect(cancelConversation).not.toHaveBeenCalled();
+
+    cancellation.resolve();
+    await waitFor(() => runtime.turnLifecycle.kind === "idle");
+  });
+
+  test("releases the cancellation fence when exact API cancellation is unavailable", async () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, null, "conv-api");
+    const socket = createOpenTransport();
+    const lease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+    });
+    runtime.turnLifecycle.setRunId(lease, "run-api");
+    const cancelConversationRun = mock(async () => {
+      throw new Error("exact API cancellation is unavailable");
+    });
+    setActiveRuntime(listener);
+
+    expect(
+      await handleAbortMessageInput(
+        listener,
+        {
+          command: {
+            type: "abort_message",
+            runtime: {
+              agent_id: null,
+              conversation_id: "conv-api",
+            },
+            run_id: "run-api",
+          },
+          socket,
+          opts: {} as StartListenerOptions,
+          processQueuedTurn: async () => {},
+        },
+        { cancelConversationRun },
+      ),
+    ).toBe(true);
+
+    expect(
+      finishListenerTurn(runtime, lease, {
+        stopReason: "cancelled",
+        socket,
+        runId: "run-api",
+        agentId: null,
+        conversationId: "conv-api",
+      }).finished,
+    ).toBe(true);
+    await waitFor(() => runtime.turnLifecycle.kind === "idle");
+    expect(cancelConversationRun).toHaveBeenCalledTimes(1);
+  });
 });

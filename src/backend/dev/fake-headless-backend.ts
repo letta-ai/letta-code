@@ -400,10 +400,21 @@ export class HeadlessBackend implements Backend {
       return { [runId]: "failed" } as never;
     }
 
+    return this.cancelRunById(runId);
+  }
+
+  private async cancelRunById(runId: string) {
+    const run = this.runs.get(runId);
+    if (!run || isTerminalRun(run)) {
+      return { [runId]: "failed" } as never;
+    }
+
     if (run.conversation_id) {
-      this.store.settleInterruptedToolCalls(run.conversation_id, { agentId });
+      this.store.settleInterruptedToolCalls(run.conversation_id, {
+        agentId: run.agent_id,
+      });
     } else {
-      this.store.settleInterruptedToolCalls(agentId);
+      this.store.settleInterruptedToolCalls(run.agent_id);
     }
     const controller = this.runControllerByRunId.get(runId);
     this.recordRunChunk(runId, {
@@ -413,6 +424,20 @@ export class HeadlessBackend implements Backend {
     this.completeRun(runId, "cancelled");
     controller?.abort();
     return { [runId]: "cancelled" } as never;
+  }
+
+  async cancelConversationRun(
+    ...args: Parameters<Backend["cancelConversationRun"]>
+  ) {
+    const [conversationId, requestedRunId] = args;
+    const runId =
+      requestedRunId ?? this.activeRunByConversation.get(conversationId);
+    if (!runId) return {} as never;
+    const run = this.runs.get(runId);
+    if (!run || run.conversation_id !== conversationId || isTerminalRun(run)) {
+      return { [runId]: "failed" } as never;
+    }
+    return this.cancelRunById(runId);
   }
 
   async retrieveRun(runId: string) {

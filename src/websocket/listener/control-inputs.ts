@@ -425,6 +425,10 @@ export async function handleAbortMessageInput(
       conversationId: string,
     ) => Promise<void>;
     cancelRun: (agentId: string, runId: string) => Promise<void>;
+    cancelConversationRun: (
+      conversationId: string,
+      runId?: string | null,
+    ) => Promise<void>;
   }> = {},
 ): Promise<boolean> {
   const resolvedDeps = {
@@ -449,6 +453,23 @@ export async function handleAbortMessageInput(
       const result = await getBackend().cancelRun(agentId, runId);
       if (result[runId] !== "cancelled") {
         throw new Error(`Backend did not cancel run ${runId}`);
+      }
+    },
+    cancelConversationRun: async (
+      conversationId: string,
+      runId?: string | null,
+    ) => {
+      const result = await getBackend().cancelConversationRun(
+        conversationId,
+        runId,
+      );
+      if (runId && result[runId] !== "cancelled") {
+        throw new Error(`Backend did not cancel run ${runId}`);
+      }
+      if (!runId && !Object.values(result).includes("cancelled")) {
+        throw new Error(
+          `Backend did not cancel the active run for ${conversationId}`,
+        );
       }
     },
     ...deps,
@@ -488,7 +509,7 @@ export async function handleAbortMessageInput(
   }
 
   const cancellation = scopedRuntime.turnLifecycle.requestCancellation({
-    waitForExternalSettlement: hasActiveTurn && Boolean(scopedRuntime.agentId),
+    waitForExternalSettlement: hasActiveTurn,
   });
   // Interrupt semantics: the current turn stops and the user's queued messages
   // park until resume_queue or the user's next message. System items (task
@@ -592,12 +613,13 @@ export async function handleAbortMessageInput(
 
   const cancelConversationId = scopedRuntime.conversationId;
   const cancelAgentId = scopedRuntime.agentId;
-  if (cancelAgentId) {
-    const cancelRunId = interruptedRunId ?? params.command.run_id ?? null;
-    // Target the interrupted run when possible so this abort can never select
-    // a replacement turn. Older backends may reject run-scoped cancellation;
-    // the lifecycle fence also makes the conversation-wide fallback safe.
-    const backendCancellation = cancelRunId
+  const cancelRunId = interruptedRunId ?? params.command.run_id ?? null;
+  // Target the interrupted run when possible so this abort can never select
+  // a replacement turn. For conversations with agent_id:null, resolve the
+  // backend's execution owner from that exact run instead of widening the abort
+  // to every active run in the conversation.
+  const backendCancellation =
+    cancelAgentId && cancelRunId
       ? resolvedDeps
           .cancelRun(cancelAgentId, cancelRunId)
           .catch(() =>
@@ -606,28 +628,29 @@ export async function handleAbortMessageInput(
               cancelConversationId,
             ),
           )
-      : resolvedDeps.cancelConversation(cancelAgentId, cancelConversationId);
-    void backendCancellation
-      .catch(() => {
-        // Fire-and-forget
-      })
-      .finally(() => {
-        if (!cancellation.lease) {
-          return;
-        }
-        const settlement = scopedRuntime.turnLifecycle.settleCancellation(
-          cancellation.lease,
+      : cancelAgentId
+        ? resolvedDeps.cancelConversation(cancelAgentId, cancelConversationId)
+        : resolvedDeps.cancelConversationRun(cancelConversationId, cancelRunId);
+  void backendCancellation
+    .catch(() => {
+      // Fire-and-forget
+    })
+    .finally(() => {
+      if (!cancellation.lease) {
+        return;
+      }
+      const settlement = scopedRuntime.turnLifecycle.settleCancellation(
+        cancellation.lease,
+      );
+      if (settlement.released) {
+        resolvedDeps.scheduleQueuePump(
+          scopedRuntime,
+          params.socket,
+          params.opts as StartListenerOptions,
+          params.processQueuedTurn,
         );
-        if (settlement.released) {
-          resolvedDeps.scheduleQueuePump(
-            scopedRuntime,
-            params.socket,
-            params.opts as StartListenerOptions,
-            params.processQueuedTurn,
-          );
-        }
-      });
-  }
+      }
+    });
 
   resolvedDeps.scheduleQueuePump(
     scopedRuntime,

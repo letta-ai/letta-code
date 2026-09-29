@@ -344,6 +344,11 @@ export interface Backend {
     runId: string,
   ): Promise<Awaited<ReturnType<APIClient["agents"]["messages"]["cancel"]>>>;
 
+  cancelConversationRun(
+    conversationId: string,
+    runId?: string | null,
+  ): Promise<Awaited<ReturnType<APIClient["agents"]["messages"]["cancel"]>>>;
+
   retrieveRun(
     runId: string,
     options?: RunRetrieveOptions,
@@ -659,6 +664,19 @@ export class APIBackend implements Backend {
   async cancelRun(agentId: string, runId: string) {
     const client = await this.getClient();
     return client.agents.messages.cancel(agentId, { run_ids: [runId] });
+  }
+
+  async cancelConversationRun(
+    _conversationId: string,
+    _runId?: string | null,
+  ): Promise<Awaited<ReturnType<APIClient["agents"]["messages"]["cancel"]>>> {
+    // The public conversations cancellation route cannot scope by run ID. Do
+    // not add a retrieve round-trip here: a run with agent_id:null still has no
+    // agent cancellation route, and waiting on that request would hold the
+    // listener's cancellation fence without making cancellation safer.
+    throw new Error(
+      "API backend does not support exact cancellation for conversations with agent_id:null",
+    );
   }
 
   async retrieveRun(runId: string, options?: RunRetrieveOptions) {
