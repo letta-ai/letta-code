@@ -8,7 +8,12 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getBackend } from "@/backend";
+import { __testSetBackend, getBackend } from "@/backend";
+import {
+  resolveBackendMode,
+  setConfiguredBackendMode,
+} from "@/backend/backend-mode";
+import { LocalBackend } from "@/backend/local/local-backend";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { clearCapturedToolExecutionContexts } from "@/tools/manager";
 import { prepareToolExecutionContextForResolvedTarget } from "@/tools/toolset";
@@ -633,4 +638,47 @@ describe("normalizeWorkflowArgs", () => {
     expect(normalizeWorkflowArgs({ files: [] })).toEqual({ files: [] });
     expect(normalizeWorkflowArgs(undefined)).toBeUndefined();
   });
+});
+
+test("local Workflow uses the real SDK against a local-state App Server", async () => {
+  const storageDir = mkdtempSync(join(tmpdir(), "workflow-local-sdk-"));
+  const previousMode = resolveBackendMode();
+  const previousBackend = getBackend();
+  let handle: Awaited<ReturnType<typeof createSdkSpawnerHandle>> | undefined;
+  try {
+    setConfiguredBackendMode("local");
+    const backend = new LocalBackend({
+      storageDir,
+      executionMode: "deterministic",
+      memfsEnabled: false,
+    });
+    __testSetBackend(backend);
+    const parent = await backend.createAgent({
+      name: "Parent",
+      model: "openai/gpt-5.6-luna",
+    } as never);
+    handle = await createSdkSpawnerHandle({
+      model: "openai/gpt-5.6-luna",
+      parentScope: { agentId: parent.id, conversationId: "default" },
+    });
+    const started: string[] = [];
+    const outcome = await handle.spawner(
+      { prompt: "reply briefly", options: {}, callIndex: 0 },
+      AbortSignal.timeout(10_000),
+      { onStarted: (id) => started.push(id) },
+    );
+    expect(outcome).toMatchObject({ failed: false, value: "pong" });
+    const workerId = outcome.conversationId;
+    if (!workerId) throw new Error("SDK did not report a worker conversation");
+    expect(started).toEqual([workerId]);
+    expect(await backend.retrieveConversation(workerId)).toMatchObject({
+      agent_id: null,
+      parent_agent_id: parent.id,
+    });
+  } finally {
+    await handle?.cleanup();
+    __testSetBackend(previousBackend);
+    setConfiguredBackendMode(previousMode);
+    rmSync(storageDir, { recursive: true, force: true });
+  }
 });

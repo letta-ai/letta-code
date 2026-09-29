@@ -15,6 +15,7 @@
  * are injected into args (not part of the model-facing JSON schema).
  */
 
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
@@ -44,6 +45,7 @@ import {
   DEFAULT_ALLOWED_TOOLS,
 } from "@/tools/workflow/sdk-spawner";
 import type {
+  SdkClient,
   SubagentSpawner,
   WorkflowExecutionResult,
   WorkflowMeta,
@@ -58,6 +60,8 @@ import {
   formatTaskNotification,
   resolveNotificationScope,
 } from "@/utils/task-notifications";
+import { startAppServer } from "@/websocket/app-server";
+import { getActiveRuntime } from "@/websocket/listener/runtime";
 import {
   appendToOutputFile,
   assertBackgroundProcessCapacity,
@@ -196,10 +200,24 @@ export async function createSdkSpawnerHandle(
   setStage("loading Agent SDK");
   const sdk = await loadAgentSdk();
   setStage("creating SDK client and spawner");
-  const client = sdk.createLocalClient(backendMode);
-  let spawner: SubagentSpawner;
+  // SDK-managed local query() requires an API-backed App Server. Point its
+  // remote transport at this process's local-state App Server instead.
+  const runtime = backendMode === "local" ? getActiveRuntime() : null;
+  const server =
+    backendMode === "local"
+      ? await startAppServer({
+          listen: "ws://127.0.0.1:0",
+          startProcessServices: false,
+          ...(runtime ? { runtime } : {}),
+          connectionName: `workflow-${randomUUID()}`,
+        })
+      : null;
+  let client: SdkClient | undefined;
   try {
-    spawner = createSdkSpawner(client, {
+    client = server
+      ? sdk.createRemoteClient(server.controlUrl)
+      : sdk.createLocalClient(backendMode);
+    const spawner: SubagentSpawner = createSdkSpawner(client, {
       parentAgentId,
       model,
       resolveModel,
@@ -212,16 +230,21 @@ export async function createSdkSpawnerHandle(
         ? { parentContextWindowLimit }
         : {}),
     });
+    return {
+      spawner,
+      cleanup: async () => {
+        try {
+          await client?.[Symbol.asyncDispose]?.().catch(() => undefined);
+        } finally {
+          await server?.close();
+        }
+      },
+    };
   } catch (error) {
-    void client[Symbol.asyncDispose]?.().catch(() => undefined);
+    await client?.[Symbol.asyncDispose]?.().catch(() => undefined);
+    await server?.close();
     throw error;
   }
-  return {
-    spawner,
-    cleanup: async () => {
-      await client[Symbol.asyncDispose]?.().catch(() => undefined);
-    },
-  };
 }
 
 let spawnerFactory: SpawnerFactory = createSdkSpawnerHandle;
