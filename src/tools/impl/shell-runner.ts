@@ -91,6 +91,9 @@ const child = pty.spawn(config.executable, config.args, {
   cwd: config.cwd,
   env: process.env,
 });
+if (typeof process.send === "function") {
+  process.send({ type: "pty_pid", pid: child.pid });
+}
 child.onData((data) => process.stdout.write(data));
 child.onExit(({ exitCode }) => process.exit(typeof exitCode === "number" ? exitCode : 1));
 process.stdin.setEncoding("utf8");
@@ -266,6 +269,7 @@ function spawnPtyBridgeProcess(
     throw new ShellExecutionError("Executable is required");
   }
 
+  let ptyProcessGroupId: number | null = null;
   const childProcess: ChildProcess = spawn(
     "node",
     [
@@ -277,10 +281,25 @@ function spawnPtyBridgeProcess(
       cwd: options.cwd,
       env: buildPtyEnv(options.env),
       shell: false,
-      stdio: ["pipe", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe", "ipc"],
       detached: process.platform !== "win32",
     },
   );
+
+  childProcess.on("message", (message) => {
+    if (
+      typeof message === "object" &&
+      message !== null &&
+      "type" in message &&
+      message.type === "pty_pid" &&
+      "pid" in message &&
+      typeof message.pid === "number" &&
+      Number.isInteger(message.pid) &&
+      message.pid > 0
+    ) {
+      ptyProcessGroupId = message.pid;
+    }
+  });
 
   childProcess.stdout?.on("data", (chunk: Buffer) => {
     events.output(chunk, "stdout");
@@ -293,6 +312,16 @@ function spawnPtyBridgeProcess(
 
   return {
     kill(signal?: string | number) {
+      killChildProcessTree(childProcess, signal);
+    },
+    killProcessGroup(signal: string | number = "SIGKILL") {
+      if (process.platform !== "win32" && ptyProcessGroupId !== null) {
+        try {
+          process.kill(-ptyProcessGroupId, signal as NodeJS.Signals);
+        } catch {
+          // The PTY group may already be gone. The bridge still needs cleanup.
+        }
+      }
       killChildProcessTree(childProcess, signal);
     },
     interrupt() {

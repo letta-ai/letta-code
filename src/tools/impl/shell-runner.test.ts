@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -162,12 +168,17 @@ describe("shared shell process", () => {
     },
   );
 
-  test.skipIf(process.platform === "win32")(
-    "transient cleanup kills a real native PTY group after its shell parent exits",
+  test.skipIf(process.platform === "win32" || !process.versions.bun)(
+    "transient cleanup kills the Bun PTY group after its shell parent exits",
     async () => {
       const fixtureDir = mkdtempSync(join(tmpdir(), "native-pty-transient-"));
       const actionFile = join(fixtureDir, "action.txt");
-      const command = `nohup sh -c 'sleep 0.6; printf leaked > ${JSON.stringify(actionFile)}' >/dev/null 2>&1 &`;
+      const childScript = join(fixtureDir, "delayed-child.cjs");
+      writeFileSync(
+        childScript,
+        `const fs = require("node:fs"); process.on("SIGHUP", () => {}); setTimeout(() => fs.writeFileSync(${JSON.stringify(actionFile)}, "leaked"), 600); setInterval(() => {}, 1000);`,
+      );
+      const command = `${JSON.stringify(process.execPath)} ${JSON.stringify(childScript)} >/dev/null 2>&1 &`;
       const running = startShellProcess(["bash", "-c", command], {
         cwd: process.cwd(),
         env: process.env,
