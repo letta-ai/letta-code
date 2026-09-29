@@ -35,7 +35,10 @@ import {
 } from "@/utils/subagent-launch-marker";
 import { reportSubagentStdoutLoss } from "@/utils/subagent-stdout-failure";
 import { isAgentIdCompatibleWithBackend } from "./agent/agent-id";
-import type { ApprovalResult } from "./agent/approval-execution";
+import type {
+  ApprovalDecision,
+  ApprovalResult,
+} from "./agent/approval-execution";
 import {
   buildFreshDenialApprovals,
   extractConflictDetail,
@@ -705,6 +708,17 @@ export async function handleHeadlessCommand(
   if (!startupPermissionMode.ok) {
     console.error(startupPermissionMode.message);
     process.exit(1);
+  }
+  // argv and stream-json input can both be agent-authored (e.g. a nested
+  // letta -p through exec_command). Headless has no verified human-origin signal.
+  if (startupPermissionMode.mode === "auto") {
+    reportAndExitHeadless(
+      "headless_auto_origin_unverified",
+      new Error(
+        "Auto permission mode requires the interactive TUI; headless input cannot verify human origin.",
+      ),
+      "headless_startup_flag_validation",
+    );
   }
 
   // Set CLI permission overrides if provided
@@ -2589,24 +2603,7 @@ export async function handleHeadlessCommand(
         }
 
         // Phase 1: Collect decisions for all approvals
-        type Decision =
-          | {
-              type: "approve";
-              approval: {
-                toolCallId: string;
-                toolName: string;
-                toolArgs: string;
-              };
-            }
-          | {
-              type: "deny";
-              approval: {
-                toolCallId: string;
-                toolName: string;
-                toolArgs: string;
-              };
-              reason: string;
-            };
+        type Decision = ApprovalDecision;
 
         const { autoAllowed, autoDenied, needsUserInput } =
           await classifyApprovals(approvals, {
@@ -2614,6 +2611,7 @@ export async function handleHeadlessCommand(
             requireArgsForAutoApprove: true,
             missingNameReason: "Tool call incomplete - missing name",
             toolContextId: turnToolContextId ?? undefined,
+            abortSignal: sigintSignal,
           });
 
         const decisions: Decision[] = [
@@ -4498,25 +4496,7 @@ async function runBidirectionalMode(
             }
 
             // Check permissions and collect decisions
-            type Decision =
-              | {
-                  type: "approve";
-                  approval: {
-                    toolCallId: string;
-                    toolName: string;
-                    toolArgs: string;
-                  };
-                  matchedRule: string;
-                }
-              | {
-                  type: "deny";
-                  approval: {
-                    toolCallId: string;
-                    toolName: string;
-                    toolArgs: string;
-                  };
-                  reason: string;
-                };
+            type Decision = ApprovalDecision & { matchedRule?: string };
 
             const { autoAllowed, autoDenied, needsUserInput } =
               await classifyApprovals(approvals, {
@@ -4524,6 +4504,7 @@ async function runBidirectionalMode(
                 requireArgsForAutoApprove: true,
                 missingNameReason: "Tool call incomplete - missing name",
                 toolContextId: turnToolContextId ?? undefined,
+                abortSignal: currentAbortController.signal,
               });
 
             const decisions: Decision[] = [

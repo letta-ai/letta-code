@@ -7,6 +7,7 @@ import { isObjectRecord, isStringArray } from "./protocol-validation";
 function isDevicePermissionMode(value: unknown): boolean {
   return (
     value === "standard" ||
+    value === "auto" ||
     value === "acceptEdits" ||
     value === "unrestricted" ||
     value === "strict"

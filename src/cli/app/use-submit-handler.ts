@@ -256,6 +256,7 @@ type SubmitHandlerContext = {
   needsEagerApprovalCheck: boolean;
   openTrajectorySegment: () => void;
   overrideContentPartsRef: MutableRefObject<MessageCreate["content"] | null>;
+  queuedHumanRequestRef: MutableRefObject<string | null>;
   pendingApprovals: ApprovalRequest[];
   pendingConversationSwitchRef: MutableRefObject<ConversationSwitchContext | null>;
   pendingGitReminderRef: MutableRefObject<PendingGitReminder | null>;
@@ -515,6 +516,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     needsEagerApprovalCheck,
     openTrajectorySegment,
     overrideContentPartsRef,
+    queuedHumanRequestRef,
     pendingApprovals,
     pendingConversationSwitchRef,
     pendingGitReminderRef,
@@ -589,6 +591,8 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       };
       const msg = message?.trim() ?? "";
       const overrideContentParts = overrideContentPartsRef.current;
+      const queuedHumanRequest = queuedHumanRequestRef.current;
+      queuedHumanRequestRef.current = null;
       const hasOverrideContent = overrideContentParts !== null;
       if (overrideContentParts) {
         overrideContentPartsRef.current = null;
@@ -3669,7 +3673,6 @@ ${SYSTEM_REMINDER_CLOSE}
 
       // Append task notifications (if any) as event lines before the user message
       appendTaskNotificationEvents(taskNotifications);
-
       const transcriptStartLineIndex = userTextForInput
         ? Math.max(0, toLines(buffersRef.current).length - 1)
         : null;
@@ -3719,7 +3722,6 @@ ${SYSTEM_REMINDER_CLOSE}
       // Start the conversation loop. If we have queued approval results from an interrupted
       // client-side execution, send them first before the new user message.
       const initialInput: Array<MessageCreate | ApprovalCreate> = [];
-
       if (eagerRecoveryDenials && eagerRecoveryDenials.length > 0) {
         initialInput.push({
           type: "approval",
@@ -3727,25 +3729,24 @@ ${SYSTEM_REMINDER_CLOSE}
           otid: randomUUID(),
         });
       }
-
       const queuedApprovalInput =
         consumeQueuedApprovalInputForCurrentConversation();
       if (queuedApprovalInput) {
         initialInput.push(queuedApprovalInput);
       }
-
       initialInput.push({
         type: "message",
         role: "user",
         content: messageContent as unknown as MessageCreate["content"],
         otid: userOtid,
       });
-
       await processConversation(initialInput, {
+        trustedUserRequest: hasOverrideContent
+          ? queuedHumanRequest || undefined
+          : userTextForInput,
         submissionGeneration,
         transcriptStartLineIndex,
       });
-
       await runPostTurnMemorySync({
         conversationId,
         agentId,
@@ -3756,7 +3757,6 @@ ${SYSTEM_REMINDER_CLOSE}
           });
         },
       });
-
       // Clean up placeholders after submission
       clearPlaceholdersInText(msg);
 

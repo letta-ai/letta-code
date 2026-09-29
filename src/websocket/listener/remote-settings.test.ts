@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import {
@@ -25,6 +25,8 @@ import {
 describe("remote settings cwd repair", () => {
   const originalHome = process.env.HOME;
   let tempRoot: string | null = null;
+
+  beforeEach(() => resetRemoteSettingsCache());
 
   afterEach(async () => {
     resetRemoteSettingsCache();
@@ -214,7 +216,7 @@ describe("remote settings cwd repair", () => {
     );
 
     saveRemoteSettings({
-      permissionModeMap: { "conversation:live": { mode: "acceptEdits" } },
+      permissionModeMap: { "conversation:live": { mode: "auto" } },
     });
     expect(await flushRemoteSettingsWrites()).toBe(true);
     expect(
@@ -222,7 +224,7 @@ describe("remote settings cwd repair", () => {
     ).toMatchObject({
       cwdMap: {},
       permissionModeMap: {
-        "conversation:live": { mode: "acceptEdits" },
+        "conversation:live": { mode: "auto" },
       },
     });
   });

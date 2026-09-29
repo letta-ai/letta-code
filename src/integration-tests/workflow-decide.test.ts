@@ -1,8 +1,11 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { classifyApprovals } from "@/cli/helpers/approval-classification";
 import { settingsManager } from "@/settings-manager";
+import { loadSpecificTools, loadTools } from "@/tools/manager";
+import { submitWorkflowDecision } from "@/tools/workflow/decide";
 import { executeWorkflow } from "@/tools/workflow/workflow-engine";
 
 // The CI API integration matrix provides LETTA_API_KEY; a missing key is a
@@ -82,3 +85,186 @@ return await decide(
     await rm(dir, { recursive: true, force: true });
   }
 }, 45_000);
+
+test("auto permission classification follows the live Jev choice", async () => {
+  if (!process.env.LETTA_API_KEY) {
+    throw new Error(
+      "LETTA_API_KEY is required for the live auto permission test.",
+    );
+  }
+  await settingsManager.initialize();
+  await loadTools();
+  const dir = await mkdtemp(join(tmpdir(), "auto-jev-live-"));
+  const filePath = join(dir, "note.txt");
+  try {
+    await writeFile(filePath, "hello\n");
+    const patch = `*** Begin Patch\n*** Update File: ${filePath}\n@@\n-hello\n+hello world\n*** End Patch`;
+    let response:
+      | Awaited<ReturnType<typeof submitWorkflowDecision>>
+      | undefined;
+    let outboundRequest: unknown;
+    const result = await classifyApprovals(
+      [
+        {
+          toolCallId: "live-auto",
+          toolName: "ApplyPatch",
+          toolArgs: JSON.stringify({ input: patch }),
+        },
+      ],
+      {
+        workingDirectory: dir,
+        permissionModeState: { mode: "auto" },
+        trustedUserRequest:
+          "Change hello to hello world in note.txt in this project",
+        requireArgsForAutoApprove: true,
+        decide: async (...args) => {
+          outboundRequest = args[0];
+          response = await submitWorkflowDecision(...args);
+          return response;
+        },
+      },
+    );
+    expect(outboundRequest).toMatchObject({
+      state: {
+        trusted_user_request:
+          "Change hello to hello world in note.txt in this project",
+        untrusted_proposed_tool_call: {
+          tool_name: "ApplyPatch",
+          arguments: { input: patch },
+        },
+      },
+    });
+    expect(JSON.stringify(outboundRequest)).toContain("hello world");
+    expect(await readFile(filePath, "utf8")).toBe("hello\n");
+    expect(response?.model).toMatch(/^typesafe\/jev-/);
+    expect(response?.answers.approval).toMatchObject({
+      type: "choice",
+      calibrated: true,
+    });
+    expect(result.autoDenied).toHaveLength(0);
+    expect(result.autoAllowed.length + result.needsUserInput.length).toBe(1);
+    const answer = response?.answers.approval;
+    expect(result.autoAllowed).toHaveLength(
+      answer?.choice === "approve" ? 1 : 0,
+    );
+    expect(result.needsUserInput).toHaveLength(
+      answer?.choice === "ask" ? 1 : 0,
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}, 20_000);
+
+test("auto asks Jev about a compound workspace exploration command", async () => {
+  if (!process.env.LETTA_API_KEY) throw new Error("LETTA_API_KEY required");
+  await settingsManager.initialize();
+  await loadSpecificTools(["exec_command"]);
+  const cwd = await mkdtemp(join(tmpdir(), "auto-jev-explore-"));
+  try {
+    await writeFile(join(cwd, "AGENTS.md"), "# Project instructions\n");
+    const cmd =
+      'for f in AGENTS.md .cursor/rules; do if test -e "$f"; then printf \'%s\\n\' "$f"; fi; done';
+    let response:
+      | Awaited<ReturnType<typeof submitWorkflowDecision>>
+      | undefined;
+    let outbound: unknown;
+    const result = await classifyApprovals(
+      [
+        {
+          toolCallId: "explore",
+          toolName: "exec_command",
+          toolArgs: JSON.stringify({
+            cmd,
+            description: "Look around repository guidance",
+          }),
+        },
+      ],
+      {
+        workingDirectory: cwd,
+        permissionModeState: { mode: "auto" },
+        trustedUserRequest: "look around at this repo",
+        requireArgsForAutoApprove: true,
+        decide: async (...args) => {
+          outbound = args[0];
+          response = await submitWorkflowDecision(...args);
+          return response;
+        },
+      },
+    );
+    expect(outbound).toMatchObject({
+      state: {
+        untrusted_proposed_tool_call: {
+          tool_name: "exec_command",
+          arguments: { cmd },
+        },
+      },
+    });
+    expect(response?.answers.approval?.choice).toBeOneOf(["approve", "ask"]);
+    expect(result.autoAllowed).toHaveLength(
+      response?.answers.approval?.choice === "approve" ? 1 : 0,
+    );
+    expect(result.needsUserInput).toHaveLength(
+      response?.answers.approval?.choice === "ask" ? 1 : 0,
+    );
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+}, 20_000);
+
+test("auto gates a previously allowed Read on the live Jev choice", async () => {
+  if (!process.env.LETTA_API_KEY) {
+    throw new Error("LETTA_API_KEY is required for the live auto test.");
+  }
+  await settingsManager.initialize();
+  await loadTools();
+  const dir = await mkdtemp(join(tmpdir(), "auto-jev-read-live-"));
+  const filePath = join(dir, "AGENTS.md");
+  try {
+    await writeFile(filePath, "# Test project\n");
+    let response:
+      | Awaited<ReturnType<typeof submitWorkflowDecision>>
+      | undefined;
+    let outboundRequest: unknown;
+    const result = await classifyApprovals(
+      [
+        {
+          toolCallId: "live-read",
+          toolName: "Read",
+          toolArgs: JSON.stringify({ file_path: filePath }),
+        },
+      ],
+      {
+        workingDirectory: dir,
+        permissionModeState: { mode: "auto" },
+        trustedUserRequest: "Look around this repo and read AGENTS.md",
+        requireArgsForAutoApprove: true,
+        decide: async (...args) => {
+          outboundRequest = args[0];
+          response = await submitWorkflowDecision(...args);
+          return response;
+        },
+      },
+    );
+    expect(outboundRequest).toMatchObject({
+      state: {
+        trusted_user_request: "Look around this repo and read AGENTS.md",
+        untrusted_proposed_tool_call: {
+          tool_name: "Read",
+          arguments: { file_path: filePath },
+        },
+      },
+    });
+    expect(response?.answers.approval).toMatchObject({
+      type: "choice",
+      calibrated: true,
+    });
+    expect(result.autoAllowed).toHaveLength(
+      response?.answers.approval?.choice === "approve" ? 1 : 0,
+    );
+    expect(result.needsUserInput).toHaveLength(
+      response?.answers.approval?.choice === "ask" ? 1 : 0,
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}, 20_000);

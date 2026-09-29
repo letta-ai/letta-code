@@ -167,7 +167,7 @@ export type PendingTeleport = {
 };
 
 export interface ModeChangePayload {
-  mode: "standard" | "acceptEdits" | "unrestricted" | "strict";
+  mode: "standard" | "auto" | "acceptEdits" | "unrestricted" | "strict";
 }
 
 export interface ChangeCwdMessage {

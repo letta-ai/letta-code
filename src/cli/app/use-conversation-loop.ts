@@ -46,6 +46,7 @@ import {
   hasActiveSubagents,
 } from "@/agent/subagent-state";
 import { type ConversationMessageStreamBody, getBackend } from "@/backend";
+import { buildApprovalBatchKey } from "@/cli/app/approval-diffs";
 import {
   type Buffers,
   type Line,
@@ -78,6 +79,8 @@ import {
   buildQueuedContentParts,
   buildQueuedUserText,
   getQueuedNotificationSummaries,
+  selectApprovalContinuationRequest,
+  toQueuedMsg,
 } from "@/cli/helpers/queued-message-parts";
 import { appendTranscriptDeltaJsonl } from "@/cli/helpers/reflection-transcript";
 import { safeJsonParseOr } from "@/cli/helpers/safe-json-parse";
@@ -110,7 +113,7 @@ import type { ApprovalContext } from "@/permissions/analyzer";
 import { formatPermissionDenial } from "@/permissions/format-denial";
 import type { PermissionMode } from "@/permissions/mode";
 import { permissionMode } from "@/permissions/mode";
-import type { QueueRuntime } from "@/queue/queue-runtime";
+import type { DequeuedBatch, QueueRuntime } from "@/queue/queue-runtime";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { analyzeToolApproval, type ToolExecutionResult } from "@/tools/manager";
@@ -142,6 +145,7 @@ import type {
   AutoAllowedExecution,
   AutoDeniedApproval,
   AutoHandledToolResult,
+  ProcessConversationOptions,
   QueueApprovalResults,
 } from "./types";
 
@@ -192,11 +196,17 @@ type ConversationLoopContext = {
   appendError: AppendError;
   appendTaskNotificationEvents: (summaries: string[]) => boolean;
   approvalToolContextIdRef: MutableRefObject<string | null>;
+  pendingApprovalIntentRef: MutableRefObject<{
+    conversationId: string;
+    generation: number;
+    batchKey: string;
+    request: string;
+  } | null>;
   autoAllowedExecutionRef: MutableRefObject<AutoAllowedExecution | null>;
   buffersRef: MutableRefObject<Buffers>;
   clearApprovalToolContext: () => void;
   closeTrajectorySegment: () => void;
-  consumeQueuedMessages: () => QueuedMessage[] | null;
+  consumeQueuedMessages: () => DequeuedBatch | null;
   queueModeRef: MutableRefObject<"immediate" | "defer">;
   contextTrackerRef: MutableRefObject<ContextTracker>;
   chatgptPlanSwapsRef: MutableRefObject<number>;
@@ -294,6 +304,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     appendError,
     appendTaskNotificationEvents,
     approvalToolContextIdRef,
+    pendingApprovalIntentRef,
     autoAllowedExecutionRef,
     buffersRef,
     clearApprovalToolContext,
@@ -480,10 +491,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
   const processConversation = useCallback(
     async (
       initialInput: Array<MessageCreate | ApprovalCreate>,
-      options?: {
-        allowReentry?: boolean;
-        submissionGeneration?: number;
-        transcriptStartLineIndex?: number | null;
+      options?: ProcessConversationOptions & {
         allowResponseStateReuse?: boolean;
       },
     ): Promise<void> => {
@@ -1158,7 +1166,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                     setApprovalContexts([]);
                     queueApprovalResults(null);
 
-                    // Set up approval UI with fetched approvals
+                    // Recovered approvals have no verified request provenance.
+                    pendingApprovalIntentRef.current = null;
                     setPendingApprovals(serverApprovals);
 
                     // Analyze approval contexts (same logic as /resume)
@@ -1833,6 +1842,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 missingNameReason:
                   "Tool call incomplete - missing name or arguments",
                 toolContextId: approvalToolContextIdRef.current,
+                trustedUserRequest: options?.trustedUserRequest,
+                abortSignal: abortControllerRef.current?.signal,
               });
 
             // Precompute diffs for file edit tools before execution (both auto-allowed and needs-user-input)
@@ -2022,10 +2033,24 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 // Append queued messages if any (from 15s append mode).
                 // In defer mode, skip mid-run bundling — let the dequeue gate
                 // handle dispatch after the agent is fully done (end_turn).
-                const queuedItemsToAppend =
+                const queuedBatch =
                   queueModeRef.current === "immediate"
                     ? consumeQueuedMessages()
                     : null;
+                // Select intent before display conversion drops queue provenance.
+                const continuationRequest = selectApprovalContinuationRequest(
+                  options?.trustedUserRequest,
+                  queuedBatch,
+                );
+                const queuedItemsToAppend = queuedBatch
+                  ? queuedBatch.items
+                      .filter(
+                        (item) =>
+                          item.kind === "message" ||
+                          item.kind === "task_notification",
+                      )
+                      .map(toQueuedMsg)
+                  : null;
                 const queuedNotifications = queuedItemsToAppend
                   ? getQueuedNotificationSummaries(queuedItemsToAppend)
                   : [];
@@ -2062,7 +2087,10 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                         otid: queuedUserOtid,
                       },
                     ],
-                    { allowReentry: true },
+                    {
+                      allowReentry: true,
+                      trustedUserRequest: continuationRequest,
+                    },
                   );
                   toolResultsInFlightRef.current = false;
                   return;
@@ -2111,6 +2139,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   {
                     allowReentry: true,
                     allowResponseStateReuse: true,
+                    trustedUserRequest: continuationRequest,
                   },
                 );
                 toolResultsInFlightRef.current = false;
@@ -2190,8 +2219,17 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               return;
             }
 
-            // Show approval dialog for tools that need user input
-            setPendingApprovals(needsUserInput.map((ac) => ac.approval));
+            // Keep only this batch's verified human request across manual review.
+            const manualApprovals = needsUserInput.map((ac) => ac.approval);
+            pendingApprovalIntentRef.current = options?.trustedUserRequest
+              ? {
+                  conversationId: conversationIdRef.current,
+                  generation: myGeneration,
+                  batchKey: buildApprovalBatchKey(manualApprovals),
+                  request: options.trustedUserRequest,
+                }
+              : null;
+            setPendingApprovals(manualApprovals);
             setApprovalContexts(
               needsUserInput
                 .map((ac) => ac.context)
@@ -2283,7 +2321,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 setApprovalContexts([]);
                 queueApprovalResults(null);
 
-                // Set up approval UI with fetched approvals
+                // Recovered approvals have no verified request provenance.
+                pendingApprovalIntentRef.current = null;
                 setPendingApprovals(serverApprovals);
 
                 // Analyze approval contexts

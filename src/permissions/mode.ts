@@ -1,18 +1,25 @@
-// Permission mode management (unrestricted, standard, acceptEdits, strict)
+// Permission mode management (unrestricted, standard, auto, acceptEdits, strict)
 
 export type PermissionMode =
   | "standard"
+  | "auto"
   | "acceptEdits"
   | "unrestricted"
   | "strict";
 
 /** The default starting permission mode. */
 export const DEFAULT_PERMISSION_MODE: PermissionMode = "unrestricted";
+/** Full disclosure, printed once to stderr at startup where width is free. */
+export const AUTO_PERMISSION_MODE_LABEL =
+  "auto (sends user request and full tool args to Letta Cloud)";
+/** Footer variant; shares an 80-column row with model status. */
+export const AUTO_PERMISSION_MODE_SHORT_LABEL = "auto";
 
 /** All valid current permission mode values. */
 export const VALID_PERMISSION_MODES: readonly PermissionMode[] = [
   "unrestricted",
   "standard",
+  "auto",
   "acceptEdits",
   "strict",
 ] as const;
@@ -119,6 +126,7 @@ class PermissionModeManager {
         }
         return null;
 
+      case "auto":
       case "standard":
         // No mode overrides, use normal permission flow
         return null;

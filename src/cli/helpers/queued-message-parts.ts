@@ -7,6 +7,7 @@ import type {
 import { mergeQueuedTurnInput } from "@/queue/turn-queue-runtime";
 import type { QueuedMessage } from "@/utils/message-queue-bridge";
 import { extractTaskNotificationsForDisplay } from "@/utils/task-notifications";
+import { directUserRequest } from "./approval-classification";
 import { buildMessageContentFromDisplay } from "./paste-registry";
 
 export function getQueuedNotificationSummaries(
@@ -42,6 +43,62 @@ export function buildQueuedContentParts(
     return [];
   }
   return merged;
+}
+
+export function getQueuedDisplayText(batch: DequeuedBatch): string {
+  return batch.items
+    .flatMap((item) =>
+      item.kind === "task_notification"
+        ? [item.text]
+        : item.kind === "message" && typeof item.content === "string"
+          ? [item.content]
+          : [],
+    )
+    .filter(Boolean)
+    .join("\n");
+}
+
+/** Inspect original queue items before display conversion drops their source. */
+export function getQueuedHumanRequest(
+  batch: Pick<DequeuedBatch, "items">,
+): string | undefined {
+  return directUserRequest(
+    batch.items
+      .filter(
+        (item): item is MessageQueueItem =>
+          item.kind === "message" &&
+          item.source === "user" &&
+          item.clientMessageId !== "bridge",
+      )
+      .map((item) => ({ role: "user", content: item.content })),
+  );
+}
+
+export function pendingApprovalRequest(
+  pending: {
+    conversationId: string;
+    generation: number;
+    batchKey: string;
+    request: string;
+  } | null,
+  conversationId: string,
+  generation: number,
+  batchKey: string,
+): string | undefined {
+  return pending?.conversationId === conversationId &&
+    pending.generation === generation &&
+    pending.batchKey === batchKey
+    ? pending.request
+    : undefined;
+}
+
+export function selectApprovalContinuationRequest(
+  trustedUserRequest: string | undefined,
+  queuedBatch: DequeuedBatch | null,
+): string | undefined {
+  // An appended batch starts a new authorization context. Never fall back to
+  // old intent when it contains only automated or untrusted messages.
+  return queuedBatch ? getQueuedHumanRequest(queuedBatch) : trustedUserRequest;
 }
 
 export function buildQueuedUserText(queued: QueuedMessage[]): string {

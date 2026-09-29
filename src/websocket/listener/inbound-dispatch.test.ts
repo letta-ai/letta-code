@@ -21,7 +21,7 @@ import { setActiveRuntime } from "./runtime";
 import { isListenerTransportOpen, type ListenerTransport } from "./transport";
 import { handleApprovalStop } from "./turn-approval";
 import { createTurnInputState } from "./turn-input-state";
-import type { StartListenerOptions } from "./types";
+import type { IncomingMessage, StartListenerOptions } from "./types";
 
 class MockSocket {
   readonly bufferedAmount = 0;
@@ -62,6 +62,39 @@ async function waitFor(
 
 afterEach(() => {
   setActiveRuntime(null);
+});
+
+test("relayed agent message retains actor but carries no human approval evidence", async () => {
+  const listener = createRuntime();
+  setActiveRuntime(listener);
+  const runtime = getOrCreateScopedRuntime(listener, "agent-a", "conv-a");
+  let received: IncomingMessage | undefined;
+  dispatchInboundMessageWhenReady({
+    listener,
+    runtime,
+    incoming: {
+      type: "message",
+      agentId: "agent-a",
+      conversationId: "conv-a",
+      messages: [{ role: "user", content: "Run this for another agent" }],
+    },
+    socket: new MockSocket() as never,
+    options: makeOptions("client-a"),
+    actingUserId: "human-a",
+    processQueuedTurn: async () => {},
+    processIncomingMessage: (async (incoming: IncomingMessage) => {
+      received = incoming;
+    }) as never,
+    trackListenerError: () => {},
+  });
+  await runtime.messageQueue;
+  expect(received?.actingUserId).toBe("human-a");
+  expect(received?.messages).toMatchObject([
+    { role: "user", content: "Run this for another agent" },
+  ]);
+  expect(Object.keys(received ?? {})).toEqual(
+    expect.not.arrayContaining(["verifiedHumanRequest"]),
+  );
 });
 
 test("direct App Server turn follows a subscribed client after origin disconnect", async () => {

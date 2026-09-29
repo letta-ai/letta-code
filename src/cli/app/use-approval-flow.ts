@@ -24,6 +24,9 @@ import {
   buildQueuedContentParts,
   buildQueuedUserText,
   getQueuedNotificationSummaries,
+  pendingApprovalRequest,
+  selectApprovalContinuationRequest,
+  toQueuedMsg,
 } from "@/cli/helpers/queued-message-parts";
 import { safeJsonParseOr } from "@/cli/helpers/safe-json-parse";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
@@ -31,6 +34,7 @@ import { flushEligibleLinesBeforeReentry } from "@/cli/helpers/subagent-turn-sta
 import { getRandomThinkingVerb } from "@/cli/helpers/thinking-messages";
 import type { ApprovalContext } from "@/permissions/analyzer";
 import type { PermissionMode } from "@/permissions/mode";
+import type { DequeuedBatch } from "@/queue/queue-runtime";
 import {
   analyzeToolApproval,
   checkToolPermission,
@@ -71,6 +75,12 @@ type ApprovalFlowContext = {
   appendTaskNotificationEvents: (summaries: string[]) => boolean;
   approvalContexts: ApprovalContext[];
   approvalToolContextIdRef: MutableRefObject<string | null>;
+  pendingApprovalIntentRef: MutableRefObject<{
+    conversationId: string;
+    generation: number;
+    batchKey: string;
+    request: string;
+  } | null>;
   approvalResults: ApprovalDecision[];
   autoDeniedApprovals: AutoDeniedApproval[];
   autoHandledResults: AutoHandledToolResult[];
@@ -82,7 +92,7 @@ type ApprovalFlowContext = {
     buffers: Buffers,
     opts?: { deferToolCalls?: boolean },
   ) => void;
-  consumeQueuedMessages: () => QueuedMessage[] | null;
+  consumeQueuedMessages: () => DequeuedBatch | null;
   queueModeRef: MutableRefObject<"immediate" | "defer">;
   conversationGenerationRef: MutableRefObject<number>;
   conversationId: string;
@@ -115,6 +125,7 @@ type ApprovalFlowContext = {
   setStreaming: (value: boolean) => void;
   setThinkingMessage: Dispatch<SetStateAction<string>>;
   setUiPermissionMode: (mode: PermissionMode) => void;
+  uiPermissionModeRef: MutableRefObject<PermissionMode>;
   startupApproval: ApprovalRequest | null;
   startupApprovals: ApprovalRequest[];
   syncTrajectoryElapsedBase: () => void;
@@ -139,6 +150,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
     approvalContexts,
     approvalResults,
     approvalToolContextIdRef,
+    pendingApprovalIntentRef,
     autoDeniedApprovals,
     autoHandledResults,
     buffersRef,
@@ -177,6 +189,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
     setStreaming,
     setThinkingMessage,
     setUiPermissionMode,
+    uiPermissionModeRef,
     startupApproval,
     startupApprovals,
     syncTrajectoryElapsedBase,
@@ -262,6 +275,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
       setAutoDeniedApprovals([]);
       setApprovalContexts([]);
       setPendingApprovals([]);
+      pendingApprovalIntentRef.current = null;
 
       try {
         if (conversationGenerationRef.current !== generationAtStart) {
@@ -283,6 +297,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           return;
         }
 
+        pendingApprovalIntentRef.current = null;
         await restorePendingApprovalUi(approvals);
         setNeedsEagerApprovalCheck(false);
         if (options.notifyOnManualApproval) {
@@ -300,6 +315,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           "Failed to restore pending approval UI: %O",
           error,
         );
+        pendingApprovalIntentRef.current = null;
         await restorePendingApprovalUi(approvals);
         setNeedsEagerApprovalCheck(false);
         setAutoHandledResults([]);
@@ -327,6 +343,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: conversationId is the intentional reset trigger; generation ref is read dynamically.
   useEffect(() => {
     void conversationId;
+    pendingApprovalIntentRef.current = null;
     restoredApprovalRecoveryRef.current = {
       batchKey: null,
       generation: conversationGenerationRef.current,
@@ -370,6 +387,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           setStreaming(false);
           setIsExecutingTool(false);
           setPendingApprovals([]);
+          pendingApprovalIntentRef.current = null;
           setApprovalContexts([]);
           setApprovalResults([]);
           setAutoHandledResults([]);
@@ -382,6 +400,13 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
         const autoHandledSnapshot = [...autoHandledResults];
         const autoDeniedSnapshot = [...autoDeniedApprovals];
         const pendingSnapshot = [...pendingApprovals];
+        const trustedRequest = pendingApprovalRequest(
+          pendingApprovalIntentRef.current,
+          conversationIdRef.current,
+          conversationGenerationRef.current,
+          buildApprovalBatchKey(pendingSnapshot),
+        );
+        pendingApprovalIntentRef.current = null;
 
         // Clear dialog state immediately so UI updates right away
         setPendingApprovals([]);
@@ -553,10 +578,23 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           waitingForQueueCancelRef.current = false;
           queueSnapshotRef.current = [];
         } else {
-          const queuedItemsToAppend =
+          const queuedBatch =
             queueModeRef.current === "immediate"
               ? consumeQueuedMessages()
               : null;
+          const continuationRequest = selectApprovalContinuationRequest(
+            trustedRequest,
+            queuedBatch,
+          );
+          const queuedItemsToAppend = queuedBatch
+            ? queuedBatch.items
+                .filter(
+                  (item) =>
+                    item.kind === "message" ||
+                    item.kind === "task_notification",
+                )
+                .map(toQueuedMsg)
+            : null;
           const queuedNotifications = queuedItemsToAppend
             ? getQueuedNotificationSummaries(queuedItemsToAppend)
             : [];
@@ -595,7 +633,10 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
             buffersRef.current,
           );
           toolResultsInFlightRef.current = true;
-          await processConversation(input, { allowReentry: true });
+          await processConversation(input, {
+            allowReentry: true,
+            trustedUserRequest: continuationRequest,
+          });
           toolResultsInFlightRef.current = false;
 
           // Clear any stale queued results from previous interrupts.
@@ -793,7 +834,11 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
       // Re-check remaining approvals against the newly saved permission
       // This allows subsequent approvals that match the new rule to be auto-allowed
       const remainingApprovals = pendingApprovals.slice(currentIndex + 1);
-      if (remainingApprovals.length > 0) {
+      // A saved allow rule cannot bypass Jev for other pending calls in Auto.
+      if (
+        remainingApprovals.length > 0 &&
+        uiPermissionModeRef.current !== "auto"
+      ) {
         const recheckResults = await Promise.all(
           remainingApprovals.map(async (approval) => {
             const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
@@ -839,6 +884,13 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
 
           // Snapshot current state BEFORE clearing (critical for ID matching!)
           // This must include ALL previous decisions, auto-handled, and auto-denied
+          const trustedRequest = pendingApprovalRequest(
+            pendingApprovalIntentRef.current,
+            conversationIdRef.current,
+            conversationGenerationRef.current,
+            buildApprovalBatchKey(pendingApprovals),
+          );
+          pendingApprovalIntentRef.current = null;
           const approvalResultsSnapshot = [...approvalResults];
           const autoHandledSnapshot = [...autoHandledResults];
           const autoDeniedSnapshot = [...autoDeniedApprovals];
@@ -923,13 +975,16 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
             refreshDerived();
 
             // Continue conversation with all results
-            await processConversation([
-              {
-                type: "approval",
-                approvals: allResults as ApprovalResult[],
-                otid: randomUUID(),
-              },
-            ]);
+            await processConversation(
+              [
+                {
+                  type: "approval",
+                  approvals: allResults as ApprovalResult[],
+                  otid: randomUUID(),
+                },
+              ],
+              { trustedUserRequest: trustedRequest },
+            );
           } catch (error) {
             markIncompleteToolsAsCancelled(
               buffersRef.current,

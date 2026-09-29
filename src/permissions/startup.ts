@@ -1,5 +1,6 @@
 import { loadPermissionMode } from "./loader";
 import {
+  AUTO_PERMISSION_MODE_LABEL,
   migratePermissionMode,
   type PermissionMode,
   permissionMode,
@@ -22,6 +23,13 @@ export function formatInvalidPermissionModeMessage(value: string): string {
   return `Invalid permission mode: ${value}. Valid modes: ${VALID_PERMISSION_MODES.join(", ")}`;
 }
 
+function selectStartupMode(mode: PermissionMode): void {
+  const wasAuto = permissionMode.getMode() === "auto";
+  permissionMode.setMode(mode);
+  if (mode === "auto" && !wasAuto)
+    console.error(`Permission mode: ${AUTO_PERMISSION_MODE_LABEL}`);
+}
+
 export async function applyStartupPermissionMode(options: {
   permissionModeValue?: string;
   yoloMode?: boolean;
@@ -30,7 +38,7 @@ export async function applyStartupPermissionMode(options: {
   const { permissionModeValue, yoloMode = false } = options;
 
   if (yoloMode) {
-    permissionMode.setMode("unrestricted");
+    selectStartupMode("unrestricted");
     return { ok: true, mode: "unrestricted", source: "cli" };
   }
 
@@ -43,7 +51,7 @@ export async function applyStartupPermissionMode(options: {
         message: formatInvalidPermissionModeMessage(permissionModeValue),
       };
     }
-    permissionMode.setMode(migrated);
+    selectStartupMode(migrated);
     return { ok: true, mode: migrated, source: "cli" };
   }
 
@@ -51,7 +59,7 @@ export async function applyStartupPermissionMode(options: {
     options.workingDirectory ?? process.cwd(),
   );
   if (configuredMode) {
-    permissionMode.setMode(configuredMode);
+    selectStartupMode(configuredMode);
     return { ok: true, mode: configuredMode, source: "settings" };
   }
 

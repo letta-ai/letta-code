@@ -53,7 +53,10 @@ import {
   TOKEN_DISPLAY_THRESHOLD,
 } from "@/constants";
 import type { PermissionMode } from "@/permissions/mode";
-import { permissionMode } from "@/permissions/mode";
+import {
+  AUTO_PERMISSION_MODE_SHORT_LABEL,
+  permissionMode,
+} from "@/permissions/mode";
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 import { settingsManager } from "@/settings-manager";
 import type { QueuedMessage } from "@/utils/message-queue-bridge";
@@ -89,25 +92,27 @@ function getPermissionModeTransientHintInfo(mode: PermissionMode): {
   color: string;
   glyph?: string;
 } {
+  const { processing, processingShimmer, success, error } = colors.status;
   switch (mode) {
     case "acceptEdits":
-      return { name: "accept edits", color: colors.status.processing };
+      return { name: "accept edits", color: processing };
+    case "auto":
+      return {
+        name: AUTO_PERMISSION_MODE_SHORT_LABEL,
+        color: colors.status.autoMode,
+      };
     case "standard":
       return {
         name: "standard (request approval) mode",
-        color: colors.status.processingShimmer,
+        color: processingShimmer,
         glyph: "▶",
       };
     case "unrestricted":
-      return {
-        name: "unrestricted mode",
-        color: colors.status.success,
-        glyph: "⚡︎",
-      };
+      return { name: "unrestricted mode", color: success, glyph: "⚡︎" };
     case "strict":
       return {
         name: "strict (all tools require approval)",
-        color: colors.status.error,
+        color: error,
         glyph: "🔒",
       };
   }
@@ -1419,6 +1424,7 @@ export function Input({
       const modes: PermissionMode[] = [
         "unrestricted",
         "acceptEdits",
+        "auto",
         "standard",
       ];
       const currentIndex = modes.indexOf(currentMode);
@@ -1745,17 +1751,11 @@ export function Input({
     // Fall through to permission modes
     switch (currentMode) {
       case "acceptEdits":
-        return { name: "accept edits", color: colors.status.processing };
+      case "auto":
       case "standard":
-        return {
-          name: "standard (request approval) mode",
-          color: colors.status.processingShimmer,
-          glyph: "▶",
-        };
-      case "unrestricted":
-        // Default mode — show nothing so the built-in idle row owns the space.
-        return null;
+        return getPermissionModeTransientHintInfo(currentMode);
       default:
+        // Default mode — show nothing so the built-in idle row owns the space.
         return null;
     }
   }, [currentMode]);

@@ -93,7 +93,8 @@ import type { ExecutionPhase } from "@/cli/helpers/phase-visuals";
 import { maybeLaunchPostTurnReflection } from "@/cli/helpers/post-turn-reflection";
 import {
   buildContentFromQueueBatch,
-  toQueuedMsg,
+  getQueuedDisplayText,
+  getQueuedHumanRequest,
 } from "@/cli/helpers/queued-message-parts";
 import {
   buildReflectionArenaChoiceQuestions,
@@ -162,11 +163,7 @@ import {
   isByokHandleForSelector,
   listProviders,
 } from "@/providers/byok-providers";
-import type {
-  MessageQueueItem,
-  QueueRuntime,
-  TaskNotificationQueueItem,
-} from "@/queue/queue-runtime";
+import type { QueueRuntime } from "@/queue/queue-runtime";
 import {
   createSharedReminderState,
   enqueueCommandIoReminder,
@@ -1413,6 +1410,7 @@ export function App({
 
   // Override content parts for queued submissions (to preserve part boundaries)
   const overrideContentPartsRef = useRef<MessageCreate["content"] | null>(null);
+  const queuedHumanRequestRef = useRef<string | null>(null);
 
   // Set up message queue bridge for background tasks
   // This allows non-React code (Task.ts) to add notifications to queueDisplay
@@ -1430,6 +1428,7 @@ export function App({
           : ({
               kind: "message",
               source: message.source ?? "user",
+              clientMessageId: "bridge",
               content: message.text,
             } as Parameters<typeof tuiQueueRef.current.enqueue>[0]),
       );
@@ -1571,6 +1570,12 @@ export function App({
     null,
   );
   const approvalToolContextIdRef = useRef<string | null>(null);
+  const pendingApprovalIntentRef = useRef<{
+    conversationId: string;
+    generation: number;
+    batchKey: string;
+    request: string;
+  } | null>(null);
   const clearApprovalToolContext = useCallback(() => {
     const contextId = approvalToolContextIdRef.current;
     if (!contextId) return;
@@ -1679,17 +1684,10 @@ export function App({
   );
 
   // Queue callbacks remove consumed display entries by item ID.
-  const consumeQueuedMessages = useCallback((): QueuedMessage[] | null => {
+  const consumeQueuedMessages = useCallback(() => {
     const len = tuiQueueRef.current?.length ?? 0;
     if (len === 0) return null;
-    const batch = tuiQueueRef.current?.consumeItems(len);
-    if (!batch) return null;
-    return batch.items
-      .filter(
-        (item): item is MessageQueueItem | TaskNotificationQueueItem =>
-          item.kind === "message" || item.kind === "task_notification",
-      )
-      .map(toQueuedMsg);
+    return tuiQueueRef.current?.consumeItems(len) ?? null;
   }, []);
 
   // Helper to wrap async handlers that need to close overlay and lock input
@@ -3678,6 +3676,7 @@ export function App({
     appendError,
     appendTaskNotificationEvents,
     approvalToolContextIdRef,
+    pendingApprovalIntentRef,
     autoAllowedExecutionRef,
     buffersRef,
     clearApprovalToolContext,
@@ -3778,6 +3777,7 @@ export function App({
     approvalContexts,
     approvalResults,
     approvalToolContextIdRef,
+    pendingApprovalIntentRef,
     autoDeniedApprovals,
     autoHandledResults,
     buffersRef,
@@ -3816,6 +3816,7 @@ export function App({
     setStreaming,
     setThinkingMessage,
     setUiPermissionMode,
+    uiPermissionModeRef,
     startupApproval,
     startupApprovals,
     syncTrajectoryElapsedBase,
@@ -4169,6 +4170,7 @@ export function App({
     needsEagerApprovalCheck,
     openTrajectorySegment,
     overrideContentPartsRef,
+    queuedHumanRequestRef,
     pendingApprovals,
     pendingConversationSwitchRef,
     pendingGitReminderRef,
@@ -4278,19 +4280,9 @@ export function App({
       if (!batch) return;
 
       // Build concatenated text for lastDequeuedMessageRef (error restoration).
-      const concatenatedMessage = batch.items
-        .map((item) => {
-          if (item.kind === "task_notification") return item.text;
-          if (item.kind === "message") {
-            return typeof item.content === "string" ? item.content : "";
-          }
-          return "";
-        })
-        .filter((t) => t.length > 0)
-        .join("\n");
+      const concatenatedMessage = getQueuedDisplayText(batch);
 
       const queuedContentParts = buildContentFromQueueBatch(batch);
-
       debugLog(
         "queue",
         `Dequeuing ${batch.mergedCount} message(s): "${concatenatedMessage.slice(0, 50)}${concatenatedMessage.length > 50 ? "..." : ""}"`,
@@ -4301,6 +4293,7 @@ export function App({
 
       // Submit via normal flow — overrideContentPartsRef carries rich content parts.
       overrideContentPartsRef.current = queuedContentParts;
+      queuedHumanRequestRef.current = getQueuedHumanRequest(batch) ?? "";
       // Lock prevents re-entrant dequeue if deps churn before processConversation
       // sets abortControllerRef (which is the normal long-term gate).
       dequeueInFlightRef.current = true;
