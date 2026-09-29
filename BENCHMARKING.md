@@ -1,157 +1,213 @@
-# Benchmarking trajectory import on the local backend
+# Benchmarking Letta memory on existing data
 
-Take real coding-agent history (Claude Code, Codex, and the other harnesses the
-trajectory package supports), load it into a fresh local agent, and measure
-whether that history makes the agent better at real tasks.
+How to measure what Letta learns from existing conversation data. The data can
+be coding-agent sessions, chat logs, or a benchmark dataset. You convert it to
+the [trajectory](https://github.com/letta-ai/trajectory) format, import it into
+a fresh local agent, and let the agent build memory from it. Then you test the
+agent against a baseline.
 
-Export transcripts, create a blank local agent, import, inspect, then evaluate
-against a baseline.
+The pipeline has two steps:
+
+1. **Convert** your data to trajectory-v1 session files.
+2. **Import** the folder into a blank local agent with `letta import`. Import
+   stores every session as a conversation, then runs a memory-initialization
+   turn that analyzes the history with a dynamic Workflow and commits the
+   resulting memory.
 
 ## Setup
 
-Point the local backend at a scratch directory. Otherwise a run reads and
-mutates your real `~/.letta/lc-local-backend` agents, auth, and transcripts.
+Use a scratch local-backend directory so the run doesn't touch your real
+`~/.letta/lc-local-backend` state:
 
 ```bash
-export LETTA_LOCAL_BACKEND_DIR=/tmp/letta-bench-$(date +%s)
-export LETTA_TRAJ_DIR=/tmp/letta-trajectories-bench
+export LETTA_LOCAL_BACKEND_DIR=$(mktemp -d /tmp/letta-bench-XXXX)
+export TRAJ_DIR=$(mktemp -d /tmp/letta-traj-XXXX)
 ```
 
-`--backend local` is a one-off override and does not change your saved default.
-From a checkout, substitute `bun run dev` for `letta`. A run is disposable —
-delete `$LETTA_LOCAL_BACKEND_DIR` and start over rather than resetting in place.
+From a checkout, use `bun run dev` wherever this guide says `letta`. Each run is
+disposable. To start over, delete `$LETTA_LOCAL_BACKEND_DIR`; don't reset it in
+place.
 
-## 1. Export transcripts to trajectory-v1
+## 1. Convert data to trajectory format
+
+Each session becomes one JSON file containing an array of trajectory-v1
+records. The first record is a `meta` record, and the rest are conversational
+records in order:
+
+```json
+[
+  { "role": "meta", "source": "my-dataset" },
+  { "role": "user", "content": "I just moved to Lisbon.", "timestamp": "2024-03-01T10:00:00.000Z" },
+  { "role": "assistant", "content": "How are you settling in?", "timestamp": "2024-03-01T10:00:05.000Z" }
+]
+```
+
+The `meta` record needs `source`; `cwd`, `git_branch`, and `model` are optional.
+Every other record needs an ISO `timestamp`. Assistant tool calls use
+`tool_calls: [{ id, name, args }]`, where `args` is a JSON-object string, and
+each call must be answered by a `tool` record with the matching `tool_call_id`.
+The full contract is
+[`schema/trajectory-v1.schema.json`](https://github.com/letta-ai/trajectory/blob/main/schema/trajectory-v1.schema.json).
+Use `user`, `assistant`, `reasoning`, and `tool` records. Import has no mapping
+for `system` or `observation` records and stores them as assistant text.
+
+Lay the files out one directory per source:
+
+```
+$TRAJ_DIR/
+  my-dataset/
+    session-001.json
+    session-002.json
+```
+
+The folder may contain only `.json` session files and, optionally, a
+`manifest.json`. Symlinks and other files are rejected.
+
+Pick the conversion path that matches your data.
+
+**Coding-agent sessions on this machine** (Claude Code, Codex, and others). Let
+Letta export them. This also writes a `manifest.json`:
 
 ```bash
-letta trajectories detect
+letta trajectories detect                      # sessions available per source
+letta trajectories export --out "$TRAJ_DIR" --source claude-code --project /path/to/repo
 ```
 
-One line per source with a session count, e.g. `claude-code: 212 session(s)`.
+Use `--transcript <source>:<path>` to export a transcript file copied from
+another machine. Before you import, check that the `errors` array in
+`manifest.json` is empty; import refuses a manifest with errors.
 
-Export — keep the first corpus small, one source and one project:
+**Native transcripts from a supported harness** (see the
+[supported sources](https://github.com/letta-ai/trajectory#supported-sources)).
+Normalize them with the library:
 
-```bash
-letta trajectories export \
-  --out "$LETTA_TRAJ_DIR" \
-  --source claude-code \
-  --project /path/to/the/repo
+```ts
+import { normalizeTranscript } from "@letta-ai/trajectory";
+
+const { records, diagnostics } = normalizeTranscript({ source: "codex", transcript: rawJsonl });
+await Bun.write(`${TRAJ_DIR}/codex/${sessionId}.json`, JSON.stringify(records));
 ```
 
-| Flag | Effect |
-| --- | --- |
-| `--source <name>` | Repeatable; omit to export every supported source |
-| `--project <path>` | Keep only sessions whose recorded cwd starts with this path |
-| `--transcript <source>:<path>` | Normalize a specific file, e.g. one copied from another machine |
-| `--json` | Emit the manifest on stdout instead of progress lines |
+**Any other data** (chat logs, benchmark conversations). Write the records
+yourself and validate each file:
 
-You get `$LETTA_TRAJ_DIR/manifest.json` plus one file per session under
-`<source>/<startedAt>_<sessionId>.json`. Each session file is a JSON array of
-trajectory-v1 records: a `meta` record (source, cwd, git branch, model) followed
-by `user`, `assistant`, `reasoning`, and `tool` records. The manifest indexes
-every session with its `sessionId`, per-role counts, and first user prompt.
-Skim before importing:
+```ts
+import { validateTranscript } from "@letta-ai/trajectory";
 
-```bash
-letta trajectories list --out "$LETTA_TRAJ_DIR"
-letta trajectories view <sessionId> --out "$LETTA_TRAJ_DIR" --tools
+validateTranscript(records); // throws on an invalid trajectory
 ```
 
-Check the `errors` array in `manifest.json` — sessions that fail to normalize
-are absent from the corpus, so a source that exported 4 of 200 sessions makes
-the rest of the run meaningless. `export` replaces a directory it previously
-wrote and refuses a non-empty directory it did not create, so give each corpus
-its own `--out`.
+For multi-session benchmarks, write one file per session and use real or
+synthetic timestamps that keep the sessions in chronological order. The memory
+pass relies on that order to resolve facts that change over time.
 
-**Hold tasks out here.** Decide your evaluation tasks before exporting and scope
-`--project` and `--source` so the sessions that solved those tasks stay out of
-the corpus. Importing history that contains the answers measures recall, not
-capability.
+**Hold out your evaluation data.** Decide the test questions or tasks before
+converting, and leave out anything that contains their answers verbatim. The
+goal is to measure what memory retains and generalizes from the history, not
+whether the agent can read the answer key.
 
-## 2. Create a blank local agent
+## 2. Create a blank agent
 
 ```bash
 AGENT_ID=$(letta --backend local agents create --personality blank --name bench-01 \
+  --model openai/gpt-5.5 \
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
 ```
 
-`--personality blank` avoids a preselected persona; it does not leave memory
-empty. A new agent still starts with boilerplate `MEMORY.md`, `persona.md`, and
-`human.md`. Memory lives at `$LETTA_LOCAL_BACKEND_DIR/memfs/$AGENT_ID/memory`.
-Snapshot it now so step 4 compares before against after rather than treating
-everything present later as imported:
+Choose the model here. Import has no model option, so the memory-initialization
+turn uses the agent's model, and its Workflow workers use the same model unless
+the Workflow is given one explicitly. The provider must have credentials in the
+scratch backend, such as `OPENAI_API_KEY` in the environment. `/model` in a later
+session changes only that conversation's model, not the agent's.
+
+A new agent starts with boilerplate memory files, so snapshot its memory
+repository before importing:
 
 ```bash
-find "$LETTA_LOCAL_BACKEND_DIR/memfs/$AGENT_ID/memory" -type f
+MEMORY_DIR="$LETTA_LOCAL_BACKEND_DIR/memfs/$AGENT_ID/memory"
+git -C "$MEMORY_DIR" rev-parse HEAD > "$LETTA_LOCAL_BACKEND_DIR/pre-import-rev"
 ```
 
 ## 3. Import
 
 ```bash
-letta --backend local import "$LETTA_TRAJ_DIR" --agent "$AGENT_ID"
+cd "$(mktemp -d)"
+letta --backend local import "$TRAJ_DIR" --agent "$AGENT_ID"
 ```
 
-Import is local-backend only. It creates one out-of-context conversation per
-exported session, then runs a simplified memory-initialization turn over that
-history — no upfront questions. The output reports how many messages and
-conversations it created, and the conversation ID for each; keep that list for
-the next step.
+Run import from an empty directory. The initialization turn also looks at the
+current working directory, so running it inside a repository mixes notes about
+that repository into the agent's memory.
 
-Import once per agent. If the init turn fails after the messages land, create a
-fresh agent and re-import rather than re-running import on the same one.
+Import does the following:
 
-## 4. Inspect what landed
+1. Validates every session file before writing anything, with or without a
+   manifest.
+2. Creates one out-of-context conversation per session and prints a JSON
+   summary that maps each session to its conversation ID.
+3. Starts a headless memory-initialization turn. The agent groups the sessions
+   into cohorts, launches a dynamic Workflow of read-only workers to analyze
+   them, reads the Workflow results, and writes and commits memory. If some
+   sessions were not covered, it launches follow-up Workflows.
 
-Read back an imported conversation by its ID from the import output. Imported
-history lives in those conversations, not in the agent's `default` one:
+The command exits 0 only if all of these are true:
+
+- A Workflow ran and succeeded.
+- The workers' `sessionsRead` reports cover every session.
+- Memory has a new commit with a non-empty `MEMORY.md`.
+- The memory repository has no uncommitted changes.
+
+If a Workflow fails or never starts, the command exits non-zero instead of
+falling back to a serial pass. The run waits at most 30 minutes.
+
+Import once per agent. A second import into the same agent is refused, so to
+retry after a failure, create a new blank agent and import again.
+
+## 4. Inspect the memory
 
 ```bash
-letta --backend local messages transcript --agent "$AGENT_ID" --conversation <imported-id>
+git -C "$MEMORY_DIR" diff --stat "$(cat "$LETTA_LOCAL_BACKEND_DIR/pre-import-rev")" HEAD
+git -C "$MEMORY_DIR" log --stat
+letta --backend local memory tokens --memory-dir "$MEMORY_DIR"
 ```
 
-Then the memory, read against the step 2 snapshot so you count what changed
-rather than what is merely present:
+To read an imported session as the agent stored it, use a conversation ID from
+the import summary:
 
 ```bash
-find "$LETTA_LOCAL_BACKEND_DIR/memfs/$AGENT_ID/memory" -type f
-letta --backend local memory status --agent "$AGENT_ID"
-letta --backend local memory tokens --memory-dir "$LETTA_LOCAL_BACKEND_DIR/memfs/$AGENT_ID/memory"
+letta --backend local messages transcript --agent "$AGENT_ID" --conversation <conversation-id>
 ```
 
-Memory is git-backed, so
-`git -C "$LETTA_LOCAL_BACKEND_DIR/memfs/$AGENT_ID/memory" log --stat` shows what
-was written and in how many passes.
-
-This step is diagnostic. File count and token size describe volume, not skill —
-a large memory tree can be entirely generic. Read a few files against the
-corpus, ask whether the facts trace back to real sessions, and treat the answer
-as a hypothesis to test in step 5.
+File counts and token sizes measure volume, not quality. Read the memory files,
+check a sample of facts against the source sessions, and look for things that
+are wrong, stale, or too generic to be useful.
 
 ## 5. Evaluate against a baseline
 
-Capability is a comparison, so run the same held-out tasks against two agents:
-the imported one from step 3, and a second blank agent created exactly like
-step 2 with no import.
+Run the same held-out questions or tasks against two agents: the imported agent
+and a blank agent created the same way, with the same `--model`, but never
+imported. Keep everything else
+the same: model, tools, permissions, prompts and their order, repository commit
+for coding tasks, and a fresh conversation per question on both agents.
 
-Hold everything else fixed — same model, tools, and permissions, same repository
-at the same commit, same task prompts in the same order, one fresh conversation
-per task on both sides, each agent in its own `LETTA_LOCAL_BACKEND_DIR`.
+```bash
+letta --backend local -p --agent "$AGENT_ID" --new "<question>"
+```
 
-Use 5–10 tasks from the corpus's domain but absent from it, each with a
-pass/fail check you can run without judging the transcript — a test that goes
-green, a build that succeeds, a diff that matches expected behavior. Per task,
-per agent, capture:
+Score each item with an objective check wherever you can. For recall questions,
+use exact match or a fixed rubric. For coding tasks, use tests that pass, a
+build that succeeds, or expected behavior.
 
-| Field | How |
+Record the following:
+
+| Field | Notes |
 | --- | --- |
-| Pass / fail | Your objective check |
-| Turns to completion | Transcript |
-| Wall-clock | Time the run |
-| Token cost | `/usage` in the session, or your provider's BYOK dashboard |
-| Human interventions | Count of times you had to correct or unblock |
+| Pass / fail or score | Per item, per agent |
+| Token cost | Memory adds context to every turn |
+| Turns and wall-clock | Per item |
+| Memory size | From step 4 |
 
-Report the pass-rate difference alongside the cost difference — history that
-lifts pass rate while tripling tokens is a different result than one that does
-both. Keep the corpus description (`manifest.json` session and record counts,
-sources, project filter) with the numbers, and vary one corpus dimension at a
-time across runs.
+Report the score difference together with the cost difference. Keep a
+description of the corpus with the results: its sources, number of sessions and
+records, and how it was converted. Across runs, change one corpus dimension at a
+time.
