@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
+import { cancelAcceptedRemoteTurn } from "@/agent/subagents/remote-turn-cancel";
+import type { EnqueueReceipt } from "@/backend/api/conversation-enqueue";
 import {
   appendToOutputFile,
   type BackgroundTask,
@@ -8,6 +10,7 @@ import {
   getNextTaskId,
 } from "@/tools/impl/process_manager";
 import { task_stop } from "@/tools/impl/task-stop";
+import { executeTool, loadSpecificTools } from "@/tools/manager";
 
 /**
  * Tests for Task background execution infrastructure.
@@ -169,6 +172,111 @@ describe("TaskStop with background tasks", () => {
     expect(bgTask.status).toBe("completed"); // Status unchanged
 
     // Clean up
+    fs.unlinkSync(outputFile);
+  });
+
+  test("TaskStop reports an unconfirmed remote cancellation without claiming a kill", async () => {
+    const taskId = "task_stop_remote_unconfirmed";
+    const outputFile = createBackgroundOutputFile(taskId);
+    const detail =
+      "Remote cancellation unconfirmed for accepted Super Run sr-1: runtime activity could not be verified.";
+    const bgTask: BackgroundTask = {
+      description: "Remote Agent task",
+      subagentType: "general-purpose",
+      subagentId: "subagent_remote",
+      status: "running",
+      startTime: new Date(),
+      outputFile,
+      abortController: new AbortController(),
+      completion: Promise.resolve(),
+      remoteCancellation: { status: "unconfirmed", detail },
+    };
+    backgroundTasks.set(taskId, bgTask);
+
+    expect(await task_stop({ task_id: taskId })).toEqual({
+      killed: false,
+      output: detail,
+    });
+    expect(bgTask.abortController?.signal.aborted).toBe(true);
+
+    fs.unlinkSync(outputFile);
+  });
+
+  test("TaskStop tool formatting preserves explicit unconfirmed cancellation detail", async () => {
+    const taskId = "task_stop_remote_formatted";
+    const outputFile = createBackgroundOutputFile(taskId);
+    const detail =
+      "Remote cancellation unconfirmed: accepted Cloud execution may still be running.";
+    backgroundTasks.set(taskId, {
+      description: "Remote Agent task",
+      subagentType: "general-purpose",
+      subagentId: "subagent_remote_formatted",
+      status: "running",
+      startTime: new Date(),
+      outputFile,
+      abortController: new AbortController(),
+      completion: Promise.resolve(),
+      remoteCancellation: { status: "unconfirmed", detail },
+    });
+    await loadSpecificTools(["TaskStop"]);
+
+    const result = await executeTool("TaskStop", { task_id: taskId });
+
+    expect(result).toMatchObject({ status: "success", toolReturn: detail });
+    fs.unlinkSync(outputFile);
+  });
+
+  test("TaskStop is bounded when an exact remote cancellation request never settles", async () => {
+    const taskId = "task_stop_remote_hung_cancel";
+    const outputFile = createBackgroundOutputFile(taskId);
+    const receipt: EnqueueReceipt = {
+      status: "queued",
+      agent_id: "agent-child",
+      conversation_id: "default",
+      client_message_id: "message-1",
+      workflow_id: "workflow-1",
+      super_run_id: "super-run-1",
+    };
+    const bgTask: BackgroundTask = {
+      description: "Remote Agent task",
+      subagentType: "general-purpose",
+      subagentId: "subagent_remote_hung",
+      status: "running",
+      startTime: new Date(),
+      outputFile,
+      abortController: new AbortController(),
+      requiresRemoteCancellationVerification: true,
+    };
+    bgTask.completion = cancelAcceptedRemoteTurn(receipt, {
+      dequeue: async () => ({
+        client_message_id: receipt.client_message_id,
+        status: "too_late",
+      }),
+      exact: async () => ({
+        id: receipt.super_run_id,
+        status: "PEN",
+        completed_at: null,
+        cancelled_at: null,
+        errored_at: null,
+        error: null,
+        run_ids: ["run-hung"],
+      }),
+      cancelRun: async () => new Promise<never>(() => {}),
+      retrieveRun: async () => new Promise<never>(() => {}),
+      runtimeStatus: async () => new Promise<never>(() => {}),
+      sleep: async () => {},
+      timeoutMs: 20,
+    }).then((result) => {
+      bgTask.remoteCancellation = result;
+    });
+    backgroundTasks.set(taskId, bgTask);
+    const startedAt = Date.now();
+
+    const result = await task_stop({ task_id: taskId });
+
+    expect(Date.now() - startedAt).toBeLessThan(250);
+    expect(result.killed).toBe(false);
+    expect(result.output).toContain("Remote cancellation unconfirmed");
     fs.unlinkSync(outputFile);
   });
 

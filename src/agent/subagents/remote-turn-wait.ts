@@ -8,9 +8,9 @@ import {
 } from "@/backend/api/conversation-enqueue";
 import { buildAgentReference } from "@/cli/helpers/app-urls";
 import { INTERRUPTED_BY_USER } from "@/constants";
-import { cancelAcceptedListenerInput } from "@/headless-listener-launch";
 import { waitForAcceptedSuperRun } from "@/headless-super-run-wait";
 import { getErrorMessage } from "@/utils/error";
+import { cancelAcceptedRemoteTurn } from "./remote-turn-cancel";
 import { type ExecutionState, processStreamEvent } from "./subagent-stream";
 
 /** The submitting CLI has exited. The harness follows its Cloud receipt. */
@@ -58,12 +58,25 @@ export async function collectRemoteTurnResult(
   } catch (error) {
     let detail = getErrorMessage(error);
     if (signal.aborted) {
-      const cancelled = await cancelAcceptedListenerInput(receipt).catch(
-        () => false,
+      const cancellation = await cancelAcceptedRemoteTurn(receipt).catch(
+        (cancelError) => ({
+          status: "unconfirmed" as const,
+          detail: `Remote cancellation unconfirmed for accepted Super Run ${receipt.super_run_id}: ${getErrorMessage(cancelError)}.`,
+        }),
       );
-      detail = cancelled
-        ? INTERRUPTED_BY_USER
-        : `${INTERRUPTED_BY_USER} (could not confirm cancellation of remote Super Run ${receipt.super_run_id})`;
+      detail =
+        cancellation.status === "confirmed"
+          ? INTERRUPTED_BY_USER
+          : cancellation.detail;
+      return {
+        agentId: receipt.agent_id,
+        conversationId: receipt.conversation_id,
+        report: "",
+        success: false,
+        error: detail,
+        durationMs: Date.now() - startedAt,
+        remoteCancellation: cancellation,
+      };
     }
     return {
       agentId: receipt.agent_id,

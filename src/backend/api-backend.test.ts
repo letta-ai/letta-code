@@ -19,6 +19,7 @@ const retrieveAgentMock = mock(
 const getMock = mock(async (_path: string) => [
   { key: "API_KEY", value: "secret-value" },
 ]);
+const postMock = mock(async (_path: string) => ({ "run-1": "cancelled" }));
 const updateAgentMock = mock(
   async (_agentId: string, _body: unknown, _options?: unknown) => ({
     id: "agent-1",
@@ -97,6 +98,7 @@ const forkConversationMock = mock(
 );
 const getClientMock = mock(async () => ({
   get: getMock,
+  post: postMock,
   agents: {
     create: createAgentMock,
     retrieve: retrieveAgentMock,
@@ -143,6 +145,7 @@ describe("APIBackend", () => {
   beforeEach(() => {
     configureBackendMode("api");
     getClientMock.mockClear();
+    postMock.mockClear();
     createAgentMock.mockClear();
     getMock.mockClear();
     retrieveAgentMock.mockClear();
@@ -427,9 +430,13 @@ describe("APIBackend", () => {
       undefined,
     );
     expect(cancelConversationMock).toHaveBeenCalledWith("conv-1");
-    expect(cancelRunMock).toHaveBeenCalledWith("agent-1", {
-      run_ids: ["run-1"],
-    });
+    expect(cancelRunMock).toHaveBeenCalledWith(
+      "agent-1",
+      {
+        run_ids: ["run-1"],
+      },
+      undefined,
+    );
     expect(retrieveRunMock).toHaveBeenCalledWith("run-1", {
       headers: { "X-Letta-Acting-User-Id": "user-1" },
     });
@@ -443,18 +450,23 @@ describe("APIBackend", () => {
     });
   });
 
-  test("rejects exact cancellation for agent_id:null without an API round-trip", async () => {
+  test("uses only the fail-closed non-default exact-run cancellation route", async () => {
     const backend = new APIBackend({
       getClient: getClientMock as unknown as () => Promise<APIClient>,
       forkConversation: forkConversationMock,
     });
 
+    const signal = new AbortController().signal;
     await expect(
-      backend.cancelConversationRun("conv-1", "run-1"),
-    ).rejects.toThrow(
-      "API backend does not support exact cancellation for conversations with agent_id:null",
+      backend.cancelConversationRun("conv-1", "run-1", { signal }),
+    ).resolves.toEqual({ "run-1": "cancelled" });
+    expect(postMock).toHaveBeenCalledWith(
+      "/v1/conversations/conv-1/runs/run-1/cancel",
+      { signal },
     );
-    expect(getClientMock).not.toHaveBeenCalled();
+    expect(postMock.mock.calls.map(([path]) => path)).not.toContain(
+      "/v1/conversations/conv-1/cancel",
+    );
     expect(retrieveRunMock).not.toHaveBeenCalled();
     expect(cancelRunMock).not.toHaveBeenCalled();
     expect(cancelConversationMock).not.toHaveBeenCalled();

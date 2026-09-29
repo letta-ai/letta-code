@@ -342,11 +342,13 @@ export interface Backend {
   cancelRun(
     agentId: string,
     runId: string,
+    options?: { signal?: AbortSignal },
   ): Promise<Awaited<ReturnType<APIClient["agents"]["messages"]["cancel"]>>>;
 
   cancelConversationRun(
     conversationId: string,
     runId?: string | null,
+    options?: { signal?: AbortSignal },
   ): Promise<Awaited<ReturnType<APIClient["agents"]["messages"]["cancel"]>>>;
 
   retrieveRun(
@@ -661,22 +663,33 @@ export class APIBackend implements Backend {
     return client.conversations.cancel(conversationIdOrAgentId);
   }
 
-  async cancelRun(agentId: string, runId: string) {
+  async cancelRun(
+    agentId: string,
+    runId: string,
+    options?: { signal?: AbortSignal },
+  ) {
     const client = await this.getClient();
-    return client.agents.messages.cancel(agentId, { run_ids: [runId] });
+    return client.agents.messages.cancel(
+      agentId,
+      { run_ids: [runId] },
+      options,
+    );
   }
 
   async cancelConversationRun(
-    _conversationId: string,
-    _runId?: string | null,
+    conversationId: string,
+    runId?: string | null,
+    options?: { signal?: AbortSignal },
   ): Promise<Awaited<ReturnType<APIClient["agents"]["messages"]["cancel"]>>> {
-    // The public conversations cancellation route cannot scope by run ID. Do
-    // not add a retrieve round-trip here: a run with agent_id:null still has no
-    // agent cancellation route, and waiting on that request would hold the
-    // listener's cancellation fence without making cancellation safer.
-    throw new Error(
-      "API backend does not support exact cancellation for conversations with agent_id:null",
-    );
+    if (!runId)
+      throw new Error("Exact conversation cancellation requires a run ID");
+    const client = await this.getClient();
+    return client.post(
+      `/v1/conversations/${encodeURIComponent(conversationId)}/runs/${encodeURIComponent(runId)}/cancel`,
+      options,
+    ) as Promise<
+      Awaited<ReturnType<APIClient["agents"]["messages"]["cancel"]>>
+    >;
   }
 
   async retrieveRun(runId: string, options?: RunRetrieveOptions) {

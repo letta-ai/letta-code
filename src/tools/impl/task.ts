@@ -350,6 +350,7 @@ export function spawnBackgroundSubagentTask(
     startTime: new Date(),
     outputFile,
     abortController,
+    requiresRemoteCancellationVerification: Boolean(environment),
     runtimeScope: resolvedParentScope,
     actingUserId,
   };
@@ -434,6 +435,7 @@ export function spawnBackgroundSubagentTask(
       : execute());
   const taskLifecycle = subagentExecution
     .then(async (result) => {
+      bgTask.remoteCancellation = result.remoteCancellation;
       await copyGitHubPullRequestTagsFn(
         result.conversationId,
         resolvedParentScope?.conversationId,

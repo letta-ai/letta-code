@@ -11,6 +11,7 @@ interface TaskStopArgs {
 
 interface TaskStopResult {
   killed: boolean;
+  output?: string;
 }
 
 export async function task_stop(args: TaskStopArgs): Promise<TaskStopResult> {
@@ -24,6 +25,21 @@ export async function task_stop(args: TaskStopArgs): Promise<TaskStopResult> {
       task.abortController.abort();
       task.error = "Aborted by user";
       await task.completion;
+      if (
+        task.remoteCancellation?.status === "unconfirmed" ||
+        (task.requiresRemoteCancellationVerification &&
+          task.remoteCancellation?.status !== "confirmed")
+      ) {
+        const detail =
+          task.remoteCancellation?.status === "unconfirmed"
+            ? task.remoteCancellation.detail
+            : "Remote cancellation unconfirmed: the computer-routed child stopped before its accepted Cloud receipt could be verified.";
+        scheduleBackgroundTaskCleanup(task_id);
+        return {
+          killed: false,
+          output: detail,
+        };
+      }
       task.status = "failed";
       scheduleBackgroundTaskCleanup(task_id);
       return { killed: true };

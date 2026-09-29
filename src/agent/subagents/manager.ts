@@ -521,6 +521,17 @@ async function executeSubagent(
     }
 
     // Check if process was aborted by user
+    const abortedReceipt = state.enqueueReceipt;
+    if (runningProcess.wasAborted() && abortedReceipt) {
+      return withModel(
+        await collectRemoteTurnResult(
+          abortedReceipt,
+          state,
+          subagentId,
+          signal,
+        ),
+      );
+    }
     if (runningProcess.wasAborted()) {
       return withModel({
         agentId: state.agentId || "",

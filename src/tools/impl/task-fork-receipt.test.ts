@@ -201,7 +201,7 @@ describe("prepared conversation launch", () => {
   );
 
   test.each([undefined, "cloud", "conn-remote"])(
-    "threads initial client_message_id through a prepared child CLI (computer=%s)",
+    "threads client_message_id and fails closed on pre-receipt remote abort (computer=%s)",
     async (computer) => {
       getBackend().capabilities.environmentRouting = true;
       for (const client_message_id of ["assignment:1", undefined]) {
@@ -230,7 +230,15 @@ describe("prepared conversation launch", () => {
           expect(args[args.indexOf("--computer") + 1]).toBe(computer);
           expect(args).toContain("--no-wait");
         }
-        await task_stop({ task_id: result.task_id });
+        const stopped = await task_stop({ task_id: result.task_id });
+        if (computer) {
+          expect(stopped.killed).toBe(false);
+          expect(stopped.output).toContain(
+            "computer-routed child stopped before its accepted Cloud receipt could be verified",
+          );
+        } else {
+          expect(stopped).toEqual({ killed: true });
+        }
       }
     },
   );

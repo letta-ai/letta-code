@@ -85,6 +85,10 @@ export interface SubagentResult {
   totalTokens?: number;
   stepCount?: number;
   durationMs?: number;
+  /** Present when an accepted remote turn was interrupted by TaskStop. */
+  remoteCancellation?:
+    | { status: "confirmed" }
+    | { status: "unconfirmed"; detail: string };
 }
 
 export interface SubagentConfig {
