@@ -189,7 +189,7 @@ await Bun.build({
 });
 
 await Bun.build({
-  entrypoints: ["./src/mcp-oauth.ts"],
+  entrypoints: ["./src/mcp-oauth-public.ts"],
   outdir: "./dist",
   target: "node",
   format: "esm",

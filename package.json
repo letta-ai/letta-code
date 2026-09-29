@@ -74,7 +74,7 @@
       "default": "./dist/mcp-client.js"
     },
     "./mcp-oauth": {
-      "types": "./dist/types/mcp-oauth.d.ts",
+      "types": "./dist/types/mcp-oauth-public.d.ts",
       "import": "./dist/mcp-oauth.js",
       "default": "./dist/mcp-oauth.js"
     },
@@ -236,7 +236,7 @@
         "./dist/types/mcp-client.d.ts"
       ],
       "mcp-oauth": [
-        "./dist/types/mcp-oauth.d.ts"
+        "./dist/types/mcp-oauth-public.d.ts"
       ],
       "channels": [
         "./dist/types/channels-public.d.ts"

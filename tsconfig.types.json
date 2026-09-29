@@ -16,6 +16,7 @@
     "src/memory-constraints.ts",
     "src/mcp-client.ts",
     "src/mcp-oauth.ts",
+    "src/mcp-oauth-public.ts",
     "src/agent-presets.ts",
     "src/schedules.ts",
     "src/channels-public.ts",
