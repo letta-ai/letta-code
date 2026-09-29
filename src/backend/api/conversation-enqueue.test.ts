@@ -118,11 +118,16 @@ test.each([undefined, "My laptop", "cloud"])(
         clientMessageId: "cm-1",
         content: "hello",
         computer,
+        githubPullRequestConversationIds: ["conv-root", "conv-launcher"],
       },
       undefined,
       request,
     );
     expect(body?.computer).toBe(computer);
+    expect(body?.github_pull_request_conversation_ids).toEqual([
+      "conv-root",
+      "conv-launcher",
+    ]);
     expect(body?.messages).toEqual([
       { role: "user", content: "hello", client_message_id: "cm-1" },
     ]);
@@ -161,6 +166,32 @@ test.each([400, 404, 409, 503])(
     expect(calls).toBe(1);
   },
 );
+
+test("empty attribution is omitted from the nonempty Cloud request field", async () => {
+  const request: typeof apiRequest = async <T>(
+    _method: string,
+    _path: string,
+    body?: Record<string, unknown>,
+  ) => {
+    expect(body).not.toHaveProperty("github_pull_request_conversation_ids");
+    return {
+      client_message_id: "cm",
+      workflow_id: "wf",
+      super_run_id: "sr",
+    } as T;
+  };
+  await enqueueConversationMessage(
+    {
+      agentId: "agent-child",
+      conversationId: "default",
+      clientMessageId: "cm",
+      content: "hello",
+      githubPullRequestConversationIds: [],
+    },
+    undefined,
+    request,
+  );
+});
 
 test("retries only a typed pre-admission shutdown rejection with the same message ID", async () => {
   const requests: Array<{
@@ -211,6 +242,7 @@ test("retries only a typed pre-admission shutdown rejection with the same messag
         clientMessageId: "cm-stable",
         content: "hello",
         actingUserId: "user-parent",
+        githubPullRequestConversationIds: ["conv-parent"],
       },
       undefined,
       request,
@@ -218,6 +250,9 @@ test("retries only a typed pre-admission shutdown rejection with the same messag
     expect(requests).toHaveLength(2);
     expect(requests[0]).toEqual(requests[1]);
     expect(requests[0]?.body.client_message_id).toBe("cm-stable");
+    expect(requests[0]?.body.github_pull_request_conversation_ids).toEqual([
+      "conv-parent",
+    ]);
     expect(requests[0]?.actingUser).toBe("user-parent");
     expect(receipt).toMatchObject({
       status: "queued",

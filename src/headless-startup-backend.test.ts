@@ -5,7 +5,11 @@ import { createStartupBackend } from "./headless-startup-backend";
 
 type StartupBackend = Pick<
   Backend,
-  "retrieveAgent" | "retrieveConversation" | "createConversation"
+  | "retrieveAgent"
+  | "retrieveConversation"
+  | "createConversation"
+  | "updateAgent"
+  | "updateConversation"
 >;
 
 function recordingBackend(
@@ -22,6 +26,14 @@ function recordingBackend(
     },
     createConversation: async (_body, options) => {
       calls.push({ operation: "createConversation", options });
+      return {} as never;
+    },
+    updateAgent: async (_id, _body, options) => {
+      calls.push({ operation: "updateAgent", options });
+      return {} as never;
+    },
+    updateConversation: async (_id, _body, options) => {
+      calls.push({ operation: "updateConversation", options });
       return {} as never;
     },
   };
@@ -41,6 +53,8 @@ async function exerciseStartupBackend(
   await backend.retrieveAgent("agent-target", { include: ["agent.tools"] });
   await backend.retrieveConversation("conv-target");
   await backend.createConversation({ agent_id: "agent-target" });
+  await backend.updateAgent("agent-target", { tags_to_add: ["parent"] });
+  await backend.updateConversation("conv-target", { tags_to_add: ["parent"] });
   return calls;
 }
 
@@ -52,6 +66,8 @@ describe("headless startup backend", () => {
       "retrieveAgent",
       "retrieveConversation",
       "createConversation",
+      "updateAgent",
+      "updateConversation",
     ]);
     for (const { options } of calls) {
       expect(options).toMatchObject({
@@ -68,6 +84,8 @@ describe("headless startup backend", () => {
       { include: ["agent.tools"] },
       undefined,
       undefined,
+      undefined,
+      undefined,
     ]);
   });
 
@@ -76,6 +94,8 @@ describe("headless startup backend", () => {
 
     expect(calls.map(({ options }) => options)).toEqual([
       { include: ["agent.tools"] },
+      undefined,
+      undefined,
       undefined,
       undefined,
     ]);

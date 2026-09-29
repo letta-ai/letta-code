@@ -122,7 +122,6 @@ test("memory delegates immediately, exports the originating conversation and lau
           report: "saved",
         };
       },
-      copyGitHubPullRequestTagsImpl: async () => {},
       addToMessageQueueImpl: (message) => {
         notifications.push(message);
       },

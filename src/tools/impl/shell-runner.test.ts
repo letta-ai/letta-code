@@ -8,6 +8,7 @@ import {
 } from "@/backend";
 import { runWithRuntimeContext } from "@/runtime-context";
 import {
+  GITHUB_PR_ATTRIBUTION_TIMEOUT_MS,
   spawnWithLauncher,
   startShellProcess,
 } from "@/tools/impl/shell-runner";
@@ -137,10 +138,14 @@ describe("shared shell process", () => {
     expect(streamed).toBe("streamed");
   });
 
-  test("tracks PR output from the shared completion path", async () => {
-    let resolveUpdate!: (tags: string[]) => void;
-    const updateObserved = new Promise<string[]>((resolve) => {
-      resolveUpdate = resolve;
+  test("waits for PR attribution before completing the shell", async () => {
+    let releaseUpdate!: () => void;
+    const updateAllowed = new Promise<void>((resolve) => {
+      releaseUpdate = resolve;
+    });
+    let resolveUpdateStarted!: (tags: string[]) => void;
+    const updateStarted = new Promise<string[]>((resolve) => {
+      resolveUpdateStarted = resolve;
     });
     __testSetBackend({
       retrieveConversation: async () => ({
@@ -151,8 +156,9 @@ describe("shared shell process", () => {
         _conversationId: string,
         body: ConversationUpdateBody,
       ) => {
-        const tags = Reflect.get(body, "tags");
-        resolveUpdate(Array.isArray(tags) ? tags : []);
+        const tags = body.tags_to_add;
+        resolveUpdateStarted(Array.isArray(tags) ? tags : []);
+        await updateAllowed;
         return { id: "conv-shell", tags };
       },
     } as unknown as Backend);
@@ -176,11 +182,144 @@ describe("shared shell process", () => {
         ),
     );
 
-    await running.completion;
-    await expect(updateObserved).resolves.toEqual([
-      "channel:slack",
+    await expect(updateStarted).resolves.toEqual([
       "github:pull-request:letta-ai:letta-code:3744",
     ]);
+    const completionState = running.completion.then(() => "completed");
+    expect(
+      await Promise.race([
+        completionState,
+        Bun.sleep(20).then(() => "pending"),
+      ]),
+    ).toBe("pending");
+
+    releaseUpdate();
+    await expect(completionState).resolves.toBe("completed");
+  });
+
+  test("starts the attribution deadline only after a long-running shell exits", async () => {
+    let persisted = false;
+    __testSetBackend({
+      retrieveConversation: async () => ({ id: "conv-shell", tags: [] }),
+      updateConversation: async () => {
+        persisted = true;
+        return { id: "conv-shell" };
+      },
+    } as unknown as Backend);
+
+    const running = runWithRuntimeContext(
+      { agentId: "agent-shell", conversationId: "conv-shell" },
+      () =>
+        startShellProcess(
+          [
+            process.execPath,
+            "-e",
+            `setTimeout(() => process.stdout.write("https://github.com/letta-ai/letta-code/pull/3746\\n"), ${GITHUB_PR_ATTRIBUTION_TIMEOUT_MS + 100})`,
+          ],
+          {
+            cwd: process.cwd(),
+            env: process.env,
+            timeoutMs: GITHUB_PR_ATTRIBUTION_TIMEOUT_MS + 1_000,
+            sourceCommand: "gh pr create --fill",
+          },
+        ),
+    );
+
+    await expect(running.completion).resolves.toMatchObject({ exitCode: 0 });
+    expect(persisted).toBe(true);
+  });
+
+  test("bounds stalled PR attribution after shell completion", async () => {
+    let metadataSignal: AbortSignal | undefined;
+    let rejectUpdate!: (reason: unknown) => void;
+    __testSetBackend({
+      retrieveConversation: async () => ({ id: "conv-stalled", tags: [] }),
+      updateConversation: async (
+        _id: string,
+        _body: ConversationUpdateBody,
+        options?: { signal?: AbortSignal },
+      ) => {
+        metadataSignal = options?.signal;
+        // Deliberately ignore cancellation. Completion must own its deadline.
+        return new Promise((_, reject) => {
+          rejectUpdate = reject;
+        });
+      },
+    } as unknown as Backend);
+
+    const running = runWithRuntimeContext(
+      { agentId: "agent-shell", conversationId: "conv-stalled" },
+      () =>
+        startShellProcess(
+          [
+            process.execPath,
+            "-e",
+            'process.stdout.write("https://github.com/letta-ai/letta-code/pull/3745\\n")',
+          ],
+          {
+            cwd: process.cwd(),
+            env: process.env,
+            timeoutMs: 1000,
+            sourceCommand: "gh pr create --fill",
+          },
+        ),
+    );
+
+    const result = await running.completion;
+    expect(result.exitCode).toBe(0);
+    expect(metadataSignal?.aborted).toBe(true);
+    expect(metadataSignal?.reason.name).toBe("TimeoutError");
+    // A backend can reject after the shell has returned; that rejection is
+    // still observed by the race rather than becoming an unhandled rejection.
+    rejectUpdate(new Error("late metadata failure"));
+    await Bun.sleep(0);
+  });
+
+  test("cancels stalled PR attribution after the shell exits", async () => {
+    const controller = new AbortController();
+    const updateStarted = Promise.withResolvers<void>();
+    let metadataSignal: AbortSignal | undefined;
+    let rejectUpdate!: (reason: unknown) => void;
+    __testSetBackend({
+      retrieveConversation: async () => ({ id: "conv-cancelled", tags: [] }),
+      updateConversation: async (
+        _id: string,
+        _body: ConversationUpdateBody,
+        options?: { signal?: AbortSignal },
+      ) => {
+        metadataSignal = options?.signal;
+        updateStarted.resolve();
+        return new Promise((_, reject) => {
+          rejectUpdate = reject;
+        });
+      },
+    } as unknown as Backend);
+    const running = runWithRuntimeContext(
+      { agentId: "agent-shell", conversationId: "conv-cancelled" },
+      () =>
+        startShellProcess(
+          [
+            process.execPath,
+            "-e",
+            'process.stdout.write("https://github.com/letta-ai/letta-code/pull/3747\\n")',
+          ],
+          {
+            cwd: process.cwd(),
+            env: process.env,
+            timeoutMs: 1000,
+            signal: controller.signal,
+            sourceCommand: "gh pr create --fill",
+          },
+        ),
+    );
+    const completion = running.completion.catch((error: unknown) => error);
+    await updateStarted.promise;
+    controller.abort(new Error("caller cancelled"));
+    const result = await completion;
+    expect(result).toBeInstanceOf(Error);
+    expect(metadataSignal?.reason).toBe(controller.signal.reason);
+    rejectUpdate(new Error("late metadata failure"));
+    await Bun.sleep(0);
   });
 
   test("decodes buffered output after joining split UTF-8 bytes", async () => {

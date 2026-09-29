@@ -21,10 +21,12 @@ import {
   resolveLettaInvocation,
 } from "@/tools/impl/shell-env";
 import {
+  GITHUB_PR_CONVERSATIONS_ENV,
   LISTENER_CONNECTION_ENV,
   SUBAGENT_LAUNCH_ENV,
   SUBAGENT_LAUNCH_PROFILE_ENV,
   SUBAGENT_NAME_ENV,
+  SUBAGENT_TYPE_ENV,
 } from "@/utils/subagent-launch-marker";
 import { TRANSCRIPT_ROOT_ENV } from "@/utils/transcript-paths";
 import type { SubagentLaunchProfile, SubagentMemoryScope } from ".";
@@ -144,6 +146,8 @@ export interface ComposeSubagentChildEnvOptions {
    * scripts, and the cross-agent guard can identify the immediate parent. */
   parentAgentId: string | undefined;
   parentConversationId?: string;
+  /** Durable ancestor conversations that receive task-scoped PR associations. */
+  githubPullRequestConversationIds?: string[] | null;
   /** Subagent config type, used for type-specific child process isolation. */
   subagentType?: string;
   /** The subagent config's declared launch profile. Subagents with the memory-subagent profile
@@ -226,6 +230,19 @@ export function composeSubagentChildEnv(
     actingUserId,
     transcriptPath,
   } = options;
+  const inheritedPrConversationIds =
+    options.githubPullRequestConversationIds ??
+    parentProcessEnv[GITHUB_PR_CONVERSATIONS_ENV]?.split(",") ??
+    [];
+  const githubPullRequestConversationIds = [
+    ...inheritedPrConversationIds,
+    ...(options.parentConversationId &&
+    /^(?:local-)?conv-/.test(options.parentConversationId)
+      ? [options.parentConversationId]
+      : []),
+  ]
+    .filter((id, index, ids) => id.length > 0 && ids.indexOf(id) === index)
+    .slice(-20);
 
   const childEnv: NodeJS.ProcessEnv = {
     ...parentProcessEnv,
@@ -242,12 +259,17 @@ export function composeSubagentChildEnv(
     // Replace inherited parent addresses even when the new scope is unknown.
     LETTA_PARENT_AGENT_ID: parentAgentId,
     LETTA_PARENT_CONVERSATION_ID: options.parentConversationId,
+    // Carry up to twenty named launchers, keeping the nearest parents when
+    // the chain exceeds the enqueue contract's limit. Empty means no parents.
+    [GITHUB_PR_CONVERSATIONS_ENV]: githubPullRequestConversationIds.join(","),
     ...(transcriptPath && { TRANSCRIPT_PATH: transcriptPath }),
   };
 
   // A nested launch must never reuse its parent's assigned creation name.
   delete childEnv[SUBAGENT_NAME_ENV];
   if (options.subagentName) childEnv[SUBAGENT_NAME_ENV] = options.subagentName;
+  delete childEnv[SUBAGENT_TYPE_ENV];
+  if (subagentType) childEnv[SUBAGENT_TYPE_ENV] = subagentType;
 
   if (backendMode === "local") {
     childEnv.LETTA_LOCAL_BACKEND_EXPERIMENTAL = "1";

@@ -15,6 +15,28 @@ const config: SubagentConfig = {
   launchProfile: "default",
 };
 
+test.each(["conv-parent", "default", "local-conv-parent"])(
+  "fresh agent creation carries exact parent scope %s",
+  (parentConversationId) => {
+    const args = buildSubagentArgs(
+      "general-purpose",
+      config,
+      null,
+      "task",
+      undefined,
+      undefined,
+      undefined,
+      {
+        parentAgentId: "agent-parent",
+        parentConversationId,
+      },
+    );
+    expect(args[args.indexOf("--tags") + 1]?.split(",")).toContain(
+      `parent-conversation:agent-parent/${parentConversationId}`,
+    );
+  },
+);
+
 function targetFlags(agentId?: string, conversationId?: string) {
   const args = buildSubagentArgs(
     "general-purpose",

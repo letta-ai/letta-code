@@ -39,7 +39,6 @@ import type {
   ChannelTargetsListCommand,
   ChatGPTUsageReadCommand,
   CheckoutBranchCommand,
-  ClientToolsetConfig,
   ConversationCompactCommand,
   ConversationCreateCommand,
   ConversationListCommand,
@@ -133,6 +132,7 @@ import {
 } from "./management-protocol-inbound";
 import {
   isAgentRuntimeScope,
+  isClientToolsetConfig,
   isObjectRecord,
   isRuntimeScope,
   isStringArray,
@@ -147,14 +147,6 @@ import type { InvalidInputCommand, ParsedServerMessage } from "./types";
 export type ServerLifecycleMessage = {
   type: "pong";
 };
-
-function isClientToolsetConfig(value: unknown): value is ClientToolsetConfig {
-  if (!isObjectRecord(value)) return false;
-  return (
-    (value.base === undefined || isToolsetPreference(value.base)) &&
-    (value.include === undefined || isStringArray(value.include))
-  );
-}
 
 function isInputCommand(value: unknown): value is InputCommand {
   if (!value || typeof value !== "object") {
@@ -188,6 +180,7 @@ function isInputCommand(value: unknown): value is InputCommand {
     client_toolset?: unknown;
     external_tool_scope_ids?: unknown;
     exclude_interactive_tools?: unknown;
+    github_pull_request_conversation_ids?: unknown;
     request_id?: unknown;
     decision?: unknown;
     error?: unknown;
@@ -205,7 +198,9 @@ function isInputCommand(value: unknown): value is InputCommand {
       (payload.external_tool_scope_ids === undefined ||
         isStringArray(payload.external_tool_scope_ids)) &&
       (payload.exclude_interactive_tools === undefined ||
-        typeof payload.exclude_interactive_tools === "boolean")
+        typeof payload.exclude_interactive_tools === "boolean") &&
+      (payload.github_pull_request_conversation_ids === undefined ||
+        isStringArray(payload.github_pull_request_conversation_ids))
     );
   }
   if (payload.kind === "approval_response") {

@@ -29,7 +29,10 @@ import {
 } from "@/runtime-context";
 import { getRuntimeExecutionEnv } from "@/runtime-execution-settings";
 import { settingsManager } from "@/settings-manager";
-import { LISTENER_CONNECTION_ENV } from "@/utils/subagent-launch-marker";
+import {
+  GITHUB_PR_CONVERSATIONS_ENV,
+  LISTENER_CONNECTION_ENV,
+} from "@/utils/subagent-launch-marker";
 import { getRipgrepBinDir } from "./ripgrep-manager.js";
 
 /**
@@ -368,6 +371,10 @@ export function getShellEnv(): NodeJS.ProcessEnv {
   const listenerConnectionId = getRuntimeContext()?.connectionId;
   if (listenerConnectionId?.startsWith("conn-")) {
     env[LISTENER_CONNECTION_ENV] = listenerConnectionId;
+  }
+  const attribution = getRuntimeContext()?.githubPullRequestConversationIds;
+  if (attribution !== undefined && attribution !== null) {
+    env[GITHUB_PR_CONVERSATIONS_ENV] = attribution.join(",");
   }
   const actingUserId = getRuntimeActingUserId();
   if (actingUserId) {

@@ -60,6 +60,46 @@ export function validateAddress(
   return value;
 }
 
+/** Continue attribution only when this exact sender previously launched the target scope. */
+export async function resolveAgentMessagePullRequestConversationIds(
+  input: {
+    sender: { agentId?: string; conversationId?: string };
+    target: { agentId: string; conversationId: string };
+    inheritedConversationIds?: readonly string[] | null;
+    actingUserId?: string;
+  },
+  backend: Pick<Backend, "retrieveAgent" | "retrieveConversation">,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  const { sender, target } = input;
+  if (!sender.agentId || !sender.conversationId) return [];
+  try {
+    const record =
+      target.conversationId === "default"
+        ? await backend.retrieveAgent(target.agentId, {
+            include: ["agent.tags"],
+          })
+        : await backend.retrieveConversation(target.conversationId, {
+            signal,
+            ...actingUserRequestOptions(input.actingUserId),
+          });
+    const parentTag = `parent-conversation:${sender.agentId}/${sender.conversationId}`;
+    const tags: unknown = Reflect.get(record, "tags");
+    if (!Array.isArray(tags) || !tags.includes(parentTag)) return [];
+    return [
+      ...new Set([
+        ...(input.inheritedConversationIds ?? []),
+        sender.conversationId,
+      ]),
+    ]
+      .filter((id) => /^conv-[A-Za-z0-9-]+$/.test(id))
+      .slice(-20);
+  } catch {
+    // Attribution is optional metadata; failed discovery must not reject delivery.
+    return [];
+  }
+}
+
 /** Shared destination lookup for CLI sends and the SendAgentMessage tool. */
 export async function resolveAgentMessageDestination(
   input: {

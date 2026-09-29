@@ -8,6 +8,7 @@ import {
   buildAgentSendContent,
   normalizeAgentMessageComputer,
   resolveAgentMessageDestination,
+  resolveAgentMessagePullRequestConversationIds,
   validateAddress,
 } from "@/backend/api/agent-message";
 import {
@@ -20,6 +21,7 @@ import {
   getRuntimeContext,
 } from "@/runtime-context";
 import { debugLog } from "@/utils/debug";
+import { GITHUB_PR_CONVERSATIONS_ENV } from "@/utils/subagent-launch-marker";
 import { sendClaudeMessage } from "./claude-stream-session";
 import { sendCodexMessage } from "./codex-app-server";
 import { parseExternalCodingAgentId } from "./external-coding-agent";
@@ -232,6 +234,19 @@ export async function send_agent_message(
       sender.agentId,
     );
     signal.throwIfAborted();
+    const githubPullRequestConversationIds =
+      await resolveAgentMessagePullRequestConversationIds(
+        {
+          sender,
+          target: destination,
+          inheritedConversationIds:
+            context?.githubPullRequestConversationIds ??
+            process.env[GITHUB_PR_CONVERSATIONS_ENV]?.split(","),
+          actingUserId,
+        },
+        backend,
+        signal,
+      );
     submissionAttempted = true;
     const receipt = await (deps.enqueue ?? enqueueConversationMessage)(
       {
@@ -240,6 +255,7 @@ export async function send_agent_message(
         content: buildAgentSendContent(sender, true, args.message),
         computer,
         actingUserId,
+        githubPullRequestConversationIds,
       },
       signal,
     );

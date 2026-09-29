@@ -17,6 +17,7 @@ import type {
   ConversationResumeTailOptions,
   RunMessageStreamBody,
 } from "@/backend/backend";
+import { withLocalMetadataLock } from "@/backend/local/local-metadata-lock";
 import {
   LocalBackendNotFoundError,
   LocalStore,
@@ -194,6 +195,7 @@ export const HEADLESS_BACKEND_CAPABILITIES: BackendCapabilities = {
 };
 
 export class HeadlessBackend implements Backend {
+  private readonly metadataStorageDir: string | undefined;
   readonly capabilities = HEADLESS_BACKEND_CAPABILITIES;
 
   protected readonly store: LocalStore;
@@ -216,6 +218,7 @@ export class HeadlessBackend implements Backend {
     storeOptions: LocalStoreOptions = {},
     options: HeadlessBackendOptions = {},
   ) {
+    this.metadataStorageDir = storeOptions.storageDir;
     this.modelHandle = options.modelHandle ?? FAKE_HEADLESS_MODEL;
     this.runIdPrefix = options.runIdPrefix ?? "run-fake-headless-";
     this.runMetadataBackend = options.runMetadataBackend ?? "fake-headless";
@@ -247,7 +250,12 @@ export class HeadlessBackend implements Backend {
 
   async updateAgent(...args: Parameters<Backend["updateAgent"]>) {
     const [agentId, body] = args;
-    return this.store.updateAgent(agentId, body);
+    return withLocalMetadataLock(
+      this.metadataStorageDir,
+      "agent",
+      agentId,
+      () => this.store.updateAgent(agentId, body),
+    );
   }
 
   createAgent(...args: Parameters<Backend["createAgent"]>) {
@@ -272,7 +280,12 @@ export class HeadlessBackend implements Backend {
 
   updateConversation(...args: Parameters<Backend["updateConversation"]>) {
     const [conversationId, body] = args;
-    return Promise.resolve(this.store.updateConversation(conversationId, body));
+    return withLocalMetadataLock(
+      this.metadataStorageDir,
+      "conversation",
+      conversationId,
+      () => this.store.updateConversation(conversationId, body),
+    );
   }
 
   async recompileConversation(

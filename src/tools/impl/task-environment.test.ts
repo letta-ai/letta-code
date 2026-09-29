@@ -21,7 +21,6 @@ describe("spawnBackgroundSubagentTask environment threading", () => {
         registerSubagentImpl: () => {},
         completeSubagentImpl: () => {},
         getSubagentSnapshotImpl: () => ({ agents: [], expanded: false }),
-        copyGitHubPullRequestTagsImpl: async () => {},
         addToMessageQueueImpl: () => {},
         formatTaskNotificationImpl: () => "",
         runSubagentStopHooksImpl: async () => ({

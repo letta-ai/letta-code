@@ -616,11 +616,7 @@ export interface InputCreateMessagePayload {
   messages: Array<MessageCreate & { client_message_id?: string }>;
   /** Handling policy for unsupported or failed image inputs. */
   image_failure_mode?: "strict" | "drop";
-  /**
-   * Optional request-scoped allowlist for locally executed client tools.
-   * Undefined preserves the listener's normal toolset; an empty array means no
-   * client tools for this turn.
-   */
+  /** Request-scoped client tools: undefined preserves defaults; [] disables all. */
   client_tool_allowlist?: string[];
   /**
    * Optional request-scoped built-in toolset selection. The base chooses the
@@ -639,6 +635,7 @@ export interface InputCreateMessagePayload {
    */
   exclude_interactive_tools?: boolean;
   response_format?: Record<string, unknown>;
+  github_pull_request_conversation_ids?: string[];
 }
 
 export type InputApprovalResponsePayload = {

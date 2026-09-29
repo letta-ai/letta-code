@@ -60,6 +60,38 @@ const message = {
   message: "Please check the tests.",
 };
 
+test.each(["default", "conv-target"])(
+  "only exact child scope %s continues the current task's PR attribution",
+  async (conversationId) => {
+    const tags = [
+      "parent-conversation:agent-caller/conv-old",
+      "parent-conversation:agent-caller/conv-caller",
+    ];
+    const f = fixture(tags);
+    f.backend.retrieveConversation = async (id) =>
+      ({ id, agent_id: "agent-target", tags }) as Awaited<
+        ReturnType<Backend["retrieveConversation"]>
+      >;
+    const result = await runWithRuntimeContext(
+      { ...caller, githubPullRequestConversationIds: ["conv-root"] },
+      () =>
+        send_agent_message(
+          {
+            ...message,
+            agent_id: "agent-target",
+            conversation_id: conversationId,
+          },
+          f,
+        ),
+    );
+    expect(result.status).toBe("success");
+    expect(f.submissions[0]?.githubPullRequestConversationIds).toEqual([
+      "conv-root",
+      "conv-caller",
+    ]);
+  },
+);
+
 test.each([false, true])(
   "missing acting user diagnostic respects debug mode: %s",
   async (debug) => {

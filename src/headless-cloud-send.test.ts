@@ -7,6 +7,7 @@ import type {
 } from "@/backend/api/conversation-enqueue";
 import { ApiRequestError } from "@/backend/api/request";
 import { parseCliArgs } from "@/cli/args";
+import { GITHUB_PR_CONVERSATIONS_ENV } from "@/utils/subagent-launch-marker";
 import {
   shouldEnqueueCloudSend,
   tryCloudHeadlessSend,
@@ -121,6 +122,48 @@ function fixture() {
   };
   return { backend, deps, stdout, stderr, submissions };
 }
+
+test.each(["default", "conv-target"])(
+  "CLI continuation uses exact child scope %s and current task attribution",
+  async (conversationId) => {
+    const f = fixture();
+    const tags = [
+      "parent-conversation:agent-parent/conv-parent",
+      "parent-conversation:agent-parent/conv-old",
+    ];
+    f.backend.retrieveAgent = async (id, options) =>
+      ({
+        id,
+        tags: options?.include?.includes("agent.tags") ? tags : [],
+      }) as Awaited<ReturnType<Backend["retrieveAgent"]>>;
+    f.backend.retrieveConversation = async (id) =>
+      ({ id, agent_id: "agent-target", tags }) as Awaited<
+        ReturnType<Backend["retrieveConversation"]>
+      >;
+    expect(
+      await tryCloudHeadlessSend(
+        flags(
+          "--agent",
+          "agent-target",
+          "--conversation",
+          conversationId,
+          "--no-wait",
+        ),
+        "continue",
+        f.backend,
+        false,
+        {
+          ...f.deps,
+          env: { ...f.deps.env, [GITHUB_PR_CONVERSATIONS_ENV]: "conv-root" },
+        },
+      ),
+    ).toBe(0);
+    expect(f.submissions[0]?.githubPullRequestConversationIds).toEqual([
+      "conv-root",
+      "conv-parent",
+    ]);
+  },
+);
 
 test.each(["text", "json", "stream-json"])(
   "no-wait %s exits on HTTP acceptance with a receipt and recovery commands",

@@ -228,7 +228,6 @@ test.each([false, true])(
             report: "Committed picture",
           };
         },
-        copyGitHubPullRequestTagsImpl: async () => {},
         addToMessageQueueImpl: () => {
           notifications++;
         },

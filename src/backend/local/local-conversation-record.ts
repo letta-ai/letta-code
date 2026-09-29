@@ -169,5 +169,8 @@ export function updateLocalConversationRecord(
   if (isStringArray(bodyRecord.tags)) {
     next.tags = bodyRecord.tags;
   }
+  if (isStringArray(bodyRecord.tags_to_add)) {
+    next.tags = [...new Set([...(next.tags ?? []), ...bodyRecord.tags_to_add])];
+  }
   return next;
 }

@@ -6,7 +6,11 @@ import type { Backend } from "@/backend";
 
 type HeadlessStartupBackend = Pick<
   Backend,
-  "retrieveAgent" | "retrieveConversation" | "createConversation"
+  | "retrieveAgent"
+  | "retrieveConversation"
+  | "createConversation"
+  | "updateAgent"
+  | "updateConversation"
 >;
 
 function mergeRequestOptions<T>(
@@ -44,6 +48,18 @@ export function createStartupBackend(
       ),
     createConversation: (body, options) =>
       backend.createConversation(
+        body,
+        mergeRequestOptions(options, requestOptions),
+      ),
+    updateAgent: (agentId, body, options) =>
+      backend.updateAgent(
+        agentId,
+        body,
+        mergeRequestOptions(options, requestOptions),
+      ),
+    updateConversation: (conversationId, body, options) =>
+      backend.updateConversation(
+        conversationId,
         body,
         mergeRequestOptions(options, requestOptions),
       ),

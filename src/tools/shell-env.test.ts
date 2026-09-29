@@ -18,6 +18,7 @@ import {
   getShellEnv,
   resolveLettaInvocation,
 } from "@/tools/impl/shell-env";
+import { GITHUB_PR_CONVERSATIONS_ENV } from "@/utils/subagent-launch-marker";
 
 function withTemporaryAgentEnv<T>(agentId: string, fn: () => T): T {
   const originalAgentId = process.env.AGENT_ID;
@@ -73,6 +74,20 @@ function withTemporaryEnv<T>(
 }
 
 describe("shellEnv letta shim", () => {
+  test.each([{ ids: ["conv-current"] }, { ids: [] }])(
+    "exports the turn's PR attribution instead of stale process scope: %j",
+    ({ ids }) => {
+      withTemporaryEnv({ [GITHUB_PR_CONVERSATIONS_ENV]: "conv-stale" }, () => {
+        const env = runWithRuntimeContext(
+          { githubPullRequestConversationIds: [...ids] },
+          getShellEnv,
+        );
+        expect(env[GITHUB_PR_CONVERSATIONS_ENV]).toBe(ids.join(","));
+        expect(process.env[GITHUB_PR_CONVERSATIONS_ENV]).toBe("conv-stale");
+      });
+    },
+  );
+
   test("resolveLettaInvocation prefers explicit launcher env", () => {
     const invocation = resolveLettaInvocation(
       {

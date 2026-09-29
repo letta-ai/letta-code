@@ -2,7 +2,10 @@
 export const SUBAGENT_LAUNCH_ENV = "LETTA_SUBAGENT_LAUNCH";
 export const SUBAGENT_LAUNCH_PROFILE_ENV = "LETTA_SUBAGENT_LAUNCH_PROFILE";
 export const SUBAGENT_NAME_ENV = "LETTA_SUBAGENT_NAME";
+export const SUBAGENT_TYPE_ENV = "LETTA_SUBAGENT_TYPE";
 export const LISTENER_CONNECTION_ENV = "LETTA_RUNTIME_LISTENER_CONNECTION_ID";
+/** Durable ancestor conversations that receive PRs created by this task tree. */
+export const GITHUB_PR_CONVERSATIONS_ENV = "LETTA_GITHUB_PR_CONVERSATION_IDS";
 
 export function consumeSubagentLaunch(env: NodeJS.ProcessEnv): boolean {
   const isLaunch = env[SUBAGENT_LAUNCH_ENV] === "1";
