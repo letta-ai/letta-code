@@ -3,11 +3,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildClientSkillsPayload } from "@/agent/client-skills";
-import {
-  discoverSkills,
-  isSkillAvailableForAgent,
-  type Skill,
-} from "@/agent/skills";
+import { discoverSkills } from "@/agent/skills";
+import { experimentManager } from "@/experiments/manager";
 import { settingsManager } from "@/settings-manager";
 import { readSkillContent } from "@/tools/impl/skill";
 
@@ -49,68 +46,35 @@ afterEach(async () => {
   }
 });
 
-async function palaceSkillOffer(agentId: string) {
-  const payload = await buildClientSkillsPayload({
-    agentId,
-    skillSources: ["bundled"],
-    attachedRepositories: [],
-  });
-  return {
-    listed: payload.availableSkills.some((skill) => skill.name === SKILL_ID),
-    content: readSkillContent(SKILL_ID, "/tmp/no-project-skills", agentId, {
-      attachedRepositories: [],
-    }),
-  };
-}
-
 describe("curating-memory-palace skill", () => {
-  test("is hidden while the memory_palace experiment is off", async () => {
-    const offer = await palaceSkillOffer("agent-123");
-
-    expect(offer.listed).toBe(false);
-    await expect(offer.content).rejects.toThrow("not found");
-    const discovery = await discoverSkills(
-      "/tmp/no-project-skills",
-      "agent-123",
-      {
-        sources: ["bundled"],
-      },
-    );
-    expect(discovery.skills.some((skill) => skill.id === SKILL_ID)).toBe(false);
-  });
-
-  test("is listed and readable for cloud and local agents when it is on", async () => {
-    process.env.LETTA_MEMORY_PALACE = "1";
+  test("is listed and readable for cloud and local agents with the memory_palace experiment off", async () => {
+    expect(experimentManager.isEnabled("memory_palace")).toBe(false);
 
     for (const agentId of ["agent-123", "agent-local-123"]) {
-      const offer = await palaceSkillOffer(agentId);
+      const payload = await buildClientSkillsPayload({
+        agentId,
+        skillSources: ["bundled"],
+        attachedRepositories: [],
+      });
+      expect(payload.availableSkills.some((s) => s.name === SKILL_ID)).toBe(
+        true,
+      );
 
-      expect(offer.listed).toBe(true);
-      const { content } = await offer.content;
+      const { content } = await readSkillContent(
+        SKILL_ID,
+        "/tmp/no-project-skills",
+        agentId,
+        { attachedRepositories: [] },
+      );
       expect(content).toContain("palace/MEMORY.md");
       expect(content).toContain("palace-action");
+
       const discovery = await discoverSkills(
         "/tmp/no-project-skills",
         agentId,
-        {
-          sources: ["bundled"],
-        },
+        { sources: ["bundled"] },
       );
-      expect(discovery.skills.some((skill) => skill.id === SKILL_ID)).toBe(
-        true,
-      );
+      expect(discovery.skills.some((s) => s.id === SKILL_ID)).toBe(true);
     }
-  });
-
-  test("keeps a project skill with the same name when the experiment is off", () => {
-    const skill: Skill = {
-      id: SKILL_ID,
-      name: SKILL_ID,
-      description: "Project copy",
-      path: "/tmp/project/SKILL.md",
-      source: "project",
-    };
-
-    expect(isSkillAvailableForAgent(skill, "agent-123")).toBe(true);
   });
 });
