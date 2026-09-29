@@ -61,6 +61,10 @@ import type {
   StoredMessage,
 } from "./local-store";
 import {
+  listImportedLocalConversations,
+  writeImportedLocalConversation,
+} from "./local-trajectory-import";
+import {
   getLocalBackendMemoryFilesystemRoot,
   isLocalBackendMemfsDisabledForProcess,
 } from "./paths";
@@ -390,6 +394,23 @@ export class LocalBackend extends HeadlessBackend {
       }
     }
     return agent;
+  }
+
+  /** Persist a validated trajectory in an out-of-context local conversation. */
+  async importHistoricalConversation(input: {
+    agentId: string;
+    summary: string;
+    tags: string[];
+    messages: LocalMessage[];
+  }): Promise<Awaited<ReturnType<HeadlessBackend["createConversation"]>>> {
+    await this.retrieveAgent(input.agentId);
+    const imported = writeImportedLocalConversation(this.storageDir, input);
+    return imported;
+  }
+
+  /** Scan the disk inventory, including conversations imported after store hydration. */
+  listAllLocalAgentConversations(agentId: string) {
+    return listImportedLocalConversations(this.storageDir, agentId);
   }
 
   override async createConversation(

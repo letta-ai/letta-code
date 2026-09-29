@@ -1,3 +1,5 @@
+import type { ParsedCliArgs } from "@/cli/args";
+import { parsePositiveIntFlag } from "@/cli/flag-utils";
 import {
   getReflectionSettings,
   persistReflectionSettingsForAgent,
@@ -9,6 +11,40 @@ import { settingsManager } from "@/settings-manager";
 export interface ReflectionOverrides {
   trigger?: ReflectionTrigger;
   stepCount?: number;
+}
+
+export function parseReflectionOverrides(
+  values: ParsedCliArgs["values"],
+): ReflectionOverrides {
+  const triggerRaw = values["reflection-trigger"];
+  const stepCountRaw = values["reflection-step-count"];
+  if (!triggerRaw && !stepCountRaw) return {};
+  const overrides: ReflectionOverrides = {};
+  if (triggerRaw !== undefined) {
+    if (
+      triggerRaw !== "off" &&
+      triggerRaw !== "step-count" &&
+      triggerRaw !== "compaction-event"
+    ) {
+      throw new Error(
+        `Invalid --reflection-trigger "${triggerRaw}". Valid values: off, step-count, compaction-event`,
+      );
+    }
+    overrides.trigger = triggerRaw;
+  }
+  if (stepCountRaw !== undefined) {
+    try {
+      overrides.stepCount = parsePositiveIntFlag({
+        rawValue: stepCountRaw,
+        flagName: "reflection-step-count",
+      });
+    } catch {
+      throw new Error(
+        `Invalid --reflection-step-count "${stepCountRaw}". Expected a positive integer.`,
+      );
+    }
+  }
+  return overrides;
 }
 
 export async function applyHeadlessReflectionOverrides(
