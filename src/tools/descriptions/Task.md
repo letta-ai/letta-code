@@ -34,6 +34,8 @@ Use `subagent_type: "claude-code"` or `subagent_type: "codex"` to start a coding
 
 The initial receipt includes a synthetic `claude_...` or `codex_...` agent ID as soon as the native session starts. Pass that ID to `SendAgentMessage` to steer active work or start one tracked follow-up turn when idle.
 
+External workers see none of your conversation or memory, and nobody answers their questions mid-task. Write the prompt as a complete assignment: the goal, the files or area in scope, what the worker may do (for example, whether to commit), what counts as done, and the command that verifies it. Claude Code workers end with a short `status` / `changes` / `verification` report and record any assumptions they made. A steer interrupts the in-flight turn, so batch corrections into one message instead of sending several.
+
 External coding agents can receive the current agent's MCP discovery metadata and use the existing `letta mcp` CLI through their shell:
 
 ```typescript

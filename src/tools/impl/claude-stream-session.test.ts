@@ -2,6 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { PassThrough } from "node:stream";
 import {
   __resetClaudeSessionsForTests,
+  buildClaudeStreamArgs,
+  CLAUDE_WORKER_INSTRUCTIONS,
   type ClaudeSessionTransport,
   runClaudeTurn,
   sendClaudeMessage,
@@ -61,6 +63,42 @@ function parseWrite(
 const base = { parentAgentId: "parent", cwd: "/repo" };
 
 afterEach(() => __resetClaudeSessionsForTests());
+
+function flagValue(args: string[], flag: string): string | undefined {
+  const index = args.indexOf(flag);
+  return index === -1 ? undefined : args[index + 1];
+}
+
+describe("Claude worker launch args", () => {
+  test("loads only worker tools and no user-global MCP servers", () => {
+    const args = buildClaudeStreamArgs({ sessionId: SESSION_ID });
+    expect(flagValue(args, "--tools")).toBe(
+      "Bash,Edit,Write,Read,Glob,Grep,WebFetch,WebSearch,Skill",
+    );
+    expect(flagValue(args, "--allowed-tools")).toBe(
+      "Bash,Edit,Write,Read,Glob,Grep,WebFetch,WebSearch",
+    );
+    expect(args).toContain("--strict-mcp-config");
+    expect(flagValue(args, "--permission-mode")).toBe("acceptEdits");
+  });
+
+  test("always appends the worker contract, then any MCP reminder", () => {
+    expect(flagValue(buildClaudeStreamArgs({}), "--append-system-prompt")).toBe(
+      CLAUDE_WORKER_INSTRUCTIONS,
+    );
+    const args = buildClaudeStreamArgs({
+      mcpReminder: "MCP reminder",
+      resumeSessionId: SESSION_ID,
+    });
+    expect(args.filter((arg) => arg === "--append-system-prompt")).toHaveLength(
+      1,
+    );
+    expect(flagValue(args, "--append-system-prompt")).toBe(
+      `${CLAUDE_WORKER_INSTRUCTIONS}\n\nMCP reminder`,
+    );
+    expect(flagValue(args, "--resume")).toBe(SESSION_ID);
+  });
+});
 
 describe("Claude stream sessions", () => {
   test("keeps the original task alive through the exact interrupt event sequence", async () => {
@@ -172,6 +210,57 @@ describe("Claude stream sessions", () => {
     fixture.emit({ type: "result", is_error: false, result: "done" });
     expect(await running).toMatchObject({ success: true, report: "done" });
     expect(fixture.ended()).toBe(true);
+  });
+
+  test("reports tokens summed across turns replaced by a steer", async () => {
+    const fixture = transportFixture();
+    const running = runClaudeTurn(
+      { ...base, prompt: "one", sessionId: SESSION_ID },
+      { createTransport: () => fixture.transport },
+    );
+    await Bun.sleep(0);
+    fixture.emit({ type: "stream_event", event: { type: "message_start" } });
+    const steering = sendClaudeMessage({
+      ...base,
+      prompt: "two",
+      sessionId: SESSION_ID,
+    });
+    await Bun.sleep(0);
+    const interrupt = parseWrite(fixture, 1);
+    fixture.emit({
+      type: "control_response",
+      response: { subtype: "success", request_id: interrupt.request_id },
+    });
+    expect((await steering).mode).toBe("steered");
+    fixture.emit({
+      type: "result",
+      is_error: true,
+      subtype: "error_during_execution",
+      result: "interrupted",
+      usage: {
+        input_tokens: 10,
+        cache_creation_input_tokens: 100,
+        cache_read_input_tokens: 0,
+        output_tokens: 5,
+      },
+    });
+    fixture.emit({ type: "stream_event", event: { type: "message_start" } });
+    fixture.emit({
+      type: "result",
+      is_error: false,
+      result: "two",
+      usage: {
+        input_tokens: 10,
+        cache_creation_input_tokens: 20,
+        cache_read_input_tokens: 100,
+        output_tokens: 5,
+      },
+    });
+    expect(await running).toMatchObject({
+      success: true,
+      report: "two",
+      totalTokens: 250,
+    });
   });
 
   test("idle concurrent sends start one resume and serialize the second steer", async () => {

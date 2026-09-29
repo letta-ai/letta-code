@@ -27,6 +27,7 @@ describe("external coding agent commands", () => {
     expect(command.args).toContain("acceptEdits");
     expect(command.args).not.toContain("--dangerously-skip-permissions");
     expect(command.args).toContain("--append-system-prompt");
+    expect(command.args).toContain("--strict-mcp-config");
     expect(command.args).not.toContain("Implement it");
     expect(command.stdin).toBe("Implement it");
   });
