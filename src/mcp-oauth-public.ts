@@ -1,3 +1,4 @@
+import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { connectMcpServer } from "@/mcp-client";
 import {
   createMcpOAuthSessionWithStorage,
@@ -40,6 +41,11 @@ export interface AuthorizeMcpServerWithStorageOptions {
   storage: McpOAuthStorage;
   serverName: string;
   serverUrl: string;
+  /**
+   * Custom fetch used for the MCP transport plus OAuth discovery, dynamic
+   * registration, token exchange, and authenticated MCP requests.
+   */
+  fetch?: FetchLike;
   openBrowser?: (url: string) => Promise<void>;
   onStatus?: (message: string) => void;
   signal?: AbortSignal;
@@ -53,12 +59,16 @@ interface InFlightAuthorization {
 }
 
 const inFlightAuthorizations = new Map<string, InFlightAuthorization>();
+const fetchFunctionIds = new WeakMap<FetchLike, number>();
+let nextFetchFunctionId = 1;
 
 /**
  * Authorize and validate one HTTP MCP server, then return importable credentials.
  *
  * Calls for the same storage namespace, agent, and server share one in-flight
- * SDK authorization lifecycle. Aborting one subscriber does not interrupt
+ * SDK authorization lifecycle when they also use the same fetch function.
+ * Distinct fetch functions never share a flight, so one caller cannot bypass
+ * another caller's network policy. Aborting one subscriber does not interrupt
  * another; the underlying operation is cancelled when its final subscriber
  * leaves. A storage namespace must remain stable for wrappers around the same
  * physical backend and unique across physically distinct backends.
@@ -80,7 +90,7 @@ export async function authorizeMcpServerWithStorage(
     options.serverName,
     options.serverUrl,
   );
-  const flightKey = `${options.storageNamespace}\0${credentialKey}`;
+  const flightKey = `${options.storageNamespace}\0${credentialKey}\0${fetchIdentity(options.fetch)}`;
   let flight = inFlightAuthorizations.get(flightKey);
   if (!flight) {
     const controller = new AbortController();
@@ -144,13 +154,24 @@ async function runAuthorization(
         transport: "http",
         url: options.serverUrl,
       },
-      { oauth, signal },
+      { fetch: options.fetch, oauth, signal },
     );
     return await withAbort(oauth.exportCredentials(), signal);
   } finally {
     signal.removeEventListener("abort", cancel);
     await Promise.allSettled([connection?.close(), oauth.close()]);
   }
+}
+
+function fetchIdentity(fetchFn?: FetchLike): string {
+  if (!fetchFn) return "default";
+  let id = fetchFunctionIds.get(fetchFn);
+  if (id === undefined) {
+    id = nextFetchFunctionId;
+    nextFetchFunctionId += 1;
+    fetchFunctionIds.set(fetchFn, id);
+  }
+  return String(id);
 }
 
 function abortableStorage(storage: McpOAuthStorage, signal: AbortSignal) {

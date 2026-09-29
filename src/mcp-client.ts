@@ -82,6 +82,8 @@ export interface McpOAuthConnection {
 
 export interface ConnectMcpServerOptions {
   clientInfo?: { name: string; version: string };
+  /** Custom fetch used for MCP transport and every SDK OAuth request. */
+  fetch?: FetchLike;
   stderr?: "inherit" | "pipe";
   oauth?: McpOAuthConnection;
   signal?: AbortSignal;
@@ -236,7 +238,7 @@ function createTransport(
     return new StreamableHTTPClientTransport(new URL(config.url), {
       requestInit: headersRequestInit(headers),
       authProvider: options.oauth?.authProvider,
-      fetch: abortAwareFetch(options.signal),
+      fetch: abortAwareFetch(options.signal, undefined, options.fetch),
     });
   }
   if (config.transport === "sse") {
@@ -245,7 +247,7 @@ function createTransport(
     return new SSEClientTransport(new URL(config.url), {
       requestInit,
       authProvider: options.oauth?.authProvider,
-      fetch: abortAwareFetch(options.signal, headers),
+      fetch: abortAwareFetch(options.signal, headers, options.fetch),
     });
   }
   return new StdioClientTransport({
@@ -260,12 +262,14 @@ function createTransport(
 function abortAwareFetch(
   operationSignal?: AbortSignal,
   headers?: Record<string, string>,
+  fetchFn?: FetchLike,
 ): FetchLike | undefined {
-  if (!operationSignal && !headers) return undefined;
+  if (!operationSignal && !headers) return fetchFn;
+  const request = fetchFn ?? fetch;
   return (url, init) => {
     const requestInit = headers ? mergeHeaders(init, headers) : { ...init };
     const requestSignal = requestInit.signal ?? undefined;
-    return fetch(url, {
+    return request(url, {
       ...requestInit,
       signal:
         operationSignal && requestSignal
