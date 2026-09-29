@@ -51,7 +51,7 @@ import type {
 } from "./types";
 import { ensureListenerWarmStateForTurn } from "./warmup";
 
-type PreparedToolContext = Awaited<
+export type PreparedListenerToolContext = Awaited<
   ReturnType<typeof prepareToolExecutionContextForScope>
 >;
 
@@ -64,7 +64,10 @@ export type ListenerTurnSetupResult =
       turnInput: TurnInputState;
       inboundUserTranscriptLines: Line[];
       pendingNormalizationInterruptedToolCallIds: string[];
-      preparedToolContext: PreparedToolContext;
+      preparedToolContext: PreparedListenerToolContext;
+      prepareToolContext: (
+        overrideModel?: string | null,
+      ) => Promise<PreparedListenerToolContext>;
       overrideModel?: string;
     };
 
@@ -311,31 +314,42 @@ export async function prepareListenerTurn(params: {
     ? runtime.listener.connections.get(connectionId)?.options
     : runtime.listener.connections.values().next().value?.options;
   const environmentDeviceId = listenerOptions?.deviceId;
-  const preparedToolContext = await prepareToolExecutionContextForScope({
-    connectionId,
-    environmentDeviceId,
-    agentId,
-    conversationId,
-    actingUserId: msg.actingUserId,
-    clientToolset: msg.clientToolset,
-    clientToolAllowlist: msg.clientToolAllowlist,
-    // Headless clients (SDK sessions, automation) opt out of tools that
-    // prompt the human mid-turn; the interactive set is owned by the harness.
-    ...(msg.excludeInteractiveTools || runtime.executionSettings !== undefined
-      ? { exclude: [...INTERACTIVE_USER_INPUT_TOOL_NAMES] }
-      : {}),
-    externalToolScopeIds: msg.externalToolScopeIds,
-    workingDirectory,
-    permissionModeState,
-    skillsDirectory: listenerOptions?.skillsDirectory,
-    skillSources: runtime.skillSources,
-    workspaceSandbox: runtime.workspaceSandbox,
-    executionSettings: runtime.executionSettings,
-    cachedAgent,
-    ...(agentId ? { modContext: createListenerAgentModContext(agentId) } : {}),
-    modAdapters,
-    modEvents: createListenerModEvents(modAdapters),
-  });
+  const prepareToolContext = async (override?: string | null) => {
+    const prepared = await prepareToolExecutionContextForScope({
+      connectionId,
+      environmentDeviceId,
+      agentId,
+      conversationId,
+      actingUserId: msg.actingUserId,
+      overrideModel: override,
+      clientToolset: msg.clientToolset,
+      clientToolAllowlist: msg.clientToolAllowlist,
+      // Headless clients (SDK sessions, automation) opt out of tools that
+      // prompt the human mid-turn; the interactive set is owned by the harness.
+      ...(msg.excludeInteractiveTools || runtime.executionSettings !== undefined
+        ? { exclude: [...INTERACTIVE_USER_INPUT_TOOL_NAMES] }
+        : {}),
+      externalToolScopeIds: msg.externalToolScopeIds,
+      workingDirectory,
+      permissionModeState,
+      skillsDirectory: listenerOptions?.skillsDirectory,
+      skillSources: runtime.skillSources,
+      workspaceSandbox: runtime.workspaceSandbox,
+      executionSettings: runtime.executionSettings,
+      cachedAgent,
+      ...(agentId
+        ? { modContext: createListenerAgentModContext(agentId) }
+        : {}),
+      modAdapters,
+      modEvents: createListenerModEvents(modAdapters),
+    });
+    if (isInterrupted()) return prepared;
+    runtime.currentToolset = prepared.toolset;
+    runtime.currentToolsetPreference = prepared.toolsetPreference;
+    runtime.currentLoadedTools = prepared.preparedToolContext.loadedToolNames;
+    return prepared;
+  };
+  const preparedToolContext = await prepareToolContext(overrideModel);
   if (isInterrupted()) {
     return { kind: "interrupted" };
   }
@@ -352,10 +366,6 @@ export async function prepareListenerTurn(params: {
     return { kind: "interrupted" };
   }
 
-  runtime.currentToolset = preparedToolContext.toolset;
-  runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;
-  runtime.currentLoadedTools =
-    preparedToolContext.preparedToolContext.loadedToolNames;
   runtime.currentAvailableSkills = availableSkills;
   const preloaded = await loadPreloadedSkills(
     runtime.executionSettings?.preload_skills ?? [],
@@ -400,6 +410,7 @@ export async function prepareListenerTurn(params: {
       ...queuedInterruptedToolCallIds,
     ],
     preparedToolContext,
+    prepareToolContext,
     ...(overrideModel ? { overrideModel } : {}),
   };
 }

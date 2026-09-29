@@ -57,6 +57,7 @@ export {
   shouldRetryPostStreamRunError,
   shouldRetryPreStreamTransientError,
   shouldRetryRunMetadataError,
+  TEMP_QUOTA_OVERRIDE_MODEL,
 } from "./turn-recovery-policy";
 
 // ── Async helpers (network side effects — stay here) ────────────────
