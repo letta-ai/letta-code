@@ -60,7 +60,7 @@ import {
   formatTaskNotification,
   resolveNotificationScope,
 } from "@/utils/task-notifications";
-import { startAppServer } from "@/websocket/app-server";
+import { type AppServerHandle, startAppServer } from "@/websocket/app-server";
 import { getActiveRuntime } from "@/websocket/listener/runtime";
 import {
   appendToOutputFile,
@@ -105,6 +105,47 @@ type SpawnerFactory = (
 const MAX_NOTIFICATION_RESULT_CHARS = 30_000;
 const DEFAULT_STARTUP_TIMEOUT_MS = 30_000;
 let startupTimeoutMs = DEFAULT_STARTUP_TIMEOUT_MS;
+let localWorkflowServer: Promise<AppServerHandle> | null = null;
+let localWorkflowUsers = 0;
+
+async function acquireLocalWorkflowServer(): Promise<{
+  controlUrl: string;
+  release(): Promise<void>;
+}> {
+  if (!localWorkflowServer) {
+    const runtime = getActiveRuntime();
+    localWorkflowServer = startAppServer({
+      listen: "ws://127.0.0.1:0",
+      startProcessServices: false,
+      ...(runtime ? { runtime } : {}),
+      connectionName: `workflow-${randomUUID()}`,
+    });
+  }
+  const pending = localWorkflowServer;
+  localWorkflowUsers++;
+  let server: AppServerHandle;
+  try {
+    server = await pending;
+  } catch (error) {
+    localWorkflowUsers--;
+    if (localWorkflowUsers === 0 && localWorkflowServer === pending)
+      localWorkflowServer = null;
+    throw error;
+  }
+  let released = false;
+  return {
+    controlUrl: server.controlUrl,
+    release: async () => {
+      if (released) return;
+      released = true;
+      localWorkflowUsers--;
+      if (localWorkflowUsers === 0 && localWorkflowServer === pending) {
+        localWorkflowServer = null;
+        await server.close();
+      }
+    },
+  };
+}
 
 function isOwningAgentId(value: string | null | undefined): value is string {
   return (
@@ -200,18 +241,10 @@ export async function createSdkSpawnerHandle(
   setStage("loading Agent SDK");
   const sdk = await loadAgentSdk();
   setStage("creating SDK client and spawner");
-  // SDK-managed local query() requires an API-backed App Server. Point its
-  // remote transport at this process's local-state App Server instead.
-  const runtime = backendMode === "local" ? getActiveRuntime() : null;
+  // SDK-managed local query() requires an API-backed App Server. Share one
+  // local-state server until every concurrent Workflow releases its lease.
   const server =
-    backendMode === "local"
-      ? await startAppServer({
-          listen: "ws://127.0.0.1:0",
-          startProcessServices: false,
-          ...(runtime ? { runtime } : {}),
-          connectionName: `workflow-${randomUUID()}`,
-        })
-      : null;
+    backendMode === "local" ? await acquireLocalWorkflowServer() : null;
   let client: SdkClient | undefined;
   try {
     client = server
@@ -236,13 +269,13 @@ export async function createSdkSpawnerHandle(
         try {
           await client?.[Symbol.asyncDispose]?.().catch(() => undefined);
         } finally {
-          await server?.close();
+          await server?.release();
         }
       },
     };
   } catch (error) {
     await client?.[Symbol.asyncDispose]?.().catch(() => undefined);
-    await server?.close();
+    await server?.release();
     throw error;
   }
 }

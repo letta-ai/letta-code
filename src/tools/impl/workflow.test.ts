@@ -645,6 +645,9 @@ test("local Workflow uses the real SDK against a local-state App Server", async 
   const previousMode = resolveBackendMode();
   const previousBackend = getBackend();
   let handle: Awaited<ReturnType<typeof createSdkSpawnerHandle>> | undefined;
+  let secondHandle:
+    | Awaited<ReturnType<typeof createSdkSpawnerHandle>>
+    | undefined;
   try {
     setConfiguredBackendMode("local");
     const backend = new LocalBackend({
@@ -675,7 +678,19 @@ test("local Workflow uses the real SDK against a local-state App Server", async 
       agent_id: null,
       parent_agent_id: parent.id,
     });
+    secondHandle = await createSdkSpawnerHandle({
+      model: "openai/gpt-5.6-luna",
+      parentScope: { agentId: parent.id, conversationId: "default" },
+    });
+    await handle.cleanup();
+    handle = undefined;
+    const secondOutcome = await secondHandle.spawner(
+      { prompt: "reply again", options: {}, callIndex: 1 },
+      AbortSignal.timeout(10_000),
+    );
+    expect(secondOutcome).toMatchObject({ failed: false, value: "pong" });
   } finally {
+    await secondHandle?.cleanup();
     await handle?.cleanup();
     __testSetBackend(previousBackend);
     setConfiguredBackendMode(previousMode);
