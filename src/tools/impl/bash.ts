@@ -307,6 +307,7 @@ interface BashArgs {
   signal?: AbortSignal;
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
   secretEnv?: Record<string, string>;
+  transientExecutionContextId?: string;
   parentScope?: { agentId: string; conversationId: string };
   /** Test-only override; not exposed in the Bash tool schema. */
   foregroundYieldMs?: number;
@@ -330,6 +331,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     signal,
     onOutput,
     secretEnv,
+    transientExecutionContextId,
     parentScope,
     foregroundYieldMs = DEFAULT_FOREGROUND_YIELD_MS,
   } = args;
@@ -464,6 +466,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     totalStderrLines: 0,
     runtimeScope: parentScope,
     secrets: redactions,
+    transientExecutionContextId,
   };
   backgroundProcesses.set(bashId, bgProcess);
 
@@ -573,8 +576,12 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       : await settledOutcome;
 
     if (outcome.type === "settled") {
-      backgroundProcesses.delete(bashId);
-      rmSync(outputFile, { force: true });
+      // A request-scoped secret can outlive its shell parent through a spawned
+      // descendant. Retain the process-group handle until context release.
+      if (!transientExecutionContextId) {
+        backgroundProcesses.delete(bashId);
+        rmSync(outputFile, { force: true });
+      }
       const { result } = outcome;
       const output = [foregroundOutput.stdout, foregroundOutput.stderr]
         .filter(Boolean)

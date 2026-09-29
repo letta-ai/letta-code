@@ -32,15 +32,28 @@ case "$COMMAND" in
   *) printf '%s\n' 'Refusing unsupported browser-control command' >&2; exit 2 ;;
 esac
 
-printf '%s' "$BROWSER_CONTROL_KEY" |
-  jq -Rsc --arg command "$COMMAND" \
-    '{browser_control_key:.,command:$command}' |
-  curl --silent --show-error \
-    --request POST \
-    --config <(printf 'header = "Authorization: Bearer %s"\n' "$LETTA_API_KEY") \
-    --header 'Content-Type: application/json' \
-    --data-binary @- \
-    "${LETTA_BASE_URL%/}/v1/agents/$AGENT_ID/conversations/$CONVERSATION_ID/browser-control/actions"
+response="$(
+  printf '%s' "$BROWSER_CONTROL_KEY" |
+    jq -Rsc --arg command "$COMMAND" \
+      '{browser_control_key:.,command:$command}' |
+    curl --silent --show-error \
+      --connect-timeout 5 \
+      --max-time 15 \
+      --request POST \
+      --config <(printf 'header = "Authorization: Bearer %s"\n' "$LETTA_API_KEY") \
+      --header 'Content-Type: application/json' \
+      --data-binary @- \
+      --write-out '\n%{http_code}' \
+      "${LETTA_BASE_URL%/}/v1/agents/$AGENT_ID/conversations/$CONVERSATION_ID/browser-control/actions"
+)" || {
+  printf '%s\n' 'Browser-control outcome is unknown; do not retry automatically' >&2
+  exit 1
+}
+
+http_code="${response##*$'\n'}"
+response_body="${response%$'\n'*}"
+printf '%s\n' "$response_body"
+printf 'HTTP status: %s\n' "$http_code"
 ```
 
 The JSON body must contain exactly `{browser_control_key,command}`. Do not send arbitrary fields. `$AGENT_ID` and `$CONVERSATION_ID` come from the current runtime scope.

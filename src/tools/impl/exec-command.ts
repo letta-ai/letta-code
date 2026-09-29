@@ -69,6 +69,7 @@ interface ExecCommandArgs {
   signal?: AbortSignal;
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
   secretEnv?: Record<string, string>;
+  transientExecutionContextId?: string;
   parentScope?: { agentId: string; conversationId: string };
 }
 
@@ -671,6 +672,7 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
     outputFile,
     runtimeScope: args.parentScope,
     secrets: session.secrets,
+    transientExecutionContextId: args.transientExecutionContextId,
   });
   if (session.status !== "running") {
     try {

@@ -46,6 +46,12 @@ export interface BackgroundProcess {
   persistent?: boolean;
   secrets?: Readonly<Record<string, string>>;
   /**
+   * Execution context that supplied a referenced request-scoped secret.
+   * Tagged handles are retained until that context is released so cleanup can
+   * kill the entire process group even when the shell parent already exited.
+   */
+  transientExecutionContextId?: string;
+  /**
    * Set when the agent deliberately stops the shell (TaskStop) so the
    * resulting "exit" event does not wake it with a failure notification for a
    * process it just killed on purpose.
@@ -172,6 +178,15 @@ function scheduleCompletedEntryCleanup<
   if (!entry || entry.status === "running") {
     return;
   }
+  // Request-scoped secret processes must remain addressable until their owner
+  // releases the context. In particular, a completed shell may still have
+  // descendants alive in its detached process group.
+  if (
+    "transientExecutionContextId" in entry &&
+    entry.transientExecutionContextId
+  ) {
+    return;
+  }
 
   clearCleanupTimer(entry);
   const timer = setTimeout(() => {
@@ -271,6 +286,32 @@ export function assertBackgroundTaskCapacity(): void {
 
 export function scheduleBackgroundProcessCleanup(id: string): void {
   scheduleCompletedEntryCleanup(backgroundProcesses, id);
+}
+
+/**
+ * Force-stop every shell that received a secret owned by an execution context.
+ * Shell handles kill detached Unix process groups, so this also reaches
+ * descendants after the original shell parent has exited.
+ */
+export function releaseTransientBackgroundProcesses(contextId: string): void {
+  for (const [id, entry] of backgroundProcesses) {
+    if (entry.transientExecutionContextId !== contextId) continue;
+
+    clearCleanupTimer(entry);
+    entry.completionNotificationSuppressed = true;
+    try {
+      entry.process.kill("SIGKILL");
+    } catch {
+      // The process group may already be gone. Keep teardown idempotent.
+    }
+
+    // Keep output/redaction metadata for late close/output events, but allow the
+    // ordinary retention timer to remove the handle once completion settles.
+    entry.transientExecutionContextId = undefined;
+    if (entry.status !== "running") {
+      scheduleBackgroundProcessCleanup(id);
+    }
+  }
 }
 
 export function scheduleBackgroundTaskCleanup(id: string): void {
