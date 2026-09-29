@@ -28,6 +28,7 @@ import type {
 } from "@/types/protocol_v2";
 import type { QueueRemovalTransition } from "@/types/queue-update-protocol";
 import { debugLog, debugWarn } from "@/utils/debug";
+import { getVersion } from "@/version";
 import { buildBackgroundProcessSnapshot } from "./background-process-snapshot";
 import {
   nextListenerConnectionEventSeq,
@@ -187,7 +188,7 @@ export function buildDeviceStatus(
       current_permission_mode: permissionMode.getMode(),
       current_working_directory: fallbackCwd,
       git_context: deviceGitContextCache.read(fallbackCwd),
-      letta_code_version: process.env.npm_package_version || null,
+      letta_code_version: getVersion(),
       ...buildDeviceToolsetStatus(null, null),
       current_loaded_tools: [],
       current_available_skills: [],
@@ -241,7 +242,7 @@ export function buildDeviceStatus(
     current_permission_mode: conversationPermissionModeState.mode,
     current_working_directory: resolvedCwd,
     git_context: deviceGitContextCache.read(resolvedCwd),
-    letta_code_version: process.env.npm_package_version || null,
+    letta_code_version: getVersion(),
     ...buildDeviceToolsetStatus(agentId, conversationId, conversationRuntime),
     current_loaded_tools: conversationRuntime?.currentLoadedTools ?? [],
     current_available_skills: conversationRuntime?.currentAvailableSkills ?? [],

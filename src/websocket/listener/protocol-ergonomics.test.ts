@@ -8,6 +8,7 @@ import {
   setConfiguredBackendMode,
 } from "@/backend/backend-mode";
 import { TOOLSET_OPTIONS } from "@/tools/toolset-catalog";
+import { getVersion } from "@/version";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
 import { createListenerMessageHandler } from "@/websocket/listener/message-router";
 import { parseServerMessage } from "@/websocket/listener/protocol-inbound";
@@ -521,6 +522,26 @@ describe("listener protocol ergonomics", () => {
       description: "Experimental unified toolset for every model",
       is_featured: true,
     });
+  });
+
+  test("reports the authoritative package version instead of ambient npm state", () => {
+    const previousVersion = process.env.npm_package_version;
+    process.env.npm_package_version = "999.999.999-spoofed";
+    try {
+      const runtime = __listenClientTestUtils.createListenerRuntime();
+      expect(
+        __listenClientTestUtils.buildDeviceStatus(runtime).letta_code_version,
+      ).toBe(getVersion());
+      expect(
+        __listenClientTestUtils.buildDeviceStatus(null).letta_code_version,
+      ).toBe(getVersion());
+    } finally {
+      if (previousVersion === undefined) {
+        delete process.env.npm_package_version;
+      } else {
+        process.env.npm_package_version = previousVersion;
+      }
+    }
   });
 
   test("reports the skills prepared for the active conversation", () => {
