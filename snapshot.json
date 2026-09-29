@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "candidate_id": "claude@2.1.284:docs:bb5fcc0863a48517ab41f21050d43d0669073bf18414eab95b2306af82ec5774:runtime:d9f80109929bb3c938615765fb151861cad568af7e11023210d79daffcafc03a",
+  "candidate_id": "claude@2.1.284:docs:569f63788a339abe9f81c0605b46a0f7dd4c1b5bdc261338dab3c5c5b8a7c583:runtime:d9f80109929bb3c938615765fb151861cad568af7e11023210d79daffcafc03a",
   "package_version": "2.1.284",
   "npm_integrity": "sha512-IuENsoLa+Y5fx5VaP0Md3n5UO7aYxjbFE/iydSDw6tMo2171oaxaaBa9oIepPG9NILd1owSx74ozsqAkTbEOjw==",
   "npm_published_at": "2026-09-28T17:11:59.750Z",
@@ -680,7 +680,7 @@
       },
       "https://code.claude.com/docs/en/hooks.md": {
         "url": "https://code.claude.com/docs/en/hooks.md",
-        "hash": "f9e5bca98d3181c0f06126ad377ccecf5e4b953447ad8a8f721e57f1b870d7d7",
+        "hash": "2153ff2405652e0401879ff792d9c446a96499a0280285a9815175b7d5847c67",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/hooks.md"
       },
@@ -752,7 +752,7 @@
       },
       "https://code.claude.com/docs/en/managed-settings.md": {
         "url": "https://code.claude.com/docs/en/managed-settings.md",
-        "hash": "cb86cff617569e2e61b35846c0b0a95b54f6e9ae44aacc20e550d728b8e71056",
+        "hash": "fe9136c7d3b884af2851e0a8ab3ff0a0430faf12517b2f0db159f88a45a29e33",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/managed-settings.md"
       },
@@ -1088,7 +1088,7 @@
       },
       "https://code.claude.com/docs/en/settings.md": {
         "url": "https://code.claude.com/docs/en/settings.md",
-        "hash": "d36448228f4226b1cf545391ed65e12fd0aa6ed97fb7a855e5509cf3e3716a55",
+        "hash": "41ea72eb329492a8530f2d4730b093e930151422003f161656297e44cecbf074",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/settings.md"
       },
@@ -1334,7 +1334,7 @@
       },
       "https://code.claude.com/docs/en/worktrees.md": {
         "url": "https://code.claude.com/docs/en/worktrees.md",
-        "hash": "0539a6059ce16b476964f1c0b53155bb4934efcbfc23ec0babb7eba2a10aca0c",
+        "hash": "294bb8978f5f9b1131e47ba3e06c6918cd634d595659523d18f6339f64044f38",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/worktrees.md"
       },
@@ -1351,7 +1351,7 @@
         "source_path": "sources/raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md"
       }
     },
-    "digest": "bb5fcc0863a48517ab41f21050d43d0669073bf18414eab95b2306af82ec5774"
+    "digest": "569f63788a339abe9f81c0605b46a0f7dd4c1b5bdc261338dab3c5c5b8a7c583"
   },
   "runtime": {
     "probe_contract_version": 2,
@@ -1571,7 +1571,7 @@
           {
             "name": "TaskCreate",
             "input": {
-              "description": "Probe task for exercising task tool metadata operations.",
+              "description": "Probe task for exercising task tools",
               "metadata": {
                 "keep": "yes",
                 "probe": "remove"
@@ -1622,7 +1622,7 @@
         "tool_results": [
           "Task #1 created successfully: probe-task",
           "Updated task #1 metadata",
-          "Task #1: probe-task\nStatus: pending\nDescription: Probe task for exercising task tool metadata operations.",
+          "Task #1: probe-task\nStatus: pending\nDescription: Probe task for exercising task tools",
           "Updated task #1 deleted",
           "Task not found",
           "No tasks found"
@@ -1633,8 +1633,8 @@
     ],
     "digest": "d9f80109929bb3c938615765fb151861cad568af7e11023210d79daffcafc03a"
   },
-  "fetched_at": "2026-09-29T04:32:33.050Z",
-  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/36522000039",
-  "state_commit_parent": "88daf2eca76a9413535959d0f78372a596d74582",
-  "analysis_parent_sha": "88daf2eca76a9413535959d0f78372a596d74582"
+  "fetched_at": "2026-09-29T16:32:26.288Z",
+  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/36598268253",
+  "state_commit_parent": "0d2ab09d2169fb4a258347ff648e0ea57a01d37f",
+  "analysis_parent_sha": "0d2ab09d2169fb4a258347ff648e0ea57a01d37f"
 }

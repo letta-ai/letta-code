@@ -51,7 +51,7 @@ When Claude enters a path outside the repository's `.claude/worktrees/` director
 
 ## Clean up worktrees
 
-When you exit an interactive worktree session, Claude checks the worktree for work that removal would delete: changed or untracked files, uncommitted work inside checked-out submodules, and new commits.
+When you exit an interactive worktree session, Claude checks the worktree for work that removal would delete: changed or untracked files, uncommitted work inside checked-out submodules, and new commits. These rules apply to worktrees Claude created with git. For a worktree your [WorktreeCreate hook](/docs/en/hooks#worktreecreate) created, see [WorktreeRemove](/docs/en/hooks#worktreeremove) instead.
 
 * **The worktree is clean**: for an unnamed session, Claude removes the worktree and its branch automatically. A [named](/docs/en/sessions#name-your-sessions) session prompts you first so you can keep the worktree for later
 * **The worktree has work in it**: Claude prompts you to keep or remove the worktree. Keeping preserves the directory and branch. To return later, run the `claude --worktree <name> --resume` command that Claude Code prints on exit. Removing deletes the worktree directory and its branch, along with all the work in them

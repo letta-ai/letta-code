@@ -2993,7 +2993,13 @@ Runs when a worktree is being removed. This is the cleanup counterpart to [Workt
 * a subagent with `isolation: "worktree"` finishes
 * you delete a [background session](/docs/en/agent-view#what-deleting-a-session-removes) whose worktree the hook created
 
-For git-based worktrees, Claude Code handles cleanup automatically with `git worktree remove`. If you configured a WorktreeCreate hook for a non-git version control system, pair it with a WorktreeRemove hook to handle cleanup. Without one, the worktree directory is left on disk.
+For git-based worktrees, Claude Code handles cleanup automatically with `git worktree remove`. If you configured a WorktreeCreate hook, pair it with a WorktreeRemove hook to control cleanup of the worktrees it creates:
+
+* **No WorktreeRemove hook**: when you exit a `--worktree` session and choose removal, Claude Code falls back to `git worktree remove --force` on the path your WorktreeCreate hook returned, so a worktree git recognizes is removed. A worktree git doesn't recognize, for example one your hook created with a non-git version control system, stays on disk. For what deleting a [background session](/docs/en/agent-view#what-deleting-a-session-removes) does with a hook-created worktree, see agent view's delete rules.
+* **Hook exits 0**: the worktree counts as removed. Claude Code reads nothing else from the hook, so make sure your hook deleted the directory.
+* **Hook exits non-zero**: the removal fails if the directory at `worktree_path` still exists afterward, and the worktree stays on disk with no git fallback. A hook that deleted the directory before exiting non-zero counts as removed. For how the failure is reported, see [WorktreeRemove input](#worktreeremove-input).
+
+Claude Code never deletes a branch belonging to a hook-created worktree, because it only knows the path your WorktreeCreate hook returned. If your WorktreeCreate hook creates a branch, delete it in your WorktreeRemove hook.
 
 Claude Code discards a WorktreeRemove hook's [JSON output fields](#json-output), such as `systemMessage` and `continue`.
 
