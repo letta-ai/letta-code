@@ -270,6 +270,36 @@ jobs:
       - name: Build bundle
         run: bun run build
 
+      - name: MCP OAuth NodeNext declaration smoke test
+        if: runner.os == 'Linux' && runner.arch == 'X64'
+        run: |
+          package_json="$(npm pack --json)"
+          tarball="$(node -e 'const fs=require("fs"); const rows=JSON.parse(fs.readFileSync(0,"utf8")); process.stdout.write(rows[0].filename)' <<<"$package_json")"
+          consumer="$(mktemp -d)"
+          trap 'rm -rf "$consumer" "$tarball"' EXIT
+          mkdir -p "$consumer/node_modules/@letta-ai/letta-code"
+          tar -xzf "$tarball" -C "$consumer/node_modules/@letta-ai/letta-code" --strip-components=1
+          cat > "$consumer/package.json" <<'JSON'
+          {"private":true,"type":"module"}
+          JSON
+          cat > "$consumer/tsconfig.json" <<'JSON'
+          {"compilerOptions":{"strict":true,"noEmit":true,"target":"ES2022","lib":["ES2022","DOM"],"module":"NodeNext","moduleResolution":"NodeNext","skipLibCheck":false},"include":["index.ts"]}
+          JSON
+          cat > "$consumer/index.ts" <<'TS'
+          import { authorizeMcpServerWithStorage, type McpOAuthStorage } from "@letta-ai/letta-code/mcp-oauth";
+          const storage: McpOAuthStorage = { get: async (_key, _signal) => null, set: async (_key, _value, _signal) => {}, delete: async (_key, _signal) => false };
+          void authorizeMcpServerWithStorage({ agentId: "agent", storageNamespace: "consumer", storage, serverName: "server", serverUrl: "https://mcp.example" });
+          TS
+          ./node_modules/.bin/tsc --project "$consumer/tsconfig.json"
+          node - <<'NODE'
+          const fs = require('fs');
+          const version = require('./package.json').version.replaceAll('.', '\\.');
+          const artifact = fs.readFileSync('./dist/mcp-oauth.js', 'utf8');
+          if (!new RegExp(`version:\\s*["']${version}["']`).test(artifact) || artifact.includes('typeof LETTA_VERSION')) {
+            throw new Error('MCP OAuth artifact does not embed the package version');
+          }
+          NODE
+
       - name: CLI help smoke test
         run: ./letta.js --help
 
