@@ -234,6 +234,8 @@ export type ConversationRuntime = {
   activeConnectionId: ListenerConnectionId | null;
   turnLifecycle: TurnLifecycle;
   messageQueue: Promise<void>;
+  /** Invalidates request-scoped inputs still waiting to enter the queue. */
+  requestScopedDispatchEpoch: number;
   /** Recently accepted ingress IDs, retained for idempotent client retries. */
   acceptedInputDispositions: Map<string, "started" | "queued">;
   pendingApprovalResolvers: Map<string, PendingApprovalResolver>;

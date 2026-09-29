@@ -14,6 +14,7 @@ import {
   suspendListenerConnection,
 } from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
+import { dispatchInboundMessageWhenReady } from "./inbound-dispatch";
 import { enqueueInboundUserMessage } from "./inbound-queue";
 import { createRuntime, startConnectedListenerRuntime } from "./lifecycle";
 import { createListenerMessageHandler } from "./message-router";
@@ -210,6 +211,110 @@ test("a suspended connection drops queued request-scoped context", async () => {
       requestScopedSecretEnv: { BROWSER_CONTROL_KEY: "fresh-secret" },
     }),
   ).toBe(true);
+});
+
+test("suspension drops request-scoped input still waiting on messageQueue", async () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+  const options = makeListenerOptions();
+  const oldSocket = new MockSocket();
+  const newSocket = new MockSocket();
+  setActiveRuntime(listener);
+  openListenerConnection({
+    runtime: listener,
+    connectionId: options.connectionId,
+    writer: oldSocket as unknown as WebSocket,
+    options,
+  });
+
+  let releaseMessageQueue!: () => void;
+  runtime.messageQueue = new Promise<void>((resolve) => {
+    releaseMessageQueue = resolve;
+  });
+  const processed: string[] = [];
+  const acknowledgements: boolean[] = [];
+  dispatchInboundMessageWhenReady({
+    listener,
+    runtime,
+    incoming: {
+      ...queuedMessage("cm-scoped-pending-suspend"),
+      connectionId: options.connectionId,
+      noCoalesce: true,
+      requestScopedSecretEnv: { BROWSER_CONTROL_KEY: "stale-secret" },
+    },
+    socket: oldSocket as unknown as WebSocket,
+    options,
+    processQueuedTurn: async () => {},
+    processIncomingMessage: async () => {
+      processed.push("cm-scoped-pending-suspend");
+    },
+    trackListenerError: () => {},
+    onInputAccepted: ({ accepted }) => acknowledgements.push(accepted),
+  });
+
+  oldSocket.readyState = WebSocket.CLOSED;
+  suspendListenerConnection(listener, options.connectionId);
+  openListenerConnection({
+    runtime: listener,
+    connectionId: options.connectionId,
+    writer: newSocket as unknown as WebSocket,
+    options,
+  });
+  releaseMessageQueue();
+  await runtime.messageQueue;
+
+  expect(processed).toEqual([]);
+  expect(acknowledgements).toEqual([false]);
+  expect(runtime.queueRuntime.length).toBe(0);
+  expect(runtime.queuedMessagesByItemId.size).toBe(0);
+});
+
+test("queue clear drops request-scoped input still waiting on messageQueue", async () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+  const options = makeListenerOptions();
+  const socket = new MockSocket();
+  setActiveRuntime(listener);
+  openListenerConnection({
+    runtime: listener,
+    connectionId: options.connectionId,
+    writer: socket as unknown as WebSocket,
+    options,
+  });
+
+  let releaseMessageQueue!: () => void;
+  runtime.messageQueue = new Promise<void>((resolve) => {
+    releaseMessageQueue = resolve;
+  });
+  const processed: string[] = [];
+  const acknowledgements: boolean[] = [];
+  dispatchInboundMessageWhenReady({
+    listener,
+    runtime,
+    incoming: {
+      ...queuedMessage("cm-scoped-pending-clear"),
+      connectionId: options.connectionId,
+      noCoalesce: true,
+      requestScopedSecretEnv: { BROWSER_CONTROL_KEY: "stale-secret" },
+    },
+    socket: socket as unknown as WebSocket,
+    options,
+    processQueuedTurn: async () => {},
+    processIncomingMessage: async () => {
+      processed.push("cm-scoped-pending-clear");
+    },
+    trackListenerError: () => {},
+    onInputAccepted: ({ accepted }) => acknowledgements.push(accepted),
+  });
+
+  runtime.queueRuntime.clear("cancelled");
+  releaseMessageQueue();
+  await runtime.messageQueue;
+
+  expect(processed).toEqual([]);
+  expect(acknowledgements).toEqual([false]);
+  expect(runtime.queueRuntime.length).toBe(0);
+  expect(runtime.queuedMessagesByItemId.size).toBe(0);
 });
 
 test("clearing a conversation queue also clears retained payloads", () => {

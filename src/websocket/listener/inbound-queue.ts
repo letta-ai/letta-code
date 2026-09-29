@@ -23,7 +23,7 @@ export function getInboundClientMessageIds(
   });
 }
 
-function hasRequestScopedContext(incoming: IncomingMessage): boolean {
+export function hasRequestScopedContext(incoming: IncomingMessage): boolean {
   return (
     incoming.requestScopedClientSkills !== undefined ||
     incoming.requestScopedSecretEnv !== undefined
