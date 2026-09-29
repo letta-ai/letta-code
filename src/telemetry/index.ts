@@ -757,9 +757,6 @@ class TelemetryManager {
     });
   }
 
-  /**
-   * Track errors
-   */
   trackError(
     errorType: string,
     errorMessage: string,
@@ -773,14 +770,13 @@ class TelemetryManager {
       subagentType?: string;
       modelHandle?: string;
       fallbackKind?: string;
+      omitDebugLogTail?: boolean;
     },
   ) {
-    // Skip error telemetry for self-hosted users to avoid spamming cloud analytics
     if (!this.isCloudUser()) {
       return;
     }
 
-    // Skip non-actionable errors that create noise
     if (isNonActionableError(errorMessage)) {
       return;
     }
@@ -793,7 +789,9 @@ class TelemetryManager {
       model_id: options?.modelId,
       run_id: options?.runId,
       recent_chunks: options?.recentChunks,
-      debug_log_tail: debugLogFile.getTail(),
+      debug_log_tail: options?.omitDebugLogTail
+        ? undefined
+        : debugLogFile.getTail(),
       is_subagent: options?.isSubagent,
       subagent_type: options?.subagentType,
       model_handle: options?.modelHandle,
@@ -804,10 +802,7 @@ class TelemetryManager {
     this.track("error", data);
   }
 
-  /**
-   * Track user input
-   * Note: agent_id is automatically added from currentAgentId
-   */
+  /** Agent ID is automatically added to user input from currentAgentId. */
   trackUserInput(input: string, messageType: string, modelId: string) {
     this.messageCount++;
 
