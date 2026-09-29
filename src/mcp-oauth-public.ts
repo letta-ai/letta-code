@@ -1,4 +1,3 @@
-import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { connectMcpServer } from "@/mcp-client";
 import {
   createMcpOAuthSessionWithStorage,
@@ -32,6 +31,12 @@ export interface McpOAuthStorage {
   delete(credentialKey: string, signal: AbortSignal): Promise<unknown>;
 }
 
+/** Package-owned structural fetch shape for MCP OAuth network requests. */
+export type McpOAuthFetch = (
+  url: string | URL,
+  init?: RequestInit,
+) => Promise<Response>;
+
 /** Options for one complete, single-flight MCP OAuth authorization. */
 export interface AuthorizeMcpServerWithStorageOptions {
   /** Owning agent used to namespace the credential key. */
@@ -45,7 +50,7 @@ export interface AuthorizeMcpServerWithStorageOptions {
    * Custom fetch used for the MCP transport plus OAuth discovery, dynamic
    * registration, token exchange, and authenticated MCP requests.
    */
-  fetch?: FetchLike;
+  fetch?: McpOAuthFetch;
   openBrowser?: (url: string) => Promise<void>;
   onStatus?: (message: string) => void;
   signal?: AbortSignal;
@@ -59,7 +64,7 @@ interface InFlightAuthorization {
 }
 
 const inFlightAuthorizations = new Map<string, InFlightAuthorization>();
-const fetchFunctionIds = new WeakMap<FetchLike, number>();
+const fetchFunctionIds = new WeakMap<McpOAuthFetch, number>();
 let nextFetchFunctionId = 1;
 
 /**
@@ -163,7 +168,7 @@ async function runAuthorization(
   }
 }
 
-function fetchIdentity(fetchFn?: FetchLike): string {
+function fetchIdentity(fetchFn?: McpOAuthFetch): string {
   if (!fetchFn) return "default";
   let id = fetchFunctionIds.get(fetchFn);
   if (id === undefined) {

@@ -2,9 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { type ChildProcess, spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
-import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 import {
   authorizeMcpServerWithStorage,
+  type McpOAuthFetch,
   type McpOAuthStorage,
 } from "@/mcp-oauth-public";
 
@@ -73,9 +73,17 @@ describe("public MCP OAuth fetch injection", () => {
     await startOAuthServer();
     if (!serverUrl) throw new Error("OAuth test server was not started");
 
-    const requestUrls: string[] = [];
-    const providerFetch: FetchLike = async (url, init) => {
-      requestUrls.push(String(url));
+    const requests: Array<{
+      authorization: string | null;
+      method: string;
+      url: string;
+    }> = [];
+    const providerFetch: McpOAuthFetch = async (url, init) => {
+      requests.push({
+        authorization: new Headers(init?.headers).get("authorization"),
+        method: init?.method ?? "GET",
+        url: String(url),
+      });
       return fetch(url, init);
     };
     const credentials = await authorizeMcpServerWithStorage({
@@ -92,12 +100,24 @@ describe("public MCP OAuth fetch injection", () => {
     });
 
     expect(credentials.access_token).toBeTruthy();
-    const paths = requestUrls.map((url) => new URL(url).pathname);
+    const paths = requests.map(({ url }) => new URL(url).pathname);
     expect(paths).toContain("/.well-known/oauth-protected-resource/mcp");
     expect(paths).toContain("/.well-known/oauth-authorization-server");
     expect(paths).toContain("/register");
     expect(paths).toContain("/token");
     expect(paths).toContain("/mcp");
+    const mcpRequests = requests.filter(
+      ({ url }) => new URL(url).pathname === "/mcp",
+    );
+    expect(mcpRequests.length).toBeGreaterThanOrEqual(2);
+    expect(
+      mcpRequests.some(({ authorization }) => authorization === null),
+    ).toBe(true);
+    expect(
+      mcpRequests.some(({ authorization }) =>
+        authorization?.toLowerCase().startsWith("bearer "),
+      ),
+    ).toBe(true);
   }, 30_000);
 
   test("rejects a discovered endpoint before the underlying fetch", async () => {
@@ -108,7 +128,7 @@ describe("public MCP OAuth fetch injection", () => {
       "http://169.254.169.254/latest/oauth/register";
     const guardedUrls: string[] = [];
     const underlyingUrls: string[] = [];
-    const underlyingFetch: FetchLike = async (url, init) => {
+    const underlyingFetch: McpOAuthFetch = async (url, init) => {
       const value = String(url);
       underlyingUrls.push(value);
       const response = await fetch(url, init);
@@ -137,7 +157,7 @@ describe("public MCP OAuth fetch injection", () => {
         { headers, status: response.status },
       );
     };
-    const guardedFetch: FetchLike = async (url, init) => {
+    const guardedFetch: McpOAuthFetch = async (url, init) => {
       const value = String(url);
       guardedUrls.push(value);
       if (value === maliciousRegistrationUrl) {
