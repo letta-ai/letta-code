@@ -2709,8 +2709,8 @@ export class LocalStore {
     } catch {
       return;
     }
-
     for (const entry of entries) {
+      if (entry.endsWith(".pending")) continue;
       const conversationDir = join(conversationsDir, entry);
       try {
         if (!statSync(conversationDir).isDirectory()) continue;

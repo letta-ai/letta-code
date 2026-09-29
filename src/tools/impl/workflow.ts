@@ -15,6 +15,7 @@
  * are injected into args (not part of the model-facing JSON schema).
  */
 
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
@@ -44,6 +45,7 @@ import {
   DEFAULT_ALLOWED_TOOLS,
 } from "@/tools/workflow/sdk-spawner";
 import type {
+  SdkClient,
   SubagentSpawner,
   WorkflowExecutionResult,
   WorkflowMeta,
@@ -58,6 +60,8 @@ import {
   formatTaskNotification,
   resolveNotificationScope,
 } from "@/utils/task-notifications";
+import { type AppServerHandle, startAppServer } from "@/websocket/app-server";
+import { getActiveRuntime } from "@/websocket/listener/runtime";
 import {
   appendToOutputFile,
   assertBackgroundProcessCapacity,
@@ -101,6 +105,47 @@ type SpawnerFactory = (
 const MAX_NOTIFICATION_RESULT_CHARS = 30_000;
 const DEFAULT_STARTUP_TIMEOUT_MS = 30_000;
 let startupTimeoutMs = DEFAULT_STARTUP_TIMEOUT_MS;
+let localWorkflowServer: Promise<AppServerHandle> | null = null;
+let localWorkflowUsers = 0;
+
+async function acquireLocalWorkflowServer(): Promise<{
+  controlUrl: string;
+  release(): Promise<void>;
+}> {
+  if (!localWorkflowServer) {
+    const runtime = getActiveRuntime();
+    localWorkflowServer = startAppServer({
+      listen: "ws://127.0.0.1:0",
+      startProcessServices: false,
+      ...(runtime ? { runtime } : {}),
+      connectionName: `workflow-${randomUUID()}`,
+    });
+  }
+  const pending = localWorkflowServer;
+  localWorkflowUsers++;
+  let server: AppServerHandle;
+  try {
+    server = await pending;
+  } catch (error) {
+    localWorkflowUsers--;
+    if (localWorkflowUsers === 0 && localWorkflowServer === pending)
+      localWorkflowServer = null;
+    throw error;
+  }
+  let released = false;
+  return {
+    controlUrl: server.controlUrl,
+    release: async () => {
+      if (released) return;
+      released = true;
+      localWorkflowUsers--;
+      if (localWorkflowUsers === 0 && localWorkflowServer === pending) {
+        localWorkflowServer = null;
+        await server.close();
+      }
+    },
+  };
+}
 
 function isOwningAgentId(value: string | null | undefined): value is string {
   return (
@@ -196,10 +241,16 @@ export async function createSdkSpawnerHandle(
   setStage("loading Agent SDK");
   const sdk = await loadAgentSdk();
   setStage("creating SDK client and spawner");
-  const client = sdk.createLocalClient(backendMode);
-  let spawner: SubagentSpawner;
+  // SDK-managed local query() requires an API-backed App Server. Share one
+  // local-state server until every concurrent Workflow releases its lease.
+  const server =
+    backendMode === "local" ? await acquireLocalWorkflowServer() : null;
+  let client: SdkClient | undefined;
   try {
-    spawner = createSdkSpawner(client, {
+    client = server
+      ? sdk.createRemoteClient(server.controlUrl)
+      : sdk.createLocalClient(backendMode);
+    const spawner: SubagentSpawner = createSdkSpawner(client, {
       parentAgentId,
       model,
       resolveModel,
@@ -212,16 +263,21 @@ export async function createSdkSpawnerHandle(
         ? { parentContextWindowLimit }
         : {}),
     });
+    return {
+      spawner,
+      cleanup: async () => {
+        try {
+          await client?.[Symbol.asyncDispose]?.().catch(() => undefined);
+        } finally {
+          await server?.release();
+        }
+      },
+    };
   } catch (error) {
-    void client[Symbol.asyncDispose]?.().catch(() => undefined);
+    await client?.[Symbol.asyncDispose]?.().catch(() => undefined);
+    await server?.release();
     throw error;
   }
-  return {
-    spawner,
-    cleanup: async () => {
-      await client[Symbol.asyncDispose]?.().catch(() => undefined);
-    },
-  };
 }
 
 let spawnerFactory: SpawnerFactory = createSdkSpawnerHandle;
