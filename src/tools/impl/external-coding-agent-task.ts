@@ -6,6 +6,10 @@ import {
   runExternalCodingAgent,
 } from "./external-coding-agent";
 import {
+  captureNativeSession,
+  reportNativeSessionCaptureFailure,
+} from "./native-session-capture";
+import {
   type SpawnBackgroundSubagentTaskResult,
   spawnBackgroundSubagentTask,
 } from "./task";
@@ -14,7 +18,11 @@ export function trackExternalFollowupCompletion(args: {
   type: "claude-code" | "codex";
   agentId: string;
   message: string;
-  parentScope: { agentId: string; conversationId: string };
+  parentScope: {
+    agentId: string;
+    conversationId: string;
+    actingUserId?: string;
+  };
   completion: Promise<SubagentResult>;
   interrupt: () => Promise<void>;
 }): SpawnBackgroundSubagentTaskResult {
@@ -40,6 +48,20 @@ export function trackExternalFollowupCompletion(args: {
           return await args.completion;
         } finally {
           signal?.removeEventListener("abort", interrupt);
+          const target = parseExternalCodingAgentId(args.agentId);
+          if (target) {
+            void captureNativeSession(
+              target.type === "claude-code" ? "claude_code" : "codex",
+              target.sessionId,
+              args.parentScope,
+            ).catch((error) =>
+              reportNativeSessionCaptureFailure(
+                target.type === "claude-code" ? "claude_code" : "codex",
+                target.sessionId,
+                error,
+              ),
+            );
+          }
         }
       },
     },
@@ -49,7 +71,11 @@ export function trackExternalFollowupCompletion(args: {
 export function spawnExternalCodingAgentFollowup(args: {
   agentId: string;
   message: string;
-  parentScope: { agentId: string; conversationId: string };
+  parentScope: {
+    agentId: string;
+    conversationId: string;
+    actingUserId?: string;
+  };
 }): SpawnBackgroundSubagentTaskResult {
   const target = parseExternalCodingAgentId(args.agentId);
   if (!target) {
@@ -67,6 +93,8 @@ export function spawnExternalCodingAgentFollowup(args: {
           type: target.type,
           prompt,
           parentAgentId: args.parentScope.agentId,
+          parentConversationId: args.parentScope.conversationId,
+          actingUserId: args.parentScope.actingUserId,
           resumeSessionId: target.sessionId,
           cwd: getCurrentWorkingDirectory(),
           signal,

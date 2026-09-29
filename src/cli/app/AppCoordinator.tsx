@@ -99,12 +99,12 @@ import {
   buildReflectionArenaChoiceQuestions,
   finalizeReflectionArenaChoice,
   formatReflectionArenaDeferredMessage,
-  launchReflectionArena,
   parseReflectionArenaChoiceAnswers,
   REFLECTION_ARENA_MODEL_A_DEFAULT,
   type ReflectionArenaChoiceQuestion,
   sampleReflectionArenaComparisonModel,
 } from "@/cli/helpers/reflection-arena";
+import { launchReflectionArena } from "@/cli/helpers/reflection-arena-launcher";
 import {
   AUTO_REFLECTION_DESCRIPTION,
   launchReflectionSubagent,

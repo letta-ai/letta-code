@@ -264,7 +264,7 @@ export class HeadlessBackend implements Backend {
   }
 
   async retrieveConversation(conversationId: string): Promise<Conversation> {
-    return this.store.retrieveConversation(conversationId);
+    return this.store.retrievePublicConversation(conversationId);
   }
 
   async listConversations(...args: Parameters<Backend["listConversations"]>) {
@@ -458,6 +458,13 @@ export class HeadlessBackend implements Backend {
     conversationId: string,
     body: ConversationMessageCreateBody | ConversationMessageStreamBody,
   ) {
+    const activeRunId = this.activeRunByConversation.get(conversationId);
+    const activeRun = activeRunId ? this.runs.get(activeRunId) : undefined;
+    if (activeRun && !isTerminalRun(activeRun)) {
+      throw new Error(
+        `Conversation ${conversationId} already has an active run (${activeRun.id})`,
+      );
+    }
     // Settle any tool calls left without results from a prior interrupted turn.
     // If the process was killed or the stream errored out before cancelConversation
     // was called, orphaned tool_use blocks remain in the history. Anthropic rejects
@@ -495,7 +502,10 @@ export class HeadlessBackend implements Backend {
       turnInput.agentId,
     );
     const agent = effectiveAgentForConversation(
-      this.store.retrieveAgentRecord(turnInput.agentId),
+      this.store.retrieveExecutionAgentRecord(
+        turnInput.conversationId,
+        turnInput.agentId,
+      ),
       this.store.retrieveConversation(
         turnInput.conversationId,
         turnInput.agentId,
