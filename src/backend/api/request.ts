@@ -5,6 +5,103 @@ import { getLettaCodeHeaders } from "./http-headers";
 
 export type ApiRequestMethod = "GET" | "POST" | "PATCH" | "DELETE";
 
+export interface NotificationSponsorshipRequest {
+  deliveryId: string;
+  clientMessageId: string;
+}
+
+export type NotificationSponsorshipExchangeResult =
+  | { kind: "capability"; capability: string }
+  | { kind: "receipt"; admissionState: "admitting" | "core_accepted" };
+
+export const NOTIFICATION_SPONSORSHIP_CAPABILITY_HEADER =
+  "x-letta-notification-sponsorship";
+
+export class NotificationSponsorshipExchangeError extends Error {
+  constructor(readonly status: number) {
+    super("Notification sponsorship exchange failed");
+    this.name = "NotificationSponsorshipExchangeError";
+  }
+}
+
+export function parseNotificationSponsorshipExchange(
+  value: unknown,
+): NotificationSponsorshipExchangeResult {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(
+      "Notification sponsorship exchange returned an invalid receipt",
+    );
+  }
+  const receipt = value as Record<string, unknown>;
+  if (
+    receipt.admission_state === "admitting" ||
+    receipt.admission_state === "core_accepted"
+  ) {
+    const coreAccepted = receipt.admission_state === "core_accepted";
+    const validCoreIds = coreAccepted
+      ? typeof receipt.core_message_id === "string" &&
+        receipt.core_message_id.length > 0 &&
+        typeof receipt.core_run_id === "string" &&
+        receipt.core_run_id.length > 0
+      : receipt.core_message_id === null && receipt.core_run_id === null;
+    if (
+      typeof receipt.request_id !== "string" ||
+      receipt.request_id.length === 0 ||
+      !validCoreIds ||
+      Object.keys(receipt).length !== 4
+    ) {
+      throw new Error(
+        "Notification sponsorship exchange returned an invalid receipt",
+      );
+    }
+    return { kind: "receipt", admissionState: receipt.admission_state };
+  }
+  if (
+    receipt.admission_state === "new" &&
+    typeof receipt.capability === "string" &&
+    receipt.capability.length > 0 &&
+    typeof receipt.expires_at === "string" &&
+    Number.isFinite(Date.parse(receipt.expires_at)) &&
+    Object.keys(receipt).length === 3
+  ) {
+    return { kind: "capability", capability: receipt.capability };
+  }
+  throw new Error(
+    "Notification sponsorship exchange returned an invalid receipt",
+  );
+}
+
+/** Exchange a non-secret delivery reference for a one-request capability. */
+export async function exchangeNotificationSponsorship(
+  request: NotificationSponsorshipRequest,
+  signal?: AbortSignal,
+): Promise<NotificationSponsorshipExchangeResult> {
+  const { deliveryId, clientMessageId } = request;
+  if (!deliveryId || !clientMessageId) {
+    throw new Error("Notification sponsorship reference is invalid");
+  }
+  const response = await apiFetch(
+    `/v1/internal/agent-notification-deliveries/${encodeURIComponent(deliveryId)}/sponsorship`,
+    {
+      method: "POST",
+      body: { client_message_id: clientMessageId },
+      signal,
+      headers: { "Content-Type": "application/json" },
+    },
+  );
+  if (!response.ok) {
+    // Do not retain or surface raw response bodies; they may contain secrets.
+    throw new NotificationSponsorshipExchangeError(response.status);
+  }
+  let value: unknown;
+  try {
+    value = await response.json();
+  } catch {
+    throw new Error("Notification sponsorship exchange returned invalid JSON");
+  }
+  return parseNotificationSponsorshipExchange(value);
+}
+
 export interface ApiRequestConfig {
   baseUrl: string;
   apiKey: string;

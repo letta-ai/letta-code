@@ -99,6 +99,37 @@ describe("queue noCoalesce batching", () => {
     });
   });
 
+  test("notification sponsorship stays isolated until its queued turn", () => {
+    const runtime = getOrCreateScopedRuntime(
+      createRuntime(),
+      "agent-1",
+      "conv-1",
+    );
+    const sponsored: IncomingMessage = {
+      ...bridgeMessage("notification", "cm-notification"),
+      notificationSponsorship: {
+        delivery_id: "delivery-1",
+        client_message_id: "cm-notification",
+      },
+    };
+    expect(enqueueInboundUserMessage(runtime, sponsored)).toBe(true);
+    expect(
+      enqueueInboundUserMessage(runtime, bridgeMessage("ordinary", "cm-other")),
+    ).toBe(true);
+
+    const first = consumeQueuedTurn(runtime);
+    expect(first?.dequeuedBatch.items).toHaveLength(1);
+    expect(first?.queuedTurn.notificationSponsorship).toEqual({
+      delivery_id: "delivery-1",
+      client_message_id: "cm-notification",
+    });
+    expect(first?.queuedTurn.messages).toHaveLength(1);
+
+    const second = consumeQueuedTurn(runtime);
+    expect(second?.dequeuedBatch.items).toHaveLength(1);
+    expect(second?.queuedTurn.notificationSponsorship).toBeUndefined();
+  });
+
   test("plain messages still coalesce (existing behavior unchanged)", () => {
     const runtime = getOrCreateScopedRuntime(
       createRuntime(),

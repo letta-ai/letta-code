@@ -91,6 +91,16 @@ function buildQueuedTurnMessage(
 ): IncomingMessage | null {
   let template: IncomingMessage | undefined;
   const messages: IncomingMessage["messages"] = [];
+  const notificationSponsorshipItems = batch.items.filter((item) => {
+    const queued = runtime.queuedMessagesByItemId.get(item.id);
+    return Boolean(item.kind === "message" && queued?.notificationSponsorship);
+  });
+  const notificationSponsorship =
+    notificationSponsorshipItems.length === 1 && batch.items.length === 1
+      ? runtime.queuedMessagesByItemId.get(
+          notificationSponsorshipItems[0]?.id ?? "",
+        )?.notificationSponsorship
+      : undefined;
   for (const item of batch.items) {
     const incoming = runtime.queuedMessagesByItemId.get(item.id);
     if (item.kind === "message" && incoming) {
@@ -130,6 +140,10 @@ function buildQueuedTurnMessage(
   }
   if (messages.length === 0) return null;
   const scopeItem = batch.items[0];
+  if (template && notificationSponsorship) {
+    template.notificationSponsorship = notificationSponsorship;
+    template.noCoalesce = true;
+  }
   return {
     type: "message",
     agentId: scopeItem?.agentId ?? runtime.agentId ?? undefined,
@@ -222,7 +236,10 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
   let batchConnectionId: string | undefined;
   let batchImageFailureMode: "strict" | "drop" | null = null;
   const isNoCoalesce = (candidate: (typeof queuedItems)[number]): boolean =>
-    candidate.kind === "message" && candidate.noCoalesce === true;
+    candidate.kind === "message" &&
+    (candidate.noCoalesce === true ||
+      runtime.queuedMessagesByItemId.get(candidate.id)
+        ?.notificationSponsorship !== undefined);
   for (const item of queuedItems) {
     if (
       !isCoalescable(item.kind) ||

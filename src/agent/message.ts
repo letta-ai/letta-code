@@ -234,6 +234,9 @@ export function getStreamRequestContext(
   return streamRequestContexts.get(stream as object);
 }
 
+export const NOTIFICATION_SPONSORSHIP_HEADER =
+  "x-letta-notification-sponsorship";
+
 export type SendMessageStreamOptions = {
   streamTokens?: boolean;
   background?: boolean;
@@ -279,6 +282,11 @@ export type SendMessageStreamOptions = {
    * for self-hosted / single-user / pre-channel-split flows.
    */
   actingUserId?: string;
+  /** One-time capability for a single matching initial user message. */
+  notificationSponsorship?: {
+    capability: string;
+    clientMessageId: string;
+  };
 };
 
 export type SendMessageStreamRequestOptions = {
@@ -537,6 +545,35 @@ export async function sendMessageStreamWithBackend(
     extraHeaders[ACTING_USER_ID_HEADER] = actingUserId;
   }
 
+  const notificationSponsorship = opts.notificationSponsorship;
+  const notificationCapability = notificationSponsorship?.capability;
+  if (
+    notificationSponsorship &&
+    (!notificationCapability || notificationCapability.length === 0)
+  ) {
+    throw new Error("Notification sponsorship capability is missing");
+  }
+  if (notificationSponsorship) {
+    const matchingMessage = normalizedMessages.find(
+      (message) =>
+        "content" in message &&
+        "otid" in message &&
+        message.otid === notificationSponsorship.clientMessageId,
+    );
+    if (
+      normalizedMessages.length !== 1 ||
+      !matchingMessage ||
+      !("role" in matchingMessage) ||
+      matchingMessage.role !== "user" ||
+      !("otid" in matchingMessage) ||
+      matchingMessage.otid !== notificationSponsorship.clientMessageId
+    ) {
+      throw new Error(
+        "Notification sponsorship requires exactly one matching user message",
+      );
+    }
+  }
+
   const messageSummary = normalizedMessages
     .map((item) => {
       if (item.type === "approval") {
@@ -581,6 +618,11 @@ export async function sendMessageStreamWithBackend(
           headers: {
             ...((requestOptions.headers as Record<string, string>) ?? {}),
             ...extraHeaders,
+            ...(notificationSponsorship && notificationCapability
+              ? {
+                  [NOTIFICATION_SPONSORSHIP_HEADER]: notificationCapability,
+                }
+              : {}),
           },
         },
       );
@@ -594,6 +636,7 @@ export async function sendMessageStreamWithBackend(
       break;
     } catch (error) {
       if (
+        !notificationSponsorship &&
         isCloudApiShutdownRejection(error) &&
         cloudApiShutdownRetries < CLOUD_API_SHUTDOWN_MAX_RETRIES
       ) {

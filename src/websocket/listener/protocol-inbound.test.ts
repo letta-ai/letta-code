@@ -123,6 +123,119 @@ describe("input protocol-inbound validators", () => {
     }
   });
 
+  test("ordinary create_message cannot carry notification sponsorship", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          payload: {
+            kind: "create_message",
+            messages: [{ role: "user", content: "unsponsored fallback" }],
+            notification_sponsorship: {
+              delivery_id: "delivery-1",
+              client_message_id: "notification-v1-abc",
+            },
+          },
+        }),
+      ),
+    );
+    expect(parsed?.type).toBe("__invalid_input");
+  });
+
+  test("notification input requires exactly one matching user message", () => {
+    const envelope = {
+      type: "input",
+      runtime: { agent_id: "agent-1", conversation_id: "default" },
+      payload: {
+        kind: "create_notification_message",
+        client_message_id: "notification-v1-abc",
+        notification_sponsorship: {
+          delivery_id: "delivery-1",
+          client_message_id: "notification-v1-abc",
+        },
+        messages: [
+          {
+            role: "user",
+            content: "notification",
+            client_message_id: "notification-v1-abc",
+          },
+        ],
+      },
+    };
+    expect(
+      parseServerMessage(Buffer.from(JSON.stringify(envelope)))?.type,
+    ).toBe("input");
+
+    const invalidPayloads = [
+      { ...envelope.payload, messages: [] },
+      {
+        ...envelope.payload,
+        messages: [...envelope.payload.messages, ...envelope.payload.messages],
+      },
+      {
+        ...envelope.payload,
+        messages: [{ ...envelope.payload.messages[0], role: "assistant" }],
+      },
+      {
+        ...envelope.payload,
+        client_message_id: "different-id",
+      },
+      {
+        ...envelope.payload,
+        messages: [
+          {
+            ...envelope.payload.messages[0],
+            client_message_id: "different-id",
+          },
+        ],
+      },
+      {
+        ...envelope.payload,
+        notification_sponsorship: {
+          ...envelope.payload.notification_sponsorship,
+          client_message_id: "different-id",
+        },
+      },
+      {
+        ...envelope.payload,
+        notification_sponsorship: {
+          ...envelope.payload.notification_sponsorship,
+          capability: "must-not-come-from-relay",
+        },
+      },
+      {
+        ...envelope.payload,
+        capability: "must-not-come-from-relay",
+      },
+      {
+        ...envelope.payload,
+        messages: [
+          {
+            role: "user",
+            client_message_id: "notification-v1-abc",
+          },
+        ],
+      },
+      {
+        ...envelope.payload,
+        messages: [
+          {
+            ...envelope.payload.messages[0],
+            capability: "must-not-enter-message-content",
+          },
+        ],
+      },
+    ];
+    for (const payload of invalidPayloads) {
+      expect(
+        parseServerMessage(
+          Buffer.from(JSON.stringify({ ...envelope, payload })),
+        )?.type,
+      ).toBe("__invalid_input");
+    }
+  });
+
   test("validates request-scoped response format contracts", () => {
     expect(validateResponseFormat(undefined)).toBeNull();
     expect(validateResponseFormat("json")).toBe(

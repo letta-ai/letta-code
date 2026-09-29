@@ -279,6 +279,14 @@ async function handleIncomingMessageInner(
       overrideModel,
       responseFormat: msg.responseFormat,
       actingUserId: msg.actingUserId,
+      ...(msg.notificationSponsorship
+        ? {
+            notificationSponsorship: {
+              delivery_id: msg.notificationSponsorship.delivery_id,
+              client_message_id: msg.notificationSponsorship.client_message_id,
+            },
+          }
+        : {}),
       getInput: () => turnInput,
       getInterruptedToolCallIds: () =>
         pendingNormalizationInterruptedToolCallIds,
@@ -289,11 +297,18 @@ async function handleIncomingMessageInner(
       sender: turnInputSender,
       stream: initialStream,
       buildSendOptions,
+      reconciledReceipt,
     } = initial;
     turnInput = initial.input;
-    if (!initialStream) {
+    if (reconciledReceipt) {
+      finishTurn({
+        stopReason: "end_turn",
+        agentId,
+        conversationId,
+      });
       return;
     }
+    if (!initialStream) return;
     let stream = initialStream;
     pendingNormalizationInterruptedToolCallIds = [];
     markAwaitingAcceptedApprovalContinuationRunId(

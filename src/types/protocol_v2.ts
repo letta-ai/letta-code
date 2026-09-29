@@ -640,12 +640,12 @@ export interface InputCreateMessagePayload {
   exclude_interactive_tools?: boolean;
   response_format?: Record<string, unknown>;
 }
-
 export type InputApprovalResponsePayload = {
   kind: "approval_response";
 } & ApprovalResponseBody;
 export type InputPayload =
   | InputCreateMessagePayload
+  | import("./notification-sponsorship").InputCreateNotificationMessagePayload
   | InputApprovalResponsePayload
   | TeleportProtocol.InputTeleportContinuePayload;
 

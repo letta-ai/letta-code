@@ -128,10 +128,12 @@ import {
   isExternalToolCallResponseCommand,
   isRuntimeExternalToolsUpdateCommand,
 } from "./external-tool-protocol";
+import { isInputCommand } from "./input-protocol-inbound";
 import {
   isAppServerInfoCommand,
   isConversationForkCommand,
 } from "./management-protocol-inbound";
+import { isValidNotificationMessagePayload } from "./notification-sponsorship-protocol";
 import {
   isAgentRuntimeScope,
   isObjectRecord,
@@ -155,68 +157,6 @@ function isClientToolsetConfig(value: unknown): value is ClientToolsetConfig {
     (value.base === undefined || isToolsetPreference(value.base)) &&
     (value.include === undefined || isStringArray(value.include))
   );
-}
-
-function isInputCommand(value: unknown): value is InputCommand {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-  const candidate = value as {
-    type?: unknown;
-    request_id?: unknown;
-    runtime?: unknown;
-    payload?: unknown;
-  };
-  if (candidate.type !== "input" || !isRuntimeScope(candidate.runtime)) {
-    return false;
-  }
-  if (
-    candidate.request_id !== undefined &&
-    (typeof candidate.request_id !== "string" ||
-      candidate.request_id.length === 0)
-  ) {
-    return false;
-  }
-  if (!candidate.payload || typeof candidate.payload !== "object") {
-    return false;
-  }
-  const payload = candidate.payload as {
-    kind?: unknown;
-    messages?: unknown;
-    image_failure_mode?: unknown;
-    client_tool_allowlist?: unknown;
-    client_toolset?: unknown;
-    external_tool_scope_ids?: unknown;
-    exclude_interactive_tools?: unknown;
-    request_id?: unknown;
-    decision?: unknown;
-    error?: unknown;
-  };
-  if (payload.kind === "create_message") {
-    return (
-      Array.isArray(payload.messages) &&
-      (payload.image_failure_mode === undefined ||
-        payload.image_failure_mode === "strict" ||
-        payload.image_failure_mode === "drop") &&
-      (payload.client_tool_allowlist === undefined ||
-        isStringArray(payload.client_tool_allowlist)) &&
-      (payload.client_toolset === undefined ||
-        isClientToolsetConfig(payload.client_toolset)) &&
-      (payload.external_tool_scope_ids === undefined ||
-        isStringArray(payload.external_tool_scope_ids)) &&
-      (payload.exclude_interactive_tools === undefined ||
-        typeof payload.exclude_interactive_tools === "boolean")
-    );
-  }
-  if (payload.kind === "approval_response") {
-    return isValidApprovalResponseBody(payload);
-  }
-  if (payload.kind === "teleport_continue")
-    return (
-      isAgentRuntimeScope(candidate.runtime) &&
-      isTeleportContinuePayload(payload)
-    );
-  return false;
 }
 
 function legacyEnvironmentMessageToInputCommand(
@@ -296,6 +236,7 @@ function getInvalidInputReason(value: unknown): {
   const payload = candidate.payload as {
     kind?: unknown;
     messages?: unknown;
+    client_message_id?: unknown;
     image_failure_mode?: unknown;
     client_tool_allowlist?: unknown;
     client_toolset?: unknown;
@@ -306,6 +247,13 @@ function getInvalidInputReason(value: unknown): {
     error?: unknown;
   };
   if (payload.kind === "create_message") {
+    if ("notification_sponsorship" in payload) {
+      return {
+        runtime: candidate.runtime,
+        reason:
+          "Protocol violation: notification_sponsorship requires input.kind=create_notification_message",
+      };
+    }
     if (!Array.isArray(payload.messages)) {
       return {
         runtime: candidate.runtime,
@@ -362,6 +310,16 @@ function getInvalidInputReason(value: unknown): {
         runtime: candidate.runtime,
         reason:
           "Protocol violation: input.payload.external_tool_scope_ids must be string[]",
+      };
+    }
+    return null;
+  }
+  if (payload.kind === "create_notification_message") {
+    if (!isValidNotificationMessagePayload(payload)) {
+      return {
+        runtime: candidate.runtime,
+        reason:
+          "Protocol violation: create_notification_message requires exactly one user message with matching client_message_id and a valid notification_sponsorship reference",
       };
     }
     return null;
