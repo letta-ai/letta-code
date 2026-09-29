@@ -26,13 +26,17 @@ import { detectShellContext } from "@/utils/shell-context";
 import { publishChannelRuntimeToolsForTurn } from "./channel-runtime-tools";
 import { getInboundImageFailureModes } from "./image-policy";
 import { consumeInterruptQueue } from "./interrupts";
+import { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
 import {
   createListenerAgentModContext,
   createListenerModEvents,
+  ensureListenerAgentModAdapter,
   ensureListenerModAdaptersForAgent,
 } from "./mod-adapter";
+import { getListenerModCommand } from "./mod-commands";
 import type { ConversationPermissionModeState } from "./permission-mode";
 import { hasInterruptedCacheForScope } from "./runtime";
+import { expandListenerUserSkillMessages } from "./skill-invocation";
 import { emitListenerTurnStart } from "./turn-events";
 import {
   createTurnInputState,
@@ -128,6 +132,42 @@ export async function prepareListenerTurn(params: {
       conversationId,
     });
   }
+
+  let inboundMessages = msg.messages;
+  if (agentId) {
+    const hasSlashInput = inboundMessages.some(
+      (message) =>
+        "role" in message &&
+        message.role === "user" &&
+        (typeof message.content === "string"
+          ? message.content.trim().startsWith("/")
+          : message.content[0]?.type === "text" &&
+            message.content[0].text.trim().startsWith("/")),
+    );
+    if (hasSlashInput) {
+      await ensureListenerAgentModAdapter(runtime.listener, agentId);
+      const { commands } = await import("@/cli/commands/registry");
+      const listenerOptions = connectionId
+        ? runtime.listener.connections.get(connectionId)?.options
+        : runtime.listener.connections.values().next().value?.options;
+      inboundMessages = await expandListenerUserSkillMessages(
+        inboundMessages,
+        {
+          agentId,
+          workingDirectory,
+          skillsDirectory: listenerOptions?.skillsDirectory,
+          skillSources: runtime.skillSources,
+        },
+        (commandId) =>
+          SUPPORTED_REMOTE_COMMANDS.includes(commandId) ||
+          Boolean(commands[`/${commandId}`]) ||
+          Boolean(getListenerModCommand(runtime.listener, commandId, agentId)),
+      );
+      if (isInterrupted()) return { kind: "interrupted" };
+    }
+  }
+  // The skill body is harness context, not text the human typed. Keep telemetry
+  // and the local transcript on the original slash command.
   trackListenerUserInput(msg.messages, "unknown", msg.actingUserId);
 
   const messagesToSend: Array<MessageCreate | ApprovalCreate> = [];
@@ -150,10 +190,26 @@ export async function prepareListenerTurn(params: {
       otid: crypto.randomUUID(),
     });
   }
-  messagesToSend.push(...ensureTurnInputMessageOtids(msg.messages));
+  const stampedInboundMessages = ensureTurnInputMessageOtids(inboundMessages);
+  messagesToSend.push(...stampedInboundMessages);
 
+  const skillWasExpanded = inboundMessages !== msg.messages;
+  const displayMessages = skillWasExpanded
+    ? [
+        ...messagesToSend.slice(0, -stampedInboundMessages.length),
+        ...stampedInboundMessages.map((message, index) => {
+          const original = msg.messages[index];
+          return inboundMessages[index] !== original &&
+            original &&
+            "content" in original &&
+            "content" in message
+            ? { ...message, content: original.content }
+            : message;
+        }),
+      ]
+    : messagesToSend;
   let inboundUserTranscriptLines =
-    buildInboundUserTranscriptLines(messagesToSend);
+    buildInboundUserTranscriptLines(displayMessages);
   const firstMessage = msg.messages[0];
   const isApprovalMessage =
     firstMessage &&
@@ -292,7 +348,7 @@ export async function prepareListenerTurn(params: {
       messages: currentInput,
     }),
   );
-  if (currentInput !== messagesToSend) {
+  if (currentInput !== messagesToSend && !skillWasExpanded) {
     inboundUserTranscriptLines = buildInboundUserTranscriptLines(currentInput);
   }
   const modAdapters = agentId

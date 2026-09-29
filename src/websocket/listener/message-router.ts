@@ -1,10 +1,5 @@
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import type WebSocket from "ws";
-import {
-  estimateActiveMemorySystemPromptTokens,
-  setSystemPromptDoctorState,
-} from "@/cli/helpers/system-prompt-warning";
-import { settingsManager } from "@/settings-manager";
 import type {
   AbortMessageCommand,
   ApprovalResponseBody,
@@ -19,7 +14,7 @@ import {
   handleTerminalResize,
   handleTerminalSpawn,
 } from "@/websocket/terminal-handler";
-import { handleExecuteCommand } from "./commands";
+import { handleExecuteCommand, handleRefreshDoctorState } from "./commands";
 import { handleAgentConversationManagementProtocolCommand } from "./commands/agents-conversations";
 import { handleAppServerInfoCommand } from "./commands/app-server-info";
 import { handleCwdProtocolCommand } from "./commands/boot-working-directory";
@@ -46,6 +41,7 @@ import {
 import {
   dispatchInboundMessageWhenReady,
   getAcceptedInputDisposition,
+  queueSkillCommand,
   rememberAcceptedInputDisposition,
 } from "./inbound-dispatch";
 import {
@@ -58,7 +54,6 @@ import {
   parseServerMessage,
 } from "./protocol-inbound";
 import { summarizeV2Command } from "./protocol-logging";
-import { emitDeviceStatusUpdate } from "./protocol-outbound";
 import {
   scheduleQueuePump,
   shouldProcessInboundMessageDirectly,
@@ -888,22 +883,8 @@ export function createListenerMessageHandler(
 
       // Slash commands (execute_command)
       if (isExecuteCommandCommand(parsed)) {
-        // Internal-only: refresh doctor state after recompile (no chat output)
         if (parsed.command_id === "refresh_doctor_state") {
-          const agentId = parsed.runtime.agent_id;
-          if (agentId && settingsManager.isMemfsEnabled(agentId)) {
-            try {
-              const { getScopedMemoryFilesystemRoot } = await import(
-                "@/agent/memory-filesystem"
-              );
-              const memoryDir = getScopedMemoryFilesystemRoot(agentId);
-              const tokens = estimateActiveMemorySystemPromptTokens(memoryDir);
-              setSystemPromptDoctorState(agentId, tokens);
-            } catch {
-              // best-effort
-            }
-          }
-          emitDeviceStatusUpdate(socket, runtime, parsed.runtime);
+          await handleRefreshDoctorState(parsed, socket, runtime);
           return;
         }
 
@@ -919,6 +900,14 @@ export function createListenerMessageHandler(
             onLog: opts.onLog,
             connectionId: opts.connectionId,
             connectionName: opts.connectionName,
+            enqueueSkillMessage: (incoming) =>
+              queueSkillCommand(
+                scopedRuntime,
+                incoming,
+                socket,
+                opts,
+                processQueuedTurn,
+              ),
           });
         });
         return;
