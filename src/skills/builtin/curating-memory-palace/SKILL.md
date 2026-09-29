@@ -132,7 +132,7 @@ For a scheduled update, a reflection, or when the user asks for one:
 2. Remove items that are done, no longer true, dismissed, or past a date with nothing left to do.
 3. Add items the evidence supports and the user would want to see.
 4. Edit sections in place and keep what is still true. Keep the first three sections first and in order.
-5. Check each routine's latest runs when you can, such as with `letta cron runs`, not just what memory says. Report its health in the Overview even when nothing about it changed.
+5. Check each routine's latest runs when you can, not just what memory says. For schedules, find IDs with `letta cron list --agent <agent-id>` and inspect each with `letta cron runs --id <id> --agent <agent-id>`. Report their health in the Overview even when nothing changed.
 6. Check every button against the format above before you save, counting each instruction's characters with a script.
 
 ## In a conversation
