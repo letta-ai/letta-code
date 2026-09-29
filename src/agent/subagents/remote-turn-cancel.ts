@@ -11,6 +11,7 @@ import {
   getExactSuperRun,
 } from "@/backend/api/conversation-enqueue";
 import { ApiRequestError } from "@/backend/api/request";
+import { abortAcceptedListenerRun } from "@/headless-listener-launch";
 import { getErrorMessage } from "@/utils/error";
 
 export type RemoteCancellationResult =
@@ -36,6 +37,7 @@ interface RemoteTurnCancelDeps {
     conversationIds: string[],
     signal?: AbortSignal,
   ) => Promise<AgentRuntimeStatusSnapshot>;
+  abortListenerRun: typeof abortAcceptedListenerRun;
   sleep: (ms: number) => Promise<void>;
   timeoutMs: number;
   pollMs: number;
@@ -119,6 +121,7 @@ export async function cancelAcceptedRemoteTurn(
       backend.cancelConversationRun(conversationId, runId, { signal }),
     retrieveRun: (runId, signal) => backend.retrieveRun(runId, { signal }),
     runtimeStatus: getAgentRuntimeStatus,
+    abortListenerRun: abortAcceptedListenerRun,
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     timeoutMs: 10_000,
     pollMs: 250,
@@ -127,6 +130,8 @@ export async function cancelAcceptedRemoteTurn(
   const deadline = Date.now() + deps.timeoutMs;
   let runIds: string[] = [];
   const cancellationRequested = new Set<string>();
+  const listenerCancellationRequested = new Set<string>();
+  const listenerSettlementRequired = new Set<string>();
   let lastDetail = "the accepted Cloud run is still non-terminal";
   let authoritativelyDequeued = false;
 
@@ -172,27 +177,84 @@ export async function cancelAcceptedRemoteTurn(
     const uncancelledRunIds = runIds.filter(
       (runId) => !cancellationRequested.has(runId),
     );
-    if (uncancelledRunIds.length > 0) {
-      const requests =
-        receipt.conversation_id === "default"
-          ? await Promise.allSettled(
-              uncancelledRunIds.map((runId) =>
-                withinDeadline(deadline, (signal) =>
-                  deps.cancelRun(receipt.agent_id, runId, signal),
+    // A slow owner lookup must not prevent the exact Cloud stop request.
+    const cloudPromise =
+      receipt.conversation_id === "default"
+        ? Promise.allSettled(
+            uncancelledRunIds.map((runId) =>
+              withinDeadline(deadline, (signal) =>
+                deps.cancelRun(receipt.agent_id, runId, signal),
+              ),
+            ),
+          )
+        : Promise.allSettled(
+            uncancelledRunIds.map((runId) =>
+              withinDeadline(deadline, (signal) =>
+                deps.cancelConversationRun(
+                  receipt.conversation_id,
+                  runId,
+                  signal,
                 ),
               ),
-            )
-          : await Promise.allSettled(
-              uncancelledRunIds.map((runId) =>
-                withinDeadline(deadline, (signal) =>
-                  deps.cancelConversationRun(
-                    receipt.conversation_id,
-                    runId,
-                    signal,
-                  ),
-                ),
-              ),
-            );
+            ),
+          );
+    let conversationRuntime:
+      | AgentRuntimeStatusSnapshot["statuses"][number]
+      | undefined;
+    if (receipt.connection_id) {
+      try {
+        const runtime = await withinDeadline(deadline, (signal) =>
+          deps.runtimeStatus(
+            receipt.agent_id,
+            [receipt.conversation_id],
+            signal,
+          ),
+        );
+        conversationRuntime = runtime.statuses.find(
+          (entry) => entry.conversation_id === receipt.conversation_id,
+        );
+      } catch (error) {
+        if (isDeadlineError(error)) {
+          await cloudPromise;
+          break;
+        }
+        lastDetail = `runtime ownership could not be verified: ${getErrorMessage(error)}`;
+      }
+    }
+    const listenerOwnsConversation = Boolean(
+      receipt.connection_id &&
+        conversationRuntime?.active_harness?.connection_id ===
+          receipt.connection_id,
+    );
+    const listenerRunIds = listenerOwnsConversation
+      ? (conversationRuntime?.active_run_ids.filter(
+          (runId) =>
+            runIds.includes(runId) && !listenerCancellationRequested.has(runId),
+        ) ?? [])
+      : [];
+    for (const runId of listenerRunIds) listenerSettlementRequired.add(runId);
+    if (uncancelledRunIds.length > 0 || listenerRunIds.length > 0) {
+      const listenerPromise = listenerOwnsConversation
+        ? Promise.allSettled(
+            listenerRunIds.map(async (runId) => {
+              const aborted = await withinDeadline(deadline, (signal) =>
+                deps.abortListenerRun(receipt, runId, signal),
+              );
+              if (aborted) listenerCancellationRequested.add(runId);
+              return aborted;
+            }),
+          )
+        : Promise.resolve([]);
+      const [listenerRequests, requests] = await Promise.all([
+        listenerPromise,
+        cloudPromise,
+      ]);
+      const listenerFailure = listenerRequests.find(
+        (result): result is PromiseRejectedResult =>
+          result.status === "rejected",
+      );
+      if (listenerFailure)
+        lastDetail = `owning listener cancellation failed: ${getErrorMessage(listenerFailure.reason)}`;
       let rejected: PromiseRejectedResult | undefined;
       for (const [index, result] of requests.entries()) {
         const runId = uncancelledRunIds[index];
@@ -230,6 +292,7 @@ export async function cancelAcceptedRemoteTurn(
       );
       if (statuses.every(Boolean)) {
         try {
+          // Owner discovery preceded the stop. Prove inactivity with a fresh read.
           const runtime = await withinDeadline(deadline, (signal) =>
             deps.runtimeStatus(
               receipt.agent_id,
@@ -250,9 +313,13 @@ export async function cancelAcceptedRemoteTurn(
                       (runId) => !conversation.active_run_ids.includes(runId),
                     ),
                 );
-          if (inactive) return { status: "confirmed" };
-          lastDetail =
-            runIds.length === 0
+          const listenerSettled = [...listenerSettlementRequired].every(
+            (runId) => listenerCancellationRequested.has(runId),
+          );
+          if (inactive && listenerSettled) return { status: "confirmed" };
+          lastDetail = !listenerSettled
+            ? "the owning listener has not confirmed the target turn's lease settled"
+            : runIds.length === 0
               ? "the accepted Super Run has no correlated run ID without proof that the target conversation is inactive"
               : "the accepted Super Run settled but its correlated run is still active in the runtime";
         } catch (error) {

@@ -431,6 +431,43 @@ describe("listener interrupt queue handoff", () => {
     await waitFor(() => runtime.turnLifecycle.kind === "idle");
   });
 
+  test("bounds settlement waiting when a turn owner ignores its abort", async () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const lease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+    });
+    runtime.turnLifecycle.setRunId(lease, "run-stuck");
+    setActiveRuntime(listener);
+
+    await expect(
+      handleAbortMessageInput(
+        listener,
+        {
+          command: {
+            type: "abort_message",
+            runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+            run_id: "run-stuck",
+            wait_for_settlement: true,
+            pause_queue: false,
+          },
+          socket: createOpenTransport(),
+          opts: {} as StartListenerOptions,
+          processQueuedTurn: async () => {},
+        },
+        {
+          cancelRun: async () => {},
+          cancelConversation: async () => {
+            throw new Error("must not widen exact cancellation");
+          },
+          settlementTimeoutMs: 10,
+        },
+      ),
+    ).rejects.toThrow("Timed out waiting for run run-stuck to settle");
+    expect(runtime.turnLifecycle.kind).toBe("cancelling");
+  });
+
   test("releases the cancellation fence when exact API cancellation is unavailable", async () => {
     const listener = createRuntime();
     const runtime = getOrCreateScopedRuntime(listener, null, "conv-api");

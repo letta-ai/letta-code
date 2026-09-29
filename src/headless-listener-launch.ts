@@ -9,6 +9,7 @@ import {
 import type { Backend } from "@/backend";
 import {
   dequeueConversationMessage,
+  type EnqueueReceipt,
   enqueueConversationMessage,
   getLatestConversationSuperRun,
   listEnqueuedRunMessages,
@@ -54,6 +55,39 @@ async function createListenerClient(
     WebSocket,
     requestTimeoutMs: 30_000,
   });
+}
+
+/** Abort only the exact run owned by this accepted listener receipt. */
+export async function abortAcceptedListenerRun(
+  receipt: EnqueueReceipt,
+  runId: string,
+  signal: AbortSignal,
+): Promise<boolean> {
+  if (!receipt.connection_id) return false;
+  const scope = {
+    agent_id: receipt.agent_id,
+    conversation_id: receipt.conversation_id,
+  };
+  const client = await createListenerClient(receipt.connection_id, scope);
+  const close = () => client.close();
+  signal.addEventListener("abort", close, { once: true });
+  try {
+    signal.throwIfAborted();
+    await client.connect();
+    signal.throwIfAborted();
+    const response = await client.abort({
+      runtime: scope,
+      run_id: runId,
+      wait_for_settlement: true,
+      pause_queue: false,
+    });
+    if (!response.success)
+      throw new Error(response.error ?? "Listener rejected cancellation");
+    return response.aborted && response.lease_settled === true;
+  } finally {
+    signal.removeEventListener("abort", close);
+    client.close();
+  }
 }
 
 /** Cancel only this input: a queued child must not interrupt the turn ahead of it. */

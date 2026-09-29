@@ -678,7 +678,6 @@ export function createListenerMessageHandler(
         });
         return;
       }
-
       if (parsed.type === "abort_message") {
         if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
           if (parsed.request_id) {
@@ -718,6 +717,7 @@ export function createListenerMessageHandler(
                 runtime: parsed.runtime,
                 aborted,
                 success: true,
+                ...(parsed.wait_for_settlement && { lease_settled: aborted }),
               },
               "abort_message_response",
               "abort_message",

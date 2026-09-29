@@ -322,6 +322,43 @@ describe("listener protocol ergonomics", () => {
     });
   });
 
+  test("a waited abort acknowledges lease settlement explicitly", async () => {
+    const runtime = __listenClientTestUtils.createListenerRuntime();
+    const sent: unknown[] = [];
+    let settle!: (value: boolean) => void;
+    const pending = new Promise<boolean>((resolve) => {
+      settle = resolve;
+    });
+    __listenClientTestUtils.setActiveRuntime(runtime);
+
+    const handling = makeHandler(runtime, sent, {
+      handleAbortMessageInput: async () => pending,
+    })(
+      Buffer.from(
+        JSON.stringify({
+          type: "abort_message",
+          request_id: "abort-settled",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          run_id: "run-1",
+          wait_for_settlement: true,
+          pause_queue: true,
+        }),
+      ),
+    );
+    expect(sent).toEqual([]);
+    settle(true);
+    await handling;
+
+    expect(sent).toContainEqual({
+      type: "abort_message_response",
+      request_id: "abort-settled",
+      runtime: { agent_id: "agent-1", conversation_id: "default" },
+      aborted: true,
+      success: true,
+      lease_settled: true,
+    });
+  });
+
   test("abort_message request_id reports idle no-op without timing out", async () => {
     const runtime = __listenClientTestUtils.createListenerRuntime();
     const sent: unknown[] = [];

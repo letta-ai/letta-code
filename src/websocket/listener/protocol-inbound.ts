@@ -434,26 +434,22 @@ function isChangeDeviceStateCommand(
 
 function isAbortMessageCommand(value: unknown): value is AbortMessageCommand {
   if (!value || typeof value !== "object") return false;
-  const candidate = value as {
-    type?: unknown;
-    runtime?: unknown;
-    request_id?: unknown;
-    run_id?: unknown;
-  };
-  if (
-    candidate.type !== "abort_message" ||
-    !isRuntimeScope(candidate.runtime)
-  ) {
-    return false;
-  }
-  const hasRequestId =
-    candidate.request_id === undefined ||
-    typeof candidate.request_id === "string";
-  const hasRunId =
-    candidate.run_id === undefined ||
-    candidate.run_id === null ||
-    typeof candidate.run_id === "string";
-  return hasRequestId && hasRunId;
+  const candidate = value as Partial<
+    Record<keyof AbortMessageCommand, unknown>
+  >;
+  return (
+    candidate.type === "abort_message" &&
+    isRuntimeScope(candidate.runtime) &&
+    (candidate.request_id === undefined ||
+      typeof candidate.request_id === "string") &&
+    (candidate.run_id === undefined ||
+      candidate.run_id === null ||
+      typeof candidate.run_id === "string") &&
+    (candidate.wait_for_settlement === undefined ||
+      typeof candidate.wait_for_settlement === "boolean") &&
+    (candidate.pause_queue === undefined ||
+      typeof candidate.pause_queue === "boolean")
+  );
 }
 
 function isSyncCommand(value: unknown): value is SyncCommand {

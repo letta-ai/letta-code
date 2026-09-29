@@ -682,11 +682,11 @@ export interface ChangeDeviceStateCommand {
 export interface AbortMessageCommand {
   type: "abort_message";
   runtime: ConversationRuntimeScope;
-  /** When provided, app-server sends abort_message_response on the control channel. */
-  request_id?: string;
+  request_id?: string; // Sends a control-channel response when provided.
   run_id?: string | null;
+  wait_for_settlement?: boolean;
+  pause_queue?: boolean;
 }
-
 export interface SyncCommand {
   type: "sync";
   runtime: ConversationRuntimeScope;
@@ -753,8 +753,8 @@ export interface AbortMessageResponseMessage {
   type: "abort_message_response";
   request_id: string;
   runtime: ConversationRuntimeScope;
-  /** True when an active turn or pending approval was interrupted. */
-  aborted: boolean;
+  aborted: boolean; // Active turn or pending approval was interrupted.
+  lease_settled?: boolean; // Listener waited for its original lease.
   success: boolean;
   error?: string;
 }

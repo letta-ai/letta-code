@@ -14,18 +14,24 @@ import {
   releaseToolExecutionContext,
 } from "@/tools/manager";
 import { openListenerConnection } from "./connection";
+import { handleAbortMessageInput } from "./control-inputs";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { enqueueInboundUserMessage } from "./inbound-queue";
 import { createRuntime } from "./lifecycle";
 import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
-import { shouldProcessInboundMessageDirectly } from "./queue";
+import {
+  scheduleQueuePump,
+  shouldProcessInboundMessageDirectly,
+} from "./queue";
 import { finalizeHandledRecoveryTurn } from "./recovery";
-import { clearConversationRuntimeState } from "./runtime";
+import { clearConversationRuntimeState, setActiveRuntime } from "./runtime";
 import { finishPendingTeleport, handleTeleportRequest } from "./teleport";
 import type { ListenerTransport } from "./transport";
 import { handleApprovalStop } from "./turn-approval";
 import { releaseListenerTurnContext } from "./turn-context";
 import type { TurnLease } from "./turn-lifecycle";
+import { finishListenerTurn } from "./turn-terminal";
+import type { IncomingMessage, StartListenerOptions } from "./types";
 
 function createOpenTransport(sentPayloads: string[] = []): ListenerTransport {
   return {
@@ -122,8 +128,121 @@ function startQuestionApproval(
 
 describe("listener turn lifecycle integration", () => {
   afterEach(() => {
+    setActiveRuntime(null);
     setCurrentAgentId(null);
     setConversationId(null);
+  });
+
+  test("run-scoped remote abort stops a headless local tool and releases its queued successor", async () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    runtime.executionSettings = {
+      allowed_tools: ["Bash"],
+      disallowed_tools: [],
+      disable_memory_guard: false,
+    };
+    const lease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+    });
+    runtime.turnLifecycle.setRunId(lease, "run-child");
+    setActiveRuntime(listener);
+    let executing = false;
+    const approval = {
+      toolCallId: "call-child",
+      toolName: "Bash",
+      toolArgs: '{"command":"long-running"}',
+    };
+    const owner = startQuestionApproval(runtime, lease, {
+      approvals: [approval],
+      dependencies: {
+        classifyApprovals: async () => ({
+          autoAllowed: [{ approval, parsedArgs: {}, context: null }],
+          autoDenied: [],
+          needsUserInput: [],
+        }),
+        executeApprovalBatch: async (
+          _decisions: unknown,
+          _unused: unknown,
+          options?: { abortSignal?: AbortSignal },
+        ) => {
+          executing = true;
+          await new Promise<void>((resolve) =>
+            options?.abortSignal?.addEventListener("abort", () => resolve(), {
+              once: true,
+            }),
+          );
+          return [
+            {
+              type: "tool" as const,
+              tool_call_id: approval.toolCallId,
+              status: "error" as const,
+              tool_return: "interrupted",
+            },
+          ];
+        },
+        ensureSecretsHydrated: async () => {},
+      } as never,
+    });
+    for (let attempt = 0; attempt < 100 && !executing; attempt += 1)
+      await Bun.sleep(1);
+    expect(executing).toBe(true);
+
+    expect(
+      enqueueInboundUserMessage(runtime, {
+        type: "message",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        messages: [{ role: "user", content: "replacement" }],
+      }),
+    ).toBe(true);
+    const processed: IncomingMessage[] = [];
+    const abort = handleAbortMessageInput(
+      listener,
+      {
+        command: {
+          type: "abort_message",
+          runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+          run_id: "run-child",
+          wait_for_settlement: true,
+          pause_queue: false,
+        },
+        socket: createOpenTransport(),
+        opts: {} as StartListenerOptions,
+        processQueuedTurn: async (message) => {
+          processed.push(message);
+        },
+      },
+      {
+        cancelRun: async () => {},
+        cancelConversation: async () => {
+          throw new Error("must not widen exact cancellation");
+        },
+      },
+    );
+
+    expect((await owner).kind).toBe("interrupted");
+    finishListenerTurn(runtime, lease, {
+      stopReason: "cancelled",
+      socket: createOpenTransport(),
+      runId: "run-child",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    });
+    scheduleQueuePump(
+      runtime,
+      createOpenTransport(),
+      {} as StartListenerOptions,
+      async (message) => {
+        processed.push(message);
+      },
+    );
+    expect(await abort).toBe(true);
+    for (let attempt = 0; attempt < 100 && processed.length === 0; attempt += 1)
+      await Bun.sleep(1);
+    expect(processed[0]?.messages).toEqual([
+      expect.objectContaining({ role: "user", content: "replacement" }),
+    ]);
   });
 
   test("publishes classification outcome before waiting for user approval", async () => {

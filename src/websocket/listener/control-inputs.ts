@@ -429,6 +429,7 @@ export async function handleAbortMessageInput(
       conversationId: string,
       runId?: string | null,
     ) => Promise<void>;
+    settlementTimeoutMs: number;
   }> = {},
 ): Promise<boolean> {
   const resolvedDeps = {
@@ -472,6 +473,7 @@ export async function handleAbortMessageInput(
         );
       }
     },
+    settlementTimeoutMs: 10_000,
     ...deps,
   };
 
@@ -514,7 +516,7 @@ export async function handleAbortMessageInput(
   // Interrupt semantics: the current turn stops and the user's queued messages
   // park until resume_queue or the user's next message. System items (task
   // notifications, cron, mod continuations) still drain once idle.
-  scopedRuntime.queueRuntime.pause();
+  if (params.command.pause_queue !== false) scopedRuntime.queueRuntime.pause();
   const interruptedRunId = cancellation.runId;
   const pendingRequestsSnapshot = hasPendingApprovals
     ? resolvedDeps.getPendingControlRequests(listener, scope)
@@ -620,14 +622,13 @@ export async function handleAbortMessageInput(
   // to every active run in the conversation.
   const backendCancellation =
     cancelAgentId && cancelRunId
-      ? resolvedDeps
-          .cancelRun(cancelAgentId, cancelRunId)
-          .catch(() =>
-            resolvedDeps.cancelConversation(
-              cancelAgentId,
-              cancelConversationId,
-            ),
-          )
+      ? resolvedDeps.cancelRun(cancelAgentId, cancelRunId).catch((error) => {
+          if (params.command.pause_queue === false) throw error;
+          return resolvedDeps.cancelConversation(
+            cancelAgentId,
+            cancelConversationId,
+          );
+        })
       : cancelAgentId
         ? resolvedDeps.cancelConversation(cancelAgentId, cancelConversationId)
         : resolvedDeps.cancelConversationRun(cancelConversationId, cancelRunId);
@@ -658,6 +659,20 @@ export async function handleAbortMessageInput(
     params.opts as StartListenerOptions,
     params.processQueuedTurn,
   );
+  if (params.command.wait_for_settlement && cancellation.lease) {
+    const leaseId = cancellation.lease.id;
+    const deadline = Date.now() + resolvedDeps.settlementTimeoutMs;
+    let snapshot = scopedRuntime.turnLifecycle.snapshot();
+    while (
+      (snapshot.kind === "active" || snapshot.kind === "cancelling") &&
+      snapshot.lease.id === leaseId
+    ) {
+      if (Date.now() >= deadline)
+        throw new Error(`Timed out waiting for run ${cancelRunId} to settle`);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      snapshot = scopedRuntime.turnLifecycle.snapshot();
+    }
+  }
   return true;
 }
 
