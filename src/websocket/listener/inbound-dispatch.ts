@@ -2,6 +2,7 @@ import { getOrCreateProcessTransport } from "./connection";
 import {
   enqueueInboundUserMessage,
   getInboundClientMessageId,
+  hasRequestScopedContext,
 } from "./inbound-queue";
 import {
   scheduleQueuePump,
@@ -82,6 +83,11 @@ export function dispatchInboundMessageWhenReady(params: {
     onInputAccepted,
   } = params;
   const clientMessageId = getInboundClientMessageId(incoming);
+  const requestScoped = hasRequestScopedContext(incoming);
+  const originatingConnection = incoming.connectionId
+    ? listener.connections.get(incoming.connectionId)
+    : undefined;
+  const requestScopedDispatchEpoch = runtime.requestScopedDispatchEpoch;
   let inputAcknowledged = false;
   const acknowledgeInput = (result: {
     accepted: boolean;
@@ -95,6 +101,18 @@ export function dispatchInboundMessageWhenReady(params: {
   runtime.messageQueue = runtime.messageQueue
     .then(async () => {
       if (listener !== getActiveRuntime() || listener.intentionallyClosed) {
+        acknowledgeInput({ accepted: false });
+        return;
+      }
+      if (
+        requestScoped &&
+        (!originatingConnection ||
+          !incoming.connectionId ||
+          listener.connections.get(incoming.connectionId) !==
+            originatingConnection ||
+          originatingConnection.cancellation.signal.aborted ||
+          runtime.requestScopedDispatchEpoch !== requestScopedDispatchEpoch)
+      ) {
         acknowledgeInput({ accepted: false });
         return;
       }
