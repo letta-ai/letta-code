@@ -205,8 +205,11 @@ test("a cancelled run that remains active in the runtime is unconfirmed", async 
         },
       ],
     }),
-    sleep: async () => {},
-    timeoutMs: 20,
+    // Stop after observing activity instead of racing a tiny wall-clock budget.
+    sleep: async () => {
+      throw new Error("first status observation complete");
+    },
+    timeoutMs: 5_000,
   });
 
   expect(result).toEqual({
