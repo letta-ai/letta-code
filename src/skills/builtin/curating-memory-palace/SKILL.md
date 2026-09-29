@@ -13,7 +13,7 @@ The Memory Palace is the page a user opens to understand you. Someone who has no
 
 The user acts on it with buttons and replies. It is not a log, a transcript recap, or a page about the Palace itself.
 
-Two writers follow these rules: you, in a conversation or during reflection, and the unattended nightly pass that updates your Palace from your recent conversations. "You" always means the agent that owns the Palace.
+You can update the Palace yourself, in a conversation or during reflection, or an update can run on a schedule. Either works, and both follow these rules. "You" always means the agent that owns the Palace.
 
 ## Sections
 
@@ -117,7 +117,7 @@ The user's reactions to the Palace are the strongest evidence of what they want.
 
 ## Updating the whole Palace
 
-For a nightly pass, a reflection, or when the user asks for an update:
+For a scheduled update, a reflection, or when the user asks for one:
 
 1. Read `palace/MEMORY.md` and every section first. If `palace/` does not exist, create it only when the user asked for a Palace or your instructions for this run say to.
 2. Remove items that are done, no longer true, dismissed, or past a date with nothing left to do.
