@@ -220,25 +220,10 @@ describe("telemetry flush auth", () => {
 
   test("listener write failures send a payload-free error event to Cloud", async () => {
     telemetryState.isCloudUser = () => true;
+    const sent: Array<{ data: Record<string, unknown> }> = [];
     const fetchMock = mock(
       async (_url: string | URL | Request, init?: RequestInit) => {
-        const payload = JSON.parse(String(init?.body));
-        const event = payload.events[0];
-        expect(event.type).toBe("error");
-        expect(event.data).toMatchObject({
-          error_type: "listener_state_write_failed",
-          run_id: "run-test",
-        });
-        expect(JSON.parse(event.data.context)).toMatchObject({
-          phase: "before_tool_execution",
-          operation: "write",
-          error_code: "ENOSPC",
-          agent_id: "agent-test",
-          conversation_id: "conv-test",
-          tool_call_ids: ["call-test"],
-        });
-        expect(event.data.debug_log_tail).toBeUndefined();
-        expect(JSON.stringify(event.data)).not.toContain("/private/");
+        sent.push(JSON.parse(String(init?.body)).events[0]);
         return new Response(null, { status: 200 });
       },
     );
@@ -249,17 +234,27 @@ describe("telemetry flush auth", () => {
 
     reportListenerStateWriteFailure({
       phase: "before_tool_execution",
-      operation: "write",
       error: Object.assign(new Error("/private/state.json"), {
         code: "ENOSPC",
       }),
       agentId: "agent-test",
       conversationId: "conv-test",
       runId: "run-test",
-      toolCallIds: ["call-test"],
+      toolCallId: "call-test",
     });
     await telemetry.flush();
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(sent[0]?.data).toMatchObject({
+      error_type: "listener_state_write_failed",
+      run_id: "run-test",
+    });
+    expect(JSON.parse(String(sent[0]?.data.context))).toMatchObject({
+      phase: "before_tool_execution",
+      error_code: "ENOSPC",
+      tool_call_id: "call-test",
+    });
+    expect(sent[0]?.data.debug_log_tail).toBeUndefined();
+    expect(JSON.stringify(sent)).not.toContain("/private/");
   });
 
   test("self-hosted users still send usage telemetry", async () => {

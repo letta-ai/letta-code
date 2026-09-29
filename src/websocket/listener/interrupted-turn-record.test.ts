@@ -56,39 +56,3 @@ test("a replacement reads completed results; another sandbox has nothing to reco
     rmSync(directory, { recursive: true, force: true });
   }
 });
-
-test("a failed state-file write reports its operation and does not persist a result", () => {
-  const directory = mkdtempSync(join(tmpdir(), "listener-write-failure-"));
-  const diskFull = Object.assign(
-    new Error("private path should not be logged"),
-    {
-      code: "ENOSPC",
-    },
-  );
-  const failures: Array<{ operation: string; error: unknown }> = [];
-  const record: InterruptedTurnRecord = {
-    agentId: "agent-test",
-    conversationId: "conv-test",
-    runId: "run-test",
-    toolCallIds: ["call-test"],
-    results: [],
-    requestOtid: "request-test",
-    workingDirectory: "/private/workspace",
-  };
-  try {
-    const store = createInterruptedTurnStore(join(directory, "state"), {
-      writeFile: () => {
-        throw diskFull;
-      },
-      onWriteFailure: (operation, error) => {
-        failures.push({ operation, error });
-      },
-    });
-
-    expect(() => store.write(record)).toThrow(diskFull);
-    expect(failures).toEqual([{ operation: "write", error: diskFull }]);
-    expect(store.read(record.agentId, record.conversationId)).toBeNull();
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
-});

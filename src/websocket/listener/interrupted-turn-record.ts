@@ -21,16 +21,6 @@ export type ListenerStateWritePhase =
   | "before_tool_execution"
   | "after_tool_execution";
 
-type ListenerStateWriteOperation = "mkdir" | "write" | "rename" | "cleanup";
-
-type WriteOptions = {
-  writeFile?: typeof writeFileSync;
-  onWriteFailure?: (
-    operation: ListenerStateWriteOperation,
-    error: unknown,
-  ) => void;
-};
-
 /** Local execution evidence, never populated by observing another runtime. */
 export interface InterruptedTurnRecord {
   revision?: string;
@@ -52,7 +42,6 @@ export function createInterruptedTurnStore(
     "listener-state",
     createHash("sha256").update(getServerUrl()).digest("hex").slice(0, 24),
   ),
-  writeOptions: WriteOptions = {},
 ) {
   function path(agentId: string, conversationId: string) {
     return join(
@@ -112,25 +101,11 @@ export function createInterruptedTurnStore(
       return readRecord(path(agentId, conversationId));
     },
     write(record: InterruptedTurnRecord): void {
+      mkdirSync(directory, { recursive: true, mode: 0o700 });
       const destination = path(record.agentId, record.conversationId);
       const temporary = `${destination}.${randomUUID()}.tmp`;
-      let operation: ListenerStateWriteOperation = "mkdir";
-      let attemptedWrite = false;
-      let failure: unknown;
-      let failed = false;
-      const report = (stage: ListenerStateWriteOperation, error: unknown) => {
-        // Diagnostics must not replace the filesystem error the turn sees.
-        try {
-          writeOptions.onWriteFailure?.(stage, error);
-        } catch {
-          // Telemetry is best-effort, especially when the disk is full.
-        }
-      };
       try {
-        mkdirSync(directory, { recursive: true, mode: 0o700 });
-        attemptedWrite = true;
-        operation = "write";
-        (writeOptions.writeFile ?? writeFileSync)(
+        writeFileSync(
           temporary,
           JSON.stringify({ ...record, revision: randomUUID() }),
           {
@@ -138,24 +113,10 @@ export function createInterruptedTurnStore(
             flush: true,
           },
         );
-        operation = "rename";
         renameSync(temporary, destination);
-      } catch (error) {
-        failure = error;
-        failed = true;
-        report(operation, error);
+      } finally {
+        rmSync(temporary, { force: true });
       }
-      if (attemptedWrite) {
-        try {
-          rmSync(temporary, { force: true });
-        } catch (error) {
-          report("cleanup", error);
-          // As before, cleanup failure takes precedence over an earlier error.
-          failure = error;
-          failed = true;
-        }
-      }
-      if (failed) throw failure;
     },
     remove(agentId: string, conversationId: string): void {
       rmSync(path(agentId, conversationId), { force: true });
@@ -199,18 +160,20 @@ export function recordListenerWork(
       process.cwd(),
     ...update,
   };
-  createInterruptedTurnStore(undefined, {
-    onWriteFailure: (operation, error) =>
-      reportListenerStateWriteFailure({
-        phase,
-        operation,
-        error,
-        agentId: record.agentId,
-        conversationId: record.conversationId,
-        runId: record.runId ?? runtime.activeRunId ?? undefined,
-        toolCallIds: record.toolCallIds,
-      }),
-  }).write(record);
+  const store = createInterruptedTurnStore();
+  try {
+    store.write(record);
+  } catch (error) {
+    reportListenerStateWriteFailure({
+      phase,
+      error,
+      agentId: record.agentId,
+      conversationId: record.conversationId,
+      runId: record.runId ?? runtime.activeRunId ?? undefined,
+      toolCallId: record.toolCallIds[0],
+    });
+    throw error;
+  }
 }
 
 export function forgetListenerWork(runtime: ConversationRuntime): void {
