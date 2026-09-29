@@ -130,50 +130,6 @@ describe("storage-injected MCP OAuth", () => {
     await oauth.close();
   });
 
-  test("keeps pre-token protocol state transient until exchange completes", async () => {
-    const key = "transient-protocol-state";
-    const values = new Map<string, string>();
-    const oauth = await createMcpOAuthSessionWithStorage({
-      credentialKey: key,
-      storage: memoryStorage(values),
-      interactive: true,
-      openBrowser: async () => {},
-    });
-    if (
-      !oauth?.authProvider.saveClientInformation ||
-      !oauth.authProvider.saveDiscoveryState ||
-      !oauth.authProvider.saveCodeVerifier ||
-      !oauth.authProvider.codeVerifier
-    ) {
-      throw new Error("OAuth provider cannot stage protocol state");
-    }
-    const redirectUrl = String(oauth.authProvider.redirectUrl);
-    oauth.authProvider.saveClientInformation({
-      client_id: "transient-client",
-      redirect_uris: [redirectUrl],
-    });
-    oauth.authProvider.saveDiscoveryState({
-      resourceMetadataUrl: "https://resource.example",
-      authorizationServerUrl: "https://auth.example",
-    });
-    oauth.authProvider.saveCodeVerifier("transient-verifier");
-
-    expect(values.has(key)).toBe(false);
-    expect(oauth.authProvider.codeVerifier()).toBe("transient-verifier");
-
-    await oauth.authProvider.saveTokens({
-      access_token: "completed-access",
-      token_type: "Bearer",
-    });
-    const persisted = JSON.parse(values.get(key) ?? "{}");
-    expect(persisted.clientInformation.client_id).toBe("transient-client");
-    expect(persisted.discoveryState.authorizationServerUrl).toBe(
-      "https://auth.example",
-    );
-    expect(persisted.codeVerifier).toBeUndefined();
-    await oauth.close();
-  });
-
   test("cancels a pending browser callback cleanly", async () => {
     const oauth = await createMcpOAuthSessionWithStorage({
       credentialKey: "cancelled",
@@ -814,7 +770,39 @@ describe("MCP OAuth", () => {
     await waitForServer(serverUrl);
 
     const values = new Map<string, string>();
-    const storage = memoryStorage(values);
+    const baseStorage = memoryStorage(values);
+    const firstReadStarted = deferred();
+    let blockFirstRead = true;
+    let firstReadAborted = false;
+    const storage = {
+      get: async (credentialKey: string, signal: AbortSignal) => {
+        if (!blockFirstRead) return baseStorage.get(credentialKey);
+        blockFirstRead = false;
+        firstReadStarted.resolve();
+        return new Promise<never>((_resolve, reject) => {
+          signal.addEventListener(
+            "abort",
+            () => {
+              firstReadAborted = true;
+              reject(signal.reason);
+            },
+            { once: true },
+          );
+        });
+      },
+      set: async (
+        credentialKey: string,
+        value: string,
+        signal: AbortSignal,
+      ) => {
+        signal.throwIfAborted();
+        await baseStorage.set(credentialKey, value);
+      },
+      delete: async (credentialKey: string, signal: AbortSignal) => {
+        signal.throwIfAborted();
+        return baseStorage.delete(credentialKey);
+      },
+    };
     let browserOpenCount = 0;
     const cancelledSubscriber = new AbortController();
     const options = {
@@ -832,9 +820,20 @@ describe("MCP OAuth", () => {
         await response.text();
       },
     };
+    const cancelledFirstAttempt = new AbortController();
+    const firstAttempt = authorizeMcpServerWithStorage({
+      ...options,
+      signal: cancelledFirstAttempt.signal,
+    });
+    await firstReadStarted.promise;
+    cancelledFirstAttempt.abort();
+    const immediateRetry = authorizeMcpServerWithStorage(options);
+    await expect(firstAttempt).rejects.toBeDefined();
+    expect(firstReadAborted).toBe(true);
+
     const [credentials, duplicateCredentials, cancellation] = await Promise.all(
       [
-        authorizeMcpServerWithStorage(options),
+        immediateRetry,
         authorizeMcpServerWithStorage(options),
         rejectionMessage(
           authorizeMcpServerWithStorage({
@@ -869,7 +868,7 @@ describe("MCP OAuth", () => {
 
     const persistedOAuth = await createMcpOAuthSessionWithStorage({
       credentialKey,
-      storage,
+      storage: baseStorage,
       interactive: false,
       openBrowser: async () => {},
     });

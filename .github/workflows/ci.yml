@@ -287,10 +287,18 @@ jobs:
           JSON
           cat > "$consumer/index.ts" <<'TS'
           import { authorizeMcpServerWithStorage, type McpOAuthStorage } from "@letta-ai/letta-code/mcp-oauth";
-          const storage: McpOAuthStorage = { get: async () => null, set: async () => {}, delete: async () => false };
+          const storage: McpOAuthStorage = { get: async (_key, _signal) => null, set: async (_key, _value, _signal) => {}, delete: async (_key, _signal) => false };
           void authorizeMcpServerWithStorage({ agentId: "agent", storageNamespace: "consumer", storage, serverName: "server", serverUrl: "https://mcp.example" });
           TS
           ./node_modules/.bin/tsc --project "$consumer/tsconfig.json"
+          node - <<'NODE'
+          const fs = require('fs');
+          const version = require('./package.json').version.replaceAll('.', '\\.');
+          const artifact = fs.readFileSync('./dist/mcp-oauth.js', 'utf8');
+          if (!new RegExp(`version:\\s*["']${version}["']`).test(artifact) || artifact.includes('typeof LETTA_VERSION')) {
+            throw new Error('MCP OAuth artifact does not embed the package version');
+          }
+          NODE
 
       - name: CLI help smoke test
         run: ./letta.js --help

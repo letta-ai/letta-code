@@ -8,6 +8,52 @@ import {
 import { authorizeMcpServerWithStorage } from "@/mcp-oauth-public";
 
 describe("storage-injected MCP OAuth concurrent staging", () => {
+  test("keeps protocol state transient and clears PKCE after exchange", async () => {
+    const key = "transient-protocol-state";
+    const values = new Map<string, string>();
+    const oauth = await createMcpOAuthSessionWithStorage({
+      credentialKey: key,
+      storage: memoryStorage(values),
+      interactive: true,
+      openBrowser: async () => {},
+    });
+    if (
+      !oauth?.authProvider.saveClientInformation ||
+      !oauth.authProvider.saveDiscoveryState ||
+      !oauth.authProvider.saveCodeVerifier ||
+      !oauth.authProvider.codeVerifier
+    ) {
+      throw new Error("OAuth provider cannot stage protocol state");
+    }
+    const redirectUrl = String(oauth.authProvider.redirectUrl);
+    oauth.authProvider.saveClientInformation({
+      client_id: "transient-client",
+      redirect_uris: [redirectUrl],
+    });
+    oauth.authProvider.saveDiscoveryState({
+      resourceMetadataUrl: "https://resource.example",
+      authorizationServerUrl: "https://auth.example",
+    });
+    oauth.authProvider.saveCodeVerifier("transient-verifier");
+
+    expect(values.has(key)).toBe(false);
+    expect(oauth.authProvider.codeVerifier()).toBe("transient-verifier");
+    await oauth.authProvider.saveTokens({
+      access_token: "completed-access",
+      token_type: "Bearer",
+    });
+    const persisted = JSON.parse(values.get(key) ?? "{}");
+    expect(persisted.clientInformation.client_id).toBe("transient-client");
+    expect(persisted.discoveryState.authorizationServerUrl).toBe(
+      "https://auth.example",
+    );
+    expect(persisted.codeVerifier).toBeUndefined();
+    expect(() => oauth.authProvider.codeVerifier?.()).toThrow(
+      "No MCP OAuth PKCE verifier is available",
+    );
+    await oauth.close();
+  });
+
   test("rejects foreign request targets without ending the callback", async () => {
     const oauth = await createMcpOAuthSessionWithStorage({
       credentialKey: "malformed-callback-target",
@@ -28,6 +74,29 @@ describe("storage-injected MCP OAuth concurrent staging", () => {
       `http://attacker.invalid/callback?code=foreign-code&state=${encodeURIComponent(expectedState)}`,
     );
     expect(absolute).toContain(" 400 ");
+    const backslash = await rawHttpRequest(
+      Number(redirectUrl.port),
+      `/\\attacker.invalid/callback?code=foreign-code&state=${encodeURIComponent(expectedState)}`,
+    );
+    expect(backslash).toContain(" 400 ");
+    const hostileHost = await rawHttpRequest(
+      Number(redirectUrl.port),
+      `/callback?code=foreign-code&state=${encodeURIComponent(expectedState)}`,
+      "attacker.invalid",
+    );
+    expect(hostileHost).toContain(" 400 ");
+    const wrongPort = await rawHttpRequest(
+      Number(redirectUrl.port),
+      `/callback?code=foreign-code&state=${encodeURIComponent(expectedState)}`,
+      `127.0.0.1:${Number(redirectUrl.port) + 1}`,
+    );
+    expect(wrongPort).toContain(" 400 ");
+    const missingHost = await rawHttpRequest(
+      Number(redirectUrl.port),
+      `/callback?code=foreign-code&state=${encodeURIComponent(expectedState)}`,
+      null,
+    );
+    expect(missingHost).not.toContain(" 200 ");
     const valid = await fetch(
       `${redirectUrl.toString()}?code=expected-code&state=${encodeURIComponent(expectedState)}`,
     );
@@ -37,7 +106,22 @@ describe("storage-injected MCP OAuth concurrent staging", () => {
   });
 
   test("aborts a public authorization while the MCP server is hung", async () => {
-    const server = createServer(() => {});
+    let requestCount = 0;
+    let firstRequestAborted = false;
+    const firstRequestStarted = deferred();
+    const server = createServer((request, response) => {
+      requestCount += 1;
+      if (requestCount === 1) {
+        firstRequestStarted.resolve();
+        const recordAbort = () => {
+          firstRequestAborted = true;
+        };
+        response.once("close", recordAbort);
+        request.socket.once("close", recordAbort);
+        return;
+      }
+      response.writeHead(500).end("retry reached a fresh transport");
+    });
     await new Promise<void>((resolve) =>
       server.listen(0, "127.0.0.1", resolve),
     );
@@ -46,16 +130,25 @@ describe("storage-injected MCP OAuth concurrent staging", () => {
       throw new Error("Hung MCP test server did not bind");
     }
     const controller = new AbortController();
-    const authorization = authorizeMcpServerWithStorage({
+    const options = {
       agentId: "agent-abort",
       storageNamespace: "test-hung-server",
       storage: memoryStorage(new Map()),
       serverName: "Hung MCP",
       serverUrl: `http://127.0.0.1:${address.port}/mcp`,
       openBrowser: async () => {},
+    };
+    const authorization = authorizeMcpServerWithStorage({
+      ...options,
       signal: controller.signal,
     });
-    setTimeout(() => controller.abort(), 25);
+    await firstRequestStarted.promise;
+    controller.abort();
+    const immediateRetry = authorizeMcpServerWithStorage(options);
+    const immediateRetryOutcome = immediateRetry.then(
+      () => "resolved",
+      () => "rejected",
+    );
     const outcome = await Promise.race([
       authorization.then(
         () => "resolved",
@@ -64,38 +157,23 @@ describe("storage-injected MCP OAuth concurrent staging", () => {
       Bun.sleep(500).then(() => "timed-out"),
     ]);
     expect(outcome).toBe("rejected");
+    for (let attempt = 0; attempt < 20 && !firstRequestAborted; attempt += 1) {
+      await Bun.sleep(10);
+    }
+    expect(firstRequestAborted).toBe(true);
+
+    const retryOutcome = await Promise.race([
+      immediateRetryOutcome,
+      Bun.sleep(500).then(() => "timed-out"),
+    ]);
+    expect(retryOutcome).toBe("rejected");
+    expect(requestCount).toBeGreaterThanOrEqual(2);
     server.closeAllConnections();
     if (server.listening) {
       await new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),
       );
     }
-  });
-
-  test("aborts while the storage-backed session is still loading", async () => {
-    let rejectRead = (_error: Error) => {};
-    const blockedRead = new Promise<never>((_resolve, reject) => {
-      rejectRead = reject;
-    });
-    const controller = new AbortController();
-    const storage: McpOAuthStorage = {
-      get: async () => blockedRead,
-      set: async () => {},
-      delete: async () => false,
-    };
-    const authorization = authorizeMcpServerWithStorage({
-      agentId: "agent-delayed-storage",
-      storageNamespace: "test-delayed-storage",
-      storage,
-      serverName: "Delayed storage MCP",
-      serverUrl: "http://127.0.0.1:1/mcp",
-      openBrowser: async () => {},
-      signal: controller.signal,
-    });
-    controller.abort();
-    await expect(authorization).rejects.toBeDefined();
-    rejectRead(new Error("late storage read failed"));
-    await Bun.sleep(10);
   });
 
   test("isolates identical credential keys across storage backends", async () => {
@@ -126,16 +204,29 @@ describe("storage-injected MCP OAuth concurrent staging", () => {
       storage: storageB,
       interactive: false,
     });
-    if (!oauthA || !oauthB) throw new Error("OAuth sessions were not created");
+    const siblingA = await createMcpOAuthSessionWithStorage({
+      credentialKey: key,
+      storage: storageA,
+      interactive: false,
+    });
+    if (!oauthA || !oauthB || !siblingA) {
+      throw new Error("OAuth sessions were not created");
+    }
 
     expect((await oauthA.authProvider.tokens())?.access_token).toBe("access-a");
     expect((await oauthB.authProvider.tokens())?.access_token).toBe("access-b");
     expect((await oauthA.exportCredentials()).refresh_token).toBe("refresh-a");
     expect((await oauthB.exportCredentials()).refresh_token).toBe("refresh-b");
     await oauthA.close();
+    expect((await siblingA.authProvider.tokens())?.access_token).toBe(
+      "access-a",
+    );
+    expect(JSON.stringify(oauthA.authProvider)).not.toContain("access-a");
+    expect(JSON.stringify(oauthA.authProvider)).not.toContain("refresh-a");
     await oauthB.close();
     expect(() => oauthA.authProvider.tokens()).toThrow("session is closed");
     expect(() => oauthB.authProvider.tokens()).toThrow("session is closed");
+    await siblingA.close();
   });
 
   test("scrubs local credentials when closed during a pending write", async () => {
@@ -415,7 +506,11 @@ function memoryStorage(values: Map<string, string>): McpOAuthStorage {
   };
 }
 
-function rawHttpRequest(port: number, target: string): Promise<string> {
+function rawHttpRequest(
+  port: number,
+  target: string,
+  host: string | null = `127.0.0.1:${port}`,
+): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     const socket = createConnection({ host: "127.0.0.1", port });
@@ -423,8 +518,9 @@ function rawHttpRequest(port: number, target: string): Promise<string> {
     socket.on("data", (chunk: Buffer) => chunks.push(chunk));
     socket.once("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
     socket.once("connect", () => {
+      const hostHeader = host ? `Host: ${host}\r\n` : "";
       socket.write(
-        `GET ${target} HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nConnection: close\r\n\r\n`,
+        `GET ${target} HTTP/1.1\r\n${hostHeader}Connection: close\r\n\r\n`,
       );
     });
   });
