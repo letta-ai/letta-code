@@ -33,6 +33,8 @@ export type ShellSpawnOptions = {
 
 export interface ShellProcessHandle {
   kill(signal?: string | number): unknown;
+  /** Kill the detached process group, including descendants of an exited parent. */
+  killProcessGroup?(signal?: string | number): unknown;
   interrupt(): void;
   write(input: string): void;
 }
@@ -302,6 +304,36 @@ function spawnPtyBridgeProcess(
   };
 }
 
+export function __testCreateNativePtyProcessHandle(
+  ptyProcess: NodePtyProcess,
+): ShellProcessHandle {
+  return {
+    kill(signal?: string | number) {
+      ptyProcess.kill(typeof signal === "string" ? signal : undefined);
+    },
+    killProcessGroup(signal: string | number = "SIGKILL") {
+      if (process.platform === "win32") {
+        ptyProcess.kill(typeof signal === "string" ? signal : undefined);
+        return;
+      }
+
+      try {
+        process.kill(-ptyProcess.pid, signal as NodeJS.Signals);
+      } catch {
+        // Fall back to node-pty's direct-child kill if the process group has
+        // already disappeared or the platform cannot address it.
+        ptyProcess.kill(typeof signal === "string" ? signal : undefined);
+      }
+    },
+    interrupt() {
+      ptyProcess.kill("SIGINT");
+    },
+    write(input: string) {
+      ptyProcess.write(input);
+    },
+  };
+}
+
 function spawnNativePtyProcess(
   launcher: string[],
   options: ShellSpawnOptions,
@@ -327,17 +359,7 @@ function spawnNativePtyProcess(
     events.close(typeof exitCode === "number" ? exitCode : null);
   });
 
-  return {
-    kill(signal?: string | number) {
-      ptyProcess.kill(typeof signal === "string" ? signal : undefined);
-    },
-    interrupt() {
-      ptyProcess.kill("SIGINT");
-    },
-    write(input: string) {
-      ptyProcess.write(input);
-    },
-  };
+  return __testCreateNativePtyProcessHandle(ptyProcess);
 }
 
 function spawnPtyProcess(

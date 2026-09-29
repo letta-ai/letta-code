@@ -14,6 +14,8 @@ type TimerHandle = ReturnType<typeof setTimeout>;
 
 export interface BackgroundProcessHandle {
   kill(signal?: string | number): unknown;
+  /** Kill the detached process group, including descendants of an exited parent. */
+  killProcessGroup?(signal?: string | number): unknown;
 }
 
 export interface BackgroundRuntimeScope {
@@ -300,7 +302,11 @@ export function releaseTransientBackgroundProcesses(contextId: string): void {
     clearCleanupTimer(entry);
     entry.completionNotificationSuppressed = true;
     try {
-      entry.process.kill("SIGKILL");
+      if (entry.process.killProcessGroup) {
+        entry.process.killProcessGroup("SIGKILL");
+      } else {
+        entry.process.kill("SIGKILL");
+      }
     } catch {
       // The process group may already be gone. Keep teardown idempotent.
     }

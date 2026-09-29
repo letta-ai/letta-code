@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,6 +20,19 @@ import {
 afterEach(() => invalidateClientSkillsPayloadCache());
 
 describe("sendMessageStream skill sources", () => {
+  test("browser-control skill disables curlrc before every other curl option", () => {
+    const body = readFileSync(
+      join(
+        import.meta.dir,
+        "../skills/builtin/browser-control-over-wire/SKILL.md",
+      ),
+      "utf8",
+    );
+    const curlInvocation = body.match(/curl[^\n]+/)?.[0];
+
+    expect(curlInvocation).toBe("curl -q --silent --show-error \\");
+  });
+
   test("forwards a request-scoped response format to the Messages API", () => {
     const responseFormat = {
       type: "json_schema",

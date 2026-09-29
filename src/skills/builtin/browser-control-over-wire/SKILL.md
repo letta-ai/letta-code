@@ -36,7 +36,7 @@ response="$(
   printf '%s' "$BROWSER_CONTROL_KEY" |
     jq -Rsc --arg command "$COMMAND" \
       '{browser_control_key:.,command:$command}' |
-    curl --silent --show-error \
+    curl -q --silent --show-error \
       --connect-timeout 5 \
       --max-time 15 \
       --request POST \

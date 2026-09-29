@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import {
@@ -8,6 +8,11 @@ import {
 } from "@/backend";
 import { runWithRuntimeContext } from "@/runtime-context";
 import {
+  backgroundProcesses,
+  releaseTransientBackgroundProcesses,
+} from "@/tools/impl/process_manager";
+import {
+  __testCreateNativePtyProcessHandle,
   spawnWithLauncher,
   startShellProcess,
 } from "@/tools/impl/shell-runner";
@@ -111,6 +116,47 @@ describe("shared shell process", () => {
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain("read:hello");
+    },
+  );
+
+  test.skipIf(process.platform === "win32")(
+    "native node-pty exposes a separate process-group kill for transient cleanup",
+    () => {
+      const ptyKill = mock((_signal?: string) => {});
+      const processKill = spyOn(process, "kill").mockImplementation(
+        ((_pid: number, _signal?: string | number) =>
+          true) as typeof process.kill,
+      );
+      const handle = __testCreateNativePtyProcessHandle({
+        pid: 4321,
+        kill: ptyKill,
+        write: () => {},
+        onData: () => {},
+        onExit: () => {},
+      });
+
+      const processId = "native-pty-transient-test";
+      try {
+        // Ordinary termination retains node-pty's direct-child behavior.
+        handle.kill("SIGTERM");
+        expect(ptyKill).toHaveBeenCalledWith("SIGTERM");
+        expect(processKill).not.toHaveBeenCalled();
+
+        backgroundProcesses.set(processId, {
+          process: handle,
+          command: "browser-control",
+          status: "running",
+          exitCode: null,
+          transientExecutionContextId: "ctx-native-pty",
+        });
+        releaseTransientBackgroundProcesses("ctx-native-pty");
+
+        expect(processKill).toHaveBeenCalledWith(-4321, "SIGKILL");
+        expect(ptyKill).toHaveBeenCalledTimes(1);
+      } finally {
+        backgroundProcesses.delete(processId);
+        processKill.mockRestore();
+      }
     },
   );
 
