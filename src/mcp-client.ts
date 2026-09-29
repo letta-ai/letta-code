@@ -73,6 +73,7 @@ export interface ConnectedMcpServer {
 export interface McpOAuthConnection {
   authProvider: OAuthClientProvider;
   waitForAuthorizationCode?: () => Promise<string>;
+  closeCallback?(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -80,6 +81,7 @@ export interface ConnectMcpServerOptions {
   clientInfo?: { name: string; version: string };
   stderr?: "inherit" | "pipe";
   oauth?: McpOAuthConnection;
+  signal?: AbortSignal;
 }
 
 declare const LETTA_VERSION: string | undefined;
@@ -99,9 +101,13 @@ export async function connectMcpServer(
 ): Promise<ConnectedMcpServer> {
   let client = new Client(options.clientInfo ?? DEFAULT_CLIENT_INFO);
   try {
+    options.signal?.throwIfAborted();
     const transport = createTransport(config, options);
     try {
-      await client.connect(transport);
+      await client.connect(
+        transport,
+        options.signal ? { signal: options.signal } : undefined,
+      );
     } catch (error) {
       if (
         !(error instanceof UnauthorizedError) ||
@@ -110,16 +116,32 @@ export async function connectMcpServer(
       ) {
         throw error;
       }
-      const authorizationCode = await options.oauth.waitForAuthorizationCode();
-      await transport.finishAuth(authorizationCode);
+      const authorizationCode = await withAbort(
+        options.oauth.waitForAuthorizationCode(),
+        options.signal,
+        () => options.oauth?.close(),
+      );
+      await withAbort(
+        transport.finishAuth(authorizationCode),
+        options.signal,
+        () => transport.close(),
+      );
       await client
         .close()
         .catch(() => transport.close().catch(() => undefined));
       client = new Client(options.clientInfo ?? DEFAULT_CLIENT_INFO);
-      await client.connect(createTransport(config, options));
+      await client.connect(
+        createTransport(config, options),
+        options.signal ? { signal: options.signal } : undefined,
+      );
     }
-    await options.oauth?.close();
-    const response = await client.listTools();
+    await (options.oauth?.closeCallback?.() ??
+      options.oauth?.close() ??
+      Promise.resolve());
+    const response = await client.listTools(
+      undefined,
+      options.signal ? { signal: options.signal } : undefined,
+    );
     const tools = response.tools.map((tool) => ({
       ...tool,
       inputSchema: normalizeInputSchema(tool.inputSchema),
@@ -152,13 +174,45 @@ export async function connectMcpServer(
       close: async () => {
         if (closed) return;
         closed = true;
-        await client.close();
+        const results = await Promise.allSettled([
+          client.close(),
+          options.oauth?.close(),
+        ]);
+        const failure = results.find(
+          (result): result is PromiseRejectedResult =>
+            result.status === "rejected",
+        );
+        if (failure) throw failure.reason;
       },
     };
   } catch (error) {
     await options.oauth?.close();
     await client.close().catch(() => undefined);
     throw error;
+  }
+}
+
+async function withAbort<T>(
+  operation: Promise<T>,
+  signal?: AbortSignal,
+  onAbort?: () => Promise<unknown> | unknown,
+): Promise<T> {
+  if (!signal) return operation;
+  signal.throwIfAborted();
+  let abort: (() => void) | undefined;
+  const cancellation = new Promise<never>((_resolve, reject) => {
+    abort = () => {
+      void Promise.resolve(onAbort?.()).catch(() => undefined);
+      reject(
+        signal.reason ?? new DOMException("Operation aborted", "AbortError"),
+      );
+    };
+    signal.addEventListener("abort", abort, { once: true });
+  });
+  try {
+    return await Promise.race([operation, cancellation]);
+  } finally {
+    if (abort) signal.removeEventListener("abort", abort);
   }
 }
 

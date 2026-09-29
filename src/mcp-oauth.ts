@@ -1,5 +1,4 @@
 import { createHash, randomBytes } from "node:crypto";
-import { createServer, type Server } from "node:http";
 import type {
   OAuthClientProvider,
   OAuthDiscoveryState,
@@ -18,19 +17,22 @@ import {
   OpenIdProviderDiscoveryMetadataSchema,
   SafeUrlSchema,
 } from "@modelcontextprotocol/sdk/shared/auth.js";
+import { callbackPort, startOAuthCallbackServer } from "@/mcp-oauth-callback";
 import {
   deleteSecretValue,
   getSecretValue,
   setSecretValue,
 } from "@/utils/secrets";
 
-const CALLBACK_TIMEOUT_MS = 5 * 60 * 1000;
 const credentialCoordinators = new Map<string, CredentialCoordinator>();
+const storageObjectIds = new WeakMap<object, number>();
+let nextStorageObjectId = 1;
 
 interface CredentialCoordinator {
   queue: Promise<void>;
   generation: number;
   state?: PersistedMcpOAuthState;
+  activeProviders: number;
   clientVersion: number;
   tokenVersion: number;
   discoveryVersion: number;
@@ -65,6 +67,7 @@ export interface McpOAuthCredentialSnapshot {
 export interface McpOAuthSession {
   authProvider: OAuthClientProvider;
   waitForAuthorizationCode?: () => Promise<string>;
+  closeCallback?(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -96,6 +99,8 @@ export interface McpOAuthSessionOptions {
 export interface StorageInjectedMcpOAuthSessionOptions {
   /** Consumer-owned opaque key, unique process-wide across storage backends. */
   credentialKey: string;
+  /** Stable identity for wrappers around the same physical storage backend. */
+  storageNamespace?: string;
   storage: McpOAuthStorage;
   interactive: boolean;
   openBrowser?: (url: string) => Promise<void>;
@@ -108,9 +113,15 @@ export async function clearMcpOAuthCredentials(
   serverUrl: string,
 ): Promise<boolean> {
   const credentialKey = mcpOAuthCredentialKey(agentId, serverName, serverUrl);
+  const coordinationKey = storageCoordinationKey(
+    bunSecretStorage,
+    credentialKey,
+    "bun-secrets",
+  );
   const { result } = await clearStoredCredentials(
     bunSecretStorage,
     credentialKey,
+    coordinationKey,
   );
   return result === true;
 }
@@ -124,6 +135,7 @@ export async function createMcpOAuthSession(
   const credentialKey = mcpOAuthCredentialKey(agentId, serverName, serverUrl);
   return createMcpOAuthSessionWithStorage({
     credentialKey,
+    storageNamespace: "bun-secrets",
     storage: bunSecretStorage,
     interactive: options.interactive,
     onStatus: options.onStatus,
@@ -134,36 +146,69 @@ export async function createMcpOAuthSession(
 export async function createMcpOAuthSessionWithStorage(
   options: StorageInjectedMcpOAuthSessionOptions,
 ): Promise<ExportableMcpOAuthSession | undefined> {
-  const loaded = await loadState(options.storage, options.credentialKey);
-  const persisted = loaded.state;
-  if (!options.interactive && !persisted) return undefined;
+  const coordinationKey = storageCoordinationKey(
+    options.storage,
+    options.credentialKey,
+    options.storageNamespace,
+  );
+  retainCredentialCoordinator(coordinationKey);
+  let provider: PersistentMcpOAuthProvider | undefined;
+  let callback:
+    | Awaited<ReturnType<typeof startOAuthCallbackServer>>
+    | undefined;
+  try {
+    const loaded = await loadState(
+      options.storage,
+      options.credentialKey,
+      coordinationKey,
+    );
+    const persisted = loaded.state;
+    if (!options.interactive && !persisted) {
+      await releaseCredentialCoordinator(coordinationKey);
+      return undefined;
+    }
 
-  const callback = options.interactive
-    ? await startOAuthCallbackServer(callbackPort(persisted?.redirectUrl))
-    : undefined;
-  const redirectUrl = callback?.redirectUrl ?? persisted?.redirectUrl;
-  if (!redirectUrl) return undefined;
+    callback = options.interactive
+      ? await startOAuthCallbackServer(callbackPort(persisted?.redirectUrl))
+      : undefined;
+    const redirectUrl = callback?.redirectUrl ?? persisted?.redirectUrl;
+    if (!redirectUrl) {
+      await releaseCredentialCoordinator(coordinationKey);
+      return undefined;
+    }
 
-  const provider = new PersistentMcpOAuthProvider({
-    credentialKey: options.credentialKey,
-    storage: options.storage,
-    redirectUrl,
-    persisted,
-    interactive: options.interactive,
-    onStatus: options.onStatus,
-    openBrowser: options.openBrowser ?? openSystemBrowser,
-    expectedState: callback?.expectedState,
-    generation: loaded.generation,
-  });
-
-  return {
-    authProvider: provider,
-    ...(callback
-      ? { waitForAuthorizationCode: () => callback.waitForCode() }
-      : {}),
-    exportCredentials: () => provider.exportCredentials(),
-    close: async () => callback?.close(),
-  };
+    provider = new PersistentMcpOAuthProvider({
+      credentialKey: options.credentialKey,
+      coordinationKey,
+      storage: options.storage,
+      redirectUrl,
+      persisted,
+      interactive: options.interactive,
+      onStatus: options.onStatus,
+      openBrowser: options.openBrowser ?? openSystemBrowser,
+      expectedState: callback?.expectedState,
+      generation: loaded.generation,
+    });
+    const activeProvider = provider;
+    const activeCallback = callback;
+    return {
+      authProvider: activeProvider,
+      ...(activeCallback
+        ? { waitForAuthorizationCode: () => activeCallback.waitForCode() }
+        : {}),
+      exportCredentials: () => activeProvider.exportCredentials(),
+      closeCallback: async () => activeCallback?.close(),
+      close: async () => {
+        activeCallback?.close();
+        await activeProvider.dispose();
+      },
+    };
+  } catch (error) {
+    callback?.close();
+    if (provider) await provider.dispose();
+    else await releaseCredentialCoordinator(coordinationKey);
+    throw error;
+  }
 }
 
 const bunSecretStorage: McpOAuthStorage = {
@@ -186,14 +231,17 @@ class PersistentMcpOAuthProvider implements OAuthClientProvider {
   private tokenOperationVersion: number;
   private readonly coordinator: CredentialCoordinator;
   private readonly credentialKey: string;
+  private readonly coordinationKey: string;
   private readonly storage: McpOAuthStorage;
   private readonly interactive: boolean;
   private readonly onStatus?: (message: string) => void;
   private readonly openBrowser: (url: string) => Promise<void>;
   private readonly expectedState?: { value?: string };
+  private closed = false;
 
   constructor(options: {
     credentialKey: string;
+    coordinationKey: string;
     storage: McpOAuthStorage;
     redirectUrl: string;
     persisted?: PersistedMcpOAuthState;
@@ -204,13 +252,14 @@ class PersistentMcpOAuthProvider implements OAuthClientProvider {
     generation: number;
   }) {
     this.credentialKey = options.credentialKey;
+    this.coordinationKey = options.coordinationKey;
     this.storage = options.storage;
     this.interactive = options.interactive;
     this.onStatus = options.onStatus;
     this.openBrowser = options.openBrowser;
     this.expectedState = options.expectedState;
     this.generation = options.generation;
-    this.coordinator = getCredentialCoordinator(options.credentialKey);
+    this.coordinator = getCredentialCoordinator(options.coordinationKey);
     this.observedClientVersion = this.coordinator.clientVersion;
     this.observedTokenVersion = this.coordinator.tokenVersion;
     this.observedDiscoveryVersion = this.coordinator.discoveryVersion;
@@ -223,6 +272,7 @@ class PersistentMcpOAuthProvider implements OAuthClientProvider {
   }
 
   get redirectUrl(): string {
+    this.assertOpen();
     return this.stateData.redirectUrl;
   }
 
@@ -237,12 +287,14 @@ class PersistentMcpOAuthProvider implements OAuthClientProvider {
   }
 
   state(): string {
+    this.assertOpen();
     const state = randomBytes(24).toString("base64url");
     if (this.expectedState) this.expectedState.value = state;
     return state;
   }
 
   clientInformation(): OAuthClientInformationMixed | undefined {
+    this.assertOpen();
     if (this.generation !== this.coordinator.generation) return undefined;
     if (
       this.pendingClientInformation &&
@@ -264,7 +316,8 @@ class PersistentMcpOAuthProvider implements OAuthClientProvider {
   }
 
   saveClientInformation(clientInformation: OAuthClientInformationMixed): void {
-    assertCurrentGeneration(this.credentialKey, this.generation);
+    this.assertOpen();
+    assertCurrentGeneration(this.coordinationKey, this.generation);
     this.stateData.clientInformation = clientInformation;
     this.pendingClientInformation = {
       value: clientInformation,
@@ -277,6 +330,7 @@ class PersistentMcpOAuthProvider implements OAuthClientProvider {
   }
 
   tokens(): OAuthTokens | undefined {
+    this.assertOpen();
     if (this.generation !== this.coordinator.generation) return undefined;
     this.observedTokenVersion = this.coordinator.tokenVersion;
     this.tokenOperationGeneration = this.coordinator.generation;
@@ -285,13 +339,16 @@ class PersistentMcpOAuthProvider implements OAuthClientProvider {
   }
 
   async exportCredentials(): Promise<McpOAuthCredentialSnapshot> {
+    this.assertOpen();
     const expectedGeneration = this.generation;
-    return enqueueStorageMutation(this.credentialKey, async () => {
-      assertCurrentGeneration(this.credentialKey, expectedGeneration);
+    return enqueueStorageMutation(this.coordinationKey, async () => {
+      this.assertOpen();
+      assertCurrentGeneration(this.coordinationKey, expectedGeneration);
       const latest = await readStoredState(this.storage, this.credentialKey);
       if (!latest) {
         throw new Error("MCP OAuth authorization is not complete");
       }
+      this.assertOpen();
       this.coordinator.state = latest;
       this.stateData = latest;
       return exportCredentialSnapshot(latest);
@@ -299,6 +356,7 @@ class PersistentMcpOAuthProvider implements OAuthClientProvider {
   }
 
   async saveTokens(tokens: OAuthTokens): Promise<void> {
+    this.assertOpen();
     const expectedGeneration = this.tokenOperationGeneration;
     const expectedTokenVersion = this.tokenOperationVersion;
     const tokenExpiresAt =
@@ -308,9 +366,10 @@ class PersistentMcpOAuthProvider implements OAuthClientProvider {
     const pendingClientInformation = this.pendingClientInformation;
     const pendingDiscoveryState = this.pendingDiscoveryState;
     const result = await enqueueStorageMutation(
-      this.credentialKey,
+      this.coordinationKey,
       async () => {
-        assertCurrentGeneration(this.credentialKey, expectedGeneration);
+        this.assertOpen();
+        assertCurrentGeneration(this.coordinationKey, expectedGeneration);
         if (this.coordinator.tokenVersion !== expectedTokenVersion) {
           throw new Error(
             "MCP OAuth token response is stale because credentials changed",
@@ -363,6 +422,10 @@ class PersistentMcpOAuthProvider implements OAuthClientProvider {
         return { state, clientMerged, discoveryMerged };
       },
     );
+    if (this.closed) {
+      this.scrubLocalState();
+      return;
+    }
     this.stateData = result.state;
     this.observedTokenVersion = this.coordinator.tokenVersion;
     this.tokenOperationGeneration = this.coordinator.generation;
@@ -384,6 +447,7 @@ class PersistentMcpOAuthProvider implements OAuthClientProvider {
   }
 
   async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
+    this.assertOpen();
     if (!this.interactive) {
       throw new Error(
         "MCP authentication requires user authorization. Open /mcp and press R to sign in.",
@@ -396,10 +460,12 @@ class PersistentMcpOAuthProvider implements OAuthClientProvider {
   }
 
   saveCodeVerifier(codeVerifier: string): void {
+    this.assertOpen();
     this.codeVerifierValue = codeVerifier;
   }
 
   codeVerifier(): string {
+    this.assertOpen();
     if (!this.codeVerifierValue) {
       throw new Error("No MCP OAuth PKCE verifier is available");
     }
@@ -407,7 +473,8 @@ class PersistentMcpOAuthProvider implements OAuthClientProvider {
   }
 
   saveDiscoveryState(state: OAuthDiscoveryState): void {
-    assertCurrentGeneration(this.credentialKey, this.generation);
+    this.assertOpen();
+    assertCurrentGeneration(this.coordinationKey, this.generation);
     this.stateData.discoveryState = state;
     this.pendingDiscoveryState = {
       value: state,
@@ -420,6 +487,7 @@ class PersistentMcpOAuthProvider implements OAuthClientProvider {
   }
 
   discoveryState(): OAuthDiscoveryState | undefined {
+    this.assertOpen();
     if (this.generation !== this.coordinator.generation) return undefined;
     if (
       this.pendingDiscoveryState &&
@@ -438,6 +506,7 @@ class PersistentMcpOAuthProvider implements OAuthClientProvider {
   async invalidateCredentials(
     scope: "all" | "client" | "tokens" | "verifier" | "discovery",
   ): Promise<void> {
+    this.assertOpen();
     if (scope === "verifier") {
       this.codeVerifierValue = undefined;
       return;
@@ -447,6 +516,7 @@ class PersistentMcpOAuthProvider implements OAuthClientProvider {
       const { generation, cleared } = await clearStoredCredentials(
         this.storage,
         this.credentialKey,
+        this.coordinationKey,
         {
           generation: this.generation,
           clientVersion: this.observedClientVersion,
@@ -454,6 +524,7 @@ class PersistentMcpOAuthProvider implements OAuthClientProvider {
           discoveryVersion: this.observedDiscoveryVersion,
         },
       );
+      if (this.closed) return;
       if (!cleared) {
         this.stateData = this.coordinator.state ?? { redirectUrl };
         this.pendingClientInformation = undefined;
@@ -484,9 +555,10 @@ class PersistentMcpOAuthProvider implements OAuthClientProvider {
           ? this.observedTokenVersion
           : this.observedDiscoveryVersion;
     const result = await enqueueStorageMutation(
-      this.credentialKey,
+      this.coordinationKey,
       async () => {
-        assertCurrentGeneration(this.credentialKey, expectedGeneration);
+        this.assertOpen();
+        assertCurrentGeneration(this.coordinationKey, expectedGeneration);
         const currentVersion =
           scope === "client"
             ? this.coordinator.clientVersion
@@ -513,6 +585,7 @@ class PersistentMcpOAuthProvider implements OAuthClientProvider {
         return state;
       },
     );
+    if (this.closed) return;
     this.stateData = result ?? { redirectUrl: this.redirectUrl };
     if (scope === "client") {
       this.observedClientVersion = this.coordinator.clientVersion;
@@ -535,6 +608,25 @@ class PersistentMcpOAuthProvider implements OAuthClientProvider {
           this.coordinator.discoveryVersion;
       }
     }
+  }
+
+  async dispose(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    this.scrubLocalState();
+    await releaseCredentialCoordinator(this.coordinationKey);
+    this.scrubLocalState();
+  }
+
+  private scrubLocalState(): void {
+    this.codeVerifierValue = undefined;
+    this.pendingClientInformation = undefined;
+    this.pendingDiscoveryState = undefined;
+    this.stateData = { redirectUrl: this.stateData.redirectUrl };
+  }
+
+  private assertOpen(): void {
+    if (this.closed) throw new Error("MCP OAuth session is closed");
   }
 }
 
@@ -575,10 +667,10 @@ function exportCredentialSnapshot(
 }
 
 function enqueueStorageMutation<T>(
-  credentialKey: string,
+  coordinationKey: string,
   mutation: () => Promise<T>,
 ): Promise<T> {
-  const coordinator = getCredentialCoordinator(credentialKey);
+  const coordinator = getCredentialCoordinator(coordinationKey);
   const pending = coordinator.queue.then(mutation, mutation);
   coordinator.queue = pending.then(
     () => undefined,
@@ -588,27 +680,78 @@ function enqueueStorageMutation<T>(
 }
 
 function getCredentialCoordinator(
-  credentialKey: string,
+  coordinationKey: string,
 ): CredentialCoordinator {
-  const existing = credentialCoordinators.get(credentialKey);
+  const existing = credentialCoordinators.get(coordinationKey);
   if (existing) return existing;
   const coordinator: CredentialCoordinator = {
     queue: Promise.resolve(),
     generation: 0,
+    activeProviders: 0,
     clientVersion: 0,
     tokenVersion: 0,
     discoveryVersion: 0,
   };
-  credentialCoordinators.set(credentialKey, coordinator);
+  credentialCoordinators.set(coordinationKey, coordinator);
   return coordinator;
 }
 
-function assertCurrentGeneration(
+function storageCoordinationKey(
+  storage: McpOAuthStorage,
   credentialKey: string,
+  storageNamespace?: string,
+): string {
+  const namespace = storageNamespace;
+  if (
+    namespace !== undefined &&
+    (!namespace.trim() || namespace.includes("\0"))
+  ) {
+    throw new Error(
+      "MCP OAuth storage namespace must be non-empty and contain no NUL bytes",
+    );
+  }
+  let identity: string;
+  if (!namespace) {
+    let objectId = storageObjectIds.get(storage);
+    if (!objectId) {
+      objectId = nextStorageObjectId;
+      nextStorageObjectId += 1;
+      storageObjectIds.set(storage, objectId);
+    }
+    identity = `object:${objectId}`;
+  } else {
+    identity = `namespace:${namespace}`;
+  }
+  return `${identity}\0${credentialKey}`;
+}
+
+function retainCredentialCoordinator(coordinationKey: string): void {
+  getCredentialCoordinator(coordinationKey).activeProviders += 1;
+}
+
+async function releaseCredentialCoordinator(
+  coordinationKey: string,
+): Promise<void> {
+  const coordinator = getCredentialCoordinator(coordinationKey);
+  await enqueueStorageMutation(coordinationKey, async () => {
+    coordinator.activeProviders = Math.max(0, coordinator.activeProviders - 1);
+    if (coordinator.activeProviders === 0) coordinator.state = undefined;
+  });
+  await coordinator.queue;
+  if (
+    coordinator.activeProviders === 0 &&
+    credentialCoordinators.get(coordinationKey) === coordinator
+  ) {
+    credentialCoordinators.delete(coordinationKey);
+  }
+}
+
+function assertCurrentGeneration(
+  coordinationKey: string,
   expectedGeneration: number,
 ): void {
   if (
-    getCredentialCoordinator(credentialKey).generation !== expectedGeneration
+    getCredentialCoordinator(coordinationKey).generation !== expectedGeneration
   ) {
     throw new Error(
       "MCP OAuth session is stale because credentials were cleared",
@@ -619,6 +762,7 @@ function assertCurrentGeneration(
 async function clearStoredCredentials(
   storage: McpOAuthStorage,
   credentialKey: string,
+  coordinationKey: string,
   expected?: {
     generation: number;
     clientVersion: number;
@@ -626,10 +770,10 @@ async function clearStoredCredentials(
     discoveryVersion: number;
   },
 ): Promise<{ result: unknown; generation: number; cleared: boolean }> {
-  return enqueueStorageMutation(credentialKey, async () => {
-    const coordinator = getCredentialCoordinator(credentialKey);
+  const coordinator = getCredentialCoordinator(coordinationKey);
+  const outcome = await enqueueStorageMutation(coordinationKey, async () => {
     if (expected) {
-      assertCurrentGeneration(credentialKey, expected.generation);
+      assertCurrentGeneration(coordinationKey, expected.generation);
       if (
         coordinator.clientVersion !== expected.clientVersion ||
         coordinator.tokenVersion !== expected.tokenVersion ||
@@ -650,166 +794,14 @@ async function clearStoredCredentials(
     coordinator.state = undefined;
     return { result, generation: coordinator.generation, cleared: true };
   });
-}
-
-interface OAuthCallbackServer {
-  redirectUrl: string;
-  expectedState: { value?: string };
-  waitForCode(): Promise<string>;
-  close(): void;
-}
-
-async function startOAuthCallbackServer(
-  preferredPort?: number,
-): Promise<OAuthCallbackServer> {
-  try {
-    return await startOAuthCallbackServerOnPort(preferredPort ?? 0);
-  } catch (error) {
-    if (!preferredPort) throw error;
-    return startOAuthCallbackServerOnPort(0);
+  await coordinator.queue;
+  if (
+    coordinator.activeProviders === 0 &&
+    credentialCoordinators.get(coordinationKey) === coordinator
+  ) {
+    credentialCoordinators.delete(coordinationKey);
   }
-}
-
-async function startOAuthCallbackServerOnPort(
-  port: number,
-): Promise<OAuthCallbackServer> {
-  const expectedState: { value?: string } = {};
-  let server: Server;
-  let completed = false;
-  let settle: ((code: string) => void) | undefined;
-  let reject: ((error: Error) => void) | undefined;
-  const codePromise = new Promise<string>((resolve, rejectPromise) => {
-    settle = (code) => {
-      completed = true;
-      resolve(code);
-    };
-    reject = (error) => {
-      completed = true;
-      rejectPromise(error);
-    };
-  });
-  void codePromise.catch(() => undefined);
-
-  server = createServer((request, response) => {
-    let url: URL;
-    try {
-      url = new URL(request.url ?? "/", "http://127.0.0.1");
-    } catch {
-      response.writeHead(400, { "Content-Type": "text/plain" });
-      response.end("Invalid request target");
-      return;
-    }
-    if (url.pathname !== "/callback") {
-      response.writeHead(404).end("Not found");
-      return;
-    }
-    const error = url.searchParams.get("error");
-    const code = url.searchParams.get("code");
-    const state = url.searchParams.get("state");
-    if (!state || state !== expectedState.value) {
-      response.writeHead(400, { "Content-Type": "text/html" });
-      response.end(
-        callbackPage("Authorization failed", "Invalid OAuth callback"),
-      );
-      return;
-    }
-    if (error) {
-      response.writeHead(400, { "Content-Type": "text/html" });
-      reject?.(new Error(`MCP OAuth authorization failed: ${error}`));
-      response.end(callbackPage("Authorization failed", error), () => {
-        void closeServer(true);
-      });
-      return;
-    }
-    if (!code) {
-      response.writeHead(400, { "Content-Type": "text/html" });
-      response.end(
-        callbackPage("Authorization failed", "Missing authorization code"),
-      );
-      return;
-    }
-    response.writeHead(200, { "Content-Type": "text/html" });
-    settle?.(code);
-    response.end(
-      callbackPage(
-        "Authorization complete",
-        "You can close this tab and return to Letta Code.",
-      ),
-      () => {
-        void closeServer(true);
-      },
-    );
-  });
-  server.on("clientError", (_error, socket) => {
-    if (!socket.writable) return;
-    socket.end(
-      "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
-    );
-  });
-
-  let serverClosing = false;
-  const closeServer = (force = false): void => {
-    if (serverClosing) return;
-    serverClosing = true;
-    server.close();
-    if (force) server.closeAllConnections();
-  };
-
-  await new Promise<void>((resolve, rejectListen) => {
-    server.once("error", rejectListen);
-    server.listen(port, "127.0.0.1", resolve);
-  });
-  server.unref();
-  const address = server.address();
-  if (!address || typeof address === "string") {
-    server.close();
-    throw new Error("Could not start MCP OAuth callback server");
-  }
-  const timeout = setTimeout(() => {
-    reject?.(new Error("Timed out waiting for MCP OAuth authorization"));
-    void closeServer(true);
-  }, CALLBACK_TIMEOUT_MS);
-  timeout.unref();
-
-  return {
-    redirectUrl: `http://127.0.0.1:${address.port}/callback`,
-    expectedState,
-    waitForCode: () => codePromise.finally(() => clearTimeout(timeout)),
-    close: () => {
-      clearTimeout(timeout);
-      if (!completed) reject?.(new Error("MCP OAuth flow was cancelled"));
-      closeServer(true);
-    },
-  };
-}
-
-function callbackPort(redirectUrl?: string): number | undefined {
-  if (!redirectUrl) return undefined;
-  try {
-    const parsed = new URL(redirectUrl);
-    return parsed.hostname === "127.0.0.1" && parsed.port
-      ? Number(parsed.port)
-      : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function callbackPage(title: string, message: string): string {
-  return `<!doctype html><html><body style="font-family:system-ui;padding:2rem"><h1>${escapeHtml(title)}</h1><p>${escapeHtml(message)}</p></body></html>`;
-}
-
-function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/g, (character) => {
-    const entities: Record<string, string> = {
-      "&": "&amp;",
-      "<": "&lt;",
-      ">": "&gt;",
-      '"': "&quot;",
-      "'": "&#39;",
-    };
-    return entities[character] ?? character;
-  });
+  return outcome;
 }
 
 async function openSystemBrowser(url: string): Promise<void> {
@@ -837,9 +829,10 @@ export function mcpOAuthCredentialKey(
 async function loadState(
   storage: McpOAuthStorage,
   credentialKey: string,
+  coordinationKey: string,
 ): Promise<{ state?: PersistedMcpOAuthState; generation: number }> {
-  return enqueueStorageMutation(credentialKey, async () => {
-    const coordinator = getCredentialCoordinator(credentialKey);
+  return enqueueStorageMutation(coordinationKey, async () => {
+    const coordinator = getCredentialCoordinator(coordinationKey);
     const state = await readStoredState(storage, credentialKey);
     coordinator.state = state;
     return { state, generation: coordinator.generation };

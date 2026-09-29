@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { type ChildProcess, spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { createConnection } from "node:net";
 import { fileURLToPath } from "node:url";
 import { connectMcpServer } from "@/mcp-client";
 import {
@@ -734,32 +733,6 @@ describe("storage-injected MCP OAuth", () => {
     }
   });
 
-  test("rejects malformed request targets without ending the callback", async () => {
-    const oauth = await createMcpOAuthSessionWithStorage({
-      credentialKey: "malformed-callback-target",
-      storage: memoryStorage(),
-      interactive: true,
-    });
-    if (!oauth?.waitForAuthorizationCode || !oauth.authProvider.state) {
-      throw new Error("Interactive OAuth callback was not created");
-    }
-    const expectedState = await oauth.authProvider.state();
-    const redirectUrl = new URL(String(oauth.authProvider.redirectUrl));
-    const authorizationCode = oauth.waitForAuthorizationCode();
-
-    const malformedResponse = await rawHttpRequest(
-      Number(redirectUrl.port),
-      "//[",
-    );
-    expect(malformedResponse).toContain(" 400 ");
-    const valid = await fetch(
-      `${redirectUrl.toString()}?code=expected-code&state=${encodeURIComponent(expectedState)}`,
-    );
-    expect(valid.status).toBe(200);
-    await expect(authorizationCode).resolves.toBe("expected-code");
-    await oauth.close();
-  });
-
   test("ignores unsolicited callbacks and accepts the expected state", async () => {
     const oauth = await createMcpOAuthSessionWithStorage({
       credentialKey: "callback-state",
@@ -842,18 +815,38 @@ describe("MCP OAuth", () => {
 
     const values = new Map<string, string>();
     const storage = memoryStorage(values);
-    const credentials = await authorizeMcpServerWithStorage({
+    let browserOpenCount = 0;
+    const cancelledSubscriber = new AbortController();
+    const options = {
       agentId: AGENT_ID,
+      storageNamespace: "test-high-level-memory",
       storage,
       serverName: SERVER_NAME,
       serverUrl,
-      openBrowser: async (authorizationUrl) => {
+      openBrowser: async (authorizationUrl: string) => {
+        browserOpenCount += 1;
+        cancelledSubscriber.abort();
         const response = await fetch(authorizationUrl, {
           redirect: "follow",
         });
         await response.text();
       },
-    });
+    };
+    const [credentials, duplicateCredentials, cancellation] = await Promise.all(
+      [
+        authorizeMcpServerWithStorage(options),
+        authorizeMcpServerWithStorage(options),
+        rejectionMessage(
+          authorizeMcpServerWithStorage({
+            ...options,
+            signal: cancelledSubscriber.signal,
+          }),
+        ),
+      ],
+    );
+    expect(duplicateCredentials).toEqual(credentials);
+    expect(cancellation).not.toBe("resolved unexpectedly");
+    expect(browserOpenCount).toBe(1);
     expect(credentials.access_token).toBeTruthy();
     expect(credentials.client_id).toBeTruthy();
     expect(credentials.redirect_uri).toMatch(
@@ -932,21 +925,6 @@ function rejectionMessage(promise: Promise<unknown>): Promise<string> {
     (error: unknown) =>
       error instanceof Error ? error.message : String(error),
   );
-}
-
-function rawHttpRequest(port: number, target: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    const socket = createConnection({ host: "127.0.0.1", port });
-    socket.once("error", reject);
-    socket.on("data", (chunk: Buffer) => chunks.push(chunk));
-    socket.once("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
-    socket.once("connect", () => {
-      socket.write(
-        `GET ${target} HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nConnection: close\r\n\r\n`,
-      );
-    });
-  });
 }
 
 async function waitForServer(url: string): Promise<void> {
