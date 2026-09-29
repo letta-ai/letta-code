@@ -21,6 +21,7 @@ import type { SharedReminderState } from "@/reminders/state";
 import type { RuntimeWorkspaceSandbox } from "@/runtime-context";
 import type { RuntimeExecutionSettings } from "@/runtime-execution-settings";
 import type { ToolsetName, ToolsetPreference } from "@/tools/toolset";
+import type { NotificationSponsorshipReference } from "@/types/notification-sponsorship";
 import type {
   ApprovalResponseBody,
   AvailableSkillSummary,
@@ -123,6 +124,8 @@ export interface IncomingMessage {
    * self-hosted, single-user, or pre-channel-split flows.
    */
   actingUserId?: string;
+  /** Non-secret delivery reference; never exposed to message content or tools. */
+  notificationSponsorship?: NotificationSponsorshipReference;
 }
 
 export type ProcessQueuedTurn = (

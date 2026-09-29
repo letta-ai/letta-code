@@ -52,6 +52,7 @@ import {
   enqueueInboundUserMessage,
   getInboundClientMessageId,
 } from "./inbound-queue";
+import { createIncomingMessage } from "./notification-input";
 import {
   isExecuteCommandCommand,
   parseServerLifecycleMessage,
@@ -533,7 +534,12 @@ export function createListenerMessageHandler(
           return;
         }
         const inputPayload = parsed.payload;
-        if (inputPayload.kind !== "create_message") {
+        const incoming = createIncomingMessage(
+          inputPayload,
+          parsed.runtime,
+          connectionId,
+        );
+        if (!incoming) {
           emitLoopErrorNotice(socket, runtime, {
             message: `Unsupported input payload kind: ${String((inputPayload as { kind?: unknown }).kind)}`,
             stopReason: "error",
@@ -544,26 +550,11 @@ export function createListenerMessageHandler(
           acknowledgeInput(false, "Unsupported input payload kind");
           return;
         }
-        const error = validateResponseFormat(inputPayload.response_format);
+        const error = validateResponseFormat(incoming.responseFormat);
         if (error) {
           acknowledgeInput(false, error);
           return;
         }
-        const incoming: IncomingMessage = {
-          type: "message",
-          connectionId,
-          ...(parsed.runtime.agent_id
-            ? { agentId: parsed.runtime.agent_id }
-            : {}),
-          conversationId: parsed.runtime.conversation_id,
-          clientToolAllowlist: inputPayload.client_tool_allowlist,
-          clientToolset: inputPayload.client_toolset,
-          externalToolScopeIds: inputPayload.external_tool_scope_ids,
-          excludeInteractiveTools: inputPayload.exclude_interactive_tools,
-          responseFormat: inputPayload.response_format,
-          imageFailureMode: inputPayload.image_failure_mode,
-          messages: inputPayload.messages,
-        };
         const hasApprovalPayload = incoming.messages.some(
           (payload): payload is ApprovalCreate =>
             "type" in payload && payload.type === "approval",

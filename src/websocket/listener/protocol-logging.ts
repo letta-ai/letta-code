@@ -50,6 +50,15 @@ function summarizeInputPayload(payload: unknown): string[] {
       "exclude_interactive_tools",
       payload.exclude_interactive_tools,
     );
+    if (isRecord(payload.notification_sponsorship)) {
+      pushField(
+        fields,
+        "notification_sponsorship.delivery_id",
+        typeof payload.notification_sponsorship.delivery_id === "string"
+          ? payload.notification_sponsorship.delivery_id
+          : undefined,
+      );
+    }
   } else if (payload.kind === "approval_response") {
     pushField(fields, "request_id", payload.request_id);
     pushField(fields, "response", payload.response);
