@@ -33,9 +33,11 @@ A button sends its instruction to you, so offer only what you can do. Each butto
 - **Schedule:** recurring work you run without being asked, such as a weekly report or a daily check. The instruction asks you to set up the schedule. See "Offering a schedule".
 - **Fill a gap:** something you lack, such as a tool to connect, access or a permission to grant, or a question only the user can answer.
 
-Every blocker gets a button. When an item is a decision with real options, give each option its own button, two or three at most, so the user picks one: for example "Make it a ticket", "Assign it to Charles", and "Close it". Otherwise give the item one strong button, not several weak ones. The kinds above are for choosing buttons; do not write a kind's name on the page.
+Every blocker gets a button. When an item is a decision with real options, give each option its own button, two or three at most, so the user picks one: for example "Make it a ticket", "Assign it to Charles", and "Close it". Otherwise give the item one strong button, not several weak ones. The kinds are only for choosing buttons. Never write a kind's name, or any other caption, above a button.
 
 When only the user can fix something (raise a quota, attach a tool, log in), the item says what the user needs to do, and the button is still something you can do, such as "Walk me through fixing this" or "I fixed it, check again". For the second, re-run the failing check and clear the item if it passes.
+
+Offer the most reliable fix first, which usually means moving the work to Cloud. Anything that depends on the user's computer, such as a local schedule or a sign-in that lives on one machine, stops whenever that computer sleeps or Letta Code is closed. Offer to run the schedule in Cloud and to connect the account there before asking the user to keep a computer on. Suggest a fix on the user's computer only when Cloud cannot do the job, and say why.
 
 The headline says what is going on; the button says what to do. Never repeat the button's label in the headline, and do not end the text with a "Next: ..." sentence that restates the button. Write the headline "**Grok CLI regression may still be live.**" with the button "Verify the Grok CLI regression", not the headline "**Verify the Grok CLI regression.**"
 
@@ -45,7 +47,7 @@ Offer a Schedule button when the evidence shows recurring work: the user asked f
 
 Do not offer one for one-off work, for work that reports when it finishes (such as CI or a deploy), for anything more often than hourly, for work that needs the user during the run, or for anything on the Dismissed list. Offer at most two at a time.
 
-The label names the work and when it runs, with a time zone. The instruction asks you to set it up and says what to do, when, where to send results, and when to stay quiet. When you set it up, record it in memory and tell the user where it runs: a schedule on the user's computer runs only while Letta Code is open there and the computer is awake.
+The label names the work and when it runs, with a time zone. The instruction asks you to set it up and says what to do, when, where to send results, and when to stay quiet. Set it up in Cloud unless the work truly needs one of the user's computers, record it in memory, and tell the user where it runs.
 
 ### Button format
 
@@ -55,7 +57,7 @@ A fenced code block with the language `palace-action` becomes a button. It holds
 **The dependency report is still manual.** You asked for it on Sep 15, Sep 22, and Sep 29.
 
 ```palace-action
-{"actionId": "schedule-dep-report", "label": "Send the dependency report Mondays at 9am PT", "conversationId": "new", "instruction": "Set up a schedule for Mondays at 9am PT: run the dependency report, post it to #eng-deps, and skip weeks with no changes. Record it in memory and tell me where it runs."}
+{"actionId": "schedule-dep-report", "label": "Send the dependency report Mondays at 9am PT", "conversationId": "new", "instruction": "Set up a Cloud schedule for Mondays at 9am PT: run the dependency report, post it to #eng-deps, and skip weeks with no changes. Record it in memory and tell me where it runs."}
 ```
 ````
 
