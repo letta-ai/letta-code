@@ -2074,6 +2074,7 @@ async function executeToolInner(
   const workingDirectory =
     executionScope.workingDirectory ?? getCurrentWorkingDirectory();
   const scopedAgentId = executionScope.agentId ?? undefined;
+  const turnSecrets = executionScope.transientSecretEnv;
   const modContext =
     context?.modContext ??
     toolExecutionModContext(executionScope, { workingDirectory });
@@ -2275,13 +2276,12 @@ async function executeToolInner(
       }
 
       if (STREAMING_SHELL_TOOLS.has(internalName)) {
-        // Redact only this invocation's secrets.
         const command = enhancedArgs.command ?? enhancedArgs.cmd;
         invocationSecrets =
           typeof command === "string" ||
           (Array.isArray(command) &&
             command.every((part) => typeof part === "string"))
-            ? extractSecretEnvFromCommand(command, scopedAgentId)
+            ? extractSecretEnvFromCommand(command, scopedAgentId, turnSecrets)
             : {};
         invocationRedactions = captureSecretRedactions(invocationSecrets);
         if (options?.onOutput) {

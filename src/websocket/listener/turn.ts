@@ -22,6 +22,7 @@ import {
 } from "@/cli/helpers/accumulator";
 import { telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
+import { releaseToolExecutionContext } from "@/tools/manager";
 import type { StopReasonType } from "@/types/protocol_v2";
 import { isCloudApiDeploymentInterrupted } from "@/utils/cloud-api-shutdown";
 import { isDebugEnabled } from "@/utils/debug";
@@ -211,6 +212,11 @@ async function handleIncomingMessageInner(
     });
     return true;
   };
+  const turnToolContextIds = new Set<string>();
+  let turnToolContextId: string | null = null;
+  const rememberTurnToolContextId = (contextId: string | null): void => {
+    if (contextId) turnToolContextIds.add(contextId);
+  };
   try {
     runtime.lastTerminalLoopErrorMessage = null;
     runtime.lastTerminalLoopErrorRunId = null;
@@ -227,7 +233,6 @@ async function handleIncomingMessageInner(
       conversation_id: conversationId,
     });
     telemetry.setCurrentAgentId(agentId ?? null);
-    let turnToolContextId: string | null = null;
     const setup = await prepareListenerTurn({
       msg,
       runtime,
@@ -262,6 +267,9 @@ async function handleIncomingMessageInner(
       });
       return;
     }
+    rememberTurnToolContextId(
+      setup.preparedToolContext.preparedToolContext.contextId,
+    );
     let turnInput = setup.turnInput;
     const inboundUserTranscriptLines = setup.inboundUserTranscriptLines;
     const overrideModel = setup.overrideModel;
@@ -278,6 +286,7 @@ async function handleIncomingMessageInner(
       preparedToolContext: setup.preparedToolContext.preparedToolContext,
       overrideModel,
       responseFormat: msg.responseFormat,
+      requestScopedClientSkills: setup.requestScopedClientSkills,
       actingUserId: msg.actingUserId,
       getInput: () => turnInput,
       getInterruptedToolCallIds: () =>
@@ -309,6 +318,7 @@ async function handleIncomingMessageInner(
     turnToolContextId = getStreamToolContextId(
       stream as Stream<LettaStreamingResponse>,
     );
+    rememberTurnToolContextId(turnToolContextId);
     let runId: string | undefined;
     seedInboundUserTranscriptLines(buffers, inboundUserTranscriptLines);
     while (true) {
@@ -511,6 +521,7 @@ async function handleIncomingMessageInner(
           turnToolContextId = getStreamToolContextId(
             stream as Stream<LettaStreamingResponse>,
           );
+          rememberTurnToolContextId(turnToolContextId);
           continue;
         }
 
@@ -591,6 +602,7 @@ async function handleIncomingMessageInner(
           turnToolContextId = getStreamToolContextId(
             stream as Stream<LettaStreamingResponse>,
           );
+          rememberTurnToolContextId(turnToolContextId);
           continue;
         }
 
@@ -657,6 +669,7 @@ async function handleIncomingMessageInner(
             turnToolContextId = getStreamToolContextId(
               stream as Stream<LettaStreamingResponse>,
             );
+            rememberTurnToolContextId(turnToolContextId);
             continue;
           }
         }
@@ -726,6 +739,7 @@ async function handleIncomingMessageInner(
           turnToolContextId = getStreamToolContextId(
             stream as Stream<LettaStreamingResponse>,
           );
+          rememberTurnToolContextId(turnToolContextId);
           continue;
         }
 
@@ -806,6 +820,7 @@ async function handleIncomingMessageInner(
       pendingNormalizationInterruptedToolCallIds =
         approvalResult.pendingNormalizationInterruptedToolCallIds;
       turnToolContextId = approvalResult.turnToolContextId;
+      rememberTurnToolContextId(turnToolContextId);
       lastExecutionResults = approvalResult.lastExecutionResults;
       lastExecutingToolCallIds = approvalResult.lastExecutingToolCallIds;
       lastNeedsUserInputToolCallIds =
@@ -854,6 +869,7 @@ async function handleIncomingMessageInner(
       turnToolContextId = getStreamToolContextId(
         stream as Stream<LettaStreamingResponse>,
       );
+      rememberTurnToolContextId(turnToolContextId);
     }
   } catch (error) {
     trackBoundaryError({
@@ -960,6 +976,9 @@ async function handleIncomingMessageInner(
         finalized: finalizedByThisInvocation,
       });
     } finally {
+      for (const contextId of turnToolContextIds) {
+        releaseToolExecutionContext(contextId);
+      }
       releaseListenerTurnContext({ runtime, agentId, conversationId });
     }
 

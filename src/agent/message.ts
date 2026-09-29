@@ -40,6 +40,7 @@ import {
 import {
   buildClientSkillsPayload,
   buildClientSkillsUpdateReminder,
+  type ClientSkill,
 } from "./client-skills";
 import { getSkillSources } from "./context";
 import { parseRetryAfterHeaderMs } from "./turn-recovery-policy";
@@ -243,8 +244,13 @@ export type SendMessageStreamOptions = {
   /** Per-conversation permission mode state. When provided, tool execution uses
    *  this scoped state instead of the global permissionMode singleton. */
   permissionModeState?: PermissionModeState;
-  /** Per-request skill sources. An empty array disables client skills. */
+  /** Per-request skill sources. An empty array disables installed client skills. */
   skillSources?: SkillSource[];
+  /**
+   * Trusted controller-supplied skills forwarded only for this turn. These do
+   * not participate in installed-skill discovery, reminders, or caches.
+   */
+  requestScopedClientSkills?: ClientSkill[];
   /**
    * Per-request model override. Uses backend request-scoped override_model and
    * does not mutate agent/conversation persisted model configuration.
@@ -287,6 +293,23 @@ export type SendMessageStreamRequestOptions = {
   headers?: Record<string, string>;
 };
 
+function mergeRequestScopedClientSkills(
+  installedClientSkills: ClientSkill[],
+  requestScopedClientSkills: ClientSkill[] | undefined,
+): ClientSkill[] {
+  if (!requestScopedClientSkills || requestScopedClientSkills.length === 0) {
+    return installedClientSkills;
+  }
+
+  const mergedByName = new Map(
+    installedClientSkills.map((skill) => [skill.name, skill]),
+  );
+  for (const skill of requestScopedClientSkills) {
+    mergedByName.set(skill.name, skill);
+  }
+  return [...mergedByName.values()];
+}
+
 export function buildConversationMessagesCreateRequestBody(
   conversationId: string,
   messages: Array<MessageCreate | ApprovalCreate>,
@@ -301,7 +324,10 @@ export function buildConversationMessagesCreateRequestBody(
     normalizeOutgoingApprovalMessages(messages, opts.approvalNormalization),
     opts,
     clientTools,
-    clientSkills,
+    mergeRequestScopedClientSkills(
+      clientSkills,
+      opts.requestScopedClientSkills,
+    ),
   );
 }
 
@@ -455,6 +481,12 @@ export async function sendMessageStreamWithBackend(
         },
       ]
     : normalizedMessages;
+  // Merge request-scoped entries only after computing the installed-skill
+  // reminder. They must never enter the reminder baseline or discovery cache.
+  const requestClientSkills = mergeRequestScopedClientSkills(
+    clientSkills,
+    opts.requestScopedClientSkills,
+  );
   const isApprovalContinuation =
     isApprovalContinuationRequest(normalizedMessages);
   // Only reuse cached response state when the approval continuation was fully
@@ -473,7 +505,7 @@ export async function sendMessageStreamWithBackend(
     requestMessages,
     opts,
     clientTools,
-    clientSkills,
+    requestClientSkills,
   );
 
   if (isDebugEnabled()) {

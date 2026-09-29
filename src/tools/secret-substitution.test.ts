@@ -182,6 +182,46 @@ describe("scoped shell secret execution", () => {
       }
     });
   }
+
+  test("injects and scrubs a turn-scoped secret without storing it globally", async () => {
+    const secret = "bcow-test-secret-0123456789";
+    const runtimeScript = createTempRuntimeScriptCommand(
+      "process.stdout.write(process.env.BROWSER_CONTROL_KEY ?? '')",
+    );
+    const prepared = await prepareToolExecutionContextForSpecificTools(
+      ["Bash"],
+      {
+        runtimeContext: {
+          agentId: AGENT_A,
+          workingDirectory: process.cwd(),
+          transientSecretEnv: { BROWSER_CONTROL_KEY: secret },
+        },
+        workingDirectory: process.cwd(),
+      },
+    );
+
+    try {
+      const result = await executeTool(
+        "Bash",
+        {
+          command: `${runtimeScript.command} $BROWSER_CONTROL_KEY`,
+          description: "Read a turn-scoped secret",
+        },
+        { toolContextId: prepared.contextId },
+      );
+      const text = asText(result.toolReturn);
+      expect(result.status).toBe("success");
+      expect(text).toContain("BROWSER_CONTROL_KEY=<REDACTED>");
+      expect(text).not.toContain(secret);
+    } finally {
+      releaseToolExecutionContext(prepared.contextId);
+      runtimeScript.cleanup();
+    }
+
+    expect(
+      extractSecretEnvFromCommand("$BROWSER_CONTROL_KEY", AGENT_A),
+    ).toEqual({});
+  });
 });
 
 /**

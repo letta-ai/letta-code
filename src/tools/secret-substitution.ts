@@ -27,8 +27,9 @@ const SECRET_PATTERN = /\$(?:\{[#!]?)?([A-Z_][A-Z0-9_]*)/g;
 export function extractSecretEnvFromCommand(
   command: string | readonly string[],
   agentId?: string,
+  provided: Readonly<Record<string, string>> = {},
 ): Record<string, string> {
-  const secrets = loadSecrets(agentId);
+  const secrets = { ...loadSecrets(agentId), ...provided };
   const env: Record<string, string> = {};
 
   const scan = (text: string) => {
