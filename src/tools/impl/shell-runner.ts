@@ -84,13 +84,31 @@ type ProcessEvents = {
 const NODE_PTY_BRIDGE_SCRIPT = `
 const pty = require("node-pty");
 const config = JSON.parse(process.argv[1]);
-const child = pty.spawn(config.executable, config.args, {
+let child = null;
+let groupKillRequested = false;
+const killPtyGroup = () => {
+  if (!child) {
+    groupKillRequested = true;
+    return;
+  }
+  try {
+    process.kill(-child.pid, "SIGKILL");
+  } catch {
+    child.kill("SIGKILL");
+  }
+  process.exit(137);
+};
+if (process.platform !== "win32") {
+  process.on("SIGUSR2", killPtyGroup);
+}
+child = pty.spawn(config.executable, config.args, {
   name: "xterm-256color",
   cols: 80,
   rows: 24,
   cwd: config.cwd,
   env: process.env,
 });
+if (groupKillRequested) killPtyGroup();
 let pendingExitCode = null;
 let pidReported = typeof process.send !== "function";
 const reportPid = () => {
@@ -116,16 +134,6 @@ process.stdin.setEncoding("utf8");
 process.stdin.on("data", (data) => child.write(data));
 process.on("SIGTERM", () => child.kill("SIGTERM"));
 process.on("SIGINT", () => child.kill("SIGINT"));
-if (process.platform !== "win32") {
-  process.on("SIGUSR2", () => {
-    try {
-      process.kill(-child.pid, "SIGKILL");
-    } catch {
-      child.kill("SIGKILL");
-    }
-    process.exit(137);
-  });
-}
 `;
 
 const FORCE_KILL_GRACE_MS = 2000;
