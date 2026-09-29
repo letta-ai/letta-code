@@ -57,7 +57,11 @@ import {
   parseServerLifecycleMessage,
   parseServerMessage,
 } from "./protocol-inbound";
-import { summarizeV2Command } from "./protocol-logging";
+import {
+  redactRawV2FrameForLogging,
+  redactV2CommandForLogging,
+  summarizeV2Command,
+} from "./protocol-logging";
 import { emitDeviceStatusUpdate } from "./protocol-outbound";
 import {
   scheduleQueuePump,
@@ -221,17 +225,12 @@ export function createListenerMessageHandler(
   return async (data: WebSocket.RawData): Promise<void> => {
     const lifecycleMessage =
       parseListenerReadyMessage(data) ?? parseServerLifecycleMessage(data);
-    // Legacy relays can deliver input before onConnected. Fail outside the
-    // handler catch so no parsing, logging, or dispatch follows a failed seal.
-    // Only projected pongs are content-free; ready frames retain extra fields.
     if (lifecycleMessage?.type !== "pong") sealStartupLogs();
     const raw = data.toString();
     let parsedScope: ParsedRuntimeScope = null;
 
     try {
       if (lifecycleMessage) {
-        // Record relay pongs so the heartbeat watchdog can detect a half-open
-        // socket (no pong within the timeout) and force a reconnect.
         if (lifecycleMessage.type === "pong") {
           runtime.lastPongAt = Date.now();
         }
@@ -242,18 +241,15 @@ export function createListenerMessageHandler(
       const parsed = parseServerMessage(data);
       parsedScope = getParsedRuntimeScope(parsed);
       if (parsed) {
-        safeEmitWsEvent("recv", "client", parsed);
+        safeEmitWsEvent("recv", "client", redactV2CommandForLogging(parsed));
       } else {
-        // Log unparseable frames so protocol drift is visible in debug mode
         safeEmitWsEvent("recv", "lifecycle", {
           type: "_ws_unparseable",
-          raw,
+          raw: redactRawV2FrameForLogging(raw),
         });
       }
       if (isDebugEnabled()) {
-        console.log(
-          `[Listen] Received message: ${JSON.stringify(parsed, null, 2)}`,
-        );
+        console.log(`[Listen] Received ${summarizeV2Command(parsed)}`);
       }
 
       if (!parsed) {
@@ -474,8 +470,6 @@ export function createListenerMessageHandler(
             parsed.runtime.agent_id,
             parsed.runtime.conversation_id,
           );
-          // The continuation this scope's runtime_start announced has arrived;
-          // sync recovery may act on its own again from here.
           clearExpectedInboundTeleport(scopedRuntime);
           const acceptedKey = `teleport:${teleportId}`;
           const previousDisposition =
@@ -556,6 +550,11 @@ export function createListenerMessageHandler(
             ? { agentId: parsed.runtime.agent_id }
             : {}),
           conversationId: parsed.runtime.conversation_id,
+          noCoalesce: Boolean(
+            inputPayload.client_skills || inputPayload.secret_env,
+          ),
+          requestScopedClientSkills: inputPayload.client_skills,
+          requestScopedSecretEnv: inputPayload.secret_env,
           clientToolAllowlist: inputPayload.client_tool_allowlist,
           clientToolset: inputPayload.client_toolset,
           externalToolScopeIds: inputPayload.external_tool_scope_ids,
@@ -827,7 +826,6 @@ export function createListenerMessageHandler(
         return;
       }
 
-      // Channels management commands (device/live management)
       if (runtime.serviceCommandTypes.has(parsed.type)) {
         runDetachedListenerTask("service_command", async () => {
           const serviceCommandHandler = runtime.serviceCommandHandler;
@@ -886,9 +884,7 @@ export function createListenerMessageHandler(
         return;
       }
 
-      // Slash commands (execute_command)
       if (isExecuteCommandCommand(parsed)) {
-        // Internal-only: refresh doctor state after recompile (no chat output)
         if (parsed.command_id === "refresh_doctor_state") {
           const agentId = parsed.runtime.agent_id;
           if (agentId && settingsManager.isMemfsEnabled(agentId)) {
@@ -946,7 +942,6 @@ export function createListenerMessageHandler(
         return;
       }
 
-      // Terminal commands (no runtime scope required)
       if (parsed.type === "terminal_spawn") {
         handleTerminalSpawn(
           parsed,

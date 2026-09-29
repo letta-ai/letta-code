@@ -28,6 +28,8 @@ import type {
   ControlRequest,
   ExternalToolCallResult,
   LoopStatus,
+  RequestScopedClientSkill,
+  RequestScopedSecretEnv,
   RuntimeScope,
   StopReasonType,
   TeleportContinuation,
@@ -105,6 +107,10 @@ export interface IncomingMessage {
    */
   processOwnedTurn?: boolean;
   imageFailureMode?: "strict" | "drop";
+  /** Trusted controller-supplied skills available only for this turn. */
+  requestScopedClientSkills?: RequestScopedClientSkill[];
+  /** Trusted controller-supplied shell secrets available only for this turn. */
+  requestScopedSecretEnv?: RequestScopedSecretEnv;
   clientToolAllowlist?: string[];
   clientToolset?: ClientToolsetConfig;
   externalToolScopeIds?: string[];
@@ -228,6 +234,8 @@ export type ConversationRuntime = {
   activeConnectionId: ListenerConnectionId | null;
   turnLifecycle: TurnLifecycle;
   messageQueue: Promise<void>;
+  /** Invalidates request-scoped inputs still waiting to enter the queue. */
+  requestScopedDispatchEpoch: number;
   /** Recently accepted ingress IDs, retained for idempotent client retries. */
   acceptedInputDispositions: Map<string, "started" | "queued">;
   pendingApprovalResolvers: Map<string, PendingApprovalResolver>;

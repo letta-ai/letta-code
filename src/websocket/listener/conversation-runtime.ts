@@ -1,5 +1,6 @@
 import { type QueueItem, QueueRuntime } from "@/queue/queue-runtime";
 import type { QueueRemovalTransition } from "@/types/queue-update-protocol";
+import { getInboundClientMessageIds } from "./inbound-queue";
 import { getQueueItemScope, getQueueItemsScope } from "./queue";
 import { scheduleQueueEmit } from "./queue-update-outbound";
 import {
@@ -53,7 +54,21 @@ export function ensureConversationQueueRuntime(
         });
       },
       onCleared: (_reason, _clearedCount, items) => {
+        runtime.requestScopedDispatchEpoch += 1;
         runtime.pendingTurns = 0;
+        for (const item of items) {
+          const queuedMessage = runtime.queuedMessagesByItemId.get(item.id);
+          if (queuedMessage) {
+            for (const clientMessageId of getInboundClientMessageIds(
+              queuedMessage,
+            )) {
+              runtime.acceptedInputDispositions.delete(clientMessageId);
+            }
+          } else if (item.clientMessageId) {
+            runtime.acceptedInputDispositions.delete(item.clientMessageId);
+          }
+          runtime.queuedMessagesByItemId.delete(item.id);
+        }
         scheduleQueueEmit(
           listener,
           getQueueItemsScope(items),

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import type { InputCommand } from "@/types/protocol_v2";
 import {
   isCronPauseCommand,
   isCronResumeCommand,
@@ -11,6 +12,11 @@ import {
   isUpdateModelCommand,
   parseServerMessage,
 } from "@/websocket/listener/protocol-inbound";
+import {
+  redactRawV2FrameForLogging,
+  redactV2CommandForLogging,
+  summarizeV2Command,
+} from "@/websocket/listener/protocol-logging";
 import { validateResponseFormat } from "@/websocket/listener/structured-output";
 
 describe("app-server protocol hard cut", () => {
@@ -120,6 +126,136 @@ describe("input protocol-inbound validators", () => {
     expect(parsed?.type).toBe("input");
     if (parsed?.type === "input" && parsed.payload.kind === "create_message") {
       expect(parsed.payload.exclude_interactive_tools).toBe(true);
+    }
+  });
+
+  test("accepts bounded request-scoped client skills without logging their values", () => {
+    const secretDescription = "Pair with ephemeral-key-123 before expiry";
+    const command: InputCommand = {
+      type: "input",
+      runtime: { agent_id: "agent-1", conversation_id: "default" },
+      payload: {
+        kind: "create_message",
+        messages: [],
+        client_skills: [
+          {
+            name: "temporary-controller-skill",
+            description: secretDescription,
+            location: "/skills/temporary/SKILL.md",
+          },
+        ],
+        secret_env: { BROWSER_CONTROL_KEY: "ephemeral-key-123" },
+      },
+    };
+    const parsed = parseServerMessage(Buffer.from(JSON.stringify(command)));
+
+    expect(parsed).toEqual(command);
+    const summary = summarizeV2Command(parsed);
+    expect(summary).toContain("client_skills=1");
+    expect(summary).toContain("secret_env=1");
+    expect(summary).not.toContain(secretDescription);
+    expect(summary).not.toContain("temporary-controller-skill");
+    expect(summary).not.toContain("/skills/temporary/SKILL.md");
+    const logged = JSON.stringify(redactV2CommandForLogging(parsed));
+    expect(logged).toContain('"client_skills_count":1');
+    expect(logged).toContain('"secret_env_count":1');
+    expect(logged).not.toContain(secretDescription);
+    expect(logged).not.toContain("temporary-controller-skill");
+    expect(logged).not.toContain("/skills/temporary/SKILL.md");
+    expect(logged).not.toContain("ephemeral-key-123");
+  });
+
+  test.each([
+    { secret_env: "not-an-object" },
+    { secret_env: { lowercase: "secret" } },
+    { secret_env: { BROWSER_CONTROL_KEY: 123 } },
+    { secret_env: { BROWSER_CONTROL_KEY: "" } },
+  ])("rejects malformed request-scoped secret env %#", (payload) => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          payload: {
+            kind: "create_message",
+            messages: [],
+            ...payload,
+          },
+        }),
+      ),
+    );
+
+    expect(parsed?.type).toBe("__invalid_input");
+    if (parsed?.type === "__invalid_input") {
+      expect(parsed.reason).toContain("secret_env");
+    }
+  });
+
+  test.each([
+    '{"secret_env":{"BROWSER_CONTROL_KEY":"ephemeral-key"}',
+    '{"secret\\u005fenv":{"BROWSER_CONTROL_KEY":"escaped-key"}',
+    '{"client\\u005fskills":[{"description":"escaped-secret"}]',
+    "not-json",
+  ])("never logs an unparseable raw frame: %s", (raw) => {
+    const logged = redactRawV2FrameForLogging(raw);
+    expect(logged).toBe(
+      `[REDACTED unparseable frame; bytes=${Buffer.byteLength(raw, "utf8")}]`,
+    );
+    expect(logged).not.toContain("ephemeral-key");
+    expect(logged).not.toContain("escaped-key");
+    expect(logged).not.toContain("escaped-secret");
+  });
+
+  test.each([
+    { client_skills: "not-an-array" },
+    {
+      client_skills: [{ name: "missing-location", description: "description" }],
+    },
+    {
+      client_skills: [
+        {
+          name: "wrong-description",
+          description: 123,
+          location: "/skill/SKILL.md",
+        },
+      ],
+    },
+    {
+      client_skills: [
+        {
+          name: "extra-field",
+          description: "description",
+          location: "/skill/SKILL.md",
+          secret: "not allowed",
+        },
+      ],
+    },
+    {
+      client_skills: Array.from({ length: 33 }, (_, index) => ({
+        name: `skill-${index}`,
+        description: "description",
+        location: `/skill-${index}/SKILL.md`,
+      })),
+    },
+  ])("rejects malformed request-scoped client skills %#", (payload) => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          payload: {
+            kind: "create_message",
+            messages: [],
+            ...payload,
+          },
+        }),
+      ),
+    );
+
+    expect(parsed?.type).toBe("__invalid_input");
+    if (parsed?.type === "__invalid_input") {
+      expect(parsed.reason).toContain("client_skills");
+      expect(parsed.reason).not.toContain("not allowed");
     }
   });
 

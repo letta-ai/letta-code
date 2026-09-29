@@ -1,4 +1,5 @@
 import type WebSocket from "ws";
+import { dropRequestScopedInputsForConnection } from "./inbound-queue";
 import { getConversationRuntimeKey, nextEventSeq } from "./runtime";
 import {
   isListenerTransportOpen,
@@ -340,6 +341,7 @@ export function suspendListenerConnection(
     subscriptions: new Set(connection.subscriptions),
     eventSeqCounter: connection.eventSeqCounter,
   };
+  dropRequestScopedInputsForConnection(runtime, connectionId);
   const closed = closeListenerConnection(runtime, connectionId);
   getResumeStates(runtime).set(connectionId, resumeState);
   return closed;

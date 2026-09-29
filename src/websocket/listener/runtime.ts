@@ -263,6 +263,7 @@ export function createConversationRuntime(
     activeConnectionId: null,
     turnLifecycle,
     messageQueue: Promise.resolve(),
+    requestScopedDispatchEpoch: 0,
     acceptedInputDispositions: new Map(),
     pendingApprovalResolvers: new Map(),
     recoveredApprovalState: null,

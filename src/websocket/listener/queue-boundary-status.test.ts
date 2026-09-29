@@ -14,6 +14,7 @@ import {
   suspendListenerConnection,
 } from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
+import { dispatchInboundMessageWhenReady } from "./inbound-dispatch";
 import { enqueueInboundUserMessage } from "./inbound-queue";
 import { createRuntime, startConnectedListenerRuntime } from "./lifecycle";
 import { createListenerMessageHandler } from "./message-router";
@@ -100,7 +101,10 @@ test("a queued input drains once after its scheduled socket is replaced", async 
     finishDirectTurn = resolve;
   });
   expect(
-    enqueueInboundUserMessage(runtime, queuedMessage("cm-reconnect")),
+    enqueueInboundUserMessage(runtime, {
+      ...queuedMessage("cm-reconnect"),
+      connectionId: options.connectionId,
+    }),
   ).toBe(true);
   const processed: string[] = [];
   const processQueuedTurn = async () => {
@@ -135,6 +139,201 @@ test("a queued input drains once after its scheduled socket is replaced", async 
   expect(runtime.queuedMessagesByItemId.size).toBe(0);
   expect(oldSocket.sentPayloads).toEqual([]);
   expect(newSocket.sentPayloads.length).toBeGreaterThan(0);
+});
+
+test("a suspended connection drops queued request-scoped context", async () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+  const options = makeListenerOptions();
+  const oldSocket = new MockSocket();
+  const newSocket = new MockSocket();
+  setActiveRuntime(listener);
+  openListenerConnection({
+    runtime: listener,
+    connectionId: options.connectionId,
+    writer: oldSocket as unknown as WebSocket,
+    options,
+  });
+  markListenerConnectionInitialized(listener, options.connectionId);
+  subscribeListenerConnection(listener, options.connectionId, {
+    agent_id: "agent-1",
+    conversation_id: "conv-1",
+  });
+
+  expect(
+    enqueueInboundUserMessage(runtime, {
+      ...queuedMessage("cm-scoped-reconnect"),
+      connectionId: options.connectionId,
+      requestScopedClientSkills: [
+        {
+          name: "browser-control-session",
+          description: "ephemeral",
+          location: "request://browser-control-session",
+        },
+      ],
+      requestScopedSecretEnv: { BROWSER_CONTROL_KEY: "secret" },
+    }),
+  ).toBe(true);
+  runtime.acceptedInputDispositions.set("cm-scoped-reconnect", "queued");
+
+  oldSocket.readyState = WebSocket.CLOSED;
+  suspendListenerConnection(listener, options.connectionId);
+
+  expect(runtime.queueRuntime.length).toBe(0);
+  expect(runtime.queuedMessagesByItemId.size).toBe(0);
+  expect(runtime.acceptedInputDispositions.has("cm-scoped-reconnect")).toBe(
+    false,
+  );
+
+  openListenerConnection({
+    runtime: listener,
+    connectionId: options.connectionId,
+    writer: newSocket as unknown as WebSocket,
+    options,
+  });
+  markListenerConnectionInitialized(listener, options.connectionId);
+  const processed: string[] = [];
+  scheduleQueuePump(
+    runtime,
+    getOrCreateProcessTransport(listener),
+    options,
+    async () => {
+      processed.push("cm-scoped-reconnect");
+    },
+  );
+  await runtime.messageQueue;
+
+  expect(processed).toEqual([]);
+  expect(
+    enqueueInboundUserMessage(runtime, {
+      ...queuedMessage("cm-scoped-reconnect"),
+      connectionId: options.connectionId,
+      requestScopedSecretEnv: { BROWSER_CONTROL_KEY: "fresh-secret" },
+    }),
+  ).toBe(true);
+});
+
+test("suspension drops request-scoped input still waiting on messageQueue", async () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+  const options = makeListenerOptions();
+  const oldSocket = new MockSocket();
+  const newSocket = new MockSocket();
+  setActiveRuntime(listener);
+  openListenerConnection({
+    runtime: listener,
+    connectionId: options.connectionId,
+    writer: oldSocket as unknown as WebSocket,
+    options,
+  });
+
+  let releaseMessageQueue!: () => void;
+  runtime.messageQueue = new Promise<void>((resolve) => {
+    releaseMessageQueue = resolve;
+  });
+  const processed: string[] = [];
+  const acknowledgements: boolean[] = [];
+  dispatchInboundMessageWhenReady({
+    listener,
+    runtime,
+    incoming: {
+      ...queuedMessage("cm-scoped-pending-suspend"),
+      connectionId: options.connectionId,
+      noCoalesce: true,
+      requestScopedSecretEnv: { BROWSER_CONTROL_KEY: "stale-secret" },
+    },
+    socket: oldSocket as unknown as WebSocket,
+    options,
+    processQueuedTurn: async () => {},
+    processIncomingMessage: async () => {
+      processed.push("cm-scoped-pending-suspend");
+    },
+    trackListenerError: () => {},
+    onInputAccepted: ({ accepted }) => acknowledgements.push(accepted),
+  });
+
+  oldSocket.readyState = WebSocket.CLOSED;
+  suspendListenerConnection(listener, options.connectionId);
+  openListenerConnection({
+    runtime: listener,
+    connectionId: options.connectionId,
+    writer: newSocket as unknown as WebSocket,
+    options,
+  });
+  releaseMessageQueue();
+  await runtime.messageQueue;
+
+  expect(processed).toEqual([]);
+  expect(acknowledgements).toEqual([false]);
+  expect(runtime.queueRuntime.length).toBe(0);
+  expect(runtime.queuedMessagesByItemId.size).toBe(0);
+});
+
+test("queue clear drops request-scoped input still waiting on messageQueue", async () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+  const options = makeListenerOptions();
+  const socket = new MockSocket();
+  setActiveRuntime(listener);
+  openListenerConnection({
+    runtime: listener,
+    connectionId: options.connectionId,
+    writer: socket as unknown as WebSocket,
+    options,
+  });
+
+  let releaseMessageQueue!: () => void;
+  runtime.messageQueue = new Promise<void>((resolve) => {
+    releaseMessageQueue = resolve;
+  });
+  const processed: string[] = [];
+  const acknowledgements: boolean[] = [];
+  dispatchInboundMessageWhenReady({
+    listener,
+    runtime,
+    incoming: {
+      ...queuedMessage("cm-scoped-pending-clear"),
+      connectionId: options.connectionId,
+      noCoalesce: true,
+      requestScopedSecretEnv: { BROWSER_CONTROL_KEY: "stale-secret" },
+    },
+    socket: socket as unknown as WebSocket,
+    options,
+    processQueuedTurn: async () => {},
+    processIncomingMessage: async () => {
+      processed.push("cm-scoped-pending-clear");
+    },
+    trackListenerError: () => {},
+    onInputAccepted: ({ accepted }) => acknowledgements.push(accepted),
+  });
+
+  runtime.queueRuntime.clear("cancelled");
+  releaseMessageQueue();
+  await runtime.messageQueue;
+
+  expect(processed).toEqual([]);
+  expect(acknowledgements).toEqual([false]);
+  expect(runtime.queueRuntime.length).toBe(0);
+  expect(runtime.queuedMessagesByItemId.size).toBe(0);
+});
+
+test("clearing a conversation queue also clears retained payloads", () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+  expect(
+    enqueueInboundUserMessage(runtime, {
+      ...queuedMessage("cm-cleared"),
+      connectionId: "conn-cleared",
+      requestScopedSecretEnv: { BROWSER_CONTROL_KEY: "secret" },
+    }),
+  ).toBe(true);
+  runtime.acceptedInputDispositions.set("cm-cleared", "queued");
+
+  runtime.queueRuntime.clear("cancelled");
+
+  expect(runtime.queueRuntime.length).toBe(0);
+  expect(runtime.queuedMessagesByItemId.size).toBe(0);
+  expect(runtime.acceptedInputDispositions.has("cm-cleared")).toBe(false);
 });
 
 test("an unrelated connection cannot drain a disconnected conversation", async () => {

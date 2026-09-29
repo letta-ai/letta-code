@@ -25,12 +25,53 @@ function pushField(
   if (formatted !== null) fields.push(`${label}=${formatted}`);
 }
 
+export function redactV2CommandForLogging(parsed: unknown): unknown {
+  if (
+    !isRecord(parsed) ||
+    parsed.type !== "input" ||
+    !isRecord(parsed.payload)
+  ) {
+    return parsed;
+  }
+  if (
+    parsed.payload.kind !== "create_message" ||
+    (!("client_skills" in parsed.payload) && !("secret_env" in parsed.payload))
+  ) {
+    return parsed;
+  }
+
+  const payload = { ...parsed.payload };
+  const clientSkills = payload.client_skills;
+  delete payload.client_skills;
+  payload.client_skills_count = Array.isArray(clientSkills)
+    ? clientSkills.length
+    : "invalid";
+  const secretEnv = payload.secret_env;
+  delete payload.secret_env;
+  payload.secret_env_count = isRecord(secretEnv)
+    ? Object.keys(secretEnv).length
+    : secretEnv === undefined
+      ? 0
+      : "invalid";
+  return { ...parsed, payload };
+}
+
+export function redactRawV2FrameForLogging(raw: string): string {
+  return `[REDACTED unparseable frame; bytes=${Buffer.byteLength(raw, "utf8")}]`;
+}
+
 function summarizeInputPayload(payload: unknown): string[] {
   if (!isRecord(payload)) return [];
   const fields: string[] = [];
   pushField(fields, "kind", payload.kind);
   if (payload.kind === "create_message") {
     pushField(fields, "messages", payload.messages);
+    if (Array.isArray(payload.client_skills)) {
+      fields.push(`client_skills=${payload.client_skills.length}`);
+    }
+    if (isRecord(payload.secret_env)) {
+      fields.push(`secret_env=${Object.keys(payload.secret_env).length}`);
+    }
     pushField(fields, "client_tool_allowlist", payload.client_tool_allowlist);
     if (isRecord(payload.client_toolset)) {
       pushField(fields, "client_toolset.base", payload.client_toolset.base);
