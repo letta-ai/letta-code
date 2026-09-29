@@ -56,21 +56,35 @@ async function startOAuthCallbackServerOnPort(
     if (
       request.method !== "GET" ||
       !request.url?.startsWith("/") ||
-      request.url.startsWith("//")
+      request.url.startsWith("//") ||
+      request.url.includes("\\")
     ) {
       response.writeHead(400, { "Content-Type": "text/plain" });
       response.end("Invalid request target");
       return;
     }
+    const address = server.address();
+    const expectedHost =
+      address && typeof address !== "string"
+        ? `127.0.0.1:${address.port}`
+        : undefined;
+    if (!expectedHost || request.headers.host !== expectedHost) {
+      response.writeHead(400, { "Content-Type": "text/plain" });
+      response.end("Invalid callback host");
+      return;
+    }
     let url: URL;
     try {
-      url = new URL(request.url, "http://127.0.0.1");
+      url = new URL(request.url, `http://${expectedHost}`);
     } catch {
       response.writeHead(400, { "Content-Type": "text/plain" });
       response.end("Invalid request target");
       return;
     }
-    if (url.pathname !== "/callback") {
+    if (
+      url.origin !== `http://${expectedHost}` ||
+      url.pathname !== "/callback"
+    ) {
       response.writeHead(404).end("Not found");
       return;
     }

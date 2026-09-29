@@ -9,7 +9,10 @@ import {
   StdioClientTransport,
 } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type {
+  FetchLike,
+  Transport,
+} from "@modelcontextprotocol/sdk/shared/transport.js";
 
 interface McpServerConfigBase {
   name: string;
@@ -233,6 +236,7 @@ function createTransport(
     return new StreamableHTTPClientTransport(new URL(config.url), {
       requestInit: headersRequestInit(headers),
       authProvider: options.oauth?.authProvider,
+      fetch: abortAwareFetch(options.signal),
     });
   }
   if (config.transport === "sse") {
@@ -241,9 +245,7 @@ function createTransport(
     return new SSEClientTransport(new URL(config.url), {
       requestInit,
       authProvider: options.oauth?.authProvider,
-      fetch: headers
-        ? (url, init) => fetch(url, mergeHeaders(init, headers))
-        : undefined,
+      fetch: abortAwareFetch(options.signal, headers),
     });
   }
   return new StdioClientTransport({
@@ -253,6 +255,24 @@ function createTransport(
     ...(config.cwd ? { cwd: config.cwd } : {}),
     stderr: options.stderr ?? "inherit",
   });
+}
+
+function abortAwareFetch(
+  operationSignal?: AbortSignal,
+  headers?: Record<string, string>,
+): FetchLike | undefined {
+  if (!operationSignal && !headers) return undefined;
+  return (url, init) => {
+    const requestInit = headers ? mergeHeaders(init, headers) : { ...init };
+    const requestSignal = requestInit.signal ?? undefined;
+    return fetch(url, {
+      ...requestInit,
+      signal:
+        operationSignal && requestSignal
+          ? AbortSignal.any([operationSignal, requestSignal])
+          : (operationSignal ?? requestSignal),
+    });
+  };
 }
 
 function supportsOAuthCompletion(

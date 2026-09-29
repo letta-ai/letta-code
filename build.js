@@ -198,6 +198,9 @@ await Bun.build({
   naming: {
     entry: "mcp-oauth.js",
   },
+  define: {
+    LETTA_VERSION: JSON.stringify(version),
+  },
 });
 
 await Bun.build({

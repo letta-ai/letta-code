@@ -229,7 +229,7 @@ class PersistentMcpOAuthProvider implements OAuthClientProvider {
   private observedDiscoveryVersion: number;
   private tokenOperationGeneration: number;
   private tokenOperationVersion: number;
-  private readonly coordinator: CredentialCoordinator;
+  private coordinatorValue?: CredentialCoordinator;
   private readonly credentialKey: string;
   private readonly coordinationKey: string;
   private readonly storage: McpOAuthStorage;
@@ -259,12 +259,13 @@ class PersistentMcpOAuthProvider implements OAuthClientProvider {
     this.openBrowser = options.openBrowser;
     this.expectedState = options.expectedState;
     this.generation = options.generation;
-    this.coordinator = getCredentialCoordinator(options.coordinationKey);
-    this.observedClientVersion = this.coordinator.clientVersion;
-    this.observedTokenVersion = this.coordinator.tokenVersion;
-    this.observedDiscoveryVersion = this.coordinator.discoveryVersion;
-    this.tokenOperationGeneration = this.coordinator.generation;
-    this.tokenOperationVersion = this.coordinator.tokenVersion;
+    const coordinator = getCredentialCoordinator(options.coordinationKey);
+    this.coordinatorValue = coordinator;
+    this.observedClientVersion = coordinator.clientVersion;
+    this.observedTokenVersion = coordinator.tokenVersion;
+    this.observedDiscoveryVersion = coordinator.discoveryVersion;
+    this.tokenOperationGeneration = coordinator.generation;
+    this.tokenOperationVersion = coordinator.tokenVersion;
     this.stateData = {
       ...options.persisted,
       redirectUrl: options.redirectUrl,
@@ -422,6 +423,7 @@ class PersistentMcpOAuthProvider implements OAuthClientProvider {
         return { state, clientMerged, discoveryMerged };
       },
     );
+    this.codeVerifierValue = undefined;
     if (this.closed) {
       this.scrubLocalState();
       return;
@@ -614,8 +616,17 @@ class PersistentMcpOAuthProvider implements OAuthClientProvider {
     if (this.closed) return;
     this.closed = true;
     this.scrubLocalState();
-    await releaseCredentialCoordinator(this.coordinationKey);
-    this.scrubLocalState();
+    try {
+      await releaseCredentialCoordinator(this.coordinationKey);
+    } finally {
+      this.coordinatorValue = undefined;
+      this.scrubLocalState();
+    }
+  }
+
+  private get coordinator(): CredentialCoordinator {
+    if (!this.coordinatorValue) throw new Error("MCP OAuth session is closed");
+    return this.coordinatorValue;
   }
 
   private scrubLocalState(): void {

@@ -17,11 +17,18 @@ export interface McpOAuthCredentialSnapshot {
   scope?: string;
 }
 
-/** Async persistence for completed MCP OAuth credentials. */
+/**
+ * Abort-aware persistence for completed MCP OAuth credentials.
+ * Implementations must reject promptly when `signal` aborts and must not apply
+ * a write or delete after cancellation.
+ */
 export interface McpOAuthStorage {
-  get(credentialKey: string): Promise<string | null | undefined>;
-  set(credentialKey: string, value: string): Promise<void>;
-  delete(credentialKey: string): Promise<unknown>;
+  get(
+    credentialKey: string,
+    signal: AbortSignal,
+  ): Promise<string | null | undefined>;
+  set(credentialKey: string, value: string, signal: AbortSignal): Promise<void>;
+  delete(credentialKey: string, signal: AbortSignal): Promise<unknown>;
 }
 
 /** Options for one complete, single-flight MCP OAuth authorization. */
@@ -97,7 +104,7 @@ export async function authorizeMcpServerWithStorage(
     flight = newFlight;
     inFlightAuthorizations.set(flightKey, flight);
   }
-  return subscribeToAuthorization(flight, options.signal);
+  return subscribeToAuthorization(flightKey, flight, options.signal);
 }
 
 async function runAuthorization(
@@ -105,10 +112,11 @@ async function runAuthorization(
   credentialKey: string,
   signal: AbortSignal,
 ): Promise<McpOAuthCredentialSnapshot> {
+  const storage = abortableStorage(options.storage, signal);
   const creating = createMcpOAuthSessionWithStorage({
     credentialKey,
     storageNamespace: options.storageNamespace,
-    storage: options.storage,
+    storage,
     interactive: true,
     openBrowser: options.openBrowser,
     onStatus: options.onStatus,
@@ -145,28 +153,72 @@ async function runAuthorization(
   }
 }
 
+function abortableStorage(storage: McpOAuthStorage, signal: AbortSignal) {
+  return {
+    get: (credentialKey: string) =>
+      runStorageOperation(() => storage.get(credentialKey, signal), signal),
+    set: (credentialKey: string, value: string) =>
+      runStorageOperation(
+        () => storage.set(credentialKey, value, signal),
+        signal,
+      ),
+    delete: (credentialKey: string) =>
+      runStorageOperation(() => storage.delete(credentialKey, signal), signal),
+  };
+}
+
+function runStorageOperation<T>(
+  operation: () => Promise<T>,
+  signal: AbortSignal,
+): Promise<T> {
+  signal.throwIfAborted();
+  return withAbort(operation(), signal);
+}
+
 function subscribeToAuthorization(
+  flightKey: string,
   flight: InFlightAuthorization,
   signal?: AbortSignal,
 ): Promise<McpOAuthCredentialSnapshot> {
   flight.consumers += 1;
-  let released = false;
   const release = (): void => {
-    if (released) return;
-    released = true;
     flight.consumers -= 1;
-    if (!flight.settled && flight.consumers === 0) flight.controller.abort();
+    if (!flight.settled && flight.consumers === 0) {
+      if (inFlightAuthorizations.get(flightKey) === flight) {
+        inFlightAuthorizations.delete(flightKey);
+      }
+      flight.controller.abort();
+    }
   };
-  return withAbort(flight.promise, signal).then(
-    (credentials) => {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const abort = () => {
+      if (settled) return;
+      settled = true;
       release();
-      return { ...credentials };
-    },
-    (error: unknown) => {
-      release();
-      throw error;
-    },
-  );
+      reject(
+        signal?.reason ?? new DOMException("Operation aborted", "AbortError"),
+      );
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) abort();
+    void flight.promise.then(
+      (credentials) => {
+        if (settled) return;
+        settled = true;
+        signal?.removeEventListener("abort", abort);
+        release();
+        resolve({ ...credentials });
+      },
+      (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        signal?.removeEventListener("abort", abort);
+        release();
+        reject(error);
+      },
+    );
+  });
 }
 
 async function withAbort<T>(
