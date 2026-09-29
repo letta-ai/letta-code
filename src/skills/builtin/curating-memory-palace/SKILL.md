@@ -1,6 +1,6 @@
 ---
 name: curating-memory-palace
-description: Curates the Memory Palace, a user-facing command center for agent state in palace/. Use when creating or updating palace/*.md sections or palace/MEMORY.md, adding palace-action buttons, or handling a Palace action or reply.
+description: Curates the Memory Palace, a one-page view in palace/ where the user reviews and acts on agent state. Use whenever you have something the user should review in one place, such as tasks, suggested improvements, open questions, follow-ups, blockers, or changes in your understanding; during reflection; when asked to set up or update the Palace; and when handling a Palace action or reply.
 ---
 
 # Curating the Memory Palace
@@ -10,6 +10,17 @@ Treat the Memory Palace as a command center for state: make your ongoing underst
 Choose contents that fit the agent and its relationship with the user. A companion might share relational understanding, shared interests, or unresolved questions. A work agent might surface pending work, proactively identified issues, or tasks it can resume. Neither is the universal template.
 
 Show meaningful current state, not a transcript recap or a page about maintaining the Palace itself. Keep it concise without forcing everything into a task list.
+
+## When to write to it
+
+The Palace is where you put things for the user to review. Update it as you go, not only when asked:
+
+- **During work:** when you notice a task, an improvement you could make, a question only the user can answer, a blocker, or a follow-up, add it to the right section. Mention it in the conversation too if it matters now.
+- **During reflection:** check the Palace against what happened. Add new items, update changed ones, and remove items that are done, stale, or dismissed.
+- **When the user asks** to set up or update the Palace: set up means build a first Palace from what you already know; update means bring every section current.
+- **After a Palace action or reply:** update the section it came from.
+
+Skip it for things that only matter inside the current conversation.
 
 ## Files
 
