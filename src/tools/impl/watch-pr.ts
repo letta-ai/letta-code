@@ -138,7 +138,6 @@ export async function watch_pr(
     emit(event) {
       queueMonitorEvent({
         taskId,
-        description,
         event,
         scope,
         actingUserId,
