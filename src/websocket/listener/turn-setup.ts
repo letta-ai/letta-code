@@ -20,6 +20,7 @@ import {
 import { buildListenReminderContext } from "@/reminders/listen-context";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { INTERACTIVE_USER_INPUT_TOOL_NAMES } from "@/tools/interactive-policy";
+import { releaseToolExecutionContext } from "@/tools/manager";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import { debugWarn, isDebugEnabled } from "@/utils/debug";
 import { detectShellContext } from "@/utils/shell-context";
@@ -65,6 +66,7 @@ export type ListenerTurnSetupResult =
       inboundUserTranscriptLines: Line[];
       pendingNormalizationInterruptedToolCallIds: string[];
       preparedToolContext: PreparedToolContext;
+      requestScopedClientSkills: IncomingMessage["requestScopedClientSkills"];
       overrideModel?: string;
     };
 
@@ -325,6 +327,7 @@ export async function prepareListenerTurn(params: {
       ? { exclude: [...INTERACTIVE_USER_INPUT_TOOL_NAMES] }
       : {}),
     externalToolScopeIds: msg.externalToolScopeIds,
+    transientSecretEnv: msg.requestScopedSecretEnv,
     workingDirectory,
     permissionModeState,
     skillsDirectory: listenerOptions?.skillsDirectory,
@@ -336,70 +339,81 @@ export async function prepareListenerTurn(params: {
     modAdapters,
     modEvents: createListenerModEvents(modAdapters),
   });
-  if (isInterrupted()) {
-    return { kind: "interrupted" };
-  }
+  let contextHandedOff = false;
+  try {
+    if (isInterrupted()) {
+      return { kind: "interrupted" };
+    }
 
-  const availableSkills = (
-    await buildClientSkillsPayload({
-      ...(agentId ? { agentId } : {}),
-      workingDirectory,
-      skillsDirectory: listenerOptions?.skillsDirectory,
-      skillSources: runtime.skillSources,
-    })
-  ).availableSkills;
-  if (isInterrupted()) {
-    return { kind: "interrupted" };
-  }
+    const availableSkills = (
+      await buildClientSkillsPayload({
+        ...(agentId ? { agentId } : {}),
+        workingDirectory,
+        skillsDirectory: listenerOptions?.skillsDirectory,
+        skillSources: runtime.skillSources,
+      })
+    ).availableSkills;
+    if (isInterrupted()) {
+      return { kind: "interrupted" };
+    }
 
-  runtime.currentToolset = preparedToolContext.toolset;
-  runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;
-  runtime.currentLoadedTools =
-    preparedToolContext.preparedToolContext.loadedToolNames;
-  runtime.currentAvailableSkills = availableSkills;
-  const preloaded = await loadPreloadedSkills(
-    runtime.executionSettings?.preload_skills ?? [],
-    {
-      ...(agentId ? { agentId } : {}),
-      workingDirectory,
-      skillsDirectory: listenerOptions?.skillsDirectory,
-      skillSources: runtime.skillSources,
-    },
-  );
-  if (isInterrupted()) return { kind: "interrupted" };
-  if (preloaded) {
-    const index = turnInput.messages.findLastIndex(
-      (message) => "role" in message && message.role === "user",
+    runtime.currentToolset = preparedToolContext.toolset;
+    runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;
+    runtime.currentLoadedTools =
+      preparedToolContext.preparedToolContext.loadedToolNames;
+    runtime.currentAvailableSkills = availableSkills;
+    const preloaded = await loadPreloadedSkills(
+      runtime.executionSettings?.preload_skills ?? [],
+      {
+        ...(agentId ? { agentId } : {}),
+        workingDirectory,
+        skillsDirectory: listenerOptions?.skillsDirectory,
+        skillSources: runtime.skillSources,
+      },
     );
-    turnInput = {
-      ...turnInput,
-      messages: turnInput.messages.map((message, i) =>
-        i === index && "content" in message
-          ? {
-              ...message,
-              content: [
-                { type: "text" as const, text: preloaded },
-                ...(typeof message.content === "string"
-                  ? [{ type: "text" as const, text: message.content }]
-                  : message.content),
-              ],
-            }
-          : message,
-      ),
+    if (isInterrupted()) return { kind: "interrupted" };
+    if (preloaded) {
+      const index = turnInput.messages.findLastIndex(
+        (message) => "role" in message && message.role === "user",
+      );
+      turnInput = {
+        ...turnInput,
+        messages: turnInput.messages.map((message, i) =>
+          i === index && "content" in message
+            ? {
+                ...message,
+                content: [
+                  { type: "text" as const, text: preloaded },
+                  ...(typeof message.content === "string"
+                    ? [{ type: "text" as const, text: message.content }]
+                    : message.content),
+                ],
+              }
+            : message,
+        ),
+      };
+      inboundUserTranscriptLines = buildInboundUserTranscriptLines(
+        turnInput.messages,
+      );
+    }
+    contextHandedOff = true;
+    return {
+      kind: "ready",
+      getCachedAgent: () => cachedAgent,
+      turnInput,
+      inboundUserTranscriptLines,
+      pendingNormalizationInterruptedToolCallIds: [
+        ...queuedInterruptedToolCallIds,
+      ],
+      preparedToolContext,
+      requestScopedClientSkills: msg.requestScopedClientSkills,
+      ...(overrideModel ? { overrideModel } : {}),
     };
-    inboundUserTranscriptLines = buildInboundUserTranscriptLines(
-      turnInput.messages,
-    );
+  } finally {
+    if (!contextHandedOff) {
+      releaseToolExecutionContext(
+        preparedToolContext.preparedToolContext.contextId,
+      );
+    }
   }
-  return {
-    kind: "ready",
-    getCachedAgent: () => cachedAgent,
-    turnInput,
-    inboundUserTranscriptLines,
-    pendingNormalizationInterruptedToolCallIds: [
-      ...queuedInterruptedToolCallIds,
-    ],
-    preparedToolContext,
-    ...(overrideModel ? { overrideModel } : {}),
-  };
 }

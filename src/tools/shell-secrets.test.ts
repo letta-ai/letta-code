@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { bash } from "@/tools/impl/bash";
+import { backgroundProcesses } from "@/tools/impl/process_manager";
 import {
   buildPowerShellCommand,
   POWERSHELL_UTF8_OUTPUT_PREFIX,
@@ -14,8 +17,13 @@ import {
 import { createTempRuntimeScriptCommand } from "@/tools/runtime-script";
 import {
   extractSecretEnvFromCommand,
+  resolveShellSecretArgs,
   scrubSecretsFromString,
 } from "@/tools/secret-substitution";
+import {
+  clearPendingMessages,
+  setMessageQueueAdder,
+} from "@/utils/message-queue-bridge";
 import {
   __testSeedSecretsCache,
   clearSecretsCache,
@@ -33,6 +41,19 @@ const seededSecrets = {
 
 afterEach(() => {
   clearSecretsCache(TEST_AGENT_ID);
+  setMessageQueueAdder(null);
+  clearPendingMessages();
+  for (const processState of backgroundProcesses.values()) {
+    try {
+      processState.process.kill("SIGKILL");
+    } catch {
+      // Process group may already be gone.
+    }
+    if (processState.outputFile) {
+      rmSync(processState.outputFile, { force: true });
+    }
+  }
+  backgroundProcesses.clear();
 });
 
 const secretEnv = {
@@ -103,6 +124,17 @@ describe("shell secret env extraction", () => {
     expect(extractSecretEnvFromCommand("echo hello", TEST_AGENT_ID)).toEqual(
       {},
     );
+  });
+
+  test("rejects transient secrets on unbound background shell tools", () => {
+    expect(() =>
+      resolveShellSecretArgs({
+        command: "watch $BROWSER_CONTROL_KEY",
+        transientSecretEnv: { BROWSER_CONTROL_KEY: "request-only-key" },
+        toolName: "Monitor",
+        executionContextId: "context-1",
+      }),
+    ).toThrow("cannot receive request-scoped secrets");
   });
 });
 
@@ -223,6 +255,157 @@ describe("shell secret execution", () => {
       runtimeScript.cleanup();
     }
   });
+
+  test.skipIf(process.platform === "win32")(
+    "kills a transient-secret Bash process group after its shell parent exits",
+    async () => {
+      const fixtureDir = mkdtempSync(join(tmpdir(), "transient-bash-"));
+      const actionFile = join(fixtureDir, "action.txt");
+      const runtimeScript = createTempRuntimeScriptCommand(
+        `const fs = require("node:fs"); setTimeout(() => fs.writeFileSync(${JSON.stringify(actionFile)}, process.env.BROWSER_CONTROL_KEY ?? "missing"), 600)`,
+      );
+      const queued: unknown[] = [];
+      setMessageQueueAdder((message) => queued.push(message));
+      const context = await prepareToolExecutionContextForSpecificTools(
+        ["Bash"],
+        {
+          runtimeContext: {
+            agentId: TEST_AGENT_ID,
+            workingDirectory: process.cwd(),
+            transientSecretEnv: { BROWSER_CONTROL_KEY: "request-only-key" },
+          },
+          workingDirectory: process.cwd(),
+        },
+      );
+
+      try {
+        const launched = await executeTool(
+          "Bash",
+          {
+            command: `BROWSER_CONTROL_KEY="$BROWSER_CONTROL_KEY" ${runtimeScript.command} >/dev/null 2>&1 &`,
+            description: "Schedule a delayed transient action",
+            run_in_background: true,
+          },
+          { toolContextId: context.contextId },
+        );
+        const taskId = toolReturnText(launched.toolReturn).match(
+          /ID: (bash_\d+)/,
+        )?.[1];
+        expect(taskId).toBeString();
+
+        // The shell parent exits immediately, but its detached process group
+        // still contains the delayed child and must remain bound to the context.
+        const deadline = Date.now() + 2_000;
+        while (
+          taskId &&
+          backgroundProcesses.get(taskId)?.status === "running" &&
+          Date.now() < deadline
+        ) {
+          await Bun.sleep(10);
+        }
+        expect(backgroundProcesses.get(taskId as string)?.status).not.toBe(
+          "running",
+        );
+
+        releaseToolExecutionContext(context.contextId);
+        await Bun.sleep(750);
+        expect(existsSync(actionFile)).toBe(false);
+        // Completion may have raced before cleanup because the shell parent was
+        // already done, but cleanup itself must never add another notification.
+        expect(queued.length).toBeLessThanOrEqual(1);
+      } finally {
+        releaseToolExecutionContext(context.contextId);
+        runtimeScript.cleanup();
+        rmSync(fixtureDir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test("kills transient-secret exec_command after automatic yield without notifying", async () => {
+    const fixtureDir = mkdtempSync(join(tmpdir(), "transient-exec-"));
+    const actionFile = join(fixtureDir, "action.txt");
+    const runtimeScript = createTempRuntimeScriptCommand(
+      `const fs = require("node:fs"); setTimeout(() => fs.writeFileSync(${JSON.stringify(actionFile)}, process.env.BROWSER_CONTROL_KEY ?? "missing"), 700)`,
+    );
+    const queued: unknown[] = [];
+    setMessageQueueAdder((message) => queued.push(message));
+    const context = await prepareToolExecutionContextForSpecificTools(
+      ["exec_command"],
+      {
+        runtimeContext: {
+          agentId: TEST_AGENT_ID,
+          workingDirectory: process.cwd(),
+          transientSecretEnv: { BROWSER_CONTROL_KEY: "request-only-key" },
+        },
+        workingDirectory: process.cwd(),
+      },
+    );
+
+    try {
+      const launched = await executeTool(
+        "exec_command",
+        {
+          cmd: `${runtimeScript.command} $BROWSER_CONTROL_KEY`,
+          description: "Schedule a yielded transient action",
+          yield_time_ms: 250,
+        },
+        { toolContextId: context.contextId },
+      );
+      expect(toolReturnText(launched.toolReturn)).toContain(
+        "Process running with session ID",
+      );
+
+      releaseToolExecutionContext(context.contextId);
+      await Bun.sleep(850);
+      expect(existsSync(actionFile)).toBe(false);
+      expect(queued).toHaveLength(0);
+    } finally {
+      releaseToolExecutionContext(context.contextId);
+      runtimeScript.cleanup();
+      rmSync(fixtureDir, { recursive: true, force: true });
+    }
+  });
+
+  test.skipIf(process.platform === "win32")(
+    "does not bind ordinary persisted-secret background work to context release",
+    async () => {
+      await seedSecrets();
+      const fixtureDir = mkdtempSync(join(tmpdir(), "persisted-bash-"));
+      const actionFile = join(fixtureDir, "action.txt");
+      const runtimeScript = createTempRuntimeScriptCommand(
+        `const fs = require("node:fs"); setTimeout(() => fs.writeFileSync(${JSON.stringify(actionFile)}, process.env.PASSWORD ?? "missing"), 300)`,
+      );
+      const context = await prepareToolExecutionContextForSpecificTools(
+        ["Bash"],
+        {
+          runtimeContext: {
+            agentId: TEST_AGENT_ID,
+            workingDirectory: process.cwd(),
+          },
+          workingDirectory: process.cwd(),
+        },
+      );
+
+      try {
+        await executeTool(
+          "Bash",
+          {
+            command: `PASSWORD="$PASSWORD" ${runtimeScript.command}`,
+            description: "Run ordinary secret background work",
+            run_in_background: true,
+          },
+          { toolContextId: context.contextId },
+        );
+        releaseToolExecutionContext(context.contextId);
+        await Bun.sleep(500);
+        expect(readFileSync(actionFile, "utf8")).toBe(seededSecrets.PASSWORD);
+      } finally {
+        releaseToolExecutionContext(context.contextId);
+        runtimeScript.cleanup();
+        rmSync(fixtureDir, { recursive: true, force: true });
+      }
+    },
+  );
 
   test("executeTool injects and scrubs referenced shell secrets", async () => {
     await seedSecrets();

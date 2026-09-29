@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,6 +20,19 @@ import {
 afterEach(() => invalidateClientSkillsPayloadCache());
 
 describe("sendMessageStream skill sources", () => {
+  test("browser-control skill disables curlrc before every other curl option", () => {
+    const body = readFileSync(
+      join(
+        import.meta.dir,
+        "../skills/builtin/browser-control-over-wire/SKILL.md",
+      ),
+      "utf8",
+    );
+    const curlInvocation = body.match(/curl[^\n]+/)?.[0];
+
+    expect(curlInvocation).toBe("curl -q --silent --show-error \\");
+  });
+
   test("forwards a request-scoped response format to the Messages API", () => {
     const responseFormat = {
       type: "json_schema",
@@ -211,6 +225,131 @@ describe("sendMessageStream skill sources", () => {
       await send("conv-new");
       expect(recorded.at(-1)?.body.messages).toHaveLength(1);
       expect(input).toHaveLength(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("forwards transient skills without adding them to messages or installed-skill state", async () => {
+    const root = await mkdtemp(join(tmpdir(), "letta-request-skills-"));
+    const skillsDirectory = join(root, "skills");
+    const installedSkillDirectory = join(skillsDirectory, "installed-skill");
+    await mkdir(installedSkillDirectory, { recursive: true });
+    await writeFile(
+      join(installedSkillDirectory, "SKILL.md"),
+      [
+        "---",
+        "name: installed-skill",
+        "description: A normal installed skill.",
+        "---",
+      ].join("\n"),
+    );
+
+    const recorded: MessageCreateParams[] = [];
+    const backend = {
+      createConversationMessageStream: async (
+        _conversationId: string,
+        body: MessageCreateParams,
+      ) => {
+        recorded.push(body);
+        return {
+          async *[Symbol.asyncIterator]() {},
+        } as unknown as Stream<LettaStreamingResponse>;
+      },
+    } as unknown as Backend;
+    const preparedToolContext =
+      await prepareToolExecutionContextForSpecificTools([], {
+        runtimeContext: { skillsDirectory, workingDirectory: root },
+      });
+    const secret = "ephemeral-key-123";
+    const input = [
+      { role: "user" as const, content: "Use the temporary skill." },
+    ];
+
+    try {
+      await sendMessageStreamWithBackend(
+        backend,
+        "conv-request-skills",
+        input,
+        {
+          skillSources: ["project"],
+          preparedToolContext,
+          requestScopedClientSkills: [
+            {
+              name: "temporary-skill",
+              description: `Pair with ${secret}`,
+              location: "/temporary/SKILL.md",
+            },
+            {
+              name: "temporary-skill",
+              description: `Use the final ${secret}`,
+              location: "/temporary/final/SKILL.md",
+            },
+          ],
+        },
+      );
+
+      expect(recorded[0]?.client_skills).toEqual([
+        {
+          name: "installed-skill",
+          description: "A normal installed skill.",
+          location: join(installedSkillDirectory, "SKILL.md"),
+        },
+        {
+          name: "temporary-skill",
+          description: `Use the final ${secret}`,
+          location: "/temporary/final/SKILL.md",
+        },
+      ]);
+      expect(recorded[0]?.messages).toEqual(input);
+      expect(JSON.stringify(recorded[0]?.messages)).not.toContain(secret);
+
+      const continuation = [
+        {
+          type: "approval" as const,
+          approvals: [
+            {
+              type: "tool" as const,
+              tool_call_id: "call-1",
+              status: "success" as const,
+              tool_return: "done",
+            },
+          ],
+        },
+      ];
+      await sendMessageStreamWithBackend(
+        backend,
+        "conv-request-skills",
+        continuation,
+        {
+          skillSources: ["project"],
+          preparedToolContext,
+          requestScopedClientSkills: recorded[0]?.client_skills?.filter(
+            (skill) => skill.name === "temporary-skill",
+          ),
+        },
+      );
+      expect(recorded[1]?.client_skills).toContainEqual(
+        expect.objectContaining({ name: "temporary-skill" }),
+      );
+      expect(JSON.stringify(recorded[1]?.messages)).not.toContain(secret);
+
+      await sendMessageStreamWithBackend(
+        backend,
+        "conv-request-skills",
+        input,
+        { skillSources: ["project"], preparedToolContext },
+      );
+
+      expect(recorded[2]?.client_skills).toEqual([
+        {
+          name: "installed-skill",
+          description: "A normal installed skill.",
+          location: join(installedSkillDirectory, "SKILL.md"),
+        },
+      ]);
+      expect(recorded[2]?.messages).toEqual(input);
+      expect(JSON.stringify(recorded[2])).not.toContain(secret);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

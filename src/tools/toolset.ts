@@ -305,6 +305,7 @@ export async function prepareToolExecutionContextForScope(params: {
   skillSources?: SkillSource[];
   workspaceSandbox?: RuntimeContextSnapshot["workspaceSandbox"];
   executionSettings?: RuntimeContextSnapshot["executionSettings"];
+  transientSecretEnv?: Record<string, string>;
   cachedAgent?: AgentState | null;
   modContext?: ModContext;
   modEvents?: ModEvents;
@@ -329,6 +330,7 @@ export async function prepareToolExecutionContextForScope(params: {
     skillSources,
     workspaceSandbox,
     executionSettings,
+    transientSecretEnv,
     cachedAgent,
     modContext,
     modEvents,
@@ -429,6 +431,7 @@ export async function prepareToolExecutionContextForScope(params: {
       ...(skillSources !== undefined ? { skillSources } : {}),
       ...(workspaceSandbox !== undefined ? { workspaceSandbox } : {}),
       executionSettings,
+      transientSecretEnv,
     },
   });
   return { ...result, agent: agent as AgentState | null };

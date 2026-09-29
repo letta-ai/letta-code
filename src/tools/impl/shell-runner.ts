@@ -33,6 +33,8 @@ export type ShellSpawnOptions = {
 
 export interface ShellProcessHandle {
   kill(signal?: string | number): unknown;
+  /** Kill the detached process group, including descendants of an exited parent. */
+  killProcessGroup?(signal?: string | number): unknown;
   interrupt(): void;
   write(input: string): void;
 }
@@ -82,15 +84,52 @@ type ProcessEvents = {
 const NODE_PTY_BRIDGE_SCRIPT = `
 const pty = require("node-pty");
 const config = JSON.parse(process.argv[1]);
-const child = pty.spawn(config.executable, config.args, {
+let child = null;
+let groupKillRequested = false;
+const killPtyGroup = () => {
+  if (!child) {
+    groupKillRequested = true;
+    return;
+  }
+  try {
+    process.kill(-child.pid, "SIGKILL");
+  } catch {
+    child.kill("SIGKILL");
+  }
+  process.exit(137);
+};
+if (process.platform !== "win32") {
+  process.on("SIGUSR2", killPtyGroup);
+}
+child = pty.spawn(config.executable, config.args, {
   name: "xterm-256color",
   cols: 80,
   rows: 24,
   cwd: config.cwd,
   env: process.env,
 });
+if (groupKillRequested) killPtyGroup();
+let pendingExitCode = null;
+let pidReported = typeof process.send !== "function";
+const reportPid = () => {
+  if (typeof process.send !== "function") return;
+  process.send({ type: "pty_pid", pid: child.pid }, () => {
+    pidReported = true;
+    if (pendingExitCode !== null) process.exit(pendingExitCode);
+  });
+};
+const pidReportDelayMs = Number(config.pidReportDelayMs || 0);
+if (Number.isFinite(pidReportDelayMs) && pidReportDelayMs > 0) {
+  setTimeout(reportPid, pidReportDelayMs);
+} else {
+  reportPid();
+}
 child.onData((data) => process.stdout.write(data));
-child.onExit(({ exitCode }) => process.exit(typeof exitCode === "number" ? exitCode : 1));
+child.onExit(({ exitCode }) => {
+  const code = typeof exitCode === "number" ? exitCode : 1;
+  if (pidReported) process.exit(code);
+  pendingExitCode = code;
+});
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (data) => child.write(data));
 process.on("SIGTERM", () => child.kill("SIGTERM"));
@@ -264,21 +303,42 @@ function spawnPtyBridgeProcess(
     throw new ShellExecutionError("Executable is required");
   }
 
+  let ptyProcessGroupId: number | null = null;
   const childProcess: ChildProcess = spawn(
     "node",
     [
       "-e",
       NODE_PTY_BRIDGE_SCRIPT,
-      JSON.stringify({ executable, args, cwd: options.cwd }),
+      JSON.stringify({
+        executable,
+        args,
+        cwd: options.cwd,
+        pidReportDelayMs: options.env.LETTA_TEST_PTY_PID_REPORT_DELAY_MS,
+      }),
     ],
     {
       cwd: options.cwd,
       env: buildPtyEnv(options.env),
       shell: false,
-      stdio: ["pipe", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe", "ipc"],
       detached: process.platform !== "win32",
     },
   );
+
+  childProcess.on("message", (message) => {
+    if (
+      typeof message === "object" &&
+      message !== null &&
+      "type" in message &&
+      message.type === "pty_pid" &&
+      "pid" in message &&
+      typeof message.pid === "number" &&
+      Number.isInteger(message.pid) &&
+      message.pid > 0
+    ) {
+      ptyProcessGroupId = message.pid;
+    }
+  });
 
   childProcess.stdout?.on("data", (chunk: Buffer) => {
     events.output(chunk, "stdout");
@@ -293,11 +353,63 @@ function spawnPtyBridgeProcess(
     kill(signal?: string | number) {
       killChildProcessTree(childProcess, signal);
     },
+    killProcessGroup(signal: string | number = "SIGKILL") {
+      if (process.platform !== "win32" && ptyProcessGroupId !== null) {
+        try {
+          process.kill(-ptyProcessGroupId, signal as NodeJS.Signals);
+        } catch {
+          // The PTY group may already be gone. The bridge still needs cleanup.
+        }
+      } else if (
+        process.platform !== "win32" &&
+        childProcess.exitCode === null
+      ) {
+        try {
+          // The bridge knows the forkpty PID synchronously, even before its IPC
+          // report reaches this process. Let it kill that group before exiting.
+          childProcess.kill("SIGUSR2");
+          return;
+        } catch {
+          // Fall through to bridge-tree cleanup if signaling races with exit.
+        }
+      }
+      killChildProcessTree(childProcess, signal);
+    },
     interrupt() {
       interruptChildProcessTree(childProcess);
     },
     write(input: string) {
       childProcess.stdin?.write(input);
+    },
+  };
+}
+
+export function __testCreateNativePtyProcessHandle(
+  ptyProcess: NodePtyProcess,
+): ShellProcessHandle {
+  return {
+    kill(signal?: string | number) {
+      ptyProcess.kill(typeof signal === "string" ? signal : undefined);
+    },
+    killProcessGroup(signal: string | number = "SIGKILL") {
+      if (process.platform === "win32") {
+        ptyProcess.kill(typeof signal === "string" ? signal : undefined);
+        return;
+      }
+
+      try {
+        process.kill(-ptyProcess.pid, signal as NodeJS.Signals);
+      } catch {
+        // Fall back to node-pty's direct-child kill if the process group has
+        // already disappeared or the platform cannot address it.
+        ptyProcess.kill(typeof signal === "string" ? signal : undefined);
+      }
+    },
+    interrupt() {
+      ptyProcess.kill("SIGINT");
+    },
+    write(input: string) {
+      ptyProcess.write(input);
     },
   };
 }
@@ -327,17 +439,7 @@ function spawnNativePtyProcess(
     events.close(typeof exitCode === "number" ? exitCode : null);
   });
 
-  return {
-    kill(signal?: string | number) {
-      ptyProcess.kill(typeof signal === "string" ? signal : undefined);
-    },
-    interrupt() {
-      ptyProcess.kill("SIGINT");
-    },
-    write(input: string) {
-      ptyProcess.write(input);
-    },
-  };
+  return __testCreateNativePtyProcessHandle(ptyProcess);
 }
 
 function spawnPtyProcess(

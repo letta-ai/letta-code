@@ -24,13 +24,11 @@ const SECRET_PATTERN = /\$(?:\{[#!]?)?([A-Z_][A-Z0-9_]*)/g;
  * The shell will expand these vars natively, so secret values never get
  * injected into the command string itself.
  */
-export function extractSecretEnvFromCommand(
+function extractReferencedSecrets(
   command: string | readonly string[],
-  agentId?: string,
+  secrets: Readonly<Record<string, string>>,
 ): Record<string, string> {
-  const secrets = loadSecrets(agentId);
   const env: Record<string, string> = {};
-
   const scan = (text: string) => {
     for (const match of text.matchAll(SECRET_PATTERN)) {
       const name = match[1];
@@ -40,18 +38,72 @@ export function extractSecretEnvFromCommand(
     }
   };
 
-  if (typeof command === "string") {
-    scan(command);
-    return env;
-  }
-
-  for (const part of command) {
-    if (typeof part === "string") {
-      scan(part);
-    }
-  }
-
+  if (typeof command === "string") scan(command);
+  else for (const part of command) scan(part);
   return env;
+}
+
+export function extractSecretEnvFromCommand(
+  command: string | readonly string[],
+  agentId?: string,
+  provided: Readonly<Record<string, string>> = {},
+): Record<string, string> {
+  return extractReferencedSecrets(command, {
+    ...loadSecrets(agentId),
+    ...provided,
+  });
+}
+
+/** Resolve shell injection plus request-secret process ownership metadata. */
+export function resolveShellSecretArgs(params: {
+  command: unknown;
+  agentId?: string;
+  transientSecretEnv?: Readonly<Record<string, string>>;
+  toolName: string;
+  executionContextId?: string;
+}): {
+  secretEnv?: Record<string, string>;
+  transientExecutionContextId?: string;
+} {
+  const command =
+    typeof params.command === "string"
+      ? params.command
+      : Array.isArray(params.command) &&
+          params.command.every((part) => typeof part === "string")
+        ? (params.command as string[])
+        : undefined;
+  if (!command) return {};
+
+  const secretEnv = extractSecretEnvFromCommand(
+    command,
+    params.agentId,
+    params.transientSecretEnv,
+  );
+  const receivesTransientSecrets = Boolean(
+    params.transientSecretEnv &&
+      Object.keys(extractReferencedSecrets(command, params.transientSecretEnv))
+        .length,
+  );
+  if (
+    receivesTransientSecrets &&
+    params.toolName !== "Bash" &&
+    params.toolName !== "exec_command"
+  ) {
+    throw new Error(
+      `${params.toolName} cannot receive request-scoped secrets because its background process lifetime is not bound to this tool execution context`,
+    );
+  }
+  if (receivesTransientSecrets && !params.executionContextId) {
+    throw new Error(
+      "Request-scoped shell secrets require a tool execution context",
+    );
+  }
+  return {
+    ...(Object.keys(secretEnv).length ? { secretEnv } : {}),
+    ...(receivesTransientSecrets
+      ? { transientExecutionContextId: params.executionContextId }
+      : {}),
+  };
 }
 
 /**

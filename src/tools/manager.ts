@@ -81,6 +81,7 @@ import {
   appendHookFeedbackToToolReturn,
   collectPostToolHookFeedback,
 } from "./hook-feedback";
+import { releaseTransientBackgroundProcesses } from "./impl/process_manager";
 import { clampToolReturnContent } from "./impl/tool-return-clamp";
 import {
   functionToolForm,
@@ -94,8 +95,8 @@ import {
 import {
   captureSecretRedactions,
   createScrubbedOutputStreamer,
-  extractSecretEnvFromCommand,
   getAmbientRedactionSecrets,
+  resolveShellSecretArgs,
   type ScrubbedOutputStreamer,
   sanitizeOutputLines,
   sanitizeToolReturnContent,
@@ -515,9 +516,9 @@ export function clearCapturedToolExecutionContexts(): void {
 }
 
 export function releaseToolExecutionContext(contextId: string): void {
+  releaseTransientBackgroundProcesses(contextId);
   getExecutionContexts().delete(contextId);
 }
-
 /**
  * Acquires the toolset switch lock. Call before starting async tool loading.
  * Ref-counted: multiple overlapping switches will keep the lock held until all complete.
@@ -2074,6 +2075,7 @@ async function executeToolInner(
   const workingDirectory =
     executionScope.workingDirectory ?? getCurrentWorkingDirectory();
   const scopedAgentId = executionScope.agentId ?? undefined;
+  const turnSecrets = executionScope.transientSecretEnv;
   const modContext =
     context?.modContext ??
     toolExecutionModContext(executionScope, { workingDirectory });
@@ -2275,14 +2277,14 @@ async function executeToolInner(
       }
 
       if (STREAMING_SHELL_TOOLS.has(internalName)) {
-        // Redact only this invocation's secrets.
-        const command = enhancedArgs.command ?? enhancedArgs.cmd;
-        invocationSecrets =
-          typeof command === "string" ||
-          (Array.isArray(command) &&
-            command.every((part) => typeof part === "string"))
-            ? extractSecretEnvFromCommand(command, scopedAgentId)
-            : {};
+        const shellSecretArgs = resolveShellSecretArgs({
+          command: enhancedArgs.command ?? enhancedArgs.cmd,
+          agentId: scopedAgentId,
+          transientSecretEnv: turnSecrets,
+          toolName: internalName,
+          executionContextId: options?.toolContextId,
+        });
+        invocationSecrets = shellSecretArgs.secretEnv ?? {};
         invocationRedactions = captureSecretRedactions(invocationSecrets);
         if (options?.onOutput) {
           outputStreamer = createScrubbedOutputStreamer(
@@ -2292,9 +2294,7 @@ async function executeToolInner(
           );
           enhancedArgs = { ...enhancedArgs, onOutput: outputStreamer.onOutput };
         }
-        if (Object.keys(invocationSecrets).length > 0) {
-          enhancedArgs = { ...enhancedArgs, secretEnv: invocationSecrets };
-        }
+        enhancedArgs = { ...enhancedArgs, ...shellSecretArgs };
         const parentScope =
           options?.parentScope ??
           (SCOPED_BACKGROUND_TOOLS.has(internalName) && scopedAgentId
