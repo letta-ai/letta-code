@@ -89,8 +89,9 @@ describe("opt-in headless import init Workflow lifecycle", () => {
     const followUp = await waiting;
     expect(followUp).toContain("journal.jsonl");
     expect(state.followUps).toBe(1);
-    expect(await importInitWaitForWorkflows(state)).toBeNull();
-    expect(() => importInitVerify(state)).toThrow("Missing Workflow journal");
+    await expect(importInitWaitForWorkflows(state)).rejects.toThrow(
+      "Missing Workflow journal",
+    );
     writeFileSync(
       join(executionDir, "journal.jsonl"),
       `${["a", "b"]
@@ -105,6 +106,7 @@ describe("opt-in headless import init Workflow lifecycle", () => {
         )
         .join("\n")}\n`,
     );
+    expect(await importInitWaitForWorkflows(state)).toBeNull();
     expect(() => importInitVerify(state)).toThrow(
       "no new committed initialization",
     );
@@ -131,14 +133,17 @@ describe("opt-in headless import init Workflow lifecycle", () => {
     );
   });
 
-  test("rejects failed Workflow and unaccounted sessions", async () => {
+  test("reports failed Workflow for retry without counting it as coverage", async () => {
     const state = fixture();
     register(state);
     finishWorkflowExecution("workflow_1", {
       status: "failed",
       error: "worker error",
     });
-    await expect(importInitWaitForWorkflows(state)).rejects.toThrow("failed");
+    const correction = await importInitWaitForWorkflows(state);
+    expect(correction).toContain("workflow_1: failed");
+    expect(correction).toContain("correct the failure");
+    expect(state.workflowRuns).toHaveLength(0);
     __resetWorkflowExecutionsForTests();
     const dir = register(state, "workflow_2");
     writeFileSync(
@@ -147,12 +152,27 @@ describe("opt-in headless import init Workflow lifecycle", () => {
         outcome: {
           failed: false,
           conversationId: "conv-a",
-          value: { sessionsRead: ["a"] },
+          value: { sessionsRead: ["a", "invented-id"] },
         },
       })}\n`,
     );
     finishWorkflowExecution("workflow_2", { status: "completed" });
     await importInitWaitForWorkflows(state);
+    const unread = await importInitWaitForWorkflows(state);
+    expect(unread).toContain("1/2 sessions");
+    expect(unread).toContain("b");
     expect(() => importInitVerify(state)).toThrow("1/2 sessions");
+    __resetWorkflowExecutionsForTests();
+    const retry = register(state, "workflow_3");
+    writeFileSync(
+      join(retry, "journal.jsonl"),
+      `${JSON.stringify({ outcome: { failed: false, conversationId: "conv-b", value: { sessionsRead: ["b"] } } })}\n`,
+    );
+    finishWorkflowExecution("workflow_3", { status: "completed" });
+    await importInitWaitForWorkflows(state);
+    expect(await importInitWaitForWorkflows(state)).toBeNull();
+    expect(() => importInitVerify(state)).toThrow(
+      "no new committed initialization",
+    );
   });
 });

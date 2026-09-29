@@ -85,6 +85,22 @@ export async function importInitWaitForWorkflows(
     if (state.workflowRuns.length === 0) {
       throw new Error("No dynamic Workflow was started by the init turn");
     }
+    const { expected, read } = coveredSessions(state);
+    const unread = expected.filter((session) => !read.has(session.sessionId));
+    if (unread.length > 0) {
+      if (state.followUps >= MAX_FOLLOW_UPS) {
+        throw new Error(
+          `Workflow did not account for ${unread.length}/${expected.length} sessions after ${MAX_FOLLOW_UPS} follow-ups`,
+        );
+      }
+      state.followUps += 1;
+      return `<system-reminder>\nWorkflow coverage is incomplete: ${unread.length}/${expected.length} sessions have no verified read. Unread session IDs (first 50): ${unread
+        .slice(0, 50)
+        .map((session) => session.sessionId)
+        .join(
+          ", ",
+        )}. Check the authoritative manifest at ${join(state.manifestDir, "manifest.json")}; inspect the completed Workflow journals for invented or missing IDs. Launch a read-only follow-up Workflow to fully read the missing sessions, using the manifest's exact session IDs in its schema and sessionsRead. Do not claim completion or stop before all sessions are accounted for.\n</system-reminder>`;
+    }
     return null;
   }
   if (state.followUps >= MAX_FOLLOW_UPS) {
@@ -99,22 +115,20 @@ export async function importInitWaitForWorkflows(
     await waitForChange(1000);
     pending = newRuns(state);
   }
-  if (pending.some((run) => run.status !== "completed")) {
-    throw new Error("Import init Workflow failed; history remains imported");
-  }
+  const failed = pending.filter((run) => run.status !== "completed");
   for (const run of pending) {
     state.handled.add(run.taskId);
-    state.workflowRuns.push(run);
+    if (run.status === "completed") state.workflowRuns.push(run);
   }
   state.followUps += 1;
-  return `<system-reminder>\nThe import analysis Workflow(s) finished: ${pending.map((run) => `${run.taskId}: ${run.agentsDone}/${run.agentsTotal} workers succeeded; journal ${join(run.executionDir, "journal.jsonl")}; output ${run.outputFile}`).join("\n")}. Read the actual journals and outputs, verify history coverage against ${join(state.manifestDir, "manifest.json")}, then synthesize evidence-backed memory in this agent's repository. If any cohort was unread, launch a follow-up read-only Workflow and account for it. Commit memory changes before claiming complete initialization. Do not ask questions.\n</system-reminder>`;
+  return `<system-reminder>\nThe import analysis Workflow(s) finished: ${pending.map((run) => `${run.taskId}: ${run.status}; ${run.agentsDone}/${run.agentsTotal} workers succeeded; journal ${join(run.executionDir, "journal.jsonl")}; output ${run.outputFile}`).join("\n")}. ${failed.length ? "Some Workflows failed. Read their output files, correct the failure, and retry unread cohorts with a read-only Workflow; failed runs do not count toward coverage. " : ""}Read the completed journals and outputs, verify history coverage against ${join(state.manifestDir, "manifest.json")}, then synthesize evidence-backed memory in this agent's repository. If any cohort was unread, launch a follow-up read-only Workflow and account for it. Commit memory changes before claiming complete initialization. Do not ask questions.\n</system-reminder>`;
 }
 
-/** Refuse a false success after a headless turn that only announced a task. */
-export function importInitVerify(state: ImportInitState): void {
-  if (!state.workflowRuns.length) {
-    throw new Error("No completed Workflow; memory initialization was not run");
-  }
+function coveredSessions(state: ImportInitState): {
+  expected: Array<{ sessionId: string }>;
+  read: Set<string>;
+  successfulWorkers: number;
+} {
   const read = new Set<string>();
   let successfulWorkers = 0;
   for (const run of state.workflowRuns) {
@@ -145,8 +159,6 @@ export function importInitVerify(state: ImportInitState): void {
       }
     }
   }
-  if (!successfulWorkers)
-    throw new Error("No successful local Workflow workers");
   const manifest = JSON.parse(
     readFileSync(join(state.manifestDir, "manifest.json"), "utf8"),
   ) as {
@@ -155,6 +167,17 @@ export function importInitVerify(state: ImportInitState): void {
   const expected = manifest.sessions ?? [];
   if (expected.length !== state.expectedSessions)
     throw new Error("Import manifest changed during initialization");
+  return { expected, read, successfulWorkers };
+}
+
+/** Refuse a false success after a headless turn that only announced a task. */
+export function importInitVerify(state: ImportInitState): void {
+  if (!state.workflowRuns.length) {
+    throw new Error("No completed Workflow; memory initialization was not run");
+  }
+  const { expected, read, successfulWorkers } = coveredSessions(state);
+  if (!successfulWorkers)
+    throw new Error("No successful local Workflow workers");
   const unread = expected.filter((session) => !read.has(session.sessionId));
   if (unread.length > 0) {
     throw new Error(
