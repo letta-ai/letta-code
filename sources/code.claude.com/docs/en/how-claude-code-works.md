@@ -38,12 +38,12 @@ Tools are what make Claude Code agentic. Without tools, Claude can only respond 
 
 The built-in tools generally fall into five categories, each representing a different kind of agency.
 
-| Category              | What Claude can do                                                                                                                                   |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **File operations**   | Read files, edit code, create new files, rename and reorganize                                                                                       |
-| **Search**            | Find files by pattern, search content with regex, explore codebases                                                                                  |
-| **Execution**         | Run shell commands, start servers, run tests, use git                                                                                                |
-| **Web**               | Search the web, fetch documentation, look up error messages                                                                                          |
+| Category | What Claude can do |
+| - | - |
+| **File operations** | Read files, edit code, create new files, rename and reorganize |
+| **Search** | Find files by pattern, search content with regex, explore codebases |
+| **Execution** | Run shell commands, start servers, run tests, use git |
+| **Web** | Search the web, fetch documentation, look up error messages |
 | **Code intelligence** | See type errors and warnings after edits, jump to definitions, find references (requires [code intelligence plugins](/docs/en/plugins/code-intelligence)) |
 
 These are the primary capabilities. Claude also has tools for spawning subagents, asking you questions, and other orchestration tasks. See [Tools available to Claude](/docs/en/tools-reference) for the complete list.
@@ -82,11 +82,11 @@ The [agentic loop](#the-agentic-loop), [tools](#tools), and capabilities are the
 
 Claude Code runs in three environments, each with different tradeoffs for where your code executes.
 
-| Environment        | Where code runs                                                                                               | Use case                                                   |
-| ------------------ | ------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| **Local**          | Your machine                                                                                                  | Default. Full access to your files, tools, and environment |
-| **Cloud**          | Anthropic-managed VMs, or [self-hosted environments](/docs/en/self-hosted-environments) your organization operates | Offload tasks, work on repos you don't have locally        |
-| **Remote Control** | Your machine, controlled from a browser                                                                       | Use the web UI while execution and your files stay local   |
+| Environment | Where code runs | Use case |
+| - | - | - |
+| **Local** | Your machine | Default. Full access to your files, tools, and environment |
+| **Cloud** | Anthropic-managed VMs, or [self-hosted environments](/docs/en/self-hosted-environments) your organization operates | Offload tasks, work on repos you don't have locally |
+| **Remote Control** | Your machine, controlled from a browser | Use the web UI while execution and your files stay local |
 
 ### Interfaces
 
@@ -121,6 +121,17 @@ For the resume flags, the `/resume` picker, naming, and what happens when the sa
 Claude's context window holds your conversation history, file contents, command outputs, [CLAUDE.md](/docs/en/memory), [auto memory](/docs/en/memory#auto-memory), loaded skills, and system instructions. As you work, context fills up. Claude compacts automatically, but instructions from early in the conversation can get lost. Put persistent rules in CLAUDE.md, and run `/context` to see what's using space.
 
 For an interactive walkthrough of what loads and when, see [Explore the context window](/docs/en/context-window).
+
+#### Context Claude Code adds on its own
+
+If Claude follows a rule you didn't write, such as adding a `Co-Authored-By` trailer to a commit, the rule may have come from a [system reminder](/docs/en/glossary#system-reminder). As you work, Claude Code adds its own context to the conversation alongside your messages:
+
+* Your CLAUDE.md files
+* The instructions of your [output style](/docs/en/output-styles)
+* A note when a file Claude read earlier changes on disk
+* The commit and pull request attribution lines
+
+To change or remove the attribution lines, set [`attribution`](/docs/en/settings-reference#attribution). To remove Claude Code's built-in commit and pull request instructions, set [`includeGitInstructions`](/docs/en/settings-reference#includegitinstructions) to `false`. For the other switches, see [Turn off the context your agent replaces](/docs/en/agent-sdk/modifying-system-prompts#turn-off-the-context-your-agent-replaces).
 
 #### When context fills up
 

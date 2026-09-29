@@ -72,11 +72,11 @@ The tag must occupy its own line; Claude Code ignores a tag embedded mid-line.
 
 The tag takes three attributes, all required:
 
-| Attribute | Description                                       |
-| :-------- | :------------------------------------------------ |
-| `v`       | Protocol version. `1` is the only supported value |
-| `type`    | Hint kind. `plugin` is the only supported value   |
-| `value`   | Plugin identifier in `name@marketplace` form      |
+| Attribute | Description |
+| :- | :- |
+| `v` | Protocol version. `1` is the only supported value |
+| `type` | Hint kind. `plugin` is the only supported value |
+| `value` | Plugin identifier in `name@marketplace` form |
 
 Values may be double-quoted or unquoted; an unquoted value can't contain whitespace.
 

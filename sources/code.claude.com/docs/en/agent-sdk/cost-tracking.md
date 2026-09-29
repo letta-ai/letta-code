@@ -89,11 +89,11 @@ In streaming input mode, read call totals as described in [Track costs in stream
 
 The three result-level fields differ in what they count when the agent spawns [subagents](/docs/en/agent-sdk/subagents). Use `modelUsage`, or `model_usage` in Python, for whole-tree token accounting; the `usage` field undercounts as soon as nesting occurs.
 
-| Field                        | Subagent activity                                                                                 |
-| ---------------------------- | ------------------------------------------------------------------------------------------------- |
-| `usage`                      | Excluded. Counts only the top-level agent loop, so tokens consumed inside subagents are not added |
-| `total_cost_usd`             | Included. Counts subagent requests alongside the top-level loop                                   |
-| `modelUsage` / `model_usage` | Included. Counts subagent requests alongside the top-level loop, broken down by model             |
+| Field | Subagent activity |
+| - | - |
+| `usage` | Excluded. Counts only the top-level agent loop, so tokens consumed inside subagents are not added |
+| `total_cost_usd` | Included. Counts subagent requests alongside the top-level loop |
+| `modelUsage` / `model_usage` | Included. Counts subagent requests alongside the top-level loop, broken down by model |
 
 In [single message input mode](/docs/en/agent-sdk/streaming-vs-single-mode#single-message-input), when background subagents are still running at the end of the final turn, Claude Code waits for them, up to the cap described in [background tasks at exit](/docs/en/headless#background-tasks-at-exit), before emitting the result. The result's `total_cost_usd`, `duration_api_ms`, and `modelUsage`, or `model_usage` in Python, include the work done during that wait.
 

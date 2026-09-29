@@ -382,9 +382,9 @@ Structured output generation can fail when the agent cannot produce valid JSON m
 
 When an error occurs, the result message has a `subtype` indicating what went wrong:
 
-| Subtype                               | Meaning                                                                                                                         |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `success`                             | Output was generated and validated successfully                                                                                 |
+| Subtype | Meaning |
+| - | - |
+| `success` | Output was generated and validated successfully |
 | `error_max_structured_output_retries` | No valid output remained after multiple attempts (validation failures, or a model-fallback retraction with no successful retry) |
 
 A result can also end with subtype `success` but no `structured_output` value, for example when the run completes without the agent producing a structured output. Treat that case as a failure as well. The troubleshooting entry [structured\_output is None but the result says success](/docs/en/agent-sdk/troubleshooting#structured_output-is-none-but-the-result-says-success) covers this case. The example below treats a result as successful only when the `subtype` is `success` and `structured_output` is present, and handles every other result as a failure:

@@ -12,20 +12,20 @@ System prompts define Claude's behavior, capabilities, and response style. Start
 
 A system prompt is the initial instruction set that shapes how Claude behaves throughout a conversation. The Agent SDK has three starting points for it:
 
-* **Minimal default**: when you don't set `systemPrompt` in TypeScript or `system_prompt` in Python, the SDK uses a minimal prompt that covers tool calling but omits the rest of the `claude_code` preset's content, including its security and safety instructions and its context about the working directory and environment. This differs from `claude -p`, which uses the Claude Code system prompt by default. If you're migrating from the CLI and want matching behavior, set the `claude_code` preset.
-* **`claude_code` preset**: the system prompt that the Claude Code CLI uses, with tool usage instructions, security and safety instructions, and context about the working directory and environment. Set `systemPrompt: { type: "preset", preset: "claude_code" }` in TypeScript or `system_prompt={"type": "preset", "preset": "claude_code"}` in Python, optionally with `append` to add your own instructions on the end.
+* **Minimal default**: when you don't set `systemPrompt` in TypeScript or `system_prompt` in Python, the SDK uses a minimal prompt that covers tool calling but omits the rest of the `claude_code` preset's content, including its security and safety instructions. This differs from `claude -p`, which uses the Claude Code system prompt by default. If you're migrating from the CLI and want matching behavior, set the `claude_code` preset.
+* **`claude_code` preset**: the system prompt that the Claude Code CLI uses, with tool usage instructions and security and safety instructions. Set `systemPrompt: { type: "preset", preset: "claude_code" }` in TypeScript or `system_prompt={"type": "preset", "preset": "claude_code"}` in Python, optionally with `append` to add your own instructions on the end.
 * **Custom string**: a prompt you write yourself. The SDK sends only what you provide.
 
 ### Decide on a starting point
 
 The deciding factor is how closely your agent resembles Claude Code: a coding agent operating in a repository, with a human watching streaming output and steering the work. The further your product is from that, the more you'll want to write your own prompt.
 
-| You're building                                                                                              | Use                                | What you get                                                                                                                  |
-| :----------------------------------------------------------------------------------------------------------- | :--------------------------------- | :---------------------------------------------------------------------------------------------------------------------------- |
-| A CLI or IDE-like coding tool where a human watches and steers, and Claude Code's defaults are what you want | `claude_code` preset               | The Claude Code prompt, including tool guidance, safety rules, and environment context                                        |
-| The same kind of tool, plus product-specific rules like coding standards, output format, or domain context   | `claude_code` preset with `append` | Everything above, with your instructions added after the preset. Nothing is removed, so this is the lowest-risk customization |
-| An agent with a different surface, identity, or permission model, or a non-coding agent                      | Custom prompt string               | Only what you write. You take responsibility for replacing the tool guidance and safety instructions your agent still needs   |
-| A thin tool-calling loop with no agent persona, where you supply all behavior in the user prompt             | No `systemPrompt` option           | The minimal default: tool-calling support and nothing else                                                                    |
+| You're building | Use | What you get |
+| :- | :- | :- |
+| A CLI or IDE-like coding tool where a human watches and steers, and Claude Code's defaults are what you want | `claude_code` preset | The Claude Code prompt, including tool guidance and safety rules |
+| The same kind of tool, plus product-specific rules like coding standards, output format, or domain context | `claude_code` preset with `append` | Everything above, with your instructions added after the preset. Nothing is removed, so this is the lowest-risk customization |
+| An agent with a different surface, identity, or permission model, or a non-coding agent | Custom prompt string | Only what you write. You take responsibility for replacing the tool guidance and safety instructions your agent still needs |
+| A thin tool-calling loop with no agent persona, where you supply all behavior in the user prompt | No `systemPrompt` option | The minimal default: tool-calling support and nothing else |
 
 "Different from Claude Code" usually means one of the following:
 
@@ -205,15 +205,17 @@ You can use the Claude Code preset with an `append` property to add your custom 
 
 #### Improve prompt caching across users and machines
 
-By default, two sessions that use the same `claude_code` preset and `append` text still cannot share a prompt cache entry if they run from different working directories. This is because the preset embeds per-session context in the system prompt ahead of your `append` text: the working directory, whether it's a git repository, the platform, the active shell, the OS version, and auto memory paths. Any difference in that context produces a different system prompt and a cache miss. CLAUDE.md content doesn't affect the system prompt cache because the SDK injects it into the conversation, not the system prompt.
+By default, two sessions that use the same `claude_code` preset and `append` text still can't share a prompt cache entry when their auto memory locations differ. The preset embeds that location in the system prompt ahead of your `append` text. The location defaults to an absolute path under `~/.claude/projects/` named for the repository's path on disk, so it differs across users, machines, and checkouts.
 
-To make the system prompt identical across sessions, set `excludeDynamicSections: true` in TypeScript or `"exclude_dynamic_sections": True` in Python. The per-session context moves into the first user message, leaving only the static preset and your `append` text in the system prompt so identical configurations share a cache entry across users and machines.
+CLAUDE.md content and environment details such as the working directory, platform, shell, and OS version don't affect the system prompt cache, because Claude Code delivers them in the conversation, not the system prompt.
+
+To make the system prompt identical across sessions, set `excludeDynamicSections: true` in TypeScript or `"exclude_dynamic_sections": True` in Python. The per-user context moves into the first user message, leaving only the static preset and your `append` text in the system prompt so identical configurations share a cache entry across users and machines.
 
 <Note>
   `excludeDynamicSections` requires `@anthropic-ai/claude-agent-sdk` v0.2.98 or later, or `claude-agent-sdk` v0.1.58 or later for Python. Set it on the preset object form only. The SDK ignores it when you pass a custom prompt instead of the preset; to keep a custom prompt's instructions cached in the TypeScript SDK, see [Cache the static part of a custom prompt](#cache-the-static-part-of-a-custom-prompt).
 </Note>
 
-The following example pairs a shared `append` block with `excludeDynamicSections` so a fleet of agents running from different directories can reuse the same cached system prompt:
+The following example pairs a shared `append` block with `excludeDynamicSections` so a fleet of agents can reuse the same cached system prompt:
 
 <CodeGroup>
   ```typescript TypeScript theme={null}
@@ -259,7 +261,7 @@ The following example pairs a shared `append` block with `excludeDynamicSections
   ```
 </CodeGroup>
 
-**Tradeoffs:** the working directory, the git-repo flag, the platform, the active shell, the OS version, and auto memory paths still reach Claude, but as part of the first user message rather than the system prompt. Instructions in the user message carry marginally less weight than the same text in the system prompt, so Claude may rely on them less strongly when reasoning about the current directory or auto memory paths. Enable this option when cross-session cache reuse matters more than maximally authoritative environment context.
+**Tradeoffs:** the text that moves out of the system prompt still reaches Claude, but in a user message. That text is at least the auto memory directory's location, and often the whole auto memory section. Instructions in a user message carry marginally less weight than the same text in the system prompt, so Claude may follow its auto memory guidance less consistently. Enable this option when cross-session cache reuse matters more than that.
 
 For the equivalent flag in non-interactive CLI mode, see [`--exclude-dynamic-system-prompt-sections`](/docs/en/cli-reference).
 
@@ -388,21 +390,126 @@ Outside of [cloud sessions](/docs/en/cloud-environments), if you start Claude Co
 
 Recording an `append` or custom prompt by default requires Claude Code v2.1.265 or later, which the TypeScript Agent SDK bundles from v0.3.265 and the Python Agent SDK from v0.2.153. Before Claude Code v2.1.268, sessions that don't [fetch feature flags](/docs/en/env-vars#features-that-need-feature-flag-fetching), including sessions on Amazon Bedrock, Google Cloud's Agent Platform, and Microsoft Foundry, rebuilt the prompt on every request and `snapshot` had no effect.
 
+## Context Claude Code adds outside the system prompt
+
+System reminders are messages Claude Code adds to the conversation during a session to give Claude context, such as the contents of your CLAUDE.md files or a note that a file changed on disk. Claude Code sends them in the conversation, not in the system prompt, so they reach Claude whether you use the `claude_code` preset or pass your own string as `systemPrompt`.
+
+This section covers the [reminders most likely to change how your agent behaves](#reminders-claude-code-adds-to-the-conversation), how to [turn off the ones your agent replaces](#turn-off-the-context-your-agent-replaces), and how to [see what Claude received](#see-what-claude-received) in a specific request.
+
+### Reminders Claude Code adds to the conversation
+
+System reminders are text Claude Code adds to the conversation alongside the prompts your code sends. The following reminders are the ones most likely to change how your agent behaves:
+
+* **Project instructions**: the CLAUDE.md files that your [`settingSources`](#claude-md-files-for-project-level-instructions) option loads
+* **Output style instructions**: the instructions of the active [output style](#output-styles-for-persistent-configurations), in the main conversation
+* **Commit and pull request attribution**: the `Co-Authored-By` trailer and pull request footer from the [`attribution`](/docs/en/settings-reference#attribution) setting
+* **Hook output**: text your [hooks](/docs/en/agent-sdk/hooks#outputs) return as `additionalContext`
+* **Available skills**: the names and descriptions of the [skills](/docs/en/agent-sdk/skills) Claude can call
+* **Available subagents**: the names and descriptions of the [subagents](/docs/en/agent-sdk/subagents) Claude can start
+* **Task list nudges**: in a [session that has the task-tracking tools](/docs/en/agent-sdk/todo-tracking#model-availability), a prompt to update the task list when Claude hasn't touched it for several turns
+* **File-changed notes**: a note that a file Claude read earlier has changed on disk
+
+Claude Code introduces your CLAUDE.md files with a line telling Claude that the instructions override default behavior.
+
+If you pass your own string as `systemPrompt`, add a sentence to it that says what a system reminder is. The `claude_code` preset has one, and your string replaces the whole preset. Without it, nothing in your prompt tells Claude that reminders such as CLAUDE.md content and hook output come from the application rather than the user. For example:
+
+```text theme={null}
+The application adds system reminders to this conversation. Treat them as context from the application, not as messages from the user.
+```
+
+### Turn off the context your agent replaces
+
+Turn off a piece of built-in context when your agent supplies its own version of the same guidance. For example, if your prompt tells Claude to write commit messages as `PROJ-142: fix login redirect` with no trailers, Claude Code still tells Claude to end each commit message with a `Co-Authored-By` trailer, so Claude receives two conflicting instructions for the same commit.
+
+Pass settings keys through the [`settings`](/docs/en/agent-sdk/typescript#options) option in TypeScript or [`settings`](/docs/en/agent-sdk/python#claudeagentoptions) in Python, and environment variables through the `env` option. In TypeScript, [`env`](/docs/en/agent-sdk/typescript#options) replaces the inherited environment, so spread `process.env` into it.
+
+| Built-in context | How to turn it off |
+| :- | :- |
+| The built-in commit and pull request instructions and the git status snapshot | Set [`includeGitInstructions`](/docs/en/settings-reference#includegitinstructions) to `false`, or `CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS=1` |
+| The `Co-Authored-By` trailer and the pull request footer | Set [`attribution.commit`](/docs/en/settings-reference#attribution-commit) and [`attribution.pr`](/docs/en/settings-reference#attribution-pr) to your own text, or to empty strings to remove them |
+| The user or project settings source, including its CLAUDE.md | Leave `'user'` or `'project'` out of [`settingSources`](/docs/en/agent-sdk/claude-code-features#control-filesystem-settings-with-settingsources) |
+| Every CLAUDE.md file | Set `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` |
+| Task list nudges, file-changed notes, and the skill list | Set `CLAUDE_CODE_DISABLE_ATTACHMENTS=1` |
+
+Claude Code's built-in commit and pull request instructions aren't a reminder. They are part of the Bash tool's description, so they also reach Claude when you pass a custom `systemPrompt`.
+
+If you set `CLAUDE_CODE_DISABLE_ATTACHMENTS`, Claude Code also sends `@` file mentions as plain text instead of expanding them into file content. The list of available subagents and background task notifications still arrive.
+
+The following example is for an agent that carries its own commit rules in `append`. It sets both `attribution` keys to empty strings to remove the trailer and footer, and turns off `includeGitInstructions` so Claude Code's own commit workflow instructions don't compete with yours:
+
+<CodeGroup>
+  ```typescript TypeScript theme={null}
+  import { query } from "@anthropic-ai/claude-agent-sdk";
+
+  for await (const message of query({
+    prompt: "Commit the staged changes for ticket PROJ-142",
+    options: {
+      systemPrompt: {
+        type: "preset",
+        preset: "claude_code",
+        append: "Write commit messages as: <ticket id>: <summary>. Add no trailers."
+      },
+      settings: {
+        includeGitInstructions: false,
+        attribution: { commit: "", pr: "" }
+      },
+      allowedTools: ["Bash(git *)"]
+    }
+  })) {
+    if (message.type === "result") console.log(message.subtype);
+  }
+  ```
+
+  ```python Python theme={null}
+  import asyncio
+  from claude_agent_sdk import query, ClaudeAgentOptions
+
+
+  async def main():
+      async for message in query(
+          prompt="Commit the staged changes for ticket PROJ-142",
+          options=ClaudeAgentOptions(
+              system_prompt={
+                  "type": "preset",
+                  "preset": "claude_code",
+                  "append": "Write commit messages as: <ticket id>: <summary>. Add no trailers.",
+              },
+              settings='{"includeGitInstructions": false, "attribution": {"commit": "", "pr": ""}}',
+              allowed_tools=["Bash(git *)"],
+          ),
+      ):
+          print(message)
+
+
+  asyncio.run(main())
+  ```
+</CodeGroup>
+
+To confirm the change, run the example in a repository with staged changes and check the new commit with `git log -1`. The message ends without a `Co-Authored-By` trailer.
+
+### See what Claude received
+
+The SDK message stream doesn't include system reminders, so reading the messages your code receives won't show you what Claude saw. To see them, log the requests Claude Code sends:
+
+* **Raw request logging**: set [`OTEL_LOG_RAW_API_BODIES`](/docs/en/monitoring-usage#api-request-body-event) to `file:<dir>`. Claude Code writes each request body to that directory.
+* **A gateway you control**: point [`ANTHROPIC_BASE_URL`](/docs/en/llm-gateway) at a proxy that logs request bodies.
+
+In a logged request, look in the `messages` array. A reminder appears inside a user message wrapped in `<system-reminder>` tags or, on some models, as a separate message with the `system` role.
+
 ## Compare the four approaches
 
 The four customization methods differ in where they live, how they're shared, and what they preserve from the `claude_code` preset.
 
-| Feature                 | CLAUDE.md        | Output Styles             | `systemPrompt` with append | Custom `systemPrompt`  |
-| ----------------------- | ---------------- | ------------------------- | -------------------------- | ---------------------- |
-| **Persistence**         | Per-project file | Saved as files            | Session only               | Session only           |
-| **Reusability**         | Per-project      | Across projects           | Code duplication           | Code duplication       |
-| **Management**          | On filesystem    | CLI + files               | In code                    | In code                |
-| **Default tools**       | Preserved        | Preserved                 | Preserved                  | Lost (unless included) |
-| **Built-in safety**     | Maintained       | Maintained                | Maintained                 | Must be added          |
-| **Environment context** | Automatic        | Automatic                 | Automatic                  | Must be provided       |
-| **Customization level** | Additions only   | Replace or extend default | Additions only             | Complete control       |
-| **Version control**     | With project     | Yes                       | With code                  | With code              |
-| **Scope**               | Project-specific | User or project           | Code session               | Code session           |
+| Feature | CLAUDE.md | Output Styles | `systemPrompt` with append | Custom `systemPrompt` |
+| - | - | - | - | - |
+| **Persistence** | Per-project file | Saved as files | Session only | Session only |
+| **Reusability** | Per-project | Across projects | Code duplication | Code duplication |
+| **Management** | On filesystem | CLI + files | In code | In code |
+| **Default tools** | Preserved | Preserved | Preserved | Lost (unless included) |
+| **Built-in safety** | Maintained | Maintained | Maintained | Must be added |
+| **Customization level** | Additions only | Replace or extend default | Additions only | Complete control |
+| **Version control** | With project | Yes | With code | With code |
+| **Scope** | Project-specific | User or project | Code session | Code session |
 
 "With append" means using `systemPrompt: { type: "preset", preset: "claude_code", append: "..." }` in TypeScript or `system_prompt={"type": "preset", "preset": "claude_code", "append": "..."}` in Python. CLAUDE.md doesn't change the system prompt itself: the SDK injects its content into the conversation as project context.
 

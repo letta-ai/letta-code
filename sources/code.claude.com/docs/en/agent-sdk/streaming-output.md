@@ -86,14 +86,14 @@ Claude Code sets `user_message_uuid` on the turn's first non-ping stream event, 
 
 The `event` field contains the raw streaming event from the [Claude API](https://platform.claude.com/docs/en/build-with-claude/streaming#event-types). Common event types include:
 
-| Event Type            | Description                                     |
-| :-------------------- | :---------------------------------------------- |
-| `message_start`       | Start of a new message                          |
+| Event Type | Description |
+| :- | :- |
+| `message_start` | Start of a new message |
 | `content_block_start` | Start of a new content block (text or tool use) |
-| `content_block_delta` | Incremental update to content                   |
-| `content_block_stop`  | End of a content block                          |
-| `message_delta`       | Message-level updates (stop reason, usage)      |
-| `message_stop`        | End of the message                              |
+| `content_block_delta` | Incremental update to content |
+| `content_block_stop` | End of a content block |
+| `message_delta` | Message-level updates (stop reason, usage) |
+| `message_stop` | End of the message |
 
 ## Message flow
 
@@ -318,7 +318,7 @@ This example combines text and tool streaming into a cohesive UI. It tracks whet
 
 ## Known limitations
 
-* **Structured output**: the JSON result appears only in the final `ResultMessage.structured_output`, not as streaming deltas. See [structured outputs](/docs/en/agent-sdk/structured-outputs) for details.
+* **Structured output**: with partial messages enabled, the JSON streams as a tool call's unvalidated `input_json_delta` chunks, and only the validated result reaches the final `ResultMessage.structured_output`. See [structured outputs](/docs/en/agent-sdk/structured-outputs) for details.
 
 ## Next steps
 
