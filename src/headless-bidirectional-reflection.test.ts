@@ -42,6 +42,10 @@ interface BidirectionalReflectionSummary {
 
 const cliProcesses = new Set<ChildProcessWithoutNullStreams>();
 const tempRoots: string[] = [];
+const reflectionWaitTimeoutMs = 10_000;
+// Keep the original startup/turn budget in addition to all three sequential
+// reflection waits. A whole-scenario deadline must not cut a valid wait short.
+const scenarioTimeoutMs = 25_000 + 3 * reflectionWaitTimeoutMs;
 
 afterAll(async () => {
   for (const child of cliProcesses) {
@@ -102,7 +106,7 @@ describe("headless bidirectional auto-reflection", () => {
       summary.state?.reflected_through_message_id,
       formatSummary(summary),
     ).toBe("ui-msg-6");
-  }, 30_000);
+  }, 60_000);
 });
 
 async function runBidirectionalReflectionScenario(): Promise<BidirectionalReflectionSummary> {
@@ -201,7 +205,7 @@ async function runBidirectionalReflectionScenario(): Promise<BidirectionalReflec
     void waitForReflectionProgress(transcriptDir, {
       reflectedCompletedSteps: 3,
       payloadCount: 3,
-      timeoutMs: 10_000,
+      timeoutMs: reflectionWaitTimeoutMs,
     }).finally(() => {
       child.stdin.end();
     });
@@ -257,13 +261,13 @@ async function runBidirectionalReflectionScenario(): Promise<BidirectionalReflec
           void waitForReflectionProgress(transcriptDir, {
             reflectedCompletedSteps: 1,
             payloadCount: 1,
-            timeoutMs: 10_000,
+            timeoutMs: reflectionWaitTimeoutMs,
           }).finally(() => sendUser("hello two"));
         } else if (resultCount === 2) {
           void waitForReflectionProgress(transcriptDir, {
             reflectedCompletedSteps: 2,
             payloadCount: 2,
-            timeoutMs: 10_000,
+            timeoutMs: reflectionWaitTimeoutMs,
           }).finally(() => sendUser("hello three"));
         } else if (resultCount === 3) {
           scheduleCloseAfterReflection();
@@ -278,7 +282,7 @@ async function runBidirectionalReflectionScenario(): Promise<BidirectionalReflec
 
   const timeout = setTimeout(() => {
     child.kill("SIGTERM");
-  }, 25_000);
+  }, scenarioTimeoutMs);
 
   const { code, signal } = await new Promise<{
     code: number | null;
