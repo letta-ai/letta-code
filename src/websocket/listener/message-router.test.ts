@@ -386,6 +386,13 @@ describe("listener message router ownership handoff", () => {
     const listener = createRuntime();
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
     const socket = new MockSocket();
+    const opts = makeListenerOptions();
+    openListenerConnection({
+      runtime: listener,
+      connectionId: opts.connectionId,
+      writer: socket as unknown as WebSocket,
+      options: opts,
+    });
     const sent: unknown[] = [];
     let receivedActingUserId: string | undefined;
     let receivedRequestScopedClientSkills:
@@ -405,7 +412,7 @@ describe("listener message router ownership handoff", () => {
     const handleMessage = createListenerMessageHandler({
       runtime: listener,
       socket: socket as unknown as WebSocket,
-      opts: makeListenerOptions(),
+      opts,
       processQueuedTurn: async () => {},
       fileCommandSession: { handle: () => false },
       getParsedRuntimeScope: () => null,
