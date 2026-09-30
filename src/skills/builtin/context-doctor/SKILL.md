@@ -1,7 +1,7 @@
 ---
 name: Context Doctor
 id: context-doctor
-description: Investigate and repair an agent's context — memory, system prompt, and skills — using observed behavior as evidence. Use when the user asks why you misbehaved, asks to audit, clean up, or fix your memory or context, or runs /doctor. Do not load for routine memory reads or edits, or requests that merely mention memory.
+description: Investigate and repair an agent's context — memory, system prompt, and skills — using observed behavior as evidence. Use when the user asks to audit, clean up, or fix your memory or context, or runs /doctor. Do not load for routine memory reads or edits, or requests that merely mention memory.
 ---
 
 # Context Doctor
