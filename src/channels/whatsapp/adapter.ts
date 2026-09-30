@@ -10,6 +10,7 @@ import type {
   OutboundChannelMessage,
   WhatsAppChannelAccount,
 } from "@/channels/types";
+import { debugLog } from "@/utils/debug";
 import {
   asRecord,
   buildWhatsAppQuotedOptions,
@@ -226,10 +227,6 @@ export function createWhatsAppAdapter(
     } catch {
       return null;
     }
-  }
-
-  function getTypingOwner(): WhatsAppSocket | null {
-    return sock;
   }
 
   function sendTypingPresence(
@@ -468,8 +465,9 @@ export function createWhatsAppAdapter(
         const fromMe = msg.key?.fromMe === true;
         if (fromMe && !(account.selfChatMode && selfChat)) continue;
         if (account.selfChatMode && !selfChat) {
-          console.log(
-            `[WhatsApp:${account.accountId}] drop non-self message in self-chat mode remoteJid=${remoteJid}`,
+          debugLog(
+            `WhatsApp:${account.accountId}`,
+            `drop non-self message in self-chat mode remoteJid=${remoteJid}`,
           );
           continue;
         }
@@ -577,8 +575,9 @@ export function createWhatsAppAdapter(
           raw: msg,
         };
 
-        console.log(
-          `[WhatsApp:${account.accountId}] inbound chatId=${chatId} sender=${senderId} text="${previewWhatsAppText(body)}"`,
+        debugLog(
+          `WhatsApp:${account.accountId}`,
+          `inbound chatId=${chatId} sender=${senderId} text="${previewWhatsAppText(body)}"`,
         );
         acceptedEntries.push({
           inbound,
@@ -979,7 +978,7 @@ export function createWhatsAppAdapter(
   typing = createWhatsAppTypingController<WhatsAppSocket>({
     accountId: account.accountId,
     canonicalizeChatId,
-    getOwner: getTypingOwner,
+    getOwner: () => sock,
     sendPresence: sendTypingPresence,
   });
 

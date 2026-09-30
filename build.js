@@ -131,10 +131,11 @@ await Bun.build({
   naming: {
     entry: "image-resize-worker.js",
   },
-  // The Electron-safe build loads a patched native addon and its adjacent
-  // libvips shared library. Keep its package boundary intact so those files
-  // resolve from node_modules at runtime.
-  external: ["@janhapke/sharp-electron"],
+  // Both Sharp variants load native bindings from their installed packages.
+  // Keep their JS and native bindings together in the worker: bundling one
+  // version's JS can otherwise resolve another version's @img binding from
+  // an ancestor node_modules directory at runtime.
+  external: ["sharp", "@janhapke/sharp-electron"],
 });
 
 // Add shebang to output file
@@ -182,6 +183,21 @@ await Bun.build({
   sourcemap: "external",
   naming: {
     entry: "mcp-client.js",
+  },
+  define: {
+    LETTA_VERSION: JSON.stringify(version),
+  },
+});
+
+await Bun.build({
+  entrypoints: ["./src/mcp-oauth-public.ts"],
+  outdir: "./dist",
+  target: "node",
+  format: "esm",
+  minify: false,
+  sourcemap: "external",
+  naming: {
+    entry: "mcp-oauth.js",
   },
   define: {
     LETTA_VERSION: JSON.stringify(version),
@@ -252,6 +268,19 @@ await Bun.build({
     ".txt": "text",
   },
 });
+
+// Pure async question contract for browser and CommonJS consumers.
+for (const format of ["esm", "cjs"]) {
+  await Bun.build({
+    entrypoints: ["./src/ask-user-question.ts"],
+    outdir: "./dist",
+    target: "browser",
+    format,
+    minify: false,
+    sourcemap: "external",
+    naming: { entry: `ask-user-question.${format === "cjs" ? "cjs" : "js"}` },
+  });
+}
 
 // Pure scheduled-turn envelope contract shared by scheduler producers and
 // transcript consumers.

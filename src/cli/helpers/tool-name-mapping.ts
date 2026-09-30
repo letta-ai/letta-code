@@ -3,8 +3,6 @@
  * Centralizes tool name remapping logic used across the UI.
  */
 
-import { isInteractiveApprovalTool } from "@/tools/interactive-policy";
-
 // Retired memory tools; kept so saved transcripts still render them.
 const MEMORY_TOOL_NAMES = new Set(["memory", "memory_apply_patch"]);
 
@@ -124,17 +122,6 @@ export function isFancyUITool(name: string): boolean {
     // Shell/bash tools now render inline
     isShellTool(name)
   );
-}
-
-/**
- * Checks if a tool always requires user interaction, even in unrestricted mode.
- * These are tools that fundamentally need user input to proceed:
- * - AskUserQuestion: needs user to answer questions
- *
- * Other tools (bash, file edits) should respect unrestricted mode and auto-approve.
- */
-export function alwaysRequiresUserInput(name: string): boolean {
-  return isInteractiveApprovalTool(name);
 }
 
 /**

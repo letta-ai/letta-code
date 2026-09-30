@@ -178,10 +178,6 @@ import { settingsManager, shouldPersistSessionState } from "./settings-manager";
 import { writeWireMessage, writeWireMessageAsync } from "./stream-json-writer";
 import { shutdownBackgroundMemoryTasks } from "./tools/impl/memory-task-lifecycle";
 import {
-  INTERACTIVE_USER_INPUT_TOOL_NAMES,
-  isInteractiveApprovalTool,
-} from "./tools/interactive-policy";
-import {
   type ExternalToolDefinition,
   registerExternalTools,
   setExternalToolExecutor,
@@ -430,7 +426,6 @@ async function prepareHeadlessToolExecutionContext(params: {
     conversationId: params.conversationId,
     overrideModel: params.overrideModel,
     workingDirectory: getCurrentWorkingDirectory(),
-    exclude: [...INTERACTIVE_USER_INPUT_TOOL_NAMES],
     cachedAgent: params.cachedAgent,
     modContext: params.modContext,
     modEvents: params.modEvents,
@@ -2610,7 +2605,6 @@ export async function handleHeadlessCommand(
 
         const { autoAllowed, autoDenied, needsUserInput } =
           await classifyApprovals(approvals, {
-            alwaysRequiresUserInput: isInteractiveApprovalTool,
             requireArgsForAutoApprove: true,
             missingNameReason: "Tool call incomplete - missing name",
             toolContextId: turnToolContextId ?? undefined,
@@ -4520,7 +4514,6 @@ async function runBidirectionalMode(
 
             const { autoAllowed, autoDenied, needsUserInput } =
               await classifyApprovals(approvals, {
-                alwaysRequiresUserInput: isInteractiveApprovalTool,
                 requireArgsForAutoApprove: true,
                 missingNameReason: "Tool call incomplete - missing name",
                 toolContextId: turnToolContextId ?? undefined,
@@ -4555,8 +4548,7 @@ async function runBidirectionalMode(
               }
 
               if (permResponse.decision === "allow") {
-                // If provided updatedInput (e.g., for AskUserQuestion with answers),
-                // update the approval's toolArgs to use it
+                // Apply tool arguments edited by the permission response.
                 const finalApproval = permResponse.updatedInput
                   ? {
                       ...ac.approval,

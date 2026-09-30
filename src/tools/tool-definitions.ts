@@ -32,7 +32,7 @@ import WriteArtifactFileDescription from "./descriptions/WriteArtifactFile.md";
 import WriteStdinDescription from "./descriptions/WriteStdin.md";
 import { apply_patch } from "./impl/apply-patch";
 import { read_artifact_file, write_artifact_file } from "./impl/artifact-files";
-import { ask_user_question } from "./impl/ask-user-question";
+import { ask_user_question_async } from "./impl/ask-user-question";
 import { bash } from "./impl/bash";
 import { edit } from "./impl/edit";
 import { enter_worktree } from "./impl/enter-worktree";
@@ -120,10 +120,10 @@ function execCommandDescription(): string {
 }
 
 const toolDefinitions = {
-  AskUserQuestion: defineTool({
+  AskUserQuestionAsync: defineTool({
     schema: AskUserQuestionSchema,
     description: AskUserQuestionDescription.trim(),
-    impl: ask_user_question,
+    impl: ask_user_question_async,
   }),
   Bash: defineTool({
     schema: BashSchema,

@@ -19,6 +19,7 @@ import {
   getCurrentWorkingDirectory,
   getRuntimeContext,
 } from "@/runtime-context";
+import { debugLog } from "@/utils/debug";
 import { sendClaudeMessage } from "./claude-stream-session";
 import { sendCodexMessage } from "./codex-app-server";
 import { parseExternalCodingAgentId } from "./external-coding-agent";
@@ -120,7 +121,10 @@ export async function send_agent_message(
             type: "codex",
             agentId: args.agent_id as string,
             message: args.message,
-            parentScope,
+            parentScope: {
+              ...parentScope,
+              actingUserId: context?.actingUserId,
+            },
             completion: receipt.completion,
             interrupt: receipt.interrupt,
           });
@@ -170,7 +174,7 @@ export async function send_agent_message(
           type: "claude-code",
           agentId: args.agent_id as string,
           message: args.message,
-          parentScope,
+          parentScope: { ...parentScope, actingUserId: context?.actingUserId },
           completion: receipt.completion,
           interrupt: receipt.interrupt,
         });
@@ -197,15 +201,12 @@ export async function send_agent_message(
     const computer = normalizeAgentMessageComputer(args.computer);
     const actingUserId = context?.actingUserId;
     if (!actingUserId) {
-      console.info(
-        "[SendAgentMessage] Sending without X-Letta-Acting-User-Id",
-        {
-          senderAgentId: sender.agentId,
-          senderConversationId: sender.conversationId,
-          targetAgentId: args.agent_id,
-          targetConversationId: args.conversation_id,
-        },
-      );
+      debugLog("SendAgentMessage", "Sending without X-Letta-Acting-User-Id", {
+        senderAgentId: sender.agentId,
+        senderConversationId: sender.conversationId,
+        targetAgentId: args.agent_id,
+        targetConversationId: args.conversation_id,
+      });
     }
     const signal = AbortSignal.any([
       AbortSignal.timeout(30_000),

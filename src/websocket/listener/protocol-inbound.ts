@@ -101,6 +101,7 @@ import type {
 const EXPERIMENT_IDS = new Set<ExperimentId>([
   "conversation_titles",
   "desktop_conversation_bootstrap",
+  "memory_palace",
   "tui_cron",
 ]);
 
@@ -179,7 +180,6 @@ function isInputCommand(value: unknown): value is InputCommand {
   if (!candidate.payload || typeof candidate.payload !== "object") {
     return false;
   }
-
   const payload = candidate.payload as {
     kind?: unknown;
     messages?: unknown;

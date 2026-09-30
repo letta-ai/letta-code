@@ -154,6 +154,7 @@ export function isUserInvocableSkill(skill: Skill): boolean {
 }
 
 const LOCAL_AGENT_EXCLUDED_BUNDLED_SKILLS = new Set([
+  "curating-memory-palace",
   "image-generation",
   "managing-shared-memory",
   "working-across-computers",
@@ -316,7 +317,9 @@ export async function discoverSkills(
   }
 
   return {
-    skills: Array.from(skillsById.values()).sort(compareSkills),
+    skills: Array.from(skillsById.values())
+      .filter((skill) => isSkillAvailableForAgent(skill, agentId))
+      .sort(compareSkills),
     errors: allErrors,
   };
 }

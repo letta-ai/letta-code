@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  createSandboxDesktopSession,
   downloadFileFromSandbox,
   ensureConversationSandbox,
   type SandboxFilesApiDeps,
@@ -112,5 +113,51 @@ describe("sandbox file API", () => {
     expect(calls[0]?.input).toBe(
       "https://api.letta.test/v1/sandboxes/sandbox-1/files?path=%2Froot%2Fdownloads%2Freport.txt",
     );
+  });
+
+  test("creates a desktop session for the sandbox", async () => {
+    const calls: Array<{ input: string; init?: RequestInit }> = [];
+    const result = await createSandboxDesktopSession(
+      "sandbox-1",
+      createDeps(
+        Response.json({
+          url: "https://api.letta.test/v1/sandboxes/sandbox-1/desktop-session/ws?token=abc",
+          expiresAt: "2026-09-28T23:00:00.000Z",
+        }),
+        calls,
+      ),
+    );
+
+    expect(result).toEqual({
+      url: "https://api.letta.test/v1/sandboxes/sandbox-1/desktop-session/ws?token=abc",
+      expiresAt: "2026-09-28T23:00:00.000Z",
+    });
+    expect(calls[0]?.input).toBe(
+      "https://api.letta.test/v1/sandboxes/sandbox-1/desktop-session",
+    );
+    expect(calls[0]?.init?.method).toBe("POST");
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({});
+    expect(new Headers(calls[0]?.init?.headers).get("Authorization")).toBe(
+      "Bearer secret",
+    );
+  });
+
+  test("surfaces the server's not-ready error for a desktop session", async () => {
+    const calls: Array<{ input: string; init?: RequestInit }> = [];
+    await expect(
+      createSandboxDesktopSession(
+        "sandbox-1",
+        createDeps(
+          Response.json(
+            {
+              errorCode: "SANDBOX_NOT_READY",
+              message: "Sandbox is not ready for desktop access",
+            },
+            { status: 409 },
+          ),
+          calls,
+        ),
+      ),
+    ).rejects.toThrow("Sandbox is not ready for desktop access");
   });
 });

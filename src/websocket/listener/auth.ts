@@ -8,6 +8,7 @@ import {
 } from "@/auth/oauth";
 import { refreshAccessTokenSingleFlight } from "@/auth/oauth-refresh";
 import { settingsManager } from "@/settings-manager";
+import { debugLog } from "@/utils/debug";
 import {
   deriveListenerInstanceId,
   type RegisterOptions,
@@ -156,7 +157,7 @@ async function refreshListenerAccessToken(
   }
 
   const now = Date.now();
-  console.log("Access token expired, refreshing...");
+  debugLog("Listen", "Access token expired, refreshing...");
 
   const tokens = await refreshAccessTokenSingleFlight(
     settings.refreshToken,
@@ -172,7 +173,7 @@ async function refreshListenerAccessToken(
   });
   await settingsManager.flush();
 
-  console.log("Token refreshed successfully.");
+  debugLog("Listen", "Token refreshed successfully.");
   return tokens.access_token;
 }
 

@@ -8,6 +8,7 @@ import {
   type TelemetrySurface,
   telemetry,
 } from "@/telemetry";
+import { reportListenerStateWriteFailure } from "@/telemetry/error-reporting";
 
 type TelemetryTestState = {
   events: unknown[];
@@ -215,6 +216,45 @@ describe("telemetry flush auth", () => {
 
     telemetry.trackError("test_error", "test message", "test_context");
     expect(telemetryState.events).toHaveLength(0);
+  });
+
+  test("listener write failures send a payload-free error event to Cloud", async () => {
+    telemetryState.isCloudUser = () => true;
+    const sent: Array<{ data: Record<string, unknown> }> = [];
+    const fetchMock = mock(
+      async (_url: string | URL | Request, init?: RequestInit) => {
+        sent.push(JSON.parse(String(init?.body)).events[0]);
+        return new Response(null, { status: 200 });
+      },
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    settingsManager.getSettingsWithSecureTokens = mock(async () => ({
+      env: { LETTA_API_KEY: "settings-key" },
+    })) as unknown as typeof settingsManager.getSettingsWithSecureTokens;
+
+    reportListenerStateWriteFailure({
+      phase: "before_tool_execution",
+      error: Object.assign(new Error("/private/state.json"), {
+        code: "ENOSPC",
+      }),
+      agentId: "agent-test",
+      conversationId: "conv-test",
+      runId: "run-test",
+      toolCallId: "call-test",
+    });
+    await telemetry.flush();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(sent[0]?.data).toMatchObject({
+      error_type: "listener_state_write_failed",
+      run_id: "run-test",
+    });
+    expect(JSON.parse(String(sent[0]?.data.context))).toMatchObject({
+      phase: "before_tool_execution",
+      error_code: "ENOSPC",
+      tool_call_id: "call-test",
+    });
+    expect(sent[0]?.data.debug_log_tail).toBeUndefined();
+    expect(JSON.stringify(sent)).not.toContain("/private/");
   });
 
   test("self-hosted users still send usage telemetry", async () => {

@@ -1,6 +1,7 @@
 import { Box } from "ink";
 import { memo, type ReactNode } from "react";
 import { getSubagentByToolCallId } from "@/agent/subagent-state.js";
+import { parseAskUserQuestionReceipt } from "@/ask-user-question";
 import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
 import {
   formatArgsDisplay,
@@ -187,7 +188,9 @@ export const ToolCallMessage = memo(
       // For AskUserQuestion, show friendly header only after completion
       if (isQuestionTool(rawName)) {
         if (line.phase === "finished" && line.resultOk !== false) {
-          displayName = "User answered Letta Code's questions:";
+          displayName = parseAskUserQuestionReceipt(line.resultText)
+            ? "Questions posted"
+            : "User answered Letta Code's questions:";
         } else {
           displayName = "Asking user questions...";
         }

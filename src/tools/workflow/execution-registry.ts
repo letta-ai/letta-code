@@ -33,6 +33,7 @@ interface WorkflowExecutionRecord {
   error?: string;
   phases: string[];
   agents: Map<number, WorkflowAgentRecord>;
+  decisionTokens: number;
   logs: string[];
 }
 
@@ -124,6 +125,7 @@ export function registerWorkflowExecution(params: {
     startedAt: params.startedAt ?? Date.now(),
     phases: (params.meta.phases ?? []).map((p) => p.title),
     agents: new Map(),
+    decisionTokens: 0,
     logs: [],
   });
   notify();
@@ -143,6 +145,9 @@ export function recordWorkflowProgress(
     case "log":
       record.logs.push(event.message);
       if (record.logs.length > MAX_LOG_LINES) record.logs.shift();
+      break;
+    case "decision_usage":
+      record.decisionTokens += event.totalTokens;
       break;
     case "agent": {
       const previous = record.agents.get(event.callIndex);
@@ -224,7 +229,9 @@ function snapshot(
     agentsDone: agents.filter((a) => a.status === "done").length,
     agentsFailed: agents.filter((a) => a.status === "error").length,
     agentsRunning: agents.filter((a) => a.status === "running").length,
-    totalTokens: agents.reduce((sum, a) => sum + (a.totalTokens ?? 0), 0),
+    totalTokens:
+      record.decisionTokens +
+      agents.reduce((sum, a) => sum + (a.totalTokens ?? 0), 0),
     phases: phaseOrder.map((title) => ({
       title,
       agents: byPhase.get(title) ?? [],

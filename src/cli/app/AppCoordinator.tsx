@@ -99,12 +99,12 @@ import {
   buildReflectionArenaChoiceQuestions,
   finalizeReflectionArenaChoice,
   formatReflectionArenaDeferredMessage,
-  launchReflectionArena,
   parseReflectionArenaChoiceAnswers,
   REFLECTION_ARENA_MODEL_A_DEFAULT,
   type ReflectionArenaChoiceQuestion,
   sampleReflectionArenaComparisonModel,
 } from "@/cli/helpers/reflection-arena";
+import { launchReflectionArena } from "@/cli/helpers/reflection-arena-launcher";
 import {
   AUTO_REFLECTION_DESCRIPTION,
   launchReflectionSubagent,
@@ -3765,7 +3765,6 @@ export function App({
     handleApproveAlways,
     handleDenyCurrent,
     handleCancelApprovals,
-    handleQuestionSubmit,
   } = useApprovalFlow({
     abortControllerRef,
     agentId,
@@ -5008,7 +5007,6 @@ export function App({
         handlePermissionModeChange={handlePermissionModeChange}
         handlePersonalitySelect={handlePersonalitySelect}
         handleProfileEscapeCancel={handleProfileEscapeCancel}
-        handleQuestionSubmit={handleQuestionSubmit}
         handleReflectionArenaChoiceCancel={handleReflectionArenaChoiceCancel}
         handleReflectionArenaChoiceSubmit={handleReflectionArenaChoiceSubmit}
         handleSleeptimeModeSelect={handleSleeptimeModeSelect}

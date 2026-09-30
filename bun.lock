@@ -7,7 +7,7 @@
       "dependencies": {
         "@earendil-works/pi-ai": "^0.87.1",
         "@janhapke/sharp-electron": "0.35.3-electron.1",
-        "@letta-ai/letta-agent-sdk": "^0.8.17",
+        "@letta-ai/letta-agent-sdk": "0.8.24",
         "@letta-ai/letta-client": "^1.10.2",
         "@letta-ai/trajectory": "0.2.0",
         "@modelcontextprotocol/sdk": "1.30.0",
@@ -196,11 +196,11 @@
 
     "@jridgewell/sourcemap-codec": ["@jridgewell/sourcemap-codec@1.5.5", "", {}, "sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og=="],
 
-    "@letta-ai/letta-agent-sdk": ["@letta-ai/letta-agent-sdk@0.8.17", "", { "dependencies": { "@letta-ai/letta-client": "^1.12.1", "@letta-ai/letta-code": "0.33.1", "ajv": "^8.20.0" } }, "sha512-6vjifnqinepS8oZSqVEoO3BdaD0TkPbdiuLkFen6+W1h62nlEdQoQtKbeMrPMsl6qf29Xnfvd7fxql9vajybLQ=="],
+    "@letta-ai/letta-agent-sdk": ["@letta-ai/letta-agent-sdk@0.8.24", "", { "dependencies": { "@letta-ai/letta-client": "^1.12.1", "@letta-ai/letta-code": "0.33.7", "ajv": "^8.20.0" } }, "sha512-ZwJtar/o7hNn6BX4qo7CN80FSdbnmiUXUmwVbkcvAfhLUTWe8ijObMGS8slwtD682KYVP0ZxoTxnVqDiob4cog=="],
 
     "@letta-ai/letta-client": ["@letta-ai/letta-client@1.10.2", "", {}, "sha512-BYAPkIl6wHYORJ+zHmlWaPSrlsMbN5YkoSnHnEUvaIJBOpa5kLwldNjzHIALcSAV19Qc0ktRoIQy0i0Vqb21yQ=="],
 
-    "@letta-ai/letta-code": ["@letta-ai/letta-code@0.33.1", "", { "dependencies": { "@earendil-works/pi-ai": "^0.87.1", "@janhapke/sharp-electron": "0.35.3-electron.1", "@letta-ai/letta-agent-sdk": "^0.8.11", "@letta-ai/letta-client": "^1.10.2", "@letta-ai/trajectory": "0.2.0", "@modelcontextprotocol/sdk": "1.30.0", "@pierre/diffs": "1.2.2", "@scarf/scarf": "^1.4.0", "cron-parser": "^5.6.1", "cross-spawn": "^7.0.6", "glob": "^13.0.0", "ink": "5.2.1", "ink-link": "^4.1.0", "node-pty": "^1.1.0", "open": "^10.2.0", "react": "18.2.0", "sharp": "^0.34.5", "shiki": "^4.0.2", "strip-ansi": "^7.2.0", "ws": "^8.19.0" }, "optionalDependencies": { "@vscode/ripgrep": "^1.17.0" }, "bin": { "letta": "letta.js" } }, "sha512-cTow1SXbomdDtOSgQyObJ1Blr8gUaJcHtcDSee6xe0eHFWGCXq5YAlBJmpEQ1yDDjutVE2C4Sn0cZOqsD41DOg=="],
+    "@letta-ai/letta-code": ["@letta-ai/letta-code@0.33.7", "", { "dependencies": { "@earendil-works/pi-ai": "^0.87.1", "@janhapke/sharp-electron": "0.35.3-electron.1", "@letta-ai/letta-agent-sdk": "0.8.21", "@letta-ai/letta-client": "^1.10.2", "@letta-ai/trajectory": "0.2.0", "@modelcontextprotocol/sdk": "1.30.0", "@pierre/diffs": "1.2.2", "@scarf/scarf": "^1.4.0", "@shikijs/langs": "4.0.2", "cron-parser": "^5.6.1", "cross-spawn": "^7.0.6", "glob": "^13.0.0", "ink": "5.2.1", "ink-link": "^4.1.0", "node-pty": "^1.1.0", "open": "^10.2.0", "react": "18.2.0", "sharp": "^0.34.5", "shiki": "^4.0.2", "strip-ansi": "^7.2.0", "ws": "^8.19.0" }, "optionalDependencies": { "@vscode/ripgrep": "^1.17.0" }, "bin": { "letta": "letta.js" } }, "sha512-PkXdVNXwoKrMFuE08rfVKliKignpe4HUnq+bzs3EsgLfogm2m2oe7PFhmk8tb4VoCfc5oqqrwhtzuF+ur0PlFQ=="],
 
     "@letta-ai/trajectory": ["@letta-ai/trajectory@0.2.0", "", {}, "sha512-biCyT0z8nh4Q8kIqBrPgmzoalacPmosmCpvEjdN9ILpL85+T75b8ahcN9MHPHQUVRj/J7UyQuRahJ4/JdrpCcA=="],
 
@@ -1230,6 +1230,8 @@
 
     "@letta-ai/letta-agent-sdk/@letta-ai/letta-client": ["@letta-ai/letta-client@1.12.1", "", {}, "sha512-rYjXMXpkfssj7VBBX3qCp6mdpNRv6YPNrliYsjkhWoQDqGg3J9bsgIQ28ZhQTddabYxRUIwcdzuaizFx8pvZ7A=="],
 
+    "@letta-ai/letta-code/@letta-ai/letta-agent-sdk": ["@letta-ai/letta-agent-sdk@0.8.21", "", { "dependencies": { "@letta-ai/letta-client": "^1.12.1", "@letta-ai/letta-code": "0.33.3", "ajv": "^8.20.0" } }, "sha512-eOTsakTURLhW0ad9YHydAKuWLaZGHmc/5Zzs6YycUzi9OLTIQLmPbTIGbhcruYYtTFS/iPECrXZFUzadEl8RkA=="],
+
     "@letta-ai/letta-code/@letta-ai/letta-client": ["@letta-ai/letta-client@1.12.1", "", {}, "sha512-rYjXMXpkfssj7VBBX3qCp6mdpNRv6YPNrliYsjkhWoQDqGg3J9bsgIQ28ZhQTddabYxRUIwcdzuaizFx8pvZ7A=="],
 
     "@pierre/diffs/diff": ["diff@8.0.3", "", {}, "sha512-qejHi7bcSD4hQAZE0tNAawRK1ZtafHDmMTMkrrIGgSLl7hTnQHmKCeB45xAcbfTqK2zowkM3j3bHt/4b/ARbYQ=="],
@@ -1433,6 +1435,8 @@
     "@janhapke/sharp-electron/sharp/@img/sharp-win32-ia32": ["@img/sharp-win32-ia32@0.35.3", "", { "os": "win32", "cpu": "ia32" }, "sha512-r53mXsBN6lFUDiST764SvgwUdHAqM4rPAiDzAmf4fLoB6X/rkfyTrLCg6+g17wJJiCmB3JYgHuUldCWUIRFSXw=="],
 
     "@janhapke/sharp-electron/sharp/@img/sharp-win32-x64": ["@img/sharp-win32-x64@0.35.3", "", { "os": "win32", "cpu": "x64" }, "sha512-D4y1vNeZrIIJCN+uHaWVtH86B+aCrdMYYjicy9pXHvbGZeGYLLSd3wdVuC37FxVXlU1ARsk84eKWfWMXGYEqvA=="],
+
+    "@letta-ai/letta-code/@letta-ai/letta-agent-sdk/@letta-ai/letta-code": ["@letta-ai/letta-code@0.33.3", "", { "dependencies": { "@earendil-works/pi-ai": "^0.87.1", "@janhapke/sharp-electron": "0.35.3-electron.1", "@letta-ai/letta-agent-sdk": "^0.8.17", "@letta-ai/letta-client": "^1.10.2", "@letta-ai/trajectory": "0.2.0", "@modelcontextprotocol/sdk": "1.30.0", "@pierre/diffs": "1.2.2", "@scarf/scarf": "^1.4.0", "@shikijs/langs": "4.0.2", "cron-parser": "^5.6.1", "cross-spawn": "^7.0.6", "glob": "^13.0.0", "ink": "5.2.1", "ink-link": "^4.1.0", "node-pty": "^1.1.0", "open": "^10.2.0", "react": "18.2.0", "sharp": "^0.34.5", "shiki": "^4.0.2", "strip-ansi": "^7.2.0", "ws": "^8.19.0" }, "optionalDependencies": { "@vscode/ripgrep": "^1.17.0" }, "bin": { "letta": "letta.js" } }, "sha512-9h6dCnxnn0CMiUkYj9Qbx4KxR/DbYYDJN0BLo6iHvxQjuBsssCtriMbS2QSOKjKkfsPB91J2x/N68PzW3AmW5g=="],
 
     "@pierre/diffs/shiki/@shikijs/core": ["@shikijs/core@3.23.0", "", { "dependencies": { "@shikijs/types": "3.23.0", "@shikijs/vscode-textmate": "^10.0.2", "@types/hast": "^3.0.4", "hast-util-to-html": "^9.0.5" } }, "sha512-NSWQz0riNb67xthdm5br6lAkvpDJRTgB36fxlo37ZzM2yq0PQFFzbd8psqC2XMPgCzo1fW6cVi18+ArJ44wqgA=="],
 

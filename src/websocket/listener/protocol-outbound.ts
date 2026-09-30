@@ -53,7 +53,6 @@ import {
 import {
   getConversationRuntime,
   getPendingControlRequests,
-  getRecoveredApprovalStateForScope,
   hasInterruptedCacheForScope,
   safeEmitWsEvent,
 } from "./runtime";
@@ -299,18 +298,13 @@ export function buildLoopStatus(
     scopedConversationId,
   );
   const interruptedCacheActive = hasInterruptedCacheForScope(listener, scope);
-  const recovered = getRecoveredApprovalStateForScope(listener, scope);
   const status = interruptedCacheActive
     ? !conversationRuntime?.isProcessing
       ? "WAITING_ON_INPUT"
       : conversationRuntime?.loopStatus === "WAITING_ON_APPROVAL"
         ? "WAITING_ON_INPUT"
         : (conversationRuntime?.loopStatus ?? "WAITING_ON_INPUT")
-    : recovered &&
-        recovered.pendingRequestIds.size > 0 &&
-        conversationRuntime?.loopStatus === "WAITING_ON_INPUT"
-      ? "WAITING_ON_APPROVAL"
-      : (conversationRuntime?.loopStatus ?? "WAITING_ON_INPUT");
+    : (conversationRuntime?.loopStatus ?? "WAITING_ON_INPUT");
   return {
     status,
     active_run_ids:
@@ -825,8 +819,10 @@ export function buildSubagentSnapshot(
       status: a.status,
       agent_url: a.agentURL,
       conversation_id: a.conversationId ?? null,
+      super_run_id: a.superRunId,
       model: a.model,
       is_background: a.isBackground,
+      claims_parent_runtime: a.claimsParentRuntime,
       silent: a.silent,
       tool_call_id: a.toolCallId,
       parent_agent_id: a.parentAgentId,

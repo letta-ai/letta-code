@@ -12,8 +12,14 @@ import { join } from "node:path";
 import type { ApprovalResult } from "@/agent/approval-execution";
 import { STALE_APPROVAL_RECOVERY_DENIAL_REASON } from "@/agent/turn-recovery-policy";
 import { getServerUrl } from "@/backend/api/server-url";
+import { reportListenerStateWriteFailure } from "@/telemetry/error-reporting";
 import { debugWarn } from "@/utils/debug";
 import type { ConversationRuntime } from "./types";
+
+export type ListenerStateWritePhase =
+  | "run_observed"
+  | "before_tool_execution"
+  | "after_tool_execution";
 
 /** Local execution evidence, never populated by observing another runtime. */
 export interface InterruptedTurnRecord {
@@ -135,11 +141,12 @@ export function recordListenerWork(
       "runId" | "toolCallIds" | "results" | "requestOtid" | "actingUserId"
     >
   >,
+  phase: ListenerStateWritePhase,
 ): void {
   if (!runtime.agentId || !runtime.listener.connectionId?.startsWith("conn-"))
     return;
   const previous = readInterruptedTurn(runtime);
-  createInterruptedTurnStore().write({
+  const record: InterruptedTurnRecord = {
     agentId: runtime.agentId,
     conversationId: runtime.conversationId,
     runId: previous?.runId ?? null,
@@ -152,7 +159,21 @@ export function recordListenerWork(
       previous?.workingDirectory ??
       process.cwd(),
     ...update,
-  });
+  };
+  const store = createInterruptedTurnStore();
+  try {
+    store.write(record);
+  } catch (error) {
+    reportListenerStateWriteFailure({
+      phase,
+      error,
+      agentId: record.agentId,
+      conversationId: record.conversationId,
+      runId: record.runId ?? runtime.activeRunId ?? undefined,
+      toolCallId: record.toolCallIds[0],
+    });
+    throw error;
+  }
 }
 
 export function forgetListenerWork(runtime: ConversationRuntime): void {

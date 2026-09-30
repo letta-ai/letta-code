@@ -35,7 +35,6 @@ import {
 } from "./protocol-outbound";
 import { scheduleQueuePump } from "./queue";
 import { emitLoopErrorNotice } from "./recoverable-notices";
-import { resolveRecoveredApprovalResponse } from "./recovery";
 import {
   getActiveRuntime,
   getConversationRuntime,
@@ -45,7 +44,6 @@ import {
 } from "./runtime";
 import { normalizeConversationId, normalizeCwdAgentId } from "./scope";
 import type { ListenerTransport } from "./transport";
-import { handleIncomingMessage } from "./turn";
 import { setCommandLoopStatus } from "./turn-status";
 import type {
   ChangeCwdMessage,
@@ -200,21 +198,6 @@ export async function handleApprovalResponseInput(
       response: ApprovalResponseBody,
       connectionId?: ListenerConnectionId,
     ) => boolean;
-    getOrCreateScopedRuntime: (
-      listener: ListenerRuntime,
-      agentId?: string | null,
-      conversationId?: string | null,
-    ) => ConversationRuntime;
-    resolveRecoveredApprovalResponse: (
-      runtime: ConversationRuntime,
-      socket: ListenerTransport,
-      response: ApprovalResponseBody,
-      processTurn: typeof handleIncomingMessage,
-      opts?: {
-        onStatusChange?: StartListenerOptions["onStatusChange"];
-        connectionId?: string;
-      },
-    ) => Promise<boolean>;
     scheduleQueuePump: (
       runtime: ConversationRuntime,
       socket: ListenerTransport,
@@ -224,8 +207,6 @@ export async function handleApprovalResponseInput(
   } = {
     resolveRuntimeForApprovalRequest,
     resolvePendingApprovalResolver,
-    getOrCreateScopedRuntime,
-    resolveRecoveredApprovalResponse,
     scheduleQueuePump,
   },
 ): Promise<boolean> {
@@ -245,37 +226,6 @@ export async function handleApprovalResponseInput(
   ) {
     deps.scheduleQueuePump(
       approvalRuntime,
-      params.socket,
-      params.opts as StartListenerOptions,
-      params.processQueuedTurn,
-    );
-    return true;
-  }
-
-  const targetRuntime =
-    approvalRuntime ??
-    deps.getOrCreateScopedRuntime(
-      listener,
-      params.runtime.agent_id,
-      params.runtime.conversation_id,
-    );
-  if (targetRuntime.cancelRequested) {
-    return false;
-  }
-  if (
-    await deps.resolveRecoveredApprovalResponse(
-      targetRuntime,
-      params.socket,
-      params.response,
-      handleIncomingMessage,
-      {
-        onStatusChange: params.opts.onStatusChange,
-        connectionId: params.opts.connectionId,
-      },
-    )
-  ) {
-    deps.scheduleQueuePump(
-      targetRuntime,
       params.socket,
       params.opts as StartListenerOptions,
       params.processQueuedTurn,
@@ -425,6 +375,10 @@ export async function handleAbortMessageInput(
       conversationId: string,
     ) => Promise<void>;
     cancelRun: (agentId: string, runId: string) => Promise<void>;
+    cancelConversationRun: (
+      conversationId: string,
+      runId?: string | null,
+    ) => Promise<void>;
   }> = {},
 ): Promise<boolean> {
   const resolvedDeps = {
@@ -449,6 +403,23 @@ export async function handleAbortMessageInput(
       const result = await getBackend().cancelRun(agentId, runId);
       if (result[runId] !== "cancelled") {
         throw new Error(`Backend did not cancel run ${runId}`);
+      }
+    },
+    cancelConversationRun: async (
+      conversationId: string,
+      runId?: string | null,
+    ) => {
+      const result = await getBackend().cancelConversationRun(
+        conversationId,
+        runId,
+      );
+      if (runId && result[runId] !== "cancelled") {
+        throw new Error(`Backend did not cancel run ${runId}`);
+      }
+      if (!runId && !Object.values(result).includes("cancelled")) {
+        throw new Error(
+          `Backend did not cancel the active run for ${conversationId}`,
+        );
       }
     },
     ...deps,
@@ -488,7 +459,7 @@ export async function handleAbortMessageInput(
   }
 
   const cancellation = scopedRuntime.turnLifecycle.requestCancellation({
-    waitForExternalSettlement: hasActiveTurn && Boolean(scopedRuntime.agentId),
+    waitForExternalSettlement: hasActiveTurn,
   });
   // Interrupt semantics: the current turn stops and the user's queued messages
   // park until resume_queue or the user's next message. System items (task
@@ -592,12 +563,13 @@ export async function handleAbortMessageInput(
 
   const cancelConversationId = scopedRuntime.conversationId;
   const cancelAgentId = scopedRuntime.agentId;
-  if (cancelAgentId) {
-    const cancelRunId = interruptedRunId ?? params.command.run_id ?? null;
-    // Target the interrupted run when possible so this abort can never select
-    // a replacement turn. Older backends may reject run-scoped cancellation;
-    // the lifecycle fence also makes the conversation-wide fallback safe.
-    const backendCancellation = cancelRunId
+  const cancelRunId = interruptedRunId ?? params.command.run_id ?? null;
+  // Target the interrupted run when possible so this abort can never select
+  // a replacement turn. For conversations with agent_id:null, resolve the
+  // backend's execution owner from that exact run instead of widening the abort
+  // to every active run in the conversation.
+  const backendCancellation =
+    cancelAgentId && cancelRunId
       ? resolvedDeps
           .cancelRun(cancelAgentId, cancelRunId)
           .catch(() =>
@@ -606,28 +578,29 @@ export async function handleAbortMessageInput(
               cancelConversationId,
             ),
           )
-      : resolvedDeps.cancelConversation(cancelAgentId, cancelConversationId);
-    void backendCancellation
-      .catch(() => {
-        // Fire-and-forget
-      })
-      .finally(() => {
-        if (!cancellation.lease) {
-          return;
-        }
-        const settlement = scopedRuntime.turnLifecycle.settleCancellation(
-          cancellation.lease,
+      : cancelAgentId
+        ? resolvedDeps.cancelConversation(cancelAgentId, cancelConversationId)
+        : resolvedDeps.cancelConversationRun(cancelConversationId, cancelRunId);
+  void backendCancellation
+    .catch(() => {
+      // Fire-and-forget
+    })
+    .finally(() => {
+      if (!cancellation.lease) {
+        return;
+      }
+      const settlement = scopedRuntime.turnLifecycle.settleCancellation(
+        cancellation.lease,
+      );
+      if (settlement.released) {
+        resolvedDeps.scheduleQueuePump(
+          scopedRuntime,
+          params.socket,
+          params.opts as StartListenerOptions,
+          params.processQueuedTurn,
         );
-        if (settlement.released) {
-          resolvedDeps.scheduleQueuePump(
-            scopedRuntime,
-            params.socket,
-            params.opts as StartListenerOptions,
-            params.processQueuedTurn,
-          );
-        }
-      });
-  }
+      }
+    });
 
   resolvedDeps.scheduleQueuePump(
     scopedRuntime,

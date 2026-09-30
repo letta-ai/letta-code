@@ -20,7 +20,7 @@ import { join, resolve } from "node:path";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { resolveModel } from "@/agent/model-catalog";
 import { getPrimaryAgentModelHandle } from "@/agent/subagents/subagent-model";
-import { apiRequest } from "@/backend/api/request";
+import { getBackend } from "@/backend";
 import { resolveBackendMode } from "@/backend/backend-mode";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import {
@@ -102,27 +102,35 @@ const MAX_NOTIFICATION_RESULT_CHARS = 30_000;
 const DEFAULT_STARTUP_TIMEOUT_MS = 30_000;
 let startupTimeoutMs = DEFAULT_STARTUP_TIMEOUT_MS;
 
+function isOwningAgentId(value: string | null | undefined): value is string {
+  return (
+    value?.startsWith("agent-") === true && !value.startsWith("agent-free:")
+  );
+}
+
 async function resolveParentAgentId(
   args: WorkflowArgs,
 ): Promise<string | null> {
   let parentAgentId: string | null | undefined = args.parentScope?.agentId;
   const conversationId =
     args.parentScope?.conversationId ?? getConversationId();
-  if (!parentAgentId?.startsWith("agent-")) {
+  if (!isOwningAgentId(parentAgentId)) {
     if (conversationId && conversationId !== "default") {
       // The invoking conversation may itself be agent-free (a worker of an
       // outer workflow); its parent supplies the lineage then.
-      const conversation = await apiRequest<{
+      const conversation = (await getBackend().retrieveConversation(
+        conversationId,
+      )) as unknown as {
         agent_id: string | null;
         parent_agent_id?: string | null;
-      }>("GET", `/v1/conversations/${encodeURIComponent(conversationId)}`);
+      };
       parentAgentId =
         conversation.agent_id ?? conversation.parent_agent_id ?? null;
     } else {
       parentAgentId = getCurrentAgentId();
     }
   }
-  return parentAgentId?.startsWith("agent-") ? parentAgentId : null;
+  return isOwningAgentId(parentAgentId) ? parentAgentId : null;
 }
 
 export async function createSdkSpawnerHandle(
@@ -156,10 +164,39 @@ export async function createSdkSpawnerHandle(
       );
     }
   }
+  const backendMode = resolveBackendMode();
+  let parentModelSettings: Record<string, unknown> | undefined;
+  let parentContextWindowLimit: number | null | undefined;
+  if (backendMode === "local") {
+    setStage("snapshotting local parent settings");
+    const conversationId =
+      args.parentScope?.conversationId ?? getConversationId();
+    const source =
+      conversationId && conversationId !== "default"
+        ? await getBackend().retrieveConversation(conversationId)
+        : await getBackend().retrieveAgent(parentAgentId);
+    const record = source as unknown as Record<string, unknown>;
+    if (
+      record.model_settings &&
+      typeof record.model_settings === "object" &&
+      !Array.isArray(record.model_settings)
+    ) {
+      parentModelSettings = { ...record.model_settings } as Record<
+        string,
+        unknown
+      >;
+    }
+    if (
+      typeof record.context_window_limit === "number" ||
+      record.context_window_limit === null
+    ) {
+      parentContextWindowLimit = record.context_window_limit;
+    }
+  }
   setStage("loading Agent SDK");
   const sdk = await loadAgentSdk();
   setStage("creating SDK client and spawner");
-  const client = sdk.createLocalClient();
+  const client = sdk.createLocalClient(backendMode);
   let spawner: SubagentSpawner;
   try {
     spawner = createSdkSpawner(client, {
@@ -168,6 +205,12 @@ export async function createSdkSpawnerHandle(
       resolveModel,
       allowedTools: args.allowedTools ?? [...DEFAULT_ALLOWED_TOOLS],
       cwd: getCurrentWorkingDirectory(),
+      supportsAgentFreeResume: sdk.supportsAgentFreeResume,
+      verifyPersistedRuns: backendMode === "api",
+      ...(parentModelSettings ? { parentModelSettings } : {}),
+      ...(parentContextWindowLimit !== undefined
+        ? { parentContextWindowLimit }
+        : {}),
     });
   } catch (error) {
     void client[Symbol.asyncDispose]?.().catch(() => undefined);
@@ -204,6 +247,8 @@ export function formatWorkflowProgressLine(
       return `── ${event.title} ──`;
     case "log":
       return `» ${event.message}`;
+    case "decision_usage":
+      return null;
     case "agent": {
       // Only status transitions worth a line; "queued" would be noise.
       if (event.status === "queued") return null;
@@ -267,7 +312,7 @@ function formatCompletionResult(
   return [
     payload,
     "",
-    `Per-agent results: ${join(executionDir, "journal.jsonl")} — one line per completed agent with its full return value.`,
+    `Per-call results: ${join(executionDir, "journal.jsonl")} — one line per completed agent call with its full return value, plus one per decide() API attempt (retries included) with its model, cost, calibration, and tokens.`,
     "If the result above is empty or unexpected, read that file BEFORE diagnosing — do not assume agents returned non-empty results.",
   ].join("\n");
 }
@@ -290,13 +335,6 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
   if (!script) {
     return {
       toolReturn: "Provide `script` (inline source) or `scriptPath`.",
-      status: "error",
-    };
-  }
-  if (resolveBackendMode() !== "api") {
-    return {
-      toolReturn:
-        "Workflow agent() calls require the API backend because agent-free conversations are not supported by the local store.",
       status: "error",
     };
   }
@@ -530,7 +568,7 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
       `Workflow launched in background. Task ID: ${taskId}`,
       `Summary: ${meta.description}`,
       `Script file: ${scriptPath}`,
-      `Journal: ${journalPath} (one line per completed agent)`,
+      `Journal: ${journalPath} (one line per completed agent, and per decide() API attempt including retries)`,
       `Output file: ${outputFile}`,
       "",
       "You will be notified when it completes. Do not poll or sleep — keep working or end your turn. Read the output file only when you need interim progress; TaskStop aborts the run; the user can watch live status with /workflows.",

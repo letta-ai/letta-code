@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { clearCapturedToolExecutionContexts } from "@/tools/manager";
+import {
+  clearCapturedToolExecutionContexts,
+  getServerToolName,
+} from "@/tools/manager";
 import { prepareToolExecutionContextForResolvedTarget } from "@/tools/toolset";
 import { TOOLSET_CATALOG } from "@/tools/toolset-catalog";
 
@@ -36,7 +39,7 @@ describe("request-scoped client toolsets", () => {
       modelIdentifier: "anthropic/claude-sonnet-5",
       toolsetPreference: "auto",
       clientToolset: { include: ["AskUserQuestion"] },
-      exclude: ["AskUserQuestion"],
+      exclude: ["AskUserQuestionAsync"],
       clientToolAllowlist: ["Read", "AskUserQuestion"],
     });
 
@@ -77,9 +80,7 @@ describe("request-scoped client toolsets", () => {
 
       expect(prepared.toolset).toBe("letta");
       expect(prepared.preparedToolContext.loadedToolNames).toEqual(
-        TOOLSET_CATALOG.letta.tools.map((name) =>
-          name === "Task" ? "Agent" : name,
-        ),
+        TOOLSET_CATALOG.letta.tools.map(getServerToolName),
       );
       expect(prepared.preparedToolContext.loadedToolNames).toContain("Edit");
       expect(prepared.preparedToolContext.loadedToolNames).not.toContain(

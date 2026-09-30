@@ -243,7 +243,11 @@ async function resolveRuntimeStartConversation(
   parsed: RuntimeStartCommand,
   agent: AgentState | null,
   created: CreatedResources,
-  createEphemeral: typeof createEphemeralConversation,
+  createEphemeral: (
+    body: EphemeralConversationCreateBody,
+  ) => Promise<
+    Conversation | Awaited<ReturnType<typeof createEphemeralConversation>>
+  >,
   retrieveConversation: (conversationId: string) => Promise<Conversation>,
 ): Promise<Conversation> {
   const backend = getBackend();
@@ -443,13 +447,18 @@ export async function handleRuntimeStartCommand(
   try {
     validateRuntimeStartShape(parsed);
     agent = await resolveRuntimeStartAgent(parsed, created);
+    const backend = getBackend();
+    const createEphemeral =
+      context.createEphemeralConversation ??
+      backend.createEphemeralConversation?.bind(backend) ??
+      createEphemeralConversation;
     conversation = await resolveRuntimeStartConversation(
       parsed,
       agent,
       created,
-      context.createEphemeralConversation ?? createEphemeralConversation,
+      createEphemeral,
       context.retrieveConversation ??
-        ((id) => getBackend().retrieveConversation(id)),
+        ((id) => backend.retrieveConversation(id)),
     );
     conversation = await applyRuntimeStartConversationSourceTags(
       parsed,

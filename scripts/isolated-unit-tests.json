@@ -1,6 +1,16 @@
 {
   "tests": [
     {
+      "path": "src/websocket/ask-user-question-async.test.ts",
+      "timeoutMs": 30000,
+      "reason": "Runs a real local App Server with isolated HOME, settings, backend, and WebSocket clients to verify nonblocking questions and later responses."
+    },
+    {
+      "path": "src/websocket/listener/ask-user-question-turn.test.ts",
+      "timeoutMs": 30000,
+      "reason": "Checks per-input question tool opt-in with process-global backend, settings, and environment isolation."
+    },
+    {
       "path": "src/websocket/listener/turn-cleanup-memory-update.e2e.test.ts",
       "timeoutMs": 30000,
       "reason": "Exercises real MemFS Git pushes and listener notifications with isolated HOME, settings, backend, auth environment, and repository-list fetch."

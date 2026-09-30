@@ -404,6 +404,22 @@ export class LocalBackend extends HeadlessBackend {
     return conversation;
   }
 
+  async createEphemeralConversation(body: {
+    model: string;
+    system: string;
+    model_settings?: Record<string, unknown>;
+    context_window_limit?: number | null;
+    parent_agent_id?: string | null;
+    name?: string;
+    is_subagent?: boolean;
+  }): Promise<
+    Awaited<ReturnType<NonNullable<Backend["createEphemeralConversation"]>>>
+  > {
+    return this.store.createEphemeralConversation(body) as unknown as Awaited<
+      ReturnType<NonNullable<Backend["createEphemeralConversation"]>>
+    >;
+  }
+
   override async recompileConversation(
     conversationId: string,
     body?: ConversationRecompileBody,
@@ -451,6 +467,19 @@ export class LocalBackend extends HeadlessBackend {
     history: StoredMessage[];
     uiMessages: LocalMessage[];
   }): Promise<{ systemPrompt: string; midConversationSystemPrompt?: string }> {
+    if (this.store.isAgentFreeConversation(input.conversationId)) {
+      const clientSkills = Array.isArray(
+        (input.body as Record<string, unknown>).client_skills,
+      )
+        ? ((input.body as Record<string, unknown>).client_skills as unknown[])
+        : [];
+      return {
+        systemPrompt: appendAvailableSkillsBlock(
+          input.agent.system,
+          clientSkills,
+        ),
+      };
+    }
     const persisted = await this.getOrCompileSystemPrompt(
       input.conversationId,
       input.agentId,
@@ -564,7 +593,10 @@ export class LocalBackend extends HeadlessBackend {
       return (conversationModelSettings as { context_window_limit: number })
         .context_window_limit;
     }
-    const agent = this.store.retrieveAgentRecord(agentId);
+    const agent = this.store.retrieveExecutionAgentRecord(
+      conversationId,
+      agentId,
+    );
     return typeof agent.model_settings.context_window_limit === "number"
       ? agent.model_settings.context_window_limit
       : undefined;
@@ -583,7 +615,10 @@ export class LocalBackend extends HeadlessBackend {
     conversationId: string,
     agentId: string,
   ): LocalAgentRecord {
-    const agent = this.store.retrieveAgentRecord(agentId);
+    const agent = this.store.retrieveExecutionAgentRecord(
+      conversationId,
+      agentId,
+    );
     const conversation = this.store.retrieveConversation(
       conversationId,
       agentId,

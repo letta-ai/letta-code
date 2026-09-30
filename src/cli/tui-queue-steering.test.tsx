@@ -223,13 +223,14 @@ async function renderTestApp(local = false, failure?: TerminalFailure) {
       const stream = await createStream(...args);
       if (executor.inputs.length !== 1) return stream;
       return new Stream<LettaStreamingResponse>(async function* () {
+        let failed = false;
         for await (const chunk of stream) {
-          // The SDK may throw before yielding any chunk or exposing a run ID.
-          if (chunk.message_type === "error_message") {
-            throw new Error("terminal queue fixture error");
-          }
-          yield chunk;
+          // Finish the backend run, but hide its terminal chunks from the TUI:
+          // the SDK may throw before yielding any chunk or exposing a run ID.
+          if (chunk.message_type === "error_message") failed = true;
+          if (!failed) yield chunk;
         }
+        if (failed) throw new Error("terminal queue fixture error");
       }, stream.controller);
     };
   }
