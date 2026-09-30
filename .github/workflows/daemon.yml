@@ -110,13 +110,19 @@ jobs:
           NODE
           ASAR=$(find apps/daemon/release -iname app.asar -print -quit)
           test -n "$ASAR"
-          node node_modules/@electron/asar/bin/asar.js list "$ASAR" > /tmp/daemon-asar-files.txt
-          for path in \
-            /dist/main.cjs \
-            /dist/preload.cjs \
-            /assets/tray-connected.png \
-            /assets/tray-error.png \
-            /assets/tray-stopped.png \
-            /assets/tray-working.png; do
-            grep -Fxq "$path" /tmp/daemon-asar-files.txt
-          done
+          ASAR="$ASAR" node - <<'NODE'
+          const { listPackage } = require('@electron/asar');
+          const files = new Set(
+            listPackage(process.env.ASAR).map(path => path.replaceAll('\\', '/')),
+          );
+          for (const path of [
+            '/dist/main.cjs',
+            '/dist/preload.cjs',
+            '/assets/tray-connected.png',
+            '/assets/tray-error.png',
+            '/assets/tray-stopped.png',
+            '/assets/tray-working.png',
+          ]) {
+            if (!files.has(path)) throw new Error(`Missing ASAR entry: ${path}`);
+          }
+          NODE
