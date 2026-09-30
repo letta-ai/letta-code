@@ -95,6 +95,7 @@ function addCaseVariants(source: string): void {
 async function syncFixture(
   fixture: ReturnType<typeof makeFixture>,
   ignorecase = true,
+  failHeadProbe = false,
 ): Promise<void> {
   await syncAttachedRepositoryCheckout(
     {
@@ -105,7 +106,12 @@ async function syncFixture(
       token: "",
     },
     {
-      git: async (cwd, args) => ({ stdout: git(cwd, args, ignorecase) }),
+      git: async (cwd, args) => {
+        if (failHeadProbe && args[0] === "rev-parse") {
+          throw new Error("Git probe failed");
+        }
+        return { stdout: git(cwd, args, ignorecase) };
+      },
       gitWithRetry: async (cwd, args) => ({
         stdout: git(cwd, args, ignorecase),
       }),
@@ -143,6 +149,14 @@ describe("case-colliding tracked paths", () => {
     expect(existsSync(fixture.mount)).toBe(false);
   });
 
+  test("does not publish a mount when the HEAD probe fails", async () => {
+    const fixture = makeFixture();
+    await expect(syncFixture(fixture, true, true)).rejects.toThrow(
+      "Git probe failed",
+    );
+    expect(existsSync(fixture.mount)).toBe(false);
+  });
+
   test("rejects a new collision before advancing an existing mount", async () => {
     const fixture = makeFixture();
     await syncFixture(fixture);
@@ -170,6 +184,7 @@ describe("case-colliding tracked paths", () => {
   test("fast-forwards an existing mount without a collision", async () => {
     const fixture = makeFixture();
     await syncFixture(fixture);
+    expect(existsSync(join(fixture.mount, "MEMORY.md"))).toBe(true);
     writeFileSync(join(fixture.source, "note.md"), "# Safe\n");
     git(fixture.source, ["add", "note.md"]);
     git(fixture.source, ["commit", "-qm", "safe update"]);
@@ -177,6 +192,19 @@ describe("case-colliding tracked paths", () => {
     await syncFixture(fixture);
     expect(existsSync(join(fixture.mount, "note.md"))).toBe(true);
     expect(git(fixture.mount, ["status", "--porcelain"])).toBe("");
+  });
+
+  test("preserves local commits when the remote has not advanced", async () => {
+    const fixture = makeFixture();
+    await syncFixture(fixture);
+    writeFileSync(join(fixture.mount, "local.md"), "# Local\n");
+    git(fixture.mount, ["add", "local.md"]);
+    git(fixture.mount, ["commit", "-qm", "local change"]);
+    const localHead = git(fixture.mount, ["rev-parse", "HEAD"]).trim();
+
+    await syncFixture(fixture);
+    expect(git(fixture.mount, ["rev-parse", "HEAD"]).trim()).toBe(localHead);
+    expect(existsSync(join(fixture.mount, "local.md"))).toBe(true);
   });
 
   test("keeps a normal checkout possible on a case-sensitive filesystem", async () => {

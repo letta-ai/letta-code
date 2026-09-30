@@ -22,6 +22,14 @@ export function findCaseCollidingTrackedPath(
   return false;
 }
 
+function isMissingGitValue(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const { code, status } = error as { code?: unknown; status?: unknown };
+  // `rev-parse --verify --quiet` and `config --get` exit 1 for a missing
+  // value. Timeouts and repository errors must not publish a checkout.
+  return code === 1 || status === 1;
+}
+
 export async function assertCaseCompatibleCheckout(
   directory: string,
   tree: string,
@@ -33,7 +41,10 @@ export async function assertCaseCompatibleCheckout(
     "--verify",
     "--quiet",
     tree,
-  ]).catch(() => null);
+  ]).catch((error: unknown) => {
+    if (isMissingGitValue(error)) return null;
+    throw error;
+  });
   if (!head) return false;
 
   const { stdout: ignorecase } = await git(directory, [
@@ -41,7 +52,10 @@ export async function assertCaseCompatibleCheckout(
     "--bool",
     "--get",
     "core.ignorecase",
-  ]).catch(() => ({ stdout: "" }));
+  ]).catch((error: unknown) => {
+    if (isMissingGitValue(error)) return { stdout: "" };
+    throw error;
+  });
   if (ignorecase.trim() !== "true" && process.platform !== "win32") {
     return true;
   }
