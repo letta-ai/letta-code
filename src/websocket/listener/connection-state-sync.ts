@@ -67,7 +67,11 @@ export async function completeInitialConnectionStartup(
   });
   if (!isCurrent()) return false;
   for (const runtime of listener.conversationRuntimes.values()) {
-    replayPendingApprovalRequestsToConnection(runtime, options.connectionId);
+    replayPendingApprovalRequestsToConnection(
+      runtime,
+      options.connectionId,
+      connection,
+    );
   }
   if (!isCurrent()) return false;
   if (startupOptions.updateReconnectState) {

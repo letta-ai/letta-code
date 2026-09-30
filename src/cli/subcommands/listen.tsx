@@ -778,7 +778,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         "type" in event &&
         event.type === "_ws_close"
       ) {
-        markCloudListenerReconnecting();
+        readiness.setCloudReconnecting();
       }
       if (!shouldLogWsEvents) {
         return;

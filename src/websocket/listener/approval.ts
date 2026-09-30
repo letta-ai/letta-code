@@ -347,9 +347,16 @@ export function rejectPendingApprovalResolversForConnection(
 export function replayPendingApprovalRequestsToConnection(
   runtime: ConversationRuntime,
   connectionId: ListenerConnectionId,
+  expectedConnection?: import("./types").ListenerConnectionState,
 ): void {
   const connection = runtime.listener.connections.get(connectionId);
-  if (!connection?.initialized || !isListenerTransportOpen(connection.writer)) {
+  if (
+    !connection ||
+    (expectedConnection
+      ? connection !== expectedConnection
+      : !connection.initialized) ||
+    !isListenerTransportOpen(connection.writer)
+  ) {
     return;
   }
   for (const pending of pendingApprovalEntries(runtime)) {

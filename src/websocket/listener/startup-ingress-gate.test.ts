@@ -5,6 +5,7 @@ import {
   markListenerConnectionInitialized,
   openListenerConnection,
 } from "./connection";
+import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import {
   createRuntime,
   startConnectedListenerRuntime,
@@ -114,6 +115,7 @@ test("gates every inbound frame until awaited connection startup completes", asy
 
 test("emits initial state before opening the inbound startup gate", async () => {
   const runtime = createRuntime();
+  getOrCreateScopedRuntime(runtime, "agent-1", "conversation-1");
   const connectionId = "initial-sync";
   const initializedDuringSync: boolean[] = [];
   const transport = new MockTransport(() => {
