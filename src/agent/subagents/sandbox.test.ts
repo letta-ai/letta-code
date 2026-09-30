@@ -1,6 +1,12 @@
 import { expect, test } from "bun:test";
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -12,6 +18,7 @@ import { getLocalBackendCrossAgentTreeRoot } from "@/backend/local/paths";
 import {
   canonicalizeRoot,
   getDefaultAgentsTreeRoot,
+  getLettaHomeRoot,
 } from "@/permissions/sandbox-policy";
 import {
   detectSandboxBackend,
@@ -66,6 +73,92 @@ test("sandboxed shell scratch files are writable while workspace writes stay den
       }),
     ).not.toThrow();
   } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("a Linux memory child's Bash output redirects from a read-only external scratch", () => {
+  const availability = detectSandboxBackend();
+  if (availability.backend !== "bwrap") return;
+
+  const workspace = mkdtempSync(join(tmpdir(), "memory-scratch-test-"));
+  const fixtureRoot = join(
+    getDefaultAgentsTreeRoot(),
+    `scratch-test-${crypto.randomUUID()}`,
+  );
+  const ownMemory = join(fixtureRoot, "parent", "memory");
+  const otherMemory = join(fixtureRoot, "other");
+  const externalScratch = join(workspace, "scratch");
+  const transcript = join(workspace, "transcript.txt");
+  mkdirSync(ownMemory, { recursive: true });
+  mkdirSync(otherMemory, { recursive: true });
+  mkdirSync(externalScratch);
+  writeFileSync(transcript, "synthetic transcript");
+
+  let redirectedScratch: string | undefined;
+  try {
+    const result = wrapSubagentLauncher({
+      ...baseInput(),
+      availability,
+      memoryRoots: [ownMemory],
+      inheritedPrimaryRoot: ownMemory,
+      env: { ...process.env, LETTA_SCRATCHPAD: externalScratch },
+      launcher: {
+        command: process.execPath,
+        args: [
+          "-e",
+          `const fs = require('node:fs');
+           try {
+             const { createBackgroundOutputFile } = await import(${JSON.stringify(join(import.meta.dir, "../../tools/impl/process_manager.ts"))});
+             createBackgroundOutputFile('bash_1');
+           } catch (error) {
+             console.error(error.code);
+             process.exit(2);
+           }
+           if (fs.readFileSync(${JSON.stringify(transcript)}, 'utf8') !== 'synthetic transcript') throw new Error('Transcript unreadable');
+           fs.writeFileSync(${JSON.stringify(join(ownMemory, "memory.md"))}, 'memory');
+           for (const denied of [${JSON.stringify(join(workspace, "forbidden"))}, ${JSON.stringify(join(otherMemory, "forbidden"))}]) {
+             try { fs.writeFileSync(denied, 'no'); throw new Error('Sandbox allowed forbidden write'); }
+             catch (error) { if (!['EPERM', 'EACCES', 'EROFS', 'ENOENT'].includes(error.code)) throw error; }
+           }`,
+        ],
+      },
+    });
+    if (!result) throw new Error("Expected sandbox launcher");
+    redirectedScratch = result.sandboxEnv.LETTA_SCRATCHPAD;
+
+    const inherited = spawnSync(result.command, result.args, {
+      env: {
+        ...process.env,
+        ...result.sandboxEnv,
+        LETTA_SCRATCHPAD: externalScratch,
+      },
+      cwd: workspace,
+      encoding: "utf8",
+    });
+    expect(inherited.status).toBe(2);
+    expect(inherited.stderr).toContain("EROFS");
+
+    const corrected = spawnSync(result.command, result.args, {
+      env: {
+        ...process.env,
+        LETTA_SCRATCHPAD: externalScratch,
+        ...result.sandboxEnv,
+      },
+      cwd: workspace,
+      encoding: "utf8",
+    });
+    expect(corrected.status).toBe(0);
+    expect(existsSync(join(redirectedScratch as string, "bash_1.log"))).toBe(
+      true,
+    );
+    expect(existsSync(join(ownMemory, "memory.md"))).toBe(true);
+    expect(existsSync(join(workspace, "forbidden"))).toBe(false);
+    expect(existsSync(join(otherMemory, "forbidden"))).toBe(false);
+  } finally {
+    if (redirectedScratch)
+      rmSync(redirectedScratch, { recursive: true, force: true });
+    rmSync(fixtureRoot, { recursive: true, force: true });
     rmSync(workspace, { recursive: true, force: true });
   }
 });
@@ -134,6 +227,66 @@ test("wraps an API subagent with the memory-subagent profile under the backend",
     `0=${getDefaultAgentsTreeRoot()}`,
     `1=${canonicalizeRoot(getLocalBackendCrossAgentTreeRoot())}`,
   ]);
+});
+
+test.each([
+  join(tmpdir(), "parent-scratch"),
+  join(getDefaultAgentsTreeRoot(), "other", "scratch"),
+  "relative/parent-scratch",
+  join(getDefaultAgentsTreeRoot(), "missing-scratch-root", "memory", "scratch"),
+])(
+  "redirects a memory subagent's unwritable scratchpad without expanding its sandbox: %s",
+  (configuredScratchpad) => {
+    const result = wrapSubagentLauncher({
+      ...baseInput(),
+      env: {
+        LETTA_FS_SANDBOX: "1",
+        LETTA_SCRATCHPAD: configuredScratchpad,
+      },
+    });
+    const scratchpad = result?.sandboxEnv.LETTA_SCRATCHPAD;
+    try {
+      expect(scratchpad).toStartWith(join(getLettaHomeRoot(), "tmp"));
+      expect(scratchpad).not.toBe(configuredScratchpad);
+      expect(existsSync(scratchpad as string)).toBe(true);
+      expect(result?.args.join(" ")).not.toContain(configuredScratchpad);
+    } finally {
+      if (scratchpad) rmSync(scratchpad, { recursive: true, force: true });
+    }
+  },
+);
+
+test("preserves an explicitly configured scratchpad already writable by the sandbox", () => {
+  const configuredScratchpad = join(getLettaHomeRoot(), "tmp", "allowed");
+  const result = wrapSubagentLauncher({
+    ...baseInput(),
+    env: { LETTA_FS_SANDBOX: "1", LETTA_SCRATCHPAD: configuredScratchpad },
+  });
+  expect(result?.sandboxEnv.LETTA_SCRATCHPAD).toBeUndefined();
+});
+
+test("redirects scratch under a memory root whose bwrap bind does not exist", () => {
+  const missingMemory = join(
+    getDefaultAgentsTreeRoot(),
+    "not-created",
+    "memory",
+  );
+  const result = wrapSubagentLauncher({
+    ...baseInput(),
+    availability: { backend: "bwrap", bwrapPath: "bwrap", reason: "test" },
+    memoryRoots: [missingMemory],
+    inheritedPrimaryRoot: missingMemory,
+    env: {
+      LETTA_FS_SANDBOX: "1",
+      LETTA_SCRATCHPAD: join(missingMemory, "scratch"),
+    },
+  });
+  const scratchpad = result?.sandboxEnv.LETTA_SCRATCHPAD;
+  try {
+    expect(scratchpad).toStartWith(join(getLettaHomeRoot(), "tmp"));
+  } finally {
+    if (scratchpad) rmSync(scratchpad, { recursive: true, force: true });
+  }
 });
 
 test("returns null when the flag is off", () => {
