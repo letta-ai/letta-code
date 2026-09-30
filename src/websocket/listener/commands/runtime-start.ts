@@ -2,14 +2,15 @@ import type {
   AgentCreateParams,
   AgentState,
 } from "@letta-ai/letta-client/resources/agents/agents";
-import type {
-  Conversation,
-  ConversationCreateParams,
-} from "@letta-ai/letta-client/resources/conversations/conversations";
+import type { ConversationCreateParams } from "@letta-ai/letta-client/resources/conversations/conversations";
 import type WebSocket from "ws";
 import { createAgentWithBaseToolsRecovery } from "@/agent/create";
 import { DEFAULT_CREATED_AGENT_BASE_TOOLS } from "@/agent/create-agent-request";
-import { type ConversationUpdateBody, getBackend } from "@/backend";
+import {
+  type BackendConversation as Conversation,
+  type ConversationUpdateBody,
+  getBackend,
+} from "@/backend";
 import {
   createEphemeralConversation,
   type EphemeralConversationCreateBody,

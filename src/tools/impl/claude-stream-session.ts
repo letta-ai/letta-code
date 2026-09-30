@@ -7,6 +7,12 @@ import {
   type RunningSubagentProcess,
   spawnSubagentProcess,
 } from "@/agent/subagents/subagent-process";
+import {
+  mergeSecretRedactions,
+  redactSecretBearingResult,
+  scrubSecretsFromString,
+  snapshotInheritedSecretRedactions,
+} from "@/tools/secret-substitution";
 
 export interface ClaudeSessionTransport {
   process: Pick<ChildProcessWithoutNullStreams, "stdout" | "stderr" | "stdin">;
@@ -34,6 +40,7 @@ interface ClaudeSession {
   startedAt: number;
   stderr: string;
   report: string;
+  secretRedactions: Record<string, string>;
   protocolError?: string;
   settled: boolean;
   pendingSteers: number;
@@ -166,12 +173,19 @@ function failResult(session: ClaudeSession, error: unknown): SubagentResult {
 }
 
 function rejectControls(session: ClaudeSession, error: Error): void {
-  for (const pending of session.pendingControls.values()) pending.reject(error);
+  const safeError = new Error(
+    scrubSecretsFromString(error.message, session.secretRedactions),
+  );
+  for (const pending of session.pendingControls.values())
+    pending.reject(safeError);
   session.pendingControls.clear();
 }
 
 function rejectTurnWaiters(session: ClaudeSession, error: Error): void {
-  for (const waiter of session.turnWaiters) waiter.reject(error);
+  const safeError = new Error(
+    scrubSecretsFromString(error.message, session.secretRedactions),
+  );
+  for (const waiter of session.turnWaiters) waiter.reject(safeError);
   session.turnWaiters.clear();
 }
 
@@ -235,7 +249,7 @@ function settle(session: ClaudeSession, result: SubagentResult): void {
   const completedError = new Error("Claude Code session completed");
   rejectControls(session, completedError);
   rejectTurnWaiters(session, completedError);
-  session.resolve(result);
+  session.resolve(redactSecretBearingResult(result, session.secretRedactions));
 }
 
 function writeRaw(stdin: Writable, data: string): Promise<void> {
@@ -302,7 +316,9 @@ function handleControlResponse(
       typeof response.error === "string"
         ? response.error
         : `Claude interrupt was rejected (${String(response.subtype ?? "unknown")})`;
-    pending.reject(new Error(detail));
+    pending.reject(
+      new Error(scrubSecretsFromString(detail, session.secretRedactions)),
+    );
   }
 }
 
@@ -384,6 +400,7 @@ async function launchSession(
     startedAt: Date.now(),
     stderr: "",
     report: "",
+    secretRedactions: snapshotInheritedSecretRedactions(env),
     protocolError: undefined,
     settled: false,
     pendingSteers: 0,
@@ -459,7 +476,13 @@ async function startSession(
   const key = options.resumeSessionId ?? options.sessionId;
   if (key) {
     const active = sessions.get(key);
-    if (active && !active.settled) return active;
+    if (active && !active.settled) {
+      active.secretRedactions = mergeSecretRedactions(
+        active.secretRedactions,
+        snapshotInheritedSecretRedactions(deps.env ?? {}),
+      );
+      return active;
+    }
   }
   return launchSession(options, deps);
 }

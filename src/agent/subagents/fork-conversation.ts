@@ -54,7 +54,7 @@ export async function forkParentConversation(
   params: ForkParentConversationParams,
   dependencies: ForkParentConversationDependencies = {},
 ) {
-  // Resolve and validate before creating the subagent conversation. Invalid
+  // Resolve and validate before creating the hidden conversation. Invalid
   // model IDs should not leave an orphan fork behind.
   const modelOverride = await (
     dependencies.resolveModelOverride ??
@@ -78,13 +78,9 @@ export async function forkParentConversation(
       ...(params.parentConversationId === "default"
         ? { agentId: params.parentAgentId }
         : {}),
-      ...(params.backend.capabilities.localMemfs
-        ? { hidden: true }
-        : {
-            ephemeral: true,
-            name: allocateSubagentName(params.parentAgentName),
-            isSubagent: true,
-          }),
+      ephemeral: true,
+      name: allocateSubagentName(params.parentAgentName),
+      isSubagent: true,
       signal: params.signal,
     },
   );
@@ -103,9 +99,7 @@ export async function forkParentConversation(
       params.parentAgentId,
       params.parentConversationId,
       forkedConversation.id,
-      params.backend.capabilities.localMemfs
-        ? params.parentAgentId
-        : forkedConversation.id,
+      forkedConversation.id,
     );
   } catch (error) {
     await params.backend

@@ -21,6 +21,17 @@ import {
   resolveLettaInvocation,
 } from "@/tools/impl/shell-env";
 import {
+  filterAgentSecretEnv,
+  INHERITED_SECRET_EXECUTION_ID_ENV,
+  INHERITED_SECRET_NAMES_ENV,
+  inheritedSecretNames,
+  scopedSecretRedactions,
+} from "@/tools/secret-substitution";
+import {
+  getVerifiedSecretOwner,
+  initSecretsFromServer,
+} from "@/utils/secrets-store";
+import {
   LISTENER_CONNECTION_ENV,
   SUBAGENT_LAUNCH_ENV,
   SUBAGENT_LAUNCH_PROFILE_ENV,
@@ -135,6 +146,8 @@ export function resolveSubagentLauncher(
 export interface ComposeSubagentChildEnvOptions {
   /** The env of the process spawning the subagent (parent). */
   parentProcessEnv: NodeJS.ProcessEnv;
+  /** Values fetched for the captured parent scope, never from ambient parent IDs. */
+  agentSecretEnv?: Record<string, string>;
   listenerConnectionId?: string | null;
   /** Active backend mode to force in the child CLI process. */
   backendMode?: BackendMode;
@@ -213,6 +226,7 @@ export function composeSubagentChildEnv(
 ): NodeJS.ProcessEnv {
   const {
     parentProcessEnv,
+    agentSecretEnv,
     listenerConnectionId,
     backendMode,
     localBackendStorageDir,
@@ -227,8 +241,16 @@ export function composeSubagentChildEnv(
     transcriptPath,
   } = options;
 
-  const childEnv: NodeJS.ProcessEnv = {
-    ...parentProcessEnv,
+  const childEnv: NodeJS.ProcessEnv = { ...parentProcessEnv };
+  for (const name of inheritedSecretNames(childEnv)) delete childEnv[name];
+  delete childEnv[INHERITED_SECRET_NAMES_ENV];
+  delete childEnv[INHERITED_SECRET_EXECUTION_ID_ENV];
+  const scopedSecrets = filterAgentSecretEnv(agentSecretEnv ?? {}, {});
+  Object.assign(childEnv, {
+    ...scopedSecrets,
+    ...(Object.keys(scopedSecrets).length > 0 && {
+      [INHERITED_SECRET_NAMES_ENV]: JSON.stringify(Object.keys(scopedSecrets)),
+    }),
     ...(inheritedApiKey && { LETTA_API_KEY: inheritedApiKey }),
     ...(inheritedBaseUrl && { LETTA_BASE_URL: inheritedBaseUrl }),
     ...(actingUserId && { [ACTING_USER_ID_ENV]: actingUserId }),
@@ -239,14 +261,14 @@ export function composeSubagentChildEnv(
     ...((subagentType === "reflection" || subagentType === "memory") && {
       [LETTA_MOD_CAPABILITY_PROFILE_ENV]: PROVIDERS_ONLY_MOD_CAPABILITY_PROFILE,
     }),
-    // Preserve resource lineage only for an actual ephemeral parent. Unknown
-    // scopes must clear inherited addresses rather than reuse a stale parent.
+    // The caller resolves conv-* lineage from persisted, authorized storage.
+    // Never trust a stale parent marker inherited from an unrelated runtime.
     LETTA_PARENT_AGENT_ID: parentAgentId?.startsWith("conv-")
-      ? parentProcessEnv.LETTA_PARENT_AGENT_ID
+      ? undefined
       : parentAgentId,
     LETTA_PARENT_CONVERSATION_ID: options.parentConversationId,
     ...(transcriptPath && { TRANSCRIPT_PATH: transcriptPath }),
-  };
+  });
 
   // A nested launch must never reuse its parent's assigned creation name.
   delete childEnv[SUBAGENT_NAME_ENV];
@@ -294,6 +316,44 @@ export async function resolveSubagentDeploymentAgentId(
   if (agentId || !conversationId || conversationId === "default")
     return agentId;
   return (await retrieveConversation(conversationId)).agent_id ?? undefined;
+}
+
+export async function resolveSubagentSecretEnv(options: {
+  parentAgentId?: string;
+  existingAgentId?: string;
+  existingConversationId?: string;
+  retrieveConversation: (id: string) => Promise<{
+    agent_id: string | null;
+    parent_agent_id?: string | null;
+  }>;
+}): Promise<Record<string, string>> {
+  const { parentAgentId, existingAgentId, existingConversationId } = options;
+  if (!parentAgentId) return {};
+  // Nested null-owned scopes inherit the verified resource parent, never a
+  // parent marker supplied by the child process.
+  if (
+    parentAgentId.startsWith("conv-") ||
+    parentAgentId.startsWith("local-conv-")
+  ) {
+    await initSecretsFromServer(parentAgentId);
+  }
+  const owner = getVerifiedSecretOwner(parentAgentId);
+  if (!owner) return {};
+  if (existingAgentId && existingAgentId !== owner) return {};
+  if (existingConversationId && existingConversationId !== "default") {
+    const conversation = await options.retrieveConversation(
+      existingConversationId,
+    );
+    if (
+      conversation.agent_id !== owner &&
+      !(
+        conversation.agent_id === null && conversation.parent_agent_id === owner
+      )
+    )
+      return {};
+  }
+  if (owner === parentAgentId) await initSecretsFromServer(owner);
+  return scopedSecretRedactions(parentAgentId);
 }
 
 export function shouldLaunchThroughListener(options: {

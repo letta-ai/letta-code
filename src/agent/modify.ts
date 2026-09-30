@@ -7,8 +7,7 @@ import type {
   GoogleAIModelSettings,
   OpenAIModelSettings,
 } from "@letta-ai/letta-client/resources/agents/agents";
-import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
-import type { Backend } from "@/backend";
+import type { Backend, BackendConversation } from "@/backend";
 import { getBackend } from "@/backend";
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 import { debugLog } from "@/utils/debug";
@@ -489,7 +488,7 @@ export async function updateConversationLLMConfig(
   modelHandle: string,
   updateArgs?: Record<string, unknown>,
   options?: UpdateLLMConfigOptions,
-): Promise<Conversation> {
+): Promise<BackendConversation> {
   const backend = getBackend();
   const useBackendModelCatalog = backend.capabilities.localModelCatalog;
 

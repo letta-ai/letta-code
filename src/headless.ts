@@ -125,7 +125,6 @@ import {
   clearHeadlessClientToolRules,
   createHeadlessEphemeralConversation,
   getHeadlessEphemeralIdentity,
-  prepareHeadlessEphemeralBackend,
   resumeHeadlessEphemeralConversation,
 } from "./headless-ephemeral-startup";
 import { launchListenerConversation } from "./headless-listener-launch";
@@ -758,7 +757,6 @@ export async function handleHeadlessCommand(
     const { configureDevBackend } = await import("@/backend");
     await configureDevBackend(devBackend);
   }
-  prepareHeadlessEphemeralBackend(Boolean(values.ephemeral));
   const backend = getBackend();
   markMilestone("HEADLESS_CLIENT_READY");
   const sendExitCode = await tryCloudHeadlessSend(
@@ -1281,6 +1279,11 @@ export async function handleHeadlessCommand(
     process.exit(1);
   }
   markMilestone("HEADLESS_AGENT_RESOLVED");
+  if (
+    process.env.LETTA_CODE_AGENT_ROLE === "subagent" &&
+    process.env.LETTA_INHERITED_SECRET_NAMES
+  )
+    process.env.LETTA_INHERITED_SECRET_EXECUTION_ID = agent.id;
   const publicAgentId = ephemeralFlag ? null : agent.id;
   telemetry.setCurrentAgent(publicAgentId, agent.tags);
   const isResumingAgent = !ephemeralFlag && !!(specifiedAgentId || !forceNew);

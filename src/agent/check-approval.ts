@@ -8,7 +8,7 @@ import type {
   MessageType,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
-import { getBackend } from "@/backend";
+import { type BackendConversation, getBackend } from "@/backend";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import { debugLog, debugWarn, isDebugEnabled } from "@/utils/debug";
 
@@ -47,7 +47,7 @@ export interface ResumeData {
   pendingApproval: ApprovalRequest | null; // Deprecated: use pendingApprovals
   pendingApprovals: ApprovalRequest[];
   messageHistory: Message[];
-  conversation?: Conversation;
+  conversation?: BackendConversation;
 }
 
 export function isResumedConversation(
@@ -456,7 +456,7 @@ async function fetchResumeTail(
   conversationId: string,
   limit = BACKFILL_PAGE_LIMIT,
 ): Promise<{
-  conversation?: Conversation;
+  conversation?: BackendConversation;
   messages: Message[];
 }> {
   const tail = await getBackend().getConversationResumeTail(
@@ -529,7 +529,7 @@ export async function getResumeDataFromBackend(
     let messages: Message[] = [];
 
     if (useConversationsApi) {
-      let conversation: Conversation | undefined;
+      let conversation: BackendConversation | undefined;
       if (shouldFetchTail) {
         try {
           const tail = await fetchResumeTail(agent.id, activeConversationId);

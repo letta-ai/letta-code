@@ -83,16 +83,16 @@ describe("forkParentConversation", () => {
     );
   });
 
-  test("local forks retain hidden agent-backed conversations", async () => {
+  test("local forks request detached children and key toolsets by child conversation", async () => {
     const fixture = backendFixture([]);
     const backend = {
       ...fixture,
       capabilities: { ...fixture.capabilities, localMemfs: true },
     };
     backend.forkConversation = async (_id, options) => {
-      expect(options).toMatchObject({ hidden: true });
-      expect(options).not.toHaveProperty("ephemeral");
-      expect(options).not.toHaveProperty("name");
+      expect(options).toMatchObject({ ephemeral: true, isSubagent: true });
+      expect(options?.name).toBeTruthy();
+      expect(options).not.toHaveProperty("hidden");
       return { id: "local-conv-fork" };
     };
     await forkParentConversation(
@@ -105,7 +105,7 @@ describe("forkParentConversation", () => {
       {
         resolveModelOverride: async () => null,
         inheritToolset: async (_agentId, _parentId, _forkId, targetAgentId) => {
-          expect(targetAgentId).toBe("agent-local-parent");
+          expect(targetAgentId).toBe("local-conv-fork");
         },
       },
     );

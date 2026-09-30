@@ -637,6 +637,40 @@ export function spawnBackgroundSubagentTask(
   return { taskId, outputFile, subagentId };
 }
 
+export async function resolveExternalTaskParentAgentId(parentScope?: {
+  agentId: string;
+  conversationId: string;
+}): Promise<string | null> {
+  const runtime = getRuntimeContext();
+  if (
+    runtime?.agentId === null ||
+    parentScope?.agentId.startsWith("local-conv-") ||
+    parentScope?.agentId.startsWith("conv-")
+  ) {
+    const conversationId =
+      runtime?.agentId === null
+        ? runtime.conversationId
+        : parentScope?.conversationId;
+    if (!conversationId || !/^(?:conv|local-conv)-/.test(conversationId))
+      return null;
+    const conversation = (await getBackend().retrieveConversation(
+      conversationId,
+    )) as {
+      agent_id: string | null;
+      parent_agent_id?: string | null;
+    };
+    return conversation.agent_id === null
+      ? (conversation.parent_agent_id ?? null)
+      : null;
+  }
+  if (parentScope?.agentId) return parentScope.agentId;
+  try {
+    return getCurrentAgentId();
+  } catch {
+    return null;
+  }
+}
+
 /** Launch through the same task lifecycle for tools and App Server commands. */
 export async function launchSubagent(
   args: TaskArgs,
@@ -677,9 +711,12 @@ export async function launchSubagent(
   const mcpValidationError = validateExternalCodingAgentMcpOptions(args.mcp);
   if (mcpValidationError) return { success: false, error: mcpValidationError };
 
+  // Validate required parameters based on mode
   if (isDeployingExisting) {
+    // Deploying existing agent: prompt and description required, subagent_type optional
     validateRequiredParams(args, ["prompt", "description"], "Task");
   } else {
+    // Creating new agent: subagent_type, prompt, and description required
     validateRequiredParams(
       args,
       ["subagent_type", "prompt", "description"],
@@ -687,6 +724,7 @@ export async function launchSubagent(
     );
   }
 
+  // Extract validated params
   const inputPrompt = args.prompt as string;
   const description = args.description as string;
 
@@ -780,7 +818,8 @@ export async function launchSubagent(
         error: `${subagent_type} runs in the current working directory and does not support computer routing`,
       };
     }
-    const parentAgentId = resolvedParentScope?.agentId ?? getCurrentAgentId();
+    const parentAgentId =
+      await resolveExternalTaskParentAgentId(resolvedParentScope);
     if (!parentAgentId) {
       return {
         success: false,
@@ -899,9 +938,8 @@ export async function launchSubagent(
         model,
         signal,
       });
-      effectiveAgentId = getBackend().capabilities.localMemfs
-        ? parentAgentId
-        : undefined;
+      // Forked children are conversation-owned in both backends.
+      effectiveAgentId = undefined;
       effectiveConversationId = forkedConv.id;
     } catch (error) {
       const errorMessage =
@@ -956,6 +994,7 @@ export async function launchSubagent(
     signal?.removeEventListener("abort", abortStartup);
   }
 
+  // Extract Letta agent ID from subagent state (available after link resolves)
   const linkedAgent = getSubagentSnapshot().agents.find(
     (a) => a.id === subagentId,
   );

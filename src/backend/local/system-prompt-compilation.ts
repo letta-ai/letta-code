@@ -32,6 +32,8 @@ export interface LocalCompiledSystemPrompt {
 export interface CompileLocalSystemPromptOptions {
   agent: LocalAgentRecord;
   conversationId: string;
+  /** Null-owned conversations have no agent ID to advertise in the prompt. */
+  persistedAgentId?: string | null;
   memoryDir?: string;
   includeMemfs?: boolean;
   now?: Date;
@@ -362,19 +364,36 @@ function formatUtcTimestamp(date: Date): string {
 }
 
 function compileMemoryMetadata(input: {
-  agentId: string;
+  agentId: string | null;
   conversationId: string;
   compiledAt: Date;
   previousMessageCount: number;
 }): string {
   return [
     "<memory_metadata>",
-    `- AGENT_ID: ${input.agentId}`,
+    ...(input.agentId ? [`- AGENT_ID: ${input.agentId}`] : []),
     `- CONVERSATION_ID: ${input.conversationId}`,
     `- System prompt last recompiled: ${formatUtcTimestamp(input.compiledAt)}`,
     `- ${input.previousMessageCount} previous messages between you and the user are stored in recall memory`,
     "</memory_metadata>",
   ].join("\n");
+}
+
+/** Keep a fork's compiled instructions and memory, but regenerate its identity. */
+export function stripCompiledIdentityMetadata(
+  snapshot: Pick<LocalCompiledSystemPrompt, "content" | "coreMemory">,
+): string {
+  const start = snapshot.coreMemory.lastIndexOf("<memory_metadata>");
+  if (start < 0) return snapshot.content;
+  const close = "</memory_metadata>";
+  const end = snapshot.coreMemory.indexOf(close, start);
+  if (end < 0) return snapshot.content;
+  const block = snapshot.coreMemory.slice(start, end + close.length);
+  const offset = snapshot.content.lastIndexOf(block);
+  return offset < 0
+    ? snapshot.content
+    : snapshot.content.slice(0, offset) +
+        snapshot.content.slice(offset + block.length);
 }
 
 function injectCoreMemory(rawSystemPrompt: string, coreMemory: string): string {
@@ -443,7 +462,7 @@ export function compileLocalSystemPrompt(
     memfs.format === "memfs-v2"
       ? ""
       : compileMemoryMetadata({
-          agentId: options.agent.id,
+          agentId: options.persistedAgentId === null ? null : options.agent.id,
           conversationId: options.conversationId,
           compiledAt,
           previousMessageCount: options.previousMessageCount ?? 0,

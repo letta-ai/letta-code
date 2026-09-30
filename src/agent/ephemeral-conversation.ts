@@ -9,6 +9,7 @@ import {
   createEphemeralConversation as createEphemeralConversationRequest,
   type EphemeralConversationCreateBody,
 } from "@/backend/api/ephemeral-conversations";
+import { LocalBackend } from "@/backend/local/local-backend";
 
 export interface CreateEphemeralConversationOptions {
   model?: string;
@@ -84,6 +85,7 @@ export function projectResumedEphemeralConversation(conversation: {
   agent_id?: string | null;
   name?: string | null;
   model?: string | null;
+  system?: string | null;
   model_settings?: unknown;
   context_window_limit?: number | null;
 }): AgentState {
@@ -96,7 +98,7 @@ export function projectResumedEphemeralConversation(conversation: {
     conversation.id,
     {
       model: conversation.model,
-      system: "",
+      system: conversation.system ?? "",
       model_settings: (conversation.model_settings ?? {}) as Record<
         string,
         unknown
@@ -109,54 +111,38 @@ export function projectResumedEphemeralConversation(conversation: {
 
 export async function createEphemeralConversation(
   options: CreateEphemeralConversationOptions,
+  backendMode: "api" | "local" = "api",
 ): Promise<{ agent: AgentState; conversationId: string }> {
   const body = await buildEphemeralConversationCreateBody(options);
-  const conversation = await createEphemeralConversationRequest(
-    body,
-    {
-      ...(options.name !== undefined ? { name: options.name } : {}),
-      ...(options.isSubagent !== undefined
-        ? { is_subagent: options.isSubagent }
-        : {}),
-    },
-    options.requestOptions,
-  );
+  const metadata = {
+    ...(options.name !== undefined ? { name: options.name } : {}),
+    ...(options.isSubagent !== undefined
+      ? { is_subagent: options.isSubagent }
+      : {}),
+  };
+  const conversation = await (async () => {
+    if (backendMode === "api") {
+      return createEphemeralConversationRequest(
+        body,
+        metadata,
+        options.requestOptions,
+      );
+    }
+    const backend = getBackend();
+    if (!(backend instanceof LocalBackend)) {
+      throw new Error("Detached local conversations require the local backend");
+    }
+    return backend.createDetachedConversation({ ...body, ...metadata });
+  })();
   return {
     agent: projectEphemeralAgent(conversation.id, body, conversation.name),
     conversationId: conversation.id,
   };
 }
 
-export async function createLocalEphemeralConversation(
+/** Compatibility entry point for existing local callers; both paths use one body. */
+export function createLocalEphemeralConversation(
   options: CreateEphemeralConversationOptions,
 ): Promise<{ agent: AgentState; conversationId: string }> {
-  const body = await buildEphemeralConversationCreateBody(options);
-  const backend = getBackend();
-  const internalAgent = await backend.createAgent({
-    agent_type: "letta_v1_agent",
-    name: "Ephemeral conversation",
-    model: body.model,
-    system: body.system,
-    memory_blocks: [],
-    tags: [],
-    tools: [],
-    include_base_tools: false,
-    include_base_tool_rules: false,
-    initial_message_sequence: [],
-    parallel_tool_calls: true,
-    hidden: true,
-  });
-  const conversation = await backend.createConversation({
-    agent_id: internalAgent.id,
-    model: body.model,
-    ...(body.model_settings ? { model_settings: body.model_settings } : {}),
-    ...(body.context_window_limit
-      ? { context_window_limit: body.context_window_limit }
-      : {}),
-  });
-
-  return {
-    agent: internalAgent,
-    conversationId: conversation.id,
-  };
+  return createEphemeralConversation(options, "local");
 }

@@ -73,7 +73,8 @@ mock.module("@/agent/subagents/subagent-process", () => ({
 const { task, launchSubagent } = await import("./task");
 const { task_stop } = await import("./task-stop");
 
-const forkConversation = mock(async () => ({ id: "conv-fork" }));
+let forkConversationId = "conv-fork";
+const forkConversation = mock(async () => ({ id: forkConversationId }));
 const originalHome = process.env.HOME;
 const originalScratchpad = process.env.LETTA_SCRATCHPAD;
 let testHome: string;
@@ -90,6 +91,7 @@ beforeEach(async () => {
   spawnProcess.mockClear();
   childInputs.length = 0;
   processFailure = undefined;
+  forkConversationId = "conv-fork";
   forkConversation.mockClear();
   clearSubagentConfigCache();
   __testSetBackend({
@@ -98,8 +100,8 @@ beforeEach(async () => {
     retrieveAgent: async () => ({ name: "Parent", model: "anthropic/test" }),
     retrieveConversation: async (id: string) => ({
       id,
-      agent_id: id === "conv-fork" ? null : "agent-parent",
-      parent_agent_id: id === "conv-fork" ? "agent-parent" : null,
+      agent_id: id === forkConversationId ? null : "agent-parent",
+      parent_agent_id: id === forkConversationId ? "agent-parent" : null,
       model: "anthropic/test",
     }),
   } as unknown as Backend);
@@ -304,6 +306,32 @@ describe("prepared conversation launch", () => {
 });
 
 describe("fork launch receipt", () => {
+  test("local fork launches the conversation without a parent agent selector", async () => {
+    forkConversationId = "local-conv-fork";
+    getBackend().capabilities.localMemfs = true;
+    const receipt = await runWithRuntimeContext(
+      { workingDirectory: testHome },
+      () =>
+        task({
+          subagent_type: "fork",
+          prompt: "Inspect the parent history",
+          description: "Local fork receipt",
+        }),
+    );
+
+    expect(forkConversation).toHaveBeenCalledWith("conv-parent", {
+      agentId: undefined,
+      ephemeral: true,
+      isSubagent: true,
+      name: expect.any(String),
+      signal: undefined,
+    });
+    expect(receipt).toContain("Conversation ID: local-conv-fork");
+    expect(receipt).not.toContain("Agent ID:");
+    expect(childInputs[0]?.args).toContain("local-conv-fork");
+    expect(childInputs[0]?.args).not.toContain("--agent");
+  });
+
   test.each(["fork", "recall"])(
     "%s returns the child conversation before it emits init or completes",
     async (subagent_type) => {

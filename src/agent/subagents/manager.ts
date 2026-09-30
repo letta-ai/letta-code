@@ -41,6 +41,7 @@ import { getRuntimeExecutionEnv } from "@/runtime-execution-settings";
 import { settingsManager } from "@/settings-manager";
 import { debugLog, debugWarn } from "@/utils/debug";
 import { getErrorMessage } from "@/utils/error";
+import { getVerifiedSecretOwner } from "@/utils/secrets-store";
 import { isSubagentStdoutLostError } from "@/utils/subagent-stdout-failure";
 import { wrapManagedWorkloadLauncher } from "@/utils/systemd-workload-scope";
 import {
@@ -58,6 +59,7 @@ import {
   resolveSubagentDeploymentAgentId,
   resolveSubagentInheritedPrimaryRoot,
   resolveSubagentLauncher,
+  resolveSubagentSecretEnv,
   resolveSubagentWorkingDirectory,
 } from "./subagent-launcher";
 import {
@@ -362,9 +364,7 @@ async function executeSubagent(
         clientMessageId,
       },
     );
-
     const launcher = resolveSubagentLauncher(cliArgs);
-
     // Resolve auth once in parent and forward to child to avoid per-subagent
     // keychain lookups under high parallel fan-out.
     const settings = await settingsManager.getSettingsWithSecureTokens();
@@ -409,12 +409,21 @@ async function executeSubagent(
       ),
       USER_CWD: subagentWorkingDirectory,
     };
+    const agentSecretEnv = await resolveSubagentSecretEnv({
+      parentAgentId,
+      existingAgentId,
+      existingConversationId,
+      retrieveConversation: (id) => activeBackend.retrieveConversation(id),
+    });
     const childEnv = composeSubagentChildEnv({
       parentProcessEnv,
+      agentSecretEnv,
       listenerConnectionId: getRuntimeContext()?.connectionId,
       backendMode,
       localBackendStorageDir,
-      parentAgentId,
+      parentAgentId: parentAgentId
+        ? (getVerifiedSecretOwner(parentAgentId) ?? undefined)
+        : undefined,
       subagentType: type,
       parentConversationId,
       launchProfile: effectiveLaunchProfile,
@@ -963,8 +972,8 @@ async function spawnSubagentInContext(
     }
   }
 
-  // Agent-backed forks can link eagerly; agent-free Cloud forks publish their
-  // own conversation link through the child init event. Preserve custom links.
+  // Link agent-backed deployments directly; null-owned Cloud forks retain
+  // their conversation ID without claiming the parent agent as owner.
   if ((forkedContext || type === "custom") && existingConversationId) {
     const forkAgentURL = existingAgentId
       ? buildAgentReference(existingAgentId, {
