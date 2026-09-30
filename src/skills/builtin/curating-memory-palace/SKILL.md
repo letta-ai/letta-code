@@ -29,25 +29,35 @@ Add up to three more sections only when they hold something the first three cann
 
 A button sends its instruction to you, so offer only what you can do. Each button is one of three kinds:
 
-- **Do it now:** a one-off task, such as reviewing a PR.
-- **From now on:** a lasting change. The instruction asks you to set up the schedule, standing rule, or permission, record it in memory, and confirm what you set up. Offer one when the user asked for the same thing repeatedly, did the same manual work repeatedly, or keeps approving the same kind of decision.
-- **Fill a gap:** something you lack, such as a tool to connect, access to restore, or a question only the user can answer.
+- **Do it now:** a one-off task, such as reviewing a PR, or a standing rule you record once when the user keeps approving the same kind of decision.
+- **Schedule:** recurring work you run without being asked, such as a weekly report or a daily check. The instruction asks you to set up the schedule. See "Offering a schedule".
+- **Fill a gap:** something you lack, such as a tool to connect, access or a permission to grant, or a question only the user can answer.
 
-Every blocker gets a button. When an item is a decision with real options, give each option its own button, two or three at most, so the user picks one: for example "Make it a ticket", "Assign it to Charles", and "Close it". Otherwise give the item one strong button, not several weak ones. The kinds above are for choosing buttons; do not write a kind's name on the page.
+Every blocker gets a button. When an item is a decision with real options, give each option its own button, two or three at most, so the user picks one: for example "Make it a ticket", "Assign it to Charles", and "Close it". Otherwise give the item one strong button, not several weak ones. The kinds are only for choosing buttons. Never write a kind's name, or any other caption, above a button.
 
 When only the user can fix something (raise a quota, attach a tool, log in), the item says what the user needs to do, and the button is still something you can do, such as "Walk me through fixing this" or "I fixed it, check again". For the second, re-run the failing check and clear the item if it passes.
 
+Offer the most reliable fix first, which usually means moving the work to Cloud. Anything that depends on the user's computer, such as a local schedule or a sign-in that lives on one machine, stops whenever that computer sleeps or Letta Code is closed. Offer to run the schedule in Cloud and to connect the account there before asking the user to keep a computer on. Suggest a fix on the user's computer only when Cloud cannot do the job, and say why.
+
 The headline says what is going on; the button says what to do. Never repeat the button's label in the headline, and do not end the text with a "Next: ..." sentence that restates the button. Write the headline "**Grok CLI regression may still be live.**" with the button "Verify the Grok CLI regression", not the headline "**Verify the Grok CLI regression.**"
+
+### Offering a schedule
+
+Offer a Schedule button when the evidence shows recurring work: the user asked for the same thing on three or more days or said they want it regularly, you did the same manual check on three or more days, a deadline repeats, or something slipped that a regular check would have caught. If a routine you already run is broken, offer to fix it instead of adding another.
+
+Do not offer one for one-off work, for work that reports when it finishes (such as CI or a deploy), for anything more often than hourly, for work that needs the user during the run, or for anything on the Dismissed list. Offer at most two at a time.
+
+The label names the work and when it runs, with a time zone. The instruction asks you to set it up and says what to do, when, where to send results, and when to stay quiet. Set it up in Cloud unless the work truly needs one of the user's computers, record it in memory, and tell the user where it runs.
 
 ### Button format
 
-A fenced code block with the language `palace-action` becomes a button. It holds one strict JSON object and nothing else. Put it directly under its item. A Suggestions item with a From now on button:
+A fenced code block with the language `palace-action` becomes a button. It holds one strict JSON object and nothing else. Put it directly under its item. A Suggestions item with a Schedule button:
 
 ````markdown
 **The dependency report is still manual.** You asked for it on Sep 15, Sep 22, and Sep 29.
 
 ```palace-action
-{"actionId": "schedule-dep-report", "label": "Send the dependency report every Monday", "conversationId": "new", "instruction": "Schedule the dependency report for Mondays at 9am PT, record the schedule in memory, and confirm what you set up."}
+{"actionId": "schedule-dep-report", "label": "Send the dependency report Mondays at 9am PT", "conversationId": "new", "instruction": "Set up a Cloud schedule for Mondays at 9am PT: run the dependency report, post it to #eng-deps, and skip weeks with no changes. Record it in memory and tell me where it runs."}
 ```
 ````
 
@@ -124,7 +134,7 @@ For a scheduled update, a reflection, or when the user asks for one:
 2. Remove items that are done, no longer true, dismissed, or past a date with nothing left to do.
 3. Add items the evidence supports and the user would want to see.
 4. Edit sections in place and keep what is still true. Keep the first three sections first and in order.
-5. Check each routine in memory and in recent conversations, and report its health in the Overview even when nothing about it changed.
+5. Check each routine's latest runs when you can, not just what memory says. For schedules, find IDs with `letta cron list --agent <agent-id>` and inspect each with `letta cron runs --id <id> --agent <agent-id>`. Report their health in the Overview even when nothing changed.
 6. Check every button against the format above before you save, counting each instruction's characters with a script.
 
 ## In a conversation
@@ -133,5 +143,5 @@ This section applies only while you are talking with the user.
 
 - **Keep it current as you work.** If `palace/` exists and you notice a blocker, a decision for the user, work you could do, or a routine that changed, update the right section. Mention it in the conversation too if it matters now. Skip things that only matter inside this conversation.
 - **Set up or update.** When the user asks you to set up the Palace, build it from what you already know, starting with the three sections above. For an update, follow "Updating the whole Palace".
-- **A clicked button.** The app opens the button's conversation and sends one message. A hidden system reminder in it names the action, the section's path, and the section's current content. Do what the label and instruction ask, in that conversation, then update the item.
+- **A clicked button.** The app opens the button's conversation and sends one message. A hidden system reminder in it names the action, the section's path, and the section's current content. Do what the label and instruction ask, in that conversation, then update the item. A schedule you set up leaves Suggestions and joins the routines in the Overview.
 - **A reply.** The user's note comes with a hidden system reminder that holds the section's path and content. Apply it as described in "Signals from the user", answer any question in the conversation, and update the section if the answer changes it. Then reply briefly with what you changed.
