@@ -3769,7 +3769,6 @@ export function App({
     handleApproveAlways,
     handleDenyCurrent,
     handleCancelApprovals,
-    handleQuestionSubmit,
   } = useApprovalFlow({
     abortControllerRef,
     agentId,
@@ -5018,7 +5017,6 @@ export function App({
         handlePermissionModeChange={handlePermissionModeChange}
         handlePersonalitySelect={handlePersonalitySelect}
         handleProfileEscapeCancel={handleProfileEscapeCancel}
-        handleQuestionSubmit={handleQuestionSubmit}
         handleReflectionArenaChoiceCancel={handleReflectionArenaChoiceCancel}
         handleReflectionArenaChoiceSubmit={handleReflectionArenaChoiceSubmit}
         handleSleeptimeModeSelect={handleSleeptimeModeSelect}

@@ -23,7 +23,6 @@ export const TOOLSET_CATALOG: Readonly<Record<ToolsetName, ToolsetDefinition>> =
       description: "Experimental unified toolset for every model",
       is_featured: true,
       tools: [
-        "AskUserQuestion",
         "EnterWorktree",
         "ExitWorktree",
         "SetWorkingDirectory",
@@ -58,7 +57,6 @@ export const TOOLSET_CATALOG: Readonly<Record<ToolsetName, ToolsetDefinition>> =
         "Optimized for Anthropic models, recommended for all non-OpenAI models",
       is_featured: true,
       tools: [
-        "AskUserQuestion",
         "Bash",
         "Monitor",
         "WatchPR",
@@ -86,7 +84,6 @@ export const TOOLSET_CATALOG: Readonly<Record<ToolsetName, ToolsetDefinition>> =
       description: "Optimized for GPT/Codex models",
       is_featured: true,
       tools: [
-        "AskUserQuestion",
         "EnterWorktree",
         "ExitWorktree",
         "SetWorkingDirectory",

@@ -19,6 +19,7 @@
     "src/mcp-oauth-public.ts",
     "src/agent-presets.ts",
     "src/schedules.ts",
+    "src/ask-user-question.ts",
     "src/channels-public.ts",
     "src/gateway-core.ts",
     "src/channels-slack.ts",

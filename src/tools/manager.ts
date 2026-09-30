@@ -148,6 +148,7 @@ const TOOL_NAME_MAPPINGS: Partial<Record<ToolName, string>> = {
   // Internal implementation name stays `Task` for backward compat with existing
   // agent states; getInternalToolName("Agent") resolves back to "Task".
   Task: "Agent",
+  AskUserQuestionAsync: "AskUserQuestion",
 };
 
 /** Get the server-facing name for a tool (maps internal names to what the model sees). */
@@ -2308,20 +2309,17 @@ async function executeToolInner(
         }
       }
 
-      if (internalName === "Task") {
-        if (options?.toolCallId) {
-          enhancedArgs = { ...enhancedArgs, toolCallId: options.toolCallId };
-        }
-        if (options?.parentScope) {
-          enhancedArgs = { ...enhancedArgs, parentScope: options.parentScope };
-        }
+      // Correlate receipts with executor identity, never model-supplied fields.
+      if (
+        internalName === "AskUserQuestionAsync" ||
+        (["Task", "Skill"].includes(internalName) && options?.toolCallId)
+      ) {
+        enhancedArgs = { ...enhancedArgs, toolCallId: options?.toolCallId };
       }
-
-      // Skill metadata must not use process-global scope in listener mode.
-      if (internalName === "Skill" && options?.toolCallId) {
-        enhancedArgs = { ...enhancedArgs, toolCallId: options.toolCallId };
-      }
-      if (internalName === "Skill" && options?.parentScope) {
+      if (
+        (internalName === "Task" || internalName === "Skill") &&
+        options?.parentScope
+      ) {
         enhancedArgs = { ...enhancedArgs, parentScope: options.parentScope };
       }
 

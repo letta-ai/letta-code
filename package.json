@@ -33,6 +33,10 @@
     "dist/agent-presets.js.map",
     "dist/schedules.js",
     "dist/schedules.js.map",
+    "dist/ask-user-question.js",
+    "dist/ask-user-question.js.map",
+    "dist/ask-user-question.cjs",
+    "dist/ask-user-question.cjs.map",
     "dist/channels-public.js",
     "dist/channels-public.js.map",
     "dist/gateway-core.js",
@@ -48,6 +52,13 @@
   ],
   "exports": {
     ".": "./letta.js",
+    "./ask-user-question": {
+      "types": "./dist/types/ask-user-question.d.ts",
+      "browser": "./dist/ask-user-question.js",
+      "import": "./dist/ask-user-question.js",
+      "require": "./dist/ask-user-question.cjs",
+      "default": "./dist/ask-user-question.js"
+    },
     "./app-server-protocol": {
       "types": "./dist/types/types/app-server-protocol.d.ts"
     },
@@ -214,6 +225,9 @@
   },
   "typesVersions": {
     "*": {
+      "ask-user-question": [
+        "./dist/types/ask-user-question.d.ts"
+      ],
       "agent-presets": [
         "./dist/types/agent-presets.d.ts"
       ],

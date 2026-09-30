@@ -53,7 +53,6 @@ import {
 import {
   getConversationRuntime,
   getPendingControlRequests,
-  getRecoveredApprovalStateForScope,
   hasInterruptedCacheForScope,
   safeEmitWsEvent,
 } from "./runtime";
@@ -299,18 +298,13 @@ export function buildLoopStatus(
     scopedConversationId,
   );
   const interruptedCacheActive = hasInterruptedCacheForScope(listener, scope);
-  const recovered = getRecoveredApprovalStateForScope(listener, scope);
   const status = interruptedCacheActive
     ? !conversationRuntime?.isProcessing
       ? "WAITING_ON_INPUT"
       : conversationRuntime?.loopStatus === "WAITING_ON_APPROVAL"
         ? "WAITING_ON_INPUT"
         : (conversationRuntime?.loopStatus ?? "WAITING_ON_INPUT")
-    : recovered &&
-        recovered.pendingRequestIds.size > 0 &&
-        conversationRuntime?.loopStatus === "WAITING_ON_INPUT"
-      ? "WAITING_ON_APPROVAL"
-      : (conversationRuntime?.loopStatus ?? "WAITING_ON_INPUT");
+    : (conversationRuntime?.loopStatus ?? "WAITING_ON_INPUT");
   return {
     status,
     active_run_ids:

@@ -100,7 +100,6 @@ import {
   isFileWriteTool,
   isPatchTool,
 } from "@/cli/helpers/tool-name-mapping";
-import { alwaysRequiresUserInput } from "@/cli/helpers/tool-name-mapping.js";
 import { finishTuiTurn } from "@/cli/helpers/tui-turn-lifecycle";
 import type { LocalModAdapter } from "@/cli/mods/use-local-mod-adapter";
 import { SYSTEM_ALERT_OPEN, SYSTEM_REMINDER_OPEN } from "@/constants";
@@ -1828,7 +1827,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             const { needsUserInput, autoAllowed, autoDenied } =
               await classifyApprovals(approvalsToProcess, {
                 getContext: analyzeToolApproval,
-                alwaysRequiresUserInput,
                 requireArgsForAutoApprove: true,
                 missingNameReason:
                   "Tool call incomplete - missing name or arguments",

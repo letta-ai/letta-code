@@ -35,7 +35,6 @@ import {
 } from "./protocol-outbound";
 import { scheduleQueuePump } from "./queue";
 import { emitLoopErrorNotice } from "./recoverable-notices";
-import { resolveRecoveredApprovalResponse } from "./recovery";
 import {
   getActiveRuntime,
   getConversationRuntime,
@@ -45,7 +44,6 @@ import {
 } from "./runtime";
 import { normalizeConversationId, normalizeCwdAgentId } from "./scope";
 import type { ListenerTransport } from "./transport";
-import { handleIncomingMessage } from "./turn";
 import { setCommandLoopStatus } from "./turn-status";
 import type {
   ChangeCwdMessage,
@@ -200,21 +198,6 @@ export async function handleApprovalResponseInput(
       response: ApprovalResponseBody,
       connectionId?: ListenerConnectionId,
     ) => boolean;
-    getOrCreateScopedRuntime: (
-      listener: ListenerRuntime,
-      agentId?: string | null,
-      conversationId?: string | null,
-    ) => ConversationRuntime;
-    resolveRecoveredApprovalResponse: (
-      runtime: ConversationRuntime,
-      socket: ListenerTransport,
-      response: ApprovalResponseBody,
-      processTurn: typeof handleIncomingMessage,
-      opts?: {
-        onStatusChange?: StartListenerOptions["onStatusChange"];
-        connectionId?: string;
-      },
-    ) => Promise<boolean>;
     scheduleQueuePump: (
       runtime: ConversationRuntime,
       socket: ListenerTransport,
@@ -224,8 +207,6 @@ export async function handleApprovalResponseInput(
   } = {
     resolveRuntimeForApprovalRequest,
     resolvePendingApprovalResolver,
-    getOrCreateScopedRuntime,
-    resolveRecoveredApprovalResponse,
     scheduleQueuePump,
   },
 ): Promise<boolean> {
@@ -245,37 +226,6 @@ export async function handleApprovalResponseInput(
   ) {
     deps.scheduleQueuePump(
       approvalRuntime,
-      params.socket,
-      params.opts as StartListenerOptions,
-      params.processQueuedTurn,
-    );
-    return true;
-  }
-
-  const targetRuntime =
-    approvalRuntime ??
-    deps.getOrCreateScopedRuntime(
-      listener,
-      params.runtime.agent_id,
-      params.runtime.conversation_id,
-    );
-  if (targetRuntime.cancelRequested) {
-    return false;
-  }
-  if (
-    await deps.resolveRecoveredApprovalResponse(
-      targetRuntime,
-      params.socket,
-      params.response,
-      handleIncomingMessage,
-      {
-        onStatusChange: params.opts.onStatusChange,
-        connectionId: params.opts.connectionId,
-      },
-    )
-  ) {
-    deps.scheduleQueuePump(
-      targetRuntime,
       params.socket,
       params.opts as StartListenerOptions,
       params.processQueuedTurn,

@@ -3,7 +3,6 @@ import { Readable, Writable } from "node:stream";
 import { render } from "ink";
 import type { ComponentProps } from "react";
 import stripAnsi from "strip-ansi";
-import { ApprovalSwitch } from "./ApprovalSwitch";
 import { InlineQuestionApproval } from "./InlineQuestionApproval";
 
 class CaptureStream extends Writable {
@@ -35,7 +34,7 @@ type QuestionsProp = ComponentProps<typeof InlineQuestionApproval>["questions"];
 
 async function renderWithQuestions(
   questions: QuestionsProp,
-  throughApproval = false,
+  submit = false,
   onSubmit: (answers: Record<string, string>) => void = () => {},
 ): Promise<string> {
   const stdout = new CaptureStream() as CaptureStream & NodeJS.WriteStream;
@@ -45,25 +44,11 @@ async function renderWithQuestions(
 
   try {
     const instance = render(
-      throughApproval ? (
-        <ApprovalSwitch
-          approval={{
-            toolName: "AskUserQuestion",
-            toolCallId: "tc-1",
-            toolArgs: JSON.stringify({ questions }),
-          }}
-          onApprove={() => {}}
-          onApproveAlways={() => {}}
-          onDeny={() => {}}
-          onQuestionSubmit={onSubmit}
-        />
-      ) : (
-        <InlineQuestionApproval
-          questions={questions}
-          onSubmit={onSubmit}
-          isFocused={false}
-        />
-      ),
+      <InlineQuestionApproval
+        questions={questions}
+        onSubmit={onSubmit}
+        isFocused={submit}
+      />,
       {
         stdout,
         stdin,
@@ -74,7 +59,7 @@ async function renderWithQuestions(
     );
 
     await new Promise((resolve) => setTimeout(resolve, 20));
-    if (throughApproval) {
+    if (submit) {
       stdin.push("\r");
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
@@ -180,7 +165,7 @@ test("InlineQuestionApproval coerces non-array `options` instead of throwing (de
   }
 });
 
-test("ApprovalSwitch renders and submits a single choice when multiSelect is omitted", async () => {
+test("InlineQuestionApproval renders and submits a single choice when multiSelect is omitted", async () => {
   let answers: Record<string, string> | undefined;
   const output = await renderWithQuestions(
     [
@@ -202,19 +187,4 @@ test("ApprovalSwitch renders and submits a single choice when multiSelect is omi
   expect(output).not.toContain("Run AskUserQuestion?");
   expect(output).not.toContain("ERROR");
   expect(answers).toEqual({ "Choose?": "A" });
-});
-
-test("ApprovalSwitch renders generic approval for malformed questions", async () => {
-  for (const questions of [
-    '[{"question":"Choose?"}]',
-    [{ question: "Choose?", header: "Choice" }],
-    [{ question: "Choose?", header: "Choice", options: null }],
-  ]) {
-    const output = await renderWithQuestions(
-      questions as unknown as QuestionsProp,
-      true,
-    );
-    expect(output).toContain("Run AskUserQuestion?");
-    expect(output).not.toContain("ERROR");
-  }
 });

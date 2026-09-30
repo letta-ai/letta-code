@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
 import { getBackend } from "@/backend";
 import { getTeleportStatus } from "@/backend/api/environments";
-import { isInteractiveApprovalTool } from "@/tools/interactive-policy";
 import { debugWarn } from "@/utils/debug";
 import { getOrCreateProcessTransport } from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
@@ -173,11 +172,6 @@ export async function recoverRecordedTurns(
           continue;
         }
         if (owned.length !== pending.length) continue;
-        // Questions still require a human answer; browser sync re-presents them.
-        if (
-          owned.some((approval) => isInteractiveApprovalTool(approval.toolName))
-        )
-          continue;
         if (!(await canRecover(runtime))) continue;
         if (!unchanged()) continue;
         const approvals = recordedToolResults(

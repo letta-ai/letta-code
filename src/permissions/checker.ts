@@ -777,6 +777,8 @@ function getDefaultDecision(
     "write_artifact_file",
     "Wake",
     "WatchPR",
+    "AskUserQuestion",
+    "AskUserQuestionAsync",
   ];
 
   if (autoAllowTools.includes(toolName)) {
