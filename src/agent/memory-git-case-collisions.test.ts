@@ -207,14 +207,30 @@ describe("case-colliding tracked paths", () => {
     expect(existsSync(join(fixture.mount, "local.md"))).toBe(true);
   });
 
-  test("keeps a normal checkout possible on a case-sensitive filesystem", async () => {
-    const fixture = makeFixture();
-    addCaseVariants(fixture.source);
+  test.skipIf(process.platform !== "linux")(
+    "keeps a normal checkout possible on a case-sensitive filesystem",
+    async () => {
+      const fixture = makeFixture();
+      addCaseVariants(fixture.source);
 
-    await syncFixture(fixture, false);
-    expect(git(fixture.mount, ["ls-files"], false)).toContain("PDF/one.md");
-    expect(git(fixture.mount, ["ls-files"], false)).toContain("pdf/two.md");
-  });
+      await syncFixture(fixture, false);
+      expect(git(fixture.mount, ["ls-files"], false)).toContain("PDF/one.md");
+      expect(git(fixture.mount, ["ls-files"], false)).toContain("pdf/two.md");
+    },
+  );
+
+  test.skipIf(process.platform !== "win32")(
+    "rejects a case collision on Windows even when Git ignorecase is false",
+    async () => {
+      const fixture = makeFixture();
+      addCaseVariants(fixture.source);
+
+      await expect(syncFixture(fixture, false)).rejects.toThrow(
+        "tracks paths that differ only by case",
+      );
+      expect(existsSync(fixture.mount)).toBe(false);
+    },
+  );
 
   test("mounts an empty repository and later receives its first commit", async () => {
     const fixture = makeEmptyFixture();
