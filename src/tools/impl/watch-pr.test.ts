@@ -165,7 +165,11 @@ describe("WatchPR background lifecycle", () => {
 
     await Bun.sleep(250);
     const notifications = queued.join("\n");
-    expect(notifications.match(/could not refresh/g)).toHaveLength(1);
+    expect(
+      queued.filter((notification) =>
+        notification.includes("could not refresh"),
+      ),
+    ).toHaveLength(1);
     expect(notifications).toContain("recovered after 5 failed polls");
     expect(waits).toEqual([
       30_000, 60_000, 120_000, 240_000, 300_000, 300_000, 30_000,
