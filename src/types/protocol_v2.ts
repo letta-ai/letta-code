@@ -611,8 +611,12 @@ export type ApprovalResponseBody =
  * In v2, the WS server accepts runtime-scoped chat/device commands plus
  * device capability commands (filesystem, memory, cron, terminals).
  */
+export type { ClientPreferences } from "./client-preferences";
+
 export interface InputCreateMessagePayload {
   kind: "create_message";
+  /** Omitted inherits; supplied replaces the conversation snapshot; {} clears. */
+  client_preferences?: import("./client-preferences").ClientPreferences;
   messages: Array<MessageCreate & { client_message_id?: string }>;
   /** Handling policy for unsupported or failed image inputs. */
   image_failure_mode?: "strict" | "drop";
@@ -630,13 +634,7 @@ export interface InputCreateMessagePayload {
   client_toolset?: ClientToolsetConfig;
   /** Scoped runtime-start tools to expose for this turn; unscoped tools remain available. */
   external_tool_scope_ids?: string[];
-  /**
-   * Exclude interactive user-input tools (AskUserQuestion and friends) from
-   * this turn's toolset. Intended for headless clients (SDK sessions,
-   * automation) that cannot surface mid-turn questions to a human. The
-   * excluded set is owned by the harness (interactive-policy), so new
-   * interactive tools are covered without client updates.
-   */
+  /** Exclude interactive tools even when included by preferences or this input. */
   exclude_interactive_tools?: boolean;
   response_format?: Record<string, unknown>;
 }

@@ -2,10 +2,15 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { inheritForkToolset } from "@/agent/subagents/fork-conversation";
+import {
+  forkParentConversation,
+  inheritForkToolset,
+} from "@/agent/subagents/fork-conversation";
+import { __testSetBackend } from "@/backend";
+import { LocalBackend } from "@/backend/local";
 import { settingsManager } from "@/settings-manager";
 import { clearCapturedToolExecutionContexts } from "@/tools/manager";
-import { prepareToolExecutionContextForResolvedTarget } from "@/tools/toolset";
+import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 
 const originalHome = process.env.HOME;
 let testHomeDir: string;
@@ -18,6 +23,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  __testSetBackend(null);
   clearCapturedToolExecutionContexts();
   await settingsManager.reset();
   await rm(testHomeDir, { recursive: true, force: true });
@@ -25,26 +31,67 @@ afterEach(async () => {
 });
 
 describe("fork subagent toolset inheritance", () => {
-  test("does not copy the parent's request-scoped async question include", async () => {
-    const agentId = "agent-parent";
-    settingsManager.setToolsetPreference(agentId, "codex", "conv-parent");
-    const parent = await prepareToolExecutionContextForResolvedTarget({
-      toolsetPreference: "codex",
-      conversationId: "conv-parent",
-      clientToolset: { include: ["AskUserQuestionAsync"] },
+  test("a real fork does not inherit persistent client preferences from its parent", async () => {
+    const backend = new LocalBackend({
+      storageDir: join(testHomeDir, "backend"),
+      memfsEnabled: false,
+    });
+    __testSetBackend(backend);
+    const agent = await backend.createAgent({
+      name: "Fork preference fixture",
+      model: "anthropic/claude-sonnet-4-6",
+    });
+    const conversation = await backend.createConversation({
+      agent_id: agent.id,
+    });
+    settingsManager.setToolsetPreference(agent.id, "codex", conversation.id);
+    settingsManager.setClientPreferences(agent.id, conversation.id, {
+      toolset: { include: ["AskUserQuestion"] },
+    });
+    const parent = await prepareToolExecutionContextForScope({
+      agentId: agent.id,
+      conversationId: conversation.id,
     });
     expect(parent.preparedToolContext.loadedToolNames).toContain(
       "AskUserQuestion",
     );
-    await inheritForkToolset(agentId, "conv-parent", "conv-child");
-    const child = await prepareToolExecutionContextForResolvedTarget({
-      toolsetPreference: settingsManager.getToolsetPreference(
-        agentId,
-        "conv-child",
-      ),
-      conversationId: "conv-child",
+    const fork = await forkParentConversation({
+      backend,
+      parentAgentId: agent.id,
+      parentConversationId: conversation.id,
+      config: {
+        name: "fork",
+        description: "Fork the parent conversation",
+        systemPrompt: "",
+        allowedTools: "all",
+        recommendedModel: "inherit",
+        recommendedModelSource: "builtin",
+        skills: [],
+        fork: true,
+        launchProfile: "default",
+      },
+    });
+    expect(fork.id).not.toBe(conversation.id);
+    expect(settingsManager.getToolsetPreference(agent.id, fork.id)).toBe(
+      "codex",
+    );
+    expect(settingsManager.getClientPreferences(agent.id, fork.id)).toEqual({});
+    const child = await prepareToolExecutionContextForScope({
+      agentId: agent.id,
+      conversationId: fork.id,
     });
     expect(child.preparedToolContext.loadedToolNames).not.toContain(
+      "AskUserQuestion",
+    );
+    // A subsequent parent turn omits client_toolset and still uses its defaults.
+    const nextParent = await prepareToolExecutionContextForScope({
+      agentId: agent.id,
+      conversationId: conversation.id,
+    });
+    expect(nextParent.preparedToolContext.loadedToolNames).toEqual(
+      parent.preparedToolContext.loadedToolNames,
+    );
+    expect(nextParent.preparedToolContext.loadedToolNames).toContain(
       "AskUserQuestion",
     );
   });

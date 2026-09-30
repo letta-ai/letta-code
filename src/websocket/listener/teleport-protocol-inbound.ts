@@ -1,3 +1,4 @@
+import { isClientPreferences } from "@/tools/client-preferences";
 import type {
   InputTeleportContinuePayload,
   TeleportProtocolCommand,
@@ -10,6 +11,8 @@ export function isTeleportContinuePayload(
   if (!isObjectRecord(value) || !isObjectRecord(value.source)) return false;
   return (
     value.kind === "teleport_continue" &&
+    (value.client_preferences === undefined ||
+      isClientPreferences(value.client_preferences)) &&
     typeof value.teleport_id === "string" &&
     value.teleport_id.length > 0 &&
     typeof value.source.device_id === "string" &&

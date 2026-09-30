@@ -29,6 +29,9 @@ test("direct started input activates sources immediately", async () => {
   await gateway.submit(
     makeDelivery({ sources: [source], clientMessageId: "cm-1" }),
   );
+  expect(client.submittedInputs[0]?.payload).toMatchObject({
+    client_preferences: {},
+  });
 
   // Should emit queued lifecycle for each source
   expect(lifecycleEvents.filter((e) => e.type === "queued")).toHaveLength(1);

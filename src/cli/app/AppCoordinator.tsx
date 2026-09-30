@@ -92,10 +92,6 @@ import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
 import type { ExecutionPhase } from "@/cli/helpers/phase-visuals";
 import { maybeLaunchPostTurnReflection } from "@/cli/helpers/post-turn-reflection";
 import {
-  buildContentFromQueueBatch,
-  toQueuedMsg,
-} from "@/cli/helpers/queued-message-parts";
-import {
   buildReflectionArenaChoiceQuestions,
   finalizeReflectionArenaChoice,
   formatReflectionArenaDeferredMessage,
@@ -128,6 +124,10 @@ import {
 } from "@/cli/helpers/tool-name-mapping";
 import { isTaskTool } from "@/cli/helpers/tool-name-mapping.js";
 import { getTuiBlockedReason } from "@/cli/helpers/tui-queue-adapter";
+import {
+  prepareTuiQueueSubmit,
+  toTuiQueuedMessage,
+} from "@/cli/helpers/tui-queue-input";
 import { createTuiQueueRuntime } from "@/cli/helpers/tui-queue-runtime";
 import type { WindowTitleData } from "@/cli/helpers/window-title-config";
 import { useSyncedState } from "@/cli/hooks/use-synced-state";
@@ -1687,7 +1687,7 @@ export function App({
         (item): item is MessageQueueItem | TaskNotificationQueueItem =>
           item.kind === "message" || item.kind === "task_notification",
       )
-      .map(toQueuedMsg);
+      .map(toTuiQueuedMessage);
   }, []);
 
   // Helper to wrap async handlers that need to close overlay and lock input
@@ -4267,19 +4267,11 @@ export function App({
       const batch = tuiQueueRef.current?.consumeItems(queueLen);
       if (!batch) return;
 
-      // Build concatenated text for lastDequeuedMessageRef (error restoration).
-      const concatenatedMessage = batch.items
-        .map((item) => {
-          if (item.kind === "task_notification") return item.text;
-          if (item.kind === "message") {
-            return typeof item.content === "string" ? item.content : "";
-          }
-          return "";
-        })
-        .filter((t) => t.length > 0)
-        .join("\n");
-
-      const queuedContentParts = buildContentFromQueueBatch(batch);
+      const {
+        text: concatenatedMessage,
+        content: queuedContentParts,
+        submitOptions,
+      } = prepareTuiQueueSubmit(batch);
 
       debugLog(
         "queue",
@@ -4296,13 +4288,15 @@ export function App({
       dequeueInFlightRef.current = true;
       // Steering is opt-in for each batch; new user messages wait by default.
       setQueueMode("defer");
-      void onSubmitRef.current(concatenatedMessage).finally(() => {
-        dequeueInFlightRef.current = false;
-        // If more items arrived while in-flight, bump epoch so the effect re-runs.
-        if ((tuiQueueRef.current?.length ?? 0) > 0) {
-          setDequeueEpoch((e) => e + 1);
-        }
-      });
+      void onSubmitRef
+        .current(concatenatedMessage, false, submitOptions)
+        .finally(() => {
+          dequeueInFlightRef.current = false;
+          // If more items arrived while in-flight, bump epoch so the effect re-runs.
+          if ((tuiQueueRef.current?.length ?? 0) > 0) {
+            setDequeueEpoch((e) => e + 1);
+          }
+        });
     } else if (hasAnythingQueued) {
       // Log why dequeue was blocked (useful for debugging stuck queues)
       debugLog(

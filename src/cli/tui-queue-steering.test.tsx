@@ -31,6 +31,10 @@ import { permissionMode } from "@/permissions/mode";
 import { sessionPermissions } from "@/permissions/session";
 import { settingsManager } from "@/settings-manager";
 import {
+  getStoredClientPreferences,
+  replaceClientPreferences,
+} from "@/tools/client-preferences";
+import {
   addToMessageQueue,
   clearPendingMessages,
   isQueueBridgeConnected,
@@ -255,7 +259,7 @@ async function renderTestApp(local = false, failure?: TerminalFailure) {
   await waitFor(isQueueBridgeConnected, "the production queue bridge");
   addToMessageQueue({ kind: "user", text: "start the original turn" });
   await waitFor(() => executor.inputs.length === 1, "the original turn");
-  return { executor, stdin, stdout };
+  return { executor, stdin, stdout, agentId, conversationId: conversation.id };
 }
 
 function expectToolResult(input: HeadlessTurnExecutorInput | undefined) {
@@ -266,6 +270,35 @@ function expectToolResult(input: HeadlessTurnExecutorInput | undefined) {
 }
 
 describe("TUI user queue steering", () => {
+  test("idle cron dispatch retains client preferences until a user message runs", async () => {
+    const { executor, agentId, conversationId } = await renderTestApp();
+    executor.approval.release();
+    executor.completion.release();
+    await waitFor(() => executor.endTurnEmitted, "the completed user turn");
+    const preferences = { toolset: { include: ["AskUserQuestion"] } };
+    replaceClientPreferences(agentId, conversationId, preferences);
+
+    addToMessageQueue({
+      kind: "user",
+      source: "cron",
+      text: "scheduled follow-up",
+    });
+    await waitFor(() => executor.inputs.length === 3, "the scheduled turn");
+    expect(JSON.stringify(executor.inputs[2]?.body)).toContain(
+      "scheduled follow-up",
+    );
+    expect(getStoredClientPreferences(agentId, conversationId)).toEqual(
+      preferences,
+    );
+
+    addToMessageQueue({ kind: "user", text: "native user follow-up" });
+    await waitFor(() => executor.inputs.length === 4, "the native user turn");
+    expect(JSON.stringify(executor.inputs[3]?.body)).toContain(
+      "native user follow-up",
+    );
+    expect(getStoredClientPreferences(agentId, conversationId)).toEqual({});
+  });
+
   test.each(
     (["request", "stream", "run", "run_lookup"] as const).flatMap((failure) =>
       (["unchanged", "edited", "cleared", "draft"] as const).map(

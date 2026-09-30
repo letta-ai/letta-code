@@ -261,6 +261,7 @@ export class ChannelGateway {
             },
           ],
           image_failure_mode: "drop",
+          client_preferences: {},
         },
       });
       if (!response.accepted) {
