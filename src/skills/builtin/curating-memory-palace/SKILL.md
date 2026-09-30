@@ -1,6 +1,6 @@
 ---
 name: curating-memory-palace
-description: Rules for the Memory Palace (palace/), the Palace tab in Letta Code Desktop and chat.letta.com that shows the user where things stand, what you could do next, and how to make you more useful. Use to set up or update it, to handle a Palace reply or action, and, when palace/ exists, to surface blockers, decisions, suggestions, or routine changes, including during reflection.
+description: Rules for the Memory Palace (palace/), the view on your Memory page in the Letta dashboard that shows the user where things stand, what you could do next, and how to make you more useful. Load it before creating or editing anything in palace/, when a message starts with "Palace action:" or "Palace reply on", and, when palace/ exists, whenever you notice a blocker, a decision for the user, work you could offer, or a routine that started, broke, or changed.
 ---
 
 # Curating the Memory Palace
