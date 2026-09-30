@@ -1,6 +1,7 @@
 import type WebSocket from "ws";
 import { resolveBackendMode } from "@/backend/backend-mode";
 import { getLocalChannelTeleportError } from "@/channels/teleport-guard";
+import { getStoredClientPreferences } from "@/tools/client-preferences";
 import type {
   TeleportContinuation,
   TeleportFailedCommand,
@@ -219,6 +220,10 @@ function sendTeleportReady(
   ).mode;
   const message: TeleportReadyMessage = {
     type: "teleport_ready",
+    client_preferences: getStoredClientPreferences(
+      pending.agentId,
+      pending.conversationId,
+    ),
     teleport_id: pending.teleportId,
     runtime: {
       agent_id: pending.agentId,

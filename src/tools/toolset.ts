@@ -14,6 +14,7 @@ import type { RuntimeContextSnapshot } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { OPENAI_COMPATIBLE_PROXY_UPDATE_ARG } from "@/utils/openai-endpoint";
 import { isRecord } from "@/utils/type-guards";
+import { getStoredClientPreferences } from "./client-preferences";
 import {
   getInternalToolName,
   isOpenAIModel,
@@ -320,7 +321,7 @@ export async function prepareToolExecutionContextForScope(params: {
     overrideProviderType,
     cachedEffectiveModel,
     exclude,
-    clientToolset,
+    clientToolset: requestClientToolset,
     clientToolAllowlist,
     externalToolScopeIds,
     workingDirectory,
@@ -335,6 +336,9 @@ export async function prepareToolExecutionContextForScope(params: {
     modAdapters,
   } = params;
 
+  const clientToolset: ClientToolsetConfig | undefined =
+    requestClientToolset ??
+    getStoredClientPreferences(agentId, conversationId).toolset;
   const backend = getBackend();
   const agent = agentId
     ? ((cachedAgent ??

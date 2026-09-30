@@ -1,5 +1,11 @@
 import { afterEach, expect, mock, test } from "bun:test";
 import WebSocket from "ws";
+import { settingsManager } from "@/settings-manager";
+import { TestDirectory } from "@/test-utils/test-fs";
+import {
+  getStoredClientPreferences,
+  replaceClientPreferences,
+} from "@/tools/client-preferences";
 import type { TeleportContinuation } from "@/types/protocol_v2";
 import {
   markListenerConnectionInitialized,
@@ -142,6 +148,56 @@ async function deliverTeleportFailure(params: {
 
 afterEach(() => {
   setActiveRuntime(null);
+});
+
+test("failed same-runtime teleport keeps the source preference snapshot", async () => {
+  const directory = new TestDirectory();
+  const oldHome = process.env.HOME;
+  await settingsManager.reset();
+  process.env.HOME = directory.path;
+  try {
+    await settingsManager.initialize();
+    const preferences = { toolset: { include: ["AskUserQuestion"] } };
+    replaceClientPreferences("agent-1", "conversation-1", preferences);
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conversation-1",
+    );
+    const socket = new MockSocket();
+    setActiveRuntime(listener);
+    prepareSourceTeleport(listener, runtime, socket);
+    expect(socket.sent).toContainEqual(
+      expect.objectContaining({
+        type: "teleport_ready",
+        client_preferences: preferences,
+      }),
+    );
+    await deliverTeleportFailure({
+      listener,
+      runtime,
+      socket,
+      error: "Destination unavailable",
+      processIncomingMessage: async (incoming) => {
+        expect(incoming.clientPreferences).toBeUndefined();
+        expect(
+          getStoredClientPreferences(
+            incoming.agentId ?? null,
+            incoming.conversationId,
+          ),
+        ).toEqual(preferences);
+      },
+    });
+    expect(getStoredClientPreferences("agent-1", "conversation-1")).toEqual(
+      preferences,
+    );
+  } finally {
+    await settingsManager.reset();
+    if (oldHome === undefined) delete process.env.HOME;
+    else process.env.HOME = oldHome;
+    directory.cleanup();
+  }
 });
 
 test("terminal teleport failure resumes the source without approvals", async () => {
