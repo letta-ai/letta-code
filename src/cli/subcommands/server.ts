@@ -110,7 +110,13 @@ export function asLegacyAppServerCommand(argv: string[]): string[] {
 }
 
 export async function runServerSubcommand(argv: string[]): Promise<number> {
-  if (argv.includes("--help") || argv.includes("-h")) {
+  if (
+    (argv.includes("--help") || argv.includes("-h")) &&
+    !argv.some(
+      (arg) =>
+        arg === "--lifecycle-output" || arg.startsWith("--lifecycle-output="),
+    )
+  ) {
     printServerHelp();
     return 0;
   }

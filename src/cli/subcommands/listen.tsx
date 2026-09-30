@@ -26,6 +26,8 @@ import { settingsManager } from "@/settings-manager";
 import { getListenerTelemetrySurface, telemetry } from "@/telemetry";
 import { cancelBackgroundMemoryTasks } from "@/tools/impl/memory-task-lifecycle";
 import { CHANNEL_SERVICE_COMMAND_TYPES } from "@/types/service-protocol";
+import { isDebugEnabled } from "@/utils/debug";
+import { suppressStartupLogMarker } from "@/utils/startup-log-boundary";
 import type { AppServerHandle } from "@/websocket/app-server";
 import { RemoteSessionLog } from "@/websocket/listen-log";
 import {
@@ -222,23 +224,30 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
 
   const debugMode = !!values.debug;
   if (debugMode) process.env.LETTA_DEBUG = "1";
+  const effectiveDebugMode = isDebugEnabled();
   const skillsDirectory = values.skills ?? process.env.LETTA_SKILLS_DIRECTORY;
-
-  // Show help
-  if (values.help) {
-    printListenUsage();
-    return 0;
-  }
 
   const lifecycle = resolveServerLifecycleOutput(
     values["lifecycle-output"],
-    debugMode,
+    effectiveDebugMode,
   );
   if (lifecycle.error) {
     console.error(`Error: ${lifecycle.error}`);
     return 1;
   }
   const lifecycleOutput = lifecycle.output;
+  if (lifecycleOutput) suppressStartupLogMarker();
+
+  // Machine lifecycle mode owns stdout; never mix human usage text into JSONL.
+  if (values.help) {
+    if (lifecycleOutput) {
+      lifecycleOutput.emit("error");
+      return 1;
+    }
+    printListenUsage();
+    return 0;
+  }
+
   const reportError = (...args: unknown[]): void => {
     if (lifecycleOutput) lifecycleOutput.emit("error");
     else console.error(...args);
@@ -436,6 +445,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         registerOptions = await resolveListenerRegistrationOptions(
           deviceId,
           connectionName,
+          { allowInteractiveOAuth: !lifecycleOutput },
         );
       } catch (authErr) {
         if (authErr instanceof MissingListenerApiKeyError) {
@@ -502,6 +512,20 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       }
     }
 
+    let currentListenerStatus: "idle" | "receiving" | "processing" = "idle";
+    let lifecycleConnected = false;
+    const updateListenerStatus = (
+      status: "idle" | "receiving" | "processing",
+    ): void => {
+      currentListenerStatus = status;
+      if (lifecycleConnected) lifecycleOutput?.emitListenerStatus(status);
+    };
+    const emitConnectedWithCurrentStatus = (): void => {
+      lifecycleConnected = true;
+      lifecycleOutput?.emit("connected");
+      lifecycleOutput?.emitListenerStatus(currentListenerStatus);
+    };
+
     let channelGatewayStart: Promise<void> | null = null;
     const startChannelGateway = (): Promise<void> => {
       if (channelGatewayStart) return channelGatewayStart;
@@ -541,6 +565,11 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             if (debugMode) console.log(`[${formatTimestamp()}] ${message}`);
           },
           onLifecycleEvent: (event) => {
+            if (event.kind === "restart_scheduled") {
+              lifecycleOutput?.emit("reconnecting");
+            } else if (event.kind === "restart_ready") {
+              lifecycleOutput?.emitListenerStatus(currentListenerStatus);
+            }
             telemetry.trackChannelGatewayLifecycle({
               lifecycle_event: event.kind,
               restart_attempt: event.restartAttempt,
@@ -557,7 +586,9 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             });
           },
           onUnexpectedExit: (error) => {
-            reportError(`[${formatTimestamp()}] ${error.message}`);
+            sessionLog.log(
+              `[ChannelGateway] recoverable exit: ${error.message}`,
+            );
           },
           onRestartExhausted: (error) => {
             reportError(`[${formatTimestamp()}] ${error.message}`);
@@ -619,6 +650,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         "@/websocket/listen-client"
       );
 
+      lifecycleOutput?.emit("reconnecting");
       await startLocalChannelListener({
         connectionId,
         deviceId,
@@ -632,7 +664,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             : undefined,
         onStatusChange: (status) => {
           sessionLog.log(`status: ${status}`);
-          lifecycleOutput?.emitListenerStatus(status);
+          updateListenerStatus(status);
           if (debugMode) {
             console.log(`[${formatTimestamp()}] status: ${status}`);
           }
@@ -640,7 +672,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         onConnected: async () => {
           await startChannelGateway();
           sessionLog.log("Local channel listener ready.");
-          lifecycleOutput?.emit("connected");
+          emitConnectedWithCurrentStatus();
           if (debugMode) {
             console.log(`[${formatTimestamp()}] Local channel listener ready.`);
             console.log("");
@@ -673,6 +705,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       `Registering with ${registerOptions.serverUrl}/v1/environments/register`,
     );
 
+    lifecycleOutput?.emit("reconnecting");
     const {
       connectionId,
       wsUrl,
@@ -714,6 +747,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       const nextRegisterOptions = await resolveListenerRegistrationOptions(
         deviceId,
         connectionName,
+        { allowInteractiveOAuth: !lifecycleOutput },
       );
       const result = await registerWithCloudRetry(nextRegisterOptions, {
         maxDurationMs: Infinity,
@@ -774,7 +808,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
           onWsEvent: shouldLogWsEvents ? wsEventLogger : undefined,
           onStatusChange: (status) => {
             sessionLog.log(`status: ${status}`);
-            lifecycleOutput?.emitListenerStatus(status);
+            updateListenerStatus(status);
             if (debugMode) {
               console.log(`[${formatTimestamp()}] status: ${status}`);
             }
@@ -783,7 +817,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
           onConnected: async () => {
             sessionLog.log("Connected. Awaiting instructions.");
             await startChannelGateway();
-            lifecycleOutput?.emit("connected");
+            emitConnectedWithCurrentStatus();
             if (debugMode) {
               console.log(
                 `[${formatTimestamp()}] Connected. Awaiting instructions.`,
@@ -792,6 +826,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             }
           },
           onRetrying: (attempt, _maxAttempts, nextRetryIn) => {
+            lifecycleConnected = false;
             sessionLog.log(
               `Reconnecting (attempt ${attempt}, retry in ${Math.round(nextRetryIn / 1000)}s)`,
             );
@@ -803,6 +838,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             }
           },
           onNeedsReregister: async () => {
+            lifecycleConnected = false;
             lifecycleOutput?.emit("reconnecting");
             if (debugMode) {
               console.log(

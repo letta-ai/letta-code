@@ -25,6 +25,11 @@ if (ownerPid !== undefined) {
   }
 }
 
+/** Suppress the human startup boundary for a machine-only stdout protocol. */
+export function suppressStartupLogMarker(): void {
+  marker = undefined;
+}
+
 /** Seal the process's merged stdout/stderr startup capture before user content. */
 export function sealStartupLogs(): void {
   if (failure) throw failure;

@@ -1,14 +1,51 @@
 import { describe, expect, test } from "bun:test";
+import { resolve } from "node:path";
 import {
   createServerLifecycleOutput,
   resolveServerLifecycleOutput,
 } from "@/cli/subcommands/lifecycle-output";
+
+async function runLifecycleCli(
+  extraEnv: Record<string, string | undefined> = {},
+): Promise<{ stdout: string; stderr: string; code: number }> {
+  const bundle = process.env.LETTA_TEST_CLI_BUNDLE;
+  const child = Bun.spawn(
+    [
+      bundle ? "node" : process.execPath,
+      bundle || "src/index.ts",
+      "server",
+      "--lifecycle-output",
+      "jsonl",
+      "--help",
+    ],
+    {
+      cwd: resolve(import.meta.dir, "../../.."),
+      env: {
+        ...process.env,
+        LETTA_DEBUG: "0",
+        DEBUG: undefined,
+        LETTA_STARTUP_LOG_MARKER: "cfa52d2e-c4bd-41ee-84b5-fb346258a9c3",
+        LETTA_STARTUP_LOG_OWNER_PID: undefined,
+        ...extraEnv,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  );
+  const [stdout, stderr, code] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ]);
+  return { stdout, stderr, code };
+}
 
 describe("server lifecycle output", () => {
   test("emits protocol-versioned JSON lines without runtime payloads", () => {
     const lines: string[] = [];
     const output = createServerLifecycleOutput((line) => lines.push(line));
 
+    output.emit("reconnecting");
     output.emit("connected");
     output.emitListenerStatus("idle");
     output.emitListenerStatus("receiving");
@@ -17,6 +54,7 @@ describe("server lifecycle output", () => {
     output.emit("error");
 
     expect(lines.map((line) => JSON.parse(line))).toEqual([
+      { lettaLifecycleProtocol: 1, state: "reconnecting" },
       { lettaLifecycleProtocol: 1, state: "connected" },
       { lettaLifecycleProtocol: 1, state: "idle" },
       { lettaLifecycleProtocol: 1, state: "working" },
@@ -45,10 +83,32 @@ describe("server lifecycle output", () => {
     });
     expect(resolveServerLifecycleOutput("jsonl", true)).toMatchObject({
       output: null,
-      error: expect.stringContaining("cannot be combined"),
+      error: expect.stringContaining("debug output is enabled"),
     });
     expect(resolveServerLifecycleOutput("jsonl", false)).toMatchObject({
       error: null,
     });
   });
+});
+
+describe("server lifecycle CLI output", () => {
+  test("keeps stdout JSONL-only without usage or startup markers", async () => {
+    const result = await runLifecycleCli();
+    expect(result.code, result.stderr).toBe(1);
+    expect(result.stdout).toBe(
+      '{"lettaLifecycleProtocol":1,"state":"error"}\n',
+    );
+    expect(result.stdout).not.toContain("Usage:");
+    expect(result.stdout).not.toContain("letta-startup-end");
+  });
+
+  test.each(["LETTA_DEBUG", "DEBUG"])(
+    "rejects lifecycle mode when %s enables debug output",
+    async (variable) => {
+      const result = await runLifecycleCli({ [variable]: "1" });
+      expect(result.code).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("debug output is enabled");
+    },
+  );
 });

@@ -30,7 +30,8 @@ export function resolveServerLifecycleOutput(
   if (mode && debug) {
     return {
       output: null,
-      error: "--lifecycle-output cannot be combined with --debug",
+      error:
+        "--lifecycle-output cannot be used while debug output is enabled by --debug, LETTA_DEBUG, or DEBUG",
     };
   }
   return { output: mode ? createServerLifecycleOutput() : null, error: null };
