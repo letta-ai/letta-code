@@ -5,9 +5,6 @@
   "description": "Letta Code is a CLI tool for interacting with stateful Letta agents from the terminal.",
   "type": "module",
   "packageManager": "bun@1.3.14",
-  "workspaces": [
-    "apps/*"
-  ],
   "bin": {
     "letta": "letta.js"
   },
@@ -219,10 +216,6 @@
     "test:update-chain:startup": "bun run src/test-utils/update-chain-smoke.ts --mode startup",
     "prepublishOnly": "bun run build",
     "postinstall": "node scripts/postinstall-patches.js || echo letta: vendor patches skipped && node -e \"try{require('fs').chmodSync(require('path').join(require.resolve('node-pty/package.json'),'../prebuilds/darwin-arm64/spawn-helper'),0o755)}catch(e){}\" || true",
-    "daemon:build": "bun run --cwd apps/daemon build",
-    "daemon:check": "bun run --cwd apps/daemon check",
-    "daemon:dev": "bun run --cwd apps/daemon dev",
-    "daemon:package": "bun run --cwd apps/daemon package",
     "mod-learning:memory-citations": "bun scripts/mod-learning/learn-mod.ts --env docs/examples/mods/learning/memory-citations.env.json"
   },
   "lint-staged": {
