@@ -260,6 +260,19 @@ jobs:
           files: letta.js
           fail_on_unmatched_files: true
 
+      # Releases created with GITHUB_TOKEN do not emit another release-triggered
+      # workflow run, so explicitly start the cross-platform daemon build.
+      - name: Dispatch Letta Daemon release
+        if: steps.detect.outputs.should_publish == 'true' && steps.version.outputs.is_prerelease == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.AMELIA_GITHUB_TOKEN }}
+          TARGET_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          gh workflow run daemon-release.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref main \
+            -f tag="$TARGET_TAG"
+
       # Propagate the release downstream: dispatch the packaging bump
       # workflow with the exact version so bundled copies of the CLI never
       # silently lag behind published releases. Non-blocking: a failed

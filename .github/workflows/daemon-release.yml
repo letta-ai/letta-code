@@ -1,0 +1,148 @@
+name: Publish Letta Daemon
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing letta-code release tag, for example v0.33.8
+        required: true
+
+concurrency:
+  group: publish-letta-daemon-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build / ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x64
+            runner: ubuntu-24.04
+          - name: Linux arm64
+            runner: ubuntu-24.04-arm
+          - name: macOS arm64
+            runner: macos-14
+          - name: macOS x64
+            runner: macos-15-intel
+          - name: Windows x64
+            runner: windows-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      CSC_LINK: ${{ runner.os == 'macOS' && secrets.MAC_CSC_LINK || runner.os == 'Windows' && secrets.WIN_CSC_LINK || '' }}
+      CSC_KEY_PASSWORD: ${{ runner.os == 'macOS' && secrets.MAC_CSC_KEY_PASSWORD || runner.os == 'Windows' && secrets.WIN_CSC_KEY_PASSWORD || '' }}
+      APPLE_ID: ${{ secrets.MAC_APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.MAC_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.MAC_TEAM_ID }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Require platform signing credentials
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            test -n "$CSC_LINK"
+            test -n "$CSC_KEY_PASSWORD"
+            test -n "$APPLE_ID"
+            test -n "$APPLE_APP_SPECIFIC_PASSWORD"
+            test -n "$APPLE_TEAM_ID"
+          elif [ "$RUNNER_OS" = "Windows" ]; then
+            test -n "$CSC_LINK"
+            test -n "$CSC_KEY_PASSWORD"
+          fi
+
+      - name: Install dependencies
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bun install --frozen-lockfile
+
+      - name: Check and package
+        env:
+          LETTA_DAEMON_PUBLISH: never
+        run: |
+          bun run daemon:check
+          bun run --cwd apps/daemon package
+
+      - name: Verify platform signatures
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            APP=$(find apps/daemon/release -type d -name 'Letta Daemon.app' -print -quit)
+            test -n "$APP"
+            codesign --verify --deep --strict --verbose=2 "$APP"
+            codesign -dv --verbose=4 "$APP" 2>&1 | grep -Fq "TeamIdentifier=$APPLE_TEAM_ID"
+            codesign -dv --verbose=4 "$APP" 2>&1 | grep -Eq '^Authority=Developer ID Application: .*Letta'
+            spctl --assess --type execute --verbose=2 "$APP"
+          elif [ "$RUNNER_OS" = "Windows" ]; then
+            powershell.exe -NoProfile -Command '
+              $installers = Get-ChildItem "apps/daemon/release/*.exe"
+              if (-not $installers) { throw "No Windows installer was built." }
+              foreach ($installer in $installers) {
+                $signature = Get-AuthenticodeSignature $installer.FullName
+                if ($signature.Status -ne "Valid") { throw "Invalid signature on $($installer.Name): $($signature.StatusMessage)" }
+                if ($signature.SignerCertificate.Subject -notmatch "(?i)Letta") { throw "Unexpected signer on $($installer.Name)" }
+              }
+            '
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: daemon-${{ matrix.runner }}
+          path: |
+            apps/daemon/release/*.AppImage
+            apps/daemon/release/*.AppImage.blockmap
+            apps/daemon/release/*.dmg
+            apps/daemon/release/*.dmg.blockmap
+            apps/daemon/release/*.zip
+            apps/daemon/release/*.zip.blockmap
+            apps/daemon/release/*.exe
+            apps/daemon/release/*.exe.blockmap
+            apps/daemon/release/latest*.yml
+          if-no-files-found: error
+
+  publish:
+    name: Attach signed artifacts
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: daemon-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          set -euo pipefail
+          cd release-assets
+          find . -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z \
+            | xargs -0 sha256sum \
+            | sed 's#  \./#  #' > SHA256SUMS
+          test -s SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Upload to GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          set -euo pipefail
+          find release-assets -maxdepth 1 -type f -print0 \
+            | xargs -0 gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber

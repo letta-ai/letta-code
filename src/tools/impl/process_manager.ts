@@ -74,6 +74,40 @@ export interface BackgroundTask {
 export const backgroundProcesses = new Map<string, BackgroundProcess>();
 export const backgroundTasks = new Map<string, BackgroundTask>();
 
+/** Best-effort, bounded shutdown for detached work before the CLI exits. */
+export async function shutdownBackgroundWork(timeoutMs = 2_000): Promise<void> {
+  const taskCompletions: Promise<void>[] = [];
+  let hasRunningProcesses = false;
+  for (const task of backgroundTasks.values()) {
+    if (task.status !== "running") continue;
+    task.abortController?.abort(new Error("Letta Code is shutting down."));
+    if (task.completion) taskCompletions.push(task.completion);
+  }
+  for (const processState of backgroundProcesses.values()) {
+    if (processState.status !== "running") continue;
+    hasRunningProcesses = true;
+    processState.completionNotificationSuppressed = true;
+    try {
+      processState.process.kill("SIGTERM");
+    } catch {
+      // The process may already have exited.
+    }
+  }
+
+  const timeout = new Promise((resolve) => setTimeout(resolve, timeoutMs));
+  if (hasRunningProcesses) await timeout;
+  else await Promise.race([Promise.allSettled(taskCompletions), timeout]);
+
+  for (const processState of backgroundProcesses.values()) {
+    if (processState.status !== "running") continue;
+    try {
+      processState.process.kill("SIGKILL");
+    } catch {
+      // The process may already have exited.
+    }
+  }
+}
+
 type BackgroundProcessStateListener = (scope?: BackgroundRuntimeScope) => void;
 
 const backgroundProcessStateListeners =

@@ -20,6 +20,10 @@ let watcher: ReturnType<typeof setInterval> | null = null;
  * process is expected to manage its own lifecycle.
  */
 export function startOrphanDetection(): void {
+  // Daemon-managed listeners install a command-aware watchdog that runs the
+  // full listener cleanup path before exiting.
+  if (process.env.LETTA_DAEMON_PARENT_PID) return;
+
   const initialParent = process.ppid;
 
   // If we were already orphaned at startup, there's nothing to detect.
