@@ -17,6 +17,7 @@ import {
 } from "./memory-constraints";
 import { commitMemoryWrite, initializeLocalMemoryRepo } from "./memory-git";
 import {
+  buildPreCommitHookScript,
   installPreCommitHook,
   installSharedMemoryPreCommitHook,
 } from "./memory-git-hooks";
@@ -619,4 +620,77 @@ describe("shared-memory pre-commit hook", () => {
       "exceeds 70 from maxFileCharacters",
     );
   });
+
+  test("rejects an unrelated commit when tracked memory is already invalid", () => {
+    repo = initRepo("shared-memory-existing-invalid-");
+    writeFileSync(join(repo, "invalid.md"), "missing frontmatter\n");
+    execFileSync("git", ["add", "invalid.md"], { cwd: repo });
+    execFileSync("git", ["commit", "-qm", "seed invalid memory"], {
+      cwd: repo,
+    });
+    installSharedMemoryPreCommitHook(repo);
+
+    writeFileSync(join(repo, "unrelated.txt"), "not memory\n");
+    execFileSync("git", ["add", "unrelated.txt"], { cwd: repo });
+    const result = tryCommit(repo, "reject existing invalid memory");
+    expect(result.status).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain(
+      "invalid.md: missing frontmatter",
+    );
+  });
+
+  test("validates a large tracked tree without passing every path to the runtime", () => {
+    repo = initRepo("shared-memory-many-paths-");
+    for (let index = 0; index < 800; index += 1) {
+      writeFileSync(
+        join(
+          repo,
+          `notes-${String(index).padStart(4, "0")}-${"x".repeat(48)}.md`,
+        ),
+        v2Memory("valid\n"),
+      );
+    }
+    execFileSync("git", ["add", "."], { cwd: repo });
+    // Seed the tracked tree before installing the hook. The tested commit only
+    // stages a non-Markdown file, but v2 validation must still scan the tree.
+    execFileSync("git", ["commit", "-qm", "seed many memory files"], {
+      cwd: repo,
+    });
+    installSharedMemoryPreCommitHook(repo);
+
+    const shim = join(repo, "git-bash-runtime");
+    writeFileSync(
+      shim,
+      `#!/bin/sh
+length=0
+for arg do length=$((length + \${#arg} + 1)); done
+if [ "$length" -gt 32767 ]; then
+  echo "simulated Windows command line limit" >&2
+  exit 90
+fi
+exec '${process.execPath}' "$@"
+`,
+      { mode: 0o755 },
+    );
+    writeFileSync(
+      join(repo, ".git", "hooks", "pre-commit"),
+      buildPreCommitHookScript({ execPath: shim, electron: false }),
+      { mode: 0o755 },
+    );
+
+    writeFileSync(join(repo, "unrelated.txt"), "not memory\n");
+    execFileSync("git", ["add", "unrelated.txt"], { cwd: repo });
+    const valid = tryCommit(repo, "commit despite many memory paths");
+    expect(valid.stdout + valid.stderr).not.toContain(
+      "simulated Windows command line limit",
+    );
+    expect(valid.status).toBe(0);
+
+    const firstMemoryPath = `notes-0000-${"x".repeat(48)}.md`;
+    writeFileSync(join(repo, firstMemoryPath), "invalid\n");
+    execFileSync("git", ["add", firstMemoryPath], { cwd: repo });
+    const invalid = tryCommit(repo, "reject bad memory in large tree");
+    expect(invalid.status).not.toBe(0);
+    expect(invalid.stdout + invalid.stderr).toContain("missing frontmatter");
+  }, 30_000);
 });
