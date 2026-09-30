@@ -27,6 +27,8 @@ letta.js.map
 image-resize-worker.js
 image-resize-worker.js.map
 /skills/
+/apps/daemon/release/
+/apps/daemon/runtime/
 .DS_Store
 
 # Logs

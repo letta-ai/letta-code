@@ -1,4 +1,5 @@
-FROM public.ecr.aws/docker/library/node:22.19-bookworm-slim
+ARG NODE_BASE_IMAGE=public.ecr.aws/docker/library/node:22.19-bookworm-slim
+FROM ${NODE_BASE_IMAGE}
 
 ARG LETTA_CODE_VERSION=latest
 

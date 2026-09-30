@@ -1,0 +1,103 @@
+{
+  "name": "@letta-ai/letta-daemon",
+  "version": "0.0.0",
+  "private": true,
+  "description": "A minimal system tray for an always-available Letta Code computer.",
+  "author": "Letta <support@letta.com>",
+  "desktopName": "com.letta.daemon",
+  "type": "module",
+  "main": "dist/main.cjs",
+  "scripts": {
+    "build": "bun run scripts/build.ts",
+    "check": "bun run lint && bun run typecheck && bun test src",
+    "dev": "bun run --cwd ../.. build && bun run build && electron .",
+    "package": "bun run --cwd ../.. build && bun run build && bun run stage-runtime && bun run scripts/package.ts",
+    "package:dir": "bun run --cwd ../.. build && bun run build && bun run stage-runtime && bun run scripts/package.ts --dir",
+    "lint": "bunx --bun @biomejs/biome@2.2.5 check src scripts",
+    "stage-runtime": "bun run scripts/stage-runtime.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@janhapke/sharp-electron": "0.35.3-electron.1",
+    "@pierre/diffs": "1.2.2",
+    "@shikijs/langs": "4.0.2",
+    "@vscode/ripgrep": "^1.17.0",
+    "electron-updater": "6.8.9",
+    "grammy": "^1.42.0",
+    "node-pty": "^1.1.0",
+    "sharp": "^0.34.5",
+    "ws": "^8.19.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "electron": "38.8.6",
+    "electron-builder": "26.15.3",
+    "typescript": "^5.0.0"
+  },
+  "build": {
+    "appId": "com.letta.daemon",
+    "productName": "Letta Daemon",
+    "icon": "assets/icon.png",
+    "asar": true,
+    "files": [
+      "dist/**/*",
+      "assets/tray-*.png",
+      "package.json",
+      "node_modules/**/*"
+    ],
+    "asarUnpack": [
+      "node_modules/@img/**",
+      "node_modules/@janhapke/sharp-electron/**",
+      "node_modules/@pierre/diffs/**",
+      "node_modules/@shikijs/langs/**",
+      "node_modules/@vscode/ripgrep/**",
+      "node_modules/grammy/**",
+      "node_modules/node-pty/**",
+      "node_modules/sharp/**",
+      "node_modules/ws/**"
+    ],
+    "extraResources": [
+      {
+        "from": "runtime",
+        "to": "runtime"
+      }
+    ],
+    "artifactName": "letta-daemon-${os}-${arch}.${ext}",
+    "directories": {
+      "output": "release"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "letta-ai",
+      "repo": "letta-code"
+    },
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "icon": "assets/icon.icns",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "win": {
+      "icon": "assets/icon.png",
+      "target": [
+        "nsis"
+      ]
+    },
+    "linux": {
+      "category": "Development",
+      "executableName": "letta-daemon",
+      "icon": "assets/icon.png",
+      "syncDesktopName": true,
+      "target": [
+        "AppImage"
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "runAfterFinish": true
+    }
+  }
+}

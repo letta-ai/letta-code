@@ -18,11 +18,21 @@ import {
   RESTORE_ENABLED_CHANNELS_AGENT_SCOPE_ENV,
 } from "@/channels/restore-scope";
 import { ListenerStatusUI } from "@/cli/components/ListenerStatusUI";
+import {
+  createStdioHostProtocol,
+  startHostParentWatchdog,
+  startStdioHostCommandListener,
+} from "@/cli/subcommands/host-protocol";
 import { printFirstRunWelcome } from "@/cli/subcommands/listen-first-run-welcome";
+import {
+  LISTEN_OPTIONS,
+  printListenUsage,
+} from "@/cli/subcommands/listen-usage";
 import { applyStartupPermissionMode } from "@/permissions/startup";
 import { settingsManager } from "@/settings-manager";
 import { getListenerTelemetrySurface, telemetry } from "@/telemetry";
 import { cancelBackgroundMemoryTasks } from "@/tools/impl/memory-task-lifecycle";
+import { shutdownBackgroundWork } from "@/tools/impl/process_manager";
 import { CHANNEL_SERVICE_COMMAND_TYPES } from "@/types/service-protocol";
 import type { AppServerHandle } from "@/websocket/app-server";
 import { RemoteSessionLog } from "@/websocket/listen-log";
@@ -49,6 +59,7 @@ import {
   shouldAcquireManualListenerLock,
 } from "@/websocket/listener/manual-instance-lock";
 import { flushRemoteSettingsWrites } from "@/websocket/listener/remote-settings";
+import { killAllTerminals } from "@/websocket/terminal-handler";
 
 type ListenerProcessAnchor = {
   close: () => void;
@@ -188,65 +199,6 @@ export const __listenSubcommandTestUtils = {
   shouldAcquireStandaloneListenerLock,
 };
 
-const LISTEN_OPTIONS = {
-  "computer-name": { type: "string" },
-  "env-name": { type: "string" },
-  channels: { type: "string" },
-  skills: { type: "string" },
-  "install-channel-runtimes": { type: "boolean" },
-  help: { type: "boolean", short: "h" },
-  debug: { type: "boolean" },
-} as const;
-
-function printListenUsage(): void {
-  console.log(
-    "Usage: letta server [--computer-name <name>] [--channels <list>] [--skills <path>] [--debug]\n",
-  );
-  console.log("Register this computer to receive messages from Letta Cloud.\n");
-  console.log("Options:");
-  console.log(
-    "  --computer-name <name>  Friendly name for this computer (uses hostname if not provided)",
-  );
-  console.log(
-    "  --channels <list>  Comma-separated channel names to enable (e.g. telegram)",
-  );
-  console.log(
-    "  --skills <path>     Use this directory for computer-provided skills",
-  );
-  console.log(
-    "  --install-channel-runtimes  Install missing runtime deps for the selected channels before startup",
-  );
-  console.log(
-    "  --debug            Plain-text mode: log all WebSocket events instead of interactive UI",
-  );
-  console.log("  -h, --help         Show this help message\n");
-  console.log("Examples:");
-  console.log(
-    "  letta channels configure telegram          # Configure Telegram first",
-  );
-  console.log(
-    "  letta server                              # Uses hostname as default",
-  );
-  console.log('  letta server --computer-name "work-laptop"');
-  console.log(
-    "  letta server --channels telegram           # Enable Telegram channel",
-  );
-  console.log("  letta server --channels telegram --install-channel-runtimes");
-  console.log(
-    "  letta server --debug                       # Log all WS events\n",
-  );
-  console.log(
-    "Once connected, this instance will listen for incoming messages from cloud agents.",
-  );
-  console.log("Messages will be executed locally on this computer.");
-  console.log(
-    "Telegram flow: configure the bot, start the listener with --channels telegram,",
-  );
-  console.log(
-    "then message the bot from Telegram and run /channels telegram pair <code> in the target conversation.",
-  );
-}
-
 export async function runListenSubcommand(argv: string[]): Promise<number> {
   // Parse arguments
   let values: ReturnType<
@@ -276,6 +228,16 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     return 0;
   }
 
+  if (values["host-protocol"] && values["host-protocol"] !== "stdio") {
+    console.error(
+      `Error: unsupported --host-protocol value "${values["host-protocol"]}"; expected "stdio"`,
+    );
+    return 1;
+  }
+  const hostProtocol = values["host-protocol"]
+    ? createStdioHostProtocol()
+    : null;
+
   await settingsManager.initialize();
   await applyStartupPermissionMode({});
   telemetry.setSurface(getListenerTelemetrySurface());
@@ -287,6 +249,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   // orphaning its descendants which accumulate over time.
   let isShuttingDown = false;
   let manualListenerLock: ManualListenerLockHandle | null = null;
+  let stopHostCommandListener: (() => void) | null = null;
   let channelGatewaySupervisor: ChannelGatewaySupervisor | null = null;
   let channelAppServer: AppServerHandle | null = null;
   let clearChannelServiceHandler: (() => void) | null = null;
@@ -314,48 +277,65 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       );
     }
   };
+  let shutdownPromise: Promise<void> | null = null;
+  const cleanupBeforeExit = (exitReason: string): Promise<void> => {
+    shutdownPromise ??= (async () => {
+      await closeChannelGateway().catch(() => undefined);
+      try {
+        const { stopListenerClient, isListenerActive } = await import(
+          "@/websocket/listen-client"
+        );
+        if (isListenerActive()) stopListenerClient();
+      } catch {
+        // Best-effort cleanup — don't block exit.
+      }
+      try {
+        killAllTerminals();
+      } catch {
+        // Best-effort cleanup — don't block exit.
+      }
+      stopHostCommandListener?.();
+      stopHostCommandListener = null;
+      await shutdownBackgroundWork().catch(() => undefined);
+      await cancelBackgroundMemoryTasks().catch(() => undefined);
+      await flushRemoteSettingsWrites().catch(() => undefined);
+      await releaseManualListenerLock();
+      await flushListenerTelemetryEnd(exitReason).catch(() => undefined);
+    })();
+    return shutdownPromise;
+  };
+  const exitListener = async (
+    code: number,
+    exitReason: string,
+  ): Promise<never> => {
+    isShuttingDown = true;
+    const forceExitTimer = setTimeout(() => process.exit(1), 10_000);
+    forceExitTimer.unref();
+    try {
+      await cleanupBeforeExit(exitReason);
+    } finally {
+      process.exit(code);
+    }
+  };
   const handleShutdownSignal = async (
     signal: "SIGINT" | "SIGHUP" | "SIGTERM",
   ): Promise<void> => {
     if (isShuttingDown) return;
-    isShuttingDown = true;
-    try {
-      await closeChannelGateway();
-      const { stopListenerClient, isListenerActive } = await import(
-        "@/websocket/listen-client"
-      );
-      if (isListenerActive()) {
-        stopListenerClient();
-      }
-    } catch {
-      // Best-effort cleanup — don't block exit
-    }
-    await cancelBackgroundMemoryTasks();
-    await flushRemoteSettingsWrites();
-    await releaseManualListenerLock();
-    await flushListenerTelemetryEnd(`listener_${signal.toLowerCase()}`);
-    process.exit(0);
+    await exitListener(0, `listener_${signal.toLowerCase()}`);
   };
 
   process.once("SIGTERM", () => void handleShutdownSignal("SIGTERM"));
   process.once("SIGINT", () => void handleShutdownSignal("SIGINT"));
   process.once("SIGHUP", () => void handleShutdownSignal("SIGHUP"));
+  if (hostProtocol) {
+    startHostParentWatchdog(() => void handleShutdownSignal("SIGTERM"));
+    stopHostCommandListener = startStdioHostCommandListener(
+      () => void handleShutdownSignal("SIGTERM"),
+    );
+    delete process.env.LETTA_DAEMON_PARENT_PID;
+  }
 
-  const exitWithTelemetry = async (
-    code: number,
-    exitReason: string,
-  ): Promise<never> => {
-    try {
-      await closeChannelGateway();
-    } catch {
-      // Best effort — don't block exit on channel cleanup failure
-    }
-    await cancelBackgroundMemoryTasks();
-    await flushRemoteSettingsWrites();
-    await releaseManualListenerLock();
-    await flushListenerTelemetryEnd(exitReason);
-    process.exit(code);
-  };
+  const exitWithTelemetry = exitListener;
 
   // Load local project settings to access saved environment name
   await settingsManager.loadLocalProjectSettings();
@@ -448,6 +428,10 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     }
 
     if (startupMode.kind === "unsupported-self-hosted") {
+      hostProtocol?.emitFatal(
+        "listener_self_hosted_no_channels",
+        `Self-hosted listener registration is not available for ${startupMode.serverUrl}.`,
+      );
       console.error(
         `Self-hosted listener registration is not available for ${startupMode.serverUrl}.`,
       );
@@ -467,6 +451,10 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         );
       } catch (authErr) {
         if (authErr instanceof MissingListenerApiKeyError) {
+          hostProtocol?.emitFatal(
+            "listener_missing_api_key",
+            "LETTA_API_KEY not found",
+          );
           console.error("Error: LETTA_API_KEY not found");
           console.error(
             "Set your API key with: export LETTA_API_KEY=<your-key>",
@@ -475,10 +463,10 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
           return 1;
         }
 
-        console.error(
-          "OAuth login failed:",
-          authErr instanceof Error ? authErr.message : String(authErr),
-        );
+        const authMessage =
+          authErr instanceof Error ? authErr.message : String(authErr);
+        hostProtocol?.emitFatal("listener_oauth_failed", authMessage);
+        console.error("OAuth login failed:", authMessage);
         await flushListenerTelemetryEnd("listener_oauth_failed");
         return 1;
       }
@@ -499,9 +487,9 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
           });
         } catch (lockError) {
           if (lockError instanceof ManualListenerAlreadyRunningError) {
-            console.error(
-              `A letta server for computer "${connectionName}" is already running on this machine (pid ${lockError.holderPid}).`,
-            );
+            const message = `A letta server for computer "${connectionName}" is already running on this machine (pid ${lockError.holderPid}).`;
+            hostProtocol?.emitFatal("listener_already_running", message);
+            console.error(message);
             console.error(
               "Stop that process, or choose a different logical listener with --computer-name.",
             );
@@ -510,6 +498,10 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             return 1;
           }
           if (lockError instanceof ManualListenerLockUnavailableError) {
+            hostProtocol?.emitFatal(
+              "listener_lock_unavailable",
+              lockError.message,
+            );
             console.error(
               `Could not establish listener ownership: ${lockError.message}`,
             );
@@ -584,6 +576,10 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
           onRestartExhausted: (error) => {
             console.error(`[${formatTimestamp()}] ${error.message}`);
             if (values.channels) {
+              hostProtocol?.emitFatal(
+                "listener_channel_gateway_restart_exhausted",
+                error.message,
+              );
               void exitWithTelemetry(
                 1,
                 "listener_channel_gateway_restart_exhausted",
@@ -650,15 +646,17 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
                 sessionLog.wsEvent(direction, label, event);
               }
             : undefined,
-        onStatusChange: (status) => {
+        onStatusChange: (status, statusConnectionId) => {
           sessionLog.log(`status: ${status}`);
+          hostProtocol?.emitStatus(status, statusConnectionId);
           if (debugMode) {
             console.log(`[${formatTimestamp()}] status: ${status}`);
           }
         },
-        onConnected: async () => {
+        onConnected: async (connectedConnectionId) => {
           await startChannelGateway();
           sessionLog.log("Local channel listener ready.");
+          hostProtocol?.emitReady(connectedConnectionId);
           if (debugMode) {
             console.log(`[${formatTimestamp()}] Local channel listener ready.`);
             console.log("");
@@ -666,6 +664,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         },
         onError: (error: Error) => {
           sessionLog.log(`Error: ${error.message}`);
+          hostProtocol?.emitFatal("listener_error", error.message);
           console.error(`[${formatTimestamp()}] Error: ${error.message}`);
           void exitWithTelemetry(1, "listener_error");
         },
@@ -770,8 +769,8 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       }
     };
 
-    if (debugMode) {
-      // Debug mode: plain-text event logging, no Ink UI
+    if (debugMode || hostProtocol) {
+      // Debug and host protocol modes use plain stdout instead of the Ink UI.
       const startDebugClient = async (
         connId: string,
         url: string,
@@ -788,31 +787,51 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
           connectionName,
           skillsDirectory,
           onWsEvent: shouldLogWsEvents ? wsEventLogger : undefined,
-          onStatusChange: (status) => {
+          onStatusChange: (status, statusConnectionId) => {
             sessionLog.log(`status: ${status}`);
-            console.log(`[${formatTimestamp()}] status: ${status}`);
+            hostProtocol?.emitStatus(status, statusConnectionId);
+            if (debugMode) {
+              console.log(`[${formatTimestamp()}] status: ${status}`);
+            }
           },
           onLog: logListenerMessage,
-          onConnected: async () => {
+          onConnected: async (connectedConnectionId) => {
             sessionLog.log("Connected. Awaiting instructions.");
             await startChannelGateway();
-            console.log(
-              `[${formatTimestamp()}] Connected. Awaiting instructions.`,
-            );
-            console.log("");
+            hostProtocol?.emitReady(connectedConnectionId);
+            if (debugMode) {
+              console.log(
+                `[${formatTimestamp()}] Connected. Awaiting instructions.`,
+              );
+              console.log("");
+            }
           },
-          onRetrying: (attempt, _maxAttempts, nextRetryIn) => {
+          onRetrying: (
+            attempt,
+            _maxAttempts,
+            nextRetryIn,
+            retryConnectionId,
+          ) => {
             sessionLog.log(
               `Reconnecting (attempt ${attempt}, retry in ${Math.round(nextRetryIn / 1000)}s)`,
             );
-            console.log(
-              `[${formatTimestamp()}] Reconnecting (attempt ${attempt}, retry in ${Math.round(nextRetryIn / 1000)}s)`,
+            hostProtocol?.emitReconnecting(
+              retryConnectionId,
+              attempt,
+              nextRetryIn,
             );
+            if (debugMode) {
+              console.log(
+                `[${formatTimestamp()}] Reconnecting (attempt ${attempt}, retry in ${Math.round(nextRetryIn / 1000)}s)`,
+              );
+            }
           },
           onNeedsReregister: async () => {
-            console.log(
-              `[${formatTimestamp()}] Computer connection expired, re-registering...`,
-            );
+            if (debugMode) {
+              console.log(
+                `[${formatTimestamp()}] Computer connection expired, re-registering...`,
+              );
+            }
             try {
               const result = await reregister();
               await startDebugClient(
@@ -825,6 +844,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
               const msg =
                 error instanceof Error ? error.message : String(error);
               sessionLog.log(`Re-registration failed: ${msg}`);
+              hostProtocol?.emitFatal("listener_reregister_failed", msg);
               console.error(
                 `[${formatTimestamp()}] Re-registration failed: ${msg}`,
               );
@@ -833,11 +853,16 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
           },
           onDisconnected: () => {
             sessionLog.log("Disconnected.");
+            hostProtocol?.emitFatal(
+              "listener_disconnected",
+              "Connection to Letta Cloud was lost.",
+            );
             console.log(`[${formatTimestamp()}] Disconnected.`);
             void exitWithTelemetry(1, "listener_disconnected");
           },
           onError: (error: Error) => {
             sessionLog.log(`Error: ${error.message}`);
+            hostProtocol?.emitFatal("listener_error", error.message);
             console.error(`[${formatTimestamp()}] Error: ${error.message}`);
             void exitWithTelemetry(1, "listener_error");
           },
@@ -958,6 +983,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     sessionLog.log(`FATAL: ${msg}`);
+    hostProtocol?.emitFatal("listener_start_failed", msg);
     console.error(`Failed to start listener: ${msg}`);
     await flushRemoteSettingsWrites();
     await releaseManualListenerLock();
