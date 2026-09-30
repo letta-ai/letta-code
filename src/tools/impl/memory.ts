@@ -8,9 +8,12 @@
  */
 import { execFileSync } from "node:child_process";
 import {
+  closeSync,
   existsSync,
+  openSync,
   readdirSync,
   readFileSync,
+  readSync,
   realpathSync,
   statSync,
 } from "node:fs";
@@ -321,6 +324,19 @@ function renderDirectory(
   return `${open}\n${head}\n\n${tailText}\n${close}`;
 }
 
+/** Matches Read's text-file ceiling so oversized files are rejected before being loaded. */
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
+
+function readPrefix(path: string, bytes: number): Buffer {
+  const fd = openSync(path, "r");
+  try {
+    const buffer = Buffer.alloc(bytes);
+    return buffer.subarray(0, readSync(fd, buffer, 0, bytes, 0));
+  } finally {
+    closeSync(fd);
+  }
+}
+
 function renderFile(relPath: string, fullPath: string): string {
   const content = readFileSync(fullPath, "utf8").trimEnd();
   const open = `<memory_content path="${escapeXmlText(relPath).replace(/"/g, "&quot;")}"${descriptionAttr(readDescription(fullPath))}>`;
@@ -392,7 +408,12 @@ export async function memory(args: MemoryArgs): Promise<{ content: string }> {
   if (!stat.isFile()) {
     throw new Error(`Not a memory file or directory: ${relPath}`);
   }
-  if (readFileSync(fullPath).subarray(0, 8_000).includes(0)) {
+  if (stat.size > MAX_FILE_BYTES) {
+    throw new Error(
+      `${relPath} is too large: ${stat.size} bytes (max ${MAX_FILE_BYTES} bytes).`,
+    );
+  }
+  if (readPrefix(fullPath, 8_000).includes(0)) {
     throw new Error(
       `${relPath} is not a text file. Use Read on ${fullPath} instead.`,
     );

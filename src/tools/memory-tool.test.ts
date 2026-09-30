@@ -180,7 +180,13 @@ describe("Memory tool", () => {
   });
 
   test("rejects root, skills, escapes, and suggests root-relative paths", async () => {
+    write(
+      memoryDir(V2_AGENT),
+      "bulk/huge.md",
+      "x".repeat(10 * 1024 * 1024 + 1),
+    );
     const cases: Array<[string, string]> = [
+      ["bulk/huge.md", "is too large: 10485761 bytes"],
       ["", "memory root is already in your context"],
       ["persona.md", "root core memory and is already in your context"],
       ["skills/demo", 'Use Skill("demo")'],
