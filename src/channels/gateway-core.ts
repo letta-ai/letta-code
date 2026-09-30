@@ -1,5 +1,4 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import { getInteractiveApprovalKind } from "@/tools/interactive-policy";
 import type {
   ApprovalResponseBody,
   ControlRequest,
@@ -262,6 +261,7 @@ export class ChannelGateway {
             },
           ],
           image_failure_mode: "drop",
+          client_preferences: {},
         },
       });
       if (!response.accepted) {
@@ -978,9 +978,7 @@ export class ChannelGateway {
     void this.enqueueHook(state, () =>
       this.hooks.onControlRequest({
         requestId: message.request_id,
-        kind:
-          getInteractiveApprovalKind(message.request.tool_name) ??
-          "generic_tool_approval",
+        kind: "generic_tool_approval",
         source,
         toolName: message.request.tool_name,
         input: message.request.input,

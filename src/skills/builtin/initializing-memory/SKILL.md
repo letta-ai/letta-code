@@ -94,7 +94,7 @@ Via the installed `@letta-ai/trajectory` package, reports every coding-agent ses
 Infer rather than ask: `git shortlog -sn --all | head -5`, `git log --format="%an <%ae>" | sort -u | head -10`, cross-referenced with `git config user.email`.
 
 ### 4. Ask upfront questions
-One bundled AskUserQuestion: research depth (standard or deep); other repositories you should know about; communication style; and — only if Step 2 found sessions — whether to analyze them, naming the sources detected. Say that approving means read-only subagents will read those transcripts using `deepseek/deepseek-v4.1-flash` if available, otherwise your current model, so the choice is informed. Don't ask what you can discover from files, git, or history.
+Ask one bundle of questions, using AskUserQuestion when available or an ordinary message otherwise: research depth (standard or deep); other repositories you should know about; communication style; and — only if Step 2 found sessions — whether to analyze them, naming the sources detected. Say that approving means read-only subagents will read those transcripts using `deepseek/deepseek-v4.1-flash` if available, otherwise your current model, so the choice is informed. Don't ask what you can discover from files, git, or history. Wait for the user's reply; a completed question tool call is not approval.
 
 ### 5. Export and cohort the approved history
 Only if the user approved in Step 4. Skip entirely otherwise; Step 6 still runs. These sessions are evidence of what happened, not proof of who wrote each prompt.

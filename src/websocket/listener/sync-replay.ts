@@ -73,7 +73,6 @@ export async function replaySyncStateForRuntime(
   // teleport.
   if (
     syncScopedRuntime.recoveredApprovalState &&
-    syncScopedRuntime.recoveredApprovalState.pendingRequestIds.size === 0 &&
     (syncScopedRuntime.recoveredApprovalState.autoDecisions?.length ?? 0) > 0
   ) {
     void startRecoveredApprovalContinuation(

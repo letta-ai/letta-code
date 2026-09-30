@@ -39,7 +39,6 @@ import type {
   ChannelTargetsListCommand,
   ChatGPTUsageReadCommand,
   CheckoutBranchCommand,
-  ClientToolsetConfig,
   ConversationCompactCommand,
   ConversationCreateCommand,
   ConversationListCommand,
@@ -101,6 +100,7 @@ import type {
 const EXPERIMENT_IDS = new Set<ExperimentId>([
   "conversation_titles",
   "desktop_conversation_bootstrap",
+  "memory_palace",
   "tui_cron",
 ]);
 
@@ -118,6 +118,10 @@ import {
   isGetCwdMapCommand,
   isSetBootWorkingDirectoryCommand,
 } from "./cwd-protocol-inbound";
+import {
+  getInputToolSelectionError,
+  isClientToolsetConfig,
+} from "./input-tool-selection";
 import { isResumeQueueCommand } from "./queue-pause-protocol-inbound";
 
 export { isConnectProviderCommand } from "./connect-provider-protocol-inbound";
@@ -148,14 +152,6 @@ export type ServerLifecycleMessage = {
   type: "pong";
 };
 
-function isClientToolsetConfig(value: unknown): value is ClientToolsetConfig {
-  if (!isObjectRecord(value)) return false;
-  return (
-    (value.base === undefined || isToolsetPreference(value.base)) &&
-    (value.include === undefined || isStringArray(value.include))
-  );
-}
-
 function isInputCommand(value: unknown): value is InputCommand {
   if (!value || typeof value !== "object") {
     return false;
@@ -179,13 +175,13 @@ function isInputCommand(value: unknown): value is InputCommand {
   if (!candidate.payload || typeof candidate.payload !== "object") {
     return false;
   }
-
   const payload = candidate.payload as {
     kind?: unknown;
     messages?: unknown;
     image_failure_mode?: unknown;
     client_tool_allowlist?: unknown;
     client_toolset?: unknown;
+    client_preferences?: unknown;
     external_tool_scope_ids?: unknown;
     exclude_interactive_tools?: unknown;
     request_id?: unknown;
@@ -198,14 +194,7 @@ function isInputCommand(value: unknown): value is InputCommand {
       (payload.image_failure_mode === undefined ||
         payload.image_failure_mode === "strict" ||
         payload.image_failure_mode === "drop") &&
-      (payload.client_tool_allowlist === undefined ||
-        isStringArray(payload.client_tool_allowlist)) &&
-      (payload.client_toolset === undefined ||
-        isClientToolsetConfig(payload.client_toolset)) &&
-      (payload.external_tool_scope_ids === undefined ||
-        isStringArray(payload.external_tool_scope_ids)) &&
-      (payload.exclude_interactive_tools === undefined ||
-        typeof payload.exclude_interactive_tools === "boolean")
+      getInputToolSelectionError(payload) === null
     );
   }
   if (payload.kind === "approval_response") {
@@ -299,6 +288,7 @@ function getInvalidInputReason(value: unknown): {
     image_failure_mode?: unknown;
     client_tool_allowlist?: unknown;
     client_toolset?: unknown;
+    client_preferences?: unknown;
     external_tool_scope_ids?: unknown;
     exclude_interactive_tools?: unknown;
     request_id?: unknown;
@@ -324,47 +314,8 @@ function getInvalidInputReason(value: unknown): {
           "Protocol violation: input.payload.image_failure_mode must be strict or drop",
       };
     }
-    if (
-      payload.client_tool_allowlist !== undefined &&
-      !isStringArray(payload.client_tool_allowlist)
-    ) {
-      return {
-        runtime: candidate.runtime,
-        reason:
-          "Protocol violation: input.payload.client_tool_allowlist must be string[]",
-      };
-    }
-    if (
-      payload.client_toolset !== undefined &&
-      !isClientToolsetConfig(payload.client_toolset)
-    ) {
-      return {
-        runtime: candidate.runtime,
-        reason:
-          "Protocol violation: input.payload.client_toolset must contain an optional valid base and string[] include",
-      };
-    }
-    if (
-      payload.exclude_interactive_tools !== undefined &&
-      typeof payload.exclude_interactive_tools !== "boolean"
-    ) {
-      return {
-        runtime: candidate.runtime,
-        reason:
-          "Protocol violation: input.payload.exclude_interactive_tools must be boolean",
-      };
-    }
-    if (
-      payload.external_tool_scope_ids !== undefined &&
-      !isStringArray(payload.external_tool_scope_ids)
-    ) {
-      return {
-        runtime: candidate.runtime,
-        reason:
-          "Protocol violation: input.payload.external_tool_scope_ids must be string[]",
-      };
-    }
-    return null;
+    const reason = getInputToolSelectionError(payload);
+    return reason ? { runtime: candidate.runtime, reason } : null;
   }
   if (payload.kind === "approval_response") {
     if (!isValidApprovalResponseBody(payload)) {

@@ -14,6 +14,7 @@ const baseSkill: Skill = {
 describe("isSkillAvailableForAgent", () => {
   test("excludes bundled cloud-only skills for local agents", async () => {
     for (const id of [
+      "curating-memory-palace",
       "image-generation",
       "managing-shared-memory",
       "working-across-computers",

@@ -228,7 +228,6 @@ type AppViewProps = {
     commandId?: string | null,
   ) => Promise<void>;
   handleProfileEscapeCancel: () => void;
-  handleQuestionSubmit: (answers: Record<string, string>) => Promise<void>;
   handleReflectionArenaChoiceCancel: () => void;
   handleReflectionArenaChoiceSubmit: (
     answers: Record<string, string>,
@@ -410,7 +409,6 @@ export function AppView(props: AppViewProps) {
     handlePermissionModeChange,
     handlePersonalitySelect,
     handleProfileEscapeCancel,
-    handleQuestionSubmit,
     handleReflectionArenaChoiceCancel,
     handleReflectionArenaChoiceSubmit,
     handleSleeptimeModeSelect,
@@ -576,7 +574,6 @@ export function AppView(props: AppViewProps) {
                             onApproveAlways={handleApproveAlways}
                             onDeny={handleDenyCurrent}
                             onCancel={handleCancelApprovals}
-                            onQuestionSubmit={handleQuestionSubmit}
                             precomputedDiff={
                               ln.toolCallId
                                 ? precomputedDiffsRef.current.get(ln.toolCallId)
@@ -663,7 +660,6 @@ export function AppView(props: AppViewProps) {
                     onApproveAlways={handleApproveAlways}
                     onDeny={handleDenyCurrent}
                     onCancel={handleCancelApprovals}
-                    onQuestionSubmit={handleQuestionSubmit}
                     allDiffs={precomputedDiffsRef.current}
                     isFocused={true}
                     approveAlwaysText={
@@ -1725,8 +1721,6 @@ export function AppView(props: AppViewProps) {
             )}
 
             {/* Plan Mode Dialog - NOW RENDERED INLINE with tool call (see liveItems above) */}
-
-            {/* AskUserQuestion now rendered inline via InlineQuestionApproval */}
           </>
         )}
       </Box>

@@ -1,6 +1,6 @@
 {
   "name": "@letta-ai/letta-code",
-  "version": "0.33.7",
+  "version": "0.34.0",
   "lettaStartupLogProtocol": 1,
   "description": "Letta Code is a CLI tool for interacting with stateful Letta agents from the terminal.",
   "type": "module",
@@ -33,6 +33,10 @@
     "dist/agent-presets.js.map",
     "dist/schedules.js",
     "dist/schedules.js.map",
+    "dist/ask-user-question.js",
+    "dist/ask-user-question.js.map",
+    "dist/ask-user-question.cjs",
+    "dist/ask-user-question.cjs.map",
     "dist/channels-public.js",
     "dist/channels-public.js.map",
     "dist/gateway-core.js",
@@ -48,6 +52,13 @@
   ],
   "exports": {
     ".": "./letta.js",
+    "./ask-user-question": {
+      "types": "./dist/types/ask-user-question.d.ts",
+      "browser": "./dist/ask-user-question.js",
+      "import": "./dist/ask-user-question.js",
+      "require": "./dist/ask-user-question.cjs",
+      "default": "./dist/ask-user-question.js"
+    },
     "./app-server-protocol": {
       "types": "./dist/types/types/app-server-protocol.d.ts"
     },
@@ -139,7 +150,7 @@
   "dependencies": {
     "@earendil-works/pi-ai": "^0.87.1",
     "@janhapke/sharp-electron": "0.35.3-electron.1",
-    "@letta-ai/letta-agent-sdk": "0.8.21",
+    "@letta-ai/letta-agent-sdk": "0.8.24",
     "@letta-ai/letta-client": "^1.10.2",
     "@letta-ai/trajectory": "0.2.0",
     "@modelcontextprotocol/sdk": "1.30.0",
@@ -214,6 +225,9 @@
   },
   "typesVersions": {
     "*": {
+      "ask-user-question": [
+        "./dist/types/ask-user-question.d.ts"
+      ],
       "agent-presets": [
         "./dist/types/agent-presets.d.ts"
       ],

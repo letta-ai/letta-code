@@ -111,7 +111,7 @@ function connectRuntime(runtime: ConversationRuntime): MockTransport {
 }
 
 describe("recoverApprovalStateForSync restart recovery", () => {
-  test("sync publishes a recovered question as a control request", async () => {
+  test("sync does not revive a legacy question as a control request", async () => {
     const runtime = createScopedRuntime();
     const transport = connectRuntime(runtime);
 
@@ -133,22 +133,14 @@ describe("recoverApprovalStateForSync restart recovery", () => {
 
     const frames = transport.sent.map((payload) => JSON.parse(payload));
     expect(frames.map((frame) => frame.type)).toEqual([
-      "control_request",
       "update_device_status",
       "update_loop_status",
       "update_queue",
       "update_subagent_state",
     ]);
-    expect(frames[0]).toMatchObject({
-      type: "control_request",
-      request_id: "perm-call-ask-1",
-      runtime: scope,
-      request: {
-        subtype: "can_use_tool",
-        tool_name: "AskUserQuestion",
-        tool_call_id: "call-ask-1",
-        input: JSON.parse(askUserQuestionApproval.toolArgs),
-      },
+    expect(runtime.pendingInterruptedResults?.[0]).toMatchObject({
+      tool_call_id: "call-ask-1",
+      approve: false,
     });
 
     transport.sent.length = 0;
@@ -161,12 +153,12 @@ describe("recoverApprovalStateForSync restart recovery", () => {
         forceDeviceStatus: true,
       },
     );
-    expect(transport.sent.map((payload) => JSON.parse(payload).type)).toContain(
-      "control_request",
-    );
+    expect(
+      transport.sent.map((payload) => JSON.parse(payload).type),
+    ).not.toContain("control_request");
   });
 
-  test("re-presents a pending AskUserQuestion as a live control request", async () => {
+  test("a legacy pending question follows the same stale-denial path as other calls", async () => {
     const runtime = createScopedRuntime();
 
     await recoverApprovalStateForSync(
@@ -175,21 +167,16 @@ describe("recoverApprovalStateForSync restart recovery", () => {
       createDeps([askUserQuestionApproval]),
     );
 
-    expect(runtime.pendingInterruptedResults).toBeNull();
-    expect(runtime.pendingInterruptedContext).toBeNull();
-    expect(runtime.recoveredApprovalState).not.toBeNull();
-    expect(runtime.recoveredApprovalState?.pendingRequestIds).toEqual(
-      new Set(["perm-call-ask-1"]),
-    );
-
-    const pending = getPendingControlRequests(runtime.listener, scope);
-    expect(pending).toHaveLength(1);
-    expect(pending[0]?.request_id).toBe("perm-call-ask-1");
-    expect(pending[0]?.request.tool_name).toBe("AskUserQuestion");
-    expect(pending[0]?.request.tool_call_id).toBe("call-ask-1");
-    expect(pending[0]?.request.input).toEqual(
-      JSON.parse(askUserQuestionApproval.toolArgs),
-    );
+    expect(runtime.pendingInterruptedResults).toEqual([
+      {
+        type: "approval",
+        tool_call_id: "call-ask-1",
+        approve: false,
+        reason: STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+      },
+    ]);
+    expect(runtime.recoveredApprovalState).toBeNull();
+    expect(getPendingControlRequests(runtime.listener, scope)).toHaveLength(0);
   });
 
   test("owner sync with only stale denials holds them for an immediate turn", async () => {
@@ -211,8 +198,6 @@ describe("recoverApprovalStateForSync restart recovery", () => {
     expect(runtime.pendingInterruptedResults).toBeNull();
     expect(runtime.pendingInterruptedContext).toBeNull();
     const recovered = runtime.recoveredApprovalState;
-    expect(recovered?.pendingRequestIds.size).toBe(0);
-    expect(recovered?.approvalsByRequestId.size).toBe(0);
     expect(recovered?.autoDecisions).toEqual(
       stale.map((approval) => ({
         type: "deny",
@@ -471,7 +456,7 @@ describe("recoverApprovalStateForSync restart recovery", () => {
     expect(calls).toBe(2);
   });
 
-  test("mixed batch re-presents interactive tools and stages denials for the rest", async () => {
+  test("mixed batch stages stale denials for every interrupted call", async () => {
     const runtime = createScopedRuntime();
 
     await recoverApprovalStateForSync(
@@ -480,32 +465,15 @@ describe("recoverApprovalStateForSync restart recovery", () => {
       createDeps([bashApproval, askUserQuestionApproval]),
     );
 
-    expect(runtime.pendingInterruptedResults).toBeNull();
-    const recovered = runtime.recoveredApprovalState;
-    expect(recovered?.pendingRequestIds).toEqual(new Set(["perm-call-ask-1"]));
-    expect(recovered?.autoDecisions).toEqual([
-      {
-        type: "deny",
-        approval: bashApproval,
+    expect(runtime.pendingInterruptedResults).toEqual(
+      [bashApproval, askUserQuestionApproval].map((approval) => ({
+        type: "approval",
+        tool_call_id: approval.toolCallId,
+        approve: false,
         reason: STALE_APPROVAL_RECOVERY_DENIAL_REASON,
-      },
-    ]);
-
-    const pending = getPendingControlRequests(runtime.listener, scope);
-    expect(pending).toHaveLength(1);
-    expect(pending[0]?.request.tool_name).toBe("AskUserQuestion");
-  });
-
-  test("a repeat sync keeps the in-flight recovered state object", async () => {
-    const runtime = createScopedRuntime();
-    const deps = createDeps([askUserQuestionApproval]);
-
-    await recoverApprovalStateForSync(runtime, scope, deps);
-    const firstRecovered = runtime.recoveredApprovalState;
-    expect(firstRecovered).not.toBeNull();
-
-    await recoverApprovalStateForSync(runtime, scope, deps);
-    expect(runtime.recoveredApprovalState).toBe(firstRecovered);
+      })),
+    );
+    expect(getPendingControlRequests(runtime.listener, scope)).toHaveLength(0);
   });
 
   test("recovered state with no unanswered requests clears when the backend is idle", async () => {
@@ -514,13 +482,10 @@ describe("recoverApprovalStateForSync restart recovery", () => {
     await recoverApprovalStateForSync(
       runtime,
       scope,
-      createDeps([askUserQuestionApproval]),
+      createDeps([bashApproval]),
+      { resumeInterruptedTurn: true },
     );
     expect(runtime.recoveredApprovalState).not.toBeNull();
-
-    // All requests answered: the keep-in-flight guard no longer applies, so a
-    // sync against an idle backend clears the leftover state.
-    runtime.recoveredApprovalState?.pendingRequestIds.clear();
 
     await recoverApprovalStateForSync(runtime, scope, createDeps([]));
     expect(runtime.recoveredApprovalState).toBeNull();
@@ -533,16 +498,15 @@ describe("recoverApprovalStateForSync restart recovery", () => {
     );
     const source = readFileSync(recoveryPath, "utf-8");
 
-    // Replay-unsafe tools become stale denials; interactive tools are
-    // re-presented as recovered control requests (LET-10821). Neither path
-    // may classify or auto-execute restored approvals (#1876). The denials
+    // Interrupted tools become stale denials, never live control requests.
+    // Recovery may not classify or auto-execute restored approvals. The denials
     // ride on recovered state as deny decisions; the sync caller sends them
     // as the next turn, and nothing here approves or runs a restored tool.
     expect(source).toContain('type: "deny" as const,');
     expect(source).toContain("STALE_APPROVAL_RECOVERY_DENIAL_REASON");
     expect(source).not.toContain('type: "approve"');
     expect(source).toContain("clearRecoveredApprovalState(runtime);");
-    expect(source).toContain("isInteractiveApprovalTool");
+    expect(source).not.toContain("isInteractiveApprovalTool");
     expect(source).not.toContain("classifyApprovalsWithSuggestions(");
     expect(source).not.toContain("buildRecoveredAutoDecisions(");
     expect(source).not.toContain("executeApprovalBatch");

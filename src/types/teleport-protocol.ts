@@ -1,4 +1,5 @@
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
+import type { ClientPreferences } from "./client-preferences";
 import type { RuntimeScope } from "./runtime-scope";
 
 export interface TeleportContinuation {
@@ -7,6 +8,7 @@ export interface TeleportContinuation {
 
 export interface InputTeleportContinuePayload {
   kind: "teleport_continue";
+  client_preferences?: ClientPreferences;
   teleport_id: string;
   source: {
     device_id: string;
@@ -56,6 +58,7 @@ export interface TeleportProbeResponseMessage {
 
 export interface TeleportReadyMessage {
   type: "teleport_ready";
+  client_preferences: ClientPreferences;
   teleport_id: string;
   runtime: RuntimeScope;
   success: boolean;

@@ -18,7 +18,6 @@ import { handleAbortMessageInput } from "./control-inputs";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { enqueueInboundUserMessage } from "./inbound-queue";
 import { createRuntime } from "./lifecycle";
-import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
 import {
   scheduleQueuePump,
   shouldProcessInboundMessageDirectly,
@@ -74,7 +73,7 @@ async function waitForPendingApproval(
   throw new Error("Approval request was not registered");
 }
 
-function startQuestionApproval(
+function startToolApproval(
   runtime: ReturnType<typeof getOrCreateScopedRuntime>,
   turnLease: TurnLease,
   overrides: Partial<Parameters<typeof handleApprovalStop>[0]> = {},
@@ -83,19 +82,10 @@ function startQuestionApproval(
     approvals: [
       {
         toolCallId: "call-1",
-        toolName: "AskUserQuestion",
+        toolName: "Write",
         toolArgs: JSON.stringify({
-          questions: [
-            {
-              question: "Continue?",
-              header: "Confirm",
-              options: [
-                { label: "Yes", description: "Continue the turn" },
-                { label: "No", description: "Stop the turn" },
-              ],
-              multiSelect: false,
-            },
-          ],
+          file_path: "/tmp/listener-approval-test.txt",
+          content: "requires permission",
         }),
       },
     ],
@@ -104,11 +94,7 @@ function startQuestionApproval(
     agentId: "agent-1",
     conversationId: "conv-1",
     turnWorkingDirectory: process.cwd(),
-    turnPermissionModeState: getOrCreateConversationPermissionModeStateRef(
-      runtime.listener,
-      "agent-1",
-      "conv-1",
-    ),
+    turnPermissionModeState: { mode: "strict" },
     dequeuedBatchId: "batch-1",
     msgRunIds: [],
     turnInput: { messages: [] },
@@ -153,7 +139,7 @@ describe("listener turn lifecycle integration", () => {
       toolName: "Bash",
       toolArgs: '{"command":"long-running"}',
     };
-    const owner = startQuestionApproval(runtime, lease, {
+    const owner = startToolApproval(runtime, lease, {
       approvals: [approval],
       dependencies: {
         classifyApprovals: async () => ({
@@ -256,7 +242,7 @@ describe("listener turn lifecycle integration", () => {
     runtime.turnLifecycle.setRunId(turnLease, "run-1");
     const sentPayloads: string[] = [];
 
-    const approvalResultPromise = startQuestionApproval(runtime, turnLease, {
+    const approvalResultPromise = startToolApproval(runtime, turnLease, {
       socket: createOpenTransport(sentPayloads),
       runId: "run-1",
     });
@@ -295,7 +281,7 @@ describe("listener turn lifecycle integration", () => {
       initialStatus: "PROCESSING_API_RESPONSE",
     });
 
-    const approvalResultPromise = startQuestionApproval(runtime, turnLease);
+    const approvalResultPromise = startToolApproval(runtime, turnLease);
 
     await waitForPendingApproval(runtime);
     clearConversationRuntimeState(runtime);
@@ -329,7 +315,7 @@ describe("listener turn lifecycle integration", () => {
       workingDirectory: process.cwd(),
       initialStatus: "PROCESSING_API_RESPONSE",
     });
-    const approvalResultPromise = startQuestionApproval(runtime, staleLease);
+    const approvalResultPromise = startToolApproval(runtime, staleLease);
 
     await waitForPendingApproval(runtime);
     clearConversationRuntimeState(runtime);
@@ -372,7 +358,7 @@ describe("listener turn lifecycle integration", () => {
       throw new Error("process transport should not wait for a remote client");
     });
 
-    const result = await startQuestionApproval(runtime, turnLease, {
+    const result = await startToolApproval(runtime, turnLease, {
       approvals: [approval],
       socket: {
         kind: "runtime",
@@ -483,7 +469,7 @@ describe("listener turn lifecycle integration", () => {
         await prepareToolExecutionContextForSpecificTools([]);
 
       try {
-        const result = await startQuestionApproval(runtime, turnLease, {
+        const result = await startToolApproval(runtime, turnLease, {
           approvals: [approval],
           processOwnedTurn: true,
           buildSendOptions: () =>
@@ -597,7 +583,7 @@ describe("listener turn lifecycle integration", () => {
       throw new Error("source must not start another model step");
     });
 
-    const result = await startQuestionApproval(runtime, turnLease, {
+    const result = await startToolApproval(runtime, turnLease, {
       agentId,
       conversationId,
       approvals: [approval],
@@ -703,7 +689,7 @@ describe("listener turn lifecycle integration", () => {
 
     // processOwnedTurn is intentionally omitted: the default must preserve the
     // relay wait rather than opting every caller into the bypass.
-    const result = await startQuestionApproval(runtime, turnLease, {
+    const result = await startToolApproval(runtime, turnLease, {
       approvals: [approval],
       socket: {
         kind: "runtime",
@@ -775,7 +761,7 @@ describe("listener turn lifecycle integration", () => {
       toolName: "Bash",
       toolArgs: '{"command":"pwd"}',
     };
-    const owner = startQuestionApproval(runtime, staleLease, {
+    const owner = startToolApproval(runtime, staleLease, {
       approvals: [approval],
       socket: createOpenTransport(sentPayloads),
       dependencies: {

@@ -74,11 +74,7 @@ import {
   splitSyntheticAssistantResponse,
 } from "@/cli/helpers/local-no-model-response";
 import type { ExecutionPhase } from "@/cli/helpers/phase-visuals";
-import {
-  buildQueuedContentParts,
-  buildQueuedUserText,
-  getQueuedNotificationSummaries,
-} from "@/cli/helpers/queued-message-parts";
+import { getQueuedNotificationSummaries } from "@/cli/helpers/queued-message-parts";
 import { appendTranscriptDeltaJsonl } from "@/cli/helpers/reflection-transcript";
 import { safeJsonParseOr } from "@/cli/helpers/safe-json-parse";
 import {
@@ -100,7 +96,6 @@ import {
   isFileWriteTool,
   isPatchTool,
 } from "@/cli/helpers/tool-name-mapping";
-import { alwaysRequiresUserInput } from "@/cli/helpers/tool-name-mapping.js";
 import { finishTuiTurn } from "@/cli/helpers/tui-turn-lifecycle";
 import type { LocalModAdapter } from "@/cli/mods/use-local-mod-adapter";
 import { SYSTEM_ALERT_OPEN, SYSTEM_REMINDER_OPEN } from "@/constants";
@@ -113,6 +108,7 @@ import { permissionMode } from "@/permissions/mode";
 import type { QueueRuntime } from "@/queue/queue-runtime";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
+import { replaceClientPreferences } from "@/tools/client-preferences";
 import { analyzeToolApproval, type ToolExecutionResult } from "@/tools/manager";
 import type { PreparedScopeToolContext } from "@/tools/toolset";
 import { debugLog, debugWarn, isDebugEnabled } from "@/utils/debug";
@@ -128,7 +124,7 @@ import {
   TEMP_QUOTA_OVERRIDE_MODEL,
 } from "./constants";
 import { extractErrorMeta } from "./errors";
-import { appendOptimisticUserLine, createClientOtid, uid } from "./ids";
+import { uid } from "./ids";
 import {
   getErrorHintForStopReason,
   getPreferredAgentModelHandle,
@@ -136,6 +132,7 @@ import {
 import { sendDesktopNotification } from "./notifications";
 import { isRetriableError } from "./retry";
 import { stripSystemReminders } from "./system-reminders";
+import { prepareTuiQueuedTurn } from "./turn-input";
 import type {
   AppendError,
   ApprovalDecision,
@@ -480,12 +477,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
   const processConversation = useCallback(
     async (
       initialInput: Array<MessageCreate | ApprovalCreate>,
-      options?: {
-        allowReentry?: boolean;
-        submissionGeneration?: number;
-        transcriptStartLineIndex?: number | null;
-        allowResponseStateReuse?: boolean;
-      },
+      options?: import("./types").ProcessConversationOptions,
     ): Promise<void> => {
       // Transient pre-stream retries can yield for seconds.
       // Pin the user's permission mode for the duration of the submission so
@@ -562,6 +554,12 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
       if (processingConversationRef.current > 0 && !allowReentry) {
         return;
       }
+      if (options?.clientPreferences !== undefined)
+        replaceClientPreferences(
+          agentIdRef.current,
+          conversationIdRef.current,
+          options.clientPreferences,
+        );
       processingConversationRef.current += 1;
       let turnStartCancelReason: string | null = null;
 
@@ -1828,7 +1826,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             const { needsUserInput, autoAllowed, autoDenied } =
               await classifyApprovals(approvalsToProcess, {
                 getContext: analyzeToolApproval,
-                alwaysRequiresUserInput,
                 requireArgsForAutoApprove: true,
                 missingNameReason:
                   "Tool call incomplete - missing name or arguments",
@@ -2029,46 +2026,22 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 const queuedNotifications = queuedItemsToAppend
                   ? getQueuedNotificationSummaries(queuedItemsToAppend)
                   : [];
-                const hadNotifications =
-                  appendTaskNotificationEvents(queuedNotifications);
-                const queuedUserText = queuedItemsToAppend
-                  ? buildQueuedUserText(queuedItemsToAppend)
-                  : "";
-
-                const queuedUserOtid = createClientOtid();
-                appendOptimisticUserLine(
+                appendTaskNotificationEvents(queuedNotifications);
+                const queuedTurn = prepareTuiQueuedTurn(
+                  queuedItemsToAppend,
+                  allResults,
                   buffersRef.current,
-                  queuedUserText,
-                  queuedUserOtid,
                 );
-
-                if (queuedItemsToAppend && queuedItemsToAppend.length > 0) {
-                  const queuedContentParts =
-                    buildQueuedContentParts(queuedItemsToAppend);
+                if (queuedTurn.hasQueuedMessage) {
                   setThinkingMessage(getRandomThinkingVerb());
                   refreshDerived();
                   toolResultsInFlightRef.current = true;
                   await processConversation(
-                    [
-                      {
-                        type: "approval",
-                        approvals: allResults,
-                        otid: createClientOtid(),
-                      },
-                      {
-                        type: "message",
-                        role: "user",
-                        content: queuedContentParts,
-                        otid: queuedUserOtid,
-                      },
-                    ],
-                    { allowReentry: true },
+                    queuedTurn.input,
+                    queuedTurn.options,
                   );
                   toolResultsInFlightRef.current = false;
                   return;
-                }
-                if (hadNotifications || queuedUserText.length > 0) {
-                  refreshDerived();
                 }
 
                 // Cancel mode - queue results and let dequeue effect handle

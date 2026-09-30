@@ -9,10 +9,7 @@ import {
   StdioClientTransport,
 } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import type {
-  FetchLike,
-  Transport,
-} from "@modelcontextprotocol/sdk/shared/transport.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 
 interface McpServerConfigBase {
   name: string;
@@ -80,8 +77,16 @@ export interface McpOAuthConnection {
   close(): Promise<void>;
 }
 
+/** Package-owned structural fetch shape for MCP network requests. */
+export type McpFetch = (
+  url: string | URL,
+  init?: RequestInit,
+) => Promise<Response>;
+
 export interface ConnectMcpServerOptions {
   clientInfo?: { name: string; version: string };
+  /** Custom fetch used for MCP transport and every SDK OAuth request. */
+  fetch?: McpFetch;
   stderr?: "inherit" | "pipe";
   oauth?: McpOAuthConnection;
   signal?: AbortSignal;
@@ -236,7 +241,7 @@ function createTransport(
     return new StreamableHTTPClientTransport(new URL(config.url), {
       requestInit: headersRequestInit(headers),
       authProvider: options.oauth?.authProvider,
-      fetch: abortAwareFetch(options.signal),
+      fetch: abortAwareFetch(options.signal, undefined, options.fetch),
     });
   }
   if (config.transport === "sse") {
@@ -245,7 +250,7 @@ function createTransport(
     return new SSEClientTransport(new URL(config.url), {
       requestInit,
       authProvider: options.oauth?.authProvider,
-      fetch: abortAwareFetch(options.signal, headers),
+      fetch: abortAwareFetch(options.signal, headers, options.fetch),
     });
   }
   return new StdioClientTransport({
@@ -260,12 +265,14 @@ function createTransport(
 function abortAwareFetch(
   operationSignal?: AbortSignal,
   headers?: Record<string, string>,
-): FetchLike | undefined {
-  if (!operationSignal && !headers) return undefined;
+  fetchFn?: McpFetch,
+): McpFetch | undefined {
+  if (!operationSignal && !headers) return fetchFn;
+  const request = fetchFn ?? fetch;
   return (url, init) => {
     const requestInit = headers ? mergeHeaders(init, headers) : { ...init };
     const requestSignal = requestInit.signal ?? undefined;
-    return fetch(url, {
+    return request(url, {
       ...requestInit,
       signal:
         operationSignal && requestSignal

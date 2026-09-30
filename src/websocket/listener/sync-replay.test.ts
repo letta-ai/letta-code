@@ -209,9 +209,6 @@ describe("sync replay on a teleport source", () => {
     runtime.recoveredApprovalState = {
       agentId: scope.agent_id,
       conversationId: scope.conversation_id,
-      approvalsByRequestId: new Map(),
-      pendingRequestIds: new Set(),
-      responsesByRequestId: new Map(),
       autoDecisions: [
         { type: "deny", approval: sourceYieldedApproval, reason: "stale" },
       ],

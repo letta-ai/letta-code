@@ -19,6 +19,7 @@ import {
 } from "@/reminders/engine";
 import { buildListenReminderContext } from "@/reminders/listen-context";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
+import { replaceClientPreferences } from "@/tools/client-preferences";
 import { INTERACTIVE_USER_INPUT_TOOL_NAMES } from "@/tools/interactive-policy";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import { debugWarn, isDebugEnabled } from "@/utils/debug";
@@ -311,6 +312,8 @@ export async function prepareListenerTurn(params: {
     ? runtime.listener.connections.get(connectionId)?.options
     : runtime.listener.connections.values().next().value?.options;
   const environmentDeviceId = listenerOptions?.deviceId;
+  if (msg.clientPreferences !== undefined)
+    replaceClientPreferences(agentId, conversationId, msg.clientPreferences);
   const preparedToolContext = await prepareToolExecutionContextForScope({
     connectionId,
     environmentDeviceId,
@@ -319,9 +322,8 @@ export async function prepareListenerTurn(params: {
     actingUserId: msg.actingUserId,
     clientToolset: msg.clientToolset,
     clientToolAllowlist: msg.clientToolAllowlist,
-    // Headless clients (SDK sessions, automation) opt out of tools that
-    // prompt the human mid-turn; the interactive set is owned by the harness.
-    ...(msg.excludeInteractiveTools || runtime.executionSettings !== undefined
+    // Honor explicit client exclusions; headless execution does not block questions.
+    ...(msg.excludeInteractiveTools
       ? { exclude: [...INTERACTIVE_USER_INPUT_TOOL_NAMES] }
       : {}),
     externalToolScopeIds: msg.externalToolScopeIds,
