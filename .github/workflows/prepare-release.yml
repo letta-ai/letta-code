@@ -113,12 +113,13 @@ jobs:
 
           jq --arg version "$NEW_VERSION" '.version = $version' package.json > package.json.tmp
           mv package.json.tmp package.json
+          bun run runtime-graph:generate
 
           echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
 
       - name: Commit version bump
         run: |
-          git add package.json
+          git add package.json npm-shrinkwrap.json
           git commit -m "chore: bump version to ${{ steps.version.outputs.new_version }}"
 
       - name: Create version bump PR

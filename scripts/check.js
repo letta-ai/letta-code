@@ -23,6 +23,7 @@ const checks = [
   { name: "test coverage", script: ["check:test-coverage"] },
   { name: "skill frontmatter", script: ["check:skill-frontmatter"] },
   { name: "bundled skill scripts", script: ["check:bundled-skill-scripts"] },
+  { name: "runtime dependency graph", script: ["runtime-graph:verify"] },
   { name: "biome", script: ["lint"] },
   { name: "typescript", script: ["typecheck"] },
 ];
