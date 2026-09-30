@@ -347,7 +347,6 @@ export async function startConnectedListenerRuntime(
     options.startCronScheduler !== false &&
     process.env.LETTA_DISABLE_CRON_SCHEDULER !== "1";
 
-  markListenerConnectionInitialized(runtime, opts.connectionId);
   safeEmitWsEvent("recv", "lifecycle", {
     type:
       getListenerTransportKind(transport) === "websocket"
@@ -357,7 +356,8 @@ export async function startConnectedListenerRuntime(
   runtime.hasSuccessfulConnection = true;
   runtime.everConnected = true;
   await opts.onConnected(opts.connectionId);
-
+  if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) return;
+  markListenerConnectionInitialized(runtime, opts.connectionId);
   await emitInitialState(runtime, transport, opts.connectionId, options);
   for (const conversationRuntime of runtime.conversationRuntimes.values()) {
     replayPendingApprovalRequestsToConnection(

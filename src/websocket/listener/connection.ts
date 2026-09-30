@@ -91,6 +91,10 @@ export function openListenerConnection(params: {
   const resumeStates = getResumeStates(params.runtime);
   const resumed = resumeStates.get(params.connectionId);
   resumeStates.delete(params.connectionId);
+  let resolveStartupReady!: () => void;
+  const startupReady = new Promise<void>((resolve) => {
+    resolveStartupReady = resolve;
+  });
   const connection: ListenerConnectionState = {
     id: params.connectionId,
     ordinal: resumed?.ordinal ?? params.runtime.nextConnectionOrdinal,
@@ -98,6 +102,8 @@ export function openListenerConnection(params: {
     streamWriter: params.streamWriter ?? null,
     cancellation: params.cancellation ?? new AbortController(),
     initialized: false,
+    startupReady,
+    resolveStartupReady,
     subscriptions: resumed?.subscriptions ?? new Set(),
     eventSeqCounter: resumed?.eventSeqCounter ?? 0,
     options: params.options,
@@ -119,13 +125,27 @@ export function openListenerConnection(params: {
   return connection;
 }
 
+export async function waitForListenerConnectionStartup(
+  runtime: ListenerRuntime,
+  connectionId: ListenerConnectionId,
+): Promise<boolean> {
+  const connection = runtime.connections.get(connectionId);
+  if (!connection) return true;
+  await connection.startupReady;
+  return (
+    runtime.connections.get(connectionId) === connection &&
+    connection.initialized
+  );
+}
+
 export function markListenerConnectionInitialized(
   runtime: ListenerRuntime,
   connectionId: ListenerConnectionId,
 ): void {
   const connection = runtime.connections.get(connectionId);
-  if (connection) {
+  if (connection && !connection.initialized) {
     connection.initialized = true;
+    connection.resolveStartupReady();
   }
 }
 
@@ -322,6 +342,7 @@ export function closeListenerConnection(
     unsubscribeListenerConnection(runtime, connectionId, runtimeKey);
   }
   runtime.connections.delete(connectionId);
+  connection.resolveStartupReady();
   connection.cancellation.abort();
   refreshLegacySingleConnection(runtime);
   return connection;

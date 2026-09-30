@@ -309,6 +309,8 @@ export type ListenerConnectionState = {
   streamWriter: ListenerTransport | null;
   cancellation: AbortController;
   initialized: boolean;
+  startupReady: Promise<void>;
+  resolveStartupReady: () => void;
   subscriptions: Set<string>;
   eventSeqCounter: number;
   options: StartListenerOptions;
