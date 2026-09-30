@@ -444,6 +444,56 @@ describe("pending channel control requests", () => {
     expect(registry.hasPendingControlRequest(event.requestId)).toBe(true);
   });
 
+  test("Telegram /new preserves pending controls even after the gateway turn ends", async () => {
+    __testOverrideLoadChannelAccounts(() => []);
+    const replies: Array<{ chatId: string; text: string }> = [];
+    const registry = new ChannelRegistry();
+    const adapter = {
+      ...createAdapter(replies),
+      id: "telegram:acct-telegram",
+      channelId: "telegram",
+      accountId: "acct-telegram",
+    };
+    registry.registerAdapter(adapter);
+    registry.setMessageHandler(() => {
+      throw new Error("/new must not reach the agent");
+    });
+    registry.setRuntimeBusyHandler(() => false);
+    registry.setReady();
+    addRoute("telegram", {
+      accountId: "acct-telegram",
+      chatId: "123",
+      chatType: "direct",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      createdAt: "2026-05-19T00:00:00.000Z",
+    });
+    await registry.registerPendingControlRequest(
+      createPendingControlRequestEvent({
+        source: {
+          channel: "telegram",
+          accountId: "acct-telegram",
+          chatId: "123",
+          chatType: "direct",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+        },
+      }),
+    );
+    await adapter.onMessage?.(
+      createInboundMessage("/new", {
+        channel: "telegram",
+        accountId: "acct-telegram",
+        chatId: "123",
+        chatType: "direct",
+        threadId: null,
+      }),
+    );
+    expect(replies.at(-1)?.text).toContain("active or queued work");
+    expect(registry.hasPendingControlRequest("req-ask-1")).toBe(true);
+  });
+
   test("/cancel bypasses pending channel control prompts", async () => {
     const replies: Array<{
       chatId: string;

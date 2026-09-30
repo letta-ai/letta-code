@@ -190,6 +190,25 @@ channel command set is:
 - `/reflection` — start a memory reflection pass for the current route's agent
   conversation when MemFS is enabled.
 
+Telegram also supports `/new` (or `/new@BotName`) on an existing route. It
+creates a fresh conversation for the same agent, retaining agent memory and
+persisting the new conversation for that bot/chat/topic. Other routes and paused
+state are unchanged. Gateway-tracked turns, queued inputs, and registry-tracked
+pending approvals block reset: finish or `/cancel` the work, then retry `/new`.
+It does not delete the previous conversation or bypass pairing and command
+permissions.
+
+`/new` replaces a channel route, not a running conversation. Desktop/API clients
+on the old conversation stay there and are not cancelled or redirected. The
+busy check is local channel bookkeeping, not a backend-wide idle assertion or a
+distributed lock. This matches creating a separate conversation rather than
+clearing the old transcript; memory remains shared through the same agent.
+After replacement, a new routed MessageChannel call from the old conversation
+fails its scope lookup. A reply that already resolved the old route (including
+one already handed to Telegram) can still arrive after the `/new` confirmation.
+No transport send is recalled. Finish other-client work first if a clean visual
+cutover is required; `/new` does not promise globally quiescent output.
+
 Slack-native slash command payloads currently exist only for `/cancel`; the rest
 are expected to be sent as normal channel messages in the relevant chat/thread.
 

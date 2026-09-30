@@ -25,8 +25,12 @@ import type {
   ChannelModelHandler,
   ChannelReflectionHandler,
   ChannelReloadHandler,
+  ChannelRuntimeBusyHandler,
 } from "./registry-handlers";
-import { buildSlackConversationSummary } from "./registry-presentation";
+import {
+  buildSlackConversationSummary,
+  buildTelegramConversationSummary,
+} from "./registry-presentation";
 import type { ChannelRouteProvisioner } from "./registry-routes";
 import {
   addRoute,
@@ -34,6 +38,7 @@ import {
   getRoutesForChannel,
   loadRouteForInboundMessage,
   loadRoutes,
+  setRouteInMemory,
 } from "./routing";
 import type {
   ChannelAccount,
@@ -53,6 +58,7 @@ export function createChannelCommandRouter(deps: {
     threadId?: string | null,
   ) => ChannelRoute | null;
   getCancelHandler: () => ChannelCancelHandler | null;
+  getRuntimeBusyHandler?: () => ChannelRuntimeBusyHandler | null;
   getReflectionHandler: () => ChannelReflectionHandler | null;
   getReloadHandler: () => ChannelReloadHandler | null;
   getModelHandler: () => ChannelModelHandler | null;
@@ -233,6 +239,9 @@ export function createChannelCommandRouter(deps: {
   async function handleNewConversationSlashCommand(
     msg: InboundChannelMessage,
   ): Promise<{ handled: boolean; text?: string }> {
+    if (msg.channel === "telegram") {
+      return handleTelegramNewConversation(msg);
+    }
     if (msg.channel !== "slack") {
       return {
         handled: true,
@@ -283,6 +292,79 @@ export function createChannelCommandRouter(deps: {
       defaultPermissionMode: config.defaultPermissionMode,
     });
 
+    return {
+      handled: true,
+      text: buildChannelNewConversationMessage(msg.channel, route),
+    };
+  }
+
+  async function handleTelegramNewConversation(
+    msg: InboundChannelMessage,
+  ): Promise<{ handled: boolean; text: string }> {
+    // Require an established route: /new must not bypass pairing or rebind an agent.
+    const existingRoute = loadAndFindRawRouteForMessage(msg);
+    if (!existingRoute) {
+      return { handled: true, text: buildChannelNoRouteMessage(msg.channel) };
+    }
+    const isBusy = deps.getRuntimeBusyHandler?.();
+    if (!isBusy) {
+      return {
+        handled: true,
+        text: "Telegram cannot start a new conversation while the listener is not ready. Please try again later.",
+      };
+    }
+    const runtime = {
+      agent_id: existingRoute.agentId,
+      conversation_id: existingRoute.conversationId,
+    };
+    const busyReply = {
+      handled: true,
+      text: "Telegram still has active or queued work for this conversation. Wait for it to finish, or /cancel it, then retry /new.",
+    };
+    if (isBusy(runtime)) return busyReply;
+
+    let conversationId: string;
+    try {
+      conversationId = await deps.routes.createConversationForAgent(
+        existingRoute.agentId,
+        buildTelegramConversationSummary(msg),
+      );
+    } catch {
+      return {
+        handled: true,
+        text: "Telegram could not create a new conversation. The current route is unchanged. Please try again later.",
+      };
+    }
+    // Creation yields: another message or /new may have arrived in the meantime.
+    // Recheck synchronously before persistence; never move a busy route or overwrite
+    // another reset. The unused empty conversation is harmless and left intact.
+    const currentRoute = loadAndFindRawRouteForMessage(msg);
+    if (
+      !currentRoute ||
+      currentRoute.conversationId !== existingRoute.conversationId ||
+      currentRoute.agentId !== existingRoute.agentId
+    ) {
+      return {
+        handled: true,
+        text: "Telegram's route changed while creating the conversation. Please retry /new.",
+      };
+    }
+    if (deps.getRuntimeBusyHandler?.() !== isBusy || isBusy(runtime))
+      return busyReply;
+    const route = {
+      ...currentRoute,
+      conversationId,
+      updatedAt: new Date().toISOString(),
+    };
+    try {
+      addRoute(msg.channel, route);
+    } catch {
+      setRouteInMemory(msg.channel, currentRoute);
+      return {
+        handled: true,
+        text: "Telegram could not save the new conversation route. Please try again later.",
+      };
+    }
     return {
       handled: true,
       text: buildChannelNewConversationMessage(msg.channel, route),

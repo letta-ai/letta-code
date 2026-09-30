@@ -517,7 +517,7 @@ export async function tryHandleChannelSlashCommand(
             handler: options.handlers?.model,
           });
         case "new":
-          if (!isSlackMentionControl) {
+          if (!isSlackMentionControl && msg.channel !== "telegram") {
             return buildUnsupportedChannelCommandMessage(msg.channel, command);
           }
           return handleScopedCommand({

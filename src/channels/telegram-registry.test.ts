@@ -30,6 +30,16 @@ import {
   clearTargetStores,
 } from "@/channels/targets";
 import type { ChannelAdapter, InboundChannelMessage } from "@/channels/types";
+import { runChannelCancelCommand } from "./command-runtime-executor";
+import { ChannelGateway } from "./gateway-core";
+import {
+  FakeClient,
+  makeDelivery,
+  makeHooks,
+  makeSource,
+  makeStreamDelta,
+  makeTurnFinished,
+} from "./gateway-test-support";
 
 const createConversation = mock(async () => ({ id: "conv-telegram" }));
 
@@ -138,6 +148,320 @@ describe("telegram channel registry", () => {
       await registry.stopAll();
     }
     resetState();
+  });
+
+  test.each([
+    {
+      stopReason: "end_turn",
+      cancelBeforeHandoff: false,
+      abortOutcome: "success",
+    },
+    {
+      stopReason: "cancelled",
+      cancelBeforeHandoff: false,
+      abortOutcome: "success",
+    },
+    {
+      stopReason: "llm_api_error",
+      cancelBeforeHandoff: false,
+      abortOutcome: "success",
+    },
+    {
+      stopReason: "cancelled",
+      cancelBeforeHandoff: true,
+      abortOutcome: "success",
+    },
+    {
+      stopReason: "cancelled",
+      cancelBeforeHandoff: true,
+      abortOutcome: "no-active",
+    },
+    {
+      stopReason: "end_turn",
+      cancelBeforeHandoff: false,
+      abortOutcome: "failure",
+    },
+    {
+      stopReason: "end_turn",
+      cancelBeforeHandoff: false,
+      abortOutcome: "throw",
+    },
+  ])(
+    "/new protects approvals across $stopReason (cancel before handoff: $cancelBeforeHandoff, $abortOutcome)",
+    async ({ stopReason, cancelBeforeHandoff, abortOutcome }) => {
+      const { ChannelRegistry } = await import("@/channels/registry");
+      const registry = new ChannelRegistry();
+      const replies: Array<{ chatId: string; text: string }> = [];
+      const adapter = createAdapter(replies);
+      const progressStarted = Promise.withResolvers<void>();
+      const releaseProgress = Promise.withResolvers<void>();
+      const finished = Promise.withResolvers<void>();
+      adapter.handleTurnProgressEvent = async () => {
+        progressStarted.resolve();
+        await releaseProgress.promise;
+      };
+      adapter.handleTurnLifecycleEvent = async (event) => {
+        if (event.type === "finished") finished.resolve();
+      };
+      const deliveredControls: string[] = [];
+      adapter.handleControlRequestEvent = async (event) => {
+        deliveredControls.push(event.requestId);
+      };
+      registry.registerAdapter(adapter);
+      const client = new FakeClient();
+      const gateway = new ChannelGateway(
+        client,
+        makeHooks({
+          onProgress: (event) => registry.dispatchTurnProgressEvent(event),
+          onLifecycle: (event) => registry.dispatchTurnLifecycleEvent(event),
+          onControlRequest: (event) =>
+            registry.registerPendingControlRequest(event),
+        }).hooks,
+      );
+      registry.setRuntimeBusyHandler((runtime) =>
+        gateway.isRuntimeBusy(runtime),
+      );
+      registry.setCancelHandler(({ runtime }) =>
+        gateway.cancelControlHandoffs(
+          runtime,
+          async () => {
+            const result = await runChannelCancelCommand({
+              runtime,
+              client: {
+                listModels: async () => ({ success: true, entries: [] }),
+                updateModel: async () => ({ success: true }),
+                executeCommand: async () => ({ success: true, output: "" }),
+                abortMessage: async () => {
+                  if (abortOutcome === "throw")
+                    throw new Error("abort unavailable");
+                  if (abortOutcome === "success") {
+                    client.emit({
+                      type: "control_request",
+                      request_id: "same-turn-late",
+                      agent_id: "agent-1",
+                      conversation_id: "conv-1",
+                      request: {
+                        subtype: "can_use_tool",
+                        tool_name: "Bash",
+                        input: {},
+                        tool_call_id: "late-call",
+                        permission_suggestions: [],
+                        blocked_path: null,
+                      },
+                    });
+                    client.emit(makeTurnFinished("cancelled"));
+                  }
+                  return {
+                    success: abortOutcome !== "failure",
+                    aborted: abortOutcome !== "no-active",
+                  };
+                },
+              },
+            });
+            return result.cancelled;
+          },
+          (requestId) => registry.clearPendingControlRequest(requestId),
+        ),
+      );
+      registry.setMessageHandler(() => {});
+      registry.setReady();
+      setRouteInMemory("telegram", {
+        accountId: "telegram-bot",
+        chatId: "-100123",
+        threadId: "42",
+        chatType: "channel",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        enabled: true,
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+      try {
+        await gateway.submit(
+          makeDelivery({
+            sources: [
+              makeSource({
+                accountId: "telegram-bot",
+                chatId: "-100123",
+                threadId: "42",
+              }),
+            ],
+          }),
+        );
+        client.emit(
+          makeStreamDelta({
+            message_type: "reasoning_message",
+            run_id: "run-1",
+          }),
+        );
+        await progressStarted.promise;
+        client.emit({
+          type: "control_request",
+          request_id: "ctrl-delayed",
+          agent_id: "agent-1",
+          conversation_id: "conv-1",
+          request: {
+            subtype: "can_use_tool",
+            tool_name: "Bash",
+            input: { command: "ls" },
+            tool_call_id: "call-1",
+            permission_suggestions: [],
+            blocked_path: null,
+          },
+        });
+        if (!(cancelBeforeHandoff && abortOutcome === "success")) {
+          client.emit(makeTurnFinished(stopReason));
+        }
+        expect(registry.hasPendingControlRequest("ctrl-delayed")).toBe(false);
+        await adapter.onMessage?.(createInboundMessage({ text: "/new" }));
+        expect(
+          getRoute("telegram", "-100123", "telegram-bot", "42")?.conversationId,
+        ).toBe("conv-1");
+        expect(createConversation).not.toHaveBeenCalled();
+        expect(replies.at(-1)?.text).toContain("/cancel");
+        if (cancelBeforeHandoff) {
+          await adapter.onMessage?.(createInboundMessage({ text: "/cancel" }));
+        }
+        releaseProgress.resolve();
+        await finished.promise;
+        if (!cancelBeforeHandoff) {
+          // Terminal events alone must not discard a genuine pending approval.
+          expect(registry.hasPendingControlRequest("ctrl-delayed")).toBe(true);
+          await adapter.onMessage?.(createInboundMessage({ text: "/new" }));
+          expect(createConversation).not.toHaveBeenCalled();
+          const cancelling = adapter.onMessage?.(
+            createInboundMessage({ text: "/cancel" }),
+          );
+          if (abortOutcome === "throw")
+            await expect(cancelling).rejects.toThrow("abort unavailable");
+          else await cancelling;
+        }
+        expect(deliveredControls).toEqual(
+          cancelBeforeHandoff && abortOutcome === "success"
+            ? []
+            : ["ctrl-delayed"],
+        );
+        if (abortOutcome !== "success") {
+          expect(registry.hasPendingControlRequest("ctrl-delayed")).toBe(true);
+          await adapter.onMessage?.(createInboundMessage({ text: "/new" }));
+          expect(createConversation).not.toHaveBeenCalled();
+          abortOutcome = "success";
+          await adapter.onMessage?.(createInboundMessage({ text: "/cancel" }));
+        }
+        expect(registry.hasPendingControlRequest("ctrl-delayed")).toBe(false);
+        expect(registry.hasPendingControlRequest("same-turn-late")).toBe(false);
+        await adapter.onMessage?.(createInboundMessage({ text: "/new" }));
+        expect(createConversation).toHaveBeenCalledTimes(1);
+        expect(
+          getRoute("telegram", "-100123", "telegram-bot", "42")?.conversationId,
+        ).toBe("conv-telegram");
+      } finally {
+        client.emit(makeTurnFinished("cancelled"));
+        releaseProgress.resolve();
+        await finished.promise;
+        registry.clearPendingControlRequest("ctrl-delayed");
+        gateway.close();
+      }
+    },
+  );
+
+  test("successful cancellation preserves newer and unrelated registry approvals", async () => {
+    const { ChannelRegistry } = await import("@/channels/registry");
+    const registry = new ChannelRegistry();
+    const adapter = createAdapter();
+    adapter.handleControlRequestEvent = async () => {};
+    registry.registerAdapter(adapter);
+    registry.setMessageHandler(() => {});
+    registry.setReady();
+    setRouteInMemory("telegram", {
+      accountId: "telegram-bot",
+      chatId: "-100123",
+      threadId: "42",
+      chatType: "channel",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    const source = makeSource({
+      accountId: "telegram-bot",
+      chatId: "-100123",
+      threadId: "42",
+    });
+    const register = (requestId: string, overrides = {}) =>
+      registry.registerPendingControlRequest({
+        requestId,
+        kind: "generic_tool_approval",
+        toolName: "Bash",
+        input: {},
+        source: { ...source, ...overrides },
+      });
+    const started = Promise.withResolvers<void>();
+    const abort = Promise.withResolvers<boolean>();
+    const client = new FakeClient();
+    const lateDelivered = Promise.withResolvers<void>();
+    const gateway = new ChannelGateway(
+      client,
+      makeHooks({
+        onControlRequest: async (event) => {
+          await registry.registerPendingControlRequest(event);
+          lateDelivered.resolve();
+        },
+      }).hooks,
+    );
+    registry.setCancelHandler(({ runtime }) =>
+      gateway.cancelControlHandoffs(
+        runtime,
+        async () => {
+          started.resolve();
+          return abort.promise;
+        },
+        (id) => registry.clearPendingControlRequest(id),
+      ),
+    );
+    try {
+      await gateway.submit(makeDelivery({ sources: [source] }));
+      await register("old");
+      await register("unrelated", {
+        chatId: "other",
+        conversationId: "conv-other",
+      });
+      const cancelling = adapter.onMessage?.(
+        createInboundMessage({ text: "/cancel" }),
+      );
+      await started.promise;
+      client.emit({
+        type: "control_request",
+        request_id: "same-turn-late",
+        agent_id: "agent-1",
+        conversation_id: "conv-1",
+        request: {
+          subtype: "can_use_tool",
+          tool_name: "Bash",
+          input: {},
+          tool_call_id: "late-call",
+          permission_suggestions: [],
+          blocked_path: null,
+        },
+      });
+      await lateDelivered.promise;
+      expect(registry.hasPendingControlRequest("same-turn-late")).toBe(true);
+      client.emit(makeTurnFinished("cancelled"));
+      await gateway.submit(
+        makeDelivery({ clientMessageId: "replacement", sources: [source] }),
+      );
+      await register("new");
+      abort.resolve(true);
+      await cancelling;
+      expect(registry.hasPendingControlRequest("old")).toBe(false);
+      expect(registry.hasPendingControlRequest("same-turn-late")).toBe(false);
+      expect(registry.hasPendingControlRequest("new")).toBe(true);
+      expect(registry.hasPendingControlRequest("unrelated")).toBe(true);
+    } finally {
+      abort.resolve(false);
+      for (const id of ["old", "new", "unrelated", "same-turn-late"])
+        registry.clearPendingControlRequest(id);
+      gateway.close();
+    }
   });
 
   test("mention-only Telegram groups ignore ambient messages", async () => {

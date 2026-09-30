@@ -265,7 +265,7 @@ describe("channel slash commands", () => {
     expect(text).toContain("Telegram is connected to Letta Code.");
     expect(text).not.toContain("MessageChannel");
     expect(text).toContain(
-      "Supported slash commands here: /help, /status, /whoami, /pause, /resume, /cancel, /chat, /feedback, /model, /reflection, /reload.",
+      "Supported slash commands here: /help, /status, /whoami, /pause, /resume, /cancel, /chat, /feedback, /model, /reflection, /reload, /new.",
     );
 
     const slackText = buildChannelHelpMessage("slack");
@@ -632,6 +632,46 @@ describe("channel slash commands", () => {
     }
   });
 
+  test.each(["/new", "/new@LettaBot"])(
+    "Telegram %s invokes the fresh-conversation handler",
+    async (text) => {
+      const replies: CapturedDirectReply[] = [];
+      let called = false;
+      expect(
+        await tryHandleChannelSlashCommand(
+          createReplyCapturingAdapter(replies),
+          {
+            channel: "telegram",
+            chatId: "123",
+            senderId: "456",
+            senderName: "Alice",
+            text,
+            timestamp: 0,
+            chatType: "direct",
+          },
+          {
+            handlers: {
+              newConversation: async () => {
+                called = true;
+                return { handled: true, text: "Fresh conversation" };
+              },
+            },
+          },
+        ),
+      ).toBe(true);
+      expect(called).toBe(true);
+      expect(replies[0]?.text).toBe("Fresh conversation");
+    },
+  );
+
+  test("Telegram help advertises /new without changing other channels", () => {
+    expect(buildChannelHelpMessage("telegram")).toContain("/new");
+    expect(buildChannelHelpMessage("telegram")).toContain(
+      "Other clients stay on the old conversation; an in-flight reply may still arrive.",
+    );
+    expect(buildChannelHelpMessage("discord")).not.toContain("/new");
+  });
+
   test("builds cancel command messages", () => {
     expect(buildChannelCancelAcceptedMessage("slack")).toBe(
       "Slack cancelled the in-progress agent turn for this chat.",
@@ -848,7 +888,7 @@ describe("channel slash commands", () => {
     expect(text).toContain("Telegram received /compact now");
     expect(text).toContain("not supported in channels yet");
     expect(text).toContain(
-      "Supported slash commands: /help, /status, /whoami, /pause, /resume, /cancel, /chat, /feedback, /model, /reflection, /reload.",
+      "Supported slash commands: /help, /status, /whoami, /pause, /resume, /cancel, /chat, /feedback, /model, /reflection, /reload, /new.",
     );
     expect(text).toContain("without a leading slash");
 

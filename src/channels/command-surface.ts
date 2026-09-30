@@ -452,7 +452,12 @@ export function buildChannelHelpMessage(
   return [
     `${displayName} is connected to Letta Code.`,
     "Send a normal message here and the connected agent will reply in this chat.",
-    `Supported slash commands here: ${supportedCommandsText()}.`,
+    `Supported slash commands here: ${supportedCommandsText()}${channelId === "telegram" ? ", /new" : ""}.`,
+    ...(channelId === "telegram"
+      ? [
+          "/new starts a fresh conversation for this chat with the same agent and memory. Wait for channel work to finish, or /cancel it first. Other clients stay on the old conversation; an in-flight reply may still arrive.",
+        ]
+      : []),
     ...extraParagraphs,
     "If this chat is not connected yet, send any non-command message and follow the pairing instructions.",
   ].join("\n\n");
@@ -473,7 +478,7 @@ export function buildUnsupportedChannelCommandMessage(
     ? supportedBangCommandsText()
     : channelId === "slack"
       ? supportedSlackMentionSlashCommandsText(options)
-      : supportedCommandsText("/", options);
+      : `${supportedCommandsText("/", options)}${channelId === "telegram" ? ", /new" : ""}`;
   const supportedLabel =
     channelId === "slack" && !isBang
       ? "Slack mention commands"

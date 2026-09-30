@@ -522,13 +522,20 @@ export async function startLocalChannelGateway(
     },
   };
 
-  registry.setCancelHandler(async ({ runtime }) => {
-    const result = await runChannelCancelCommand({
-      client: runtimeCommandClient,
+  registry.setRuntimeBusyHandler((runtime) => gateway.isRuntimeBusy(runtime));
+  registry.setCancelHandler(({ runtime }) =>
+    gateway.cancelControlHandoffs(
       runtime,
-    });
-    return result.cancelled;
-  });
+      async () => {
+        const result = await runChannelCancelCommand({
+          client: runtimeCommandClient,
+          runtime,
+        });
+        return result.cancelled;
+      },
+      (requestId) => registry.clearPendingControlRequest(requestId),
+    ),
+  );
 
   registry.setModelHandler(async ({ channelId, runtime, modelIdentifier }) => {
     if (!modelIdentifier) {
