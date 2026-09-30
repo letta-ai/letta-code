@@ -3567,7 +3567,7 @@ describe("listen-client v2 status builders", () => {
     }
   });
 
-  test("recovered approvals surface as pending control requests and WAITING_ON_APPROVAL", () => {
+  test("stale recovered approvals do not surface control requests or approval gates", () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
     const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
       listener,
@@ -3575,23 +3575,27 @@ describe("listen-client v2 status builders", () => {
       "default",
     );
     const socket = new MockSocket(WebSocket.OPEN);
-    const requestId = "perm-tool-call-1";
-
     runtime.recoveredApprovalState = {
       agentId: "agent-1",
       conversationId: "default",
-      approvalsByRequestId: new Map([
-        [
-          requestId,
-          {
-            approval: {} as never,
-            approvalContext: null,
-            controlRequest: makeControlRequest(requestId),
+      allApprovals: [
+        {
+          toolCallId: "tool-call-1",
+          toolName: "AskUserQuestion",
+          toolArgs: '{"questions":[]}',
+        },
+      ],
+      autoDecisions: [
+        {
+          type: "deny",
+          approval: {
+            toolCallId: "tool-call-1",
+            toolName: "AskUserQuestion",
+            toolArgs: '{"questions":[]}',
           },
-        ],
-      ]),
-      pendingRequestIds: new Set([requestId]),
-      responsesByRequestId: new Map(),
+          reason: "Stale approval recovered after reconnect",
+        },
+      ],
     };
 
     __listenClientTestUtils.emitStateSync(
@@ -3606,14 +3610,9 @@ describe("listen-client v2 status builders", () => {
     const outbound = socket.sentPayloads.map((payload) =>
       JSON.parse(payload as string),
     );
-    expect(outbound[0].device_status.pending_control_requests).toEqual([
-      {
-        request_id: requestId,
-        request: makeControlRequest(requestId).request,
-      },
-    ]);
+    expect(outbound[0].device_status.pending_control_requests).toEqual([]);
     expect(outbound[1].loop_status).toEqual({
-      status: "WAITING_ON_APPROVAL",
+      status: "WAITING_ON_INPUT",
       active_run_ids: [],
       executing_tool_call_ids: [],
     });
@@ -3627,18 +3626,13 @@ describe("listen-client v2 status builders", () => {
     runtime.recoveredApprovalState = {
       agentId: "agent-1",
       conversationId: "default",
-      approvalsByRequestId: new Map([
-        [
-          "perm-stale",
-          {
-            approval: {} as never,
-            approvalContext: null,
-            controlRequest: makeControlRequest("perm-stale"),
-          },
-        ],
-      ]),
-      pendingRequestIds: new Set(["perm-stale"]),
-      responsesByRequestId: new Map(),
+      allApprovals: [
+        {
+          toolCallId: "tool-stale",
+          toolName: "Bash",
+          toolArgs: '{"command":"pwd"}',
+        },
+      ],
     };
 
     await __listenClientTestUtils.recoverApprovalStateForSync?.(runtime, {
@@ -3659,18 +3653,13 @@ describe("listen-client v2 status builders", () => {
     runtime.recoveredApprovalState = {
       agentId: "agent-1",
       conversationId: "default",
-      approvalsByRequestId: new Map([
-        [
-          "perm-stale",
-          {
-            approval: {} as never,
-            approvalContext: null,
-            controlRequest: makeControlRequest("perm-stale"),
-          },
-        ],
-      ]),
-      pendingRequestIds: new Set(["perm-stale"]),
-      responsesByRequestId: new Map(),
+      allApprovals: [
+        {
+          toolCallId: "tool-stale",
+          toolName: "Bash",
+          toolArgs: '{"command":"pwd"}',
+        },
+      ],
     };
 
     __listenClientTestUtils.clearRecoveredApprovalStateForScope(runtime, {
@@ -3954,34 +3943,18 @@ describe("listen-client interrupt queue projection", () => {
     runtime.recoveredApprovalState = {
       agentId: "agent-1",
       conversationId: "conv-1",
-      approvalsByRequestId: new Map([
-        [
-          "perm-tool-1",
-          {
-            approval: {
-              toolCallId: "tool-1",
-              toolName: "Bash",
-              toolArgs: '{"command":"ls"}',
-            },
-            approvalContext: null,
-            controlRequest: makeControlRequest("perm-tool-1"),
-          },
-        ],
-        [
-          "perm-tool-2",
-          {
-            approval: {
-              toolCallId: "tool-2",
-              toolName: "Bash",
-              toolArgs: '{"command":"pwd"}',
-            },
-            approvalContext: null,
-            controlRequest: makeControlRequest("perm-tool-2"),
-          },
-        ],
-      ]),
-      pendingRequestIds: new Set(["perm-tool-1", "perm-tool-2"]),
-      responsesByRequestId: new Map(),
+      allApprovals: [
+        {
+          toolCallId: "tool-1",
+          toolName: "Bash",
+          toolArgs: '{"command":"ls"}',
+        },
+        {
+          toolCallId: "tool-2",
+          toolName: "Bash",
+          toolArgs: '{"command":"pwd"}',
+        },
+      ],
     };
 
     const stashed = __listenClientTestUtils.stashRecoveredApprovalInterrupts(
@@ -4218,7 +4191,7 @@ describe("listen-client capability-gated approval flow", () => {
     rejectPendingApprovalResolvers(runtime, "test cleanup");
   });
 
-  test("handled recovered approval responses reschedule queue pumping for the fallback scoped runtime", async () => {
+  test("handled live approval responses reschedule queue pumping for the scoped runtime", async () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
     const targetRuntime =
       __listenClientTestUtils.getOrCreateConversationRuntime(
@@ -4228,14 +4201,14 @@ describe("listen-client capability-gated approval flow", () => {
       );
     const socket = new MockSocket(WebSocket.OPEN);
     const scheduleQueuePumpMock = mock(() => {});
-    const resolveRecoveredApprovalResponseMock = mock(async () => true);
+    const resolvePendingApprovalResolverMock = mock(() => true);
 
     const handled = await __listenClientTestUtils.handleApprovalResponseInput(
       listener,
       {
         runtime: { agent_id: "agent-1", conversation_id: "default" },
         response: {
-          request_id: "perm-recovered",
+          request_id: "perm-live",
           decision: { behavior: "allow" },
         },
         socket: socket as unknown as WebSocket,
@@ -4246,27 +4219,20 @@ describe("listen-client capability-gated approval flow", () => {
         processQueuedTurn: async () => {},
       },
       {
-        resolveRuntimeForApprovalRequest: () => null,
-        resolvePendingApprovalResolver: () => false,
-        getOrCreateScopedRuntime: () => targetRuntime,
-        resolveRecoveredApprovalResponse: resolveRecoveredApprovalResponseMock,
+        resolveRuntimeForApprovalRequest: () => targetRuntime,
+        resolvePendingApprovalResolver: resolvePendingApprovalResolverMock,
         scheduleQueuePump: scheduleQueuePumpMock,
       },
     );
 
     expect(handled).toBe(true);
-    expect(resolveRecoveredApprovalResponseMock).toHaveBeenCalledWith(
+    expect(resolvePendingApprovalResolverMock).toHaveBeenCalledWith(
       targetRuntime,
-      socket,
       {
-        request_id: "perm-recovered",
+        request_id: "perm-live",
         decision: { behavior: "allow" },
       },
-      expect.any(Function),
-      {
-        onStatusChange: undefined,
-        connectionId: "conn-1",
-      },
+      undefined,
     );
     expect(scheduleQueuePumpMock).toHaveBeenCalledWith(
       targetRuntime,
@@ -4286,7 +4252,7 @@ describe("listen-client capability-gated approval flow", () => {
       );
     const socket = new MockSocket(WebSocket.OPEN);
     const scheduleQueuePumpMock = mock(() => {});
-    const resolveRecoveredApprovalResponseMock = mock(async () => false);
+    const resolvePendingApprovalResolverMock = mock(() => false);
 
     beginTestTurn(targetRuntime);
     targetRuntime.turnLifecycle.requestCancellation();
@@ -4307,17 +4273,22 @@ describe("listen-client capability-gated approval flow", () => {
         processQueuedTurn: async () => {},
       },
       {
-        resolveRuntimeForApprovalRequest: () => null,
-        resolvePendingApprovalResolver: () => false,
-        getOrCreateScopedRuntime: () => targetRuntime,
-        resolveRecoveredApprovalResponse: resolveRecoveredApprovalResponseMock,
+        resolveRuntimeForApprovalRequest: () => targetRuntime,
+        resolvePendingApprovalResolver: resolvePendingApprovalResolverMock,
         scheduleQueuePump: scheduleQueuePumpMock,
       },
     );
 
     expect(handled).toBe(false);
     expect(targetRuntime.cancelRequested).toBe(true);
-    expect(resolveRecoveredApprovalResponseMock).not.toHaveBeenCalled();
+    expect(resolvePendingApprovalResolverMock).toHaveBeenCalledWith(
+      targetRuntime,
+      {
+        request_id: "perm-stale",
+        decision: { behavior: "allow" },
+      },
+      undefined,
+    );
     expect(scheduleQueuePumpMock).not.toHaveBeenCalled();
   });
 
@@ -4446,7 +4417,7 @@ describe("listen-client capability-gated approval flow", () => {
     __listenClientTestUtils.setActiveRuntime(null);
   });
 
-  test("abort_message preserves recovered approval denials instead of clobbering them to empty", async () => {
+  test("abort_message ignores stale recovery without a live turn or approval gate", async () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
     listener.socket = socket as unknown as WebSocket;
@@ -4463,22 +4434,13 @@ describe("listen-client capability-gated approval flow", () => {
     runtime.recoveredApprovalState = {
       agentId: "agent-1",
       conversationId: "default",
-      approvalsByRequestId: new Map([
-        [
-          "perm-recovered",
-          {
-            approval: {
-              toolCallId: "call-1",
-              toolName: "Write",
-              toolArgs: '{"path":"foo.txt"}',
-            },
-            approvalContext: null,
-            controlRequest: makeControlRequest("perm-recovered"),
-          },
-        ],
-      ]),
-      pendingRequestIds: new Set(["perm-recovered"]),
-      responsesByRequestId: new Map(),
+      allApprovals: [
+        {
+          toolCallId: "call-1",
+          toolName: "Write",
+          toolArgs: '{"path":"foo.txt"}',
+        },
+      ],
     };
 
     const handled = await __listenClientTestUtils.handleAbortMessageInput(
@@ -4501,32 +4463,18 @@ describe("listen-client capability-gated approval flow", () => {
       },
     );
 
-    expect(handled).toBe(true);
+    expect(handled).toBe(false);
     expect(runtime.cancelRequested).toBe(false);
-    expect(runtime.pendingInterruptedResults).toEqual([
+    expect(runtime.pendingInterruptedResults).toBeNull();
+    expect(runtime.recoveredApprovalState?.allApprovals).toEqual([
       {
-        type: "approval",
-        tool_call_id: "call-1",
-        approve: false,
-        reason: "User interrupted the stream",
+        toolCallId: "call-1",
+        toolName: "Write",
+        toolArgs: '{"path":"foo.txt"}',
       },
     ]);
-
-    const consumed = __listenClientTestUtils.consumeInterruptQueue(
-      runtime,
-      "agent-1",
-      "default",
-    );
-    expect(consumed?.approvalMessage.approvals).toEqual([
-      {
-        type: "approval",
-        tool_call_id: "call-1",
-        approve: false,
-        reason: "User interrupted the stream",
-      },
-    ]);
-    expect(scheduleQueuePumpMock).toHaveBeenCalled();
-    expect(cancelConversationMock).toHaveBeenCalledWith("agent-1", "default");
+    expect(scheduleQueuePumpMock).not.toHaveBeenCalled();
+    expect(cancelConversationMock).not.toHaveBeenCalled();
 
     __listenClientTestUtils.setActiveRuntime(null);
   });

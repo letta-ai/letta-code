@@ -1278,7 +1278,6 @@ async function main(): Promise<void> {
     await loadStartupTools({
       modelIdentifier: specifiedModel,
       toolset: specifiedToolset as ToolsetPreference | undefined,
-      exclude: ["AskUserQuestion"],
     });
     markMilestone("TOOLS_LOADED");
 

@@ -507,18 +507,6 @@ export function getPendingControlRequests(
     });
   }
 
-  const recovered = conversationRuntime.recoveredApprovalState;
-  if (recovered) {
-    for (const requestId of recovered.pendingRequestIds) {
-      const entry = recovered.approvalsByRequestId.get(requestId);
-      if (!entry) continue;
-      requests.push({
-        request_id: entry.controlRequest.request_id,
-        request: entry.controlRequest.request,
-      });
-    }
-  }
-
   return requests;
 }
 

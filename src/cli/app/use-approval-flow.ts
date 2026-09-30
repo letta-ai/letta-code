@@ -42,7 +42,6 @@ import { debugLog } from "@/utils/debug";
 import type { QueuedMessage } from "@/utils/message-queue-bridge";
 
 import { buildApprovalBatchKey } from "./approval-diffs";
-import { getQuestionsFromApproval } from "./approval-questions";
 import { extractErrorMeta } from "./errors";
 import { appendOptimisticUserLine, createClientOtid } from "./ids";
 import { sendDesktopNotification } from "./notifications";
@@ -1084,73 +1083,6 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
     setPendingApprovals,
   ]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: buffersRef is stable; .current is read dynamically.
-  const handleQuestionSubmit = useCallback(
-    async (answers: Record<string, string>) => {
-      const currentIndex = approvalResults.length;
-      const approval = pendingApprovals[currentIndex];
-      if (!approval) return;
-
-      const isLast = currentIndex + 1 >= pendingApprovals.length;
-
-      // Get questions from approval args
-      const questions = getQuestionsFromApproval(approval);
-
-      // Format the answer string like Claude Code does
-      // Filter out malformed questions (LLM might send invalid data)
-      const answerParts = questions
-        .filter((q) => q.question)
-        .map((q) => {
-          const answer = answers[q.question] || "";
-          return `"${q.question}"="${answer}"`;
-        });
-      const toolReturn = `User has answered your questions: ${answerParts.join(", ")}. You can now continue with the user's answers in mind.`;
-
-      const precomputedResult: ToolExecutionResult = {
-        toolReturn,
-        status: "success",
-      };
-
-      // Update buffers with tool return
-      onChunk(buffersRef.current, {
-        message_type: "tool_return_message",
-        id: "dummy",
-        date: new Date().toISOString(),
-        tool_call_id: approval.toolCallId,
-        tool_return: toolReturn,
-        status: "success",
-        stdout: null,
-        stderr: null,
-      });
-
-      setThinkingMessage(getRandomThinkingVerb());
-      refreshDerived();
-
-      const decision = {
-        type: "approve" as const,
-        approval,
-        precomputedResult,
-      };
-
-      if (isLast) {
-        setIsExecutingTool(true);
-        await sendAllResults(decision);
-      } else {
-        setApprovalResults((prev) => [...prev, decision]);
-      }
-    },
-    [
-      pendingApprovals,
-      approvalResults,
-      sendAllResults,
-      refreshDerived,
-      agentId,
-      setApprovalResults,
-      setIsExecutingTool,
-      setThinkingMessage,
-    ],
-  );
-
   // Live area shows only in-progress items
   return {
     recoverRestoredPendingApprovals,
@@ -1158,6 +1090,5 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
     handleApproveAlways,
     handleDenyCurrent,
     handleCancelApprovals,
-    handleQuestionSubmit,
   };
 }

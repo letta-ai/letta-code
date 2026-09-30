@@ -6,7 +6,6 @@ import {
 } from "@/agent/approval-execution";
 import { computeDiffPreviews } from "@/helpers/diff-preview";
 import { formatPermissionDenial } from "@/permissions/format-denial";
-import { isInteractiveApprovalTool } from "@/tools/interactive-policy";
 import type { PermissionModeState } from "@/tools/permission-mode-state";
 import type { ApprovalClassificationEndMessage } from "@/types/approval-classification-protocol";
 import type {
@@ -232,7 +231,6 @@ export async function handleApprovalStop(params: {
   const { autoAllowed, autoDenied, needsUserInput } = await classifyApprovals(
     approvals,
     {
-      alwaysRequiresUserInput: isInteractiveApprovalTool,
       treatAskAsDeny: false,
       requireArgsForAutoApprove: true,
       missingNameReason: "Tool call incomplete - missing name",
@@ -392,7 +390,6 @@ export async function handleApprovalStop(params: {
             const reclassified = await classifyApprovalsWithSuggestions(
               pendingNeedsUserInput.map((entry) => entry.approval),
               {
-                alwaysRequiresUserInput: isInteractiveApprovalTool,
                 treatAskAsDeny: false,
                 requireArgsForAutoApprove: true,
                 missingNameReason: "Tool call incomplete - missing name",

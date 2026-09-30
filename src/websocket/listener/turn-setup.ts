@@ -319,9 +319,8 @@ export async function prepareListenerTurn(params: {
     actingUserId: msg.actingUserId,
     clientToolset: msg.clientToolset,
     clientToolAllowlist: msg.clientToolAllowlist,
-    // Headless clients (SDK sessions, automation) opt out of tools that
-    // prompt the human mid-turn; the interactive set is owned by the harness.
-    ...(msg.excludeInteractiveTools || runtime.executionSettings !== undefined
+    // Honor explicit client exclusions; headless execution does not block questions.
+    ...(msg.excludeInteractiveTools
       ? { exclude: [...INTERACTIVE_USER_INPUT_TOOL_NAMES] }
       : {}),
     externalToolScopeIds: msg.externalToolScopeIds,

@@ -1,8 +1,4 @@
 import { memo } from "react";
-import {
-  type AskUserQuestion,
-  parseAskUserQuestions,
-} from "@/cli/helpers/ask-user-questions";
 import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
@@ -15,7 +11,6 @@ import {
 import { InlineBashApproval } from "./InlineBashApproval";
 import { InlineFileEditApproval } from "./InlineFileEditApproval";
 import { InlineGenericApproval } from "./InlineGenericApproval";
-import { InlineQuestionApproval } from "./InlineQuestionApproval";
 import { InlineTaskApproval } from "./InlineTaskApproval";
 
 // Types for parsed tool data
@@ -60,9 +55,6 @@ type Props = {
   allowPersistence?: boolean;
   showPreview?: boolean;
   defaultScope?: "project" | "session";
-
-  // Special handlers for AskUserQuestion
-  onQuestionSubmit?: (answers: Record<string, string>) => void;
 
   // External data for FileEdit approvals
   precomputedDiff?: AdvancedDiffSuccess;
@@ -175,19 +167,6 @@ function getTaskInfo(approval: ApprovalRequest): TaskInfo | null {
   }
 }
 
-// Parse questions from AskUserQuestion args. Delegates to the shared
-// parseAskUserQuestions validator (single source of truth shared with the
-// use-approval-flow submit path) so malformed shapes — e.g. `questions` as a
-// JSON string, a non-string `question`/`header`/`description`, or a
-// non-array/empty `options` — are rejected here and ApprovalSwitch falls
-// through to InlineGenericApproval, matching how malformed Bash/Task args are
-// handled. InlineQuestionApproval also coerces/filters `options` as
-// defense-in-depth, but this gate keeps malformed payloads out of the
-// specialized renderer.
-export function getQuestions(approval: ApprovalRequest): AskUserQuestion[] {
-  return parseAskUserQuestions(approval);
-}
-
 /**
  * ApprovalSwitch - Unified approval component that renders the appropriate
  * specialized approval UI based on tool type.
@@ -205,7 +184,6 @@ export const ApprovalSwitch = memo(
     isFocused = true,
     approveAlwaysText,
     allowPersistence = true,
-    onQuestionSubmit,
     precomputedDiff,
     allDiffs,
     showPreview = true,
@@ -256,23 +234,6 @@ export const ApprovalSwitch = memo(
             allowPersistence={allowPersistence}
             defaultScope={defaultScope}
             showPreview={showPreview}
-          />
-        );
-      }
-    }
-
-    // AskUserQuestion → InlineQuestionApproval
-    // Guard: only render specialized UI if questions are valid, otherwise fall through
-    // to InlineGenericApproval (matches pattern for Bash/Task with malformed args)
-    if (toolName === "AskUserQuestion" && onQuestionSubmit) {
-      const questions = getQuestions(approval);
-      if (questions.length > 0) {
-        return (
-          <InlineQuestionApproval
-            questions={questions}
-            onSubmit={onQuestionSubmit}
-            onCancel={onCancel}
-            isFocused={isFocused}
           />
         );
       }

@@ -268,6 +268,19 @@ await Bun.build({
   },
 });
 
+// Pure async question contract for browser and CommonJS consumers.
+for (const format of ["esm", "cjs"]) {
+  await Bun.build({
+    entrypoints: ["./src/ask-user-question.ts"],
+    outdir: "./dist",
+    target: "browser",
+    format,
+    minify: false,
+    sourcemap: "external",
+    naming: { entry: `ask-user-question.${format === "cjs" ? "cjs" : "js"}` },
+  });
+}
+
 // Pure scheduled-turn envelope contract shared by scheduler producers and
 // transcript consumers.
 await Bun.build({
