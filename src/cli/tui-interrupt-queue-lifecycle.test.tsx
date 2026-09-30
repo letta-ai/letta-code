@@ -231,7 +231,9 @@ async function renderTestApp(executor: HeadlessTurnExecutor): Promise<{
   backend: FakeHeadlessBackend;
   stdin: NodeJS.ReadStream;
 }> {
-  const agentId = "agent-tui-interrupt-queue";
+  // This fixture is local. A Cloud-shaped ID makes skill discovery query
+  // attached repositories over HTTP before each otherwise-fake turn.
+  const agentId = "agent-local-tui-interrupt-queue";
   const backend = new FakeHeadlessBackend(agentId, executor);
   __testSetBackend(backend);
   const agentState = await backend.retrieveAgent(agentId);
