@@ -641,11 +641,11 @@ describe("shared-memory pre-commit hook", () => {
 
   test("validates a large tracked tree without passing every path to the runtime", () => {
     repo = initRepo("shared-memory-many-paths-");
-    for (let index = 0; index < 800; index += 1) {
+    for (let index = 0; index < 240; index += 1) {
       writeFileSync(
         join(
           repo,
-          `notes-${String(index).padStart(4, "0")}-${"x".repeat(48)}.md`,
+          `notes-${String(index).padStart(4, "0")}-${"x".repeat(145)}.md`,
         ),
         v2Memory("valid\n"),
       );
@@ -668,7 +668,7 @@ if [ "$length" -gt 32767 ]; then
   echo "simulated Windows command line limit" >&2
   exit 90
 fi
-exec '${process.execPath}' "$@"
+exec node "$@"
 `,
       { mode: 0o755 },
     );
@@ -686,7 +686,7 @@ exec '${process.execPath}' "$@"
     );
     expect(valid.status).toBe(0);
 
-    const firstMemoryPath = `notes-0000-${"x".repeat(48)}.md`;
+    const firstMemoryPath = `notes-0000-${"x".repeat(145)}.md`;
     writeFileSync(join(repo, firstMemoryPath), "invalid\n");
     execFileSync("git", ["add", firstMemoryPath], { cwd: repo });
     const invalid = tryCommit(repo, "reject bad memory in large tree");
