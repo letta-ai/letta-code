@@ -17,12 +17,11 @@ import { killAllTerminals } from "@/websocket/terminal-handler";
 import {
   rejectPendingApprovalResolvers,
   rejectPendingApprovalResolversForConnection,
-  replayPendingApprovalRequestsToConnection,
 } from "./approval";
 import { resolveListenerReconnectAuth } from "./auth";
 import {
   getOrCreateProcessTransport,
-  markListenerConnectionInitialized,
+  isCurrentInitializedListenerConnection,
   openListenerConnection,
   suspendListenerConnection,
 } from "./connection";
@@ -31,10 +30,11 @@ import {
   closeListenerRuntimeConnections,
   createConnectionTurnProcessor,
 } from "./connection-lifecycle";
-import { emitInitialConnectionState as emitInitialState } from "./connection-state-sync";
+import { completeInitialConnectionStartup } from "./connection-state-sync";
 import {
   INITIAL_RETRY_DELAY_MS,
   LISTENER_PONG_TIMEOUT_MS,
+  MAX_RETRY_ATTEMPTS,
   MAX_RETRY_DELAY_MS,
   MAX_RETRY_DURATION_MS,
 } from "./constants";
@@ -82,7 +82,6 @@ import {
   createListenerPairIdentity,
   handleListenerSocketOpenFailure,
   isCurrentSocketPair,
-  parseListenerReadyMessage,
   preparePairedListenerTransport,
   prepareSplitStreamTransport,
   shouldHandleControlSocketClose,
@@ -335,10 +334,13 @@ export async function startConnectedListenerRuntime(
     startProcessServices?: boolean;
     streamTransport?: ListenerTransport | null;
     emitInitialState?: boolean;
+    updateReconnectState?: boolean;
     recoverRecordedWork?: typeof recoverRecordedTurns;
   } = {},
 ): Promise<void> {
   if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) return;
+  const startupConnection = runtime.connections.get(opts.connectionId);
+  if (!startupConnection || startupConnection.writer !== transport) return;
   sealStartupLogs();
   installExternalToolBridge(runtime);
   // Opt out when another process already holds the cron scheduler lease.
@@ -353,19 +355,16 @@ export async function startConnectedListenerRuntime(
         ? "_ws_open"
         : "_local_open",
   });
-  runtime.hasSuccessfulConnection = true;
-  runtime.everConnected = true;
-  await opts.onConnected(opts.connectionId);
-  if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) return;
-  markListenerConnectionInitialized(runtime, opts.connectionId);
-  await emitInitialState(runtime, transport, opts.connectionId, options);
-  for (const conversationRuntime of runtime.conversationRuntimes.values()) {
-    replayPendingApprovalRequestsToConnection(
-      conversationRuntime,
-      opts.connectionId,
-    );
-  }
-
+  if (
+    !(await completeInitialConnectionStartup(
+      runtime,
+      startupConnection,
+      transport,
+      opts,
+      options,
+    ))
+  )
+    return;
   if (options.startHeartbeat !== false) {
     startConnectionHeartbeat(
       runtime,
@@ -392,7 +391,6 @@ export async function startConnectedListenerRuntime(
   }
 
   if (options.startProcessServices === false) return;
-
   // Managed remote listeners adopt an open gateway and resume local records.
   scheduleRecordedTurnRecovery(runtime, options.recoverRecordedWork);
 
@@ -410,7 +408,7 @@ export async function startConnectedListenerRuntime(
 
   if (runtime.processServicesStarted) return;
   if (!(await waitForProcessServicesSlot(runtime, opts.connectionId))) return;
-
+  if (runtime.connections.get(opts.connectionId) !== startupConnection) return;
   const processServicesGeneration = runtime.processServicesGeneration + 1;
   runtime.processServicesGeneration = processServicesGeneration;
   const processServicesReady = (async () => {
@@ -681,7 +679,6 @@ export async function startLocalChannelListener(
   }
 }
 
-/** Connect to WebSocket with exponential backoff retry. */
 async function connectWithRetry(
   runtime: ListenerRuntime,
   opts: StartListenerOptions,
@@ -711,11 +708,7 @@ async function connectWithRetry(
       INITIAL_RETRY_DELAY_MS * 2 ** (attempt - 1),
       MAX_RETRY_DELAY_MS,
     );
-    const maxAttempts = Math.ceil(
-      Math.log2(MAX_RETRY_DURATION_MS / INITIAL_RETRY_DELAY_MS),
-    );
-
-    opts.onRetrying?.(attempt, maxAttempts, delay, opts.connectionId);
+    opts.onRetrying?.(attempt, MAX_RETRY_ATTEMPTS, delay, opts.connectionId);
 
     await new Promise<void>((resolve) => {
       runtime.reconnectTimeout = setTimeout(resolve, delay);
@@ -791,7 +784,7 @@ async function connectWithRetry(
     runDetachedListenerTask,
     trackListenerError,
   });
-  let pairedStartupReady = pairIdentity === null;
+  let connectionStartupReady = false;
   const pendingStartupFrames: WebSocket.RawData[] = [];
   if (streamSocket) {
     attachSplitStreamSocketHandlers({
@@ -832,7 +825,7 @@ async function connectWithRetry(
         });
       }
       if (!isCurrentSocketPair(runtime, socket, streamSocket)) return;
-      openListenerConnection({
+      const connection = openListenerConnection({
         runtime,
         connectionId: opts.connectionId,
         writer: socket,
@@ -847,10 +840,12 @@ async function connectWithRetry(
         {
           startHeartbeat: true,
           startCronScheduler: true,
+          updateReconnectState: true,
           streamTransport,
         },
       );
-      pairedStartupReady = true;
+      if (!isCurrentInitializedListenerConnection(runtime, connection)) return;
+      connectionStartupReady = true;
       for (const frame of pendingStartupFrames.splice(0)) {
         await handleMessage(frame);
       }
@@ -866,11 +861,7 @@ async function connectWithRetry(
   });
 
   socket.on("message", (data: WebSocket.RawData) => {
-    if (
-      pairIdentity &&
-      !pairedStartupReady &&
-      !parseListenerReadyMessage(data)
-    ) {
+    if (!connectionStartupReady) {
       pendingStartupFrames.push(data);
       return;
     }
@@ -894,6 +885,10 @@ async function connectWithRetry(
       runtime.intentionallyClosed ||
       code === 1008 ||
       (code === 1000 && reasonText === "Replaced by new connection");
+
+    if (!terminalClose && runtime.hasSuccessfulConnection) {
+      opts.onRetrying?.(0, MAX_RETRY_ATTEMPTS, 0, opts.connectionId);
+    }
 
     clearRuntimeTimers(runtime);
 

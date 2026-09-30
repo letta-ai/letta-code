@@ -30,6 +30,7 @@ type LockEntry = {
   optional?: boolean;
   os?: string[];
   cpu?: string[];
+  libc?: string[];
   link?: boolean;
   dependencies?: Record<string, string>;
   optionalDependencies?: Record<string, string>;
@@ -50,6 +51,7 @@ type CanonicalGraphEntry = {
   optional: boolean;
   os: string[];
   cpu: string[];
+  libc: string[];
 };
 
 function hasSha512Integrity(value: unknown): value is string {
@@ -103,6 +105,7 @@ export function canonicalRuntimeGraph(
       optional: entry.optional === true,
       os: Array.isArray(entry.os) ? entry.os : [],
       cpu: Array.isArray(entry.cpu) ? entry.cpu : [],
+      libc: Array.isArray(entry.libc) ? [...entry.libc].sort() : [],
     });
   }
 

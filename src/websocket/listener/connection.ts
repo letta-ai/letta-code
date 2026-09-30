@@ -128,12 +128,24 @@ export function openListenerConnection(params: {
 export async function waitForListenerConnectionStartup(
   runtime: ListenerRuntime,
   connectionId: ListenerConnectionId,
+  expectedWriter: ListenerTransport,
 ): Promise<boolean> {
   const connection = runtime.connections.get(connectionId);
-  if (!connection) return true;
+  if (!connection || connection.writer !== expectedWriter) return false;
   await connection.startupReady;
   return (
     runtime.connections.get(connectionId) === connection &&
+    connection.writer === expectedWriter &&
+    connection.initialized
+  );
+}
+
+export function isCurrentInitializedListenerConnection(
+  runtime: ListenerRuntime,
+  connection: ListenerConnectionState,
+): boolean {
+  return (
+    runtime.connections.get(connection.id) === connection &&
     connection.initialized
   );
 }
@@ -141,9 +153,14 @@ export async function waitForListenerConnectionStartup(
 export function markListenerConnectionInitialized(
   runtime: ListenerRuntime,
   connectionId: ListenerConnectionId,
+  expectedConnection?: ListenerConnectionState,
 ): void {
   const connection = runtime.connections.get(connectionId);
-  if (connection && !connection.initialized) {
+  if (
+    connection &&
+    (!expectedConnection || connection === expectedConnection) &&
+    !connection.initialized
+  ) {
     connection.initialized = true;
     connection.resolveStartupReady();
   }

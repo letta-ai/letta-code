@@ -232,14 +232,17 @@ test("keeps attached App Server connections from bypassing the startup barrier",
       {
         startHeartbeat: false,
         startCronScheduler: false,
+        updateReconnectState: true,
       },
     );
     await gatewayStarting;
 
+    expect(runtime.hasSuccessfulConnection).toBe(false);
     expect(runtime.processServicesStarted).toBe(false);
 
     releaseGateway();
     await start;
+    expect(runtime.hasSuccessfulConnection).toBe(true);
     expect(runtime.processServicesStarted).toBe(true);
   } finally {
     releaseGateway();

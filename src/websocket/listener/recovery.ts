@@ -17,6 +17,7 @@ import { createBuffers } from "@/cli/helpers/accumulator";
 import { drainStreamWithResume } from "@/cli/helpers/stream";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import type { StopReasonType, StreamDelta } from "@/types/protocol_v2";
+import { isDebugEnabled } from "@/utils/debug";
 import { normalizeCloudRetryWireMessage } from "./cloud-retry-message";
 import {
   LISTENER_STREAM_RESUME_POLICY,
@@ -313,7 +314,7 @@ export async function debugLogApprovalResumeState(
     sentToolCallIds: string[];
   },
 ): Promise<void> {
-  if (!process.env.DEBUG) {
+  if (!isDebugEnabled()) {
     return;
   }
 

@@ -61,6 +61,7 @@ describe("split stream listener lifecycle", () => {
   let rejectNextStreamUpgrade: boolean;
   let streamUpgradeAttempts: number;
   let stalledUpgradeSockets: Set<Duplex>;
+  let controlFrameOnConnect: unknown | null;
 
   beforeEach(async () => {
     stopListenerClient();
@@ -101,6 +102,7 @@ describe("split stream listener lifecycle", () => {
     rejectNextStreamUpgrade = false;
     streamUpgradeAttempts = 0;
     stalledUpgradeSockets = new Set();
+    controlFrameOnConnect = null;
     server = new WebSocketServer({ noServer: true });
     httpServer = createServer();
     httpServer.on("upgrade", (request, socket, head) => {
@@ -141,6 +143,10 @@ describe("split stream listener lifecycle", () => {
       connectionUrls.push(requestUrl);
       connectionChannels.push(requestUrl.searchParams.get("channel"));
       receivedFrames[index] = [];
+      if (requestUrl.searchParams.get("channel") === "control") {
+        const frame = controlFrameOnConnect;
+        if (frame) socket.send(JSON.stringify(frame));
+      }
       socket.on("message", (data) => {
         receivedFrames[index]?.push(JSON.parse(data.toString()) as unknown);
       });
@@ -279,6 +285,30 @@ describe("split stream listener lifecycle", () => {
       }),
     );
   }
+
+  test("legacy split startup buffers control frames received before registration", async () => {
+    controlFrameOnConnect = {
+      type: "app_server_info",
+      request_id: "pre-registration",
+    };
+    const onConnected = mock(() => {});
+
+    await startClient({ onConnected });
+    await waitFor(
+      () => onConnected.mock.calls.length === 1,
+      "legacy split listener did not finish startup",
+    );
+    const controlIndex = lastConnectionIndexForChannel("control");
+    await waitFor(
+      () =>
+        receivedFrames[controlIndex]?.some(
+          (frame) =>
+            (frame as { request_id?: string }).request_id ===
+            "pre-registration",
+        ) ?? false,
+      "pre-registration control frame was not replayed after startup",
+    );
+  });
 
   test("paired startup waits for exact control and stream acceptance", async () => {
     const onConnected = mock(() => {});

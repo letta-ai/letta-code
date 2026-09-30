@@ -1,7 +1,10 @@
 import { afterEach, expect, mock, test } from "bun:test";
 import WebSocket from "ws";
 import type { TeleportContinuation } from "@/types/protocol_v2";
-import { openListenerConnection } from "./connection";
+import {
+  markListenerConnectionInitialized,
+  openListenerConnection,
+} from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { dispatchInboundMessageWhenReady } from "./inbound-dispatch";
 import { createRuntime } from "./lifecycle";
@@ -48,12 +51,13 @@ function openSource(
   listener: ReturnType<typeof createRuntime>,
   socket: MockSocket,
 ): void {
-  openListenerConnection({
+  const connection = openListenerConnection({
     runtime: listener,
     connectionId: "source",
     writer: socket as never,
     options: makeOptions(),
   });
+  markListenerConnectionInitialized(listener, "source", connection);
 }
 
 function requestTeleport(listener: ReturnType<typeof createRuntime>): void {

@@ -7,6 +7,7 @@ import {
 
 async function runLifecycleCli(
   extraEnv: Record<string, string | undefined> = {},
+  extraArgs: string[] = [],
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   const bundle = process.env.LETTA_TEST_CLI_BUNDLE;
   const child = Bun.spawn(
@@ -16,6 +17,7 @@ async function runLifecycleCli(
       "server",
       "--lifecycle-output",
       "jsonl",
+      ...extraArgs,
       "--help",
     ],
     {
@@ -102,13 +104,38 @@ describe("server lifecycle CLI output", () => {
     expect(result.stdout).not.toContain("letta-startup-end");
   });
 
-  test.each(["LETTA_DEBUG", "DEBUG"])(
-    "rejects lifecycle mode when %s enables debug output",
-    async (variable) => {
-      const result = await runLifecycleCli({ [variable]: "1" });
+  test.each([
+    ["LETTA_DEBUG", "1"],
+    ["DEBUG", "1"],
+  ])(
+    "rejects lifecycle mode when %s=%s can enable debug output",
+    async (variable, value) => {
+      const result = await runLifecycleCli({ [variable]: value });
       expect(result.code).toBe(1);
       expect(result.stdout).toBe("");
       expect(result.stderr).toContain("debug output is enabled");
     },
   );
+
+  test.each(["0", "false", "letta:*"])(
+    "keeps lifecycle stdout machine-only when DEBUG=%s is disabled",
+    async (value) => {
+      const result = await runLifecycleCli({ DEBUG: value });
+      expect(result.code, result.stderr).toBe(1);
+      expect(result.stdout).toBe(
+        '{"lettaLifecycleProtocol":1,"state":"error"}\n',
+      );
+    },
+  );
+
+  test("keeps parse-error usage off lifecycle stdout", async () => {
+    const result = await runLifecycleCli({}, ["--not-a-listener-option"]);
+    expect(result.code).toBe(1);
+    expect(result.stdout).toBe(
+      '{"lettaLifecycleProtocol":1,"state":"error"}\n',
+    );
+    expect(result.stdout).not.toContain("Usage:");
+    expect(result.stdout).not.toContain("letta-startup-end");
+    expect(result.stderr).toContain("not-a-listener-option");
+  });
 });

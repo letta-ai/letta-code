@@ -2,6 +2,7 @@ import type { RuntimeScope } from "@/types/protocol_v2";
 import { replayPendingApprovalRequestsToConnection } from "./approval";
 import {
   findListenerConnectionByTransport,
+  markListenerConnectionInitialized,
   toListenerConnection,
 } from "./connection";
 import {
@@ -10,11 +11,14 @@ import {
   emitStateSync,
   refreshDeviceGitContext,
 } from "./protocol-outbound";
+import { getActiveRuntime } from "./runtime";
 import type { ListenerTransport } from "./transport";
 import type {
   ConversationRuntime,
   ListenerConnectionId,
+  ListenerConnectionState,
   ListenerRuntime,
+  StartListenerOptions,
 } from "./types";
 
 export async function emitInitialConnectionState(
@@ -39,6 +43,39 @@ export async function emitInitialConnectionState(
     emitDeviceStatusUpdate(transport, conversationRuntime, scope, routing);
     emitLoopStatusUpdate(transport, conversationRuntime, scope, routing);
   }
+}
+
+export async function completeInitialConnectionStartup(
+  listener: ListenerRuntime,
+  connection: ListenerConnectionState,
+  transport: ListenerTransport,
+  options: Pick<StartListenerOptions, "connectionId" | "onConnected">,
+  startupOptions: {
+    emitInitialState?: boolean;
+    updateReconnectState?: boolean;
+  },
+): Promise<boolean> {
+  const isCurrent = (): boolean =>
+    listener === getActiveRuntime() &&
+    !listener.intentionallyClosed &&
+    listener.connections.get(options.connectionId) === connection;
+
+  await options.onConnected(options.connectionId);
+  if (!isCurrent()) return false;
+  await emitInitialConnectionState(listener, transport, options.connectionId, {
+    emitInitialState: startupOptions.emitInitialState,
+  });
+  if (!isCurrent()) return false;
+  for (const runtime of listener.conversationRuntimes.values()) {
+    replayPendingApprovalRequestsToConnection(runtime, options.connectionId);
+  }
+  if (!isCurrent()) return false;
+  if (startupOptions.updateReconnectState) {
+    listener.hasSuccessfulConnection = true;
+    listener.everConnected = true;
+  }
+  markListenerConnectionInitialized(listener, options.connectionId, connection);
+  return true;
 }
 
 export async function replaySubscribedConnectionState(

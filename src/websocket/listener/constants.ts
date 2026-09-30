@@ -1,6 +1,9 @@
 export const MAX_RETRY_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 export const INITIAL_RETRY_DELAY_MS = 1000; // 1 second
 export const MAX_RETRY_DELAY_MS = 30000; // 30 seconds
+export const MAX_RETRY_ATTEMPTS = Math.ceil(
+  Math.log2(MAX_RETRY_DURATION_MS / INITIAL_RETRY_DELAY_MS),
+);
 // Split listener pairs are only usable once both control and stream sockets
 // complete their opening handshake. If the stream upgrade makes no progress,
 // tear down the incomplete pair and let the normal reconnect path build a

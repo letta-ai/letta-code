@@ -25,6 +25,7 @@ function dependencyLock() {
         resolved:
           "https://registry.npmjs.org/dependency/-/dependency-4.5.6.tgz",
         integrity,
+        libc: ["musl", "glibc"],
       },
     },
   };
@@ -43,6 +44,7 @@ describe("runtime dependency graph protocol", () => {
         optional: false,
         os: [],
         cpu: [],
+        libc: ["glibc", "musl"],
       },
     ];
     const expected = `sha512-${createHash("sha512")
@@ -51,6 +53,16 @@ describe("runtime dependency graph protocol", () => {
 
     expect(canonicalRuntimeGraph(lock)).toEqual(canonical);
     expect(runtimeGraphDigest(lock)).toBe(expected);
+  });
+
+  test("includes libc compatibility in the canonical digest", () => {
+    const multiLibcLock = dependencyLock();
+    const muslOnlyLock = dependencyLock();
+    muslOnlyLock.packages["node_modules/dependency"].libc = ["musl"];
+
+    expect(runtimeGraphDigest(multiLibcLock)).not.toBe(
+      runtimeGraphDigest(muslOnlyLock),
+    );
   });
 
   test("verifies the release manifest declaration and shrinkwrap root", () => {
