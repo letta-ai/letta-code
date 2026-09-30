@@ -448,6 +448,18 @@ function checkPermissionForEngine(
     };
   }
 
+  // Memory() only reads the scoped agent's own memory directory.
+  if (toolName === "Memory" && !isStrictMode) {
+    traceEvent(trace, "memory-auto-allow", "Memory tool is always allowed");
+    return {
+      result: {
+        decision: "allow",
+        reason: "Memory tool is always allowed (reads own memory)",
+      },
+      trace,
+    };
+  }
+
   if (!isStrictMode && isShellToolName(canonicalTool)) {
     const shellCommand = extractShellCommand(toolArgs);
     if (
