@@ -175,7 +175,7 @@ describe("Memory tool", () => {
       "[File truncated: showing lines 1-2000 of 2100 total lines.",
     );
     expect(file.text).toContain(
-      `[Full file: ${memoryDir(V2_AGENT)}/bulk/long.md]`,
+      `[Full file: ${join(memoryDir(V2_AGENT), "bulk", "long.md")}]`,
     );
   });
 
