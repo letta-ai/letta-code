@@ -110,7 +110,7 @@ jobs:
           NODE
           ASAR=$(find apps/daemon/release -iname app.asar -print -quit)
           test -n "$ASAR"
-          bunx asar list "$ASAR" > /tmp/daemon-asar-files.txt
+          node node_modules/@electron/asar/bin/asar.js list "$ASAR" > /tmp/daemon-asar-files.txt
           for path in \
             /dist/main.cjs \
             /dist/preload.cjs \
