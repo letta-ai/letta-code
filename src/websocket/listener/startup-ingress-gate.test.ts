@@ -1,6 +1,10 @@
 import { expect, mock, test } from "bun:test";
 import type WebSocket from "ws";
-import { openListenerConnection } from "./connection";
+import {
+  closeListenerConnection,
+  markListenerConnectionInitialized,
+  openListenerConnection,
+} from "./connection";
 import {
   createRuntime,
   startConnectedListenerRuntime,
@@ -16,11 +20,14 @@ class MockTransport {
   readonly sent: string[] = [];
   bufferedAmount = 0;
 
+  constructor(private readonly onSend?: () => void) {}
+
   isOpen(): boolean {
     return true;
   }
 
   send(data: string): void {
+    this.onSend?.();
     this.sent.push(data);
   }
 }
@@ -100,6 +107,147 @@ test("gates every inbound frame until awaited connection startup completes", asy
     expect(onWsEvent).toHaveBeenCalledTimes(2);
   } finally {
     releaseStartup();
+    stopRuntime(runtime, true);
+    setActiveRuntime(null);
+  }
+});
+
+test("emits initial state before opening the inbound startup gate", async () => {
+  const runtime = createRuntime();
+  const connectionId = "initial-sync";
+  const initializedDuringSync: boolean[] = [];
+  const transport = new MockTransport(() => {
+    initializedDuringSync.push(
+      runtime.connections.get(connectionId)?.initialized ?? false,
+    );
+  });
+  const options: StartListenerOptions = {
+    connectionId,
+    wsUrl: "local://test",
+    deviceId: "device-1",
+    connectionName: "test",
+    onConnected: () => {},
+    onDisconnected: () => {},
+    onError: () => {},
+  };
+  openListenerConnection({
+    runtime,
+    connectionId,
+    writer: transport,
+    options,
+  });
+  setActiveRuntime(runtime);
+
+  try {
+    await startConnectedListenerRuntime(
+      runtime,
+      transport,
+      options,
+      async () => {},
+      {
+        startHeartbeat: false,
+        startCronScheduler: false,
+        startProcessServices: false,
+      },
+    );
+
+    expect(initializedDuringSync.length).toBeGreaterThan(0);
+    expect(initializedDuringSync).toEqual(
+      initializedDuringSync.map(() => false),
+    );
+    expect(runtime.connections.get(connectionId)?.initialized).toBe(true);
+  } finally {
+    stopRuntime(runtime, true);
+    setActiveRuntime(null);
+  }
+});
+
+test("stale startup cannot initialize a replacement with the same id", async () => {
+  const runtime = createRuntime();
+  const firstTransport = new MockTransport();
+  const replacementTransport = new MockTransport();
+  let releaseFirstStartup!: () => void;
+  const firstStartupBlocked = new Promise<void>((resolve) => {
+    releaseFirstStartup = resolve;
+  });
+  const options: StartListenerOptions = {
+    connectionId: "reused-connection",
+    wsUrl: "local://test",
+    deviceId: "device-1",
+    connectionName: "test",
+    onConnected: async () => firstStartupBlocked,
+    onDisconnected: () => {},
+    onError: () => {},
+  };
+  const firstConnection = openListenerConnection({
+    runtime,
+    connectionId: options.connectionId,
+    writer: firstTransport,
+    options,
+  });
+  const handleFirstMessage = createListenerMessageHandler({
+    runtime,
+    socket: firstTransport as unknown as WebSocket,
+    opts: options,
+    processQueuedTurn: async () => {},
+    fileCommandSession: { handle: () => false },
+    getParsedRuntimeScope: () => null,
+    replaySyncStateForRuntime: async () => {},
+    getOrCreateScopedRuntime: () => {
+      throw new Error("not used");
+    },
+    handleApprovalResponseInput: async () => false,
+    handleChangeDeviceStateInput: async () => false,
+    handleAbortMessageInput: async () => false,
+    stampInboundUserMessageOtids: (incoming) => incoming,
+    safeSocketSend: () => true,
+    runDetachedListenerTask: () => {},
+    trackListenerError: () => {},
+    processIncomingMessage: async () => {},
+  });
+  setActiveRuntime(runtime);
+
+  try {
+    const firstStartup = startConnectedListenerRuntime(
+      runtime,
+      firstTransport,
+      options,
+      async () => {},
+      {
+        startHeartbeat: false,
+        startCronScheduler: false,
+        startProcessServices: false,
+        emitInitialState: false,
+      },
+    );
+    await Promise.resolve();
+
+    expect(closeListenerConnection(runtime, options.connectionId)).toBe(
+      firstConnection,
+    );
+    const replacement = openListenerConnection({
+      runtime,
+      connectionId: options.connectionId,
+      writer: replacementTransport,
+      options: { ...options, onConnected: () => {} },
+    });
+
+    releaseFirstStartup();
+    await firstStartup;
+
+    expect(firstConnection.initialized).toBe(false);
+    expect(replacement.initialized).toBe(false);
+    markListenerConnectionInitialized(
+      runtime,
+      options.connectionId,
+      replacement,
+    );
+    expect(replacement.initialized).toBe(true);
+
+    await handleFirstMessage(Buffer.from(JSON.stringify({ type: "pong" })));
+    expect(runtime.lastPongAt).toBeNull();
+  } finally {
+    releaseFirstStartup();
     stopRuntime(runtime, true);
     setActiveRuntime(null);
   }

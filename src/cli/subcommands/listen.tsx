@@ -18,9 +18,17 @@ import {
   RESTORE_ENABLED_CHANNELS_AGENT_SCOPE_ENV,
 } from "@/channels/restore-scope";
 import { ListenerStatusUI } from "@/cli/components/ListenerStatusUI";
-import { resolveServerLifecycleOutput } from "@/cli/subcommands/lifecycle-output";
+import {
+  createServerLifecycleOutput,
+  hasJsonlLifecycleIntent,
+  resolveServerLifecycleOutput,
+} from "@/cli/subcommands/lifecycle-output";
 import { printFirstRunWelcome } from "@/cli/subcommands/listen-first-run-welcome";
 import { printListenUsage } from "@/cli/subcommands/listen-usage";
+import {
+  completeListenerConnectionStartup,
+  createListenerReadinessController,
+} from "@/cli/subcommands/listener-readiness";
 import { applyStartupPermissionMode } from "@/permissions/startup";
 import { settingsManager } from "@/settings-manager";
 import { getListenerTelemetrySurface, telemetry } from "@/telemetry";
@@ -204,7 +212,8 @@ const LISTEN_OPTIONS = {
 } as const;
 
 export async function runListenSubcommand(argv: string[]): Promise<number> {
-  // Parse arguments
+  const lifecycleRequested = hasJsonlLifecycleIntent(argv);
+  if (lifecycleRequested) suppressStartupLogMarker();
   let values: ReturnType<
     typeof parseArgs<{ options: typeof LISTEN_OPTIONS }>
   >["values"];
@@ -218,7 +227,8 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`Error: ${message}`);
-    printListenUsage();
+    if (lifecycleRequested) createServerLifecycleOutput().emit("error");
+    else printListenUsage();
     return 1;
   }
 
@@ -238,7 +248,6 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   const lifecycleOutput = lifecycle.output;
   if (lifecycleOutput) suppressStartupLogMarker();
 
-  // Machine lifecycle mode owns stdout; never mix human usage text into JSONL.
   if (values.help) {
     if (lifecycleOutput) {
       lifecycleOutput.emit("error");
@@ -334,7 +343,6 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     process.exit(code);
   };
 
-  // Load local project settings to access saved environment name
   await settingsManager.loadLocalProjectSettings();
 
   // Initialize channels if explicitly requested, or restore persisted enabled
@@ -372,22 +380,18 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     }
   };
 
-  // Determine connection name
   let connectionName: string;
   let showedFirstRunWelcome = false;
 
   const explicitComputerName = values["computer-name"] ?? values["env-name"];
   const spawnerDeviceId = getSpawnerDeviceId();
   if (explicitComputerName) {
-    // Explicitly provided - use it and save to local project settings
     connectionName = explicitComputerName;
     if (!spawnerDeviceId) settingsManager.setListenerEnvName(connectionName);
   } else {
-    // Not provided - check saved local project settings
     const savedName = settingsManager.getListenerEnvName();
 
     if (savedName) {
-      // Reuse saved name
       connectionName = savedName;
     } else {
       // No saved name - default to hostname so a first run (e.g. pasted from
@@ -399,7 +403,6 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     }
   }
 
-  // Session log (always written to ~/.letta/logs/remote/)
   const sessionLog = new RemoteSessionLog();
   sessionLog.init();
   if (!lifecycleOutput) console.log(`Log file: ${sessionLog.path}`);
@@ -409,7 +412,6 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   };
 
   try {
-    // Get device ID
     const deviceId = spawnerDeviceId ?? settingsManager.getOrCreateDeviceId();
     if (spawnerDeviceId)
       process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID = deviceId;
@@ -512,19 +514,11 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       }
     }
 
-    let currentListenerStatus: "idle" | "receiving" | "processing" = "idle";
-    let lifecycleConnected = false;
-    const updateListenerStatus = (
-      status: "idle" | "receiving" | "processing",
-    ): void => {
-      currentListenerStatus = status;
-      if (lifecycleConnected) lifecycleOutput?.emitListenerStatus(status);
-    };
-    const emitConnectedWithCurrentStatus = (): void => {
-      lifecycleConnected = true;
-      lifecycleOutput?.emit("connected");
-      lifecycleOutput?.emitListenerStatus(currentListenerStatus);
-    };
+    const readiness = createListenerReadinessController(
+      channelNames.length > 0 || restoreEnabledChannels,
+      (ready) => lifecycleOutput?.emit(ready ? "connected" : "reconnecting"),
+      (status) => lifecycleOutput?.emitListenerStatus(status),
+    );
 
     let channelGatewayStart: Promise<void> | null = null;
     const startChannelGateway = (): Promise<void> => {
@@ -566,9 +560,9 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
           },
           onLifecycleEvent: (event) => {
             if (event.kind === "restart_scheduled") {
-              lifecycleOutput?.emit("reconnecting");
+              readiness.setGatewayReady(false);
             } else if (event.kind === "restart_ready") {
-              lifecycleOutput?.emitListenerStatus(currentListenerStatus);
+              readiness.setGatewayReady(true);
             }
             telemetry.trackChannelGatewayLifecycle({
               lifecycle_event: event.kind,
@@ -605,6 +599,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             }
           },
         });
+        readiness.setGatewayReady(true);
         runtime.serviceCommandHandler = (request) => {
           const supervisor = channelGatewaySupervisor;
           if (!supervisor) {
@@ -664,15 +659,19 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             : undefined,
         onStatusChange: (status) => {
           sessionLog.log(`status: ${status}`);
-          updateListenerStatus(status);
+          readiness.setStatus(status);
           if (debugMode) {
             console.log(`[${formatTimestamp()}] status: ${status}`);
           }
         },
-        onConnected: async () => {
-          await startChannelGateway();
+        onConnected: async (connectedId) => {
+          const ready = await completeListenerConnectionStartup(
+            connectedId,
+            readiness,
+            startChannelGateway,
+          );
+          if (!ready) return;
           sessionLog.log("Local channel listener ready.");
-          emitConnectedWithCurrentStatus();
           if (debugMode) {
             console.log(`[${formatTimestamp()}] Local channel listener ready.`);
             console.log("");
@@ -736,12 +735,8 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       console.log("");
     }
 
-    // Import and start WebSocket client
     const { startListenerClient } = await import("@/websocket/listen-client");
 
-    // Re-register helper with retry for transient errors (e.g. 521).
-    // Uses exponential backoff so a temporary server outage doesn't
-    // permanently kill the connection.
     const reregister = async (): Promise<RegisterResult> => {
       sessionLog.log("Re-registering with retry...");
       const nextRegisterOptions = await resolveListenerRegistrationOptions(
@@ -770,12 +765,21 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     const shouldLogWsEvents =
       debugMode || process.env.LETTA_LOG_WS_EVENTS === "1";
 
-    // WS event logger: optionally writes to file, console only in --debug
     const wsEventLogger = (
       direction: "send" | "recv",
       label: "client" | "protocol" | "control" | "lifecycle",
       event: unknown,
     ): void => {
+      if (
+        direction === "recv" &&
+        label === "lifecycle" &&
+        event &&
+        typeof event === "object" &&
+        "type" in event &&
+        event.type === "_ws_close"
+      ) {
+        markCloudListenerReconnecting();
+      }
       if (!shouldLogWsEvents) {
         return;
       }
@@ -789,7 +793,6 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     };
 
     if (debugMode || lifecycleOutput) {
-      // Non-interactive modes do not mount the Ink status UI.
       const startNonInteractiveClient = async (
         connId: string,
         url: string,
@@ -808,16 +811,20 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
           onWsEvent: shouldLogWsEvents ? wsEventLogger : undefined,
           onStatusChange: (status) => {
             sessionLog.log(`status: ${status}`);
-            updateListenerStatus(status);
+            readiness.setStatus(status);
             if (debugMode) {
               console.log(`[${formatTimestamp()}] status: ${status}`);
             }
           },
           onLog: logListenerMessage,
-          onConnected: async () => {
+          onConnected: async (connectedId) => {
+            const ready = await completeListenerConnectionStartup(
+              connectedId,
+              readiness,
+              startChannelGateway,
+            );
+            if (!ready) return;
             sessionLog.log("Connected. Awaiting instructions.");
-            await startChannelGateway();
-            emitConnectedWithCurrentStatus();
             if (debugMode) {
               console.log(
                 `[${formatTimestamp()}] Connected. Awaiting instructions.`,
@@ -826,11 +833,10 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             }
           },
           onRetrying: (attempt, _maxAttempts, nextRetryIn) => {
-            lifecycleConnected = false;
+            readiness.setCloudReconnecting();
             sessionLog.log(
               `Reconnecting (attempt ${attempt}, retry in ${Math.round(nextRetryIn / 1000)}s)`,
             );
-            lifecycleOutput?.emit("reconnecting");
             if (debugMode) {
               console.log(
                 `[${formatTimestamp()}] Reconnecting (attempt ${attempt}, retry in ${Math.round(nextRetryIn / 1000)}s)`,
@@ -838,8 +844,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             }
           },
           onNeedsReregister: async () => {
-            lifecycleConnected = false;
-            lifecycleOutput?.emit("reconnecting");
+            readiness.setCloudReconnecting();
             if (debugMode) {
               console.log(
                 `[${formatTimestamp()}] Computer connection expired, re-registering...`,
@@ -882,8 +887,6 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         supportsPairedListenerGenerations,
       );
     } else {
-      // Normal mode: interactive Ink UI. On a first run keep the welcome banner
-      // and sign-in output on screen instead of clearing them.
       if (!showedFirstRunWelcome) console.clear();
 
       let updateStatusCallback:
@@ -983,10 +986,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       );
     }
 
-    // Keep process alive
-    return new Promise<number>(() => {
-      // Never resolves - runs until Ctrl+C
-    });
+    return new Promise<number>(() => {});
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     sessionLog.log(`FATAL: ${msg}`);

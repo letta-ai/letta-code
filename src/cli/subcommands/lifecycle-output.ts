@@ -17,6 +17,14 @@ export type ServerLifecycleOutput = {
   emitListenerStatus: (status: "idle" | "receiving" | "processing") => void;
 };
 
+export function hasJsonlLifecycleIntent(argv: string[]): boolean {
+  return argv.some(
+    (arg, index) =>
+      arg === "--lifecycle-output=jsonl" ||
+      (arg === "--lifecycle-output" && argv[index + 1] === "jsonl"),
+  );
+}
+
 export function resolveServerLifecycleOutput(
   mode: string | undefined,
   debug: boolean,

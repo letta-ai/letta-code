@@ -221,7 +221,9 @@ export function createListenerMessageHandler(
   const connectionId = explicitConnectionId ?? opts.connectionId;
 
   return async (data: WebSocket.RawData): Promise<void> => {
-    if (!(await waitForListenerConnectionStartup(runtime, connectionId)))
+    if (
+      !(await waitForListenerConnectionStartup(runtime, connectionId, socket))
+    )
       return;
 
     const lifecycleMessage =
