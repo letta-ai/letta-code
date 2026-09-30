@@ -10,10 +10,10 @@ export type {
   ChannelGatewayDelivery,
   ChannelGatewayHandoffDelivery,
   ChannelGatewayHooks,
-  ChannelGatewayModelStatus,
   ChannelGatewayRichDraft,
 } from "./channels/gateway-core";
 export { ChannelGateway } from "./channels/gateway-core";
+export type { ChannelGatewayModelStatus } from "./channels/gateway-model-status";
 export { formatChannelControlRequestPrompt } from "./channels/interactive";
 export type {
   ChannelBindingLookup,
