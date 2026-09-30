@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { PassThrough } from "node:stream";
 import {
   createStdioHostProtocol,
+  HOST_COMMAND_PREFIX,
   HOST_PROTOCOL_PREFIX,
   type HostProtocolEvent,
   startHostParentWatchdog,
+  startStdioHostCommandListener,
 } from "@/cli/subcommands/host-protocol";
 
 function captureProtocol(): {
@@ -26,6 +29,23 @@ function captureProtocol(): {
 }
 
 describe("stdio host protocol", () => {
+  test("accepts only a versioned shutdown command from its host", async () => {
+    const input = new PassThrough();
+    let shutdowns = 0;
+    const stop = startStdioHostCommandListener(() => {
+      shutdowns += 1;
+    }, input);
+
+    input.write("ordinary input\n");
+    input.write(`${HOST_COMMAND_PREFIX}{"version":2,"type":"shutdown"}\n`);
+    input.write(`${HOST_COMMAND_PREFIX}{"version":1,"type":"shutdown"}\n`);
+    input.write(`${HOST_COMMAND_PREFIX}{"version":1,"type":"shutdown"}\n`);
+    await Bun.sleep(0);
+    stop();
+
+    expect(shutdowns).toBe(1);
+  });
+
   test("rejects an invalid supervising process ID", () => {
     expect(() => startHostParentWatchdog(undefined, "not-a-pid")).toThrow(
       "must be a valid process ID",

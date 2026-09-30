@@ -21,6 +21,7 @@ import { ListenerStatusUI } from "@/cli/components/ListenerStatusUI";
 import {
   createStdioHostProtocol,
   startHostParentWatchdog,
+  startStdioHostCommandListener,
 } from "@/cli/subcommands/host-protocol";
 import { printFirstRunWelcome } from "@/cli/subcommands/listen-first-run-welcome";
 import {
@@ -248,6 +249,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   // orphaning its descendants which accumulate over time.
   let isShuttingDown = false;
   let manualListenerLock: ManualListenerLockHandle | null = null;
+  let stopHostCommandListener: (() => void) | null = null;
   let channelGatewaySupervisor: ChannelGatewaySupervisor | null = null;
   let channelAppServer: AppServerHandle | null = null;
   let clearChannelServiceHandler: (() => void) | null = null;
@@ -292,6 +294,8 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       } catch {
         // Best-effort cleanup — don't block exit.
       }
+      stopHostCommandListener?.();
+      stopHostCommandListener = null;
       await shutdownBackgroundWork().catch(() => undefined);
       await cancelBackgroundMemoryTasks().catch(() => undefined);
       await flushRemoteSettingsWrites().catch(() => undefined);
@@ -325,6 +329,9 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   process.once("SIGHUP", () => void handleShutdownSignal("SIGHUP"));
   if (hostProtocol) {
     startHostParentWatchdog(() => void handleShutdownSignal("SIGTERM"));
+    stopHostCommandListener = startStdioHostCommandListener(
+      () => void handleShutdownSignal("SIGTERM"),
+    );
     delete process.env.LETTA_DAEMON_PARENT_PID;
   }
 

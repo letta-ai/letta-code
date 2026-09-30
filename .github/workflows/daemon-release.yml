@@ -1,59 +1,121 @@
 name: Publish Letta Daemon
+run-name: Publish Letta Daemon ${{ github.event.client_payload.tag }}
 
 on:
-  release:
-    types: [published]
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: Existing letta-code release tag, for example v0.33.8
-        required: true
+  repository_dispatch:
+    types: [publish_letta_daemon]
 
 concurrency:
-  group: publish-letta-daemon-${{ github.event.release.tag_name || inputs.tag }}
+  group: publish-letta-daemon-${{ github.event.client_payload.tag }}
   cancel-in-progress: false
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
+  validate:
+    name: Validate immutable release source
+    runs-on: ubuntu-24.04
+    outputs:
+      commit_sha: ${{ steps.release.outputs.commit_sha }}
+      ref_oid: ${{ steps.release.outputs.ref_oid }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate tag, package, ancestry, and draft release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.client_payload.tag }}
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          git fetch --force origin main "refs/tags/$TAG:refs/tags/$TAG"
+          REF_OID=$(git rev-parse "$TAG")
+          COMMIT_SHA=$(git rev-parse "$TAG^{commit}")
+          git merge-base --is-ancestor "$COMMIT_SHA" origin/main
+
+          VERSION=$(git show "$COMMIT_SHA:package.json" | jq -r '.version')
+          test "$TAG" = "v$VERSION"
+          test "$(npm view "@letta-ai/letta-code@$VERSION" version)" = "$VERSION"
+
+          RELEASE_JSON=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,tagName)
+          test "$(jq -r '.tagName' <<<"$RELEASE_JSON")" = "$TAG"
+          test "$(jq -r '.isDraft' <<<"$RELEASE_JSON")" = "true"
+
+          echo "commit_sha=$COMMIT_SHA" >> "$GITHUB_OUTPUT"
+          echo "ref_oid=$REF_OID" >> "$GITHUB_OUTPUT"
+
   build:
     name: Build / ${{ matrix.name }}
+    needs: validate
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
+    # SECURITY: repository admins must keep signing credentials as secrets on
+    # this environment (not repository secrets), restrict it to protected main,
+    # and require release-owner approval.
+    environment: daemon-signing
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: Linux x64
             runner: ubuntu-24.04
+            expected_assets: |
+              apps/daemon/release/letta-daemon-linux-x86_64.AppImage
+              apps/daemon/release/latest-linux.yml
           - name: Linux arm64
             runner: ubuntu-24.04-arm
+            expected_assets: |
+              apps/daemon/release/letta-daemon-linux-arm64.AppImage
+              apps/daemon/release/latest-arm64-linux-arm64.yml
           - name: macOS arm64
             runner: macos-14
+            expected_assets: |
+              apps/daemon/release/letta-daemon-mac-arm64.dmg
+              apps/daemon/release/letta-daemon-mac-arm64.dmg.blockmap
+              apps/daemon/release/letta-daemon-mac-arm64.zip
+              apps/daemon/release/letta-daemon-mac-arm64.zip.blockmap
+              apps/daemon/release/latest-arm64-mac.yml
           - name: macOS x64
             runner: macos-15-intel
+            expected_assets: |
+              apps/daemon/release/letta-daemon-mac-x64.dmg
+              apps/daemon/release/letta-daemon-mac-x64.dmg.blockmap
+              apps/daemon/release/letta-daemon-mac-x64.zip
+              apps/daemon/release/letta-daemon-mac-x64.zip.blockmap
+              apps/daemon/release/latest-mac.yml
           - name: Windows x64
             runner: windows-latest
+            expected_assets: |
+              apps/daemon/release/letta-daemon-win-x64.exe
+              apps/daemon/release/letta-daemon-win-x64.exe.blockmap
+              apps/daemon/release/latest.yml
     defaults:
       run:
         shell: bash
-    env:
-      CSC_LINK: ${{ runner.os == 'macOS' && secrets.MAC_CSC_LINK || runner.os == 'Windows' && secrets.WIN_CSC_LINK || '' }}
-      CSC_KEY_PASSWORD: ${{ runner.os == 'macOS' && secrets.MAC_CSC_KEY_PASSWORD || runner.os == 'Windows' && secrets.WIN_CSC_KEY_PASSWORD || '' }}
-      APPLE_ID: ${{ secrets.MAC_APPLE_ID }}
-      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.MAC_APP_SPECIFIC_PASSWORD }}
-      APPLE_TEAM_ID: ${{ secrets.MAC_TEAM_ID }}
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.release.tag_name || inputs.tag }}
+          ref: ${{ needs.validate.outputs.commit_sha }}
+          persist-credentials: false
 
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.14
 
       - name: Require platform signing credentials
+        env:
+          CSC_LINK: ${{ runner.os == 'macOS' && secrets.MAC_CSC_LINK || runner.os == 'Windows' && secrets.WIN_CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ runner.os == 'macOS' && secrets.MAC_CSC_KEY_PASSWORD || runner.os == 'Windows' && secrets.WIN_CSC_KEY_PASSWORD || '' }}
+          APPLE_ID: ${{ runner.os == 'macOS' && secrets.MAC_APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ runner.os == 'macOS' && secrets.MAC_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ runner.os == 'macOS' && secrets.MAC_TEAM_ID || '' }}
         run: |
           set -euo pipefail
           if [ "$RUNNER_OS" = "macOS" ]; then
@@ -68,16 +130,30 @@ jobs:
           fi
 
       - name: Install dependencies
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bun install --frozen-lockfile
 
-      - name: Check and package
+      - name: Check
+        run: bun run daemon:check
+
+      - name: Package and sign
         env:
+          CSC_LINK: ${{ runner.os == 'macOS' && secrets.MAC_CSC_LINK || runner.os == 'Windows' && secrets.WIN_CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ runner.os == 'macOS' && secrets.MAC_CSC_KEY_PASSWORD || runner.os == 'Windows' && secrets.WIN_CSC_KEY_PASSWORD || '' }}
+          APPLE_ID: ${{ runner.os == 'macOS' && secrets.MAC_APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ runner.os == 'macOS' && secrets.MAC_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ runner.os == 'macOS' && secrets.MAC_TEAM_ID || '' }}
           LETTA_DAEMON_PUBLISH: never
         run: |
-          bun run daemon:check
           bun run --cwd apps/daemon package
+
+      - name: Verify expected build outputs
+        env:
+          EXPECTED_ASSETS: ${{ matrix.expected_assets }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r asset; do
+            [ -z "$asset" ] || test -s "$asset"
+          done <<< "$EXPECTED_ASSETS"
 
       - name: Verify platform signatures
         run: |
@@ -86,8 +162,8 @@ jobs:
             APP=$(find apps/daemon/release -type d -name 'Letta Daemon.app' -print -quit)
             test -n "$APP"
             codesign --verify --deep --strict --verbose=2 "$APP"
-            codesign -dv --verbose=4 "$APP" 2>&1 | grep -Fq "TeamIdentifier=$APPLE_TEAM_ID"
-            codesign -dv --verbose=4 "$APP" 2>&1 | grep -Eq '^Authority=Developer ID Application: .*Letta'
+            codesign -dv --verbose=4 "$APP" 2>&1 | grep -Fxq 'TeamIdentifier=Q3QJ94H24K'
+            codesign -dv --verbose=4 "$APP" 2>&1 | grep -Fxq 'Authority=Developer ID Application: Letta Inc. (Q3QJ94H24K)'
             spctl --assess --type execute --verbose=2 "$APP"
           elif [ "$RUNNER_OS" = "Windows" ]; then
             powershell.exe -NoProfile -Command '
@@ -96,7 +172,7 @@ jobs:
               foreach ($installer in $installers) {
                 $signature = Get-AuthenticodeSignature $installer.FullName
                 if ($signature.Status -ne "Valid") { throw "Invalid signature on $($installer.Name): $($signature.StatusMessage)" }
-                if ($signature.SignerCertificate.Subject -notmatch "(?i)Letta") { throw "Unexpected signer on $($installer.Name)" }
+                if ($signature.SignerCertificate.Thumbprint -ne "C10BB76AD4EE815242406A1E3E1117FFEC743D4F") { throw "Unexpected signer on $($installer.Name)" }
               }
             '
           fi
@@ -118,14 +194,41 @@ jobs:
 
   publish:
     name: Attach signed artifacts
-    needs: build
+    needs: [validate, build]
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v5
         with:
           pattern: daemon-*
           path: release-assets
           merge-multiple: true
+
+      - name: Verify complete release asset set
+        run: |
+          set -euo pipefail
+          cat > /tmp/expected-daemon-assets <<'EOF'
+          latest-arm64-linux-arm64.yml
+          latest-arm64-mac.yml
+          latest-linux.yml
+          latest-mac.yml
+          latest.yml
+          letta-daemon-linux-arm64.AppImage
+          letta-daemon-linux-x86_64.AppImage
+          letta-daemon-mac-arm64.dmg
+          letta-daemon-mac-arm64.dmg.blockmap
+          letta-daemon-mac-arm64.zip
+          letta-daemon-mac-arm64.zip.blockmap
+          letta-daemon-mac-x64.dmg
+          letta-daemon-mac-x64.dmg.blockmap
+          letta-daemon-mac-x64.zip
+          letta-daemon-mac-x64.zip.blockmap
+          letta-daemon-win-x64.exe
+          letta-daemon-win-x64.exe.blockmap
+          EOF
+          find release-assets -maxdepth 1 -type f -printf '%f\n' | sort > /tmp/actual-daemon-assets
+          diff -u /tmp/expected-daemon-assets /tmp/actual-daemon-assets
 
       - name: Generate checksums
         run: |
@@ -141,8 +244,20 @@ jobs:
       - name: Upload to GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          EXPECTED_REF_OID: ${{ needs.validate.outputs.ref_oid }}
+          TAG: ${{ github.event.client_payload.tag }}
         run: |
           set -euo pipefail
+          CURRENT_REF_OID=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq '.object.sha')
+          test "$CURRENT_REF_OID" = "$EXPECTED_REF_OID"
+          test "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')" = "true"
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' \
+            | while IFS= read -r asset; do
+                case "$asset" in
+                  letta-daemon-* | latest*.yml | SHA256SUMS)
+                    gh release delete-asset "$TAG" "$asset" --repo "$GITHUB_REPOSITORY" --yes
+                    ;;
+                esac
+              done
           find release-assets -maxdepth 1 -type f -print0 \
             | xargs -0 gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber

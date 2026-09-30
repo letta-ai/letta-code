@@ -1,3 +1,6 @@
+import type { Readable } from "node:stream";
+
+export const HOST_COMMAND_PREFIX = "LETTA_HOST_COMMAND ";
 export const HOST_PROTOCOL_PREFIX = "LETTA_HOST_EVENT ";
 
 export type HostProtocolEvent =
@@ -42,6 +45,47 @@ export type StdioHostProtocol = {
 };
 
 const PARENT_WATCH_INTERVAL_MS = 2_000;
+
+/** Listen for the tray's cross-platform graceful-shutdown command. */
+export function startStdioHostCommandListener(
+  onShutdown: () => void,
+  input: Readable = process.stdin,
+): () => void {
+  let buffer = "";
+  let handled = false;
+  const onData = (chunk: Buffer | string): void => {
+    buffer += chunk.toString();
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (handled || !line.startsWith(HOST_COMMAND_PREFIX)) continue;
+      try {
+        const command = JSON.parse(
+          line.slice(HOST_COMMAND_PREFIX.length),
+        ) as unknown;
+        if (
+          command &&
+          typeof command === "object" &&
+          "version" in command &&
+          command.version === 1 &&
+          "type" in command &&
+          command.type === "shutdown"
+        ) {
+          handled = true;
+          onShutdown();
+        }
+      } catch {
+        // Ignore non-protocol input.
+      }
+    }
+  };
+  input.on("data", onData);
+  input.resume();
+  return () => {
+    input.off("data", onData);
+    input.pause();
+  };
+}
 
 /** Exit a daemon-managed listener when its supervising tray process disappears. */
 export function startHostParentWatchdog(

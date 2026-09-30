@@ -98,7 +98,7 @@ jobs:
               if (statSync(path).isDirectory()) {
                 const nested = find(path, suffix);
                 if (nested) return nested;
-              } else if (path.replaceAll('\\', '/').endsWith(suffix)) return path;
+              } else if (path.split(String.fromCharCode(92)).join('/').toLowerCase().endsWith(suffix)) return path;
             }
             return null;
           }
@@ -108,7 +108,8 @@ jobs:
           if (!asar || !cli) throw new Error(`Missing packaged files: asar=${asar}, cli=${cli}`);
           console.log({ asar, cli });
           NODE
-          ASAR=$(find apps/daemon/release -path '*/resources/app.asar' -print -quit)
+          ASAR=$(find apps/daemon/release -iname app.asar -print -quit)
+          test -n "$ASAR"
           bunx asar list "$ASAR" > /tmp/daemon-asar-files.txt
           for path in \
             /dist/main.cjs \

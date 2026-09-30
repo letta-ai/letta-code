@@ -1,5 +1,6 @@
 import { app, Notification } from "electron";
 import { autoUpdater } from "electron-updater";
+import { configureUpdatePolicy } from "./update-policy";
 
 interface UpdateControllerOptions {
   onError(error: Error): void;
@@ -23,9 +24,7 @@ export class UpdateController {
 
   start(): void {
     if (!app.isPackaged || this.#interval) return;
-    autoUpdater.autoDownload = true;
-    autoUpdater.autoInstallOnAppQuit = true;
-    autoUpdater.channel = process.arch === "arm64" ? "latest-arm64" : "latest";
+    configureUpdatePolicy(autoUpdater, process.arch);
     autoUpdater.on("update-downloaded", (info) => {
       this.#readyVersion = info.version;
       this.#options.onReady(info.version);

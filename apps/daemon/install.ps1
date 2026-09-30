@@ -1,4 +1,5 @@
 $ErrorActionPreference = "Stop"
+$expectedSignerThumbprint = "C10BB76AD4EE815242406A1E3E1117FFEC743D4F"
 
 $releaseBase = if ($env:LETTA_DAEMON_RELEASE_BASE) {
   $env:LETTA_DAEMON_RELEASE_BASE.TrimEnd("/")
@@ -36,11 +37,13 @@ try {
   if ($signature.Status -ne "Valid") {
     throw "The installer signature is not valid: $($signature.StatusMessage)"
   }
-  if ($signature.SignerCertificate.Subject -notmatch "(?i)Letta") {
+  if ($signature.SignerCertificate.Thumbprint -ne $expectedSignerThumbprint) {
     throw "The installer was not signed by the expected Letta publisher."
   }
 
-  $process = Start-Process -FilePath $installerPath -ArgumentList "/S" -PassThru -Wait
+  Get-Process -Name "Letta Daemon" -ErrorAction SilentlyContinue |
+    Stop-Process -Force -ErrorAction SilentlyContinue
+  $process = Start-Process -FilePath $installerPath -ArgumentList "/S", "--force-run" -PassThru -Wait
   if ($process.ExitCode -ne 0) { throw "The installer exited with code $($process.ExitCode)." }
   Write-Host "Installed Letta Daemon."
 } finally {

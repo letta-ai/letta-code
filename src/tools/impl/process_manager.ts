@@ -74,8 +74,15 @@ export interface BackgroundTask {
 export const backgroundProcesses = new Map<string, BackgroundProcess>();
 export const backgroundTasks = new Map<string, BackgroundTask>();
 
+// Subagent abort escalates to SIGKILL after 2 seconds and then confirms the
+// detached process group is gone. Keep this bound comfortably beyond that
+// full escalation path so listener shutdown cannot orphan the group.
+const BACKGROUND_SHUTDOWN_TIMEOUT_MS = 5_000;
+
 /** Best-effort, bounded shutdown for detached work before the CLI exits. */
-export async function shutdownBackgroundWork(timeoutMs = 2_000): Promise<void> {
+export async function shutdownBackgroundWork(
+  timeoutMs = BACKGROUND_SHUTDOWN_TIMEOUT_MS,
+): Promise<void> {
   const taskCompletions: Promise<void>[] = [];
   let hasRunningProcesses = false;
   for (const task of backgroundTasks.values()) {

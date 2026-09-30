@@ -2,6 +2,7 @@
 set -eu
 
 RELEASE_BASE="${LETTA_DAEMON_RELEASE_BASE:-https://github.com/letta-ai/letta-code/releases/latest/download}"
+EXPECTED_MAC_TEAM_ID="Q3QJ94H24K"
 SYSTEM=$(uname -s)
 MACHINE=$(uname -m)
 
@@ -14,6 +15,7 @@ esac
 case "$SYSTEM" in
   Darwin) ASSET="letta-daemon-mac-$ARCH.zip" ;;
   Linux)
+    # electron-builder names Linux x64 artifacts with the x86_64 token.
     if [ "$ARCH" = "x64" ]; then ARCH=x86_64; fi
     ASSET="letta-daemon-linux-$ARCH.AppImage"
     ;;
@@ -52,8 +54,10 @@ if [ "$SYSTEM" = "Darwin" ]; then
     exit 1
   fi
   codesign --verify --deep --strict --verbose=2 "$TMPDIR_PATH/unpacked/Letta Daemon.app"
-  codesign -dv --verbose=4 "$TMPDIR_PATH/unpacked/Letta Daemon.app" 2>&1 \
-    | grep -Eq '^Authority=Developer ID Application: .*Letta'
+  SIGNATURE_INFO=$(codesign -dv --verbose=4 "$TMPDIR_PATH/unpacked/Letta Daemon.app" 2>&1)
+  printf '%s\n' "$SIGNATURE_INFO" | grep -Fxq "TeamIdentifier=$EXPECTED_MAC_TEAM_ID"
+  printf '%s\n' "$SIGNATURE_INFO" \
+    | grep -Fxq "Authority=Developer ID Application: Letta Inc. ($EXPECTED_MAC_TEAM_ID)"
   spctl --assess --type execute --verbose=2 "$TMPDIR_PATH/unpacked/Letta Daemon.app"
 
   STAGED_APP="$DESTINATION/.letta-daemon.new.$$"
@@ -66,6 +70,12 @@ if [ "$SYSTEM" = "Darwin" ]; then
   ' EXIT INT TERM
   rm -rf "$STAGED_APP" "$BACKUP_APP"
   ditto "$TMPDIR_PATH/unpacked/Letta Daemon.app" "$STAGED_APP"
+  osascript -e 'tell application id "com.letta.daemon" to quit' >/dev/null 2>&1 || true
+  for _ in 1 2 3 4 5; do
+    pgrep -f '/Letta Daemon.app/Contents/MacOS/Letta Daemon' >/dev/null 2>&1 || break
+    sleep 1
+  done
+  pkill -KILL -f '/Letta Daemon.app/Contents/MacOS/Letta Daemon' >/dev/null 2>&1 || true
   if [ -d "$DESTINATION/Letta Daemon.app" ]; then
     mv "$DESTINATION/Letta Daemon.app" "$BACKUP_APP"
   fi
@@ -86,6 +96,12 @@ fi
 BIN_DIR="$HOME/.local/bin"
 APPLICATIONS_DIR="$HOME/.local/share/applications"
 mkdir -p "$BIN_DIR" "$APPLICATIONS_DIR"
+pkill -TERM -x letta-daemon >/dev/null 2>&1 || true
+for _ in 1 2 3 4 5; do
+  pgrep -x letta-daemon >/dev/null 2>&1 || break
+  sleep 1
+done
+pkill -KILL -x letta-daemon >/dev/null 2>&1 || true
 install -m 0755 "$TMPDIR_PATH/$ASSET" "$BIN_DIR/letta-daemon"
 cat > "$APPLICATIONS_DIR/com.letta.daemon.desktop" <<EOF
 [Desktop Entry]

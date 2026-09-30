@@ -4,6 +4,8 @@ import { homedir } from "node:os";
 import { dirname } from "node:path";
 
 export const HOST_EVENT_PREFIX = "LETTA_HOST_EVENT ";
+const HOST_SHUTDOWN_COMMAND =
+  'LETTA_HOST_COMMAND {"version":1,"type":"shutdown"}\n';
 
 export type DaemonStatusKind =
   | "stopped"
@@ -52,9 +54,19 @@ interface ListenerSupervisorOptions {
   onStatus(status: DaemonStatus): void;
 }
 
-const GRACEFUL_STOP_MS = 5_000;
+// The listener can spend up to five seconds draining detached work and has a
+// ten-second final cleanup watchdog. Wait beyond that before killing its tree.
+const GRACEFUL_STOP_MS = 12_000;
 const MAX_RESTART_DELAY_MS = 30_000;
 const FINAL_STOP_WAIT_MS = 2_000;
+export const RESTART_STABILITY_WINDOW_MS = 60_000;
+
+export function wasListenerStable(
+  readyAt: number | null,
+  exitedAt: number,
+): boolean {
+  return readyAt !== null && exitedAt - readyAt >= RESTART_STABILITY_WINDOW_MS;
+}
 
 export function parseHostEventLine(line: string): HostEvent | null {
   if (!line.startsWith(HOST_EVENT_PREFIX)) return null;
@@ -113,6 +125,7 @@ export class ListenerSupervisor {
   #desiredRunning = false;
   #environmentName: string;
   #lifecycle: Promise<void> = Promise.resolve();
+  #readyAt: number | null = null;
   #restartAttempts = 0;
   #restartTimer: NodeJS.Timeout | null = null;
 
@@ -194,7 +207,7 @@ export class ListenerSupervisor {
               .filter(Boolean)
               .join(process.platform === "win32" ? ";" : ":"),
           },
-          stdio: ["ignore", "pipe", "pipe"],
+          stdio: ["pipe", "pipe", "pipe"],
           windowsHide: true,
         },
       );
@@ -204,6 +217,7 @@ export class ListenerSupervisor {
     }
 
     this.#child = child;
+    this.#readyAt = null;
     const stdoutState = { buffer: "" };
     let finished = false;
     const finish = (
@@ -241,6 +255,8 @@ export class ListenerSupervisor {
     error?: Error,
   ): void {
     if (this.#child === child) this.#child = null;
+    if (wasListenerStable(this.#readyAt, Date.now())) this.#restartAttempts = 0;
+    this.#readyAt = null;
     const expected = this.#expectedExits.delete(child);
     const detail = error?.message ?? code ?? signal ?? "unknown";
     void this.#log(
@@ -282,7 +298,7 @@ export class ListenerSupervisor {
   #handleHostEvent(event: HostEvent): void {
     void this.#log(`${HOST_EVENT_PREFIX}${JSON.stringify(event)}`);
     if (event.type === "ready") {
-      this.#restartAttempts = 0;
+      this.#readyAt ??= Date.now();
       this.#emit({ kind: "connected" });
       return;
     }
@@ -348,11 +364,7 @@ async function terminateChild(
   const exited = waitForChildExit(child);
   if (!child.pid || hasChildExited(child)) return;
 
-  if (process.platform === "win32") {
-    await runTaskkill(child.pid, false);
-  } else {
-    signalProcessGroup(child, "SIGTERM");
-  }
+  sendGracefulShutdown(child);
 
   if (await settlesWithin(exited, timeoutMs)) return;
   if (!child.pid || hasChildExited(child)) return;
@@ -380,6 +392,19 @@ function signalProcessGroup(child: ChildProcess, signal: NodeJS.Signals): void {
     process.kill(-child.pid, signal);
   } catch {
     child.kill(signal);
+  }
+}
+
+function sendGracefulShutdown(child: ChildProcess): void {
+  const stdin = child.stdin;
+  if (!stdin || stdin.destroyed || !stdin.writable) return;
+  // A still-running child can close its input between the checks above and
+  // this write. EPIPE is expected in that race and must not crash the tray.
+  stdin.once("error", () => undefined);
+  try {
+    stdin.end(HOST_SHUTDOWN_COMMAND);
+  } catch {
+    // The forced process-tree fallback below remains responsible for cleanup.
   }
 }
 
