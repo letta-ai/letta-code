@@ -161,6 +161,24 @@ jobs:
             -f ref="refs/tags/$TAG" \
             -f sha="$GITHUB_SHA" >/dev/null
 
+      - name: Verify release tag before publishing packages
+        if: steps.detect.outputs.should_publish == 'true'
+        env:
+          TARGET_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          TAG_COMMIT=$(
+            git ls-remote "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" "refs/tags/$TARGET_TAG^{}" \
+              | awk 'NR == 1 { print $1 }'
+          )
+          if [ -z "$TAG_COMMIT" ]; then
+            TAG_COMMIT=$(
+              git ls-remote "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" "refs/tags/$TARGET_TAG" \
+                | awk 'NR == 1 { print $1 }'
+            )
+          fi
+          test "$TAG_COMMIT" = "$GITHUB_SHA"
+
       - name: Publish to npm
         if: steps.detect.outputs.should_publish == 'true' && steps.version.outputs.npm_published != 'true'
         run: npm publish --access public --tag ${{ steps.version.outputs.npm_tag }}

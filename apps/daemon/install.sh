@@ -72,10 +72,10 @@ if [ "$SYSTEM" = "Darwin" ]; then
   ditto "$TMPDIR_PATH/unpacked/Letta Daemon.app" "$STAGED_APP"
   osascript -e 'tell application id "com.letta.daemon" to quit' >/dev/null 2>&1 || true
   for _ in 1 2 3 4 5; do
-    pgrep -f '/Letta Daemon.app/Contents/MacOS/Letta Daemon' >/dev/null 2>&1 || break
+    pgrep -f '/Letta Daemon.app/Contents/MacOS/letta-daemon' >/dev/null 2>&1 || break
     sleep 1
   done
-  pkill -KILL -f '/Letta Daemon.app/Contents/MacOS/Letta Daemon' >/dev/null 2>&1 || true
+  pkill -KILL -f '/Letta Daemon.app/Contents/MacOS/letta-daemon' >/dev/null 2>&1 || true
   if [ -d "$DESTINATION/Letta Daemon.app" ]; then
     mv "$DESTINATION/Letta Daemon.app" "$BACKUP_APP"
   fi
