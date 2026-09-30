@@ -2,6 +2,12 @@ import { spawn as nodeSpawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
 import type { SubagentResult } from "@/agent/subagents";
+import {
+  mergeSecretRedactions,
+  redactSecretBearingResult,
+  scrubSecretsFromString,
+  snapshotInheritedSecretRedactions,
+} from "@/tools/secret-substitution";
 
 declare const LETTA_VERSION: string | undefined;
 
@@ -39,6 +45,7 @@ interface CodexSession {
   cwd: string;
   parentAgentId: string;
   model?: string;
+  secretRedactions: Record<string, string>;
   activeTurnId?: string;
   activeWaiter?: TurnWaiter;
   startLock: Promise<void>;
@@ -249,15 +256,20 @@ function failSession(session: CodexSession, error: Error): void {
   session.activeTurnId = undefined;
   session.activeWaiter = undefined;
   if (!waiter) return;
-  waiter.resolve({
-    agentId: `codex_${session.threadId}`,
-    runtimeSessionId: session.threadId,
-    model: waiter.model,
-    report: waiter.latestAgentMessage ?? "",
-    success: false,
-    error: error.message,
-    durationMs: Date.now() - waiter.startedAt,
-  });
+  waiter.resolve(
+    redactSecretBearingResult(
+      {
+        agentId: `codex_${session.threadId}`,
+        runtimeSessionId: session.threadId,
+        model: waiter.model,
+        report: waiter.latestAgentMessage ?? "",
+        success: false,
+        error: error.message,
+        durationMs: Date.now() - waiter.startedAt,
+      },
+      session.secretRedactions,
+    ),
+  );
 }
 
 function recordCompletedItem(
@@ -287,17 +299,22 @@ function settleTurn(
   session.activeWaiter = undefined;
   const status = readString(turn, "status");
   const failure = turnError(params);
-  waiter.resolve({
-    agentId: `codex_${session.threadId}`,
-    runtimeSessionId: session.threadId,
-    model: waiter.model,
-    report: turnReport(params) || waiter.latestAgentMessage || "",
-    success: status === "completed",
-    ...(status === "completed"
-      ? {}
-      : { error: failure ?? `Codex turn ${status ?? "failed"}` }),
-    durationMs: Date.now() - waiter.startedAt,
-  });
+  waiter.resolve(
+    redactSecretBearingResult(
+      {
+        agentId: `codex_${session.threadId}`,
+        runtimeSessionId: session.threadId,
+        model: waiter.model,
+        report: turnReport(params) || waiter.latestAgentMessage || "",
+        success: status === "completed",
+        ...(status === "completed"
+          ? {}
+          : { error: failure ?? `Codex turn ${status ?? "failed"}` }),
+        durationMs: Date.now() - waiter.startedAt,
+      },
+      session.secretRedactions,
+    ),
+  );
   scheduleIdleSessionCleanup(session);
   return true;
 }
@@ -404,6 +421,7 @@ async function createSession(
     cwd: readString(thread, "cwd") ?? options.cwd,
     parentAgentId: options.parentAgentId,
     model: options.model,
+    secretRedactions: snapshotInheritedSecretRedactions(env),
     startLock: Promise.resolve(),
     pendingNotifications,
     idleTimeoutMs: deps.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS,
@@ -507,6 +525,10 @@ async function resumeSession(
   const loaded = sessions.get(threadId);
   if (loaded) {
     clearIdleSessionCleanup(loaded);
+    loaded.secretRedactions = mergeSecretRedactions(
+      loaded.secretRedactions,
+      snapshotInheritedSecretRedactions(deps.env ?? {}),
+    );
     return loaded;
   }
   const pending = sessionCreations.get(threadId);
@@ -559,10 +581,19 @@ export async function sendCodexMessage(
         turnId: handle.turnId,
         completion: handle.completion,
         interrupt: async () => {
-          await session.client.request("turn/interrupt", {
-            threadId: handle.threadId,
-            turnId: handle.turnId,
-          });
+          try {
+            await session.client.request("turn/interrupt", {
+              threadId: handle.threadId,
+              turnId: handle.turnId,
+            });
+          } catch (error) {
+            throw new Error(
+              scrubSecretsFromString(
+                errorMessage(error),
+                session.secretRedactions,
+              ),
+            );
+          }
         },
       };
     });
@@ -570,7 +601,9 @@ export async function sendCodexMessage(
     if (!session.activeTurnId && sessions.get(session.threadId) === session) {
       scheduleIdleSessionCleanup(session);
     }
-    throw error;
+    throw new Error(
+      scrubSecretsFromString(errorMessage(error), session.secretRedactions),
+    );
   }
 }
 

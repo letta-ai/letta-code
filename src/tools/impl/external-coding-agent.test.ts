@@ -1,16 +1,100 @@
 import { describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
+import {
+  __testOverrideSecretsBackend,
+  __testSeedSecretsCache,
+  clearSecretsCache,
+} from "@/utils/secrets-store";
 import {
   buildExternalCodingAgentCommand,
   buildExternalCodingAgentMcpReminder,
   formatExternalCodingAgentId,
   parseExternalCodingAgentId,
   parseExternalCodingAgentOutput,
+  prepareExternalCodingAgentEnv,
+  redactExternalCodingAgentResult,
   runExternalCodingAgent,
   selectExternalCodingAgentMcpEntries,
   validateExternalCodingAgentMcpOptions,
 } from "./external-coding-agent";
 
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";
+
+describe("external coding agent secret environment", () => {
+  test("drops stale marked values from another runtime before re-scoping", async () => {
+    const inheritedEnv = {
+      LETTA_CODE_AGENT_ROLE: "subagent",
+      LETTA_INHERITED_SECRET_EXECUTION_ID: "agent-other-runtime",
+      LETTA_INHERITED_SECRET_NAMES: '["STALE_TOKEN","LETTA_API_KEY"]',
+      STALE_TOKEN: "foreign-secret-value",
+      LETTA_API_KEY: "runtime-auth",
+    };
+    const { env } = await prepareExternalCodingAgentEnv("parent", inheritedEnv);
+    expect(env.STALE_TOKEN).toBeUndefined();
+    // A stale marker claiming the auth variable is removed rather than trusted.
+    expect(env.LETTA_API_KEY).toBeUndefined();
+    expect(env.LETTA_INHERITED_SECRET_NAMES).toBeUndefined();
+  });
+
+  test("secret hydration failure returns a failed result without launching provider", async () => {
+    __testOverrideSecretsBackend({
+      capabilities: { serverSecrets: true },
+      listAgentSecrets: async () => {
+        throw new Error("secret fetch denied");
+      },
+      updateAgent: async () => ({}),
+    });
+    try {
+      const result = await runExternalCodingAgent({
+        type: "codex",
+        prompt: "test",
+        parentAgentId: "agent-denied",
+      });
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("secret fetch denied");
+    } finally {
+      __testOverrideSecretsBackend(null);
+    }
+  });
+  test.each(["codex", "claude-code"] as const)(
+    "%s child process receives the parent value and returns redacted text",
+    async (type) => {
+      const secret = "synthetic-external-process-secret-4792";
+      __testSeedSecretsCache("parent", {
+        EXTERNAL_CANARY: secret,
+        LETTA_API_KEY: "not-runtime-auth",
+      });
+      try {
+        const { env, secrets } = await prepareExternalCodingAgentEnv("parent");
+        const child = spawnSync(
+          process.execPath,
+          [
+            "-e",
+            "process.stdout.write(process.env.EXTERNAL_CANARY ?? 'absent')",
+          ],
+          { env, encoding: "utf8" },
+        );
+        expect(child.status).toBe(0);
+        expect(child.stdout).toBe(secret);
+        expect(env.LETTA_API_KEY).not.toBe("not-runtime-auth");
+        const result = redactExternalCodingAgentResult(
+          {
+            agentId: `${type}-session`,
+            report: child.stdout,
+            success: true,
+            error: child.stdout,
+          },
+          secrets,
+        );
+        expect(result.report).toContain("EXTERNAL_CANARY=<REDACTED>");
+        expect(result.error).toContain("EXTERNAL_CANARY=<REDACTED>");
+        expect(result.report).not.toContain(secret);
+      } finally {
+        clearSecretsCache("parent");
+      }
+    },
+  );
+});
 
 describe("external coding agent commands", () => {
   test("builds Claude Code JSON invocation with safe root-compatible permissions", () => {

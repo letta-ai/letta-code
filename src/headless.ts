@@ -1279,6 +1279,11 @@ export async function handleHeadlessCommand(
     process.exit(1);
   }
   markMilestone("HEADLESS_AGENT_RESOLVED");
+  if (
+    process.env.LETTA_CODE_AGENT_ROLE === "subagent" &&
+    process.env.LETTA_INHERITED_SECRET_NAMES
+  )
+    process.env.LETTA_INHERITED_SECRET_EXECUTION_ID = agent.id;
   const publicAgentId = ephemeralFlag ? null : agent.id;
   telemetry.setCurrentAgent(publicAgentId, agent.tags);
   const isResumingAgent = !ephemeralFlag && !!(specifiedAgentId || !forceNew);

@@ -8,11 +8,22 @@ import {
   createLocalEphemeralConversation,
   projectResumedEphemeralConversation,
 } from "@/agent/ephemeral-conversation";
+import { resolveSubagentSecretEnv } from "@/agent/subagents/subagent-launcher";
 import { configureBackendMode, getBackend } from "@/backend";
 import { createHeadlessEphemeralConversation } from "@/headless-ephemeral-startup";
+import { runWithRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { setupRuntimeModelCatalogFixture } from "@/test-utils/runtime-model-catalog";
+import { resolveExternalTaskParentAgentId } from "@/tools/impl/task";
 import {
+  executeTool,
+  prepareToolExecutionContextForSpecificTools,
+  releaseToolExecutionContext,
+} from "@/tools/manager";
+import { createTempRuntimeScriptCommand } from "@/tools/runtime-script";
+import {
+  clearSecretsCache,
+  getVerifiedSecretOwner,
   initSecretsFromServer,
   loadSecrets,
   setSecretOnServer,
@@ -190,8 +201,8 @@ describe("ephemeral conversation creation", () => {
             systemPromptCustom: "minimal prompt",
           });
         }
-        // Current API request headers inherit the headless acting user even
-        // without an explicit remote-computer override.
+        // apiRequest forwards the headless acting user from the environment
+        // even when this caller does not add per-request headers.
         expect(actingUsers).toEqual(["user-initiator", "user-initiator"]);
         expect(bodies.every((body) => !("requestOptions" in body))).toBe(true);
         expect(bodies[0]?.parent_agent_id).toBe(
@@ -242,6 +253,120 @@ describe("ephemeral conversation creation", () => {
       expect(
         loadSecrets(unrelated.conversationId).CHILD_TEST_SECRET,
       ).toBeUndefined();
+      expect(getVerifiedSecretOwner(child.conversationId)).toBe(parent.id);
+      expect(
+        await runWithRuntimeContext(
+          { agentId: null, conversationId: child.conversationId },
+          () => resolveExternalTaskParentAgentId(),
+        ),
+      ).toBe(parent.id);
+      expect(
+        await runWithRuntimeContext(
+          { agentId: null, conversationId: unrelated.conversationId },
+          () => resolveExternalTaskParentAgentId(),
+        ),
+      ).toBeNull();
+      const retrieveConversation = (id: string) =>
+        backend.retrieveConversation(id);
+      expect(
+        await resolveSubagentSecretEnv({
+          parentAgentId: parent.id,
+          existingConversationId: child.conversationId,
+          retrieveConversation,
+        }),
+      ).toEqual({ CHILD_TEST_SECRET: "parent-only" });
+      expect(
+        await resolveSubagentSecretEnv({
+          parentAgentId: child.conversationId,
+          existingConversationId: child.conversationId,
+          retrieveConversation,
+        }),
+      ).toEqual({ CHILD_TEST_SECRET: "parent-only" });
+      const fork = await backend.forkConversation(child.conversationId, {
+        ephemeral: true,
+      });
+      expect(await backend.retrieveConversation(fork.id)).toMatchObject({
+        agent_id: null,
+        parent_agent_id: parent.id,
+      });
+      expect(
+        await resolveSubagentSecretEnv({
+          parentAgentId: child.conversationId,
+          existingConversationId: fork.id,
+          retrieveConversation,
+        }),
+      ).toEqual({ CHILD_TEST_SECRET: "parent-only" });
+      // Headless startup hydrates the fork's own conversation scope before
+      // dispatching its client-side tools.
+      await initSecretsFromServer(fork.id);
+      expect(
+        await resolveSubagentSecretEnv({
+          parentAgentId: unrelated.conversationId,
+          retrieveConversation,
+        }),
+      ).toEqual({});
+      expect(
+        await resolveSubagentSecretEnv({
+          parentAgentId: parent.id,
+          existingConversationId: unrelated.conversationId,
+          retrieveConversation,
+        }),
+      ).toEqual({});
+      const script = createTempRuntimeScriptCommand(
+        "process.stdout.write(process.env.CHILD_TEST_SECRET ?? 'absent')",
+      );
+      const runChildShell = async (conversationId: string) => {
+        const context = await prepareToolExecutionContextForSpecificTools(
+          ["Bash"],
+          {
+            runtimeContext: {
+              agentId: null,
+              conversationId,
+              workingDirectory: storageDir,
+            },
+            workingDirectory: storageDir,
+          },
+        );
+        try {
+          const result = await executeTool(
+            "Bash",
+            { command: script.command, timeout: 5000 },
+            { toolContextId: context.contextId },
+          );
+          return JSON.stringify(result.toolReturn);
+        } finally {
+          releaseToolExecutionContext(context.contextId);
+        }
+      };
+      try {
+        const first = await runChildShell(child.conversationId);
+        expect(first).toContain("CHILD_TEST_SECRET=<REDACTED>");
+        expect(first).not.toContain("parent-only");
+        expect(await runChildShell(fork.id)).toContain(
+          "CHILD_TEST_SECRET=<REDACTED>",
+        );
+        expect(await runChildShell(unrelated.conversationId)).toContain(
+          "absent",
+        );
+        await setSecretOnServer(
+          "CHILD_TEST_SECRET",
+          "rotated-parent-only",
+          parent.id,
+        );
+        clearSecretsCache(null);
+        await initSecretsFromServer(child.conversationId);
+        const resumed = await runChildShell(child.conversationId);
+        expect(resumed).toContain("CHILD_TEST_SECRET=<REDACTED>");
+        expect(resumed).not.toContain("rotated-parent-only");
+        expect(
+          await runWithRuntimeContext(
+            { agentId: null, conversationId: child.conversationId },
+            () => Promise.resolve(loadSecrets()),
+          ),
+        ).toEqual({ CHILD_TEST_SECRET: "rotated-parent-only" });
+      } finally {
+        script.cleanup();
+      }
     } finally {
       if (originalStorageDir === undefined)
         delete process.env.LETTA_LOCAL_BACKEND_DIR;
