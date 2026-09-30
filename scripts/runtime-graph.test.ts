@@ -15,6 +15,7 @@ function dependencyLock() {
     lockfileVersion: 3,
     packages: {
       "": {
+        name: "@letta-ai/letta-code",
         version: "1.2.3",
         dependencies: { dependency: "^4.0.0" },
         optionalDependencies: {},

@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 export const RUNTIME_GRAPH_PROTOCOL = 1;
+export const RUNTIME_GRAPH_NPM_VERSION = "12.2.0";
+export const RUNTIME_GRAPH_BUN_VERSION = "1.3.14";
 const PACKAGE_PATH = new URL("../package.json", import.meta.url);
 const SHRINKWRAP_PATH = new URL("../npm-shrinkwrap.json", import.meta.url);
 const REGISTRY_HOST = "registry.npmjs.org";
@@ -142,6 +144,7 @@ export function verifyRuntimeGraph(
   if (
     lock.name !== manifest.name ||
     lock.version !== manifest.version ||
+    root?.name !== manifest.name ||
     root?.version !== manifest.version ||
     !sameRecord(root.dependencies, manifest.dependencies) ||
     !sameRecord(root.optionalDependencies, manifest.optionalDependencies)
@@ -187,7 +190,7 @@ async function runNpm(args: string[], cwd: string): Promise<string> {
     });
     child.once("error", reject);
     child.once("exit", (code, signal) => {
-      if (code === 0) resolve(stdout);
+      if (code === 0) resolve(stdout.trim());
       else
         reject(
           new Error(`npm exited with ${signal ?? code ?? "unknown status"}`),
@@ -196,12 +199,55 @@ async function runNpm(args: string[], cwd: string): Promise<string> {
   });
 }
 
+async function runBun(args: string[], cwd: string): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const child = spawn(
+      process.platform === "win32" ? "bun.exe" : "bun",
+      args,
+      {
+        cwd,
+        stdio: ["ignore", "pipe", "inherit"],
+      },
+    );
+    let stdout = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += String(chunk);
+    });
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      if (code === 0) resolve(stdout.trim());
+      else
+        reject(
+          new Error(`bun exited with ${signal ?? code ?? "unknown status"}`),
+        );
+    });
+  });
+}
+
+async function assertExactToolchain(cwd: string): Promise<void> {
+  const [npmVersion, bunVersion] = await Promise.all([
+    runNpm(["--version"], cwd),
+    runBun(["--version"], cwd),
+  ]);
+  if (npmVersion !== RUNTIME_GRAPH_NPM_VERSION) {
+    throw new Error(
+      `runtime graph generation requires npm ${RUNTIME_GRAPH_NPM_VERSION}, found ${npmVersion}`,
+    );
+  }
+  if (bunVersion !== RUNTIME_GRAPH_BUN_VERSION) {
+    throw new Error(
+      `runtime graph generation requires Bun ${RUNTIME_GRAPH_BUN_VERSION}, found ${bunVersion}`,
+    );
+  }
+}
+
 async function generateRuntimeGraph(): Promise<string> {
   const manifest = await readJson<PackageManifest>(PACKAGE_PATH);
   const staging = await mkdtemp(join(tmpdir(), "letta-runtime-graph-"));
   const runtimeRoot = join(staging, "runtime");
   const installerRoot = join(staging, "installer");
   try {
+    await assertExactToolchain(staging);
     await Promise.all([
       mkdir(runtimeRoot, { recursive: true }),
       mkdir(installerRoot, { recursive: true }),
@@ -217,19 +263,24 @@ async function generateRuntimeGraph(): Promise<string> {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
 
-    const packOutput = await runNpm(
+    const packOutput = await runBun(
       [
+        "pm",
         "pack",
-        "--json",
+        "--quiet",
         "--ignore-scripts",
-        "--pack-destination",
+        "--destination",
         installerRoot,
       ],
       runtimeRoot,
     );
-    const packed = JSON.parse(packOutput) as Array<{ filename: string }>;
-    const tarball = packed[0]?.filename;
-    if (!tarball) throw new Error("npm pack did not produce a runtime tarball");
+    const packedPath = packOutput
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => line.endsWith(".tgz"));
+    const tarball = packedPath?.split(/[\\/]/).pop();
+    if (!tarball)
+      throw new Error("bun pm pack did not produce a runtime tarball");
     await writeFile(
       join(installerRoot, "package.json"),
       `${JSON.stringify(
@@ -261,6 +312,7 @@ async function generateRuntimeGraph(): Promise<string> {
     delete packages[""];
     delete packages[runtimeLocation];
     packages[""] = {
+      name: manifest.name,
       version: manifest.version,
       dependencies: manifest.dependencies ?? {},
       optionalDependencies: manifest.optionalDependencies ?? {},
