@@ -131,10 +131,11 @@ await Bun.build({
   naming: {
     entry: "image-resize-worker.js",
   },
-  // The Electron-safe build loads a patched native addon and its adjacent
-  // libvips shared library. Keep its package boundary intact so those files
-  // resolve from node_modules at runtime.
-  external: ["@janhapke/sharp-electron"],
+  // Both Sharp variants load native bindings from their installed packages.
+  // Keep their JS and native bindings together in the worker: bundling one
+  // version's JS can otherwise resolve another version's @img binding from
+  // an ancestor node_modules directory at runtime.
+  external: ["sharp", "@janhapke/sharp-electron"],
 });
 
 // Add shebang to output file

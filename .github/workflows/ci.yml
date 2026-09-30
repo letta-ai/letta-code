@@ -270,6 +270,10 @@ jobs:
       - name: Build bundle
         run: bun run build
 
+      - name: Verify image worker with a newer Sharp runtime
+        if: runner.os == 'Linux' && runner.arch == 'X64'
+        run: node scripts/smoke-image-worker.mjs
+
       - name: MCP OAuth NodeNext declaration smoke test
         if: runner.os == 'Linux' && runner.arch == 'X64'
         run: |
