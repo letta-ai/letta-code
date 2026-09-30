@@ -60,10 +60,14 @@ function recordToolCall(
  * Handle an init event from the subagent stream
  */
 function handleInitEvent(
-  event: { agent_id?: string; conversation_id?: string },
+  event: { agent_id?: string | null; conversation_id?: string },
   state: ExecutionState,
   subagentId: string,
 ): void {
+  if (event.agent_id === null) {
+    state.agentId = null;
+    updateSubagent(subagentId, { agentId: null, agentURL: null });
+  }
   if (event.agent_id) {
     state.agentId = event.agent_id;
     const agentURL = buildAgentReference(event.agent_id, {

@@ -1,4 +1,7 @@
-import type { AgentRuntimeScope } from "./runtime-scope";
+import type {
+  AgentRuntimeScope,
+  ConversationRuntimeScope,
+} from "./runtime-scope";
 
 /** Run a slash command in an agent conversation. */
 export interface ExecuteCommandCommand {
@@ -21,7 +24,7 @@ export interface ExecuteCommandResponseMessage {
 export interface RemoveQueueItemCommand {
   type: "remove_queue_item";
   request_id: string;
-  runtime: AgentRuntimeScope;
+  runtime: ConversationRuntimeScope;
   item_id: string;
 }
 

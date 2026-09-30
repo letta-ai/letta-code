@@ -307,14 +307,15 @@ describe("buildSubagentArgs", () => {
     launchProfile: "default",
   };
 
-  test("does not pass --no-memfs (statelessness derives from subagent role env)", () => {
+  test("creates Cloud subagents without an agent record", () => {
     const args = buildSubagentArgs("test-subagent", baseConfig, null, "hello");
 
     expect(args).not.toContain("--no-memfs");
-    expect(args).toContain("--new-agent");
+    expect(args).toContain("--ephemeral");
+    expect(args).not.toContain("--new-agent");
   });
 
-  test("tags new subagents with type and combines parent into one --tags value", () => {
+  test("does not encode subagent identity in agent tags", () => {
     const args = buildSubagentArgs(
       "explore",
       baseConfig,
@@ -326,17 +327,15 @@ describe("buildSubagentArgs", () => {
       { parentAgentId: "agent-parent-123" },
     );
 
-    const tagFlagCount = args.filter((a) => a === "--tags").length;
-    expect(tagFlagCount).toBe(1);
-    const tagsValue = args[args.indexOf("--tags") + 1];
-    expect(tagsValue).toBe("type:explore,parent:agent-parent-123");
+    expect(args).not.toContain("--tags");
+    expect(args).toContain("--ephemeral");
   });
 
-  test("omits parent tag when no parentAgentId is provided", () => {
+  test("parentless subagents also use ephemeral conversations", () => {
     const args = buildSubagentArgs("explore", baseConfig, null, "hello");
 
-    const tagsValue = args[args.indexOf("--tags") + 1];
-    expect(tagsValue).toBe("type:explore");
+    expect(args).not.toContain("--tags");
+    expect(args).toContain("--ephemeral");
   });
 
   test("threads the computer selector through as --computer", () => {
@@ -352,9 +351,34 @@ describe("buildSubagentArgs", () => {
     );
 
     expect(args[args.indexOf("--computer") + 1]).toBe("office-mac");
-    // The child submits and exits; the parent follows the remote turn.
-    expect(args).toContain("--no-wait");
+    expect(args).not.toContain("--no-wait");
   });
+
+  test.each([
+    { agentId: "agent-existing", conversationId: undefined, noWait: true },
+    {
+      agentId: "agent-existing",
+      conversationId: "conv-existing",
+      noWait: true,
+    },
+    { agentId: undefined, conversationId: "conv-fork", noWait: false },
+  ])(
+    "remote launch preserves enqueue only for agent deployments: %j",
+    ({ agentId, conversationId, noWait }) => {
+      const args = buildSubagentArgs(
+        "explore",
+        baseConfig,
+        null,
+        "hello",
+        agentId,
+        conversationId,
+        undefined,
+        { environment: "office-mac" },
+      );
+      expect(args.includes("--no-wait")).toBe(noWait);
+      expect(args).toContain("--computer");
+    },
+  );
 
   test("omits --computer and --no-wait by default", () => {
     const args = buildSubagentArgs("explore", baseConfig, null, "hello");
@@ -393,6 +417,8 @@ describe("buildSubagentArgs", () => {
     expect(args).toContain("--backend");
     expect(args).toContain("local");
     expect(args).not.toContain("--no-memfs");
+    expect(args).toContain("--new-agent");
+    expect(args).not.toContain("--ephemeral");
   });
 
   test("deploys existing subagent agents without --new-agent (keeps memfs)", () => {

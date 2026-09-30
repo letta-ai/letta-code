@@ -67,6 +67,8 @@ export async function resolveAgentMessageDestination(
     conversationId?: string;
     senderAgentId?: string;
     actingUserId?: string;
+    /** Reuse a lookup already authorized in this request's actor scope. */
+    resolvedConversation?: { id: string; agent_id: string | null };
     /** Calling runtime, independent of optional sender attribution overrides. */
     currentConversation?: { agentId?: string; conversationId?: string };
   },
@@ -80,10 +82,10 @@ export async function resolveAgentMessageDestination(
   }
   const options = { signal, ...actingUserRequestOptions(input.actingUserId) };
   if (conversationId && conversationId !== "default") {
-    const conversation = await backend.retrieveConversation(
-      conversationId,
-      options,
-    );
+    const conversation =
+      input.resolvedConversation?.id === conversationId
+        ? input.resolvedConversation
+        : await backend.retrieveConversation(conversationId, options);
     if (agentId && agentId !== conversation.agent_id) {
       throw new Error(
         "The conversation does not belong to the requested agent.",
@@ -99,13 +101,24 @@ export async function resolveAgentMessageDestination(
     );
     conversationId = conversation.id;
   }
+  assertNotCurrentConversation(
+    { agentId, conversationId },
+    input.currentConversation,
+  );
+  return { agentId, conversationId };
+}
+
+/** Agent-free conversations have no agent identity, but still cannot send to themselves. */
+export function assertNotCurrentConversation(
+  destination: { agentId: string | null; conversationId: string },
+  current?: { agentId?: string; conversationId?: string },
+): void {
   if (
-    agentId === input.currentConversation?.agentId &&
-    conversationId === input.currentConversation?.conversationId
+    destination.conversationId === current?.conversationId &&
+    (destination.agentId === null || destination.agentId === current.agentId)
   ) {
     throw new Error(
       "Cannot message the current conversation. Use Monitor for external events or Wake for timed self-invocation.",
     );
   }
-  return { agentId, conversationId };
 }

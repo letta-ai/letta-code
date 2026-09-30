@@ -47,7 +47,11 @@ export async function getPrimaryAgentModelHandle(
 }> {
   try {
     const agentId = scope.agentId ?? getCurrentAgentId();
-    const agent = await getBackend().retrieveAgent(agentId);
+    // Agent-free children use the conversation ID as their local runtime key.
+    // Do not let a lookup of that key as an agent discard their model override.
+    const agent = agentId.startsWith("conv-")
+      ? null
+      : await getBackend().retrieveAgent(agentId);
     const conversationId = scope.conversationId;
     if (conversationId && conversationId !== "default") {
       try {
@@ -61,7 +65,7 @@ export async function getPrimaryAgentModelHandle(
         // Fall back to the agent default if the conversation is not available.
       }
     }
-    return { handle: getModelHandleFromAgent(agent), agent };
+    return { handle: agent ? getModelHandleFromAgent(agent) : null, agent };
   } catch {
     return { handle: null, agent: null };
   }

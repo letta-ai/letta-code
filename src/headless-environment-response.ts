@@ -13,6 +13,8 @@ import {
   type EnvironmentConnection,
   getEnvironmentConnection,
   isEnvironmentOnline,
+  resolveAgentSandboxConnectionId,
+  resolveEnvironmentConnectionId,
   type SendEnvironmentMessageBody,
 } from "@/backend/api/environments";
 import { ApiRequestError } from "@/backend/api/request";
@@ -109,6 +111,48 @@ export function isCloudEnvironmentSelector(
   if (typeof selector !== "string") return false;
   const normalized = selector.trim().toLowerCase();
   return normalized === "cloud" || normalized === "cloud-sandbox";
+}
+
+export async function resolveHeadlessListenerEnvironment(params: {
+  selector?: string;
+  inheritedConnectionId?: string;
+  agentId: string | null;
+  parentAgentId?: string;
+  conversationId: string;
+}): Promise<{
+  connectionId: string;
+  responseEnvironment: ReplyEnvironmentMetadata;
+}> {
+  const selector = params.selector ?? "";
+  const useCloudSandbox = isCloudEnvironmentSelector(selector);
+  const resourceAgentId = params.agentId ?? params.parentAgentId;
+  if (useCloudSandbox && !resourceAgentId) {
+    throw new Error("Ephemeral cloud sandbox routing requires a parent agent");
+  }
+  const routing = selector
+    ? useCloudSandbox
+      ? await resolveAgentSandboxConnectionId(
+          resourceAgentId as string,
+          params.agentId === null
+            ? undefined
+            : { conversationId: params.conversationId },
+        )
+      : await resolveEnvironmentConnectionId(selector)
+    : null;
+  const connectionId = routing?.connectionId ?? params.inheritedConnectionId;
+  if (!connectionId)
+    throw new Error("No listener connection was resolved for this launch");
+  return {
+    connectionId,
+    responseEnvironment: routing
+      ? buildEnvironmentResponseMetadata({
+          source: useCloudSandbox ? "cloud-sandbox" : "explicit",
+          input: selector,
+          connectionId,
+          environment: routing.environment,
+        })
+      : { source: "same-environment" },
+  };
 }
 
 export function getEnvironmentRoutedMessagingUnsupportedReason(

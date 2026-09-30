@@ -10,6 +10,83 @@ import {
 } from "@/backend";
 import { releaseToolExecutionContext } from "@/tools/manager";
 import { __headlessTestUtils } from "./headless";
+import {
+  getHeadlessEphemeralIdentity,
+  resumeHeadlessEphemeralConversation,
+} from "./headless-ephemeral-startup";
+
+describe("ephemeral headless identity", () => {
+  const parentAgentId = "agent-12345678-1234-1234-1234-123456789abc";
+  const env = {
+    LETTA_SUBAGENT_NAME: "Reviewer",
+    LETTA_CODE_AGENT_ROLE: "subagent",
+    LETTA_PARENT_AGENT_ID: parentAgentId,
+  };
+
+  test("forwards the display name, subagent marker and valid agent parent", () => {
+    expect(getHeadlessEphemeralIdentity(env)).toEqual({
+      name: "Reviewer",
+      isSubagent: true,
+      parentAgentId,
+    });
+    expect(getHeadlessEphemeralIdentity({ AGENT_ID: parentAgentId })).toEqual({
+      name: undefined,
+      isSubagent: false,
+    });
+  });
+
+  test.each(["conv-child", "agent-local-123", "not-an-agent", ""])(
+    "does not link invalid parent %s",
+    (parent) => {
+      expect(
+        getHeadlessEphemeralIdentity({ ...env, LETTA_PARENT_AGENT_ID: parent }),
+      ).not.toHaveProperty("parentAgentId");
+    },
+  );
+
+  test.each([undefined, "agent-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"])(
+    "resume replaces ambient parent %s with persisted lineage",
+    (ambientParent) => {
+      const environment: NodeJS.ProcessEnv = {
+        LETTA_PARENT_AGENT_ID: ambientParent,
+      };
+      const conversation = {
+        id: "conv-resumed",
+        agent_id: null,
+        model: "openai/gpt-5.6-luna",
+        parent_agent_id: parentAgentId,
+      };
+      const resumed = resumeHeadlessEphemeralConversation(
+        conversation,
+        false,
+        environment,
+      );
+      expect(resumed.parentAgentId).toBe(parentAgentId);
+      expect(environment.LETTA_PARENT_AGENT_ID).toBe(parentAgentId);
+      expect(resumed.agent.id).toBe(conversation.id);
+      const parentless = resumeHeadlessEphemeralConversation(
+        { ...conversation, parent_agent_id: null },
+        false,
+        environment,
+      );
+      expect(parentless.parentAgentId).toBeUndefined();
+      expect(environment.LETTA_PARENT_AGENT_ID).toBeUndefined();
+    },
+  );
+
+  test("memory workers retain their resource parent", () => {
+    expect(
+      getHeadlessEphemeralIdentity({
+        ...env,
+        LETTA_SUBAGENT_LAUNCH_PROFILE: "memory-subagent",
+      }),
+    ).toEqual({
+      name: "Reviewer",
+      isSubagent: true,
+      parentAgentId,
+    });
+  });
+});
 
 const REPRESENTATIVE_MODELS = [
   "openai/gpt-5.6-luna",

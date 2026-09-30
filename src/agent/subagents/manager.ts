@@ -55,6 +55,7 @@ import { allocateSubagentName } from "./names";
 import { collectRemoteTurnResult } from "./remote-turn-wait";
 import {
   composeSubagentChildEnv,
+  resolveSubagentDeploymentAgentId,
   resolveSubagentInheritedPrimaryRoot,
   resolveSubagentLauncher,
   resolveSubagentWorkingDirectory,
@@ -88,10 +89,21 @@ import {
  * never trigger fresh agent creation, so base tools are out of scope.
  */
 const NO_BASE_TOOL_SUBAGENT_TYPES = new Set(["reflection", "memory", "init"]);
+// Listener sync, queue removal, and run abort may each take up to 30 seconds.
+const REMOTE_CHILD_CANCEL_GRACE_MS = 95_000;
 
 // ============================================================================
 // Helper Functions
 // ============================================================================
+
+export function describeAbortedSubagent(
+  remoteAgentFree: boolean,
+  finalError: string | null,
+): string {
+  if (!remoteAgentFree || finalError === "Listener execution cancelled")
+    return INTERRUPTED_BY_USER;
+  return `${INTERRUPTED_BY_USER} (could not confirm listener cancellation; remote execution may still be running${finalError ? `: ${finalError}` : ""})`;
+}
 
 /**
  * Check if an error message indicates an unsupported provider
@@ -155,10 +167,12 @@ export function buildSubagentArgs(
     args.push("--client-message-id", options.clientMessageId);
 
   if (options.environment) {
-    // The child only submits the send and exits with the enqueue receipt;
-    // this process follows the remote turn through Cloud's status APIs
-    // (see remote-turn-wait.ts). No child process waits on the remote turn.
-    args.push("--computer", options.environment, "--no-wait");
+    args.push("--computer", options.environment);
+    // Agent-backed deployments return a Cloud enqueue receipt. Agent-free
+    // children use acknowledged listener input and wait for their own turn.
+    if (existingAgentId || options.backendMode === "local") {
+      args.push("--no-wait");
+    }
   }
 
   if (isDeployingExisting) {
@@ -177,22 +191,23 @@ export function buildSubagentArgs(
     // Don't pass --system (existing agent keeps its prompt)
     // Don't pass --model (existing agent keeps its model)
   } else {
-    // Create new agent (original behavior). A systemPromptOverride replaces the
-    // configured persona with a caller-supplied prompt via `--system-custom`
-    // (mutually exclusive with `--system`).
+    // Cloud subagents own only a conversation, never a hidden agent. The local
+    // backend still requires an agent record for its execution state.
+    args.push(options.backendMode === "local" ? "--new-agent" : "--ephemeral");
     if (options.systemPromptOverride) {
-      args.push("--new-agent", "--system-custom", options.systemPromptOverride);
+      args.push("--system-custom", options.systemPromptOverride);
     } else {
-      args.push("--new-agent", "--system", type);
+      args.push("--system", type);
     }
-    const subagentTags = [`type:${type}`];
-    if (options.parentAgentId) {
-      subagentTags.push(`parent:${options.parentAgentId}`);
+    if (options.backendMode === "local") {
+      args.push(
+        "--tags",
+        [
+          `type:${type}`,
+          ...(options.parentAgentId ? [`parent:${options.parentAgentId}`] : []),
+        ].join(","),
+      );
     }
-    args.push("--tags", subagentTags.join(","));
-    // Newly spawned subagents are stateless (non-memfs). The headless
-    // entrypoint derives this from LETTA_CODE_AGENT_ROLE=subagent — no CLI
-    // flag needed, and no user-facing opt-out exists.
     if (model) {
       args.push("--model", model);
     }
@@ -325,6 +340,11 @@ async function executeSubagent(
       }
     }
 
+    existingAgentId = await resolveSubagentDeploymentAgentId(
+      existingAgentId,
+      existingConversationId,
+      (id) => activeBackend.retrieveConversation(id),
+    );
     const cliArgs = buildSubagentArgs(
       type,
       config,
@@ -445,10 +465,16 @@ async function executeSubagent(
       throw new Error("Subagent executable is required");
     }
     signal?.throwIfAborted();
+    const remoteAgentFree = Boolean(
+      environment && backendMode === "api" && !existingAgentId,
+    );
     const runningProcess = spawnSubagentProcess(managedCommand, managedArgs, {
       cwd: subagentWorkingDirectory,
       env: spawnEnv,
       signal,
+      forceKillGraceMs: remoteAgentFree
+        ? REMOTE_CHILD_CANCEL_GRACE_MS
+        : undefined,
     });
     const proc = runningProcess.process;
     proc.stdin.on("error", () => {});
@@ -527,7 +553,7 @@ async function executeSubagent(
         conversationId: state.conversationId || undefined,
         report: "",
         success: false,
-        error: INTERRUPTED_BY_USER,
+        error: describeAbortedSubagent(remoteAgentFree, state.finalError),
       });
     }
 
@@ -909,8 +935,10 @@ async function spawnSubagentInContext(
       });
   // Build the prompt with system reminder for deployed agents
   let finalPrompt = prompt;
-  if (
-    (type !== "custom" || forkedContext) &&
+  if (forkedContext) {
+    finalPrompt = buildForkSystemReminder(type, backendMode) + prompt;
+  } else if (
+    type !== "custom" &&
     isDeployingExisting &&
     resolvedParentAgentId
   ) {
@@ -918,10 +946,7 @@ async function spawnSubagentInContext(
       const cachedParent =
         parentAgent ??
         (await getBackend().retrieveAgent(resolvedParentAgentId));
-      if (forkedContext) {
-        const systemReminder = buildForkSystemReminder(type, backendMode);
-        finalPrompt = systemReminder + prompt;
-      } else if (
+      if (
         shouldPrependDeploySystemReminder(
           existingAgentId,
           resolvedParentAgentId,
@@ -938,12 +963,8 @@ async function spawnSubagentInContext(
     }
   }
 
-  // Fork subagents (e.g. recall) deploy the parent agent into a forked
-  // conversation. They don't emit an init event carrying agent_id/
-  // conversation_id (which is the usual source of agentURL), so without this
-  // the card would have no link and any fallback would route to the parent's
-  // main conversation. Set the link eagerly to the forked conversation so it
-  // opens the subagent's own thread instead.
+  // Agent-backed forks can link eagerly; agent-free Cloud forks publish their
+  // own conversation link through the child init event. Preserve custom links.
   if ((forkedContext || type === "custom") && existingConversationId) {
     const forkAgentURL = existingAgentId
       ? buildAgentReference(existingAgentId, {

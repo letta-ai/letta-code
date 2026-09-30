@@ -1,4 +1,5 @@
 import { updateConversationLLMConfig } from "@/agent/modify";
+import { allocateSubagentName } from "@/agent/subagents/names";
 import type { Backend } from "@/backend";
 import { settingsManager } from "@/settings-manager";
 import type { SubagentConfig } from ".";
@@ -12,6 +13,7 @@ export async function inheritForkToolset(
   agentId: string,
   parentConversationId: string,
   forkConversationId: string,
+  targetAgentId = agentId,
 ): Promise<void> {
   const parentToolset = settingsManager.getToolsetPreference(
     agentId,
@@ -20,7 +22,7 @@ export async function inheritForkToolset(
   if (parentToolset === "auto") return;
 
   settingsManager.setToolsetPreference(
-    agentId,
+    targetAgentId,
     parentToolset,
     forkConversationId,
   );
@@ -30,6 +32,7 @@ export async function inheritForkToolset(
 interface ForkParentConversationParams {
   backend: Backend;
   parentAgentId: string;
+  parentAgentName?: string | null;
   parentConversationId: string;
   config: SubagentConfig;
   model?: string;
@@ -51,7 +54,7 @@ export async function forkParentConversation(
   params: ForkParentConversationParams,
   dependencies: ForkParentConversationDependencies = {},
 ) {
-  // Resolve and validate before creating the hidden conversation. Invalid
+  // Resolve and validate before creating the subagent conversation. Invalid
   // model IDs should not leave an orphan fork behind.
   const modelOverride = await (
     dependencies.resolveModelOverride ??
@@ -75,7 +78,13 @@ export async function forkParentConversation(
       ...(params.parentConversationId === "default"
         ? { agentId: params.parentAgentId }
         : {}),
-      hidden: true,
+      ...(params.backend.capabilities.localMemfs
+        ? { hidden: true }
+        : {
+            ephemeral: true,
+            name: allocateSubagentName(params.parentAgentName),
+            isSubagent: true,
+          }),
       signal: params.signal,
     },
   );
@@ -94,6 +103,9 @@ export async function forkParentConversation(
       params.parentAgentId,
       params.parentConversationId,
       forkedConversation.id,
+      params.backend.capabilities.localMemfs
+        ? params.parentAgentId
+        : forkedConversation.id,
     );
   } catch (error) {
     await params.backend

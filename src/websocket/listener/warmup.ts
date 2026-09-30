@@ -65,6 +65,10 @@ export async function ensureListenerWarmStateForTurn(
 ): Promise<ListenerAgentMetadata | null> {
   const { agentId } = scope;
   if (!agentId) {
+    await warmupDeps.ensureSecretsHydratedForAgent(
+      listener,
+      scope.conversationId,
+    );
     return null;
   }
 

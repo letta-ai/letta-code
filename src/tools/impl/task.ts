@@ -6,7 +6,11 @@
  */
 
 import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
-import { getConversationId, getCurrentAgentId } from "@/agent/context";
+import {
+  getConversationId,
+  getCurrentAgentId,
+  getCurrentAgentName,
+} from "@/agent/context";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
   completeSubagent,
@@ -650,7 +654,6 @@ export async function launchSubagent(
   const resolvedParentScope = resolveNotificationScope(args.parentScope);
   signal?.throwIfAborted();
 
-  // Determine if deploying an existing agent
   const isDeployingExisting = Boolean(args.agent_id || args.conversation_id);
   const requestedType = args.subagent_type;
   const externalCodingAgentType =
@@ -674,12 +677,9 @@ export async function launchSubagent(
   const mcpValidationError = validateExternalCodingAgentMcpOptions(args.mcp);
   if (mcpValidationError) return { success: false, error: mcpValidationError };
 
-  // Validate required parameters based on mode
   if (isDeployingExisting) {
-    // Deploying existing agent: prompt and description required, subagent_type optional
     validateRequiredParams(args, ["prompt", "description"], "Task");
   } else {
-    // Creating new agent: subagent_type, prompt, and description required
     validateRequiredParams(
       args,
       ["subagent_type", "prompt", "description"],
@@ -687,7 +687,6 @@ export async function launchSubagent(
     );
   }
 
-  // Extract validated params
   const inputPrompt = args.prompt as string;
   const description = args.description as string;
 
@@ -893,12 +892,15 @@ export async function launchSubagent(
       const forkedConv = await forkParentConversation({
         backend: getBackend(),
         parentAgentId,
+        parentAgentName: getCurrentAgentName(),
         parentConversationId: parentConvId,
         config,
         model,
         signal,
       });
-      effectiveAgentId = parentAgentId;
+      effectiveAgentId = getBackend().capabilities.localMemfs
+        ? parentAgentId
+        : undefined;
       effectiveConversationId = forkedConv.id;
     } catch (error) {
       const errorMessage =
@@ -953,7 +955,6 @@ export async function launchSubagent(
     signal?.removeEventListener("abort", abortStartup);
   }
 
-  // Extract Letta agent ID from subagent state (available after link resolves)
   const linkedAgent = getSubagentSnapshot().agents.find(
     (a) => a.id === subagentId,
   );
