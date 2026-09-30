@@ -105,6 +105,7 @@ import {
   setSystemPromptDoctorState,
 } from "@/cli/helpers/system-prompt-warning.ts";
 import { getRandomThinkingVerb } from "@/cli/helpers/thinking-messages";
+import { tuiSubmitClientPreferences } from "@/cli/helpers/tui-client-preferences";
 import {
   buildModCommandPrompt,
   parseModCommandArgv,
@@ -159,6 +160,7 @@ import { handleConnectionCommand } from "./submit-connection-commands";
 import { handleDiagnosticsCommand } from "./submit-diagnostics-commands";
 import { handleNavigationCommand } from "./submit-navigation-commands";
 import { handleProfileCommand } from "./submit-profile-commands";
+import { bindTuiClientPreferences, buildTuiTurnInput } from "./turn-input";
 import type {
   ActiveOverlay,
   AppCommandRunner,
@@ -519,7 +521,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     pendingConversationSwitchRef,
     pendingGitReminderRef,
     processConversation,
-    processConversationWithQueuedApprovals,
     profileConfirmPending,
     projectDirectory,
     queuedApprovalResults,
@@ -582,7 +583,10 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: moved from AppCoordinator; dependencies are preserved from the original callback.
   const onSubmit = useCallback(
-    async (message?: string): Promise<{ submitted: boolean }> => {
+    async (
+      message?: string,
+      submitOptions?: { userInitiated: boolean },
+    ): Promise<{ submitted: boolean }> => {
       const commandScope = {
         agentId: agentIdRef.current,
         conversationId: conversationIdRef.current,
@@ -599,6 +603,14 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       const routedUserText = aliasBareExitCommand(userTextForInput);
       const isSystemOnly =
         taskNotifications.length > 0 && userTextForInput.length === 0;
+      const clientPreferences = tuiSubmitClientPreferences(
+        isSystemOnly,
+        submitOptions,
+      );
+      const processConversationWithQueuedApprovals = bindTuiClientPreferences(
+        ctx.processConversationWithQueuedApprovals,
+        clientPreferences,
+      );
 
       // Handle profile load confirmation (Enter to continue)
       if (profileConfirmPending && !msg && !hasOverrideContent) {
@@ -3718,30 +3730,15 @@ ${SYSTEM_REMINDER_CLOSE}
 
       // Start the conversation loop. If we have queued approval results from an interrupted
       // client-side execution, send them first before the new user message.
-      const initialInput: Array<MessageCreate | ApprovalCreate> = [];
-
-      if (eagerRecoveryDenials && eagerRecoveryDenials.length > 0) {
-        initialInput.push({
-          type: "approval",
-          approvals: eagerRecoveryDenials,
-          otid: randomUUID(),
-        });
-      }
-
-      const queuedApprovalInput =
-        consumeQueuedApprovalInputForCurrentConversation();
-      if (queuedApprovalInput) {
-        initialInput.push(queuedApprovalInput);
-      }
-
-      initialInput.push({
-        type: "message",
-        role: "user",
+      const initialInput = buildTuiTurnInput({
+        approvals: eagerRecoveryDenials,
+        queuedApproval: consumeQueuedApprovalInputForCurrentConversation(),
         content: messageContent as unknown as MessageCreate["content"],
         otid: userOtid,
       });
 
       await processConversation(initialInput, {
+        clientPreferences,
         submissionGeneration,
         transcriptStartLineIndex,
       });

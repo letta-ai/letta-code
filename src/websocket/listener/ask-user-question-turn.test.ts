@@ -9,7 +9,9 @@ import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
 import { settingsManager } from "@/settings-manager";
 import { TestDirectory } from "@/test-utils/test-fs";
 import { isolateAmbientLettaTestEnv } from "@/test-utils/test-process-env";
+import { getStoredClientPreferences } from "@/tools/client-preferences";
 import { clearCapturedToolExecutionContexts } from "@/tools/manager";
+import type { InputCreateMessagePayload } from "@/types/protocol_v2";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { createRuntime } from "./lifecycle";
 import {
@@ -18,12 +20,12 @@ import {
   disposeListenerModAdapter,
 } from "./mod-adapter";
 import { parseServerMessage } from "./protocol-inbound";
-import { setActiveRuntime } from "./runtime";
+import { evictConversationRuntimeIfIdle, setActiveRuntime } from "./runtime";
 import { prepareListenerTurn } from "./turn-setup";
 import { finishListenerTurn } from "./turn-terminal";
 import { __listenerWarmupTestUtils } from "./warmup";
 
-test("app-server questions are scoped to the input that includes them", async () => {
+test("conversation preferences preserve serialized tools across idle, automatic turns, eviction and settings reload", async () => {
   const directory = new TestDirectory();
   const originalHome = process.env.HOME;
   await settingsManager.reset();
@@ -61,8 +63,7 @@ test("app-server questions are scoped to the input that includes them", async ()
     await settingsManager.initialize();
     async function prepare(
       conversationId: string,
-      include: boolean,
-      exclude = false,
+      payload: Partial<InputCreateMessagePayload> = {},
     ) {
       const parsed = parseServerMessage(
         Buffer.from(
@@ -72,10 +73,7 @@ test("app-server questions are scoped to the input that includes them", async ()
             payload: {
               kind: "create_message",
               messages: [{ role: "user", content: "Which warehouse?" }],
-              ...(include
-                ? { client_toolset: { include: ["AskUserQuestionAsync"] } }
-                : {}),
-              exclude_interactive_tools: exclude,
+              ...payload,
             },
           }),
         ),
@@ -100,6 +98,7 @@ test("app-server questions are scoped to the input that includes them", async ()
             conversationId,
             messages: parsed.payload.messages,
             clientToolset: parsed.payload.client_toolset,
+            clientPreferences: parsed.payload.client_preferences,
             excludeInteractiveTools: parsed.payload.exclude_interactive_tools,
           },
           runtime,
@@ -110,8 +109,8 @@ test("app-server questions are scoped to the input that includes them", async ()
           turnLease: lease,
         });
         if (result.kind !== "ready") throw new Error("Turn did not prepare");
-        return result.preparedToolContext.preparedToolContext.clientTools.map(
-          (tool) => tool.name,
+        return JSON.stringify(
+          result.preparedToolContext.preparedToolContext.clientTools,
         );
       } finally {
         finishListenerTurn(runtime, lease, {
@@ -122,11 +121,57 @@ test("app-server questions are scoped to the input that includes them", async ()
         });
       }
     }
-    expect(await prepare("web", true)).toContain("AskUserQuestion");
-    expect(await prepare("child", false)).not.toContain("AskUserQuestion");
-    expect(await prepare("web", false)).not.toContain("AskUserQuestion");
-    expect(await prepare("web", true, true)).not.toContain("AskUserQuestion");
-    expect(await prepare("web", true)).toContain("AskUserQuestion");
+    const name = '"name":"AskUserQuestion"';
+    const baseline = await prepare("web");
+    const preferences = { toolset: { include: ["AskUserQuestion"] } };
+    const included = await prepare("web", { client_preferences: preferences });
+    expect(included).toContain(name);
+    expect(
+      await prepare("web", {
+        messages: [
+          {
+            role: "user",
+            content: "<task-notification>done</task-notification>",
+          },
+        ],
+      }),
+    ).toBe(included);
+    expect(
+      await prepare("web", {
+        messages: [{ role: "user", content: "scheduled prompt" }],
+      }),
+    ).toBe(included);
+    expect(await prepare("web", { client_preferences: preferences })).toBe(
+      included,
+    );
+    const oldRuntime = getOrCreateScopedRuntime(listener, agentId, "web");
+    expect(evictConversationRuntimeIfIdle(oldRuntime)).toBe(true);
+    expect(getOrCreateScopedRuntime(listener, agentId, "web")).not.toBe(
+      oldRuntime,
+    );
+    expect(await prepare("web")).toBe(included);
+    await settingsManager.reset();
+    await settingsManager.initialize();
+    expect(await prepare("web")).toBe(included);
+    expect(await prepare("child")).not.toContain(name);
+    expect(await prepare("web", { client_toolset: {} })).toBe(baseline);
+    expect(await prepare("web")).toBe(included);
+    expect(await prepare("web", { exclude_interactive_tools: true })).toBe(
+      baseline,
+    );
+    expect(await prepare("web")).toBe(included);
+    expect(await prepare("web", { client_preferences: {} })).toBe(baseline);
+    expect(await prepare("web")).toBe(baseline);
+    expect(
+      await prepare("web", {
+        client_toolset: { include: ["AskUserQuestion"] },
+      }),
+    ).toContain(name);
+    expect(await prepare("web")).toBe(baseline);
+    expect(getStoredClientPreferences(agentId, "web")).toEqual({});
+    await prepare("default", { client_preferences: preferences });
+    expect(await prepare("default")).toContain(name);
+    expect(await prepare("other")).not.toContain(name);
   } finally {
     disposeListenerModAdapter(listener);
     __listenerWarmupTestUtils.resetWarmupDepsForTests();

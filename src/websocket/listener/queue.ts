@@ -10,6 +10,10 @@ import type {
 import { isCoalescable } from "@/queue/queue-runtime";
 import { buildTaskNotificationContent } from "@/queue/turn-queue-runtime";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
+import {
+  getStoredClientPreferences,
+  normalizeClientPreferences,
+} from "@/tools/client-preferences";
 import { debugWarn } from "@/utils/debug";
 import { getListenerBlockedReason } from "@/websocket/helpers/listener-queue-adapter";
 import {
@@ -221,6 +225,9 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
   let hasModContinue = false;
   let batchConnectionId: string | undefined;
   let batchImageFailureMode: "strict" | "drop" | null = null;
+  let batchPreferences = JSON.stringify(
+    getStoredClientPreferences(runtime.agentId, runtime.conversationId),
+  );
   const isNoCoalesce = (candidate: (typeof queuedItems)[number]): boolean =>
     candidate.kind === "message" && candidate.noCoalesce === true;
   for (const item of queuedItems) {
@@ -229,6 +236,19 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
       !hasSameQueueScope(firstQueuedItem, item)
     ) {
       break;
+    }
+    const incoming = runtime.queuedMessagesByItemId.get(item.id);
+    if (incoming?.clientPreferences !== undefined) {
+      const preferences = JSON.stringify(
+        normalizeClientPreferences(incoming.clientPreferences),
+      );
+      // A changed selection starts a new turn; identical UI snapshots can steer it.
+      if (
+        preferences !== batchPreferences &&
+        (queueLen > 0 || runtime.turnLifecycle.kind !== "idle")
+      )
+        break;
+      batchPreferences = preferences;
     }
     // noCoalesce items run as single-item batches: one never joins an
     // existing batch, and nothing joins a batch it started.
