@@ -27,16 +27,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Build image
-        # The release build intentionally uses the ECR Public default so a
-        # Docker Hub publish login cannot interfere with pulling the base.
-        # PR smoke builds use Docker Hub directly to avoid ECR's shared data
-        # cap taking the entire repository's validation offline.
-        run: |
-          docker build \
-            --build-arg NODE_BASE_IMAGE=docker.io/library/node:22.19-bookworm-slim \
-            --tag letta-code:smoke \
-            --file docker/Dockerfile \
-            .
+        run: docker build --tag letta-code:smoke --file docker/Dockerfile .
 
       - name: Verify CLI and runtime tools
         run: |

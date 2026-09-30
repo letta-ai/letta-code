@@ -17,7 +17,6 @@ Remote computer options:
   --channels <list>  Comma-separated channel names to enable (e.g. telegram)
   --install-channel-runtimes  Install missing runtime dependencies for selected channels
   --debug  Log WebSocket events instead of showing the interactive status UI
-  --host-protocol stdio  Emit prefixed JSON lifecycle events for a host process
 
 App Server options:
   --listen [url]  Accept App Server connections. If URL is omitted, binds to an available loopback port
@@ -90,9 +89,7 @@ export function resolveServerCommand(argv: string[]): ServerCommand {
         arg === "--env-name" ||
         arg.startsWith("--env-name=") ||
         arg === "--channels" ||
-        arg.startsWith("--channels=") ||
-        arg === "--host-protocol" ||
-        arg.startsWith("--host-protocol="),
+        arg.startsWith("--channels="),
     );
     if (conflictingOption) {
       throw new Error(

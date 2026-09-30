@@ -11,10 +11,6 @@ describe("server subcommand routing", () => {
       kind: "remote",
       argv: ["--channels", "slack"],
     });
-    expect(resolveServerCommand(["--host-protocol", "stdio"])).toEqual({
-      kind: "remote",
-      argv: ["--host-protocol", "stdio"],
-    });
   });
 
   test("uses a bare --listen flag for App Server on an available port", () => {
@@ -63,9 +59,6 @@ describe("server subcommand routing", () => {
     expect(() =>
       resolveServerCommand(["--channels=slack", "--listen"]),
     ).toThrow("--channels cannot be used with --listen");
-    expect(() =>
-      resolveServerCommand(["--listen", "--host-protocol", "stdio"]),
-    ).toThrow("--host-protocol cannot be used with --listen");
   });
 
   test("maps the legacy command to App Server mode", () => {
