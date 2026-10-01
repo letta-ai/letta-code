@@ -23,6 +23,7 @@ export interface HeadlessTurnExecutorInput {
   body: HeadlessTurnBody;
   history: StoredMessage[];
   uiMessages: LocalMessage[];
+  signal: AbortSignal;
 }
 
 export interface HeadlessTurnExecutor {

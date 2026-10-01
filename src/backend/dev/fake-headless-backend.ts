@@ -502,6 +502,8 @@ export class HeadlessBackend implements Backend {
       turnInput.agentId,
       body,
     );
+    const runController = new AbortController();
+    this.runControllerByRunId.set(run.id, runController);
     const history = this.store.listConversationMessages(
       turnInput.conversationId,
       {
@@ -541,6 +543,7 @@ export class HeadlessBackend implements Backend {
         : resolvedPrompt.midConversationSystemPrompt;
     let stream: Stream<LettaStreamingResponse>;
     try {
+      runController.signal.throwIfAborted();
       stream = await this.executor.execute({
         conversationId: turnInput.conversationId,
         agentId: turnInput.agentId,
@@ -550,17 +553,32 @@ export class HeadlessBackend implements Backend {
         body,
         history,
         uiMessages,
+        signal: runController.signal,
       });
     } catch (error) {
       this.failRun(run.id, error);
       throw error;
     }
-    this.runControllerByRunId.set(run.id, stream.controller);
+    const abortExecutorStream = () => {
+      if (!stream.controller.signal.aborted) {
+        stream.controller.abort(runController.signal.reason);
+      }
+    };
+    if (runController.signal.aborted) {
+      abortExecutorStream();
+    } else {
+      runController.signal.addEventListener("abort", abortExecutorStream, {
+        once: true,
+      });
+    }
     return this.persistExecutorStream(
       turnInput.conversationId,
       turnInput.agentId,
       stream,
       run.id,
+      runController,
+      () =>
+        runController.signal.removeEventListener("abort", abortExecutorStream),
     );
   }
 
@@ -688,22 +706,29 @@ export class HeadlessBackend implements Backend {
     return recorded;
   }
 
+  private isRunCancelled(runId: string): boolean {
+    return this.runs.get(runId)?.status === "cancelled";
+  }
+
   private persistExecutorStream(
     conversationId: string,
     agentId: string,
     stream: Stream<LettaStreamingResponse>,
     runId: string,
+    runController: AbortController,
+    disposeAbortRelay: () => void,
   ): Stream<LettaStreamingResponse> {
     const store = this.store;
     const backend = this;
     return {
-      controller: stream.controller,
+      controller: runController,
       async *[Symbol.asyncIterator]() {
         let sawStopReason = false;
         let sawApprovalRequest = false;
         let pendingErrorInfo: RunErrorMetadata | undefined;
         try {
           for await (const rawChunk of stream) {
+            if (backend.isRunCancelled(runId)) return;
             const chunk = attachRunId(rawChunk, runId);
             if (chunk.message_type === "approval_request_message") {
               sawApprovalRequest = true;
@@ -730,6 +755,7 @@ export class HeadlessBackend implements Backend {
               );
             }
           }
+          if (backend.isRunCancelled(runId)) return;
           if (!sawStopReason) {
             if (pendingErrorInfo) {
               backend.completeRun(runId, "error", pendingErrorInfo);
@@ -770,6 +796,8 @@ export class HeadlessBackend implements Backend {
         } catch (error) {
           backend.failRun(runId, error);
           throw error;
+        } finally {
+          disposeAbortRelay();
         }
       },
     } as unknown as Stream<LettaStreamingResponse>;

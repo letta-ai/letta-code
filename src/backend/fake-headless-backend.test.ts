@@ -9,7 +9,11 @@ import type {
   ConversationUpdateBody,
 } from "@/backend";
 import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
-import { DeterministicToolCallExecutor } from "@/backend/dev/headless-turn-executor";
+import {
+  DeterministicToolCallExecutor,
+  type HeadlessTurnExecutor,
+  type HeadlessTurnExecutorInput,
+} from "@/backend/dev/headless-turn-executor";
 import {
   type ProviderStreamAdapter,
   ProviderTurnExecutor,
@@ -36,7 +40,99 @@ class RecordingProviderAdapter implements ProviderStreamAdapter {
   }
 }
 
+class PendingSetupExecutor implements HeadlessTurnExecutor {
+  input: HeadlessTurnExecutorInput | undefined;
+
+  async execute(input: HeadlessTurnExecutorInput) {
+    this.input = input;
+    return await new Promise<never>((_resolve, reject) => {
+      input.signal.addEventListener(
+        "abort",
+        () => reject(new DOMException("cancelled", "AbortError")),
+        { once: true },
+      );
+    });
+  }
+}
+
+class LateChunkExecutor implements HeadlessTurnExecutor {
+  private release!: () => void;
+  readonly ready = new Promise<void>((resolve) => {
+    this.release = resolve;
+  });
+
+  async execute() {
+    const source = this;
+    return {
+      controller: new AbortController(),
+      async *[Symbol.asyncIterator]() {
+        await source.ready;
+        yield {
+          message_type: "assistant_message",
+          content: [{ type: "text", text: "late output" }],
+        } as never;
+        yield {
+          message_type: "stop_reason",
+          stop_reason: "end_turn",
+        } as never;
+      },
+    } as never;
+  }
+
+  continue(): void {
+    this.release();
+  }
+}
+
 describe("FakeHeadlessBackend", () => {
+  test("cancels provider setup before the executor returns a stream", async () => {
+    const executor = new PendingSetupExecutor();
+    const backend = new FakeHeadlessBackend("agent-fake-headless", executor);
+    const conversation = await backend.createConversation({
+      agent_id: "agent-fake-headless",
+    });
+    const pending = backend.createConversationMessageStream(conversation.id, {
+      agent_id: "agent-fake-headless",
+      messages: [{ role: "user", content: "wait" }],
+    } as ConversationMessageCreateBody);
+
+    await Promise.resolve();
+    expect(executor.input?.signal.aborted).toBe(false);
+    await backend.cancelRun("agent-fake-headless", "run-fake-headless-1");
+
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(executor.input?.signal.aborted).toBe(true);
+    expect(await backend.retrieveRun("run-fake-headless-1")).toMatchObject({
+      status: "cancelled",
+      stop_reason: "cancelled",
+    });
+  });
+
+  test("does not persist provider chunks that arrive after cancellation", async () => {
+    const executor = new LateChunkExecutor();
+    const backend = new FakeHeadlessBackend("agent-fake-headless", executor);
+    const conversation = await backend.createConversation({
+      agent_id: "agent-fake-headless",
+    });
+    const stream = await backend.createConversationMessageStream(
+      conversation.id,
+      {
+        agent_id: "agent-fake-headless",
+        messages: [{ role: "user", content: "wait" }],
+      } as ConversationMessageCreateBody,
+    );
+    const collecting = collect(stream);
+
+    await backend.cancelRun("agent-fake-headless", "run-fake-headless-1");
+    executor.continue();
+
+    expect(await collecting).toEqual([]);
+    const replay = await collect(
+      await backend.streamRunMessages("run-fake-headless-1", {} as never),
+    );
+    expect(JSON.stringify(replay)).not.toContain("late output");
+  });
+
   test("streams deterministic assistant responses", async () => {
     const backend = new FakeHeadlessBackend("agent-fake-headless");
     const conversation = await backend.createConversation({

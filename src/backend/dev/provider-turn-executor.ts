@@ -45,6 +45,8 @@ export interface ProviderTurnInput {
   uiMessages: LocalMessage[];
   clientTools: unknown[];
   clientSkills: unknown[];
+  /** Present for real turns; optional for direct adapter callers and fixtures. */
+  signal?: AbortSignal;
 }
 
 /** Provider-request start info emitted at the model-call boundary. */
@@ -140,6 +142,7 @@ export function buildProviderTurnInput(
     uiMessages: input.uiMessages,
     clientTools: bodyListField(input.body, "client_tools"),
     clientSkills: bodyListField(input.body, "client_skills"),
+    signal: input.signal,
   };
 }
 
@@ -426,9 +429,9 @@ function identityForContentSegment(
 
 function createProviderLettaStream(
   events: AsyncIterable<ProviderStreamEvent>,
+  controller: AbortController,
   contextTokensEstimate?: number,
 ): Stream<LettaStreamingResponse> {
-  const controller = new AbortController();
   return {
     controller,
     async *[Symbol.asyncIterator]() {
@@ -555,10 +558,15 @@ export class ProviderTurnExecutor implements HeadlessTurnExecutor {
   ) {}
 
   async execute(input: HeadlessTurnExecutorInput) {
-    const providerInput = buildProviderTurnInput(input);
+    const controller = new AbortController();
+    const providerInput = {
+      ...buildProviderTurnInput(input),
+      signal: AbortSignal.any([input.signal, controller.signal]),
+    };
     const events = await this.adapter.stream(providerInput);
     return createProviderLettaStream(
       events,
+      controller,
       estimateProviderContextTokens(providerInput),
     );
   }
