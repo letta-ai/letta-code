@@ -324,6 +324,22 @@ export function getOutboundQueueStats(transport: ListenerTransport): {
   };
 }
 
+/** Settle every queued frame when its owning connection closes. */
+export function closeOutboundTransportQueue(
+  transport: ListenerTransport,
+): void {
+  const state = queueByTransport.get(transport);
+  if (!state) return;
+  if (state.pollTimer) {
+    clearTimeout(state.pollTimer);
+    state.pollTimer = null;
+  }
+  for (const frame of state.frames.splice(0)) frame.onDropped?.();
+  // Keep terminal diagnostics for a transport that this queue killed. Normal
+  // connection closes can forget the queue because the writer is discarded.
+  if (!state.killed) queueByTransport.delete(transport);
+}
+
 // ----- Wire perf telemetry (moved from protocol-outbound.ts) -----
 // Aggregates per-message-type send metrics into 1s windows, flushed to stderr
 // or LETTA_LISTENER_PERF_FILE when LETTA_LISTENER_PERF is enabled.

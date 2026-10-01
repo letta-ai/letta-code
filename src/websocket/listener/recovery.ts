@@ -398,6 +398,7 @@ export type RecoveredContinuationDependencies = {
   ensureModAdapters?: typeof ensureListenerModAdaptersForAgent;
   prepareToolExecutionContext?: typeof prepareToolExecutionContextForScope;
   executeApprovalBatch?: typeof executeApprovalBatch;
+  recordListenerWork?: typeof recordListenerWork;
 };
 
 type RecoveryDeliveryOrigin = {
@@ -538,6 +539,7 @@ async function executeRecoveredApprovalContinuation(params: {
     prepareToolExecutionContextForScope;
   const executeApprovals =
     dependencies?.executeApprovalBatch ?? executeApprovalBatch;
+  const recordWork = dependencies?.recordListenerWork ?? recordListenerWork;
   const scope = {
     agent_id: recovered.agentId,
     conversation_id: recovered.conversationId,
@@ -740,9 +742,14 @@ async function executeRecoveredApprovalContinuation(params: {
       return;
     }
 
-    recordListenerWork(
+    const continuationOtid = crypto.randomUUID();
+    recordWork(
       runtime,
-      { toolCallIds: approvedToolCallIds, results: approvalResults },
+      {
+        toolCallIds: approvalResults.map((result) => result.tool_call_id),
+        results: approvalResults,
+        requestOtid: continuationOtid,
+      },
       "after_tool_execution",
     );
 
@@ -773,6 +780,7 @@ async function executeRecoveredApprovalContinuation(params: {
           lastNeedsUserInputToolCallIds: [],
           agentId: recovered.agentId,
           conversationId: recovered.conversationId,
+          requestOtid: continuationOtid,
         });
         runtime.turnLifecycle.setExecutingToolCallIds(recoveryLease, []);
         if (runtime.recoveredApprovalState === recovered) {
@@ -800,7 +808,7 @@ async function executeRecoveredApprovalContinuation(params: {
       {
         type: "approval",
         approvals: approvalResults,
-        otid: crypto.randomUUID(),
+        otid: continuationOtid,
       },
     ]);
     let continuationBatchId = `batch-recovered-${crypto.randomUUID()}`;
@@ -831,17 +839,20 @@ async function executeRecoveredApprovalContinuation(params: {
       return;
     }
 
+    const continuationConnectionId =
+      selectedDeliveryOwnerId ?? opts?.connectionId;
     await processTurn(
       {
         type: "message",
         agentId: recovered.agentId,
         conversationId: recovered.conversationId,
+        connectionId: continuationConnectionId,
         messages: continuationInput.messages,
       },
       socket,
       runtime,
       opts?.onStatusChange,
-      selectedDeliveryOwnerId ?? opts?.connectionId,
+      continuationConnectionId,
       continuationBatchId,
       recoveryLease,
       continuationCorrelation,

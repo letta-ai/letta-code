@@ -271,6 +271,7 @@ export type ConversationRuntime = {
     agentId: string | null;
     conversationId: string;
     continuationEpoch: number;
+    requestOtid?: string;
   } | null;
   continuationEpoch: number;
   pendingInterruptedToolCallIds: string[] | null;
@@ -457,6 +458,7 @@ export interface InterruptPopulateInput {
   lastNeedsUserInputToolCallIds: string[];
   agentId: string | null;
   conversationId: string;
+  requestOtid?: string;
 }
 
 export interface InterruptToolReturn {

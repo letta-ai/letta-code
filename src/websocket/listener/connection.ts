@@ -1,4 +1,5 @@
 import type WebSocket from "ws";
+import { closeOutboundTransportQueue } from "./outbound-wire";
 import { getConversationRuntimeKey, nextEventSeq } from "./runtime";
 import {
   isListenerTransportOpen,
@@ -362,6 +363,10 @@ export function closeListenerConnection(
   runtime.connections.delete(connectionId);
   connection.resolveStartupReady();
   connection.cancellation.abort();
+  closeOutboundTransportQueue(connection.writer);
+  if (connection.streamWriter) {
+    closeOutboundTransportQueue(connection.streamWriter);
+  }
   refreshLegacySingleConnection(runtime);
   return connection;
 }

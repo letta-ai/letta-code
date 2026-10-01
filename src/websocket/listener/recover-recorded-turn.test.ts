@@ -188,6 +188,60 @@ test("accepted result request is found by OTID if the listener died before seein
   }
 });
 
+test("denial-only saved results restart with their exact request identity", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "recorded-denial-"));
+  const store = createInterruptedTurnStore(directory);
+  const listener = createRuntime();
+  listener.connectionId = "conn-replacement";
+  const sent: IncomingMessage[] = [];
+  try {
+    store.write({
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      runId: "run-old",
+      toolCallIds: ["call-denied"],
+      results: [
+        {
+          type: "approval",
+          tool_call_id: "call-denied",
+          approve: false,
+          reason: "Listener restarted before approval",
+        },
+      ],
+      requestOtid: "denial-request",
+      workingDirectory: "/project",
+    });
+    await recoverRecordedTurns(listener, {
+      store,
+      backend: { retrieveAgent: async () => ({ id: "agent-1" }) } as never,
+      resume: (async () => ({
+        pendingApprovals: [
+          { toolCallId: "call-denied", toolName: "Bash", toolArgs: "{}" },
+        ],
+      })) as never,
+      canRecover: async () => true,
+      setCwd: () => {},
+      processTurn: async (message) => {
+        sent.push(message);
+      },
+    });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.messages?.[0]).toMatchObject({
+      otid: "denial-request",
+      approvals: [
+        {
+          tool_call_id: "call-denied",
+          approve: false,
+          reason: "Listener restarted before approval",
+        },
+      ],
+    });
+  } finally {
+    listener.intentionallyClosed = true;
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("normal delivery during the final ownership lookup keeps its newer work", async () => {
   const directory = mkdtempSync(join(tmpdir(), "recorded-race-"));
   const store = createInterruptedTurnStore(directory);

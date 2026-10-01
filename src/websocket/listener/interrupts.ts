@@ -661,6 +661,7 @@ export function populateInterruptQueue(
       agentId: input.agentId,
       conversationId: input.conversationId,
       continuationEpoch: runtime.continuationEpoch,
+      ...(input.requestOtid ? { requestOtid: input.requestOtid } : {}),
     };
     runtime.pendingInterruptedToolCallIds = [...input.lastExecutingToolCallIds];
     return true;
@@ -679,6 +680,7 @@ export function populateInterruptQueue(
       agentId: input.agentId,
       conversationId: input.conversationId,
       continuationEpoch: runtime.continuationEpoch,
+      ...(input.requestOtid ? { requestOtid: input.requestOtid } : {}),
     };
     runtime.pendingInterruptedToolCallIds = [...input.lastExecutingToolCallIds];
     return true;
@@ -701,6 +703,7 @@ export function populateInterruptQueue(
       agentId: input.agentId,
       conversationId: input.conversationId,
       continuationEpoch: runtime.continuationEpoch,
+      ...(input.requestOtid ? { requestOtid: input.requestOtid } : {}),
     };
     runtime.pendingInterruptedToolCallIds = null;
     return true;
@@ -762,7 +765,7 @@ export function consumeInterruptQueue(
       approvalMessage: {
         type: "approval",
         approvals: runtime.pendingInterruptedResults,
-        otid: crypto.randomUUID(),
+        otid: ctx?.requestOtid ?? crypto.randomUUID(),
       },
       interruptedToolCallIds: runtime.pendingInterruptedToolCallIds
         ? [...runtime.pendingInterruptedToolCallIds]

@@ -10,6 +10,7 @@ import {
 import { cleanupListenerConnection } from "./connection-lifecycle";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { enqueueInboundUserMessage } from "./inbound-queue";
+import { consumeInterruptQueue } from "./interrupts";
 import { createRuntime } from "./lifecycle";
 import { getOutboundQueueStats, OUTBOUND_QUEUE_LIMITS } from "./outbound-wire";
 import { startRecoveredApprovalContinuation } from "./recovery";
@@ -155,9 +156,12 @@ describe("recovered approval lease boundaries", () => {
     subscribeListenerConnection(listener, "client-a", scope);
     socketA.onTerminate = () => cleanupListenerConnection(listener, "client-a");
     const continuedConnectionIds: Array<string | undefined> = [];
+    const continuedMessageConnectionIds: Array<string | undefined> = [];
+    const submittedOtids: string[] = [];
+    const recordedOtids: string[] = [];
     const processTurn = mock(
       async (
-        _message,
+        message,
         _socket,
         ownerRuntime,
         _onStatusChange,
@@ -166,6 +170,9 @@ describe("recovered approval lease boundaries", () => {
         turnLease,
       ) => {
         continuedConnectionIds.push(connectionId);
+        continuedMessageConnectionIds.push(message.connectionId);
+        const approvalMessage = message.messages[0] as { otid?: string };
+        if (approvalMessage.otid) submittedOtids.push(approvalMessage.otid);
         if (turnLease) ownerRuntime.turnLifecycle.finish(turnLease, "end_turn");
       },
     );
@@ -180,6 +187,9 @@ describe("recovered approval lease boundaries", () => {
           ensureModAdapters: async () => [],
           prepareToolExecutionContext: async () => createPreparedToolContext(),
           executeApprovalBatch: async () => createToolResults(),
+          recordListenerWork: (_runtime, update) => {
+            if (update.requestOtid) recordedOtids.push(update.requestOtid);
+          },
         },
       },
     );
@@ -215,6 +225,9 @@ describe("recovered approval lease boundaries", () => {
     expect(terminalTypes).toEqual(["client_tool_end", "tool_return_message"]);
     expect(runtime.activeConnectionId).toBe("client-b");
     expect(continuedConnectionIds).toEqual(["client-b"]);
+    expect(continuedMessageConnectionIds).toEqual(["client-b"]);
+    expect(recordedOtids).toHaveLength(1);
+    expect(recordedOtids).toEqual(submittedOtids);
   });
 
   test("a missing explicit process origin defers recovery for a later owner", async () => {
@@ -384,6 +397,7 @@ describe("recovered approval lease boundaries", () => {
       },
     } as ListenerTransport;
     const processTurn = mock(async () => {});
+    const recordedOtids: string[] = [];
 
     expect(
       await startRecoveredApprovalContinuation(
@@ -397,6 +411,9 @@ describe("recovered approval lease boundaries", () => {
             prepareToolExecutionContext: async () =>
               createPreparedToolContext(),
             executeApprovalBatch: async () => createToolResults(),
+            recordListenerWork: (_runtime, update) => {
+              if (update.requestOtid) recordedOtids.push(update.requestOtid);
+            },
           },
         },
       ),
@@ -406,6 +423,9 @@ describe("recovered approval lease boundaries", () => {
     expect(runtime.pendingInterruptedResults).toEqual(createToolResults());
     expect(runtime.pendingInterruptedToolCallIds).toEqual([]);
     expect(runtime.recoveredApprovalState).toBeNull();
+    const queued = consumeInterruptQueue(runtime, "agent-1", "conv-1");
+    expect(recordedOtids).toHaveLength(1);
+    expect(queued?.approvalMessage.otid).toBe(recordedOtids[0]);
   });
 
   test("a queued user's identity survives recovered denial continuation", async () => {
@@ -427,6 +447,7 @@ describe("recovered approval lease boundaries", () => {
     );
     let receivedActingUserId: string | undefined;
     let receivedMessages: unknown;
+    const recordedToolCallIds: string[][] = [];
 
     const handled = await startRecoveredApprovalContinuation(
       runtime,
@@ -450,6 +471,10 @@ describe("recovered approval lease boundaries", () => {
           ensureModAdapters: async () => [],
           prepareToolExecutionContext: async () => createPreparedToolContext(),
           executeApprovalBatch: async () => createDenialResults(),
+          recordListenerWork: (_runtime, update) => {
+            if (update.toolCallIds)
+              recordedToolCallIds.push(update.toolCallIds);
+          },
         },
       },
     );
@@ -467,6 +492,7 @@ describe("recovered approval lease boundaries", () => {
     expect(JSON.stringify(receivedMessages)).toContain(
       '"attribution":{"acting_user_id":"cloud-user-charles"}',
     );
+    expect(recordedToolCallIds).toEqual([["call-1"]]);
   });
 
   test("stale recovered denial processing emits nothing into a replacement run", async () => {
