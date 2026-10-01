@@ -304,6 +304,23 @@ export async function handleApprovalStop(params: {
     ) {
       return listener.connectionId ?? "legacy";
     }
+    if (
+      originConnectionId &&
+      (!runtime.activeConnectionId ||
+        runtime.activeConnectionId === originConnectionId)
+    ) {
+      const directOrigin = listener.connections.get(originConnectionId);
+      const directOriginTransport =
+        directOrigin?.streamWriter ?? directOrigin?.writer;
+      if (
+        directOrigin?.initialized &&
+        directOriginTransport &&
+        isListenerTransportOpen(directOriginTransport) &&
+        !getOutboundQueueStats(directOriginTransport).killed
+      ) {
+        return originConnectionId;
+      }
+    }
     const scopedSubscribers = getSubscribedListenerConnections(listener, {
       agent_id: runtime.agentId,
       conversation_id: runtime.conversationId,

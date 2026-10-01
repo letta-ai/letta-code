@@ -62,7 +62,7 @@ import {
   hasInterruptedCacheForScope,
 } from "./runtime";
 import { ensureSecretsHydratedForAgent } from "./secrets-sync";
-import type { ListenerTransport } from "./transport";
+import { isListenerTransportOpen, type ListenerTransport } from "./transport";
 import {
   createTurnCorrelation,
   type TurnCorrelation,
@@ -516,6 +516,23 @@ async function executeRecoveredApprovalContinuation(params: {
     recoveryLease.signal.aborted ||
     !runtime.turnLifecycle.isCurrent(recoveryLease);
   const getDeliveryOwnerId = (): string | null => {
+    if (
+      originConnectionId &&
+      (!runtime.activeConnectionId ||
+        runtime.activeConnectionId === originConnectionId)
+    ) {
+      const directOrigin = runtime.listener.connections.get(originConnectionId);
+      const directOriginTransport =
+        directOrigin?.streamWriter ?? directOrigin?.writer;
+      if (
+        directOrigin?.initialized &&
+        directOriginTransport &&
+        isListenerTransportOpen(directOriginTransport) &&
+        !getOutboundQueueStats(directOriginTransport).killed
+      ) {
+        return originConnectionId;
+      }
+    }
     const subscribers = getSubscribedListenerConnections(
       runtime.listener,
       scope,
