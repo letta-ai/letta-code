@@ -274,6 +274,8 @@ export type ConversationRuntime = {
   } | null;
   continuationEpoch: number;
   pendingInterruptedToolCallIds: string[] | null;
+  /** Terminal delivery waits that may transfer to a rotating replacement. */
+  pendingTerminalDeliveryCount: number;
   /** Per-conversation reminder state (session-context, agent-info, etc.). */
   reminderState: SharedReminderState;
   /** Per-conversation tracker for compaction/reflection cadence. */

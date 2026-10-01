@@ -554,17 +554,22 @@ describe("listener turn lifecycle integration", () => {
       toolName: "Bash",
       toolArgs: '{"command":"pwd"}',
     };
-    const executeApprovalBatch = mock(async () => [
-      {
-        type: "tool" as const,
-        tool_call_id: approval.toolCallId,
-        status: "success" as const,
-        tool_return: "/workspace",
-      },
-    ]);
+    let transportOpen = false;
+    const executeApprovalBatch = mock(async () => {
+      transportOpen = false;
+      return [
+        {
+          type: "tool" as const,
+          tool_call_id: approval.toolCallId,
+          status: "success" as const,
+          tool_return: "/workspace",
+        },
+      ];
+    });
     const executionStartedAtWait: boolean[] = [];
     const waitForApprovalTransportOpen = mock(async () => {
       executionStartedAtWait.push(executeApprovalBatch.mock.calls.length > 0);
+      transportOpen = true;
       return "open" as const;
     });
 
@@ -575,10 +580,8 @@ describe("listener turn lifecycle integration", () => {
       socket: {
         kind: "runtime",
         bufferedAmount: 0,
-        isOpen: () => false,
-        send: () => {
-          throw new Error("process transport cannot send implicitly");
-        },
+        isOpen: () => transportOpen,
+        send: () => {},
       },
       dependencies: {
         classifyApprovals: async () => ({

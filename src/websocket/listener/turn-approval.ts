@@ -42,7 +42,7 @@ import {
   normalizeExecutionResultsForInterruptParity,
 } from "./interrupts";
 import { awaitOrderedOutboundDeliveries } from "./outbound-delivery";
-import { getOutboundQueueStats } from "./outbound-wire";
+import { getOutboundQueueStats, OUTBOUND_QUEUE_LIMITS } from "./outbound-wire";
 import {
   createLifecycleMessageBase,
   emitCanonicalMessageDelta,
@@ -296,13 +296,18 @@ export async function handleApprovalStop(params: {
     return scopedSubscribers.length > 0 || isListenerTransportOpen(socket);
   };
   const getDeliveryOwnerId = (): string | null => {
-    const scopedSubscribers = getSubscribedListenerConnections(
-      runtime.listener,
-      {
-        agent_id: runtime.agentId,
-        conversation_id: runtime.conversationId,
-      },
-    ).filter(
+    const listener = runtime.listener;
+    if (
+      listener.connections.size === 0 &&
+      isListenerTransportOpen(socket) &&
+      !getOutboundQueueStats(socket).killed
+    ) {
+      return listener.connectionId ?? "legacy";
+    }
+    const scopedSubscribers = getSubscribedListenerConnections(listener, {
+      agent_id: runtime.agentId,
+      conversation_id: runtime.conversationId,
+    }).filter(
       (connection) =>
         !getOutboundQueueStats(connection.streamWriter ?? connection.writer)
           .killed,
@@ -312,16 +317,37 @@ export async function handleApprovalStop(params: {
       return preferred;
     }
     if (originConnectionCanResume && originConnectionId) return null;
-    return scopedSubscribers[0]?.id ?? null;
+    const replacementId = scopedSubscribers[0]?.id ?? null;
+    if (replacementId && originConnectionCanResume === false) {
+      runtime.activeConnectionId = replacementId;
+    }
+    return replacementId;
   };
   const awaitTerminalDeliveries = async (
     deliveries: OutboundMessageDelivery[],
-  ): Promise<"sent" | "interrupted"> =>
-    awaitOrderedOutboundDeliveries({
-      deliveries,
-      getOwnerId: getDeliveryOwnerId,
-      shouldInterrupt,
-    });
+  ): Promise<"sent" | "interrupted"> => {
+    runtime.pendingTerminalDeliveryCount += 1;
+    try {
+      return await awaitOrderedOutboundDeliveries({
+        deliveries,
+        getOwnerId: getDeliveryOwnerId,
+        shouldInterrupt,
+        ...(originConnectionCanResume === false
+          ? { ownerWaitTimeoutMs: OUTBOUND_QUEUE_LIMITS.MAX_BACKPRESSURE_MS }
+          : {}),
+        receiptMatchesOwner: (receipt, ownerId) =>
+          receipt.connectionId === ownerId ||
+          (runtime.listener.connections.size === 0 &&
+            receipt.connectionId === null &&
+            ownerId === (runtime.listener.connectionId ?? "legacy")),
+      });
+    } finally {
+      runtime.pendingTerminalDeliveryCount = Math.max(
+        0,
+        runtime.pendingTerminalDeliveryCount - 1,
+      );
+    }
+  };
 
   const interruptTermination = (
     interruptedTurnInput: TurnInputState = turnInput,

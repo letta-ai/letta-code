@@ -2,6 +2,7 @@ import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 import WebSocket from "ws";
 import { STALE_APPROVAL_RECOVERY_DENIAL_REASON } from "@/agent/turn-recovery-policy";
 import {
+  getOrCreateProcessTransport,
   markListenerConnectionInitialized,
   openListenerConnection,
   subscribeListenerConnection,
@@ -20,9 +21,15 @@ class MockSocket {
   bufferedAmount = 0;
   readyState: number = WebSocket.OPEN;
   readonly sent: unknown[] = [];
+  onTerminate?: () => void;
 
   send(data: string): void {
     this.sent.push(JSON.parse(data));
+  }
+
+  terminate(): void {
+    this.readyState = WebSocket.CLOSED;
+    this.onTerminate?.();
   }
 }
 
@@ -146,6 +153,7 @@ describe("recovered approval lease boundaries", () => {
     });
     markListenerConnectionInitialized(listener, "client-a");
     subscribeListenerConnection(listener, "client-a", scope);
+    socketA.onTerminate = () => cleanupListenerConnection(listener, "client-a");
     const processTurn = mock(
       async (
         _message,
@@ -161,9 +169,10 @@ describe("recovered approval lease boundaries", () => {
     );
     const handled = startRecoveredApprovalContinuation(
       runtime,
-      socketA as never,
+      getOrCreateProcessTransport(listener),
       processTurn,
       {
+        connectionId: "client-a",
         dependencies: {
           ensureSecretsHydrated: async () => {},
           prepareToolExecutionContext: async () => createPreparedToolContext(),
@@ -201,7 +210,7 @@ describe("recovered approval lease boundaries", () => {
         ["client_tool_end", "tool_return_message"].includes(messageType ?? ""),
       );
     expect(terminalTypes).toEqual(["client_tool_end", "tool_return_message"]);
-    cleanupListenerConnection(listener, "client-a");
+    expect(runtime.activeConnectionId).toBe("client-b");
   });
 
   test("thrown recovery replays its closing tool terminal to a later App Server owner", async () => {
@@ -225,9 +234,10 @@ describe("recovered approval lease boundaries", () => {
     const processTurn = mock(async () => {});
     const handled = startRecoveredApprovalContinuation(
       runtime,
-      socketA as never,
+      getOrCreateProcessTransport(listener),
       processTurn,
       {
+        connectionId: "client-a",
         dependencies: {
           ensureSecretsHydrated: async () => {},
           prepareToolExecutionContext: async () => createPreparedToolContext(),

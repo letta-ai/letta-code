@@ -43,7 +43,7 @@ import {
   ensureListenerModAdaptersForAgent,
 } from "./mod-adapter";
 import { awaitOrderedOutboundDeliveries } from "./outbound-delivery";
-import { getOutboundQueueStats } from "./outbound-wire";
+import { getOutboundQueueStats, OUTBOUND_QUEUE_LIMITS } from "./outbound-wire";
 import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
 import {
   emitCanonicalMessageDelta,
@@ -505,10 +505,10 @@ async function executeRecoveredApprovalContinuation(params: {
     agent_id: recovered.agentId,
     conversation_id: recovered.conversationId,
   } as const;
-  const originConnection = findListenerConnectionByTransport(
-    runtime.listener,
-    socket,
-  );
+  const originConnection =
+    (opts?.connectionId
+      ? (runtime.listener.connections.get(opts.connectionId) ?? null)
+      : null) ?? findListenerConnectionByTransport(runtime.listener, socket);
   const originConnectionId = originConnection?.id;
   const originConnectionCanResume =
     originConnection?.options.connectionIdCanResume !== false;
@@ -529,7 +529,11 @@ async function executeRecoveredApprovalContinuation(params: {
       return preferred;
     }
     if (originConnectionCanResume && originConnectionId) return null;
-    return subscribers[0]?.id ?? null;
+    const replacementId = subscribers[0]?.id ?? null;
+    if (replacementId && originConnectionCanResume === false) {
+      runtime.activeConnectionId = replacementId;
+    }
+    return replacementId;
   };
   const awaitRecoveryDeliveries = (
     deliveries: ReturnType<typeof emitToolExecutionFinishedEvents>,
@@ -547,10 +551,19 @@ async function executeRecoveredApprovalContinuation(params: {
         return "sent" as const;
       })();
     }
+    runtime.pendingTerminalDeliveryCount += 1;
     return awaitOrderedOutboundDeliveries({
       deliveries,
       getOwnerId: getDeliveryOwnerId,
       shouldInterrupt: shouldInterruptDelivery,
+      ...(originConnectionCanResume === false
+        ? { ownerWaitTimeoutMs: OUTBOUND_QUEUE_LIMITS.MAX_BACKPRESSURE_MS }
+        : {}),
+    }).finally(() => {
+      runtime.pendingTerminalDeliveryCount = Math.max(
+        0,
+        runtime.pendingTerminalDeliveryCount - 1,
+      );
     });
   };
   let continuationFinalized = false;

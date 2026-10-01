@@ -37,6 +37,7 @@ class MockSocket {
   readyState: number = WebSocket.OPEN;
   readonly sent: unknown[] = [];
   onSend?: (message: unknown) => void;
+  onTerminate?: () => void;
 
   isOpen(): boolean {
     return this.readyState === WebSocket.OPEN;
@@ -46,6 +47,11 @@ class MockSocket {
     const message = JSON.parse(data);
     this.sent.push(message);
     this.onSend?.(message);
+  }
+
+  terminate(): void {
+    this.readyState = WebSocket.CLOSED;
+    this.onTerminate?.();
   }
 }
 
@@ -276,6 +282,7 @@ test("replays a timed-out thrown-tool terminal to a later App Server owner", asy
   });
   markListenerConnectionInitialized(listener, "client-a");
   subscribeListenerConnection(listener, "client-a", scope);
+  socketA.onTerminate = () => cleanupListenerConnection(listener, "client-a");
 
   const runtime = getOrCreateScopedRuntime(
     listener,
@@ -372,7 +379,6 @@ test("replays a timed-out thrown-tool terminal to a later App Server owner", asy
           ?.message_type === "client_tool_end",
     ),
   ).toBe(true);
-  cleanupListenerConnection(listener, "client-a");
   expect(runtime.activeConnectionId).toBe("client-b");
 });
 

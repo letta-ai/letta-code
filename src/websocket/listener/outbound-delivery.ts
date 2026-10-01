@@ -48,10 +48,15 @@ function createInterruptWaiter(shouldInterrupt: () => boolean): {
 async function waitForOwner(
   getOwnerId: () => string | null,
   shouldInterrupt: () => boolean,
+  timeoutMs?: number,
 ): Promise<string | null> {
+  const startedAt = Date.now();
   while (!shouldInterrupt()) {
     const ownerId = getOwnerId();
     if (ownerId) return ownerId;
+    if (timeoutMs !== undefined && Date.now() - startedAt >= timeoutMs) {
+      return null;
+    }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   return null;
@@ -62,8 +67,16 @@ export async function awaitOrderedOutboundDeliveries(params: {
   deliveries: OutboundMessageDelivery[];
   getOwnerId(): string | null;
   shouldInterrupt(): boolean;
+  receiptMatchesOwner?(
+    receipt: OutboundMessageDelivery["receipts"][number],
+    ownerId: string,
+  ): boolean;
+  ownerWaitTimeoutMs?: number;
 }): Promise<DeliveryWaitResult> {
   const { deliveries, getOwnerId, shouldInterrupt } = params;
+  const receiptMatchesOwner =
+    params.receiptMatchesOwner ??
+    ((receipt, ownerId) => receipt.connectionId === ownerId);
   const deliveryAttempts = deliveries.map((delivery) => [delivery]);
   const unusableReceipts = new Set<
     OutboundMessageDelivery["receipts"][number]
@@ -89,14 +102,14 @@ export async function awaitOrderedOutboundDeliveries(params: {
       .flatMap((delivery) => delivery.receipts)
       .find(
         (candidate) =>
-          candidate.connectionId === ownerId &&
+          receiptMatchesOwner(candidate, ownerId) &&
           !unusableReceipts.has(candidate),
       );
     if (!receipt) {
       const replay = initialDelivery.replayTo(ownerId);
       attempts.push(replay);
-      receipt = replay.receipts.find(
-        ({ connectionId }) => connectionId === ownerId,
+      receipt = replay.receipts.find((candidate) =>
+        receiptMatchesOwner(candidate, ownerId),
       );
     }
     if (!receipt) return "dropped";
@@ -121,7 +134,11 @@ export async function awaitOrderedOutboundDeliveries(params: {
   let terminalIndex = 0;
   deliveryLoop: while (terminalIndex < deliveries.length) {
     if (shouldInterrupt()) return interruptDelivery();
-    const ownerId = await waitForOwner(getOwnerId, shouldInterrupt);
+    const ownerId = await waitForOwner(
+      getOwnerId,
+      shouldInterrupt,
+      params.ownerWaitTimeoutMs,
+    );
     if (!ownerId) return interruptDelivery();
     for (let index = 0; index <= terminalIndex; index += 1) {
       const result = await settleForOwner(index, ownerId);

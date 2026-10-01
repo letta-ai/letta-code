@@ -76,7 +76,14 @@ export function cleanupListenerConnection(
             conversation_id: conversationRuntime.conversationId,
           }).find((connection) => connection.id !== connectionId)?.id ?? null;
       } else if (!hasEligibleFailover) {
-        conversationRuntime.turnLifecycle.requestCancellation();
+        const awaitsRotatingTerminalHandoff =
+          closingConnection?.options.connectionIdCanResume === false &&
+          conversationRuntime.pendingTerminalDeliveryCount > 0;
+        if (awaitsRotatingTerminalHandoff) {
+          conversationRuntime.activeConnectionId = null;
+        } else {
+          conversationRuntime.turnLifecycle.requestCancellation();
+        }
       }
     }
     for (const [
