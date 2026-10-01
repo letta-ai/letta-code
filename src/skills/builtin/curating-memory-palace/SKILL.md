@@ -27,7 +27,7 @@ An item that breaks one of these does more harm than an empty section.
 
 Keep these sections in this order:
 
-1. **Overview** (`overview.md`): where things stand. What you or the user are working on, the role others rely on the user for, each standing routine (schedules, digests, checks) and whether it is running or broken, and what changed recently. A snapshot, not a to-do list.
+1. **Overview** (`overview.md`): where things stand. Open with the user's role and where their main work stands right now. A role line alone isn't enough. Then what you are working on for them, each standing routine (schedules, digests, checks) and whether it is running or broken, and what changed recently. A snapshot, not a to-do list.
 2. **Needs Attention** (`needs-attention.md`): only things the user has to close. Three kinds qualify: a promise the user made, a question asked directly to them, and someone blocked waiting on them (an okay, a yes or no, an escalation only they can make). Put the highest stakes first: outside people or their data, then a blocked teammate, then internal chores. Each item says plainly that it's waiting on the user, and who is waiting. Once the user has given their okay and the work moves to someone else, the item leaves the page. If nothing qualifies, say "Nothing needs you right now."
 3. **Suggestions** (`suggestions.md`): work you can take off the user's plate, routines you could run, and access that would make you more independent. Each item says what prompted it and when.
 4. **Curiosities** (`curiosities.md`): things you can't settle yet but will look into, mainly for you to pick up later. Delete the file and its index line when it is empty.
@@ -35,10 +35,12 @@ Keep these sections in this order:
 Curiosities hold three kinds of item:
 
 - Work that looks open, where the close may have happened somewhere you can't see (another channel, GitHub, a release page). Don't offer a fix for these in Needs Attention or Suggestions, because the user may already have finished it.
-- A promise you can check yourself: a release, deploy, or PR. The headline names the thing, never a question to the user: "Desktop release with the Vault fix", not "Did you cut the Desktop release?"
+- A promise you can check yourself: a release, deploy, or PR. The headline names the thing, never a question to the user: "Desktop release with the login fix", not "Did you cut the Desktop release?"
 - A question the user asked that a tool could answer once connected. Put the Connect link on that item.
 
-Each Curiosity gives the last known fact and where you will look. Give it one "Investigate" button, plus a Connect link when a tool is needed. Never a fix, draft, or schedule button.
+Each Curiosity gives the last known fact and where you will look. Its button names the check, such as "Check PR 324's status" or "Find the latest Desktop release". A bare "Investigate" is wrong when the item names something specific to look up. A question a tool could answer gets its Connect link and no button. Never a fix, draft, or schedule button.
+
+Don't pad the section. Leave out topics that are already settled, and PRs or tasks that one of the user's own agents already tracks.
 
 Add another section only when it holds something these cannot. Keep the first three even when one is empty, and say so in one line.
 
@@ -46,7 +48,7 @@ Add another section only when it holds something these cannot. Keep the first th
 
 Shape the item by where the promise would be kept:
 
-- **Outside contact** (email a customer, reply on Discord, write to a vendor): you usually can't see these kept. The headline is a question, such as "Did you reach Dartnixtrix?", with two buttons, "Yes, clear it" and "Draft ..." (the message). Never a draft button alone.
+- **Outside contact** (email a customer, reply on Discord, write to a vendor): you usually can't see these kept. The headline is a question, such as "Did you email the vendor?", with two buttons, "Yes, clear it" and "Draft ..." (the message). Never a draft button alone.
 - **A release, deploy, PR, or other artifact you can look up:** a Curiosity, not Needs Attention.
 
 ### Budget
@@ -63,7 +65,7 @@ A button sends its instruction to you, so offer only what you can do. Each butto
 - **From now on:** a schedule or standing rule. See "Offering a schedule".
 - **Fill a gap:** a connection, access, or an answer only the user has.
 
-Give each item one button, except a decision with real options (two or three buttons, such as "Make it a ticket", "Assign it to Charles", "Close it") and an outside-contact promise ("Yes, clear it" plus "Draft ..."). Never write a caption or a button type above a button.
+Give each item one button, except a Curiosity that only needs a Connect link (no button), a decision with real options (two or three buttons, such as "Make it a ticket", "Assign it to Charles", "Close it") and an outside-contact promise ("Yes, clear it" plus "Draft ..."). Never write a caption or a button type above a button.
 
 When only the user can fix something (raise a quota, log in), say what they need to do, and make the button something you can do, such as "I fixed it, check again". Re-run the failing check and clear the item if it passes.
 
@@ -93,11 +95,11 @@ A fenced code block with the language `palace-action` becomes a button. It holds
 
 - `actionId` (required): 1 to 64 characters, no spaces, unique within the section.
 - `label` (required): the button text, up to 80 characters.
-- `instruction` (optional): what you do when it is clicked, up to 1,000 characters. Name the work, where to find it, and any limits.
+- `instruction` (optional): what you do when it is clicked, up to 1,000 characters. Stay short and aim for under 200. Name the work, where to find it, and any limits, not every detail.
 - `kind` (optional): `"schedule"` shows a clock on the button. Leave it out for other buttons.
 - `conversationId` (optional): one of your real conversation ids, or `new` for a fresh conversation. Leave it out to use the main chat.
 
-Any other key (such as `cadence` or `time`), or invalid JSON, renders the block as an error instead of a button. Put timing in the label and instruction.
+Use only the keys above. Unknown keys are ignored (such as `cadence` or `time`), so put timing in the label and instruction. A block that is still invalid, such as bad JSON or a missing `label`, doesn't show at all.
 
 ### Links
 
@@ -137,13 +139,13 @@ An item's text plus the action and links blocks directly under it form one card.
 ## Writing rules
 
 - **Headline:** short and bold, at most 60 characters, naming the thing in plain words ("Security audit review"). IDs and handles go in the write-up. Only an outside-contact promise uses a question headline.
-- **Write-up:** as many sentences as it needs, up to about 1,000 characters. Add what the headline lacks (IDs, dates, counts, consequences, who is waiting), and never restate the headline.
-- **Report, don't interpret.** Say what happened, where it stands, and who holds it. No verdicts on what the work needs, no advice, and no hopeful or alarming spin. "Companion memory needs a different approach" and "A customer's only copy may be recoverable" both fail. When the outcome is unknown, state the known fact ("Atlas couldn't reach the VM"). The button is the suggestion. Don't put suggestions in the text.
+- **Write-up:** one or two sentences by default. Go longer only when the user needs more to act, and never to retell a thread's history. Add what the headline lacks (IDs, dates, counts, consequences, who is waiting), and never restate the headline.
+- **Report, don't interpret.** Say what happened, where it stands, and who holds it. No verdicts on what the work needs, no advice, and no hopeful or alarming spin. "The sync job needs a different approach" and "A customer's only copy may be recoverable" both fail. When the outcome is unknown, state the known fact ("The deploy agent couldn't reach the VM"). The button is the suggestion. Don't put suggestions in the text.
 - Don't ask the user something you could look up, and don't narrate your own reasoning.
 - No prefixes, hedges, semicolons, attribution chains, or raw URLs. Link the name of a thing instead, such as [LET-13139](https://linear.app/...), and never use a link as the headline. At most two links per item.
 - Write absolute dates ("on Sep 29"). Use a clock time only when the state changes within the day. Never write "today" or "tomorrow": the Palace is read days later.
 - Write in your own voice: "I" for you, "you" for the user.
-- **Names:** use a name only as your sources use it (a display or real name, or a name in message text). Give anyone outside the workspace a short role, such as "Suy, a Discord user". Never build a name from an email address, username, or handle. An agent's name isn't its user's name: "the customer on the Simon agent".
+- **Names:** use a name only as your sources use it (a display or real name, or a name in message text). Give anyone outside the workspace a short role, such as "Sam, a Discord user". Never build a name from an email address, username, or handle. An agent's name isn't its user's name: "the customer on the Scout agent".
 - Don't offer work the user's own agent, another agent, or a teammate already owns.
 
 ## Signals from the user
@@ -166,7 +168,7 @@ For a scheduled update, a reflection, or when the user asks:
 3. Move anything you can check yourself out of Needs Attention and into Curiosities.
 4. Add items the evidence supports. Edit sections in place, keep what is still true, and keep the sections in order.
 5. Check each routine's latest runs. Find IDs with `letta cron list --agent <agent-id>` and inspect each with `letta cron runs --id <id> --agent <agent-id>`. Report their health in the Overview even when nothing changed.
-6. Validate every `palace-action` and `palace-links` block against the formats above with a short script before you save: allowed keys only, label and instruction lengths, https URLs.
+6. Validate every `palace-action` and `palace-links` block against the formats above with a short script before you save: documented keys only, label and instruction lengths, https URLs.
 
 ## In a conversation
 

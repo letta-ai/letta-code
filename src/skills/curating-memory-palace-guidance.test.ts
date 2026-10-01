@@ -11,8 +11,9 @@ const ACTION_KEYS = new Set([
 const LINK_KEYS = new Set(["label", "url"]);
 
 /**
- * Why the Palace would show a `palace-action` block as an error instead of a
- * button, or null. Mirrors the action parser in Letta Code Desktop.
+ * Why the Palace would not show a `palace-action` block as a button, or null.
+ * Mirrors the action parser in Letta Code Desktop, which ignores unknown keys
+ * and hides a block that is still invalid.
  */
 function actionProblem(source: string): string | null {
   let parsed: unknown;
@@ -24,8 +25,6 @@ function actionProblem(source: string): string | null {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     return "not an object";
   }
-  const extra = Object.keys(parsed).filter((key) => !ACTION_KEYS.has(key));
-  if (extra.length > 0) return `unknown keys: ${extra.join(", ")}`;
   const { actionId, label, conversationId, instruction, kind } =
     parsed as Record<string, unknown>;
   if (typeof actionId !== "string" || !/^\S{1,64}$/.test(actionId)) {
@@ -97,6 +96,10 @@ describe("curating-memory-palace guidance", () => {
     expect(blocks.length).toBeGreaterThan(0);
     for (const block of blocks) {
       expect(actionProblem(block)).toBeNull();
+      // The page ignores unknown keys, but examples must model documented ones.
+      expect(
+        Object.keys(JSON.parse(block)).filter((key) => !ACTION_KEYS.has(key)),
+      ).toEqual([]);
       const { instruction } = JSON.parse(block) as { instruction?: string };
       expect(instruction?.length ?? 0).toBeLessThan(200);
     }
@@ -127,6 +130,45 @@ describe("curating-memory-palace guidance", () => {
       "suggestions.md",
       "curiosities.md",
     ]);
+  });
+
+  test("an unknown button key is ignored, and the skill says so", () => {
+    expect(
+      actionProblem('{"actionId": "a", "label": "Do it", "cadence": "weekly"}'),
+    ).toBeNull();
+    expect(guidance).not.toContain("renders the block as an error");
+    expect(guidance).toContain("Unknown keys are ignored");
+    expect(guidance).toContain("Use only the keys above");
+  });
+
+  test("the instruction limit is 1,000 characters, with advice to stay under 200", () => {
+    expect(guidance).not.toContain("300 characters");
+    expect(guidance).toContain("up to 1,000 characters");
+    expect(guidance).toContain("aim for under 200");
+  });
+
+  test("Curiosities buttons name the check and the section isn't padded", () => {
+    expect(guidance).not.toContain('one "Investigate" button');
+    expect(guidance).toContain('"Check PR 324\'s status"');
+    expect(guidance).toContain("gets its Connect link and no button");
+    expect(guidance).toContain("Never a fix, draft, or schedule button");
+    expect(guidance).toContain("Don't pad the section");
+  });
+
+  test("write-ups default to one or two sentences", () => {
+    expect(guidance).toContain("one or two sentences by default");
+    expect(guidance).not.toContain("as many sentences as it needs");
+  });
+
+  test("the Overview gives the role and where the main work stands", () => {
+    expect(guidance).toContain("A role line alone isn't enough");
+  });
+
+  test("the page covers only the user's own work", () => {
+    expect(guidance).toContain("The page covers only the user's own work");
+    expect(guidance).toContain(
+      "Work that sits with someone else stays off the page",
+    );
   });
 
   test("routine health guidance supplies the required schedule ID for run history", () => {
