@@ -1139,16 +1139,16 @@ async function prepareLocalOnlyMemoryRepoForGitOps(
 ): Promise<void> {
   installLocalMemoryPreCommitHook(memoryDir);
   installPostCommitHook(memoryDir);
-  await setLocalGitConfig(memoryDir, "letta.agentId", author.agentId);
-  await setLocalGitConfig(memoryDir, "user.email", author.authorEmail);
-  await setLocalGitConfig(
-    memoryDir,
-    "user.name",
-    author.authorName.trim() || "Letta Agent",
-  );
-  // Default commit signing off (only when unset locally) so direct
-  // `git commit` runs in the memory repo don't attempt to sign with the
-  // agent's keyless committer identity. See ensureLocalMemfsGitConfig.
+  for (const [key, value] of [
+    ["letta.agentId", author.agentId],
+    ["user.email", author.authorEmail],
+    ["user.name", author.authorName.trim() || "Letta Agent"],
+  ] as const) {
+    if ((await getLocalGitConfig(memoryDir, key)) !== value) {
+      await setLocalGitConfig(memoryDir, key, value);
+    }
+  }
+  // Signing off when unset locally; see ensureLocalMemfsGitConfig.
   if ((await getLocalGitConfig(memoryDir, "commit.gpgsign")) === null) {
     await setLocalGitConfig(memoryDir, "commit.gpgsign", "false");
   }
