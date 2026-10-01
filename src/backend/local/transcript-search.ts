@@ -570,7 +570,7 @@ export function searchLocalTranscriptMessages(
   // Unscoped recall runs from inside the active conversation, whose newest user
   // message is commonly the question being recalled. Demote that one message,
   // plus messages-search command/result pairs, instead of deleting tool results
-  // globally. Explicit conversation searches remain literal and unmodified.
+  // globally. Explicit conversation targets do not demote their newest user message.
   if (!conversationId && options.currentConversationId) {
     const latestCurrentUser = records
       .filter(
