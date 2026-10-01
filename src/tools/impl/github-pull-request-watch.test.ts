@@ -342,6 +342,22 @@ describe("GitHub pull request snapshot fetch", () => {
     ).rejects.toThrow("reviewThreads unavailable");
   });
 
+  test("passes the PR repository to every gh call", async () => {
+    const repos = new Set<string | undefined>();
+    await expect(
+      fetchGitHubPullRequestSnapshot(ref, {
+        cwd: "/not-a-checkout",
+        deps: {
+          runGh: async (_args, options) => {
+            repos.add(options.repo);
+            throw new Error("stop after first call");
+          },
+        },
+      }),
+    ).rejects.toThrow("stop after first call");
+    expect([...repos]).toEqual(["letta-ai/letta-code"]);
+  });
+
   test("retries a ready snapshot when PR metadata changes during the read", async () => {
     let fullReads = 0;
     let metadataReads = 0;

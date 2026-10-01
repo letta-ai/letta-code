@@ -23,11 +23,19 @@ const MAX_CONSISTENCY_READ_ATTEMPTS = 3;
 
 class PullRequestChangedDuringReadError extends Error {}
 
+interface GhRunOptions {
+  cwd: string;
+  signal?: AbortSignal;
+  /**
+   * `owner/repo` the command targets. `gh api graphql` carries no repository
+   * in its arguments, so wrappers that pick credentials per repository (such
+   * as the Letta Cloud sandbox gh wrapper) need it from `GH_REPO`.
+   */
+  repo?: string;
+}
+
 interface GitHubPullRequestWatchDeps {
-  runGh?: (
-    args: string[],
-    options: { cwd: string; signal?: AbortSignal },
-  ) => Promise<string>;
+  runGh?: (args: string[], options: GhRunOptions) => Promise<string>;
 }
 
 interface GitHubPullRequestSnapshotOptions {
@@ -397,10 +405,15 @@ function mapSnapshot(
 
 async function defaultRunGh(
   args: string[],
-  options: { cwd: string; signal?: AbortSignal },
+  options: GhRunOptions,
 ): Promise<string> {
+  const env =
+    options.repo && !process.env.GH_REPO
+      ? { ...process.env, GH_REPO: options.repo }
+      : process.env;
   const result = await execFileAsync("gh", args, {
     cwd: options.cwd,
+    env,
     signal: options.signal,
     timeout: 30_000,
     maxBuffer: 5 * 1024 * 1024,
@@ -585,7 +598,7 @@ function parseReviewThreadPage(
 async function completeReviewThreadComments(
   thread: GraphQlReviewThread,
   runGh: NonNullable<GitHubPullRequestWatchDeps["runGh"]>,
-  options: { cwd: string; signal?: AbortSignal },
+  options: GhRunOptions,
 ): Promise<GraphQlReviewThread> {
   if (!thread.id || !thread.comments?.pageInfo?.hasPreviousPage) return thread;
   const comments = [...(thread.comments.nodes ?? [])];
@@ -623,7 +636,12 @@ async function readGitHubPullRequestSnapshot(
   ref: GitHubPullRequestRef,
   options: GitHubPullRequestSnapshotOptions,
 ): Promise<GitHubPullRequestSnapshot> {
-  const runGh = options.deps?.runGh ?? defaultRunGh;
+  const baseRunGh = options.deps?.runGh ?? defaultRunGh;
+  const repo = `${ref.owner}/${ref.repo}`;
+  const runGh: NonNullable<GitHubPullRequestWatchDeps["runGh"]> = (
+    args,
+    runOptions,
+  ) => baseRunGh(args, { ...runOptions, repo });
   let pullRequest: GraphQlPullRequest | undefined;
   const comments: Array<GraphQlComment | null> = [];
   const reviews: Array<GraphQlReview | null> = [];
