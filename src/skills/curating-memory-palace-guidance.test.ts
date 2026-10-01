@@ -51,11 +51,10 @@ function actionProblem(source: string): string | null {
 }
 
 /**
- * Why the Palace would show a `palace-links` block as an error instead of
- * link chips, or null. Mirrors the links parser in Letta Code Desktop.
  * Why the Palace would not show a `palace-links` block as link chips, or null.
  * Mirrors the links parser in Letta Code Desktop, which hides a block that is
  * still invalid.
+ */
 function linksProblem(source: string): string | null {
   let parsed: unknown;
   try {
