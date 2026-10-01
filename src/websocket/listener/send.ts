@@ -21,6 +21,7 @@ import { type ConversationMessageStreamBody, getBackend } from "@/backend";
 import { getRetryStatusMessage } from "@/cli/helpers/error-formatter";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import { shouldEmitRetryNotice } from "@/utils/cloud-api-shutdown";
+import { isDebugEnabled } from "@/utils/debug";
 import { createStreamAbortRelay } from "@/utils/stream-abort-relay";
 import {
   rememberPendingApprovalBatchIds,
@@ -264,7 +265,7 @@ async function tryResumeBusyConversationStream(params: {
     if (abortSignal?.aborted) {
       throw new Error("Cancelled by user");
     }
-    if (process.env.DEBUG) {
+    if (isDebugEnabled()) {
       console.warn(
         debugMessage,
         resumeError instanceof Error

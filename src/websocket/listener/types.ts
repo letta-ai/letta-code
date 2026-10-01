@@ -46,8 +46,14 @@ export interface StartListenerOptions {
   supportsPairedListenerGenerations?: boolean;
   deviceId: string;
   connectionName: string;
+  /** False when reconnecting necessarily allocates a new physical id. */
+  connectionIdCanResume?: boolean;
   skillsDirectory?: string;
   onConnected: (connectionId: string) => void | Promise<void>;
+  /** Called only after initial state and approvals are replayed and the exact connection is routable. */
+  onConnectionReady?: (
+    connection: ListenerConnectionState,
+  ) => void | Promise<void>;
   onDisconnected: () => void;
   onNeedsReregister?: () => void;
   onError: (error: Error) => void;
@@ -88,7 +94,7 @@ export interface IncomingMessage {
    * return to the correct client even when multiple clients share a runtime.
    */
   connectionId?: ListenerConnectionId;
-  agentId?: string;
+  agentId?: string | null;
   conversationId?: string;
   /** Queue this message as its own turn; never merge with other messages. */
   noCoalesce?: boolean;
@@ -262,12 +268,15 @@ export type ConversationRuntime = {
   approvalMessageIdByToolCallId: Map<string, string>;
   pendingInterruptedResults: Array<ApprovalResult> | null;
   pendingInterruptedContext: {
-    agentId: string;
+    agentId: string | null;
     conversationId: string;
     continuationEpoch: number;
+    requestOtid?: string;
   } | null;
   continuationEpoch: number;
   pendingInterruptedToolCallIds: string[] | null;
+  /** Terminal delivery waits that may transfer to a rotating replacement. */
+  pendingTerminalDeliveryCount: number;
   /** Per-conversation reminder state (session-context, agent-info, etc.). */
   reminderState: SharedReminderState;
   /** Per-conversation tracker for compaction/reflection cadence. */
@@ -309,6 +318,9 @@ export type ListenerConnectionState = {
   streamWriter: ListenerTransport | null;
   cancellation: AbortController;
   initialized: boolean;
+  ingressReady: boolean;
+  startupReady: Promise<void>;
+  resolveStartupReady: () => void;
   subscriptions: Set<string>;
   eventSeqCounter: number;
   options: StartListenerOptions;
@@ -444,8 +456,9 @@ export interface InterruptPopulateInput {
   lastExecutionResults: ApprovalResult[] | null;
   lastExecutingToolCallIds: string[];
   lastNeedsUserInputToolCallIds: string[];
-  agentId: string;
+  agentId: string | null;
   conversationId: string;
+  requestOtid?: string;
 }
 
 export interface InterruptToolReturn {

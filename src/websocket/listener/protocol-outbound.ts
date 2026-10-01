@@ -33,6 +33,7 @@ import {
   nextListenerConnectionEventSeq,
   resolveListenerConnectionTargets,
   TO_SUBSCRIBERS,
+  toListenerConnection,
 } from "./connection";
 import { SYSTEM_REMINDER_RE } from "./constants";
 import { getConversationWorkingDirectory, getExportedCwdMap } from "./cwd";
@@ -42,8 +43,13 @@ import {
   shouldEmitDeviceStatus,
 } from "./device-status-cache";
 import { buildDeviceToolsetStatus } from "./device-toolset-status";
+import { createLifecycleMessageBase } from "./lifecycle-message";
 import { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
 import { listListenerModCommands } from "./mod-command-registry";
+import {
+  createOutboundMessageDelivery,
+  type OutboundMessageDelivery,
+} from "./outbound-delivery";
 import { enqueueOutboundFrame } from "./outbound-wire";
 import { getConversationPermissionModeState } from "./permission-mode";
 import {
@@ -360,6 +366,9 @@ type OutboundProtocolMessage = WsProtocolMessage extends infer TMessage
     : never
   : never;
 
+export { createLifecycleMessageBase } from "./lifecycle-message";
+export type { OutboundMessageDelivery } from "./outbound-delivery";
+
 export function emitProtocolV2Message(
   socket: ListenerTransport,
   runtime: RuntimeCarrier,
@@ -371,14 +380,28 @@ export function emitProtocolV2Message(
       }
     | undefined,
   routing: ListenerMessageRouting,
-): void {
+  notifyObservers = true,
+): OutboundMessageDelivery {
   const listener = getListenerRuntime(runtime);
   const runtimeScope = resolveRuntimeScope(
     listener,
     getScopeForRuntime(runtime, scope),
   );
-  if (!runtimeScope) return;
-  notifyStreamObservers(listener, message, runtimeScope);
+  const delivery = (
+    receipts: OutboundMessageDelivery["receipts"],
+  ): OutboundMessageDelivery =>
+    createOutboundMessageDelivery(receipts, (connectionId) =>
+      emitProtocolV2Message(
+        socket,
+        runtime,
+        message,
+        scope,
+        toListenerConnection(connectionId),
+        false,
+      ),
+    );
+  if (!runtimeScope) return delivery([]);
+  if (notifyObservers) notifyStreamObservers(listener, message, runtimeScope);
   const frameClass = classifyOutboundFrame(message);
   const targets = resolveListenerConnectionTargets({
     runtime: listener,
@@ -387,9 +410,10 @@ export function emitProtocolV2Message(
     routing,
     streamMessage: isStreamChannelMessage(message.type),
   });
+  const receipts: OutboundMessageDelivery["receipts"] = [];
   for (const { connection, transport: targetSocket } of targets) {
     if (!isListenerTransportOpen(targetSocket)) continue;
-    enqueueOutboundFrame(targetSocket, {
+    const receipt = enqueueOutboundFrame(targetSocket, {
       typeLabel: message.type,
       frameClass,
       ...(frameClass === "status"
@@ -442,7 +466,9 @@ export function emitProtocolV2Message(
         });
       },
     });
+    receipts.push({ connectionId: connection?.id ?? null, ...receipt });
   }
+  return delivery(receipts);
 }
 
 export function broadcastServiceProtocolMessage(
@@ -868,23 +894,6 @@ export function emitSubagentStateIfOpen(
   }
 }
 
-export function createLifecycleMessageBase<TMessageType extends string>(
-  messageType: TMessageType,
-  runId?: string | null,
-): {
-  id: string;
-  date: string;
-  message_type: TMessageType;
-  run_id?: string;
-} {
-  return {
-    id: `lifecycle-${crypto.randomUUID()}`,
-    date: new Date().toISOString(),
-    message_type: messageType,
-    ...(runId ? { run_id: runId } : {}),
-  };
-}
-
 export function emitCanonicalMessageDelta(
   socket: ListenerTransport,
   runtime: RuntimeCarrier,
@@ -893,8 +902,9 @@ export function emitCanonicalMessageDelta(
     agent_id?: string | null;
     conversation_id?: string | null;
   },
-): void {
-  emitStreamDelta(socket, runtime, delta, scope);
+  routing: ListenerMessageRouting = TO_SUBSCRIBERS,
+): OutboundMessageDelivery {
+  return emitStreamDelta(socket, runtime, delta, scope, undefined, routing);
 }
 
 export function emitRetryDelta(
@@ -960,8 +970,8 @@ export function emitInterruptedStatusDelta(
     message: "Interrupted",
     level: "warning",
     runId: params.runId,
-    agentId: params.agentId ?? undefined,
-    conversationId: params.conversationId ?? undefined,
+    agentId: params.agentId,
+    conversationId: params.conversationId,
   });
 }
 
@@ -974,7 +984,8 @@ export function emitStreamDelta(
     conversation_id?: string | null;
   },
   subagentId?: string,
-): void {
+  routing: ListenerMessageRouting = TO_SUBSCRIBERS,
+): OutboundMessageDelivery {
   const message: Omit<
     StreamDeltaMessage,
     "runtime" | "event_seq" | "emitted_at" | "idempotency_key"
@@ -983,5 +994,5 @@ export function emitStreamDelta(
     delta,
     ...(subagentId ? { subagent_id: subagentId } : {}),
   };
-  emitProtocolV2Message(socket, runtime, message, scope, TO_SUBSCRIBERS);
+  return emitProtocolV2Message(socket, runtime, message, scope, routing);
 }

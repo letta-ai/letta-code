@@ -37,6 +37,7 @@ import { handleSkillAgentProtocolCommand } from "./commands/skills-agents";
 import {
   getOrCreateProcessTransport,
   subscribeListenerConnection,
+  waitForListenerConnectionStartup,
 } from "./connection";
 import { getBootWorkingDirectory } from "./cwd";
 import {
@@ -220,6 +221,11 @@ export function createListenerMessageHandler(
   const connectionId = explicitConnectionId ?? opts.connectionId;
 
   return async (data: WebSocket.RawData): Promise<void> => {
+    if (
+      !(await waitForListenerConnectionStartup(runtime, connectionId, socket))
+    )
+      return;
+
     const lifecycleMessage =
       parseListenerReadyMessage(data) ?? parseServerLifecycleMessage(data);
     // Legacy relays can deliver input before onConnected. Fail outside the

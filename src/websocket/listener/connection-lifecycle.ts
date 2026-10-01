@@ -61,14 +61,29 @@ export function cleanupListenerConnection(
 ): void {
   for (const conversationRuntime of runtime.conversationRuntimes.values()) {
     if (conversationRuntime.activeConnectionId === connectionId) {
+      const closingConnection = runtime.connections.get(connectionId);
       const hasEligibleFailover = getSubscribedListenerConnections(runtime, {
         agent_id: conversationRuntime.agentId,
         conversation_id: conversationRuntime.conversationId,
       }).some((connection) => connection.id !== connectionId);
-      if (hasEligibleFailover) {
-        conversationRuntime.activeConnectionId = null;
-      } else {
-        conversationRuntime.turnLifecycle.requestCancellation();
+      if (
+        hasEligibleFailover &&
+        closingConnection?.options.connectionIdCanResume === false
+      ) {
+        conversationRuntime.activeConnectionId =
+          getSubscribedListenerConnections(runtime, {
+            agent_id: conversationRuntime.agentId,
+            conversation_id: conversationRuntime.conversationId,
+          }).find((connection) => connection.id !== connectionId)?.id ?? null;
+      } else if (!hasEligibleFailover) {
+        const awaitsRotatingTerminalHandoff =
+          closingConnection?.options.connectionIdCanResume === false &&
+          conversationRuntime.pendingTerminalDeliveryCount > 0;
+        if (awaitsRotatingTerminalHandoff) {
+          conversationRuntime.activeConnectionId = null;
+        } else {
+          conversationRuntime.turnLifecycle.requestCancellation();
+        }
       }
     }
     for (const [

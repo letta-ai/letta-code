@@ -27,7 +27,7 @@ import {
   buildApprovalSuggestionPayload,
   classifyApprovalsWithSuggestions,
 } from "./approval-suggestions";
-import { TO_SUBSCRIBERS } from "./connection";
+import { getSubscribedListenerConnections, TO_SUBSCRIBERS } from "./connection";
 import { appendQueuedTurnToInput } from "./continuation-input";
 import {
   readInterruptedTurn,
@@ -41,12 +41,15 @@ import {
   emitToolExecutionStartedEvents,
   normalizeExecutionResultsForInterruptParity,
 } from "./interrupts";
+import { awaitOrderedOutboundDeliveries } from "./outbound-delivery";
+import { getOutboundQueueStats, OUTBOUND_QUEUE_LIMITS } from "./outbound-wire";
 import {
   createLifecycleMessageBase,
   emitCanonicalMessageDelta,
   emitDequeuedUserMessage,
   emitProtocolV2Message,
   emitRuntimeStateUpdates,
+  type OutboundMessageDelivery,
 } from "./protocol-outbound";
 import { consumeQueuedTurn } from "./queue";
 import { debugLogApprovalResumeState } from "./recovery";
@@ -72,7 +75,7 @@ import type { ConversationRuntime, PendingTeleport } from "./types";
 type ApprovalTransportOpenResult = "open" | "interrupted";
 
 type WaitForApprovalTransportOpen = (
-  socket: ListenerTransport,
+  isDeliveryReady: () => boolean,
   shouldInterrupt: () => boolean,
 ) => Promise<ApprovalTransportOpenResult>;
 
@@ -129,10 +132,10 @@ export type ApprovalBranchResult =
 const APPROVAL_TRANSPORT_REOPEN_POLL_MS = 50;
 
 async function waitForApprovalTransportOpen(
-  socket: ListenerTransport,
+  isDeliveryReady: () => boolean,
   shouldInterrupt: () => boolean,
 ): Promise<ApprovalTransportOpenResult> {
-  if (isListenerTransportOpen(socket)) {
+  if (isDeliveryReady()) {
     return "open";
   }
 
@@ -141,7 +144,7 @@ async function waitForApprovalTransportOpen(
       setTimeout(resolve, APPROVAL_TRANSPORT_REOPEN_POLL_MS),
     );
 
-    if (isListenerTransportOpen(socket)) {
+    if (isDeliveryReady()) {
       return "open";
     }
   }
@@ -157,7 +160,7 @@ export async function handleApprovalStop(params: {
   }>;
   runtime: ConversationRuntime;
   socket: ListenerTransport;
-  agentId?: string;
+  agentId?: string | null;
   conversationId: string;
   turnWorkingDirectory: string;
   turnPermissionModeState: PermissionModeState;
@@ -171,6 +174,10 @@ export async function handleApprovalStop(params: {
   turnCorrelation?: TurnCorrelation;
   /** This turn's output is owned by an in-process caller, not a relay client. */
   processOwnedTurn?: boolean;
+  /** Relay connection that originated this turn; replacements retain this id. */
+  originConnectionId?: string;
+  /** Whether the origin can return under the same logical connection id. */
+  originConnectionCanResume?: boolean;
   buildSendOptions: () => Parameters<
     typeof sendApprovalContinuationWithRetry
   >[2];
@@ -198,6 +205,8 @@ export async function handleApprovalStop(params: {
     turnLease,
     turnCorrelation,
     processOwnedTurn = false,
+    originConnectionId,
+    originConnectionCanResume = true,
     buildSendOptions,
     dependencies,
   } = params;
@@ -236,7 +245,7 @@ export async function handleApprovalStop(params: {
       missingNameReason: "Tool call incomplete - missing name",
       workingDirectory: turnWorkingDirectory,
       permissionModeState: turnPermissionModeState,
-      agentId,
+      agentId: agentId ?? undefined,
       toolContextId: turnToolContextId ?? undefined,
     },
   );
@@ -272,6 +281,90 @@ export async function handleApprovalStop(params: {
 
   const shouldInterrupt = () =>
     abortSignal.aborted || !runtime.turnLifecycle.isCurrent(turnLease);
+  const isDeliveryReady = (): boolean => {
+    const listener = runtime.listener;
+    const scopedSubscribers = getSubscribedListenerConnections(listener, {
+      agent_id: runtime.agentId,
+      conversation_id: runtime.conversationId,
+    });
+    const deliveryOwnerId = runtime.activeConnectionId ?? originConnectionId;
+    if (deliveryOwnerId) {
+      return scopedSubscribers.some(
+        (connection) => connection.id === deliveryOwnerId,
+      );
+    }
+    return scopedSubscribers.length > 0 || isListenerTransportOpen(socket);
+  };
+  const getDeliveryOwnerId = (): string | null => {
+    const listener = runtime.listener;
+    if (
+      listener.connections.size === 0 &&
+      isListenerTransportOpen(socket) &&
+      !getOutboundQueueStats(socket).killed
+    ) {
+      return listener.connectionId ?? "legacy";
+    }
+    if (
+      originConnectionId &&
+      (!runtime.activeConnectionId ||
+        runtime.activeConnectionId === originConnectionId)
+    ) {
+      const directOrigin = listener.connections.get(originConnectionId);
+      const directOriginTransport =
+        directOrigin?.streamWriter ?? directOrigin?.writer;
+      if (
+        directOrigin?.initialized &&
+        directOriginTransport &&
+        isListenerTransportOpen(directOriginTransport) &&
+        !getOutboundQueueStats(directOriginTransport).killed
+      ) {
+        return originConnectionId;
+      }
+    }
+    const scopedSubscribers = getSubscribedListenerConnections(listener, {
+      agent_id: runtime.agentId,
+      conversation_id: runtime.conversationId,
+    }).filter(
+      (connection) =>
+        !getOutboundQueueStats(connection.streamWriter ?? connection.writer)
+          .killed,
+    );
+    const preferred = runtime.activeConnectionId ?? originConnectionId;
+    if (preferred && scopedSubscribers.some(({ id }) => id === preferred)) {
+      return preferred;
+    }
+    if (originConnectionCanResume && originConnectionId) return null;
+    const replacementId = scopedSubscribers[0]?.id ?? null;
+    if (replacementId && originConnectionCanResume === false) {
+      runtime.activeConnectionId = replacementId;
+    }
+    return replacementId;
+  };
+  const awaitTerminalDeliveries = async (
+    deliveries: OutboundMessageDelivery[],
+  ): Promise<"sent" | "interrupted"> => {
+    runtime.pendingTerminalDeliveryCount += 1;
+    try {
+      return await awaitOrderedOutboundDeliveries({
+        deliveries,
+        getOwnerId: getDeliveryOwnerId,
+        shouldInterrupt,
+        ...(originConnectionCanResume === false
+          ? { ownerWaitTimeoutMs: OUTBOUND_QUEUE_LIMITS.MAX_BACKPRESSURE_MS }
+          : {}),
+        receiptMatchesOwner: (receipt, ownerId) =>
+          receipt.connectionId === ownerId ||
+          (runtime.listener.connections.size === 0 &&
+            receipt.connectionId === null &&
+            ownerId === (runtime.listener.connectionId ?? "legacy")),
+      });
+    } finally {
+      runtime.pendingTerminalDeliveryCount = Math.max(
+        0,
+        runtime.pendingTerminalDeliveryCount - 1,
+      );
+    }
+  };
 
   const interruptTermination = (
     interruptedTurnInput: TurnInputState = turnInput,
@@ -342,7 +435,7 @@ export async function handleApprovalStop(params: {
           blocked_path: null,
           ...(diffs.length > 0 ? { diffs } : {}),
         },
-        agent_id: agentId,
+        agent_id: agentId ?? undefined,
         conversation_id: conversationId,
       };
 
@@ -395,7 +488,7 @@ export async function handleApprovalStop(params: {
                 missingNameReason: "Tool call incomplete - missing name",
                 workingDirectory: turnWorkingDirectory,
                 permissionModeState: turnPermissionModeState,
-                agentId,
+                agentId: agentId ?? undefined,
                 toolContextId: turnToolContextId ?? undefined,
               },
             );
@@ -450,13 +543,9 @@ export async function handleApprovalStop(params: {
   // A process-owned turn's results are consumed in-process, so there is no
   // client whose reconnect is worth waiting for. Relay-originated turns still
   // wait through transient disconnects so their output is not lost (#3522).
-  if (
-    approvedDecisions.length > 0 &&
-    !processOwnedTurn &&
-    !isListenerTransportOpen(socket)
-  ) {
+  if (approvedDecisions.length > 0 && !processOwnedTurn && !isDeliveryReady()) {
     const transportOpenResult = await waitForTransportOpen(
-      socket,
+      isDeliveryReady,
       shouldInterrupt,
     );
     if (transportOpenResult === "interrupted") {
@@ -566,13 +655,23 @@ export async function handleApprovalStop(params: {
     // an interrupt is in flight (the interrupt path emits finished events
     // from the interrupted-results cache).
     emitToolExecutionOutput.flush();
+    if (!shouldInterrupt() && !processOwnedTurn && !isDeliveryReady()) {
+      await waitForTransportOpen(isDeliveryReady, shouldInterrupt);
+    }
     if (!shouldInterrupt()) {
-      emitToolExecutionAbortedEvents(socket, runtime, {
-        toolCallIds: lastExecutingToolCallIds,
-        runId: executionRunId,
-        agentId,
-        conversationId,
-      });
+      const abortedDeliveries = emitToolExecutionAbortedEvents(
+        socket,
+        runtime,
+        {
+          toolCallIds: lastExecutingToolCallIds,
+          runId: executionRunId,
+          agentId,
+          conversationId,
+        },
+      );
+      if (!processOwnedTurn) {
+        await awaitTerminalDeliveries(abortedDeliveries);
+      }
     }
     throw error;
   } finally {
@@ -580,6 +679,18 @@ export async function handleApprovalStop(params: {
   }
   if (!runtime.turnLifecycle.isCurrent(turnLease)) {
     return interruptTermination();
+  }
+  // A relay can disconnect after client-side execution begins. Do not drop the
+  // terminal tool frames into the startup barrier of its replacement: wait
+  // until that connection has completed state sync and becomes routable.
+  if (!processOwnedTurn && !isDeliveryReady()) {
+    const transportOpenResult = await waitForTransportOpen(
+      isDeliveryReady,
+      shouldInterrupt,
+    );
+    if (transportOpenResult === "interrupted") {
+      return interruptTermination();
+    }
   }
   const persistedExecutionResults = normalizeExecutionResultsForInterruptParity(
     runtime,
@@ -594,7 +705,7 @@ export async function handleApprovalStop(params: {
     })),
     persistedExecutionResults,
   );
-  emitToolExecutionFinishedEvents(socket, runtime, {
+  const terminalDeliveries = emitToolExecutionFinishedEvents(socket, runtime, {
     approvals: persistedExecutionResults,
     runId: executionRunId,
     agentId,
@@ -606,13 +717,22 @@ export async function handleApprovalStop(params: {
     { results: persistedExecutionResults },
     "after_tool_execution",
   );
-  emitInterruptToolReturnMessage(
-    socket,
-    runtime,
-    persistedExecutionResults,
-    executionRunId,
-    "tool-return",
+  terminalDeliveries.push(
+    ...emitInterruptToolReturnMessage(
+      socket,
+      runtime,
+      persistedExecutionResults,
+      executionRunId,
+      "tool-return",
+    ),
   );
+
+  if (
+    !processOwnedTurn &&
+    (await awaitTerminalDeliveries(terminalDeliveries)) === "interrupted"
+  ) {
+    return interruptTermination();
+  }
 
   if (shouldInterrupt()) {
     return interruptTermination();

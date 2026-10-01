@@ -137,9 +137,7 @@ export async function prepareListenerTurn(params: {
     agent_id: agentId,
     conversation_id: conversationId,
   });
-  const consumed = agentId
-    ? consumeInterruptQueue(runtime, agentId, conversationId)
-    : null;
+  const consumed = consumeInterruptQueue(runtime, agentId, conversationId);
   if (consumed) {
     messagesToSend.push(consumed.approvalMessage);
     queuedInterruptedToolCallIds = consumed.interruptedToolCallIds;

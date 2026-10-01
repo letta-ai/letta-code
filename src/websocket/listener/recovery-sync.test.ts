@@ -268,6 +268,7 @@ describe("recoverApprovalStateForSync restart recovery", () => {
           );
         },
         recoveredContinuationDependencies: {
+          ensureModAdapters: async () => [],
           ensureSecretsHydrated: async () => {},
           prepareToolExecutionContext: async () =>
             ({

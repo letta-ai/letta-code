@@ -307,6 +307,7 @@ export function createConversationRuntime(
     pendingInterruptedContext: null,
     continuationEpoch: 0,
     pendingInterruptedToolCallIds: null,
+    pendingTerminalDeliveryCount: 0,
     reminderState:
       listener.reminderStateByConversation.get(runtimeKey) ??
       (() => {
@@ -418,6 +419,7 @@ export function clearConversationRuntimeState(
   runtime.pendingInterruptedResults = null;
   runtime.pendingInterruptedContext = null;
   runtime.pendingInterruptedToolCallIds = null;
+  runtime.pendingTerminalDeliveryCount = 0;
   runtime.expectedTeleportId = null;
   runtime.expectedTeleportExpiresAt = null;
   runtime.dequeuedClientMessageIdsByBatchId.clear();
@@ -531,7 +533,7 @@ export function hasInterruptedCacheForScope(
   const context = conversationRuntime.pendingInterruptedContext;
   if (
     context &&
-    context.agentId === (scopedAgentId ?? "") &&
+    context.agentId === scopedAgentId &&
     context.conversationId === scopedConversationId &&
     context.continuationEpoch === conversationRuntime.continuationEpoch
   ) {

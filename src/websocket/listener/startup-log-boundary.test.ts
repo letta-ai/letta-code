@@ -93,14 +93,11 @@ for (const runtime of ["bun", "node"]) {
       );
     });
 
-    test("legacy early user ingress seals before full-input debug/event logs, not at onConnected", () => {
+    test("early user ingress remains gated until the connected callback completes", () => {
       const [startup, content] = expectSealed(run("early"));
       expect(startup).toContain("AFTER_PONG_STARTUP");
-      expect(content.indexOf("EARLY_USER_PRIVATE")).toBeLessThan(
-        content.indexOf("BEFORE_CONNECTED"),
-      );
-      expect(content.indexOf("BEFORE_CONNECTED")).toBeLessThan(
-        content.indexOf("CONNECTED_PRIVATE"),
+      expect(content.indexOf("CONNECTED_PRIVATE")).toBeLessThan(
+        content.indexOf("EARLY_USER_PRIVATE"),
       );
     });
 

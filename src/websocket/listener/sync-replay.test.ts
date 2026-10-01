@@ -127,6 +127,7 @@ async function sync(
     },
     recoveredContinuationDependencies: {
       ensureSecretsHydrated: async () => {},
+      ensureModAdapters: async () => [],
       prepareToolExecutionContext: async () =>
         ({
           toolset: "codex",
