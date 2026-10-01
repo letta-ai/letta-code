@@ -23,6 +23,11 @@ export interface LocalModSource {
 
 export interface ResolveLocalModSourcesOptions {
   agentModsDirectory?: string;
+  /**
+   * Agent mod file names (relative to `agentModsDirectory`) to skip. Read on
+   * every resolution so a disable takes effect on the next reload.
+   */
+  getDisabledAgentModFiles?: () => ReadonlySet<string>;
   cacheDirectory?: string;
   globalModsDirectory?: string;
   includeGlobalMods?: boolean;
@@ -94,8 +99,11 @@ export function resolveLocalModSources(
   }
 
   if (options.agentModsDirectory) {
+    const disabled = options.getDisabledAgentModFiles?.() ?? new Set<string>();
     sources.push({
-      files: listModFiles(options.agentModsDirectory),
+      files: listModFiles(options.agentModsDirectory).filter(
+        (file) => !disabled.has(path.basename(file)),
+      ),
       root: options.agentModsDirectory,
       scope: "agent",
       trusted: true,

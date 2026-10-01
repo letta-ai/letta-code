@@ -223,6 +223,12 @@ export interface ModTurnStartCancelResult {
   reason: string;
 }
 
+/** Which loaded mod returned a turn_start cancel. Set by the host. */
+export interface ModTurnStartCancelSource {
+  path: string;
+  scope: ModSourceScope;
+}
+
 export interface ModTurnStartResult {
   input?: Array<MessageCreate | ApprovalCreate>;
   cancel?: ModTurnStartCancelResult;

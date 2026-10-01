@@ -36,6 +36,7 @@ import type {
 } from "@/types/protocol_v2";
 import { debugLog } from "@/utils/debug";
 import { markSecretsReminderRefreshPending } from "./commands/secrets";
+import { handleModsCommand } from "./commands-mods";
 import { getConversationWorkingDirectory } from "./cwd";
 import {
   ensureListenerAgentModAdapter,
@@ -205,6 +206,26 @@ export async function handleExecuteCommand(
           opts,
         );
         break;
+
+      case "mods": {
+        const result = await handleModsCommand(
+          conversationRuntime,
+          trimmedArgs,
+          command.runtime.acting_user_id ?? null,
+        );
+        if (result.success) {
+          // Re-advertise so commands from a now-disabled mod disappear.
+          emitDeviceStatusUpdate(socket, conversationRuntime, scope);
+        }
+        emitSlashCommandEnd(socket, conversationRuntime, scope, {
+          command_id: command.command_id,
+          input,
+          output: result.output,
+          success: result.success,
+        });
+        emitExecuteCommandResponse(socket, command, result);
+        return;
+      }
 
       case "upgrade-letta-code":
         output = await handleUpgradeLettaCodeCommand(opts);
