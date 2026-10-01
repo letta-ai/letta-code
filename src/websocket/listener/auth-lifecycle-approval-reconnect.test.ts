@@ -173,14 +173,16 @@ describe("listener approval reconnect timing", () => {
     }
   });
 
-  function startClient() {
+  function startClient(
+    onConnected: (connectionId: string) => void | Promise<void> = () => {},
+  ) {
     return startListenerClient({
       connectionId: "connection-id",
       wsUrl,
       supportsSplitStatusChannels: true,
       deviceId: "device-id",
       connectionName: "listener-name",
-      onConnected: mock(() => {}),
+      onConnected: mock(onConnected),
       onDisconnected: mock(() => {}),
       onNeedsReregister: mock(() => {}),
       onError: mock(() => {}),
@@ -280,8 +282,22 @@ describe("listener approval reconnect timing", () => {
     };
   }
 
-  test("service restart reconnect preserves a client tool already executing", async () => {
-    await startClient();
+  test("service restart buffers terminal client-tool frames until the replacement initializes", async () => {
+    let connectedCount = 0;
+    let reportReplacementStartup!: () => void;
+    const replacementStartup = new Promise<void>((resolve) => {
+      reportReplacementStartup = resolve;
+    });
+    let releaseReplacementStartup!: () => void;
+    const replacementStartupReady = new Promise<void>((resolve) => {
+      releaseReplacementStartup = resolve;
+    });
+    await startClient(async () => {
+      connectedCount += 1;
+      if (connectedCount !== 2) return;
+      reportReplacementStartup();
+      await replacementStartupReady;
+    });
     await waitFor(
       () =>
         getActiveRuntime()?.connections.get("connection-id")?.initialized ===
@@ -369,8 +385,28 @@ describe("listener approval reconnect timing", () => {
         countConnectionsForChannel("stream") === 2,
       "listener did not reconnect after service restart",
     );
+    await replacementStartup;
+    expect(listener.connections.get("connection-id")?.initialized).toBe(false);
 
+    let approvalSettled = false;
+    void approvalStop.finally(() => {
+      approvalSettled = true;
+    });
     finishExecution(executionResults);
+    await new Promise((resolve) => setTimeout(resolve, 75));
+    expect(approvalSettled).toBe(false);
+    expect(countToolStreamDeltas("client_tool_end", approval.toolCallId)).toBe(
+      0,
+    );
+    expect(
+      countToolStreamDeltas("tool_return_message", approval.toolCallId),
+    ).toBe(0);
+
+    releaseReplacementStartup();
+    await waitFor(
+      () => listener.connections.get("connection-id")?.initialized === true,
+      "replacement listener connection did not finish startup",
+    );
     const result = await approvalStop;
     expect(result.kind).toBe("terminal");
     if (result.kind !== "terminal") throw new Error("tool did not finish");

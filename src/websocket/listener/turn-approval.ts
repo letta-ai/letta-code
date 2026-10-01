@@ -581,6 +581,18 @@ export async function handleApprovalStop(params: {
   if (!runtime.turnLifecycle.isCurrent(turnLease)) {
     return interruptTermination();
   }
+  // A relay can disconnect after client-side execution begins. Do not drop the
+  // terminal tool frames into the startup barrier of its replacement: wait
+  // until that connection has completed state sync and becomes routable.
+  if (!processOwnedTurn && !isListenerTransportOpen(socket)) {
+    const transportOpenResult = await waitForTransportOpen(
+      socket,
+      shouldInterrupt,
+    );
+    if (transportOpenResult === "interrupted") {
+      return interruptTermination();
+    }
+  }
   const persistedExecutionResults = normalizeExecutionResultsForInterruptParity(
     runtime,
     executionResults,

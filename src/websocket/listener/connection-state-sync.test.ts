@@ -1,9 +1,13 @@
 import { expect, test } from "bun:test";
 import {
+  closeListenerConnection,
   markListenerConnectionInitialized,
   openListenerConnection,
 } from "./connection";
-import { replaySubscribedConnectionState } from "./connection-state-sync";
+import {
+  emitInitialConnectionState,
+  replaySubscribedConnectionState,
+} from "./connection-state-sync";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import {
   createRuntime,
@@ -163,6 +167,55 @@ test("waits for asynchronous Git status before emitting the state sync", async (
     "update_queue",
     "update_subagent_state",
   ]);
+});
+
+test("a blocked initial Git refresh cannot emit into a same-ID replacement", async () => {
+  const listener = createRuntime();
+  getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+  const staleTransport = new MockTransport();
+  const replacementTransport = new MockTransport();
+  const connectionId = "cloud-relay";
+  const options: StartListenerOptions = {
+    connectionId,
+    wsUrl: "local://cloud-relay",
+    deviceId: "test-device",
+    connectionName: "cloud-relay",
+    onConnected: () => {},
+    onDisconnected: () => {},
+    onError: () => {},
+  };
+  const staleConnection = openListenerConnection({
+    runtime: listener,
+    connectionId,
+    writer: staleTransport,
+    options,
+  });
+
+  let releaseGit!: () => void;
+  const gitReady = new Promise<void>((resolve) => {
+    releaseGit = resolve;
+  });
+  const initialState = emitInitialConnectionState(
+    listener,
+    staleConnection,
+    staleTransport,
+    { refreshGitContext: async () => gitReady },
+  );
+  await Promise.resolve();
+
+  closeListenerConnection(listener, connectionId);
+  const replacement = openListenerConnection({
+    runtime: listener,
+    connectionId,
+    writer: replacementTransport,
+    options,
+  });
+  markListenerConnectionInitialized(listener, connectionId, replacement);
+  releaseGit();
+
+  expect(await initialState).toBe(false);
+  expect(staleTransport.sent).toEqual([]);
+  expect(replacementTransport.sent).toEqual([]);
 });
 
 test("keeps attached App Server connections from bypassing the startup barrier", async () => {

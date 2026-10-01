@@ -15,7 +15,6 @@ import { getActiveRuntime } from "./runtime";
 import type { ListenerTransport } from "./transport";
 import type {
   ConversationRuntime,
-  ListenerConnectionId,
   ListenerConnectionState,
   ListenerRuntime,
   StartListenerOptions,
@@ -23,15 +22,24 @@ import type {
 
 export async function emitInitialConnectionState(
   runtime: ListenerRuntime,
+  connection: ListenerConnectionState,
   transport: ListenerTransport,
-  connectionId: ListenerConnectionId,
-  options: { emitInitialState?: boolean } = {},
-): Promise<void> {
-  if (options.emitInitialState === false) return;
-  const routing = toListenerConnection(connectionId);
+  options: {
+    emitInitialState?: boolean;
+    refreshGitContext?: typeof refreshDeviceGitContext;
+  } = {},
+): Promise<boolean> {
+  const isCurrent = (): boolean =>
+    runtime.connections.get(connection.id) === connection &&
+    connection.writer === transport &&
+    !connection.cancellation.signal.aborted;
+
+  if (options.emitInitialState === false) return isCurrent();
+  if (!isCurrent()) return false;
+  const routing = toListenerConnection(connection.id);
   if (runtime.conversationRuntimes.size === 0) {
     emitLoopStatusUpdate(transport, runtime, undefined, routing);
-    return;
+    return isCurrent();
   }
 
   for (const conversationRuntime of runtime.conversationRuntimes.values()) {
@@ -39,10 +47,17 @@ export async function emitInitialConnectionState(
       agent_id: conversationRuntime.agentId,
       conversation_id: conversationRuntime.conversationId,
     };
-    await refreshDeviceGitContext(conversationRuntime, scope);
+    await (options.refreshGitContext ?? refreshDeviceGitContext)(
+      conversationRuntime,
+      scope,
+    );
+    if (!isCurrent()) return false;
     emitDeviceStatusUpdate(transport, conversationRuntime, scope, routing);
+    if (!isCurrent()) return false;
     emitLoopStatusUpdate(transport, conversationRuntime, scope, routing);
+    if (!isCurrent()) return false;
   }
+  return true;
 }
 
 export async function completeInitialConnectionStartup(
@@ -62,9 +77,13 @@ export async function completeInitialConnectionStartup(
 
   await options.onConnected(options.connectionId);
   if (!isCurrent()) return false;
-  await emitInitialConnectionState(listener, transport, options.connectionId, {
-    emitInitialState: startupOptions.emitInitialState,
-  });
+  if (
+    !(await emitInitialConnectionState(listener, connection, transport, {
+      emitInitialState: startupOptions.emitInitialState,
+    }))
+  ) {
+    return false;
+  }
   if (!isCurrent()) return false;
   for (const runtime of listener.conversationRuntimes.values()) {
     replayPendingApprovalRequestsToConnection(
@@ -92,10 +111,22 @@ export async function replaySubscribedConnectionState(
     refreshGitContext?: typeof refreshDeviceGitContext;
   } = {},
 ): Promise<void> {
-  await (options.refreshGitContext ?? refreshDeviceGitContext)(listener, scope);
   const connection = findListenerConnectionByTransport(listener, transport);
+  const isCurrent = (): boolean =>
+    !connection ||
+    (listener.connections.get(connection.id) === connection &&
+      (connection.writer === transport ||
+        connection.streamWriter === transport) &&
+      !connection.cancellation.signal.aborted);
+  await (options.refreshGitContext ?? refreshDeviceGitContext)(listener, scope);
+  if (!isCurrent()) return;
   if (connection) {
-    replayPendingApprovalRequestsToConnection(runtime, connection.id);
+    replayPendingApprovalRequestsToConnection(
+      runtime,
+      connection.id,
+      connection,
+    );
+    if (!isCurrent()) return;
   }
   emitStateSync(transport, listener, scope, {
     forceDeviceStatus: options.forceDeviceStatus,

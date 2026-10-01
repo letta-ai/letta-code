@@ -538,7 +538,7 @@ describe("listener turn lifecycle integration", () => {
   // Guards the gate's polarity and its default. A relay turn's results must
   // reach the client that asked for them, so a closed transport still waits for
   // reconnect (#3522) — only an explicitly process-owned turn may skip it.
-  test("a relay-owned turn still waits for reconnect before executing tools", async () => {
+  test("a relay-owned turn waits for reconnect before execution and terminal emission", async () => {
     const runtime = getOrCreateScopedRuntime(
       createRuntime(),
       "agent-1",
@@ -562,9 +562,9 @@ describe("listener turn lifecycle integration", () => {
         tool_return: "/workspace",
       },
     ]);
-    let waitedBeforeExecuting = false;
+    const executionStartedAtWait: boolean[] = [];
     const waitForApprovalTransportOpen = mock(async () => {
-      waitedBeforeExecuting = executeApprovalBatch.mock.calls.length === 0;
+      executionStartedAtWait.push(executeApprovalBatch.mock.calls.length > 0);
       return "open" as const;
     });
 
@@ -599,8 +599,8 @@ describe("listener turn lifecycle integration", () => {
     });
 
     expect(result.kind).toBe("terminal");
-    expect(waitForApprovalTransportOpen).toHaveBeenCalledTimes(1);
-    expect(waitedBeforeExecuting).toBe(true);
+    expect(waitForApprovalTransportOpen).toHaveBeenCalledTimes(2);
+    expect(executionStartedAtWait).toEqual([false, true]);
     expect(executeApprovalBatch).toHaveBeenCalledTimes(1);
   });
 
