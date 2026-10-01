@@ -1,6 +1,6 @@
 import type WebSocket from "ws";
 import type { RemoveQueueItemCommand } from "@/types/protocol_v2";
-import type { ResumeQueueCommand } from "@/types/queue-update-protocol";
+import type { QueueControlCommand } from "@/types/queue-update-protocol";
 import { emitQueueUpdateIfOpen } from "@/websocket/listener/protocol-outbound";
 import { scheduleQueuePump } from "@/websocket/listener/queue";
 import type {
@@ -12,7 +12,7 @@ import type { GetOrCreateScopedRuntime, SafeSocketSend } from "./types";
 
 /** Mutate the listener's queue without submitting a new user message. */
 export function handleQueueCommand(
-  command: ResumeQueueCommand | RemoveQueueItemCommand,
+  command: QueueControlCommand | RemoveQueueItemCommand,
   deps: {
     listener: ListenerRuntime;
     socket: WebSocket;
@@ -42,6 +42,36 @@ export function handleQueueCommand(
     );
     // Even a missing item requires a snapshot to repair a stale client queue.
     emitQueueUpdateIfOpen(deps.listener, command.runtime);
+    return;
+  }
+
+  if (command.type === "steer_queue_item") {
+    const success = scopedRuntime.queueRuntime.steer(command.item_id);
+    deps.safeSocketSend(
+      deps.socket,
+      {
+        type: "steer_queue_item_response",
+        request_id: command.request_id,
+        runtime: command.runtime,
+        item_id: command.item_id,
+        success,
+        ...(success
+          ? {}
+          : {
+              error: "Queued user message not found or requires its own turn",
+            }),
+      },
+      "steer_queue_item_response",
+      "steer_queue_item",
+    );
+    emitQueueUpdateIfOpen(deps.listener, command.runtime);
+    if (success)
+      scheduleQueuePump(
+        scopedRuntime,
+        deps.socket,
+        deps.opts,
+        deps.processQueuedTurn,
+      );
     return;
   }
 

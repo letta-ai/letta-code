@@ -408,7 +408,7 @@ export async function resolveStaleApprovals(
         },
       ]);
       let recoveryTurnCorrelation: TurnCorrelation | undefined;
-      const consumedQueuedTurn = consumeQueuedTurn(runtime);
+      const consumedQueuedTurn = consumeQueuedTurn(runtime, "steering");
       if (consumedQueuedTurn) {
         const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
         recoveryTurnCorrelation = createTurnCorrelation(

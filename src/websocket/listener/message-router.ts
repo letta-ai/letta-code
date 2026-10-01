@@ -34,6 +34,11 @@ import { handleRuntimeStartProtocolCommand } from "./commands/runtime-start";
 import { handleSecretsCommand } from "./commands/secrets";
 import { handleSettingsProtocolCommand } from "./commands/settings";
 import { handleSkillAgentProtocolCommand } from "./commands/skills-agents";
+import type {
+  GetOrCreateScopedRuntime,
+  RunDetachedListenerTask,
+  SafeSocketSend,
+} from "./commands/types";
 import {
   getOrCreateProcessTransport,
   subscribeListenerConnection,
@@ -81,7 +86,6 @@ import {
 import type { ListenerTransport } from "./transport";
 import { handleIncomingMessage } from "./turn";
 import type {
-  ConversationRuntime,
   IncomingMessage,
   ListenerConnectionId,
   ListenerRuntime,
@@ -89,18 +93,6 @@ import type {
   StartListenerOptions,
   SyncReplayOptions,
 } from "./types";
-
-type SafeSocketSend = (
-  socket: WebSocket,
-  payload: unknown,
-  errorType: string,
-  context: string,
-) => boolean;
-
-type RunDetachedListenerTask = (
-  commandName: string,
-  task: () => Promise<void>,
-) => void;
 
 type TrackListenerError = (
   errorType: string,
@@ -132,11 +124,7 @@ type MessageRouterParams = {
     scope: RuntimeScope,
     opts?: SyncReplayOptions,
   ) => Promise<void>;
-  getOrCreateScopedRuntime: (
-    listener: ListenerRuntime,
-    agentId?: string | null,
-    conversationId?: string | null,
-  ) => ConversationRuntime;
+  getOrCreateScopedRuntime: GetOrCreateScopedRuntime;
   handleApprovalResponseInput: (
     listener: ListenerRuntime,
     params: {
@@ -740,6 +728,7 @@ export function createListenerMessageHandler(
 
       if (
         parsed.type === "resume_queue" ||
+        parsed.type === "steer_queue_item" ||
         parsed.type === "remove_queue_item"
       ) {
         handleQueueCommand(parsed, {

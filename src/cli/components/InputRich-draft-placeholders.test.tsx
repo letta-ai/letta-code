@@ -53,6 +53,7 @@ type ContentParts = ReturnType<typeof buildMessageContentFromDisplay>;
 function mountComposer() {
   // Content is built from the display text when the submit handler runs.
   const submissions: ContentParts[] = [];
+  const retries: boolean[] = [];
   const stdin = new Readable({ read() {} }) as NodeJS.ReadStream;
   stdin.isTTY = true;
   stdin.setRawMode = () => stdin;
@@ -70,7 +71,8 @@ function mountComposer() {
         thinkingMessage=""
         terminalWidth={100}
         shouldAnimate={false}
-        onSubmit={async (message) => {
+        onSubmit={async (message, isRetry) => {
+          retries.push(isRetry === true);
           submissions.push(buildMessageContentFromDisplay(message ?? ""));
           return { submitted: true };
         }}
@@ -99,6 +101,7 @@ function mountComposer() {
   });
   return {
     submissions,
+    retries,
     // One stdin read per key, each in its own tick, like a person typing.
     async press(...keys: string[]) {
       await tick();
@@ -269,6 +272,24 @@ describe("Input draft holders", () => {
     ]);
   });
 
+  test("a restored image stays resolvable and only its submission is a retry", async () => {
+    const id = allocateImage({ data: "iVBORw0KGgo=", mediaType: "image/png" });
+    const composer = mountComposer();
+    try {
+      await composer.restore(`[Image #${id}] retry`);
+      expect(getImage(id)).toBeDefined();
+      await composer.press(ENTER, "next", ENTER);
+    } finally {
+      composer.unmount();
+    }
+    expect(composer.submissions[0]?.map((part) => part.type)).toEqual([
+      "image",
+      "text",
+    ]);
+    expect(composer.submissions[1]).toEqual([{ type: "text", text: "next" }]);
+    expect(composer.retries).toEqual([true, false]);
+  });
+
   test("a restored input dropped because the composer has text is released", async () => {
     const id = allocateImage({ data: "iVBORw0KGgo=", mediaType: "image/png" });
     const composer = mountComposer();
@@ -283,5 +304,6 @@ describe("Input draft holders", () => {
     }
     // The typed draft was kept, not clobbered by the restored text.
     expect(composer.submissions).toEqual([[{ type: "text", text: "draft" }]]);
+    expect(composer.retries).toEqual([false]);
   });
 });

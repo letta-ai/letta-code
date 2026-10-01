@@ -33,7 +33,7 @@ describe("queue ordering wiring", () => {
     // updated automatically via the onDequeued callback — no direct setState here.
     expect(segment).toContain("tuiQueueRef.current?.consumeItems(queueLen)");
     expect(segment).toMatch(
-      /onSubmitRef\s*\.current\(concatenatedMessage, submitOptions\)/,
+      /onSubmitRef\s*\.current\(concatenatedMessage, false, submitOptions\)/,
     );
     expect(segment).toContain("!dequeueInFlightRef.current");
     expect(segment).toContain("queuedOverlayAction,");
