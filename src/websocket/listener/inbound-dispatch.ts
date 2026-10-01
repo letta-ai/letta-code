@@ -1,5 +1,6 @@
 import type { InputCreateMessagePayload } from "@/types/protocol_v2";
 import type { ConversationRuntimeScope } from "@/types/runtime-scope";
+import { isDebugEnabled } from "@/utils/debug";
 import { getOrCreateProcessTransport } from "./connection";
 import {
   enqueueInboundUserMessage,
@@ -202,7 +203,7 @@ export function dispatchInboundMessageWhenReady(params: {
         error,
         "listener_message_queue",
       );
-      if (process.env.DEBUG) {
+      if (isDebugEnabled()) {
         console.error("[Listen] Error handling queued input:", error);
       }
       emitListenerStatus(

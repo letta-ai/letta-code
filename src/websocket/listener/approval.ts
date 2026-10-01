@@ -1,5 +1,6 @@
 import type { ApprovalResult } from "@/agent/approval-execution";
 import type { ApprovalResponseBody, ControlRequest } from "@/types/protocol_v2";
+import { isDebugEnabled } from "@/utils/debug";
 import {
   createConnectionRequestKey,
   findListenerConnectionByTransport,
@@ -230,7 +231,7 @@ export function validateApprovalResultIds(
   }>,
   approvals: ApprovalResult[],
 ): void {
-  if (!process.env.DEBUG) {
+  if (!isDebugEnabled()) {
     return;
   }
 

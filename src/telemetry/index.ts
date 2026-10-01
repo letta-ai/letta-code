@@ -6,7 +6,7 @@ import { getServerUrl } from "@/backend/api/server-url";
 import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
 import { getRuntimeActingUserId } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
-import { debugLogFile } from "@/utils/debug";
+import { debugLogFile, isDebugEnabled } from "@/utils/debug";
 import { isLoopbackHostname, parseUrl } from "@/utils/url";
 import { getVersion } from "@/version";
 import {
@@ -440,7 +440,7 @@ class TelemetryManager {
     this.flushInterval = setInterval(() => {
       this.flush().catch((err) => {
         // Silently fail - we don't want telemetry to interfere with user experience
-        if (process.env.LETTA_DEBUG) {
+        if (isDebugEnabled()) {
           console.error("Telemetry flush error:", err);
         }
       });
@@ -523,7 +523,7 @@ class TelemetryManager {
     // Flush if batch size is reached
     if (this.events.length >= this.MAX_BATCH_SIZE) {
       this.flush().catch((err) => {
-        if (process.env.LETTA_DEBUG) {
+        if (isDebugEnabled()) {
           console.error("Telemetry flush error:", err);
         }
       });
