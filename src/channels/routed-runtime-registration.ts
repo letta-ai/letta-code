@@ -4,6 +4,7 @@ import type {
   RuntimeScope,
   RuntimeStartExternalToolsGroup,
 } from "@/types/app-server-protocol";
+import { sourceRouteKey } from "./gateway-sources";
 import { loadRoutes } from "./routing";
 import type { ChannelStartupLogger, ChannelTurnSource } from "./types";
 
@@ -63,8 +64,11 @@ function toolScopeKey(
   runtime: RuntimeScope,
 ): string {
   if (sources.length === 0) return `proactive:${runtime.agent_id}`;
+  const destinationClass =
+    new Set(sources.map(sourceRouteKey)).size > 1 ? "multiple" : "single";
   return JSON.stringify(
     [
+      destinationClass,
       ...new Set(
         sources.map((source) => `${source.channel}:${source.accountId ?? ""}`),
       ),

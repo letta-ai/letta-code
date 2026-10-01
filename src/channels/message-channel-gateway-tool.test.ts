@@ -237,3 +237,82 @@ test("builds proactive Slack for a fresh conversation owned by the account agent
     }),
   ).resolves.toBeNull();
 });
+
+test("policy false does not expose a relay-only proactive account", async () => {
+  __testOverrideLoadChannelAccounts(() => []);
+  __testOverrideSaveChannelAccounts(() => {});
+  const registry = new ChannelRegistry();
+  registry.registerAdapter({
+    id: "slack:relay-proactive",
+    channelId: "slack",
+    accountId: "relay-proactive",
+    name: "Slack",
+    start: async () => {},
+    stop: async () => {},
+    isRunning: () => true,
+    sendMessage: async () => ({ messageId: "unused" }),
+    sendDirectReply: async () => {},
+  });
+  upsertChannelAccount("slack", {
+    channel: "slack",
+    accountId: "relay-proactive",
+    displayName: "Relay proactive",
+    enabled: true,
+    dmPolicy: "pairing",
+    replyMode: "relay",
+    allowedUsers: [],
+    createdAt: "2026-08-13T00:00:00.000Z",
+    updatedAt: "2026-08-13T00:00:00.000Z",
+    mode: "socket",
+    botToken: "xoxb-test",
+    appToken: "xapp-test",
+    agentId: "agent-1",
+    defaultPermissionMode: "standard",
+  });
+
+  await expect(
+    buildGatewayMessageChannelTool(
+      [],
+      { agent_id: "agent-1", conversation_id: "conv-proactive" },
+      { automaticRelay: false },
+    ),
+  ).resolves.toBeNull();
+});
+
+test("policy false keeps routed tool instructions after live mode becomes relay", async () => {
+  __testOverrideLoadChannelAccounts(() => []);
+  __testOverrideSaveChannelAccounts(() => {});
+  upsertChannelAccount("slack", {
+    channel: "slack",
+    accountId: "mode-changed",
+    displayName: "Mode changed",
+    enabled: true,
+    dmPolicy: "pairing",
+    replyMode: "relay",
+    allowedUsers: [],
+    createdAt: "2026-08-13T00:00:00.000Z",
+    updatedAt: "2026-08-13T00:00:00.000Z",
+    mode: "socket",
+    botToken: "xoxb-test",
+    appToken: "xapp-test",
+    agentId: "agent-1",
+    defaultPermissionMode: "standard",
+  });
+
+  const tool = await buildGatewayMessageChannelTool(
+    [
+      makeSource({
+        channel: "slack",
+        accountId: "mode-changed",
+        chatId: "C-mode-changed",
+      }),
+    ],
+    undefined,
+    { automaticRelay: false },
+  );
+
+  expect(tool?.description).toContain(
+    "Plain assistant text is not delivered to that external user.",
+  );
+  expect(tool?.description).not.toContain("uses automatic relay");
+});

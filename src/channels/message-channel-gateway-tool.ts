@@ -14,25 +14,25 @@ export async function buildGatewayMessageChannelTool(
   runtime?: RuntimeScope,
   policy?: { automaticRelay: boolean },
 ): Promise<ExternalToolDefinitionPayload | null> {
-  const channelScopes =
-    sources.length > 0
-      ? sources.map((source) => ({
-          channelId: source.channel,
-          accountId: source.accountId ?? null,
-          routedDestinationKey: sourceRouteKey(source),
+  const routed = sources.length > 0;
+  const channelScopes = routed
+    ? sources.map((source) => ({
+        channelId: source.channel,
+        accountId: source.accountId ?? null,
+        routedDestinationKey: sourceRouteKey(source),
+      }))
+    : runtime
+      ? listEligibleProactiveSlackAccounts({
+          agentId: runtime.agent_id,
+        }).map(({ account }) => ({
+          channelId: "slack",
+          accountId: account.accountId,
         }))
-      : runtime
-        ? listEligibleProactiveSlackAccounts({
-            agentId: runtime.agent_id,
-          }).map(({ account }) => ({
-            channelId: "slack",
-            accountId: account.accountId,
-          }))
-        : [];
+      : [];
   const toolScopes =
-    policy?.automaticRelay === true
+    routed && policy?.automaticRelay === true
       ? []
-      : policy?.automaticRelay === false
+      : routed && policy?.automaticRelay === false
         ? channelScopes
         : channelScopes.filter(
             ({ channelId, accountId }) =>
@@ -41,16 +41,21 @@ export async function buildGatewayMessageChannelTool(
           );
   const routedDestinations = new Set(sources.map(sourceRouteKey));
   const exposedScopes =
-    sources.length > 0 && routedDestinations.size > 1
-      ? channelScopes
-      : toolScopes;
+    routed && routedDestinations.size > 1 ? channelScopes : toolScopes;
   if (exposedScopes.length === 0) return null;
 
+  const resolvedChannels = await resolveLocalMessageChannelToolChannels({
+    channels: exposedScopes,
+  });
   const tool = await buildMessageChannelExternalToolDefinition({
-    channels: await resolveLocalMessageChannelToolChannels({
-      channels: exposedScopes,
-    }),
-    scoped: sources.length > 0,
+    channels:
+      routed && policy?.automaticRelay === false
+        ? resolvedChannels.map((channel) => ({
+            ...channel,
+            replyMode: "tool" as const,
+          }))
+        : resolvedChannels,
+    scoped: routed,
     allowProactiveTargets: true,
   });
   const accountIds = [
@@ -60,7 +65,7 @@ export async function buildGatewayMessageChannelTool(
         .filter((accountId): accountId is string => Boolean(accountId)),
     ),
   ];
-  if (sources.length > 0 && accountIds.length > 1) {
+  if (routed && accountIds.length > 1) {
     tool.description += `\n\nCurrently routed accounts: ${accountIds.join(", ")}.`;
   }
   return tool;

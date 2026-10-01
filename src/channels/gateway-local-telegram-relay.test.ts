@@ -34,6 +34,8 @@ const TEST_TIMEOUT_MS = 10_000;
 type TurnPlan = {
   text: string;
   assistantMessagesAroundTool?: [string, string];
+  started?: () => void;
+  waitForRelease?: Promise<void>;
 };
 
 function assistantMessagesAroundToolStream(
@@ -114,6 +116,8 @@ function plannedExecutor(
             .client_tools ?? []
         ).map((tool) => tool.name),
       );
+      plan.started?.();
+      await plan.waitForRelease;
       if (plan.assistantMessagesAroundTool) {
         return assistantMessagesAroundToolStream(
           plan.assistantMessagesAroundTool[0],
@@ -129,7 +133,7 @@ function plannedExecutor(
   };
 }
 
-test("Telegram ingress relays finalized assistant messages across the local App Server boundary", async () => {
+test("a queued local App Server input retains its own reply mode", async () => {
   const originalDisableMods = process.env.LETTA_DISABLE_MODS;
   const originalDisableCron = process.env.LETTA_DISABLE_CRON_SCHEDULER;
   const originalIsMemfsExplicitlyDisabled =
@@ -140,12 +144,19 @@ test("Telegram ingress relays finalized assistant messages across the local App 
     agentId === AGENT_ID ||
     originalIsMemfsExplicitlyDisabled.call(settingsManager, agentId);
 
+  const firstStarted = Promise.withResolvers<void>();
+  const releaseFirst = Promise.withResolvers<void>();
   const plans: TurnPlan[] = [
+    {
+      text: "first tool-mode reply",
+      started: firstStarted.resolve,
+      waitForRelease: releaseFirst.promise,
+    },
+    { text: "queued relay-mode reply" },
     {
       text: FINAL_TEXT,
       assistantMessagesAroundTool: [BEFORE_TOOL_TEXT, AFTER_TOOL_TEXT],
     },
-    { text: FINAL_TEXT },
   ];
   const clientToolNamesByTurn: string[][] = [];
   let server: Awaited<ReturnType<typeof startAppServer>> | undefined;
@@ -170,7 +181,7 @@ test("Telegram ingress relays finalized assistant messages across the local App 
         dmPolicy: "open",
         groupMode: "open",
         richPrivateChatDefault: false,
-        replyMode: "relay",
+        replyMode: "tool",
       },
       { accountId: ACCOUNT_ID },
     );
@@ -209,37 +220,44 @@ test("Telegram ingress relays finalized assistant messages across the local App 
       if (event.type === "finished") finishedTurns += 1;
     };
 
-    await bot.emit("message", inboundMessage(1, "relay without a tool call"));
+    await bot.emit("message", inboundMessage(1, "first tool-mode message"));
+    await firstStarted.promise;
+    updateChannelAccountLive("telegram", ACCOUNT_ID, { replyMode: "relay" });
+    await bot.emit("message", inboundMessage(2, "queued behind first turn"));
+    releaseFirst.resolve();
     await waitFor(
-      () => finishedTurns === 1,
-      "Timed out waiting for relay-only channel turn",
+      () => finishedTurns === 2,
+      "Timed out waiting for queued mixed-mode turns",
     );
-    expect(bot.api.sendMessage).toHaveBeenCalledTimes(2);
+    expect(bot.api.sendMessage).toHaveBeenCalledTimes(1);
     expect(bot.api.sendMessage).toHaveBeenNthCalledWith(
       1,
+      CHAT_ID,
+      "queued relay-mode reply",
+      expect.any(Object),
+    );
+    expect(clientToolNamesByTurn[0]).toContain("MessageChannel");
+    expect(clientToolNamesByTurn[1]).not.toContain("MessageChannel");
+
+    await bot.emit("message", inboundMessage(3, "relay after queue drained"));
+    await waitFor(
+      () => finishedTurns === 3,
+      "Timed out waiting for relay turn after queue drain",
+    );
+    expect(bot.api.sendMessage).toHaveBeenCalledTimes(3);
+    expect(bot.api.sendMessage).toHaveBeenNthCalledWith(
+      2,
       CHAT_ID,
       BEFORE_TOOL_TEXT,
       expect.any(Object),
     );
     expect(bot.api.sendMessage).toHaveBeenNthCalledWith(
-      2,
+      3,
       CHAT_ID,
       AFTER_TOOL_TEXT,
       expect.any(Object),
     );
-    expect(clientToolNamesByTurn[0]).not.toContain("MessageChannel");
-
-    updateChannelAccountLive("telegram", ACCOUNT_ID, { replyMode: "tool" });
-    await bot.emit(
-      "message",
-      inboundMessage(2, "tool mode without a tool call"),
-    );
-    await waitFor(
-      () => finishedTurns === 2,
-      "Timed out waiting for tool-mode channel turn",
-    );
-    expect(bot.api.sendMessage).toHaveBeenCalledTimes(2);
-    expect(clientToolNamesByTurn[1]).toContain("MessageChannel");
+    expect(clientToolNamesByTurn[2]).not.toContain("MessageChannel");
     expect(plans).toHaveLength(0);
   } finally {
     settingsManager.isMemfsExplicitlyDisabled =

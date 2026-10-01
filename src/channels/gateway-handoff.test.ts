@@ -393,6 +393,64 @@ test("preserves tool reply policy across an active handoff", async () => {
   destinationGateway.close();
 });
 
+test("active handoff retains scoped tool callback ownership", async () => {
+  const sourceClient = new FakeClient();
+  const destinationClient = new FakeClient();
+  const source = makeSource({ channel: "slack", chatId: "C-scoped-handoff" });
+  const sourceGateway = new ChannelGateway(sourceClient, makeHooks().hooks);
+  let callbackSources: ChannelTurnSource[] = [];
+  const destinationGateway = new ChannelGateway(
+    destinationClient,
+    makeHooks({
+      executeExternalTool: async (_request, sources) => {
+        callbackSources = sources;
+        return { content: [{ type: "text", text: "sent" }] };
+      },
+    }).hooks,
+  );
+  const delivery = makeDelivery({
+    clientMessageId: "cm-scoped-handoff",
+    sources: [source],
+  });
+
+  await sourceGateway.submit(delivery);
+  const payload = sourceClient.submittedInputs[0]?.payload as {
+    external_tool_scope_ids?: string[];
+  };
+  const scopeId = payload.external_tool_scope_ids?.[0];
+  expect(scopeId).toBeString();
+  await Bun.sleep(0);
+  const activeTurnState = sourceGateway.releaseActiveDelivery(
+    TEST_RUNTIME,
+    delivery.clientMessageId,
+  );
+  expect(activeTurnState?.toolScopes?.[0]?.id).toBe(scopeId);
+  if (!scopeId || !activeTurnState) throw new Error("missing handoff scope");
+
+  await destinationGateway.adoptActiveDelivery({
+    runtime: delivery.runtime,
+    sources: delivery.sources,
+    clientMessageId: delivery.clientMessageId,
+    activeTurnState,
+  });
+  expect(destinationClient.startedRuntimes[0]?.external_tools).toMatchObject([
+    { scope_id: scopeId },
+  ]);
+  await destinationClient.requestExternalToolCall({
+    type: "external_tool_call_request",
+    request_id: "scoped-handoff-request",
+    runtime: TEST_RUNTIME,
+    scope_id: scopeId,
+    tool_call_id: "scoped-handoff-call",
+    tool_name: "MessageChannel",
+    input: { action: "send", channel: "slack", chat_id: source.chatId },
+  });
+  expect(callbackSources).toEqual([source]);
+
+  sourceGateway.close();
+  destinationGateway.close();
+});
+
 test("release waits for queued finalized relay before handing off ownership", async () => {
   const client = new FakeClient();
   const relays: string[] = [];

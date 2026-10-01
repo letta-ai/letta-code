@@ -140,11 +140,11 @@ remain first-party/bundled work for now. Custom plugins can still expose custom
 
 Accounts default to tool mode: the agent must call `MessageChannel` to reply.
 A saved account can opt into `reply_mode: "relay"`, which sends finalized
-assistant messages through the local gateway for a single routed destination.
-Failed or cancelled turns do not send unfinished text. Single-destination relay
-turns omit `MessageChannel`; use tool mode for reactions, files, and proactive
-sends. Multiple destinations fall back to explicit `MessageChannel` delivery,
-never automatic broadcasts. Remote hosts must implement the relay hook.
+assistant messages for one routed destination. Mode changes affect new inputs.
+Failed or cancelled turns do not send unfinished text. Relay turns omit
+`MessageChannel`; use tool mode for reactions, files, and proactive sends.
+Multiple destinations fall back to explicit delivery, never broadcasts.
+Remote hosts must supply the relay transport and captured reply policy.
 For debugging, check the account mode, inbound notification, destination, and
 either the explicit tool result or the automatic-relay warning.
 

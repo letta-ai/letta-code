@@ -16,12 +16,22 @@ import {
   runIdFromDelta,
   stopReasonFromDelta,
 } from "./gateway-assistant-relay";
+import { prepareGatewayRegistrationPolicy } from "./gateway-registration-policy";
+import { performGatewayRuntimeRegistration } from "./gateway-runtime-registration";
 import {
-  modelStatusFromRuntimeStart,
-  prepareGatewayRegistrationPolicy,
-} from "./gateway-registration-policy";
+  type ActiveGatewayTurn,
+  type GatewayRuntimeState,
+  gatewayRuntimeKey,
+  hasAgentRuntime,
+  hasGatewayRuntimeWork,
+  remainingGatewaySources,
+  rememberAcceptedClientMessageId,
+} from "./gateway-runtime-state";
 import {
-  channelTagsForSources,
+  GatewayRuntimeToolScopes,
+  type GatewayToolScope,
+} from "./gateway-runtime-tool-scopes";
+import {
   sourceLifecycleKey,
   sourceRouteKey,
   uniqueLifecycleSources,
@@ -34,12 +44,10 @@ import type {
   ChannelGatewayHandoffDelivery,
   ChannelGatewayHooks,
   ChannelGatewayModelStatus,
-  ChannelGatewayRichDraft,
 } from "./gateway-types";
 import {
   createMessageChannelIdempotencyScope,
   MessageChannelDuplicateActionError,
-  type MessageChannelIdempotencyScope,
 } from "./message-channel-idempotency";
 import { createChannelTurnProgressBuilder } from "./progress-builder";
 import type {
@@ -47,8 +55,6 @@ import type {
   ChannelTurnLifecycleEvent,
   ChannelTurnSource,
 } from "./types";
-
-const MAX_ACCEPTED_CLIENT_MESSAGE_IDS = 2048;
 
 export type {
   ChannelGatewayActiveTurnState,
@@ -60,50 +66,6 @@ export type {
   ChannelGatewayRichDraft,
 } from "./gateway-types";
 
-type ActiveGatewayTurn = {
-  batchId: string;
-  routingSources: ChannelTurnSource[];
-  lifecycleSources: ChannelTurnSource[];
-  progress: ReturnType<typeof createChannelTurnProgressBuilder>;
-  richDraft: ChannelGatewayRichDraft | null;
-  runId?: string;
-  assistantText: GatewayAssistantTextAccumulator;
-  idempotencyScope: MessageChannelIdempotencyScope;
-  relayEligible: boolean;
-};
-
-type GatewayRuntimeState = {
-  runtime: RuntimeScope;
-  pendingSourcesByClientMessageId: Map<
-    string,
-    {
-      sources: ChannelTurnSource[];
-      disposition: "submitting" | "queued";
-      automaticRelay: boolean;
-      removalDisposition?: "dequeued" | "cancelled";
-    }
-  >;
-  active: ActiveGatewayTurn | null;
-  registrationSignature: string | null;
-  registration: Promise<void> | null;
-  routedSources: ChannelTurnSource[];
-  replayedControlRequestIds: Set<string>;
-  submissionQueue: Promise<void>;
-  hookQueue: Promise<void> | null;
-  acceptedClientMessageIds: Set<string>;
-  modelStatus: ChannelGatewayModelStatus | null;
-};
-
-function runtimeKey(runtime: RuntimeScope): string {
-  return `${runtime.agent_id}:${runtime.conversation_id}`;
-}
-
-function hasAgentRuntime<
-  T extends { runtime?: RuntimeScope<string | null> | null },
->(value: T): value is T & { runtime: RuntimeScope } {
-  return !!value.runtime?.agent_id;
-}
-
 /**
  * Process-neutral Channels bridge. It only speaks the public App Server
  * protocol; channel adapters and credentials stay behind the injected hooks.
@@ -111,6 +73,7 @@ function hasAgentRuntime<
 export class ChannelGateway {
   private readonly states = new Map<string, GatewayRuntimeState>();
   private readonly disposers: Array<() => void> = [];
+  private readonly runtimeToolScopes: GatewayRuntimeToolScopes;
   // Serialize registration replacement so late starts cannot restore removed routes.
   private registrationQueue = Promise.resolve();
 
@@ -118,21 +81,40 @@ export class ChannelGateway {
     private readonly client: ChannelGatewayClient,
     private readonly hooks: ChannelGatewayHooks,
   ) {
+    this.runtimeToolScopes = new GatewayRuntimeToolScopes(client);
     this.disposers.push(
       client.onMessage((message) => this.handleMessage(message)),
       client.onExternalToolCall(async (request) => {
         const state = hasAgentRuntime(request)
-          ? this.states.get(runtimeKey(request.runtime))
+          ? this.states.get(gatewayRuntimeKey(request.runtime))
           : undefined;
         const active = state?.active;
-        const sources = active?.routingSources ?? state?.routedSources ?? [];
+        const scoped =
+          hasAgentRuntime(request) && request.scope_id
+            ? this.runtimeToolScopes.resolve(request.runtime, request.scope_id)
+            : null;
+        if (request.scope_id && !scoped) {
+          throw new Error(
+            `Unknown or stale external tool scope: ${request.scope_id}`,
+          );
+        }
+        const sources =
+          scoped?.sources ??
+          active?.routingSources ??
+          state?.routedSources ??
+          [];
+        const activeOwnsScope = Boolean(
+          scoped && active?.toolScopes.some((scope) => scope.id === scoped.id),
+        );
         // Pass the per-turn idempotency scope only when a turn is active;
         // process-owned calls (no active batch) are not deduped.
         try {
           return await hooks.executeExternalTool(
             request,
             sources,
-            active?.idempotencyScope ?? null,
+            activeOwnsScope || (!request.scope_id && active)
+              ? active?.idempotencyScope
+              : null,
           );
         } catch (error) {
           if (!(error instanceof MessageChannelDuplicateActionError))
@@ -147,6 +129,7 @@ export class ChannelGateway {
   }
 
   close(): void {
+    this.runtimeToolScopes.close();
     for (const dispose of this.disposers.splice(0)) dispose();
     this.client.close();
     this.states.clear();
@@ -181,17 +164,44 @@ export class ChannelGateway {
       automaticRelay: false,
     });
     try {
-      const automaticRelay = await this.enqueueRegistration(async () => {
+      const toolScope = await this.enqueueRegistration(async () => {
         state.routedSources = uniqueRoutedSources([
           ...state.routedSources,
           ...delivery.sources,
         ]);
-        return await this.performRuntimeRegistration(state, delivery);
+        const { automaticRelay, tool } = await prepareGatewayRegistrationPolicy(
+          {
+            hooks: this.hooks,
+            runtime: delivery.runtime,
+            sources: delivery.sources,
+          },
+        );
+        const scope = this.runtimeToolScopes.create(
+          delivery.runtime,
+          delivery.sources,
+          automaticRelay,
+          tool,
+        );
+        try {
+          await this.performRuntimeRegistration(
+            state,
+            delivery,
+            automaticRelay,
+            this.runtimeToolScopes.registrationGroups(delivery.runtime, false),
+          );
+          return scope;
+        } catch (error) {
+          this.runtimeToolScopes.release(scope);
+          throw error;
+        }
       });
       const submitted = state.pendingSourcesByClientMessageId.get(
         delivery.clientMessageId,
       );
-      if (submitted) submitted.automaticRelay = automaticRelay;
+      if (submitted) {
+        submitted.automaticRelay = toolScope.automaticRelay;
+        submitted.toolScope = toolScope;
+      }
       const response = await this.client.submitInput({
         runtime: delivery.runtime,
         payload: {
@@ -205,15 +215,18 @@ export class ChannelGateway {
           ],
           image_failure_mode: "drop",
           client_preferences: {},
+          external_tool_scope_ids: this.runtimeToolScopes.selection(toolScope),
         },
       });
       if (!response.accepted) {
         state.pendingSourcesByClientMessageId.delete(delivery.clientMessageId);
+        this.runtimeToolScopes.release(toolScope);
+        this.finishToolScopesIfIdle(state);
         if (workAtSubmit && !state.active)
           this.finishRejectedDelivery(state, delivery);
         return false;
       }
-      this.rememberAcceptedClientMessageId(state, delivery.clientMessageId);
+      rememberAcceptedClientMessageId(state, delivery.clientMessageId);
       for (const source of delivery.sources) {
         void this.enqueueHook(state, () =>
           this.hooks.onLifecycle({ type: "queued", source }),
@@ -224,7 +237,8 @@ export class ChannelGateway {
           state,
           delivery.clientMessageId,
           delivery.sources,
-          automaticRelay,
+          toolScope.automaticRelay,
+          toolScope,
         );
         state.pendingSourcesByClientMessageId.delete(delivery.clientMessageId);
       } else if (response.disposition === "queued") {
@@ -238,27 +252,25 @@ export class ChannelGateway {
       }
       return true;
     } catch (error) {
+      const failed = state.pendingSourcesByClientMessageId.get(
+        delivery.clientMessageId,
+      );
       state.pendingSourcesByClientMessageId.delete(delivery.clientMessageId);
+      if (failed?.toolScope) {
+        this.runtimeToolScopes.release(failed.toolScope);
+      }
+      this.finishToolScopesIfIdle(state);
       if (workAtSubmit && !state.active)
         this.finishRejectedDelivery(state, delivery);
       throw error;
     }
   }
 
-  private remainingSources(state: GatewayRuntimeState): ChannelTurnSource[] {
-    return uniqueLifecycleSources([
-      ...(state.active?.lifecycleSources ?? []),
-      ...Array.from(state.pendingSourcesByClientMessageId.values()).flatMap(
-        (pending) => pending.sources,
-      ),
-    ]);
-  }
-
   private finishRejectedDelivery(
     state: GatewayRuntimeState,
     delivery: ChannelGatewayDelivery,
   ): void {
-    const remainingSources = this.remainingSources(state);
+    const remainingSources = remainingGatewaySources(state);
     void this.enqueueHook(state, () =>
       this.hooks.onLifecycle({
         type: "finished",
@@ -303,7 +315,7 @@ export class ChannelGateway {
       ...state.routedSources,
       ...delivery.sources,
     ]);
-    this.rememberAcceptedClientMessageId(state, delivery.clientMessageId);
+    rememberAcceptedClientMessageId(state, delivery.clientMessageId);
   }
 
   async restoreRuntime(
@@ -323,6 +335,7 @@ export class ChannelGateway {
         assistantText: new GatewayAssistantTextAccumulator(),
         idempotencyScope: createMessageChannelIdempotencyScope(),
         relayEligible: false,
+        toolScopes: [],
       };
       state.active = recoveredTurn;
     }
@@ -342,7 +355,7 @@ export class ChannelGateway {
   async adoptActiveDelivery(
     delivery: ChannelGatewayHandoffDelivery,
   ): Promise<void> {
-    const key = runtimeKey(delivery.runtime);
+    const key = gatewayRuntimeKey(delivery.runtime);
     const stateExisted = this.states.has(key);
     const state = this.getState(delivery.runtime);
     const batchId = `channel-${delivery.clientMessageId}`;
@@ -359,7 +372,7 @@ export class ChannelGateway {
           delivery.sources,
           state.active.relayEligible,
         );
-        this.rememberAcceptedClientMessageId(state, delivery.clientMessageId);
+        rememberAcceptedClientMessageId(state, delivery.clientMessageId);
         return;
       }
 
@@ -383,18 +396,22 @@ export class ChannelGateway {
         relayEligible:
           delivery.activeTurnState?.automaticRelay ??
           Boolean(delivery.activeTurnState),
+        toolScopes: delivery.activeTurnState?.toolScopes ?? [],
       };
       state.active = active;
+      for (const scope of active.toolScopes)
+        this.runtimeToolScopes.retain(scope);
       state.routedSources = uniqueRoutedSources([
         ...state.routedSources,
         ...delivery.sources,
       ]);
-      this.rememberAcceptedClientMessageId(state, delivery.clientMessageId);
+      rememberAcceptedClientMessageId(state, delivery.clientMessageId);
       try {
         await this.performRuntimeRegistration(
           state,
           { ...delivery, content: "" },
           active.relayEligible,
+          this.runtimeToolScopes.registrationGroups(delivery.runtime, false),
         );
         if (state.active !== active) return;
         active.richDraft =
@@ -411,6 +428,9 @@ export class ChannelGateway {
         );
       } catch (error) {
         active.richDraft?.dispose();
+        for (const scope of active.toolScopes) {
+          this.runtimeToolScopes.release(scope);
+        }
         if (state.active === active) state.active = null;
         state.routedSources = previousRoutedSources;
         if (!wasAccepted) {
@@ -426,7 +446,7 @@ export class ChannelGateway {
     runtime: RuntimeScope,
     clientMessageId: string,
   ): ChannelGatewayActiveTurnState | null {
-    const key = runtimeKey(runtime);
+    const key = gatewayRuntimeKey(runtime);
     const state = this.states.get(key);
     const active = state?.active;
     if (!state || active?.batchId !== `channel-${clientMessageId}`) {
@@ -437,10 +457,14 @@ export class ChannelGateway {
     if (state.hookQueue) return null;
     const idempotency = active.idempotencyScope.snapshot();
     if (!idempotency) return null;
+    const toolScopes = active.toolScopes.map((scope) =>
+      this.runtimeToolScopes.detach(scope),
+    );
     const handoffState = {
       assistantText: active.assistantText.snapshot(),
       idempotency,
       automaticRelay: active.relayEligible,
+      ...(toolScopes.length > 0 ? { toolScopes } : {}),
     };
     active.richDraft?.dispose();
     this.states.delete(key);
@@ -455,13 +479,26 @@ export class ChannelGateway {
     const state = this.getState(runtime);
     await this.enqueueRegistration(async () => {
       this.setRoutedSources(runtime, sources);
-      await this.performRuntimeRegistration(state, {
+      const prepared = await prepareGatewayRegistrationPolicy({
+        hooks: this.hooks,
         runtime,
-        content: "",
         sources,
-        clientMessageId: "recovered",
-        ...(defaultPermissionMode ? { defaultPermissionMode } : {}),
       });
+      const externalTools = prepared.tool ? [{ tools: [prepared.tool] }] : [];
+      this.runtimeToolScopes.setDesiredUnscoped(runtime, externalTools);
+      if (this.runtimeToolScopes.hasRetainedScopes(runtime)) return;
+      await this.performRuntimeRegistration(
+        state,
+        {
+          runtime,
+          content: "",
+          sources,
+          clientMessageId: "recovered",
+          ...(defaultPermissionMode ? { defaultPermissionMode } : {}),
+        },
+        prepared.automaticRelay,
+        externalTools,
+      );
     });
   }
 
@@ -470,21 +507,17 @@ export class ChannelGateway {
     sources: ChannelTurnSource[] = [],
   ): Promise<boolean> {
     return await this.enqueueRegistration(async () => {
-      if (this.states.has(runtimeKey(runtime))) return false;
+      if (this.states.has(gatewayRuntimeKey(runtime))) return false;
       const tool = await this.hooks.buildExternalTool(runtime, sources);
-      const response = await this.client.runtimeExternalToolsUpdate({
-        updates: [
+      await this.runtimeToolScopes.updateDesiredUnscoped(
+        [
           {
             runtimes: [runtime],
             external_tools: tool ? [{ tools: [tool] }] : [],
           },
         ],
-      });
-      if (!response.success) {
-        throw new Error(
-          response.error ?? "Failed to publish channel runtime tools",
-        );
-      }
+        () => false,
+      );
       return tool !== null;
     });
   }
@@ -495,7 +528,7 @@ export class ChannelGateway {
     options: { cleanupIdleRuntime?: boolean } = {},
   ): Promise<void> {
     await this.enqueueRegistration(async () => {
-      const key = runtimeKey(runtime);
+      const key = gatewayRuntimeKey(runtime);
       const state = this.states.get(key);
       if (options.cleanupIdleRuntime) {
         if (
@@ -522,6 +555,7 @@ export class ChannelGateway {
           response.error ?? "Failed to release channel runtime tools",
         );
       }
+      this.runtimeToolScopes.forgetRuntime(runtime);
     });
   }
 
@@ -552,16 +586,9 @@ export class ChannelGateway {
     }>,
   ): Promise<void> {
     return this.enqueueRegistration(async () => {
-      if (updates.length > 0) {
-        const response = await this.client.runtimeExternalToolsUpdate({
-          updates,
-        });
-        if (!response.success) {
-          throw new Error(
-            response.error ?? "Failed to update routed runtime tools",
-          );
-        }
-      }
+      await this.runtimeToolScopes.updateDesiredUnscoped(updates, (runtime) =>
+        hasGatewayRuntimeWork(this.states.get(gatewayRuntimeKey(runtime))),
+      );
       for (const update of routedSources) {
         this.setRoutedSources(update.runtime, update.sources);
       }
@@ -569,7 +596,7 @@ export class ChannelGateway {
   }
 
   getModelStatus(runtime: RuntimeScope): ChannelGatewayModelStatus | null {
-    return this.states.get(runtimeKey(runtime))?.modelStatus ?? null;
+    return this.states.get(gatewayRuntimeKey(runtime))?.modelStatus ?? null;
   }
 
   updateModelStatus(runtime: RuntimeScope, modelHandle: string | null): void {
@@ -581,7 +608,7 @@ export class ChannelGateway {
   }
 
   private getState(runtime: RuntimeScope): GatewayRuntimeState {
-    const key = runtimeKey(runtime);
+    const key = gatewayRuntimeKey(runtime);
     let state = this.states.get(key);
     if (!state) {
       state = {
@@ -602,16 +629,16 @@ export class ChannelGateway {
     return state;
   }
 
-  private rememberAcceptedClientMessageId(
-    state: GatewayRuntimeState,
-    clientMessageId: string,
-  ): void {
-    state.acceptedClientMessageIds.delete(clientMessageId);
-    state.acceptedClientMessageIds.add(clientMessageId);
-    if (state.acceptedClientMessageIds.size <= MAX_ACCEPTED_CLIENT_MESSAGE_IDS)
-      return;
-    const oldest = state.acceptedClientMessageIds.values().next().value;
-    if (oldest) state.acceptedClientMessageIds.delete(oldest);
+  private finishToolScopesIfIdle(state: GatewayRuntimeState): void {
+    if (state.active || state.pendingSourcesByClientMessageId.size > 0) return;
+    this.runtimeToolScopes.flushWhenIdle(
+      state.runtime,
+      () =>
+        hasGatewayRuntimeWork(
+          this.states.get(gatewayRuntimeKey(state.runtime)),
+        ),
+      (task) => this.enqueueRegistration(task),
+    );
   }
 
   private enqueueHook(
@@ -652,65 +679,18 @@ export class ChannelGateway {
     state: GatewayRuntimeState,
     delivery: ChannelGatewayDelivery,
     policyOverride?: boolean,
+    externalToolsOverride?: Parameters<
+      typeof performGatewayRuntimeRegistration
+    >[0]["externalToolsOverride"],
   ): Promise<boolean> {
-    const { automaticRelay, tool } = await prepareGatewayRegistrationPolicy({
+    return await performGatewayRuntimeRegistration({
+      client: this.client,
       hooks: this.hooks,
-      runtime: delivery.runtime,
-      sources: delivery.sources,
-      ...(policyOverride === undefined ? {} : { override: policyOverride }),
+      state,
+      delivery,
+      ...(policyOverride === undefined ? {} : { policyOverride }),
+      ...(externalToolsOverride === undefined ? {} : { externalToolsOverride }),
     });
-    const conversationTags = channelTagsForSources(delivery.sources);
-    const signature = JSON.stringify({
-      mode: delivery.defaultPermissionMode ?? null,
-      automaticRelay,
-      tool,
-      conversationTags,
-    });
-    if (state.registrationSignature === signature && state.registration) {
-      await state.registration;
-      return automaticRelay;
-    }
-
-    const registration = this.client
-      .runtimeStart({
-        agent_id: delivery.runtime.agent_id,
-        conversation_id: delivery.runtime.conversation_id,
-        ...(conversationTags.length > 0
-          ? { conversation_source_tags: conversationTags }
-          : {}),
-        ...(delivery.defaultPermissionMode
-          ? { mode: delivery.defaultPermissionMode }
-          : {}),
-        recover_approvals: true,
-        force_device_status: false,
-        wait_for_replay: true,
-        preserve_skill_sources: true,
-        client_info: { name: "channel-gateway", title: "Channel Gateway" },
-        external_tools: tool ? [{ tools: [tool] }] : [],
-      })
-      .then((response) => {
-        if (!response.success) {
-          throw new Error(
-            response.error ?? "Failed to register channel runtime",
-          );
-        }
-        state.modelStatus = modelStatusFromRuntimeStart(
-          response,
-          delivery.runtime,
-        );
-      });
-    state.registrationSignature = signature;
-    state.registration = registration;
-    try {
-      await registration;
-    } catch (error) {
-      if (state.registration === registration) {
-        state.registration = null;
-        state.registrationSignature = null;
-      }
-      throw error;
-    }
-    return automaticRelay;
   }
 
   private handleMessage(message: WsProtocolMessage): void {
@@ -756,11 +736,13 @@ export class ChannelGateway {
       clientMessageId: string;
       sources: ChannelTurnSource[];
       automaticRelay: boolean;
+      toolScope?: GatewayToolScope;
     }> = [];
     const cancelled: Array<{
       clientMessageId: string;
       sources: ChannelTurnSource[];
       automaticRelay: boolean;
+      toolScope?: GatewayToolScope;
     }> = [];
 
     for (const [
@@ -776,21 +758,29 @@ export class ChannelGateway {
         clientMessageId,
         sources: pending.sources,
         automaticRelay: pending.automaticRelay,
+        ...(pending.toolScope ? { toolScope: pending.toolScope } : {}),
       });
       state.pendingSourcesByClientMessageId.delete(clientMessageId);
     }
 
     const firstDequeued = dequeued[0];
     if (firstDequeued) {
+      const dequeuedScopes = dequeued.flatMap((entry) =>
+        entry.toolScope ? [entry.toolScope] : [],
+      );
       this.activateSources(
         state,
         firstDequeued.clientMessageId,
         dequeued.flatMap((entry) => entry.sources),
         dequeued.every((entry) => entry.automaticRelay),
+        dequeuedScopes[0],
       );
+      if (state.active)
+        state.active.toolScopes.push(...dequeuedScopes.slice(1));
     }
     for (const entry of cancelled) {
-      const remainingSources = this.remainingSources(state);
+      if (entry.toolScope) this.runtimeToolScopes.release(entry.toolScope);
+      const remainingSources = remainingGatewaySources(state);
       void this.enqueueHook(state, () =>
         this.hooks.onLifecycle({
           type: "finished",
@@ -802,6 +792,7 @@ export class ChannelGateway {
         }),
       );
     }
+    this.finishToolScopesIfIdle(state);
   }
 
   private activateSources(
@@ -809,8 +800,10 @@ export class ChannelGateway {
     clientMessageId: string,
     sources: ChannelTurnSource[],
     automaticRelay: boolean,
+    toolScope?: GatewayToolScope,
   ): void {
     if (state.active) {
+      if (toolScope) state.active.toolScopes.push(toolScope);
       const knownLifecycleKeys = new Set(
         state.active.lifecycleSources.map(sourceLifecycleKey),
       );
@@ -852,6 +845,7 @@ export class ChannelGateway {
       assistantText: new GatewayAssistantTextAccumulator(),
       idempotencyScope: createMessageChannelIdempotencyScope(),
       relayEligible: automaticRelay,
+      toolScopes: toolScope ? [toolScope] : [],
     };
     const processingEvent: ChannelTurnLifecycleEvent = {
       type: "processing",
@@ -946,9 +940,12 @@ export class ChannelGateway {
     }
     state.active = null;
     active.richDraft?.dispose();
+    for (const scope of active.toolScopes)
+      this.runtimeToolScopes.release(scope);
+    this.finishToolScopesIfIdle(state);
     const remainingSources =
       channelTurnOutcome(terminal.stopReason) === "completed"
-        ? this.remainingSources(state)
+        ? remainingGatewaySources(state)
         : [];
     void this.enqueueHook(state, () =>
       this.hooks.onLifecycle({
@@ -969,7 +966,7 @@ export class ChannelGateway {
   private handleControlRequest(message: ControlRequest): void {
     if (!message.agent_id || !message.conversation_id) return;
     const state = this.states.get(
-      runtimeKey({
+      gatewayRuntimeKey({
         agent_id: message.agent_id,
         conversation_id: message.conversation_id,
       }),

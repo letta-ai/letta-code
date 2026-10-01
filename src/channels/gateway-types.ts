@@ -9,6 +9,7 @@ import type {
   RuntimeExternalToolsUpdateResponseMessage,
   RuntimeScope,
   RuntimeStartCommand,
+  RuntimeStartExternalToolsGroup,
   RuntimeStartResponseMessage,
   WsProtocolMessage,
 } from "@/types/app-server-protocol";
@@ -88,6 +89,16 @@ export interface ChannelGatewayActiveTurnState {
   idempotency: MessageChannelIdempotencyState;
   /** Effective policy captured when this turn was registered. */
   automaticRelay?: boolean;
+  /** Immutable scoped tool registrations retained across ownership handoff. */
+  toolScopes?: ChannelGatewayToolScopeState[];
+}
+
+export interface ChannelGatewayToolScopeState {
+  id: string;
+  runtime: RuntimeScope;
+  sources: ChannelTurnSource[];
+  automaticRelay: boolean;
+  group?: RuntimeStartExternalToolsGroup;
 }
 
 export type ChannelGatewayHandoffDelivery = Omit<
