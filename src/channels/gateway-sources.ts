@@ -38,3 +38,7 @@ export function uniqueLifecycleSources(
 ): ChannelTurnSource[] {
   return uniqueSourcesBy(sources, sourceLifecycleKey);
 }
+
+export function channelTagsForSources(sources: ChannelTurnSource[]): string[] {
+  return [...new Set(sources.map((source) => `channel:${source.channel}`))];
+}

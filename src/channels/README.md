@@ -138,14 +138,15 @@ Plugins that need Slack/Discord-style auto-routing or rich Desktop management
 remain first-party/bundled work for now. Custom plugins can still expose custom
 `MessageChannel` actions and schema fragments via `messageActions`.
 
-> Note: inbound channel delivery and user-visible replies are separate steps.
-> A channel message can successfully reach the agent, but the agent still has to
-> call `MessageChannel` to reply. If the transcript shows the incoming
-> `<channel-notification>` but no `MessageChannel` tool call, this is usually a
-> model/prompting issue rather than a channel adapter failure. For debugging,
-> check whether the notification reached the conversation, whether the agent
-> called `MessageChannel`, whether the tool result says the message was sent,
-> and whether the route/account IDs match the original chat.
+Accounts default to tool mode: the agent must call `MessageChannel` to reply.
+A saved account can opt into `reply_mode: "relay"`, which sends finalized
+assistant messages for one routed destination. Mode changes affect new inputs.
+Failed or cancelled turns do not send unfinished text. Relay turns omit
+`MessageChannel`; use tool mode for reactions, files, and proactive sends.
+Multiple destinations fall back to explicit delivery, never broadcasts.
+Remote hosts must supply the relay transport and captured reply policy.
+For debugging, check the account mode, inbound notification, destination, and
+either the explicit tool result or the automatic-relay warning.
 
 ## Local backend channels
 

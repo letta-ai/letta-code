@@ -21,12 +21,15 @@ describe("registry copy: first-party channels", () => {
     expect(text).not.toContain("(community channel)");
   });
 
-  test("unbound route instructions point at the desktop UI for slack", () => {
-    const text = buildUnboundRouteInstructions("slack", "C123ABC");
+  test("unbound route instructions include UI and CLI paths for telegram", () => {
+    const text = buildUnboundRouteInstructions("telegram", "515978553");
     expect(text).toContain("Open Channels >");
-    expect(text).toContain("Slack");
-    expect(text).toContain("Chat ID: C123ABC");
-    expect(text).not.toContain("letta channels route add");
+    expect(text).toContain("Telegram");
+    expect(text).toContain("CLI on the listener machine:");
+    expect(text).toContain(
+      "letta channels route add --channel telegram --chat-id 515978553 --agent <agent-id>",
+    );
+    expect(text).toContain("Find your agent id with letta agents list.");
     expect(text).not.toContain("(community channel)");
   });
 
@@ -56,15 +59,16 @@ describe("registry copy: first-party channels", () => {
     expect(text).not.toContain("--agent <agent-id>");
   });
 
-  test("first-party whatsapp unbound route keeps the desktop wording", () => {
+  test("first-party whatsapp unbound route includes both setup paths", () => {
     const text = buildUnboundRouteInstructions(
       "whatsapp",
       "15551234567@s.whatsapp.net",
     );
     expect(text).toContain("Open Channels >");
     expect(text).toContain("WhatsApp");
-    expect(text).toContain("Chat ID: 15551234567@s.whatsapp.net");
-    expect(text).not.toContain("letta channels route add");
+    expect(text).toContain(
+      "letta channels route add --channel whatsapp --chat-id 15551234567@s.whatsapp.net --agent <agent-id>",
+    );
   });
 
   test("first-party copy uses 'Letta agent' consistently", () => {
