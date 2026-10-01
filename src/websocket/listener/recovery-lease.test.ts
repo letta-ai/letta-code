@@ -154,16 +154,18 @@ describe("recovered approval lease boundaries", () => {
     markListenerConnectionInitialized(listener, "client-a");
     subscribeListenerConnection(listener, "client-a", scope);
     socketA.onTerminate = () => cleanupListenerConnection(listener, "client-a");
+    const continuedConnectionIds: Array<string | undefined> = [];
     const processTurn = mock(
       async (
         _message,
         _socket,
         ownerRuntime,
         _onStatusChange,
-        _connectionId,
+        connectionId,
         _batchId,
         turnLease,
       ) => {
+        continuedConnectionIds.push(connectionId);
         if (turnLease) ownerRuntime.turnLifecycle.finish(turnLease, "end_turn");
       },
     );
@@ -175,6 +177,7 @@ describe("recovered approval lease boundaries", () => {
         connectionId: "client-a",
         dependencies: {
           ensureSecretsHydrated: async () => {},
+          ensureModAdapters: async () => [],
           prepareToolExecutionContext: async () => createPreparedToolContext(),
           executeApprovalBatch: async () => createToolResults(),
         },
@@ -211,6 +214,93 @@ describe("recovered approval lease boundaries", () => {
       );
     expect(terminalTypes).toEqual(["client_tool_end", "tool_return_message"]);
     expect(runtime.activeConnectionId).toBe("client-b");
+    expect(continuedConnectionIds).toEqual(["client-b"]);
+  });
+
+  test("a missing explicit process origin defers recovery for a later owner", async () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    runtime.recoveredApprovalState = createApprovedRecoveredState();
+    runtime.activeConnectionId = "client-a";
+    const socketA = new MockSocket();
+    openListenerConnection({
+      runtime: listener,
+      connectionId: "client-a",
+      writer: socketA as never,
+      options: makeOptions("client-a"),
+    });
+    markListenerConnectionInitialized(listener, "client-a");
+    subscribeListenerConnection(listener, "client-a", {
+      agent_id: "agent-1",
+      conversation_id: "conv-1",
+    });
+    cleanupListenerConnection(listener, "client-a");
+    const processTurn = mock(
+      async (
+        _message,
+        _socket,
+        ownerRuntime,
+        _onStatusChange,
+        _connectionId,
+        _batchId,
+        turnLease,
+      ) => {
+        if (turnLease) ownerRuntime.turnLifecycle.finish(turnLease, "end_turn");
+      },
+    );
+
+    expect(
+      await startRecoveredApprovalContinuation(
+        runtime,
+        getOrCreateProcessTransport(listener),
+        processTurn,
+        {
+          connectionId: "client-a",
+          dependencies: {
+            ensureSecretsHydrated: async () => {},
+            ensureModAdapters: async () => [],
+            prepareToolExecutionContext: async () =>
+              createPreparedToolContext(),
+            executeApprovalBatch: async () => createToolResults(),
+          },
+        },
+      ),
+    ).toBe(false);
+    expect(processTurn).not.toHaveBeenCalled();
+    expect(runtime.recoveredApprovalState).not.toBeNull();
+    expect(runtime.turnLifecycle.kind).toBe("idle");
+    expect(runtime.activeConnectionId).toBeNull();
+
+    const socketB = new MockSocket();
+    openListenerConnection({
+      runtime: listener,
+      connectionId: "client-b",
+      writer: socketB as never,
+      options: makeOptions("client-b"),
+    });
+    markListenerConnectionInitialized(listener, "client-b");
+    subscribeListenerConnection(listener, "client-b", {
+      agent_id: "agent-1",
+      conversation_id: "conv-1",
+    });
+    expect(
+      await startRecoveredApprovalContinuation(
+        runtime,
+        getOrCreateProcessTransport(listener),
+        processTurn,
+        {
+          connectionId: "client-b",
+          dependencies: {
+            ensureSecretsHydrated: async () => {},
+            ensureModAdapters: async () => [],
+            prepareToolExecutionContext: async () =>
+              createPreparedToolContext(),
+            executeApprovalBatch: async () => createToolResults(),
+          },
+        },
+      ),
+    ).toBe(true);
+    expect(processTurn).toHaveBeenCalledTimes(1);
   });
 
   test("thrown recovery replays its closing tool terminal to a later App Server owner", async () => {
@@ -240,6 +330,7 @@ describe("recovered approval lease boundaries", () => {
         connectionId: "client-a",
         dependencies: {
           ensureSecretsHydrated: async () => {},
+          ensureModAdapters: async () => [],
           prepareToolExecutionContext: async () => createPreparedToolContext(),
           executeApprovalBatch: async () => {
             throw new Error("recovery crashed");
@@ -302,6 +393,7 @@ describe("recovered approval lease boundaries", () => {
         {
           dependencies: {
             ensureSecretsHydrated: async () => {},
+            ensureModAdapters: async () => [],
             prepareToolExecutionContext: async () =>
               createPreparedToolContext(),
             executeApprovalBatch: async () => createToolResults(),
@@ -311,6 +403,9 @@ describe("recovered approval lease boundaries", () => {
     ).toBe(true);
     expect(processTurn).not.toHaveBeenCalled();
     expect(runtime.turnLifecycle.kind).toBe("idle");
+    expect(runtime.pendingInterruptedResults).toEqual(createToolResults());
+    expect(runtime.pendingInterruptedToolCallIds).toEqual([]);
+    expect(runtime.recoveredApprovalState).toBeNull();
   });
 
   test("a queued user's identity survives recovered denial continuation", async () => {
@@ -352,6 +447,7 @@ describe("recovered approval lease boundaries", () => {
       {
         dependencies: {
           ensureSecretsHydrated: async () => {},
+          ensureModAdapters: async () => [],
           prepareToolExecutionContext: async () => createPreparedToolContext(),
           executeApprovalBatch: async () => createDenialResults(),
         },
@@ -398,6 +494,7 @@ describe("recovered approval lease boundaries", () => {
       {
         dependencies: {
           ensureSecretsHydrated: async () => {},
+          ensureModAdapters: async () => [],
           prepareToolExecutionContext: async () => createPreparedToolContext(),
           executeApprovalBatch: async (decisions) => {
             expect(decisions).toEqual(
@@ -447,6 +544,7 @@ describe("recovered approval lease boundaries", () => {
       {
         dependencies: {
           ensureSecretsHydrated: async () => {},
+          ensureModAdapters: async () => [],
           prepareToolExecutionContext: async () => createPreparedToolContext(),
           executeApprovalBatch: async () => {
             executionStarted = true;
@@ -493,6 +591,7 @@ describe("recovered approval lease boundaries", () => {
       {
         dependencies: {
           ensureSecretsHydrated: async () => {},
+          ensureModAdapters: async () => [],
           prepareToolExecutionContext: async () => createPreparedToolContext(),
           executeApprovalBatch: async () => {
             throw new Error("terminated");

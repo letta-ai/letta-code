@@ -29,6 +29,7 @@ import {
 } from "./constants";
 import { appendQueuedTurnToInput } from "./continuation-input";
 import { getConversationWorkingDirectory } from "./cwd";
+import { recordListenerWork } from "./interrupted-turn-record";
 import {
   createToolExecutionOutputEmitter,
   emitInterruptToolReturnMessage,
@@ -36,6 +37,7 @@ import {
   emitToolExecutionFinishedEvents,
   emitToolExecutionStartedEvents,
   normalizeToolReturnWireMessage,
+  populateInterruptQueue,
 } from "./interrupts";
 import {
   createListenerAgentModContext,
@@ -62,7 +64,11 @@ import {
   hasInterruptedCacheForScope,
 } from "./runtime";
 import { ensureSecretsHydratedForAgent } from "./secrets-sync";
-import { isListenerTransportOpen, type ListenerTransport } from "./transport";
+import {
+  getListenerTransportKind,
+  isListenerTransportOpen,
+  type ListenerTransport,
+} from "./transport";
 import {
   createTurnCorrelation,
   type TurnCorrelation,
@@ -389,8 +395,14 @@ type RecoveredContinuationProcessTurn = (
 
 export type RecoveredContinuationDependencies = {
   ensureSecretsHydrated?: typeof ensureSecretsHydratedForAgent;
+  ensureModAdapters?: typeof ensureListenerModAdaptersForAgent;
   prepareToolExecutionContext?: typeof prepareToolExecutionContextForScope;
   executeApprovalBatch?: typeof executeApprovalBatch;
+};
+
+type RecoveryDeliveryOrigin = {
+  connectionId: string;
+  connectionIdCanResume: boolean;
 };
 
 type RecoveredContinuationOptions = {
@@ -426,6 +438,26 @@ export async function startRecoveredApprovalContinuation(
   if (runtime.turnLifecycle.kind !== "idle") {
     return false;
   }
+  const originConnection = opts?.connectionId
+    ? (runtime.listener.connections.get(opts.connectionId) ?? null)
+    : findListenerConnectionByTransport(runtime.listener, socket);
+  if (
+    opts?.connectionId &&
+    !originConnection &&
+    getListenerTransportKind(socket) === "runtime"
+  ) {
+    if (runtime.activeConnectionId === opts.connectionId) {
+      runtime.activeConnectionId = null;
+    }
+    return false;
+  }
+  const deliveryOrigin: RecoveryDeliveryOrigin | null = originConnection
+    ? {
+        connectionId: originConnection.id,
+        connectionIdCanResume:
+          originConnection.options.connectionIdCanResume !== false,
+      }
+    : null;
   if (!(await canRecoverConversation(runtime))) {
     if (runtime.recoveredApprovalState === recovered) {
       clearRecoveredApprovalState(runtime);
@@ -467,6 +499,7 @@ export async function startRecoveredApprovalContinuation(
     turnId: `batch-recovered-startup-${crypto.randomUUID()}`,
     processTurn,
     opts,
+    deliveryOrigin,
   });
   return true;
 }
@@ -481,6 +514,7 @@ async function executeRecoveredApprovalContinuation(params: {
   turnId: string;
   processTurn: RecoveredContinuationProcessTurn;
   opts?: RecoveredContinuationOptions;
+  deliveryOrigin: RecoveryDeliveryOrigin | null;
 }): Promise<void> {
   const {
     runtime,
@@ -492,10 +526,13 @@ async function executeRecoveredApprovalContinuation(params: {
     turnId,
     processTurn,
     opts,
+    deliveryOrigin,
   } = params;
   const dependencies = opts?.dependencies;
   const ensureSecretsHydrated =
     dependencies?.ensureSecretsHydrated ?? ensureSecretsHydratedForAgent;
+  const ensureModAdapters =
+    dependencies?.ensureModAdapters ?? ensureListenerModAdaptersForAgent;
   const prepareToolExecutionContext =
     dependencies?.prepareToolExecutionContext ??
     prepareToolExecutionContextForScope;
@@ -505,13 +542,10 @@ async function executeRecoveredApprovalContinuation(params: {
     agent_id: recovered.agentId,
     conversation_id: recovered.conversationId,
   } as const;
-  const originConnection =
-    (opts?.connectionId
-      ? (runtime.listener.connections.get(opts.connectionId) ?? null)
-      : null) ?? findListenerConnectionByTransport(runtime.listener, socket);
-  const originConnectionId = originConnection?.id;
+  const originConnectionId = deliveryOrigin?.connectionId;
   const originConnectionCanResume =
-    originConnection?.options.connectionIdCanResume !== false;
+    deliveryOrigin?.connectionIdCanResume ?? true;
+  let selectedDeliveryOwnerId = originConnectionId;
   const shouldInterruptDelivery = () =>
     recoveryLease.signal.aborted ||
     !runtime.turnLifecycle.isCurrent(recoveryLease);
@@ -530,6 +564,7 @@ async function executeRecoveredApprovalContinuation(params: {
         isListenerTransportOpen(directOriginTransport) &&
         !getOutboundQueueStats(directOriginTransport).killed
       ) {
+        selectedDeliveryOwnerId = originConnectionId;
         return originConnectionId;
       }
     }
@@ -543,6 +578,7 @@ async function executeRecoveredApprovalContinuation(params: {
     );
     const preferred = runtime.activeConnectionId ?? originConnectionId;
     if (preferred && subscribers.some(({ id }) => id === preferred)) {
+      selectedDeliveryOwnerId = preferred;
       return preferred;
     }
     if (originConnectionCanResume && originConnectionId) return null;
@@ -550,12 +586,13 @@ async function executeRecoveredApprovalContinuation(params: {
     if (replacementId && originConnectionCanResume === false) {
       runtime.activeConnectionId = replacementId;
     }
+    if (replacementId) selectedDeliveryOwnerId = replacementId;
     return replacementId;
   };
   const awaitRecoveryDeliveries = (
     deliveries: ReturnType<typeof emitToolExecutionFinishedEvents>,
   ): Promise<"sent" | "interrupted"> => {
-    if (!originConnection) {
+    if (!deliveryOrigin) {
       return (async () => {
         for (const delivery of deliveries) {
           const settlements = await Promise.all(
@@ -629,7 +666,7 @@ async function executeRecoveredApprovalContinuation(params: {
       if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
         return;
       }
-      const modAdapters = await ensureListenerModAdaptersForAgent(
+      const modAdapters = await ensureModAdapters(
         runtime.listener,
         recovered.agentId,
       );
@@ -703,6 +740,12 @@ async function executeRecoveredApprovalContinuation(params: {
       return;
     }
 
+    recordListenerWork(
+      runtime,
+      { toolCallIds: approvedToolCallIds, results: approvalResults },
+      "after_tool_execution",
+    );
+
     const terminalDeliveries = emitToolExecutionFinishedEvents(
       socket,
       runtime,
@@ -724,6 +767,17 @@ async function executeRecoveredApprovalContinuation(params: {
     );
     if ((await awaitRecoveryDeliveries(terminalDeliveries)) === "interrupted") {
       if (runtime.turnLifecycle.isCurrent(recoveryLease)) {
+        populateInterruptQueue(runtime, {
+          lastExecutionResults: approvalResults,
+          lastExecutingToolCallIds: [],
+          lastNeedsUserInputToolCallIds: [],
+          agentId: recovered.agentId,
+          conversationId: recovered.conversationId,
+        });
+        runtime.turnLifecycle.setExecutingToolCallIds(recoveryLease, []);
+        if (runtime.recoveredApprovalState === recovered) {
+          clearRecoveredApprovalState(runtime);
+        }
         finishListenerTurn(runtime, recoveryLease, {
           stopReason: recoveryLease.signal.aborted ? "cancelled" : "error",
           socket,
@@ -787,7 +841,7 @@ async function executeRecoveredApprovalContinuation(params: {
       socket,
       runtime,
       opts?.onStatusChange,
-      opts?.connectionId,
+      selectedDeliveryOwnerId ?? opts?.connectionId,
       continuationBatchId,
       recoveryLease,
       continuationCorrelation,
