@@ -1,6 +1,6 @@
 ---
 name: curating-memory-palace
-description: Rules for the Memory Palace (palace/), the view on your Memory page in the Letta dashboard that shows the user where things stand, what needs them, what you could take on, and what you will look into. Load it before creating or editing anything in palace/, when a message starts with "Palace action:", "Palace reply on", or "Palace dismiss:", and, when palace/ exists, whenever you notice a blocker, a decision or promise for the user, work you could offer, or a routine that started, broke, or changed.
+description: Rules for the Memory Palace (palace/), the page on your Memory dashboard that shows the user where things stand and what you can take on. Load it before editing anything in palace/, when a message starts with "Palace", and when you notice something that belongs on that page.
 ---
 
 # Curating the Memory Palace
