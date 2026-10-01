@@ -17,6 +17,10 @@ import {
   stopReasonFromDelta,
 } from "./gateway-assistant-relay";
 import {
+  modelStatusFromRuntimeStart,
+  prepareGatewayRegistrationPolicy,
+} from "./gateway-registration-policy";
+import {
   channelTagsForSources,
   sourceLifecycleKey,
   sourceRouteKey,
@@ -75,6 +79,7 @@ type GatewayRuntimeState = {
     {
       sources: ChannelTurnSource[];
       disposition: "submitting" | "queued";
+      automaticRelay: boolean;
       removalDisposition?: "dequeued" | "cancelled";
     }
   >;
@@ -173,15 +178,20 @@ export class ChannelGateway {
     state.pendingSourcesByClientMessageId.set(delivery.clientMessageId, {
       sources: uniqueLifecycleSources(delivery.sources),
       disposition: "submitting",
+      automaticRelay: false,
     });
     try {
-      await this.enqueueRegistration(async () => {
+      const automaticRelay = await this.enqueueRegistration(async () => {
         state.routedSources = uniqueRoutedSources([
           ...state.routedSources,
           ...delivery.sources,
         ]);
-        await this.performRuntimeRegistration(state, delivery);
+        return await this.performRuntimeRegistration(state, delivery);
       });
+      const submitted = state.pendingSourcesByClientMessageId.get(
+        delivery.clientMessageId,
+      );
+      if (submitted) submitted.automaticRelay = automaticRelay;
       const response = await this.client.submitInput({
         runtime: delivery.runtime,
         payload: {
@@ -210,7 +220,12 @@ export class ChannelGateway {
         );
       }
       if (response.disposition === "started") {
-        this.activateSources(state, delivery.clientMessageId, delivery.sources);
+        this.activateSources(
+          state,
+          delivery.clientMessageId,
+          delivery.sources,
+          automaticRelay,
+        );
         state.pendingSourcesByClientMessageId.delete(delivery.clientMessageId);
       } else if (response.disposition === "queued") {
         const pending = state.pendingSourcesByClientMessageId.get(
@@ -282,6 +297,7 @@ export class ChannelGateway {
     state.pendingSourcesByClientMessageId.set(delivery.clientMessageId, {
       sources,
       disposition: "queued",
+      automaticRelay: false,
     });
     state.routedSources = uniqueRoutedSources([
       ...state.routedSources,
@@ -337,7 +353,12 @@ export class ChannelGateway {
             `Cannot adopt ${batchId}; ${state.active.batchId} is already active`,
           );
         }
-        this.activateSources(state, delivery.clientMessageId, delivery.sources);
+        this.activateSources(
+          state,
+          delivery.clientMessageId,
+          delivery.sources,
+          state.active.relayEligible,
+        );
         this.rememberAcceptedClientMessageId(state, delivery.clientMessageId);
         return;
       }
@@ -359,7 +380,9 @@ export class ChannelGateway {
         idempotencyScope: createMessageChannelIdempotencyScope(
           delivery.activeTurnState?.idempotency,
         ),
-        relayEligible: Boolean(delivery.activeTurnState),
+        relayEligible:
+          delivery.activeTurnState?.automaticRelay ??
+          Boolean(delivery.activeTurnState),
       };
       state.active = active;
       state.routedSources = uniqueRoutedSources([
@@ -368,10 +391,11 @@ export class ChannelGateway {
       ]);
       this.rememberAcceptedClientMessageId(state, delivery.clientMessageId);
       try {
-        await this.performRuntimeRegistration(state, {
-          ...delivery,
-          content: "",
-        });
+        await this.performRuntimeRegistration(
+          state,
+          { ...delivery, content: "" },
+          active.relayEligible,
+        );
         if (state.active !== active) return;
         active.richDraft =
           this.hooks.createRichDraft?.({
@@ -416,6 +440,7 @@ export class ChannelGateway {
     const handoffState = {
       assistantText: active.assistantText.snapshot(),
       idempotency,
+      automaticRelay: active.relayEligible,
     };
     active.richDraft?.dispose();
     this.states.delete(key);
@@ -626,19 +651,24 @@ export class ChannelGateway {
   private async performRuntimeRegistration(
     state: GatewayRuntimeState,
     delivery: ChannelGatewayDelivery,
-  ): Promise<void> {
-    const tool = await this.hooks.buildExternalTool(
-      delivery.runtime,
-      delivery.sources,
-    );
+    policyOverride?: boolean,
+  ): Promise<boolean> {
+    const { automaticRelay, tool } = await prepareGatewayRegistrationPolicy({
+      hooks: this.hooks,
+      runtime: delivery.runtime,
+      sources: delivery.sources,
+      ...(policyOverride === undefined ? {} : { override: policyOverride }),
+    });
     const conversationTags = channelTagsForSources(delivery.sources);
     const signature = JSON.stringify({
       mode: delivery.defaultPermissionMode ?? null,
+      automaticRelay,
       tool,
       conversationTags,
     });
     if (state.registrationSignature === signature && state.registration) {
-      return state.registration;
+      await state.registration;
+      return automaticRelay;
     }
 
     const registration = this.client
@@ -664,32 +694,10 @@ export class ChannelGateway {
             response.error ?? "Failed to register channel runtime",
           );
         }
-        const agentRecord = response.agent as unknown as Record<
-          string,
-          unknown
-        > | null;
-        const conversationRecord = response.conversation as unknown as Record<
-          string,
-          unknown
-        > | null;
-        const agentModel =
-          typeof agentRecord?.model === "string"
-            ? agentRecord.model
-            : (response.agent?.llm_config?.model ?? null);
-        const conversationModel =
-          typeof conversationRecord?.model === "string"
-            ? conversationRecord.model
-            : null;
-        state.modelStatus = {
-          modelHandle:
-            delivery.runtime.conversation_id === "default"
-              ? agentModel
-              : (conversationModel ?? agentModel),
-          scope:
-            delivery.runtime.conversation_id === "default"
-              ? "agent"
-              : "conversation",
-        };
+        state.modelStatus = modelStatusFromRuntimeStart(
+          response,
+          delivery.runtime,
+        );
       });
     state.registrationSignature = signature;
     state.registration = registration;
@@ -702,6 +710,7 @@ export class ChannelGateway {
       }
       throw error;
     }
+    return automaticRelay;
   }
 
   private handleMessage(message: WsProtocolMessage): void {
@@ -746,10 +755,12 @@ export class ChannelGateway {
     const dequeued: Array<{
       clientMessageId: string;
       sources: ChannelTurnSource[];
+      automaticRelay: boolean;
     }> = [];
     const cancelled: Array<{
       clientMessageId: string;
       sources: ChannelTurnSource[];
+      automaticRelay: boolean;
     }> = [];
 
     for (const [
@@ -761,7 +772,11 @@ export class ChannelGateway {
       }
       const target =
         pending.removalDisposition === "dequeued" ? dequeued : cancelled;
-      target.push({ clientMessageId, sources: pending.sources });
+      target.push({
+        clientMessageId,
+        sources: pending.sources,
+        automaticRelay: pending.automaticRelay,
+      });
       state.pendingSourcesByClientMessageId.delete(clientMessageId);
     }
 
@@ -771,6 +786,7 @@ export class ChannelGateway {
         state,
         firstDequeued.clientMessageId,
         dequeued.flatMap((entry) => entry.sources),
+        dequeued.every((entry) => entry.automaticRelay),
       );
     }
     for (const entry of cancelled) {
@@ -792,6 +808,7 @@ export class ChannelGateway {
     state: GatewayRuntimeState,
     clientMessageId: string,
     sources: ChannelTurnSource[],
+    automaticRelay: boolean,
   ): void {
     if (state.active) {
       const knownLifecycleKeys = new Set(
@@ -809,6 +826,7 @@ export class ChannelGateway {
         ...state.active.routingSources,
         ...sources,
       ]);
+      state.active.relayEligible &&= automaticRelay;
       const processingEvent: ChannelTurnLifecycleEvent = {
         type: "processing",
         batchId: state.active.batchId,
@@ -833,7 +851,7 @@ export class ChannelGateway {
         }) ?? null,
       assistantText: new GatewayAssistantTextAccumulator(),
       idempotencyScope: createMessageChannelIdempotencyScope(),
-      relayEligible: true,
+      relayEligible: automaticRelay,
     };
     const processingEvent: ChannelTurnLifecycleEvent = {
       type: "processing",

@@ -12,6 +12,7 @@ import type { ChannelTurnSource } from "./types";
 export async function buildGatewayMessageChannelTool(
   sources: ChannelTurnSource[],
   runtime?: RuntimeScope,
+  policy?: { automaticRelay: boolean },
 ): Promise<ExternalToolDefinitionPayload | null> {
   const channelScopes =
     sources.length > 0
@@ -28,11 +29,16 @@ export async function buildGatewayMessageChannelTool(
             accountId: account.accountId,
           }))
         : [];
-  const toolScopes = channelScopes.filter(
-    ({ channelId, accountId }) =>
-      !accountId ||
-      getChannelAccount(channelId, accountId)?.replyMode !== "relay",
-  );
+  const toolScopes =
+    policy?.automaticRelay === true
+      ? []
+      : policy?.automaticRelay === false
+        ? channelScopes
+        : channelScopes.filter(
+            ({ channelId, accountId }) =>
+              !accountId ||
+              getChannelAccount(channelId, accountId)?.replyMode !== "relay",
+          );
   const routedDestinations = new Set(sources.map(sourceRouteKey));
   const exposedScopes =
     sources.length > 0 && routedDestinations.size > 1

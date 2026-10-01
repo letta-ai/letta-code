@@ -349,6 +349,50 @@ test("transfers accumulated assistant text across an active handoff", async () =
   destinationGateway.close();
 });
 
+test("preserves tool reply policy across an active handoff", async () => {
+  const client = new FakeClient();
+  const relays: string[] = [];
+  const destinationGateway = new ChannelGateway(
+    client,
+    makeHooks({
+      relayAssistantText: ({ text }) => {
+        relays.push(text);
+      },
+    }).hooks,
+  );
+  const handoff = makeHandoff({ clientMessageId: "cm-tool-policy-handoff" });
+
+  await destinationGateway.adoptActiveDelivery({
+    ...handoff,
+    activeTurnState: {
+      assistantText: {
+        currentMessageId: null,
+        currentText: "",
+        deltaKeys: [],
+        finalizedMessageIds: [],
+      },
+      idempotency: {
+        successfulActionKeys: [],
+        successfulTextDeliveryKeys: [],
+        lastSuccessfulActionKey: null,
+      },
+      automaticRelay: false,
+    },
+  });
+  client.emit(
+    makeStreamDelta({
+      message_type: "assistant_message",
+      id: "tool-policy-confirmation",
+      content: "Sent.",
+    }),
+  );
+  client.emit(makeTurnFinished("end_turn"));
+  await Bun.sleep(0);
+
+  expect(relays).toEqual([]);
+  destinationGateway.close();
+});
+
 test("release waits for queued finalized relay before handing off ownership", async () => {
   const client = new FakeClient();
   const relays: string[] = [];

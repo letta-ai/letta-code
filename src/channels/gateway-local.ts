@@ -38,6 +38,7 @@ import {
   type ChannelGatewayDelivery,
   type ChannelGatewayHooks,
 } from "./gateway-core";
+import { uniqueRoutedSources } from "./gateway-sources";
 import { buildGatewayMessageChannelTool } from "./message-channel-gateway-tool";
 import {
   MessageChannelDuplicateActionError,
@@ -209,6 +210,16 @@ export async function relayLocalAssistantText(options: {
   if (!source?.accountId) return;
   const account = getChannelAccount(source.channel, source.accountId);
   if (!account || account.replyMode !== "relay") return;
+  await deliverLocalAssistantText(options);
+}
+
+async function deliverLocalAssistantText(options: {
+  text: string;
+  sources: ChannelTurnSource[];
+  idempotencyScope: MessageChannelIdempotencyScope;
+}): Promise<void> {
+  const source = options.sources.length === 1 ? options.sources[0] : undefined;
+  if (!source?.accountId) return;
   try {
     const result = await relayLocalMessageChannel(
       {
@@ -250,8 +261,18 @@ export function createLocalChannelGatewayHooks(
           }
         : null;
     },
-    buildExternalTool: async (runtime, sources) => {
-      return buildGatewayMessageChannelTool(sources, runtime);
+    resolveAssistantRelayPolicy: (_runtime, sources) => {
+      const routedSources = uniqueRoutedSources(sources);
+      if (routedSources.length !== 1) return false;
+      const source = routedSources[0];
+      if (!source?.accountId) return false;
+      return (
+        getChannelAccount(source.channel, source.accountId)?.replyMode ===
+        "relay"
+      );
+    },
+    buildExternalTool: async (runtime, sources, policy) => {
+      return buildGatewayMessageChannelTool(sources, runtime, policy);
     },
     executeExternalTool: async (request, sources, idempotencyScope) => {
       if (
@@ -274,7 +295,7 @@ export function createLocalChannelGatewayHooks(
         idempotencyScope,
       );
     },
-    relayAssistantText: relayLocalAssistantText,
+    relayAssistantText: deliverLocalAssistantText,
     onLifecycle: (event) => registry.dispatchTurnLifecycleEvent(event),
     onProgress: (event) => registry.dispatchTurnProgressEvent(event),
     onControlRequest: (event) => registry.registerPendingControlRequest(event),

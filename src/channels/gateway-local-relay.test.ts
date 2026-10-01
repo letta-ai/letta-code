@@ -184,6 +184,61 @@ describe("local automatic channel relay", () => {
     },
   );
 
+  test("keeps relay mode for a turn after the account changes to tool mode", async () => {
+    const { sendMessage, turnFinished } = setup("relay");
+    const registry = getChannelRegistry();
+    if (!registry) throw new Error("registry missing");
+    const client = new FakeClient();
+    const gateway = new ChannelGateway(
+      client,
+      createLocalChannelGatewayHooks(registry),
+    );
+
+    await gateway.submit(makeDelivery({ sources: [SOURCE] }));
+    updateChannelAccountLive("slack", "account-1", { replyMode: "tool" });
+    client.emit(
+      makeStreamDelta({
+        message_type: "assistant_message",
+        id: "relay-mode-snapshot",
+        content: "original relay reply",
+      }),
+    );
+    client.emit(makeTurnFinished("end_turn"));
+    await turnFinished;
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "original relay reply" }),
+    );
+    gateway.close();
+  });
+
+  test("keeps tool mode for a turn after the account changes to relay mode", async () => {
+    const { sendMessage, turnFinished } = setup("tool");
+    const registry = getChannelRegistry();
+    if (!registry) throw new Error("registry missing");
+    const client = new FakeClient();
+    const gateway = new ChannelGateway(
+      client,
+      createLocalChannelGatewayHooks(registry),
+    );
+
+    await gateway.submit(makeDelivery({ sources: [SOURCE] }));
+    updateChannelAccountLive("slack", "account-1", { replyMode: "relay" });
+    client.emit(
+      makeStreamDelta({
+        message_type: "assistant_message",
+        id: "tool-mode-snapshot",
+        content: "Sent.",
+      }),
+    );
+    client.emit(makeTurnFinished("end_turn"));
+    await turnFinished;
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    gateway.close();
+  });
+
   test("sends completed assistant text only for relay accounts", async () => {
     const { sendMessage: relaySend } = setup("relay");
     await relayLocalAssistantText({

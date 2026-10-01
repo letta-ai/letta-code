@@ -50,7 +50,12 @@ export interface ChannelGatewayHooks {
   buildExternalTool(
     runtime: RuntimeScope,
     sources: ChannelTurnSource[],
+    policy?: { automaticRelay: boolean },
   ): Promise<ExternalToolDefinitionPayload | null>;
+  resolveAssistantRelayPolicy?(
+    runtime: RuntimeScope,
+    sources: ChannelTurnSource[],
+  ): boolean | Promise<boolean>;
   executeExternalTool(
     request: ExternalToolCallRequestMessage,
     sources: ChannelTurnSource[],
@@ -81,6 +86,8 @@ export interface ChannelGatewayDelivery {
 export interface ChannelGatewayActiveTurnState {
   assistantText: GatewayAssistantTextAccumulatorState;
   idempotency: MessageChannelIdempotencyState;
+  /** Effective policy captured when this turn was registered. */
+  automaticRelay?: boolean;
 }
 
 export type ChannelGatewayHandoffDelivery = Omit<
