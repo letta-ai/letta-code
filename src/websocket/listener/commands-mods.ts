@@ -7,7 +7,7 @@ import {
 } from "@/mods/agent-mod-overrides";
 import { isModFileExtension } from "@/mods/file-extensions";
 import {
-  reloadListenerModAdapter,
+  reloadListenerAgentModAdapter,
   resolveListenerAgentModsDirectoryForAgent,
 } from "./mod-adapter";
 import type { ConversationRuntime } from "./types";
@@ -139,7 +139,7 @@ export async function handleModsCommand(
       disabledBy: actingUserId,
       reason: rest.length > 0 ? rest.join(" ") : null,
     });
-    await reloadListenerModAdapter(conversationRuntime.listener, agentId);
+    await reloadListenerAgentModAdapter(conversationRuntime.listener, agentId);
     return {
       output: `Disabled ${file} for this agent. Its file is unchanged; run /mods enable ${file} to turn it back on.`,
       success: true,
@@ -153,6 +153,6 @@ export async function handleModsCommand(
   if (!file || !enableAgentMod(agentId, file)) {
     return { output: `${target} is not disabled.`, success: false };
   }
-  await reloadListenerModAdapter(conversationRuntime.listener, agentId);
+  await reloadListenerAgentModAdapter(conversationRuntime.listener, agentId);
   return { output: `Enabled ${file} for this agent.`, success: true };
 }

@@ -199,6 +199,51 @@ describe("turn_start lockout recovery (LET-12868)", () => {
     disposeListenerModAdapter(listener);
   });
 
+  test("/mods disable recovers even when the listener's global mods fail to reload", async () => {
+    const listener = createListener(root);
+    let globalReloads = 0;
+    listener.modAdapter = {
+      dispose: () => {},
+      events: {
+        hasHandlers: () => false,
+        emit: async (name: string) => ({
+          diagnostics: [],
+          handlerCount: 0,
+          name,
+          results: [],
+        }),
+      },
+      reload: async () => {
+        globalReloads += 1;
+        throw new Error("broken global mod");
+      },
+    } as unknown as ListenerRuntime["modAdapter"];
+    const conversation = {
+      agentId: "agent-locked",
+      conversationId: "conv-locked",
+      listener,
+    } as unknown as ConversationRuntime;
+    const turn = () =>
+      emitListenerTurnStart({
+        agentId: "agent-locked",
+        conversationId: "conv-locked",
+        input: userInput("Ping"),
+        runtime: listener,
+        workingDirectory: root,
+      });
+
+    expect((await turn()).cancelled).toBe(true);
+    const disabled = await handleModsCommand(
+      conversation,
+      "disable bootstrap-guard.ts",
+      null,
+    );
+    expect(disabled.success).toBe(true);
+    expect(globalReloads).toBe(0);
+    expect((await turn()).cancelled).toBe(false);
+    disposeListenerModAdapter(listener);
+  });
+
   test("disabling is scoped to one agent", async () => {
     const listener = createListener(root);
     const conversation = {

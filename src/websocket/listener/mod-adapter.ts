@@ -335,12 +335,24 @@ export async function reloadListenerModAdapter(
   await adapter.reload();
 
   if (!agentId) return;
-  const agentAdapter = runtime.agentModAdapters?.get(agentId);
+  await reloadListenerAgentModAdapter(runtime, agentId);
+}
+
+/** Reload only this agent's mods, leaving the listener's global mods alone. */
+export async function reloadListenerAgentModAdapter(
+  runtime: ListenerRuntime,
+  agentId: string,
+): Promise<void> {
   if (!resolveAgentModsDirectory(agentId)) {
-    agentAdapter?.dispose();
+    runtime.agentModAdapters?.get(agentId)?.dispose();
     runtime.agentModAdapters?.delete(agentId);
     return;
   }
+  // A load already in flight may have resolved its sources before the
+  // caller's change, so let it settle and then reload.
+  const pending = runtime.agentModAdapterLoads?.get(agentId);
+  if (pending) await pending.catch(() => null);
+  const agentAdapter = runtime.agentModAdapters?.get(agentId);
   if (agentAdapter) {
     await agentAdapter.reload();
     return;
