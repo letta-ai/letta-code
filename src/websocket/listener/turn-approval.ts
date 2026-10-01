@@ -566,6 +566,13 @@ export async function handleApprovalStop(params: {
     // an interrupt is in flight (the interrupt path emits finished events
     // from the interrupted-results cache).
     emitToolExecutionOutput.flush();
+    if (
+      !shouldInterrupt() &&
+      !processOwnedTurn &&
+      !isListenerTransportOpen(socket)
+    ) {
+      await waitForTransportOpen(socket, shouldInterrupt);
+    }
     if (!shouldInterrupt()) {
       emitToolExecutionAbortedEvents(socket, runtime, {
         toolCallIds: lastExecutingToolCallIds,

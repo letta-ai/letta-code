@@ -430,6 +430,122 @@ describe("listener approval reconnect timing", () => {
     expect(deps.executeApprovalBatch).toHaveBeenCalledTimes(1);
   });
 
+  test("service restart buffers failed client-tool terminal frames until replacement startup", async () => {
+    let connectedCount = 0;
+    let reportReplacementStartup!: () => void;
+    const replacementStartup = new Promise<void>((resolve) => {
+      reportReplacementStartup = resolve;
+    });
+    let releaseReplacementStartup!: () => void;
+    const replacementStartupReady = new Promise<void>((resolve) => {
+      releaseReplacementStartup = resolve;
+    });
+    await startClient(async () => {
+      connectedCount += 1;
+      if (connectedCount !== 2) return;
+      reportReplacementStartup();
+      await replacementStartupReady;
+    });
+    await waitFor(
+      () =>
+        getActiveRuntime()?.connections.get("connection-id")?.initialized ===
+        true,
+      "initial listener connection did not initialize",
+    );
+
+    const listener = getActiveRuntime();
+    if (!listener?.transport) throw new Error("listener transport missing");
+    subscribeListenerConnection(listener, "connection-id", {
+      agent_id: "agent-1",
+      conversation_id: "conv-1",
+    });
+    const capturedTransport = listener.transport;
+    const conversationRuntime = getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-1",
+    );
+    const turnLease = conversationRuntime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+      initialStatus: "PROCESSING_API_RESPONSE",
+    });
+    conversationRuntime.turnLifecycle.setRunId(turnLease, "run-failed-restart");
+
+    const approval = {
+      toolCallId: "call-failed-during-restart",
+      toolName: "FailingClientTool",
+      toolArgs: JSON.stringify({ command: "fail" }),
+    };
+    let executionStarted = false;
+    let failExecution!: (error: Error) => void;
+    const execution = new Promise<ApprovalResult[]>((_resolve, reject) => {
+      failExecution = reject;
+    });
+    const deps = makeAutoAllowedDeps(approval, turnLease, [], []);
+    deps.executeApprovalBatch.mockImplementation(async () => {
+      executionStarted = true;
+      return execution;
+    });
+    const approvalStop = handleApprovalStop({
+      approvals: [approval],
+      runtime: conversationRuntime,
+      socket: capturedTransport,
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      turnWorkingDirectory: process.cwd(),
+      turnPermissionModeState: getOrCreateConversationPermissionModeStateRef(
+        listener,
+        "agent-1",
+        "conv-1",
+      ),
+      dequeuedBatchId: "batch-failed-restart",
+      runId: "run-failed-restart",
+      msgRunIds: ["run-failed-restart"],
+      turnInput: createTurnInputState([]),
+      pendingNormalizationInterruptedToolCallIds: [],
+      turnToolContextId: null,
+      turnLease,
+      buildSendOptions: () => ({ streamTokens: true }),
+      dependencies: deps as never,
+    });
+
+    await waitFor(() => executionStarted, "client tool did not start");
+    const initialControlIndex = lastConnectionIndexForChannel("control");
+    connections[initialControlIndex]?.close(1012, "Service restart");
+    await waitFor(
+      () =>
+        countConnectionsForChannel("control") === 2 &&
+        countConnectionsForChannel("stream") === 2,
+      "listener did not reconnect after service restart",
+    );
+    await replacementStartup;
+
+    let approvalSettled = false;
+    void approvalStop.then(
+      () => {
+        approvalSettled = true;
+      },
+      () => {
+        approvalSettled = true;
+      },
+    );
+    failExecution(new Error("client tool failed"));
+    await new Promise((resolve) => setTimeout(resolve, 75));
+    expect(approvalSettled).toBe(false);
+    expect(countToolStreamDeltas("client_tool_end", approval.toolCallId)).toBe(
+      0,
+    );
+
+    releaseReplacementStartup();
+    await expect(approvalStop).rejects.toThrow("client tool failed");
+    await waitFor(
+      () => countToolStreamDeltas("client_tool_end", approval.toolCallId) === 1,
+      "aborted tool result did not reach the replacement listener connection",
+    );
+    expect(deps.executeApprovalBatch).toHaveBeenCalledTimes(1);
+  });
+
   test("disconnected requires_approval producer waits for reconnect before executing a generic client tool", async () => {
     await startClient();
     await waitFor(
