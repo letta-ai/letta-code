@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import WebSocket from "ws";
 import {
+  markListenerConnectionInitialized,
   openListenerConnection,
   subscribeListenerConnection,
 } from "./connection";
@@ -103,6 +104,38 @@ describe("listener connection lifecycle", () => {
     expect([...runtime.connectionIdsByRuntimeKey.values()][0]).toEqual(
       new Set(["a"]),
     );
+  });
+
+  test("a resumable owner waits for its same-id replacement", () => {
+    const runtime = createRuntime();
+    for (const connectionId of ["origin", "peer"]) {
+      openListenerConnection({
+        runtime,
+        connectionId,
+        writer: new MockSocket() as never,
+        options: makeOptions(connectionId),
+      });
+      markListenerConnectionInitialized(runtime, connectionId);
+    }
+    const scope = { agent_id: "agent-1", conversation_id: "conversation-1" };
+    subscribeListenerConnection(runtime, "origin", scope);
+    subscribeListenerConnection(runtime, "peer", scope);
+    const scopedRuntime = getOrCreateScopedRuntime(
+      runtime,
+      scope.agent_id,
+      scope.conversation_id,
+    );
+    const lease = scopedRuntime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+    });
+    scopedRuntime.activeConnectionId = "origin";
+
+    cleanupListenerConnection(runtime, "origin");
+
+    expect(scopedRuntime.activeConnectionId).toBe("origin");
+    expect(scopedRuntime.turnLifecycle.isCurrent(lease)).toBe(true);
+    expect(runtime.connections.has("peer")).toBe(true);
   });
 
   test("global shutdown closes every socket and suppresses callbacks", () => {

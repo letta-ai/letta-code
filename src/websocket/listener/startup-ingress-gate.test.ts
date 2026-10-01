@@ -164,6 +164,70 @@ test("emits initial state before opening the inbound startup gate", async () => 
   }
 });
 
+test("publishes connection readiness only after exact ingress activation", async () => {
+  const runtime = createRuntime();
+  const transport = new MockTransport();
+  let releaseIngress!: () => void;
+  const ingressBlocked = new Promise<void>((resolve) => {
+    releaseIngress = resolve;
+  });
+  let signalActivationStarted!: () => void;
+  const activationStarted = new Promise<void>((resolve) => {
+    signalActivationStarted = resolve;
+  });
+  const onConnectionReady = mock((connection) => {
+    expect(connection.ingressReady).toBe(true);
+    expect(runtime.connections.get(connection.id)).toBe(connection);
+  });
+  const options: StartListenerOptions = {
+    connectionId: "ingress-ready",
+    wsUrl: "local://test",
+    deviceId: "device",
+    connectionName: "test",
+    onConnected: () => {},
+    onConnectionReady,
+    onDisconnected: () => {},
+    onError: () => {},
+  };
+  const connection = openListenerConnection({
+    runtime,
+    connectionId: options.connectionId,
+    writer: transport,
+    options,
+  });
+  setActiveRuntime(runtime);
+  try {
+    const starting = startConnectedListenerRuntime(
+      runtime,
+      transport,
+      options,
+      async () => {},
+      {
+        startHeartbeat: false,
+        startCronScheduler: false,
+        startProcessServices: false,
+        emitInitialState: false,
+        activateIngress: async () => {
+          signalActivationStarted();
+          await ingressBlocked;
+          return true;
+        },
+      },
+    );
+    await activationStarted;
+    expect(connection.initialized).toBe(true);
+    expect(connection.ingressReady).toBe(false);
+    expect(onConnectionReady).not.toHaveBeenCalled();
+    releaseIngress();
+    await starting;
+    expect(onConnectionReady).toHaveBeenCalledTimes(1);
+  } finally {
+    releaseIngress();
+    stopRuntime(runtime, true);
+    setActiveRuntime(null);
+  }
+});
+
 test("stale startup cannot initialize a replacement with the same id", async () => {
   const runtime = createRuntime();
   const firstTransport = new MockTransport();

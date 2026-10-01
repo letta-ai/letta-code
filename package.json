@@ -219,7 +219,8 @@
     "test:update-chain:startup": "bun run src/test-utils/update-chain-smoke.ts --mode startup",
     "prepublishOnly": "bun run runtime-graph:verify && bun run build",
     "postinstall": "node scripts/postinstall-patches.js || echo letta: vendor patches skipped && node -e \"try{require('fs').chmodSync(require('path').join(require.resolve('node-pty/package.json'),'../prebuilds/darwin-arm64/spawn-helper'),0o755)}catch(e){}\" || true",
-    "mod-learning:memory-citations": "bun scripts/mod-learning/learn-mod.ts --env docs/examples/mods/learning/memory-citations.env.json"
+    "mod-learning:memory-citations": "bun scripts/mod-learning/learn-mod.ts --env docs/examples/mods/learning/memory-citations.env.json",
+    "test:built-entrypoints": "LETTA_TEST_CLI_BUNDLE=\"$PWD/letta.js\" LETTA_TEST_BUILT_ARTIFACT=1 bun test src/cli/subcommands/lifecycle-output.test.ts src/websocket/app-server-dream.test.ts --timeout 60000"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx,json}": [

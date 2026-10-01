@@ -46,10 +46,14 @@ export interface StartListenerOptions {
   supportsPairedListenerGenerations?: boolean;
   deviceId: string;
   connectionName: string;
+  /** False when reconnecting necessarily allocates a new physical id. */
+  connectionIdCanResume?: boolean;
   skillsDirectory?: string;
   onConnected: (connectionId: string) => void | Promise<void>;
   /** Called only after initial state and approvals are replayed and the exact connection is routable. */
-  onConnectionReady?: (connectionId: string) => void | Promise<void>;
+  onConnectionReady?: (
+    connection: ListenerConnectionState,
+  ) => void | Promise<void>;
   onDisconnected: () => void;
   onNeedsReregister?: () => void;
   onError: (error: Error) => void;
@@ -90,7 +94,7 @@ export interface IncomingMessage {
    * return to the correct client even when multiple clients share a runtime.
    */
   connectionId?: ListenerConnectionId;
-  agentId?: string;
+  agentId?: string | null;
   conversationId?: string;
   /** Queue this message as its own turn; never merge with other messages. */
   noCoalesce?: boolean;
@@ -311,6 +315,7 @@ export type ListenerConnectionState = {
   streamWriter: ListenerTransport | null;
   cancellation: AbortController;
   initialized: boolean;
+  ingressReady: boolean;
   startupReady: Promise<void>;
   resolveStartupReady: () => void;
   subscriptions: Set<string>;

@@ -34,7 +34,7 @@ export function createIncomingMessage(
   return {
     type: "message",
     connectionId,
-    ...(scope.agent_id ? { agentId: scope.agent_id } : {}),
+    agentId: scope.agent_id,
     conversationId: scope.conversation_id,
     clientToolAllowlist: payload.client_tool_allowlist,
     clientToolset: payload.client_toolset,

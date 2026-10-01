@@ -47,6 +47,7 @@ import {
   emitDequeuedUserMessage,
   emitProtocolV2Message,
   emitRuntimeStateUpdates,
+  type OutboundMessageDelivery,
 } from "./protocol-outbound";
 import { consumeQueuedTurn } from "./queue";
 import { debugLogApprovalResumeState } from "./recovery";
@@ -157,7 +158,7 @@ export async function handleApprovalStop(params: {
   }>;
   runtime: ConversationRuntime;
   socket: ListenerTransport;
-  agentId?: string;
+  agentId?: string | null;
   conversationId: string;
   turnWorkingDirectory: string;
   turnPermissionModeState: PermissionModeState;
@@ -173,6 +174,8 @@ export async function handleApprovalStop(params: {
   processOwnedTurn?: boolean;
   /** Relay connection that originated this turn; replacements retain this id. */
   originConnectionId?: string;
+  /** Whether the origin can return under the same logical connection id. */
+  originConnectionCanResume?: boolean;
   buildSendOptions: () => Parameters<
     typeof sendApprovalContinuationWithRetry
   >[2];
@@ -201,6 +204,7 @@ export async function handleApprovalStop(params: {
     turnCorrelation,
     processOwnedTurn = false,
     originConnectionId,
+    originConnectionCanResume = true,
     buildSendOptions,
     dependencies,
   } = params;
@@ -239,7 +243,7 @@ export async function handleApprovalStop(params: {
       missingNameReason: "Tool call incomplete - missing name",
       workingDirectory: turnWorkingDirectory,
       permissionModeState: turnPermissionModeState,
-      agentId,
+      agentId: agentId ?? undefined,
       toolContextId: turnToolContextId ?? undefined,
     },
   );
@@ -278,15 +282,114 @@ export async function handleApprovalStop(params: {
   const isDeliveryReady = (): boolean => {
     const listener = runtime.listener;
     const scopedSubscribers = getSubscribedListenerConnections(listener, {
-      agent_id: agentId,
-      conversation_id: conversationId,
+      agent_id: runtime.agentId,
+      conversation_id: runtime.conversationId,
     });
-    if (originConnectionId) {
+    const deliveryOwnerId = runtime.activeConnectionId ?? originConnectionId;
+    if (deliveryOwnerId) {
       return scopedSubscribers.some(
-        (connection) => connection.id === originConnectionId,
+        (connection) => connection.id === deliveryOwnerId,
       );
     }
     return scopedSubscribers.length > 0 || isListenerTransportOpen(socket);
+  };
+  const getDeliveryOwnerId = (): string | null => {
+    const scopedSubscribers = getSubscribedListenerConnections(
+      runtime.listener,
+      {
+        agent_id: runtime.agentId,
+        conversation_id: runtime.conversationId,
+      },
+    );
+    const preferred = runtime.activeConnectionId ?? originConnectionId;
+    if (preferred && scopedSubscribers.some(({ id }) => id === preferred)) {
+      return preferred;
+    }
+    if (originConnectionCanResume && originConnectionId) return null;
+    return scopedSubscribers[0]?.id ?? null;
+  };
+  const awaitTerminalDeliveries = async (
+    deliveries: OutboundMessageDelivery[],
+  ): Promise<"sent" | "interrupted"> => {
+    const deliveryAttempts = deliveries.map((delivery) => [delivery]);
+    const unusableReceipts = new Set<
+      OutboundMessageDelivery["receipts"][number]
+    >();
+    const sentOwners = deliveries.map(() => new Set<string>());
+    const interruptDelivery = (): "interrupted" => {
+      for (const attempts of deliveryAttempts) {
+        for (const delivery of attempts) {
+          for (const receipt of delivery.receipts) receipt.cancel();
+        }
+      }
+      return "interrupted";
+    };
+    const settleForOwner = async (
+      deliveryIndex: number,
+      ownerId: string,
+    ): Promise<"sent" | "dropped" | "interrupted"> => {
+      if (sentOwners[deliveryIndex]?.has(ownerId)) return "sent";
+      const attempts = deliveryAttempts[deliveryIndex];
+      const initialDelivery = deliveries[deliveryIndex];
+      if (!attempts || !initialDelivery) return "dropped";
+      let receipt = attempts
+        .flatMap((delivery) => delivery.receipts)
+        .find(
+          (candidate) =>
+            candidate.connectionId === ownerId &&
+            !unusableReceipts.has(candidate),
+        );
+      if (!receipt) {
+        const replay = initialDelivery.replayTo(ownerId);
+        attempts.push(replay);
+        receipt = replay.receipts.find(
+          ({ connectionId }) => connectionId === ownerId,
+        );
+      }
+      if (!receipt) return "dropped";
+      const result = await Promise.race([
+        receipt.settlement,
+        waitForTransportOpen(() => false, shouldInterrupt).then(
+          () => "interrupted" as const,
+        ),
+      ]);
+      if (result === "sent") {
+        sentOwners[deliveryIndex]?.add(ownerId);
+      } else if (result === "dropped") {
+        unusableReceipts.add(receipt);
+      }
+      return result;
+    };
+    let terminalIndex = 0;
+    deliveryLoop: while (terminalIndex < deliveries.length) {
+      if (shouldInterrupt()) return interruptDelivery();
+      const ownerId = getDeliveryOwnerId();
+      if (!ownerId) {
+        const ready = await waitForTransportOpen(
+          isDeliveryReady,
+          shouldInterrupt,
+        );
+        if (ready === "interrupted") return interruptDelivery();
+        continue;
+      }
+      for (let index = 0; index <= terminalIndex; index += 1) {
+        const result = await settleForOwner(index, ownerId);
+        if (result === "interrupted" || shouldInterrupt()) {
+          return interruptDelivery();
+        }
+        if (result === "dropped") {
+          const ready = await waitForTransportOpen(
+            isDeliveryReady,
+            shouldInterrupt,
+          );
+          if (ready === "interrupted") return interruptDelivery();
+          continue deliveryLoop;
+        }
+        if (getDeliveryOwnerId() !== ownerId) continue deliveryLoop;
+      }
+      terminalIndex += 1;
+    }
+    return "sent";
   };
 
   const interruptTermination = (
@@ -358,7 +461,7 @@ export async function handleApprovalStop(params: {
           blocked_path: null,
           ...(diffs.length > 0 ? { diffs } : {}),
         },
-        agent_id: agentId,
+        agent_id: agentId ?? undefined,
         conversation_id: conversationId,
       };
 
@@ -411,7 +514,7 @@ export async function handleApprovalStop(params: {
                 missingNameReason: "Tool call incomplete - missing name",
                 workingDirectory: turnWorkingDirectory,
                 permissionModeState: turnPermissionModeState,
-                agentId,
+                agentId: agentId ?? undefined,
                 toolContextId: turnToolContextId ?? undefined,
               },
             );
@@ -621,7 +724,7 @@ export async function handleApprovalStop(params: {
     })),
     persistedExecutionResults,
   );
-  emitToolExecutionFinishedEvents(socket, runtime, {
+  const terminalDeliveries = emitToolExecutionFinishedEvents(socket, runtime, {
     approvals: persistedExecutionResults,
     runId: executionRunId,
     agentId,
@@ -633,13 +736,22 @@ export async function handleApprovalStop(params: {
     { results: persistedExecutionResults },
     "after_tool_execution",
   );
-  emitInterruptToolReturnMessage(
-    socket,
-    runtime,
-    persistedExecutionResults,
-    executionRunId,
-    "tool-return",
+  terminalDeliveries.push(
+    ...emitInterruptToolReturnMessage(
+      socket,
+      runtime,
+      persistedExecutionResults,
+      executionRunId,
+      "tool-return",
+    ),
   );
+
+  if (
+    !processOwnedTurn &&
+    (await awaitTerminalDeliveries(terminalDeliveries)) === "interrupted"
+  ) {
+    return interruptTermination();
+  }
 
   if (shouldInterrupt()) {
     return interruptTermination();

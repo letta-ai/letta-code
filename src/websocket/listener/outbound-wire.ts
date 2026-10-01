@@ -55,6 +55,14 @@ export interface OutboundFrame {
   build(): { payload: string; perfKey: string; onSent?: () => void } | null;
   /** Called if the socket write throws. */
   onSendError?(error: unknown): void;
+  /** Called when this frame is known not to have reached transport.send(). */
+  onDropped?(): void;
+}
+
+export type OutboundFrameSettlement = "sent" | "dropped";
+export interface OutboundFrameReceipt {
+  settlement: Promise<OutboundFrameSettlement>;
+  cancel(): void;
 }
 
 /**
@@ -102,7 +110,7 @@ function terminateStalledTransport(
   reason: string,
 ): void {
   state.killed = true;
-  state.frames = [];
+  for (const frame of state.frames.splice(0)) frame.onDropped?.();
   if (state.pollTimer) {
     clearTimeout(state.pollTimer);
     state.pollTimer = null;
@@ -127,27 +135,70 @@ function terminateStalledTransport(
 export function enqueueOutboundFrame(
   transport: ListenerTransport,
   frame: OutboundFrame,
-): void {
+): OutboundFrameReceipt {
+  let settled = false;
+  let settle!: (result: OutboundFrameSettlement) => void;
+  const settlement = new Promise<OutboundFrameSettlement>((resolve) => {
+    settle = resolve;
+  });
+  const queuedFrame: OutboundFrame = {
+    ...frame,
+    onDropped: () => {
+      frame.onDropped?.();
+      if (!settled) {
+        settled = true;
+        settle("dropped");
+      }
+    },
+    build: () => {
+      const built = frame.build();
+      if (!built) {
+        queuedFrame.onDropped?.();
+        return null;
+      }
+      return {
+        ...built,
+        onSent: () => {
+          built.onSent?.();
+          if (!settled) {
+            settled = true;
+            settle("sent");
+          }
+        },
+      };
+    },
+  };
   const state = getQueueState(transport);
-  if (state.killed) return;
+  if (state.killed) {
+    queuedFrame.onDropped?.();
+    return { settlement, cancel: () => undefined };
+  }
 
-  if (frame.frameClass === "status" && frame.coalesceKey) {
+  if (queuedFrame.frameClass === "status" && queuedFrame.coalesceKey) {
     const index = state.frames.findIndex(
-      (f) => f.frameClass === "status" && f.coalesceKey === frame.coalesceKey,
+      (f) =>
+        f.frameClass === "status" && f.coalesceKey === queuedFrame.coalesceKey,
     );
     if (index !== -1) {
       // Keep the latest snapshot after critical frames it was emitted after.
       // Replacing an earlier queue slot could put idle before a terminal error.
-      state.frames.splice(index, 1);
+      state.frames.splice(index, 1)[0]?.onDropped?.();
     }
   }
 
-  state.frames.push(frame);
+  state.frames.push(queuedFrame);
   if (state.frames.length > OUTBOUND_QUEUE_LIMITS.MAX_QUEUED_FRAMES) {
     terminateStalledTransport(transport, state, "outbound queue full");
-    return;
+    return { settlement, cancel: () => undefined };
   }
   drainOutboundQueue(transport, state);
+  return {
+    settlement,
+    cancel: () => {
+      const index = state.frames.indexOf(queuedFrame);
+      if (index !== -1) state.frames.splice(index, 1)[0]?.onDropped?.();
+    },
+  };
 }
 
 function scheduleDrainPoll(
@@ -172,7 +223,7 @@ function drainOutboundQueue(
     while (state.frames.length > 0) {
       if (!isListenerTransportOpen(transport)) {
         // The connection is already lost; queued wire frames can no longer be delivered.
-        state.frames = [];
+        for (const frame of state.frames.splice(0)) frame.onDropped?.();
         return;
       }
       const buffered = transport.bufferedAmount;
@@ -193,6 +244,7 @@ function drainOutboundQueue(
         built = frame.build();
       } catch (error) {
         frame.onSendError?.(error);
+        frame.onDropped?.();
         terminateStalledTransport(transport, state, "frame build failed");
         return;
       }
@@ -203,6 +255,7 @@ function drainOutboundQueue(
         transport.send(built.payload);
       } catch (error) {
         frame.onSendError?.(error);
+        frame.onDropped?.();
         terminateStalledTransport(transport, state, "socket write failed");
         return;
       }

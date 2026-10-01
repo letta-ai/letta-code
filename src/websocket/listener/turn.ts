@@ -165,6 +165,10 @@ async function handleIncomingMessageInner(
   if (connectionId) {
     runtime.activeConnectionId = connectionId;
   }
+  const originConnectionCanResume = connectionId
+    ? runtime.listener.connections.get(connectionId)?.options
+        .connectionIdCanResume !== false
+    : false;
   if (!runtime.turnLifecycle.isCurrent(turnLease))
     throw new Error("Cannot continue a turn with a stale lifecycle lease");
   const turnAbortSignal = turnLease.signal;
@@ -771,7 +775,7 @@ async function handleIncomingMessageInner(
         approvals,
         runtime,
         socket,
-        agentId: agentId ?? undefined,
+        agentId,
         conversationId,
         turnWorkingDirectory,
         turnPermissionModeState,
@@ -785,6 +789,7 @@ async function handleIncomingMessageInner(
         turnCorrelation,
         processOwnedTurn: msg.processOwnedTurn === true,
         originConnectionId: msg.connectionId,
+        originConnectionCanResume,
         buildSendOptions,
       });
       if (approvalResult.kind === "error") {

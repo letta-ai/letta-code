@@ -61,13 +61,21 @@ export function cleanupListenerConnection(
 ): void {
   for (const conversationRuntime of runtime.conversationRuntimes.values()) {
     if (conversationRuntime.activeConnectionId === connectionId) {
+      const closingConnection = runtime.connections.get(connectionId);
       const hasEligibleFailover = getSubscribedListenerConnections(runtime, {
         agent_id: conversationRuntime.agentId,
         conversation_id: conversationRuntime.conversationId,
       }).some((connection) => connection.id !== connectionId);
-      if (hasEligibleFailover) {
-        conversationRuntime.activeConnectionId = null;
-      } else {
+      if (
+        hasEligibleFailover &&
+        closingConnection?.options.connectionIdCanResume === false
+      ) {
+        conversationRuntime.activeConnectionId =
+          getSubscribedListenerConnections(runtime, {
+            agent_id: conversationRuntime.agentId,
+            conversation_id: conversationRuntime.conversationId,
+          }).find((connection) => connection.id !== connectionId)?.id ?? null;
+      } else if (!hasEligibleFailover) {
         conversationRuntime.turnLifecycle.requestCancellation();
       }
     }

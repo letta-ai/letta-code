@@ -102,6 +102,7 @@ export function openListenerConnection(params: {
     streamWriter: params.streamWriter ?? null,
     cancellation: params.cancellation ?? new AbortController(),
     initialized: false,
+    ingressReady: false,
     startupReady,
     resolveStartupReady,
     subscriptions: resumed?.subscriptions ?? new Set(),

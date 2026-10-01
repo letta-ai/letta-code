@@ -78,7 +78,7 @@ test("an adopted connection starts recorded recovery even when process services 
   }
 });
 
-test("remote lifecycle readiness stays blocked until initial state sync completes", async () => {
+test("protocol initialization completes without publishing ingress readiness", async () => {
   const runtime = createRuntime();
   getOrCreateScopedRuntime(runtime, "agent-remote", "conversation-remote");
   const sent: string[] = [];
@@ -129,7 +129,7 @@ test("remote lifecycle readiness stays blocked until initial state sync complete
     releaseSync();
     expect(await startup).toBe(true);
     expect(connection.initialized).toBe(true);
-    expect(onConnectionReady).toHaveBeenCalledTimes(1);
+    expect(onConnectionReady).not.toHaveBeenCalled();
     expect(sent.length).toBeGreaterThan(0);
   } finally {
     releaseSync();

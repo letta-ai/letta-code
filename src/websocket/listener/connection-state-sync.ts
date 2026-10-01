@@ -64,10 +64,7 @@ export async function completeInitialConnectionStartup(
   listener: ListenerRuntime,
   connection: ListenerConnectionState,
   transport: ListenerTransport,
-  options: Pick<
-    StartListenerOptions,
-    "connectionId" | "onConnected" | "onConnectionReady"
-  >,
+  options: Pick<StartListenerOptions, "connectionId" | "onConnected">,
   startupOptions: {
     emitInitialState?: boolean;
     updateReconnectState?: boolean;
@@ -104,7 +101,6 @@ export async function completeInitialConnectionStartup(
   }
   markListenerConnectionInitialized(listener, options.connectionId, connection);
   if (!isCurrent() || !connection.initialized) return false;
-  await options.onConnectionReady?.(options.connectionId);
   return isCurrent() && connection.initialized;
 }
 

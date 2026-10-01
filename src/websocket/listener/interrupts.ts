@@ -11,6 +11,7 @@ import { collectApprovalResultToolCallIds } from "./approval";
 import {
   createLifecycleMessageBase,
   emitCanonicalMessageDelta,
+  type OutboundMessageDelivery,
 } from "./protocol-outbound";
 import { clearRecoveredApprovalState } from "./runtime";
 import type { ListenerTransport } from "./transport";
@@ -18,6 +19,7 @@ import type {
   ConversationRuntime,
   InterruptPopulateInput,
   InterruptToolReturn,
+  ListenerMessageRouting,
   RecoveredApprovalState,
 } from "./types";
 
@@ -339,14 +341,15 @@ export function emitInterruptToolReturnMessage(
   approvals: ApprovalResult[] | null,
   runId?: string | null,
   uuidPrefix: string = "interrupt-tool-return",
-): void {
+  routing?: ListenerMessageRouting,
+): OutboundMessageDelivery[] {
   const toolReturns = extractInterruptToolReturns(approvals);
   if (toolReturns.length === 0) {
-    return;
+    return [];
   }
 
   const resolvedRunId = runId ?? runtime.activeRunId ?? undefined;
-  for (const toolReturn of toolReturns) {
+  return toolReturns.map((toolReturn) =>
     emitCanonicalMessageDelta(
       socket,
       runtime,
@@ -373,11 +376,12 @@ export function emitInterruptToolReturnMessage(
         ],
       },
       {
-        agent_id: runtime.agentId ?? undefined,
+        agent_id: runtime.agentId,
         conversation_id: runtime.conversationId,
       },
-    );
-  }
+      routing,
+    ),
+  );
 }
 
 export function emitToolExecutionStartedEvents(
@@ -387,7 +391,7 @@ export function emitToolExecutionStartedEvents(
     toolCallIds?: string[];
     toolCalls?: ClientToolExecutionInfo[];
     runId?: string | null;
-    agentId?: string;
+    agentId?: string | null;
     conversationId?: string;
   },
 ): void {
@@ -418,12 +422,13 @@ export function emitToolExecutionFinishedEvents(
   params: {
     approvals: ApprovalResult[] | null;
     runId?: string | null;
-    agentId?: string;
+    agentId?: string | null;
     conversationId?: string;
   },
-): void {
+  routing?: ListenerMessageRouting,
+): OutboundMessageDelivery[] {
   const toolReturns = extractInterruptToolReturns(params.approvals);
-  for (const toolReturn of toolReturns) {
+  return toolReturns.map((toolReturn) => {
     const messageId = runtime.approvalMessageIdByToolCallId.get(
       toolReturn.tool_call_id,
     );
@@ -433,11 +438,17 @@ export function emitToolExecutionFinishedEvents(
       tool_call_id: toolReturn.tool_call_id,
       status: toolReturn.status,
     };
-    emitCanonicalMessageDelta(socket, runtime, delta, {
-      agent_id: params.agentId,
-      conversation_id: params.conversationId,
-    });
-  }
+    return emitCanonicalMessageDelta(
+      socket,
+      runtime,
+      delta,
+      {
+        agent_id: params.agentId,
+        conversation_id: params.conversationId,
+      },
+      routing,
+    );
+  });
 }
 
 /**
@@ -451,7 +462,7 @@ export function emitToolExecutionAbortedEvents(
   params: {
     toolCallIds: string[];
     runId?: string | null;
-    agentId?: string;
+    agentId?: string | null;
     conversationId?: string;
   },
 ): void {
@@ -475,7 +486,7 @@ export function createToolExecutionOutputEmitter(
   runtime: ConversationRuntime,
   params: {
     runId?: string | null;
-    agentId?: string;
+    agentId?: string | null;
     conversationId?: string;
     shouldEmit?: () => boolean;
   },

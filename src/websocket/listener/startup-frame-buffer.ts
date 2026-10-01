@@ -14,7 +14,7 @@ function rawDataByteLength(data: WebSocket.RawData): number {
 export class StartupFrameBuffer {
   #frames: WebSocket.RawData[] = [];
   #bytes = 0;
-  #overflowed = false;
+  #phase: "buffering" | "draining" | "live" | "terminated" = "buffering";
 
   constructor(private readonly onOverflow: () => void = () => {}) {}
 
@@ -33,14 +33,14 @@ export class StartupFrameBuffer {
   }
 
   push(data: WebSocket.RawData): boolean {
-    if (this.#overflowed) return false;
+    if (this.#phase === "terminated") return false;
     const bytes = rawDataByteLength(data);
     if (
       this.#frames.length >= MAX_PENDING_STARTUP_FRAMES ||
       bytes > MAX_PENDING_STARTUP_FRAME_BYTES - this.#bytes
     ) {
       this.clear();
-      this.#overflowed = true;
+      this.#phase = "terminated";
       this.onOverflow();
       return false;
     }
@@ -50,7 +50,7 @@ export class StartupFrameBuffer {
   }
 
   drain(): WebSocket.RawData[] {
-    if (this.#overflowed) return [];
+    if (this.#phase === "terminated") return [];
     const frames = this.#frames;
     this.#frames = [];
     this.#bytes = 0;
@@ -62,17 +62,53 @@ export class StartupFrameBuffer {
     this.#bytes = 0;
   }
 
-  handle(
+  get phase(): "buffering" | "draining" | "live" | "terminated" {
+    return this.#phase;
+  }
+
+  abort(): void {
+    if (this.#phase === "terminated") return;
+    this.clear();
+    this.#phase = "terminated";
+  }
+
+  accept(
     data: WebSocket.RawData,
-    ready: boolean,
     handleMessage: (frame: WebSocket.RawData) => Promise<void>,
   ): void {
-    if (this.#overflowed) return;
-    if (!ready) {
+    if (this.#phase === "terminated") return;
+    if (this.#phase !== "live") {
       this.push(data);
       return;
     }
     void handleMessage(data);
+  }
+
+  async drainToLive(
+    handleMessage: (frame: WebSocket.RawData) => Promise<void>,
+    isCurrentAndOpen: () => boolean,
+  ): Promise<boolean> {
+    if (this.#phase === "terminated" || !isCurrentAndOpen()) {
+      this.abort();
+      return false;
+    }
+    this.#phase = "draining";
+    while (this.#frames.length > 0) {
+      const frame = this.#frames.shift();
+      if (!frame) break;
+      this.#bytes -= rawDataByteLength(frame);
+      await handleMessage(frame);
+      if (this.phase === "terminated" || !isCurrentAndOpen()) {
+        this.abort();
+        return false;
+      }
+    }
+    if (!isCurrentAndOpen()) {
+      this.abort();
+      return false;
+    }
+    this.#phase = "live";
+    return true;
   }
 
   static terminateIngress(
@@ -85,7 +121,10 @@ export class StartupFrameBuffer {
       new Error("Listener startup ingress buffer exceeded its limit"),
       "listener_startup",
     );
-    controlSocket.terminate();
-    streamSocket?.terminate();
+    for (const socket of new Set(
+      [controlSocket, streamSocket].filter(Boolean),
+    )) {
+      socket?.terminate();
+    }
   }
 }

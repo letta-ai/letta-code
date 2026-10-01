@@ -316,4 +316,35 @@ describe("app-server startup lifecycle", () => {
       await rm(storageDir, { recursive: true, force: true });
     }
   });
+
+  test("terminates and forgets a local startup ingress flood", async () => {
+    let releaseInitialization!: () => void;
+    const initialization = new Promise<void>((resolve) => {
+      releaseInitialization = resolve;
+    });
+    const handle = await startAppServer({
+      listen: "ws://127.0.0.1:0",
+      initializeRuntime: () => initialization,
+    });
+    const client = new WebSocket(handle.controlUrl);
+    try {
+      await waitForOpen(client);
+      const closed = waitForClose(client);
+      for (let index = 0; index < 257; index += 1) {
+        client.send(JSON.stringify({ type: "invalid", index }));
+      }
+      await closed;
+      await waitFor(
+        () => getActiveRuntime()?.connections.size === 0,
+        "overflowed local client remained attached",
+      );
+      releaseInitialization();
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(getActiveRuntime()?.connections.size).toBe(0);
+    } finally {
+      releaseInitialization();
+      closeClient(client);
+      await handle.close();
+    }
+  });
 });

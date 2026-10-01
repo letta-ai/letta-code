@@ -16,15 +16,26 @@ export interface ListenerReadinessController {
 }
 
 export async function completeListenerConnectionStartup(
-  connectionId: string,
+  expectedConnection: import("@/websocket/listener/types").ListenerConnectionState,
   readiness: ListenerReadinessController,
 ): Promise<boolean> {
   const { getActiveRuntime } = await import("@/websocket/listener/runtime");
   const runtime = getActiveRuntime();
-  const connection = runtime?.connections.get(connectionId);
+  const connection = runtime?.connections.get(expectedConnection.id);
   const epoch = readiness.captureCloudEpoch();
-  if (!runtime || !connection?.initialized) return false;
-  if (getActiveRuntime()?.connections.get(connectionId) !== connection)
+  if (
+    !runtime ||
+    connection !== expectedConnection ||
+    !connection.initialized ||
+    !connection.ingressReady ||
+    connection.cancellation.signal.aborted
+  )
+    return false;
+  const { isListenerTransportOpen } = await import(
+    "@/websocket/listener/transport"
+  );
+  if (!isListenerTransportOpen(connection.writer)) return false;
+  if (getActiveRuntime()?.connections.get(connection.id) !== connection)
     return false;
   readiness.completeCloudStartup(epoch);
   return true;

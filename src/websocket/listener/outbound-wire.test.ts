@@ -233,7 +233,10 @@ describe("outbound wire queue", () => {
       },
     } as ListenerTransport;
 
-    enqueueOutboundFrame(transport, frame("stranded", "critical"));
+    const receipt = enqueueOutboundFrame(
+      transport,
+      frame("stranded", "critical"),
+    );
     expect(getOutboundQueueStats(transport).queuedFrames).toBe(1);
 
     open = false;
@@ -241,6 +244,20 @@ describe("outbound wire queue", () => {
       setTimeout(resolve, OUTBOUND_QUEUE_LIMITS.DRAIN_POLL_MS + 20),
     );
     expect(sent).toEqual([]);
+    expect(getOutboundQueueStats(transport).queuedFrames).toBe(0);
+    await expect(receipt.settlement).resolves.toBe("dropped");
+  });
+
+  test("cancelling a queued critical frame settles and removes it", async () => {
+    const { transport } = makeLocalTransport({
+      bufferedAmount: OUTBOUND_QUEUE_LIMITS.HIGH_WATERMARK_BUFFERED_BYTES,
+    });
+    const receipt = enqueueOutboundFrame(
+      transport,
+      frame("cancelled", "critical"),
+    );
+    receipt.cancel();
+    await expect(receipt.settlement).resolves.toBe("dropped");
     expect(getOutboundQueueStats(transport).queuedFrames).toBe(0);
   });
 

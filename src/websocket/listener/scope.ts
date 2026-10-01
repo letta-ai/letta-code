@@ -64,7 +64,12 @@ export function resolveRuntimeScope(
 ): RuntimeScope<string | null> | null {
   const resolvedAgentId = resolveScopedAgentId(runtime, params);
   const resolvedConversationId = resolveScopedConversationId(runtime, params);
-  if (!resolvedAgentId && resolvedConversationId === "default") {
+  const explicitAgentFree = params?.agent_id === null;
+  if (
+    !resolvedAgentId &&
+    resolvedConversationId === "default" &&
+    !explicitAgentFree
+  ) {
     return null;
   }
   return {
