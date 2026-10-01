@@ -32,7 +32,7 @@ function applyFileLimit(files: string[], workingDirectory: string): GlobResult {
     (items) => items.join("\n"),
     "files",
     "Glob",
-    { workingDirectory, toolName: "Glob" },
+    { workingDirectory },
   );
 
   // Split the content back into an array of file paths + notice

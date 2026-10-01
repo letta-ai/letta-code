@@ -3,7 +3,6 @@ import {
   LIMITS,
   truncateArray,
   truncateByChars,
-  truncateByLines,
 } from "@/tools/impl/truncation";
 
 describe("truncation utilities", () => {
@@ -44,73 +43,20 @@ describe("truncation utilities", () => {
 
       expect(result.content).toContain("1,000 characters");
     });
-  });
 
-  describe("truncateByLines", () => {
-    test("does not truncate when under line limit", () => {
-      const text = "line1\nline2\nline3";
-      const result = truncateByLines(text, 10, undefined, "Test");
+    test("ignores previewChars when no overflow file was written", () => {
+      const text = `${"a".repeat(1000)}END`;
+      const result = truncateByChars(text, 500, "Test", {
+        previewChars: 100,
+        useMiddleTruncation: true,
+      });
 
-      expect(result.wasTruncated).toBe(false);
-      expect(result.content).toBe(text);
-      expect(result.originalLineCount).toBe(3);
-      expect(result.linesShown).toBe(3);
-    });
-
-    test("truncates when exceeding line limit", () => {
-      const lines = Array.from({ length: 100 }, (_, i) => `Line ${i + 1}`);
-      const text = lines.join("\n");
-      const result = truncateByLines(text, 50, undefined, "Test");
-
-      expect(result.wasTruncated).toBe(true);
-      expect(result.originalLineCount).toBe(100);
-      // With middle truncation, we get beginning + marker + end = 51 lines shown
-      expect(result.linesShown).toBe(51);
-      expect(result.content).toContain("Line 1");
-      expect(result.content).toContain("Line 25"); // end of first half
-      expect(result.content).toContain("lines omitted");
-      expect(result.content).toContain("Line 76"); // beginning of second half
-      expect(result.content).toContain("Line 100");
-      expect(result.content).toContain("showing 50 of 100 lines");
-    });
-
-    test("truncates long lines when maxCharsPerLine specified", () => {
-      const text = `short\n${"a".repeat(1000)}\nshort`;
-      const result = truncateByLines(text, 10, 500, "Test");
-
-      expect(result.wasTruncated).toBe(true);
-      expect(result.content).toContain("short");
-      expect(result.content).toContain("a".repeat(500));
-      expect(result.content).toContain("... [line truncated]");
+      expect(result.overflowPath).toBeUndefined();
+      expect(result.content).toStartWith("a".repeat(250));
+      expect(result.content).toContain("END");
       expect(result.content).toContain(
-        "Some lines exceeded 500 characters and were truncated",
+        "[Output truncated: showing 500 of 1,003 characters.]",
       );
-    });
-
-    test("handles both line count and character truncation", () => {
-      const lines = Array.from(
-        { length: 100 },
-        (_, i) => `Line ${i + 1}: ${"x".repeat(2000)}`,
-      );
-      const text = lines.join("\n");
-      const result = truncateByLines(text, 50, 1000, "Test");
-
-      expect(result.wasTruncated).toBe(true);
-      expect(result.originalLineCount).toBe(100);
-      // With middle truncation, we get beginning + marker + end = 51 lines shown
-      expect(result.linesShown).toBe(51);
-      expect(result.content).toContain("showing 50 of 100 lines");
-      expect(result.content).toContain(
-        "Some lines exceeded 1,000 characters and were truncated",
-      );
-    });
-
-    test("exactly at line limit does not truncate", () => {
-      const text = "line1\nline2\nline3";
-      const result = truncateByLines(text, 3, undefined, "Test");
-
-      expect(result.wasTruncated).toBe(false);
-      expect(result.content).toBe(text);
     });
   });
 
@@ -160,6 +106,9 @@ describe("truncation utilities", () => {
   describe("LIMITS constants", () => {
     test("has expected values", () => {
       expect(LIMITS.BASH_OUTPUT_CHARS).toBe(30_000);
+      expect(LIMITS.BASH_FAILURE_OUTPUT_CHARS).toBe(10_000);
+      expect(LIMITS.HOOK_OUTPUT_CHARS).toBe(10_000);
+      expect(LIMITS.OVERFLOW_PREVIEW_CHARS).toBe(2_000);
       expect(LIMITS.READ_MAX_LINES).toBe(2_000);
       expect(LIMITS.READ_MAX_CHARS_PER_LINE).toBe(2_000);
       expect(LIMITS.READ_OUTPUT_CHARS).toBe(30_000);

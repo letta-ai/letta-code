@@ -124,7 +124,7 @@ a dummy LETTA_BASE_URL for --backend local.
 State files:
   ~/.letta/channels/<channel>/accounts.json
   ~/.letta/channels/<channel>/pairing.yaml
-  ~/.letta/channels/<channel>/routing.yaml
+  ~/.letta/channels/<channel>/routing.json
 
 Output is JSON.
 `.trim(),

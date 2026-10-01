@@ -1,11 +1,16 @@
+import { canonicalizeRoot } from "@/permissions/sandbox-policy";
 import { updateRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { getOrCreateProcessTransport } from "./connection";
 import {
+  getConversationWorkingDirectory,
   getWorkingDirectoryScopeKey,
   setConversationWorkingDirectory,
 } from "./cwd";
-import { emitDeviceStatusUpdate } from "./protocol-outbound";
+import {
+  emitDeviceStatusUpdate,
+  refreshDeviceGitContext,
+} from "./protocol-outbound";
 import { getConversationRuntime } from "./runtime";
 import { normalizeConversationId, normalizeCwdAgentId } from "./scope";
 import type { ListenerTransport } from "./transport";
@@ -66,15 +71,25 @@ export async function switchConversationWorkingDirectory(params: {
   const { runtime, workingDirectory } = params;
   const agentId = normalizeCwdAgentId(params.agentId);
   const conversationId = normalizeConversationId(params.conversationId);
-
-  await loadSettingsForWorkingDirectory(workingDirectory);
-
-  setConversationWorkingDirectory(
+  const currentWorkingDirectory = getConversationWorkingDirectory(
     runtime,
     agentId,
     conversationId,
-    workingDirectory,
   );
+  const workingDirectoryChanged =
+    canonicalizeRoot(currentWorkingDirectory) !==
+    canonicalizeRoot(workingDirectory);
+
+  await loadSettingsForWorkingDirectory(workingDirectory);
+
+  if (workingDirectoryChanged) {
+    setConversationWorkingDirectory(
+      runtime,
+      agentId,
+      conversationId,
+      workingDirectory,
+    );
+  }
 
   if (params.updateCurrentRuntimeContext !== false) {
     updateRuntimeContext({ workingDirectory });
@@ -90,7 +105,7 @@ export async function switchConversationWorkingDirectory(params: {
   const reminderState =
     conversationRuntime?.reminderState ??
     runtime.reminderStateByConversation.get(scopeKey);
-  if (reminderState) {
+  if (workingDirectoryChanged && reminderState) {
     reminderState.hasSentSessionContext = false;
     reminderState.pendingSessionContextReason = "cwd_changed";
   }
@@ -98,13 +113,13 @@ export async function switchConversationWorkingDirectory(params: {
   if (params.emitStatus !== false) {
     const statusTransport =
       params.statusSocket ?? getOrCreateProcessTransport(runtime);
-    emitDeviceStatusUpdate(
-      statusTransport,
-      params.statusRuntime ?? conversationRuntime ?? runtime,
-      {
-        agent_id: agentId,
-        conversation_id: conversationId,
-      },
-    );
+    const statusRuntime =
+      params.statusRuntime ?? conversationRuntime ?? runtime;
+    const statusScope = {
+      agent_id: agentId,
+      conversation_id: conversationId,
+    };
+    await refreshDeviceGitContext(statusRuntime, statusScope);
+    emitDeviceStatusUpdate(statusTransport, statusRuntime, statusScope);
   }
 }

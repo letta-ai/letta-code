@@ -97,6 +97,51 @@ export class DeterministicPongExecutor implements HeadlessTurnExecutor {
   }
 }
 
+function isReflectionTurn(body: HeadlessTurnBody): boolean {
+  return JSON.stringify(body).includes("$TRANSCRIPT_PATH");
+}
+
+/**
+ * Deterministic test executor that keeps ordinary turns simple while making a
+ * reflection prove it opened the transcript before returning success.
+ */
+export class DeterministicReflectionExecutor implements HeadlessTurnExecutor {
+  private toolCallSeq = 0;
+
+  async execute(input: HeadlessTurnExecutorInput) {
+    if (hasApprovalResults(input.body)) {
+      return createAssistantMessageStream({
+        content: [{ type: "text", text: "reflection transcript inspected" }],
+      });
+    }
+    if (!isReflectionTurn(input.body)) {
+      return createAssistantMessageStream();
+    }
+
+    this.toolCallSeq += 1;
+    const toolCallId = `tool-call-reflection-read-${this.toolCallSeq}`;
+    return createStream([
+      {
+        message_type: "approval_request_message",
+        tool_call: {
+          tool_call_id: toolCallId,
+          name: "Bash",
+          arguments: JSON.stringify({
+            command:
+              "bun -e \"const fs=require('fs');const p=process.env.TRANSCRIPT_PATH;if(!p)throw new Error('TRANSCRIPT_PATH missing');process.stdout.write(fs.readFileSync(p,'utf8'))\"",
+            description: "Read the reflection transcript payload",
+            login: false,
+          }),
+        },
+      } as LettaStreamingResponse,
+      {
+        message_type: "stop_reason",
+        stop_reason: "requires_approval",
+      } as LettaStreamingResponse,
+    ]);
+  }
+}
+
 export class DeterministicToolCallExecutor implements HeadlessTurnExecutor {
   private toolCallSeq = 0;
 

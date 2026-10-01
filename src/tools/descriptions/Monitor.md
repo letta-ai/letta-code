@@ -10,18 +10,10 @@ Your script's stdout is the event stream. Each line becomes a notification. Exit
   tail -f /var/log/app.log | grep --line-buffered "ERROR"
   # Each file change is an event
   inotifywait -m --format '%e %f' /watched/dir
-  # Poll GitHub for new PR comments and emit one line per new comment
-  last=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    gh api "repos/owner/repo/issues/123/comments?since=$last" --jq '.[] | "\(.user.login): \(.body)"'
-    last=$now; sleep 30
   # Node script that emits events as they arrive (e.g. WebSocket listener)
   node watch-for-events.js
-  # Per-occurrence with a natural end: emit each CI check as it lands, exit when the run completes
-    s=$(gh pr checks 123 --json name,bucket)
-    cur=$(jq -r '.[] | select(.bucket!="pending") | "\(.name): \(.bucket)"' <<<"$s" | sort)
-    comm -13 <(echo "$prev") <(echo "$cur")
-    jq -e 'all(.bucket!="pending")' <<<"$s" >/dev/null && break
+
+For open github.com pull requests, use WatchPR instead. It covers the whole PR surface and keeps watching after CI finishes. Use Monitor only when WatchPR does not apply.
 
 **Don't use an unbounded command for a single notification.** `tail -f`, `inotifywait -m`, and `while true` never exit on their own, so the monitor stays armed until timeout even after the event has fired. For "tell me when X is ready," use Bash `run_in_background` with an `until` loop instead (one notification, ends in seconds). Note that `tail -f log | grep -m 1 ...` does *not* fix this: if the log goes quiet after the match, `tail` never receives SIGPIPE and the pipeline hangs anyway.
 
@@ -43,7 +35,7 @@ For poll loops checking job state, emit on every terminal status (`succeeded|fai
 
 Stdout lines within 200ms are batched into a single notification, so multiline output from a single event groups naturally.
 
-The script runs in the same shell environment as Bash. Exit ends the watch (exit code is reported). Timeout → killed. Set `persistent: true` for session-length watches (PR monitoring, log tails) — the monitor runs until you call TaskStop or the session ends. Use TaskStop to cancel early.
+The script runs in the same shell environment as Bash. Exit ends the watch (exit code is reported). Timeout → killed. Set `persistent: true` for session-length watches (log tails, long-lived event streams) — the monitor runs until you call TaskStop or the session ends. Use TaskStop to cancel early.
 
 **ws source** — open a WebSocket and stream each incoming text frame as an event. No shell, no polling: the server pushes, you get notified.
     ws: {url: 'wss://events.example.com/stream', protocols: ['v1']},

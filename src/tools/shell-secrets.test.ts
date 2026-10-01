@@ -1,8 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { bash } from "@/tools/impl/bash";
-import { run_shell_command } from "@/tools/impl/run-shell-command-gemini";
-import { shell_command } from "@/tools/impl/shell-command.js";
 import {
   buildPowerShellCommand,
   POWERSHELL_UTF8_OUTPUT_PREFIX,
@@ -19,8 +17,8 @@ import {
   scrubSecretsFromString,
 } from "@/tools/secret-substitution";
 import {
+  __testSeedSecretsCache,
   clearSecretsCache,
-  initSecretsFromServer,
 } from "@/utils/secrets-store";
 
 const TEST_AGENT_ID = "agent-shell-secrets";
@@ -43,13 +41,8 @@ const secretEnv = {
   TOKEN: seededSecrets.TOKEN,
 };
 
-async function seedSecrets(): Promise<void> {
-  await initSecretsFromServer(TEST_AGENT_ID, {
-    secrets: Object.entries(seededSecrets).map(([key, value]) => ({
-      key,
-      value,
-    })),
-  });
+function seedSecrets(): void {
+  __testSeedSecretsCache(TEST_AGENT_ID, seededSecrets);
 }
 
 function literalSecretCommand(): string {
@@ -62,6 +55,19 @@ function expectLiteralSecrets(output: string): void {
   expect(output).toContain("he$$o");
   expect(output).toContain("`whoami`");
   expect(output).toContain("$foo$bar");
+}
+
+async function waitForFileContent(
+  filePath: string,
+  predicate: (content: string) => boolean,
+): Promise<string> {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    const content = readFileSync(filePath, "utf8");
+    if (predicate(content)) return content;
+    await Bun.sleep(10);
+  }
+  throw new Error(`Timed out waiting for background output in ${filePath}`);
 }
 
 function toolReturnText(toolReturn: ToolReturnContent): string {
@@ -143,24 +149,6 @@ describe("shell secret execution", () => {
     expectLiteralSecrets(result.content[0]?.text ?? "");
   });
 
-  test("shell_command expands injected secret env values literally", async () => {
-    const result = await shell_command({
-      command: literalSecretCommand(),
-      secretEnv,
-    });
-
-    expectLiteralSecrets(result.output);
-  });
-
-  test("run_shell_command expands injected secret env values literally", async () => {
-    const result = await run_shell_command({
-      command: literalSecretCommand(),
-      secretEnv,
-    });
-
-    expectLiteralSecrets(result.message);
-  });
-
   test("does not scrub an unused low-entropy secret", async () => {
     await seedSecrets();
     const context = await prepareToolExecutionContextForSpecificTools(
@@ -196,7 +184,7 @@ describe("shell secret execution", () => {
   test("keeps background output scoped to the launch secrets", async () => {
     await seedSecrets();
     const context = await prepareToolExecutionContextForSpecificTools(
-      ["Bash", "TaskOutput"],
+      ["Bash"],
       {
         runtimeContext: {
           agentId: TEST_AGENT_ID,
@@ -225,17 +213,11 @@ describe("shell secret execution", () => {
       expect(taskId).toBeString();
       expect(outputFile).toBeString();
 
-      const completed = await executeTool(
-        "TaskOutput",
-        { task_id: taskId, block: true, timeout: 5000 },
-        { toolContextId: context.contextId },
+      const output = await waitForFileContent(outputFile as string, (content) =>
+        content.includes("PASSWORD=<REDACTED>"),
       );
-      const output = toolReturnText(completed.toolReturn);
       expect(output).toContain("PASSWORD=<REDACTED>");
       expect(output).not.toContain(seededSecrets.PASSWORD);
-      expect(readFileSync(outputFile as string, "utf8")).not.toContain(
-        seededSecrets.PASSWORD,
-      );
     } finally {
       releaseToolExecutionContext(context.contextId);
       runtimeScript.cleanup();
@@ -246,7 +228,7 @@ describe("shell secret execution", () => {
     await seedSecrets();
     const command = literalSecretCommand();
     const context = await prepareToolExecutionContextForSpecificTools(
-      ["Bash", "shell_command", "ShellCommand", "run_shell_command"],
+      ["Bash"],
       {
         runtimeContext: {
           agentId: TEST_AGENT_ID,
@@ -259,9 +241,6 @@ describe("shell secret execution", () => {
     try {
       const calls = [
         ["Bash", { command, description: "Test shell secrets" }],
-        ["shell_command", { command, description: "Test shell secrets" }],
-        ["ShellCommand", { command, description: "Test shell secrets" }],
-        ["run_shell_command", { command, description: "Test shell secrets" }],
       ] as const;
 
       for (const [toolName, args] of calls) {

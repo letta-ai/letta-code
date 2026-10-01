@@ -108,7 +108,7 @@ function terminateStalledTransport(
     state.pollTimer = null;
   }
   recordOutboundQueuePerf("queue:killed", 1);
-  console.error(`[Listen Wire] Terminating stalled transport (${reason})`);
+  debugWarn("Listen Wire", `Terminating stalled transport (${reason})`);
   if (getListenerTransportKind(transport) === "websocket") {
     const ws = transport as { terminate?: () => void; close?: () => void };
     try {
@@ -136,11 +136,9 @@ export function enqueueOutboundFrame(
       (f) => f.frameClass === "status" && f.coalesceKey === frame.coalesceKey,
     );
     if (index !== -1) {
-      // Snapshot semantics: replace in place so queue position (and fairness
-      // relative to other frames) is preserved.
-      state.frames[index] = frame;
-      drainOutboundQueue(transport, state);
-      return;
+      // Keep the latest snapshot after critical frames it was emitted after.
+      // Replacing an earlier queue slot could put idle before a terminal error.
+      state.frames.splice(index, 1);
     }
   }
 

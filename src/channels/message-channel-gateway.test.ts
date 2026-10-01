@@ -13,6 +13,44 @@ function createSlackActions() {
 }
 
 describe("external MessageChannel gateway boundary", () => {
+  test("discovers Slack custom emoji through a host-owned transport", async () => {
+    const listCustomEmojis = mock(async () => ["blob_wave", "party_parrot"]);
+    const actions = createSlackMessageActionAdapter({
+      react: true,
+      listCustomEmojis: true,
+    });
+    const result = await actions.handleAction({
+      request: {
+        action: "list-custom-emojis",
+        channel: "slack",
+        chatId: "C123",
+      },
+      route: {
+        accountId: "generated-app-1",
+        chatId: "C123",
+        chatType: "channel",
+        threadId: null,
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+      adapter: {
+        sendMessage: async () => ({ messageId: "unused" }),
+        listCustomEmojis,
+      },
+      formatText: (text) => ({ text }),
+    });
+
+    expect(actions.describeMessageTool({}).actions).toEqual([
+      "send",
+      "react",
+      "list-custom-emojis",
+    ]);
+    expect(result).toBe(
+      "Available custom Slack emoji (2): :blob_wave:, :party_parrot:",
+    );
+    expect(listCustomEmojis).toHaveBeenCalledTimes(1);
+  });
+
   test("builds the canonical scoped tool from host-supported Slack actions", () => {
     const definition = buildMessageChannelExternalToolDefinition({
       scoped: true,

@@ -5,11 +5,11 @@ import type {
   ApprovalDecision,
   ApprovalResult,
 } from "@/agent/approval-execution";
+import type { AttributedMessageCreate } from "@/agent/message-attribution";
 import type { SkillSource } from "@/agent/skill-sources";
 import type { ContextTracker } from "@/cli/helpers/context-tracker";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import type { ModAdapter } from "@/mods/mod-adapter";
-import type { ApprovalContext } from "@/permissions/analyzer";
 import type {
   DequeuedBatch,
   QueueBlockedReason,
@@ -18,6 +18,7 @@ import type {
 } from "@/queue/queue-runtime";
 import type { SharedReminderState } from "@/reminders/state";
 import type { RuntimeWorkspaceSandbox } from "@/runtime-context";
+import type { RuntimeExecutionSettings } from "@/runtime-execution-settings";
 import type { ToolsetName, ToolsetPreference } from "@/tools/toolset";
 import type {
   ApprovalResponseBody,
@@ -68,6 +69,17 @@ export interface StartListenerOptions {
   ) => void;
 }
 
+/** Options a `sync` command carries into the listener's state replay. */
+export type SyncReplayOptions = {
+  /** `SyncCommand.recover_approvals`: consult the backend for stale approvals. */
+  recoverApprovals?: boolean;
+  /** `SyncCommand.resume_interrupted_turn`: owner-only immediate continuation. */
+  resumeInterruptedTurn?: boolean;
+  forceDeviceStatus?: boolean;
+  onStatusChange?: StartListenerOptions["onStatusChange"];
+  connectionId?: string;
+};
+
 export interface IncomingMessage {
   type: "message";
   /**
@@ -94,11 +106,13 @@ export interface IncomingMessage {
   imageFailureMode?: "strict" | "drop";
   clientToolAllowlist?: string[];
   clientToolset?: ClientToolsetConfig;
+  clientPreferences?: import("@/types/client-preferences").ClientPreferences;
   externalToolScopeIds?: string[];
   /** Exclude interactive user-input tools (AskUserQuestion) from this turn's toolset. */
   excludeInteractiveTools?: boolean;
+  responseFormat?: Record<string, unknown>;
   messages: Array<
-    (MessageCreate & { client_message_id?: string }) | ApprovalCreate
+    (AttributedMessageCreate & { client_message_id?: string }) | ApprovalCreate
   >;
   /**
    * Cloud user id of the human who actually pressed "send", forwarded
@@ -184,18 +198,9 @@ export type PendingApprovalResolver = {
   controlRequest?: ControlRequest;
 };
 
-export type RecoveredPendingApproval = {
-  approval: ApprovalRequest;
-  controlRequest: ControlRequest;
-  approvalContext: ApprovalContext | null;
-};
-
 export type RecoveredApprovalState = {
   agentId: string;
   conversationId: string;
-  approvalsByRequestId: Map<string, RecoveredPendingApproval>;
-  pendingRequestIds: Set<string>;
-  responsesByRequestId: Map<string, ApprovalResponseBody>;
   autoDecisions?: ApprovalDecision[];
   allApprovals?: ApprovalRequest[];
 };
@@ -209,6 +214,7 @@ export type ConversationRuntime = {
   skillSources: SkillSource[] | undefined;
   /** Explicit runtime filesystem boundary for shared app-server sessions. */
   workspaceSandbox: RuntimeWorkspaceSandbox | undefined;
+  executionSettings?: RuntimeExecutionSettings;
   /** Connection currently executing this conversation's turn, if client-owned. */
   activeConnectionId: ListenerConnectionId | null;
   turnLifecycle: TurnLifecycle;
@@ -217,6 +223,13 @@ export type ConversationRuntime = {
   acceptedInputDispositions: Map<string, "started" | "queued">;
   pendingApprovalResolvers: Map<string, PendingApprovalResolver>;
   recoveredApprovalState: RecoveredApprovalState | null;
+  /**
+   * Teleport whose `teleport_continue` this scope is waiting for, set by the
+   * cloud's destination `runtime_start`. While it is set (and not expired),
+   * sync recovery leaves the source's pending approvals to the continuation.
+   */
+  expectedTeleportId: string | null;
+  expectedTeleportExpiresAt: number | null;
   readonly lastStopReason: StopReasonType | null;
   lastTerminalLoopErrorMessage: string | null;
   lastTerminalLoopErrorRunId: string | null;
@@ -339,6 +352,10 @@ export type ListenerRuntime = {
   processServicesStarted: boolean;
   /** Invalidates process-service attempts that outlive an outbound connection. */
   processServicesGeneration: number;
+  /** Invalidates detached external-tool notifications after an authoritative reset. */
+  externalToolNotificationEpochByConversation: Map<string, number>;
+  /** Holds detached completions while a conversation reset may still fail. */
+  externalToolNotificationBarrierByConversation: Map<string, Promise<void>>;
   /** Coalesces concurrent connection attempts while process services initialize. */
   processServicesReady: Promise<void> | null;
   /** Generation owned by processServicesReady, or null when no attempt is active. */

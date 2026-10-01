@@ -1,13 +1,25 @@
-import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import {
+  type AttributedMessageCreate,
+  withMessageAttribution,
+} from "@/agent/message-attribution";
 import type {
   DequeuedBatch,
   QueueBlockedReason,
   QueueItem,
 } from "@/queue/queue-runtime";
 import { isCoalescable } from "@/queue/queue-runtime";
-import { mergeQueuedTurnInput } from "@/queue/turn-queue-runtime";
+import { buildTaskNotificationContent } from "@/queue/turn-queue-runtime";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
+import {
+  getStoredClientPreferences,
+  normalizeClientPreferences,
+} from "@/tools/client-preferences";
+import { debugWarn } from "@/utils/debug";
 import { getListenerBlockedReason } from "@/websocket/helpers/listener-queue-adapter";
+import {
+  getOrCreateProcessTransport,
+  getSubscribedListenerConnections,
+} from "./connection";
 import { getInboundImageFailureMode } from "./image-policy";
 import { getInboundClientMessageIds } from "./inbound-queue";
 import {
@@ -66,153 +78,68 @@ function hasSameQueueScope(a: QueueItem, b: QueueItem): boolean {
   );
 }
 
-function mergeDequeuedBatchContent(
-  items: QueueItem[],
-): MessageCreate["content"] | null {
-  const queuedInputs: Array<
-    | { kind: "user"; content: MessageCreate["content"] }
-    | {
-        kind: "task_notification";
-        text: string;
-      }
-    | {
-        kind: "cron_prompt";
-        text: string;
-      }
-  > = [];
-
-  for (const item of items) {
-    if (item.kind === "message") {
-      queuedInputs.push({
-        kind: "user",
-        content: item.content,
-      });
-      continue;
-    }
-    if (item.kind === "task_notification") {
-      queuedInputs.push({
-        kind: "task_notification",
-        text: item.text,
-      });
-      continue;
-    }
-    if (item.kind === "cron_prompt") {
-      queuedInputs.push({
-        kind: "cron_prompt",
-        text: item.text,
-      });
-      continue;
-    }
-    if (item.kind === "mod_continue") {
-      // A continue is plain user text — merge it as user content.
-      queuedInputs.push({
-        kind: "user",
-        content: item.text,
-      });
-    }
+function getBatchActingUserId(items: QueueItem[]): string | undefined {
+  const actingUserId = items[0]?.actingUserId;
+  if (
+    !actingUserId ||
+    items.some((item) => item.actingUserId !== actingUserId)
+  ) {
+    return undefined;
   }
-
-  return mergeQueuedTurnInput(queuedInputs, {
-    normalizeUserContent: (content) => content,
-  });
-}
-
-function getPrimaryQueueMessageItem(items: QueueItem[]): QueueItem | null {
-  for (const item of items) {
-    if (item.kind === "message") {
-      return item;
-    }
-  }
-  return null;
-}
-
-/**
- * Picks an acting cloud user id to attribute the outbound
- * createMessage to. When a batch coalesces messages from multiple
- * users we use the **last enqueued** sender — matches user intuition
- * ("whoever just hit send pays") and matches the seq order the queue
- * already preserves. Returns undefined when no item in the batch
- * carries an actingUserId (self-hosted / pre-channel-split flow).
- */
-export function pickBatchActingUserId(items: QueueItem[]): string | undefined {
-  for (let i = items.length - 1; i >= 0; i -= 1) {
-    const actingUserId = items[i]?.actingUserId;
-    if (actingUserId) {
-      return actingUserId;
-    }
-  }
-  return undefined;
+  return actingUserId;
 }
 
 function buildQueuedTurnMessage(
   runtime: ConversationRuntime,
   batch: DequeuedBatch,
 ): IncomingMessage | null {
-  const actingUserId = pickBatchActingUserId(batch.items);
-  const primaryItem = getPrimaryQueueMessageItem(batch.items);
-  if (!primaryItem) {
-    // No user message in the batch — this is a notification-only batch.
-    // Build a synthetic IncomingMessage to restart the agent loop.
-    for (const item of batch.items) {
-      runtime.queuedMessagesByItemId.delete(item.id);
-    }
-
-    const mergedContent = mergeDequeuedBatchContent(batch.items);
-    if (mergedContent === null) {
-      return null;
-    }
-
-    // Determine scope from the batch items (they all share the same scope)
-    const scopeItem = batch.items[0];
-    return {
-      type: "message",
-      agentId: scopeItem?.agentId ?? runtime.agentId ?? undefined,
-      conversationId: scopeItem?.conversationId ?? runtime.conversationId,
-      ...(actingUserId ? { actingUserId } : {}),
-      messages: [
-        {
-          role: "user",
-          content: mergedContent,
-          otid: crypto.randomUUID(),
-        } satisfies MessageCreate,
-      ],
-    };
-  }
-
-  const template = runtime.queuedMessagesByItemId.get(primaryItem.id);
+  let template: IncomingMessage | undefined;
+  const messages: IncomingMessage["messages"] = [];
   for (const item of batch.items) {
+    const incoming = runtime.queuedMessagesByItemId.get(item.id);
+    if (item.kind === "message" && incoming) {
+      template ??= {
+        ...incoming,
+        actingUserId: incoming.actingUserId ?? item.actingUserId,
+      };
+      messages.push(
+        ...incoming.messages.map((message) =>
+          "content" in message
+            ? withMessageAttribution(
+                message,
+                item.actingUserId ?? incoming.actingUserId,
+              )
+            : message,
+        ),
+      );
+    } else if (item.kind === "message") {
+      messages.push(
+        withMessageAttribution(
+          { role: "user", content: item.content },
+          item.actingUserId,
+        ),
+      );
+    } else if (isCoalescable(item.kind) && "text" in item) {
+      messages.push({
+        role: "user",
+        content:
+          item.kind === "task_notification"
+            ? buildTaskNotificationContent(item)
+            : item.text,
+        otid: crypto.randomUUID(),
+        attribution: {},
+      } satisfies AttributedMessageCreate);
+    }
     runtime.queuedMessagesByItemId.delete(item.id);
   }
-  if (!template) {
-    return null;
-  }
-
-  const mergedContent = mergeDequeuedBatchContent(batch.items);
-  if (mergedContent === null) {
-    return null;
-  }
-
-  const firstMessageIndex = template.messages.findIndex(
-    (payload): payload is MessageCreate & { client_message_id?: string } =>
-      "content" in payload,
-  );
-  if (firstMessageIndex === -1) {
-    return null;
-  }
-
-  const firstMessage = template.messages[firstMessageIndex] as MessageCreate & {
-    client_message_id?: string;
-  };
-  const mergedFirstMessage = {
-    ...firstMessage,
-    content: mergedContent,
-  };
-  const messages = template.messages.slice();
-  messages[firstMessageIndex] = mergedFirstMessage;
-
+  if (messages.length === 0) return null;
+  const scopeItem = batch.items[0];
   return {
+    type: "message",
+    agentId: scopeItem?.agentId ?? runtime.agentId ?? undefined,
+    conversationId: scopeItem?.conversationId ?? runtime.conversationId,
     ...template,
-    ...(actingUserId ? { actingUserId } : {}),
+    actingUserId: template?.actingUserId ?? getBatchActingUserId(batch.items),
     messages,
   };
 }
@@ -285,7 +212,7 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
   dequeuedBatch: DequeuedBatch;
   queuedTurn: IncomingMessage;
 } | null {
-  const queuedItems = runtime.queueRuntime.peek();
+  const queuedItems = runtime.queueRuntime.peekReady();
   const firstQueuedItem = queuedItems[0];
   if (!firstQueuedItem || !isCoalescable(firstQueuedItem.kind)) {
     return null;
@@ -298,6 +225,9 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
   let hasModContinue = false;
   let batchConnectionId: string | undefined;
   let batchImageFailureMode: "strict" | "drop" | null = null;
+  let batchPreferences = JSON.stringify(
+    getStoredClientPreferences(runtime.agentId, runtime.conversationId),
+  );
   const isNoCoalesce = (candidate: (typeof queuedItems)[number]): boolean =>
     candidate.kind === "message" && candidate.noCoalesce === true;
   for (const item of queuedItems) {
@@ -306,6 +236,19 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
       !hasSameQueueScope(firstQueuedItem, item)
     ) {
       break;
+    }
+    const incoming = runtime.queuedMessagesByItemId.get(item.id);
+    if (incoming?.clientPreferences !== undefined) {
+      const preferences = JSON.stringify(
+        normalizeClientPreferences(incoming.clientPreferences),
+      );
+      // A changed selection starts a new turn; identical UI snapshots can steer it.
+      if (
+        preferences !== batchPreferences &&
+        (queueLen > 0 || runtime.turnLifecycle.kind !== "idle")
+      )
+        break;
+      batchPreferences = preferences;
     }
     // noCoalesce items run as single-item batches: one never joins an
     // existing batch, and nothing joins a batch it started.
@@ -424,6 +367,45 @@ function emitTurnBoundaryStatus(
   emitLoopStatusUpdate(socket, runtime, scope);
 }
 
+function resolveQueuePumpTransport(
+  runtime: ConversationRuntime,
+  socket: ListenerTransport,
+): ListenerTransport | null {
+  // A scheduled pump may outlive the socket that accepted its input. Route
+  // through the process transport once connections are tracked so a reconnect
+  // can replace the writer without replacing the queue's single pump.
+  if (
+    runtime.listener.connections.size > 0 ||
+    runtime.listener.processTransport !== null
+  ) {
+    const transport = getOrCreateProcessTransport(runtime.listener);
+    if (!isListenerTransportOpen(transport)) return null;
+    // ProcessRuntimeTransport.isOpen() only means *some* connection is open.
+    // Queued input for this scope must have a live recipient before dequeue;
+    // otherwise its user echo and status are silently dropped. Local channel
+    // listeners intentionally execute without a remote subscriber.
+    const localConnection = [...runtime.listener.connections.values()].some(
+      (connection) =>
+        connection.initialized &&
+        "kind" in connection.writer &&
+        connection.writer.kind === "local" &&
+        isListenerTransportOpen(connection.writer),
+    );
+    if (
+      !localConnection &&
+      getSubscribedListenerConnections(runtime.listener, {
+        agent_id: runtime.agentId,
+        conversation_id: runtime.conversationId,
+      }).length === 0
+    ) {
+      return null;
+    }
+    return transport;
+  }
+  // Untracked test/legacy transports have no process connection to follow.
+  return isListenerTransportOpen(socket) ? socket : null;
+}
+
 async function drainQueuedMessages(
   runtime: ConversationRuntime,
   socket: ListenerTransport,
@@ -447,9 +429,23 @@ async function drainQueuedMessages(
         return;
       }
 
+      // Do not consume a batch without a live delivery path. On reconnect,
+      // the next iteration picks up the replacement writer automatically.
+      const turnTransport = resolveQueuePumpTransport(runtime, socket);
+      if (!turnTransport) return;
+
       const blockedReason = computeListenerQueueBlockedReason(runtime);
       if (blockedReason) {
         runtime.queueRuntime.tryDequeue(blockedReason);
+        return;
+      }
+
+      if (runtime.queueRuntime.readyLength === 0) {
+        // Only interrupt-parked user messages remain: report it once and wait
+        // for resume_queue or the next inbound message.
+        if (runtime.queueRuntime.length > 0) {
+          runtime.queueRuntime.tryDequeue("paused_by_user");
+        }
         return;
       }
 
@@ -459,9 +455,14 @@ async function drainQueuedMessages(
       }
 
       const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
-      emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
+      emitDequeuedUserMessage(
+        turnTransport,
+        runtime,
+        queuedTurn,
+        dequeuedBatch,
+      );
       // Turn start boundary: unconditional snapshot even when nothing changed.
-      emitTurnBoundaryStatus(runtime, socket);
+      emitTurnBoundaryStatus(runtime, turnTransport);
 
       const preTurnStatus =
         getListenerStatus(runtime.listener) === "processing"
@@ -482,7 +483,8 @@ async function drainQueuedMessages(
       );
       // Turn end boundary: repair any queue/loop frame the turn's own
       // change-driven emissions failed to deliver.
-      emitTurnBoundaryStatus(runtime, socket);
+      const endTransport = resolveQueuePumpTransport(runtime, socket);
+      if (endTransport) emitTurnBoundaryStatus(runtime, endTransport);
       evictConversationRuntimeIfIdle(runtime);
     }
   } finally {
@@ -509,8 +511,7 @@ export function scheduleQueuePump(
       runtime.queuePumpScheduled = false;
       if (
         runtime.listener !== getActiveRuntime() ||
-        runtime.listener.intentionallyClosed ||
-        !isListenerTransportOpen(socket)
+        runtime.listener.intentionallyClosed
       ) {
         return;
       }
@@ -523,7 +524,7 @@ export function scheduleQueuePump(
         error,
         context: "listener_queue_pump",
       });
-      console.error("[Listen] Error in queue pump:", error);
+      debugWarn("Listen", "Error in queue pump:", error);
       emitListenerStatus(
         runtime.listener,
         opts.onStatusChange,

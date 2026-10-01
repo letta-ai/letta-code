@@ -6,9 +6,12 @@ import {
   getCronRunLogPath,
   getTask as getCronTask,
   listTasks as listCronTasks,
+  pauseTask as pauseCronTask,
   readCronRunLogEntriesPage,
+  resumeTask as resumeCronTask,
   updateTask as updateCronTask,
 } from "@/cron";
+import { isManagedCloudSandbox } from "@/cron/runner";
 import { runCronTaskNow } from "@/cron/scheduler";
 import type {
   CronAddCommand,
@@ -16,10 +19,17 @@ import type {
   CronDeleteCommand,
   CronGetCommand,
   CronListCommand,
+  CronPauseCommand,
+  CronResumeCommand,
   CronRunsCommand,
   CronTriggerCommand,
   CronUpdateCommand,
 } from "@/types/protocol_v2";
+import {
+  isCronPauseCommand,
+  isCronResumeCommand,
+  isCronTriggerCommand,
+} from "@/websocket/listener/cron-protocol-inbound";
 import {
   isCronAddCommand,
   isCronDeleteAllCommand,
@@ -27,7 +37,6 @@ import {
   isCronGetCommand,
   isCronListCommand,
   isCronRunsCommand,
-  isCronTriggerCommand,
   isCronUpdateCommand,
 } from "@/websocket/listener/protocol-inbound";
 import type { RunDetachedListenerTask, SafeSocketSend } from "./types";
@@ -38,6 +47,8 @@ export type CronCommand =
   | CronGetCommand
   | CronRunsCommand
   | CronTriggerCommand
+  | CronPauseCommand
+  | CronResumeCommand
   | CronUpdateCommand
   | CronDeleteCommand
   | CronDeleteAllCommand;
@@ -109,6 +120,11 @@ export async function handleCronCommand(
 
   if (parsed.type === "cron_add") {
     try {
+      if (isManagedCloudSandbox()) {
+        throw new Error(
+          "Local schedules cannot be created in a managed Cloud sandbox",
+        );
+      }
       const scheduledFor = parsed.scheduled_for
         ? new Date(parsed.scheduled_for)
         : undefined;
@@ -257,6 +273,67 @@ export async function handleCronCommand(
           success: false,
           found: false,
           error: err instanceof Error ? err.message : "Failed to trigger cron",
+        },
+        "listener_cron_send_failed",
+        "listener_cron_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "cron_pause" || parsed.type === "cron_resume") {
+    const responseType =
+      parsed.type === "cron_pause"
+        ? ("cron_pause_response" as const)
+        : ("cron_resume_response" as const);
+    try {
+      if (parsed.type === "cron_resume" && isManagedCloudSandbox()) {
+        throw new Error(
+          "Local schedules cannot be resumed in a managed Cloud sandbox",
+        );
+      }
+      let scheduledFor: Date | undefined;
+      if (parsed.type === "cron_resume" && parsed.scheduled_for !== undefined) {
+        scheduledFor = new Date(parsed.scheduled_for);
+        if (Number.isNaN(scheduledFor.getTime())) {
+          throw new Error("Invalid scheduled_for timestamp");
+        }
+      }
+      const result =
+        parsed.type === "cron_pause"
+          ? pauseCronTask(parsed.task_id)
+          : resumeCronTask(parsed.task_id, scheduledFor);
+      safeSocketSend(
+        socket,
+        {
+          type: responseType,
+          request_id: parsed.request_id,
+          success: result.success,
+          found: result.found,
+          ...(result.task ? { task: result.task } : {}),
+          ...(result.error ? { error: result.error } : {}),
+        },
+        "listener_cron_send_failed",
+        "listener_cron_command",
+      );
+      if (result.success && result.task) {
+        emitCronsUpdated(socket, safeSocketSend, {
+          agent_id: result.task.agent_id,
+          conversation_id: result.task.conversation_id,
+        });
+      }
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: responseType,
+          request_id: parsed.request_id,
+          success: false,
+          found: getCronTask(parsed.task_id) !== null,
+          error:
+            err instanceof Error
+              ? err.message
+              : `Failed to ${parsed.type === "cron_pause" ? "pause" : "resume"} cron`,
         },
         "listener_cron_send_failed",
         "listener_cron_command",
@@ -414,6 +491,8 @@ export function handleCronProtocolCommand(
     isCronGetCommand(parsed) ||
     isCronRunsCommand(parsed) ||
     isCronTriggerCommand(parsed) ||
+    isCronPauseCommand(parsed) ||
+    isCronResumeCommand(parsed) ||
     isCronUpdateCommand(parsed) ||
     isCronDeleteCommand(parsed) ||
     isCronDeleteAllCommand(parsed)

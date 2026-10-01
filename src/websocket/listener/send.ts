@@ -20,6 +20,7 @@ import {
 import { type ConversationMessageStreamBody, getBackend } from "@/backend";
 import { getRetryStatusMessage } from "@/cli/helpers/error-formatter";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
+import { shouldEmitRetryNotice } from "@/utils/cloud-api-shutdown";
 import { createStreamAbortRelay } from "@/utils/stream-abort-relay";
 import {
   rememberPendingApprovalBatchIds,
@@ -406,7 +407,6 @@ export async function resolveStaleApprovals(
           otid: crypto.randomUUID(),
         },
       ]);
-      let continuationActingUserId: string | undefined;
       let recoveryTurnCorrelation: TurnCorrelation | undefined;
       const consumedQueuedTurn = consumeQueuedTurn(runtime);
       if (consumedQueuedTurn) {
@@ -416,7 +416,6 @@ export async function resolveStaleApprovals(
           queuedTurn,
           dequeuedBatch.batchId,
         );
-        continuationActingUserId = queuedTurn.actingUserId;
         continuationInput = appendQueuedTurnToInput(
           continuationInput,
           queuedTurn,
@@ -440,9 +439,6 @@ export async function resolveStaleApprovals(
           agentId: runtime.agentId ?? undefined,
           streamTokens: true,
           background: true,
-          ...(continuationActingUserId
-            ? { actingUserId: continuationActingUserId }
-            : {}),
           workingDirectory: recoveryWorkingDirectory,
           preparedToolContext: preparedToolContext.preparedToolContext,
           ...(continuationInput.imageFailureModesByMessageOtid
@@ -609,7 +605,7 @@ export async function sendMessageStreamWithRetry(
         });
 
         const retryMessage = getRetryStatusMessage(errorDetail);
-        if (retryMessage) {
+        if (retryMessage && shouldEmitRetryNotice(preStreamError)) {
           emitRetryDelta(socket, runtime, {
             message: retryMessage,
             reason: "error",
@@ -810,7 +806,7 @@ export async function sendApprovalContinuationWithRetry(
         });
 
         const retryMessage = getRetryStatusMessage(errorDetail);
-        if (retryMessage) {
+        if (retryMessage && shouldEmitRetryNotice(preStreamError)) {
           emitRetryDelta(socket, runtime, {
             message: retryMessage,
             reason: "error",

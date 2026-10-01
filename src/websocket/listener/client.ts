@@ -61,7 +61,6 @@ import {
 } from "./interrupts";
 import {
   createRuntime,
-  replaySyncStateForRuntime,
   runDetachedListenerTask,
   safeSocketSend,
   startConnectedListenerRuntime,
@@ -94,6 +93,7 @@ import {
   markAwaitingAcceptedApprovalContinuationRunId,
   resolveStaleApprovals,
 } from "./send";
+import { replaySyncStateForRuntime } from "./sync-replay";
 import { handleIncomingMessage } from "./turn";
 import type {
   ConversationRuntime,
@@ -129,6 +129,8 @@ function createLegacyTestRuntime(): ConversationRuntime & {
   processTransport: ListenerRuntime["processTransport"];
   processServicesStarted: boolean;
   processServicesGeneration: number;
+  externalToolNotificationEpochByConversation: ListenerRuntime["externalToolNotificationEpochByConversation"];
+  externalToolNotificationBarrierByConversation: ListenerRuntime["externalToolNotificationBarrierByConversation"];
   processServicesReady: Promise<void> | null;
   processServicesReadyGeneration: number | null;
   serviceCommandHandler: ListenerRuntime["serviceCommandHandler"];
@@ -181,6 +183,8 @@ function createLegacyTestRuntime(): ConversationRuntime & {
     processTransport: ListenerRuntime["processTransport"];
     processServicesStarted: boolean;
     processServicesGeneration: number;
+    externalToolNotificationEpochByConversation: ListenerRuntime["externalToolNotificationEpochByConversation"];
+    externalToolNotificationBarrierByConversation: ListenerRuntime["externalToolNotificationBarrierByConversation"];
     processServicesReady: Promise<void> | null;
     processServicesReadyGeneration: number | null;
     serviceCommandHandler: ListenerRuntime["serviceCommandHandler"];
@@ -324,6 +328,22 @@ function createLegacyTestRuntime(): ConversationRuntime & {
       get: () => listener.processServicesGeneration,
       set: (value: number) => {
         listener.processServicesGeneration = value;
+      },
+    },
+    externalToolNotificationEpochByConversation: {
+      get: () => listener.externalToolNotificationEpochByConversation,
+      set: (
+        value: ListenerRuntime["externalToolNotificationEpochByConversation"],
+      ) => {
+        listener.externalToolNotificationEpochByConversation = value;
+      },
+    },
+    externalToolNotificationBarrierByConversation: {
+      get: () => listener.externalToolNotificationBarrierByConversation,
+      set: (
+        value: ListenerRuntime["externalToolNotificationBarrierByConversation"],
+      ) => {
+        listener.externalToolNotificationBarrierByConversation = value;
       },
     },
     processServicesReady: {
@@ -662,6 +682,7 @@ export const __listenClientTestUtils = {
     scope: { agent_id: string | null; conversation_id: string },
     opts?: {
       recoverApprovals?: boolean;
+      resumeInterruptedTurn?: boolean;
       recoverApprovalStateForSync?: (
         runtime: ConversationRuntime,
         scope: { agent_id: string | null; conversation_id: string },

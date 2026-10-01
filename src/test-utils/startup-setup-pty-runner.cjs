@@ -3,7 +3,8 @@ const os = require("node:os");
 const path = require("node:path");
 const pty = require("node-pty");
 
-const [, , cliPath, projectRoot] = process.argv;
+const [, , cliPath, projectRoot, runtime = "node", scenario = "fresh"] =
+  process.argv;
 const INK_BRACKETED_PASTE_ENABLE = "\x1b[?2004h";
 
 function sleep(ms) {
@@ -69,16 +70,26 @@ async function main() {
   );
   let terminal;
   try {
-    writeBrokenLocalTranscriptStore(homeDir);
+    if (scenario === "explicit-cloud") {
+      writeBrokenLocalTranscriptStore(homeDir);
+    } else if (scenario === "saved-cloud") {
+      fs.mkdirSync(path.join(homeDir, ".letta"), { recursive: true });
+      fs.writeFileSync(
+        path.join(homeDir, ".letta", "settings.json"),
+        JSON.stringify({ preferredBackendMode: "api" }),
+      );
+    }
 
     let output = "";
     let exited = false;
+    const executable = runtime === "bun" ? "bun" : "node";
+    const runtimeCliPath =
+      runtime === "bun" ? path.join(projectRoot, "src/index.ts") : cliPath;
     terminal = pty.spawn(
-      "node",
-      // Force API startup so the no-credentials setup menu renders. The test
-      // is about PTY raw input after terminal preflight, not explicit cloud
-      // agent handling; cloud-agent setup intentionally disables local mode.
-      [cliPath, "--backend", "api"],
+      executable,
+      scenario === "explicit-cloud"
+        ? [runtimeCliPath, "--backend", "cloud"]
+        : [runtimeCliPath],
       {
         cols: 120,
         cwd: projectRoot,
@@ -104,8 +115,10 @@ async function main() {
       await waitForOutput(
         () => output,
         (current) =>
-          globalThis.stripAnsi(current).includes("> Proceed locally (default)"),
-        "default local setup selection",
+          globalThis
+            .stripAnsi(current)
+            .includes("> Sign in with Letta (default)"),
+        "default cloud setup selection",
       ),
     );
     if (initialOutput.includes("Unsupported local transcript format")) {
@@ -121,24 +134,76 @@ async function main() {
     );
 
     const beforeInputLength = output.length;
-    terminal.write("\x1b[A");
+    terminal.write("\x1b[B");
     await waitForOutput(
       () => output,
       (current) =>
-        globalThis.stripAnsi(current).includes("> Sign in with Letta"),
-      "up-arrow selection change",
+        globalThis
+          .stripAnsi(current.slice(beforeInputLength))
+          .includes(
+            scenario === "explicit-cloud" ? "> Exit" : "> Proceed locally",
+          ),
+      "down-arrow selection change",
     );
 
     const afterInputOutput = globalThis.stripAnsi(
       output.slice(beforeInputLength),
     );
-    if (afterInputOutput.includes("^[[A")) {
+    if (afterInputOutput.includes("^[[B")) {
       throw new Error(
         `Arrow key was echoed instead of handled. Output:\n${afterInputOutput}`,
       );
     }
     if (exited) {
       throw new Error("CLI exited while setup menu should still be active");
+    }
+    if (scenario === "fresh-local") {
+      terminal.write("\r");
+      await waitForOutput(
+        () => output,
+        (current) =>
+          globalThis.stripAnsi(current).includes("Setup complete!") &&
+          JSON.parse(
+            fs.readFileSync(
+              path.join(homeDir, ".letta", "settings.json"),
+              "utf8",
+            ),
+          ).preferredBackendMode === "local",
+        "persisted local setup selection",
+      );
+      return;
+    }
+    if (scenario !== "explicit-cloud") {
+      const beforeExitSelection = output.length;
+      terminal.write("\x1b[B");
+      await waitForOutput(
+        () => output,
+        (current) =>
+          globalThis
+            .stripAnsi(current.slice(beforeExitSelection))
+            .includes("> Exit"),
+        "exit selection",
+      );
+    }
+    terminal.write("\r");
+    await waitForOutput(
+      () => output,
+      () => exited,
+      "setup cancellation",
+    );
+    const settings = JSON.parse(
+      fs.readFileSync(path.join(homeDir, ".letta", "settings.json"), "utf8"),
+    );
+    const expectedPreference =
+      scenario === "explicit-cloud"
+        ? "local"
+        : scenario === "saved-cloud"
+          ? "api"
+          : undefined;
+    if (settings.preferredBackendMode !== expectedPreference) {
+      throw new Error(
+        `Setup cancellation changed the saved backend: ${settings.preferredBackendMode}`,
+      );
     }
   } finally {
     if (terminal) {

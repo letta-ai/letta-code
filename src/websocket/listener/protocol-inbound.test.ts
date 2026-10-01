@@ -1,11 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import {
+  isCronPauseCommand,
+  isCronResumeCommand,
+} from "@/websocket/listener/cron-protocol-inbound";
+import {
   isChannelAccountCreateCommand,
   isChannelAccountUpdateCommand,
   isChannelSetConfigCommand,
+  isConnectProviderCommand,
   isUpdateModelCommand,
   parseServerMessage,
 } from "@/websocket/listener/protocol-inbound";
+import { validateResponseFormat } from "@/websocket/listener/structured-output";
 
 describe("app-server protocol hard cut", () => {
   test.each([
@@ -18,6 +24,80 @@ describe("app-server protocol hard cut", () => {
   ])("rejects legacy command %s", (type) => {
     const parsed = parseServerMessage(Buffer.from(JSON.stringify({ type })));
     expect(parsed).toBeNull();
+  });
+});
+
+describe("connect provider protocol", () => {
+  test("accepts completed ChatGPT OAuth credentials", () => {
+    expect(
+      isConnectProviderCommand({
+        type: "connect_provider",
+        request_id: "request-1",
+        target: "local",
+        provider_id: "openai-codex-oauth",
+        provider_name: "chatgpt-work",
+        fields: {},
+        oauth_config: {
+          access_token: "access-token",
+          id_token: "id-token",
+          refresh_token: "refresh-token",
+          account_id: "account-id",
+          expires_at: 1_800_000_000_000,
+        },
+      }),
+    ).toBe(true);
+  });
+
+  test("rejects incomplete ChatGPT OAuth credentials", () => {
+    expect(
+      isConnectProviderCommand({
+        type: "connect_provider",
+        request_id: "request-1",
+        target: "local",
+        provider_id: "openai-codex-oauth",
+        fields: {},
+        oauth_config: {
+          access_token: "access-token",
+          id_token: "id-token",
+          expires_at: 1_800_000_000_000,
+        },
+      }),
+    ).toBe(false);
+  });
+
+  test("accepts subscription OAuth tokens from a client-run device login", () => {
+    expect(
+      isConnectProviderCommand({
+        type: "connect_provider",
+        request_id: "request-1",
+        target: "local",
+        provider_id: "xai",
+        fields: {},
+        oauth_config: {
+          type: "oauth",
+          access: "access-token",
+          refresh: "refresh-token",
+          expires: 2_000_000_000_000,
+        },
+      }),
+    ).toBe(true);
+  });
+
+  test("rejects subscription OAuth tokens that cannot be refreshed", () => {
+    expect(
+      isConnectProviderCommand({
+        type: "connect_provider",
+        request_id: "request-1",
+        target: "local",
+        provider_id: "xai",
+        fields: {},
+        oauth_config: {
+          type: "oauth",
+          access: "access-token",
+          expires: 2_000_000_000_000,
+        },
+      }),
+    ).toBe(false);
   });
 });
 
@@ -41,6 +121,22 @@ describe("input protocol-inbound validators", () => {
     if (parsed?.type === "input" && parsed.payload.kind === "create_message") {
       expect(parsed.payload.exclude_interactive_tools).toBe(true);
     }
+  });
+
+  test("validates request-scoped response format contracts", () => {
+    expect(validateResponseFormat(undefined)).toBeNull();
+    expect(validateResponseFormat("json")).toBe(
+      "response_format must be an object",
+    );
+    expect(validateResponseFormat({ type: "text" })).toBe(
+      "response_format.type must be json_schema",
+    );
+    expect(
+      validateResponseFormat({
+        type: "json_schema",
+        json_schema: { schema: { type: "object" } },
+      }),
+    ).toBeNull();
   });
 
   test("rejects non-boolean exclude_interactive_tools", () => {
@@ -147,6 +243,78 @@ describe("teleport protocol-inbound validators", () => {
     expect(parseServerMessage(Buffer.from(JSON.stringify(message)))?.type).toBe(
       message.type,
     );
+  });
+});
+
+describe("resume_queue protocol-inbound validators", () => {
+  test("accepts the resume_queue wire shape with and without request_id", () => {
+    const withRequestId = {
+      type: "resume_queue" as const,
+      request_id: "resume-1",
+      runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+    };
+    const withoutRequestId = {
+      type: "resume_queue" as const,
+      runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+    };
+    expect(
+      parseServerMessage(Buffer.from(JSON.stringify(withRequestId))),
+    ).toEqual(withRequestId);
+    expect(
+      parseServerMessage(Buffer.from(JSON.stringify(withoutRequestId))),
+    ).toEqual(withoutRequestId);
+  });
+
+  test("rejects resume_queue without a runtime scope", () => {
+    expect(
+      parseServerMessage(
+        Buffer.from(
+          JSON.stringify({ type: "resume_queue", request_id: "resume-1" }),
+        ),
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("cron pause protocol-inbound validators", () => {
+  test("accepts the exact pause and resume wire shapes", () => {
+    const pause = {
+      type: "cron_pause" as const,
+      request_id: "pause-1",
+      task_id: "task-1",
+    };
+    const resume = {
+      type: "cron_resume" as const,
+      request_id: "resume-1",
+      task_id: "task-1",
+      scheduled_for: "2026-08-27T12:00:00.000Z",
+    };
+
+    expect(isCronPauseCommand(pause)).toBe(true);
+    expect(isCronResumeCommand(resume)).toBe(true);
+    expect(parseServerMessage(Buffer.from(JSON.stringify(pause)))).toEqual(
+      pause,
+    );
+    expect(parseServerMessage(Buffer.from(JSON.stringify(resume)))).toEqual(
+      resume,
+    );
+  });
+
+  test("rejects malformed pause and resume commands", () => {
+    expect(
+      isCronPauseCommand({
+        type: "cron_pause",
+        request_id: "pause-1",
+      }),
+    ).toBe(false);
+    expect(
+      isCronResumeCommand({
+        type: "cron_resume",
+        request_id: "resume-1",
+        task_id: "task-1",
+        scheduled_for: null,
+      }),
+    ).toBe(false);
   });
 });
 

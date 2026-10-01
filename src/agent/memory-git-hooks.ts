@@ -1,5 +1,5 @@
 /**
- * Git hook scripts installed into memfs memory repos.
+ * Git hook scripts installed into agent and shared memory repositories.
  *
  * The pre-commit hook validates memory markdown frontmatter; the post-commit
  * hook mirrors commits to an optional user-configured memory-repository
@@ -7,9 +7,19 @@
  * see memory-git.ts.
  */
 
+import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { validateMemoryFileFrontmatter } from "@/memory-frontmatter";
 import { debugLog } from "@/utils/debug";
+import {
+  MEMORY_CONSTRAINTS_CONFIG_PATH,
+  MEMORY_CONSTRAINTS_VALIDATOR_NAME,
+  MEMORY_CONSTRAINTS_VALIDATOR_SCRIPT,
+} from "./memory-constraints";
+
+const MEMORY_LAYOUT_POLICY = "letta-memory-layout-policy";
+type MemoryLayoutPolicy = "legacy-only" | "root-marker" | "shared-memory";
 
 /**
  * Bash pre-commit hook that validates frontmatter in memory .md files.
@@ -23,15 +33,133 @@ import { debugLog } from "@/utils/debug";
  * - Only allowed agent-editable key: description
  * - Legacy key 'limit' is tolerated for backward compatibility
  * - read_only may exist (from server) but agent must not change it
+ * - Optional file-size and depth constraints come from .memfs.config.json
  */
-export const PRE_COMMIT_HOOK_SCRIPT = `#!/usr/bin/env bash
+export function buildPreCommitHookScript(
+  options: {
+    execPath?: string;
+    electron?: boolean;
+    platform?: NodeJS.Platform;
+  } = {},
+): string {
+  const execPath = options.execPath ?? process.execPath;
+  const platform = options.platform ?? process.platform;
+  // Git for Windows executes hooks with Bash, which resolves /c/... rather
+  // than the native C:\... path returned by process.execPath.
+  const bashPath =
+    platform === "win32"
+      ? execPath
+          .replaceAll("\\", "/")
+          .replace(
+            /^([A-Za-z]):\//,
+            (_match, drive: string) => `/${drive.toLowerCase()}/`,
+          )
+      : execPath;
+  const quotedPath = `'${bashPath.replaceAll("'", `'"'"'`)}'`;
+  const electron = options.electron ?? Boolean(process.versions.electron);
+
+  return `#!/usr/bin/env bash
 # Validate frontmatter in staged memory .md files
 # Installed by Letta Code CLI
 
-AGENT_EDITABLE_KEYS="description"
-PROTECTED_KEYS="read_only"
-ALL_KNOWN_KEYS="description read_only limit"
 errors=""
+memory_files=()
+
+run_memory_node() {
+  ${electron ? "ELECTRON_RUN_AS_NODE=1 " : ""}${quotedPath} "$@"
+}
+
+memory_layout_policy_file="$(git rev-parse --git-common-dir 2>/dev/null)/${MEMORY_LAYOUT_POLICY}"
+memory_layout_policy=$(cat "$memory_layout_policy_file" 2>/dev/null || true)
+
+validate_memory_constraints() {
+  if { [ "$memory_layout_policy" = "root-marker" ] && \
+       { git cat-file -e ":MEMORY.md" 2>/dev/null || \
+         git cat-file -e "HEAD:MEMORY.md" 2>/dev/null; }; } || \
+     git cat-file -e ":${MEMORY_CONSTRAINTS_CONFIG_PATH}" 2>/dev/null || \
+     git cat-file -e "HEAD:${MEMORY_CONSTRAINTS_CONFIG_PATH}" 2>/dev/null; then
+    run_memory_node "$(git rev-parse --git-common-dir)/hooks/${MEMORY_CONSTRAINTS_VALIDATOR_NAME}" || exit $?
+  fi
+}
+
+validate_memory_files() {
+  [ "$1" = "legacy" ] && [ "\${#memory_files[@]}" -eq 0 ] && return
+  local result
+  result=$(run_memory_node - "$1" "$memory_layout_policy" "\${memory_files[@]}" <<'LETTA_MEMORY_FRONTMATTER'
+const { execFileSync, spawnSync } = require("node:child_process");
+const validateMemoryFileFrontmatter = ${validateMemoryFileFrontmatter.toString()};
+const [format, policy, ...stagedPaths] = process.argv.slice(2);
+try {
+  // MemFS v2 validates the complete staged tree, not just changed files. Read
+  // paths from Git inside the child instead of passing them through argv: Git
+  // Bash on Windows cannot launch Node with a sufficiently large path list.
+  const paths = format === "memfs-v2"
+    ? execFileSync("git", ["ls-files", "-z", "*.md"], { encoding: "utf8", maxBuffer: Infinity, stdio: ["ignore", "pipe", "pipe"] }).split("\\0").filter(Boolean)
+    : stagedPaths;
+  for (const path of paths) {
+    if (format === "memfs-v2") {
+      if (path.startsWith("skills/")) continue;
+      if (policy === "root-marker") {
+        let slash = path.lastIndexOf("/");
+        let projected = true;
+        while (slash >= 0) {
+          const index = ":" + path.slice(0, slash) + "/MEMORY.md";
+          if (spawnSync("git", ["cat-file", "-e", index], { stdio: "ignore" }).status !== 0) {
+            projected = false;
+            break;
+          }
+          slash = path.lastIndexOf("/", slash - 1);
+        }
+        if (!projected) continue;
+      }
+    }
+    const content = execFileSync("git", ["show", ":" + path], { encoding: "utf8", maxBuffer: Infinity, stdio: ["ignore", "pipe", "pipe"] });
+    let previousContent = null;
+    if (format === "legacy") {
+      const previous = spawnSync("git", ["show", "HEAD:" + path], { encoding: "utf8", maxBuffer: Infinity, stdio: ["ignore", "pipe", "pipe"] });
+      if (previous.error) throw previous.error;
+      if (previous.status === 0) previousContent = previous.stdout;
+    }
+    const errors = validateMemoryFileFrontmatter({ path, content, previousContent, format });
+    for (const error of errors) console.log("  " + error);
+  }
+} catch {
+  console.error("Memory validation could not read Git contents. No files were committed.");
+  process.exit(1);
+}
+LETTA_MEMORY_FRONTMATTER
+  ) || exit $?
+  if [ -n "$result" ]; then
+    errors="$errors\\n$result"
+  fi
+}
+
+use_v2_validation=false
+case "$memory_layout_policy" in
+  shared-memory) use_v2_validation=true ;;
+  root-marker)
+    if git cat-file -e ":MEMORY.md" 2>/dev/null || \
+       git cat-file -e "HEAD:MEMORY.md" 2>/dev/null; then
+      use_v2_validation=true
+    fi
+    ;;
+esac
+
+if [ "$use_v2_validation" = "true" ]; then
+  for file in $(git diff --cached --name-only --diff-filter=ACMR | grep -E '^skills/[^/]+\\.md$' || true); do
+    errors="$errors\\n  $file: invalid skill path (skills must be folders). Use skills/<name>/SKILL.md"
+  done
+
+  validate_memory_files "memfs-v2"
+
+  if [ -n "$errors" ]; then
+    echo "Memory validation failed:"
+    echo -e "$errors"
+    exit 1
+  fi
+  validate_memory_constraints
+  exit 0
+fi
 
 # Skills must always be directories: skills/<name>/SKILL.md
 # Reject legacy flat skill files (both current and legacy repo layouts).
@@ -39,134 +167,31 @@ for file in $(git diff --cached --name-only --diff-filter=ACMR | grep -E '^(memo
   errors="$errors\\n  $file: invalid skill path (skills must be folders). Use skills/<name>/SKILL.md"
 done
 
-# Helper: extract a frontmatter value from content
-get_fm_value() {
-  local content="$1" key="$2"
-  local closing_line
-  closing_line=$(echo "$content" | tail -n +2 | grep -n '^---$' | head -1 | cut -d: -f1)
-  [ -z "$closing_line" ] && return
-  echo "$content" | tail -n +2 | head -n $((closing_line - 1)) | grep "^$key:" | cut -d: -f2- | sed 's/^ *//;s/ *$//'
-}
-
 # Match .md files under system/ or reference/ (with optional memory/ prefix).
 # Skip skill SKILL.md files — they use a different frontmatter format.
 for file in $(git diff --cached --name-only --diff-filter=ACM | grep -E '^(memory/)?(system|reference)/.*\\.md$'); do
-  staged=$(git show ":$file")
-
-  # Frontmatter is required
-  first_line=$(echo "$staged" | head -1)
-  if [ "$first_line" != "---" ]; then
-    errors="$errors\\n  $file: missing frontmatter (must start with ---)"
-    continue
-  fi
-
-  # Check frontmatter is properly closed
-  closing_line=$(echo "$staged" | tail -n +2 | grep -n '^---$' | head -1 | cut -d: -f1)
-  if [ -z "$closing_line" ]; then
-    errors="$errors\\n  $file: frontmatter opened but never closed (missing closing ---)"
-    continue
-  fi
-
-  # Check read_only protection against HEAD version
-  head_content=$(git show "HEAD:$file" 2>/dev/null || true)
-  if [ -n "$head_content" ]; then
-    head_ro=$(get_fm_value "$head_content" "read_only")
-    if [ "$head_ro" = "true" ]; then
-      errors="$errors\\n  $file: file is read_only and cannot be modified"
-      continue
-    fi
-  fi
-
-  # Extract frontmatter lines
-  frontmatter=$(echo "$staged" | tail -n +2 | head -n $((closing_line - 1)))
-
-  # Track required fields
-  has_description=false
-
-  # Validate each line
-  while IFS= read -r line; do
-    [ -z "$line" ] && continue
-    # Skip YAML multiline continuation lines (indented lines that continue a previous value)
-    case "$line" in
-      " "*|$'\t'*) continue ;;
-    esac
-
-    key=$(echo "$line" | cut -d: -f1 | tr -d ' ')
-    value=$(echo "$line" | cut -d: -f2- | sed 's/^ *//;s/ *$//')
-
-    # Check key is known
-    known=false
-    for k in $ALL_KNOWN_KEYS; do
-      if [ "$key" = "$k" ]; then
-        known=true
-        break
-      fi
-    done
-    if [ "$known" = "false" ]; then
-      errors="$errors\\n  $file: unknown frontmatter key '$key' (allowed: $ALL_KNOWN_KEYS)"
-      continue
-    fi
-
-    # Check if agent is trying to modify a protected key
-    for k in $PROTECTED_KEYS; do
-      if [ "$key" = "$k" ]; then
-        # Compare against HEAD — if value changed (or key was added), reject
-        if [ -n "$head_content" ]; then
-          head_val=$(get_fm_value "$head_content" "$key")
-          if [ "$value" != "$head_val" ]; then
-            errors="$errors\\n  $file: '$key' is a protected field and cannot be changed by the agent"
-          fi
-        else
-          # New file with read_only — agent shouldn't set this
-          errors="$errors\\n  $file: '$key' is a protected field and cannot be set by the agent"
-        fi
-      fi
-    done
-
-    # Validate value types
-    case "$key" in
-      limit)
-        # Legacy field accepted for backward compatibility.
-        ;;
-      description)
-        has_description=true
-        if [ -z "$value" ]; then
-          errors="$errors\\n  $file: 'description' must not be empty"
-        fi
-        ;;
-    esac
-  done <<< "$frontmatter"
-
-  # Check required fields
-  if [ "$has_description" = "false" ]; then
-    errors="$errors\\n  $file: missing required field 'description'"
-  fi
-
-  # Check if protected keys were removed (existed in HEAD but not in staged)
-  if [ -n "$head_content" ]; then
-    for k in $PROTECTED_KEYS; do
-      head_val=$(get_fm_value "$head_content" "$k")
-      if [ -n "$head_val" ]; then
-        staged_val=$(get_fm_value "$staged" "$k")
-        if [ -z "$staged_val" ]; then
-          errors="$errors\\n  $file: '$k' is a protected field and cannot be removed by the agent"
-        fi
-      fi
-    done
-  fi
+  memory_files+=("$file")
 done
+validate_memory_files "legacy"
 
 if [ -n "$errors" ]; then
   echo "Frontmatter validation failed:"
   echo -e "$errors"
   exit 1
 fi
+validate_memory_constraints
 `;
+}
+
+export const PRE_COMMIT_HOOK_SCRIPT = buildPreCommitHookScript();
 
 /**
  * Install the pre-commit hook for frontmatter validation.
  */
-export function installPreCommitHook(dir: string): void {
+function installPreCommitHookWithPolicy(
+  dir: string,
+  policy: MemoryLayoutPolicy,
+): void {
   const hooksDir = join(dir, ".git", "hooks");
   const hookPath = join(hooksDir, "pre-commit");
 
@@ -176,7 +201,42 @@ export function installPreCommitHook(dir: string): void {
 
   writeFileSync(hookPath, PRE_COMMIT_HOOK_SCRIPT, "utf-8");
   chmodSync(hookPath, 0o755);
+  writeFileSync(
+    join(hooksDir, MEMORY_CONSTRAINTS_VALIDATOR_NAME),
+    MEMORY_CONSTRAINTS_VALIDATOR_SCRIPT,
+    "utf8",
+  );
+  writeFileSync(join(dir, ".git", MEMORY_LAYOUT_POLICY), `${policy}\n`, "utf8");
   debugLog("memfs-git", "Installed pre-commit hook");
+}
+
+export function installPreCommitHook(
+  dir: string,
+  allowRootMemoryLayout = false,
+): void {
+  installPreCommitHookWithPolicy(
+    dir,
+    allowRootMemoryLayout ? "root-marker" : "legacy-only",
+  );
+}
+
+/** Refresh validation for a local-only repository without changing its layout. */
+export function installLocalMemoryPreCommitHook(dir: string): void {
+  const hasRootMarker =
+    existsSync(join(dir, "MEMORY.md")) ||
+    spawnSync("git", ["cat-file", "-e", "HEAD:MEMORY.md"], {
+      cwd: dir,
+      stdio: "ignore",
+    }).status === 0;
+  installPreCommitHookWithPolicy(
+    dir,
+    hasRootMarker ? "root-marker" : "legacy-only",
+  );
+}
+
+/** Install memory validation for an attached shared repository. */
+export function installSharedMemoryPreCommitHook(dir: string): void {
+  installPreCommitHookWithPolicy(dir, "shared-memory");
 }
 
 /**
@@ -228,4 +288,10 @@ export function installPostCommitHook(dir: string): void {
   writeFileSync(hookPath, POST_COMMIT_HOOK_SCRIPT, "utf-8");
   chmodSync(hookPath, 0o755);
   debugLog("memfs-git", "Installed post-commit memory-repository hook");
+}
+
+/** Refresh every harness-owned Git hook for an API-backed memory checkout. */
+export function installMemoryGitHooks(dir: string): void {
+  installPreCommitHook(dir, true);
+  installPostCommitHook(dir);
 }

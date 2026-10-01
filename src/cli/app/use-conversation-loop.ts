@@ -74,18 +74,17 @@ import {
   splitSyntheticAssistantResponse,
 } from "@/cli/helpers/local-no-model-response";
 import type { ExecutionPhase } from "@/cli/helpers/phase-visuals";
-import {
-  buildQueuedContentParts,
-  buildQueuedUserText,
-  getQueuedNotificationSummaries,
-} from "@/cli/helpers/queued-message-parts";
+import { getQueuedNotificationSummaries } from "@/cli/helpers/queued-message-parts";
 import { appendTranscriptDeltaJsonl } from "@/cli/helpers/reflection-transcript";
 import { safeJsonParseOr } from "@/cli/helpers/safe-json-parse";
 import {
   type ApprovalRequest,
+  advanceStreamSequenceCursor,
   type DrainResult,
   drainStream,
   drainStreamWithResume,
+  recordEmptyApprovalTelemetry,
+  type StreamSequenceCursor,
 } from "@/cli/helpers/stream";
 import { shouldClearCompletedSubagentsOnTurnStart } from "@/cli/helpers/subagent-turn-start";
 import {
@@ -97,7 +96,7 @@ import {
   isFileWriteTool,
   isPatchTool,
 } from "@/cli/helpers/tool-name-mapping";
-import { alwaysRequiresUserInput } from "@/cli/helpers/tool-name-mapping.js";
+import { finishTuiTurn } from "@/cli/helpers/tui-turn-lifecycle";
 import type { LocalModAdapter } from "@/cli/mods/use-local-mod-adapter";
 import { SYSTEM_ALERT_OPEN, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { runStopHooks } from "@/hooks";
@@ -109,6 +108,7 @@ import { permissionMode } from "@/permissions/mode";
 import type { QueueRuntime } from "@/queue/queue-runtime";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
+import { replaceClientPreferences } from "@/tools/client-preferences";
 import { analyzeToolApproval, type ToolExecutionResult } from "@/tools/manager";
 import type { PreparedScopeToolContext } from "@/tools/toolset";
 import { debugLog, debugWarn, isDebugEnabled } from "@/utils/debug";
@@ -124,7 +124,7 @@ import {
   TEMP_QUOTA_OVERRIDE_MODEL,
 } from "./constants";
 import { extractErrorMeta } from "./errors";
-import { appendOptimisticUserLine, createClientOtid, uid } from "./ids";
+import { uid } from "./ids";
 import {
   getErrorHintForStopReason,
   getPreferredAgentModelHandle,
@@ -132,6 +132,7 @@ import {
 import { sendDesktopNotification } from "./notifications";
 import { isRetriableError } from "./retry";
 import { stripSystemReminders } from "./system-reminders";
+import { prepareTuiQueuedTurn } from "./turn-input";
 import type {
   AppendError,
   ApprovalDecision,
@@ -196,6 +197,7 @@ type ConversationLoopContext = {
   queueModeRef: MutableRefObject<"immediate" | "defer">;
   contextTrackerRef: MutableRefObject<ContextTracker>;
   chatgptPlanSwapsRef: MutableRefObject<number>;
+  chatgptExhaustedProvidersRef: MutableRefObject<Set<string>>;
   conversationBusyRetriesRef: MutableRefObject<number>;
   conversationGenerationRef: MutableRefObject<number>;
   conversationIdRef: MutableRefObject<string>;
@@ -245,6 +247,7 @@ type ConversationLoopContext = {
   setCurrentModelHandle: Dispatch<SetStateAction<string | null>>;
   setCurrentModelId: Dispatch<SetStateAction<string | null>>;
   setDequeueEpoch: Dispatch<SetStateAction<number>>;
+  setInterruptRequested: Dispatch<SetStateAction<boolean>>;
   lastStopReasonRef: MutableRefObject<string | null>;
   setIsExecutingTool: Dispatch<SetStateAction<boolean>>;
   setLlmConfig: Dispatch<SetStateAction<LlmConfig | null>>;
@@ -293,6 +296,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     clearApprovalToolContext,
     closeTrajectorySegment,
     chatgptPlanSwapsRef,
+    chatgptExhaustedProvidersRef,
     consumeQueuedMessages,
     queueModeRef,
     contextTrackerRef,
@@ -339,6 +343,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     setCurrentModelHandle,
     setCurrentModelId,
     setDequeueEpoch,
+    setInterruptRequested,
     lastStopReasonRef,
     setIsExecutingTool,
     setLlmConfig,
@@ -472,12 +477,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
   const processConversation = useCallback(
     async (
       initialInput: Array<MessageCreate | ApprovalCreate>,
-      options?: {
-        allowReentry?: boolean;
-        submissionGeneration?: number;
-        transcriptStartLineIndex?: number | null;
-        allowResponseStateReuse?: boolean;
-      },
+      options?: import("./types").ProcessConversationOptions,
     ): Promise<void> => {
       // Transient pre-stream retries can yield for seconds.
       // Pin the user's permission mode for the duration of the submission so
@@ -554,6 +554,12 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
       if (processingConversationRef.current > 0 && !allowReentry) {
         return;
       }
+      if (options?.clientPreferences !== undefined)
+        replaceClientPreferences(
+          agentIdRef.current,
+          conversationIdRef.current,
+          options.clientPreferences,
+        );
       processingConversationRef.current += 1;
       let turnStartCancelReason: string | null = null;
 
@@ -605,12 +611,12 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         conversationBusyRetriesRef.current = 0;
         quotaAutoSwapAttemptedRef.current = false;
         chatgptPlanSwapsRef.current = 0;
+        chatgptExhaustedProvidersRef.current.clear();
       }
 
-      // Track last run ID for error reporting (accessible in catch block)
       let currentRunId: string | undefined;
       let preserveTranscriptStartForApproval = false;
-
+      let turnAbortController: AbortController | null = null;
       try {
         if (turnStartCancelReason) {
           const statusId = uid("status");
@@ -640,7 +646,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         openTrajectorySegment();
         setNetworkPhase("upload");
         setExecutionPhase("requesting");
-        abortControllerRef.current = new AbortController();
+        turnAbortController = new AbortController();
+        abortControllerRef.current = turnAbortController;
 
         if (
           await maybeStreamSyntheticNoModelResponse(
@@ -732,11 +739,9 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           clearCompletedSubagents();
         }
 
-        let highestSeqIdSeen: number | null = null;
+        let streamSequenceCursor: StreamSequenceCursor | null = null;
 
         while (true) {
-          // Capture the signal BEFORE any async operations
-          // This prevents a race where handleInterrupt nulls the ref during await
           const signal = abortControllerRef.current?.signal;
 
           // Check if cancelled before starting new stream
@@ -941,7 +946,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   undefined, // no handleFirstMessage on resume
                   makeExecutionPhaseHook(setExecutionPhase),
                   contextTrackerRef.current,
-                  highestSeqIdSeen,
+                  streamSequenceCursor,
                 );
                 debugLog(
                   "stream",
@@ -1303,7 +1308,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             contextTrackerRef.current.currentTurnId++;
           }
 
-          const drainResult = preStreamResumeResult
+          const drainResult: Promise<DrainResult> = preStreamResumeResult
             ? preStreamResumeResult
             : (() => {
                 if (!stream) {
@@ -1319,7 +1324,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   handleFirstMessage,
                   makeExecutionPhaseHook(setExecutionPhase),
                   contextTrackerRef.current,
-                  highestSeqIdSeen,
+                  streamSequenceCursor,
                 );
               })();
 
@@ -1331,11 +1336,14 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             lastRunId,
             lastSeqId,
             fallbackError,
+            errorInfo: streamErrorInfo,
           } = await drainResult;
 
-          if (lastSeqId != null) {
-            highestSeqIdSeen = Math.max(highestSeqIdSeen ?? 0, lastSeqId);
-          }
+          streamSequenceCursor = advanceStreamSequenceCursor(
+            streamSequenceCursor,
+            lastRunId,
+            lastSeqId,
+          );
 
           // Update currentRunId for error reporting in catch block
           currentRunId = lastRunId ?? undefined;
@@ -1362,8 +1370,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           const wasAborted = !!signal?.aborted;
           let stopReasonToHandle = wasAborted ? "cancelled" : stopReason;
 
-          // Check if this conversation became stale while the stream was running.
-          // If stale, a newer processConversation is running and we shouldn't modify UI state.
           const isStaleAfterDrain =
             myGeneration !== conversationGenerationRef.current;
 
@@ -1725,17 +1731,16 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             clearApprovalToolContext();
             preserveTranscriptStartForApproval = true;
             approvalToolContextIdRef.current = turnToolContextId;
-            // Clear stale state immediately to prevent ID mismatch bugs
             setAutoHandledResults([]);
             setAutoDeniedApprovals([]);
             lastSentInputRef.current = null; // Clear - message was received by server
             pendingInterruptRecoveryConversationIdRef.current = null;
 
-            // Use new approvals array, fallback to legacy approval for backward compat
             const approvalsToProcess = approvalsFromStream;
 
             if (approvalsToProcess.length === 0) {
               clearApprovalToolContext();
+              recordEmptyApprovalTelemetry(lastRunId, streamSequenceCursor);
               appendError(
                 `Unexpected empty approvals with stop reason: ${stopReason}`,
               );
@@ -1821,7 +1826,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             const { needsUserInput, autoAllowed, autoDenied } =
               await classifyApprovals(approvalsToProcess, {
                 getContext: analyzeToolApproval,
-                alwaysRequiresUserInput,
                 requireArgsForAutoApprove: true,
                 missingNameReason:
                   "Tool call incomplete - missing name or arguments",
@@ -1851,31 +1855,15 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 } else if (isFileEditTool(toolName)) {
                   const filePath = args.file_path as string | undefined;
                   if (filePath) {
-                    // Check if it's a multi-edit (has edits array) or single edit
-                    if (args.edits && Array.isArray(args.edits)) {
-                      const result = computeAdvancedDiff({
-                        kind: "multi_edit",
-                        filePath,
-                        edits: args.edits as Array<{
-                          old_string: string;
-                          new_string: string;
-                          replace_all?: boolean;
-                        }>,
-                      });
-                      if (result.mode === "advanced") {
-                        precomputedDiffsRef.current.set(toolCallId, result);
-                      }
-                    } else {
-                      const result = computeAdvancedDiff({
-                        kind: "edit",
-                        filePath,
-                        oldString: (args.old_string as string) || "",
-                        newString: (args.new_string as string) || "",
-                        replaceAll: args.replace_all as boolean | undefined,
-                      });
-                      if (result.mode === "advanced") {
-                        precomputedDiffsRef.current.set(toolCallId, result);
-                      }
+                    const result = computeAdvancedDiff({
+                      kind: "edit",
+                      filePath,
+                      oldString: (args.old_string as string) || "",
+                      newString: (args.new_string as string) || "",
+                      replaceAll: args.replace_all as boolean | undefined,
+                    });
+                    if (result.mode === "advanced") {
+                      precomputedDiffsRef.current.set(toolCallId, result);
                     }
                   }
                 } else if (isPatchTool(toolName) && args.input) {
@@ -2038,46 +2026,22 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 const queuedNotifications = queuedItemsToAppend
                   ? getQueuedNotificationSummaries(queuedItemsToAppend)
                   : [];
-                const hadNotifications =
-                  appendTaskNotificationEvents(queuedNotifications);
-                const queuedUserText = queuedItemsToAppend
-                  ? buildQueuedUserText(queuedItemsToAppend)
-                  : "";
-
-                const queuedUserOtid = createClientOtid();
-                appendOptimisticUserLine(
+                appendTaskNotificationEvents(queuedNotifications);
+                const queuedTurn = prepareTuiQueuedTurn(
+                  queuedItemsToAppend,
+                  allResults,
                   buffersRef.current,
-                  queuedUserText,
-                  queuedUserOtid,
                 );
-
-                if (queuedItemsToAppend && queuedItemsToAppend.length > 0) {
-                  const queuedContentParts =
-                    buildQueuedContentParts(queuedItemsToAppend);
+                if (queuedTurn.hasQueuedMessage) {
                   setThinkingMessage(getRandomThinkingVerb());
                   refreshDerived();
                   toolResultsInFlightRef.current = true;
                   await processConversation(
-                    [
-                      {
-                        type: "approval",
-                        approvals: allResults,
-                        otid: createClientOtid(),
-                      },
-                      {
-                        type: "message",
-                        role: "user",
-                        content: queuedContentParts,
-                        otid: queuedUserOtid,
-                      },
-                    ],
-                    { allowReentry: true },
+                    queuedTurn.input,
+                    queuedTurn.options,
                   );
                   toolResultsInFlightRef.current = false;
                   return;
-                }
-                if (hadNotifications || queuedUserText.length > 0) {
-                  refreshDerived();
                 }
 
                 // Cancel mode - queue results and let dequeue effect handle
@@ -2235,7 +2199,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             }
           }
 
-          // Fetch run error metadata for recovery decisions.
           const runErrorInfo = await fetchRunErrorInfo(lastRunId),
             detailFromRun = runErrorInfo?.detail ?? runErrorInfo?.message;
           const invalidIdsDetected =
@@ -2368,22 +2331,20 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             continue;
           }
 
-          // ChatGPT plan rotation: when a chatgpt_oauth BYOK plan hits its
-          // usage limit, swap the agent to the same model on a sibling
-          // connected ChatGPT plan and resend. Takes precedence over the
-          // letta/auto quota fallback below.
           if (
             chatgptPlanSwapsRef.current <
             CHATGPT_PLAN_ROTATION_MAX_SWAPS_PER_TURN
           ) {
             const rotation = await rotateChatGPTPlanOnQuotaLimit({
               agentId: agentIdRef.current,
+              conversationId: conversationIdRef.current,
               currentHandle: currentModelId,
-              error: runErrorInfo ?? detailFromRun ?? fallbackError,
+              error: streamErrorInfo ?? runErrorInfo ?? fallbackError,
+              exhaustedProviders: chatgptExhaustedProvidersRef.current,
+              signal: turnAbortController.signal,
             });
             if (rotation) {
               chatgptPlanSwapsRef.current += 1;
-
               const statusId = uid("status");
               buffersRef.current.byId.set(statusId, {
                 kind: "status",
@@ -2397,8 +2358,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               buffersRef.current.interrupted = false;
               continue;
             }
-            // No sibling plan available — fall through to the letta/auto
-            // quota fallback below.
+            // No sibling plan available; try the hosted Auto fallback below.
           }
 
           // Quota-limit fallback: hosted Letta API can recover by switching to
@@ -2477,7 +2437,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 ...currentInput,
                 {
                   type: "message" as const,
-                  role: "system" as const,
+                  role: "user" as const,
                   content: `<system-reminder>The previous response was empty. Please provide a response with either text content or a tool call.</system-reminder>`,
                   otid: randomUUID(),
                 },
@@ -2602,7 +2562,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 ? []
                 : refreshInputOtidsForNewRequest(currentInput);
               // Reset seq_id threshold — new run starts from seq_id 1, not a resume.
-              highestSeqIdSeen = null;
+              streamSequenceCursor = null;
               // Reset interrupted flag so retry stream chunks are processed
               buffersRef.current.interrupted = false;
               // Retry by continuing the while loop with fresh OTIDs.
@@ -2857,30 +2817,18 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           pendingTranscriptStartLineIndexRef.current = null;
         }
 
-        // Check if this conversation was superseded by an ESC interrupt
-        const isStale = myGeneration !== conversationGenerationRef.current;
-
-        abortControllerRef.current = null;
-
-        // Decrement BEFORE bumping the epoch so that when the dequeue effect
-        // fires synchronously (Ink legacy mode), processingConversationRef.current
-        // already reflects the true count. The defer gate checks === 0 to confirm
-        // no more nested processConversation calls are outstanding.
-        if (!isStale) {
-          processingConversationRef.current = Math.max(
-            0,
-            processingConversationRef.current - 1,
-          );
-        }
-
-        // Trigger dequeue effect now that processConversation is no longer active.
-        // The dequeue effect checks abortControllerRef (a ref, not state), so it
-        // won't re-run on its own — bump dequeueEpoch to force re-evaluation.
-        // Only bump for normal completions — if stale (ESC was pressed), the user
-        // cancelled and queued messages should NOT be auto-submitted.
-        if (!isStale && (tuiQueueRef.current?.length ?? 0) > 0) {
-          setDequeueEpoch((e: number) => e + 1);
-        }
+        // Wakes dequeue on a normal completion; when superseded by an ESC
+        // interrupt, settles the interrupt (cancelling -> idle) instead.
+        finishTuiTurn({
+          isStale: myGeneration !== conversationGenerationRef.current,
+          turnAbortController,
+          abortControllerRef,
+          processingConversationRef,
+          userCancelledRef,
+          setInterruptRequested,
+          queueLength: () => tuiQueueRef.current?.length ?? 0,
+          bumpDequeueEpoch: () => setDequeueEpoch((e: number) => e + 1),
+        });
       }
     },
     [

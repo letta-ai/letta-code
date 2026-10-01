@@ -15,6 +15,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import { debugWarn } from "@/utils/debug";
 import {
   type CronRunOutcome,
   type CronRunReason,
@@ -264,8 +265,9 @@ export function safeAppendCronRunLogForTask(
   try {
     appendCronRunLogForTask(task, entry);
   } catch (err) {
-    console.error(
-      `[Cron] Error writing run log for task ${task.id}:`,
+    debugWarn(
+      "Cron",
+      `Error writing run log for task ${task.id}:`,
       err instanceof Error ? err.message : err,
     );
   }

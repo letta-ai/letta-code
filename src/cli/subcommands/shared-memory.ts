@@ -17,7 +17,8 @@ import { settingsManager } from "@/settings-manager";
  * Shared memory repositories are org-owned git repos served over the same
  * smart-HTTP transport as agent MemFS (`/v1/git/<agent>/repositories/<name>.git`).
  * The DATA plane is the local mount at `$MEMORY_DIR/../<name>`: read, edit,
- * commit, and push there with plain git, exactly like MemFS. This subcommand
+ * and commit there with plain git. The harness pushes clean commits after
+ * turns, like MemFS. This subcommand
  * only covers the operations that genuinely need the API — create/list/
  * attach/detach/history — plus `sync`, which materializes local mounts.
  *
@@ -72,8 +73,8 @@ Notes:
   - Agent id comes from --agent or AGENT_ID/LETTA_AGENT_ID in the env.
   - Uses CLI auth; override with LETTA_API_KEY/LETTA_BASE_URL if needed.
   - Attached repositories mount at $MEMORY_DIR/../<name> as normal git
-    checkouts. Edit files and commit/push there like MemFS — no API calls
-    are needed for file content.
+    checkouts. Edit files and commit there like MemFS; the harness pushes
+    clean commits after turns. No API calls are needed for file content.
 
 Examples:
   letta shared-memory list
@@ -368,7 +369,7 @@ export async function runSharedMemorySubcommand(
               sync: sync.summaries,
               ...(recompileError ? { recompile_failed: recompileError } : {}),
               note: mounted
-                ? "Edit files under the mount and commit/push with git, like MemFS."
+                ? "Edit files under the mount and commit with git; the harness pushes clean commits after turns."
                 : "The repository is attached but its local mount was not created — see `sync` above. Resolve the reported error, then re-run `letta shared-memory sync`.",
             },
             null,

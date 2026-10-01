@@ -13,9 +13,38 @@ import type { ChannelRestoreAgentScope } from "./restore-scope";
 const SHUTDOWN_TIMEOUT_MS = 5000;
 const STARTUP_TIMEOUT_MS = 30000;
 const COMMAND_TIMEOUT_MS = 30000;
+const DEFAULT_RESTART_MAX_ATTEMPTS = 5;
+const DEFAULT_RESTART_INITIAL_DELAY_MS = 1000;
+const DEFAULT_RESTART_MAX_DELAY_MS = 30000;
+const DEFAULT_RESTART_STABLE_AFTER_MS = 60000;
 export const CHANNEL_GATEWAY_READY_SIGNAL = "CHANNEL_GATEWAY_READY";
 const RESPONSE_PREFIX = "CHANNEL_GATEWAY_RESPONSE ";
 const EVENT_PREFIX = "CHANNEL_GATEWAY_EVENT ";
+
+export interface ChannelGatewayRestartPolicy {
+  maxAttempts: number;
+  initialDelayMs: number;
+  maxDelayMs: number;
+  stableAfterMs: number;
+  readyTimeoutMs: number;
+  shutdownTimeoutMs: number;
+}
+
+export interface ChannelGatewayLifecycleEvent {
+  kind:
+    | "exit"
+    | "process_error"
+    | "restart_scheduled"
+    | "restart_ready"
+    | "restart_exhausted";
+  restartAttempt: number;
+  maxRestartAttempts: number;
+  durationMs?: number;
+  delayMs?: number;
+  exitCode?: number | null;
+  signal?: NodeJS.Signals | null;
+  reachedReady?: boolean;
+}
 
 export interface StartChannelGatewaySupervisorOptions {
   appServerUrl: string;
@@ -28,7 +57,11 @@ export interface StartChannelGatewaySupervisorOptions {
   env?: NodeJS.ProcessEnv;
   onLog?: (message: string) => void;
   onUnexpectedExit?: (error: Error) => void;
+  onRestartExhausted?: (error: Error) => void;
+  onLifecycleEvent?: (event: ChannelGatewayLifecycleEvent) => void;
   onServiceEvent?: (event: ServiceEvent) => void;
+  /** Override restart timing for deterministic embedding/tests. */
+  restartPolicy?: Partial<ChannelGatewayRestartPolicy>;
   /** Override the executable used to launch the gateway (embedding/tests). */
   launcher?: { command: string; args?: string[] };
   /** Override child creation for deterministic supervisor protocol tests. */
@@ -84,8 +117,41 @@ export async function startChannelGatewaySupervisor(
     ...(options.failOnStartupError === false ? ["--allow-startup-errors"] : []),
     ...(options.installChannelRuntimes ? ["--install-channel-runtimes"] : []),
   ];
+  const restartPolicy: ChannelGatewayRestartPolicy = {
+    maxAttempts: Math.max(
+      0,
+      Math.floor(
+        options.restartPolicy?.maxAttempts ?? DEFAULT_RESTART_MAX_ATTEMPTS,
+      ),
+    ),
+    initialDelayMs: Math.max(
+      0,
+      options.restartPolicy?.initialDelayMs ?? DEFAULT_RESTART_INITIAL_DELAY_MS,
+    ),
+    maxDelayMs: Math.max(
+      0,
+      options.restartPolicy?.maxDelayMs ?? DEFAULT_RESTART_MAX_DELAY_MS,
+    ),
+    stableAfterMs: Math.max(
+      0,
+      options.restartPolicy?.stableAfterMs ?? DEFAULT_RESTART_STABLE_AFTER_MS,
+    ),
+    readyTimeoutMs: Math.max(
+      1,
+      options.restartPolicy?.readyTimeoutMs ?? STARTUP_TIMEOUT_MS,
+    ),
+    shutdownTimeoutMs: Math.max(
+      1,
+      options.restartPolicy?.shutdownTimeoutMs ?? SHUTDOWN_TIMEOUT_MS,
+    ),
+  };
   let child: ChildProcess | null = null;
+  let readyChild: ChildProcess | null = null;
   let stopping = false;
+  let initialReadyCompleted = false;
+  let restartAttempts = 0;
+  let restartTimer: ReturnType<typeof setTimeout> | null = null;
+  let stableTimer: ReturnType<typeof setTimeout> | null = null;
   let resolveInitialReady: (() => void) | null = null;
   let rejectInitialReady: ((error: Error) => void) | null = null;
   const pendingCommands = new Map<
@@ -101,7 +167,59 @@ export async function startChannelGatewaySupervisor(
     rejectInitialReady = reject;
   });
 
-  const launch = (): void => {
+  function clearStableTimer(): void {
+    if (!stableTimer) return;
+    clearTimeout(stableTimer);
+    stableTimer = null;
+  }
+
+  function rejectPendingCommands(error: Error): void {
+    for (const pending of pendingCommands.values()) {
+      clearTimeout(pending.timeout);
+      pending.reject(error);
+    }
+    pendingCommands.clear();
+  }
+
+  function scheduleRestart(lastError: Error): void {
+    if (stopping) return;
+    if (restartAttempts >= restartPolicy.maxAttempts) {
+      const exhaustedError = new Error(
+        `${lastError.message}; restart attempts exhausted (${restartPolicy.maxAttempts})`,
+      );
+      options.onLog?.(`[ChannelGateway] ${exhaustedError.message}`);
+      options.onLifecycleEvent?.({
+        kind: "restart_exhausted",
+        restartAttempt: restartAttempts,
+        maxRestartAttempts: restartPolicy.maxAttempts,
+      });
+      options.onRestartExhausted?.(exhaustedError);
+      return;
+    }
+
+    restartAttempts += 1;
+    const multiplier = 2 ** Math.min(restartAttempts - 1, 30);
+    const delayMs = Math.min(
+      restartPolicy.initialDelayMs * multiplier,
+      restartPolicy.maxDelayMs,
+    );
+    options.onLog?.(
+      `[ChannelGateway] restart attempt ${restartAttempts}/${restartPolicy.maxAttempts} in ${delayMs}ms`,
+    );
+    options.onLifecycleEvent?.({
+      kind: "restart_scheduled",
+      restartAttempt: restartAttempts,
+      maxRestartAttempts: restartPolicy.maxAttempts,
+      delayMs,
+    });
+    restartTimer = setTimeout(() => {
+      restartTimer = null;
+      launch();
+    }, delayMs);
+    restartTimer.unref?.();
+  }
+
+  function launch(): void {
     if (stopping) return;
     child = (options.spawnProcess ?? spawn)(launcher.command, childArgs, {
       cwd,
@@ -110,21 +228,111 @@ export async function startChannelGatewaySupervisor(
       windowsHide: true,
     });
     const launchedChild = child;
+    const launchedRestartAttempt = restartAttempts;
+    const launchedAt = Date.now();
+    let generationReady = false;
+    let terminationHandled = false;
+    let forcedTerminationError: Error | null = null;
+    let readyTimeout: ReturnType<typeof setTimeout> | null = null;
+    let readyForceKillTimeout: ReturnType<typeof setTimeout> | null = null;
+
+    function clearReadyTimeouts(): void {
+      if (readyTimeout) clearTimeout(readyTimeout);
+      readyTimeout = null;
+      if (readyForceKillTimeout) clearTimeout(readyForceKillTimeout);
+      readyForceKillTimeout = null;
+    }
+
+    if (initialReadyCompleted) {
+      readyTimeout = setTimeout(() => {
+        if (generationReady || terminationHandled) return;
+        forcedTerminationError = new Error(
+          `ChannelGateway restart attempt ${launchedRestartAttempt} timed out waiting for ready`,
+        );
+        terminateChild(launchedChild, "SIGTERM");
+        readyForceKillTimeout = setTimeout(() => {
+          if (generationReady || terminationHandled) return;
+          terminateChild(launchedChild, "SIGKILL");
+        }, restartPolicy.shutdownTimeoutMs);
+        readyForceKillTimeout.unref?.();
+      }, restartPolicy.readyTimeoutMs);
+      readyTimeout.unref?.();
+    }
+
+    const handleTermination = (
+      error: Error,
+      event: Pick<ChannelGatewayLifecycleEvent, "kind" | "exitCode" | "signal">,
+    ): void => {
+      if (terminationHandled) return;
+      terminationHandled = true;
+      clearReadyTimeouts();
+      clearStableTimer();
+      if (child === launchedChild) child = null;
+      if (readyChild === launchedChild) readyChild = null;
+      if (stopping) return;
+
+      options.onLifecycleEvent?.({
+        ...event,
+        restartAttempt: launchedRestartAttempt,
+        maxRestartAttempts: restartPolicy.maxAttempts,
+        durationMs: Date.now() - launchedAt,
+        reachedReady: generationReady,
+      });
+      options.onLog?.(`[ChannelGateway] ${error.message}`);
+      rejectPendingCommands(error);
+      options.onUnexpectedExit?.(error);
+      if (!initialReadyCompleted) {
+        rejectInitialReady?.(error);
+        resolveInitialReady = null;
+        rejectInitialReady = null;
+        return;
+      }
+      scheduleRestart(error);
+    };
+
     options.onLog?.(
       `[ChannelGateway] started pid=${launchedChild.pid ?? "unknown"}`,
     );
     launchedChild.stdout?.setEncoding("utf8");
     let stdoutBuffer = "";
     launchedChild.stdout?.on("data", (chunk: string) => {
+      if (terminationHandled) return;
       stdoutBuffer += chunk;
       const lines = stdoutBuffer.split("\n");
       stdoutBuffer = lines.pop() ?? "";
       for (const rawLine of lines) {
         const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
         if (line === CHANNEL_GATEWAY_READY_SIGNAL) {
-          resolveInitialReady?.();
-          resolveInitialReady = null;
-          rejectInitialReady = null;
+          if (generationReady) continue;
+          generationReady = true;
+          clearReadyTimeouts();
+          readyChild = launchedChild;
+          if (!initialReadyCompleted) {
+            initialReadyCompleted = true;
+            resolveInitialReady?.();
+            resolveInitialReady = null;
+            rejectInitialReady = null;
+          } else {
+            options.onLog?.(
+              `[ChannelGateway] restart attempt ${launchedRestartAttempt}/${restartPolicy.maxAttempts} ready`,
+            );
+            options.onLifecycleEvent?.({
+              kind: "restart_ready",
+              restartAttempt: launchedRestartAttempt,
+              maxRestartAttempts: restartPolicy.maxAttempts,
+              durationMs: Date.now() - launchedAt,
+            });
+            clearStableTimer();
+            stableTimer = setTimeout(() => {
+              stableTimer = null;
+              if (readyChild !== launchedChild || stopping) return;
+              restartAttempts = 0;
+              options.onLog?.(
+                `[ChannelGateway] restart budget reset after ${restartPolicy.stableAfterMs}ms stable`,
+              );
+            }, restartPolicy.stableAfterMs);
+            stableTimer.unref?.();
+          }
         } else if (line.startsWith(RESPONSE_PREFIX)) {
           let response: {
             requestId: string;
@@ -166,34 +374,26 @@ export async function startChannelGatewaySupervisor(
     });
     launchedChild.once("error", (error) => {
       options.onLog?.(`[ChannelGateway] process error: ${error.message}`);
-      rejectInitialReady?.(error);
-      resolveInitialReady = null;
-      rejectInitialReady = null;
+      if (!generationReady) {
+        handleTermination(error, {
+          kind: "process_error",
+          exitCode: null,
+          signal: null,
+        });
+      }
     });
     launchedChild.once("exit", (code, signal) => {
-      if (child === launchedChild) child = null;
-      if (stopping) return;
-      if (rejectInitialReady) {
-        rejectInitialReady(
+      handleTermination(
+        forcedTerminationError ??
           new Error(
-            `ChannelGateway exited before ready (${signal ?? code ?? "unknown"})`,
+            generationReady
+              ? `ChannelGateway exited unexpectedly (${signal ?? code ?? "unknown"})`
+              : `ChannelGateway exited before ready (${signal ?? code ?? "unknown"})`,
           ),
-        );
-        resolveInitialReady = null;
-        rejectInitialReady = null;
-      }
-      const error = new Error(
-        `ChannelGateway exited unexpectedly (${signal ?? code ?? "unknown"})`,
+        { kind: "exit", exitCode: code, signal },
       );
-      options.onLog?.(`[ChannelGateway] ${error.message}`);
-      for (const pending of pendingCommands.values()) {
-        clearTimeout(pending.timeout);
-        pending.reject(error);
-      }
-      pendingCommands.clear();
-      options.onUnexpectedExit?.(error);
     });
-  };
+  }
 
   launch();
 
@@ -215,7 +415,7 @@ export async function startChannelGatewaySupervisor(
   return {
     request: (command) =>
       new Promise<ServiceCommandResponse>((resolve, reject) => {
-        const activeChild = child;
+        const activeChild = readyChild;
         if (!activeChild?.stdin?.writable) {
           reject(new Error("ChannelGateway process is not available"));
           return;
@@ -241,14 +441,14 @@ export async function startChannelGatewaySupervisor(
     close: async () => {
       if (stopping) return;
       stopping = true;
+      if (restartTimer) clearTimeout(restartTimer);
+      restartTimer = null;
+      clearStableTimer();
       const activeChild = child;
       child = null;
+      readyChild = null;
       const closeError = new Error("ChannelGateway supervisor closed");
-      for (const pending of pendingCommands.values()) {
-        clearTimeout(pending.timeout);
-        pending.reject(closeError);
-      }
-      pendingCommands.clear();
+      rejectPendingCommands(closeError);
       if (!activeChild || activeChild.exitCode !== null) return;
       await new Promise<void>((resolve) => {
         const timeout = setTimeout(() => {

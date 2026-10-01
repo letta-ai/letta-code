@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { runWithRuntimeContext } from "@/runtime-context";
 import { TestDirectory } from "@/test-utils/test-fs";
 import { ls } from "@/tools/impl/ls";
 
@@ -20,6 +21,33 @@ describe("LS tool", () => {
     expect(result.content[0]?.text).toContain("file1.txt");
     expect(result.content[0]?.text).toContain("file2.txt");
     expect(result.content[0]?.text).toContain("subdir/");
+  });
+
+  test("resolves relative paths from runtime working directory", async () => {
+    testDir = new TestDirectory();
+    const workspace = testDir.createDir("workspace");
+    testDir.createFile("workspace/relative-file.txt", "");
+
+    const result = await runWithRuntimeContext(
+      { workingDirectory: workspace },
+      () => ls({ path: "." }),
+    );
+
+    expect(result.content[0]?.text).toContain("relative-file.txt");
+  });
+
+  test("preserves absolute paths when runtime working directory differs", async () => {
+    testDir = new TestDirectory();
+    const workspace = testDir.createDir("workspace");
+    const absoluteTarget = testDir.createDir("absolute-target");
+    testDir.createFile("absolute-target/absolute-file.txt", "");
+
+    const result = await runWithRuntimeContext(
+      { workingDirectory: workspace },
+      () => ls({ path: absoluteTarget }),
+    );
+
+    expect(result.content[0]?.text).toContain("absolute-file.txt");
   });
 
   test("shows directories with trailing slash", async () => {

@@ -51,6 +51,7 @@ function setup(replyMode: "tool" | "relay") {
   );
 
   const sendMessage = mock(async () => ({ messageId: "message-1" }));
+  const turnFinished = Promise.withResolvers<void>();
   const adapter: ChannelAdapter = {
     id: "slack:account-1",
     channelId: "slack",
@@ -61,6 +62,9 @@ function setup(replyMode: "tool" | "relay") {
     isRunning: () => true,
     sendMessage,
     sendDirectReply: async () => {},
+    handleTurnLifecycleEvent: async (event) => {
+      if (event.type === "finished") turnFinished.resolve();
+    },
   };
   const registry = new ChannelRegistry();
   registry.registerAdapter(adapter);
@@ -75,7 +79,7 @@ function setup(replyMode: "tool" | "relay") {
     createdAt: "2026-04-11T00:00:00.000Z",
     updatedAt: "2026-04-11T00:00:00.000Z",
   });
-  return sendMessage;
+  return { sendMessage, turnFinished: turnFinished.promise };
 }
 
 describe("local automatic channel relay", () => {
@@ -150,7 +154,7 @@ describe("local automatic channel relay", () => {
   ] as const)(
     "actual local gateway hooks deliver completed text in %s mode",
     async (replyMode, expectedSends) => {
-      const sendMessage = setup(replyMode);
+      const { sendMessage, turnFinished } = setup(replyMode);
       const registry = getChannelRegistry();
       if (!registry) throw new Error("registry missing");
       const client = new FakeClient();
@@ -168,7 +172,7 @@ describe("local automatic channel relay", () => {
         }),
       );
       client.emit(makeTurnFinished("end_turn"));
-      await Bun.sleep(10);
+      await turnFinished;
 
       expect(sendMessage).toHaveBeenCalledTimes(expectedSends);
       if (expectedSends === 1) {
@@ -181,7 +185,7 @@ describe("local automatic channel relay", () => {
   );
 
   test("sends completed assistant text only for relay accounts", async () => {
-    const relaySend = setup("relay");
+    const { sendMessage: relaySend } = setup("relay");
     await relayLocalAssistantText({
       text: "automatic reply",
       sources: [SOURCE],
@@ -195,7 +199,7 @@ describe("local automatic channel relay", () => {
     await getChannelRegistry()?.stopAll();
     clearAllRoutes();
     clearChannelAccountStores();
-    const toolSend = setup("tool");
+    const { sendMessage: toolSend } = setup("tool");
     await relayLocalAssistantText({
       text: "must stay internal",
       sources: [SOURCE],
@@ -299,7 +303,7 @@ describe("local automatic channel relay", () => {
   });
 
   test("suppresses relay text already sent explicitly in the same turn", async () => {
-    const sendMessage = setup("relay");
+    const { sendMessage } = setup("relay");
     const idempotencyScope = createMessageChannelIdempotencyScope();
     const args: MessageChannelArgs = {
       action: "send",

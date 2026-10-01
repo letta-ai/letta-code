@@ -9,15 +9,11 @@ import {
   getSkillsDirectory,
 } from "@/agent/context";
 import { getModelInfo } from "@/agent/model";
-import { getAllSubagentConfigs } from "@/agent/subagents";
+import { getModelFacingSubagentDescriptors } from "@/agent/subagents";
 import { getBackend } from "@/backend";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { experimentManager } from "@/experiments/manager";
-import {
-  runPostToolUseFailureHooks,
-  runPostToolUseHooks,
-  runPreToolUseHooks,
-} from "@/hooks";
+import { runPreToolUseHooks } from "@/hooks";
 import { buildModInvocationContext } from "@/mods/context";
 import { createModConversationHandle } from "@/mods/conversation-handle";
 import { attachDeprecatedGetContextTrap } from "@/mods/deprecated-api";
@@ -33,7 +29,6 @@ import {
   getModToolDefinition,
   isModToolParallelSafe,
   type ModToolDefinition,
-  modToolApprovalPolicy,
   runModTool,
 } from "@/mods/tool-registry";
 import type {
@@ -42,7 +37,6 @@ import type {
   ModToolEndEvent,
   ModToolRunContext,
   ModToolStartEvent,
-  ToolApprovalPolicy,
 } from "@/mods/types";
 import type {
   PermissionDecision,
@@ -57,12 +51,36 @@ import {
 } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
+import { messageChannelTelemetry } from "@/telemetry/channel";
+import { autoBackgroundExternalTool } from "@/tools/external-tool-background";
+import { listenerExternalToolBackgroundOptions } from "@/tools/external-tool-background-eligibility";
+import type {
+  ClientTool,
+  ExternalToolDefinition,
+  ExternalToolExecutor,
+} from "@/tools/external-tool-types";
+
+export type {
+  ClientTool,
+  ExternalToolDefinition,
+  ExternalToolExecutor,
+} from "@/tools/external-tool-types";
+
+import { waitForToolCheckouts } from "@/utils/checkout-readiness";
 import { debugLog } from "@/utils/debug";
 import { refreshAndListSecrets } from "@/utils/secrets-store";
 import { isRecord } from "@/utils/type-guards";
-import { serializeClientTools } from "./client-tool-serialization";
+import {
+  selectModelFacingExternalTools,
+  serializeClientTools,
+} from "./client-tool-serialization";
 import { normalizeExternalToolResultContent } from "./external-tool-content";
 import { toolFilter } from "./filter";
+import {
+  appendHookFeedbackToText,
+  appendHookFeedbackToToolReturn,
+  collectPostToolHookFeedback,
+} from "./hook-feedback";
 import { clampToolReturnContent } from "./impl/tool-return-clamp";
 import {
   functionToolForm,
@@ -74,43 +92,20 @@ import {
   type PermissionModeState,
 } from "./permission-mode-state";
 import {
+  captureSecretRedactions,
+  createScrubbedOutputStreamer,
   extractSecretEnvFromCommand,
+  getAmbientRedactionSecrets,
+  type ScrubbedOutputStreamer,
+  sanitizeOutputLines,
+  sanitizeToolReturnContent,
+  scrubAmbientSecrets,
   scrubSecretsFromString,
 } from "./secret-substitution";
+import { resolveBackendSpecificToolAssets } from "./task-tool-assets";
 import { TOOL_DEFINITIONS, type ToolName } from "./tool-definitions";
-import { TOOL_PERMISSIONS } from "./tool-permissions";
 
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
-
-async function resolveBackendSpecificToolDescription(
-  name: string,
-  description: string,
-): Promise<string> {
-  let isLocalMemfs = false;
-  try {
-    const { getBackend } = await import("@/backend");
-    isLocalMemfs = getBackend().capabilities.localMemfs;
-  } catch {
-    isLocalMemfs = false;
-  }
-  if (!isLocalMemfs) return description;
-
-  if (name === "memory_apply_patch") {
-    return description.replace(
-      "The harness pushes clean committed memory changes after the turn for remote MemFS agents.",
-      "Local backend MemFS has no Letta remote; memory changes are committed locally.",
-    );
-  }
-
-  if (name === "memory") {
-    return description.replace(
-      "The harness pushes clean committed memory changes after the turn for remote MemFS agents.",
-      "Local backend MemFS has no Letta remote; memory changes are committed locally.",
-    );
-  }
-
-  return description;
-}
 
 function resolvedModelForm(
   base: ModelFacingToolForm,
@@ -136,55 +131,33 @@ function resolvedModelForm(
 
 const STREAMING_SHELL_TOOLS = new Set([
   "Bash",
-  "BashOutput",
-  "TaskOutput",
   "exec_command",
   "write_stdin",
-  "shell_command",
-  "ShellCommand",
-  "shell",
-  "Shell",
-  "run_shell_command",
-  "RunShellCommand",
   "Monitor",
+  "Workflow",
 ]);
+/** Background tools whose completion notification targets the invoking scope. */
+const SCOPED_BACKGROUND_TOOLS = new Set(["Monitor", "Workflow"]);
 
 // Tools that write files — used to trigger onFileWrite broadcast after execution.
-const FILE_MUTATING_TOOLS = new Set(["Edit", "Write", "MultiEdit", "replace"]);
+const FILE_MUTATING_TOOLS = new Set(["Edit", "Write"]);
 
-// Maps internal tool names to server/model-facing tool names
-// This allows us to have multiple implementations (e.g., write_file_gemini, Write from Anthropic)
-// that map to the same server tool name since only one toolset is active at a time
+// Maps internal implementation names to the names shown to the model.
 const TOOL_NAME_MAPPINGS: Partial<Record<ToolName, string>> = {
-  // Gemini tools - map to their original Gemini CLI names
-  glob_gemini: "glob",
-  write_todos: "write_todos",
-  write_file_gemini: "write_file",
-  replace: "replace",
-  search_file_content: "search_file_content",
-  read_many_files: "read_many_files",
-  read_file_gemini: "read_file",
-  list_directory: "list_directory",
-  run_shell_command: "run_shell_command",
   // Align subagent-spawning tool with Claude Code: surface internal `Task` as `Agent`.
   // Internal implementation name stays `Task` for backward compat with existing
   // agent states; getInternalToolName("Agent") resolves back to "Task".
   Task: "Agent",
+  AskUserQuestionAsync: "AskUserQuestion",
 };
 
-/**
- * Get the server-facing name for a tool (maps internal names to what the model sees)
- */
+/** Get the server-facing name for a tool (maps internal names to what the model sees). */
 export function getServerToolName(internalName: string): string {
   return TOOL_NAME_MAPPINGS[internalName as ToolName] || internalName;
 }
 
-/**
- * Get the internal tool name from a server-facing name
- * Used when the server sends back tool calls/approvals with server names
- */
+/** Get the internal tool name from a server-facing name (tool calls/approvals arrive with server names). */
 export function getInternalToolName(serverName: string): string {
-  // Build reverse mapping
   for (const [internal, server] of Object.entries(TOOL_NAME_MAPPINGS)) {
     if (server === serverName) {
       return internal;
@@ -209,7 +182,7 @@ function matchesClientToolAllowlistEntry(
   );
 }
 
-export function filterBuiltInToolNamesByClientAllowlist(
+function filterBuiltInToolNamesByClientAllowlist(
   toolNames: ToolName[],
   clientToolAllowlist?: string[],
 ): ToolName[] {
@@ -227,10 +200,6 @@ export function filterBuiltInToolNamesByClientAllowlist(
   );
 }
 
-const WORKTREE_TOOL_NAMES = new Set<ToolName>([
-  "EnterWorktree",
-  "ExitWorktree",
-]);
 const ARTIFACT_TOOL_NAMES: ToolName[] = [
   "read_artifact_file",
   "write_artifact_file",
@@ -309,7 +278,7 @@ function filterExternalToolsByRuntimeContext(
     Array.from(externalTools.entries()).filter(([, tool]) => {
       const matchesRuntime =
         !tool.runtime ||
-        (tool.runtime.agentId === runtimeContext.agentId &&
+        ((tool.runtime.agentId ?? null) === (runtimeContext.agentId ?? null) &&
           tool.runtime.conversationId === runtimeContext.conversationId);
       // An unscoped runtime tool belongs to its agent/conversation. The
       // registration connection remains its execution return path, but turns
@@ -339,19 +308,6 @@ function filterExternalToolsByScopeIds(
   );
 }
 
-function toModelFacingExternalToolMap(
-  externalTools: Map<string, ExternalToolDefinition>,
-): Map<string, ExternalToolDefinition> {
-  const modelFacingTools = new Map<string, ExternalToolDefinition>();
-  for (const tool of externalTools.values()) {
-    // MVP: if one runtime exposes duplicate model-facing names, the later
-    // registration wins. We keep cross-runtime registrations isolated by using
-    // namespaced internal keys before this final model-facing collapse.
-    modelFacingTools.set(tool.name, tool);
-  }
-  return modelFacingTools;
-}
-
 function filterModToolsByClientAllowlist(
   modTools: Map<string, ModToolDefinition>,
   clientToolAllowlist?: string[],
@@ -368,95 +324,8 @@ function filterModToolsByClientAllowlist(
   );
 }
 
-export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
-  "AskUserQuestion",
-  "Bash",
-  "Monitor",
-  "TaskOutput",
-  ...WORKTREE_TOOL_NAMES,
-  "SetWorkingDirectory",
-  "Edit",
-  "TaskStop",
-  // "MultiEdit",
-  // "LS",
-  "memory",
-  "Read",
-  "Skill",
-  "Task",
-  "TaskCreate",
-  "TaskGet",
-  "TaskList",
-  "TaskUpdate",
-  "Write",
-];
-
-export const OPENAI_DEFAULT_TOOLS: ToolName[] = [
-  "exec_command",
-  "write_stdin",
-  // TODO(codex-parity): add once request_user_input tool exists in raw codex path.
-  // "request_user_input",
-  "apply_patch",
-  "memory_apply_patch",
-  "update_plan",
-  "view_image",
-];
-
-export const GEMINI_DEFAULT_TOOLS: ToolName[] = [
-  "run_shell_command",
-  "read_file_gemini",
-  "list_directory",
-  "glob_gemini",
-  "search_file_content",
-  "memory",
-  ...WORKTREE_TOOL_NAMES,
-  "SetWorkingDirectory",
-  "replace",
-  "write_file_gemini",
-  "write_todos",
-  "read_many_files",
-  "Skill",
-  "Task",
-];
-
-// PascalCase toolsets (codex-2 and gemini-2) for consistency with Skill tool naming
-export const OPENAI_PASCAL_TOOLS: ToolName[] = [
-  // Additional Letta Code tools
-  "AskUserQuestion",
-  ...WORKTREE_TOOL_NAMES,
-  "SetWorkingDirectory",
-  "memory_apply_patch",
-  "Task",
-  "Monitor",
-  "TaskOutput",
-  "TaskStop",
-  "Skill",
-  // Standard Codex tools
-  "exec_command",
-  "write_stdin",
-  "ViewImage",
-  "ApplyPatch",
-  "UpdatePlan",
-];
-
-export const GEMINI_PASCAL_TOOLS: ToolName[] = [
-  // Additional Letta Code tools
-  "AskUserQuestion",
-  ...WORKTREE_TOOL_NAMES,
-  "SetWorkingDirectory",
-  "memory",
-  "Skill",
-  "Task",
-  // Standard Gemini tools
-  "RunShellCommand",
-  "ReadFileGemini",
-  "ListDirectory",
-  "GlobGemini",
-  "SearchFileContent",
-  "Replace",
-  "WriteFileGemini",
-  "WriteTodos",
-  "ReadManyFiles",
-];
+import { TOOLSET_CATALOG, WORKTREE_TOOL_NAMES } from "./toolset-catalog";
+import type { ToolsetName } from "./toolset-types";
 
 type ToolArgs = Record<string, unknown>;
 
@@ -711,7 +580,7 @@ export function isToolsetSwitchInProgress(): boolean {
  * based on the currently loaded toolset.
  *
  * - If a tool with the exact name is loaded, prefer that.
- * - Otherwise, fall back to the alias mapping used for Gemini tools.
+ * - Otherwise, fall back to the model-facing alias mapping.
  * - Returns undefined if no matching tool is loaded.
  */
 function resolveInternalToolName(
@@ -730,55 +599,7 @@ function resolveInternalToolName(
   return undefined;
 }
 
-/**
- * ClientTool interface matching the Letta SDK's expected format.
- * Used when passing client-side tools via the client_tools field.
- */
-export interface ClientTool {
-  name: string;
-  description?: string | null;
-  parameters?: { [key: string]: unknown } | null;
-}
-
 // EXTERNAL TOOLS (SDK-side execution)
-
-export interface ExternalToolDefinition {
-  name: string;
-  label?: string;
-  description: string;
-  parameters: Record<string, unknown>; // JSON Schema
-  /** Internal registration key; model-facing calls still use name. */
-  registrationKey?: string;
-  connectionId?: string;
-  /** Optional visibility scope; scoped tools are hidden unless selected for a turn. */
-  scopeId?: string;
-  /** Optional runtime owner; runtime-owned tools are visible only in that runtime. */
-  runtime?: {
-    agentId?: string;
-    conversationId?: string;
-  };
-  /** Client-local executor owned by this tool (for example an MCP process). */
-  executor?: ExternalToolExecutor;
-}
-
-/**
- * Callback to execute an external tool via SDK
- */
-export type ExternalToolExecutor = (
-  toolCallId: string,
-  toolName: string,
-  input: Record<string, unknown>,
-  context?: { tool: ExternalToolDefinition },
-) => Promise<{
-  content: Array<{
-    type: string;
-    text?: string;
-    data?: string;
-    mimeType?: string;
-  }>;
-  isError: boolean;
-}>;
-
 // Storage for external tool definitions and executor
 const EXTERNAL_TOOLS_KEY = Symbol.for("@letta/externalTools");
 const EXTERNAL_EXECUTOR_KEY = Symbol.for("@letta/externalToolExecutor");
@@ -856,7 +677,7 @@ export function getExternalToolDefinition(
  */
 export function getExternalToolsAsClientTools(): ClientTool[] {
   return Array.from(
-    toModelFacingExternalToolMap(
+    selectModelFacingExternalTools(
       filterExternalToolsByRuntimeContext(getExternalToolsRegistry(), {}),
     ).values(),
   ).map((tool) => ({
@@ -866,9 +687,7 @@ export function getExternalToolsAsClientTools(): ClientTool[] {
   }));
 }
 
-/**
- * Execute an external tool via SDK
- */
+/** Execute an external tool via SDK. */
 export async function executeExternalTool(
   toolCallId: string,
   toolName: string,
@@ -884,6 +703,8 @@ export async function executeExternalTool(
     };
   }
 
+  const startedAt = Date.now();
+  let success = false;
   try {
     const tool = toolDefinition ?? getExternalToolDefinition(toolName);
     const result = await executor(
@@ -892,7 +713,7 @@ export async function executeExternalTool(
       input,
       tool ? { tool } : undefined,
     );
-
+    success = !result.isError;
     return {
       toolReturn: clampToolReturnContent(
         normalizeExternalToolResultContent(result.content),
@@ -906,6 +727,18 @@ export async function executeExternalTool(
       toolReturn: `External tool execution error: ${errorMessage}`,
       status: "error",
     };
+  } finally {
+    if (toolName === "MessageChannel" || toolName === "message_channel") {
+      telemetry.trackToolUsage(
+        toolName,
+        success,
+        Date.now() - startedAt,
+        undefined,
+        success ? undefined : "tool_error",
+        undefined,
+        messageChannelTelemetry(input),
+      );
+    }
   }
 }
 
@@ -917,7 +750,7 @@ export async function executeExternalTool(
 export function getClientToolsFromRegistry(): ClientTool[] {
   return buildClientToolsFromSnapshot(
     toolRegistry,
-    toModelFacingExternalToolMap(
+    selectModelFacingExternalTools(
       filterExternalToolsByRuntimeContext(getExternalToolsRegistry(), {}),
     ),
     getAvailableModToolsRegistry(),
@@ -966,7 +799,7 @@ function capturePreparedToolExecutionContext(
   );
   const executionSnapshot: ToolExecutionContextSnapshot = {
     toolRegistry: toolRegistrySnapshot,
-    externalTools: toModelFacingExternalToolMap(
+    externalTools: selectModelFacingExternalTools(
       filterExternalToolsByClientAllowlist(
         filterExternalToolsByScopeIds(
           filterExternalToolsByRuntimeContext(
@@ -977,6 +810,7 @@ function capturePreparedToolExecutionContext(
         ),
         clientToolAllowlist,
       ),
+      runtimeContext.connectionId,
     ),
     externalExecutor: snapshot.externalExecutor,
     modContext: options?.modContext ?? snapshot.modContext,
@@ -1049,8 +883,10 @@ export async function prepareCurrentToolExecutionContext(options?: {
 }): Promise<PreparedToolExecutionContext> {
   await waitForToolsetReady();
   const currentToolNames = Array.from(toolRegistry.keys()) as ToolName[];
-  const toolRegistrySnapshot =
-    await buildSpecificToolRegistry(currentToolNames);
+  const toolRegistrySnapshot = await buildToolRegistry(
+    currentToolNames,
+    options?.workingDirectory,
+  );
   return capturePreparedToolExecutionContext(
     {
       toolRegistry: toolRegistrySnapshot,
@@ -1082,7 +918,10 @@ export async function prepareToolExecutionContextForSpecificTools(
     runtimeContext?: Partial<RuntimeContextSnapshot>;
   },
 ): Promise<PreparedToolExecutionContext> {
-  const toolRegistrySnapshot = await buildSpecificToolRegistry(toolNames);
+  const toolRegistrySnapshot = await buildToolRegistry(
+    toolNames,
+    options?.workingDirectory,
+  );
   return capturePreparedToolExecutionContext(
     {
       toolRegistry: toolRegistrySnapshot,
@@ -1101,7 +940,7 @@ export async function prepareToolExecutionContextForSpecificTools(
 }
 
 type ModelToolsetOptions = {
-  resolvedToolset?: "codex" | "default";
+  resolvedToolset?: ToolsetName;
   exclude?: ToolName[];
   include?: ToolName[];
   clientToolAllowlist?: string[];
@@ -1139,33 +978,6 @@ export async function prepareToolExecutionContextForModel(
     },
     options,
   );
-}
-
-/**
- * Get permissions for a specific tool.
- * @param toolName - The name of the tool
- * @returns Tool permissions object with requiresApproval flag
- */
-export function getToolPermissions(toolName: string) {
-  const approvalPolicy = getToolApprovalPolicy(toolName);
-  return { requiresApproval: approvalPolicy !== "auto", approvalPolicy };
-}
-
-export function getToolApprovalPolicy(
-  toolName: string,
-  contextId?: string | null,
-): ToolApprovalPolicy {
-  const context = contextId ? getExecutionContextById(contextId) : undefined;
-  const modPolicy = modToolApprovalPolicy(
-    toolName,
-    context?.modTools ?? getAvailableModToolsRegistry(),
-  );
-  if (modPolicy) return modPolicy;
-
-  const toolPermission = TOOL_PERMISSIONS[toolName as ToolName];
-  if (!toolPermission) return "auto";
-  if (toolPermission.approvalPolicy) return toolPermission.approvalPolicy;
-  return toolPermission.requiresApproval ? "ask" : "auto";
 }
 
 export function isModToolParallelSafeForContext(
@@ -1360,18 +1172,23 @@ function maybeApplyLspReadOverride(registry: ToolRegistry): void {
   });
 }
 
-async function buildSpecificToolRegistry(
-  toolNames: string[],
+async function buildToolRegistry(
+  toolNames: readonly string[],
+  workingDirectory = getCurrentWorkingDirectory(),
 ): Promise<ToolRegistry> {
-  const { toolFilter } = await import("@/tools/filter");
   const newRegistry: ToolRegistry = new Map();
 
   for (const name of toolNames) {
-    if (!toolFilter.isEnabled(name)) {
+    const internalName = getInternalToolName(name);
+    const enabledTools = toolFilter.getEnabledTools();
+    if (
+      enabledTools !== null &&
+      !enabledTools.some(
+        (allowed) => getInternalToolName(allowed) === internalName,
+      )
+    ) {
       continue;
     }
-
-    const internalName = getInternalToolName(name);
     if (
       !shouldIncludeWorktreeTool() &&
       WORKTREE_TOOL_NAMES.has(internalName as ToolName)
@@ -1390,15 +1207,23 @@ async function buildSpecificToolRegistry(
       throw new Error(`Tool implementation not found for ${internalName}`);
     }
 
-    const description = await resolveBackendSpecificToolDescription(
+    const resolvedAssets = await resolveBackendSpecificToolAssets(
       internalName,
       definition.description,
+      definition.schema as JsonSchema,
     );
+    let { description } = resolvedAssets;
+    const { inputSchema } = resolvedAssets;
+    if (internalName === "Task") {
+      const subagents =
+        await getModelFacingSubagentDescriptors(workingDirectory);
+      description = injectSubagentsIntoTaskDescription(description, subagents);
+    }
 
     const toolSchema: ToolSchema = {
       name: internalName,
       description,
-      input_schema: definition.schema as JsonSchema,
+      input_schema: inputSchema,
     };
 
     newRegistry.set(internalName, {
@@ -1406,7 +1231,7 @@ async function buildSpecificToolRegistry(
       modelForm: resolvedModelForm(
         definition.modelForm,
         description,
-        definition.schema as JsonSchema,
+        inputSchema,
       ),
       fn: definition.impl,
     });
@@ -1416,125 +1241,45 @@ async function buildSpecificToolRegistry(
   return newRegistry;
 }
 
-async function resolveBaseToolNamesForModel(
+function resolveBaseToolNamesForModel(
   modelIdentifier?: string,
   options?: ModelToolsetOptions,
-): Promise<ToolName[]> {
-  const { toolFilter } = await import("@/tools/filter");
-  let baseToolNames: ToolName[];
-  // Provider aliases can be classified by a caller that also has provider
-  // metadata. Prefer that result over re-inferring from the model handle.
-  if (
-    !toolFilter.isActive() &&
-    (options?.resolvedToolset === "codex" ||
-      (options?.resolvedToolset === undefined &&
-        modelIdentifier &&
-        isOpenAIModel(modelIdentifier)))
-  ) {
-    baseToolNames = OPENAI_PASCAL_TOOLS;
-  } else if (!toolFilter.isActive()) {
-    // Temporary rollback: Gemini models should use the default Claude-style
-    // toolset until we intentionally restore the Gemini-specific toolset.
-    baseToolNames = ANTHROPIC_DEFAULT_TOOLS;
-  } else {
-    baseToolNames = TOOL_NAMES;
+): ToolName[] {
+  const toolset =
+    options?.resolvedToolset ??
+    (modelIdentifier && isOpenAIModel(modelIdentifier) ? "codex" : "default");
+  const allowlist =
+    options?.clientToolAllowlist ?? toolFilter.getEnabledTools();
+  // An allowlist may explicitly request bundled tools outside the preset.
+  // External and mod tool names are handled when the snapshot is captured.
+  const allowlistedTools = (allowlist ?? [])
+    .map(getInternalToolName)
+    .filter((name): name is ToolName => Object.hasOwn(TOOL_DEFINITIONS, name));
+  let toolNames = resolveArtifactToolNames([
+    ...new Set([
+      ...TOOLSET_CATALOG[toolset].tools,
+      ...(options?.include ?? []),
+      ...allowlistedTools,
+    ]),
+  ]);
+  if (options?.exclude) {
+    const excluded = new Set(options.exclude);
+    toolNames = toolNames.filter((name) => !excluded.has(name));
   }
-
-  if (options?.include && options.include.length > 0) {
-    // Copy rather than push: the branches above bind shared module-level
-    // preset arrays, so appending in place would leak one turn's tools into
-    // the preset itself for the life of the process.
-    baseToolNames = [...new Set([...baseToolNames, ...options.include])];
-  }
-
-  if (options?.exclude && options.exclude.length > 0) {
-    const excludeSet = new Set(options.exclude);
-    baseToolNames = baseToolNames.filter((name) => !excludeSet.has(name));
-  }
-
-  baseToolNames = filterWorktreeTools(baseToolNames);
-
-  baseToolNames = resolveArtifactToolNames(baseToolNames);
-
-  baseToolNames = filterBuiltInToolNamesByClientAllowlist(
-    baseToolNames,
+  return filterBuiltInToolNamesByClientAllowlist(
+    filterWorktreeTools(toolNames),
     options?.clientToolAllowlist,
   );
-
-  return baseToolNames;
 }
 
 async function buildRegistryForModel(
   modelIdentifier?: string,
-  options?: ModelToolsetOptions,
+  options?: ModelToolsetOptions & { workingDirectory?: string },
 ): Promise<ToolRegistry> {
-  const { toolFilter } = await import("@/tools/filter");
-  const allSubagentConfigs = await getAllSubagentConfigs();
-  const discoveredSubagents = Object.entries(allSubagentConfigs).map(
-    ([name, config]) => ({
-      name,
-      description: config.description,
-      recommendedModel: config.recommendedModel,
-    }),
+  return buildToolRegistry(
+    resolveBaseToolNamesForModel(modelIdentifier, options),
+    options?.workingDirectory,
   );
-  const baseToolNames = await resolveBaseToolNamesForModel(
-    modelIdentifier,
-    options,
-  );
-  const newRegistry: ToolRegistry = new Map();
-
-  for (const name of baseToolNames) {
-    if (!toolFilter.isEnabled(name)) {
-      continue;
-    }
-
-    try {
-      const definition = TOOL_DEFINITIONS[name];
-      if (!definition) {
-        throw new Error(`Missing tool definition for ${name}`);
-      }
-
-      if (!definition.impl) {
-        throw new Error(`Tool implementation not found for ${name}`);
-      }
-
-      let description = await resolveBackendSpecificToolDescription(
-        name,
-        definition.description,
-      );
-      if (name === "Task" && discoveredSubagents.length > 0) {
-        description = injectSubagentsIntoTaskDescription(
-          description,
-          discoveredSubagents,
-        );
-      }
-
-      const toolSchema: ToolSchema = {
-        name,
-        description,
-        input_schema: definition.schema as JsonSchema,
-      };
-
-      newRegistry.set(name, {
-        schema: toolSchema,
-        modelForm: resolvedModelForm(
-          definition.modelForm,
-          description,
-          definition.schema as JsonSchema,
-        ),
-        fn: definition.impl,
-      });
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : JSON.stringify(error);
-      throw new Error(
-        `Required tool "${name}" could not be loaded from bundled assets. ${message}`,
-      );
-    }
-  }
-
-  maybeApplyLspReadOverride(newRegistry);
-  return newRegistry;
 }
 
 /**
@@ -1551,7 +1296,7 @@ export async function loadSpecificTools(toolNames: string[]): Promise<void> {
   acquireSwitchLock();
 
   try {
-    const newRegistry = await buildSpecificToolRegistry(toolNames);
+    const newRegistry = await buildToolRegistry(toolNames);
     replaceRegistry(newRegistry);
   } finally {
     // Always release the lock, even if an error occurred
@@ -1560,7 +1305,7 @@ export async function loadSpecificTools(toolNames: string[]): Promise<void> {
 }
 
 /**
- * Loads all tools defined in TOOL_NAMES and constructs their full schemas + function references.
+ * Loads the selected preset and constructs its schemas and implementations.
  * This should be called on program startup.
  * Will error if any expected tool files are missing.
  *
@@ -1574,7 +1319,7 @@ export async function loadSpecificTools(toolNames: string[]): Promise<void> {
  */
 export async function loadTools(
   modelIdentifier?: string,
-  options?: { exclude?: ToolName[] },
+  options?: ModelToolsetOptions,
 ): Promise<void> {
   // Acquire lock to signal that a switch is in progress
   acquireSwitchLock();
@@ -1605,20 +1350,6 @@ export function isOpenAIModel(modelIdentifier: string): boolean {
     modelIdentifier.startsWith("openai-codex/") ||
     modelIdentifier.startsWith(`${OPENAI_CODEX_PROVIDER_NAME}/`) ||
     modelIdentifier.startsWith("chatgpt_oauth/")
-  );
-}
-
-export function isGeminiModel(modelIdentifier: string): boolean {
-  const info = getModelInfo(modelIdentifier);
-  if (info?.handle && typeof info.handle === "string") {
-    return (
-      info.handle.startsWith("google/") || info.handle.startsWith("google_ai/")
-    );
-  }
-  // Fallback: treat raw handle-style identifiers as Gemini
-  return (
-    modelIdentifier.startsWith("google/") ||
-    modelIdentifier.startsWith("google_ai/")
   );
 }
 
@@ -1966,85 +1697,6 @@ function getModToolStatus(result: unknown): "success" | "error" {
   return "success";
 }
 
-type ToolHookContext = {
-  args: Record<string, unknown>;
-  debugLabel: string;
-  scopedAgentId?: string;
-  toolCallId?: string;
-  toolName: string;
-  workingDirectory: string;
-};
-
-async function collectPostToolHookFeedback(
-  context: ToolHookContext,
-  result: {
-    errorType?: string;
-    failureOutput?: string;
-    output: string;
-    status: "success" | "error";
-  },
-): Promise<string[]> {
-  let postToolUseFeedback: string[] = [];
-  try {
-    const postHookResult = await runPostToolUseHooks(
-      context.toolName,
-      context.args,
-      { status: result.status, output: result.output },
-      context.toolCallId,
-      context.workingDirectory,
-      context.scopedAgentId,
-      undefined,
-      undefined,
-    );
-    postToolUseFeedback = postHookResult.feedback;
-  } catch (error) {
-    debugLog("hooks", `PostToolUse hook error (${context.debugLabel})`, error);
-  }
-
-  let postToolUseFailureFeedback: string[] = [];
-  if (result.status === "error") {
-    try {
-      const failureHookResult = await runPostToolUseFailureHooks(
-        context.toolName,
-        context.args,
-        result.failureOutput ?? result.output,
-        result.errorType ?? "tool_error",
-        context.toolCallId,
-        context.workingDirectory,
-        context.scopedAgentId,
-        undefined,
-        undefined,
-      );
-      postToolUseFailureFeedback = failureHookResult.feedback;
-    } catch (error) {
-      debugLog(
-        "hooks",
-        `PostToolUseFailure hook error (${context.debugLabel})`,
-        error,
-      );
-    }
-  }
-
-  return [...postToolUseFeedback, ...postToolUseFailureFeedback];
-}
-
-function appendHookFeedbackToText(text: string, feedback: string[]): string {
-  if (feedback.length === 0) return text;
-  return `${text}\n\n[Hook feedback]:\n${feedback.join("\n")}`;
-}
-
-function appendHookFeedbackToToolReturn(
-  toolReturn: ToolReturnContent,
-  feedback: string[],
-): ToolReturnContent {
-  if (feedback.length === 0) return toolReturn;
-  const feedbackMessage = `\n\n[Hook feedback]:\n${feedback.join("\n")}`;
-  if (typeof toolReturn === "string") {
-    return toolReturn + feedbackMessage;
-  }
-  return [...toolReturn, { type: "text" as const, text: feedbackMessage }];
-}
-
 function cloneToolArgsForModEvent(args: ToolArgs): ToolArgs {
   try {
     return structuredClone(args);
@@ -2164,6 +1816,10 @@ async function executeModTool(
       redactions.set(name, value);
     }
   };
+  // Mod-spawned subprocesses inherit the runtime env; redact its auth values.
+  for (const [name, value] of Object.entries(getAmbientRedactionSecrets())) {
+    addRedaction(name, value);
+  }
 
   const run = async (): Promise<ToolExecutionResult> => {
     const preHookResult = await runPreToolUseHooks(
@@ -2176,7 +1832,7 @@ async function executeModTool(
     if (preHookResult.blocked) {
       const feedback = preHookResult.feedback.join("\n") || "Blocked by hook";
       return {
-        toolReturn: `Error: Tool execution blocked by hook. ${feedback}`,
+        toolReturn: `Error: Tool execution blocked by hook. ${scrubAmbientSecrets(feedback)}`,
         status: "error",
       };
     }
@@ -2385,7 +2041,7 @@ async function executeToolInner(
     onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
     toolContextId?: string;
     parentScope?: { agentId: string; conversationId: string };
-    /** Called after a file-mutating tool (Edit, Write, MultiEdit) writes to disk.
+    /** Called after a file-mutating tool (Edit, Write) writes to disk.
      *  The listener layer uses this to broadcast the new content via WebSocket. */
     onFileWrite?: (filePath: string, content: string) => void;
     toolEndArgsRef?: { current: ToolArgs };
@@ -2424,6 +2080,21 @@ async function executeToolInner(
     toolExecutionModContext(executionScope, { workingDirectory });
   const activeModTools =
     context?.modTools ?? getAvailableModToolsRegistry(modContext);
+  try {
+    if (!activeExternalTools.has(name) || activeModTools.has(name))
+      await waitForToolCheckouts(
+        scopedAgentId,
+        name,
+        args,
+        workingDirectory,
+        activeModTools.has(name),
+      );
+  } catch (error) {
+    return {
+      status: "error",
+      toolReturn: `Memory checkout is unavailable: ${String(error)}`,
+    };
+  }
 
   if (activeModTools.has(name)) {
     const modTool = activeModTools.get(name);
@@ -2471,7 +2142,6 @@ async function executeToolInner(
       modContext,
     });
   }
-
   // Check if this is an external tool (SDK-executed)
   if (activeExternalTools.has(name)) {
     const externalTool = activeExternalTools.get(name);
@@ -2485,10 +2155,7 @@ async function executeToolInner(
     });
     if (result) {
       if (options?.toolEndArgsRef) options.toolEndArgsRef.current = eventArgs;
-      return {
-        toolReturn: result.output,
-        status: result.status,
-      };
+      return { toolReturn: result.output, status: result.status };
     }
     if (options?.toolEndArgsRef) options.toolEndArgsRef.current = eventArgs;
     const permissionDecision = await checkModPermissionForContext({
@@ -2499,20 +2166,31 @@ async function executeToolInner(
       toolName: name,
       workingDirectory,
     });
-    if (permissionDecision?.decision !== undefined) {
-      if (permissionDecision.decision !== "allow") {
-        return createModPermissionToolResult(permissionDecision);
-      }
+    if (
+      permissionDecision?.decision !== undefined &&
+      permissionDecision.decision !== "allow"
+    ) {
+      return createModPermissionToolResult(permissionDecision);
     }
-    return executeExternalTool(
-      options?.toolCallId ?? `ext-${Date.now()}`,
-      name,
-      eventArgs as Record<string, unknown>,
-      externalTool?.executor ?? activeExternalExecutor,
-      externalTool,
+    return runWithRuntimeContext(executionScope, () =>
+      autoBackgroundExternalTool(
+        name,
+        externalTool,
+        executeExternalTool(
+          options?.toolCallId ?? `ext-${Date.now()}`,
+          name,
+          eventArgs as Record<string, unknown>,
+          externalTool?.executor ?? activeExternalExecutor,
+          externalTool,
+        ),
+        listenerExternalToolBackgroundOptions(
+          externalTool,
+          modEvents,
+          executionScope,
+        ),
+      ),
     );
   }
-
   const internalName = resolveInternalToolName(name, activeRegistry);
   const tool = internalName ? activeRegistry.get(internalName) : undefined;
   if (!internalName || !tool) {
@@ -2571,7 +2249,7 @@ async function executeToolInner(
     if (preHookResult.blocked) {
       const feedback = preHookResult.feedback.join("\n") || "Blocked by hook";
       return {
-        toolReturn: `Error: Tool execution blocked by hook. ${feedback}`,
+        toolReturn: `Error: Tool execution blocked by hook. ${scrubAmbientSecrets(feedback)}`,
         status: "error",
       };
     }
@@ -2585,20 +2263,20 @@ async function executeToolInner(
     }
     if (options?.toolEndArgsRef) options.toolEndArgsRef.current = args;
 
-    try {
-      // Inject options for tools that support them without altering schemas
-      let enhancedArgs = args;
-      let invocationSecrets: Record<string, string> = {};
+    let invocationSecrets: Record<string, string> = {};
+    let invocationRedactions = captureSecretRedactions();
+    let outputStreamer: ScrubbedOutputStreamer | null = null;
 
-      // Every built-in may opt into turn cancellation without adding another
-      // manager-side allowlist entry. The signal remains outside tool schemas.
+    try {
+      let enhancedArgs = args;
+
+      // Cancellation is internal, not part of model-facing tool schemas.
       if (options?.signal) {
         enhancedArgs = { ...enhancedArgs, signal: options.signal };
       }
 
       if (STREAMING_SHELL_TOOLS.has(internalName)) {
-        // Keep secret values out of shell interpolation and only redact values
-        // that this invocation can access.
+        // Redact only this invocation's secrets.
         const command = enhancedArgs.command ?? enhancedArgs.cmd;
         invocationSecrets =
           typeof command === "string" ||
@@ -2606,47 +2284,45 @@ async function executeToolInner(
             command.every((part) => typeof part === "string"))
             ? extractSecretEnvFromCommand(command, scopedAgentId)
             : {};
+        invocationRedactions = captureSecretRedactions(invocationSecrets);
         if (options?.onOutput) {
-          enhancedArgs = {
-            ...enhancedArgs,
-            onOutput: (chunk: string, stream: "stdout" | "stderr") => {
-              options.onOutput?.(
-                stripAnsi(scrubSecretsFromString(chunk, invocationSecrets)),
-                stream,
-              );
-            },
-          };
+          outputStreamer = createScrubbedOutputStreamer(
+            invocationRedactions,
+            options.onOutput,
+            stripAnsi,
+          );
+          enhancedArgs = { ...enhancedArgs, onOutput: outputStreamer.onOutput };
         }
         if (Object.keys(invocationSecrets).length > 0) {
           enhancedArgs = { ...enhancedArgs, secretEnv: invocationSecrets };
         }
-        if (options?.parentScope) {
-          enhancedArgs = { ...enhancedArgs, parentScope: options.parentScope };
+        const parentScope =
+          options?.parentScope ??
+          (SCOPED_BACKGROUND_TOOLS.has(internalName) && scopedAgentId
+            ? {
+                agentId: scopedAgentId,
+                conversationId: executionScope.conversationId ?? "default",
+              }
+            : undefined);
+        if (parentScope) {
+          enhancedArgs = { ...enhancedArgs, parentScope };
         }
       }
 
-      // Inject toolCallId, abort signal, and parent scope for Task tool
-      if (internalName === "Task") {
-        if (options?.toolCallId) {
-          enhancedArgs = { ...enhancedArgs, toolCallId: options.toolCallId };
-        }
-        if (options?.parentScope) {
-          enhancedArgs = { ...enhancedArgs, parentScope: options.parentScope };
-        }
+      // Correlate receipts with executor identity, never model-supplied fields.
+      if (
+        internalName === "AskUserQuestionAsync" ||
+        (["Task", "Skill"].includes(internalName) && options?.toolCallId)
+      ) {
+        enhancedArgs = { ...enhancedArgs, toolCallId: options?.toolCallId };
       }
-
-      // Inject scoped metadata for Skill tool.
-      // In listener/desktop mode, relying on global agent context is unsafe
-      // because multiple agent/conversation scopes can overlap in one process.
-      if (internalName === "Skill" && options?.toolCallId) {
-        enhancedArgs = { ...enhancedArgs, toolCallId: options.toolCallId };
-      }
-      if (internalName === "Skill" && options?.parentScope) {
+      if (
+        (internalName === "Task" || internalName === "Skill") &&
+        options?.parentScope
+      ) {
         enhancedArgs = { ...enhancedArgs, parentScope: options.parentScope };
       }
 
-      // Inject worktree-only execution state and cancellation without exposing
-      // either internal field in the model-facing schema.
       if (WORKTREE_TOOL_NAMES.has(internalName as ToolName)) {
         enhancedArgs = {
           ...enhancedArgs,
@@ -2656,7 +2332,10 @@ async function executeToolInner(
         };
       }
 
-      const result = await tool.fn(enhancedArgs);
+      // finally() emits any tail the scrubbers held back as partial secrets.
+      const result = await tool
+        .fn(enhancedArgs)
+        .finally(() => outputStreamer?.flush());
       const duration = Date.now() - startTime;
 
       // Broadcast file content after file-mutating tools so web clients update
@@ -2691,37 +2370,17 @@ async function executeToolInner(
       // Flatten the response to plain text
       let flattenedResponse = flattenToolResponse(result);
 
-      // Scrub secret values + ANSI escape sequences from tool output so they
-      // don't leak into agent context or render as garbage in downstream UIs.
-      if (STREAMING_SHELL_TOOLS.has(internalName)) {
-        const sanitize = (text: string) =>
-          stripAnsi(scrubSecretsFromString(text, invocationSecrets));
-        if (typeof flattenedResponse === "string") {
-          flattenedResponse = sanitize(flattenedResponse);
-        } else if (Array.isArray(flattenedResponse)) {
-          flattenedResponse = flattenedResponse.map((block) =>
-            block.type === "text"
-              ? { ...block, text: sanitize(block.text) }
-              : block,
-          );
-        }
-        if (stdout) {
-          for (let i = 0; i < stdout.length; i++) {
-            const line = stdout[i];
-            if (line !== undefined) {
-              stdout[i] = sanitize(line);
-            }
-          }
-        }
-        if (stderr) {
-          for (let i = 0; i < stderr.length; i++) {
-            const line = stderr[i];
-            if (line !== undefined) {
-              stderr[i] = sanitize(line);
-            }
-          }
-        }
-      }
+      // Scrub every tool return, including ambient runtime credentials.
+      const stripAnsiEscapes = STREAMING_SHELL_TOOLS.has(internalName);
+      flattenedResponse = sanitizeToolReturnContent(
+        flattenedResponse,
+        invocationRedactions,
+        stripAnsiEscapes,
+      );
+      if (stdout)
+        sanitizeOutputLines(stdout, invocationRedactions, stripAnsiEscapes);
+      if (stderr)
+        sanitizeOutputLines(stderr, invocationRedactions, stripAnsiEscapes);
 
       flattenedResponse = clampToolReturnContent(
         flattenedResponse,
@@ -2785,11 +2444,14 @@ async function executeToolInner(
         : error instanceof Error
           ? error.name
           : "unknown";
+      // Thrown errors can embed child output (e.g. an env-file parser echoing
+      // its environment); scrub before telemetry, hooks, or the model see them.
       const errorMessage = isAbort
         ? INTERRUPTED_BY_USER
-        : error instanceof Error
-          ? error.message
-          : String(error);
+        : scrubSecretsFromString(
+            error instanceof Error ? error.message : String(error),
+            invocationRedactions,
+          );
 
       // Track tool usage error
       telemetry.trackToolUsage(
@@ -2849,6 +2511,7 @@ async function executeToolInner(
 export async function executeTool(
   ...params: Parameters<typeof executeToolInner>
 ): Promise<ToolExecutionResult> {
+  const toolRedactions = captureSecretRedactions();
   const [name, args, options] = params;
   const toolEndArgsRef = { current: args };
   const res = await executeToolInner(name, args, {
@@ -2881,6 +2544,7 @@ export async function executeTool(
         executionScope.workingDirectory ?? getCurrentWorkingDirectory(),
     });
 
+  const overrideRedactions = captureSecretRedactions(toolRedactions);
   const override = await emitToolEndEvent({
     args: toolEndArgsRef.current,
     events: modEvents,
@@ -2893,7 +2557,11 @@ export async function executeTool(
   });
 
   return override
-    ? { ...res, toolReturn: override.output, status: override.status }
+    ? {
+        ...res,
+        toolReturn: scrubSecretsFromString(override.output, overrideRedactions),
+        status: override.status,
+      }
     : res;
 }
 
@@ -2976,18 +2644,4 @@ export function getToolSchema(
  */
 export function clearTools(): void {
   toolRegistry.clear();
-}
-
-/**
- * Clears the tool registry with lock protection.
- * Acquires the switch lock, clears the registry, then releases the lock.
- * This ensures sendMessageStream() waits for the clear to complete.
- */
-export function clearToolsWithLock(): void {
-  acquireSwitchLock();
-  try {
-    toolRegistry.clear();
-  } finally {
-    releaseSwitchLock();
-  }
 }

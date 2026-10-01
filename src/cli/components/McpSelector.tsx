@@ -401,8 +401,8 @@ export const McpSelector = memo(function McpSelector({
           <Text dimColor>No tools discovered.</Text>
         ) : (
           viewingState.tools.map((tool) => (
-            <Box key={tool.registrationKey ?? tool.name} flexDirection="column">
-              <Text>{tool.label ?? tool.name}</Text>
+            <Box key={tool.name} flexDirection="column">
+              <Text>{tool.title ?? tool.name}</Text>
               <Text dimColor>
                 {"  "}
                 {truncateText(singleLine(tool.description), terminalWidth - 2)}

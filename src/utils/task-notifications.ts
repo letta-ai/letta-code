@@ -1,5 +1,6 @@
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { SYSTEM_REMINDER_OPEN } from "@/constants";
+import { getRuntimeContext } from "@/runtime-context";
 
 /**
  * Task Notification Formatting
@@ -15,6 +16,7 @@ import { SYSTEM_REMINDER_OPEN } from "@/constants";
 export interface NotificationScope {
   agentId: string;
   conversationId: string;
+  actingUserId?: string;
 }
 
 export interface TaskNotification {
@@ -22,7 +24,7 @@ export interface TaskNotification {
   status: "completed" | "failed";
   summary: string;
   result: string;
-  outputFile: string;
+  outputFile?: string;
   usage?: {
     totalTokens?: number;
     toolUses?: number;
@@ -50,13 +52,14 @@ function unescapeXml(str: string): string {
 // ============================================================================
 
 /**
- * Resolve the agent/conversation scope a completion notification routes to.
+ * Capture the conversation and initiating sender when background work starts.
  *
  * Prefers the scope injected by executeTool, which is the only correct source
  * in listener/desktop mode where several agent scopes share one process, and
  * falls back to the process-global agent context for plain CLI sessions.
  * Returns undefined when neither is available, in which case the caller should
  * still queue the notification unscoped rather than drop it.
+ * Keep this snapshot until delivery; a later turn may belong to another user.
  */
 export function resolveNotificationScope(parentScope?: {
   agentId: string;
@@ -66,6 +69,7 @@ export function resolveNotificationScope(parentScope?: {
     return {
       agentId: parentScope.agentId,
       conversationId: parentScope.conversationId || "default",
+      actingUserId: getRuntimeContext()?.actingUserId,
     };
   }
 
@@ -73,6 +77,7 @@ export function resolveNotificationScope(parentScope?: {
     return {
       agentId: getCurrentAgentId(),
       conversationId: getConversationId() ?? "default",
+      actingUserId: getRuntimeContext()?.actingUserId,
     };
   } catch {
     return undefined;
@@ -106,18 +111,16 @@ export function formatTaskNotification(notification: TaskNotification): string {
 <status>${notification.status}</status>
 <summary>${escapedSummary}</summary>
 <result>${escapedResult}</result>${usageBlock}
-</task-notification>
-Full transcript available at: ${notification.outputFile}`;
+</task-notification>${notification.outputFile ? `\nFull transcript available at: ${notification.outputFile}` : ""}`;
 }
 
 export function formatMonitorEventNotification(notification: {
   taskId: string;
-  description: string;
   event: string;
 }): string {
   return `<task-notification>
 <task-id>${escapeXml(notification.taskId)}</task-id>
-<summary>${escapeXml(`Monitor event: "${notification.description}"`)}</summary>
+<summary>${escapeXml(`Monitor event: "${notification.event}"`)}</summary>
 <result>
 <event>${escapeXml(notification.event)}</event>
 </result>

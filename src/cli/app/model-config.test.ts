@@ -1,15 +1,52 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
+import { models } from "@/agent/model";
+import { setupRuntimeModelCatalogFixture } from "@/test-utils/runtime-model-catalog";
 import {
   deriveReasoningEffort,
   mapHandleToLlmConfigPatch,
   providerTypeFromModelSettings,
   providerTypeFromUpdateArgs,
   reasoningEffortLlmConfigPatch,
+  resolveModelSelectionReasoningHandle,
 } from "./model-config";
 
+setupRuntimeModelCatalogFixture();
+
 describe("model config helpers", () => {
+  test("uses a local runtime handle for reasoning tiers when it is present", () => {
+    models.push({
+      id: "gpt-5.6-sol-local-medium",
+      handle: "openai-codex/gpt-5.6-sol",
+      label: "GPT-5.6 Sol",
+      description: "",
+      updateArgs: { reasoning_effort: "medium" },
+    });
+
+    expect(
+      resolveModelSelectionReasoningHandle(
+        "openai-codex/gpt-5.6-sol",
+        "chatgpt-plus-pro/gpt-5.6-sol",
+      ),
+    ).toBe("openai-codex/gpt-5.6-sol");
+  });
+
+  test("uses the registry handle when the selected alias is not in the catalog", () => {
+    expect(
+      resolveModelSelectionReasoningHandle(
+        "lc-minimax/MiniMax-M3",
+        "minimax/MiniMax-M3",
+      ),
+    ).toBe("minimax/MiniMax-M3");
+    expect(
+      resolveModelSelectionReasoningHandle(
+        "chatgpt-personal/gpt-5.6-sol",
+        "chatgpt-plus-pro/gpt-5.6-sol",
+      ),
+    ).toBe("chatgpt-plus-pro/gpt-5.6-sol");
+  });
+
   test("maps custom ChatGPT OAuth alias handles using provider type metadata", () => {
     expect(
       mapHandleToLlmConfigPatch("chatgpt-personal/gpt-5.5", "chatgpt_oauth"),

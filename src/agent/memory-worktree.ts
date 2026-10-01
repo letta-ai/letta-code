@@ -4,7 +4,11 @@ import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
+import { getAuthToken } from "@/agent/memory-auth";
+import { runGit as runMemoryGit } from "@/agent/memory-git";
 import { GIT_DISABLE_COMMIT_SIGNING_ARGS } from "@/agent/memory-git-signing";
+import { withMemoryOperation } from "@/agent/memory-operation";
+import { getMemfsServerUrl } from "@/backend/api/memfs-git-proxy";
 import { debugLog } from "@/utils/debug";
 
 const execFile = promisify(execFileCb);
@@ -114,6 +118,8 @@ export interface ReflectionMemoryWorktree {
 export interface CreateReflectionMemoryWorktreeOptions {
   parentMemoryDir: string;
   now?: Date;
+  /** Directory and branch prefix; memory workers use "memory-worker". */
+  label?: string;
 }
 
 export async function createReflectionMemoryWorktree(
@@ -122,8 +128,9 @@ export async function createReflectionMemoryWorktree(
   const parentMemoryDir = resolve(options.parentMemoryDir);
   const id = buildReflectionWorktreeId(options.now);
   const worktreeBaseDir = join(dirname(parentMemoryDir), "memory-worktrees");
-  const worktreeDir = join(worktreeBaseDir, `reflection-${id}`);
-  const branchName = `letta/reflection/${id}`;
+  const label = options.label ?? "reflection";
+  const worktreeDir = join(worktreeBaseDir, `${label}-${id}`);
+  const branchName = `letta/${label}/${id}`;
 
   await mkdir(worktreeBaseDir, { recursive: true });
 
@@ -267,15 +274,23 @@ async function getHead(cwd: string): Promise<string | undefined> {
 
 async function refreshParentFromOrigin(parentMemoryDir: string): Promise<void> {
   const origin = await tryRunGit(parentMemoryDir, [
-    "remote",
-    "get-url",
-    "origin",
+    "config",
+    "--get",
+    "remote.origin.url",
   ]);
   if (!origin) {
     return;
   }
 
-  await runGit(parentMemoryDir, ["fetch", "origin", "main"]);
+  // Use the same authentication and transient Desktop proxy as memory sync.
+  // Other origins (including local repositories) keep their own credentials.
+  const memfsPrefix = `${getMemfsServerUrl().trim().replace(/\/+$/, "")}/v1/git/`;
+  const token = origin.stdout.trim().startsWith(memfsPrefix)
+    ? await getAuthToken()
+    : undefined;
+  await runMemoryGit(parentMemoryDir, ["fetch", "origin", "main"], token, {
+    timeoutMs: GIT_TIMEOUT_MS,
+  });
 
   const remoteIsAncestor = await tryRunGit(parentMemoryDir, [
     "merge-base",
@@ -344,7 +359,8 @@ async function cleanupWorktreeAndBranch(
   ]);
 }
 
-async function finalizeReflectionMemoryWorktreeImpl(
+/** Finalize without taking the checkout lease; the caller must already hold it. */
+export async function finalizeReflectionMemoryWorktreeUnlocked(
   worktree: ReflectionMemoryWorktree,
   options: ReflectionMemoryWorktreeFinalizeOptions,
 ): Promise<ReflectionMemoryWorktreeFinalizeResult> {
@@ -644,7 +660,86 @@ export async function finalizeReflectionMemoryWorktree(
   worktree: ReflectionMemoryWorktree,
   options: ReflectionMemoryWorktreeFinalizeOptions,
 ): Promise<ReflectionMemoryWorktreeFinalizeResult> {
-  return await finalizeReflectionMemoryWorktreeImpl(worktree, options);
+  return withMemoryOperation(worktree.parentMemoryDir, () =>
+    finalizeReflectionMemoryWorktreeUnlocked(worktree, options),
+  );
+}
+
+export type MemoryWorkerWorktreeOutcome =
+  | { status: "merged"; commitCount: number; head: string }
+  | { status: "no_changes" }
+  | { status: "discarded" }
+  | { status: "merge_conflict"; commitCount: number; branchName: string }
+  | { status: "failed"; error: string };
+
+/**
+ * Bring a memory worker's worktree back into the parent checkout. The caller
+ * must hold the checkout lease. Commits are merged (fast-forward when
+ * possible); uncommitted edits in the worktree are dropped, as are all edits
+ * when `discard` is set (a cancelled worker). A merge that conflicts with the
+ * parent's own changes is aborted and the branch is kept so nothing is lost.
+ * Unlike reflection, a dirty parent does not block the merge: Git refuses only
+ * when the parent's uncommitted files overlap the worker's commits, and that
+ * surfaces as a conflict here.
+ */
+export async function integrateMemoryWorkerWorktree(
+  worktree: ReflectionMemoryWorktree,
+  options: { discard?: boolean } = {},
+): Promise<MemoryWorkerWorktreeOutcome> {
+  const cleanup = (force: boolean) =>
+    cleanupWorktreeAndBranch(
+      worktree.parentMemoryDir,
+      worktree.worktreeDir,
+      worktree.branchName,
+      { force },
+    );
+  if (options.discard) {
+    await cleanup(true);
+    return { status: "discarded" };
+  }
+  let commitCount = 0;
+  try {
+    commitCount = await getCommitCount(worktree);
+  } catch (error) {
+    await cleanup(true).catch(() => undefined);
+    return { status: "failed", error: String(error) };
+  }
+  if (commitCount === 0) {
+    await cleanup(true);
+    return { status: "no_changes" };
+  }
+  // Remove the worktree first so the branch can be merged from the parent;
+  // the branch survives until the merge succeeds.
+  if (existsSync(worktree.worktreeDir)) {
+    await runGit(worktree.parentMemoryDir, [
+      "worktree",
+      "remove",
+      "--force",
+      worktree.worktreeDir,
+    ]);
+  }
+  const merged = await tryRunGit(worktree.parentMemoryDir, [
+    "merge",
+    "--no-edit",
+    "-m",
+    `merge(memory): ${worktree.branchName}`,
+    worktree.branchName,
+  ]);
+  if (!merged) {
+    await tryRunGit(worktree.parentMemoryDir, ["merge", "--abort"]);
+    return {
+      status: "merge_conflict",
+      commitCount,
+      branchName: worktree.branchName,
+    };
+  }
+  await tryRunGit(worktree.parentMemoryDir, [
+    "branch",
+    "-d",
+    worktree.branchName,
+  ]);
+  const head = await getHead(worktree.parentMemoryDir);
+  return { status: "merged", commitCount, head: head ?? "" };
 }
 
 export interface ReflectionMemoryWorktreeFinalizeOptions {

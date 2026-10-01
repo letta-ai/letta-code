@@ -3,14 +3,14 @@
  *
  * `add` requires `--name`, so names are the handle users (and agents)
  * actually remember — but the stores address tasks by ID. This module
- * resolves a positional that didn't match any ID as a task *name*, across
- * both stores (local ~/.letta/crons.json and Cloud schedules).
+ * resolves a positional that didn't match any ID as a task *name* across
+ * local and Cloud inventory.
  */
 
+import { isLocalAgentId } from "@/agent/agent-id";
 import { listCloudSchedules } from "@/backend/api/schedules";
 import { resolveBackendMode } from "@/backend/backend-mode";
 import { listTasks } from "@/cron";
-import { resolveCronRunner } from "./cron-runner";
 
 export interface ResolvedTaskRef {
   /** The task/schedule id the reference resolved to. */
@@ -29,13 +29,16 @@ export async function ensureSettingsForCloud(): Promise<void> {
   await settingsManager.initialize();
 }
 
+export function canManageCloudSchedules(agentId: string): boolean {
+  return resolveBackendMode() === "api" && !isLocalAgentId(agentId);
+}
+
 /**
  * Resolve a `get`/`delete` positional that didn't match any task ID as a
  * task name. `letta cron delete <name>` failing with "not found" while the
  * schedule keeps firing is a footgun.
  *
- * Searches the local store, then Cloud schedules (when `runner`/capability
- * allow). Exact-match only. Returns:
+ * Searches local and reachable Cloud inventory. Exact-match only. Returns:
  * - `{ id, store }` for exactly one match
  * - `{ ambiguous }` with the matching ids when several tasks share the name
  * - `null` for no match (callers keep their existing not-found error)
@@ -43,43 +46,29 @@ export async function ensureSettingsForCloud(): Promise<void> {
 export async function resolveTaskName(
   name: string,
   options: {
-    runner?: string;
     agentId: string;
   },
 ): Promise<ResolvedTaskRef | { ambiguous: ResolvedTaskRef[] } | null> {
   const matches: ResolvedTaskRef[] = [];
 
-  if (options.runner !== "cloud") {
-    for (const task of listTasks()) {
-      if (task.name === name) {
-        matches.push({ id: task.id, store: "local" });
-      }
+  for (const task of listTasks()) {
+    if (task.name === name) {
+      matches.push({ id: task.id, store: "local" });
     }
   }
 
-  if (options.runner !== "local" && options.agentId) {
-    const backendMode = resolveBackendMode();
-    const preliminary = resolveCronRunner({
-      agentId: options.agentId,
-      backendMode,
-    });
-    const cloudCandidate =
-      !("error" in preliminary) && preliminary.runner === "cloud";
-
-    if (cloudCandidate || options.runner === "cloud") {
-      try {
-        await ensureSettingsForCloud();
-        const response = await listCloudSchedules(options.agentId);
-        for (const schedule of response.scheduled_messages) {
-          if (schedule.name === name) {
-            matches.push({ id: schedule.id, store: "cloud" });
-          }
+  if (options.agentId && canManageCloudSchedules(options.agentId)) {
+    try {
+      await ensureSettingsForCloud();
+      const response = await listCloudSchedules(options.agentId);
+      for (const schedule of response.scheduled_messages) {
+        if (schedule.name === name) {
+          matches.push({ id: schedule.id, store: "cloud" });
         }
-      } catch {
-        // Name lookup is best-effort sugar on top of ID addressing: a
-        // failed cloud list falls through to the caller's not-found path,
-        // which names the ID-based usage.
       }
+    } catch {
+      // Name lookup is best-effort sugar on top of ID addressing: a failed
+      // Cloud list falls through to the caller's ID-based not-found path.
     }
   }
 

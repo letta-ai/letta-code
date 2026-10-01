@@ -18,8 +18,9 @@ import {
   scanMemoryFilesystem,
 } from "@/agent/memory-scanner";
 import { getAgentContextOverview } from "@/backend/api/agents";
-import { getClient, getServerUrl } from "@/backend/api/client";
+import { getClient } from "@/backend/api/client";
 import { apiRequest } from "@/backend/api/request";
+import { getServerUrl } from "@/backend/api/server-url";
 import {
   applyContextUsageSnapshot,
   type ContextUsageSnapshot,

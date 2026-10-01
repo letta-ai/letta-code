@@ -1,3 +1,4 @@
+import { getDesktopAccessToken } from "@/auth/desktop-credentials";
 import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
 import { settingsManager } from "@/settings-manager";
 import { getLettaCodeHeaders } from "./http-headers";
@@ -15,6 +16,8 @@ export interface ApiFetchOptions {
   signal?: AbortSignal;
   baseUrl?: string;
   apiKey?: string;
+  /** `null` suppresses the inherited headless acting user for this request. */
+  actingUserId?: string | null;
   headers?: Record<string, string>;
   query?: Record<string, string | number | boolean | null | undefined>;
 }
@@ -24,6 +27,7 @@ export class ApiRequestError extends Error {
     message: string,
     readonly status: number,
     readonly responseText: string,
+    readonly headers?: Headers,
   ) {
     super(message);
     this.name = "ApiRequestError";
@@ -37,7 +41,11 @@ export async function getApiRequestConfig(): Promise<ApiRequestConfig> {
       process.env.LETTA_BASE_URL ||
       settings.env?.LETTA_BASE_URL ||
       LETTA_CLOUD_API_URL,
-    apiKey: process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY || "",
+    apiKey:
+      getDesktopAccessToken() ||
+      process.env.LETTA_API_KEY ||
+      settings.env?.LETTA_API_KEY ||
+      "",
   };
 }
 
@@ -96,7 +104,7 @@ export async function apiFetch(
   return fetch(url, {
     method: options.method ?? "GET",
     headers: {
-      ...getLettaCodeHeaders(apiKey),
+      ...getLettaCodeHeaders(apiKey, options.actingUserId),
       ...options.headers,
     },
     ...(options.body && { body: JSON.stringify(options.body) }),
@@ -126,6 +134,7 @@ export async function apiRequest<T>(
       `API error (${response.status}): ${text}`,
       response.status,
       text,
+      response.headers,
     );
   }
 

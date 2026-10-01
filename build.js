@@ -100,7 +100,24 @@ await Bun.build({
   // bundled AbortSignal class during bot.init().
   // But don't make `sharp` external, causes issues with global Bun-based installs
   // ref: #745, #1200
-  external: ["ws", "@vscode/ripgrep", "node-pty", "grammy"],
+  // @pierre/diffs stays external so the diff viewer's shiki highlighter (its
+  // own nested shiki v3 with the full @shikijs/langs set, ~10 MB of source)
+  // loads from node_modules on demand instead of adding a second inlined copy
+  // to the bundle's resident source string. The diff viewer is only reachable
+  // through dynamic imports, so this costs no startup time.
+  // @shikijs/langs stays external so lazily-imported grammars (LET-13149)
+  // resolve from node_modules on demand instead of being inlined eagerly into
+  // the single-file bundle.
+  external: [
+    "ws",
+    "@vscode/ripgrep",
+    "node-pty",
+    "grammy",
+    "@pierre/diffs",
+    "@pierre/diffs/*",
+    "@shikijs/langs",
+    "@shikijs/langs/*",
+  ],
   features: features,
 });
 
@@ -114,10 +131,11 @@ await Bun.build({
   naming: {
     entry: "image-resize-worker.js",
   },
-  // The Electron-safe build loads a patched native addon and its adjacent
-  // libvips shared library. Keep its package boundary intact so those files
-  // resolve from node_modules at runtime.
-  external: ["@janhapke/sharp-electron"],
+  // Both Sharp variants load native bindings from their installed packages.
+  // Keep their JS and native bindings together in the worker: bundling one
+  // version's JS can otherwise resolve another version's @img binding from
+  // an ancestor node_modules directory at runtime.
+  external: ["sharp", "@janhapke/sharp-electron"],
 });
 
 // Add shebang to output file
@@ -172,6 +190,21 @@ await Bun.build({
 });
 
 await Bun.build({
+  entrypoints: ["./src/mcp-oauth-public.ts"],
+  outdir: "./dist",
+  target: "node",
+  format: "esm",
+  minify: false,
+  sourcemap: "external",
+  naming: {
+    entry: "mcp-oauth.js",
+  },
+  define: {
+    LETTA_VERSION: JSON.stringify(version),
+  },
+});
+
+await Bun.build({
   entrypoints: ["./src/memory-confinement.ts"],
   outdir: "./dist",
   target: "node",
@@ -180,6 +213,18 @@ await Bun.build({
   sourcemap: "external",
   naming: {
     entry: "memory-confinement.js",
+  },
+});
+
+await Bun.build({
+  entrypoints: ["./src/memory-constraints.ts"],
+  outdir: "./dist",
+  target: "node",
+  format: "esm",
+  minify: false,
+  sourcemap: "external",
+  naming: {
+    entry: "memory-constraints.js",
   },
 });
 
@@ -223,6 +268,19 @@ await Bun.build({
     ".txt": "text",
   },
 });
+
+// Pure async question contract for browser and CommonJS consumers.
+for (const format of ["esm", "cjs"]) {
+  await Bun.build({
+    entrypoints: ["./src/ask-user-question.ts"],
+    outdir: "./dist",
+    target: "browser",
+    format,
+    minify: false,
+    sourcemap: "external",
+    naming: { entry: `ask-user-question.${format === "cjs" ? "cjs" : "js"}` },
+  });
+}
 
 // Pure scheduled-turn envelope contract shared by scheduler producers and
 // transcript consumers.

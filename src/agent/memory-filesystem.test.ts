@@ -3,18 +3,31 @@
  */
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  ensureLocalMemfsCheckout,
   getMemoryFilesystemRoot,
   getMemorySystemDir,
   isLettaMemfsServer,
   labelFromRelativePath,
   renderMemoryFilesystemTree,
   stampMemfsTagOnCreateBody,
+  stampRootMemoryOnCreateBody,
 } from "@/agent/memory-filesystem";
+import {
+  POST_COMMIT_HOOK_SCRIPT,
+  PRE_COMMIT_HOOK_SCRIPT,
+} from "@/agent/memory-git-hooks";
 import { DIRECTORY_LIMIT_ENV } from "@/utils/directory-limits";
 
 const ORIGINAL_LETTA_BASE_URL = process.env.LETTA_BASE_URL;
@@ -180,6 +193,45 @@ describe("stampMemfsTagOnCreateBody", () => {
       tags: null,
     };
     expect(stampMemfsTagOnCreateBody(body, TAG).tags).toEqual([TAG]);
+  });
+});
+
+describe("stampRootMemoryOnCreateBody", () => {
+  test("adds a root index before existing memory blocks", () => {
+    const body = {
+      memory_blocks: [{ label: "persona", value: "Persistent persona" }],
+    };
+
+    expect(
+      stampRootMemoryOnCreateBody(body).memory_blocks?.map(
+        (block) => block.label,
+      ),
+    ).toEqual(["MEMORY", "persona"]);
+  });
+
+  test("creates a root index when memory blocks are absent", () => {
+    const body: {
+      memory_blocks?: Array<{
+        label: string;
+        value: string;
+        description?: string;
+      }>;
+    } = {};
+    expect(stampRootMemoryOnCreateBody(body).memory_blocks).toEqual([
+      {
+        label: "MEMORY",
+        value: "# Memory\n",
+        description: "Root memory index.",
+      },
+    ]);
+  });
+
+  test("preserves a caller-provided root index", () => {
+    const body = {
+      memory_blocks: [{ label: "MEMORY", value: "# Custom\n" }],
+    };
+
+    expect(stampRootMemoryOnCreateBody(body)).toBe(body);
   });
 });
 
@@ -506,6 +558,35 @@ describe("memory filesystem paths", () => {
     expect(systemDir).toBe(
       join("/home/user", ".letta", "agents", "agent-123", "memory", "system"),
     );
+  });
+
+  test("refreshes harness hooks when an existing checkout is activated", async () => {
+    const agentId = `existing-memfs-${Date.now()}`;
+    const memoryDir = getMemoryFilesystemRoot(agentId);
+    const hooksDir = join(memoryDir, ".git", "hooks");
+    mkdirSync(memoryDir, { recursive: true });
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: memoryDir });
+    writeFileSync(join(hooksDir, "pre-commit"), "stale\n");
+    writeFileSync(join(hooksDir, "post-commit"), "stale\n");
+
+    try {
+      await ensureLocalMemfsCheckout(agentId);
+
+      expect(readFileSync(join(hooksDir, "pre-commit"), "utf8")).toBe(
+        PRE_COMMIT_HOOK_SCRIPT,
+      );
+      expect(readFileSync(join(hooksDir, "post-commit"), "utf8")).toBe(
+        POST_COMMIT_HOOK_SCRIPT,
+      );
+      expect(
+        readFileSync(
+          join(memoryDir, ".git", "letta-memory-layout-policy"),
+          "utf8",
+        ),
+      ).toBe("root-marker\n");
+    } finally {
+      rmSync(join(memoryDir, ".."), { recursive: true, force: true });
+    }
   });
 });
 

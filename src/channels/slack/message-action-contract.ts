@@ -1,3 +1,4 @@
+import { formatSlackBindingNotice } from "@/channels/message-channel-bindings";
 import type {
   ChannelMessageActionAdapter,
   ChannelMessageActionContext,
@@ -6,12 +7,16 @@ import type {
 export interface CreateSlackMessageActionAdapterOptions {
   /** Expose reaction actions when the injected transport supports them. */
   react?: boolean;
+  /** Expose workspace custom emoji discovery when the transport supports it. */
+  listCustomEmojis?: boolean;
   /** Expose local-path uploads when the injected transport can read them. */
   uploadFile?: boolean;
   /** Host-owned proactive target resolver, when proactive sends are supported. */
   resolveMessageTarget?: ChannelMessageActionAdapter["resolveMessageTarget"];
   /** Host-owned attachment materialization, when download-file is supported. */
   downloadFile?: (context: ChannelMessageActionContext) => Promise<string>;
+  /** Advertise binding actions only when the executor's host provides them. */
+  bindings?: boolean;
 }
 
 async function sendSlackMessage(
@@ -44,9 +49,13 @@ async function sendSlackMessage(
     agentId: route.agentId,
     conversationId: route.conversationId,
   });
-  return request.mediaPath
+  const confirmation = request.mediaPath
     ? `Attachment sent to slack (message_id: ${result.messageId})`
     : `Message sent to slack (message_id: ${result.messageId})`;
+  return (
+    confirmation +
+    formatSlackBindingNotice(result.bindingInfo, route.conversationId)
+  );
 }
 
 async function reactInSlack(
@@ -73,6 +82,25 @@ async function reactInSlack(
     : `Reaction added on slack (message_id: ${result.messageId})`;
 }
 
+async function listSlackCustomEmojis(
+  context: ChannelMessageActionContext,
+): Promise<string> {
+  const listCustomEmojis = context.adapter.listCustomEmojis;
+  if (typeof listCustomEmojis !== "function") {
+    return "Error: Running Slack adapter does not support custom emoji discovery.";
+  }
+  try {
+    const names = await listCustomEmojis.call(context.adapter);
+    if (names.length === 0) {
+      return "This Slack workspace has no custom emoji available to the app.";
+    }
+    return `Available custom Slack emoji (${names.length}): ${names.map((name) => `:${name}:`).join(", ")}`;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return `Error: Could not list custom Slack emoji. ${message}`;
+  }
+}
+
 /**
  * Build canonical Slack MessageChannel actions around a host-owned transport.
  * Capabilities are explicit so remote gateways never advertise local-path or
@@ -84,12 +112,31 @@ export function createSlackMessageActionAdapter(
   const actions = [
     "send",
     ...(options.react ? ["react"] : []),
+    ...(options.listCustomEmojis ? ["list-custom-emojis"] : []),
     ...(options.uploadFile ? ["upload-file"] : []),
     ...(options.downloadFile ? ["download-file"] : []),
+    ...(options.bindings ? ["get-binding", "update-binding"] : []),
   ];
   return {
     describeMessageTool() {
       const properties: Record<string, unknown> = {};
+      if (options.bindings) {
+        properties.threadId = {
+          type: ["string", "null"],
+          description:
+            "Thread identifier. Binding actions require an exact Slack thread timestamp, or explicit null for an unthreaded DM.",
+        };
+        properties.conversationId = {
+          type: "string",
+          description:
+            "Destination conversation for update-binding. Must belong to this agent; default selects this agent's default conversation.",
+        };
+        properties.expectedConversationId = {
+          type: "string",
+          description:
+            "Expected current destination for update-binding, from get-binding. A different current binding returns a conflict; an already-matching destination is a no-op.",
+        };
+      }
       if (options.downloadFile) {
         properties.attachmentId = {
           type: "string",
@@ -131,6 +178,10 @@ export function createSlackMessageActionAdapter(
           return options.react
             ? await reactInSlack(context)
             : 'Error: Action "react" is not supported on slack.';
+        case "list-custom-emojis":
+          return options.listCustomEmojis
+            ? await listSlackCustomEmojis(context)
+            : 'Error: Action "list-custom-emojis" is not supported on slack.';
         case "download-file":
           return options.downloadFile
             ? await options.downloadFile(context)

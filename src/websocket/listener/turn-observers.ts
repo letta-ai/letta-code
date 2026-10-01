@@ -1,3 +1,4 @@
+import { debugWarn } from "@/utils/debug";
 import type { IncomingMessage } from "./types";
 
 /**
@@ -45,7 +46,7 @@ export function notifyTurnStarted(msg: IncomingMessage): void {
     try {
       hooksByOtid.get(otid)?.onStarted?.();
     } catch (error) {
-      console.error("[Listen V2] Turn observer onStarted failed", error);
+      debugWarn("Listen V2", "Turn observer onStarted failed", error);
     }
   }
 }
@@ -55,7 +56,7 @@ export function notifyTurnFinished(msg: IncomingMessage): void {
     try {
       hooksByOtid.get(otid)?.onFinished();
     } catch (error) {
-      console.error("[Listen V2] Turn observer onFinished failed", error);
+      debugWarn("Listen V2", "Turn observer onFinished failed", error);
     }
   }
 }

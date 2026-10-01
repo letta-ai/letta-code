@@ -58,7 +58,7 @@ interface AffectedPaths {
 export async function apply_patch(
   args: ApplyPatchArgs,
 ): Promise<ApplyPatchResult> {
-  validateRequiredParams(args, ["input"], "apply_patch");
+  validateRequiredParams(args, ["input"], "ApplyPatch");
   const { input } = args;
 
   const operations = parsePatch(input);

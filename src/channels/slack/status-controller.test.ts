@@ -209,7 +209,7 @@ test("slack status event table: concurrent title swaps are sent in event order",
   expect(sentTitles).toEqual(["Reading the adapter", "Running the tests"]);
 });
 
-test("slack status event table: queued mid-turn input does not clear live status", async () => {
+test("slack status event table: queued mid-turn input refreshes live status", async () => {
   const adapter = await createStartedSlackAdapter();
   const source = createSlackTurnSource();
   await adapter.handleTurnProgressEvent?.({
@@ -228,7 +228,10 @@ test("slack status event table: queued mid-turn input does not clear live status
     source: { ...source, messageId: "1712800000.000300" },
   });
 
-  expect(client.assistant.threads.setStatus).toHaveBeenCalledTimes(1);
+  expect(client.assistant.threads.setStatus).toHaveBeenCalledTimes(2);
+  expect(client.assistant.threads.setStatus.mock.calls[1]).toEqual(
+    client.assistant.threads.setStatus.mock.calls[0],
+  );
   expect(client.chat.postMessage).not.toHaveBeenCalled();
 });
 

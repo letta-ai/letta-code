@@ -19,11 +19,23 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { isLocalAgentId } from "@/agent/agent-id";
 import { estimatePeriodMs, isValidCron } from "./parse-interval";
+import { captureProcessIdentity, isProcessAlive } from "./process-identity";
+
+export {
+  __testOverrideReadProcessIdentity,
+  isProcessAlive,
+} from "./process-identity";
 
 // ── Types ───────────────────────────────────────────────────────────
 
-export type CronTaskStatus = "active" | "fired" | "missed" | "cancelled";
+export type CronTaskStatus =
+  | "active"
+  | "paused"
+  | "fired"
+  | "missed"
+  | "cancelled";
 export type CancelReason = "conversation_not_found" | "expired";
 export type CronRunOutcome = "queued" | "missed" | "failed" | "skipped";
 export type CronRunReason =
@@ -44,6 +56,8 @@ export interface SchedulerOwner {
   process_start_ticks?: string | null;
   boot_id?: string | null;
 }
+
+export type CronSchedulerScope = "all" | "cloud" | "local";
 
 export interface CronTask {
   // Identity
@@ -96,6 +110,9 @@ export interface CronTask {
 interface CronFileData {
   version: 1;
   scheduler_owner: SchedulerOwner | null;
+  scheduler_owners: Partial<
+    Record<Exclude<CronSchedulerScope, "all">, SchedulerOwner>
+  >;
   tasks: CronTask[];
 }
 
@@ -135,6 +152,7 @@ function emptyFile(): CronFileData {
   return {
     version: 1,
     scheduler_owner: null,
+    scheduler_owners: {},
     tasks: [],
   };
 }
@@ -156,6 +174,10 @@ function normalizeCronFileData(data: CronFileData): CronFileData {
   return {
     version: 1,
     scheduler_owner: data.scheduler_owner ?? null,
+    scheduler_owners:
+      data.scheduler_owners && typeof data.scheduler_owners === "object"
+        ? data.scheduler_owners
+        : {},
     tasks: Array.isArray(data.tasks) ? data.tasks.map(normalizeTask) : [],
   };
 }
@@ -192,105 +214,6 @@ interface LockOwner {
   acquired_at: number;
   process_start_ticks?: string | null;
   boot_id?: string | null;
-}
-
-interface ProcessIdentity {
-  startTicks: string | null;
-  bootId: string | null;
-}
-
-let readProcessIdentityOverride:
-  | ((pid: number) => ProcessIdentity | null)
-  | null = null;
-
-function readLinuxProcessIdentity(pid: number): ProcessIdentity | null {
-  try {
-    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
-    const endCommand = stat.lastIndexOf(")");
-    if (endCommand === -1) {
-      return null;
-    }
-
-    // /proc/<pid>/stat wraps the command name in parentheses as field #2.
-    // Everything after that begins at field #3 ("state"), so starttime
-    // (field #22) is offset 19 in the remaining array.
-    const fields = stat
-      .slice(endCommand + 2)
-      .trim()
-      .split(/\s+/);
-    const startTicks = fields[19] ?? null;
-    if (!startTicks) {
-      return null;
-    }
-
-    let bootId: string | null = null;
-    try {
-      bootId =
-        readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim() || null;
-    } catch {
-      // Best effort: boot_id is helpful but not required.
-    }
-
-    return { startTicks, bootId };
-  } catch {
-    return null;
-  }
-}
-
-function readProcessIdentity(pid: number): ProcessIdentity | null {
-  if (readProcessIdentityOverride) {
-    return readProcessIdentityOverride(pid);
-  }
-  return readLinuxProcessIdentity(pid);
-}
-
-function captureProcessIdentity(pid: number): {
-  process_start_ticks: string | null;
-  boot_id: string | null;
-} {
-  const identity = readProcessIdentity(pid);
-  return {
-    process_start_ticks: identity?.startTicks ?? null,
-    boot_id: identity?.bootId ?? null,
-  };
-}
-
-export function isProcessAlive(
-  pid: number,
-  owner?: {
-    process_start_ticks?: string | null;
-    boot_id?: string | null;
-  } | null,
-): boolean {
-  try {
-    process.kill(pid, 0);
-  } catch {
-    return false;
-  }
-
-  // On Linux, compare the persisted process identity as well. This lets us
-  // distinguish "same PID, different process" across container restarts.
-  if (owner) {
-    const identity = readProcessIdentity(pid);
-    if (identity) {
-      if (
-        owner.boot_id &&
-        identity.bootId &&
-        owner.boot_id !== identity.bootId
-      ) {
-        return false;
-      }
-      if (
-        owner.process_start_ticks &&
-        identity.startTicks &&
-        owner.process_start_ticks !== identity.startTicks
-      ) {
-        return false;
-      }
-    }
-  }
-
-  return true;
 }
 
 function readLockOwner(lockDir: string): LockOwner | null {
@@ -502,13 +425,14 @@ export function addTask(input: AddTaskInput): AddTaskResult {
     const agentId = input.agent_id;
     const conversationId = input.conversation_id ?? "new";
 
-    // Check per-agent active limit
-    const activeCount = data.tasks.filter(
-      (t) => t.agent_id === agentId && t.status === "active",
+    // Pausing a task must not let an agent exceed the persisted schedule limit.
+    const scheduledCount = data.tasks.filter(
+      (task) =>
+        task.agent_id === agentId && !TERMINAL_TASK_STATUSES.has(task.status),
     ).length;
-    if (activeCount >= MAX_ACTIVE_TASKS_PER_AGENT) {
+    if (scheduledCount >= MAX_ACTIVE_TASKS_PER_AGENT) {
       throw new Error(
-        `Agent ${agentId} has ${activeCount} active tasks (max ${MAX_ACTIVE_TASKS_PER_AGENT}). Delete some before adding more.`,
+        `Agent ${agentId} has ${scheduledCount} active or paused tasks (max ${MAX_ACTIVE_TASKS_PER_AGENT}). Delete some before adding more.`,
       );
     }
 
@@ -559,11 +483,15 @@ export function addTask(input: AddTaskInput): AddTaskResult {
     data.tasks.push(task);
     writeCronFile(data);
 
-    // Check if a scheduler is running
+    // A mixed-version tombstone in scheduler_owner does not count as an
+    // all-agent lease — only a real all-lease or the matching scoped owner
+    // suppresses the warning.
     let warning: string | undefined;
     if (
-      !data.scheduler_owner ||
-      !isProcessAlive(data.scheduler_owner.pid, data.scheduler_owner)
+      !hasLiveSchedulerOwner(
+        data,
+        isLocalAgentId(input.agent_id) ? "local" : "cloud",
+      )
     ) {
       warning =
         "No letta server is currently running. This task will only execute when a WS listener is active.";
@@ -633,32 +561,124 @@ export function deleteAllTasks(agentId: string): number {
 
 // ── Scheduler lease ─────────────────────────────────────────────────
 
+function isLiveOwner(
+  owner: SchedulerOwner | null | undefined,
+): owner is SchedulerOwner {
+  return Boolean(owner && isProcessAlive(owner.pid, owner));
+}
+
+function liveScopedOwners(data: CronFileData): SchedulerOwner[] {
+  return Object.values(data.scheduler_owners).filter(isLiveOwner);
+}
+
+function createSchedulerOwner(token: string): SchedulerOwner {
+  return {
+    pid: process.pid,
+    token,
+    started_at: new Date().toISOString(),
+    ...captureProcessIdentity(process.pid),
+  };
+}
+
+function ownerMatches(
+  owner: SchedulerOwner | null | undefined,
+  token: string,
+): owner is SchedulerOwner {
+  return (
+    owner !== null &&
+    owner !== undefined &&
+    owner.pid === process.pid &&
+    owner.token === token
+  );
+}
+
+/**
+ * True when a live lease would process schedules for `backend`.
+ * A true all-agent owner (live `scheduler_owner`, no live scoped owners)
+ * covers every backend. A scoped owner only covers its own lane. A
+ * mixed-version tombstone in `scheduler_owner` does not count as all-owner
+ * while a scoped row is live.
+ */
+export function hasLiveSchedulerOwner(
+  data: {
+    scheduler_owner: SchedulerOwner | null;
+    scheduler_owners?: Partial<
+      Record<Exclude<CronSchedulerScope, "all">, SchedulerOwner>
+    >;
+  },
+  backend: Exclude<CronSchedulerScope, "all">,
+): boolean {
+  const scoped = data.scheduler_owners ?? {};
+  const hasTrueAllOwner =
+    isLiveOwner(data.scheduler_owner) &&
+    !isLiveOwner(scoped.local) &&
+    !isLiveOwner(scoped.cloud);
+  return hasTrueAllOwner || isLiveOwner(scoped[backend]);
+}
+
+function throwIfLiveAllLease(
+  owner: SchedulerOwner | null | undefined,
+  allowSelf: boolean,
+): void {
+  if (!isLiveOwner(owner)) return;
+  if (allowSelf && owner.pid === process.pid) return;
+  throw new Error(
+    `Scheduler lease held by PID ${owner.pid} (token ${owner.token}). Cannot claim.`,
+  );
+}
+
+function throwIfLiveScopedLease(
+  existingOwner: SchedulerOwner | undefined,
+  scope: Exclude<CronSchedulerScope, "all">,
+): void {
+  if (
+    existingOwner &&
+    existingOwner.pid !== process.pid &&
+    isLiveOwner(existingOwner)
+  ) {
+    throw new Error(
+      `${scope} scheduler lease held by PID ${existingOwner.pid} (token ${existingOwner.token}). Cannot claim.`,
+    );
+  }
+}
+
 /**
  * Claim the scheduler lease. Returns the token on success.
  * Throws if another live process holds the lease.
+ *
+ * Scoped claims also write a live `scheduler_owner` tombstone so older
+ * binaries that only inspect that field refuse `claimSchedulerLease()` and
+ * cannot rewrite the file without `scheduler_owners`.
  */
-export function claimSchedulerLease(): string {
+export function claimSchedulerLease(scope: CronSchedulerScope = "all"): string {
   return withLock(() => {
     const data = readCronFile();
     const token = randomBytes(4).toString("hex");
+    const owner = createSchedulerOwner(token);
+    const liveScoped = liveScopedOwners(data);
+    const liveLegacy = isLiveOwner(data.scheduler_owner)
+      ? data.scheduler_owner
+      : null;
 
-    if (data.scheduler_owner) {
-      const existingOwner = data.scheduler_owner;
-      const { pid, token: existingToken } = existingOwner;
-      if (pid !== process.pid && isProcessAlive(pid, existingOwner)) {
+    if (scope === "all") {
+      for (const existingOwner of liveScoped) {
         throw new Error(
-          `Scheduler lease held by PID ${pid} (token ${existingToken}). Cannot claim.`,
+          `Scoped scheduler lease held by PID ${existingOwner.pid}. Cannot claim all schedules.`,
         );
       }
-      // Stale lease from dead process or self-reclaim — take over
+      throwIfLiveAllLease(liveLegacy, true);
+      data.scheduler_owners = {};
+      data.scheduler_owner = owner;
+    } else {
+      // A live scheduler_owner with no live scoped owners is a real all-agent
+      // lease (or a stale tombstone whose scoped row was stripped). Refuse.
+      if (liveScoped.length === 0) {
+        throwIfLiveAllLease(liveLegacy, false);
+      }
+      throwIfLiveScopedLease(data.scheduler_owners[scope], scope);
+      data.scheduler_owners[scope] = owner;
+      if (!liveLegacy) data.scheduler_owner = owner;
     }
-
-    data.scheduler_owner = {
-      pid: process.pid,
-      token,
-      started_at: new Date().toISOString(),
-      ...captureProcessIdentity(process.pid),
-    };
     writeCronFile(data);
     return token;
   });
@@ -667,36 +687,99 @@ export function claimSchedulerLease(): string {
 /**
  * Verify we still hold the scheduler lease.
  */
-export function verifySchedulerLease(token: string): boolean {
+export function verifySchedulerLease(
+  token: string,
+  scope: CronSchedulerScope = "all",
+): boolean {
   const data = readCronFile();
-  return (
-    data.scheduler_owner !== null &&
-    data.scheduler_owner.pid === process.pid &&
-    data.scheduler_owner.token === token
-  );
+  const owner =
+    scope === "all" ? data.scheduler_owner : data.scheduler_owners[scope];
+  return ownerMatches(owner, token);
+}
+
+let failNextRefreshSchedulerLease = false;
+let throwNextRefreshSchedulerLease = false;
+
+export function __testFailNextRefreshSchedulerLease(fail = true): void {
+  failNextRefreshSchedulerLease = fail;
+}
+
+export function __testThrowNextRefreshSchedulerLease(shouldThrow = true): void {
+  throwNextRefreshSchedulerLease = shouldThrow;
+}
+
+/**
+ * Confirm we still hold the lease. Scoped holders restore a dead tombstone
+ * and a missing row when we own it or it matches `knownTombstoneToken`.
+ * A different live all-owner is lease loss. Heartbeat, not only the 60s tick.
+ */
+export function refreshSchedulerLease(
+  token: string,
+  scope: CronSchedulerScope = "all",
+  knownTombstoneToken?: string,
+): boolean {
+  return withLock(() => {
+    if (throwNextRefreshSchedulerLease) {
+      throwNextRefreshSchedulerLease = false;
+      throw new Error("Failed to acquire crons.lock — timed out after 5s");
+    }
+    if (failNextRefreshSchedulerLease) {
+      failNextRefreshSchedulerLease = false;
+      return false;
+    }
+    const data = readCronFile();
+    if (scope === "all") {
+      return ownerMatches(data.scheduler_owner, token);
+    }
+    const owner = data.scheduler_owners[scope];
+    if (ownerMatches(owner, token)) {
+      if (!isLiveOwner(data.scheduler_owner)) {
+        data.scheduler_owner = owner;
+        writeCronFile(data);
+      }
+      return true;
+    }
+    if (isLiveOwner(owner)) return false;
+    const tombstone = data.scheduler_owner;
+    if (
+      isLiveOwner(tombstone) &&
+      tombstone.token !== knownTombstoneToken &&
+      !ownerMatches(tombstone, token)
+    ) {
+      return false;
+    }
+    const restored = createSchedulerOwner(token);
+    data.scheduler_owners[scope] = restored;
+    if (!isLiveOwner(data.scheduler_owner)) {
+      data.scheduler_owner = restored;
+    }
+    writeCronFile(data);
+    return true;
+  });
 }
 
 /**
  * Release the scheduler lease.
  */
-export function releaseSchedulerLease(token: string): void {
+export function releaseSchedulerLease(
+  token: string,
+  scope: CronSchedulerScope = "all",
+): void {
   withLock(() => {
     const data = readCronFile();
-    if (
-      data.scheduler_owner &&
-      data.scheduler_owner.pid === process.pid &&
-      data.scheduler_owner.token === token
-    ) {
+    const owner =
+      scope === "all" ? data.scheduler_owner : data.scheduler_owners[scope];
+    if (!ownerMatches(owner, token)) return;
+    if (scope === "all") {
       data.scheduler_owner = null;
-      writeCronFile(data);
+    } else {
+      delete data.scheduler_owners[scope];
+      if (ownerMatches(data.scheduler_owner, token)) {
+        data.scheduler_owner = liveScopedOwners(data)[0] ?? null;
+      }
     }
+    writeCronFile(data);
   });
-}
-
-export function __testOverrideReadProcessIdentity(
-  fn: ((pid: number) => ProcessIdentity | null) | null,
-): void {
-  readProcessIdentityOverride = fn;
 }
 
 // ── Task state updates (used by scheduler) ──────────────────────────
@@ -729,6 +812,133 @@ export function updateTask(
   });
 }
 
+export function recordTaskQueued(
+  taskId: string,
+  trigger: "automatic" | "manual",
+  queuedAt: Date,
+): CronTask | null {
+  return updateTask(taskId, (task) => {
+    const queuedAtIso = queuedAt.toISOString();
+    if (trigger === "automatic" && !task.recurring) {
+      task.status = "fired";
+      task.fired_at = queuedAtIso;
+    }
+    task.last_fired_at = queuedAtIso;
+    task.fire_count += 1;
+    task.last_run_at = queuedAtIso;
+    task.last_run_outcome = "queued";
+    task.last_run_reason = task.recurring
+      ? "scheduled_time_matched"
+      : "one_off_due";
+    task.last_run_error = null;
+  });
+}
+
+export interface CronStateChangeResult {
+  success: boolean;
+  found: boolean;
+  task?: CronTask;
+  error?: string;
+}
+
+const TERMINAL_TASK_STATUSES = new Set<CronTaskStatus>([
+  "fired",
+  "missed",
+  "cancelled",
+]);
+
+/** Pause an active task atomically. Repeated pauses are successful no-ops. */
+export function pauseTask(taskId: string): CronStateChangeResult {
+  return withLock(() => {
+    const data = readCronFile();
+    const task = data.tasks.find((candidate) => candidate.id === taskId);
+    if (!task) {
+      return { success: false, found: false, error: "Schedule not found" };
+    }
+    if (task.status === "paused") {
+      return { success: true, found: true, task: { ...task } };
+    }
+    if (task.status !== "active") {
+      return {
+        success: false,
+        found: true,
+        task: { ...task },
+        error: "Completed schedules cannot be paused",
+      };
+    }
+
+    task.status = "paused";
+    writeCronFile(data);
+    return { success: true, found: true, task: { ...task } };
+  });
+}
+
+/**
+ * Resume a paused task atomically. An overdue one-off requires a replacement
+ * future timestamp in the same operation. Repeated resumes are no-ops.
+ */
+export function resumeTask(
+  taskId: string,
+  scheduledFor?: Date,
+  now = new Date(),
+): CronStateChangeResult {
+  return withLock(() => {
+    const data = readCronFile();
+    const task = data.tasks.find((candidate) => candidate.id === taskId);
+    if (!task) {
+      return { success: false, found: false, error: "Schedule not found" };
+    }
+    if (task.status === "active") {
+      return { success: true, found: true, task: { ...task } };
+    }
+    if (task.status !== "paused") {
+      return {
+        success: false,
+        found: true,
+        task: { ...task },
+        error: "Completed schedules cannot be resumed",
+      };
+    }
+
+    if (!task.recurring) {
+      const resumeAt =
+        scheduledFor ??
+        (task.scheduled_for ? new Date(task.scheduled_for) : null);
+      if (!resumeAt || Number.isNaN(resumeAt.getTime())) {
+        return {
+          success: false,
+          found: true,
+          task: { ...task },
+          error: "A one-off schedule requires a valid scheduled_for timestamp",
+        };
+      }
+      if (resumeAt.getTime() <= now.getTime()) {
+        return {
+          success: false,
+          found: true,
+          task: { ...task },
+          error:
+            "An overdue one-off schedule requires a new future scheduled_for timestamp",
+        };
+      }
+      if (scheduledFor) {
+        task.scheduled_for = scheduledFor.toISOString();
+        task.jitter_offset_ms = computeJitter(
+          task.id,
+          task.cron,
+          false,
+          scheduledFor,
+          new Date(task.created_at),
+        );
+      }
+    }
+
+    task.status = "active";
+    writeCronFile(data);
+    return { success: true, found: true, task: { ...task } };
+  });
+}
+
 // ── Garbage collection ──────────────────────────────────────────────
 
 /**
@@ -742,8 +952,9 @@ export function garbageCollect(): number {
     const before = data.tasks.length;
 
     data.tasks = data.tasks.filter((t) => {
-      if (t.status === "active") return true; // Keep active tasks
-      // Terminal task — check age
+      // Keep active, paused, and status values written by newer versions. Only
+      // the known terminal states are eligible for collection.
+      if (!TERMINAL_TASK_STATUSES.has(t.status)) return true;
       const createdAt = new Date(t.created_at).getTime();
       // Use the most recent timestamp for GC age
       const terminalAt = Math.max(

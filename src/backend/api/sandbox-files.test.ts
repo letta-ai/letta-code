@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  createSandboxDesktopSession,
   downloadFileFromSandbox,
   ensureConversationSandbox,
   type SandboxFilesApiDeps,
@@ -23,6 +24,26 @@ function createDeps(
 }
 
 describe("sandbox file API", () => {
+  test("selects agent scope for default rather than looking up a literal conversation", async () => {
+    const calls: Array<{ input: string; init?: RequestInit }> = [];
+    await ensureConversationSandbox(
+      "agent-1",
+      "default",
+      createDeps(
+        Response.json({
+          sandboxId: "main-sandbox",
+          deviceId: "device-1",
+          connectionName: "Cloud",
+        }),
+        calls,
+      ),
+    );
+    expect(calls[0]?.input).toBe(
+      "https://api.letta.test/v1/agents/agent-1/sandboxes",
+    );
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({});
+  });
+
   test("ensures the conversation-scoped sandbox", async () => {
     const calls: Array<{ input: string; init?: RequestInit }> = [];
     const result = await ensureConversationSandbox(
@@ -92,5 +113,51 @@ describe("sandbox file API", () => {
     expect(calls[0]?.input).toBe(
       "https://api.letta.test/v1/sandboxes/sandbox-1/files?path=%2Froot%2Fdownloads%2Freport.txt",
     );
+  });
+
+  test("creates a desktop session for the sandbox", async () => {
+    const calls: Array<{ input: string; init?: RequestInit }> = [];
+    const result = await createSandboxDesktopSession(
+      "sandbox-1",
+      createDeps(
+        Response.json({
+          url: "https://api.letta.test/v1/sandboxes/sandbox-1/desktop-session/ws?token=abc",
+          expiresAt: "2026-09-28T23:00:00.000Z",
+        }),
+        calls,
+      ),
+    );
+
+    expect(result).toEqual({
+      url: "https://api.letta.test/v1/sandboxes/sandbox-1/desktop-session/ws?token=abc",
+      expiresAt: "2026-09-28T23:00:00.000Z",
+    });
+    expect(calls[0]?.input).toBe(
+      "https://api.letta.test/v1/sandboxes/sandbox-1/desktop-session",
+    );
+    expect(calls[0]?.init?.method).toBe("POST");
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({});
+    expect(new Headers(calls[0]?.init?.headers).get("Authorization")).toBe(
+      "Bearer secret",
+    );
+  });
+
+  test("surfaces the server's not-ready error for a desktop session", async () => {
+    const calls: Array<{ input: string; init?: RequestInit }> = [];
+    await expect(
+      createSandboxDesktopSession(
+        "sandbox-1",
+        createDeps(
+          Response.json(
+            {
+              errorCode: "SANDBOX_NOT_READY",
+              message: "Sandbox is not ready for desktop access",
+            },
+            { status: 409 },
+          ),
+          calls,
+        ),
+      ),
+    ).rejects.toThrow("Sandbox is not ready for desktop access");
   });
 });

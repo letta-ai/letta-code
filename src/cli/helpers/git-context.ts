@@ -1,4 +1,7 @@
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 export interface GitContextSnapshot {
   isGitRepo: boolean;
@@ -27,6 +30,22 @@ function runGit(args: string[], cwd: string): string | null {
       stdio: ["ignore", "pipe", "ignore"],
       windowsHide: true,
     }).trim();
+  } catch {
+    return null;
+  }
+}
+
+async function runGitAsync(
+  args: string[],
+  cwd: string,
+): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync("git", args, {
+      cwd,
+      encoding: "utf-8",
+      windowsHide: true,
+    });
+    return stdout.trim();
   } catch {
     return null;
   }
@@ -131,15 +150,17 @@ export interface LightGitContext {
  * Fast: only runs `git branch --show-current` and `git branch --sort=-committerdate`.
  * Returns null if the cwd is not inside a git repo.
  */
-export function getGitContext(cwd: string): LightGitContext | null {
-  if (!runGit(["rev-parse", "--git-dir"], cwd)) {
+export async function getGitContextAsync(
+  cwd: string,
+): Promise<LightGitContext | null> {
+  if (!(await runGitAsync(["rev-parse", "--git-dir"], cwd))) {
     return null;
   }
 
-  const branch = runGit(["branch", "--show-current"], cwd);
+  const branch = await runGitAsync(["branch", "--show-current"], cwd);
 
   // Get up to 11 local branches sorted by most recent commit (10 + current)
-  const branchList = runGit(
+  const branchList = await runGitAsync(
     [
       "branch",
       "--sort=-committerdate",

@@ -24,6 +24,7 @@ interface ScenarioSummary {
   code: number | null;
   spawnArgvs: string[][];
   toolResults: string;
+  taskOutput: string;
   stdoutTail: string;
   stderrTail: string;
 }
@@ -51,11 +52,11 @@ describe("headless subagent stdout loss", () => {
     expect(summary.spawnArgvs, formatSummary(summary)).toHaveLength(2);
     // The retry must preserve the original spawn arguments verbatim.
     expect(summary.spawnArgvs[1]).toEqual(summary.spawnArgvs[0]);
-    // The recovered report reaches the model as a successful tool result.
-    expect(summary.toolResults, formatSummary(summary)).toContain(
+    // The recovered report reaches the background task transcript.
+    expect(summary.taskOutput, formatSummary(summary)).toContain(
       "SUBAGENT-REPORT-OK",
     );
-    expect(summary.toolResults, formatSummary(summary)).not.toContain(
+    expect(summary.taskOutput, formatSummary(summary)).not.toContain(
       "Failed to parse subagent output",
     );
   }, 90_000);
@@ -66,7 +67,7 @@ describe("headless subagent stdout loss", () => {
     expect(summary.code, formatSummary(summary)).toBe(0);
     expect(summary.spawnArgvs, formatSummary(summary)).toHaveLength(2);
     expect(summary.spawnArgvs[1]).toEqual(summary.spawnArgvs[0]);
-    expect(summary.toolResults, formatSummary(summary)).toContain(
+    expect(summary.taskOutput, formatSummary(summary)).toContain(
       "SUBAGENT-REPORT-OK",
     );
   }, 90_000);
@@ -163,10 +164,18 @@ async function runStdoutLossScenario(
 
   provider.server.stop(true);
 
+  const toolResultMessages = provider.toolResults.map(
+    (result) => JSON.parse(result) as string,
+  );
+  const toolResults = toolResultMessages.join("\n");
+  const outputFile = toolResults.match(/Output file: ([^\r\n]+)/)?.[1];
+  const taskOutput = outputFile ? readFileSync(outputFile, "utf-8") : "";
+
   return {
     code,
     spawnArgvs: readSpawnArgvs(childStateDir),
-    toolResults: provider.toolResults.join("\n"),
+    toolResults,
+    taskOutput,
     stdoutTail: tail(stdout),
     stderrTail: tail(stderr),
   };
@@ -241,7 +250,7 @@ process.exit(0);
 /**
  * Minimal OpenAI-compatible SSE provider: the first chat round forces one
  * Agent tool call, later rounds record the tool results the CLI sends back
- * and finish the turn.
+ * and wait for the background report before finishing the turn.
  */
 function startMockProvider(): {
   server: ReturnType<typeof Bun.serve>;
@@ -281,6 +290,19 @@ function startMockProvider(): {
         }
       }
 
+      // Agent returns a launch acknowledgement, not the child's report. Keep
+      // the CLI alive to collect that report before sending its final response.
+      // Waiting after CLI exit cannot help: its output collector is gone.
+      if (round > 1) {
+        const outputFile = toolResults
+          .map((result) => JSON.parse(result) as string)
+          .join("\n")
+          .match(/Output file: ([^\r\n]+)/)?.[1];
+        if (outputFile) {
+          await waitForTaskOutput(outputFile, "SUBAGENT-REPORT-OK");
+        }
+      }
+
       const base = {
         id: `chatcmpl-${round}`,
         object: "chat.completion.chunk",
@@ -308,7 +330,6 @@ function startMockProvider(): {
                               description: "run test subagent",
                               prompt: "produce the test report",
                               subagent_type: "general-purpose",
-                              run_in_background: false,
                             }),
                           },
                         },
@@ -381,6 +402,24 @@ function readSpawnArgvs(childStateDir: string): string[][] {
   } catch {
     return [];
   }
+}
+
+async function waitForTaskOutput(
+  outputFile: string,
+  expected: string,
+): Promise<string> {
+  const deadline = Date.now() + 10_000;
+  let content = "";
+  while (Date.now() < deadline) {
+    try {
+      content = readFileSync(outputFile, "utf-8");
+      if (content.includes(expected)) return content;
+    } catch {
+      // The CLI is still running and may not have created the transcript yet.
+    }
+    await Bun.sleep(25);
+  }
+  return content;
 }
 
 function tail(text: string): string {

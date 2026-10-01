@@ -65,6 +65,28 @@ function frame(
 }
 
 describe("outbound wire queue", () => {
+  test("a terminal snapshot cannot overtake the failure it follows", () => {
+    const { transport, sent, raw } = makeLocalTransport({
+      bufferedAmount: OUTBOUND_QUEUE_LIMITS.HIGH_WATERMARK_BUFFERED_BYTES,
+    });
+    enqueueOutboundFrame(
+      transport,
+      frame("processing", "status", {
+        coalesceKey: "loop",
+      }),
+    );
+    enqueueOutboundFrame(transport, frame("failure", "critical"));
+    enqueueOutboundFrame(
+      transport,
+      frame("idle", "status", {
+        coalesceKey: "loop",
+      }),
+    );
+    raw.bufferedAmount = 0;
+    enqueueOutboundFrame(transport, frame("flush", "critical"));
+    expect(sent).toEqual(["failure", "idle", "flush"]);
+  });
+
   test("sends synchronously in order while the socket is healthy", () => {
     const { transport, sent } = makeLocalTransport();
 
@@ -136,8 +158,8 @@ describe("outbound wire queue", () => {
     await new Promise((resolve) =>
       setTimeout(resolve, OUTBOUND_QUEUE_LIMITS.DRAIN_POLL_MS + 20),
     );
-    // v2 replaced v1 in place (order preserved), other keys untouched.
-    expect(sent).toEqual(["loop:v2", "delta:1", "device:v1"]);
+    // The new snapshot stays after the critical delta that preceded it.
+    expect(sent).toEqual(["delta:1", "loop:v2", "device:v1"]);
   });
 
   test("terminates instead of dropping unreplayable frames on overflow", () => {

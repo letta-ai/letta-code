@@ -5,6 +5,7 @@ import {
   createAssistantMessageStream,
   type HeadlessTurnExecutor,
 } from "@/backend/dev/headless-turn-executor";
+import { attachLocalSegmentIdentity } from "@/backend/local/local-stream-chunks";
 import { startLocalChannelGateway } from "@/channels/gateway-local";
 import { addRoute } from "@/channels/routing";
 import {
@@ -44,11 +45,14 @@ function assistantMessagesAroundToolStream(
   return {
     controller,
     async *[Symbol.asyncIterator]() {
-      yield {
-        message_type: "assistant_message",
-        id: `telegram-relay-assistant-${sequence}-1`,
-        content: [{ type: "text", text: first }],
-      };
+      yield attachLocalSegmentIdentity(
+        {
+          message_type: "assistant_message",
+          id: `telegram-relay-assistant-${sequence}-1`,
+          content: [{ type: "text", text: first }],
+        },
+        { contentStartIndex: 0, useSourceMessageId: true },
+      );
       yield {
         message_type: "tool_call_message",
         id: `telegram-relay-tool-${sequence}`,
@@ -58,11 +62,14 @@ function assistantMessagesAroundToolStream(
           arguments: JSON.stringify({ command: "true" }),
         },
       };
-      yield {
-        message_type: "assistant_message",
-        id: `telegram-relay-assistant-${sequence}-2`,
-        content: [{ type: "text", text: second }],
-      };
+      yield attachLocalSegmentIdentity(
+        {
+          message_type: "assistant_message",
+          id: `telegram-relay-assistant-${sequence}-2`,
+          content: [{ type: "text", text: second }],
+        },
+        { contentStartIndex: 2, useSourceMessageId: false },
+      );
       yield { message_type: "stop_reason", stop_reason: "end_turn" };
     },
   } as unknown as ReturnType<typeof createAssistantMessageStream>;

@@ -5,10 +5,29 @@ import type {
 } from "@/backend/api/environments";
 import {
   createAgentSandbox,
+  getTeleportStatus,
   resolveDesktopEnvironmentConnectionId,
+  resolveEnvironmentConnectionId,
   teleportToEnvironment,
 } from "@/backend/api/environments";
 import type { apiRequest } from "@/backend/api/request";
+
+test("reads the scoped teleport receipt without starting a handoff", async () => {
+  const calls: unknown[][] = [];
+  const request = (async (...args: unknown[]) => {
+    calls.push(args);
+    return { status: "completed" };
+  }) as typeof apiRequest;
+  expect(
+    (await getTeleportStatus("agent/1", "conv/1", "teleport/1", request))
+      .status,
+  ).toBe("completed");
+  expect(calls[0]?.slice(0, 2)).toEqual([
+    "GET",
+    "/v1/environments/runtimes/agent%2F1/conv%2F1/teleports/teleport%2F1",
+  ]);
+  expect(calls[0]?.[3]).toMatchObject({ signal: expect.any(AbortSignal) });
+});
 
 function environment(
   overrides: Partial<EnvironmentConnection> = {},
@@ -28,6 +47,115 @@ function environment(
     ...overrides,
   };
 }
+
+describe("Computer environment resolution", () => {
+  function listConnections(
+    connections: EnvironmentConnection[],
+  ): typeof listEnvironments {
+    return async (options) => {
+      expect(options).toEqual({ limit: 100 });
+      return { connections, hasNextPage: false };
+    };
+  }
+
+  test.each(["device-1", " Environment "])(
+    "selects the freshest online listener for %s on one device",
+    async (selector) => {
+      const now = Date.now();
+      const heartbeat = environment({
+        lastHeartbeat: now - 1_000,
+        lastSeenAt: now - 10_000,
+      });
+      const seen = environment({
+        id: "env-2",
+        connectionId: "conn-2",
+        lastHeartbeat: now - 5_000,
+        lastSeenAt: now,
+      });
+      const offline = environment({
+        id: "env-3",
+        connectionId: "conn-3",
+        lastHeartbeat: now - 180_000,
+        lastSeenAt: now + 1_000,
+      });
+      for (const connections of [
+        [heartbeat, seen, offline],
+        [offline, seen, heartbeat],
+      ]) {
+        expect(
+          await resolveEnvironmentConnectionId(
+            selector,
+            listConnections(connections),
+          ),
+        ).toEqual({ connectionId: "conn-2", environment: seen });
+      }
+      seen.lastSeenAt = now - 20_000;
+      expect(
+        await resolveEnvironmentConnectionId(
+          selector,
+          listConnections([seen, heartbeat]),
+        ),
+      ).toEqual({ connectionId: "conn-1", environment: heartbeat });
+    },
+  );
+
+  test("rejects a shared name across distinct online devices", async () => {
+    const list = listConnections([
+      environment(),
+      environment({
+        id: "env-2",
+        connectionId: "conn-2",
+        deviceId: "device-2",
+      }),
+    ]);
+    await expect(
+      resolveEnvironmentConnectionId("Environment", list),
+    ).rejects.toThrow('Computer "Environment" is ambiguous');
+  });
+
+  test.each(["conn-1", "env-1"])(
+    "pins explicit listener selector %s even with a fresher sibling",
+    async (selector) => {
+      const pinned = environment({
+        lastHeartbeat: Date.now() - 10_000,
+        lastSeenAt: 0,
+      });
+      const list = listConnections([
+        pinned,
+        environment({ id: "env-2", connectionId: "conn-2" }),
+      ]);
+      expect(await resolveEnvironmentConnectionId(selector, list)).toEqual({
+        connectionId: "conn-1",
+        environment: pinned,
+      });
+      pinned.lastHeartbeat = Date.now() - 180_000;
+      await expect(
+        resolveEnvironmentConnectionId(selector, list),
+      ).rejects.toThrow("is offline");
+    },
+  );
+
+  test("rejects offline devices even with a recent lastSeenAt", async () => {
+    const list = listConnections([
+      environment({ lastHeartbeat: Date.now() - 180_000 }),
+      environment({ id: "env-2", connectionId: null, lastHeartbeat: null }),
+    ]);
+    await expect(
+      resolveEnvironmentConnectionId("device-1", list),
+    ).rejects.toThrow("is offline");
+  });
+
+  test("preserves missing and empty selector errors", async () => {
+    await expect(
+      resolveEnvironmentConnectionId("missing", listConnections([])),
+    ).rejects.toThrow("not found");
+    await expect(
+      resolveEnvironmentConnectionId("  ", async () => {
+        throw new Error("must not list for an empty selector");
+      }),
+    ).rejects.toThrow("Computer selector must not be empty");
+  });
+});
 
 describe("Cloud sandbox environment resolution", () => {
   test("sends conversationId in the create request body", async () => {
@@ -108,7 +236,7 @@ describe("Desktop environment resolution", () => {
     expect(result.environment.connectionName).toBe("Caren's Mac");
   });
 
-  test("requires Desktop Remote Access to be online", async () => {
+  test("requires the Desktop computer to be online", async () => {
     const list = (async () => ({
       connections: [
         environment({
@@ -121,7 +249,7 @@ describe("Desktop environment resolution", () => {
     })) as typeof listEnvironments;
 
     await expect(resolveDesktopEnvironmentConnectionId(list)).rejects.toThrow(
-      "enable Remote Access",
+      "wait for its computer connection",
     );
   });
 
@@ -144,8 +272,24 @@ describe("Desktop environment resolution", () => {
     })) as typeof listEnvironments;
 
     await expect(resolveDesktopEnvironmentConnectionId(list)).rejects.toThrow(
-      "Multiple Desktop environments are online",
+      "Multiple Desktop computers are online",
     );
+  });
+
+  test("resolves the account-scoped direct primary without a Remote Access sibling", async () => {
+    const list = (async () => ({
+      connections: [
+        environment({
+          deviceId: "desktop:installation:user-1",
+          listenerInstanceId: "desktop-primary:installation",
+          connectionId: "conn-primary",
+        }),
+      ],
+      hasNextPage: false,
+    })) as typeof listEnvironments;
+    expect(
+      (await resolveDesktopEnvironmentConnectionId(list)).connectionId,
+    ).toBe("conn-primary");
   });
 });
 

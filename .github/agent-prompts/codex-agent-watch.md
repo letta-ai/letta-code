@@ -12,6 +12,20 @@ The detector already compared the tracker cursor directly to the latest stable C
 
 Before running the sandbox bootstrap, resolve the watcher credential identity with `test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN" gh api user --jq .login`. It must exactly match the Expected GitHub login from the run inputs. If the secret is missing or the identities differ, stop without modifying GitHub or the tracker.
 
+Plain `git push` uses the sandbox's default GitHub App credential, not `GH_TOKEN`. For the one required branch push, use exactly:
+
+```bash
+test ! -e .git/hooks/pre-push
+test ! -e .husky/pre-push
+test "$(git remote get-url origin)" = "https://github.com/letta-ai/letta-code.git"
+test -n "$AMELIA_GITHUB_TOKEN"
+AUTH_HEADER="Authorization: Basic $(printf 'x-access-token:%s' "$AMELIA_GITHUB_TOKEN" | base64 | tr -d '\n')"
+env -u AMELIA_GITHUB_TOKEN -u GH_TOKEN -u GITHUB_TOKEN git -c http.extraHeader="$AUTH_HEADER" push -u origin HEAD
+unset AUTH_HEADER
+```
+
+If either push hook exists, the remote differs, or this push fails, stop with `needs_human_review`. Never retry with plain `git push`, `CAREN_GITHUB_TOKEN`, another user's credential, or a token-bearing remote URL.
+
 ## Sandbox setup
 
 The detector ran on a GitHub Actions runner, but your turn does not. The runner checkout, environment variables, and analysis file path are unavailable in the sandbox. The run inputs and an exact bootstrap command are included below in this prompt.
@@ -48,6 +62,10 @@ Many upstream Codex tool changes are upstream-only: MCP/plugin internals, Respon
 
 When Codex and Letta Code implement the same tool contract, implementation behavior is part of the mirror. Compare parsing, path resolution, mutation ordering, and failure semantics even when schemas and descriptions are unchanged. If the upstream diff introduces behavior that the local mirror lacks, treat it as `local_change_required` unless you can show that the difference is intentionally inapplicable locally. Do not dismiss it as a minor implementation improvement.
 
+## Instruction-content changes
+
+The detector also flags changes to model instruction content in models.json (`base_instructions`, `model_messages`, `instructions_template`) and newly added models that ship instructions. Letta Code does not mirror Codex model prompts, so these usually close as `no_local_impact`. Still read the changed instruction text: check it for tool-contract implications, and summarize noteworthy behavioral guidance (steering, user-input handling, dissatisfaction handling) in the tracker note so owners can decide whether to adopt the pattern in the Letta Code system prompt.
+
 ## Tracker updates
 
 The prompt provides:
@@ -78,6 +96,7 @@ test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN" 
   --analysis-file /tmp/codex-watch-analysis.json \
   --outcome pr_created \
   --pr-url "$PR_URL" \
+  --expected-github-login <expected-login> \
   --notes "<short summary of local mirror update>"
 ```
 

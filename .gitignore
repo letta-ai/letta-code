@@ -1,3 +1,9 @@
+# Python distribution build outputs
+/python/letta_code/_payload/
+__pycache__/
+*.pyc
+*.whl
+
 # Letta Code local settings
 .letta/settings.local.json
 .letta

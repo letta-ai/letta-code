@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { GIT_MEMORY_ENABLED_TAG } from "@/agent/agent-tags";
+import { stampRootMemoryOnCreateBody } from "@/agent/memory-filesystem";
 import type { AgentCreateBody } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import { LocalBackend } from "@/backend/local";
@@ -19,17 +20,6 @@ const MEMORY_BLOCKS = [
     label: "human",
     value: "The user is parity human.",
     description: "Parity human",
-  },
-  {
-    label: "project/gotchas",
-    value: "Use Bun.",
-    description: "Parity gotchas",
-  },
-  {
-    label: "reference/details",
-    value:
-      "External-looking labels passed as memory blocks stay in system memory.",
-    description: "Parity details",
   },
 ];
 
@@ -72,18 +62,20 @@ describe("local/API system prompt parity", () => {
 
     await settingsManager.initialize();
     const client = await getClient();
-    const apiAgent = await client.agents.create({
-      agent_type: "letta_v1_agent",
-      name: `Parity Probe ${Date.now()}`,
-      description: "temporary local/API system prompt parity probe",
-      system: RAW_SYSTEM_PROMPT,
-      model: "letta/auto",
-      include_base_tools: false,
-      include_base_tool_rules: false,
-      initial_message_sequence: [],
-      memory_blocks: MEMORY_BLOCKS,
-      tags: ["origin:letta-code", GIT_MEMORY_ENABLED_TAG],
-    } as AgentCreateBody);
+    const apiAgent = await client.agents.create(
+      stampRootMemoryOnCreateBody({
+        agent_type: "letta_v1_agent",
+        name: `Parity Probe ${Date.now()}`,
+        description: "temporary local/API system prompt parity probe",
+        system: RAW_SYSTEM_PROMPT,
+        model: "letta/auto",
+        include_base_tools: false,
+        include_base_tool_rules: false,
+        initial_message_sequence: [],
+        memory_blocks: MEMORY_BLOCKS,
+        tags: ["origin:letta-code", GIT_MEMORY_ENABLED_TAG],
+      } as AgentCreateBody),
+    );
 
     const storageDir = await mkdtemp(join(tmpdir(), "local-parity-"));
     try {
@@ -108,15 +100,9 @@ describe("local/API system prompt parity", () => {
       const normalizedApi = normalizeCompiledPrompt(apiCompiled);
       const normalizedLocal = normalizeCompiledPrompt(localCompiled);
       expect(normalizedLocal).toBe(normalizedApi);
-      expect(normalizedLocal).toContain(
-        "<projection>$MEMORY_DIR/system/project/gotchas.md</projection>",
-      );
-      expect(normalizedLocal).toContain(
-        "<projection>$MEMORY_DIR/system/reference/details.md</projection>",
-      );
-      expect(normalizedLocal).toContain(
-        "External-looking labels passed as memory blocks stay in system memory.",
-      );
+      expect(normalizedLocal).toContain("<persona>");
+      expect(normalizedLocal).toContain("<human>");
+      expect(normalizedLocal).toContain("<memory>\n# Memory\n</memory>");
     } finally {
       await rm(storageDir, { recursive: true, force: true });
       await client.agents.delete(apiAgent.id).catch(() => undefined);

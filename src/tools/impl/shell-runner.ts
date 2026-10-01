@@ -1,6 +1,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { isUsableDirectory } from "@/helpers/usable-directory";
+import { wrapManagedWorkloadLauncher } from "@/utils/systemd-workload-scope";
 import { noteExpectedWorktreeForLauncher } from "@/websocket/listener/worktree-ownership";
 import {
   createGitHubPullRequestOutputTracker,
@@ -360,7 +361,10 @@ export function startShellProcess(
   launcher: string[],
   options: ShellSpawnOptions,
 ): RunningShellProcess {
-  const [executable] = launcher;
+  const managedLauncher = wrapManagedWorkloadLauncher(launcher, {
+    env: options.env,
+  });
+  const [executable] = managedLauncher;
   if (!executable) {
     throw new ShellExecutionError("Executable is required");
   }
@@ -481,8 +485,8 @@ export function startShellProcess(
 
   try {
     processHandle = options.tty
-      ? spawnPtyProcess(launcher, options, events)
-      : spawnPipeProcess(launcher, options, events);
+      ? spawnPtyProcess(managedLauncher, options, events)
+      : spawnPipeProcess(managedLauncher, options, events);
   } catch (error) {
     completed = true;
     cleanup();

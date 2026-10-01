@@ -3,7 +3,11 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, extname, isAbsolute, join, resolve } from "node:path";
-import { resizeImageIfNeeded } from "@/utils/image-resize";
+import { trackBoundaryError } from "@/telemetry/error-reporting";
+import {
+  ImageWorkerMissingError,
+  resizeImageIfNeeded,
+} from "@/utils/image-resize";
 import { allocateImage } from "./paste-registry";
 
 /**
@@ -313,6 +317,13 @@ export async function tryImportClipboardImageMac(): Promise<ClipboardImageResult
       } catch {}
     }
 
+    if (err instanceof ImageWorkerMissingError) {
+      trackBoundaryError({
+        errorType: "image_worker_missing",
+        error: err,
+        context: "clipboard_image_paste",
+      });
+    }
     const message = err instanceof Error ? err.message : String(err);
     return { error: `Image paste failed: ${message}` };
   }

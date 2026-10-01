@@ -9,6 +9,7 @@ import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
 import {
   getConversationId,
   getCurrentAgentId,
@@ -18,13 +19,17 @@ import {
   getScopedMemoryFilesystemRoot,
   resolveScopedMemoryDir,
 } from "@/agent/memory-filesystem";
-import { getServerUrl } from "@/backend/api/client";
+import { getDesktopAccessToken } from "@/auth/desktop-credentials";
+import { getServerUrl } from "@/backend/api/server-url";
 import { isLocalBackendMemfsDisabledForProcess } from "@/backend/local/paths";
 import {
   getCurrentWorkingDirectory,
+  getRuntimeActingUserId,
   getRuntimeContext,
 } from "@/runtime-context";
+import { getRuntimeExecutionEnv } from "@/runtime-execution-settings";
 import { settingsManager } from "@/settings-manager";
+import { LISTENER_CONNECTION_ENV } from "@/utils/subagent-launch-marker";
 import { getRipgrepBinDir } from "./ripgrep-manager.js";
 
 /**
@@ -167,7 +172,12 @@ export function getLettaShimDir(env: NodeJS.ProcessEnv = process.env): string {
   return path.join(tmpdir(), SHELL_SHIM_DIR_NAME);
 }
 
-export function ensureLettaShimDir(invocation: LettaInvocation): string | null {
+export function ensureLettaShimDir(
+  invocation: LettaInvocation,
+  electronExecPath: string | undefined = process.versions.electron
+    ? process.execPath
+    : undefined,
+): string | null {
   if (!invocation.command) return null;
 
   const shimDir = getLettaShimDir();
@@ -190,9 +200,17 @@ export function ensureLettaShimDir(invocation: LettaInvocation): string | null {
   const commandWithArgs = [invocation.command, ...invocation.args]
     .map(shellEscape)
     .join(" ");
-  writeFileSync(shimPath, `#!/bin/sh\nexec ${commandWithArgs} "$@"\n`, {
-    mode: 0o755,
-  });
+  // Electron needs this when launched from a fresh shell that did not inherit
+  // Desktop's environment. Do not add it for ordinary Node/Bun launchers.
+  const electronEnv =
+    electronExecPath && invocation.command === electronExecPath
+      ? "export ELECTRON_RUN_AS_NODE=1\n"
+      : "";
+  writeFileSync(
+    shimPath,
+    `#!/bin/sh\n${electronEnv}exec ${commandWithArgs} "$@"\n`,
+    { mode: 0o755 },
+  );
   return shimDir;
 }
 
@@ -305,7 +323,13 @@ function applyHostedMemfsGitHeaderEnv(env: NodeJS.ProcessEnv): void {
  * Includes bundled tools (like ripgrep) in PATH and Letta context for skill scripts.
  */
 export function getShellEnv(): NodeJS.ProcessEnv {
-  const env = { ...process.env };
+  const executionEnv = getRuntimeExecutionEnv(
+    process.env,
+    getRuntimeContext()?.executionSettings,
+  );
+  const env = { ...executionEnv };
+  const desktopAccessToken = getDesktopAccessToken();
+  if (desktopAccessToken) env.LETTA_API_KEY = desktopAccessToken;
   const pathKey =
     Object.keys(env).find((k) => k.toUpperCase() === "PATH") || "PATH";
   const pathPrefixes: string[] = [];
@@ -340,6 +364,14 @@ export function getShellEnv(): NodeJS.ProcessEnv {
   const environmentDeviceId = getRuntimeContext()?.environmentDeviceId?.trim();
   if (environmentDeviceId) {
     env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID = environmentDeviceId;
+  }
+  const listenerConnectionId = getRuntimeContext()?.connectionId;
+  if (listenerConnectionId?.startsWith("conn-")) {
+    env[LISTENER_CONNECTION_ENV] = listenerConnectionId;
+  }
+  const actingUserId = getRuntimeActingUserId();
+  if (actingUserId) {
+    env[ACTING_USER_ID_ENV] = actingUserId;
   }
 
   // Add Letta context for skill scripts.
@@ -386,9 +418,9 @@ export function getShellEnv(): NodeJS.ProcessEnv {
         env.LETTA_MEMORY_DIR = memoryDir;
         env.MEMORY_DIR = memoryDir;
       } else {
-        const inheritedMemoryDir = process.env.MEMORY_DIR?.trim();
-        const inheritedLettaMemoryDir = process.env.LETTA_MEMORY_DIR?.trim();
-        const parentAgentId = process.env.LETTA_PARENT_AGENT_ID?.trim();
+        const inheritedMemoryDir = executionEnv.MEMORY_DIR?.trim();
+        const inheritedLettaMemoryDir = executionEnv.LETTA_MEMORY_DIR?.trim();
+        const parentAgentId = executionEnv.LETTA_PARENT_AGENT_ID?.trim();
         const inheritedParentMemoryDir = parentAgentId
           ? getScopedMemoryFilesystemRoot(parentAgentId)
           : null;
@@ -504,6 +536,19 @@ export function getShellEnv(): NodeJS.ProcessEnv {
   // `git push`/`pull` inside $MEMORY_DIR uses the proxy without persisting the
   // ephemeral localhost URL into the memory repo's git config.
   applyMemfsGitProxyEnv(env);
+  if (desktopAccessToken) {
+    const memfsPrefix = `${trimBaseUrl(getShellMemfsBaseUrl(env))}/v1/git/`;
+    const encoded = Buffer.from(`letta:${desktopAccessToken}`).toString(
+      "base64",
+    );
+    appendGitConfigEnv(env, `credential.${memfsPrefix}.helper`, "");
+    appendGitConfigEnv(
+      env,
+      `http.${memfsPrefix}.extraHeader`,
+      `Authorization: Basic ${encoded}`,
+    );
+    env.GIT_TERMINAL_PROMPT = "0";
+  }
   applyHostedMemfsGitHeaderEnv(env);
 
   return env;

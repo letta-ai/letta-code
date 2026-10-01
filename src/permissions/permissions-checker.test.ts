@@ -576,17 +576,6 @@ test("Edit defaults to ask", () => {
   expect(result.decision).toBe("ask");
 });
 
-test("TodoWrite defaults to allow", () => {
-  const result = checkPermission(
-    "TodoWrite",
-    { todos: [] },
-    { allow: [], deny: [], ask: [] },
-    "/Users/test/project",
-  );
-
-  expect(result.decision).toBe("allow");
-});
-
 test("MessageChannel defaults to allow", () => {
   const result = checkPermission(
     "MessageChannel",
@@ -830,7 +819,7 @@ test("Shell alias tools match Bash permission patterns", () => {
   };
 
   const result = checkPermission(
-    "run_shell_command",
+    "ShellCommand",
     { command: "curl -s http://localhost:4321/health" },
     permissions,
     "/Users/test/project",
@@ -838,24 +827,6 @@ test("Shell alias tools match Bash permission patterns", () => {
 
   expect(result.decision).toBe("allow");
   expect(result.matchedRule).toBe("Bash(curl:*)");
-});
-
-test("Legacy bare WriteFileGemini rule still matches write invocations", () => {
-  const permissions: PermissionRules = {
-    allow: ["WriteFileGemini"],
-    deny: [],
-    ask: [],
-  };
-
-  const result = checkPermission(
-    "WriteFileGemini",
-    { file_path: "src/main.ts", content: "console.log('x');" },
-    permissions,
-    "/Users/test/project",
-  );
-
-  expect(result.decision).toBe("allow");
-  expect(result.matchedRule).toBe("WriteFileGemini");
 });
 
 test("LETTA_PERMISSIONS_V2=0 preserves legacy alias mismatch behavior", () => {
@@ -870,7 +841,7 @@ test("LETTA_PERMISSIONS_V2=0 preserves legacy alias mismatch behavior", () => {
     };
 
     const result = checkPermission(
-      "run_shell_command",
+      "ShellCommand",
       { command: "curl -s http://localhost:4321/health" },
       permissions,
       "/Users/test/project",
@@ -929,7 +900,7 @@ test("dual eval attaches shadow decision when enabled", () => {
     };
 
     const result = checkPermission(
-      "run_shell_command",
+      "ShellCommand",
       { command: "curl -s http://localhost:4321/health" },
       permissions,
       "/Users/test/project",

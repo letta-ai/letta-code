@@ -2,6 +2,7 @@ import {
   ClaudeReleaseSourceDisagreementError,
   parseClaudeGitHubReleases,
   parseClaudeNpmMetadata,
+  releaseNotesForRange,
   selectClaudeReleaseCandidate,
 } from "./release-source.ts";
 import type { ClaudeGitHubRelease, ClaudeNpmMetadata } from "./types.ts";
@@ -109,15 +110,19 @@ describe("selectClaudeReleaseCandidate", () => {
     }
   });
 
-  test("takes the oldest release after the terminal processed version", () => {
+  test("takes the latest release after the terminal processed version", () => {
     const candidate = selectClaudeReleaseCandidate({
       githubReleases: releases,
       npmMetadata: npm(),
       processedPackageVersions: ["1.0.0"],
     });
 
-    expect(candidate?.version).toBe("1.1.0");
-    expect(candidate?.integrity).toBe("sha512-1.1.0");
+    expect(candidate?.version).toBe("1.2.0");
+    expect(candidate?.integrity).toBe("sha512-1.2.0");
+    expect(candidate?.release_notes_md).toContain("## [1.1.0]");
+    expect(candidate?.release_notes_md).toContain("notes 1.1.0");
+    expect(candidate?.release_notes_md).toContain("## [1.2.0]");
+    expect(candidate?.release_notes_md).not.toContain("notes 1.0.0");
   });
 
   test("bootstrap selects only the current npm latest release", () => {
@@ -139,7 +144,8 @@ describe("selectClaudeReleaseCandidate", () => {
     });
 
     expect(candidate?.version).toBe("1.2.0");
-    expect(candidate?.release_notes_md).toBe("notes 1.2.0");
+    expect(candidate?.release_notes_md).toContain("notes 1.1.0");
+    expect(candidate?.release_notes_md).toContain("notes 1.2.0");
   });
 
   test("validation can replay exact npm versions omitted from the GitHub feed", () => {
@@ -175,5 +181,11 @@ describe("selectClaudeReleaseCandidate", () => {
         processedPackageVersions: ["1.0.0", "1.1.0", "1.2.0"],
       }),
     ).toBeNull();
+  });
+
+  test("rejects a reversed release-note range", () => {
+    expect(() => releaseNotesForRange(releases, "1.2.0", "1.1.0")).toThrow(
+      "Previous Claude release 1.2.0 must precede 1.1.0",
+    );
   });
 });

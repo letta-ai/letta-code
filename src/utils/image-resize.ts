@@ -28,6 +28,23 @@ const magickResizeImageIfNeeded = useMagick
   ? (await import("@/utils/image-resize.magick.js")).resizeImageIfNeeded
   : null;
 
+// Thrown when the built worker file is absent from an installed package,
+// which means the installation is incomplete (e.g. a file was removed after
+// install). Callers surface this message to the user and report it.
+export class ImageWorkerMissingError extends Error {
+  readonly workerPath: string;
+
+  constructor(workerPath: string) {
+    super(
+      `the image processing worker is missing from this installation (expected at ${workerPath}). ` +
+        "Your Letta Code installation appears to be incomplete. " +
+        "Reinstall it (e.g. npm install -g @letta-ai/letta-code@latest) and try again.",
+    );
+    this.name = "ImageWorkerMissingError";
+    this.workerPath = workerPath;
+  }
+}
+
 function resolveImageWorkerPath(): string {
   const sourceWorkerPath = fileURLToPath(
     new URL("./image-resize-worker.ts", import.meta.url),
@@ -35,7 +52,13 @@ function resolveImageWorkerPath(): string {
   if (existsSync(sourceWorkerPath)) {
     return sourceWorkerPath;
   }
-  return fileURLToPath(new URL("./image-resize-worker.js", import.meta.url));
+  const bundledWorkerPath = fileURLToPath(
+    new URL("./image-resize-worker.js", import.meta.url),
+  );
+  if (!existsSync(bundledWorkerPath)) {
+    throw new ImageWorkerMissingError(bundledWorkerPath);
+  }
+  return bundledWorkerPath;
 }
 
 // Keep Sharp/libvips outside the Ink process: native GLib diagnostics write

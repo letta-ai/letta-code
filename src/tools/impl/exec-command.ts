@@ -1,8 +1,20 @@
+import * as path from "node:path";
+import { isUsableDirectory } from "@/helpers/usable-directory";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
-import { scrubSecretsFromString } from "@/tools/secret-substitution";
+import {
+  captureSecretRedactions,
+  createSecretStreamScrubber,
+  type SecretStreamScrubber,
+  scrubSecretsFromString,
+} from "@/tools/secret-substitution";
+import { addToMessageQueue } from "@/utils/message-queue-bridge.js";
+import {
+  formatTaskNotification,
+  type NotificationScope,
+  resolveNotificationScope,
+} from "@/utils/task-notifications.js";
 import { noteExpectedWorktreeForLauncher } from "@/websocket/listener/worktree-ownership";
 import {
-  appendBackgroundProcessOutput,
   appendToOutputFile,
   assertBackgroundProcessCapacity,
   backgroundProcesses,
@@ -11,7 +23,6 @@ import {
   scheduleBackgroundProcessCleanup,
   scrubCompletedBackgroundOutput,
 } from "./process_manager.js";
-import { resolveShellWorkdir } from "./shell.js";
 import { getShellEnv } from "./shell-env.js";
 import {
   buildPowerShellCommand,
@@ -27,6 +38,7 @@ import {
 import { applyShellSandbox } from "./shell-sandbox.js";
 import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
+import { assertSafeWindowsCommand } from "./windows-command-safety.js";
 
 const DEFAULT_EXEC_YIELD_TIME_MS = 10_000;
 const DEFAULT_WRITE_STDIN_YIELD_TIME_MS = 250;
@@ -78,13 +90,24 @@ type ExecSessionStatus = "running" | "completed" | "failed";
 interface ExecSession {
   id: string;
   command: string;
+  description?: string;
   output: string;
+  outputFile: string;
   chunks: ExecOutputChunk[];
   readOffset: number;
   status: ExecSessionStatus;
   exitCode: number | null;
   tty: boolean;
   secrets: Readonly<Record<string, string>>;
+  streamScrubbers: {
+    stdout: SecretStreamScrubber;
+    stderr: SecretStreamScrubber;
+  };
+  notificationScope?: NotificationScope;
+  notificationArmed: boolean;
+  completionDelivered: boolean;
+  activeWriteStdinCalls: number;
+  completionDetail?: string;
   outputWriteFailed?: boolean;
   cleanupTimer?: ReturnType<typeof setTimeout>;
 }
@@ -174,7 +197,6 @@ function truncateOutput(
     "exec_command",
     {
       workingDirectory: getCurrentWorkingDirectory(),
-      toolName: "exec_command",
       secrets,
     },
   ).content;
@@ -291,6 +313,9 @@ function formatExecOutput(params: {
   }
   if (params.sessionId !== null) {
     sections.push(`Process running with session ID ${params.sessionId}`);
+    sections.push(
+      "You will be notified when the process completes. Do not poll unless you need the output before continuing.",
+    );
   }
 
   sections.push(`Original token count: ${params.originalTokenCount}`);
@@ -351,6 +376,14 @@ function buildExplicitShellLauncher(
 function buildExecLaunchers(args: ExecCommandArgs): string[][] {
   const login = args.login ?? true;
   const envAliases = args.secretEnv ? Object.keys(args.secretEnv) : undefined;
+  if (!args.shell?.trim() || isPowerShell(args.shell)) {
+    assertSafeWindowsCommand(args.cmd, {
+      cwd: resolveShellWorkdir(args.workdir),
+      env: args.secretEnv
+        ? { ...getShellEnv(), ...args.secretEnv }
+        : getShellEnv(),
+    });
+  }
   if (args.shell?.trim()) {
     return [
       buildExplicitShellLauncher(
@@ -370,15 +403,14 @@ function buildExecLaunchers(args: ExecCommandArgs): string[][] {
 function createSessionOutputAppender(params: {
   session: ExecSession;
   outputFile: string;
-  secrets: Readonly<Record<string, string>>;
 }): (text: string, stream: "stdout" | "stderr") => void {
   return (text: string, stream: "stdout" | "stderr") => {
-    const sanitizedText = scrubSecretsFromString(text, params.secrets);
+    // The per-stream scrubber holds back potential partial secret matches so
+    // a credential split across output chunks stays redacted in the session
+    // buffer and the output file.
+    const sanitizedText = params.session.streamScrubbers[stream].push(text);
+    if (!sanitizedText) return;
     appendSessionOutput(params.session, sanitizedText, stream);
-    const bgProcess = backgroundProcesses.get(params.session.id);
-    if (bgProcess) {
-      appendBackgroundProcessOutput(bgProcess, stream, sanitizedText);
-    }
     const wrote = appendToOutputFile(params.outputFile, sanitizedText);
     if (!wrote && params.session.status === "running") {
       params.session.outputWriteFailed = true;
@@ -387,7 +419,10 @@ function createSessionOutputAppender(params: {
         "\n[output file write failed; output may be incomplete]\n",
         "stderr",
       );
-      markSessionFailed(params.session);
+      markSessionFailed(
+        params.session,
+        "Output file write failed; output may be incomplete",
+      );
       const bgProc = backgroundProcesses.get(params.session.id);
       if (bgProc) {
         try {
@@ -400,21 +435,99 @@ function createSessionOutputAppender(params: {
   };
 }
 
-function markSessionFailed(session: ExecSession): void {
+function notifyExecCompletion(session: ExecSession): void {
+  if (
+    !session.notificationArmed ||
+    session.completionDelivered ||
+    session.activeWriteStdinCalls > 0
+  ) {
+    return;
+  }
+
+  const backgroundProcess = backgroundProcesses.get(session.id);
+  if (backgroundProcess?.completionNotificationSuppressed) {
+    session.completionDelivered = true;
+    return;
+  }
+
+  session.completionDelivered = true;
+  const status = session.status === "completed" ? "completed" : "failed";
+  const unreadOutput =
+    session.output.slice(session.readOffset) || "(no new output)";
+  const { content: result } = truncateByChars(
+    scrubSecretsFromString(
+      [
+        `$ ${session.command}`,
+        `Session ID: ${session.id}`,
+        session.completionDetail,
+        unreadOutput,
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
+      session.secrets,
+    ),
+    LIMITS.BASH_NOTIFICATION_CHARS,
+    "exec_command",
+    { useMiddleTruncation: true },
+  );
+  const durationMs = backgroundProcess?.startTime
+    ? Math.max(0, Date.now() - backgroundProcess.startTime.getTime())
+    : undefined;
+
+  addToMessageQueue({
+    kind: "task_notification",
+    text: formatTaskNotification({
+      taskId: `exec_${session.id}`,
+      status,
+      summary: `Exec command "${session.description?.trim() || session.command}" ${status}`,
+      result,
+      outputFile: session.outputFile,
+      usage: durationMs === undefined ? undefined : { durationMs },
+    }),
+    ...session.notificationScope,
+  });
+}
+
+/**
+ * Emit any bytes the stream scrubbers held back as potential partial secret
+ * matches. The process's completion promise settles after its final output
+ * events, so on session close/fail this is the last chance to route the
+ * remainder into the same sinks as ordinary output.
+ */
+function flushSessionStreamScrubbers(session: ExecSession): void {
+  for (const stream of ["stdout", "stderr"] as const) {
+    const rest = session.streamScrubbers[stream].flush();
+    if (!rest) continue;
+    appendSessionOutput(session, rest, stream);
+    appendToOutputFile(session.outputFile, rest);
+  }
+}
+
+function markSessionFailed(session: ExecSession, detail: string): void {
+  if (session.status !== "running") return;
+  flushSessionStreamScrubbers(session);
   session.status = "failed";
+  session.completionDetail = detail;
   const bgProcess = backgroundProcesses.get(session.id);
   if (bgProcess) {
     bgProcess.status = "failed";
     scrubCompletedBackgroundOutput(bgProcess);
     scheduleBackgroundProcessCleanup(session.id);
   }
+  notifyExecCompletion(session);
   scheduleExecSessionCleanup(session.id);
 }
 
 function markSessionClosed(session: ExecSession, code: number | null): void {
+  if (session.status !== "running") return;
+  flushSessionStreamScrubbers(session);
   session.status =
     code === 0 && !session.outputWriteFailed ? "completed" : "failed";
   session.exitCode = code;
+  session.completionDetail =
+    code === null
+      ? "Terminated by signal before exiting"
+      : `Exit code: ${code}`;
   const bgProcess = backgroundProcesses.get(session.id);
   if (bgProcess) {
     bgProcess.status = session.status;
@@ -422,6 +535,7 @@ function markSessionClosed(session: ExecSession, code: number | null): void {
     scrubCompletedBackgroundOutput(bgProcess);
     scheduleBackgroundProcessCleanup(session.id);
   }
+  notifyExecCompletion(session);
   scheduleExecSessionCleanup(session.id);
 }
 
@@ -469,6 +583,17 @@ async function waitForSessionOutput(params: {
   return { output, wallTimeMs: Date.now() - startTime };
 }
 
+function resolveShellWorkdir(workdir?: string): string {
+  const defaultCwd = getCurrentWorkingDirectory();
+  const requestedCwd = workdir
+    ? path.isAbsolute(workdir)
+      ? workdir
+      : path.resolve(defaultCwd, workdir)
+    : defaultCwd;
+
+  return isUsableDirectory(requestedCwd) ? requestedCwd : defaultCwd;
+}
+
 async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
   assertBackgroundProcessCapacity();
 
@@ -476,6 +601,7 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
   const outputFile = createBackgroundOutputFile(`exec_${id}`);
   const cwd = resolveShellWorkdir(args.workdir);
   const env = { ...getShellEnv(), ...(args.secretEnv ?? {}) };
+  const redactions = captureSecretRedactions(args.secretEnv ?? {});
   const launchers = buildExecLaunchers(args);
   const rawLauncher = selectAvailableShellLauncher(launchers, env);
   if (!rawLauncher) {
@@ -495,20 +621,29 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
   const session: ExecSession = {
     id,
     command: args.cmd,
+    description: args.description,
     output: "",
+    outputFile,
     chunks: [],
     readOffset: 0,
     status: "running",
     exitCode: null,
     tty: args.tty ?? false,
-    secrets: args.secretEnv ?? {},
+    secrets: redactions,
+    streamScrubbers: {
+      stdout: createSecretStreamScrubber(redactions),
+      stderr: createSecretStreamScrubber(redactions),
+    },
+    notificationScope: resolveNotificationScope(args.parentScope),
+    notificationArmed: false,
+    completionDelivered: false,
+    activeWriteStdinCalls: 0,
   };
   execSessions.set(id, session);
 
   const appendOutput = createSessionOutputAppender({
     session,
     outputFile,
-    secrets: args.secretEnv ?? {},
   });
   let runningProcess: RunningShellProcess;
   try {
@@ -530,15 +665,10 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
   backgroundProcesses.set(id, {
     process: runningProcess.process,
     command: args.cmd,
-    stdout: [],
-    stderr: [],
     status: session.status,
     exitCode: session.exitCode,
-    lastReadIndex: { stdout: 0, stderr: 0 },
     startTime: new Date(),
     outputFile,
-    totalStdoutLines: 0,
-    totalStderrLines: 0,
     runtimeScope: args.parentScope,
     secrets: session.secrets,
   });
@@ -557,7 +687,10 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
       if (error instanceof ShellExecutionError) {
         appendOutput(error.message, "stderr");
       }
-      markSessionFailed(session);
+      markSessionFailed(
+        session,
+        `Error: ${error instanceof Error ? error.message : String(error)}`,
+      );
     },
   );
 
@@ -586,6 +719,9 @@ export async function exec_command(
   });
 
   const sessionId = session.status === "running" ? session.id : null;
+  if (sessionId !== null) {
+    session.notificationArmed = true;
+  }
   const formattedOutput = formatExecOutput({
     chunkId: generateChunkId(),
     wallTimeMs,
@@ -626,20 +762,36 @@ export async function write_stdin(
       );
     }
   }
-  if (chars && session.tty) {
-    (backgroundProcess.process as ShellProcessHandle).write(chars);
-    await sleep(100, args.signal);
-  }
+  session.activeWriteStdinCalls++;
+  let output: string;
+  let wallTimeMs: number;
+  let waitCompleted = false;
+  try {
+    if (chars && session.tty) {
+      (backgroundProcess.process as ShellProcessHandle).write(chars);
+      await sleep(100, args.signal);
+    }
 
-  const startOffset = session.readOffset;
-  const yieldTimeMs = clampWriteStdinYieldTime(args.yield_time_ms, chars);
-  const { output, wallTimeMs } = await waitForSessionOutput({
-    session,
-    startOffset,
-    yieldTimeMs,
-    signal: args.signal,
-    onOutput: args.onOutput,
-  });
+    const startOffset = session.readOffset;
+    const yieldTimeMs = clampWriteStdinYieldTime(args.yield_time_ms, chars);
+    ({ output, wallTimeMs } = await waitForSessionOutput({
+      session,
+      startOffset,
+      yieldTimeMs,
+      signal: args.signal,
+      onOutput: args.onOutput,
+    }));
+    waitCompleted = true;
+  } finally {
+    session.activeWriteStdinCalls--;
+    if (session.status !== "running") {
+      if (waitCompleted) {
+        session.completionDelivered = true;
+      } else {
+        notifyExecCompletion(session);
+      }
+    }
+  }
 
   const nextSessionId = session.status === "running" ? session.id : null;
   const formattedOutput = formatExecOutput({

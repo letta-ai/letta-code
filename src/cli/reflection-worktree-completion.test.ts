@@ -3,11 +3,16 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { claimMemoryOperation } from "@/agent/memory-operation";
 import {
   createReflectionMemoryWorktree,
   type ReflectionMemoryWorktree,
 } from "@/agent/memory-worktree";
-import { finalizeReflectionMemoryWorktreeLaunch } from "@/cli/helpers/reflection-launcher";
+import {
+  clearAutomaticReflectionSuppression,
+  finalizeReflectionMemoryWorktreeLaunch,
+  isAutomaticReflectionSuppressed,
+} from "@/cli/helpers/reflection-launcher";
 import { telemetry } from "@/telemetry";
 
 let tempDir: string;
@@ -66,6 +71,7 @@ async function finalizeLaunch(
 }
 
 beforeEach(() => {
+  clearAutomaticReflectionSuppression("agent-test");
   telemetry.cleanup();
   telemetryState.events = [];
   telemetry.drain = mock(async () => {});
@@ -136,6 +142,52 @@ describe("reflection worktree completion messaging", () => {
       archived: true,
     });
     expect(existsSync(worktree.worktreeDir)).toBe(false);
+  });
+
+  test("explicit integration pushes its merge from the lease holder", async () => {
+    const worktree = await createReflectionMemoryWorktree({
+      parentMemoryDir: memoryDir,
+    });
+    writeFileSync(join(worktree.worktreeDir, "reflection.md"), "draft\n");
+    git(worktree.worktreeDir, ["add", "reflection.md"]);
+    git(worktree.worktreeDir, ["commit", "-m", "reflection"]);
+
+    const synced: string[] = [];
+    let worktreeGoneAtSync = false;
+    let leaseHeldAtSync = false;
+    const result = await finalizeLaunch(worktree, true, {
+      mergePolicy: "explicit",
+      runExplicitIntegration: async () => {
+        git(memoryDir, [
+          "merge",
+          "--no-ff",
+          worktree.branchName,
+          "-m",
+          "merge reflection",
+        ]);
+        return { success: true, conversationId: "conv-review" };
+      },
+      // The integration child cannot sync while the parent holds the lease.
+      // The parent syncs only after finalize verified the merge, so a rebase
+      // during sync can no longer make the reflection look unmerged.
+      syncIntegratedMemory: async (agentId, options) => {
+        synced.push(`${agentId}:${options?.memoryDir}`);
+        worktreeGoneAtSync = !existsSync(worktree.worktreeDir);
+        // Still under the same lease as the integration and its verification.
+        leaseHeldAtSync = (await claimMemoryOperation(memoryDir)) === null;
+        return {
+          status: "pushed",
+          summary: "Pushed",
+          memoryDir,
+          localOnly: false,
+        };
+      },
+    });
+
+    expect(result.integration.status).toBe("merged");
+    expect(synced).toEqual([`agent-test:${memoryDir}`]);
+    expect(worktreeGoneAtSync).toBe(true);
+    expect(leaseHeldAtSync).toBe(true);
   });
 
   test("explicit integration failure cleans up for transcript retry", async () => {
@@ -362,5 +414,64 @@ describe("reflection worktree completion messaging", () => {
       reflection_worktree_id: worktree.id,
       commit_count: 0,
     });
+  });
+
+  test("failed reflection surfaces a model configuration error", async () => {
+    const worktree = await createReflectionMemoryWorktree({
+      parentMemoryDir: memoryDir,
+    });
+
+    const result = await finalizeLaunch(worktree, false, {
+      subagentError:
+        '400 {"error":"Model handle not found: openai-proxy/deepseek-v4-flash"}',
+    });
+
+    expect(result.integration.status).toBe("failed");
+    expect(result.completionSuccess).toBe(false);
+    expect(result.completionMessage).toBe(
+      'Reflection failed: Model handle "openai-proxy/deepseek-v4-flash" was not found. Automatic reflection is paused until the model configuration changes; use /reflect to retry.',
+    );
+  });
+
+  test("a transient manual retry does not clear model configuration suppression", async () => {
+    const configurationWorktree = await createReflectionMemoryWorktree({
+      parentMemoryDir: memoryDir,
+    });
+    await finalizeLaunch(configurationWorktree, false, {
+      subagentError:
+        '400 {"error":"Model handle not found: openai-proxy/deepseek-v4-flash"}',
+    });
+    expect(isAutomaticReflectionSuppressed("agent-test")).toBe(true);
+
+    const transientWorktree = await createReflectionMemoryWorktree({
+      parentMemoryDir: memoryDir,
+    });
+    const result = await finalizeLaunch(transientWorktree, false, {
+      subagentError: "Connection error.",
+    });
+
+    expect(result.completionMessage).toBe(
+      "Tried to reflect, but memory updates were not completed cleanly; will retry later.",
+    );
+    expect(isAutomaticReflectionSuppressed("agent-test")).toBe(true);
+  });
+
+  test("a successful manual retry resumes automatic reflection", async () => {
+    const configurationWorktree = await createReflectionMemoryWorktree({
+      parentMemoryDir: memoryDir,
+    });
+    await finalizeLaunch(configurationWorktree, false, {
+      subagentError:
+        '400 {"error":"Model handle not found: openai-proxy/deepseek-v4-flash"}',
+    });
+    expect(isAutomaticReflectionSuppressed("agent-test")).toBe(true);
+
+    const successfulWorktree = await createReflectionMemoryWorktree({
+      parentMemoryDir: memoryDir,
+    });
+    const result = await finalizeLaunch(successfulWorktree, true);
+
+    expect(result.completionSuccess).toBe(true);
+    expect(isAutomaticReflectionSuppressed("agent-test")).toBe(false);
   });
 });

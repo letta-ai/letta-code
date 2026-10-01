@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import {
   resolveSandboxSession,
+  resolveSandboxTarget,
   runSandboxSubcommand,
 } from "@/cli/subcommands/sandbox";
 
@@ -33,6 +34,137 @@ async function withEnvironment<T>(
 }
 
 describe("sandbox subcommand", () => {
+  const noCurrentSession = () => {
+    throw new Error("Must not use the executing conversation");
+  };
+  const noLookup = async () => {
+    throw new Error("Must not retrieve a conversation");
+  };
+
+  test("keeps implicit session selection unchanged", async () => {
+    expect(
+      await resolveSandboxTarget(
+        {},
+        () => resolveSandboxSession(CLOUD_ENV, null),
+        noLookup,
+      ),
+    ).toEqual({ agentId: "agent-1", conversationId: "conv-1" });
+  });
+
+  test("resolves the explicit conversation's owner without consulting shell context", async () => {
+    expect(
+      await resolveSandboxTarget(
+        { conversation: " conv-parent " },
+        noCurrentSession,
+        async (id) => {
+          expect(id).toBe("conv-parent");
+          return { agent_id: "agent-parent" };
+        },
+      ),
+    ).toEqual({ agentId: "agent-parent", conversationId: "conv-parent" });
+  });
+
+  test.each([
+    { conversation: "default", agent: "agent-parent" },
+    { agent: " agent-parent " },
+  ])(
+    "selects the explicit agent's main sandbox for %j without ambient context",
+    async (target) => {
+      expect(
+        await resolveSandboxTarget(target, noCurrentSession, noLookup),
+      ).toEqual({ agentId: "agent-parent", conversationId: "default" });
+    },
+  );
+
+  test.each([
+    [{ conversation: "default" }, "requires --agent"],
+    [{ agent: " " }, "must not be empty"],
+    [{ agent: "agent-local-1" }, "requires a Letta Cloud agent"],
+    [{ agent: "agent-parent", conversation: "" }, "Specify --conversation"],
+    [{ agent: "agent-parent", conversation: " " }, "Specify --conversation"],
+    [{ agent: "agent-parent", conversation: "new" }, "Specify --conversation"],
+    [{ conversation: "" }, "Specify --conversation"],
+    [{ conversation: "new" }, "Specify --conversation"],
+    [{ conversation: "default", agent: " " }, "must not be empty"],
+    [
+      { conversation: "default", agent: "agent-local-1" },
+      "requires a Letta Cloud agent",
+    ],
+  ] as const)("rejects invalid explicit target %j", async (target, message) => {
+    await expect(
+      resolveSandboxTarget(target, noCurrentSession, noLookup),
+    ).rejects.toThrow(message);
+  });
+
+  test.each([null, "", "agent-local-1"])(
+    "rejects unsupported owner %j without fallback",
+    async (agent_id) => {
+      await expect(
+        resolveSandboxTarget(
+          { conversation: "conv-parent" },
+          noCurrentSession,
+          async () => ({ agent_id }),
+        ),
+      ).rejects.toThrow("must belong to a Letta Cloud agent");
+    },
+  );
+
+  test("rejects a conflicting explicit agent", async () => {
+    await expect(
+      resolveSandboxTarget(
+        { conversation: "conv-parent", agent: "agent-wrong" },
+        noCurrentSession,
+        async () => ({ agent_id: "agent-parent" }),
+      ),
+    ).rejects.toThrow("does not belong to agent-wrong");
+  });
+
+  test("propagates lookup failure without fallback", async () => {
+    await expect(
+      resolveSandboxTarget(
+        { conversation: "conv-missing" },
+        noCurrentSession,
+        async () => {
+          throw new Error("Not found or unauthorized");
+        },
+      ),
+    ).rejects.toThrow("Not found or unauthorized");
+  });
+
+  test.each([
+    { flags: ["--conversation", "conv-parent"], conversationId: undefined },
+    { flags: ["--conversation", "conv-parent"], conversationId: "conv-other" },
+    { flags: ["--agent", "agent-parent"], conversationId: "conv-other" },
+  ])(
+    "does not transfer when the server returns the wrong scope: %j",
+    async ({ flags, conversationId }) => {
+      let transferred = false;
+      const code = await runSandboxSubcommand(
+        ["upload", "note.txt", ...flags],
+        {
+          initializeSettings: async () => {},
+          isCloud: async () => true,
+          getLastSession: noCurrentSession,
+          retrieveConversation: async () => ({ agent_id: "agent-parent" }),
+          statLocalPath: async () => ({ isFile: () => true }),
+          readLocalFile: async () => Buffer.from("hello"),
+          ensureSandbox: async () => ({
+            sandboxId: "wrong",
+            deviceId: "device-1",
+            connectionName: "Cloud",
+            conversationId,
+          }),
+          uploadFile: async () => {
+            transferred = true;
+            return { files: [] };
+          },
+        },
+      );
+      expect(code).toBe(1);
+      expect(transferred).toBe(false);
+    },
+  );
+
   test("prefers the active shell conversation", () => {
     expect(
       resolveSandboxSession(CLOUD_ENV, {
@@ -100,6 +232,71 @@ describe("sandbox subcommand", () => {
         "/root/downloads/upload/note.txt",
       );
     } finally {
+      console.log = originalLog;
+    }
+  });
+
+  test("prints a chat desktop viewer link for the conversation sandbox", async () => {
+    const calls: string[] = [];
+    const output: string[] = [];
+    const originalLog = console.log;
+    console.log = (message?: unknown) => output.push(String(message));
+    try {
+      const exitCode = await withEnvironment(CLOUD_ENV, () =>
+        runSandboxSubcommand(["desktop-link"], {
+          initializeSettings: async () => {},
+          isCloud: async () => true,
+          getLastSession: () => null,
+          ensureSandbox: async (agentId, conversationId) => {
+            calls.push(`ensure:${agentId}:${conversationId}`);
+            return {
+              sandboxId: "sandbox-1",
+              deviceId: "device-1",
+              connectionName: "Cloud",
+            };
+          },
+          createDesktopSession: async (sandboxId) => {
+            calls.push(`desktop:${sandboxId}`);
+            return {
+              url: "https://api.letta.test/v1/sandboxes/sandbox-1/desktop-session/ws?token=t0k",
+              expiresAt: "2026-09-28T23:00:00.000Z",
+            };
+          },
+        }),
+      );
+
+      expect(exitCode).toBe(0);
+      expect(calls).toEqual(["ensure:agent-1:conv-1", "desktop:sandbox-1"]);
+      const result = JSON.parse(output[0] ?? "{}");
+      expect(result.expiresAt).toBe("2026-09-28T23:00:00.000Z");
+      const viewer = new URL(result.url);
+      expect(viewer.origin + viewer.pathname).toBe(
+        "https://chat.letta.com/desktop",
+      );
+      expect(new URLSearchParams(viewer.hash.slice(1)).get("path")).toBe(
+        "/v1/sandboxes/sandbox-1/desktop-session/ws?token=t0k",
+      );
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
+  test("rejects a path argument for desktop-link", async () => {
+    const originalError = console.error;
+    const originalLog = console.log;
+    console.error = () => {};
+    console.log = () => {};
+    try {
+      expect(
+        await withEnvironment(CLOUD_ENV, () =>
+          runSandboxSubcommand(["desktop-link", "extra"], {
+            initializeSettings: async () => {},
+            isCloud: async () => true,
+          }),
+        ),
+      ).toBe(1);
+    } finally {
+      console.error = originalError;
       console.log = originalLog;
     }
   });

@@ -8,6 +8,7 @@ const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 export type AvailableModel = {
   handle: string;
   label: string;
+  supportsStructuredOutputs?: boolean;
   maxContextWindow?: number;
   maxOutputTokens?: number;
   providerType?: string;
@@ -181,6 +182,12 @@ async function fetchFromNetwork(): Promise<CacheEntry> {
       const availableModel = {
         handle: model.handle,
         label,
+        ...(typeof modelRecord.supports_structured_outputs === "boolean"
+          ? {
+              supportsStructuredOutputs:
+                modelRecord.supports_structured_outputs,
+            }
+          : {}),
         ...(typeof model.max_context_window === "number"
           ? { maxContextWindow: model.max_context_window }
           : {}),

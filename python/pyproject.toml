@@ -1,0 +1,15 @@
+[build-system]
+requires = []
+build-backend = "wheel_backend"
+backend-path = ["."]
+
+[project]
+name = "letta"
+dynamic = ["version"]
+description = "Letta Code: stateful agents in your terminal"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "Apache-2.0"
+
+[project.scripts]
+letta = "letta_code:main"

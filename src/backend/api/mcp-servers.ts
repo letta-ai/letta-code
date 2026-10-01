@@ -30,7 +30,7 @@ export interface McpToolSchema {
  */
 export interface ServerMcpClient {
   get(path: string): Promise<unknown>;
-  post(path: string): Promise<unknown>;
+  post(path: string, body?: unknown): Promise<unknown>;
   mcpServers: {
     list(): Promise<ServerMcpServer[]>;
     refresh(

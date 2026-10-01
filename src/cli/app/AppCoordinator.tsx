@@ -92,19 +92,15 @@ import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
 import type { ExecutionPhase } from "@/cli/helpers/phase-visuals";
 import { maybeLaunchPostTurnReflection } from "@/cli/helpers/post-turn-reflection";
 import {
-  buildContentFromQueueBatch,
-  toQueuedMsg,
-} from "@/cli/helpers/queued-message-parts";
-import {
   buildReflectionArenaChoiceQuestions,
   finalizeReflectionArenaChoice,
   formatReflectionArenaDeferredMessage,
-  launchReflectionArena,
   parseReflectionArenaChoiceAnswers,
   REFLECTION_ARENA_MODEL_A_DEFAULT,
   type ReflectionArenaChoiceQuestion,
   sampleReflectionArenaComparisonModel,
 } from "@/cli/helpers/reflection-arena";
+import { launchReflectionArena } from "@/cli/helpers/reflection-arena-launcher";
 import {
   AUTO_REFLECTION_DESCRIPTION,
   launchReflectionSubagent,
@@ -128,6 +124,11 @@ import {
 } from "@/cli/helpers/tool-name-mapping";
 import { isTaskTool } from "@/cli/helpers/tool-name-mapping.js";
 import { getTuiBlockedReason } from "@/cli/helpers/tui-queue-adapter";
+import {
+  prepareTuiQueueSubmit,
+  toTuiQueuedMessage,
+} from "@/cli/helpers/tui-queue-input";
+import { createTuiQueueRuntime } from "@/cli/helpers/tui-queue-runtime";
 import type { WindowTitleData } from "@/cli/helpers/window-title-config";
 import { useSyncedState } from "@/cli/hooks/use-synced-state";
 import {
@@ -145,7 +146,7 @@ import {
   getIntendedCronOccurrence,
   getTask,
   handleTaskPreflight,
-  isProcessAlive,
+  hasLiveSchedulerOwner,
   readCronFile,
   safeAppendCronRunLogForTask,
   shouldFireTask,
@@ -161,10 +162,10 @@ import {
   isByokHandleForSelector,
   listProviders,
 } from "@/providers/byok-providers";
-import {
-  type MessageQueueItem,
+import type {
+  MessageQueueItem,
   QueueRuntime,
-  type TaskNotificationQueueItem,
+  TaskNotificationQueueItem,
 } from "@/queue/queue-runtime";
 import {
   createSharedReminderState,
@@ -232,14 +233,14 @@ import {
   providerTypeFromModelSettings,
   reasoningEffortLlmConfigPatch,
 } from "./model-config";
-import { saveLastSessionBeforeExit } from "./session";
+import { prepareSessionExit } from "./session";
 import type {
   ActiveOverlay,
   AppProps,
   QueuedOverlayAction,
   StaticItem,
 } from "./types";
-import { closeMcp, useAgentMcpServers } from "./use-agent-mcp-servers";
+import { closeMcp, useMcpCleanup } from "./use-agent-mcp-servers";
 import { useApprovalFlow } from "./use-approval-flow";
 import { useBashHandlers } from "./use-bash-handlers";
 import { useConfigurationHandlers } from "./use-configuration-handlers";
@@ -274,7 +275,6 @@ function buildStartupCommandHints(options: {
         "→ **/resume**    browse all conversations",
         "→ **/new**       start a new conversation",
         "→ **/init**      initialize your agent's memory",
-        "→ **/remember**  teach your agent",
       ]
     : isPinned
       ? [
@@ -282,14 +282,12 @@ function buildStartupCommandHints(options: {
           "→ **/resume**    resume a previous conversation",
           "→ **/memory**    view your agent's memory",
           "→ **/init**      initialize your agent's memory",
-          "→ **/remember**  teach your agent",
         ]
       : [
           "→ **/agents**    list all agents",
           "→ **/resume**    resume a previous conversation",
           "→ **/pin**       save + name your agent",
           "→ **/init**      initialize your agent's memory",
-          "→ **/remember**  teach your agent",
         ];
 
   const onboardingHints: string[] = [];
@@ -1398,72 +1396,19 @@ export function App({
   const llmApiErrorRetriesRef = useRef(0);
   const quotaAutoSwapAttemptedRef = useRef(false);
   const emptyResponseRetriesRef = useRef(0);
-  // Per-turn ChatGPT plan rotation counter (max swaps per turn)
   const chatgptPlanSwapsRef = useRef(0);
-
+  const chatgptExhaustedProvidersRef = useRef(new Set<string>());
   // Retry counter for 409 "conversation busy" errors
   const conversationBusyRetriesRef = useRef(0);
 
   // Message queue state for queueing messages during streaming
   const [queueDisplay, setQueueDisplay] = useState<QueuedMessage[]>([]);
 
-  // QueueRuntime — authoritative queue. maxItems: Infinity disables drop limits
-  // to match the previous unbounded array semantics. queueDisplay is a derived
-  // UI state maintained by the onEnqueued/onDequeued/onCleared callbacks.
-  // Lazy init pattern; typed QueueRuntime | null with ?. at all call sites.
+  // QueueRuntime — authoritative queue; queueDisplay is derived from its
+  // callbacks (see createTuiQueueRuntime). Lazy init; typed QueueRuntime | null.
   const tuiQueueRef = useRef<QueueRuntime | null>(null);
   if (!tuiQueueRef.current) {
-    tuiQueueRef.current = new QueueRuntime({
-      maxItems: Infinity,
-      callbacks: {
-        onEnqueued: (item, queueLen) => {
-          debugLog(
-            "queue-lifecycle",
-            `enqueued item_id=${item.id} kind=${item.kind} queue_len=${queueLen}`,
-          );
-          // queueDisplay is the single source for UI — updated only here.
-          if (item.kind === "message" || item.kind === "task_notification") {
-            setQueueDisplay((prev) => [...prev, toQueuedMsg(item)]);
-          }
-        },
-        onDequeued: (batch) => {
-          debugLog(
-            "queue-lifecycle",
-            `dequeued batch_id=${batch.batchId} merged_count=${batch.mergedCount} queue_len_after=${batch.queueLenAfter}`,
-          );
-          // queueDisplay only tracks displayable items. If non-display barrier
-          // kinds are ever consumed, avoid over-trimming by counting only
-          // message/task_notification entries in the batch.
-          const displayConsumedCount = batch.items.filter(
-            (item) =>
-              item.kind === "message" || item.kind === "task_notification",
-          ).length;
-          setQueueDisplay((prev) => prev.slice(displayConsumedCount));
-        },
-        onBlocked: (reason, queueLen) =>
-          debugLog(
-            "queue-lifecycle",
-            `blocked reason=${reason} queue_len=${queueLen}`,
-          ),
-        onCleared: (_reason, _clearedCount) => {
-          debugLog(
-            "queue-lifecycle",
-            `cleared reason=${_reason} cleared_count=${_clearedCount}`,
-          );
-          setQueueDisplay([]);
-        },
-        onRemoved: (item, queueLen) => {
-          debugLog(
-            "queue-lifecycle",
-            `removed item_id=${item.id} kind=${item.kind} queue_len=${queueLen}`,
-          );
-          // Remove the matching display item by queueItemId
-          setQueueDisplay((prev) =>
-            prev.filter((msg) => msg.queueItemId !== item.id),
-          );
-        },
-      },
-    });
+    tuiQueueRef.current = createTuiQueueRuntime(setQueueDisplay);
   }
 
   // Override content parts for queued submissions (to preserve part boundaries)
@@ -1480,10 +1425,11 @@ export function App({
               kind: "task_notification",
               source: "task_notification",
               text: message.text,
+              content: message.content,
             } as Parameters<typeof tuiQueueRef.current.enqueue>[0])
           : ({
               kind: "message",
-              source: "user",
+              source: message.source ?? "user",
               content: message.text,
             } as Parameters<typeof tuiQueueRef.current.enqueue>[0]),
       );
@@ -1491,14 +1437,10 @@ export function App({
     });
     return () => setMessageQueueAdder(null);
   }, []);
-
   // ── Shadow cron scheduler ──────────────────────────────────────────
-  // When the tui_cron experiment is enabled, run a lightweight scheduler
-  // that fires cron tasks when the desktop app (WS listener) isn't running.
-  // The TUI never claims the scheduler lease — it defers to any active
-  // lease holder (the desktop app always wins, even old versions).
-  // The experiment check is inside tick() so toggling the experiment
-  // takes effect without restarting the TUI.
+  // Lightweight tui_cron scheduler when no matching WS listener is running.
+  // Defers to a live all-owner or this agent's scoped backend owner.
+  // The experiment check is inside tick() so toggling takes effect live.
   useEffect(() => {
     if (!agentId || agentId === "loading") return;
 
@@ -1522,14 +1464,15 @@ export function App({
         lastMinuteKey = currentMinuteKey;
       }
 
-      // Check if another scheduler (desktop app) is active
+      // Defer to a live all-owner or this agent's scoped backend owner.
       const cronData = readCronFile();
-      if (cronData.scheduler_owner) {
-        const { pid } = cronData.scheduler_owner;
-        if (isProcessAlive(pid, cronData.scheduler_owner)) {
-          // Desktop app is running the scheduler — defer
-          return;
-        }
+      if (
+        hasLiveSchedulerOwner(
+          cronData,
+          isLocalAgentId(agentIdRef.current ?? "") ? "local" : "cloud",
+        )
+      ) {
+        return;
       }
 
       // No active scheduler — process tasks for this agent
@@ -1562,6 +1505,7 @@ export function App({
             });
             addToMessageQueue({
               kind: "user",
+              source: "cron",
               text,
               agentId: freshTask.agent_id,
               conversationId: freshTask.conversation_id,
@@ -1675,8 +1619,7 @@ export function App({
   // Used to gate recovery alert injection to true user-interrupt retries.
   const pendingInterruptRecoveryConversationIdRef = useRef<string | null>(null);
 
-  // Epoch counter to force dequeue effect re-run when refs change but state doesn't
-  // Incremented when userCancelledRef is reset while messages are queued
+  // Epoch counter to force dequeue effect re-run when refs change but state doesn't.
   const [dequeueEpoch, setDequeueEpoch] = useState(0);
   // Strict lock to ensure dequeue submit path is at-most-once while onSubmit is in flight.
   const dequeueInFlightRef = useRef(false);
@@ -1735,8 +1678,7 @@ export function App({
     [appendTaskNotificationEvents],
   );
 
-  // consumeItems fires onDequeued → setQueueDisplay(prev => prev.slice(n))
-  // so no direct setQueueDisplay call is needed here.
+  // Queue callbacks remove consumed display entries by item ID.
   const consumeQueuedMessages = useCallback((): QueuedMessage[] | null => {
     const len = tuiQueueRef.current?.length ?? 0;
     if (len === 0) return null;
@@ -1747,7 +1689,7 @@ export function App({
         (item): item is MessageQueueItem | TaskNotificationQueueItem =>
           item.kind === "message" || item.kind === "task_notification",
       )
-      .map(toQueuedMsg);
+      .map(toTuiQueuedMessage);
   }, []);
 
   // Helper to wrap async handlers that need to close overlay and lock input
@@ -2246,10 +2188,9 @@ export function App({
           }
           emittedIdsRef.current.add(id);
           newlyCommitted.push({ ...ln });
-          // Note: We intentionally don't cleanup precomputedDiffs here because
-          // the Static area renders AFTER this function returns (on next React tick),
-          // and the diff needs to be available for ToolCallMessage to render.
-          // The diffs will be cleaned up when the session ends or on next session start.
+          // precomputedDiffs entries stay cached for Static remounts (resize
+          // repaints, ctrl+o, display toggles re-render committed items);
+          // StaticTranscript releases their oldStr/newStr payloads post-render.
         }
       }
 
@@ -2385,7 +2326,7 @@ export function App({
   useEffect(() => {
     buffersRef.current.agentId = agentState?.id;
   }, [agentState?.id]);
-  useAgentMcpServers(agentState?.id);
+  useMcpCleanup(agentState?.id);
   // Cache precomputed diffs from approval dialogs for tool return rendering
   // Key: toolCallId or "toolCallId:filePath" for Patch operations
   const precomputedDiffsRef = useRef<Map<string, AdvancedDiffSuccess>>(
@@ -2430,24 +2371,11 @@ export function App({
             typeof args.chars === "string" && args.chars.length > 0
               ? "Write input to running shell session"
               : "Poll running shell session";
-        } else if (t === "shell") {
-          const cmdVal = args.command;
-          command = Array.isArray(cmdVal)
-            ? cmdVal.join(" ")
-            : typeof cmdVal === "string"
-              ? cmdVal
-              : "(no command)";
-          description =
-            typeof args.justification === "string" ? args.justification : "";
         } else {
           command =
             typeof args.command === "string" ? args.command : "(no command)";
           description =
-            typeof args.description === "string"
-              ? args.description
-              : typeof args.justification === "string"
-                ? args.justification
-                : "";
+            typeof args.description === "string" ? args.description : "";
         }
 
         let lines = 3; // solid line + header + blank line
@@ -2517,19 +2445,6 @@ export function App({
 
         if (diff) {
           diffLines += estimateAdvancedDiffLines(diff, diffWrapWidth);
-          return headerLines + diffLines;
-        }
-
-        if (Array.isArray(args.edits)) {
-          for (const edit of args.edits) {
-            if (!edit || typeof edit !== "object") continue;
-            const oldString =
-              typeof edit.old_string === "string" ? edit.old_string : "";
-            const newString =
-              typeof edit.new_string === "string" ? edit.new_string : "";
-            diffLines += countWrappedLines(oldString, wrapWidth);
-            diffLines += countWrappedLines(newString, wrapWidth);
-          }
           return headerLines + diffLines;
         }
 
@@ -3026,12 +2941,10 @@ export function App({
                 SYSTEM_PROMPTS,
                 SYSTEM_PROMPT,
               } = await import("@/agent/prompt-assets");
-
               // Best-effort preset detection.
               // Exact match is ideal, but allow prefix-matches because the stored
               // agent.system may have additional sections appended.
               let matched: string | null = null;
-
               const contentMatches = (content: string): boolean => {
                 const norm = normalize(content);
                 return (
@@ -3040,7 +2953,6 @@ export function App({
                     (sysNorm.startsWith(norm) || norm.startsWith(sysNorm)))
                 );
               };
-
               const promptMatches = (
                 prompt: (typeof SYSTEM_PROMPTS)[number],
               ): boolean =>
@@ -3064,7 +2976,10 @@ export function App({
 
               setCurrentSystemPromptId(matched ?? "custom");
             } else {
-              setCurrentSystemPromptId("custom");
+              // A null raw prompt is Cloud's managed default, not a custom preset.
+              setCurrentSystemPromptId(
+                agentSystem === null ? "default" : "custom",
+              );
             }
           } catch {
             // best-effort only
@@ -3767,6 +3682,7 @@ export function App({
     buffersRef,
     clearApprovalToolContext,
     chatgptPlanSwapsRef,
+    chatgptExhaustedProvidersRef,
     closeTrajectorySegment,
     consumeQueuedMessages,
     queueModeRef,
@@ -3814,6 +3730,7 @@ export function App({
     setCurrentModelHandle,
     setCurrentModelId,
     setDequeueEpoch,
+    setInterruptRequested,
     lastStopReasonRef,
     setIsExecutingTool,
     setLlmConfig,
@@ -3852,7 +3769,6 @@ export function App({
     handleApproveAlways,
     handleDenyCurrent,
     handleCancelApprovals,
-    handleQuestionSubmit,
   } = useApprovalFlow({
     abortControllerRef,
     agentId,
@@ -3911,7 +3827,7 @@ export function App({
   });
 
   const handleExit = useCallback(async () => {
-    saveLastSessionBeforeExit(conversationIdRef.current);
+    await prepareSessionExit(conversationIdRef.current);
 
     // Run SessionEnd hooks
     await runEndHooks();
@@ -4030,6 +3946,7 @@ export function App({
     setApprovalResults,
     setAutoDeniedApprovals,
     setAutoHandledResults,
+    setDequeueEpoch,
     setInterruptRequested,
     setIsExecutingTool,
     setPendingApprovals,
@@ -4038,6 +3955,7 @@ export function App({
     streaming,
     toolAbortControllerRef,
     toolResultsInFlightRef,
+    tuiQueueRef,
     userCancelledRef,
     waitingForQueueCancelRef,
   });
@@ -4321,16 +4239,18 @@ export function App({
     onSubmitRef.current = onSubmit;
   }, [onSubmit]);
 
-  // Process queued messages when streaming ends.
-  // QueueRuntime is authoritative: consumeItems drives the dequeue and fires
-  // onDequeued → setQueueDisplay(prev => prev.slice(n)) to update the UI.
-  // dequeueEpoch is the sole re-trigger: bumped on every enqueue, turn
-  // completion (abortControllerRef clears), and cancel-reset.
+  // Process queued messages when streaming ends. QueueRuntime is authoritative
+  // (consumeItems fires onDequeued → setQueueDisplay). dequeueEpoch is the sole
+  // re-trigger: enqueue, turn completion, and interrupt settle (cancelling->idle).
   useEffect(() => {
     void dequeueEpoch; // explicit dep to satisfy exhaustive-deps lint
 
-    const queueLen = tuiQueueRef.current?.length ?? 0;
+    // Esc-parked user messages are skipped: only ready items count here.
+    const queueLen = tuiQueueRef.current?.readyLength ?? 0;
     const hasAnythingQueued = queueLen > 0;
+    if (!hasAnythingQueued && (tuiQueueRef.current?.length ?? 0) > 0) {
+      tuiQueueRef.current?.tryDequeue("paused_by_user");
+    }
 
     if (
       !streaming &&
@@ -4356,19 +4276,11 @@ export function App({
       const batch = tuiQueueRef.current?.consumeItems(queueLen);
       if (!batch) return;
 
-      // Build concatenated text for lastDequeuedMessageRef (error restoration).
-      const concatenatedMessage = batch.items
-        .map((item) => {
-          if (item.kind === "task_notification") return item.text;
-          if (item.kind === "message") {
-            return typeof item.content === "string" ? item.content : "";
-          }
-          return "";
-        })
-        .filter((t) => t.length > 0)
-        .join("\n");
-
-      const queuedContentParts = buildContentFromQueueBatch(batch);
+      const {
+        text: concatenatedMessage,
+        content: queuedContentParts,
+        submitOptions,
+      } = prepareTuiQueueSubmit(batch);
 
       debugLog(
         "queue",
@@ -4385,13 +4297,15 @@ export function App({
       dequeueInFlightRef.current = true;
       // Reset to immediate mode after each dequeue — defer is opt-in per batch.
       setQueueMode("immediate");
-      void onSubmitRef.current(concatenatedMessage).finally(() => {
-        dequeueInFlightRef.current = false;
-        // If more items arrived while in-flight, bump epoch so the effect re-runs.
-        if ((tuiQueueRef.current?.length ?? 0) > 0) {
-          setDequeueEpoch((e) => e + 1);
-        }
-      });
+      void onSubmitRef
+        .current(concatenatedMessage, submitOptions)
+        .finally(() => {
+          dequeueInFlightRef.current = false;
+          // If more items arrived while in-flight, bump epoch so the effect re-runs.
+          if ((tuiQueueRef.current?.length ?? 0) > 0) {
+            setDequeueEpoch((e) => e + 1);
+          }
+        });
     } else if (hasAnythingQueued) {
       // Log why dequeue was blocked (useful for debugging stuck queues)
       debugLog(
@@ -5097,7 +5011,6 @@ export function App({
         handlePermissionModeChange={handlePermissionModeChange}
         handlePersonalitySelect={handlePersonalitySelect}
         handleProfileEscapeCancel={handleProfileEscapeCancel}
-        handleQuestionSubmit={handleQuestionSubmit}
         handleReflectionArenaChoiceCancel={handleReflectionArenaChoiceCancel}
         handleReflectionArenaChoiceSubmit={handleReflectionArenaChoiceSubmit}
         handleSleeptimeModeSelect={handleSleeptimeModeSelect}

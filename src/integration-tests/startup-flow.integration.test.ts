@@ -230,7 +230,7 @@ describe("Startup Flow - Invalid Inputs", () => {
       const result = await runCli(
         [
           "--conversation",
-          "conversation-definitely-does-not-exist-12345",
+          "conv-00000000-0000-0000-0000-000000000000",
           "-p",
           "test",
         ],
@@ -240,14 +240,6 @@ describe("Startup Flow - Invalid Inputs", () => {
     },
     { timeout: 70000 },
   );
-
-  test("--import with nonexistent file shows error", async () => {
-    const result = await runCli(
-      ["--import", "/nonexistent/path/agent.af", "-p", "test"],
-      { expectExit: 1 },
-    );
-    expect(result.stderr).toContain("not found");
-  });
 });
 
 // ============================================================================
@@ -256,6 +248,7 @@ describe("Startup Flow - Invalid Inputs", () => {
 
 describe("Startup Flow - Integration", () => {
   let testAgentId: string | null = null;
+  let testConversationId: string | null = null;
 
   test(
     "--ephemeral uses saved Cloud authentication without creating an agent",
@@ -420,7 +413,7 @@ describe("Startup Flow - Integration", () => {
   );
 
   test(
-    "--conversation with valid ID derives agent and uses conversation",
+    "--new creates a non-default conversation for the selected agent",
     async () => {
       if (!testAgentId) {
         console.log("Skipping: no test agent available");
@@ -450,27 +443,45 @@ describe("Startup Flow - Integration", () => {
       }
       expect(realConversationId).toBeDefined();
       expect(realConversationId).not.toBe("default");
+      testConversationId = realConversationId;
+    },
+    { timeout: 370000 },
+  );
+
+  test(
+    "--conversation resolves the agent and submits to the selected conversation",
+    async () => {
+      if (!testAgentId || !testConversationId) {
+        console.log("Skipping: no test conversation available");
+        return;
+      }
 
       const result = await runCliJson(
         [
           "--conversation",
-          realConversationId,
-          "-m",
-          "sonnet-4.6-low",
+          testConversationId,
+          // The process that created the conversation has exited, so verify
+          // destination resolution and Cloud acceptance without waiting for a receiver.
+          "--no-wait",
           "-p",
           "Say OK",
           "--output-format",
           "json",
         ],
-        { timeoutMs: 180000 },
+        {
+          timeoutMs: 60000,
+          retryOnTimeouts: 0,
+          retryOnParseErrors: 0,
+        },
       );
 
       expect(result.exitCode).toBe(0);
       const output = result.output;
+      expect(output.status).toBe("queued");
       expect(output.agent_id).toBe(testAgentId);
-      expect(output.conversation_id).toBe(realConversationId);
+      expect(output.conversation_id).toBe(testConversationId);
     },
-    { timeout: 180000 },
+    { timeout: 70000 },
   );
 
   test(
@@ -501,8 +512,7 @@ describe("Startup Flow - Integration", () => {
           agentIdForTest,
           "--conversation",
           "default",
-          "-m",
-          "sonnet-4.6-low",
+          // Keep the model set during agent creation.
           "-p",
           "Say OK",
           "--output-format",

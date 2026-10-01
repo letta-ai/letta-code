@@ -4,13 +4,11 @@ import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
   buildReflectionMemoryScope,
   finalizeReflectionMemoryWorktree,
   type ReflectionMemoryWorktree,
   type ReflectionMemoryWorktreeFinalizeResult,
-  reflectionMemoryParentHasChanges,
 } from "@/agent/memory-worktree";
 import { buildAgentReference } from "@/cli/helpers/app-urls";
 import {
@@ -18,6 +16,7 @@ import {
   maybeUploadReflectionArenaChoiceToHf,
 } from "@/cli/helpers/reflection-arena-hf-upload";
 import { finalizeAutoReflectionCompletion } from "@/cli/helpers/reflection-completion";
+import { isRetryableReflectionArenaModelError } from "@/cli/helpers/reflection-configuration-error";
 import {
   emitReflectionRunEnd,
   emitReflectionRunStart,
@@ -27,15 +26,13 @@ import {
   REFLECTION_AGENT_ID_WAIT_MS,
   type ReflectionFeedbackContext,
   type ReflectionLaunchTriggerSource,
+  recordReflectionConfigurationFailure,
   releaseReflectionLaunch,
   tryReserveReflectionLaunch,
 } from "@/cli/helpers/reflection-launcher";
-import {
-  type AutoReflectionPayload,
-  buildAutoReflectionPayload,
-} from "@/cli/helpers/reflection-transcript";
+import type { AutoReflectionPayload } from "@/cli/helpers/reflection-transcript";
 import { telemetry } from "@/telemetry";
-import { debugLog, debugWarn } from "@/utils/debug";
+import { debugWarn } from "@/utils/debug";
 
 const execFile = promisify(execFileCb);
 const REFLECTION_ARENA_TELEMETRY_TRANSCRIPT_MAX_CHARS = 1_000_000;
@@ -153,20 +150,6 @@ export interface StartReflectionArenaRunOptions {
   payload: AutoReflectionPayload;
   triggerSource: ReflectionLaunchTriggerSource;
 }
-
-export interface LaunchReflectionArenaOptions {
-  agentId: string;
-  conversationId: string;
-  feedbackContext?: ReflectionFeedbackContext;
-  instruction?: string;
-  models: [string, string];
-  onReady: (message: string, run: ReflectionArenaRun) => void | Promise<void>;
-  triggerSource: ReflectionLaunchTriggerSource;
-}
-
-export type LaunchReflectionArenaResult =
-  | { launched: true; payloadPath: string; run: ReflectionArenaRun }
-  | { launched: false; reason: "no_payload" | "parent_dirty" };
 
 export interface FinalizeReflectionArenaChoiceOptions {
   choice: ReflectionArenaChoice;
@@ -629,21 +612,6 @@ function candidateIsFinished(candidate: ReflectionArenaCandidate): boolean {
   return Boolean(candidate.result);
 }
 
-function isRetryableArenaModelError(error: string | undefined): boolean {
-  if (!error) return false;
-  const normalized = error.toLowerCase();
-  return [
-    "model not found",
-    "unknown model",
-    "not-enough-credits",
-    "no credits",
-    "out of credits",
-    "insufficient credits",
-    "exceeded-quota",
-    "llm_insufficient_credits",
-  ].some((marker) => normalized.includes(marker));
-}
-
 function runIsReady(run: ReflectionArenaRun): boolean {
   return (
     run.candidates.length === REFLECTION_ARENA_CANDIDATE_COUNT &&
@@ -676,33 +644,6 @@ async function markCandidateComplete(params: {
     }
     return next;
   });
-}
-
-export async function launchReflectionArena(
-  options: LaunchReflectionArenaOptions,
-): Promise<LaunchReflectionArenaResult> {
-  const memoryDir = getScopedMemoryFilesystemRoot(options.agentId);
-  if (await reflectionMemoryParentHasChanges(memoryDir)) {
-    debugLog(
-      "memory",
-      `Skipping reflection arena launch (${options.triggerSource}) because parent memory has uncommitted changes`,
-    );
-    return { launched: false, reason: "parent_dirty" };
-  }
-
-  const payload = await buildAutoReflectionPayload(
-    options.agentId,
-    options.conversationId,
-  );
-  if (!payload) {
-    return { launched: false, reason: "no_payload" };
-  }
-
-  const run = await startReflectionArenaRun({
-    ...options,
-    payload,
-  });
-  return { launched: true, payloadPath: payload.payloadPath, run };
 }
 
 export async function startReflectionArenaRun(
@@ -780,6 +721,13 @@ export async function startReflectionArenaRun(
             report,
           }) => {
             try {
+              if (!success) {
+                recordReflectionConfigurationFailure({
+                  agentId: options.agentId,
+                  model: resolvedModel ?? model,
+                  error,
+                });
+              }
               const [memoryHead, memoryNoChanges] = await Promise.all([
                 getGitHead(candidate.worktree.worktreeDir),
                 reflectionMemoryWorktreeHasNoChanges(candidate.worktree),
@@ -802,7 +750,7 @@ export async function startReflectionArenaRun(
               if (
                 !success &&
                 model !== REFLECTION_ARENA_MODEL_A_DEFAULT &&
-                isRetryableArenaModelError(error)
+                isRetryableReflectionArenaModelError(error)
               ) {
                 const retryModel =
                   sampleReflectionArenaComparisonModel(attemptedModels);

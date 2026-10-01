@@ -4,14 +4,22 @@ import { parseArgs } from "node:util";
 import { getBackend } from "@/backend";
 import { searchMessagesForBackend } from "@/backend/message-search";
 import { settingsManager } from "@/settings-manager";
+import { readMessageStatus } from "./message-status";
 
 type SearchMode = "vector" | "fts" | "hybrid";
 type ListOrder = "asc" | "desc";
 
 type MessagesSubcommandDeps = {
   initializeSettings?: () => Promise<void>;
-  getBackend?: typeof getBackend;
+  getBackend?: () => Pick<
+    ReturnType<typeof getBackend>,
+    | "listAgentMessages"
+    | "listConversationMessages"
+    | "capabilities"
+    | "retrieveConversation"
+  >;
   searchMessagesForBackend?: typeof searchMessagesForBackend;
+  readMessageStatus?: typeof readMessageStatus;
 };
 
 type TranscriptMessage = {
@@ -49,6 +57,7 @@ Usage:
   letta messages search --query <text> [options]
   letta messages list [options]
   letta messages transcript --conversation <id> [options]
+  letta messages status --conversation <id> [--agent <id>]
 
 Search options:
   --query <text>        Search query (required)
@@ -71,6 +80,7 @@ List options:
   --before <message-id> Cursor: get messages before this ID
   --order <asc|desc>    Sort order (default: desc = newest first)
   --limit <n>           Max results (default: 20)
+  --include-errors     Include messages from failed steps
   --start-date <date>   Client-side filter: after this date (ISO format)
   --end-date <date>     Client-side filter: before this date (ISO format)
 
@@ -81,6 +91,8 @@ Transcript options:
   --agent-id <id>        Alias for --agent
   --limit <n>            Page size while fetching (default: 100)
   --max-pages <n>        Max pagination pages to fetch (default: 200)
+  --include-errors      Include messages from failed steps
+  Output includes truncated=true when the page limit is reached.
   --out <path>           Write transcript text to file
   --output <path>        Alias for --out
 
@@ -150,6 +162,7 @@ const MESSAGES_OPTIONS = {
   conversation: { type: "string" },
   "conversation-id": { type: "string" },
   "max-pages": { type: "string" },
+  "include-errors": { type: "boolean" },
   out: { type: "string" },
   output: { type: "string" },
 } as const;
@@ -186,6 +199,24 @@ export async function runMessagesSubcommand(
   try {
     await (deps.initializeSettings ?? (() => settingsManager.initialize()))();
     const backend = (deps.getBackend ?? getBackend)();
+    if (action === "status") {
+      const conversationId =
+        parsed.values.conversation || parsed.values["conversation-id"];
+      if (!conversationId)
+        throw new Error("Pass --conversation <id> to inspect message status.");
+      console.log(
+        JSON.stringify(
+          await (deps.readMessageStatus ?? readMessageStatus)(
+            conversationId,
+            parsed.values.agent || parsed.values["agent-id"],
+            backend,
+          ),
+          null,
+          2,
+        ),
+      );
+      return 0;
+    }
     const searchMessages =
       deps.searchMessagesForBackend ?? searchMessagesForBackend;
 
@@ -301,15 +332,17 @@ export async function runMessagesSubcommand(
       agentIdForDefault: string | undefined,
       pageLimit: number,
       maxPages: number,
-    ): Promise<TranscriptMessage[]> => {
+    ): Promise<{ messages: TranscriptMessage[]; truncated: boolean }> => {
       const collected: TranscriptMessage[] = [];
       const seenIds = new Set<string>();
       let cursorBefore: string | undefined;
+      let truncated = true;
 
       for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
         const page = await backend.listConversationMessages(conversationId, {
           limit: pageLimit,
           order: "desc",
+          ...(parsed.values["include-errors"] ? { include_err: true } : {}),
           ...(conversationId === "default" && agentIdForDefault
             ? { agent_id: agentIdForDefault }
             : {}),
@@ -318,6 +351,7 @@ export async function runMessagesSubcommand(
 
         const items = pageItems<TranscriptMessage>(page);
         if (items.length === 0) {
+          truncated = false;
           break;
         }
 
@@ -335,11 +369,12 @@ export async function runMessagesSubcommand(
 
         // Stop if no new items (all duplicates) or partial page
         if (newItems === 0 || items.length < pageLimit) {
+          truncated = newItems === 0;
           break;
         }
       }
 
-      return sortChronological(collected);
+      return { messages: sortChronological(collected), truncated };
     };
 
     if (action === "search") {
@@ -428,6 +463,7 @@ export async function runMessagesSubcommand(
         return 1;
       }
       const listBody = {
+        ...(parsed.values["include-errors"] ? { include_err: true } : {}),
         limit: parseLimit(parsed.values.limit, 20),
         after: parsed.values.after,
         before: parsed.values.before,
@@ -458,13 +494,7 @@ export async function runMessagesSubcommand(
         });
       }
 
-      const sorted = [...filtered].sort((a, b) => {
-        const aDate = "date" in a && a.date ? new Date(a.date).getTime() : 0;
-        const bDate = "date" in b && b.date ? new Date(b.date).getTime() : 0;
-        return aDate - bDate;
-      });
-
-      console.log(JSON.stringify(sorted, null, 2));
+      console.log(JSON.stringify(sortChronological(filtered), null, 2));
       return 0;
     }
 
@@ -494,8 +524,11 @@ export async function runMessagesSubcommand(
       const pageLimit = Math.max(1, parseLimit(parsed.values.limit, 100));
       const maxPages = Math.max(1, parseLimit(parsed.values["max-pages"], 200));
       const outputPathRaw = parsed.values.out || parsed.values.output;
+      const outputPath = outputPathRaw
+        ? resolve(process.cwd(), outputPathRaw)
+        : undefined;
 
-      const messages = await fetchConversationMessages(
+      const { messages, truncated } = await fetchConversationMessages(
         conversationId,
         agentId || undefined,
         pageLimit,
@@ -507,22 +540,8 @@ export async function runMessagesSubcommand(
         .join("\n\n")
         .trim();
 
-      if (outputPathRaw && typeof outputPathRaw === "string") {
-        const outputPath = resolve(process.cwd(), outputPathRaw);
+      if (outputPath) {
         await writeFile(outputPath, `${transcript}\n`, "utf-8");
-        console.log(
-          JSON.stringify(
-            {
-              conversation_id: conversationId,
-              agent_id: agentId || null,
-              message_count: messages.length,
-              output_path: outputPath,
-            },
-            null,
-            2,
-          ),
-        );
-        return 0;
       }
 
       console.log(
@@ -531,7 +550,8 @@ export async function runMessagesSubcommand(
             conversation_id: conversationId,
             agent_id: agentId || null,
             message_count: messages.length,
-            transcript,
+            truncated,
+            ...(outputPath ? { output_path: outputPath } : { transcript }),
           },
           null,
           2,

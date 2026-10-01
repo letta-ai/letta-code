@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { setCurrentAgentId } from "@/agent/context";
-import { executeCommand } from "@/cli/commands/registry";
+import { commands, executeCommand } from "@/cli/commands/registry";
+import {
+  getSystemRemindersExpanded,
+  getSystemRemindersVisible,
+  setSystemRemindersVisible,
+  toggleSystemReminderDisplay,
+} from "@/cli/components/transcript-display-state";
 import {
   __testOverrideSecretsBackend,
   clearSecretsCache,
@@ -8,10 +14,8 @@ import {
 
 const AGENT_ID = "agent-registry-secret-command";
 
-const retrieveAgentMock = mock((_agentId: string, _options?: unknown) =>
-  Promise.resolve({
-    secrets: [] as Array<{ key: string; value: string }>,
-  }),
+const listAgentSecretsMock = mock((_agentId: string) =>
+  Promise.resolve([] as Array<{ key: string; value: string }>),
 );
 
 const updateAgentMock = mock(
@@ -23,24 +27,35 @@ const capabilities = {
   remoteMemfs: true,
   serverSideToolManagement: true,
   serverSecrets: true,
-  agentFileImportExport: true,
   promptRecompile: true,
   byokProviderRefresh: true,
   localModelCatalog: false,
   localMemfs: false,
 };
 
+describe("removed AgentFile commands", () => {
+  test.each(["/export", "/download"])(
+    "%s is not executable",
+    async (command) => {
+      const result = await executeCommand(command);
+      expect(result.success).toBe(false);
+      expect(result.notFound).toBe(true);
+    },
+  );
+});
+
 describe("command registry", () => {
   beforeEach(() => {
-    retrieveAgentMock.mockReset();
+    listAgentSecretsMock.mockReset();
     updateAgentMock.mockReset();
-    retrieveAgentMock.mockResolvedValue({ secrets: [] });
+    listAgentSecretsMock.mockResolvedValue([]);
     updateAgentMock.mockResolvedValue({ id: AGENT_ID });
     setCurrentAgentId(AGENT_ID);
+    setSystemRemindersVisible(false);
     clearSecretsCache(AGENT_ID);
     __testOverrideSecretsBackend({
       capabilities,
-      retrieveAgent: retrieveAgentMock,
+      listAgentSecrets: listAgentSecretsMock,
       updateAgent: updateAgentMock,
     });
   });
@@ -49,6 +64,7 @@ describe("command registry", () => {
     __testOverrideSecretsBackend(null);
     clearSecretsCache(AGENT_ID);
     setCurrentAgentId(null);
+    setSystemRemindersVisible(false);
   });
 
   test("propagates secrets reminder refresh metadata for secret mutations", async () => {
@@ -62,9 +78,9 @@ describe("command registry", () => {
       refreshSecretsInfo: true,
     });
 
-    retrieveAgentMock.mockResolvedValueOnce({
-      secrets: [{ key: "REGISTRY_TOKEN", value: "registry-value" }],
-    });
+    listAgentSecretsMock.mockResolvedValueOnce([
+      { key: "REGISTRY_TOKEN", value: "registry-value" },
+    ]);
 
     const unsetResult = await executeCommand("/secret unset registry_token");
 
@@ -81,5 +97,50 @@ describe("command registry", () => {
     expect(result.success).toBe(true);
     expect(result.output).toContain("Secret management commands");
     expect(result.refreshSecretsInfo).toBeUndefined();
+  });
+
+  test("system reminders are discoverable and hidden by default", async () => {
+    expect(commands["/system-reminders"]).toMatchObject({
+      args: "[on|off|status]",
+      desc: "Show or hide system reminders",
+    });
+    expect(getSystemRemindersVisible()).toBe(false);
+    expect(await executeCommand("/system-reminders")).toMatchObject({
+      success: true,
+      output:
+        "System reminders are hidden. Use /system-reminders on to show them.",
+    });
+  });
+
+  test("turns system reminder rows on and off", async () => {
+    expect(await executeCommand("/system-reminders on")).toMatchObject({
+      success: true,
+      output:
+        "System reminders shown. Ctrl+R expands or collapses their contents.",
+    });
+    expect(getSystemRemindersVisible()).toBe(true);
+
+    toggleSystemReminderDisplay();
+    expect(getSystemRemindersExpanded()).toBe(true);
+
+    expect(await executeCommand("/system-reminders off")).toMatchObject({
+      success: true,
+      output: "System reminders hidden.",
+    });
+    expect(getSystemRemindersVisible()).toBe(false);
+    expect(getSystemRemindersExpanded()).toBe(false);
+  });
+
+  test("rejects unsupported system reminder modes", async () => {
+    expect(await executeCommand("/system-reminders maybe")).toMatchObject({
+      success: true,
+      output: "Usage: /system-reminders [on|off|status] (default is off)",
+    });
+    expect(
+      await executeCommand("/system-reminders status extra"),
+    ).toMatchObject({
+      success: true,
+      output: "Usage: /system-reminders [on|off|status] (default is off)",
+    });
   });
 });

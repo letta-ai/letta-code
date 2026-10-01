@@ -40,7 +40,23 @@ export function isListenerPongStale(
 export const SYSTEM_REMINDER_RE =
   /<system-reminder>[\s\S]*?<\/system-reminder>/g;
 
+// Mid-stream resume policy for listener turns. When the socket carrying a
+// run's stream dies (for example the cloud-api process that owned the run was
+// killed during a rolling restart), the listener re-attaches to the run stream
+// with `starting_after` the last seq_id. Without a policy the resume is one
+// immediate attempt, which cannot succeed while cloud-api is still down. The
+// policy must outlast a rolling restart (minutes), and once reconnected the
+// server itself waits 90 s of producer-heartbeat silence before replay reports
+// RUN_STREAM_PRODUCER_LOST, so the ceiling is sized in minutes: 0.5 + 1 + 2 +
+// 4 s, then 56 attempts at 5 s = 287.5 s, about 5 minutes of waiting.
+export const LISTENER_STREAM_RESUME_POLICY = {
+  initialDelayMs: 500,
+  maxAttempts: 60,
+  maxDelayMs: 5_000,
+};
+
 export const LLM_API_ERROR_MAX_RETRIES = 3;
+export const CLOUD_API_DEPLOYMENT_RECOVERY_MAX_ATTEMPTS = 3;
 export const EMPTY_RESPONSE_MAX_RETRIES = 2;
 export const MAX_PRE_STREAM_RECOVERY = 2;
 export const MAX_POST_STOP_APPROVAL_RECOVERY = 2;

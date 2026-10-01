@@ -1,5 +1,6 @@
 import {
   DeterministicPongExecutor,
+  DeterministicReflectionExecutor,
   type HeadlessTurnExecutor,
 } from "@/backend/dev/headless-turn-executor";
 import type { LocalPiModelsRuntime } from "@/backend/dev/pi-models-runtime";
@@ -17,7 +18,10 @@ import { ProviderTurnExecutor } from "@/backend/dev/provider-turn-executor";
 import type { LocalCompactionStats } from "./compaction";
 import type { LocalMessage } from "./local-message";
 
-export type LocalBackendExecutionMode = "pi" | "deterministic";
+export type LocalBackendExecutionMode =
+  | "pi"
+  | "deterministic"
+  | "deterministic-reflection";
 
 export interface CreateLocalExecutorOptions {
   storageDir: string;
@@ -52,6 +56,9 @@ export function createLocalExecutor(
   if (options.executor) return options.executor;
   if (options.executionMode === "deterministic") {
     return new DeterministicPongExecutor();
+  }
+  if (options.executionMode === "deterministic-reflection") {
+    return new DeterministicReflectionExecutor();
   }
   return new ProviderTurnExecutor(
     new PiStreamAdapter({

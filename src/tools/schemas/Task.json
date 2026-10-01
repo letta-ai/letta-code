@@ -11,15 +11,11 @@
     },
     "subagent_type": {
       "type": "string",
-      "description": "The type of specialized agent to use for this task"
+      "description": "The type of specialized agent to use for this task. Use claude-code or codex for a worker backed by the corresponding local CLI."
     },
     "model": {
       "type": "string",
       "description": "Optional model to use for this agent. If not specified, inherits from parent. Prefer lighter models for quick, straightforward tasks to minimize cost and latency."
-    },
-    "run_in_background": {
-      "type": "boolean",
-      "description": "Defaults to true. Set to false only when you must block and wait for the agent's final report inline. Background runs return a task ID/output file and deliver a task notification on completion."
     },
     "agent_id": {
       "type": "string",
@@ -28,6 +24,27 @@
     "conversation_id": {
       "type": "string",
       "description": "Resume from an existing conversation. Does NOT require agent_id (conversation IDs are unique and encode the agent)."
+    },
+    "computer": {
+      "type": "string",
+      "description": "Run the subagent on another connected computer instead of this machine. Prefer a stable device ID or computer name; ephemeral connection IDs are also supported to pin a specific listener. Pass \"cloud\" to provision a Cloud sandbox for the subagent's conversation. Fails fast if the device is offline or does not support routing. Omit this field to run on the current machine (the default) — only set it when the task specifically needs to run elsewhere."
+    },
+    "mcp": {
+      "type": "object",
+      "description": "For claude-code or codex, optionally expose discovery metadata for MCP servers available to the parent agent. This does not grant new authorization.",
+      "properties": {
+        "inherit": {
+          "type": "boolean",
+          "description": "When true, inject MCP discovery metadata into the external coding agent."
+        },
+        "servers": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Optional exact subset of parent MCP server names to advertise. Requires inherit: true."
+        }
+      },
+      "required": ["inherit"],
+      "additionalProperties": false
     }
   },
   "required": ["description", "prompt", "subagent_type"],

@@ -72,7 +72,9 @@ export async function ensureConversationSandbox(
     `/v1/agents/${encodeURIComponent(agentId)}/sandboxes`,
     {
       method: "POST",
-      body: JSON.stringify({ conversationId }),
+      body: JSON.stringify(
+        conversationId === "default" ? {} : { conversationId },
+      ),
     },
     deps,
   );
@@ -95,6 +97,29 @@ export async function uploadFileToSandbox(
     deps,
   );
   return (await response.json()) as { files: SandboxFileMetadata[] };
+}
+
+export interface SandboxDesktopSession {
+  /** Relay websocket URL carrying a bearer token; treat it as a secret. */
+  url: string;
+  expiresAt: string;
+}
+
+/**
+ * Start the sandbox's graphical desktop and mint a short-lived relay session.
+ * The server fixes the lifetime (one hour today); the body is intentionally
+ * empty because the endpoint accepts no options.
+ */
+export async function createSandboxDesktopSession(
+  sandboxId: string,
+  deps: SandboxFilesApiDeps = defaultDeps,
+): Promise<SandboxDesktopSession> {
+  const response = await request(
+    `/v1/sandboxes/${encodeURIComponent(sandboxId)}/desktop-session`,
+    { method: "POST", body: JSON.stringify({}) },
+    deps,
+  );
+  return (await response.json()) as SandboxDesktopSession;
 }
 
 export async function downloadFileFromSandbox(

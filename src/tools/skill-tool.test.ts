@@ -106,6 +106,37 @@ describe("Skill tool memory filesystem lookup", () => {
     ).rejects.toThrow('Skill "image-generation" not found');
   });
 
+  test("init loads the bundled v2 memory guidance", async () => {
+    process.env.HOME = tempRoot;
+    const scopedMemoryDir = join(
+      tempRoot,
+      ".letta",
+      "agents",
+      TEST_AGENT_ID,
+      "memory",
+    );
+    mkdirSync(scopedMemoryDir, { recursive: true });
+    writeFileSync(join(scopedMemoryDir, "MEMORY.md"), "# Memory\n");
+
+    const skillId = "initializing-memory";
+    const loaded = await readSkillContent(
+      skillId,
+      currentSkillsDirectory ?? join(tempRoot, ".skills"),
+      TEST_AGENT_ID,
+    );
+    expect(loaded.path).toEndWith(join(skillId, "SKILL.md"));
+
+    const rendered = renderSkillContent(skillId, loaded.content, loaded.path);
+    expect(rendered).toContain("root `MEMORY.md`");
+    expect(rendered).toContain("## Harness Constraints");
+    expect(rendered).toContain("including quota");
+    expect(rendered).toContain("agent(historyPrompt, {label:");
+    expect(rendered).toContain("agent(codePrompt, {label:");
+    expect(rendered).toContain("schema: historySchema(cohort)");
+    expect(rendered).toContain("schema: codeSchema");
+    expect(rendered).toContain("If the Workflow tool is unavailable");
+  });
+
   test("loads skills from MEMORY_DIR/skills", async () => {
     const skillName = "memfs-only-skill";
     const memoryDir = join(tempRoot, "memory");
@@ -385,6 +416,37 @@ describe("Skill tool memory filesystem lookup", () => {
     );
   });
 
+  test("loads a nested skill by its frontmatter name", async () => {
+    const projectRoot = join(tempRoot, "project-root");
+    const skillsRoot = join(projectRoot, ".skills");
+    const computerUseDir = join(skillsRoot, "computer-use");
+    const cuaDriverDir = join(computerUseDir, "references", "cua-driver");
+
+    currentSkillsDirectory = skillsRoot;
+    mkdirSync(cuaDriverDir, { recursive: true });
+    writeFileSync(
+      join(computerUseDir, "SKILL.md"),
+      "---\nname: computer-use\ndescription: managed computer use\n---\n",
+      "utf8",
+    );
+    writeFileSync(
+      join(cuaDriverDir, "SKILL.md"),
+      "---\nname: cua-driver\ndescription: Cua Driver reference\n---\n\nLoaded by frontmatter name.",
+      "utf8",
+    );
+    process.env.USER_CWD = projectRoot;
+
+    const result = await runScopedSkill({
+      skill: "cua-driver",
+      toolCallId: "tc-nested-frontmatter-name",
+    });
+
+    expect(result.message).toBe("Launching skill: cua-driver");
+    const queued = consumeQueuedSkillContent();
+    expect(queued).toHaveLength(1);
+    expect(queued[0]?.content).toContain("Loaded by frontmatter name.");
+  });
+
   test("loads canonical .agents/skills project skills before legacy .skills", async () => {
     const skillName = "canonical-project-skill";
     const projectRoot = join(tempRoot, "project-root");
@@ -417,6 +479,39 @@ describe("Skill tool memory filesystem lookup", () => {
     expect(queued).toHaveLength(1);
     expect(queued[0]?.content).toContain("Loaded from .agents/skills.");
     expect(queued[0]?.content).not.toContain("Loaded from .skills.");
+  });
+
+  test("loads a project skill instead of a bundled skill with the same name", async () => {
+    const skillName = "browser-use";
+    const projectRoot = join(tempRoot, "project-root");
+    const projectSkillDir = join(projectRoot, ".agents", "skills", skillName);
+
+    currentSkillsDirectory = join(projectRoot, ".skills");
+    mkdirSync(projectSkillDir, { recursive: true });
+    writeFileSync(
+      join(projectSkillDir, "SKILL.md"),
+      [
+        "---",
+        "name: browser-use",
+        "description: project browser controller",
+        "---",
+        "",
+        "Loaded from the project override.",
+      ].join("\n"),
+      "utf8",
+    );
+    process.env.USER_CWD = projectRoot;
+
+    const result = await runScopedSkill({
+      skill: skillName,
+      toolCallId: "tc-bundled-override",
+    });
+
+    expect(result.message).toBe(`Launching skill: ${skillName}`);
+    const queued = consumeQueuedSkillContent();
+    expect(queued).toHaveLength(1);
+    expect(queued[0]?.content).toContain("Loaded from the project override.");
+    expect(queued[0]?.content).not.toContain("# Browser Use\n");
   });
 
   test("renders skill directory substitutions", () => {

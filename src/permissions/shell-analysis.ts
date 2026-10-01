@@ -140,6 +140,9 @@ export function splitShellSegments(input: string): string[] | null {
     }
 
     if (input.startsWith("&&", i)) {
+      if (i + 2 >= input.length || input.slice(i + 2).trim() === "") {
+        return null;
+      }
       segments.push(current);
       current = "";
       i += 2;
@@ -147,6 +150,9 @@ export function splitShellSegments(input: string): string[] | null {
     }
 
     if (input.startsWith("||", i)) {
+      if (i + 2 >= input.length || input.slice(i + 2).trim() === "") {
+        return null;
+      }
       segments.push(current);
       current = "";
       i += 2;
@@ -317,6 +323,9 @@ export function splitShellSegmentsAllowCommandSubstitution(
     }
 
     if (input.startsWith("&&", i)) {
+      if (i + 2 >= input.length || input.slice(i + 2).trim() === "") {
+        return null;
+      }
       segments.push(current);
       current = "";
       i += 2;
@@ -324,6 +333,9 @@ export function splitShellSegmentsAllowCommandSubstitution(
     }
 
     if (input.startsWith("||", i)) {
+      if (i + 2 >= input.length || input.slice(i + 2).trim() === "") {
+        return null;
+      }
       segments.push(current);
       current = "";
       i += 2;

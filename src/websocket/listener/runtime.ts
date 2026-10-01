@@ -158,6 +158,9 @@ export function evictConversationRuntimeIfIdle(
 ): boolean {
   if (
     runtime.turnLifecycle.kind !== "idle" ||
+    (runtime.expectedTeleportId !== null &&
+      (runtime.expectedTeleportExpiresAt === null ||
+        runtime.expectedTeleportExpiresAt > Date.now())) ||
     runtime.queuePumpActive ||
     runtime.queuePumpScheduled ||
     runtime.pendingTurns > 0 ||
@@ -169,7 +172,8 @@ export function evictConversationRuntimeIfIdle(
     (runtime.pendingInterruptedToolCallIds?.length ?? 0) > 0 ||
     runtime.queuedMessagesByItemId.size > 0 ||
     runtime.queueRuntime?.length > 0 ||
-    (runtime.workspaceSandbox !== undefined &&
+    ((runtime.workspaceSandbox !== undefined ||
+      runtime.executionSettings !== undefined) &&
       runtime.listener.connectionIdsByRuntimeKey.has(runtime.key))
   ) {
     return false;
@@ -262,6 +266,8 @@ export function createConversationRuntime(
     acceptedInputDispositions: new Map(),
     pendingApprovalResolvers: new Map(),
     recoveredApprovalState: null,
+    expectedTeleportId: null,
+    expectedTeleportExpiresAt: null,
     get lastStopReason() {
       return turnLifecycle.lastStopReason;
     },
@@ -353,9 +359,54 @@ export function clearRecoveredApprovalState(
   evictConversationRuntimeIfIdle(runtime);
 }
 
+export function invalidateExternalToolNotifications(
+  runtime: ConversationRuntime,
+): void {
+  const notificationEpochs =
+    runtime.listener.externalToolNotificationEpochByConversation;
+  const runtimeKey = getConversationRuntimeKey(
+    runtime.agentId,
+    runtime.conversationId,
+  );
+  notificationEpochs.set(
+    runtimeKey,
+    (notificationEpochs.get(runtimeKey) ?? 0) + 1,
+  );
+}
+
+export function beginExternalToolNotificationReset(
+  runtime: ConversationRuntime,
+): () => void {
+  const barriers =
+    runtime.listener.externalToolNotificationBarrierByConversation;
+  const runtimeKey = getConversationRuntimeKey(
+    runtime.agentId,
+    runtime.conversationId,
+  );
+  const previous = barriers.get(runtimeKey);
+  let releaseCurrent!: () => void;
+  const current = new Promise<void>((resolve) => {
+    releaseCurrent = resolve;
+  });
+  const pending = previous ? previous.then(() => current) : current;
+  barriers.set(runtimeKey, pending);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    releaseCurrent();
+    void pending.then(() => {
+      if (barriers.get(runtimeKey) === pending) {
+        barriers.delete(runtimeKey);
+      }
+    });
+  };
+}
+
 export function clearConversationRuntimeState(
   runtime: ConversationRuntime,
 ): void {
+  invalidateExternalToolNotifications(runtime);
   runtime.turnLifecycle.reset("cancelled");
   releaseListenerTurnContext({
     runtime,
@@ -367,6 +418,8 @@ export function clearConversationRuntimeState(
   runtime.pendingInterruptedResults = null;
   runtime.pendingInterruptedContext = null;
   runtime.pendingInterruptedToolCallIds = null;
+  runtime.expectedTeleportId = null;
+  runtime.expectedTeleportExpiresAt = null;
   runtime.dequeuedClientMessageIdsByBatchId.clear();
   runtime.continuationEpoch += 1;
   runtime.pendingTurns = 0;
@@ -452,18 +505,6 @@ export function getPendingControlRequests(
       request_id: request.request_id,
       request: request.request,
     });
-  }
-
-  const recovered = conversationRuntime.recoveredApprovalState;
-  if (recovered) {
-    for (const requestId of recovered.pendingRequestIds) {
-      const entry = recovered.approvalsByRequestId.get(requestId);
-      if (!entry) continue;
-      requests.push({
-        request_id: entry.controlRequest.request_id,
-        request: entry.controlRequest.request,
-      });
-    }
   }
 
   return requests;

@@ -14,12 +14,17 @@ the shared `MessageChannel` tool, but they do not get custom Desktop screens.
     channel.json
     plugin.mjs
     accounts.json
-    routing.yaml
+    routing.json
     pairing.yaml
     runtime/
       package.json
       node_modules/
 ```
+
+Routes are stored as JSON. Existing `routing.yaml` files are migrated on read;
+if migration is unavailable, their routes remain readable. When both filenames
+exist, `routing.json` takes precedence, including when it contains no routes.
+Saves replace the current file only after the new snapshot is fully written.
 
 `channel.json` registers the plugin:
 
@@ -124,7 +129,7 @@ routing flow:
 
 1. The adapter receives an inbound message and calls `adapter.onMessage(msg)`.
 2. Letta Code enforces `dmPolicy` / `allowedUsers`.
-3. Letta Code resolves a route from `routing.yaml` or creates a pairing code.
+3. Letta Code resolves a route from `routing.json` or creates a pairing code.
 4. The routed message is delivered to the bound agent/conversation.
 5. ChannelGateway registers `MessageChannel` for the conversation when it has an
    active route on at least one running channel adapter.
@@ -133,19 +138,22 @@ Plugins that need Slack/Discord-style auto-routing or rich Desktop management
 remain first-party/bundled work for now. Custom plugins can still expose custom
 `MessageChannel` actions and schema fragments via `messageActions`.
 
-> Note: inbound channel delivery and user-visible replies are separate steps.
-> A channel message can successfully reach the agent, but the agent still has to
-> call `MessageChannel` to reply. If the transcript shows the incoming
-> `<channel-notification>` but no `MessageChannel` tool call, this is usually a
-> model/prompting issue rather than a channel adapter failure. For debugging,
-> check whether the notification reached the conversation, whether the agent
-> called `MessageChannel`, whether the tool result says the message was sent,
-> and whether the route/account IDs match the original chat.
+Inbound delivery and replies are separate steps. Accounts default to tool mode:
+the agent must call `MessageChannel` to reply. A saved account can opt into
+`reply_mode: "relay"`, which sends finalized assistant messages through the local
+gateway when the turn has one routed destination. Failed or cancelled turns do
+not send unfinished text. Remote gateway hosts must provide the relay hook.
+
+Single-destination relay turns do not expose `MessageChannel`. Use tool mode for
+reactions, files, and proactive sends. Turns with multiple routed destinations
+fall back to explicit `MessageChannel` delivery, without automatic broadcasts.
+For debugging, check the account mode, inbound notification, routed destination,
+and either the explicit tool result or the automatic-relay warning.
 
 ## Local backend channels
 
 Channels can run against the experimental local backend without registering a
-remote environment. In this mode the backend is in-process, so no
+remote computer. In this mode the backend is in-process, so no
 `LETTA_BASE_URL` is required.
 
 ```bash
@@ -244,6 +252,7 @@ oauth_config:
       - channels:history
       - chat:write
       - commands
+      - emoji:read
       - files:read
       - files:write
       - groups:history

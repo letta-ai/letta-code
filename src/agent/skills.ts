@@ -154,8 +154,10 @@ export function isUserInvocableSkill(skill: Skill): boolean {
 }
 
 const LOCAL_AGENT_EXCLUDED_BUNDLED_SKILLS = new Set([
+  "curating-memory-palace",
   "image-generation",
   "managing-shared-memory",
+  "working-across-computers",
 ]);
 
 export function isSkillAvailableForAgent(
@@ -315,7 +317,9 @@ export async function discoverSkills(
   }
 
   return {
-    skills: Array.from(skillsById.values()).sort(compareSkills),
+    skills: Array.from(skillsById.values())
+      .filter((skill) => isSkillAvailableForAgent(skill, agentId))
+      .sort(compareSkills),
     errors: allErrors,
   };
 }
@@ -423,7 +427,7 @@ async function parseSkillFile(
   // Parse frontmatter
   const { frontmatter, body } = parseFrontmatter(content);
 
-  // Derive ID from directory structure relative to root
+  // Derive the legacy fallback ID from the directory structure relative to root.
   // E.g., .skills/data-analysis/SKILL.MD -> "data-analysis"
   // E.g., .skills/web/scraper/SKILL.MD -> "web/scraper"
   // Normalize rootPath to not have trailing slash
@@ -434,12 +438,13 @@ async function parseSkillFile(
   const dirPath = relativePath.slice(0, -"/SKILL.MD".length);
   const defaultId = dirPath || "root";
 
+  const frontmatterName = getFrontmatterString(frontmatter, "name");
   const id =
-    (typeof frontmatter.id === "string" ? frontmatter.id : null) || defaultId;
+    getFrontmatterString(frontmatter, "id") || frontmatterName || defaultId;
 
   // Use name from frontmatter or derive from ID
   const name =
-    (typeof frontmatter.name === "string" ? frontmatter.name : null) ||
+    frontmatterName ||
     (typeof frontmatter.title === "string" ? frontmatter.title : null) ||
     (id.split("/").pop() ?? "")
       .replace(/-/g, " ")

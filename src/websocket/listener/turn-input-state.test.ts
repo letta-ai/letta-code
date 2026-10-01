@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { normalizeMessageImageParts } from "@/utils/message-image-normalization";
 import {
+  createDeploymentRecoveryTurnInput,
   createTurnInputState,
   ensureTurnInputMessageOtids,
   rebuildTurnInputWithFreshDenials,
@@ -8,6 +9,27 @@ import {
 } from "./turn-input-state";
 
 describe("listener turn input state", () => {
+  test("deployment recovery replaces accepted work with fresh internal continuations", () => {
+    const first = createDeploymentRecoveryTurnInput();
+    const second = createDeploymentRecoveryTurnInput();
+
+    expect(first.messages).toHaveLength(1);
+    expect(first.messages[0]).toMatchObject({
+      type: "message",
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text: expect.stringContaining("<system-reminder>"),
+        },
+      ],
+    });
+    expect(JSON.stringify(first.messages)).not.toContain("tool_call_id");
+    expect(JSON.stringify(first.messages)).not.toContain('"approvals"');
+    expect(first.messages[0]?.otid).toBeString();
+    expect(first.messages[0]?.otid).not.toBe(second.messages[0]?.otid);
+  });
+
   test("assigns identities to messages introduced by turn transforms", () => {
     const messages = ensureTurnInputMessageOtids([
       {

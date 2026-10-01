@@ -7,9 +7,12 @@
  */
 export const SUPPORTED_REMOTE_COMMANDS: readonly string[] = [
   "clear",
+  "clear-messages",
   "doctor",
+  "dream",
+  "reflect",
+  "reflection",
   "init",
-  "remember",
   "compact",
   "reload",
   "context-limit",
@@ -20,4 +23,5 @@ export const SUPPORTED_REMOTE_COMMANDS: readonly string[] = [
   // dedicated secret_list / secret_apply WS commands — not via
   // execute_command — so it has no case in handleExecuteCommand.
   "secret",
+  "monitor_stop",
 ];

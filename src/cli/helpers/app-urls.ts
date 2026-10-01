@@ -1,7 +1,6 @@
 import { isLocalAgentId as isLocalAgentIdShared } from "@/agent/agent-id";
 
 const CHAT_BASE = "https://chat.letta.com";
-const PLATFORM_BASE = "https://platform.letta.com";
 
 export const LETTA_CHAT_API_KEYS_URL = `${CHAT_BASE}/preferences/api-keys`;
 
@@ -35,6 +34,25 @@ export function buildChatUrl(
 
   const qs = params.toString();
   return qs ? `${base}?${qs}` : base;
+}
+
+/**
+ * Build the chat.letta.com desktop viewer URL for a sandbox desktop-session
+ * relay URL. Chat reads the relay path and expiry from the hash, so they never
+ * reach a server log as a query string. Anyone holding the result can view and
+ * control the desktop until it expires.
+ */
+export function buildDesktopViewerUrl(
+  relayUrl: string,
+  expiresAt: string,
+): string {
+  const relay = new URL(relayUrl);
+  const viewer = new URL("/desktop", CHAT_BASE);
+  viewer.hash = new URLSearchParams({
+    path: `${relay.pathname}${relay.search}`,
+    expiresAt,
+  }).toString();
+  return viewer.toString();
 }
 
 /**
@@ -74,11 +92,4 @@ export function buildAgentTerminalLink(
  */
 export function buildChatWebUrl(path: string): string {
   return `${CHAT_BASE}${path}`;
-}
-
-/**
- * Build a URL for developer and management pages on Letta Platform.
- */
-export function buildPlatformUrl(path: string): string {
-  return `${PLATFORM_BASE}${path}`;
 }

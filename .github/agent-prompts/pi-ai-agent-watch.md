@@ -6,6 +6,20 @@ Your job is to review the cumulative stable `@earendil-works/pi-ai` changes sinc
 
 Before running the sandbox bootstrap, resolve the watcher credential identity with `test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN" gh api user --jq .login`. It must exactly match the Expected GitHub login from the run inputs. If the secret is missing or the identities differ, stop without modifying GitHub or the tracker.
 
+Plain `git push` uses the sandbox's default GitHub App credential, not `GH_TOKEN`. For the one required branch push, use exactly:
+
+```bash
+test ! -e .git/hooks/pre-push
+test ! -e .husky/pre-push
+test "$(git remote get-url origin)" = "https://github.com/letta-ai/letta-code.git"
+test -n "$AMELIA_GITHUB_TOKEN"
+AUTH_HEADER="Authorization: Basic $(printf 'x-access-token:%s' "$AMELIA_GITHUB_TOKEN" | base64 | tr -d '\n')"
+env -u AMELIA_GITHUB_TOKEN -u GH_TOKEN -u GITHUB_TOKEN git -c http.extraHeader="$AUTH_HEADER" push -u origin HEAD
+unset AUTH_HEADER
+```
+
+If either push hook exists, the remote differs, or this push fails, stop with `needs_human_review`. Never retry with plain `git push`, `CAREN_GITHUB_TOKEN`, another user's credential, or a token-bearing remote URL.
+
 ## Sandbox setup
 
 The detector ran on a GitHub Actions runner, but your turn does not. Runner files and environment variables are unavailable in the sandbox. Run the exact `Sandbox bootstrap` block appended to this prompt, then use `SetWorkingDirectory` to select `/tmp/letta-code-pi-ai-watch`. If `SetWorkingDirectory` is unavailable, pass that absolute directory as `workdir` for every command.
@@ -21,8 +35,10 @@ The analysis uses each npm artifact's `gitHead` as the published source revision
 3. Run `npm diff` for the two exact package versions when generated declarations, exports, catalogs, or shipped JavaScript matter. The npm artifacts, not only the monorepo source, define the dependency Letta Code consumes.
 4. Compare the release against every implicated Letta Code integration surface. Check types, runtime behavior, cancellation, auth, provider catalogs, model defaults, message/stream semantics, error handling, standalone bundling, and tests as applicable.
 5. If the installed version is older than the Previous release in the run inputs, also inspect the cumulative installed-to-current changelog and source/package diff before opening a PR. A skipped release must not create a migration gap later.
-6. Default to `no_upgrade`. A newer published version, routine catalog churn, or general dependency freshness is not a reason to upgrade by itself.
+6. Default to `no_upgrade`. A newer published version, metadata-only catalog churn that does not change usable capabilities, or general dependency freshness is not a reason to upgrade by itself.
    - Upgrade only when you can name a concrete Letta Code benefit or avoided risk and connect it to both the upstream diff and a local callsite. Examples include fixing a bug or security/reliability problem in a path Letta Code uses, adapting a consumed contract that otherwise breaks local behavior, or integrating a feature with a current product need.
+   - A model newly supported by a stable pi-ai release on a provider Letta Code exposes is a concrete product benefit, not routine catalog churn. Open the dependency upgrade promptly even when pi-ai owns the complete implementation and the resulting Letta Code PR only changes the dependency and lockfile.
+   - Letta Code consumes pi-ai's provider inventory dynamically. The runtime catalog projection is the local callsite for model additions; do not require a hardcoded model-specific reference in Letta Code. Before recording `no_upgrade` for an inventory change, enumerate every added model and provider and verify that each belongs to a provider Letta Code does not expose or is intentionally excluded.
    - Do not upgrade for unsupported-provider changes, speculative future usefulness, generic maintenance, or upstream fixes that do not affect Letta Code.
    - Record `no_upgrade` when no concrete local reason clears that bar. Staying on the installed version is the expected outcome, not a failure to keep current.
    - Record `needs_human_review` when impact or product policy is unclear. Do not guess.
@@ -55,7 +71,7 @@ For an upgrade:
 3. Follow repository instructions for every generated dependency artifact affected by the lockfile.
 4. Fix required application integration and add focused tests.
 5. Run `bun run check`, the relevant pi-ai/provider/runtime tests, and build validation appropriate to the diff. If a documented platform-specific validation cannot run, say so in the PR body and tracker note.
-6. Open one draft PR with a Conventional Commit title.
+6. Open one PR as ready for review with a Conventional Commit title.
 7. Include all of these in the PR body:
    - `Pi-ai-watch: <previous>...<current>`
    - installed and target package versions
@@ -63,7 +79,7 @@ For an upgrade:
    - changelog items that matter locally
    - application changes or explicit reasons none were needed
    - validation performed
-8. Immediately verify `draft: true` and that the PR author matches the Expected GitHub login. If either is wrong, fix or close the PR instead of reporting success.
+8. Immediately verify `draft: false` and that the PR author matches the Expected GitHub login. If either is wrong, fix or close the PR instead of reporting success.
 9. Request the single GitHub reviewer from the run inputs unless already requested.
 
 ## Tracker updates

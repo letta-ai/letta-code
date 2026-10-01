@@ -1,0 +1,28 @@
+name: Setup CI dependencies
+description: Install the pinned runtimes and restore download caches without sharing installed modules
+inputs:
+  npm-cache:
+    description: Also cache npm downloads for package-install verification
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: 1.3.14
+
+    - uses: actions/setup-node@v6
+      with:
+        node-version: '22.19'
+        cache: ${{ inputs.npm-cache == 'true' && 'npm' || '' }}
+        cache-dependency-path: bun.lock
+
+    - uses: actions/cache@v4
+      with:
+        path: ~/.bun/install/cache
+        key: bun-${{ runner.os }}-${{ runner.arch }}-1.3.14-${{ hashFiles('bun.lock') }}
+        restore-keys: bun-${{ runner.os }}-${{ runner.arch }}-1.3.14-
+
+    - name: Install dependencies
+      shell: bash
+      run: bun install --frozen-lockfile

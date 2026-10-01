@@ -8,6 +8,12 @@ on:
     branches:
       - main
 
+# Superseded PR heads should not occupy runners needed by the current head.
+# Pushes to main remain independent so every merged revision is checked.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   classify:
     name: Classify change
@@ -87,7 +93,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.10
+          bun-version: 1.3.14
 
       - name: Install dependencies
         env:
@@ -98,7 +104,6 @@ jobs:
         run: bun run check
 
   update-chain-smoke:
-    needs: check
     name: Update Chain Smoke
     runs-on: ubuntu-24.04
     permissions:
@@ -110,7 +115,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.10
+          bun-version: 1.3.14
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -128,12 +133,96 @@ jobs:
       - name: Manual update-chain smoke test
         run: bun run test:update-chain:manual
 
-  build:
-    needs: [classify, check]
+  unit:
+    needs: classify
     if: needs.classify.outputs.run_heavy_ci == 'true'
-    name: ${{ matrix.name }}
+    name: Unit / ${{ matrix.runner }} / ${{ matrix.shard }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-14, windows-latest]
+        shard: [1, 2, 3, 4]
+        # Windows subprocess-heavy tests need more runners, not concurrent
+        # tests sharing cwd, environment, module mocks, or the same CPU.
+        include:
+          - runner: windows-latest
+            shard: 5
+          - runner: windows-latest
+            shard: 6
+          - runner: windows-latest
+            shard: 7
+          - runner: windows-latest
+            shard: 8
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+
+      - uses: ./.github/actions/setup-ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Unlock GNOME Keyring
+        if: runner.os == 'Linux'
+        uses: t1m0thyj/unlock-keyring@v1
+
+      - name: Run unit tests
+        shell: bash
+        run: node scripts/run-unit-tests.cjs --shard ${{ matrix.shard }}/${{ runner.os == 'Windows' && 8 || 4 }}
+
+  integration:
+    needs: classify
+    # Keep API credentials out of fork and Dependabot jobs. Unit and package
+    # verification still run for those contributors on every platform.
+    if: ${{ needs.classify.outputs.run_heavy_ci == 'true' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository)) }}
+    name: API / ${{ matrix.runner }} / ${{ matrix.shard }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-14, windows-latest]
+        shard: [1, 2, 3, 4]
+        # Four Windows shards put the input-format, model CLI, and teleport
+        # files together (244 seconds before setup). Split that group again.
+        include:
+          - runner: windows-latest
+            shard: 5
+          - runner: windows-latest
+            shard: 6
+          - runner: windows-latest
+            shard: 7
+          - runner: windows-latest
+            shard: 8
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: ./.github/actions/setup-ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Unlock GNOME Keyring
+        if: runner.os == 'Linux'
+        uses: t1m0thyj/unlock-keyring@v1
+
+      - name: Run integration tests (API)
+        shell: bash
+        env:
+          LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
+        run: bun test src/integration-tests --timeout 15000 --shard=${{ matrix.shard }}/${{ runner.os == 'Windows' && 8 || 4 }}
+
+  build:
+    needs: classify
+    if: needs.classify.outputs.run_heavy_ci == 'true'
+    name: Package / ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: ${{ matrix.runner == 'windows-latest' && 15 || 10 }}
     strategy:
       fail-fast: false
       matrix:
@@ -154,40 +243,66 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-        with:
-          # PR checkouts use a merge commit. Depth 2 includes its base and head.
-          fetch-depth: 2
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+      - uses: ./.github/actions/setup-ci
         with:
-          bun-version: 1.3.10
-
-      - name: Install dependencies
+          npm-cache: 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bun install --frozen-lockfile
+
+      - name: Verify native binaries
+        run: |
+          node -e "try { require('sharp'); console.log('sharp: OK') } catch(e) { console.error('sharp: FAIL —', e.message); process.exit(1) }"
+          node -e "try { require('node-pty'); console.log('node-pty: OK') } catch(e) { console.error('node-pty: FAIL —', e.message); process.exit(1) }"
+          # @janhapke/sharp-electron only has a patched artifact for linux-x64.
+          # Plain Node verifies that artifact is installed and loadable; Electron
+          # runtime behavior is exercised elsewhere.
+          if [ "${{ runner.os }}" = "Linux" ] && [ "${{ runner.arch }}" = "X64" ]; then
+            node -e "try { require('@janhapke/sharp-electron'); console.log('@janhapke/sharp-electron: OK') } catch(e) { console.error('@janhapke/sharp-electron: FAIL —', e.message); process.exit(1) }"
+          else
+            echo "@janhapke/sharp-electron: skipped (not linux-x64)"
+          fi
 
       - name: Unlock GNOME Keyring
         if: runner.os == 'Linux'
         uses: t1m0thyj/unlock-keyring@v1
 
-      - name: Run tests (extended timeout)
-        timeout-minutes: 15
-        # Unit tests must pass for fork PRs (no secrets). Keep API-dependent tests
-        # in a separate gated step.
-        run: node scripts/run-unit-tests.cjs
-
-      - name: Run integration tests (API)
-        # Only run on push to main or non-Dependabot PRs from the same repo
-        # (fork and Dependabot PRs cannot access secrets).
-        if: ${{ github.event_name == 'push' || (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository) }}
-        env:
-          LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
-        run: bun test src/integration-tests --timeout 15000
-
       - name: Build bundle
         run: bun run build
+
+      - name: Verify image worker with a newer Sharp runtime
+        if: runner.os == 'Linux' && runner.arch == 'X64'
+        run: node scripts/smoke-image-worker.mjs
+
+      - name: MCP OAuth NodeNext declaration smoke test
+        if: runner.os == 'Linux' && runner.arch == 'X64'
+        run: |
+          package_json="$(npm pack --json)"
+          tarball="$(node -e 'const fs=require("fs"); const rows=JSON.parse(fs.readFileSync(0,"utf8")); process.stdout.write(rows[0].filename)' <<<"$package_json")"
+          consumer="$(mktemp -d)"
+          trap 'rm -rf "$consumer" "$tarball"' EXIT
+          mkdir -p "$consumer/node_modules/@letta-ai/letta-code"
+          tar -xzf "$tarball" -C "$consumer/node_modules/@letta-ai/letta-code" --strip-components=1
+          cat > "$consumer/package.json" <<'JSON'
+          {"private":true,"type":"module"}
+          JSON
+          cat > "$consumer/tsconfig.json" <<'JSON'
+          {"compilerOptions":{"strict":true,"noEmit":true,"target":"ES2022","lib":["ES2022","DOM"],"module":"NodeNext","moduleResolution":"NodeNext","skipLibCheck":false},"include":["index.ts"]}
+          JSON
+          cat > "$consumer/index.ts" <<'TS'
+          import { authorizeMcpServerWithStorage, type McpOAuthStorage } from "@letta-ai/letta-code/mcp-oauth";
+          const storage: McpOAuthStorage = { get: async (_key, _signal) => null, set: async (_key, _value, _signal) => {}, delete: async (_key, _signal) => false };
+          void authorizeMcpServerWithStorage({ agentId: "agent", storageNamespace: "consumer", storage, serverName: "server", serverUrl: "https://mcp.example" });
+          TS
+          ./node_modules/.bin/tsc --project "$consumer/tsconfig.json"
+          node - <<'NODE'
+          const fs = require('fs');
+          const version = require('./package.json').version.replaceAll('.', '\\.');
+          const artifact = fs.readFileSync('./dist/mcp-oauth.js', 'utf8');
+          if (!new RegExp(`version:\\s*["']${version}["']`).test(artifact) || artifact.includes('typeof LETTA_VERSION')) {
+            throw new Error('MCP OAuth artifact does not embed the package version');
+          }
+          NODE
 
       - name: CLI help smoke test
         run: ./letta.js --help
@@ -218,7 +333,7 @@ jobs:
         shell: pwsh
         run: |
           npm pack
-          npm install -g (Get-Item letta-ai-letta-code-*.tgz).FullName
+          npm install -g (Get-Item letta-ai-letta-code-*.tgz).FullName --timing --loglevel=verbose
           letta --help
 
       - name: Test npm install flow (Unix)
@@ -228,14 +343,16 @@ jobs:
           npm pack
           npm install -g ./letta-ai-letta-code-*.tgz
           letta --help
+          cache_dir="$(mktemp -d)"
+          BUN_RUNTIME_TRANSPILER_CACHE_PATH="$cache_dir" letta --version
+          test -n "$(find "$cache_dir" -type f -name '*.pile' -print -quit)"
 
-      - name: Headless smoke test (API)
-        # Only run on push to main or non-Dependabot PRs from the same repo
-        # (fork and Dependabot PRs cannot access secrets).
-        if: ${{ github.event_name == 'push' || (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository) }}
+      - name: Headless smoke test (packaged local backend)
         env:
-          LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
-        run: ./letta.js --prompt "ping" --tools "" --permission-mode standard
+          LETTA_LOCAL_BACKEND_EXPERIMENTAL: '1'
+          LETTA_LOCAL_BACKEND_EXECUTOR: deterministic
+          LETTA_LOCAL_BACKEND_DIR: ${{ runner.temp }}/letta-package-smoke
+        run: ./letta.js --backend local --new-agent --prompt "ping" --tools "" --permission-mode standard --output-format text
 
       - name: Windows integration test
         # Only run on Windows, with API key available
@@ -256,7 +373,7 @@ jobs:
         run: bun pm pack
 
   node18-smoke:
-    needs: [classify, check]
+    needs: classify
     if: needs.classify.outputs.run_heavy_ci == 'true'
     name: Node 18 Smoke Test
     runs-on: ubuntu-24.04
@@ -269,7 +386,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.10
+          bun-version: 1.3.14
 
       - name: Install dependencies
         env:
@@ -291,7 +408,7 @@ jobs:
         run: node ./letta.js --help
 
   headless:
-    needs: [classify, check]
+    needs: classify
     if: needs.classify.outputs.run_heavy_ci == 'true'
     name: Headless / ${{ matrix.model }}
     runs-on: ubuntu-latest
@@ -308,7 +425,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.10
+          bun-version: 1.3.14
 
       - name: Install dependencies
         env:
@@ -325,7 +442,7 @@ jobs:
           bun run src/test-utils/headless-scenario.ts --model "${{ matrix.model }}" --output stream-json --parallel on
 
   headless-local:
-    needs: [classify, check]
+    needs: classify
     if: ${{ needs.classify.outputs.run_heavy_ci == 'true' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository)) }}
     name: Headless Local / ${{ matrix.model }}
     runs-on: ubuntu-latest
@@ -341,7 +458,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.10
+          bun-version: 1.3.14
 
       - name: Install dependencies
         env:
@@ -359,7 +476,7 @@ jobs:
           bun run src/test-utils/headless-scenario.ts --backend local --model "${{ matrix.model }}" --output stream-json --parallel on
 
   ollama-smoke:
-    needs: [classify, check]
+    needs: classify
     if: ${{ needs.classify.outputs.run_heavy_ci == 'true' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository)) }}
     name: Ollama Smoke / ${{ matrix.model }}
     runs-on: ubuntu-latest
@@ -384,7 +501,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.10
+          bun-version: 1.3.14
 
       - name: Install dependencies
         env:
@@ -426,10 +543,13 @@ jobs:
           bun run src/test-utils/headless-scenario.ts --backend local --model "ollama/letta-ci-smoke" --output text --parallel on --smoke
 
   reflection-headless:
-    needs: [classify, check]
+    needs: classify
     if: ${{ needs.classify.outputs.run_heavy_ci == 'true' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository)) }}
     name: Reflection / Headless
     runs-on: ubuntu-latest
+    # This is live Cloud/model coverage. Keep its diagnostics visible without
+    # letting a provider outage block packaging and release readiness.
+    continue-on-error: true
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -438,7 +558,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.10
+          bun-version: 1.3.14
 
       - name: Install dependencies
         env:
@@ -449,55 +569,3 @@ jobs:
         env:
           LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
         run: bun run src/test-utils/headless-reflection-scenario.ts --model auto
-
-  docker:
-    needs: [classify, check]
-    name: Docker Integration
-    runs-on: ubuntu-latest
-    # Only run on push to main or non-Dependabot PRs from the same repo
-    # (fork and Dependabot PRs cannot access secrets).
-    if: ${{ needs.classify.outputs.run_heavy_ci == 'true' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository)) }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.10
-
-      - name: Install dependencies
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bun install --frozen-lockfile
-
-      - name: Build bundle
-        run: bun run build
-
-      - name: Start Letta Docker server
-        run: |
-          docker run -d \
-            --name letta-server \
-            -p 8283:8283 \
-            -e ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }} \
-            letta/letta:latest
-
-      - name: Wait for Letta server to be ready
-        run: |
-          echo "Waiting for Letta server to be healthy..."
-          timeout 120 bash -c 'until curl -sf http://localhost:8283/v1/health; do sleep 2; done'
-          echo "Letta server is ready!"
-
-      - name: Docker smoke test
-        env:
-          LETTA_BASE_URL: http://localhost:8283
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: ./letta.js --prompt "ping" --tools "" --permission-mode standard --model haiku
-
-      - name: Docker logs (on failure)
-        if: failure()
-        run: docker logs letta-server
-
-      - name: Stop Letta Docker server
-        if: always()
-        run: docker stop letta-server || true

@@ -21,12 +21,16 @@ export interface ErrorInfo {
   message: string;
   error_type?: string;
   error_code?: string;
+  status_code?: number;
+  retryable?: boolean;
   detail?: string;
   run_id?: string;
 }
 
 type StructuredLettaErrorMessage = LettaStreamingResponse.LettaErrorMessage & {
   error_code?: string;
+  status_code?: number;
+  retryable?: boolean;
 };
 
 export interface ChunkProcessingResult {
@@ -40,6 +44,23 @@ export interface ChunkProcessingResult {
   updatedApproval?: ApprovalRequest;
 }
 
+export interface StreamSequenceCursor {
+  runId: string;
+  seqId: number;
+}
+
+export function advanceStreamSequenceCursor(
+  cursor: StreamSequenceCursor | null,
+  runId: string | null | undefined,
+  seqId: number | null | undefined,
+): StreamSequenceCursor | null {
+  if (!runId || seqId == null) return cursor;
+  return {
+    runId,
+    seqId: cursor?.runId === runId ? Math.max(cursor.seqId, seqId) : seqId,
+  };
+}
+
 // ============================================================================
 // STREAM PROCESSOR
 // ============================================================================
@@ -51,18 +72,24 @@ export class StreamProcessor {
   public lastRunId: string | null = null;
   public lastSeqId: number | null = null;
   public stopReason: StopReasonType | null = null;
+  public lastErrorInfo: ErrorInfo | undefined;
 
-  constructor(private readonly seenSeqIdThreshold: number | null = null) {}
+  constructor(
+    private readonly seenSequenceCursor: StreamSequenceCursor | null = null,
+  ) {}
 
   processChunk(chunk: LettaStreamingResponse): ChunkProcessingResult {
     let errorInfo: ErrorInfo | undefined;
     let updatedApproval: ApprovalRequest | undefined;
+    const cursor = this.seenSequenceCursor;
 
     if (
       "seq_id" in chunk &&
       chunk.seq_id != null &&
-      this.seenSeqIdThreshold != null &&
-      chunk.seq_id <= this.seenSeqIdThreshold
+      "run_id" in chunk &&
+      cursor &&
+      chunk.run_id === cursor.runId &&
+      chunk.seq_id <= cursor.seqId
     ) {
       return { shouldOutput: false };
     }
@@ -98,6 +125,8 @@ export class StreamProcessor {
         message: apiError.message,
         error_type: apiError.error_type,
         error_code: apiError.error_code,
+        status_code: apiError.status_code,
+        retryable: apiError.retryable,
         detail: apiError.detail,
         run_id: this.lastRunId || undefined,
       };
@@ -115,6 +144,8 @@ export class StreamProcessor {
         run_id: this.lastRunId || undefined,
       };
     }
+
+    if (errorInfo) this.lastErrorInfo = errorInfo;
 
     // Suppress mid-stream desync errors (match headless behavior)
     // These are transient and will be handled by end-of-turn desync recovery

@@ -1,7 +1,7 @@
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import type WebSocket from "ws";
 import {
-  estimateSystemPromptTokensFromMemoryDir,
+  estimateActiveMemorySystemPromptTokens,
   setSystemPromptDoctorState,
 } from "@/cli/helpers/system-prompt-warning";
 import { settingsManager } from "@/settings-manager";
@@ -10,8 +10,9 @@ import type {
   ApprovalResponseBody,
   ChangeDeviceStateCommand,
 } from "@/types/protocol_v2";
-import { isDebugEnabled } from "@/utils/debug";
+import { debugLog, isDebugEnabled } from "@/utils/debug";
 import { getErrorMessage } from "@/utils/error";
+import { sealStartupLogs } from "@/utils/startup-log-boundary";
 import {
   handleTerminalInput,
   handleTerminalKill,
@@ -28,17 +29,22 @@ import { handleCronProtocolCommand } from "./commands/cron";
 import { handleGitBranchCommand } from "./commands/git-branches";
 import { handleMemfsSyncedMemoryProtocolCommand } from "./commands/memory-command-sync";
 import { handleModelToolsetCommand } from "./commands/model-toolset";
+import { handleQueueCommand } from "./commands/queue";
 import { handleRuntimeStartProtocolCommand } from "./commands/runtime-start";
 import { handleSecretsCommand } from "./commands/secrets";
 import { handleSettingsProtocolCommand } from "./commands/settings";
 import { handleSkillAgentProtocolCommand } from "./commands/skills-agents";
-import { subscribeListenerConnection } from "./connection";
+import {
+  getOrCreateProcessTransport,
+  subscribeListenerConnection,
+} from "./connection";
 import { getBootWorkingDirectory } from "./cwd";
 import {
   handleExternalToolCallResponseCommand,
   updateRuntimeExternalTools,
 } from "./external-tools";
 import {
+  createIncomingMessage,
   dispatchInboundMessageWhenReady,
   getAcceptedInputDisposition,
   rememberAcceptedInputDisposition,
@@ -53,10 +59,7 @@ import {
   parseServerMessage,
 } from "./protocol-inbound";
 import { summarizeV2Command } from "./protocol-logging";
-import {
-  emitDeviceStatusUpdate,
-  emitQueueUpdateIfOpen,
-} from "./protocol-outbound";
+import { emitDeviceStatusUpdate } from "./protocol-outbound";
 import {
   scheduleQueuePump,
   shouldProcessInboundMessageDirectly,
@@ -65,13 +68,15 @@ import {
 import { emitLoopErrorNotice } from "./recoverable-notices";
 import { getActiveRuntime, safeEmitWsEvent } from "./runtime";
 import { parseListenerReadyMessage } from "./split-stream-lifecycle";
+import { validateResponseFormat } from "./structured-output";
 import {
   buildTeleportContinuationMessages,
+  clearExpectedInboundTeleport,
   clearPriorReadyTeleports,
+  handleTeleportFailure,
   handleTeleportProbe,
   handleTeleportRequest,
   isRuntimeTeleportPending,
-  takeFailedTeleport,
 } from "./teleport";
 import type { ListenerTransport } from "./transport";
 import { handleIncomingMessage } from "./turn";
@@ -82,6 +87,7 @@ import type {
   ListenerRuntime,
   ProcessQueuedTurn,
   StartListenerOptions,
+  SyncReplayOptions,
 } from "./types";
 
 type SafeSocketSend = (
@@ -124,7 +130,7 @@ type MessageRouterParams = {
     listenerRuntime: ListenerRuntime,
     socket: WebSocket,
     scope: RuntimeScope,
-    opts?: { recoverApprovals?: boolean; forceDeviceStatus?: boolean },
+    opts?: SyncReplayOptions,
   ) => Promise<void>;
   getOrCreateScopedRuntime: (
     listener: ListenerRuntime,
@@ -181,6 +187,14 @@ type MessageRouterParams = {
   processIncomingMessage?: typeof handleIncomingMessage;
 };
 
+function logV2Command(opts: StartListenerOptions, message: string): void {
+  if (opts.onLog) {
+    opts.onLog(`[Listen V2] ${message}`);
+    return;
+  }
+  debugLog("Listen V2", message);
+}
+
 export function createListenerMessageHandler(
   params: MessageRouterParams,
 ): (data: WebSocket.RawData) => Promise<void> {
@@ -206,12 +220,16 @@ export function createListenerMessageHandler(
   const connectionId = explicitConnectionId ?? opts.connectionId;
 
   return async (data: WebSocket.RawData): Promise<void> => {
+    const lifecycleMessage =
+      parseListenerReadyMessage(data) ?? parseServerLifecycleMessage(data);
+    // Legacy relays can deliver input before onConnected. Fail outside the
+    // handler catch so no parsing, logging, or dispatch follows a failed seal.
+    // Only projected pongs are content-free; ready frames retain extra fields.
+    if (lifecycleMessage?.type !== "pong") sealStartupLogs();
     const raw = data.toString();
     let parsedScope: ParsedRuntimeScope = null;
 
     try {
-      const lifecycleMessage =
-        parseListenerReadyMessage(data) ?? parseServerLifecycleMessage(data);
       if (lifecycleMessage) {
         // Record relay pongs so the heartbeat watchdog can detect a half-open
         // socket (no pong within the timeout) and force a reconnect.
@@ -243,7 +261,7 @@ export function createListenerMessageHandler(
         return;
       }
 
-      console.log(`[Listen V2] Received ${summarizeV2Command(parsed)}`);
+      logV2Command(opts, `Received ${summarizeV2Command(parsed)}`);
 
       if (parsedScope) {
         subscribeListenerConnection(runtime, connectionId, parsedScope);
@@ -260,11 +278,25 @@ export function createListenerMessageHandler(
         return;
       }
 
+      if (parsed.type === "launch_subagent" || parsed.type === "monitor_stop") {
+        const { handleTaskControlCommand } = await import(
+          "./commands/task-control"
+        );
+        await handleTaskControlCommand(parsed, {
+          runtime,
+          socket,
+          connectionId,
+          getOrCreateScopedRuntime,
+          runDetachedListenerTask,
+          safeSocketSend,
+        });
+        return;
+      }
+
       if (parsed.type === "app_server_info") {
         handleAppServerInfoCommand(parsed, { socket, safeSocketSend });
         return;
       }
-
       if (
         handleRuntimeStartProtocolCommand(parsed, {
           socket,
@@ -274,11 +306,12 @@ export function createListenerMessageHandler(
           runDetachedListenerTask,
           getOrCreateScopedRuntime,
           replaySyncStateForRuntime,
+          queuePumpOptions: opts,
+          processQueuedTurn,
         })
       ) {
         return;
       }
-
       if (parsed.type === "teleport_probe") {
         handleTeleportProbe(parsed, socket, safeSocketSend);
         return;
@@ -294,41 +327,15 @@ export function createListenerMessageHandler(
       }
 
       if (parsed.type === "teleport_failed") {
-        const pending = takeFailedTeleport({
+        handleTeleportFailure({
           listener: runtime,
-          teleportId: parsed.teleport_id,
-          agentId: parsed.runtime.agent_id,
-          conversationId: parsed.runtime.conversation_id,
+          command: parsed,
+          socket,
+          onStatusChange: opts.onStatusChange,
+          getOrCreateScopedRuntime,
+          runDetachedListenerTask,
+          processIncomingMessage,
         });
-        const approvals = pending?.continuation?.approvals;
-        if (pending && approvals && approvals.length > 0) {
-          const scopedRuntime = getOrCreateScopedRuntime(
-            runtime,
-            pending.agentId,
-            pending.conversationId,
-          );
-          runDetachedListenerTask("teleport_failed", async () => {
-            await processIncomingMessage(
-              {
-                type: "message",
-                connectionId: pending.connectionId,
-                agentId: pending.agentId,
-                conversationId: pending.conversationId,
-                messages: [
-                  {
-                    type: "approval",
-                    approvals,
-                    otid: parsed.teleport_id,
-                  },
-                ],
-              },
-              socket,
-              scopedRuntime,
-              opts.onStatusChange,
-              pending.connectionId,
-            );
-          });
-        }
         return;
       }
 
@@ -362,7 +369,7 @@ export function createListenerMessageHandler(
 
       if (parsed.type === "sync") {
         if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
-          console.log(`[Listen V2] Dropping sync: runtime mismatch or closed`);
+          logV2Command(opts, "Dropping sync: runtime mismatch or closed");
           if (parsed.request_id) {
             safeSocketSend(
               socket,
@@ -382,7 +389,10 @@ export function createListenerMessageHandler(
         try {
           await replaySyncStateForRuntime(runtime, socket, parsed.runtime, {
             recoverApprovals: parsed.recover_approvals !== false,
+            resumeInterruptedTurn: parsed.resume_interrupted_turn === true,
             forceDeviceStatus: parsed.force_device_status === true,
+            onStatusChange: opts.onStatusChange,
+            connectionId: opts.connectionId,
           });
           if (parsed.request_id) {
             safeSocketSend(
@@ -440,7 +450,7 @@ export function createListenerMessageHandler(
           );
         };
         if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
-          console.log(`[Listen V2] Dropping input: runtime mismatch or closed`);
+          logV2Command(opts, "Dropping input: runtime mismatch or closed");
           acknowledgeInput(false, "Runtime is no longer active");
           return;
         }
@@ -465,6 +475,9 @@ export function createListenerMessageHandler(
             parsed.runtime.agent_id,
             parsed.runtime.conversation_id,
           );
+          // The continuation this scope's runtime_start announced has arrived;
+          // sync recovery may act on its own again from here.
+          clearExpectedInboundTeleport(scopedRuntime);
           const acceptedKey = `teleport:${teleportId}`;
           const previousDisposition =
             scopedRuntime.acceptedInputDispositions.get(acceptedKey);
@@ -473,10 +486,7 @@ export function createListenerMessageHandler(
             return;
           }
           const approvals = parsed.payload.continuation?.approvals;
-          if (!approvals || approvals.length === 0) {
-            acknowledgeInput(true);
-            return;
-          }
+          const clientPreferences = parsed.payload.client_preferences;
           if (scopedRuntime.isProcessing) {
             acknowledgeInput(
               false,
@@ -493,12 +503,13 @@ export function createListenerMessageHandler(
                 connectionId,
                 agentId: teleportAgentId,
                 conversationId: parsed.runtime.conversation_id,
+                clientPreferences,
                 messages: buildTeleportContinuationMessages({
                   teleportId,
                   approvals,
                 }),
               },
-              socket,
+              getOrCreateProcessTransport(runtime),
               scopedRuntime,
               opts.onStatusChange,
               connectionId,
@@ -536,20 +547,16 @@ export function createListenerMessageHandler(
           acknowledgeInput(false, "Unsupported input payload kind");
           return;
         }
-        const incoming: IncomingMessage = {
-          type: "message",
+        const error = validateResponseFormat(inputPayload.response_format);
+        if (error) {
+          acknowledgeInput(false, error);
+          return;
+        }
+        const incoming = createIncomingMessage(
+          parsed.runtime,
+          inputPayload,
           connectionId,
-          ...(parsed.runtime.agent_id
-            ? { agentId: parsed.runtime.agent_id }
-            : {}),
-          conversationId: parsed.runtime.conversation_id,
-          clientToolAllowlist: inputPayload.client_tool_allowlist,
-          clientToolset: inputPayload.client_toolset,
-          externalToolScopeIds: inputPayload.external_tool_scope_ids,
-          excludeInteractiveTools: inputPayload.exclude_interactive_tools,
-          imageFailureMode: inputPayload.image_failure_mode,
-          messages: inputPayload.messages,
-        };
+        );
         const hasApprovalPayload = incoming.messages.some(
           (payload): payload is ApprovalCreate =>
             "type" in payload && payload.type === "approval",
@@ -731,31 +738,17 @@ export function createListenerMessageHandler(
         return;
       }
 
-      if (parsed.type === "remove_queue_item") {
-        const scopedRuntime = getOrCreateScopedRuntime(
-          runtime,
-          parsed.runtime.agent_id,
-          parsed.runtime.conversation_id || "default",
-        );
-        const removed = scopedRuntime.queueRuntime.removeItem(parsed.item_id);
-        // Emit a response so the client knows if the item was found/removed
-        safeSocketSend(
+      if (
+        parsed.type === "resume_queue" ||
+        parsed.type === "remove_queue_item"
+      ) {
+        handleQueueCommand(parsed, {
+          listener: runtime,
           socket,
-          {
-            type: "remove_queue_item_response",
-            request_id: parsed.request_id,
-            success: removed !== null,
-            item_id: parsed.item_id,
-          },
-          "remove_queue_item_response",
-          "remove_queue_item",
-        );
-        // Broadcast the authoritative queue snapshot even when the item was
-        // NOT found: a consumer removing an already-drained item is holding
-        // a stale queue copy, and this snapshot repairs it. (LET-11174)
-        emitQueueUpdateIfOpen(runtime, {
-          agent_id: parsed.runtime.agent_id,
-          conversation_id: parsed.runtime.conversation_id,
+          opts,
+          processQueuedTurn,
+          getOrCreateScopedRuntime,
+          safeSocketSend,
         });
         return;
       }
@@ -897,7 +890,7 @@ export function createListenerMessageHandler(
                 "@/agent/memory-filesystem"
               );
               const memoryDir = getScopedMemoryFilesystemRoot(agentId);
-              const tokens = estimateSystemPromptTokensFromMemoryDir(memoryDir);
+              const tokens = estimateActiveMemorySystemPromptTokens(memoryDir);
               setSystemPromptDoctorState(agentId, tokens);
             } catch {
               // best-effort

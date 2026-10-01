@@ -8,6 +8,7 @@ import type { Conversation } from "@letta-ai/letta-client/resources/conversation
 import { mapModelHandleToLlmConfigPatch } from "@/agent/model-handles";
 import type {
   Backend,
+  BackendCapabilities,
   ConversationCreateBody,
   ConversationMessageCreateBody,
   ConversationMessageListBody,
@@ -181,17 +182,19 @@ export interface HeadlessBackendOptions {
 
 const FAKE_HEADLESS_MODEL = "dev/fake-headless";
 
+export const HEADLESS_BACKEND_CAPABILITIES: BackendCapabilities = {
+  remoteMemfs: false,
+  serverSideToolManagement: false,
+  serverSecrets: false,
+  promptRecompile: false,
+  byokProviderRefresh: false,
+  localModelCatalog: true,
+  localMemfs: false,
+  environmentRouting: false,
+};
+
 export class HeadlessBackend implements Backend {
-  readonly capabilities = {
-    remoteMemfs: false,
-    serverSideToolManagement: false,
-    serverSecrets: false,
-    agentFileImportExport: false,
-    promptRecompile: false,
-    byokProviderRefresh: false,
-    localModelCatalog: true,
-    localMemfs: false,
-  };
+  readonly capabilities = HEADLESS_BACKEND_CAPABILITIES;
 
   protected readonly store: LocalStore;
   private readonly executor: HeadlessTurnExecutor;
@@ -253,7 +256,7 @@ export class HeadlessBackend implements Backend {
   }
 
   async retrieveConversation(conversationId: string): Promise<Conversation> {
-    return this.store.retrieveConversation(conversationId);
+    return this.store.retrievePublicConversation(conversationId);
   }
 
   async listConversations(...args: Parameters<Backend["listConversations"]>) {
@@ -397,10 +400,21 @@ export class HeadlessBackend implements Backend {
       return { [runId]: "failed" } as never;
     }
 
+    return this.cancelRunById(runId);
+  }
+
+  private async cancelRunById(runId: string) {
+    const run = this.runs.get(runId);
+    if (!run || isTerminalRun(run)) {
+      return { [runId]: "failed" } as never;
+    }
+
     if (run.conversation_id) {
-      this.store.settleInterruptedToolCalls(run.conversation_id, { agentId });
+      this.store.settleInterruptedToolCalls(run.conversation_id, {
+        agentId: run.agent_id,
+      });
     } else {
-      this.store.settleInterruptedToolCalls(agentId);
+      this.store.settleInterruptedToolCalls(run.agent_id);
     }
     const controller = this.runControllerByRunId.get(runId);
     this.recordRunChunk(runId, {
@@ -410,6 +424,20 @@ export class HeadlessBackend implements Backend {
     this.completeRun(runId, "cancelled");
     controller?.abort();
     return { [runId]: "cancelled" } as never;
+  }
+
+  async cancelConversationRun(
+    ...args: Parameters<Backend["cancelConversationRun"]>
+  ) {
+    const [conversationId, requestedRunId] = args;
+    const runId =
+      requestedRunId ?? this.activeRunByConversation.get(conversationId);
+    if (!runId) return {} as never;
+    const run = this.runs.get(runId);
+    if (!run || run.conversation_id !== conversationId || isTerminalRun(run)) {
+      return { [runId]: "failed" } as never;
+    }
+    return this.cancelRunById(runId);
   }
 
   async retrieveRun(runId: string) {
@@ -442,6 +470,13 @@ export class HeadlessBackend implements Backend {
     conversationId: string,
     body: ConversationMessageCreateBody | ConversationMessageStreamBody,
   ) {
+    const activeRunId = this.activeRunByConversation.get(conversationId);
+    const activeRun = activeRunId ? this.runs.get(activeRunId) : undefined;
+    if (activeRun && !isTerminalRun(activeRun)) {
+      throw new Error(
+        `Conversation ${conversationId} already has an active run (${activeRun.id})`,
+      );
+    }
     // Settle any tool calls left without results from a prior interrupted turn.
     // If the process was killed or the stream errored out before cancelConversation
     // was called, orphaned tool_use blocks remain in the history. Anthropic rejects
@@ -479,7 +514,10 @@ export class HeadlessBackend implements Backend {
       turnInput.agentId,
     );
     const agent = effectiveAgentForConversation(
-      this.store.retrieveAgentRecord(turnInput.agentId),
+      this.store.retrieveExecutionAgentRecord(
+        turnInput.conversationId,
+        turnInput.agentId,
+      ),
       this.store.retrieveConversation(
         turnInput.conversationId,
         turnInput.agentId,

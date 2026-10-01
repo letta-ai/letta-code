@@ -9,6 +9,8 @@ import {
   setCurrentAgentId,
   setCurrentAgentName,
 } from "@/agent/context";
+import { loadPreloadedSkills } from "@/agent/preloaded-skills";
+import { INTERRUPT_RECOVERY_ALERT } from "@/agent/prompt-assets";
 import { getBackend } from "@/backend";
 import type { Line } from "@/cli/helpers/accumulator";
 import {
@@ -17,6 +19,7 @@ import {
 } from "@/reminders/engine";
 import { buildListenReminderContext } from "@/reminders/listen-context";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
+import { replaceClientPreferences } from "@/tools/client-preferences";
 import { INTERACTIVE_USER_INPUT_TOOL_NAMES } from "@/tools/interactive-policy";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import { debugWarn, isDebugEnabled } from "@/utils/debug";
@@ -30,6 +33,7 @@ import {
   ensureListenerModAdaptersForAgent,
 } from "./mod-adapter";
 import type { ConversationPermissionModeState } from "./permission-mode";
+import { hasInterruptedCacheForScope } from "./runtime";
 import { emitListenerTurnStart } from "./turn-events";
 import {
   createTurnInputState,
@@ -113,16 +117,39 @@ export async function prepareListenerTurn(params: {
     onStatusChange?.("processing", connectionId);
   }
 
-  trackListenerUserInput(msg.messages, "unknown");
+  const hasAttributedUserMessage = msg.messages.some(
+    (message) =>
+      "role" in message &&
+      message.role === "user" &&
+      message.attribution?.acting_user_id,
+  );
+  if (!msg.actingUserId && hasAttributedUserMessage) {
+    console.warn("[Listen] Attributed input is missing acting user identity", {
+      agentId,
+      conversationId,
+    });
+  }
+  trackListenerUserInput(msg.messages, "unknown", msg.actingUserId);
 
   const messagesToSend: Array<MessageCreate | ApprovalCreate> = [];
   let queuedInterruptedToolCallIds: string[] = [];
+  const wasInterrupted = hasInterruptedCacheForScope(runtime.listener, {
+    agent_id: agentId,
+    conversation_id: conversationId,
+  });
   const consumed = agentId
     ? consumeInterruptQueue(runtime, agentId, conversationId)
     : null;
   if (consumed) {
     messagesToSend.push(consumed.approvalMessage);
     queuedInterruptedToolCallIds = consumed.interruptedToolCallIds;
+  }
+  if (wasInterrupted) {
+    messagesToSend.push({
+      role: "user",
+      content: INTERRUPT_RECOVERY_ALERT,
+      otid: crypto.randomUUID(),
+    });
   }
   messagesToSend.push(...ensureTurnInputMessageOtids(msg.messages));
 
@@ -259,7 +286,7 @@ export async function prepareListenerTurn(params: {
   }
 
   const currentInput = ensureTurnInputMessageOtids(turnStartEmission.input);
-  const turnInput = createTurnInputState(
+  let turnInput = createTurnInputState(
     currentInput,
     getInboundImageFailureModes({
       imageFailureMode: msg.imageFailureMode,
@@ -285,15 +312,17 @@ export async function prepareListenerTurn(params: {
     ? runtime.listener.connections.get(connectionId)?.options
     : runtime.listener.connections.values().next().value?.options;
   const environmentDeviceId = listenerOptions?.deviceId;
+  if (msg.clientPreferences !== undefined)
+    replaceClientPreferences(agentId, conversationId, msg.clientPreferences);
   const preparedToolContext = await prepareToolExecutionContextForScope({
     connectionId,
     environmentDeviceId,
     agentId,
     conversationId,
+    actingUserId: msg.actingUserId,
     clientToolset: msg.clientToolset,
     clientToolAllowlist: msg.clientToolAllowlist,
-    // Headless clients (SDK sessions, automation) opt out of tools that
-    // prompt the human mid-turn; the interactive set is owned by the harness.
+    // Honor explicit client exclusions; headless execution does not block questions.
     ...(msg.excludeInteractiveTools
       ? { exclude: [...INTERACTIVE_USER_INPUT_TOOL_NAMES] }
       : {}),
@@ -303,6 +332,7 @@ export async function prepareListenerTurn(params: {
     skillsDirectory: listenerOptions?.skillsDirectory,
     skillSources: runtime.skillSources,
     workspaceSandbox: runtime.workspaceSandbox,
+    executionSettings: runtime.executionSettings,
     cachedAgent,
     ...(agentId ? { modContext: createListenerAgentModContext(agentId) } : {}),
     modAdapters,
@@ -329,6 +359,40 @@ export async function prepareListenerTurn(params: {
   runtime.currentLoadedTools =
     preparedToolContext.preparedToolContext.loadedToolNames;
   runtime.currentAvailableSkills = availableSkills;
+  const preloaded = await loadPreloadedSkills(
+    runtime.executionSettings?.preload_skills ?? [],
+    {
+      ...(agentId ? { agentId } : {}),
+      workingDirectory,
+      skillsDirectory: listenerOptions?.skillsDirectory,
+      skillSources: runtime.skillSources,
+    },
+  );
+  if (isInterrupted()) return { kind: "interrupted" };
+  if (preloaded) {
+    const index = turnInput.messages.findLastIndex(
+      (message) => "role" in message && message.role === "user",
+    );
+    turnInput = {
+      ...turnInput,
+      messages: turnInput.messages.map((message, i) =>
+        i === index && "content" in message
+          ? {
+              ...message,
+              content: [
+                { type: "text" as const, text: preloaded },
+                ...(typeof message.content === "string"
+                  ? [{ type: "text" as const, text: message.content }]
+                  : message.content),
+              ],
+            }
+          : message,
+      ),
+    };
+    inboundUserTranscriptLines = buildInboundUserTranscriptLines(
+      turnInput.messages,
+    );
+  }
   return {
     kind: "ready",
     getCachedAgent: () => cachedAgent,

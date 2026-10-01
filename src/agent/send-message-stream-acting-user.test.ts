@@ -1,99 +1,104 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import type { Stream } from "@letta-ai/letta-client/core/streaming";
+import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
+import type { Backend } from "@/backend";
+import { prepareToolExecutionContextForSpecificTools } from "@/tools/manager";
+import { ACTING_USER_ID_ENV, ACTING_USER_ID_HEADER } from "./acting-user";
+import { sendMessageStreamWithBackend } from "./message";
+import { composeSubagentChildEnv } from "./subagents/subagent-launcher";
 
-/**
- * Header propagation contract for the multi-user sandbox flow.
- *
- * When the listener turn passes
- * `SendMessageStreamOptions.actingUserId`, the outbound SDK call must
- * carry the `X-Letta-Acting-User-Id` HTTP header so cloud-api can
- * re-attribute credits + rate limits to the actual sender (rather
- * than the user whose API key spawned the sandbox).
- *
- * Self-hosted / single-user flows never set the option, so the
- * header is absent and behavior is unchanged.
- *
- * NOTE: This is a source-level test (rather than a behavioral one
- * with a mocked backend) because another test file in the suite
- * (`listen-client-concurrency.test.ts`) uses Bun's
- * `mock.module("../../agent/message", …)` which is process-global
- * and replaces the real `sendMessageStream` with a stub for the
- * remainder of the test run. A source-level check avoids that
- * cross-test pollution while still pinning the contract — the
- * actual behavior is exercised end-to-end by the queue and
- * listener integration tests.
- */
-describe("sendMessageStream acting-user header propagation (contract)", () => {
-  const source = readFileSync(
-    fileURLToPath(new URL("../agent/message.ts", import.meta.url)),
-    "utf-8",
+function makeRecordingBackend(recordedHeaders: Array<Record<string, string>>) {
+  const stream = {
+    async *[Symbol.asyncIterator]() {},
+  } as unknown as Stream<LettaStreamingResponse>;
+  return {
+    createConversationMessageStream: async (
+      _conversationId: string,
+      _body: unknown,
+      options?: { headers?: Record<string, string> },
+    ) => {
+      recordedHeaders.push(options?.headers ?? {});
+      return stream;
+    },
+  } as unknown as Backend;
+}
+
+async function sendWithPreparedContext(
+  backend: Backend,
+  actingUserId?: string,
+): Promise<void> {
+  const preparedToolContext = await prepareToolExecutionContextForSpecificTools(
+    [],
+    {
+      runtimeContext: actingUserId ? { actingUserId } : undefined,
+    },
   );
-  const streamSource = readFileSync(
-    fileURLToPath(new URL("../cli/helpers/stream.ts", import.meta.url)),
-    "utf-8",
+  await sendMessageStreamWithBackend(
+    backend,
+    "conv-acting-user",
+    [{ role: "user", content: "Investigate." }],
+    {
+      streamTokens: true,
+      background: true,
+      skillSources: [],
+      preparedToolContext,
+    },
   );
+}
 
-  test("public option is declared on SendMessageStreamOptions", () => {
-    expect(source).toContain("actingUserId?: string;");
+describe("sendMessageStream acting-user propagation", () => {
+  test("uses the acting user captured in the turn tool context", async () => {
+    const recordedHeaders: Array<Record<string, string>> = [];
+
+    await sendWithPreparedContext(
+      makeRecordingBackend(recordedHeaders),
+      "cloud-user-a",
+    );
+
+    expect(recordedHeaders).toEqual([
+      expect.objectContaining({
+        [ACTING_USER_ID_HEADER]: "cloud-user-a",
+      }),
+    ]);
   });
 
-  test("header is set from opts.actingUserId when present", () => {
-    // Pin the precise injection so a refactor that drops the
-    // condition or renames the header is caught.
-    expect(source).toMatch(/if\s*\(\s*opts\.actingUserId\s*\)\s*\{/);
-    expect(source).toContain(
-      'extraHeaders["X-Letta-Acting-User-Id"] = opts.actingUserId',
-    );
-  });
+  test("nested subagent child environments keep attribution on every request", async () => {
+    const firstChildEnv = composeSubagentChildEnv({
+      parentProcessEnv: {},
+      backendMode: "api",
+      parentAgentId: "agent-parent",
+      launchProfile: undefined,
+      inheritedPrimaryRoot: null,
+      actingUserId: "cloud-user-a",
+    });
+    const nestedChildEnv = composeSubagentChildEnv({
+      parentProcessEnv: firstChildEnv,
+      backendMode: "api",
+      parentAgentId: "agent-child",
+      launchProfile: undefined,
+      inheritedPrimaryRoot: null,
+      actingUserId: firstChildEnv[ACTING_USER_ID_ENV],
+    });
+    const previousActingUserId = process.env[ACTING_USER_ID_ENV];
+    process.env[ACTING_USER_ID_ENV] = nestedChildEnv[ACTING_USER_ID_ENV];
+    const recordedHeaders: Array<Record<string, string>> = [];
 
-  test("extraHeaders are merged into the SDK request headers", () => {
-    // Guard the merge path so the header actually reaches the SDK
-    // call's options.headers.
-    expect(source).toMatch(/headers:\s*\{[\s\S]*?\.\.\.extraHeaders[\s\S]*?\}/);
-  });
+    try {
+      const backend = makeRecordingBackend(recordedHeaders);
+      await sendWithPreparedContext(backend);
+      await sendWithPreparedContext(backend);
+    } finally {
+      if (previousActingUserId === undefined) {
+        delete process.env[ACTING_USER_ID_ENV];
+      } else {
+        process.env[ACTING_USER_ID_ENV] = previousActingUserId;
+      }
+    }
 
-  test("acting user identity is preserved for stream recovery requests", () => {
-    expect(source).toContain(
-      "...(opts.actingUserId ? { actingUserId: opts.actingUserId } : {})",
-    );
-    expect(streamSource).toContain(
-      "const recoveryRequestOptions = actingUserRequestOptions(",
-    );
-    expect(streamSource).toContain("recoveryRequestOptions,");
-    expect(streamSource).toContain("streamRequestContext?.actingUserId");
-  });
-
-  test("response-state header carries previous id only for explicitly allowed approval continuations", () => {
-    expect(source).toContain(
-      'const RESPONSE_STATE_HEADER = "X-Letta-Response-State"',
-    );
-    expect(source).toContain(
-      'const RESPONSE_STATE_CACHE_SCOPE = "approval_boundary"',
-    );
-    expect(source).toContain(
-      "isApprovalContinuationRequest(normalizedMessages)",
-    );
-    expect(source).toContain("allowResponseStateReuse?: boolean;");
-    expect(source).toContain("opts.allowResponseStateReuse === true");
-    expect(source).toMatch(
-      /if \(previousResponseId\) \{[\s\S]*?extraHeaders\[RESPONSE_STATE_HEADER\] = encodeResponseStateHeader/,
-    );
-    expect(source).not.toContain("client_tool_context_id");
-    expect(source).toContain("previous_response_id: previousResponseId");
-    expect(source).toContain(
-      "responseStateIdsByScope.delete(responseStateScope)",
-    );
-  });
-
-  test("approval-boundary response state ids are captured from the stream", () => {
-    expect(source).toContain('candidate.message_type !== "response_state"');
-    expect(source).toContain(
-      "candidate.cache_scope !== RESPONSE_STATE_CACHE_SCOPE",
-    );
-    expect(source).toContain(
-      "responseStateIdsByScope.set(params.scope, responseId)",
-    );
-    expect(source).toContain("stream = attachResponseStateTracking(stream");
+    expect(nestedChildEnv[ACTING_USER_ID_ENV]).toBe("cloud-user-a");
+    expect(recordedHeaders).toHaveLength(2);
+    for (const headers of recordedHeaders) {
+      expect(headers[ACTING_USER_ID_HEADER]).toBe("cloud-user-a");
+    }
   });
 });

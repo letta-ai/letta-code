@@ -1,4 +1,4 @@
-import { kill_bash } from "./kill-bash.js";
+import { killBackgroundProcess } from "./kill-bash.js";
 import {
   backgroundTasks,
   scheduleBackgroundTaskCleanup,
@@ -22,8 +22,9 @@ export async function task_stop(args: TaskStopArgs): Promise<TaskStopResult> {
   if (task) {
     if (task.status === "running" && task.abortController) {
       task.abortController.abort();
-      task.status = "failed";
       task.error = "Aborted by user";
+      await task.completion;
+      task.status = "failed";
       scheduleBackgroundTaskCleanup(task_id);
       return { killed: true };
     }
@@ -31,8 +32,7 @@ export async function task_stop(args: TaskStopArgs): Promise<TaskStopResult> {
     return { killed: false };
   }
 
-  // Fall back to killing a Bash background process.
-  // The KillBash helper still uses `shell_id` internally; task_id is the
-  // unified external contract (bash shells share the same id space).
-  return kill_bash({ shell_id: task_id });
+  // Fall back to killing a Bash background process (bash shells share the
+  // task id space).
+  return { killed: killBackgroundProcess(task_id) };
 }

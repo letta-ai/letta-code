@@ -147,6 +147,11 @@ export function createModAdapter(options: CreateModAdapterOptions): ModAdapter {
   }
 
   const events: ModEvents = {
+    hasHandlers(name) {
+      if (loadState.isLoading) return true;
+      if (!loadState.hasModSources) return false;
+      return (engine.getSnapshot().events[name]?.length ?? 0) > 0;
+    },
     async emit(name, event, scopedContext) {
       if (loadState.isLoading || !loadState.hasModSources) {
         // Events are best-effort hooks; do not deliver them while the mod

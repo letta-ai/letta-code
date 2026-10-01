@@ -11,6 +11,7 @@ import {
   __resetBackgroundRetentionConfigForTests,
   backgroundProcesses,
 } from "@/tools/impl/process_manager";
+import { clearPendingMessages } from "@/utils/message-queue-bridge";
 
 const isWindows = process.platform === "win32";
 
@@ -28,6 +29,7 @@ function deleteOverflowFiles(output: string): void {
 describe.skipIf(isWindows)("Codex unified exec tools", () => {
   beforeEach(() => {
     __resetBackgroundRetentionConfigForTests();
+    clearPendingMessages();
   });
 
   afterEach(() => {
@@ -45,6 +47,7 @@ describe.skipIf(isWindows)("Codex unified exec tools", () => {
     backgroundProcesses.clear();
     __clearExecSessionsForTests();
     __resetBackgroundRetentionConfigForTests();
+    clearPendingMessages();
 
     for (const outputFile of outputFiles) {
       if (fs.existsSync(outputFile)) {

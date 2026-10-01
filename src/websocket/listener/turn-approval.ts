@@ -6,7 +6,6 @@ import {
 } from "@/agent/approval-execution";
 import { computeDiffPreviews } from "@/helpers/diff-preview";
 import { formatPermissionDenial } from "@/permissions/format-denial";
-import { isInteractiveApprovalTool } from "@/tools/interactive-policy";
 import type { PermissionModeState } from "@/tools/permission-mode-state";
 import type { ApprovalClassificationEndMessage } from "@/types/approval-classification-protocol";
 import type {
@@ -30,6 +29,10 @@ import {
 } from "./approval-suggestions";
 import { TO_SUBSCRIBERS } from "./connection";
 import { appendQueuedTurnToInput } from "./continuation-input";
+import {
+  readInterruptedTurn,
+  recordListenerWork,
+} from "./interrupted-turn-record";
 import {
   createToolExecutionOutputEmitter,
   emitInterruptToolReturnMessage,
@@ -228,7 +231,6 @@ export async function handleApprovalStop(params: {
   const { autoAllowed, autoDenied, needsUserInput } = await classifyApprovals(
     approvals,
     {
-      alwaysRequiresUserInput: isInteractiveApprovalTool,
       treatAskAsDeny: false,
       requireArgsForAutoApprove: true,
       missingNameReason: "Tool call incomplete - missing name",
@@ -388,7 +390,6 @@ export async function handleApprovalStop(params: {
             const reclassified = await classifyApprovalsWithSuggestions(
               pendingNeedsUserInput.map((entry) => entry.approval),
               {
-                alwaysRequiresUserInput: isInteractiveApprovalTool,
                 treatAskAsDeny: false,
                 requireArgsForAutoApprove: true,
                 missingNameReason: "Tool call incomplete - missing name",
@@ -469,6 +470,15 @@ export async function handleApprovalStop(params: {
   lastExecutingToolCallIds = approvedDecisions.map(
     (decision) => decision.approval.toolCallId,
   );
+  recordListenerWork(
+    runtime,
+    {
+      toolCallIds: decisions.map((decision) => decision.approval.toolCallId),
+      results: [],
+      requestOtid: crypto.randomUUID(),
+    },
+    "before_tool_execution",
+  );
   runtime.turnLifecycle.setExecutingToolCallIds(
     turnLease,
     lastExecutingToolCallIds,
@@ -507,7 +517,7 @@ export async function handleApprovalStop(params: {
   }
 
   // Broadcast new file content to web clients when a file-mutating tool
-  // (Edit, Write, MultiEdit) writes to disk, so all windows update immediately.
+  // (Edit, Write) writes to disk, so all windows update immediately.
   const onFileWrite = (filePath: string, content: string) => {
     if (!runtime.turnLifecycle.isCurrent(turnLease)) return;
     emitProtocolV2Message(
@@ -591,6 +601,11 @@ export async function handleApprovalStop(params: {
     conversationId,
   });
   lastExecutionResults = persistedExecutionResults;
+  recordListenerWork(
+    runtime,
+    { results: persistedExecutionResults },
+    "after_tool_execution",
+  );
   emitInterruptToolReturnMessage(
     socket,
     runtime,
@@ -635,17 +650,16 @@ export async function handleApprovalStop(params: {
     {
       type: "approval",
       approvals: persistedExecutionResults,
-      otid: crypto.randomUUID(),
+      otid: readInterruptedTurn(runtime)?.requestOtid ?? crypto.randomUUID(),
     },
   ]);
   let continuationBatchId = dequeuedBatchId;
-  let continuationActingUserId: string | undefined;
+  const sendOptions = buildSendOptions() ?? {};
   const consumedQueuedTurn = consumeQueuedTurn(runtime);
   if (consumedQueuedTurn) {
     const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
     turnCorrelation?.appendDequeuedBatch(dequeuedBatch.batchId);
     continuationBatchId = dequeuedBatch.batchId;
-    continuationActingUserId = queuedTurn.actingUserId;
     nextTurnInput = appendQueuedTurnToInput(nextTurnInput, queuedTurn);
     emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
   }
@@ -669,7 +683,6 @@ export async function handleApprovalStop(params: {
   });
   let sendResult: ApprovalContinuationSendResult;
   try {
-    const sendOptions = buildSendOptions() ?? {};
     const imageFailureModesByMessageOtid = mergeImageFailureModesByMessageOtid(
       sendOptions.imageFailureModesByMessageOtid,
       nextTurnInput.imageFailureModesByMessageOtid,
@@ -679,9 +692,6 @@ export async function handleApprovalStop(params: {
       nextInputWithSkillContent,
       {
         ...sendOptions,
-        ...(continuationActingUserId
-          ? { actingUserId: continuationActingUserId }
-          : {}),
         ...(imageFailureModesByMessageOtid
           ? { imageFailureModesByMessageOtid }
           : {}),

@@ -1,3 +1,4 @@
+import { getDesktopAccessToken } from "@/auth/desktop-credentials";
 import {
   LETTA_CLOUD_API_URL,
   OAuthRefreshError,
@@ -7,6 +8,7 @@ import {
 } from "@/auth/oauth";
 import { refreshAccessTokenSingleFlight } from "@/auth/oauth-refresh";
 import { settingsManager } from "@/settings-manager";
+import { debugLog } from "@/utils/debug";
 import {
   deriveListenerInstanceId,
   type RegisterOptions,
@@ -25,6 +27,7 @@ type ListenerOAuthDeps = {
   pollForToken: typeof pollForToken;
   refreshAccessToken: typeof refreshAccessToken;
   requestDeviceCode: typeof requestDeviceCode;
+  openInBrowser: (url: string) => void;
 };
 
 type ListenerAuthOptions = {
@@ -35,11 +38,29 @@ type ListenerRegistrationOptions = ListenerAuthOptions & {
   surface?: "server" | "listen";
 };
 
+/**
+ * Best-effort: open the device-auth page so a first-time user does not have
+ * to copy the URL out of the terminal. The URL is always printed as fallback.
+ */
+function openInBrowser(url: string): void {
+  import("open")
+    .then(({ default: open }) => open(url, { wait: false }))
+    .then((subprocess) => {
+      subprocess.on("error", () => {
+        // User can visit the printed URL manually.
+      });
+    })
+    .catch(() => {
+      // User can visit the printed URL manually.
+    });
+}
+
 const defaultListenerOAuthDeps: ListenerOAuthDeps = {
   LETTA_CLOUD_API_URL,
   pollForToken,
   refreshAccessToken,
   requestDeviceCode,
+  openInBrowser,
 };
 
 let listenerOAuthDepsOverride: ListenerOAuthDeps | null = null;
@@ -136,7 +157,7 @@ async function refreshListenerAccessToken(
   }
 
   const now = Date.now();
-  console.log("Access token expired, refreshing...");
+  debugLog("Listen", "Access token expired, refreshing...");
 
   const tokens = await refreshAccessTokenSingleFlight(
     settings.refreshToken,
@@ -152,7 +173,7 @@ async function refreshListenerAccessToken(
   });
   await settingsManager.flush();
 
-  console.log("Token refreshed successfully.");
+  debugLog("Listen", "Token refreshed successfully.");
   return tokens.access_token;
 }
 
@@ -164,11 +185,13 @@ async function runListenerOAuthLogin(
   console.log("No API key found. Starting OAuth login...\n");
 
   const deviceData = await oauthDeps.requestDeviceCode();
+  console.log("Opening your browser to sign in...");
   console.log(
-    `To authenticate, visit: ${deviceData.verification_uri_complete}`,
+    `If it didn't open, visit: ${deviceData.verification_uri_complete}`,
   );
   console.log(`Your code: ${deviceData.user_code}\n`);
   console.log("Waiting for authorization...\n");
+  oauthDeps.openInBrowser(deviceData.verification_uri_complete);
 
   const tokens = await oauthDeps.pollForToken(
     deviceData.device_code,
@@ -198,7 +221,7 @@ async function resolveListenerAuth(
   const allowInteractiveOAuth = options.allowInteractiveOAuth ?? true;
   const settings = await settingsManager.getSettingsWithSecureTokens();
   const serverUrl = getListenerServerUrl(settings);
-  const envApiKey = process.env.LETTA_API_KEY;
+  const envApiKey = getDesktopAccessToken() || process.env.LETTA_API_KEY;
 
   if (envApiKey) {
     return { serverUrl, apiKey: envApiKey };

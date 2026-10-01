@@ -1,9 +1,5 @@
-export type ToolsetName =
-  | "codex"
-  | "codex_snake"
-  | "default"
-  | "gemini"
-  | "gemini_snake"
-  | "none";
-
-export type ToolsetPreference = ToolsetName | "auto";
+export type {
+  ToolsetName,
+  ToolsetOption,
+  ToolsetPreference,
+} from "@/types/toolset-protocol";

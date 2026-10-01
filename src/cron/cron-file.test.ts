@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import {
+  __testFailNextRefreshSchedulerLease,
   __testOverrideReadProcessIdentity,
+  __testThrowNextRefreshSchedulerLease,
   type AddTaskInput,
   addTask,
   type CronTask,
@@ -13,9 +15,16 @@ import {
   garbageCollect,
   getActiveTasks,
   getTask,
+  hasLiveSchedulerOwner,
+  isProcessAlive,
   listTasks,
+  pauseTask,
   readCronFile,
+  recordTaskQueued,
+  refreshSchedulerLease,
   releaseSchedulerLease,
+  resumeTask,
+  type SchedulerOwner,
   updateTask,
   verifySchedulerLease,
   withLock,
@@ -47,6 +56,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  __testFailNextRefreshSchedulerLease(false);
+  __testThrowNextRefreshSchedulerLease(false);
   __testOverrideReadProcessIdentity(null);
   if (existsSync(TEST_DIR)) {
     rmSync(TEST_DIR, { recursive: true });
@@ -78,6 +89,49 @@ function overwriteTask(taskId: string, patch: Partial<CronTask>): void {
   if (!task) throw new Error("expected persisted cron task");
   Object.assign(task, patch);
   writeFileSync(_CRON_PATH, JSON.stringify(data, null, 2));
+}
+
+function deadSchedulerOwner(token = "dead-token"): SchedulerOwner {
+  return {
+    pid: 999_999_999,
+    token,
+    started_at: "2026-04-15T00:00:00.000Z",
+  };
+}
+
+/**
+ * Mimic an older binary: inspect only `scheduler_owner`, then rewrite the
+ * file without `scheduler_owners`. A live tombstone must make this throw
+ * before the write.
+ */
+function simulateLegacyClaimSchedulerLease(): string {
+  return withLock(() => {
+    const data = readCronFile();
+    const existingOwner = data.scheduler_owner;
+    if (existingOwner && isProcessAlive(existingOwner.pid, existingOwner)) {
+      throw new Error(
+        `Scheduler lease held by PID ${existingOwner.pid} (token ${existingOwner.token}). Cannot claim.`,
+      );
+    }
+    const token = "legacy-token";
+    writeFileSync(
+      _CRON_PATH,
+      JSON.stringify(
+        {
+          version: 1,
+          scheduler_owner: {
+            pid: process.pid,
+            token,
+            started_at: new Date().toISOString(),
+          },
+          tasks: data.tasks,
+        },
+        null,
+        2,
+      ),
+    );
+    return token;
+  });
 }
 
 // ── Tests ───────────────────────────────────────────────────────────
@@ -135,6 +189,17 @@ describe("addTask", () => {
       /Invalid cron expression "0 0 \*\/32 \* \*"/,
     );
     expect(readCronFile().tasks).toHaveLength(0);
+  });
+
+  test("counts paused schedules toward the per-agent limit", () => {
+    for (let index = 0; index < 50; index += 1) {
+      const { task } = addTask(makeInput({ prompt: `task ${index}` }));
+      pauseTask(task.id);
+    }
+
+    expect(() => addTask(makeInput({ prompt: "one too many" }))).toThrow(
+      /50 active or paused tasks \(max 50\)/,
+    );
   });
 });
 
@@ -262,11 +327,110 @@ describe("updateTask", () => {
   });
 });
 
+describe("pauseTask and resumeTask", () => {
+  test("pause and resume are atomic, persisted, and idempotent", () => {
+    const { task } = addTask(makeInput());
+
+    expect(pauseTask(task.id)).toMatchObject({
+      success: true,
+      found: true,
+      task: { status: "paused" },
+    });
+    expect(pauseTask(task.id)).toMatchObject({
+      success: true,
+      found: true,
+      task: { status: "paused" },
+    });
+    expect(getActiveTasks()).toHaveLength(0);
+
+    expect(resumeTask(task.id)).toMatchObject({
+      success: true,
+      found: true,
+      task: { status: "active" },
+    });
+    expect(resumeTask(task.id)).toMatchObject({
+      success: true,
+      found: true,
+      task: { status: "active" },
+    });
+  });
+
+  test("overdue one-off resume requires and stores a new future time", () => {
+    const oldTime = new Date("2026-08-26T01:00:00.000Z");
+    const { task } = addTask(
+      makeInput({ recurring: false, scheduled_for: oldTime }),
+    );
+    expect(pauseTask(task.id).success).toBe(true);
+
+    expect(
+      resumeTask(task.id, undefined, new Date("2026-08-26T02:00:00.000Z")),
+    ).toMatchObject({
+      success: false,
+      found: true,
+      task: { status: "paused", scheduled_for: oldTime.toISOString() },
+    });
+
+    const futureTime = new Date("2026-08-26T03:00:00.000Z");
+    expect(
+      resumeTask(task.id, futureTime, new Date("2026-08-26T02:00:00.000Z")),
+    ).toMatchObject({
+      success: true,
+      found: true,
+      task: { status: "active", scheduled_for: futureTime.toISOString() },
+    });
+  });
+
+  test("terminal schedules cannot pause or resume", () => {
+    const { task } = addTask(makeInput());
+    updateTask(task.id, (candidate) => {
+      candidate.status = "cancelled";
+    });
+
+    expect(pauseTask(task.id)).toMatchObject({ success: false, found: true });
+    expect(resumeTask(task.id)).toMatchObject({ success: false, found: true });
+  });
+});
+
+describe("recordTaskQueued", () => {
+  test.each([
+    { recurring: true, initialStatus: "active" as const },
+    { recurring: true, initialStatus: "paused" as const },
+    { recurring: false, initialStatus: "active" as const },
+    { recurring: false, initialStatus: "paused" as const },
+  ])(
+    "manual run preserves $initialStatus status and automatic timing when recurring=$recurring",
+    ({ recurring, initialStatus }) => {
+      const scheduledFor = new Date("2026-08-27T12:00:00.000Z");
+      const { task } = addTask(
+        makeInput({
+          recurring,
+          scheduled_for: recurring ? undefined : scheduledFor,
+        }),
+      );
+      if (initialStatus === "paused") pauseTask(task.id);
+      const queuedAt = new Date("2026-08-26T03:00:00.000Z");
+
+      const updated = recordTaskQueued(task.id, "manual", queuedAt);
+
+      expect(updated).toMatchObject({
+        status: initialStatus,
+        scheduled_for: recurring ? null : scheduledFor.toISOString(),
+        fired_at: null,
+        fire_count: 1,
+        last_run_reason: recurring ? "scheduled_time_matched" : "one_off_due",
+        last_run_at: queuedAt.toISOString(),
+      });
+    },
+  );
+});
+
 describe("getActiveTasks", () => {
   test("returns only active tasks", () => {
     addTask(makeInput());
-    const t2 = addTask(makeInput({ prompt: "echo world" }));
-    updateTask(t2.task.id, (t) => {
+    const paused = addTask(makeInput({ prompt: "echo paused" }));
+    const cancelled = addTask(makeInput({ prompt: "echo cancelled" }));
+    pauseTask(paused.task.id);
+    updateTask(cancelled.task.id, (t) => {
       t.status = "cancelled";
     });
     const active = getActiveTasks();
@@ -290,6 +454,263 @@ describe("scheduler lease", () => {
   test("wrong token fails verification", () => {
     claimSchedulerLease();
     expect(verifySchedulerLease("wrong-token")).toBe(false);
+  });
+
+  test("cloud and local schedulers hold independent leases", () => {
+    const cloudToken = claimSchedulerLease("cloud");
+    const localToken = claimSchedulerLease("local");
+
+    expect(verifySchedulerLease(cloudToken, "cloud")).toBe(true);
+    expect(verifySchedulerLease(localToken, "local")).toBe(true);
+    expect(verifySchedulerLease(cloudToken, "local")).toBe(false);
+
+    const owners = readCronFile();
+    expect(owners.scheduler_owner).toEqual(
+      expect.objectContaining({ pid: process.pid }),
+    );
+    expect(
+      isProcessAlive(owners.scheduler_owner?.pid ?? -1, owners.scheduler_owner),
+    ).toBe(true);
+
+    releaseSchedulerLease(cloudToken, "cloud");
+    expect(verifySchedulerLease(cloudToken, "cloud")).toBe(false);
+    expect(verifySchedulerLease(localToken, "local")).toBe(true);
+    expect(readCronFile().scheduler_owner).toEqual(
+      expect.objectContaining({ pid: process.pid, token: localToken }),
+    );
+
+    releaseSchedulerLease(localToken, "local");
+    expect(readCronFile().scheduler_owner).toBeNull();
+  });
+
+  test("legacy all-schedule leases exclude scoped schedulers", () => {
+    const allToken = claimSchedulerLease();
+    expect(() => claimSchedulerLease("local")).toThrow("Scheduler lease held");
+    releaseSchedulerLease(allToken);
+
+    const localToken = claimSchedulerLease("local");
+    expect(() => claimSchedulerLease()).toThrow("Scoped scheduler lease held");
+    releaseSchedulerLease(localToken, "local");
+  });
+
+  test("scoped lease writes a live scheduler_owner tombstone that old writers cannot strip", () => {
+    const localToken = claimSchedulerLease("local");
+    const before = readCronFile();
+    expect(before.scheduler_owners.local?.token).toBe(localToken);
+    expect(before.scheduler_owner?.token).toBe(localToken);
+
+    expect(() => simulateLegacyClaimSchedulerLease()).toThrow(
+      "Scheduler lease held",
+    );
+    const after = readCronFile();
+    expect(after.scheduler_owners.local?.token).toBe(localToken);
+    expect(after.scheduler_owner?.token).toBe(localToken);
+  });
+
+  test("stale scoped lease can be taken over and restores the tombstone", () => {
+    const dead = deadSchedulerOwner();
+    writeFileSync(
+      _CRON_PATH,
+      JSON.stringify(
+        {
+          version: 1,
+          scheduler_owner: dead,
+          scheduler_owners: { local: dead },
+          tasks: [],
+        },
+        null,
+        2,
+      ),
+    );
+
+    const token = claimSchedulerLease("local");
+    const data = readCronFile();
+    expect(data.scheduler_owners.local).toEqual(
+      expect.objectContaining({ pid: process.pid, token }),
+    );
+    expect(data.scheduler_owner).toEqual(
+      expect.objectContaining({ pid: process.pid, token }),
+    );
+  });
+
+  test("refreshSchedulerLease restores a stale mixed-version tombstone", () => {
+    const token = claimSchedulerLease("cloud");
+    const current = readCronFile();
+    writeFileSync(
+      _CRON_PATH,
+      JSON.stringify(
+        {
+          version: 1,
+          scheduler_owner: deadSchedulerOwner(),
+          scheduler_owners: { cloud: current.scheduler_owners.cloud },
+          tasks: [],
+        },
+        null,
+        2,
+      ),
+    );
+
+    expect(refreshSchedulerLease(token, "cloud")).toBe(true);
+    expect(readCronFile().scheduler_owner).toEqual(
+      expect.objectContaining({ pid: process.pid, token }),
+    );
+  });
+
+  test("surviving scoped owner restores a dead sibling tombstone before a legacy all-claim", () => {
+    const cloudToken = claimSchedulerLease("cloud");
+    const localToken = claimSchedulerLease("local");
+    const current = readCronFile();
+    expect(current.scheduler_owner?.token).toBe(cloudToken);
+
+    writeFileSync(
+      _CRON_PATH,
+      JSON.stringify(
+        {
+          version: 1,
+          scheduler_owner: deadSchedulerOwner(cloudToken),
+          scheduler_owners: {
+            cloud: deadSchedulerOwner(cloudToken),
+            local: current.scheduler_owners.local,
+          },
+          tasks: [],
+        },
+        null,
+        2,
+      ),
+    );
+
+    expect(refreshSchedulerLease(localToken, "local")).toBe(true);
+    expect(readCronFile().scheduler_owner).toEqual(
+      expect.objectContaining({ pid: process.pid, token: localToken }),
+    );
+    expect(() => simulateLegacyClaimSchedulerLease()).toThrow(
+      "Scheduler lease held",
+    );
+    expect(readCronFile().scheduler_owners.local?.token).toBe(localToken);
+  });
+
+  test("refresh restores scoped rows after a legacy writer strips scheduler_owners", () => {
+    const cloudToken = claimSchedulerLease("cloud");
+    const localToken = claimSchedulerLease("local");
+    const before = readCronFile();
+    expect(before.scheduler_owner?.token).toBe(cloudToken);
+
+    writeFileSync(
+      _CRON_PATH,
+      JSON.stringify(
+        {
+          version: 1,
+          scheduler_owner: before.scheduler_owner,
+          tasks: [],
+        },
+        null,
+        2,
+      ),
+    );
+
+    expect(readCronFile().scheduler_owners).toEqual({});
+    expect(refreshSchedulerLease(cloudToken, "cloud")).toBe(true);
+    expect(refreshSchedulerLease(localToken, "local", cloudToken)).toBe(true);
+
+    const after = readCronFile();
+    expect(after.scheduler_owners.cloud).toEqual(
+      expect.objectContaining({ pid: process.pid, token: cloudToken }),
+    );
+    expect(after.scheduler_owners.local).toEqual(
+      expect.objectContaining({ pid: process.pid, token: localToken }),
+    );
+    expect(after.scheduler_owner).toEqual(
+      expect.objectContaining({ pid: process.pid, token: cloudToken }),
+    );
+    expect(() => simulateLegacyClaimSchedulerLease()).toThrow(
+      "Scheduler lease held",
+    );
+    expect(() => claimSchedulerLease()).toThrow("Scoped scheduler lease held");
+  });
+
+  test("refresh does not restore a scoped row beside a live all-owner", () => {
+    const localToken = claimSchedulerLease("local");
+    writeFileSync(
+      _CRON_PATH,
+      JSON.stringify(
+        {
+          version: 1,
+          scheduler_owner: deadSchedulerOwner(),
+          tasks: [],
+        },
+        null,
+        2,
+      ),
+    );
+
+    const legacyToken = simulateLegacyClaimSchedulerLease();
+    expect(refreshSchedulerLease(localToken, "local", localToken)).toBe(false);
+
+    const after = readCronFile();
+    expect(after.scheduler_owners).toEqual({});
+    expect(after.scheduler_owner).toEqual(
+      expect.objectContaining({ pid: process.pid, token: legacyToken }),
+    );
+  });
+
+  test("hasLiveSchedulerOwner matches a true all-owner or this backend only", () => {
+    const empty = { scheduler_owner: null, scheduler_owners: {} };
+    expect(hasLiveSchedulerOwner(empty, "local")).toBe(false);
+    expect(hasLiveSchedulerOwner(empty, "cloud")).toBe(false);
+    expect(
+      hasLiveSchedulerOwner(
+        {
+          scheduler_owner: null,
+          scheduler_owners: { local: deadSchedulerOwner() },
+        },
+        "local",
+      ),
+    ).toBe(false);
+
+    const allToken = claimSchedulerLease();
+    const allOwner = readCronFile();
+    expect(hasLiveSchedulerOwner(allOwner, "local")).toBe(true);
+    expect(hasLiveSchedulerOwner(allOwner, "cloud")).toBe(true);
+    releaseSchedulerLease(allToken);
+
+    const localToken = claimSchedulerLease("local");
+    const liveLocal = readCronFile();
+    expect(hasLiveSchedulerOwner(liveLocal, "local")).toBe(true);
+    expect(hasLiveSchedulerOwner(liveLocal, "cloud")).toBe(false);
+    expect(
+      hasLiveSchedulerOwner(
+        {
+          scheduler_owner: null,
+          scheduler_owners: { local: liveLocal.scheduler_owners.local },
+        },
+        "local",
+      ),
+    ).toBe(true);
+    expect(
+      hasLiveSchedulerOwner(
+        {
+          scheduler_owner: null,
+          scheduler_owners: { cloud: liveLocal.scheduler_owners.local },
+        },
+        "local",
+      ),
+    ).toBe(false);
+    expect(
+      hasLiveSchedulerOwner(
+        {
+          scheduler_owner: null,
+          scheduler_owners: { cloud: liveLocal.scheduler_owners.local },
+        },
+        "cloud",
+      ),
+    ).toBe(true);
+
+    const cloudToken = claimSchedulerLease("cloud");
+    const both = readCronFile();
+    expect(hasLiveSchedulerOwner(both, "local")).toBe(true);
+    expect(hasLiveSchedulerOwner(both, "cloud")).toBe(true);
+    releaseSchedulerLease(cloudToken, "cloud");
+    releaseSchedulerLease(localToken, "local");
   });
 
   test("takes over a stale lease when the same PID belongs to a different process incarnation", () => {
@@ -367,6 +788,24 @@ describe("garbageCollect", () => {
     const removed = garbageCollect();
     expect(removed).toBe(0);
     expect(getTask(task.id)).not.toBeNull();
+  });
+
+  test("keeps paused and unknown future statuses regardless of age", () => {
+    const paused = addTask(makeInput({ prompt: "paused" })).task;
+    const future = addTask(makeInput({ prompt: "future" })).task;
+    const twoDaysAgo = new Date(
+      Date.now() - 2 * 24 * 60 * 60 * 1000,
+    ).toISOString();
+    pauseTask(paused.id);
+    overwriteTask(paused.id, { created_at: twoDaysAgo });
+    const data = readCronFile();
+    const futureTask = data.tasks.find((task) => task.id === future.id);
+    if (!futureTask) throw new Error("expected future task");
+    Object.assign(futureTask, { status: "waiting", created_at: twoDaysAgo });
+    writeFileSync(_CRON_PATH, JSON.stringify(data, null, 2));
+
+    expect(garbageCollect()).toBe(0);
+    expect(listTasks().map((task) => task.id)).toEqual([paused.id, future.id]);
   });
 });
 

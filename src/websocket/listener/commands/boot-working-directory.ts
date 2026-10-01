@@ -13,7 +13,10 @@ import {
   getWorkingDirectoryScopeKey,
   setBootWorkingDirectory,
 } from "@/websocket/listener/cwd";
-import { emitDeviceStatusUpdate } from "@/websocket/listener/protocol-outbound";
+import {
+  emitDeviceStatusUpdate,
+  refreshDeviceGitContext,
+} from "@/websocket/listener/protocol-outbound";
 import type { ListenerRuntime } from "@/websocket/listener/types";
 import type { SafeSocketSend } from "./types";
 
@@ -50,7 +53,10 @@ function getCwdScopeKeyFromRuntimeKey(runtimeKey: string): string | null {
     : `conversation:${conversationId}`;
 }
 
-function applyScopeUpdates(socket: WebSocket, runtime: ListenerRuntime): void {
+async function applyScopeUpdates(
+  socket: WebSocket,
+  runtime: ListenerRuntime,
+): Promise<void> {
   for (const [runtimeKey, state] of runtime.reminderStateByConversation) {
     const scopeKey = getCwdScopeKeyFromRuntimeKey(runtimeKey);
     if (!scopeKey || runtime.workingDirectoryByConversation.has(scopeKey)) {
@@ -71,10 +77,12 @@ function applyScopeUpdates(socket: WebSocket, runtime: ListenerRuntime): void {
     ) {
       continue;
     }
-    emitDeviceStatusUpdate(socket, conversationRuntime, {
+    const scope = {
       agent_id: conversationRuntime.agentId,
       conversation_id: conversationRuntime.conversationId,
-    });
+    };
+    await refreshDeviceGitContext(conversationRuntime, scope);
+    emitDeviceStatusUpdate(socket, conversationRuntime, scope);
   }
 }
 
@@ -100,7 +108,7 @@ export async function handleSetBootWorkingDirectoryCommand(
     ]);
 
     if (setBootWorkingDirectory(runtime, normalizedPath)) {
-      applyScopeUpdates(socket, runtime);
+      await applyScopeUpdates(socket, runtime);
     }
 
     safeSocketSend(

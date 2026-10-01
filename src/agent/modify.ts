@@ -38,9 +38,10 @@ function supportsDistinctAnthropicXHighEffort(modelHandle: string): boolean {
  * Builds model_settings from updateArgs based on provider type.
  * Always ensures parallel_tool_calls is enabled.
  */
-function buildModelSettings(
+export function buildModelSettings(
   modelHandle: string,
   updateArgs?: Record<string, unknown>,
+  localModelCatalog = false,
 ): ModelSettings {
   const explicitProviderType =
     typeof updateArgs?.provider_type === "string"
@@ -170,6 +171,9 @@ function buildModelSettings(
     settings = {
       provider_type: "zai",
       parallel_tool_calls: true,
+      ...(typeof updateArgs?.reasoning_effort === "string" && {
+        reasoning_effort: updateArgs.reasoning_effort,
+      }),
     };
   } else if (isXai) {
     // xAI is OpenAI-compatible on the wire, but direct xAI handles must route
@@ -238,14 +242,15 @@ function buildModelSettings(
     }
     settings = bedrockSettings;
   } else {
-    // Unknown/BYOK providers (e.g. openai-proxy) — assume OpenAI-compatible
-    const openaiProxySettings: OpenAIModelSettings = {
-      provider_type: "openai",
+    // Preserve runtime provider identity for organization-specific BYOK names.
+    // Only untyped custom handles retain the OpenAI-compatible fallback.
+    const openaiProxySettings = {
+      provider_type: explicitProviderType ?? "openai",
       parallel_tool_calls:
         typeof updateArgs?.parallel_tool_calls === "boolean"
           ? updateArgs.parallel_tool_calls
           : true,
-    };
+    } as OpenAIModelSettings;
     if (updateArgs && "reasoning_effort" in updateArgs) {
       (openaiProxySettings as Record<string, unknown>).reasoning =
         updateArgs.reasoning_effort === null
@@ -286,6 +291,22 @@ function buildModelSettings(
       updateArgs.capabilities;
   }
 
+  // Local pi-ai reads a provider-neutral effort as well. Cloud-specific
+  // settings for Google/xAI/zAI do not otherwise preserve the selected level.
+  if (
+    localModelCatalog &&
+    (typeof updateArgs?.reasoning_effort === "string" ||
+      updateArgs?.reasoning_effort === null)
+  ) {
+    (settings as Record<string, unknown>).reasoning_effort =
+      updateArgs.reasoning_effort;
+  }
+  // pi-ai owns provider-specific request options. Preserve explicit local
+  // overrides for its samplingParams seam; never send these to Cloud's schema.
+  if (localModelCatalog && isRecord(updateArgs?.sampling_params)) {
+    (settings as Record<string, unknown>).sampling_params =
+      updateArgs.sampling_params;
+  }
   return settings;
 }
 
@@ -330,6 +351,7 @@ function maxTokensForUpdatePayload(
  * @returns The updated agent state from the server (includes llm_config and model_settings)
  */
 export interface UpdateLLMConfigOptions {
+  signal?: AbortSignal;
   /**
    * Context window to send explicitly. Wins over updateArgs.context_window
    * and catalog derivation on EVERY backend — including local backends, where
@@ -418,6 +440,7 @@ export async function updateAgentLLMConfig(
   const modelSettings = buildModelSettings(
     modelHandle,
     updateArgsForModelSettings(updateArgs, { useBackendModelCatalog }),
+    useBackendModelCatalog,
   );
   const contextWindow = await resolveContextWindowForUpdate({
     modelHandle,
@@ -432,15 +455,20 @@ export async function updateAgentLLMConfig(
     useBackendModelCatalog,
   });
 
-  await backend.updateAgent(agentId, {
-    model: modelHandle,
-    ...(hasModelSettings && { model_settings: modelSettings }),
-    ...(contextWindow && { context_window_limit: contextWindow }),
-    ...(maxTokens !== undefined && { max_tokens: maxTokens }),
-  });
+  options?.signal?.throwIfAborted();
+  await backend.updateAgent(
+    agentId,
+    {
+      model: modelHandle,
+      ...(hasModelSettings && { model_settings: modelSettings }),
+      ...(contextWindow && { context_window_limit: contextWindow }),
+      ...(maxTokens !== undefined && { max_tokens: maxTokens }),
+    },
+    ...(options?.signal ? [{ signal: options.signal }] : []),
+  );
 
   const finalAgent = await backend.retrieveAgent(agentId, {
-    include: ["agent.secrets", "agent.tools", "agent.tags"],
+    include: ["agent.tools", "agent.tags"],
   });
   return finalAgent;
 }
@@ -468,6 +496,7 @@ export async function updateConversationLLMConfig(
   const modelSettings = buildModelSettings(
     modelHandle,
     updateArgsForModelSettings(updateArgs, { useBackendModelCatalog }),
+    useBackendModelCatalog,
   );
   const contextWindow = await resolveContextWindowForUpdate({
     modelHandle,
@@ -506,7 +535,12 @@ export async function updateConversationLLMConfig(
     ...(maxTokens !== undefined && { max_tokens: maxTokens }),
   } as Parameters<typeof backend.updateConversation>[1];
 
-  return backend.updateConversation(conversationId, payload);
+  options?.signal?.throwIfAborted();
+  return backend.updateConversation(
+    conversationId,
+    payload,
+    ...(options?.signal ? [{ signal: options.signal }] : []),
+  );
 }
 
 export interface ModelConfigUpdate {
@@ -611,6 +645,7 @@ export async function updateModelConfig(
       ? buildModelSettings(
           modelHandle,
           updateArgsForModelSettings(updateArgs, { useBackendModelCatalog }),
+          useBackendModelCatalog,
         )
       : undefined;
   const hasModelSettings =
@@ -708,7 +743,7 @@ export interface SystemPromptUpdateResult {
  */
 export async function updateAgentSystemPromptRaw(
   agentId: string,
-  systemPromptContent: string,
+  systemPromptContent: string | null,
 ): Promise<SystemPromptUpdateResult> {
   try {
     await getBackend().updateAgent(agentId, {
@@ -753,28 +788,29 @@ export async function updateAgentSystemPrompt(
     const { resolveAndBuildSystemPrompt } = await import(
       "@/agent/system-prompt-resolution"
     );
-    const { recordManagedSystemPrompt } = await import(
-      "@/agent/system-prompt-versioning"
-    );
+    const { getMemoryPromptModeForAgent, recordManagedSystemPrompt } =
+      await import("@/agent/system-prompt-versioning");
     const { settingsManager } = await import("@/settings-manager");
 
     const backend = getBackend();
-    const memoryMode = backend.capabilities.localMemfs
-      ? "local-memfs"
-      : settingsManager.isReady && settingsManager.isMemfsEnabled(agentId)
-        ? "memfs"
-        : "standard";
+    const memoryMode = getMemoryPromptModeForAgent(agentId);
 
     const systemPromptContent = await resolveAndBuildSystemPrompt(
       systemPromptId,
       memoryMode,
     );
 
+    const { isLettaCloud } = await import("@/agent/memory-filesystem");
+    const useCloudDefault =
+      systemPromptId === "default" &&
+      backend.capabilities.remoteMemfs &&
+      !backend.capabilities.localMemfs &&
+      (await isLettaCloud());
     debugLog("modify", "systemPromptContent: %s", systemPromptContent);
 
     const updateResult = await updateAgentSystemPromptRaw(
       agentId,
-      systemPromptContent,
+      useCloudDefault ? null : systemPromptContent,
     );
     if (!updateResult.success) {
       return {
@@ -786,7 +822,9 @@ export async function updateAgentSystemPrompt(
 
     // Persist preset for known presets; clear stale preset for subagent/unknown
     if (settingsManager.isReady) {
-      if (isKnownPreset(systemPromptId)) {
+      if (useCloudDefault) {
+        settingsManager.clearSystemPromptPreset(agentId);
+      } else if (isKnownPreset(systemPromptId)) {
         recordManagedSystemPrompt(
           agentId,
           systemPromptId,
@@ -798,10 +836,10 @@ export async function updateAgentSystemPrompt(
       }
     }
 
-    // Re-fetch agent to get updated state (include relationships so
-    // callers that rely on agent.tags/tools/secrets aren't broken).
+    // Re-fetch agent to get updated state (include relationships so callers
+    // that rely on agent.tags/tools aren't broken). Secrets use their own API.
     const agent = await backend.retrieveAgent(agentId, {
-      include: ["agent.secrets", "agent.tools", "agent.tags"],
+      include: ["agent.tools", "agent.tags"],
     });
 
     return {
@@ -833,16 +871,20 @@ export async function updateAgentSystemPromptMemfs(
 ): Promise<SystemPromptUpdateResult> {
   try {
     const { settingsManager } = await import("@/settings-manager");
-    const { isKnownPreset, buildSystemPrompt } = await import(
-      "@/agent/prompt-assets"
-    );
-    const { hashSystemPrompt, recordManagedSystemPrompt } = await import(
-      "@/agent/system-prompt-versioning"
-    );
+    const {
+      isKnownPreset,
+      buildSystemPrompt,
+      getSystemPromptVariantContents,
+      SYSTEM_PROMPTS,
+    } = await import("@/agent/prompt-assets");
+    const {
+      getMemoryPromptModeForAgent,
+      hashSystemPrompt,
+      recordManagedSystemPrompt,
+    } = await import("@/agent/system-prompt-versioning");
 
-    const newMode = getBackend().capabilities.localMemfs
-      ? "local-memfs"
-      : "memfs";
+    const backend = getBackend();
+    const newMode = getMemoryPromptModeForAgent(agentId);
     const storedPreset = settingsManager.isReady
       ? settingsManager.getSystemPromptPreset(agentId)
       : undefined;
@@ -850,10 +892,33 @@ export async function updateAgentSystemPromptMemfs(
       ? settingsManager.getSystemPromptHash(agentId)
       : undefined;
 
+    const agent = await backend.retrieveAgent(agentId);
+    // A null prompt follows the backend's current memory mode. Do not pin it.
+    if (agent.system == null) {
+      return {
+        success: true,
+        message: "Backend default system prompt follows memory mode",
+      };
+    }
+    const { reconcileCloudPromptForMemoryMode } = await import(
+      "@/agent/cloud-managed-system-prompt"
+    );
+    const cloudPromptResult = await reconcileCloudPromptForMemoryMode({
+      agent,
+      memoryMode: newMode,
+      storedPreset,
+      storedHash,
+    });
+    if (cloudPromptResult) {
+      return {
+        success: true,
+        message: cloudPromptResult,
+      };
+    }
+
     let nextSystemPrompt: string;
     if (storedPreset && isKnownPreset(storedPreset)) {
-      const agent = await getBackend().retrieveAgent(agentId);
-      const currentSystemPrompt = agent.system || "";
+      const currentSystemPrompt = agent.system;
       if (storedHash && hashSystemPrompt(currentSystemPrompt) !== storedHash) {
         if (settingsManager.isReady) {
           settingsManager.setSystemPromptCustom(agentId);
@@ -865,14 +930,15 @@ export async function updateAgentSystemPromptMemfs(
       }
 
       if (!storedHash && settingsManager.isReady) {
-        const currentMode = settingsManager.isMemfsEnabled(agentId)
-          ? getBackend().capabilities.localMemfs
-            ? "local-memfs"
-            : "memfs"
-          : "standard";
-        if (
-          currentSystemPrompt !== buildSystemPrompt(storedPreset, currentMode)
-        ) {
+        const preset = SYSTEM_PROMPTS.find(
+          (candidate) => candidate.id === storedPreset,
+        );
+        const matchesBundledVariant =
+          preset &&
+          getSystemPromptVariantContents(preset).some(
+            (content) => content.trim() === currentSystemPrompt.trim(),
+          );
+        if (!matchesBundledVariant) {
           settingsManager.setSystemPromptCustom(agentId);
           return {
             success: true,
@@ -883,11 +949,10 @@ export async function updateAgentSystemPromptMemfs(
 
       nextSystemPrompt = buildSystemPrompt(storedPreset, newMode);
     } else {
-      const agent = await getBackend().retrieveAgent(agentId);
-      nextSystemPrompt = agent.system || "";
+      nextSystemPrompt = agent.system;
     }
 
-    await getBackend().updateAgent(agentId, {
+    await backend.updateAgent(agentId, {
       system: nextSystemPrompt,
     });
 

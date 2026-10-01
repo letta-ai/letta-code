@@ -22,13 +22,22 @@ export interface MonitorBackgroundProcessSummary {
   process_id: string;
   kind: "monitor";
   description: string;
-  source: "command" | "websocket";
+  source: "command" | "websocket" | "github_pull_request";
   started_at_ms: number;
   status: "running";
   persistent: boolean;
 }
 
+export interface WorkflowBackgroundProcessSummary {
+  process_id: string;
+  kind: "workflow";
+  description: string;
+  started_at_ms: number;
+  status: "running";
+}
+
 export type BackgroundProcessSummary =
   | BashBackgroundProcessSummary
   | AgentTaskBackgroundProcessSummary
-  | MonitorBackgroundProcessSummary;
+  | MonitorBackgroundProcessSummary
+  | WorkflowBackgroundProcessSummary;

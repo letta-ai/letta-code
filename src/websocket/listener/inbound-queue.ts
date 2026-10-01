@@ -32,6 +32,9 @@ export function enqueueInboundUserMessage(
     return false;
   }
 
+  // A new user message releases anything parked by an earlier interrupt, so
+  // the parked messages run first and this one follows in order.
+  runtime.queueRuntime.resume();
   const enqueuedItem = runtime.queueRuntime.enqueue({
     kind: "message",
     source: "user",

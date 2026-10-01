@@ -46,6 +46,11 @@ export type SlackWriteClient = {
       name: string;
     }) => Promise<unknown>;
   };
+  emoji: {
+    list: () => Promise<{
+      emoji?: Record<string, string>;
+    }>;
+  };
   files: {
     getUploadURLExternal: (args: {
       filename: string;

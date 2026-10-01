@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { formatArgsDisplay } from "@/cli/helpers/format-args-display";
 
 describe("formatArgsDisplay compact plan/todo headers", () => {
-  test("shows only plan item count for update_plan", () => {
+  test("shows only plan item count for UpdatePlan", () => {
     const args = JSON.stringify({
       explanation: "Investigating restart regression",
       plan: [
@@ -12,7 +12,7 @@ describe("formatArgsDisplay compact plan/todo headers", () => {
       ],
     });
 
-    expect(formatArgsDisplay(args, "update_plan").display).toBe("3 items");
+    expect(formatArgsDisplay(args, "UpdatePlan").display).toBe("3 items");
   });
 
   test("handles singular plan item count for UpdatePlan", () => {
@@ -34,7 +34,6 @@ describe("formatArgsDisplay compact plan/todo headers", () => {
     });
 
     expect(formatArgsDisplay(args, "TodoWrite").display).toBe("2 items");
-    expect(formatArgsDisplay(args, "write_todos").display).toBe("2 items");
   });
 
   test("uses semantic summaries for read-only shell commands", () => {
@@ -87,21 +86,6 @@ describe("formatArgsDisplay compact plan/todo headers", () => {
     });
 
     const formatted = formatArgsDisplay(args, "exec_command");
-    expect(formatted.display).toBe("Show working tree status");
-    expect(formatted.shellSemantic).toMatchObject({
-      kind: "run",
-      label: "Run",
-      rawCommand: "git status --short",
-    });
-  });
-
-  test("uses Gemini shell description when present", () => {
-    const args = JSON.stringify({
-      command: "git status --short",
-      description: "Show working tree status",
-    });
-
-    const formatted = formatArgsDisplay(args, "RunShellCommand");
     expect(formatted.display).toBe("Show working tree status");
     expect(formatted.shellSemantic).toMatchObject({
       kind: "run",

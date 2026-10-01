@@ -50,7 +50,7 @@ test("does not attach MessageChannel to relay-only routed turns", async () => {
   await expect(buildGatewayMessageChannelTool([source])).resolves.toBeNull();
 });
 
-test("exposes only tool-mode accounts for mixed routed sources", async () => {
+test("exposes all routed accounts when mixed reply modes make relay ambiguous", async () => {
   __testOverrideLoadChannelAccounts(() => []);
   __testOverrideSaveChannelAccounts(() => {});
   upsertChannelAccount("slack", {
@@ -96,8 +96,83 @@ test("exposes only tool-mode accounts for mixed routed sources", async () => {
     }),
   ]);
 
-  expect(tool?.description).toContain("Currently active channels: Telegram.");
-  expect(tool?.description).not.toContain("Slack");
+  expect(tool?.description).toContain(
+    "Currently active channels: Slack, Telegram.",
+  );
+});
+
+test("exposes all relay accounts when distinct destinations make relay ambiguous", async () => {
+  __testOverrideLoadChannelAccounts(() => []);
+  __testOverrideSaveChannelAccounts(() => {});
+  for (const accountId of ["relay-one", "relay-two"]) {
+    upsertChannelAccount("slack", {
+      channel: "slack",
+      accountId,
+      displayName: `Slack ${accountId}`,
+      enabled: true,
+      dmPolicy: "pairing",
+      replyMode: "relay",
+      allowedUsers: [],
+      createdAt: "2026-08-13T00:00:00.000Z",
+      updatedAt: "2026-08-13T00:00:00.000Z",
+      mode: "socket",
+      botToken: "xoxb-test",
+      appToken: "xapp-test",
+      agentId: "agent-1",
+      defaultPermissionMode: "standard",
+    });
+  }
+
+  const tool = await buildGatewayMessageChannelTool([
+    makeSource({
+      channel: "slack",
+      accountId: "relay-one",
+      chatId: "C111",
+    }),
+    makeSource({
+      channel: "slack",
+      accountId: "relay-two",
+      chatId: "C222",
+    }),
+  ]);
+
+  expect(tool).not.toBeNull();
+  expect(tool?.description).toContain("relay-one");
+  expect(tool?.description).toContain("relay-two");
+});
+
+test("does not treat duplicate sources for one relay destination as ambiguous", async () => {
+  __testOverrideLoadChannelAccounts(() => []);
+  __testOverrideSaveChannelAccounts(() => {});
+  upsertChannelAccount("slack", {
+    channel: "slack",
+    accountId: "relay-account",
+    displayName: "Slack Relay",
+    enabled: true,
+    dmPolicy: "pairing",
+    replyMode: "relay",
+    allowedUsers: [],
+    createdAt: "2026-08-13T00:00:00.000Z",
+    updatedAt: "2026-08-13T00:00:00.000Z",
+    mode: "socket",
+    botToken: "xoxb-test",
+    appToken: "xapp-test",
+    agentId: "agent-1",
+    defaultPermissionMode: "standard",
+  });
+  const source = makeSource({
+    channel: "slack",
+    accountId: "relay-account",
+    chatId: "C123",
+    threadId: "thread-1",
+  });
+
+  await expect(
+    buildGatewayMessageChannelTool([
+      source,
+      { ...source, messageId: "message-2" },
+    ]),
+  ).resolves.toBeNull();
 });
 
 test("builds proactive Slack for a fresh conversation owned by the account agent", async () => {
@@ -137,6 +212,7 @@ test("builds proactive Slack for a fresh conversation owned by the account agent
     conversation_id: "conv-schedule-1",
   });
   expect(tool).not.toBeNull();
+  expect(tool?.auto_background).toBe(false);
   expect(tool?.description).not.toContain(
     "currently scoped to a routed external channel turn",
   );

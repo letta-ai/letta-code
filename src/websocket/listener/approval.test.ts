@@ -87,6 +87,34 @@ function makeSuccessResponse(requestId: string): ApprovalResponseBody {
 }
 
 describe("listener approval lifecycle", () => {
+  test("CLI-launched children deny interactive permission requests like one-shot headless", async () => {
+    const runtime = createScopedRuntime();
+    runtime.executionSettings = {
+      allowed_tools: [],
+      disallowed_tools: [],
+      disable_memory_guard: false,
+    };
+    const socket = new MockSocket();
+    const lease = beginApprovalWait(runtime);
+    expect(
+      await requestApprovalOverWS(
+        runtime,
+        socket,
+        lease,
+        "perm-child",
+        makeControlRequest("perm-child"),
+      ),
+    ).toEqual({
+      request_id: "perm-child",
+      decision: {
+        behavior: "deny",
+        message: "Tool requires approval (headless mode)",
+      },
+    });
+    expect(socket.sentPayloads).toEqual([]);
+    expect(runtime.pendingApprovalResolvers.size).toBe(0);
+  });
+
   test("isolates identical approval request ids by connection", async () => {
     const listener = createRuntime();
     const runtimeA = getOrCreateScopedRuntime(listener, "agent-1", "conv-a");

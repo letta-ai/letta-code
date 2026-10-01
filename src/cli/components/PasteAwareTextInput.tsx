@@ -134,7 +134,11 @@ export function PasteAwareTextInput({
 }: PasteAwareTextInputProps) {
   const { internal_eventEmitter } = useStdin();
   const [displayValue, setDisplayValue] = useState(value);
-  const [actualValue, setActualValue] = useState(value);
+  // The sync effect below skips renders that already display `value`, so
+  // resolve placeholders for the initial value here instead of on mount.
+  const [actualValue, setActualValue] = useState(() =>
+    resolvePlaceholders(value),
+  );
   const lastPasteDetectedAtRef = useRef<number>(0);
   const caretOffsetRef = useRef<number>((value || "").length);
   const [nudgeCursorOffset, setNudgeCursorOffset] = useState<
@@ -171,6 +175,16 @@ export function PasteAwareTextInput({
 
   // Sync external value changes (treat incoming value as DISPLAY value)
   useEffect(() => {
+    // Only a parent-driven change needs syncing. When this render already
+    // displays the incoming value, it is the echo of our own onChange and the
+    // handlers have set display/actual/caret. Syncing anyway is harmful: stdin
+    // can deliver several input events in one tick (an IME commit split across
+    // reads), so this passive effect may run after a later event has advanced
+    // the display and caret — applying this render's older value would clamp
+    // the caret short and drop the newer chunks (#4493).
+    if (value === displayValue) {
+      return;
+    }
     setDisplayValue(value);
     // Recompute ACTUAL by substituting placeholders via shared registry
     const resolved = resolvePlaceholders(value);
@@ -186,7 +200,7 @@ export function PasteAwareTextInput({
       setNudgeCursorOffset(nextCaret);
       caretOffsetRef.current = nextCaret;
     }
-  }, [value]);
+  }, [value, displayValue]);
 
   // Intercept paste events and macOS fallback for image clipboard imports
   useInput(

@@ -37,48 +37,16 @@ export function getDisplayableToolReturn(content: ToolReturnContent): string {
  * Tools that are safe to execute in parallel (read-only or independent).
  * These tools don't modify files or shared state, so they can't race with each other.
  * Note: Bash/shell tools are intentionally excluded - they can run arbitrary commands that may write files.
- *
- * Includes equivalent tools across all toolsets (Anthropic, Codex/OpenAI, Gemini).
  */
 const PARALLEL_SAFE_TOOLS = new Set([
-  // === Anthropic toolset (default) ===
   "Read",
-  "view_image",
   "ViewImage",
   "Grep",
   "Glob",
-
-  // === Codex/OpenAI toolset ===
-  // snake_case variants
-  "read_file",
-  "list_dir",
-  "grep_files",
-  // PascalCase variants
-  "ReadFile",
-  "ListDir",
-  "GrepFiles",
-
-  // === Gemini toolset ===
-  // snake_case variants
-  "read_file_gemini",
-  "list_directory",
-  "glob_gemini",
-  "search_file_content",
-  "read_many_files",
-  // PascalCase variants
-  "ReadFileGemini",
-  "ListDirectory",
-  "GlobGemini",
-  "SearchFileContent",
-  "ReadManyFiles",
-
-  // === Cross-toolset tools ===
   // Search/fetch tools (external APIs or read-only queries)
   "conversation_search",
   "web_search",
   "fetch_webpage",
-  // Background task output (read-only check)
-  "TaskOutput",
   // Task spawns independent subagents
   "Task",
   "Agent",
@@ -95,17 +63,7 @@ function isParallelSafe(toolName: string, toolContextId?: string): boolean {
  * Tools that modify a single file and use `file_path` as their resource identifier.
  * These can run in parallel when targeting different files.
  */
-const FILE_PATH_TOOLS = new Set([
-  // Anthropic toolset
-  "Edit",
-  "Write",
-  "MultiEdit",
-  // Gemini toolset
-  "replace",
-  "write_file_gemini",
-  "Replace",
-  "WriteFileGemini",
-]);
+const FILE_PATH_TOOLS = new Set(["Edit", "Write"]);
 
 /**
  * Tools that use a global lock (can touch multiple resources or have arbitrary side effects).
@@ -114,19 +72,9 @@ const FILE_PATH_TOOLS = new Set([
 const GLOBAL_LOCK_TOOLS = new Set([
   // Shell tools (arbitrary side effects)
   "Bash",
-  "KillBash",
-  "run_shell_command",
-  "RunShellCommand",
-  // Memory tool (file + git side effects)
-  "memory",
-  "shell_command",
   "exec_command",
   "write_stdin",
-  "shell",
-  "ShellCommand",
-  "Shell",
-  // Patch tools (can touch multiple files in a single operation)
-  "apply_patch",
+  // Patch tool (can touch several files in one call)
   "ApplyPatch",
 ]);
 

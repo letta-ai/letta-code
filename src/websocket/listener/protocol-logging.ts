@@ -163,6 +163,7 @@ export function summarizeV2Command(parsed: unknown): string {
       "replace_all",
       "expected_replacements",
       "recover_approvals",
+      "resume_interrupted_turn",
       "force_device_status",
     ]) {
       pushField(fields, key, parsed[key]);

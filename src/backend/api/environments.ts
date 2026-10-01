@@ -127,18 +127,23 @@ export async function resolveDesktopEnvironmentConnectionId(
   const response = await list({ limit: 100, onlineOnly: true });
   const matches = response.connections.filter(
     (environment) =>
-      environment.listenerInstanceId?.startsWith("desktop-direct-cloud:") ===
-        true && isEnvironmentOnline(environment),
+      ((environment.deviceId.startsWith("desktop:") &&
+        environment.listenerInstanceId?.startsWith("desktop-primary:") ===
+          true) ||
+        environment.listenerInstanceId?.startsWith("desktop-direct-cloud:") ===
+          true) &&
+      environment.organizationId !== "local" &&
+      isEnvironmentOnline(environment),
   );
 
   if (matches.length === 0) {
     throw new Error(
-      "Desktop Local is unavailable. Open Letta Desktop, enable Remote Access, and wait for its environment to come online.",
+      "Desktop Local is unavailable. Open Letta Desktop and wait for its computer connection to come online.",
     );
   }
   if (matches.length > 1) {
     throw new Error(
-      `Multiple Desktop environments are online. Run \`letta teleport list\` and choose one by name, device ID, or connection ID. Matched: ${matches.map(describeEnvironment).join(", ")}`,
+      `Multiple Desktop computers are online. Run \`letta teleport list\` and choose one by name, device ID, or connection ID. Matched: ${matches.map(describeEnvironment).join(", ")}`,
     );
   }
 
@@ -151,13 +156,14 @@ export async function resolveDesktopEnvironmentConnectionId(
 
 export async function resolveEnvironmentConnectionId(
   selector: string,
+  list: typeof listEnvironments = listEnvironments,
 ): Promise<{ connectionId: string; environment: EnvironmentConnection }> {
   const trimmed = selector.trim();
   if (!trimmed) {
-    throw new Error("Environment selector must not be empty");
+    throw new Error("Computer selector must not be empty");
   }
 
-  const response = await listEnvironments({ limit: 100 });
+  const response = await list({ limit: 100 });
   const matches = response.connections.filter((environment) => {
     return (
       environment.connectionId === trimmed ||
@@ -169,29 +175,38 @@ export async function resolveEnvironmentConnectionId(
 
   if (matches.length === 0) {
     throw new Error(
-      `Environment "${trimmed}" not found. Run \`letta environments list\` to discover available environments.`,
+      `Computer "${trimmed}" not found. Run \`letta computers list\` to discover available computers.`,
     );
   }
 
   const onlineMatches = matches.filter(isEnvironmentOnline);
   if (onlineMatches.length === 0) {
     throw new Error(
-      `Environment "${trimmed}" is offline. Matched: ${matches.map(describeEnvironment).join(", ")}`,
+      `Computer "${trimmed}" is offline. Matched: ${matches.map(describeEnvironment).join(", ")}`,
     );
   }
 
-  if (onlineMatches.length > 1) {
+  if (
+    new Set(onlineMatches.map((environment) => environment.deviceId)).size > 1
+  ) {
     throw new Error(
-      `Environment "${trimmed}" is ambiguous. Matched: ${onlineMatches.map(describeEnvironment).join(", ")}`,
+      `Computer "${trimmed}" is ambiguous. Matched: ${onlineMatches.map(describeEnvironment).join(", ")}`,
     );
   }
 
+  // Multiple listeners for one device are not multiple computers. Match the
+  // picker by preferring the online listener with the most recent activity.
+  onlineMatches.sort(
+    (a, b) =>
+      Math.max(b.lastHeartbeat ?? 0, b.lastSeenAt) -
+      Math.max(a.lastHeartbeat ?? 0, a.lastSeenAt),
+  );
   const environment = onlineMatches[0];
   if (!environment) {
-    throw new Error(`Environment "${trimmed}" is offline`);
+    throw new Error(`Computer "${trimmed}" is offline`);
   }
   if (!environment.connectionId) {
-    throw new Error(`Environment "${trimmed}" has no active connection id`);
+    throw new Error(`Computer "${trimmed}" has no active connection id`);
   }
 
   return { connectionId: environment.connectionId, environment };
@@ -257,6 +272,20 @@ export interface TeleportResponse {
   error: string | null;
   createdAt: number;
   updatedAt: number;
+}
+
+export function getTeleportStatus(
+  agentId: string,
+  conversationId: string,
+  teleportId: string,
+  request: typeof apiRequest = apiRequest,
+): Promise<TeleportResponse> {
+  return request<TeleportResponse>(
+    "GET",
+    `/v1/environments/runtimes/${encodeURIComponent(agentId)}/${encodeURIComponent(conversationId)}/teleports/${encodeURIComponent(teleportId)}`,
+    undefined,
+    { signal: AbortSignal.timeout(5000) },
+  );
 }
 
 /**

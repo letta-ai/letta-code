@@ -1,6 +1,7 @@
 import { isAgentIdCompatibleWithBackend } from "@/agent/agent-id";
 import { getCurrentAgentId } from "@/agent/context";
 import { settingsManager } from "@/settings-manager";
+import { cancelBackgroundMemoryTasks } from "@/tools/impl/memory-task-lifecycle";
 
 // Save current agent + conversation as last session before exiting.
 // This ensures subagent overwrites during the session don't persist,
@@ -22,4 +23,16 @@ export function saveLastSessionBeforeExit(conversationId?: string | null) {
   } catch {
     // Ignore if no agent context set
   }
+}
+
+/**
+ * Everything a controlled interactive exit must do before the process goes:
+ * persist the session, then tear down memory workers, which must not outlive
+ * the session that owns their checkout. Their in-flight work is dropped.
+ */
+export async function prepareSessionExit(
+  conversationId?: string | null,
+): Promise<void> {
+  saveLastSessionBeforeExit(conversationId);
+  await cancelBackgroundMemoryTasks();
 }

@@ -1,6 +1,7 @@
 import { readdir, stat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import picomatch from "picomatch";
+import { getCurrentWorkingDirectory } from "@/runtime-context";
 import LSSchema from "@/tools/schemas/LS.json";
 import { LIMITS } from "./truncation.js";
 import { validateParamTypes, validateRequiredParams } from "./validation.js";
@@ -25,7 +26,10 @@ export async function ls(
     "LS",
   );
   const { path: inputPath, ignore = [] } = args;
-  const dirPath = resolve(inputPath);
+  const userCwd = getCurrentWorkingDirectory();
+  const dirPath = isAbsolute(inputPath)
+    ? inputPath
+    : resolve(userCwd, inputPath);
   try {
     const items = await readdir(dirPath);
     const filteredItems = items.filter(

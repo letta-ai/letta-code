@@ -1,12 +1,22 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   clearSubagentConfigCache,
   getAllSubagentConfigs,
+  getBuiltinSubagentNames,
+  resolveSubagentConfigForMemoryFormat,
 } from "@/agent/subagents";
 import { __testSetBackend, type Backend } from "@/backend";
+import { findRemovedToolNames } from "@/tools/removed-tools";
 
 let tempDir: string | null = null;
 
@@ -63,39 +73,31 @@ describe("built-in subagents", () => {
     const configs = await getAllSubagentConfigs();
 
     expect(configs.reflection?.launchProfile).toBe("memory-subagent");
-    expect(configs["history-analyzer"]?.launchProfile).toBe("memory-subagent");
     expect(configs.memory?.launchProfile).toBe("memory-subagent");
     expect(configs.init?.launchProfile).toBe("memory-subagent");
   });
 
-  test("subagents run in the background by default", async () => {
-    const configs = await getAllSubagentConfigs();
-
-    for (const name of [
-      "fork",
-      "general-purpose",
-      "history-analyzer",
-      "init",
-      "memory",
-      "recall",
-      "reflection",
-    ]) {
-      expect(configs[name]?.background).toBe(true);
-    }
+  test("does not register a built-in history-analyzer", () => {
+    expect(getBuiltinSubagentNames().has("history-analyzer")).toBe(false);
   });
 
-  test("custom subagents can explicitly opt out of the background default", async () => {
+  test.each(["claude-code", "codex"])(
+    "does not allow custom files to override reserved %s adapter",
+    async (name) => {
+      tempDir = createTempProjectDir();
+      writeCustomSubagent(
+        tempDir,
+        `${name}.md`,
+        `---\nname: ${name}\ndescription: Override attempt\n---\nCustom prompt body`,
+      );
+
+      const configs = await getAllSubagentConfigs(tempDir);
+      expect(configs[name]).toBeUndefined();
+    },
+  );
+
+  test("legacy background metadata does not affect subagent config", async () => {
     tempDir = createTempProjectDir();
-    writeCustomSubagent(
-      tempDir,
-      "background-worker.md",
-      `---
-name: background-worker
-description: Custom background worker
-tools: Read
----
-Custom prompt body`,
-    );
     writeCustomSubagent(
       tempDir,
       "foreground-worker.md",
@@ -110,8 +112,7 @@ Custom prompt body`,
 
     const configs = await getAllSubagentConfigs(tempDir);
 
-    expect(configs["background-worker"]?.background).toBe(true);
-    expect(configs["foreground-worker"]?.background).toBe(false);
+    expect(configs["foreground-worker"]).not.toHaveProperty("background");
   });
 
   test("reflection exposes only Edit among first-class file tools", async () => {
@@ -119,10 +120,15 @@ Custom prompt body`,
     const hiddenFileTools = ["Read", "Write", "Glob", "Grep"];
 
     expect(configs.reflection?.allowedTools).toContain("Edit");
-    expect(configs.memory?.allowedTools).not.toContain("Edit");
+    expect(configs.memory?.fork).toBe(false);
+    expect(configs.memory?.allowedTools).toEqual([
+      "Bash",
+      "Read",
+      "Edit",
+      "Write",
+    ]);
     for (const tool of hiddenFileTools) {
       expect(configs.reflection?.allowedTools).not.toContain(tool);
-      expect(configs.memory?.allowedTools).not.toContain(tool);
     }
   });
 
@@ -137,10 +143,74 @@ Custom prompt body`,
     expect(configs.init?.systemPrompt).toContain("Commit (1 bash call)");
     expect(configs.init?.systemPrompt).not.toContain("git push");
     expect(configs.memory?.systemPrompt).toContain(
-      'WORKTREE_DIR="$MEMORY_DIR-worktrees"',
+      "background memory subagent",
     );
     expect(configs.memory?.systemPrompt).not.toContain("git push");
     expect(configs.reflection?.systemPrompt).not.toContain("git push");
+  });
+
+  test("selects v2 writer prompts for unchanged built-ins on either backend", async () => {
+    const configs = await getAllSubagentConfigs();
+
+    for (const name of ["reflection", "init", "memory"]) {
+      const config = configs[name];
+      expect(config).toBeDefined();
+      if (!config) throw new Error(`Missing ${name} config`);
+      const resolved = resolveSubagentConfigForMemoryFormat(
+        config,
+        "memfs-v2",
+        false,
+      );
+      if (name === "memory") {
+        expect(resolved.fork).toBe(false);
+        expect(resolved.systemPrompt).toContain(
+          "specific missing fact or ambiguity",
+        );
+      }
+      expect(resolved.systemPrompt).not.toContain("MemFS v2");
+      expect(resolved.systemPrompt).not.toContain("$MEMORY_DIR/system/");
+      // shared v2 layout markers
+      expect(resolved.systemPrompt).toContain("MEMORY.md");
+      expect(resolved.systemPrompt).toContain("no frontmatter");
+      expect(resolved.systemPrompt).toContain("`name` and `description`");
+
+      const localResolved = resolveSubagentConfigForMemoryFormat(
+        config,
+        "memfs-v2",
+        true,
+      );
+      expect(localResolved.systemPrompt).toBe(resolved.systemPrompt);
+    }
+
+    // per-prompt operational phrases proving copied v1 guidance remains
+    const opsPhrases: Record<string, string[]> = {
+      reflection: ["Phase 1 — Investigate", "Phase 5 — Commit", "`create`"],
+      init: [
+        "### 5. Commit (1 bash call)",
+        "feat(init): initialize memory for project",
+      ],
+      memory: ["## Updating memory", "## Git"],
+    };
+    for (const [name, phrases] of Object.entries(opsPhrases)) {
+      const config = configs[name];
+      if (!config) throw new Error(`Missing ${name} config`);
+      const resolved = resolveSubagentConfigForMemoryFormat(
+        config,
+        "memfs-v2",
+        false,
+      );
+      for (const phrase of phrases) {
+        expect(resolved.systemPrompt).toContain(phrase);
+      }
+    }
+
+    const reflection = configs.reflection;
+    if (!reflection) throw new Error("Missing reflection config");
+    const custom = { ...reflection, systemPrompt: "Custom prompt" };
+    expect(
+      resolveSubagentConfigForMemoryFormat(custom, "memfs-v2", false)
+        .systemPrompt,
+    ).toBe("Custom prompt");
   });
 
   test("keeps API-backed built-in prompts free of local backend wording", async () => {
@@ -156,6 +226,60 @@ Custom prompt body`,
     expect(configs.reflection?.systemPrompt).not.toContain(
       "local backend memory filesystem",
     );
+  });
+
+  test("built-ins never list a removed tool", () => {
+    // Read the shipped files directly: every built-in variant (standard,
+    // local-memfs, memfs-v2) lives here, and discovery would also pull in the
+    // developer's own ~/.letta/agents and project subagents.
+    const builtinDir = join(import.meta.dir, "subagents", "builtin");
+    const files = readdirSync(builtinDir).filter((file) =>
+      file.endsWith(".md"),
+    );
+    expect(files.length).toBeGreaterThan(0);
+    for (const file of files) {
+      const source = readFileSync(join(builtinDir, file), "utf-8");
+      const tools = (source.match(/^tools:(.*)$/m)?.[1] ?? "")
+        .split(",")
+        .map((tool) => tool.trim())
+        .filter(Boolean);
+      expect({ file, removed: findRemovedToolNames(tools) }).toEqual({
+        file,
+        removed: [],
+      });
+    }
+  });
+
+  test("warns when a custom subagent lists a removed tool, and still loads it", async () => {
+    tempDir = createTempProjectDir();
+    writeCustomSubagent(
+      tempDir,
+      "searcher.md",
+      [
+        "---",
+        "name: searcher",
+        "description: Read-only searcher",
+        "tools: Read, LS, MultiEdit",
+        "---",
+        "Search the repo.",
+      ].join("\n"),
+    );
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      const configs = await getAllSubagentConfigs(tempDir);
+
+      expect(configs.searcher?.allowedTools).toEqual([
+        "Read",
+        "LS",
+        "MultiEdit",
+      ]);
+      expect(warn.mock.calls.map((call) => String(call[0]))).toContain(
+        "[subagent] Warning: searcher: these tools no longer exist and will be ignored: MultiEdit",
+      );
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   test("custom CRLF reflection override replaces built-in reflection", async () => {
@@ -196,7 +320,6 @@ Custom prompt body`,
     expect(config?.allowedTools).toEqual(builtIn?.allowedTools);
     expect(config?.skills).toEqual(builtIn?.skills);
     expect(config?.fork).toBe(builtIn?.fork);
-    expect(config?.background).toBe(builtIn?.background);
     expect(config?.launchProfile).toBe(builtIn?.launchProfile);
     expect(config?.recommendedModel).toBe("auto");
     expect(config?.recommendedModelSource).toBe("user");
@@ -212,14 +335,12 @@ name: reflection
 description: Focused reflection
 tools: Read
 model: auto
-background: false
 ---`,
     );
 
     const config = (await getAllSubagentConfigs(tempDir)).reflection;
     expect(config?.description).toBe("Focused reflection");
     expect(config?.allowedTools).toEqual(["Read"]);
-    expect(config?.background).toBe(false);
     expect(config?.launchProfile).toBe("memory-subagent");
   });
 

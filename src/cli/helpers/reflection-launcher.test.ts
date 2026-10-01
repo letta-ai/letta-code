@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from "bun:test";
+import { describe, expect, mock, spyOn, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import {
   existsSync,
@@ -9,11 +9,17 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as memoryWorktree from "@/agent/memory-worktree";
+import { launchReflectionArena } from "@/cli/helpers/reflection-arena-launcher";
 import {
+  clearAutomaticReflectionSuppression,
   getReflectionLaunchSkippedMessage,
+  isAutomaticReflectionSuppressed,
   launchReflectionSubagent,
   type ReflectionLaunchOptions,
+  recordReflectionConfigurationFailure,
   shouldRunQueuedReflectionLaunch,
+  shouldSuppressReflectionLaunch,
 } from "@/cli/helpers/reflection-launcher";
 import {
   REFLECTION_STATE_SCHEMA_VERSION,
@@ -100,13 +106,82 @@ describe("shouldRunQueuedReflectionLaunch", () => {
   });
 });
 
-describe("launchReflectionSubagent", () => {
+describe("reflection launchers", () => {
+  test.each([
+    ["win32", "step-count", undefined, true],
+    ["win32", "compaction-event", undefined, true],
+    ["win32", "step-count", "0", true],
+    ["win32", "step-count", "true", true],
+    ["win32", "step-count", "1", false],
+    ["win32", "compaction-event", "1", false],
+    ["win32", "manual", undefined, false],
+    ["linux", "step-count", undefined, false],
+    ["linux", "compaction-event", "0", false],
+    ["darwin", "step-count", undefined, false],
+    ["darwin", "compaction-event", "0", false],
+  ] as const)(
+    "%s %s with Windows opt-in %s: skipped=%s",
+    async (platform, triggerSource, optIn, skipped) => {
+      const originalPlatform = Object.getOwnPropertyDescriptor(
+        process,
+        "platform",
+      );
+      const originalOptIn = process.env.LETTA_ENABLE_WINDOWS_AUTO_REFLECTION;
+      // Stop allowed launches at the next gate without API or filesystem work.
+      const isCutover = mock(async () => true);
+      const isParentDirty = spyOn(
+        memoryWorktree,
+        "reflectionMemoryParentHasChanges",
+      ).mockResolvedValue(true);
+      try {
+        Object.defineProperty(process, "platform", { value: platform });
+        if (optIn === undefined) {
+          delete process.env.LETTA_ENABLE_WINDOWS_AUTO_REFLECTION;
+        } else {
+          process.env.LETTA_ENABLE_WINDOWS_AUTO_REFLECTION = optIn;
+        }
+        const result = await launchReflectionSubagent(
+          queuedLaunchOptions({ triggerSource }),
+          { isCutover },
+        );
+        expect(result).toEqual({
+          launched: false,
+          reason: skipped ? "windows_disabled" : "cutover",
+        });
+        expect(isCutover).toHaveBeenCalledTimes(skipped ? 0 : 1);
+        const arenaResult = await launchReflectionArena({
+          agentId: "agent-arena-platform-test",
+          conversationId: "conv-arena-platform-test",
+          triggerSource,
+          models: ["model-a", "model-b"],
+          onReady: () => {},
+        });
+        expect(arenaResult).toEqual({
+          launched: false,
+          reason: skipped ? "windows_disabled" : "parent_dirty",
+        });
+        expect(isParentDirty).toHaveBeenCalledTimes(skipped ? 0 : 1);
+      } finally {
+        isParentDirty.mockRestore();
+        if (originalPlatform) {
+          Object.defineProperty(process, "platform", originalPlatform);
+        }
+        if (originalOptIn === undefined) {
+          delete process.env.LETTA_ENABLE_WINDOWS_AUTO_REFLECTION;
+        } else {
+          process.env.LETTA_ENABLE_WINDOWS_AUTO_REFLECTION = originalOptIn;
+        }
+      }
+    },
+  );
+
   test("skips client-side reflection after server cutover", async () => {
     const isCutover = mock(async () => true);
 
-    const result = await launchReflectionSubagent(queuedLaunchOptions(), {
-      isCutover,
-    });
+    const result = await launchReflectionSubagent(
+      queuedLaunchOptions({ triggerSource: "manual" }),
+      { isCutover },
+    );
 
     expect(result).toEqual({ launched: false, reason: "cutover" });
     expect(isCutover).toHaveBeenCalledWith("agent-1");
@@ -130,7 +205,7 @@ describe("launchReflectionSubagent", () => {
       writeFileSync(join(memoryDir, "dirty.md"), "dirty\n", "utf-8");
 
       const result = await launchReflectionSubagent(
-        queuedLaunchOptions({ agentId }),
+        queuedLaunchOptions({ agentId, triggerSource: "manual" }),
         { isCutover: async () => false },
       );
 
@@ -154,6 +229,43 @@ describe("launchReflectionSubagent", () => {
   });
 });
 
+describe("reflection configuration failure suppression", () => {
+  test("suppresses automatic launches but allows manual retries", () => {
+    const agentId = "agent-invalid-reflection-model";
+    clearAutomaticReflectionSuppression(agentId);
+    expect(
+      recordReflectionConfigurationFailure({
+        agentId,
+        model: "openai-proxy/deepseek-v4-flash",
+        error:
+          '400 {"error":"Model handle not found: openai-proxy/deepseek-v4-flash"}',
+      }),
+    ).toBe(true);
+
+    expect(isAutomaticReflectionSuppressed(agentId)).toBe(true);
+    expect(shouldSuppressReflectionLaunch(agentId, "step-count")).toBe(true);
+    expect(shouldSuppressReflectionLaunch(agentId, "compaction-event")).toBe(
+      true,
+    );
+    expect(shouldSuppressReflectionLaunch(agentId, "manual")).toBe(false);
+    clearAutomaticReflectionSuppression(agentId);
+  });
+
+  test("does not suppress automatic reflection for retryable failures", () => {
+    const agentId = "agent-retryable-reflection-failure";
+    clearAutomaticReflectionSuppression(agentId);
+
+    expect(
+      recordReflectionConfigurationFailure({
+        agentId,
+        model: "letta/auto-memory",
+        error: "Connection error.",
+      }),
+    ).toBe(false);
+    expect(isAutomaticReflectionSuppressed(agentId)).toBe(false);
+  });
+});
+
 describe("getReflectionLaunchSkippedMessage", () => {
   test("formats parent-dirty and listener-specific skipped reasons", () => {
     expect(getReflectionLaunchSkippedMessage("cutover")).toContain(
@@ -161,6 +273,9 @@ describe("getReflectionLaunchSkippedMessage", () => {
     );
     expect(getReflectionLaunchSkippedMessage("parent_dirty")).toContain(
       "uncommitted changes",
+    );
+    expect(getReflectionLaunchSkippedMessage("configuration_error")).toContain(
+      "Automatic reflection is paused",
     );
     expect(getReflectionLaunchSkippedMessage("no_payload", "listener")).toBe(
       "No new transcript content to reflect on for this conversation.",
