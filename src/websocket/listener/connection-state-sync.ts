@@ -64,10 +64,14 @@ export async function completeInitialConnectionStartup(
   listener: ListenerRuntime,
   connection: ListenerConnectionState,
   transport: ListenerTransport,
-  options: Pick<StartListenerOptions, "connectionId" | "onConnected">,
+  options: Pick<
+    StartListenerOptions,
+    "connectionId" | "onConnected" | "onConnectionReady"
+  >,
   startupOptions: {
     emitInitialState?: boolean;
     updateReconnectState?: boolean;
+    refreshGitContext?: typeof refreshDeviceGitContext;
   },
 ): Promise<boolean> {
   const isCurrent = (): boolean =>
@@ -80,6 +84,7 @@ export async function completeInitialConnectionStartup(
   if (
     !(await emitInitialConnectionState(listener, connection, transport, {
       emitInitialState: startupOptions.emitInitialState,
+      refreshGitContext: startupOptions.refreshGitContext,
     }))
   ) {
     return false;
@@ -98,7 +103,9 @@ export async function completeInitialConnectionStartup(
     listener.everConnected = true;
   }
   markListenerConnectionInitialized(listener, options.connectionId, connection);
-  return true;
+  if (!isCurrent() || !connection.initialized) return false;
+  await options.onConnectionReady?.(options.connectionId);
+  return isCurrent() && connection.initialized;
 }
 
 export async function replaySubscribedConnectionState(

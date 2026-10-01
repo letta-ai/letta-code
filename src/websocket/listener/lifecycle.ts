@@ -86,6 +86,7 @@ import {
   prepareSplitStreamTransport,
   shouldHandleControlSocketClose,
 } from "./split-stream-lifecycle";
+import { StartupFrameBuffer } from "./startup-frame-buffer";
 import { notifyStreamObserversRuntimeStopped } from "./stream-observers";
 import { replaySyncStateForRuntime } from "./sync-replay";
 import {
@@ -325,7 +326,11 @@ export async function startConnectedListenerRuntime(
   transport: ListenerTransport,
   opts: Pick<
     StartListenerOptions,
-    "connectionId" | "onConnected" | "onStatusChange" | "onWsEvent"
+    | "connectionId"
+    | "onConnected"
+    | "onConnectionReady"
+    | "onStatusChange"
+    | "onWsEvent"
   >,
   processQueuedTurn: ProcessQueuedTurn,
   options: {
@@ -620,7 +625,8 @@ export interface StartLocalChannelListenerOptions {
   connectionId: string;
   deviceId: string;
   connectionName: string;
-  onConnected: (connectionId: string) => void;
+  onConnected: (connectionId: string) => void | Promise<void>;
+  onConnectionReady?: (connectionId: string) => void | Promise<void>;
   onError: (error: Error) => void;
   onStatusChange?: StartListenerOptions["onStatusChange"];
   onLog?: StartListenerOptions["onLog"];
@@ -785,7 +791,11 @@ async function connectWithRetry(
     trackListenerError,
   });
   let connectionStartupReady = false;
-  const pendingStartupFrames: WebSocket.RawData[] = [];
+  const pendingStartupFrames = StartupFrameBuffer.forSockets(
+    socket,
+    () => streamSocket,
+    trackListenerError,
+  );
   if (streamSocket) {
     attachSplitStreamSocketHandlers({
       runtime,
@@ -793,7 +803,6 @@ async function connectWithRetry(
       trackListenerError,
     });
   }
-
   socket.on("open", () => {
     void (async () => {
       const streamOpen = pairIdentity
@@ -846,7 +855,7 @@ async function connectWithRetry(
       );
       if (!isCurrentInitializedListenerConnection(runtime, connection)) return;
       connectionStartupReady = true;
-      for (const frame of pendingStartupFrames.splice(0)) {
+      for (const frame of pendingStartupFrames.drain()) {
         await handleMessage(frame);
       }
     })().catch((error) => {
@@ -861,11 +870,7 @@ async function connectWithRetry(
   });
 
   socket.on("message", (data: WebSocket.RawData) => {
-    if (!connectionStartupReady) {
-      pendingStartupFrames.push(data);
-      return;
-    }
-    void handleMessage(data);
+    pendingStartupFrames.handle(data, connectionStartupReady, handleMessage);
   });
 
   socket.on("close", (code: number, reason: Buffer) => {

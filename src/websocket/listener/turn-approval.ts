@@ -27,7 +27,7 @@ import {
   buildApprovalSuggestionPayload,
   classifyApprovalsWithSuggestions,
 } from "./approval-suggestions";
-import { TO_SUBSCRIBERS } from "./connection";
+import { getSubscribedListenerConnections, TO_SUBSCRIBERS } from "./connection";
 import { appendQueuedTurnToInput } from "./continuation-input";
 import {
   readInterruptedTurn,
@@ -72,7 +72,7 @@ import type { ConversationRuntime, PendingTeleport } from "./types";
 type ApprovalTransportOpenResult = "open" | "interrupted";
 
 type WaitForApprovalTransportOpen = (
-  socket: ListenerTransport,
+  isDeliveryReady: () => boolean,
   shouldInterrupt: () => boolean,
 ) => Promise<ApprovalTransportOpenResult>;
 
@@ -129,10 +129,10 @@ export type ApprovalBranchResult =
 const APPROVAL_TRANSPORT_REOPEN_POLL_MS = 50;
 
 async function waitForApprovalTransportOpen(
-  socket: ListenerTransport,
+  isDeliveryReady: () => boolean,
   shouldInterrupt: () => boolean,
 ): Promise<ApprovalTransportOpenResult> {
-  if (isListenerTransportOpen(socket)) {
+  if (isDeliveryReady()) {
     return "open";
   }
 
@@ -141,7 +141,7 @@ async function waitForApprovalTransportOpen(
       setTimeout(resolve, APPROVAL_TRANSPORT_REOPEN_POLL_MS),
     );
 
-    if (isListenerTransportOpen(socket)) {
+    if (isDeliveryReady()) {
       return "open";
     }
   }
@@ -171,6 +171,8 @@ export async function handleApprovalStop(params: {
   turnCorrelation?: TurnCorrelation;
   /** This turn's output is owned by an in-process caller, not a relay client. */
   processOwnedTurn?: boolean;
+  /** Relay connection that originated this turn; replacements retain this id. */
+  originConnectionId?: string;
   buildSendOptions: () => Parameters<
     typeof sendApprovalContinuationWithRetry
   >[2];
@@ -198,6 +200,7 @@ export async function handleApprovalStop(params: {
     turnLease,
     turnCorrelation,
     processOwnedTurn = false,
+    originConnectionId,
     buildSendOptions,
     dependencies,
   } = params;
@@ -272,6 +275,19 @@ export async function handleApprovalStop(params: {
 
   const shouldInterrupt = () =>
     abortSignal.aborted || !runtime.turnLifecycle.isCurrent(turnLease);
+  const isDeliveryReady = (): boolean => {
+    const listener = runtime.listener;
+    const scopedSubscribers = getSubscribedListenerConnections(listener, {
+      agent_id: agentId,
+      conversation_id: conversationId,
+    });
+    if (originConnectionId) {
+      return scopedSubscribers.some(
+        (connection) => connection.id === originConnectionId,
+      );
+    }
+    return scopedSubscribers.length > 0 || isListenerTransportOpen(socket);
+  };
 
   const interruptTermination = (
     interruptedTurnInput: TurnInputState = turnInput,
@@ -450,13 +466,9 @@ export async function handleApprovalStop(params: {
   // A process-owned turn's results are consumed in-process, so there is no
   // client whose reconnect is worth waiting for. Relay-originated turns still
   // wait through transient disconnects so their output is not lost (#3522).
-  if (
-    approvedDecisions.length > 0 &&
-    !processOwnedTurn &&
-    !isListenerTransportOpen(socket)
-  ) {
+  if (approvedDecisions.length > 0 && !processOwnedTurn && !isDeliveryReady()) {
     const transportOpenResult = await waitForTransportOpen(
-      socket,
+      isDeliveryReady,
       shouldInterrupt,
     );
     if (transportOpenResult === "interrupted") {
@@ -566,12 +578,8 @@ export async function handleApprovalStop(params: {
     // an interrupt is in flight (the interrupt path emits finished events
     // from the interrupted-results cache).
     emitToolExecutionOutput.flush();
-    if (
-      !shouldInterrupt() &&
-      !processOwnedTurn &&
-      !isListenerTransportOpen(socket)
-    ) {
-      await waitForTransportOpen(socket, shouldInterrupt);
+    if (!shouldInterrupt() && !processOwnedTurn && !isDeliveryReady()) {
+      await waitForTransportOpen(isDeliveryReady, shouldInterrupt);
     }
     if (!shouldInterrupt()) {
       emitToolExecutionAbortedEvents(socket, runtime, {
@@ -591,9 +599,9 @@ export async function handleApprovalStop(params: {
   // A relay can disconnect after client-side execution begins. Do not drop the
   // terminal tool frames into the startup barrier of its replacement: wait
   // until that connection has completed state sync and becomes routable.
-  if (!processOwnedTurn && !isListenerTransportOpen(socket)) {
+  if (!processOwnedTurn && !isDeliveryReady()) {
     const transportOpenResult = await waitForTransportOpen(
-      socket,
+      isDeliveryReady,
       shouldInterrupt,
     );
     if (transportOpenResult === "interrupted") {

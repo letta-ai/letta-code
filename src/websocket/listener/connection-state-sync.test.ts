@@ -1,10 +1,11 @@
-import { expect, test } from "bun:test";
+import { expect, mock, test } from "bun:test";
 import {
   closeListenerConnection,
   markListenerConnectionInitialized,
   openListenerConnection,
 } from "./connection";
 import {
+  completeInitialConnectionStartup,
   emitInitialConnectionState,
   replaySubscribedConnectionState,
 } from "./connection-state-sync";
@@ -15,7 +16,7 @@ import {
   stopRuntime,
 } from "./lifecycle";
 import { setActiveRuntime } from "./runtime";
-import type { LocalTransport } from "./transport";
+import type { ListenerTransport, LocalTransport } from "./transport";
 import type { StartListenerOptions } from "./types";
 
 class MockTransport implements LocalTransport {
@@ -71,6 +72,113 @@ test("an adopted connection starts recorded recovery even when process services 
     );
     await new Promise((resolve) => setImmediate(resolve));
     expect(recovered).toBe(true);
+  } finally {
+    stopRuntime(runtime, true);
+    setActiveRuntime(null);
+  }
+});
+
+test("remote lifecycle readiness stays blocked until initial state sync completes", async () => {
+  const runtime = createRuntime();
+  getOrCreateScopedRuntime(runtime, "agent-remote", "conversation-remote");
+  const sent: string[] = [];
+  const transport = {
+    readyState: 1,
+    bufferedAmount: 0,
+    send: (data: string) => sent.push(data),
+    removeAllListeners: () => {},
+    close: () => {},
+  } as unknown as ListenerTransport;
+  const onConnected = mock(() => {});
+  const onConnectionReady = mock(() => {});
+  const options: StartListenerOptions = {
+    connectionId: "remote-sync",
+    wsUrl: "ws://test",
+    deviceId: "device-remote",
+    connectionName: "remote",
+    onConnected,
+    onConnectionReady,
+    onDisconnected: () => {},
+    onError: () => {},
+  };
+  const connection = openListenerConnection({
+    runtime,
+    connectionId: options.connectionId,
+    writer: transport,
+    options,
+  });
+  let releaseSync!: () => void;
+  const syncBlocked = new Promise<void>((resolve) => {
+    releaseSync = resolve;
+  });
+  setActiveRuntime(runtime);
+
+  try {
+    const startup = completeInitialConnectionStartup(
+      runtime,
+      connection,
+      transport,
+      options,
+      { refreshGitContext: async () => syncBlocked },
+    );
+    await Promise.resolve();
+    expect(onConnected).toHaveBeenCalledTimes(1);
+    expect(onConnectionReady).not.toHaveBeenCalled();
+    expect(connection.initialized).toBe(false);
+
+    releaseSync();
+    expect(await startup).toBe(true);
+    expect(connection.initialized).toBe(true);
+    expect(onConnectionReady).toHaveBeenCalledTimes(1);
+    expect(sent.length).toBeGreaterThan(0);
+  } finally {
+    releaseSync();
+    stopRuntime(runtime, true);
+    setActiveRuntime(null);
+  }
+});
+
+test("local-channel lifecycle readiness is not emitted when initial state sync fails", async () => {
+  const runtime = createRuntime();
+  getOrCreateScopedRuntime(runtime, "agent-local", "conversation-local");
+  const transport = new MockTransport();
+  const onConnected = mock(() => {});
+  const onConnectionReady = mock(() => {});
+  const options: StartListenerOptions = {
+    connectionId: "local-sync",
+    wsUrl: "local://test",
+    deviceId: "device-local",
+    connectionName: "local",
+    onConnected,
+    onConnectionReady,
+    onDisconnected: () => {},
+    onError: () => {},
+  };
+  const connection = openListenerConnection({
+    runtime,
+    connectionId: options.connectionId,
+    writer: transport,
+    options,
+  });
+  setActiveRuntime(runtime);
+
+  try {
+    await expect(
+      completeInitialConnectionStartup(
+        runtime,
+        connection,
+        transport,
+        options,
+        {
+          refreshGitContext: async () => {
+            throw new Error("sync failed");
+          },
+        },
+      ),
+    ).rejects.toThrow("sync failed");
+    expect(onConnected).toHaveBeenCalledTimes(1);
+    expect(onConnectionReady).not.toHaveBeenCalled();
+    expect(connection.initialized).toBe(false);
   } finally {
     stopRuntime(runtime, true);
     setActiveRuntime(null);

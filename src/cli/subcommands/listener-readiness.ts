@@ -18,14 +18,12 @@ export interface ListenerReadinessController {
 export async function completeListenerConnectionStartup(
   connectionId: string,
   readiness: ListenerReadinessController,
-  startGateway: () => Promise<void>,
 ): Promise<boolean> {
   const { getActiveRuntime } = await import("@/websocket/listener/runtime");
   const runtime = getActiveRuntime();
   const connection = runtime?.connections.get(connectionId);
   const epoch = readiness.captureCloudEpoch();
-  if (!runtime || !connection) return false;
-  await startGateway();
+  if (!runtime || !connection?.initialized) return false;
   if (getActiveRuntime()?.connections.get(connectionId) !== connection)
     return false;
   readiness.completeCloudStartup(epoch);

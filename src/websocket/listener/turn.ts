@@ -784,6 +784,7 @@ async function handleIncomingMessageInner(
         turnLease,
         turnCorrelation,
         processOwnedTurn: msg.processOwnedTurn === true,
+        originConnectionId: msg.connectionId,
         buildSendOptions,
       });
       if (approvalResult.kind === "error") {

@@ -14,12 +14,20 @@ import {
   stopListenerClient,
 } from "@/websocket/listen-client";
 import { __listenerAuthTestUtils } from "@/websocket/listener/auth";
-import { subscribeListenerConnection } from "@/websocket/listener/connection";
+import {
+  markListenerConnectionInitialized,
+  openListenerConnection,
+  subscribeListenerConnection,
+} from "@/websocket/listener/connection";
 import { getOrCreateScopedRuntime } from "@/websocket/listener/conversation-runtime";
 import { getOrCreateConversationPermissionModeStateRef } from "@/websocket/listener/permission-mode";
 import { finalizeHandledRecoveryTurn } from "@/websocket/listener/recovery";
 import { getActiveRuntime } from "@/websocket/listener/runtime";
-import { isListenerTransportOpen } from "@/websocket/listener/transport";
+import { MAX_PENDING_STARTUP_FRAMES } from "@/websocket/listener/startup-frame-buffer";
+import {
+  isListenerTransportOpen,
+  LocalListenerTransport,
+} from "@/websocket/listener/transport";
 import { handleApprovalStop } from "@/websocket/listener/turn-approval";
 import { createTurnInputState } from "@/websocket/listener/turn-input-state";
 
@@ -205,6 +213,32 @@ describe("listener approval reconnect timing", () => {
     return socket ? (messagesByConnection.get(socket) ?? []) : [];
   }
 
+  function addSecondInitializedSubscriber(
+    listener: NonNullable<ReturnType<typeof getActiveRuntime>>,
+  ): void {
+    const connectionId = "unrelated-connection";
+    const transport = new LocalListenerTransport();
+    const connection = openListenerConnection({
+      runtime: listener,
+      connectionId,
+      writer: transport,
+      options: {
+        connectionId,
+        wsUrl: "local://unrelated",
+        deviceId: "unrelated-device",
+        connectionName: "unrelated",
+        onConnected: () => {},
+        onDisconnected: () => {},
+        onError: () => {},
+      },
+    });
+    subscribeListenerConnection(listener, connectionId, {
+      agent_id: "agent-1",
+      conversation_id: "conv-1",
+    });
+    markListenerConnectionInitialized(listener, connectionId, connection);
+  }
+
   function countToolStreamDeltas(messageType: string, toolCallId: string) {
     let count = 0;
     for (let index = 0; index < connections.length; index += 1) {
@@ -281,6 +315,56 @@ describe("listener approval reconnect timing", () => {
       })),
     };
   }
+
+  test("blocked startup terminates and discards an overflowing ingress flood", async () => {
+    let reportStartupEntered!: () => void;
+    const startupEntered = new Promise<void>((resolve) => {
+      reportStartupEntered = resolve;
+    });
+    let releaseStartup!: () => void;
+    const startupBlocked = new Promise<void>((resolve) => {
+      releaseStartup = resolve;
+    });
+    let startupCount = 0;
+
+    try {
+      await startClient(async () => {
+        startupCount += 1;
+        if (startupCount === 1) reportStartupEntered();
+        await startupBlocked;
+      });
+      await startupEntered;
+      const controlIndex = lastConnectionIndexForChannel("control");
+      const control = connections[controlIndex];
+      if (!control) throw new Error("control connection missing");
+
+      for (let index = 0; index <= MAX_PENDING_STARTUP_FRAMES; index += 1) {
+        control.send(
+          JSON.stringify({
+            type: "app_server_info",
+            request_id: `flood-${index}`,
+          }),
+        );
+      }
+
+      await waitFor(
+        () => countConnectionsForChannel("control") >= 2,
+        "startup ingress overflow did not terminate and reconnect control",
+      );
+      expect(
+        getActiveRuntime()?.connections.get("connection-id")?.initialized,
+      ).toBe(false);
+      expect(
+        getConnectionMessages(controlIndex).some((message) =>
+          String((message as { request_id?: string }).request_id).startsWith(
+            "flood-",
+          ),
+        ),
+      ).toBe(false);
+    } finally {
+      releaseStartup();
+    }
+  });
 
   test("service restart buffers terminal client-tool frames until the replacement initializes", async () => {
     let connectedCount = 0;
@@ -367,6 +451,7 @@ describe("listener approval reconnect timing", () => {
       pendingNormalizationInterruptedToolCallIds: [],
       turnToolContextId: null,
       turnLease,
+      originConnectionId: "connection-id",
       buildSendOptions: () => ({ streamTokens: true }),
       dependencies: deps as never,
     });
@@ -387,6 +472,8 @@ describe("listener approval reconnect timing", () => {
     );
     await replacementStartup;
     expect(listener.connections.get("connection-id")?.initialized).toBe(false);
+    addSecondInitializedSubscriber(listener);
+    expect(isListenerTransportOpen(capturedTransport)).toBe(true);
 
     let approvalSettled = false;
     void approvalStop.finally(() => {
@@ -506,6 +593,7 @@ describe("listener approval reconnect timing", () => {
       pendingNormalizationInterruptedToolCallIds: [],
       turnToolContextId: null,
       turnLease,
+      originConnectionId: "connection-id",
       buildSendOptions: () => ({ streamTokens: true }),
       dependencies: deps as never,
     });
@@ -520,6 +608,9 @@ describe("listener approval reconnect timing", () => {
       "listener did not reconnect after service restart",
     );
     await replacementStartup;
+    expect(listener.connections.get("connection-id")?.initialized).toBe(false);
+    addSecondInitializedSubscriber(listener);
+    expect(isListenerTransportOpen(capturedTransport)).toBe(true);
 
     let approvalSettled = false;
     void approvalStop.then(
@@ -634,6 +725,7 @@ describe("listener approval reconnect timing", () => {
       pendingNormalizationInterruptedToolCallIds: [],
       turnToolContextId: null,
       turnLease,
+      originConnectionId: "connection-id",
       buildSendOptions: () => ({ streamTokens: true }),
       dependencies: deps as never,
     });
@@ -772,6 +864,7 @@ describe("listener approval reconnect timing", () => {
       pendingNormalizationInterruptedToolCallIds: [],
       turnToolContextId: null,
       turnLease,
+      originConnectionId: "connection-id",
       buildSendOptions: () => ({ streamTokens: true }),
       dependencies: deps as never,
     });

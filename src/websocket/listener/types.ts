@@ -48,6 +48,8 @@ export interface StartListenerOptions {
   connectionName: string;
   skillsDirectory?: string;
   onConnected: (connectionId: string) => void | Promise<void>;
+  /** Called only after initial state and approvals are replayed and the exact connection is routable. */
+  onConnectionReady?: (connectionId: string) => void | Promise<void>;
   onDisconnected: () => void;
   onNeedsReregister?: () => void;
   onError: (error: Error) => void;
