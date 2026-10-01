@@ -40,6 +40,7 @@ type ReasoningCycleDesired = {
   modelId: string;
   providerType?: string | null;
   serviceTier?: string | null;
+  modelSettings?: AgentState["model_settings"] | null;
 };
 
 function supportsDistinctAnthropicXHighEffort(modelHandle: string): boolean {
@@ -286,10 +287,16 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
             llmConfigRef.current?.context_window,
             desired.modelHandle,
           );
-          const preserveOptions =
-            preservedContextWindow !== undefined
-              ? { contextWindowOverride: preservedContextWindow }
-              : undefined;
+          // Tab changes only the reasoning level: re-send every other current
+          // model setting, since the server replaces model_settings whole.
+          const preserveOptions = {
+            ...(preservedContextWindow !== undefined && {
+              contextWindowOverride: preservedContextWindow,
+            }),
+            ...(desired.modelSettings && {
+              currentModelSettings: desired.modelSettings,
+            }),
+          };
           let conversationModelSettings:
             | AgentState["model_settings"]
             | null
@@ -303,6 +310,7 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
               desired.modelHandle,
               {
                 reasoning_effort: desired.effort,
+                enable_reasoner: desired.effort !== "none",
                 ...(desired.providerType
                   ? { provider_type: desired.providerType }
                   : {}),
@@ -321,6 +329,7 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
               desired.modelHandle,
               {
                 reasoning_effort: desired.effort,
+                enable_reasoner: desired.effort !== "none",
                 ...(desired.providerType
                   ? { provider_type: desired.providerType }
                   : {}),
@@ -618,6 +627,7 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
         modelId: next.id,
         providerType,
         serviceTier,
+        modelSettings: modelSettingsForEffort,
       };
       if (reasoningCycleTimerRef.current) {
         clearTimeout(reasoningCycleTimerRef.current);
