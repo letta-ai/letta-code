@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
   filterStructuredOutputRows,
+  settableReasoningLevels,
   structuredOutputSupport,
 } from "@/cli/subcommands/model";
 
@@ -44,6 +45,15 @@ test("the structured-output filter keeps only explicit support", () => {
     supported: [supported],
     unknownCount: 1,
   });
+});
+
+test("a model without advertised reasoning levels accepts standard ones", () => {
+  const unadvertised = settableReasoningLevels([]);
+  expect(unadvertised).toContain("high");
+  expect(unadvertised).not.toContain("bogus");
+  const advertised = settableReasoningLevels(["low", "high"]);
+  expect(advertised).toContain("high");
+  expect(advertised).not.toContain("medium");
 });
 
 // Real CLI subprocesses and disk-backed local backend; no inference or mocks.

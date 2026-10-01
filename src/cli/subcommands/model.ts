@@ -5,7 +5,10 @@ import {
   getCachedAvailableModels,
   getCachedModelReasoningCapabilities,
 } from "@/agent/available-models";
-import { getReasoningTierOptionsFromCapabilities } from "@/agent/model";
+import {
+  getReasoningTierOptionsFromCapabilities,
+  REASONING_EFFORT_ORDER,
+} from "@/agent/model";
 import {
   type CatalogModel,
   models,
@@ -36,7 +39,8 @@ Options:
   --default            Use the agent default instead of the current conversation
   --agent <id>          Agent defaults; ignore the session conversation
   --conversation <id>   One conversation's model override (--conv is an alias)
-  --reasoning <level>   Use a level advertised by model list for this model
+  --reasoning <level>   Use a level advertised by model list for this model,
+                        or any standard level if it advertises none
   --byok               List only BYOK/user-configured models
   --hosted             List only hosted (non-BYOK) models
   --structured-outputs List only models supporting structured outputs
@@ -286,6 +290,13 @@ function reasoningLevels(handle: string, contextWindow?: unknown): string[] {
   ];
 }
 
+/** A model that advertises no levels accepts any standard level; its provider decides. */
+export function settableReasoningLevels(
+  advertised: readonly string[],
+): readonly string[] {
+  return advertised.length > 0 ? advertised : REASONING_EFFORT_ORDER;
+}
+
 async function resolveSelection(model: string, reasoning?: string) {
   await initializeModelCatalog();
   const handle = resolveModel(model);
@@ -305,10 +316,12 @@ async function resolveSelection(model: string, reasoning?: string) {
     };
   }
   if (reasoning !== undefined) {
-    const levels = reasoningLevels(handle, updateArgs.context_window);
+    const levels = settableReasoningLevels(
+      reasoningLevels(handle, updateArgs.context_window),
+    );
     if (!levels.includes(reasoning)) {
       throw new Error(
-        `Unsupported reasoning level '${reasoning}' for ${handle}. Supported: ${levels.join(", ") || "none advertised"}`,
+        `Unsupported reasoning level '${reasoning}' for ${handle}. Supported: ${levels.join(", ")}`,
       );
     }
     // Select the whole reasoning preset (including thinking budgets), not just
