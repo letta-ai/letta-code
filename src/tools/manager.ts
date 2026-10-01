@@ -2276,7 +2276,7 @@ async function executeToolInner(
       }
 
       if (STREAMING_SHELL_TOOLS.has(internalName)) {
-        // Redact only this invocation's secrets.
+        // Include secrets this command referenced, including short ones.
         const command = enhancedArgs.command ?? enhancedArgs.cmd;
         invocationSecrets =
           typeof command === "string" ||

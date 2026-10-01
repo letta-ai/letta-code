@@ -5,7 +5,10 @@
 import stripAnsi from "strip-ansi";
 import { getDesktopAccessToken } from "@/auth/desktop-credentials";
 import { settingsManager } from "@/settings-manager";
-import { loadSecrets } from "@/utils/secrets-store";
+import {
+  loadSecrets,
+  resolveContextSecretsAgentId,
+} from "@/utils/secrets-store";
 
 /**
  * Pattern to match $SECRET_NAME references where SECRET_NAME is uppercase with
@@ -141,14 +144,68 @@ function mergeAmbientSecrets(
 }
 
 /**
- * Capture the ambient credentials visible when a tool or child process starts.
- * Keep this map with the invocation: ambient auth may rotate before its output
- * is returned, saved to a file, or sent in a completion notification.
+ * Short secrets a shell invocation has already referenced, keyed by agent id.
+ * Long vault values are loaded from the store on every capture. Short ones are
+ * not, because an unused low-entropy value would redact ordinary words. Once a
+ * command references one, later tool output (including Read of a file that
+ * command wrote) must scrub it too.
+ */
+const referencedShortSecrets = new Map<string, Record<string, string>>();
+
+/** Forget short secrets remembered after a shell referenced them. */
+export function clearReferencedShortSecrets(agentId?: string | null): void {
+  if (typeof agentId === "string" && agentId.length > 0) {
+    referencedShortSecrets.delete(agentId);
+    return;
+  }
+  referencedShortSecrets.clear();
+}
+
+function rememberReferencedShortSecrets(
+  agentId: string,
+  secrets: Readonly<Record<string, string>>,
+): void {
+  let remembered: Record<string, string> | undefined;
+  for (const [name, value] of Object.entries(secrets)) {
+    if (value.length > 0 && value.length < MIN_AMBIENT_SECRET_LENGTH) {
+      remembered ??= { ...(referencedShortSecrets.get(agentId) ?? {}) };
+      remembered[name] = value;
+    }
+  }
+  if (remembered) {
+    referencedShortSecrets.set(agentId, remembered);
+  }
+}
+
+function longAgentSecrets(agentId: string): Record<string, string> {
+  const selected: Record<string, string> = {};
+  for (const [name, value] of Object.entries(loadSecrets(agentId))) {
+    if (value.length >= MIN_AMBIENT_SECRET_LENGTH) {
+      selected[name] = value;
+    }
+  }
+  return selected;
+}
+
+/**
+ * Capture credentials to scrub from tool output. Includes ambient runtime auth,
+ * every cached agent secret long enough to be unambiguous, and short agent
+ * secrets this process has already referenced in a shell command. Keep the map
+ * with the invocation: ambient auth may rotate before output is returned.
  */
 export function captureSecretRedactions(
   secrets: Readonly<Record<string, string>> = {},
 ): Record<string, string> {
-  return mergeAmbientSecrets(secrets);
+  const agentId = resolveContextSecretsAgentId();
+  if (!agentId) {
+    return mergeAmbientSecrets(secrets);
+  }
+  rememberReferencedShortSecrets(agentId, secrets);
+  return mergeAmbientSecrets({
+    ...longAgentSecrets(agentId),
+    ...(referencedShortSecrets.get(agentId) ?? {}),
+    ...secrets,
+  });
 }
 
 /**

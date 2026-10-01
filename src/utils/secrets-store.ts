@@ -362,6 +362,20 @@ function resolveSecretsAgentId(explicitAgentId?: string): string | null {
 }
 
 /**
+ * Agent id from the active runtime or module context only. Unlike
+ * resolveSecretsAgentId, this does not fall through to LETTA_AGENT_ID or
+ * AGENT_ID, so tool redaction cannot attach another process's secrets.
+ */
+export function resolveContextSecretsAgentId(): string | null {
+  try {
+    const scopedAgentId = getCurrentAgentId().trim();
+    return scopedAgentId || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Initialize the agent-scoped secrets cache. Cloud agents fetch from the
  * server. Local agents read from OS secure storage through Bun.secrets.
  */

@@ -13,6 +13,7 @@ import {
 } from "@/tools/manager";
 import { createTempRuntimeScriptCommand } from "@/tools/runtime-script";
 import {
+  clearReferencedShortSecrets,
   extractSecretEnvFromCommand,
   scrubSecretsFromString,
 } from "@/tools/secret-substitution";
@@ -33,6 +34,7 @@ const seededSecrets = {
 
 afterEach(() => {
   clearSecretsCache(TEST_AGENT_ID);
+  clearReferencedShortSecrets(TEST_AGENT_ID);
 });
 
 const secretEnv = {
