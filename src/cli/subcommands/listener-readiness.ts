@@ -32,6 +32,24 @@ export async function completeListenerConnectionStartup(
   return true;
 }
 
+export function applyGatewayLifecycleReadiness(
+  readiness: ListenerReadinessController,
+  event: { kind: string },
+): void {
+  if (event.kind === "restart_ready") {
+    readiness.setGatewayReady(true);
+    return;
+  }
+  if (
+    event.kind === "exit" ||
+    event.kind === "process_error" ||
+    event.kind === "restart_scheduled" ||
+    event.kind === "restart_exhausted"
+  ) {
+    readiness.setGatewayReady(false);
+  }
+}
+
 /** Compose independently changing Cloud and gateway readiness into one lifecycle. */
 export function createListenerReadinessController(
   requiresGateway: boolean,

@@ -26,6 +26,7 @@ import {
 import { printFirstRunWelcome } from "@/cli/subcommands/listen-first-run-welcome";
 import { printListenUsage } from "@/cli/subcommands/listen-usage";
 import {
+  applyGatewayLifecycleReadiness,
   completeListenerConnectionStartup,
   createListenerReadinessController,
 } from "@/cli/subcommands/listener-readiness";
@@ -559,11 +560,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             if (debugMode) console.log(`[${formatTimestamp()}] ${message}`);
           },
           onLifecycleEvent: (event) => {
-            if (event.kind === "restart_scheduled") {
-              readiness.setGatewayReady(false);
-            } else if (event.kind === "restart_ready") {
-              readiness.setGatewayReady(true);
-            }
+            applyGatewayLifecycleReadiness(readiness, event);
             telemetry.trackChannelGatewayLifecycle({
               lifecycle_event: event.kind,
               restart_attempt: event.restartAttempt,
