@@ -79,6 +79,7 @@ export const OUTBOUND_QUEUE_LIMITS = {
   HIGH_WATERMARK_BUFFERED_BYTES: 512 * 1024,
   KILL_THRESHOLD_BUFFERED_BYTES: 16 * 1024 * 1024,
   DRAIN_POLL_MS: 50,
+  MAX_BACKPRESSURE_MS: 5_000,
 } as const;
 
 type OutboundQueueState = {
@@ -86,6 +87,7 @@ type OutboundQueueState = {
   pollTimer: ReturnType<typeof setTimeout> | null;
   draining: boolean;
   killed: boolean;
+  backpressureStartedAt: number | null;
 };
 
 const queueByTransport = new WeakMap<ListenerTransport, OutboundQueueState>();
@@ -98,6 +100,7 @@ function getQueueState(transport: ListenerTransport): OutboundQueueState {
       pollTimer: null,
       draining: false,
       killed: false,
+      backpressureStartedAt: null,
     };
     queueByTransport.set(transport, state);
   }
@@ -232,9 +235,23 @@ function drainOutboundQueue(
         return;
       }
       if (buffered >= OUTBOUND_QUEUE_LIMITS.HIGH_WATERMARK_BUFFERED_BYTES) {
+        const now = Date.now();
+        state.backpressureStartedAt ??= now;
+        if (
+          now - state.backpressureStartedAt >=
+          OUTBOUND_QUEUE_LIMITS.MAX_BACKPRESSURE_MS
+        ) {
+          terminateStalledTransport(
+            transport,
+            state,
+            "socket buffer stayed above the high watermark",
+          );
+          return;
+        }
         scheduleDrainPoll(transport, state);
         return;
       }
+      state.backpressureStartedAt = null;
 
       const frame = state.frames.shift();
       if (!frame) return;
@@ -284,10 +301,12 @@ function drainOutboundQueue(
         state.frames.length > 0 &&
         bufferedAfter >= OUTBOUND_QUEUE_LIMITS.HIGH_WATERMARK_BUFFERED_BYTES
       ) {
+        state.backpressureStartedAt ??= Date.now();
         scheduleDrainPoll(transport, state);
         return;
       }
     }
+    state.backpressureStartedAt = null;
   } finally {
     state.draining = false;
   }

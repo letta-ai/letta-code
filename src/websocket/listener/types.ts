@@ -268,7 +268,7 @@ export type ConversationRuntime = {
   approvalMessageIdByToolCallId: Map<string, string>;
   pendingInterruptedResults: Array<ApprovalResult> | null;
   pendingInterruptedContext: {
-    agentId: string;
+    agentId: string | null;
     conversationId: string;
     continuationEpoch: number;
   } | null;
@@ -453,7 +453,7 @@ export interface InterruptPopulateInput {
   lastExecutionResults: ApprovalResult[] | null;
   lastExecutingToolCallIds: string[];
   lastNeedsUserInputToolCallIds: string[];
-  agentId: string;
+  agentId: string | null;
   conversationId: string;
 }
 

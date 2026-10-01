@@ -483,7 +483,7 @@ export async function handleAbortMessageInput(
         status: "error",
       }));
     scopedRuntime.pendingInterruptedContext = {
-      agentId: scopedRuntime.agentId || "",
+      agentId: scopedRuntime.agentId,
       conversationId: scopedRuntime.conversationId,
       continuationEpoch: scopedRuntime.continuationEpoch,
     };
@@ -500,7 +500,7 @@ export async function handleAbortMessageInput(
     !scopedRuntime.pendingInterruptedContext
   ) {
     scopedRuntime.pendingInterruptedContext = {
-      agentId: scopedRuntime.agentId || "",
+      agentId: scopedRuntime.agentId,
       conversationId: scopedRuntime.conversationId,
       continuationEpoch: scopedRuntime.continuationEpoch,
     };
@@ -549,7 +549,7 @@ export async function handleAbortMessageInput(
       }),
     );
     scopedRuntime.pendingInterruptedContext = {
-      agentId: scope.agent_id || "",
+      agentId: scope.agent_id,
       conversationId: scope.conversation_id,
       continuationEpoch: scopedRuntime.continuationEpoch,
     };

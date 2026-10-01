@@ -20,6 +20,10 @@ import type { StopReasonType, StreamDelta } from "@/types/protocol_v2";
 import { isDebugEnabled } from "@/utils/debug";
 import { normalizeCloudRetryWireMessage } from "./cloud-retry-message";
 import {
+  findListenerConnectionByTransport,
+  getSubscribedListenerConnections,
+} from "./connection";
+import {
   LISTENER_STREAM_RESUME_POLICY,
   MAX_POST_STOP_APPROVAL_RECOVERY,
 } from "./constants";
@@ -38,6 +42,8 @@ import {
   createListenerModEvents,
   ensureListenerModAdaptersForAgent,
 } from "./mod-adapter";
+import { awaitOrderedOutboundDeliveries } from "./outbound-delivery";
+import { getOutboundQueueStats } from "./outbound-wire";
 import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
 import {
   emitCanonicalMessageDelta,
@@ -499,6 +505,54 @@ async function executeRecoveredApprovalContinuation(params: {
     agent_id: recovered.agentId,
     conversation_id: recovered.conversationId,
   } as const;
+  const originConnection = findListenerConnectionByTransport(
+    runtime.listener,
+    socket,
+  );
+  const originConnectionId = originConnection?.id;
+  const originConnectionCanResume =
+    originConnection?.options.connectionIdCanResume !== false;
+  const shouldInterruptDelivery = () =>
+    recoveryLease.signal.aborted ||
+    !runtime.turnLifecycle.isCurrent(recoveryLease);
+  const getDeliveryOwnerId = (): string | null => {
+    const subscribers = getSubscribedListenerConnections(
+      runtime.listener,
+      scope,
+    ).filter(
+      (connection) =>
+        !getOutboundQueueStats(connection.streamWriter ?? connection.writer)
+          .killed,
+    );
+    const preferred = runtime.activeConnectionId ?? originConnectionId;
+    if (preferred && subscribers.some(({ id }) => id === preferred)) {
+      return preferred;
+    }
+    if (originConnectionCanResume && originConnectionId) return null;
+    return subscribers[0]?.id ?? null;
+  };
+  const awaitRecoveryDeliveries = (
+    deliveries: ReturnType<typeof emitToolExecutionFinishedEvents>,
+  ): Promise<"sent" | "interrupted"> => {
+    if (!originConnection) {
+      return (async () => {
+        for (const delivery of deliveries) {
+          const settlements = await Promise.all(
+            delivery.receipts.map((receipt) => receipt.settlement),
+          );
+          if (settlements.some((settlement) => settlement === "dropped")) {
+            return "interrupted" as const;
+          }
+        }
+        return "sent" as const;
+      })();
+    }
+    return awaitOrderedOutboundDeliveries({
+      deliveries,
+      getOwnerId: getDeliveryOwnerId,
+      shouldInterrupt: shouldInterruptDelivery,
+    });
+  };
   let continuationFinalized = false;
 
   try {
@@ -599,12 +653,17 @@ async function executeRecoveredApprovalContinuation(params: {
       // once; only a replacement owner suppresses emission.
       emitToolExecutionOutput.flush();
       if (runtime.turnLifecycle.isCurrent(recoveryLease)) {
-        emitToolExecutionAbortedEvents(socket, runtime, {
-          toolCallIds: approvedToolCallIds,
-          runId: executionRunId,
-          agentId: recovered.agentId,
-          conversationId: recovered.conversationId,
-        });
+        const abortedDeliveries = emitToolExecutionAbortedEvents(
+          socket,
+          runtime,
+          {
+            toolCallIds: approvedToolCallIds,
+            runId: executionRunId,
+            agentId: recovered.agentId,
+            conversationId: recovered.conversationId,
+          },
+        );
+        await awaitRecoveryDeliveries(abortedDeliveries);
       }
       throw error;
     } finally {
@@ -614,19 +673,37 @@ async function executeRecoveredApprovalContinuation(params: {
       return;
     }
 
-    emitToolExecutionFinishedEvents(socket, runtime, {
-      approvals: approvalResults,
-      runId: executionRunId,
-      agentId: recovered.agentId,
-      conversationId: recovered.conversationId,
-    });
-    emitInterruptToolReturnMessage(
+    const terminalDeliveries = emitToolExecutionFinishedEvents(
       socket,
       runtime,
-      approvalResults,
-      executionRunId,
-      "tool-return",
+      {
+        approvals: approvalResults,
+        runId: executionRunId,
+        agentId: recovered.agentId,
+        conversationId: recovered.conversationId,
+      },
     );
+    terminalDeliveries.push(
+      ...emitInterruptToolReturnMessage(
+        socket,
+        runtime,
+        approvalResults,
+        executionRunId,
+        "tool-return",
+      ),
+    );
+    if ((await awaitRecoveryDeliveries(terminalDeliveries)) === "interrupted") {
+      if (runtime.turnLifecycle.isCurrent(recoveryLease)) {
+        finishListenerTurn(runtime, recoveryLease, {
+          stopReason: recoveryLease.signal.aborted ? "cancelled" : "error",
+          socket,
+          agentId: recovered.agentId,
+          conversationId: recovered.conversationId,
+          turnId,
+        });
+      }
+      return;
+    }
 
     runtime.turnLifecycle.setExecutingToolCallIds(recoveryLease, []);
     setTurnLoopStatus(runtime, recoveryLease, "SENDING_API_REQUEST", scope);

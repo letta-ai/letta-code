@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import WebSocket from "ws";
 import {
   enqueueOutboundFrame,
@@ -131,6 +131,29 @@ describe("outbound wire queue", () => {
     );
     expect(sent).toEqual(["queued"]);
     expect(getOutboundQueueStats(transport).queuedFrames).toBe(0);
+  });
+
+  test("terminates a websocket that stays above the high watermark", async () => {
+    let now = 1_000;
+    const clock = spyOn(Date, "now").mockImplementation(() => now);
+    const { transport, wasTerminated } = makeWsTransport({
+      bufferedAmount: OUTBOUND_QUEUE_LIMITS.HIGH_WATERMARK_BUFFERED_BYTES,
+    });
+    try {
+      const receipt = enqueueOutboundFrame(
+        transport,
+        frame("terminal", "critical"),
+      );
+      now += OUTBOUND_QUEUE_LIMITS.MAX_BACKPRESSURE_MS;
+      await new Promise((resolve) =>
+        setTimeout(resolve, OUTBOUND_QUEUE_LIMITS.DRAIN_POLL_MS + 20),
+      );
+      expect(wasTerminated()).toBe(true);
+      await expect(receipt.settlement).resolves.toBe("dropped");
+      expect(getOutboundQueueStats(transport).killed).toBe(true);
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   test("coalesces status frames latest-wins per key while queued", async () => {

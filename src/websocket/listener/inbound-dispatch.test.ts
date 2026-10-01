@@ -1,4 +1,4 @@
-import { afterEach, expect, mock, test } from "bun:test";
+import { afterEach, expect, mock, spyOn, test } from "bun:test";
 import WebSocket from "ws";
 import type { ApprovalResult } from "@/agent/approval-execution";
 import {
@@ -18,6 +18,12 @@ import {
   createIncomingMessage,
   dispatchInboundMessageWhenReady,
 } from "./inbound-dispatch";
+import {
+  emitInterruptToolReturnMessage,
+  emitToolExecutionFinishedEvents,
+  getInterruptApprovalsForEmission,
+  populateInterruptQueue,
+} from "./interrupts";
 import { createRuntime } from "./lifecycle";
 import { getOutboundQueueStats, OUTBOUND_QUEUE_LIMITS } from "./outbound-wire";
 import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
@@ -72,6 +78,7 @@ async function waitFor(
 
 afterEach(() => {
   setActiveRuntime(null);
+  mock.restore();
 });
 
 test("preserves an explicit null-agent scope on inbound turns", () => {
@@ -186,6 +193,187 @@ test("completes approval terminals in the null-agent default scope", async () =>
       ["client_tool_end", "tool_return_message"].includes(messageType ?? ""),
     );
   expect(terminalTypes).toEqual(["client_tool_end", "tool_return_message"]);
+});
+
+test("interrupt terminals preserve subscribed null-agent/default scope", () => {
+  const listener = createRuntime();
+  setActiveRuntime(listener);
+  const socket = new MockSocket();
+  openListenerConnection({
+    runtime: listener,
+    connectionId: "agent-free-interrupt",
+    writer: socket as never,
+    options: makeOptions("agent-free-interrupt"),
+  });
+  markListenerConnectionInitialized(listener, "agent-free-interrupt");
+  subscribeListenerConnection(listener, "agent-free-interrupt", {
+    agent_id: null,
+    conversation_id: "default",
+  });
+  const runtime = getOrCreateScopedRuntime(listener, null, "default");
+  const approvals = [
+    {
+      type: "tool" as const,
+      tool_call_id: "agent-free-call",
+      status: "error" as const,
+      tool_return: "Interrupted by user",
+    },
+  ];
+  expect(
+    populateInterruptQueue(runtime, {
+      lastExecutionResults: approvals,
+      lastExecutingToolCallIds: ["agent-free-call"],
+      lastNeedsUserInputToolCallIds: [],
+      agentId: null,
+      conversationId: "default",
+    }),
+  ).toBe(true);
+  const approvalsForEmission = getInterruptApprovalsForEmission(runtime, {
+    lastExecutionResults: null,
+    agentId: null,
+    conversationId: "default",
+  });
+  expect(approvalsForEmission).toEqual(approvals);
+  emitToolExecutionFinishedEvents(socket as never, runtime, {
+    approvals: approvalsForEmission ?? [],
+    runId: "run-agent-free-interrupt",
+    agentId: null,
+    conversationId: "default",
+  });
+  emitInterruptToolReturnMessage(
+    socket as never,
+    runtime,
+    approvalsForEmission ?? [],
+    "run-agent-free-interrupt",
+  );
+
+  const terminalTypes = socket.sent
+    .filter((message) => (message as { type?: string }).type === "stream_delta")
+    .map(
+      (message) =>
+        (message as { delta?: { message_type?: string } }).delta?.message_type,
+    )
+    .filter((messageType) =>
+      ["client_tool_end", "tool_return_message"].includes(messageType ?? ""),
+    );
+  expect(terminalTypes).toEqual(["client_tool_end", "tool_return_message"]);
+});
+
+test("replays a timed-out thrown-tool terminal to a later App Server owner", async () => {
+  let now = 1_000;
+  spyOn(Date, "now").mockImplementation(() => now);
+  const listener = createRuntime();
+  setActiveRuntime(listener);
+  const scope = { agent_id: "agent-1", conversation_id: "conversation-1" };
+  const socketA = new MockSocket();
+  const socketB = new MockSocket();
+  socketA.bufferedAmount = OUTBOUND_QUEUE_LIMITS.HIGH_WATERMARK_BUFFERED_BYTES;
+  openListenerConnection({
+    runtime: listener,
+    connectionId: "client-a",
+    writer: socketA as never,
+    options: makeOptions("client-a", false),
+  });
+  markListenerConnectionInitialized(listener, "client-a");
+  subscribeListenerConnection(listener, "client-a", scope);
+
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    scope.agent_id,
+    scope.conversation_id,
+  );
+  runtime.activeConnectionId = "client-a";
+  const turnLease = runtime.turnLifecycle.begin({
+    origin: "message",
+    workingDirectory: process.cwd(),
+    initialStatus: "PROCESSING_API_RESPONSE",
+  });
+  const approval = {
+    toolCallId: "throw-call",
+    toolName: "Read",
+    toolArgs: "{}",
+  };
+  let executionAttempted = false;
+  const thrown = handleApprovalStop({
+    approvals: [approval],
+    runtime,
+    socket: socketA as never,
+    agentId: scope.agent_id,
+    conversationId: scope.conversation_id,
+    turnWorkingDirectory: process.cwd(),
+    turnPermissionModeState: getOrCreateConversationPermissionModeStateRef(
+      listener,
+      scope.agent_id,
+      scope.conversation_id,
+    ),
+    dequeuedBatchId: "batch-throw",
+    runId: "run-throw",
+    msgRunIds: ["run-throw"],
+    turnInput: createTurnInputState([]),
+    pendingNormalizationInterruptedToolCallIds: [],
+    turnToolContextId: null,
+    turnLease,
+    originConnectionId: "client-a",
+    originConnectionCanResume: false,
+    buildSendOptions: () => ({ streamTokens: true }),
+    dependencies: {
+      classifyApprovals: mock(async () => ({
+        autoAllowed: [
+          {
+            approval,
+            permission: { decision: "allow" },
+            context: null,
+            parsedArgs: {},
+          },
+        ],
+        autoDenied: [],
+        needsUserInput: [],
+      })),
+      executeApprovalBatch: mock(async () => {
+        executionAttempted = true;
+        throw new Error("boom");
+      }),
+      ensureSecretsHydrated: mock(async () => {}),
+      sendApprovalContinuation: mock(async () => {
+        throw new Error("unused");
+      }),
+    } as never,
+  });
+  const thrownOutcome = thrown.then(
+    (value) => ({ value }),
+    (error: unknown) => ({ error }),
+  );
+  await waitFor(
+    () =>
+      executionAttempted &&
+      getOutboundQueueStats(socketA as never).queuedFrames >= 2,
+    "thrown-tool terminal was not queued behind backpressure",
+  );
+  now += OUTBOUND_QUEUE_LIMITS.MAX_BACKPRESSURE_MS;
+  await waitFor(
+    () => getOutboundQueueStats(socketA as never).killed,
+    "origin transport did not time out under sustained backpressure",
+  );
+  openListenerConnection({
+    runtime: listener,
+    connectionId: "client-b",
+    writer: socketB as never,
+    options: makeOptions("client-b", false),
+  });
+  markListenerConnectionInitialized(listener, "client-b");
+  subscribeListenerConnection(listener, "client-b", scope);
+
+  const outcome = await thrownOutcome;
+  expect(outcome).toHaveProperty("error");
+  expect(
+    socketB.sent.some(
+      (message) =>
+        (message as { delta?: { message_type?: string } }).delta
+          ?.message_type === "client_tool_end",
+    ),
+  ).toBe(true);
+  cleanupListenerConnection(listener, "client-a");
+  expect(runtime.activeConnectionId).toBe("client-b");
 });
 
 test("direct App Server turn follows a subscribed client after origin disconnect", async () => {

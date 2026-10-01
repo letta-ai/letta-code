@@ -20,7 +20,7 @@ import {
   installProcessEventRouting,
 } from "./process-services";
 import { scheduleQueuePump } from "./queue";
-import { setActiveRuntime } from "./runtime";
+import { hasInterruptedCacheForScope, setActiveRuntime } from "./runtime";
 import type { ListenerTransport } from "./transport";
 import { finishListenerTurn } from "./turn-terminal";
 import type { IncomingMessage, StartListenerOptions } from "./types";
@@ -409,6 +409,14 @@ describe("listener interrupt queue handoff", () => {
         },
         { cancelConversationRun, cancelConversation },
       ),
+    ).toBe(true);
+
+    expect(runtime.pendingInterruptedContext?.agentId).toBeNull();
+    expect(
+      hasInterruptedCacheForScope(listener, {
+        agent_id: null,
+        conversation_id: "conv-null-owner",
+      }),
     ).toBe(true);
 
     expect(

@@ -531,7 +531,7 @@ export function hasInterruptedCacheForScope(
   const context = conversationRuntime.pendingInterruptedContext;
   if (
     context &&
-    context.agentId === (scopedAgentId ?? "") &&
+    context.agentId === scopedAgentId &&
     context.conversationId === scopedConversationId &&
     context.continuationEpoch === conversationRuntime.continuationEpoch
   ) {

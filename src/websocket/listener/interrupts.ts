@@ -465,8 +465,8 @@ export function emitToolExecutionAbortedEvents(
     agentId?: string | null;
     conversationId?: string;
   },
-): void {
-  for (const toolCallId of params.toolCallIds) {
+): OutboundMessageDelivery[] {
+  return params.toolCallIds.map((toolCallId) => {
     const messageId = runtime.approvalMessageIdByToolCallId.get(toolCallId);
     const delta: ClientToolEndMessage = {
       ...createLifecycleMessageBase("client_tool_end", params.runId),
@@ -474,11 +474,11 @@ export function emitToolExecutionAbortedEvents(
       tool_call_id: toolCallId,
       status: "error",
     };
-    emitCanonicalMessageDelta(socket, runtime, delta, {
+    return emitCanonicalMessageDelta(socket, runtime, delta, {
       agent_id: params.agentId,
       conversation_id: params.conversationId,
     });
-  }
+  });
 }
 
 export function createToolExecutionOutputEmitter(
@@ -616,7 +616,7 @@ export function getInterruptApprovalsForEmission(
   runtime: ConversationRuntime,
   params: {
     lastExecutionResults: ApprovalResult[] | null;
-    agentId: string;
+    agentId: string | null;
     conversationId: string;
   },
 ): ApprovalResult[] | null {
@@ -719,7 +719,7 @@ export function populateInterruptQueue(
 
 export function consumeInterruptQueue(
   runtime: ConversationRuntime,
-  agentId: string,
+  agentId: string | null,
   conversationId: string,
 ): {
   approvalMessage: {

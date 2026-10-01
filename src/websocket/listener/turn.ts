@@ -830,7 +830,7 @@ async function handleIncomingMessageInner(
             lastExecutionResults,
             lastExecutingToolCallIds,
             lastNeedsUserInputToolCallIds,
-            agentId: agentId || "",
+            agentId,
             conversationId,
           });
         }
@@ -877,19 +877,19 @@ async function handleIncomingMessageInner(
           lastExecutionResults,
           lastExecutingToolCallIds,
           lastNeedsUserInputToolCallIds,
-          agentId: agentId || "",
+          agentId,
           conversationId,
         });
         const approvalsForEmission = getInterruptApprovalsForEmission(runtime, {
           lastExecutionResults,
-          agentId: agentId || "",
+          agentId,
           conversationId,
         });
         if (approvalsForEmission) {
           emitToolExecutionFinishedEvents(socket, runtime, {
             approvals: approvalsForEmission,
             runId: runtime.activeRunId || msgRunIds[msgRunIds.length - 1],
-            agentId: agentId || "",
+            agentId,
             conversationId,
           });
           emitInterruptToolReturnMessage(
