@@ -113,6 +113,10 @@ describe("MemFS v2 pre-commit hook", () => {
         trailingWhitespace: true,
       },
     });
+    // Keep the intentionally invalid CRLF bytes in the index even with Windows
+    // autocrlf enabled; the hook checks the index, not the working-tree encoding.
+    writeFileSync(join(repo, ".gitattributes"), "MEMORY.md -text\n");
+    execFileSync("git", ["add", ".gitattributes"], { cwd: repo });
     installPreCommitHook(repo, true);
     const invalid = "# Memory\r\ntext \r\nmissing newline";
     // Exercise the installed validator under the distribution's Node runtime.
@@ -121,7 +125,9 @@ describe("MemFS v2 pre-commit hook", () => {
       buildPreCommitHookScript({ execPath: "node", electron: false }),
     );
     writeFileSync(join(repo, "MEMORY.md"), invalid);
-    execFileSync("git", ["add", "MEMORY.md"], { cwd: repo });
+    execFileSync("git", ["-c", "core.autocrlf=true", "add", "MEMORY.md"], {
+      cwd: repo,
+    });
     const valid =
       "# Memory\n\nline  \nhard break\n\n````text\n```\ncode   \n````\n\n    indented code   \n\n> ~~~\n> quoted code   \n> ~~~\n";
     writeFileSync(join(repo, "MEMORY.md"), valid);
