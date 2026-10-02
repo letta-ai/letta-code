@@ -105,6 +105,34 @@ function cloneStreamingChunk(
   return JSON.parse(JSON.stringify(chunk)) as LettaStreamingResponse;
 }
 
+const CANCELLED_STREAM_ITERATION = Symbol("cancelled-stream-iteration");
+
+async function nextUntilRunCancelled<T>(
+  iterator: AsyncIterator<T>,
+  signal: AbortSignal,
+): Promise<IteratorResult<T> | typeof CANCELLED_STREAM_ITERATION> {
+  if (signal.aborted) return CANCELLED_STREAM_ITERATION;
+
+  const next = iterator.next();
+  return await new Promise((resolve, reject) => {
+    const onAbort = () => {
+      signal.removeEventListener("abort", onAbort);
+      resolve(CANCELLED_STREAM_ITERATION);
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    next.then(
+      (result) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(result);
+      },
+      (error) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+}
+
 function localStreamProtocolError(message: string): RunErrorMetadata {
   return {
     message,
@@ -757,6 +785,15 @@ export class HeadlessBackend implements Backend {
     return this.runs.get(runId)?.status === "cancelled";
   }
 
+  private cancelledRunTerminal(runId: string): LettaStreamingResponse {
+    const recorded = this.runChunksByRunId
+      .get(runId)
+      ?.findLast((chunk) => runStopReason(chunk) === "cancelled");
+    return recorded
+      ? cloneStreamingChunk(recorded)
+      : attachRunId(localStopReasonChunk("cancelled"), runId);
+  }
+
   private persistExecutorStream(
     conversationId: string,
     agentId: string,
@@ -774,9 +811,25 @@ export class HeadlessBackend implements Backend {
         let sawStopReason = false;
         let sawApprovalRequest = false;
         let pendingErrorInfo: RunErrorMetadata | undefined;
+        const iterator = stream[Symbol.asyncIterator]();
         try {
-          for await (const rawChunk of stream) {
-            if (backend.isRunCancelled(runId)) return;
+          while (true) {
+            const iteration = await nextUntilRunCancelled(
+              iterator,
+              runController.signal,
+            );
+            if (iteration === CANCELLED_STREAM_ITERATION) {
+              if (backend.isRunCancelled(runId)) {
+                yield backend.cancelledRunTerminal(runId);
+              }
+              return;
+            }
+            if (backend.isRunCancelled(runId)) {
+              yield backend.cancelledRunTerminal(runId);
+              return;
+            }
+            if (iteration.done) break;
+            const rawChunk = iteration.value;
             const chunk = attachRunId(rawChunk, runId);
             if (chunk.message_type === "approval_request_message") {
               sawApprovalRequest = true;
@@ -803,7 +856,10 @@ export class HeadlessBackend implements Backend {
               );
             }
           }
-          if (backend.isRunCancelled(runId)) return;
+          if (backend.isRunCancelled(runId)) {
+            yield backend.cancelledRunTerminal(runId);
+            return;
+          }
           if (!sawStopReason) {
             if (pendingErrorInfo) {
               backend.completeRun(runId, "error", pendingErrorInfo);
@@ -842,9 +898,16 @@ export class HeadlessBackend implements Backend {
             }
           }
         } catch (error) {
+          if (backend.isRunCancelled(runId)) {
+            yield backend.cancelledRunTerminal(runId);
+            return;
+          }
           backend.failRun(runId, error);
           throw error;
         } finally {
+          if (iterator.return) {
+            void iterator.return().catch(() => {});
+          }
           disposeAbortRelay();
         }
       },

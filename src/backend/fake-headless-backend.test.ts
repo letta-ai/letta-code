@@ -29,6 +29,14 @@ async function collect(stream: AsyncIterable<unknown>): Promise<unknown[]> {
   return chunks;
 }
 
+function expectCancelledTerminal(chunks: unknown[]): void {
+  expect(chunks).toHaveLength(1);
+  expect(chunks[0]).toMatchObject({
+    message_type: "stop_reason",
+    stop_reason: "cancelled",
+  });
+}
+
 class RecordingProviderAdapter implements ProviderStreamAdapter {
   input: ProviderTurnInput | undefined;
 
@@ -201,7 +209,7 @@ describe("FakeHeadlessBackend", () => {
     stream.controller.abort(new DOMException("cancelled", "AbortError"));
     executor.continue();
 
-    expect(await collecting).toEqual([]);
+    expectCancelledTerminal(await collecting);
     expect(await backend.retrieveRun("run-fake-headless-1")).toMatchObject({
       status: "cancelled",
       stop_reason: "cancelled",
@@ -231,7 +239,7 @@ describe("FakeHeadlessBackend", () => {
 
     stream.controller.abort(new DOMException("cancelled", "AbortError"));
 
-    expect(await collecting).toEqual([]);
+    expectCancelledTerminal(await collecting);
     expect(await backend.retrieveRun("run-fake-headless-1")).toMatchObject({
       status: "cancelled",
       stop_reason: "cancelled",
@@ -264,7 +272,7 @@ describe("FakeHeadlessBackend", () => {
     stream.controller.abort(new DOMException("cancelled", "AbortError"));
     executor.continue();
 
-    expect(await collecting).toEqual([]);
+    expectCancelledTerminal(await collecting);
     expect(executor.signal?.aborted).toBe(true);
     expect(await backend.retrieveRun("run-fake-headless-1")).toMatchObject({
       status: "cancelled",

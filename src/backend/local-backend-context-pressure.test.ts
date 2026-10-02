@@ -119,7 +119,12 @@ describe("LocalBackend context pressure", () => {
       );
 
       releaseStaleSummary(assistantMessage("stale summary"));
-      expect(await firstCollect).toEqual([]);
+      expect(await firstCollect).toEqual([
+        expect.objectContaining({
+          message_type: "stop_reason",
+          stop_reason: "cancelled",
+        }),
+      ]);
       const messages = await backend.listConversationMessages(conversation.id, {
         agent_id: agent.id,
         order: "asc",
