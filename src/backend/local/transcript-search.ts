@@ -43,8 +43,14 @@ type TranscriptMessageRow = {
 
 type SearchableStoredMessage = {
   message: StoredMessage;
-  text: string;
+  normalizedText: string;
+  tokens: string[];
   score: number;
+  isSearchEcho: boolean;
+};
+
+type LocalTranscriptSearchOptions = {
+  currentConversationId?: string;
 };
 
 function readJsonFile<T>(path: string): T | undefined {
@@ -215,8 +221,57 @@ type ParsedQuery = {
   phrases: string[];
 };
 
+const CJK_RUN =
+  /^[\p{Script_Extensions=Han}\p{Script_Extensions=Hiragana}\p{Script_Extensions=Katakana}]+$/u;
+const CJK_CHARACTER =
+  /[\p{Script_Extensions=Han}\p{Script_Extensions=Hiragana}\p{Script_Extensions=Katakana}]/u;
+
+function tokenize(value: string): string[] {
+  const words =
+    value
+      .normalize("NFKC")
+      .toLowerCase()
+      .match(/[\p{L}\p{N}]+/gu) ?? [];
+  return words.flatMap((word) => {
+    if (CJK_RUN.test(word) || !CJK_CHARACTER.test(word)) return [word];
+    const runs: string[] = [];
+    let run = "";
+    let previousCjk = false;
+    for (const character of word) {
+      const cjk = CJK_RUN.test(character);
+      if (run && cjk !== previousCjk) {
+        runs.push(run);
+        run = "";
+      }
+      run += character;
+      previousCjk = cjk;
+    }
+    if (run) runs.push(run);
+    return runs;
+  });
+}
+
 function normalizeText(value: string): string {
-  return value.toLowerCase().replace(/\s+/g, " ").trim();
+  return tokenize(value).join(" ");
+}
+
+function termFrequency(tokens: readonly string[], term: string): number {
+  if (CJK_RUN.test(term)) {
+    // These scripts commonly omit word separators. Preserve substring recall
+    // within a run without restoring Latin token-suffix matches.
+    return tokens.reduce(
+      (count, token) => count + token.split(term).length - 1,
+      0,
+    );
+  }
+  return tokens.reduce((count, token) => count + Number(token === term), 0);
+}
+
+function matchesPhrase(text: string, phrase: string): boolean {
+  const characters = Array.from(phrase);
+  const left = CJK_RUN.test(characters[0] ?? "") ? "" : " ";
+  const right = CJK_RUN.test(characters.at(-1) ?? "") ? "" : " ";
+  return ` ${text} `.includes(`${left}${phrase}${right}`);
 }
 
 function parseQuery(query: string): ParsedQuery {
@@ -230,8 +285,8 @@ function parseQuery(query: string): ParsedQuery {
     const value = buffer.trim();
     buffer = "";
     if (!value) return;
-    if (inQuote) phrases.push(value);
-    else terms.push(value);
+    if (inQuote) phrases.push(normalizeText(value));
+    else terms.push(...tokenize(value));
   };
 
   for (const char of query.trim()) {
@@ -245,50 +300,73 @@ function parseQuery(query: string): ParsedQuery {
       }
       continue;
     }
-    if (!inQuote && /\s/.test(char)) {
-      flush();
-      continue;
-    }
     buffer += char;
   }
   if (inQuote) sawUnclosedQuote = true;
   flush();
 
   if (sawUnclosedQuote) {
-    return {
-      terms: query
-        .trim()
-        .split(/\s+/)
-        .map((term) => term.trim())
-        .filter(Boolean),
-      phrases: [],
-    };
+    return { terms: [...new Set(tokenize(query))], phrases: [] };
   }
-  return { terms, phrases };
+  return {
+    terms: [...new Set(terms)],
+    phrases: [...new Set(phrases.filter(Boolean))],
+  };
 }
 
-function matchScore(text: string, query: ParsedQuery): number | null {
-  const haystack = normalizeText(text);
-  if (!haystack) return null;
+function rankMatches(
+  records: SearchableStoredMessage[],
+  query: ParsedQuery,
+): SearchableStoredMessage[] {
+  const phraseMatches = records.filter((record) =>
+    query.phrases.every((phrase) =>
+      matchesPhrase(record.normalizedText, phrase),
+    ),
+  );
+  const candidates = phraseMatches.filter(
+    (record) =>
+      query.phrases.length > 0 ||
+      query.terms.some((term) => termFrequency(record.tokens, term) > 0),
+  );
+  if (candidates.length === 0) return [];
 
-  let score = 0;
-  for (const rawPhrase of query.phrases) {
-    const phrase = normalizeText(rawPhrase);
-    if (!phrase) continue;
-    const index = haystack.indexOf(phrase);
-    if (index < 0) return null;
-    score += index * 0.1;
+  const historicalRecords = records.filter((record) => !record.isSearchEcho);
+  const corpus = historicalRecords.length > 0 ? historicalRecords : records;
+  const documentFrequency = new Map<string, number>();
+  for (const term of query.terms) {
+    documentFrequency.set(
+      term,
+      corpus.filter((record) => termFrequency(record.tokens, term) > 0).length,
+    );
   }
+  const averageLength =
+    corpus.reduce((sum, record) => sum + record.tokens.length, 0) /
+    corpus.length;
+  const k1 = 1.2;
+  const b = 0.75;
 
-  for (const rawTerm of query.terms) {
-    const term = normalizeText(rawTerm);
-    if (!term) continue;
-    const index = haystack.indexOf(term);
-    if (index < 0) return null;
-    score += index + Math.max(0, 50 - term.length);
-  }
-
-  return score;
+  return candidates.map((record) => {
+    let score = 0;
+    for (const term of query.terms) {
+      const frequency = termFrequency(record.tokens, term);
+      if (frequency === 0) continue;
+      const frequencyInDocuments = documentFrequency.get(term) ?? 0;
+      const inverseDocumentFrequency = Math.log(
+        1 +
+          (corpus.length - frequencyInDocuments + 0.5) /
+            (frequencyInDocuments + 0.5),
+      );
+      const lengthNormalization =
+        1 - b + b * (record.tokens.length / Math.max(averageLength, 1));
+      score +=
+        inverseDocumentFrequency *
+        ((frequency * (k1 + 1)) / (frequency + k1 * lengthNormalization));
+    }
+    // Quotes remain strict filters and receive a boost so exact phrasing wins
+    // when mixed with optional unquoted terms.
+    score += query.phrases.length * 2;
+    return { ...record, score: score * (record.isSearchEcho ? 0.1 : 1) };
+  });
 }
 
 function dateInRange(
@@ -350,7 +428,6 @@ function projectedTranscriptMessages(input: {
 function collectConversationMessages(input: {
   conversationDir: string;
   conversation: LocalConversationSearchRecord;
-  query: ParsedQuery;
   agentId?: string;
   conversationId?: string;
   startDate?: string;
@@ -370,28 +447,65 @@ function collectConversationMessages(input: {
   const format = transcriptFormat(manifest, rows);
   if (!format) return [];
 
-  return transcriptMessageRows(rows, format)
-    .flatMap((row) =>
-      projectedTranscriptMessages({
-        row,
-        agentId: conversation.agent_id,
-        conversationId: conversation.id,
-      }),
+  const messages = transcriptMessageRows(rows, format).flatMap((row) =>
+    projectedTranscriptMessages({
+      row,
+      agentId: conversation.agent_id,
+      conversationId: conversation.id,
+    }),
+  );
+  const searchToolCallIds = new Set(
+    messages
+      .filter((message) => {
+        const candidate = message as StoredMessage & {
+          message_type?: string;
+          tool_call?: {
+            tool_call_id?: string;
+            name?: string;
+            arguments?: string;
+          };
+        };
+        return (
+          candidate.message_type === "approval_request_message" &&
+          (candidate.tool_call?.name === "Bash" ||
+            candidate.tool_call?.name === "exec_command") &&
+          typeof candidate.tool_call.arguments === "string" &&
+          /\bmessages\s+search\b/i.test(candidate.tool_call.arguments)
+        );
+      })
+      .map((message) => {
+        const candidate = message as StoredMessage & {
+          tool_call?: { tool_call_id?: string };
+        };
+        return candidate.tool_call?.tool_call_id;
+      })
+      .filter((id): id is string => typeof id === "string"),
+  );
+
+  return messages
+    .filter((message) =>
+      dateInRange(message.date, input.startDate, input.endDate),
     )
-    .map((message) => ({
-      message,
-      text: searchableText(message),
-      score: Number.POSITIVE_INFINITY,
-    }))
-    .map((record) => {
-      const score = matchScore(record.text, input.query);
-      return score === null ? null : { ...record, score };
+    .map((message) => {
+      const candidate = message as StoredMessage & {
+        message_type?: string;
+        tool_call?: { tool_call_id?: string };
+        tool_call_id?: string;
+      };
+      const text = searchableText(message);
+      return {
+        message,
+        normalizedText: normalizeText(text),
+        tokens: tokenize(text),
+        score: 0,
+        isSearchEcho:
+          (candidate.message_type === "approval_request_message" &&
+            searchToolCallIds.has(candidate.tool_call?.tool_call_id ?? "")) ||
+          (candidate.message_type === "tool_return_message" &&
+            searchToolCallIds.has(candidate.tool_call_id ?? "")),
+      };
     })
-    .filter((record): record is SearchableStoredMessage => record !== null)
-    .filter((record) => {
-      const message = record.message as StoredMessage & { date?: string };
-      return dateInRange(message.date, input.startDate, input.endDate);
-    });
+    .filter((record) => record.tokens.length > 0);
 }
 
 function conversationDirectories(storageDir: string): string[] {
@@ -409,11 +523,15 @@ function conversationDirectories(storageDir: string): string[] {
 export function searchLocalTranscriptMessages(
   storageDir: string,
   body: LocalTranscriptSearchBody,
+  options: LocalTranscriptSearchOptions = {},
 ): MessageSearchResponse {
+  if (body.search_mode === "vector" || body.search_mode === "hybrid") {
+    throw new Error(
+      `Local backend does not support "${body.search_mode}" message search. Use "fts".`,
+    );
+  }
   const queryText = typeof body.query === "string" ? body.query.trim() : "";
   if (!queryText) return [];
-  // Local mode intentionally treats vector/hybrid as FTS-lite until a local
-  // vector index exists, so `search_mode` does not branch here.
 
   const parsedQuery = parseQuery(queryText);
   if (parsedQuery.terms.length === 0 && parsedQuery.phrases.length === 0) {
@@ -441,7 +559,6 @@ export function searchLocalTranscriptMessages(
       return collectConversationMessages({
         conversationDir,
         conversation,
-        query: parsedQuery,
         agentId,
         conversationId,
         startDate,
@@ -450,12 +567,25 @@ export function searchLocalTranscriptMessages(
     },
   );
 
-  return records
+  // Unscoped recall runs from inside the active conversation, whose newest user
+  // message is commonly the question being recalled. Demote that one message,
+  // plus messages-search command/result pairs, instead of deleting tool results
+  // globally. Explicit conversation targets do not demote their newest user message.
+  if (!conversationId && options.currentConversationId) {
+    const latestCurrentUser = records
+      .filter(
+        (record) =>
+          record.message.conversation_id === options.currentConversationId &&
+          record.message.message_type === "user_message",
+      )
+      .sort((a, b) => b.message.date.localeCompare(a.message.date))[0];
+    if (latestCurrentUser) latestCurrentUser.isSearchEcho = true;
+  }
+
+  return rankMatches(records, parsedQuery)
     .sort((a, b) => {
-      if (a.score !== b.score) return a.score - b.score;
-      const aDate = (a.message as StoredMessage & { date?: string }).date ?? "";
-      const bDate = (b.message as StoredMessage & { date?: string }).date ?? "";
-      return bDate.localeCompare(aDate);
+      if (a.score !== b.score) return b.score - a.score;
+      return b.message.date.localeCompare(a.message.date);
     })
     .slice(0, limit)
     .map((record) => toSearchResult(record.message));
