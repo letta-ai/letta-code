@@ -394,6 +394,28 @@ one = permanently busy.
 
 - **Review signal:** interrupt handling, ESC key, tool execution cleanup paths.
 
+### Secret Scrubbing Must Cover Every Sink, After Hooks and Mods
+
+The tool-output secret scrubber (`scrubSecretsFromString` in the secret
+substitution layer) merges ambient runtime credentials — inherited
+`process.env.LETTA_API_KEY`, the settings-env key, the Desktop access token,
+and its base64 `letta:<token>` git-credential encoding — into the redaction set
+(min length 8, collision suffixes).
+
+- **Scrub must run on every output sink:** streamed stdout/stderr (with
+  chunk-boundary prefix overlap so a secret split across chunks is still
+  caught), final tool returns for ALL tools (not just shell tools), thrown
+  error messages in the manager catch path, background output/files, completion
+  notifications, monitor events, and overflow files.
+- **Scrub again AFTER hook feedback is appended and after `tool_end`/mod
+  overrides replace the result.** A hook or mod that echoes the tool's raw
+  output (or appends feedback) can reintroduce a credential the earlier scrub
+  removed. The final string returned to the model is the one that matters.
+- **Review signal:** any PR touching `src/tools/secret-substitution.ts`
+  (`scrubSecretsFromString`, ambient merge, stream scrubbing) or the tool
+  success/error return path must re-scrub post-hooks and post-mods. Watch for
+  tests that use a real key instead of a sentinel credential.
+
 ### Impossible-State PRs
 
 When a PR addresses a corrupted/impossible state (e.g. `isProcessing=true` but
@@ -476,6 +498,14 @@ exact string match.
 - Verify the exact matched strings still exist and the throw-on-missing guard is
   preserved.
 - After editing vendor files, must run build for changes to take effect.
+- **Keep `ink` pinned as a runtime dependency at the exact version the patches
+  target.** The vendored patches only match a specific Ink minor, and
+  `ink-link@^4.1.0` must stay (not `^5.0.0`): `ink-link@5` peer-requires
+  `ink >=6`, so a clean `npm install -g` resolves an unpatchable Ink 7 and the
+  postinstall patch silently fails to the Bun shebang. A failed patch leaves a
+  Node-shebang CLI with no Bun transpiler cache, and the postinstall swallow
+  (`|| echo letta: vendor patches skipped`) hides it. The Unix package smoke
+  test's `.pile` cache assertion is the guard that catches an unpatched ship.
 
 ---
 
@@ -924,6 +954,20 @@ and create draft parity PRs when warranted.
 - Compact prompt for re-reviews (existing conversation detected).
 - Background agent gets stuck on complex reviews requiring repo setup + extensive
   reading. Do those in the foreground.
+- **A red `review` check is a harness failure, not a source failure.** The
+  `review` check runs `letta-ai/letta-code-action`, which invokes the reviewer
+  agent itself. A red `review` while every source suite is green means the
+  reviewer agent errored (exit 1 within ~30s, output hidden by the action), not
+  that the diff broke anything. Rerun just that job
+  (`gh run rerun <run> --job <job-id>`) instead of digging for a phantom source
+  failure. The same agent-runner failure mode also shows up on other
+  `letta-ai/letta-code-action`-backed checks (e.g. the `sync-tools-to-cloud`
+  helper) and recurs on unrelated PRs.
+- **Verify the `AI_POLICY.md` disclosure before approving.** Every PR must have
+  exactly one authorship checkbox selected (`- [ ] written entirely by a human`
+  XOR `- [ ] written with AI assistance...`) and must name the AI tools used.
+  Both unchecked is an administrative blocker (`AI_POLICY.md`) even when CI is
+  green; flag the missing disclosure rather than the code.
 
 ### Secret Injection Syntax
 
