@@ -59,7 +59,7 @@ letta.events.on("tool_start", (event, ctx) => {
 
 Lifecycle, turn, tool, compaction, and llm events are wired today.
 
-Lifecycle handlers are notification-only and should not return values. `turn_start` handlers can transform or cancel outbound user-message turns. `tool_start` handlers can transform the tool arguments before execution. Compaction and llm handlers are notification-only.
+Lifecycle handlers are notification-only and should not return values. `turn_start` handlers can transform or cancel outbound user-message turns. `turn_end` handlers can return `{ continue: "..." }` to append a follow-up user message. `tool_start` handlers can transform the tool arguments before execution. `tool_end` handlers can replace the tool result. Compaction and llm handlers are notification-only.
 
 `compact_start`/`compact_end` and `llm_start`/`llm_end` only fire on the **local backend**, where compaction and provider requests run client-side. On the Letta Cloud backend that work happens server-side and these events do not fire, so guard with `letta.capabilities.events.compact` / `letta.capabilities.events.llm` for portable mods.
 
@@ -71,6 +71,7 @@ Lifecycle handlers are notification-only and should not return values. `turn_sta
 "tool_start"
 "tool_end"
 "turn_start"
+"turn_end"
 "compact_start"
 "compact_end"
 "llm_start"
@@ -85,7 +86,7 @@ Lifecycle handlers are notification-only and should not return values. `turn_sta
   agentName: string | null;
   conversationId: string | null;
   previousConversationId?: string | null;
-  reason: "startup" | "new" | "resume" | "fork";
+  reason: "startup" | "new" | "resume" | "fork" | "reload";
 }
 ```
 
@@ -97,7 +98,7 @@ Lifecycle handlers are notification-only and should not return values. `turn_sta
   conversationId: string | null;
   durationMs: number | null;
   messageCount: number | null;
-  reason: "quit" | "new" | "resume" | "fork";
+  reason: "quit" | "new" | "resume" | "fork" | "reload";
   toolCallCount: number | null;
 }
 ```
@@ -229,6 +230,29 @@ If multiple handlers cancel, the first valid cancel reason wins. A valid reason 
 Handlers run in registration order. Later handlers see the current input after earlier mutations/returns. If a handler throws, its partial `event.input` mutation is rolled back and the error is recorded as a mod diagnostic.
 
 `turn_start` is intentionally a trusted local mod point: it can rewrite user messages, approval results, and ordering. Keep transforms focused and unsurprising.
+
+`turn_end` event:
+
+```ts
+{
+  agentId: string | null;
+  conversationId: string | null;
+  stopReason: string;
+  assistantMessage?: string;
+}
+```
+
+`turn_end` fires after a turn completes (after the assistant response and all tool calls finish). It is best-effort: handlers that throw are isolated and never block turn completion. Handlers can return `{ continue: "..." }` to append a follow-up user message and start another turn:
+
+```ts
+letta.events.on("turn_end", (event) => {
+  if (event.stopReason === "end_turn") {
+    return { continue: "Check the results and summarize what changed." };
+  }
+});
+```
+
+If multiple handlers return `continue`, the first non-empty string wins. The `continue` result is the only supported return value; otherwise the event is notification-only.
 
 `compact_start` event:
 
