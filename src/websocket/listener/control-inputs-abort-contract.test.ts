@@ -373,4 +373,100 @@ describe("abort_message response contract", () => {
     expect(exactRetry).toHaveBeenCalledWith("conv-1", "run-exact-nopause");
     expect(widened).not.toHaveBeenCalled();
   });
+
+  test("an exact abort before the first run ID binds once the stream names it", async () => {
+    // TaskStop can know the run ID from Cloud before the listener has seen
+    // the first ID-bearing stream chunk for its lease.
+    const listener = createRuntime();
+    setActiveRuntime(listener);
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const lease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+    });
+    const cancelRun = mock(async () => {});
+
+    const pending = abort(
+      listener,
+      { run_id: "run-early", wait_for_settlement: true, pause_queue: false },
+      undefined,
+      cancelRun,
+    );
+    await Bun.sleep(10);
+    expect(runtime.turnLifecycle.kind).toBe("active");
+    runtime.turnLifecycle.setRunId(lease, "run-early");
+    await Bun.sleep(10);
+    expect(runtime.turnLifecycle.kind).toBe("cancelling");
+    finishListenerTurn(runtime, lease, {
+      stopReason: "cancelled",
+      socket: createOpenTransport(),
+      runId: "run-early",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    });
+
+    expect(await pending).toMatchObject({
+      aborted: true,
+      outcome: "interrupted",
+      leaseSettled: true,
+    });
+    expect(cancelRun).toHaveBeenCalledTimes(1);
+  });
+
+  test("an early exact abort for another run never touches the lease", async () => {
+    const listener = createRuntime();
+    setActiveRuntime(listener);
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const lease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+    });
+    const cancelRun = mock(async () => {});
+
+    const pending = abort(
+      listener,
+      { run_id: "run-other", wait_for_settlement: true, pause_queue: false },
+      undefined,
+      cancelRun,
+    );
+    await Bun.sleep(10);
+    runtime.turnLifecycle.setRunId(lease, "run-replacement");
+
+    expect(await pending).toMatchObject({
+      aborted: false,
+      outcome: "not_applicable",
+    });
+    expect(runtime.turnLifecycle.kind).toBe("active");
+    expect(cancelRun).not.toHaveBeenCalled();
+  });
+
+  test("every run of a 33+ run lease stays attested after it settles", async () => {
+    const listener = createRuntime();
+    setActiveRuntime(listener);
+    // An older lease fills history first.
+    const older = startTurn(listener, "run-older");
+    finishListenerTurn(older.runtime, older.lease, {
+      stopReason: "end_turn",
+      socket: createOpenTransport(),
+      runId: "run-older",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    });
+    const { runtime, lease } = startTurn(listener, "run-0");
+    for (let index = 1; index < 40; index += 1)
+      runtime.turnLifecycle.setRunId(lease, `run-${index}`);
+    finishListenerTurn(runtime, lease, {
+      stopReason: "cancelled",
+      socket: createOpenTransport(),
+      runId: "run-39",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    });
+
+    for (const runId of ["run-0", "run-1", "run-39"]) {
+      expect(
+        await abort(listener, { run_id: runId, wait_for_settlement: true }),
+      ).toMatchObject({ outcome: "already_settled", leaseSettled: true });
+    }
+  });
 });

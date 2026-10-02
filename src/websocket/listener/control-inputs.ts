@@ -392,6 +392,24 @@ export function abortMessageResponseFields(
   };
 }
 
+/**
+ * Wait until an unbound lease observes its first run ID or ends, so an exact
+ * abort that raced the first ID-bearing stream chunk can be correlated.
+ */
+async function waitForLeaseBinding(
+  scopedRuntime: ConversationRuntime,
+  leaseId: string,
+  timeoutMs: number,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (
+    scopedRuntime.turnLifecycle.unboundLeaseId === leaseId &&
+    Date.now() < deadline
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
 async function waitForLeaseRelease(
   scopedRuntime: ConversationRuntime,
   leaseId: string,
@@ -515,13 +533,29 @@ export async function abortMessageInput(
     agent_id: params.command.runtime.agent_id,
     conversation_id: params.command.runtime.conversation_id,
   };
-  const hasPendingApprovals =
-    resolvedDeps.getPendingControlRequestCount(listener, scope) > 0;
   const scopedRuntime = resolvedDeps.getOrCreateScopedRuntime(
     listener,
     scope.agent_id,
     scope.conversation_id,
   );
+  // An exact abort can arrive before the lease has seen any run ID. Wait for
+  // the lease to bind (or end) instead of reporting a run it may own as
+  // unknown; a different binding still makes the abort not_applicable.
+  const exactRunIdForBinding = params.command.run_id ?? null;
+  const unboundLeaseId = scopedRuntime.turnLifecycle.unboundLeaseId;
+  if (
+    exactRunIdForBinding &&
+    unboundLeaseId &&
+    scopedRuntime.turnLifecycle.matchRun(exactRunIdForBinding) === null
+  ) {
+    await waitForLeaseBinding(
+      scopedRuntime,
+      unboundLeaseId,
+      resolvedDeps.settlementTimeoutMs,
+    );
+  }
+  const hasPendingApprovals =
+    resolvedDeps.getPendingControlRequestCount(listener, scope) > 0;
   const lifecycleSnapshot = scopedRuntime.turnLifecycle.snapshot();
   const hasActiveTurn = lifecycleSnapshot.kind === "active";
   const pauseQueue = params.command.pause_queue !== false;

@@ -172,12 +172,31 @@ export class TurnLifecycle {
     return this.#settledRunIds.includes(runId) ? "settled" : null;
   }
 
+  /**
+   * The unsettled lease's ID while it has not yet observed any run ID. An
+   * exact abort that arrives before the first ID-bearing stream chunk cannot
+   * tell yet whether this lease owns its run.
+   */
+  get unboundLeaseId(): string | null {
+    const state = this.#state;
+    return (state.kind === "active" || state.kind === "cancelling") &&
+      state.runIds.length === 0
+      ? state.lease.id
+      : null;
+  }
+
   #becomeIdle(state: ActiveTurnState | CancellingTurnState): void {
-    for (const runId of state.runIds) {
-      if (!this.#settledRunIds.includes(runId)) this.#settledRunIds.push(runId);
-    }
-    const overflow = this.#settledRunIds.length - SETTLED_RUN_HISTORY_LIMIT;
-    if (overflow > 0) this.#settledRunIds.splice(0, overflow);
+    // The newest settled lease is always attested in full, even when it owned
+    // more runs than the history limit; older leases fill whatever room is left.
+    const newest = new Set(state.runIds);
+    const older = this.#settledRunIds.filter((runId) => !newest.has(runId));
+    const room = Math.max(0, SETTLED_RUN_HISTORY_LIMIT - newest.size);
+    this.#settledRunIds.splice(
+      0,
+      this.#settledRunIds.length,
+      ...older.slice(older.length - room),
+      ...state.runIds,
+    );
     this.#state = IDLE_STATE;
   }
 
