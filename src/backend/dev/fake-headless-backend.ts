@@ -25,6 +25,8 @@ import {
 import { isLocalStateChunkOnly } from "@/backend/local/local-stream-chunks";
 import type { LocalAgentRecord } from "@/backend/local/local-types";
 import { TURN_DID_NOT_COMPLETE } from "@/constants";
+import { debugWarn } from "@/utils/debug";
+import { LOCAL_IN_PROCESS_STREAM } from "@/utils/stream-transport";
 import { isRecord } from "@/utils/type-guards";
 import {
   DeterministicPongExecutor,
@@ -158,6 +160,7 @@ function createReplayStream(
   const controller = new AbortController();
   return {
     controller,
+    [LOCAL_IN_PROCESS_STREAM]: true,
     async *[Symbol.asyncIterator]() {
       for (const chunk of chunks) {
         yield cloneStreamingChunk(chunk);
@@ -722,13 +725,6 @@ export class HeadlessBackend implements Backend {
   private markRunCancelled(runId: string, reason?: unknown): boolean {
     const run = this.runs.get(runId);
     if (!run || isTerminalRun(run)) return false;
-    if (run.conversation_id) {
-      this.store.settleInterruptedToolCalls(run.conversation_id, {
-        agentId: run.agent_id,
-      });
-    } else {
-      this.store.settleInterruptedToolCalls(run.agent_id);
-    }
     const controller = this.runControllerByRunId.get(runId);
     this.recordRunChunk(runId, {
       message_type: "stop_reason",
@@ -737,6 +733,22 @@ export class HeadlessBackend implements Backend {
     this.completeRun(runId, "cancelled");
     if (controller && !controller.signal.aborted) {
       controller.abort(reason);
+    }
+    try {
+      if (run.conversation_id) {
+        this.store.settleInterruptedToolCalls(run.conversation_id, {
+          agentId: run.agent_id,
+        });
+      } else {
+        this.store.settleInterruptedToolCalls(run.agent_id);
+      }
+    } catch (error) {
+      debugWarn(
+        "local-backend",
+        "Failed to persist interrupted tool cleanup after cancelling run %s: %s",
+        runId,
+        error instanceof Error ? error.message : String(error),
+      );
     }
     return true;
   }
@@ -757,6 +769,7 @@ export class HeadlessBackend implements Backend {
     const backend = this;
     return {
       controller: runController,
+      [LOCAL_IN_PROCESS_STREAM]: true,
       async *[Symbol.asyncIterator]() {
         let sawStopReason = false;
         let sawApprovalRequest = false;

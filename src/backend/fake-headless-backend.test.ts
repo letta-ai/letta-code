@@ -21,6 +21,7 @@ import {
   providerLettaChunk,
 } from "@/backend/dev/provider-turn-executor";
 import { TURN_DID_NOT_COMPLETE } from "@/constants";
+import { LOCAL_IN_PROCESS_STREAM } from "@/utils/stream-transport";
 
 async function collect(stream: AsyncIterable<unknown>): Promise<unknown[]> {
   const chunks: unknown[] = [];
@@ -56,12 +57,14 @@ class PendingSetupExecutor implements HeadlessTurnExecutor {
 }
 
 class LateChunkExecutor implements HeadlessTurnExecutor {
+  signal: AbortSignal | undefined;
   private release!: () => void;
   readonly ready = new Promise<void>((resolve) => {
     this.release = resolve;
   });
 
-  async execute() {
+  async execute(input: HeadlessTurnExecutorInput) {
+    this.signal = input.signal;
     const source = this;
     return {
       controller: new AbortController(),
@@ -189,6 +192,12 @@ describe("FakeHeadlessBackend", () => {
     );
     const collecting = collect(stream);
 
+    expect(
+      (stream as unknown as { [LOCAL_IN_PROCESS_STREAM]?: boolean })[
+        LOCAL_IN_PROCESS_STREAM
+      ],
+    ).toBe(true);
+
     stream.controller.abort(new DOMException("cancelled", "AbortError"));
     executor.continue();
 
@@ -227,6 +236,51 @@ describe("FakeHeadlessBackend", () => {
       status: "cancelled",
       stop_reason: "cancelled",
     });
+  });
+
+  test("cancellation survives interrupted-tool persistence failure", async () => {
+    const executor = new LateChunkExecutor();
+    const backend = new FakeHeadlessBackend("agent-fake-headless", executor);
+    const conversation = await backend.createConversation({
+      agent_id: "agent-fake-headless",
+    });
+    const stream = await backend.createConversationMessageStream(
+      conversation.id,
+      {
+        agent_id: "agent-fake-headless",
+        messages: [{ role: "user", content: "wait" }],
+      } as ConversationMessageCreateBody,
+    );
+    const store = (
+      backend as unknown as {
+        store: { settleInterruptedToolCalls: () => never };
+      }
+    ).store;
+    store.settleInterruptedToolCalls = () => {
+      throw new Error("injected cleanup persistence failure");
+    };
+    const collecting = collect(stream);
+
+    stream.controller.abort(new DOMException("cancelled", "AbortError"));
+    executor.continue();
+
+    expect(await collecting).toEqual([]);
+    expect(executor.signal?.aborted).toBe(true);
+    expect(await backend.retrieveRun("run-fake-headless-1")).toMatchObject({
+      status: "cancelled",
+      stop_reason: "cancelled",
+    });
+    const replay = (await collect(
+      await backend.streamRunMessages("run-fake-headless-1", {} as never),
+    )) as Array<{ message_type?: string; stop_reason?: string }>;
+    expect(
+      replay.filter(
+        (chunk) =>
+          chunk.message_type === "stop_reason" &&
+          chunk.stop_reason === "cancelled",
+      ),
+    ).toHaveLength(1);
+    expect(JSON.stringify(replay)).not.toContain("late output");
   });
 
   test("streams deterministic assistant responses", async () => {

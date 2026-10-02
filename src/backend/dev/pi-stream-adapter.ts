@@ -555,6 +555,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       modelSettings: input.agent.model_settings,
       storageDir: this.localProviderAuthStorageDir,
       modelsRuntime: this.modelsRuntime,
+      signal,
     });
     const resolved = await resolvePiModelForAgent(
       localModel.model,

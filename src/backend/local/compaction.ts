@@ -407,6 +407,7 @@ async function runGenerateText(
   transcript: string,
   defaultPrompt: string,
 ): Promise<{ text: string }> {
+  input.abortSignal?.throwIfAborted();
   const systemPrompt = input.prompt ?? defaultPrompt;
   const modelsRuntime =
     input.modelsRuntime ??
@@ -418,6 +419,7 @@ async function runGenerateText(
     modelSettings: input.agent.model_settings,
     storageDir: input.localProviderAuthStorageDir,
     modelsRuntime,
+    signal: input.abortSignal,
   });
   let resolved = await resolvePiModelForAgent(
     localModel.model,
@@ -425,6 +427,7 @@ async function runGenerateText(
     {
       localProviderAuthStorageDir: input.localProviderAuthStorageDir,
       modelsRuntime,
+      abortSignal: input.abortSignal,
     },
   );
   if (
@@ -443,6 +446,7 @@ async function runGenerateText(
       ),
       storageDir: input.localProviderAuthStorageDir,
       modelsRuntime,
+      signal: input.abortSignal,
     });
     resolved = await resolvePiModelForAgent(
       localModel.model,
@@ -450,6 +454,7 @@ async function runGenerateText(
       {
         localProviderAuthStorageDir: input.localProviderAuthStorageDir,
         modelsRuntime,
+        abortSignal: input.abortSignal,
       },
     );
   }
