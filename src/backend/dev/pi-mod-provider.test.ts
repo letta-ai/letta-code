@@ -188,6 +188,86 @@ describe("LocalPiModelsRuntime mod provider integration", () => {
     }
   });
 
+  test("noncooperative OAuth cancellation releases the mutation queue and fences late tokens", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "pi-mod-oauth-legacy-abort-"),
+    );
+    try {
+      let refreshCalls = 0;
+      let resolveLegacyRefresh:
+        | ((credential: ReturnType<typeof oauthAccount>) => void)
+        | undefined;
+      let legacyRefreshReturned = false;
+      registerPiProvider(PROVIDER, {
+        api: "openai-completions",
+        baseUrl: "https://api.acme.test/v1",
+        models: [model("acme-large")],
+        oauth: {
+          login: async () => {
+            throw new Error("not used in this test");
+          },
+          // Deliberately use the backward-compatible one-argument form and
+          // ignore cancellation, as existing provider mods are allowed to do.
+          refreshToken: async (_credentials) => {
+            refreshCalls += 1;
+            if (refreshCalls === 1) {
+              const result = await new Promise<ReturnType<typeof oauthAccount>>(
+                (resolve) => {
+                  resolveLegacyRefresh = resolve;
+                },
+              );
+              legacyRefreshReturned = true;
+              return result;
+            }
+            return oauthAccount("fresh-second-mutation");
+          },
+          getApiKey: (credentials) => credentials.access,
+        },
+      });
+      setLocalOAuthProvider({
+        providerName: PROVIDER,
+        providerType: PROVIDER,
+        auth: { ...oauthAccount("expired"), expires: Date.now() - 1 },
+        storageDir,
+      });
+      const runtime = new LocalPiModelsRuntime({ storageDir });
+      const controller = new AbortController();
+      const cancelled = runtime.getAuth(PROVIDER, controller.signal);
+      while (!resolveLegacyRefresh) await Promise.resolve();
+
+      controller.abort(new DOMException("cancelled", "AbortError"));
+
+      await expect(cancelled).rejects.toMatchObject({ name: "AbortError" });
+      const subsequent = runtime.getAuth(PROVIDER);
+      let mutationTimeout: ReturnType<typeof setTimeout> | undefined;
+      const subsequentAuth = await Promise.race([
+        subsequent,
+        new Promise<never>((_resolve, reject) => {
+          mutationTimeout = setTimeout(
+            () =>
+              reject(new Error("subsequent credential mutation stayed queued")),
+            1_000,
+          );
+        }),
+      ]).finally(() => {
+        if (mutationTimeout) clearTimeout(mutationTimeout);
+      });
+      expect(refreshCalls).toBe(2);
+      expect(subsequentAuth?.auth.apiKey).toBe("access-fresh-second-mutation");
+
+      resolveLegacyRefresh(oauthAccount("stale-late-result"));
+      while (!legacyRefreshReturned) await Promise.resolve();
+      await Promise.resolve();
+
+      expect(await runtime.getStoredCredential(PROVIDER)).toMatchObject({
+        type: "oauth",
+        access: "access-fresh-second-mutation",
+      });
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("cancels blocked mod model discovery during automatic selection", async () => {
     let discoverySignal: AbortSignal | undefined;
     registerPiProvider(PROVIDER, {
