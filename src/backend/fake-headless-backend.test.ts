@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Stream } from "@letta-ai/letta-client/core/streaming";
+import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type {
   AgentCreateBody,
   ConversationCreateBody,
@@ -92,6 +94,44 @@ class LateChunkExecutor implements HeadlessTurnExecutor {
 
   continue(): void {
     this.release();
+  }
+}
+
+class ReentrantCancelExecutor implements HeadlessTurnExecutor {
+  onNext: (() => void) | undefined;
+  private settleNext!: () => void;
+  private readonly nextSettled = new Promise<void>((resolve) => {
+    this.settleNext = resolve;
+  });
+
+  async execute() {
+    const source = this;
+    let called = false;
+    return {
+      controller: new AbortController(),
+      [Symbol.asyncIterator]() {
+        return {
+          next() {
+            if (called) {
+              return Promise.resolve({ done: true as const, value: undefined });
+            }
+            called = true;
+            source.onNext?.();
+            return source.nextSettled.then(() => ({
+              done: true as const,
+              value: undefined,
+            }));
+          },
+          return() {
+            return Promise.resolve({ done: true as const, value: undefined });
+          },
+        };
+      },
+    } as unknown as Stream<LettaStreamingResponse>;
+  }
+
+  settle(): void {
+    this.settleNext();
   }
 }
 
@@ -218,6 +258,46 @@ describe("FakeHeadlessBackend", () => {
       await backend.streamRunMessages("run-fake-headless-1", {} as never),
     );
     expect(JSON.stringify(replay)).not.toContain("late output");
+  });
+
+  test("reentrant cancellation during iterator.next emits its terminal without losing the abort", async () => {
+    const executor = new ReentrantCancelExecutor();
+    const backend = new FakeHeadlessBackend("agent-fake-headless", executor);
+    const conversation = await backend.createConversation({
+      agent_id: "agent-fake-headless",
+    });
+    const stream = await backend.createConversationMessageStream(
+      conversation.id,
+      {
+        agent_id: "agent-fake-headless",
+        messages: [{ role: "user", content: "cancel synchronously" }],
+      } as ConversationMessageCreateBody,
+    );
+    executor.onNext = () => {
+      void backend.cancelConversation(conversation.id);
+    };
+    const iterator = stream[Symbol.asyncIterator]();
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+
+    const terminal = await Promise.race([
+      iterator.next(),
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error("reentrant cancellation was lost")),
+          500,
+        );
+      }),
+    ]).finally(() => {
+      if (timeout) clearTimeout(timeout);
+    });
+    expect(terminal.done).toBe(false);
+    expect(terminal.value).toMatchObject({
+      message_type: "stop_reason",
+      stop_reason: "cancelled",
+    });
+
+    executor.settle();
+    expect((await iterator.next()).done).toBe(true);
   });
 
   test("direct stream abort remains cancelled when the provider cooperates", async () => {

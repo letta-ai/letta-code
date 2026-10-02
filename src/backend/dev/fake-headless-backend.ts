@@ -105,31 +105,58 @@ function cloneStreamingChunk(
   return JSON.parse(JSON.stringify(chunk)) as LettaStreamingResponse;
 }
 
-const CANCELLED_STREAM_ITERATION = Symbol("cancelled-stream-iteration");
+interface CancelledStreamIteration {
+  cancelled: true;
+  /** Settles only after the provider's in-flight iterator operation finishes. */
+  settled: Promise<void>;
+}
+
+function isCancelledStreamIteration<T>(
+  iteration: IteratorResult<T> | CancelledStreamIteration,
+): iteration is CancelledStreamIteration {
+  return "cancelled" in iteration;
+}
 
 async function nextUntilRunCancelled<T>(
   iterator: AsyncIterator<T>,
   signal: AbortSignal,
-): Promise<IteratorResult<T> | typeof CANCELLED_STREAM_ITERATION> {
-  if (signal.aborted) return CANCELLED_STREAM_ITERATION;
+): Promise<IteratorResult<T> | CancelledStreamIteration> {
+  if (signal.aborted) {
+    return { cancelled: true, settled: Promise.resolve() };
+  }
 
-  const next = iterator.next();
   return await new Promise((resolve, reject) => {
+    let settleProvider!: () => void;
+    const settled = new Promise<void>((settle) => {
+      settleProvider = settle;
+    });
     const onAbort = () => {
       signal.removeEventListener("abort", onAbort);
-      resolve(CANCELLED_STREAM_ITERATION);
+      resolve({ cancelled: true, settled });
     };
     signal.addEventListener("abort", onAbort, { once: true });
-    next.then(
-      (result) => {
-        signal.removeEventListener("abort", onAbort);
-        resolve(result);
-      },
-      (error) => {
-        signal.removeEventListener("abort", onAbort);
-        reject(error);
-      },
-    );
+    try {
+      const next = iterator.next();
+      next.then(
+        (result) => {
+          settleProvider();
+          signal.removeEventListener("abort", onAbort);
+          resolve(result);
+        },
+        (error) => {
+          settleProvider();
+          signal.removeEventListener("abort", onAbort);
+          reject(error);
+        },
+      );
+    } catch (error) {
+      settleProvider();
+      signal.removeEventListener("abort", onAbort);
+      reject(error);
+    }
+    // `iterator.next()` is arbitrary code and can synchronously trigger the
+    // abort after the pre-check but before returning its pending promise.
+    if (signal.aborted) onAbort();
   });
 }
 
@@ -818,10 +845,13 @@ export class HeadlessBackend implements Backend {
               iterator,
               runController.signal,
             );
-            if (iteration === CANCELLED_STREAM_ITERATION) {
+            if (isCancelledStreamIteration(iteration)) {
               if (backend.isRunCancelled(runId)) {
                 yield backend.cancelledRunTerminal(runId);
               }
+              // The terminal becomes visible promptly, but the owning turn and
+              // queue remain held until provider cleanup has actually settled.
+              await iteration.settled;
               return;
             }
             if (backend.isRunCancelled(runId)) {
@@ -906,7 +936,7 @@ export class HeadlessBackend implements Backend {
           throw error;
         } finally {
           if (iterator.return) {
-            void iterator.return().catch(() => {});
+            await iterator.return().catch(() => {});
           }
           disposeAbortRelay();
         }

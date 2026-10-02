@@ -257,7 +257,10 @@ describe("LocalPiModelsRuntime mod provider integration", () => {
 
       resolveLegacyRefresh(oauthAccount("stale-late-result"));
       while (!legacyRefreshReturned) await Promise.resolve();
-      await Promise.resolve();
+      // Let the abandoned callback unwind through modOAuthAuth, pi-ai, and the
+      // credential-store fence before reading storage. A single microtask can
+      // observe the callback return before the late mutation reaches commit.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
       expect(await runtime.getStoredCredential(PROVIDER)).toMatchObject({
         type: "oauth",
