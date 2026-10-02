@@ -856,6 +856,14 @@ to accept the default message without opening an editor.
   This is the right type for pushing to `letta-ai/letta-code`.
 - Push URL: `git push https://<user>:<token>@github.com/<org>/<repo>.git <branch> --force`
 
+### PR heads on upstream branches, not forks
+
+PRs to this repo must have their head on an upstream branch:
+`letta-ai/letta-code:main <- letta-ai/letta-code:<branch>`. Do not silently
+fall back to a personal fork when the upstream push fails. If the push fails,
+diagnose auth/permissions against the GitHub Token Types guidance above rather
+than switching the PR head to a fork.
+
 ### Letta API: `summary_search` not `summary`
 
 `GET /v1/conversations?agent_id=X&summary_search=owner/repo/pr-N` , the param
