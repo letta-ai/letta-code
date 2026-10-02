@@ -340,10 +340,27 @@ describe("FakeHeadlessBackend", () => {
       agent_id: "agent-fake-headless",
       messages: [{ role: "user", content: "never consume" }],
     } as ConversationMessageCreateBody;
-    await backend.createConversationMessageStream(conversation.id, body);
+    let requestAbortAdds = 0;
+    let requestAbortRemoves = 0;
+    const requestSignal = {
+      aborted: false,
+      reason: undefined,
+      throwIfAborted() {},
+      addEventListener(type: string) {
+        if (type === "abort") requestAbortAdds += 1;
+      },
+      removeEventListener(type: string) {
+        if (type === "abort") requestAbortRemoves += 1;
+      },
+    } as unknown as AbortSignal;
+    await backend.createConversationMessageStream(conversation.id, body, {
+      signal: requestSignal,
+    });
 
     await backend.cancelConversation(conversation.id);
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(requestAbortAdds).toBe(1);
+    expect(requestAbortRemoves).toBe(1);
     await expect(
       backend.createConversationMessageStream(conversation.id, body),
     ).resolves.toBeDefined();

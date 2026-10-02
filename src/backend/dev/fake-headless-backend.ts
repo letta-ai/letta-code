@@ -803,12 +803,21 @@ export class HeadlessBackend implements Backend {
       backend.releaseRunOperation(runId);
       throw error;
     }
+    let abortRelayDisposed = false;
+    const disposeAbortRelayOnce = () => {
+      if (abortRelayDisposed) return;
+      abortRelayDisposed = true;
+      disposeAbortRelay();
+    };
     let providerSettlement: Promise<void> | undefined;
     const settleIterator = (inFlightNext?: Promise<void>) => {
       providerSettlement ??= settleProviderIterator(
         iterator,
         inFlightNext,
-      ).finally(() => backend.releaseRunOperation(runId));
+      ).finally(() => {
+        disposeAbortRelayOnce();
+        backend.releaseRunOperation(runId);
+      });
       return providerSettlement;
     };
     let consumerStarted = false;
@@ -939,7 +948,7 @@ export class HeadlessBackend implements Backend {
           throw error;
         } finally {
           await settleIterator();
-          disposeAbortRelay();
+          disposeAbortRelayOnce();
           backend.releaseRunOperation(runId);
         }
       },
