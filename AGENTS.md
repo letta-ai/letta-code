@@ -661,6 +661,15 @@ Response: `created.agent` / `created.conversation` booleans only. Don't leak
 internal implementation details like whether a JS `ConversationRuntime` was
 newly allocated.
 
+### `launch_subagent` input identity
+
+`launch_subagent` accepts `client_message_id` so a host can identify the
+initial assignment. Launch success means only that the background task was
+registered; listener acceptance is reported later and separately (input
+receipt / `initial_input_accepted`). Keep that distinction when changing the
+launch or acceptance paths — `success: false` does not prove no child started
+(transport failures stay ambiguous).
+
 ---
 
 ## Filesystem Sandbox
@@ -966,3 +975,8 @@ Automated cross-repository release orchestration publishes Agent SDK and ACP to
 follow every stable Letta Code release. Not Dependabot, it needs multi-step
 package releases in lockstep. Currently blocked by token permissions
 (`amelia-letta` has read-only access to downstream repos).
+
+Every stable release must also be reflected in downstream consumers — Cloud,
+Chat, Desktop, and the Daytona letta-code snapshots — via separate chore bump
+PRs in those repos, and consumers gate new letta-code capabilities on a minimum
+released version.
