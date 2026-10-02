@@ -60,20 +60,38 @@ function isDesktopListenerRuntime(): boolean {
 async function getMetadataRequestConfig(
   apiKey: string | undefined,
 ): Promise<{ baseUrl: string; apiKey: string }> {
+  // Resolve credentials through the central config so Desktop OAuth tokens
+  // and secure-token API keys are included. Callers often pass an apiKey
+  // resolved only from the environment and non-secure settings: under
+  // Desktop, initializeDesktopCredentials deletes LETTA_API_KEY from the
+  // environment (the grant lives in the desktop credentials session), so a
+  // cloud-targeted request would otherwise go out without any Authorization
+  // header and be rejected.
+  let resolved: { baseUrl: string; apiKey: string } | null = null;
+  try {
+    resolved = await getApiRequestConfig();
+  } catch {
+    // Settings unavailable; fall back to the caller-provided key below.
+  }
+
   if (
     !isDesktopListenerRuntime() ||
     process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL === "1"
   ) {
-    return { baseUrl: LETTA_CLOUD_API_URL, apiKey: apiKey ?? "" };
+    return {
+      baseUrl: LETTA_CLOUD_API_URL,
+      apiKey: resolved?.apiKey || apiKey || "",
+    };
   }
 
-  const config = await getApiRequestConfig();
-
-  if (isLoopbackUrl(config.baseUrl)) {
-    return config;
+  if (resolved && isLoopbackUrl(resolved.baseUrl)) {
+    return resolved;
   }
 
-  return { baseUrl: LETTA_CLOUD_API_URL, apiKey: apiKey ?? "" };
+  return {
+    baseUrl: LETTA_CLOUD_API_URL,
+    apiKey: resolved?.apiKey || apiKey || "",
+  };
 }
 
 export async function submitFeedbackMetadata(
