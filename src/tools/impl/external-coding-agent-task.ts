@@ -1,5 +1,6 @@
 import type { SubagentResult } from "@/agent/subagents";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { bindExternalCodingAgentSession } from "./external-agent-record";
 import {
   createExternalCodingAgentConfig,
   parseExternalCodingAgentId,
@@ -88,7 +89,7 @@ export function spawnExternalCodingAgentFollowup(args: {
     description: `Continue ${target.type} session`,
     parentScope: args.parentScope,
     deps: {
-      spawnSubagentImpl: async (_type, prompt, _model, _subagentId, signal) =>
+      spawnSubagentImpl: async (_type, prompt, _model, subagentId, signal) =>
         runExternalCodingAgent({
           type: target.type,
           prompt,
@@ -98,6 +99,8 @@ export function spawnExternalCodingAgentFollowup(args: {
           resumeSessionId: target.sessionId,
           cwd: getCurrentWorkingDirectory(),
           signal,
+          onStarted: (agentId) =>
+            bindExternalCodingAgentSession(subagentId, agentId),
         }),
     },
   });

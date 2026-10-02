@@ -4,7 +4,9 @@ import {
   subscribeToStreamEvents as subscribeToSubagentStreamEvents,
 } from "@/agent/subagent-state";
 import { stopScheduler as stopCronScheduler } from "@/cron/scheduler";
+import { reportInterruptedExternalCodingAgentTasks } from "@/tools/impl/external-agent-record";
 import { subscribeToBackgroundProcessState } from "@/tools/impl/process_manager";
+import { debugWarn } from "@/utils/debug";
 import { setMessageQueueAdder } from "@/utils/message-queue-bridge";
 import { TO_SUBSCRIBERS } from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
@@ -128,6 +130,14 @@ export function installProcessEventRouting(params: {
     >);
     scheduleQueuePump(targetRuntime, processTransport, opts, processQueuedTurn);
   });
+
+  // An external coding agent killed by a restart never notified its parent.
+  // The adder above is live now, so the catch-up wake routes like any other.
+  try {
+    reportInterruptedExternalCodingAgentTasks();
+  } catch (error) {
+    debugWarn("recovery", "Interrupted external agent sweep failed", error);
+  }
 }
 
 export function clearProcessServices(runtime: ListenerRuntime): void {

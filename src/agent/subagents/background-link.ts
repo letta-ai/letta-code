@@ -61,6 +61,32 @@ export async function waitForBackgroundSubagentAgentId(
   return null;
 }
 
+/**
+ * Wait for a background subagent's agent identity on behalf of a caller that
+ * may abort. The caller's abort also stops the task's own startup, and is
+ * rethrown once the wait settles.
+ */
+export async function waitForBackgroundSubagentAgentIdOrAbort(
+  subagentId: string,
+  abortTask: (reason: unknown) => void,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  const abortStartup = () => abortTask(signal?.reason);
+  signal?.addEventListener("abort", abortStartup, { once: true });
+  try {
+    if (signal?.aborted) abortStartup();
+    const agentId = await waitForBackgroundSubagentAgentId(
+      subagentId,
+      null,
+      signal,
+    );
+    signal?.throwIfAborted();
+    return agentId;
+  } finally {
+    signal?.removeEventListener("abort", abortStartup);
+  }
+}
+
 /** Wait for a background subagent to publish its conversation identity. */
 export async function waitForBackgroundSubagentConversationId(
   subagentId: string,

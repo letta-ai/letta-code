@@ -14,7 +14,6 @@ import {
   getSnapshot as getSubagentSnapshot,
   getSubagentToolCount,
   registerSubagent,
-  updateSubagent,
 } from "@/agent/subagent-state.js";
 import {
   clearSubagentConfigCache,
@@ -25,7 +24,7 @@ import {
   type SubagentResult,
 } from "@/agent/subagents";
 import {
-  waitForBackgroundSubagentAgentId,
+  waitForBackgroundSubagentAgentIdOrAbort,
   waitForBackgroundSubagentLink,
 } from "@/agent/subagents/background-link";
 import { forkParentConversation } from "@/agent/subagents/fork-conversation";
@@ -45,6 +44,10 @@ import {
   formatTaskNotification,
   resolveNotificationScope,
 } from "@/utils/task-notifications.js";
+import {
+  bindExternalCodingAgentSession,
+  recordExternalCodingAgentTask,
+} from "./external-agent-record";
 import {
   createExternalCodingAgentConfig,
   isExternalCodingAgentType,
@@ -354,6 +357,11 @@ export function spawnBackgroundSubagentTask(
     actingUserId,
   };
   backgroundTasks.set(taskId, bgTask);
+  const finishRecord = recordExternalCodingAgentTask(
+    taskId,
+    bgTask,
+    existingAgentId,
+  );
   writeTaskTranscriptStart(outputFile, description, subagentType);
 
   // Intentionally fire-and-forget: background tasks own their lifecycle and
@@ -622,7 +630,8 @@ export function spawnBackgroundSubagentTask(
         // Silently ignore hook errors
       });
     })
-    .finally(unsubscribe);
+    .finally(unsubscribe)
+    .finally(finishRecord);
 
   // Memory drains wait for the whole lifecycle (sync, cleanup), not just the child.
   const swallow = () => undefined;
@@ -828,27 +837,15 @@ export async function launchSubagent(
             mcpReminder,
             signal: childSignal,
             onStarted: (agentId) =>
-              updateSubagent(subagentId, { agentId, status: "running" }),
+              bindExternalCodingAgentSession(subagentId, agentId),
           }),
       },
     });
-    let agentId: string | null = null;
-    if (isExternalCodingAgent) {
-      const abortStartup = () =>
-        backgroundTasks.get(taskId)?.abortController?.abort(signal?.reason);
-      signal?.addEventListener("abort", abortStartup, { once: true });
-      try {
-        if (signal?.aborted) abortStartup();
-        agentId = await waitForBackgroundSubagentAgentId(
-          subagentId,
-          null,
-          signal,
-        );
-        signal?.throwIfAborted();
-      } finally {
-        signal?.removeEventListener("abort", abortStartup);
-      }
-    }
+    const agentId = await waitForBackgroundSubagentAgentIdOrAbort(
+      subagentId,
+      (reason) => backgroundTasks.get(taskId)?.abortController?.abort(reason),
+      signal,
+    );
     return {
       success: true,
       task_id: taskId,
