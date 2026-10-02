@@ -229,6 +229,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
               forked.id,
               currentInput,
               {
+                agentId,
                 overrideModel: tempModelOverrideRef.current ?? undefined,
                 preparedToolContext: preparedToolContext.preparedToolContext,
               },
