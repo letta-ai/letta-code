@@ -724,6 +724,17 @@ BYOK row, while retaining the organization-specific handle for selection. Do
 not add provider-name rewrites to make hosted rows from `GET /v1/models` act
 like catalog rows.
 
+The CLI reasoning picker resolves tiers by the selected model handle when that
+handle exists in the runtime catalog, falling back to the normalized registry
+handle only for Cloud/BYOK aliases (`resolveModelSelectionReasoningHandle()` in
+`src/cli/app/model-config.ts`, called from the `/model` handler in
+`src/cli/app/use-configuration-handlers.ts`). Local ChatGPT OAuth models publish
+their reasoning tiers under the selected backend handle (e.g.
+`openai-codex/gpt-5.6-sol`), not the normalized Cloud handle (e.g.
+`chatgpt-plus-pro/gpt-5.6-sol`); reading the registry handle unconditionally
+makes the picker not open. Do not simplify this lookup to the registry handle —
+it regressed the local picker once (PR #4184) after the local fix in PR #4026.
+
 Key files: `src/agent/model-catalog.ts`, `src/agent/remote-model-catalog.ts`,
 `src/agent/available-models.ts`, `src/backend/local/local-model-config.ts`.
 
