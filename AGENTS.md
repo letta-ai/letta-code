@@ -183,6 +183,7 @@ Practical rules:
 - Don't mock broad shared modules (`settings-manager`, telemetry, etc.).
 - If a test file must use `mock.module()`, register it with a reason in `scripts/isolated-unit-tests.json`; `scripts/run-unit-tests.cjs` will run it in a standalone Bun process, and the mock-isolation check rejects unregistered top-level mocks.
 - If a test passes alone but fails in `bun test src/`, suspect mock leakage first.
+- Tests that install a backend singleton fixture with `__testSetBackend(...)` must capture `getBackend()` before the override and restore it in `afterEach`. An unrestored fixture leaks to other test files in the same worker and breaks them in an order-dependent way (a known source of red unit shards that pass in isolation, e.g. unrelated tests failing to resolve their stubbed model).
 
 ---
 
@@ -912,6 +913,20 @@ and create draft parity PRs when warranted.
 - **Action ref caching:** GitHub Actions resolves branch refs to SHAs at trigger
   time and caches. Pushing new commits to the action branch doesn't update
   already-triggered runs. Pin to a specific SHA instead of `@main`.
+- **Release-bump-only PRs skip heavy CI by design:** ci.yml's `classify` job
+  detects a change as `release_bump_only` when the title starts with
+  `chore: bump version to` and only `package.json` changed — exactly how
+  `prepare-release.yml` generates release PRs. The heavy matrix (unit,
+  integration, package build, headless, ollama smoke, ...) is gated off for
+  those; `check` and `update-chain-smoke` still run. Do not wait for or re-run
+  the heavy jobs on a release PR; they will not run.
+- **Release-gate CI triage:** a check that passed on the PR head but fails on
+  the post-merge `main` run is usually a flake (test-order/singleton leakage,
+  timeout, or live-provider/network), not a production regression. Confirm by
+  checking the same check on the PR head and on other PRs, then fix
+  test-isolation issues in a separate PR rather than blocking the release.
+  Live provider failures (e.g. BYOK reasoning assertions) are retried once
+  and then reported.
 
 ### Review Workflow
 
@@ -966,3 +981,9 @@ Automated cross-repository release orchestration publishes Agent SDK and ACP to
 follow every stable Letta Code release. Not Dependabot, it needs multi-step
 package releases in lockstep. Currently blocked by token permissions
 (`amelia-letta` has read-only access to downstream repos).
+
+Release-dependent workflows wait up to ~5 minutes for a freshly published
+version to become visible on npm (`wait_for_npm_version`); registry propagation
+can outlast that window, so a run may fail after the publish actually succeeded.
+Recovery: confirm with `npm view ... version`, then re-dispatch the downstream
+workflow manually.
