@@ -163,12 +163,15 @@ export function createDiskSpaceMonitor(
     level: Exclude<DiskPressureLevel, "ok">,
     sample: DiskSpaceSample,
   ): void {
-    if (!deps.isQueueConnected()) {
+    const hold = () => {
       // Newest alert wins: a critical supersedes an undelivered warning.
       held = {
         id: nextAlertId++,
         text: formatLowDiskSpaceReminder(level, sample),
       };
+    };
+    if (!deps.isQueueConnected()) {
+      hold();
       return;
     }
     const text = formatHarnessEventNotification({
@@ -178,11 +181,14 @@ export function createDiskSpaceMonitor(
     });
     const targets = targetScopes();
     if (targets.length === 0) {
-      deps.enqueue({
-        kind: "task_notification",
-        text,
-        ...deps.resolveFallbackScope(),
-      });
+      const fallback = deps.resolveFallbackScope();
+      // Consumers such as the listener drop unscoped queue items, so an alert
+      // with no known conversation waits for the next model request instead.
+      if (!fallback?.agentId) {
+        hold();
+        return;
+      }
+      deps.enqueue({ kind: "task_notification", text, ...fallback });
       return;
     }
     for (const scope of targets) {

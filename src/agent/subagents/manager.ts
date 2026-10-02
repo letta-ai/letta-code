@@ -963,7 +963,7 @@ async function spawnSubagentInContext(
     agentId: resolvedParentAgentId,
     conversationId: resolvedParentConversationId,
   });
-  return executeSubagent(
+  const result = executeSubagent(
     type,
     config,
     model,
@@ -983,7 +983,8 @@ async function spawnSubagentInContext(
     parentAgent?.name,
     resolvedParentConversationId,
     clientMessageId,
-  ).finally(releaseDiskWatch);
+  );
+  return result.finally(releaseDiskWatch);
 }
 
 export function spawnSubagent(

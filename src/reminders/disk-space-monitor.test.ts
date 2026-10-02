@@ -200,6 +200,42 @@ describe("createDiskSpaceMonitor", () => {
     release();
   });
 
+  test("with a consumer but no known scope, the alert is held instead of dropped", async () => {
+    const h = createHarness({ bridgeConnected: true });
+    const release = h.monitor.beginActivity();
+    await h.monitor.whenIdle();
+    h.disk.usedPercent = 90;
+    await h.tick();
+    // An unscoped queue item would be discarded by the listener.
+    expect(h.queued).toEqual([]);
+    const pending = await h.monitor.prepareRequestReminder({
+      agentId: "agent-x",
+      conversationId: "conv-x",
+    });
+    expect(pending?.text).toContain("90% full");
+    release();
+  });
+
+  test("warning and critical each fire once and re-arm only after usage drops", async () => {
+    const h = createHarness({ bridgeConnected: true });
+    const release = h.monitor.beginActivity({
+      agentId: "agent-a",
+      conversationId: "conv-a",
+    });
+    await h.monitor.whenIdle();
+    const levels = () =>
+      h.queued.map((m) => (m.text.includes("CRITICAL") ? "critical" : "warn"));
+    for (const percent of [86, 90, 96, 99, 92, 96, 87, 96, 70, 88]) {
+      h.disk.usedPercent = percent;
+      await h.tick();
+    }
+    // 86 warns, 96 escalates, 92 and the next 96 stay quiet (still above the
+    // critical re-arm mark). 87 re-arms only critical, so the following 96
+    // fires it again; 70 re-arms the warning, and 88 warns again.
+    expect(levels()).toEqual(["warn", "critical", "critical", "warn"]);
+    release();
+  });
+
   test("a critical alert supersedes an undelivered warning", async () => {
     const h = createHarness({ bridgeConnected: false });
     const release = h.monitor.beginActivity();
