@@ -8,7 +8,7 @@ import {
 } from "@/reminders/engine";
 import { createSharedReminderState } from "@/reminders/state";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
-import { runClaudeTurn } from "./claude-stream-session";
+import { buildClaudeWorkerArgs, runClaudeTurn } from "./claude-stream-session";
 import { runCodexTurn } from "./codex-app-server";
 import {
   captureNativeSession,
@@ -204,17 +204,11 @@ export function buildExternalCodingAgentCommand(
       "stream-json",
       "--output-format",
       "stream-json",
-      "--permission-mode",
-      "acceptEdits",
-      "--allowed-tools",
-      "Bash,Edit,Write,Read,Glob,Grep,WebFetch,WebSearch",
+      ...buildClaudeWorkerArgs(options.mcpReminder),
     ];
     if (options.model) args.push("--model", options.model);
     if (options.resumeSessionId) {
       args.push("--resume", options.resumeSessionId);
-    }
-    if (options.mcpReminder) {
-      args.push("--append-system-prompt", options.mcpReminder);
     }
     return { executable: "claude", args, stdin: options.prompt };
   }

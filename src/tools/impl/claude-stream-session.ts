@@ -7,6 +7,7 @@ import {
   type RunningSubagentProcess,
   spawnSubagentProcess,
 } from "@/agent/subagents/subagent-process";
+import { LIMITS } from "./truncation";
 
 export interface ClaudeSessionTransport {
   process: Pick<ChildProcessWithoutNullStreams, "stdout" | "stderr" | "stdin">;
@@ -41,6 +42,8 @@ interface ClaudeSession {
   awaitingReplacementStart: boolean;
   suppressedResult?: Record<string, unknown>;
   resultCount: number;
+  /** Summed across every result, including turns replaced by a steer. */
+  totalTokens: number;
   turnWaiters: Set<TurnWaiter>;
   writeLock: Promise<void>;
   completion: Promise<SubagentResult>;
@@ -106,6 +109,51 @@ function interruptInput(requestId: string): string {
   })}\n`;
 }
 
+const CLAUDE_WORKER_TOOLS = "Bash,Edit,Write,Read,Glob,Grep,WebFetch,WebSearch";
+
+/**
+ * Tools that act outside the worker's own task: cron and wakeups schedule
+ * turns in a process that exits when the task settles, and notifications and
+ * remote triggers reach the human's devices or start cloud agents.
+ */
+const CLAUDE_WORKER_DISALLOWED_TOOLS =
+  "CronCreate,CronDelete,CronList,ScheduleWakeup,PushNotification,RemoteTrigger";
+
+/** Orients a worker whose only reader is the orchestrating Letta agent. */
+export const CLAUDE_WORKER_INSTRUCTIONS = `You are a coding worker launched by a Letta agent, not a human.
+- No one can answer questions while you work. Resolve ambiguity with the most conservative reasonable choice, record it under assumptions, and continue. If you cannot proceed, stop and report status: blocked with the exact question.
+- Act only within the scope the task grants. Do not commit, push, or open pull requests unless the task asks.
+- A message that arrives while you work comes from the orchestrating agent and supersedes earlier instructions where they conflict. Keep finished work that still applies.
+- Wait for your background work (subagents, background commands) to finish before your final message.
+- Only your final message is returned, and it is cut off after ${LIMITS.TASK_OUTPUT_CHARS.toLocaleString("en-US")} characters. Skip progress narration and task recaps. End with:
+status: done | partial | blocked
+changes: one line per path
+verification: command → result
+assumptions / open issues: bullets, or none`;
+
+/**
+ * Keep Claude Code's full coding toolset, including subagents and workflows,
+ * minus tools that only make sense in a human's long-lived session.
+ * `--strict-mcp-config` drops the user's global MCP servers and connectors;
+ * parent MCP servers stay reachable through `letta mcp`. Project CLAUDE.md
+ * and skills still load.
+ */
+export function buildClaudeWorkerArgs(mcpReminder?: string): string[] {
+  return [
+    "--permission-mode",
+    "acceptEdits",
+    "--allowed-tools",
+    CLAUDE_WORKER_TOOLS,
+    "--disallowed-tools",
+    CLAUDE_WORKER_DISALLOWED_TOOLS,
+    "--strict-mcp-config",
+    "--append-system-prompt",
+    mcpReminder
+      ? `${CLAUDE_WORKER_INSTRUCTIONS}\n\n${mcpReminder}`
+      : CLAUDE_WORKER_INSTRUCTIONS,
+  ];
+}
+
 export function buildClaudeStreamArgs(options: {
   model?: string;
   mcpReminder?: string;
@@ -120,17 +168,29 @@ export function buildClaudeStreamArgs(options: {
     "--output-format",
     "stream-json",
     "--include-partial-messages",
-    "--permission-mode",
-    "acceptEdits",
-    "--allowed-tools",
-    "Bash,Edit,Write,Read,Glob,Grep,WebFetch,WebSearch",
+    ...buildClaudeWorkerArgs(options.mcpReminder),
   ];
   if (options.model) args.push("--model", options.model);
   if (options.resumeSessionId) args.push("--resume", options.resumeSessionId);
   else if (options.sessionId) args.push("--session-id", options.sessionId);
-  if (options.mcpReminder)
-    args.push("--append-system-prompt", options.mcpReminder);
   return args;
+}
+
+/** Anthropic reports input excluding cache reads and writes; sum all four. */
+export function readClaudeUsageTokens(value: Record<string, unknown>): number {
+  const usage = readRecord(value.usage);
+  if (!usage) return 0;
+  let total = 0;
+  for (const key of [
+    "input_tokens",
+    "cache_creation_input_tokens",
+    "cache_read_input_tokens",
+    "output_tokens",
+  ]) {
+    const count = usage[key];
+    if (typeof count === "number" && Number.isFinite(count)) total += count;
+  }
+  return total;
 }
 
 function createTransport(options: {
@@ -142,6 +202,10 @@ function createTransport(options: {
   return spawnSubagentProcess("claude", options.args, options);
 }
 
+function tokenUsage(session: ClaudeSession): { totalTokens?: number } {
+  return session.totalTokens > 0 ? { totalTokens: session.totalTokens } : {};
+}
+
 function successResult(session: ClaudeSession): SubagentResult {
   return {
     agentId: `claude_${session.sessionId}`,
@@ -149,6 +213,7 @@ function successResult(session: ClaudeSession): SubagentResult {
     model: session.model,
     report: session.report,
     success: true,
+    ...tokenUsage(session),
     durationMs: Date.now() - session.startedAt,
   };
 }
@@ -161,6 +226,7 @@ function failResult(session: ClaudeSession, error: unknown): SubagentResult {
     report: session.report,
     success: false,
     error: errorMessage(error),
+    ...tokenUsage(session),
     durationMs: Date.now() - session.startedAt,
   };
 }
@@ -325,6 +391,7 @@ function handleResult(
 ): void {
   session.interruptible = false;
   session.resultCount++;
+  session.totalTokens += readClaudeUsageTokens(value);
   if (session.pendingSteers > 0) {
     session.pendingSteers--;
     session.suppressedResult = value;
@@ -391,6 +458,7 @@ async function launchSession(
     awaitingReplacementStart: false,
     suppressedResult: undefined,
     resultCount: 0,
+    totalTokens: 0,
     turnWaiters: new Set(),
     writeLock: Promise.resolve(),
     completion,
