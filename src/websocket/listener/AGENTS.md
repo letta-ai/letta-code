@@ -74,6 +74,19 @@ Do not add queue self-healing as the primary fix for an impossible state. Find
 and repair the transition that produced the state. Defensive telemetry is fine
 after the producer path has a regression test.
 
+## Turn Attribution Context
+
+Per-turn PR attribution (`githubPullRequestConversationIds`, the conversations
+tagged when a turn creates a PR) is turn input, never process state.
+`prepareListenerTurn` forwards `msg.githubPullRequestConversationIds` and must
+default it to `[]` when the incoming message omits the field. A reused listener
+must not fall back to the launcher process's `LETTA_GITHUB_PR_CONVERSATION_IDS`
+env: the subagent launcher sets that var for headless children so PRs created
+inside subagents are attributed to the parent conversation, and a listener
+inheriting it would tag unrelated channel turns. Headless keeps the env
+fallback; listener isolation does not. Regression: real listener turns across
+successive inputs with a poisoned env must not tag unrelated conversations.
+
 ## Module Map
 
 - `turn-lifecycle.ts`: canonical state, leases, and transitions.
