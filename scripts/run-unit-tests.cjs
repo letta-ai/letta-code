@@ -13,6 +13,7 @@ const {
 // Unit test directories — bun discovers *.test.ts / *.test.tsx within each.
 // Listed explicitly so we skip src/integration-tests (API-gated).
 const dirs = [
+  "hooks",
   "src/agent",
   "src/auth",
   "src/backend",
