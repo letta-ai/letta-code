@@ -29,6 +29,11 @@ import { debugWarn } from "@/utils/debug";
 import { LOCAL_IN_PROCESS_STREAM } from "@/utils/stream-transport";
 import { isRecord } from "@/utils/type-guards";
 import {
+  isCancelledStreamIteration,
+  nextUntilRunCancelled,
+  settleProviderIterator,
+} from "./cancellable-stream-iterator";
+import {
   DeterministicPongExecutor,
   type HeadlessTurnExecutor,
 } from "./headless-turn-executor";
@@ -103,61 +108,6 @@ function cloneStreamingChunk(
   chunk: LettaStreamingResponse,
 ): LettaStreamingResponse {
   return JSON.parse(JSON.stringify(chunk)) as LettaStreamingResponse;
-}
-
-interface CancelledStreamIteration {
-  cancelled: true;
-  /** Settles only after the provider's in-flight iterator operation finishes. */
-  settled: Promise<void>;
-}
-
-function isCancelledStreamIteration<T>(
-  iteration: IteratorResult<T> | CancelledStreamIteration,
-): iteration is CancelledStreamIteration {
-  return "cancelled" in iteration;
-}
-
-async function nextUntilRunCancelled<T>(
-  iterator: AsyncIterator<T>,
-  signal: AbortSignal,
-): Promise<IteratorResult<T> | CancelledStreamIteration> {
-  if (signal.aborted) {
-    return { cancelled: true, settled: Promise.resolve() };
-  }
-
-  return await new Promise((resolve, reject) => {
-    let settleProvider!: () => void;
-    const settled = new Promise<void>((settle) => {
-      settleProvider = settle;
-    });
-    const onAbort = () => {
-      signal.removeEventListener("abort", onAbort);
-      resolve({ cancelled: true, settled });
-    };
-    signal.addEventListener("abort", onAbort, { once: true });
-    try {
-      const next = iterator.next();
-      next.then(
-        (result) => {
-          settleProvider();
-          signal.removeEventListener("abort", onAbort);
-          resolve(result);
-        },
-        (error) => {
-          settleProvider();
-          signal.removeEventListener("abort", onAbort);
-          reject(error);
-        },
-      );
-    } catch (error) {
-      settleProvider();
-      signal.removeEventListener("abort", onAbort);
-      reject(error);
-    }
-    // `iterator.next()` is arbitrary code and can synchronously trigger the
-    // abort after the pre-check but before returning its pending promise.
-    if (signal.aborted) onAbort();
-  });
 }
 
 function localStreamProtocolError(message: string): RunErrorMetadata {
@@ -258,6 +208,7 @@ export class HeadlessBackend implements Backend {
   private readonly executor: HeadlessTurnExecutor;
   private readonly runs = new Map<string, Run>();
   private readonly activeRunByConversation = new Map<string, string>();
+  private readonly operationRunByConversation = new Map<string, string>();
   private readonly runControllerByRunId = new Map<string, AbortController>();
   private readonly runChunksByRunId = new Map<
     string,
@@ -515,11 +466,11 @@ export class HeadlessBackend implements Backend {
     requestSignal?: AbortSignal,
   ) {
     requestSignal?.throwIfAborted();
-    const activeRunId = this.activeRunByConversation.get(conversationId);
-    const activeRun = activeRunId ? this.runs.get(activeRunId) : undefined;
-    if (activeRun && !isTerminalRun(activeRun)) {
+    const activeOperationRunId =
+      this.operationRunByConversation.get(conversationId);
+    if (activeOperationRunId) {
       throw new Error(
-        `Conversation ${conversationId} already has an active run (${activeRun.id})`,
+        `Conversation ${conversationId} already has an active run (${activeOperationRunId})`,
       );
     }
     // Settle any tool calls left without results from a prior interrupted turn.
@@ -624,6 +575,7 @@ export class HeadlessBackend implements Backend {
       requestSignal?.removeEventListener("abort", relayRequestAbort);
       runController.signal.removeEventListener("abort", markCancelled);
       this.failRun(run.id, error);
+      this.releaseRunOperation(run.id);
       throw error;
     }
     const abortExecutorStream = () => {
@@ -689,7 +641,18 @@ export class HeadlessBackend implements Backend {
     } as Run;
     this.runs.set(run.id, run);
     this.activeRunByConversation.set(conversationId, run.id);
+    this.operationRunByConversation.set(conversationId, run.id);
     return run;
+  }
+
+  private releaseRunOperation(runId: string): void {
+    const run = this.runs.get(runId);
+    if (
+      run?.conversation_id &&
+      this.operationRunByConversation.get(run.conversation_id) === runId
+    ) {
+      this.operationRunByConversation.delete(run.conversation_id);
+    }
   }
 
   private completeRun(
@@ -831,14 +794,46 @@ export class HeadlessBackend implements Backend {
   ): Stream<LettaStreamingResponse> {
     const store = this.store;
     const backend = this;
+    let iterator: AsyncIterator<LettaStreamingResponse>;
+    try {
+      iterator = stream[Symbol.asyncIterator]();
+    } catch (error) {
+      disposeAbortRelay();
+      backend.failRun(runId, error);
+      backend.releaseRunOperation(runId);
+      throw error;
+    }
+    let providerSettlement: Promise<void> | undefined;
+    const settleIterator = (inFlightNext?: Promise<void>) => {
+      providerSettlement ??= settleProviderIterator(
+        iterator,
+        inFlightNext,
+      ).finally(() => backend.releaseRunOperation(runId));
+      return providerSettlement;
+    };
+    let consumerStarted = false;
+    const settleWithoutConsumer = () => {
+      if (!consumerStarted) void settleIterator();
+    };
+    if (runController.signal.aborted) {
+      settleWithoutConsumer();
+    } else {
+      runController.signal.addEventListener("abort", settleWithoutConsumer, {
+        once: true,
+      });
+    }
     return {
       controller: runController,
       [LOCAL_IN_PROCESS_STREAM]: true,
       async *[Symbol.asyncIterator]() {
+        consumerStarted = true;
+        runController.signal.removeEventListener(
+          "abort",
+          settleWithoutConsumer,
+        );
         let sawStopReason = false;
         let sawApprovalRequest = false;
         let pendingErrorInfo: RunErrorMetadata | undefined;
-        const iterator = stream[Symbol.asyncIterator]();
         try {
           while (true) {
             const iteration = await nextUntilRunCancelled(
@@ -846,16 +841,20 @@ export class HeadlessBackend implements Backend {
               runController.signal,
             );
             if (isCancelledStreamIteration(iteration)) {
+              const settlement = settleIterator(iteration.settled);
               if (backend.isRunCancelled(runId)) {
                 yield backend.cancelledRunTerminal(runId);
               }
-              // The terminal becomes visible promptly, but the owning turn and
-              // queue remain held until provider cleanup has actually settled.
-              await iteration.settled;
+              // The terminal becomes visible promptly, but the independent
+              // operation lease remains held until both the in-flight next()
+              // and iterator cleanup settle.
+              await settlement;
               return;
             }
             if (backend.isRunCancelled(runId)) {
+              const settlement = settleIterator();
               yield backend.cancelledRunTerminal(runId);
+              await settlement;
               return;
             }
             if (iteration.done) break;
@@ -887,7 +886,9 @@ export class HeadlessBackend implements Backend {
             }
           }
           if (backend.isRunCancelled(runId)) {
+            const settlement = settleIterator();
             yield backend.cancelledRunTerminal(runId);
+            await settlement;
             return;
           }
           if (!sawStopReason) {
@@ -929,16 +930,17 @@ export class HeadlessBackend implements Backend {
           }
         } catch (error) {
           if (backend.isRunCancelled(runId)) {
+            const settlement = settleIterator();
             yield backend.cancelledRunTerminal(runId);
+            await settlement;
             return;
           }
           backend.failRun(runId, error);
           throw error;
         } finally {
-          if (iterator.return) {
-            await iterator.return().catch(() => {});
-          }
+          await settleIterator();
           disposeAbortRelay();
+          backend.releaseRunOperation(runId);
         }
       },
     } as unknown as Stream<LettaStreamingResponse>;

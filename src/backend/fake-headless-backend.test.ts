@@ -135,6 +135,41 @@ class ReentrantCancelExecutor implements HeadlessTurnExecutor {
   }
 }
 
+class ReturnReleasesNextExecutor implements HeadlessTurnExecutor {
+  returnCalls = 0;
+  private signalReady!: () => void;
+  readonly ready = new Promise<void>((resolve) => {
+    this.signalReady = resolve;
+  });
+  private settleNext!: () => void;
+  private readonly nextSettled = new Promise<void>((resolve) => {
+    this.settleNext = resolve;
+  });
+
+  async execute() {
+    const source = this;
+    return {
+      controller: new AbortController(),
+      [Symbol.asyncIterator]() {
+        return {
+          next() {
+            source.signalReady();
+            return source.nextSettled.then(() => ({
+              done: true as const,
+              value: undefined,
+            }));
+          },
+          return() {
+            source.returnCalls += 1;
+            source.settleNext();
+            return Promise.resolve({ done: true as const, value: undefined });
+          },
+        };
+      },
+    } as unknown as Stream<LettaStreamingResponse>;
+  }
+}
+
 class AbortAwareProviderAdapter implements ProviderStreamAdapter {
   async *stream(input: Parameters<ProviderStreamAdapter["stream"]>[0]) {
     if (!input.signal) throw new Error("Expected provider signal");
@@ -260,6 +295,60 @@ describe("FakeHeadlessBackend", () => {
     expect(JSON.stringify(replay)).not.toContain("late output");
   });
 
+  test("cancelled provider operation blocks a direct replacement until settlement", async () => {
+    const executor = new LateChunkExecutor();
+    const backend = new FakeHeadlessBackend("agent-fake-headless", executor);
+    const conversation = await backend.createConversation({
+      agent_id: "agent-fake-headless",
+    });
+    const body = {
+      agent_id: "agent-fake-headless",
+      messages: [{ role: "user", content: "first" }],
+    } as ConversationMessageCreateBody;
+    const stream = await backend.createConversationMessageStream(
+      conversation.id,
+      body,
+    );
+    const iterator = stream[Symbol.asyncIterator]();
+    const terminalPromise = iterator.next();
+
+    await backend.cancelConversation(conversation.id);
+    expect(await terminalPromise).toMatchObject({
+      done: false,
+      value: { message_type: "stop_reason", stop_reason: "cancelled" },
+    });
+    await expect(
+      backend.createConversationMessageStream(conversation.id, body),
+    ).rejects.toThrow("already has an active run");
+
+    const closing = iterator.return?.();
+    if (!closing) throw new Error("Expected persistence iterator return()");
+    executor.continue();
+    await closing;
+    await expect(
+      backend.createConversationMessageStream(conversation.id, body),
+    ).resolves.toBeDefined();
+  });
+
+  test("cancelling an unconsumed stream releases its operation lease", async () => {
+    const executor = new ReentrantCancelExecutor();
+    const backend = new FakeHeadlessBackend("agent-fake-headless", executor);
+    const conversation = await backend.createConversation({
+      agent_id: "agent-fake-headless",
+    });
+    const body = {
+      agent_id: "agent-fake-headless",
+      messages: [{ role: "user", content: "never consume" }],
+    } as ConversationMessageCreateBody;
+    await backend.createConversationMessageStream(conversation.id, body);
+
+    await backend.cancelConversation(conversation.id);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await expect(
+      backend.createConversationMessageStream(conversation.id, body),
+    ).resolves.toBeDefined();
+  });
+
   test("reentrant cancellation during iterator.next emits its terminal without losing the abort", async () => {
     const executor = new ReentrantCancelExecutor();
     const backend = new FakeHeadlessBackend("agent-fake-headless", executor);
@@ -296,8 +385,91 @@ describe("FakeHeadlessBackend", () => {
       stop_reason: "cancelled",
     });
 
+    let consumerReturnSettled = false;
+    const consumerReturn = iterator.return?.().then((result) => {
+      consumerReturnSettled = true;
+      return result;
+    });
+    if (!consumerReturn) {
+      throw new Error("Expected persistence iterator return()");
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    expect(consumerReturnSettled).toBe(false);
     executor.settle();
-    expect((await iterator.next()).done).toBe(true);
+    expect((await consumerReturn).done).toBe(true);
+  });
+
+  test("provider settlement releases operation ownership without another consumer read", async () => {
+    const executor = new ReentrantCancelExecutor();
+    const backend = new FakeHeadlessBackend("agent-fake-headless", executor);
+    const conversation = await backend.createConversation({
+      agent_id: "agent-fake-headless",
+    });
+    const body = {
+      agent_id: "agent-fake-headless",
+      messages: [{ role: "user", content: "consumer-independent lease" }],
+    } as ConversationMessageCreateBody;
+    const stream = await backend.createConversationMessageStream(
+      conversation.id,
+      body,
+    );
+    executor.onNext = () => {
+      void backend.cancelConversation(conversation.id);
+    };
+    const iterator = stream[Symbol.asyncIterator]();
+
+    expect(await iterator.next()).toMatchObject({
+      done: false,
+      value: { message_type: "stop_reason", stop_reason: "cancelled" },
+    });
+    await expect(
+      backend.createConversationMessageStream(conversation.id, body),
+    ).rejects.toThrow("already has an active run");
+
+    executor.settle();
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await expect(
+      backend.createConversationMessageStream(conversation.id, body),
+    ).resolves.toBeDefined();
+    expect((await iterator.return?.())?.done).toBe(true);
+  });
+
+  test("provider return can release a cancelled pending next without deadlock", async () => {
+    const executor = new ReturnReleasesNextExecutor();
+    const backend = new FakeHeadlessBackend("agent-fake-headless", executor);
+    const conversation = await backend.createConversation({
+      agent_id: "agent-fake-headless",
+    });
+    const stream = await backend.createConversationMessageStream(
+      conversation.id,
+      {
+        agent_id: "agent-fake-headless",
+        messages: [{ role: "user", content: "return releases next" }],
+      } as ConversationMessageCreateBody,
+    );
+    const iterator = stream[Symbol.asyncIterator]();
+    const terminalPromise = iterator.next();
+    await executor.ready;
+
+    await backend.cancelConversation(conversation.id);
+    expect(await terminalPromise).toMatchObject({
+      done: false,
+      value: { message_type: "stop_reason", stop_reason: "cancelled" },
+    });
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const closed = await Promise.race([
+      iterator.return?.(),
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error("provider settlement deadlocked")),
+          500,
+        );
+      }),
+    ]).finally(() => {
+      if (timeout) clearTimeout(timeout);
+    });
+    expect(closed?.done).toBe(true);
+    expect(executor.returnCalls).toBe(1);
   });
 
   test("direct stream abort remains cancelled when the provider cooperates", async () => {

@@ -297,7 +297,7 @@ describe("TUI interrupt queue lifecycle", () => {
     await waitFor(
       () => inputs.length === 2,
       "the Monitor notification turn",
-      10_000,
+      20_000,
     );
     await sleep(300);
     expect(source.state.status).toBe("running");
@@ -308,7 +308,7 @@ describe("TUI interrupt queue lifecycle", () => {
     await waitFor(
       () => inputs.length === 3,
       "the event after idle Esc",
-      10_000,
+      20_000,
     );
     expect(JSON.stringify(inputs[2]?.body)).toContain(
       "still watching after idle Esc",

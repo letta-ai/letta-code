@@ -108,6 +108,20 @@ describe("LocalBackend context pressure", () => {
       controller.abort(new DOMException("cancelled", "AbortError"));
       expect(staleCompactionSignal?.aborted).toBe(true);
 
+      await expect(
+        backend.createConversationMessageStream(conversation.id, {
+          agent_id: agent.id,
+          messages: [{ role: "user", content: "replacement" }],
+        } as ConversationMessageCreateBody),
+      ).rejects.toThrow("already has an active run");
+
+      releaseStaleSummary(assistantMessage("stale summary"));
+      expect(await firstCollect).toEqual([
+        expect.objectContaining({
+          message_type: "stop_reason",
+          stop_reason: "cancelled",
+        }),
+      ]);
       const replacementChunks = await collect(
         await backend.createConversationMessageStream(conversation.id, {
           agent_id: agent.id,
@@ -117,14 +131,6 @@ describe("LocalBackend context pressure", () => {
       expect(JSON.stringify(replacementChunks)).toContain(
         "replacement summary",
       );
-
-      releaseStaleSummary(assistantMessage("stale summary"));
-      expect(await firstCollect).toEqual([
-        expect.objectContaining({
-          message_type: "stop_reason",
-          stop_reason: "cancelled",
-        }),
-      ]);
       const messages = await backend.listConversationMessages(conversation.id, {
         agent_id: agent.id,
         order: "asc",
