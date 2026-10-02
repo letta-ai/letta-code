@@ -64,6 +64,84 @@ describe("MemFS v2 pre-commit hook", () => {
     if (repo) rmSync(repo, { recursive: true, force: true });
   });
 
+  test.each(["modify", "delete", "rename", "mode", "create"])(
+    "protects config-selected files against %s, including non-Markdown",
+    (operation) => {
+      repo = initRepo("memfs-readonly-");
+      seedConstraints(repo, { readOnlyFiles: ["locked.*"] });
+      writeFileSync(join(repo, "MEMORY.md"), "# Memory\n");
+      writeFileSync(join(repo, "locked.txt"), "accepted\n");
+      execFileSync("git", ["add", "."], { cwd: repo });
+      execFileSync("git", ["commit", "-qm", "seed memory"], { cwd: repo });
+      installPreCommitHook(repo, true);
+      if (operation === "modify")
+        writeFileSync(join(repo, "locked.txt"), "changed\n");
+      if (operation === "delete")
+        execFileSync("git", ["rm", "locked.txt"], { cwd: repo });
+      if (operation === "rename")
+        execFileSync("git", ["mv", "locked.txt", "other.txt"], { cwd: repo });
+      if (operation === "mode")
+        execFileSync("git", ["update-index", "--chmod=+x", "locked.txt"], {
+          cwd: repo,
+        });
+      if (operation === "create")
+        writeFileSync(join(repo, "locked.new"), "new\n");
+      if (operation !== "mode")
+        execFileSync("git", ["add", "-A"], { cwd: repo });
+      const head = execFileSync("git", ["rev-parse", "HEAD"], {
+        cwd: repo,
+        encoding: "utf8",
+      });
+      const result = tryCommit(repo, "reject protected change");
+      expect(result.status).not.toBe(0);
+      expect(result.stdout + result.stderr).toContain("read-only");
+      expect(
+        execFileSync("git", ["rev-parse", "HEAD"], {
+          cwd: repo,
+          encoding: "utf8",
+        }),
+      ).toBe(head);
+    },
+  );
+
+  test("checks staged formatting without rewriting files and preserves Markdown semantics", () => {
+    repo = initRepo("memfs-format-");
+    seedConstraints(repo, {
+      formatting: {
+        lineEndings: "lf",
+        finalNewline: true,
+        trailingWhitespace: true,
+      },
+    });
+    installPreCommitHook(repo, true);
+    const invalid = "# Memory\r\ntext \r\nmissing newline";
+    // Exercise the installed validator under the distribution's Node runtime.
+    writeFileSync(
+      join(repo, ".git", "hooks", "pre-commit"),
+      buildPreCommitHookScript({ execPath: "node", electron: false }),
+    );
+    writeFileSync(join(repo, "MEMORY.md"), invalid);
+    execFileSync("git", ["add", "MEMORY.md"], { cwd: repo });
+    const valid =
+      "# Memory\n\nline  \nhard break\n\n````text\n```\ncode   \n````\n\n    indented code   \n\n> ~~~\n> quoted code   \n> ~~~\n";
+    writeFileSync(join(repo, "MEMORY.md"), valid);
+    const rejected = tryCommit(repo, "reject staged formatting");
+    expect(rejected.status).not.toBe(0);
+    expect(rejected.stdout + rejected.stderr).toContain("formatting");
+    expect(rejected.stdout + rejected.stderr).toContain("LF line endings");
+    expect(rejected.stdout + rejected.stderr).toContain("final newline");
+    expect(rejected.stdout + rejected.stderr).toContain("trailing whitespace");
+    expect(readFileSync(join(repo, "MEMORY.md"), "utf8")).toBe(valid);
+    expect(
+      execFileSync("git", ["show", ":MEMORY.md"], {
+        cwd: repo,
+        encoding: "utf8",
+      }),
+    ).toBe(invalid);
+    execFileSync("git", ["add", "MEMORY.md"], { cwd: repo });
+    expect(tryCommit(repo, "accept formatting").status).toBe(0);
+  });
+
   test("requires indexes for Markdown directories while ignoring skills", () => {
     repo = initRepo("memfs-v2-hook-");
     installPreCommitHook(repo, true);
