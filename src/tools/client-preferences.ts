@@ -1,8 +1,8 @@
 import { settingsManager } from "@/settings-manager";
 import type { ClientPreferences } from "@/types/client-preferences";
 import { isRecord } from "@/utils/type-guards";
-import { getInternalToolName, getServerToolName } from "./manager";
 import { TOOL_DEFINITIONS, type ToolName } from "./tool-definitions";
+import { getInternalToolName, getServerToolName } from "./tool-name-mapping";
 
 /** Validate and canonicalize before comparing or persisting a snapshot. */
 export function normalizeClientPreferences(value: unknown): ClientPreferences {
