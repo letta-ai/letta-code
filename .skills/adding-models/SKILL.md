@@ -57,6 +57,18 @@ Common provider prefixes:
 - `google_vertex/` - Vertex AI
 - `openrouter/` - Various providers
 
+### Selection Applies the Catalog's Preset
+
+Model selection resolves the name against the active backend's catalog, and the matched entry supplies the effective settings (reasoning level, context window, output limits). `letta model set <model>` initializes the catalog and applies the matched entry's preset; selecting by a raw provider handle or a bare short name instead applies the provider-native default preset — not a catalog preset.
+
+The same-looking model can therefore differ by surface:
+
+- Cloud catalog aliases (`sonnet`, `gpt-5.6-sol`) carry Cloud presets — e.g. `gpt-5.6-sol` maps to high reasoning with a ~350k window.
+- The local pi-ai catalog has no Cloud aliases: `sonnet` fails with `Unknown model`, and local entries are per-reasoning-tier IDs (`claude-sonnet-5-high`, `gpt-5.6-sol-none`…`-max`).
+- A bare short name locally (`gpt-5.6-sol`) resolves, but to the provider-native default (`none` reasoning, ~272k window) rather than a Cloud-like high preset — select the tiered ID (`gpt-5.6-sol-high`) for a specific reasoning level.
+
+Confirm the effective configuration with `letta model get`; sessions that select "the same model" can run with different reasoning and context limits on different surfaces.
+
 ### Step 2: Update the Owning Catalog
 
 Letta Code does not bundle a model catalog:
@@ -104,5 +116,7 @@ This is handled by `isGeminiModel()` and `isOpenAIModel()` in `src/tools/manager
 ## Common Issues
 
 **"Handle not found" error**: The model handle is incorrect. Run the validation script to see valid handles.
+
+**`Unknown model "sonnet"`**: This is a Cloud catalog alias used against a local backend. Local pi-ai catalogs expose per-reasoning-tier handles like `claude-sonnet-5-high` instead (see "Selection Applies the Catalog's Preset" above).
 
 **Model works but wrong toolset**: Check `src/tools/manager.ts` to ensure the provider prefix is recognized.
