@@ -248,6 +248,19 @@ function filterToolRegistryByClientAllowlist(
   );
 }
 
+/** Memory() is attached only for agents whose memory uses the MemFS v2 layout. */
+function filterMemoryToolByMemoryFormat(
+  registry: ToolRegistry,
+  agentId: string | null | undefined,
+): ToolRegistry {
+  if (!registry.has("Memory") || resolveMemoryToolDirectory(agentId)) {
+    return registry;
+  }
+  const filtered = new Map(registry);
+  filtered.delete("Memory");
+  return filtered;
+}
+
 function filterExternalToolsByRuntimeContext(
   externalTools: Map<string, ExternalToolDefinition>,
   runtimeContext: RuntimeContextSnapshot,
@@ -302,6 +315,7 @@ function filterModToolsByClientAllowlist(
   );
 }
 
+import { resolveMemoryToolDirectory } from "./impl/memory";
 import { TOOLSET_CATALOG, WORKTREE_TOOL_NAMES } from "./toolset-catalog";
 import type { ToolsetName } from "./toolset-types";
 
@@ -727,7 +741,7 @@ export async function executeExternalTool(
  */
 export function getClientToolsFromRegistry(): ClientTool[] {
   return buildClientToolsFromSnapshot(
-    toolRegistry,
+    filterMemoryToolByMemoryFormat(toolRegistry, undefined),
     selectModelFacingExternalTools(
       filterExternalToolsByRuntimeContext(getExternalToolsRegistry(), {}),
     ),
@@ -771,9 +785,12 @@ function capturePreparedToolExecutionContext(
   const runtimeContext = buildExecutionRuntimeContextSnapshot(options);
   const clientToolAllowlist =
     options?.clientToolAllowlist ?? toolFilter.getEnabledTools() ?? undefined;
-  const toolRegistrySnapshot = filterToolRegistryByClientAllowlist(
-    snapshot.toolRegistry,
-    clientToolAllowlist,
+  const toolRegistrySnapshot = filterMemoryToolByMemoryFormat(
+    filterToolRegistryByClientAllowlist(
+      snapshot.toolRegistry,
+      clientToolAllowlist,
+    ),
+    runtimeContext.agentId,
   );
   const executionSnapshot: ToolExecutionContextSnapshot = {
     toolRegistry: toolRegistrySnapshot,

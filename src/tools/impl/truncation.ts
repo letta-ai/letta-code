@@ -29,6 +29,7 @@ export const LIMITS = {
   GREP_OUTPUT_CHARS: 10_000, // Max characters for grep results
   GLOB_MAX_FILES: 2_000, // Max number of file paths
   LS_MAX_ENTRIES: 1_000, // Max directory entries
+  MEMORY_MAX_ENTRIES: 10, // Files + subdirectories per Memory() listing
 
   // Backstop for any model-facing tool return that doesn't apply its own
   // clamp (MCP/external tools, mod tools, item-count-limited tools, etc.).

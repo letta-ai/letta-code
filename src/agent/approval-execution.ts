@@ -46,6 +46,7 @@ const PARALLEL_SAFE_TOOLS = new Set([
   "Read",
   "ViewImage",
   "Grep",
+  "Memory",
   "Glob",
   // Search/fetch tools (external APIs or read-only queries)
   "conversation_search",
