@@ -11,7 +11,7 @@ describe("getErrorHintForStopReason", () => {
     );
 
     expect(hint).toContain("4,096-token output limit");
-    expect(hint).toContain("not a spending or usage cap");
+    expect(hint).toContain("not an account quota or spending cap");
     expect(hint).toContain("/model");
     expect(hint).not.toBe(ERROR_FEEDBACK_HINT);
   });
@@ -20,7 +20,7 @@ describe("getErrorHintForStopReason", () => {
     const hint = getErrorHintForStopReason("max_tokens_exceeded", null, null);
 
     expect(hint).toContain("its output token limit");
-    expect(hint).toContain("not a spending or usage cap");
+    expect(hint).toContain("not an account quota or spending cap");
   });
 
   test("keeps the generic feedback hint for other non-provider stop reasons", () => {

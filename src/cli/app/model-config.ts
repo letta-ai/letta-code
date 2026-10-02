@@ -244,7 +244,7 @@ function maxTokensExceededHint(maxTokens: number | null | undefined): string {
       ? `its ${maxTokens.toLocaleString("en-US")}-token output limit`
       : "its output token limit";
   return [
-    `The model's response hit ${limit} before it finished (this is a per-response limit, not a spending or usage cap).`,
-    `Try lowering reasoning effort, asking for a shorter answer, or switching models with /model.`,
+    `The model reached ${limit} before finishing (this is a per-response output limit, not an account quota or spending cap).`,
+    `Try lowering reasoning effort or switching models with /model, or breaking your request into smaller steps.`,
   ].join(" ");
 }
