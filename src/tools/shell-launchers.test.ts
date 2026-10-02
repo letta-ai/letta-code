@@ -10,6 +10,7 @@ import {
   POWERSHELL_UTF8_OUTPUT_PREFIX,
   selectAvailableShellLauncher,
 } from "@/tools/impl/shell-launchers";
+import { detectShellContext } from "@/utils/shell-context";
 
 function quotePowerShellLiteral(value: string): string {
   return `'${value.replaceAll("'", "''")}'`;
@@ -85,6 +86,38 @@ describe("Shell Launchers", () => {
     expect(defaultCommand).not.toContain(POWERSHELL_EXIT_CODE_SUFFIX);
     expect(hookCommand).toContain("$global:LASTEXITCODE = $null");
     expect(hookCommand.endsWith(POWERSHELL_EXIT_CODE_SUFFIX)).toBe(true);
+  });
+
+  test("Unix launchers start with the shell named in session context", () => {
+    const originalPlatform = Object.getOwnPropertyDescriptor(
+      process,
+      "platform",
+    );
+    const originalShell = process.env.SHELL;
+
+    try {
+      for (const [currentPlatform, shell, expected] of [
+        ["darwin", "/bin/bash", "/bin/zsh"],
+        ["linux", "/usr/bin/zsh", "/usr/bin/zsh"],
+        ["linux", undefined, "/bin/bash"],
+      ] as const) {
+        Object.defineProperty(process, "platform", { value: currentPlatform });
+        if (shell === undefined) delete process.env.SHELL;
+        else process.env.SHELL = shell;
+
+        const launchers = buildShellLaunchers("echo test");
+        expect(launchers[0]?.[0]).toBe(expected);
+        expect(
+          detectShellContext(process.env, currentPlatform).displayName,
+        ).toBe(expected);
+      }
+    } finally {
+      if (originalPlatform) {
+        Object.defineProperty(process, "platform", originalPlatform);
+      }
+      if (originalShell === undefined) delete process.env.SHELL;
+      else process.env.SHELL = originalShell;
+    }
   });
 
   test("Windows launchers match Codex PowerShell order", () => {
