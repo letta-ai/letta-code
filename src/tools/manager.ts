@@ -104,6 +104,9 @@ import {
 } from "./secret-substitution";
 import { resolveBackendSpecificToolAssets } from "./task-tool-assets";
 import { TOOL_DEFINITIONS, type ToolName } from "./tool-definitions";
+import { getInternalToolName, getServerToolName } from "./tool-name-mapping";
+
+export { getInternalToolName, getServerToolName };
 
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
 
@@ -141,31 +144,6 @@ const SCOPED_BACKGROUND_TOOLS = new Set(["Monitor", "Workflow"]);
 
 // Tools that write files — used to trigger onFileWrite broadcast after execution.
 const FILE_MUTATING_TOOLS = new Set(["Edit", "Write"]);
-
-// Maps internal implementation names to the names shown to the model.
-const TOOL_NAME_MAPPINGS: Partial<Record<ToolName, string>> = {
-  // Align subagent-spawning tool with Claude Code: surface internal `Task` as `Agent`.
-  // Internal implementation name stays `Task` for backward compat with existing
-  // agent states; getInternalToolName("Agent") resolves back to "Task".
-  Task: "Agent",
-  AskUserQuestionAsync: "AskUserQuestion",
-};
-
-/** Get the server-facing name for a tool (maps internal names to what the model sees). */
-export function getServerToolName(internalName: string): string {
-  return TOOL_NAME_MAPPINGS[internalName as ToolName] || internalName;
-}
-
-/** Get the internal tool name from a server-facing name (tool calls/approvals arrive with server names). */
-export function getInternalToolName(serverName: string): string {
-  for (const [internal, server] of Object.entries(TOOL_NAME_MAPPINGS)) {
-    if (server === serverName) {
-      return internal;
-    }
-  }
-  // If not in mapping, the server name is the internal name
-  return serverName;
-}
 
 function matchesClientToolAllowlistEntry(
   allowSet: Set<string> | null,

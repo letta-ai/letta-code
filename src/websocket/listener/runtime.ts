@@ -163,6 +163,7 @@ export function evictConversationRuntimeIfIdle(
         runtime.expectedTeleportExpiresAt > Date.now())) ||
     runtime.queuePumpActive ||
     runtime.queuePumpScheduled ||
+    runtime.pendingInboundDispatches > 0 ||
     runtime.pendingTurns > 0 ||
     runtime.pendingApprovalResolvers.size > 0 ||
     runtime.pendingApprovalBatchByToolCallId.size > 0 ||
@@ -292,6 +293,7 @@ export function createConversationRuntime(
     dequeuedClientMessageIdsByBatchId: new Map(),
     queuePumpActive: false,
     queuePumpScheduled: false,
+    pendingInboundDispatches: 0,
     pendingTurns: 0,
     get loopStatus() {
       return turnLifecycle.loopStatus;

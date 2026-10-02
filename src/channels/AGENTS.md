@@ -12,12 +12,12 @@ deployment: on-device channels run it through `gateway-local.ts`, and remote
 hosts (for example Letta Cloud) run the same gateway through the
 `@letta-ai/letta-code/gateway-core` package export.
 
-Cross-cutting channel behavior — anything phrased as "all channels" or that must
-apply to both on-device and Cloud delivery — belongs in the gateway, not
-duplicated in adapter-specific routing or conversation-creation code. Before
-editing `registry-routes.ts` (or a Cloud-side route handler) for behavior like
-source tagging or conversation metadata, check whether the gateway can apply it
-where it registers or submits the runtime.
+Cross-cutting behavior belongs in the gateway, not adapters or route handlers.
+Publish immutable `scope_id` groups; select them per input using
+`external_tool_scope_ids`. Retain active, queued, and handed-off references.
+Do not freeze different queued destinations to one runtime-global schema.
+Relay inputs need unique selectors without tools; unscoped proactive tools
+return only at idle. Check this owner before editing `registry-routes.ts`.
 
 ## Pure logic is shared through package subpaths, transport is not
 

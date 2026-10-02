@@ -40,6 +40,12 @@ import type {
   UmiLifecycleMessageBase,
 } from "./approval-classification-protocol";
 import type { BackgroundProcessSummary } from "./background-process-protocol";
+import type {
+  ChannelAccountCreatePayload,
+  ChannelPluginConfig,
+  ChannelReplyMode,
+  DmPolicy,
+} from "./channel-account-protocol";
 import type { ConversationForkBody } from "./conversation-fork-protocol";
 import type * as CwdProtocol from "./cwd-protocol";
 import type {
@@ -88,6 +94,7 @@ import type {
 
 export type * from "./approval-classification-protocol";
 export type * from "./background-process-protocol";
+export type * from "./channel-account-protocol";
 export type * from "./cwd-protocol";
 export type * from "./external-tool-protocol";
 export type * from "./loop-status-protocol";
@@ -98,7 +105,6 @@ export type * from "./task-control-protocol";
 export type * from "./teleport-protocol";
 export type * from "./toolset-protocol";
 
-export type DmPolicy = "pairing" | "allowlist" | "open";
 export type ExperimentId =
   | "artifacts"
   | "conversation_titles"
@@ -205,8 +211,6 @@ export interface ReflectionSettingsSnapshot {
 }
 export type ChannelId = string;
 
-export type ChannelPluginConfig = Record<string, unknown>;
-
 // ── Channel config schema (declarative plugin UI) ──
 
 export interface ChannelConfigFieldBase {
@@ -305,11 +309,11 @@ export interface ChannelConfigSnapshot {
   display_name?: string;
   enabled: boolean;
   dm_policy: DmPolicy;
+  reply_mode: ChannelReplyMode;
   allowed_users: string[];
   /** Plugin-owned redacted config/settings payload. */
   config: ChannelPluginConfig;
 }
-
 export interface ChannelAccountSnapshot {
   channel_id: ChannelId;
   account_id: string;
@@ -318,13 +322,13 @@ export interface ChannelAccountSnapshot {
   configured: boolean;
   running: boolean;
   dm_policy: DmPolicy;
+  reply_mode: ChannelReplyMode;
   allowed_users: string[];
   /** Plugin-owned redacted config/settings payload. */
   config: ChannelPluginConfig;
   created_at: string;
   updated_at: string;
 }
-
 export interface ChannelPendingPairing {
   account_id: string;
   code: string;
@@ -1708,16 +1712,6 @@ export interface ChannelAccountsListCommand {
   channel_id: ChannelId;
 }
 
-export interface ChannelAccountCreatePayload {
-  account_id?: string;
-  display_name?: string;
-  enabled?: boolean;
-  dm_policy?: DmPolicy;
-  allowed_users?: string[];
-  /** Plugin-owned account config. New fields should be added here, not centrally. */
-  config?: ChannelPluginConfig;
-}
-
 export interface ChannelAccountCreateCommand {
   type: "channel_account_create";
   request_id: string;
@@ -1783,11 +1777,11 @@ export interface ChannelSetConfigCommand {
   account_id?: string;
   config: {
     dm_policy?: DmPolicy;
+    reply_mode?: ChannelReplyMode;
     allowed_users?: string[];
     plugin_config?: ChannelPluginConfig;
   };
 }
-
 export interface ChannelStartCommand {
   type: "channel_start";
   request_id: string;
