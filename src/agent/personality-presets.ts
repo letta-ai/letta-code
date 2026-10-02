@@ -11,7 +11,13 @@
 import { parseMdxFrontmatter } from "./memory";
 import { MEMORY_PROMPTS, SYSTEM_PROMPTS } from "./prompt-assets";
 
-export type PersonalityAssetId = "tutor-profile";
+export type PersonalityAssetId =
+  | "tutor-profile"
+  | "designing-an-agent-skill"
+  | "designing-an-agent-constitution"
+  | "designing-an-agent-affordances"
+  | "designing-an-agent-memory-design"
+  | "designing-an-agent-create-script";
 
 export interface PersonalityDefaultMemoryFile {
   path: string;
@@ -25,7 +31,7 @@ export interface PersonalityOption {
   description: string;
   /** Model ID or handle to use when no explicit model is provided. */
   defaultModel?: string;
-  /** Binary files seeded into MemFS after the initial checkout. */
+  /** Files seeded into MemFS after the initial checkout. */
   defaultMemoryFiles?: readonly PersonalityDefaultMemoryFile[];
 }
 
@@ -45,6 +51,31 @@ export const PERSONALITY_OPTIONS: PersonalityOption[] = [
         path: "profile.png",
         assetId: "tutor-profile",
         commitMessage: "chore: set default Tutor profile picture",
+      },
+      {
+        path: "skills/designing-an-agent/SKILL.md",
+        assetId: "designing-an-agent-skill",
+        commitMessage: "chore: seed designing-an-agent skill",
+      },
+      {
+        path: "skills/designing-an-agent/references/context-constitution.md",
+        assetId: "designing-an-agent-constitution",
+        commitMessage: "chore: seed designing-an-agent constitution reference",
+      },
+      {
+        path: "skills/designing-an-agent/references/affordances.md",
+        assetId: "designing-an-agent-affordances",
+        commitMessage: "chore: seed designing-an-agent affordances reference",
+      },
+      {
+        path: "skills/designing-an-agent/references/memory-design.md",
+        assetId: "designing-an-agent-memory-design",
+        commitMessage: "chore: seed designing-an-agent memory-design reference",
+      },
+      {
+        path: "skills/designing-an-agent/scripts/create-agent.ts",
+        assetId: "designing-an-agent-create-script",
+        commitMessage: "chore: seed designing-an-agent create script",
       },
     ],
   },
