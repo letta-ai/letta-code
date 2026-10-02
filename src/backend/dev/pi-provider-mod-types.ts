@@ -57,7 +57,10 @@ export interface PiProviderOAuthConfig {
   login: (
     callbacks: PiProviderOAuthLoginCallbacks,
   ) => Promise<OAuthCredentials>;
-  refreshToken: (credentials: OAuthCredentials) => Promise<OAuthCredentials>;
+  refreshToken: (
+    credentials: OAuthCredentials,
+    signal?: AbortSignal,
+  ) => Promise<OAuthCredentials>;
   getApiKey: (credentials: OAuthCredentials) => string;
   modifyModels?: (
     models: Model<Api>[],
@@ -76,6 +79,7 @@ export interface PiProviderRegistration {
   models?: PiProviderModelRegistration[];
   listModels?: (
     connection: PiProviderConnection,
+    signal?: AbortSignal,
   ) => Promise<PiProviderModelRegistration[]> | PiProviderModelRegistration[];
   connect?: boolean | PiProviderConnectConfig;
   oauth?: PiProviderOAuthConfig;

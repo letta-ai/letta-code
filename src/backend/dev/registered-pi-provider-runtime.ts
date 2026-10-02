@@ -95,13 +95,17 @@ export function resolveRegisteredPiProviderRuntimeConnection(
 export async function listRegisteredPiProviderModels(
   provider: RegisteredPiProvider,
   connection: RegisteredPiProviderModelListConnection,
+  signal?: AbortSignal,
 ): Promise<PiProviderModelRegistration[]> {
-  const listed = await provider.config.listModels?.({
-    id: provider.providerName,
-    providerName: provider.providerName,
-    baseUrl: connection.baseUrl ?? connection.baseURL,
-    apiKey: connection.apiKey,
-    headers: connection.headers,
-  });
+  const listed = await provider.config.listModels?.(
+    {
+      id: provider.providerName,
+      providerName: provider.providerName,
+      baseUrl: connection.baseUrl ?? connection.baseURL,
+      apiKey: connection.apiKey,
+      headers: connection.headers,
+    },
+    signal,
+  );
   return listed ?? provider.config.models ?? [];
 }

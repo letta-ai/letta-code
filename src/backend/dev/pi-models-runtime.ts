@@ -259,9 +259,13 @@ export class LocalPiModelsRuntime {
    * the identity (volatile `access`/`expires` fields are excluded), so they
    * do not clear last-known retention.
    */
-  private async invalidateOnCredentialChange(): Promise<void> {
+  private async invalidateOnCredentialChange(
+    signal?: AbortSignal,
+  ): Promise<void> {
     for (const providerId of this.accountScopedProviderIds()) {
-      const credential = await this.credentials.read(providerId);
+      signal?.throwIfAborted();
+      const credential = await this.credentials.read(providerId, { signal });
+      signal?.throwIfAborted();
       const signature = credentialIdentitySignature(credential);
       const previous = this.credentialSignatures.get(providerId);
       this.credentialSignatures.set(providerId, signature);
@@ -290,10 +294,14 @@ export class LocalPiModelsRuntime {
    * credential (via the auth.json adapter, refreshing OAuth as needed) or
    * the provider's ambient sources.
    */
-  async getAuth(providerId: string): Promise<AuthResult | undefined> {
+  async getAuth(
+    providerId: string,
+    signal?: AbortSignal,
+  ): Promise<AuthResult | undefined> {
+    signal?.throwIfAborted();
     this.ensureManagedProviders(providerId);
-    await this.invalidateOnCredentialChange();
-    return this.models.getAuth(providerId);
+    await this.invalidateOnCredentialChange(signal);
+    return this.models.getAuth(providerId, { signal });
   }
 
   /**
@@ -326,12 +334,16 @@ export class LocalPiModelsRuntime {
         ? this.models.getModel(providerId, fallbackModelId)
         : undefined);
     for (let attempt = 0; ; attempt++) {
+      abortSignal?.throwIfAborted();
       // Re-check connection-backed provider registration on every retry. This
       // prevents native preflight against one endpoint from being paired with
       // auth or a catalog built from another endpoint after a concurrent write.
       this.ensureManagedProviders(providerId);
-      await this.invalidateOnCredentialChange();
-      const auth = await this.models.getAuth(providerId);
+      await this.invalidateOnCredentialChange(abortSignal);
+      const auth = await this.models.getAuth(providerId, {
+        signal: abortSignal,
+      });
+      abortSignal?.throwIfAborted();
       const isLocalOllama = this.isBuiltInLocalOllamaProvider(providerId);
       const ollamaConnection = isLocalOllama
         ? resolveLocalEndpointConnection(providerId, this.storageDir)
@@ -363,8 +375,9 @@ export class LocalPiModelsRuntime {
           ...(abortSignal ? { signal: abortSignal } : {}),
         });
         try {
-          await this.refresh(providerId);
+          await this.refresh(providerId, abortSignal);
         } catch {
+          abortSignal?.throwIfAborted();
           // Exact serving truth is already known. Retained catalog capabilities
           // remain usable, but their contextWindow does not.
         }
@@ -373,14 +386,19 @@ export class LocalPiModelsRuntime {
       let model = lookup();
       if (!model) {
         try {
-          await this.models.refresh({ force: true });
+          await this.models.refresh({ force: true, signal: abortSignal });
+          abortSignal?.throwIfAborted();
         } catch {
+          abortSignal?.throwIfAborted();
           // Refresh failures keep last-known lists; the lookup below decides.
         }
         model = lookup();
       }
       const credentialMoved =
-        await this.credentialIdentityMovedSinceInvalidation(providerId);
+        await this.credentialIdentityMovedSinceInvalidation(
+          providerId,
+          abortSignal,
+        );
       const endpointMoved =
         ollamaConnection !== undefined &&
         (this.endpointSignatures.get(providerId) !==
@@ -415,18 +433,23 @@ export class LocalPiModelsRuntime {
    */
   private async credentialIdentityMovedSinceInvalidation(
     providerId: string,
+    signal?: AbortSignal,
   ): Promise<boolean> {
     const recorded = this.credentialSignatures.get(providerId);
     if (recorded === undefined) return false;
-    const credential = await this.credentials.read(providerId);
+    signal?.throwIfAborted();
+    const credential = await this.credentials.read(providerId, { signal });
+    signal?.throwIfAborted();
     return credentialIdentitySignature(credential) !== recorded;
   }
 
   /** Stored (possibly just-refreshed) credential for a provider. */
   async getStoredCredential(
     providerId: string,
+    signal?: AbortSignal,
   ): Promise<Credential | undefined> {
-    return this.credentials.read(providerId);
+    signal?.throwIfAborted();
+    return this.credentials.read(providerId, { signal });
   }
 
   /** Providers whose models this runtime discovers and owns end-to-end. */
@@ -567,10 +590,12 @@ export class LocalPiModelsRuntime {
    * credentialed dynamic built-ins (e.g. radius) refresh correctly.
    * Per-provider fetch failures keep that provider's last-known list.
    */
-  async refreshAll(): Promise<void> {
+  async refreshAll(signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
     this.ensureManagedProviders();
-    await this.invalidateOnCredentialChange();
-    await this.models.refresh({ force: true });
+    await this.invalidateOnCredentialChange(signal);
+    await this.models.refresh({ force: true, signal });
+    signal?.throwIfAborted();
   }
 
   /**
@@ -578,12 +603,14 @@ export class LocalPiModelsRuntime {
    * provider's fetch error while the provider keeps serving its last-known
    * list.
    */
-  async refresh(providerId: string): Promise<void> {
+  async refresh(providerId: string, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
     this.ensureManagedProviders(providerId);
-    await this.invalidateOnCredentialChange();
+    await this.invalidateOnCredentialChange(signal);
     // pi-ai refreshes the collection as a whole (configured dynamic
     // providers only); this method adds per-provider error semantics on top.
-    const result = await this.models.refresh({ force: true });
+    const result = await this.models.refresh({ force: true, signal });
+    signal?.throwIfAborted();
     const error = result.errors.get(providerId);
     if (error) throw error;
   }
@@ -596,12 +623,14 @@ export class LocalPiModelsRuntime {
   async resolveModel(
     providerId: string,
     modelId: string,
+    signal?: AbortSignal,
   ): Promise<Model<Api> | undefined> {
-    await this.invalidateOnCredentialChange();
+    signal?.throwIfAborted();
+    await this.invalidateOnCredentialChange(signal);
     const known = this.getModel(providerId, modelId);
     if (known) return known;
     try {
-      await this.refresh(providerId);
+      await this.refresh(providerId, signal);
     } catch {
       // Refresh failure keeps the last-known list; the lookup below decides.
     }

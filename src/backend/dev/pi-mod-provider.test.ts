@@ -3,7 +3,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CredentialStore } from "@earendil-works/pi-ai";
-import { localModelSettingsForHandle } from "@/backend/local/local-model-config";
+import {
+  listLocalModels,
+  localModelSettingsForHandle,
+} from "@/backend/local/local-model-config";
 import { setLocalOAuthProvider } from "@/backend/local/local-provider-auth-store";
 import { testRefreshContext } from "@/test-utils/pi-refresh-context";
 import { createModPiProvider } from "./pi-mod-provider";
@@ -137,6 +140,84 @@ describe("LocalPiModelsRuntime mod provider integration", () => {
     );
     expect(resolved.model).toBe(runtime.getModel(PROVIDER, "acme-large")!);
     expect(resolved.model.provider).toBe(PROVIDER);
+  });
+
+  test("cancels a blocked OAuth refresh during turn auth resolution", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-mod-oauth-abort-"));
+    try {
+      let refreshSignal: AbortSignal | undefined;
+      registerPiProvider(PROVIDER, {
+        api: "openai-completions",
+        baseUrl: "https://api.acme.test/v1",
+        models: [model("acme-large")],
+        oauth: {
+          login: async () => {
+            throw new Error("not used in this test");
+          },
+          refreshToken: async (_credentials, signal) => {
+            refreshSignal = signal;
+            return await new Promise<never>((_resolve, reject) => {
+              signal?.addEventListener(
+                "abort",
+                () => reject(new DOMException("cancelled", "AbortError")),
+                { once: true },
+              );
+            });
+          },
+          getApiKey: (credentials) => credentials.access,
+        },
+      });
+      setLocalOAuthProvider({
+        providerName: PROVIDER,
+        providerType: PROVIDER,
+        auth: { ...oauthAccount("expired"), expires: Date.now() - 1 },
+        storageDir,
+      });
+      const runtime = new LocalPiModelsRuntime({ storageDir });
+      const controller = new AbortController();
+      const pending = runtime.getAuth(PROVIDER, controller.signal);
+      while (!refreshSignal) await Promise.resolve();
+
+      controller.abort(new DOMException("cancelled", "AbortError"));
+
+      await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+      expect(refreshSignal?.aborted).toBe(true);
+      expect(refreshSignal?.reason).toMatchObject({ name: "AbortError" });
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("cancels blocked mod model discovery during automatic selection", async () => {
+    let discoverySignal: AbortSignal | undefined;
+    registerPiProvider(PROVIDER, {
+      api: "openai-completions",
+      baseUrl: "https://api.acme.test/v1",
+      connect: false,
+      listModels: async (_connection, signal) => {
+        discoverySignal = signal;
+        return await new Promise<never>((_resolve, reject) => {
+          signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("cancelled", "AbortError")),
+            { once: true },
+          );
+        });
+      },
+    });
+    const runtime = new LocalPiModelsRuntime();
+    const controller = new AbortController();
+    const pending = listLocalModels(undefined, {
+      modelsRuntime: runtime,
+      signal: controller.signal,
+    });
+    while (!discoverySignal) await Promise.resolve();
+
+    controller.abort(new DOMException("cancelled", "AbortError"));
+
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(discoverySignal?.aborted).toBe(true);
+    expect(discoverySignal?.reason).toMatchObject({ name: "AbortError" });
   });
 
   test("identity holds through the real selection path (persisted settings)", async () => {

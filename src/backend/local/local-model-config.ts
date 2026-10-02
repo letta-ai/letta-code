@@ -59,6 +59,7 @@ interface LocalModelListEntry {
 
 interface ListLocalModelsOptions {
   fetch?: typeof fetch;
+  signal?: AbortSignal;
   /**
    * Per-backend pi-ai Models runtime that owns all dynamic model discovery.
    * When omitted, a call-scoped runtime is created (honoring `fetch`), so
@@ -225,7 +226,9 @@ export async function resolveAvailableLocalModelForTurn(input: {
   modelSettings?: Record<string, unknown> | null;
   storageDir?: string;
   modelsRuntime?: LocalPiModelsRuntime;
+  signal?: AbortSignal;
 }): Promise<{ model?: string; modelSettings: Record<string, unknown> }> {
+  input.signal?.throwIfAborted();
   const baseSettings = { ...(input.modelSettings ?? {}) };
   if (
     typeof input.model === "string" &&
@@ -239,7 +242,9 @@ export async function resolveAvailableLocalModelForTurn(input: {
   );
   const models = await listLocalModels(input.storageDir, {
     ...(input.modelsRuntime ? { modelsRuntime: input.modelsRuntime } : {}),
+    ...(input.signal ? { signal: input.signal } : {}),
   });
+  input.signal?.throwIfAborted();
   const selected = preferredProvider
     ? models.find(
         (entry) => providerForLocalModelListEntry(entry) === preferredProvider,
@@ -277,7 +282,7 @@ export async function listLocalModels(
   const providerNames = localProviderNamesFromRecords(records);
   // One collection-wide refresh (pi-ai 0.81 semantics): configured dynamic
   // providers re-fetch, per-provider failures keep last-known lists.
-  await modelsRuntime.refreshAll();
+  await modelsRuntime.refreshAll(options.signal);
   const configured = resolveLocalModelConfig(storageDir);
   const models: LocalModelListEntry[] = [];
   const registeredProviders = listRegisteredPiProviders();

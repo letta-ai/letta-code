@@ -357,15 +357,25 @@ export class HeadlessBackend implements Backend {
   async createConversationMessageStream(
     conversationId: string,
     body: ConversationMessageCreateBody,
+    options?: Parameters<Backend["createConversationMessageStream"]>[2],
   ) {
-    return this.executeConversationTurn(conversationId, body);
+    return this.executeConversationTurn(
+      conversationId,
+      body,
+      options?.signal ?? undefined,
+    );
   }
 
   async streamConversationMessages(
     conversationId: string,
     body: ConversationMessageStreamBody,
+    options?: Parameters<Backend["streamConversationMessages"]>[2],
   ) {
-    return this.executeConversationTurn(conversationId, body);
+    return this.executeConversationTurn(
+      conversationId,
+      body,
+      options?.signal ?? undefined,
+    );
   }
 
   async cancelConversation(...args: Parameters<Backend["cancelConversation"]>) {
@@ -373,22 +383,10 @@ export class HeadlessBackend implements Backend {
     const runId =
       this.activeRunByConversation.get(conversationIdOrAgentId) ??
       this.findActiveRunByAgentId(conversationIdOrAgentId);
-    const run = runId ? this.runs.get(runId) : undefined;
-    if (run?.conversation_id && run.agent_id) {
-      this.store.settleInterruptedToolCalls(run.conversation_id, {
-        agentId: run.agent_id,
-      });
+    if (runId) {
+      this.markRunCancelled(runId);
     } else {
       this.store.settleInterruptedToolCalls(conversationIdOrAgentId);
-    }
-    if (runId) {
-      const controller = this.runControllerByRunId.get(runId);
-      this.recordRunChunk(runId, {
-        message_type: "stop_reason",
-        stop_reason: "cancelled",
-      } as LettaStreamingResponse);
-      this.completeRun(runId, "cancelled");
-      controller?.abort();
     }
     return { status: "cancelled" } as never;
   }
@@ -409,20 +407,7 @@ export class HeadlessBackend implements Backend {
       return { [runId]: "failed" } as never;
     }
 
-    if (run.conversation_id) {
-      this.store.settleInterruptedToolCalls(run.conversation_id, {
-        agentId: run.agent_id,
-      });
-    } else {
-      this.store.settleInterruptedToolCalls(run.agent_id);
-    }
-    const controller = this.runControllerByRunId.get(runId);
-    this.recordRunChunk(runId, {
-      message_type: "stop_reason",
-      stop_reason: "cancelled",
-    } as LettaStreamingResponse);
-    this.completeRun(runId, "cancelled");
-    controller?.abort();
+    this.markRunCancelled(runId);
     return { [runId]: "cancelled" } as never;
   }
 
@@ -469,7 +454,9 @@ export class HeadlessBackend implements Backend {
   private async executeConversationTurn(
     conversationId: string,
     body: ConversationMessageCreateBody | ConversationMessageStreamBody,
+    requestSignal?: AbortSignal,
   ) {
+    requestSignal?.throwIfAborted();
     const activeRunId = this.activeRunByConversation.get(conversationId);
     const activeRun = activeRunId ? this.runs.get(activeRunId) : undefined;
     if (activeRun && !isTerminalRun(activeRun)) {
@@ -504,6 +491,24 @@ export class HeadlessBackend implements Backend {
     );
     const runController = new AbortController();
     this.runControllerByRunId.set(run.id, runController);
+    const markCancelled = () => {
+      this.markRunCancelled(run.id, runController.signal.reason);
+    };
+    runController.signal.addEventListener("abort", markCancelled, {
+      once: true,
+    });
+    const relayRequestAbort = () => {
+      if (!runController.signal.aborted) {
+        runController.abort(requestSignal?.reason);
+      }
+    };
+    if (requestSignal?.aborted) {
+      relayRequestAbort();
+    } else {
+      requestSignal?.addEventListener("abort", relayRequestAbort, {
+        once: true,
+      });
+    }
     const history = this.store.listConversationMessages(
       turnInput.conversationId,
       {
@@ -525,25 +530,27 @@ export class HeadlessBackend implements Backend {
         turnInput.agentId,
       ),
     );
-    const resolvedPrompt = await this.resolveSystemPromptForTurn({
-      conversationId: turnInput.conversationId,
-      agentId: turnInput.agentId,
-      agent,
-      body,
-      history,
-      uiMessages,
-    });
-    const systemPrompt =
-      typeof resolvedPrompt === "string"
-        ? resolvedPrompt
-        : resolvedPrompt.systemPrompt;
-    const midConversationSystemPrompt =
-      typeof resolvedPrompt === "string"
-        ? undefined
-        : resolvedPrompt.midConversationSystemPrompt;
     let stream: Stream<LettaStreamingResponse>;
     try {
       runController.signal.throwIfAborted();
+      const resolvedPrompt = await this.resolveSystemPromptForTurn({
+        conversationId: turnInput.conversationId,
+        agentId: turnInput.agentId,
+        agent,
+        body,
+        history,
+        uiMessages,
+        signal: runController.signal,
+      });
+      runController.signal.throwIfAborted();
+      const systemPrompt =
+        typeof resolvedPrompt === "string"
+          ? resolvedPrompt
+          : resolvedPrompt.systemPrompt;
+      const midConversationSystemPrompt =
+        typeof resolvedPrompt === "string"
+          ? undefined
+          : resolvedPrompt.midConversationSystemPrompt;
       stream = await this.executor.execute({
         conversationId: turnInput.conversationId,
         agentId: turnInput.agentId,
@@ -556,6 +563,8 @@ export class HeadlessBackend implements Backend {
         signal: runController.signal,
       });
     } catch (error) {
+      requestSignal?.removeEventListener("abort", relayRequestAbort);
+      runController.signal.removeEventListener("abort", markCancelled);
       this.failRun(run.id, error);
       throw error;
     }
@@ -577,8 +586,11 @@ export class HeadlessBackend implements Backend {
       stream,
       run.id,
       runController,
-      () =>
-        runController.signal.removeEventListener("abort", abortExecutorStream),
+      () => {
+        requestSignal?.removeEventListener("abort", relayRequestAbort);
+        runController.signal.removeEventListener("abort", markCancelled);
+        runController.signal.removeEventListener("abort", abortExecutorStream);
+      },
     );
   }
 
@@ -589,6 +601,7 @@ export class HeadlessBackend implements Backend {
     body: ConversationMessageCreateBody | ConversationMessageStreamBody;
     history: ReturnType<LocalStore["listConversationMessages"]>;
     uiMessages: ReturnType<LocalStore["listLocalMessages"]>;
+    signal: AbortSignal;
   }): Promise<
     string | { systemPrompt: string; midConversationSystemPrompt?: string }
   > {
@@ -704,6 +717,28 @@ export class HeadlessBackend implements Backend {
     chunks.push(recorded);
     this.runChunksByRunId.set(runId, chunks);
     return recorded;
+  }
+
+  private markRunCancelled(runId: string, reason?: unknown): boolean {
+    const run = this.runs.get(runId);
+    if (!run || isTerminalRun(run)) return false;
+    if (run.conversation_id) {
+      this.store.settleInterruptedToolCalls(run.conversation_id, {
+        agentId: run.agent_id,
+      });
+    } else {
+      this.store.settleInterruptedToolCalls(run.agent_id);
+    }
+    const controller = this.runControllerByRunId.get(runId);
+    this.recordRunChunk(runId, {
+      message_type: "stop_reason",
+      stop_reason: "cancelled",
+    } as LettaStreamingResponse);
+    this.completeRun(runId, "cancelled");
+    if (controller && !controller.signal.aborted) {
+      controller.abort(reason);
+    }
+    return true;
   }
 
   private isRunCancelled(runId: string): boolean {

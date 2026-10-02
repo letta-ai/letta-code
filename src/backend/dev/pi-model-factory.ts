@@ -585,7 +585,10 @@ export async function resolvePiModelForAgent(
     headers = mergeHeaders(headers, nonNullHeaders(authResult.auth.headers));
   }
   if (connection.record?.auth.type === "oauth") {
-    const stored = await modelsRuntime.getStoredCredential(runtimeProviderId);
+    const stored = await modelsRuntime.getStoredCredential(
+      runtimeProviderId,
+      options.abortSignal,
+    );
     oauthCredentials = stored?.type === "oauth" ? stored : undefined;
   }
 
