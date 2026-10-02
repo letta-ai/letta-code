@@ -386,6 +386,50 @@ test("a replaced owner releases the old receipt listener", async () => {
   expect(result).toEqual({ status: "confirmed" });
 });
 
+test("a takeover after the disconnect window releases the old listener", async () => {
+  // Poll 1: no harness, so the receipt listener must settle run-own. Poll 2: a
+  // different connection owns the conversation, which proves the old listener
+  // is out even though it never answered.
+  let reads = 0;
+  const result = await cancelAcceptedRemoteTurn(
+    { ...receipt, connection_id: "old-listener" },
+    {
+      dequeue: async () => ({
+        client_message_id: receipt.client_message_id,
+        status: "too_late",
+      }),
+      exact: async () =>
+        exact({ status: "CAN", cancelled_at: "now", run_ids: ["run-own"] }),
+      abortListenerRun: async () => {
+        throw new Error("old listener unreachable");
+      },
+      cancelConversationRun: async (_conversationId, runId) => ({
+        [runId]: "cancelled",
+      }),
+      retrieveRun: async (runId) => terminalRun(runId),
+      runtimeStatus: async () => {
+        reads += 1;
+        return reads <= 2
+          ? inactiveRuntime()
+          : {
+              ...inactiveRuntime(),
+              statuses: [
+                {
+                  ...runtimeEntry(),
+                  active_harness: { connection_id: "new-listener" },
+                },
+              ],
+            };
+      },
+      sleep: async () => {},
+      timeoutMs: 1_000,
+    },
+  );
+
+  expect(reads).toBeGreaterThan(2);
+  expect(result).toEqual({ status: "confirmed" });
+});
+
 test("a stalled ownership lookup cannot prevent exact Cloud cancellation", async () => {
   const cancelled: string[] = [];
   const result = await cancelAcceptedRemoteTurn(

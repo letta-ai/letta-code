@@ -240,6 +240,11 @@ export async function cancelAcceptedRemoteTurn(
               !listenerCancellationRequested.has(runId),
           ) ?? [])
         : [];
+    // A different connection owning the conversation proves the receipt
+    // listener is out, including runs an earlier poll marked as needing its
+    // settlement while ownership was unknown.
+    if (receipt.connection_id && harnessConnection && !listenerOwnsConversation)
+      listenerSettlementRequired.clear();
     for (const runId of listenerRunIds) listenerSettlementRequired.add(runId);
     if (uncancelledRunIds.length > 0 || listenerRunIds.length > 0) {
       const listenerPromise =
