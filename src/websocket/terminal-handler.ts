@@ -92,9 +92,7 @@ function sendTerminalMessage(
 }
 
 /** Create a flush-on-size-or-timer output batcher. */
-function makeOutputBatcher(
-  onFlush: (data: string) => void,
-): (chunk: string) => void {
+export function makeOutputBatcher(onFlush: (data: string) => void) {
   let buffer = "";
   let timer: ReturnType<typeof setTimeout> | null = null;
 
@@ -109,7 +107,7 @@ function makeOutputBatcher(
     }
   };
 
-  return (chunk: string) => {
+  const push = (chunk: string) => {
     buffer += chunk;
     if (buffer.length >= MAX_BUFFER_BYTES) {
       flush();
@@ -117,6 +115,8 @@ function makeOutputBatcher(
       timer = setTimeout(flush, FLUSH_INTERVAL_MS);
     }
   };
+
+  return { push, flush };
 }
 
 // ── Bun spawn ──────────────────────────────────────────────────────────────
@@ -131,9 +131,13 @@ function spawnBun(
   socket: WebSocket,
 ): TerminalSession {
   const terminalKey = getTerminalKey(connectionId, terminal_id);
-  const handleData = makeOutputBatcher((data) =>
+  const outputBatcher = makeOutputBatcher((data) =>
     sendTerminalMessage(socket, { type: "terminal_output", terminal_id, data }),
   );
+  let markTerminalClosed: (() => void) | undefined;
+  const terminalClosed = new Promise<void>((resolve) => {
+    markTerminalClosed = resolve;
+  });
 
   const proc = Bun.spawn([shell], {
     cwd,
@@ -142,7 +146,10 @@ function spawnBun(
       cols: cols || 80,
       rows: rows || 24,
       data: (_t: unknown, chunk: Uint8Array) =>
-        handleData(new TextDecoder().decode(chunk)),
+        outputBatcher.push(new TextDecoder().decode(chunk)),
+      // Bun's process exit and PTY EOF are separate lifecycle events. Waiting
+      // for both keeps the exit notification behind every data callback.
+      exit: () => markTerminalClosed?.(),
     },
   });
 
@@ -160,9 +167,10 @@ function spawnBun(
     throw new Error("Bun.spawn terminal object missing — API unavailable");
   }
 
-  proc.exited.then((exitCode) => {
+  Promise.all([proc.exited, terminalClosed]).then(([exitCode]) => {
     const current = terminals.get(terminalKey);
     if (current && current.pid === proc.pid) {
+      outputBatcher.flush();
       terminals.delete(terminalKey);
       sendTerminalMessage(socket, {
         type: "terminal_exited",
@@ -213,7 +221,7 @@ function spawnNodePty(
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const pty = require("node-pty") as NodePtyModule;
 
-  const handleData = makeOutputBatcher((data) =>
+  const outputBatcher = makeOutputBatcher((data) =>
     sendTerminalMessage(socket, { type: "terminal_output", terminal_id, data }),
   );
 
@@ -229,11 +237,12 @@ function spawnNodePty(
     },
   });
 
-  ptyProcess.onData(handleData);
+  ptyProcess.onData(outputBatcher.push);
 
   ptyProcess.onExit(({ exitCode }: NodePtyExitEvent) => {
     const current = terminals.get(terminalKey);
     if (current && current.pid === ptyProcess.pid) {
+      outputBatcher.flush();
       terminals.delete(terminalKey);
       sendTerminalMessage(socket, {
         type: "terminal_exited",
