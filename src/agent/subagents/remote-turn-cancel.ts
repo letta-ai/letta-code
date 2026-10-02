@@ -198,53 +198,14 @@ export async function cancelAcceptedRemoteTurn(
               ),
             ),
           );
-    let conversationRuntime:
-      | AgentRuntimeStatusSnapshot["statuses"][number]
-      | undefined;
-    if (receipt.connection_id) {
-      try {
-        const runtime = await withinDeadline(deadline, (signal) =>
-          deps.runtimeStatus(
-            receipt.agent_id,
-            [receipt.conversation_id],
-            signal,
-          ),
-        );
-        conversationRuntime = runtime.statuses.find(
-          (entry) => entry.conversation_id === receipt.conversation_id,
-        );
-      } catch (error) {
-        if (isDeadlineError(error)) {
-          await cloudPromise;
-          break;
-        }
-        lastDetail = `runtime ownership could not be verified: ${getErrorMessage(error)}`;
-      }
-    }
-    const harnessConnection =
-      conversationRuntime?.active_harness?.connection_id;
-    // A listener-accepted receipt keeps its provenance. A snapshot with no
-    // harness does not prove the listener let go: it may be reconnecting with
-    // the lease (and any executing client tool) preserved. Only a different
-    // connection owning the conversation proves the old listener is out.
-    const ownerUnknown = Boolean(receipt.connection_id && !harnessConnection);
-    const listenerOwnsConversation = Boolean(
-      receipt.connection_id && harnessConnection === receipt.connection_id,
-    );
-    const listenerRunIds = ownerUnknown
+    // A listener-accepted receipt keeps its provenance until that listener
+    // itself reports the lease settled. Neither a missing harness (it may be
+    // reconnecting with the lease and a client tool preserved) nor another
+    // connection appearing in Core (two listeners can be attached while the
+    // old one is still settling) proves the old lease is gone.
+    const listenerRunIds = receipt.connection_id
       ? runIds.filter((runId) => !listenerCancellationRequested.has(runId))
-      : listenerOwnsConversation
-        ? (conversationRuntime?.active_run_ids.filter(
-            (runId) =>
-              runIds.includes(runId) &&
-              !listenerCancellationRequested.has(runId),
-          ) ?? [])
-        : [];
-    // A different connection owning the conversation proves the receipt
-    // listener is out, including runs an earlier poll marked as needing its
-    // settlement while ownership was unknown.
-    if (receipt.connection_id && harnessConnection && !listenerOwnsConversation)
-      listenerSettlementRequired.clear();
+      : [];
     for (const runId of listenerRunIds) listenerSettlementRequired.add(runId);
     if (uncancelledRunIds.length > 0 || listenerRunIds.length > 0) {
       const listenerPromise =

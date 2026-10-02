@@ -48,6 +48,10 @@ function abort(
   cancelConversation: () => Promise<void> = async () => {
     throw new Error("must not widen exact cancellation");
   },
+  cancelConversationRun: (
+    conversationId: string,
+    runId?: string | null,
+  ) => Promise<void> = async () => {},
 ) {
   return abortMessageInput(
     listener,
@@ -60,6 +64,7 @@ function abort(
     {
       cancelRun,
       cancelConversation,
+      cancelConversationRun,
       settlementTimeoutMs: 1_000,
     },
   );
@@ -294,5 +299,78 @@ describe("abort_message response contract", () => {
     expect(
       await abort(listener, { run_id: "run-a", wait_for_settlement: true }),
     ).toMatchObject({ outcome: "already_settled", queuePaused: false });
+  });
+
+  test("a broad idle abort with an empty queue fences nothing", async () => {
+    const listener = createRuntime();
+    setActiveRuntime(listener);
+
+    expect(
+      await abort(listener, { wait_for_settlement: true, pause_queue: true }),
+    ).toEqual({
+      aborted: false,
+      outcome: "not_applicable",
+      queuePaused: false,
+      leaseSettled: false,
+    });
+  });
+
+  test("not_applicable reports a queue that is still parked", async () => {
+    const listener = createRuntime();
+    setActiveRuntime(listener);
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    enqueueInboundUserMessage(runtime, {
+      type: "message",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      messages: [{ role: "user", content: "parked" }],
+    });
+    runtime.queueRuntime.pause();
+
+    expect(
+      await abort(listener, { run_id: "run-unknown", pause_queue: false }),
+    ).toMatchObject({ outcome: "not_applicable", queuePaused: true });
+    expect(await abort(listener, { pause_queue: false })).toMatchObject({
+      outcome: "not_applicable",
+      queuePaused: true,
+    });
+  });
+
+  test("an exact pause_queue:false abort still retries that same run", async () => {
+    // TaskStop's direct listener abort sends pause_queue:false. A failed
+    // cancelRun must retry the exact run, not give up or widen.
+    const listener = createRuntime();
+    setActiveRuntime(listener);
+    const { runtime, lease } = startTurn(listener, "run-exact-nopause");
+    const widened = mock(async () => {});
+    const exactRetry = mock(
+      async (_conversationId: string, _runId?: string | null) => {},
+    );
+
+    const pending = abort(
+      listener,
+      {
+        run_id: "run-exact-nopause",
+        wait_for_settlement: true,
+        pause_queue: false,
+      },
+      undefined,
+      async () => {
+        throw new Error("backend refused exact cancel");
+      },
+      widened,
+      exactRetry,
+    );
+    await Bun.sleep(5);
+    finishListenerTurn(runtime, lease, {
+      stopReason: "cancelled",
+      socket: createOpenTransport(),
+      runId: "run-exact-nopause",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    });
+    await pending;
+    expect(exactRetry).toHaveBeenCalledWith("conv-1", "run-exact-nopause");
+    expect(widened).not.toHaveBeenCalled();
   });
 });

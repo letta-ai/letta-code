@@ -351,7 +351,8 @@ export async function handleChangeDeviceStateInput(
 export type AbortMessageResult = {
   aborted: boolean;
   outcome: AbortMessageOutcome;
-  queuePaused: boolean;
+  /** Actual parked state; undefined only when the queue could not be read. */
+  queuePaused: boolean | undefined;
   /** Set when the caller asked to wait: the target lease is gone. */
   leaseSettled: boolean;
 };
@@ -452,12 +453,6 @@ export async function abortMessageInput(
     settlementTimeoutMs: number;
   }> = {},
 ): Promise<AbortMessageResult> {
-  const notApplicable: AbortMessageResult = {
-    aborted: false,
-    outcome: "not_applicable",
-    queuePaused: false,
-    leaseSettled: false,
-  };
   const resolvedDeps = {
     getActiveRuntime,
     getPendingControlRequestCount,
@@ -507,7 +502,13 @@ export async function abortMessageInput(
     listener !== resolvedDeps.getActiveRuntime() ||
     listener.intentionallyClosed
   ) {
-    return notApplicable;
+    // An inactive runtime cannot read the queue, so it makes no queue claim.
+    return {
+      aborted: false,
+      outcome: "not_applicable",
+      queuePaused: undefined,
+      leaseSettled: false,
+    };
   }
 
   const scope = {
@@ -532,8 +533,15 @@ export async function abortMessageInput(
   const runMatch = exactRunId
     ? scopedRuntime.turnLifecycle.matchRun(exactRunId)
     : "current";
-  if (runMatch === null) return notApplicable;
+  // queue_paused is always the queue's real state, never request intent.
   const queueParked = () => scopedRuntime.queueRuntime.pausedCount > 0;
+  const notApplicable = (): AbortMessageResult => ({
+    aborted: false,
+    outcome: "not_applicable",
+    queuePaused: queueParked(),
+    leaseSettled: false,
+  });
+  if (runMatch === null) return notApplicable();
   if (runMatch === "settled") {
     return {
       aborted: true,
@@ -564,14 +572,16 @@ export async function abortMessageInput(
   }
 
   if (!hasActiveTurn && !hasPendingApprovals) {
-    if (exactRunId || !pauseQueue) return notApplicable;
+    if (exactRunId || !pauseQueue) return notApplicable();
     // Nothing to stop, but a broad stop must still keep queued user input
-    // from starting after the caller is told the conversation stopped.
+    // from starting after the caller is told the conversation stopped. With
+    // nothing queued there is nothing to fence.
     scopedRuntime.queueRuntime.pause();
+    if (!queueParked()) return notApplicable();
     return {
       aborted: false,
       outcome: "queue_fenced",
-      queuePaused: queueParked(),
+      queuePaused: true,
       leaseSettled: false,
     };
   }
@@ -689,15 +699,16 @@ export async function abortMessageInput(
   const backendCancellation =
     cancelAgentId && cancelRunId
       ? resolvedDeps.cancelRun(cancelAgentId, cancelRunId).catch((error) => {
-          if (params.command.pause_queue === false) throw error;
-          // An exact run_id is the caller's whole scope. Retry through the
-          // conversation-scoped route for that same run, never cancel-all:
-          // widening could stop a turn this caller never targeted.
+          // An exact run_id is the caller's whole scope, whatever its queue
+          // intent. Retry through the conversation-scoped route for that same
+          // run, never cancel-all: widening could stop a turn this caller
+          // never targeted.
           if (params.command.run_id)
             return resolvedDeps.cancelConversationRun(
               cancelConversationId,
               cancelRunId,
             );
+          if (params.command.pause_queue === false) throw error;
           return resolvedDeps.cancelConversation(
             cancelAgentId,
             cancelConversationId,

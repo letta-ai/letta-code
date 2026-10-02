@@ -234,11 +234,11 @@ test("a vanished listener without lease settlement remains unconfirmed", async (
     },
   );
 
-  expect(reads).toBe(2);
+  expect(reads).toBeGreaterThanOrEqual(1);
   expect(result.status).toBe("unconfirmed");
 });
 
-test("only the currently owned continuation is listener-aborted in a multi-run accepted turn", async () => {
+test("the receipt listener settles every correlated run in a multi-run accepted turn", async () => {
   const aborted: string[] = [];
   let settled = false;
   const result = await cancelAcceptedRemoteTurn(
@@ -281,8 +281,10 @@ test("only the currently owned continuation is listener-aborted in a multi-run a
     },
   );
 
+  // run-history already settled on the listener (already_settled), and
+  // run-current is interrupted; both are proof only the listener can give.
   expect(result).toEqual({ status: "confirmed" });
-  expect(aborted).toEqual(["run-current"]);
+  expect(aborted.sort()).toEqual(["run-current", "run-history"]);
 });
 
 test("a missing harness is not proof the receipt listener let go", async () => {
@@ -352,7 +354,11 @@ test("a reconnected listener that settles the preserved lease confirms", async (
   expect(result).toEqual({ status: "confirmed" });
 });
 
-test("a replaced owner releases the old receipt listener", async () => {
+test("a competing listener in Core is not proof the receipt lease settled", async () => {
+  // Another connection can attach while the receipt listener is still
+  // settling its lease. Only that listener's own settled answer confirms.
+  const asked: string[] = [];
+  let reads = 0;
   const result = await cancelAcceptedRemoteTurn(
     { ...receipt, connection_id: "old-listener" },
     {
@@ -362,34 +368,40 @@ test("a replaced owner releases the old receipt listener", async () => {
       }),
       exact: async () =>
         exact({ status: "CAN", cancelled_at: "now", run_ids: ["run-own"] }),
-      abortListenerRun: async () => {
-        throw new Error("must not contact a replaced owner");
+      abortListenerRun: async (_receipt, runId) => {
+        asked.push(runId);
+        throw new Error("old listener still settling, unreachable");
       },
       cancelConversationRun: async (_conversationId, runId) => ({
         [runId]: "cancelled",
       }),
       retrieveRun: async (runId) => terminalRun(runId),
-      runtimeStatus: async () => ({
-        ...inactiveRuntime(),
-        statuses: [
-          {
-            ...runtimeEntry(),
-            active_harness: { connection_id: "new-listener" },
-          },
-        ],
-      }),
+      runtimeStatus: async () => {
+        reads += 1;
+        return {
+          ...inactiveRuntime(),
+          statuses: [
+            {
+              ...runtimeEntry(),
+              active_harness: { connection_id: "new-listener" },
+            },
+          ],
+        };
+      },
       sleep: async () => {},
       timeoutMs: 100,
     },
   );
 
-  expect(result).toEqual({ status: "confirmed" });
+  expect(asked.length).toBeGreaterThan(0);
+  expect(asked.every((runId) => runId === "run-own")).toBe(true);
+  expect(result.status).toBe("unconfirmed");
 });
 
-test("a takeover after the disconnect window releases the old listener", async () => {
-  // Poll 1: no harness, so the receipt listener must settle run-own. Poll 2: a
-  // different connection owns the conversation, which proves the old listener
-  // is out even though it never answered.
+test("a takeover mid-poll still waits for the receipt listener's settlement", async () => {
+  // Poll 1: no harness. Later polls: a different connection owns the
+  // conversation. Confirmation waits until the old listener itself settles.
+  let attempts = 0;
   let reads = 0;
   const result = await cancelAcceptedRemoteTurn(
     { ...receipt, connection_id: "old-listener" },
@@ -401,7 +413,9 @@ test("a takeover after the disconnect window releases the old listener", async (
       exact: async () =>
         exact({ status: "CAN", cancelled_at: "now", run_ids: ["run-own"] }),
       abortListenerRun: async () => {
-        throw new Error("old listener unreachable");
+        attempts += 1;
+        if (attempts < 3) throw new Error("old listener unreachable");
+        return true;
       },
       cancelConversationRun: async (_conversationId, runId) => ({
         [runId]: "cancelled",
@@ -409,7 +423,7 @@ test("a takeover after the disconnect window releases the old listener", async (
       retrieveRun: async (runId) => terminalRun(runId),
       runtimeStatus: async () => {
         reads += 1;
-        return reads <= 2
+        return reads === 1
           ? inactiveRuntime()
           : {
               ...inactiveRuntime(),
@@ -426,7 +440,7 @@ test("a takeover after the disconnect window releases the old listener", async (
     },
   );
 
-  expect(reads).toBeGreaterThan(2);
+  expect(attempts).toBe(3);
   expect(result).toEqual({ status: "confirmed" });
 });
 
@@ -455,7 +469,7 @@ test("a stalled ownership lookup cannot prevent exact Cloud cancellation", async
   expect(result.status).toBe("unconfirmed");
 });
 
-test("a pre-cancel inactive snapshot is not terminal proof", async () => {
+test("an active run in the confirmation snapshot is not terminal proof", async () => {
   let statusReads = 0;
   const result = await cancelAcceptedRemoteTurn(
     { ...receipt, connection_id: "listener-1" },
@@ -466,19 +480,20 @@ test("a pre-cancel inactive snapshot is not terminal proof", async () => {
       }),
       exact: async () =>
         exact({ status: "CAN", cancelled_at: "now", run_ids: ["run-own"] }),
-      runtimeStatus: async () =>
-        ++statusReads === 1
-          ? inactiveRuntime()
-          : {
-              ...inactiveRuntime(),
-              statuses: [
-                {
-                  ...runtimeEntry(),
-                  state: "ACTIVE" as const,
-                  active_run_ids: ["run-own"],
-                },
-              ],
+      abortListenerRun: async () => true,
+      runtimeStatus: async () => {
+        statusReads += 1;
+        return {
+          ...inactiveRuntime(),
+          statuses: [
+            {
+              ...runtimeEntry(),
+              state: "ACTIVE" as const,
+              active_run_ids: ["run-own"],
             },
+          ],
+        };
+      },
       cancelConversationRun: async (_conversationId, runId) => ({
         [runId]: "cancelled",
       }),
@@ -490,7 +505,7 @@ test("a pre-cancel inactive snapshot is not terminal proof", async () => {
     },
   );
 
-  expect(statusReads).toBe(2);
+  expect(statusReads).toBe(1);
   expect(result.status).toBe("unconfirmed");
 });
 
