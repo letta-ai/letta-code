@@ -46,8 +46,6 @@ export interface SharedReminderState {
   pendingMemoryGitSyncReminders: MemoryGitSyncReminder[];
   pendingCommandIoReminders: CommandIoReminder[];
   pendingToolsetChangeReminders: ToolsetChangeReminder[];
-  /** True once the current low-disk episode has been reported. */
-  hasNotifiedLowDiskSpace: boolean;
   /** When set, the next session-context reminder uses this reason for its intro text. */
   pendingSessionContextReason?: SessionContextReason;
 }
@@ -70,7 +68,6 @@ export function createSharedReminderState(): SharedReminderState {
     pendingMemoryGitSyncReminders: [],
     pendingCommandIoReminders: [],
     pendingToolsetChangeReminders: [],
-    hasNotifiedLowDiskSpace: false,
   };
 }
 
@@ -92,7 +89,6 @@ export function markPostCompactionContextRemindersPending(
   state.hasSentMcpServersInfo = false;
   state.mcpToolCounts.clear();
   state.lastNotifiedPermissionMode = null;
-  state.hasNotifiedLowDiskSpace = false;
 }
 
 export function syncReminderStateFromContextTracker(

@@ -13,6 +13,7 @@ import type { MessageCreateParams as ConversationMessageCreateParams } from "@le
 import { ACTING_USER_ID_ENV, ACTING_USER_ID_HEADER } from "@/agent/acting-user";
 import type { SkillSource } from "@/agent/skill-sources";
 import { type Backend, getBackend } from "@/backend";
+import { prepareDiskSpaceReminderForRequest } from "@/reminders/disk-space-monitor";
 import { getRuntimeContext } from "@/runtime-context";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import {
@@ -445,16 +446,23 @@ export async function sendMessageStreamWithBackend(
   // Deliver at the next model boundary (including tool continuations), not by
   // launching an unsolicited run from a filesystem watcher. Keep approvals and
   // the original input/otid in place, then append the runtime reminder.
-  const requestMessages = skillReminder
-    ? [
-        ...normalizedMessages,
-        {
-          type: "message" as const,
-          role: "user" as const,
-          content: skillReminder,
-        },
-      ]
-    : normalizedMessages;
+  // Low-disk alerts held for loops without a queue consumer (headless
+  // one-shot, including subagents) ride the same boundary.
+  const diskReminder = await prepareDiskSpaceReminderForRequest({
+    agentId: opts.agentId,
+    conversationId,
+  });
+  const runtimeReminders = [skillReminder, diskReminder?.text].filter(
+    (text): text is string => Boolean(text),
+  );
+  const requestMessages = [
+    ...normalizedMessages,
+    ...runtimeReminders.map((content) => ({
+      type: "message" as const,
+      role: "user" as const,
+      content,
+    })),
+  ];
   const isApprovalContinuation =
     isApprovalContinuationRequest(normalizedMessages);
   // Only reuse cached response state when the approval continuation was fully
@@ -464,7 +472,7 @@ export async function sendMessageStreamWithBackend(
   const canUsePreviousResponseState =
     isApprovalContinuation &&
     opts.allowResponseStateReuse === true &&
-    !skillReminder;
+    runtimeReminders.length === 0;
   const previousResponseId = canUsePreviousResponseState
     ? responseStateIdsByScope.get(responseStateScope)
     : undefined;
@@ -586,6 +594,7 @@ export async function sendMessageStreamWithBackend(
       );
       // A rejected request must not consume the notification; retries need it.
       sentClientSkills.set(skillScope, clientSkills);
+      diskReminder?.commit();
       stream = attachResponseStateTracking(stream, {
         scope: responseStateScope,
         conversationId: resolvedConversationId,
