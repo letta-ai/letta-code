@@ -9,7 +9,10 @@ import {
   type RecoveredContinuationDependencies,
   startRecoveredApprovalContinuation,
 } from "./recovery";
-import { recoverApprovalStateForSync } from "./recovery-sync";
+import {
+  recoverApprovalStateForSync,
+  recoverPendingAsyncQuestionsForSync,
+} from "./recovery-sync";
 import { handleIncomingMessage } from "./turn";
 import type { ListenerRuntime, SyncReplayOptions } from "./types";
 import { scheduleListenerWarmupsAfterSync } from "./warmup";
@@ -28,6 +31,9 @@ export async function replaySyncStateForRuntime(
     recoverApprovalStateForSync?: (
       ...args: Parameters<typeof recoverApprovalStateForSync>
     ) => Promise<unknown>;
+    recoverPendingAsyncQuestions?: (
+      ...args: Parameters<typeof recoverPendingAsyncQuestionsForSync>
+    ) => Promise<unknown>;
     /** Turn processor for a recovered continuation; defaults to the real turn. */
     processIncomingMessage?: typeof handleIncomingMessage;
     recoveredContinuationDependencies?: RecoveredContinuationDependencies;
@@ -44,6 +50,8 @@ export async function replaySyncStateForRuntime(
   );
   const recoverFn =
     opts?.recoverApprovalStateForSync ?? recoverApprovalStateForSync;
+  const recoverQuestionsFn =
+    opts?.recoverPendingAsyncQuestions ?? recoverPendingAsyncQuestionsForSync;
   // Recovery runs only when the sender asked for it. cloud-api's readiness
   // probes and activity claims send recover_approvals=false so a prewarmed or
   // idle sandbox never touches a conversation it merely observes.
@@ -60,6 +68,18 @@ export async function replaySyncStateForRuntime(
       });
       if (isDebugEnabled()) {
         console.warn("[Listen] Sync approval recovery failed:", error);
+      }
+    }
+    try {
+      await recoverQuestionsFn(syncScopedRuntime, scope);
+    } catch (error) {
+      trackBoundaryError({
+        errorType: "listener_sync_recovery_failed",
+        error,
+        context: "listener_sync_recovery",
+      });
+      if (isDebugEnabled()) {
+        console.warn("[Listen] Sync async-question recovery failed:", error);
       }
     }
   }

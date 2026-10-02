@@ -25,6 +25,7 @@ import { trackBoundaryError } from "@/telemetry/error-reporting";
 import type { StopReasonType } from "@/types/protocol_v2";
 import { isCloudApiDeploymentInterrupted } from "@/utils/cloud-api-shutdown";
 import { isDebugEnabled } from "@/utils/debug";
+import { clearPendingAsyncQuestionsFromMessage } from "./async-question-status";
 import { EMPTY_RESPONSE_MAX_RETRIES } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
 import {
@@ -168,6 +169,13 @@ async function handleIncomingMessageInner(
   if (!runtime.turnLifecycle.isCurrent(turnLease))
     throw new Error("Cannot continue a turn with a stale lifecycle lease");
   const turnAbortSignal = turnLease.signal;
+  // An incoming user message may carry the answer (or dismissal) to a
+  // pending async question; clear those before the turn's state emits so the
+  // sidebar indicator drops at turn start, not after the turn finishes.
+  clearPendingAsyncQuestionsFromMessage(
+    runtime,
+    msg.messages as unknown as ReadonlyArray<Record<string, unknown>>,
+  );
   let finalizedByThisInvocation = false;
   const buffers = createBuffers(agentId ?? undefined);
   const noteFinalization = (
