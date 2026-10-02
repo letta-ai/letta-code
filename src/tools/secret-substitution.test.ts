@@ -23,6 +23,7 @@ import {
   createSecretStreamScrubber,
   extractSecretEnvFromCommand,
   getAmbientRedactionSecrets,
+  scrubOutgoingMessageContent,
   scrubSecretsFromString,
 } from "@/tools/secret-substitution";
 import {
@@ -743,4 +744,129 @@ describe("ambient runtime credential redaction", () => {
     },
     15_000,
   );
+});
+
+describe("always-on vault secret redaction", () => {
+  const VAULT_KEY = SECRET_KEY;
+  const VAULT_VALUE = "vault-value-abcdef-0123456789-secret";
+
+  afterEach(() => {
+    clearSecretsCache(AGENT_A);
+    clearSecretsCache(AGENT_B);
+  });
+
+  test("vault secret is redacted even when the command never references it", async () => {
+    seedSecret(AGENT_A, VAULT_VALUE);
+    const prepared = await prepareToolExecutionContextForSpecificTools(
+      ["Bash"],
+      {
+        runtimeContext: {
+          agentId: AGENT_A,
+          workingDirectory: process.cwd(),
+        },
+        workingDirectory: process.cwd(),
+      },
+    );
+
+    try {
+      // The command expands the seeded secret; redaction must cover the
+      // expanded value in the return.
+      const result = await executeTool(
+        "Bash",
+        { command: `printf '%s' "$${VAULT_KEY}"`, timeout: 5000 },
+        { toolContextId: prepared.contextId },
+      );
+
+      const text = asText(result.toolReturn);
+      expect(text).not.toContain(VAULT_VALUE);
+      expect(text).toContain(`${VAULT_KEY}=<REDACTED>`);
+    } finally {
+      releaseToolExecutionContext(prepared.contextId);
+    }
+  });
+
+  test("vault secret read via a file tool is redacted from the return", async () => {
+    seedSecret(AGENT_A, VAULT_VALUE);
+    const baseDir = mkdtempSync(join(tmpdir(), "vault-scrub-"));
+    const filePath = join(baseDir, "secret-file.txt");
+    writeFileSync(filePath, `token=${VAULT_VALUE}\n`);
+
+    const prepared = await prepareToolExecutionContextForSpecificTools(
+      ["Read"],
+      {
+        runtimeContext: {
+          agentId: AGENT_A,
+          workingDirectory: process.cwd(),
+        },
+        workingDirectory: process.cwd(),
+      },
+    );
+
+    try {
+      // Read never references $SECRET_NAME — the vault value reaches the
+      // tool return purely through file content and must still be redacted.
+      const result = await executeTool(
+        "Read",
+        { file_path: filePath },
+        { toolContextId: prepared.contextId },
+      );
+
+      const text = asText(result.toolReturn);
+      expect(text).not.toContain(VAULT_VALUE);
+      expect(text).toContain(`${VAULT_KEY}=<REDACTED>`);
+    } finally {
+      releaseToolExecutionContext(prepared.contextId);
+      rmSync(baseDir, { recursive: true, force: true });
+    }
+  });
+
+  test("vault redaction is scoped to the executing agent", () => {
+    seedSecret(AGENT_A, VAULT_VALUE);
+    seedSecret(AGENT_B, "other-agent-vault-value-xyz-0123456789");
+
+    const scrubbedA = scrubSecretsFromString(
+      `${VAULT_VALUE} stays`,
+      {},
+      AGENT_A,
+    );
+    expect(scrubbedA).not.toContain(VAULT_VALUE);
+    expect(scrubbedA).toContain(`${VAULT_KEY}=<REDACTED>`);
+
+    // Agent B's vault does not redact agent A's value.
+    const scrubbedB = scrubSecretsFromString(
+      `${VAULT_VALUE} stays`,
+      {},
+      AGENT_B,
+    );
+    expect(scrubbedB).toContain(VAULT_VALUE);
+  });
+
+  test("short vault values are not redacted", () => {
+    __testSeedSecretsCache(AGENT_A, { [SECRET_KEY]: "short" });
+    const scrubbed = scrubSecretsFromString("a short word stays", {}, AGENT_A);
+    expect(scrubbed).toBe("a short word stays");
+  });
+
+  test("outgoing message content is scrubbed for the scoped agent", () => {
+    seedSecret(AGENT_A, VAULT_VALUE);
+
+    const stringContent = scrubOutgoingMessageContent(
+      `here is my token ${VAULT_VALUE} ok`,
+      AGENT_A,
+    );
+    expect(stringContent).not.toContain(VAULT_VALUE);
+    expect(stringContent).toContain(`${VAULT_KEY}=<REDACTED>`);
+
+    const partsContent = scrubOutgoingMessageContent(
+      [
+        { type: "text", text: `pasted: ${VAULT_VALUE}` },
+        { type: "image_url", url: "https://example.com/img.png" },
+      ],
+      AGENT_A,
+    ) as Array<{ type?: string; text?: string; url?: string }>;
+    expect(partsContent[0]?.text).not.toContain(VAULT_VALUE);
+    expect(partsContent[0]?.text).toContain(`${VAULT_KEY}=<REDACTED>`);
+    // Non-text content passes through unchanged.
+    expect(partsContent[1]?.url).toBe("https://example.com/img.png");
+  });
 });

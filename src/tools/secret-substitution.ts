@@ -62,6 +62,14 @@ export function extractSecretEnvFromCommand(
  */
 const MIN_AMBIENT_SECRET_LENGTH = 8;
 
+/**
+ * Vault values shorter than this are not redacted from tool output. Real
+ * credentials are long high-entropy strings; short values (common in dev and
+ * test environments, e.g. MY_KEY=abc123) would otherwise redact ordinary words
+ * out of tool output. Matches the ambient guard above.
+ */
+const MIN_VAULT_SECRET_LENGTH = 8;
+
 interface AmbientSecretValue {
   name: string;
   value: string;
@@ -115,16 +123,46 @@ function collectAmbientSecretValues(): AmbientSecretValue[] {
 }
 
 /**
+ * The current agent's vault secrets, always included in the redaction set.
+ * A vault value can reach tool output through paths that never reference its
+ * `$SECRET_NAME` — e.g. `cat .env`, Read/Grep on a file that contains it — so
+ * redaction must not depend on the command text mentioning the name.
+ */
+function collectVaultSecretValues(
+  scopedAgentId?: string | null,
+): AmbientSecretValue[] {
+  let vault: Record<string, string>;
+  try {
+    vault = loadSecrets(scopedAgentId ?? undefined);
+  } catch {
+    // Vault not initialized (startup/tests); ambient sources still apply.
+    return [];
+  }
+  const candidates: AmbientSecretValue[] = [];
+  for (const [name, value] of Object.entries(vault)) {
+    const trimmed = value?.trim();
+    if (!trimmed || trimmed.length < MIN_VAULT_SECRET_LENGTH) continue;
+    candidates.push({ name, value: trimmed });
+  }
+  return candidates;
+}
+
+/**
  * Merge ambient runtime auth values into an invocation's secret map. Names
  * colliding with invocation secrets are suffixed so a same-named agent secret
  * can never shadow the runtime credential out of the redaction set.
  */
 function mergeAmbientSecrets(
   secrets: Readonly<Record<string, string>>,
+  scopedAgentId?: string | null,
 ): Record<string, string> {
   const merged: Record<string, string> = {};
   const knownValues = new Set(Object.values(secrets));
-  for (const { name, value } of collectAmbientSecretValues()) {
+  const ambient = [
+    ...collectAmbientSecretValues(),
+    ...collectVaultSecretValues(scopedAgentId),
+  ];
+  for (const { name, value } of ambient) {
     // A launch-time snapshot may already contain this value. Keep its original
     // placeholder name instead of adding a second, suffixed copy.
     if (knownValues.has(value)) continue;
@@ -146,9 +184,10 @@ function mergeAmbientSecrets(
  * is returned, saved to a file, or sent in a completion notification.
  */
 export function captureSecretRedactions(
+  scopedAgentId?: string | null,
   secrets: Readonly<Record<string, string>> = {},
 ): Record<string, string> {
-  return mergeAmbientSecrets(secrets);
+  return mergeAmbientSecrets(secrets, scopedAgentId);
 }
 
 /**
@@ -156,8 +195,10 @@ export function captureSecretRedactions(
  * systems (e.g. mod tool output) that keep their own secret maps instead of
  * calling scrubSecretsFromString.
  */
-export function getAmbientRedactionSecrets(): Record<string, string> {
-  return mergeAmbientSecrets({});
+export function getAmbientRedactionSecrets(
+  scopedAgentId?: string,
+): Record<string, string> {
+  return mergeAmbientSecrets({}, scopedAgentId);
 }
 
 function scrubWithEntries(
@@ -179,13 +220,18 @@ function scrubWithEntries(
  * Scrub the supplied secret values from a string, replacing them with an
  * explicit placeholder that makes it unambiguous to the LLM that the value is
  * hidden. Ambient runtime auth values (at minimum the effective LETTA_API_KEY)
- * are always scrubbed as well, even when the caller passes no secrets.
+ * and the current agent's vault secrets are always scrubbed as well, even
+ * when the caller passes no secrets.
  */
 export function scrubSecretsFromString(
   input: string,
   secrets: Readonly<Record<string, string>>,
+  scopedAgentId?: string,
 ): string {
-  return scrubWithEntries(input, Object.entries(mergeAmbientSecrets(secrets)));
+  return scrubWithEntries(
+    input,
+    Object.entries(mergeAmbientSecrets(secrets, scopedAgentId)),
+  );
 }
 
 /**
@@ -195,6 +241,29 @@ export function scrubSecretsFromString(
  */
 export function scrubAmbientSecrets(text: string): string {
   return scrubSecretsFromString(text, {});
+}
+
+/**
+ * Scrub secret values from an outgoing message's content before it is sent to
+ * the model. Covers the ambient runtime auth values and the agent's vault
+ * secrets, so a pasted or echoed credential never enters the conversation
+ * transcript. Only rewrites text content; images and other content types pass
+ * through unchanged.
+ */
+export function scrubOutgoingMessageContent<
+  T extends { type?: string; text?: unknown },
+>(content: string | T[], scopedAgentId?: string): string | T[] {
+  if (typeof content === "string") {
+    return scrubSecretsFromString(content, {}, scopedAgentId);
+  }
+  return content.map((part) =>
+    part.type === "text" && typeof part.text === "string"
+      ? {
+          ...part,
+          text: scrubSecretsFromString(part.text, {}, scopedAgentId),
+        }
+      : part,
+  );
 }
 
 export interface SecretStreamScrubber {
@@ -350,4 +419,57 @@ export function sanitizeOutputLines(
       lines[i] = sanitizeText(line, secrets, stripAnsiEscapes);
     }
   }
+}
+
+export type InvocationSecretRedactions = Map<string, string>;
+
+/**
+ * Scrub a string against a mod invocation's redaction map. Mirrors
+ * scrubWithEntries but over the Map shape mod tools accumulate dynamically
+ * (ambient + vault + resolver-added entries).
+ */
+export function scrubInvocationSecretRedactions(
+  input: string,
+  redactions: InvocationSecretRedactions,
+): string {
+  let result = input;
+  const entries = Array.from(redactions.entries()).sort(
+    ([, a], [, b]) => b.length - a.length,
+  );
+  for (const [name, value] of entries) {
+    if (value.length > 0) {
+      result = result.replaceAll(value, `${name}=<REDACTED>`);
+    }
+  }
+  return result;
+}
+
+export function scrubModToolString(
+  input: string,
+  redactions: InvocationSecretRedactions,
+): string {
+  return scrubInvocationSecretRedactions(input, redactions);
+}
+
+export function scrubModToolReturnContent<
+  T extends { type?: string; text?: unknown },
+>(content: string | T[], redactions: InvocationSecretRedactions): string | T[] {
+  if (typeof content === "string") {
+    return scrubModToolString(content, redactions);
+  }
+  return content.map((block) =>
+    block.type === "text"
+      ? {
+          ...block,
+          text: scrubModToolString(block.text as string, redactions),
+        }
+      : block,
+  );
+}
+
+export function scrubModToolLines(
+  lines: string[] | undefined,
+  redactions: InvocationSecretRedactions,
+): string[] | undefined {
+  return lines?.map((line) => scrubModToolString(line, redactions));
 }
