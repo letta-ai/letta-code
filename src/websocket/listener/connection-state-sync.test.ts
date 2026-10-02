@@ -97,16 +97,17 @@ test("reconnecting the same listener runtime preserves its projected session id"
 test("a replacement listener runtime projects a different session id", async () => {
   const originalListener = createRuntime();
   const replacementListener = createRuntime();
+  const connectionId = "cloud-relay";
 
   const originalSessionId = await replayRuntimeSessionId({
     listener: originalListener,
     transport: new MockTransport(),
-    connectionId: "original-cloud-relay",
+    connectionId,
   });
   const replacementSessionId = await replayRuntimeSessionId({
     listener: replacementListener,
     transport: new MockTransport(),
-    connectionId: "replacement-cloud-relay",
+    connectionId,
   });
 
   expect(originalSessionId).toBe(originalListener.sessionId);
