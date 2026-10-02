@@ -14,7 +14,11 @@ import { randomInt } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { LEGACY_CHANNEL_ACCOUNT_ID } from "./accounts";
 import { getChannelDir, getChannelPairingPath } from "./config";
-import type { ApprovedUser, PairingStore, PendingPairing } from "./types";
+import type {
+  ApprovedUser,
+  PairingStore,
+  PendingPairing,
+} from "./pairing-types";
 
 // ── Constants ─────────────────────────────────────────────────────
 

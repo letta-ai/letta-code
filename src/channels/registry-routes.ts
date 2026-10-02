@@ -5,6 +5,7 @@ import type { ChannelRegistryEvent } from "./registry-events";
 import {
   buildDirectReplyOptions,
   buildDiscordConversationSummary,
+  buildFeishuConversationSummary,
   buildSignalConversationSummary,
   buildSlackAppSetupInstructions,
   buildSlackConversationSummary,
@@ -17,6 +18,7 @@ import type {
   ChannelAdapter,
   ChannelRoute,
   DiscordChannelAccount,
+  FeishuChannelAccount,
   InboundChannelMessage,
   SignalChannelAccount,
   SlackChannelAccount,
@@ -576,6 +578,105 @@ export function createChannelRouteProvisioner(deps: {
     };
   }
 
+  async function createFeishuRoute(
+    config: FeishuChannelAccount,
+    msg: InboundChannelMessage,
+  ): Promise<ChannelRoute> {
+    if (!config.agentId) {
+      throw new Error("Feishu bot is missing an agent binding.");
+    }
+
+    const conversationId = await createConversationForAgent(
+      config.agentId,
+      buildFeishuConversationSummary(msg),
+    );
+    const now = new Date().toISOString();
+    const route: ChannelRoute = {
+      accountId: config.accountId,
+      chatId: msg.chatId,
+      chatType: msg.chatType,
+      threadId: msg.threadId ?? null,
+      agentId: config.agentId,
+      conversationId,
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    addRoute(msg.channel, route);
+    return route;
+  }
+
+  async function ensureFeishuRoute(
+    adapter: ChannelAdapter,
+    msg: InboundChannelMessage,
+    config: FeishuChannelAccount,
+  ): Promise<{
+    route: ChannelRoute;
+    isFirstRouteTurn: boolean;
+  } | null> {
+    if (!config.agentId) {
+      if (msg.chatType === "direct" || msg.isMention === true) {
+        await adapter.sendDirectReply(
+          msg.chatId,
+          "This Feishu bot isn't connected to a Letta agent yet.\n\n" +
+            "Open Channels > Feishu / Lark in Letta Code, choose which agent this bot should represent, and try again.",
+        );
+      }
+      return null;
+    }
+
+    const accountId = msg.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
+    const routeThreadId = msg.threadId ?? null;
+    let route = getRouteFromStore(
+      msg.channel,
+      msg.chatId,
+      accountId,
+      routeThreadId,
+    );
+    if (!route) {
+      loadRoutes(msg.channel);
+      route = getRouteFromStore(
+        msg.channel,
+        msg.chatId,
+        accountId,
+        routeThreadId,
+      );
+    }
+
+    if (route) {
+      return { route, isFirstRouteTurn: false };
+    }
+
+    if (msg.chatType === "channel" && !msg.isMention && !msg.isOpenChannel) {
+      return null;
+    }
+
+    if (msg.chatType === "channel") {
+      const now = new Date().toISOString();
+      loadTargetStore(msg.channel);
+      upsertChannelTarget(msg.channel, {
+        accountId,
+        targetId: msg.chatId,
+        targetType: "channel",
+        chatId: msg.chatId,
+        label: msg.chatLabel ?? `Feishu group ${msg.chatId}`,
+        discoveredAt: now,
+        lastSeenAt: now,
+        lastMessageId: msg.messageId,
+      });
+      deps.emitEvent({
+        type: "targets_updated",
+        channelId: msg.channel,
+      });
+    }
+
+    return {
+      route: await createFeishuRoute(config, msg),
+      isFirstRouteTurn: true,
+    };
+  }
+
   return {
     createConversationForAgent,
     createSlackRoute,
@@ -584,6 +685,7 @@ export function createChannelRouteProvisioner(deps: {
     ensureDiscordRoute,
     ensureWhatsAppRoute,
     ensureSignalRoute,
+    ensureFeishuRoute,
   };
 }
 
