@@ -74,6 +74,23 @@ Do not add queue self-healing as the primary fix for an impossible state. Find
 and repair the transition that produced the state. Defensive telemetry is fine
 after the producer path has a regression test.
 
+## Cloud Slack V2 Dispatch Contract
+
+Cloud's hosted Slack V2 thread dispatch drives the listener through the App
+Server protocol and depends on three behaviors:
+
+- `launch_subagent` accepts `client_message_id` (the initial assignment input
+  ID, first released in 0.32.17); Cloud refuses older listeners with "Update
+  Letta Code first".
+- The initial assignment is accepted only when the listener reports
+  `input_accepted`; Cloud holds thread follow-ups until then.
+- Definite pre-launch failures return a structured `launch_subagent_response`
+  with `success: false`; Cloud treats that as definite (cleans up and allows
+  re-dispatch), while a thrown transport error is ambiguous (binding retained).
+
+Preserve these behaviors when editing `SubagentLaunchArgs`, `input_accepted`
+emission, or the `launch_subagent` error path.
+
 ## Module Map
 
 - `turn-lifecycle.ts`: canonical state, leases, and transitions.
