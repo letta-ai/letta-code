@@ -64,6 +64,7 @@ export function getRuntimeExecutionEnv(
   delete scoped.LETTA_PARENT_AGENT_ID;
   delete scoped.LETTA_PARENT_CONVERSATION_ID;
   delete scoped.LETTA_CODE_AGENT_ROLE;
+  delete scoped[SUBAGENT_DEPTH_ENV];
   delete scoped.TRANSCRIPT_PATH;
   delete scoped.MEMORY_DIR;
   delete scoped.LETTA_MEMORY_DIR;
@@ -72,9 +73,6 @@ export function getRuntimeExecutionEnv(
   if (settings.parent_conversation_id)
     scoped.LETTA_PARENT_CONVERSATION_ID = settings.parent_conversation_id;
   if (settings.agent_role) scoped.LETTA_CODE_AGENT_ROLE = settings.agent_role;
-  // Depth is harness-owned at both levels. Without a per-turn value, keep the
-  // process value: an SDK app server spawned for a Workflow worker carries the
-  // worker's depth in its env, and a listener's own process has none.
   if (settings.subagent_depth !== undefined)
     scoped[SUBAGENT_DEPTH_ENV] = String(settings.subagent_depth);
   if (settings.transcript_path)

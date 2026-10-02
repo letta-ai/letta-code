@@ -6,7 +6,6 @@
  */
 
 import { getBackend } from "@/backend";
-import { SUBAGENT_DEPTH_ENV } from "@/utils/subagent-depth-env";
 import type {
   AgentCallOptions,
   SdkClient,
@@ -28,8 +27,6 @@ export interface SdkSpawnerConfig {
   allowedTools?: string[];
   /** Working directory for subagent sessions. */
   cwd?: string;
-  /** Nesting depth of the workers: the invoking agent's depth plus one. */
-  workerDepth?: number;
   /** Local parent provider settings snapshotted when the workflow starts. */
   parentModelSettings?: Record<string, unknown>;
   /** Local parent context limit snapshotted when the workflow starts. */
@@ -366,11 +363,6 @@ function buildQueryOptions(
     skillSources: [],
     ...(config.cwd ? { cwd: config.cwd } : {}),
     disableMemoryGuard: true,
-    // Each query session gets its own app-server process; its env carries the
-    // worker depth so tool policy and nested launches count it as a child.
-    ...(config.workerDepth !== undefined
-      ? { env: { [SUBAGENT_DEPTH_ENV]: String(config.workerDepth) } }
-      : {}),
     ...(Object.keys(modelSettings).length > 0 ? { modelSettings } : {}),
     ...(!options.model && config.parentContextWindowLimit !== undefined
       ? { contextWindowLimit: config.parentContextWindowLimit }
