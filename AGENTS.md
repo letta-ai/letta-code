@@ -220,6 +220,10 @@ generic instincts. Read the local guide before changing code there:
 
 Test files live **next to their source** (`local-store.test.ts` next to `local-store.ts`), not in a separate `tests/` directory.
 
+### Adding a Slash Command
+
+A slash command can span several independent surfaces; do not assume the registry entry is the whole implementation. `src/cli/commands/registry.ts` supplies autocomplete and help text and is the generic TUI execution path, which is all a simple synchronous command needs. Commands with async execution or visible progress results add routing in `src/cli/app/use-submit-handler.ts` (plus queue-bypass classification in `src/cli/app/command-routing.ts` when relevant). A command that must work from remote/Desktop clients also needs a dispatch case in `src/websocket/listener/commands.ts` (reached via `message-router.ts`) and must be listed in `SUPPORTED_REMOTE_COMMANDS` in `src/websocket/listener/listener-constants.ts` — without that list the command never reaches remote clients. New commands still require a full restart to appear (see Known Gotchas below).
+
 ---
 
 ## Reference
