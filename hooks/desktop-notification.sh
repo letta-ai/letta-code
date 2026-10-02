@@ -1,6 +1,8 @@
 #!/bin/bash
 # Send desktop notification using osascript (macOS)
 
+set -euo pipefail
+
 input=$(cat)
 message=$(echo "$input" | jq -r '.message')
 level=$(echo "$input" | jq -r '.level')
