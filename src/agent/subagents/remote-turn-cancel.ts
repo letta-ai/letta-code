@@ -221,30 +221,39 @@ export async function cancelAcceptedRemoteTurn(
         lastDetail = `runtime ownership could not be verified: ${getErrorMessage(error)}`;
       }
     }
+    const harnessConnection =
+      conversationRuntime?.active_harness?.connection_id;
+    // A listener-accepted receipt keeps its provenance. A snapshot with no
+    // harness does not prove the listener let go: it may be reconnecting with
+    // the lease (and any executing client tool) preserved. Only a different
+    // connection owning the conversation proves the old listener is out.
+    const ownerUnknown = Boolean(receipt.connection_id && !harnessConnection);
     const listenerOwnsConversation = Boolean(
-      receipt.connection_id &&
-        conversationRuntime?.active_harness?.connection_id ===
-          receipt.connection_id,
+      receipt.connection_id && harnessConnection === receipt.connection_id,
     );
-    const listenerRunIds = listenerOwnsConversation
-      ? (conversationRuntime?.active_run_ids.filter(
-          (runId) =>
-            runIds.includes(runId) && !listenerCancellationRequested.has(runId),
-        ) ?? [])
-      : [];
+    const listenerRunIds = ownerUnknown
+      ? runIds.filter((runId) => !listenerCancellationRequested.has(runId))
+      : listenerOwnsConversation
+        ? (conversationRuntime?.active_run_ids.filter(
+            (runId) =>
+              runIds.includes(runId) &&
+              !listenerCancellationRequested.has(runId),
+          ) ?? [])
+        : [];
     for (const runId of listenerRunIds) listenerSettlementRequired.add(runId);
     if (uncancelledRunIds.length > 0 || listenerRunIds.length > 0) {
-      const listenerPromise = listenerOwnsConversation
-        ? Promise.allSettled(
-            listenerRunIds.map(async (runId) => {
-              const aborted = await withinDeadline(deadline, (signal) =>
-                deps.abortListenerRun(receipt, runId, signal),
-              );
-              if (aborted) listenerCancellationRequested.add(runId);
-              return aborted;
-            }),
-          )
-        : Promise.resolve([]);
+      const listenerPromise =
+        listenerRunIds.length > 0
+          ? Promise.allSettled(
+              listenerRunIds.map(async (runId) => {
+                const aborted = await withinDeadline(deadline, (signal) =>
+                  deps.abortListenerRun(receipt, runId, signal),
+                );
+                if (aborted) listenerCancellationRequested.add(runId);
+                return aborted;
+              }),
+            )
+          : Promise.resolve([]);
       const [listenerRequests, requests] = await Promise.all([
         listenerPromise,
         cloudPromise,

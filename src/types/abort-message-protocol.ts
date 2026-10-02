@@ -13,7 +13,7 @@ export interface AbortMessageCommand {
  * - interrupted: this request stopped an active turn or pending approval.
  * - joined: the target lease was already cancelling; this request waited on it.
  * - already_settled: the exact run belonged to a lease that has since settled.
- * - queue_fenced: broad abort with no turn to stop; user-authored queued
+ * - queue_fenced: broad abort with no turn to stop; any user-authored queued
  *   input is paused so no queued successor can start.
  * - not_applicable: no lease owns this exact run, or nothing to stop or fence.
  */
@@ -32,7 +32,11 @@ export interface AbortMessageResponseMessage {
   lease_settled?: boolean; // Listener waited for its original lease.
   /** How the listener applied this abort; absent on older listeners. */
   outcome?: AbortMessageOutcome;
-  /** Whether user-authored queued input is now parked until resume_queue. */
+  /**
+   * Authoritative queue state after this abort: true when at least one
+   * user-authored queued input is parked until resume_queue. False when the
+   * queue holds nothing parked, including an empty queue.
+   */
   queue_paused?: boolean;
   success: boolean;
   error?: string;

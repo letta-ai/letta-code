@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { WebSocket, WebSocketServer } from "ws";
 import type { ApprovalResult } from "@/agent/approval-execution";
 import type { TokenResponse } from "@/auth/oauth";
+import { getBackend } from "@/backend";
 import type { ChannelTurnSource } from "@/channels/types";
 import { settingsManager } from "@/settings-manager";
 import { getToolSchema } from "@/tools/manager";
@@ -22,6 +23,7 @@ import { getActiveRuntime } from "@/websocket/listener/runtime";
 import { isListenerTransportOpen } from "@/websocket/listener/transport";
 import { handleApprovalStop } from "@/websocket/listener/turn-approval";
 import { createTurnInputState } from "@/websocket/listener/turn-input-state";
+import { finishListenerTurn } from "@/websocket/listener/turn-terminal";
 
 type ListenerSettings = Awaited<
   ReturnType<typeof settingsManager.getSettingsWithSecureTokens>
@@ -392,6 +394,177 @@ describe("listener approval reconnect timing", () => {
       "tool result did not reach the replacement listener connection",
     );
     expect(deps.executeApprovalBatch).toHaveBeenCalledTimes(1);
+  });
+
+  test("an exact abort after reconnect settles the preserved executing client tool", async () => {
+    // TaskStop's fail-closed path for a listener receipt: the harness vanished
+    // from Core during the disconnect, so the run must be stopped and settled
+    // by the same listener once it is reachable again.
+    const cancelledRuns: string[] = [];
+    const backend = getBackend();
+    const originalCancelRun = backend.cancelRun;
+    const originalCancelConversation = backend.cancelConversation;
+    backend.cancelRun = (async (_agentId: string, runId: string) => {
+      cancelledRuns.push(runId);
+      return { [runId]: "cancelled" };
+    }) as typeof backend.cancelRun;
+    backend.cancelConversation = (async () => {
+      throw new Error("exact abort must not widen");
+    }) as typeof backend.cancelConversation;
+    try {
+      await startClient();
+      await waitFor(
+        () =>
+          getActiveRuntime()?.connections.get("connection-id")?.initialized ===
+          true,
+        "initial listener connection did not initialize",
+      );
+      const listener = getActiveRuntime();
+      if (!listener?.transport) throw new Error("listener transport missing");
+      subscribeListenerConnection(listener, "connection-id", {
+        agent_id: "agent-1",
+        conversation_id: "conv-1",
+      });
+      const capturedTransport = listener.transport;
+      const conversationRuntime = getOrCreateScopedRuntime(
+        listener,
+        "agent-1",
+        "conv-1",
+      );
+      const turnLease = conversationRuntime.turnLifecycle.begin({
+        origin: "message",
+        workingDirectory: process.cwd(),
+        initialStatus: "PROCESSING_API_RESPONSE",
+      });
+      conversationRuntime.turnLifecycle.setRunId(turnLease, "run-taskstop");
+
+      const approval = {
+        toolCallId: "call-taskstop-reconnect",
+        toolName: "LongRunningClientTool",
+        toolArgs: JSON.stringify({ command: "sleep 60" }),
+      };
+      const interrupted = [
+        {
+          type: "tool" as const,
+          tool_call_id: approval.toolCallId,
+          status: "error" as const,
+          tool_return: "interrupted",
+        },
+      ] satisfies ApprovalResult[];
+      const deps = makeAutoAllowedDeps(approval, turnLease, [], interrupted);
+      let toolAborted = false;
+      deps.executeApprovalBatch.mockImplementation(
+        async (_decisions, _context, options) =>
+          new Promise<ApprovalResult[]>((resolve) => {
+            options.abortSignal?.addEventListener("abort", () => {
+              toolAborted = true;
+              resolve(interrupted);
+            });
+          }),
+      );
+      const approvalStop = handleApprovalStop({
+        approvals: [approval],
+        runtime: conversationRuntime,
+        socket: capturedTransport,
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        turnWorkingDirectory: process.cwd(),
+        turnPermissionModeState: getOrCreateConversationPermissionModeStateRef(
+          listener,
+          "agent-1",
+          "conv-1",
+        ),
+        dequeuedBatchId: "batch-taskstop",
+        runId: "run-taskstop",
+        msgRunIds: ["run-taskstop"],
+        turnInput: createTurnInputState([]),
+        pendingNormalizationInterruptedToolCallIds: [],
+        turnToolContextId: null,
+        turnLease,
+        buildSendOptions: () => ({ streamTokens: true }),
+        dependencies: deps as never,
+      });
+      await waitFor(
+        () => conversationRuntime.loopStatus === "EXECUTING_CLIENT_SIDE_TOOL",
+        "client tool did not start",
+      );
+
+      connections[lastConnectionIndexForChannel("control")]?.close(
+        1012,
+        "Service restart",
+      );
+      await waitFor(
+        () => countConnectionsForChannel("control") === 2,
+        "listener did not reconnect",
+      );
+      // The lease and the executing tool survived the disconnect.
+      expect(conversationRuntime.turnLifecycle.kind).toBe("active");
+      expect(toolAborted).toBe(false);
+
+      const control = connections[lastConnectionIndexForChannel("control")];
+      if (!control) throw new Error("replacement control socket missing");
+      await waitFor(
+        () => control.readyState === WebSocket.OPEN,
+        "replacement control socket did not open",
+      );
+      const responses = () =>
+        (messagesByConnection.get(control) ?? []).filter(
+          (message) =>
+            (message as { type?: string }).type === "abort_message_response",
+        ) as Array<Record<string, unknown>>;
+      const sendAbort = (requestId: string) =>
+        control.send(
+          JSON.stringify({
+            type: "abort_message",
+            request_id: requestId,
+            runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+            run_id: "run-taskstop",
+            wait_for_settlement: true,
+            pause_queue: false,
+          }),
+        );
+      sendAbort("abort-taskstop");
+      await waitFor(() => toolAborted, "abort did not reach the client tool");
+      sendAbort("abort-taskstop-duplicate");
+
+      const result = await approvalStop;
+      expect(result.kind).toBe("interrupted");
+      finishListenerTurn(conversationRuntime, turnLease, {
+        stopReason: "cancelled",
+        socket: capturedTransport,
+        runId: "run-taskstop",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      });
+      await waitFor(
+        () => responses().length === 2,
+        "abort responses did not arrive on the replacement socket",
+      );
+      const byId = Object.fromEntries(
+        responses().map((response) => [response.request_id, response]),
+      );
+      expect(byId["abort-taskstop"]).toMatchObject({
+        aborted: true,
+        outcome: "interrupted",
+        success: true,
+        lease_settled: true,
+      });
+      // The duplicate (Cloud relaying the same TaskStop) lands while the lease
+      // is cancelling or just after it settled; both credit the stop.
+      expect(byId["abort-taskstop-duplicate"]).toMatchObject({
+        aborted: true,
+        success: true,
+        lease_settled: true,
+      });
+      expect(["joined", "already_settled"]).toContain(
+        byId["abort-taskstop-duplicate"]?.outcome,
+      );
+      expect(cancelledRuns).toEqual(["run-taskstop"]);
+      expect(conversationRuntime.turnLifecycle.kind).toBe("idle");
+    } finally {
+      backend.cancelRun = originalCancelRun;
+      backend.cancelConversation = originalCancelConversation;
+    }
   });
 
   test("disconnected requires_approval producer waits for reconnect before executing a generic client tool", async () => {

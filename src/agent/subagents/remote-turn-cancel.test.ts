@@ -285,7 +285,10 @@ test("only the currently owned continuation is listener-aborted in a multi-run a
   expect(aborted).toEqual(["run-current"]);
 });
 
-test("a stale receipt connection uses the exact Cloud-only fallback", async () => {
+test("a missing harness is not proof the receipt listener let go", async () => {
+  // Core shows the run terminal and no harness, but the listener that accepted
+  // the input may be reconnecting with its lease and client tool preserved.
+  const asked: string[] = [];
   const result = await cancelAcceptedRemoteTurn(
     { ...receipt, connection_id: "disconnected-listener" },
     {
@@ -295,14 +298,86 @@ test("a stale receipt connection uses the exact Cloud-only fallback", async () =
       }),
       exact: async () =>
         exact({ status: "CAN", cancelled_at: "now", run_ids: ["run-own"] }),
-      abortListenerRun: async () => {
-        throw new Error("must not reconnect to a stale owner");
+      abortListenerRun: async (_receipt, runId) => {
+        asked.push(runId);
+        throw new Error("listener unreachable");
       },
       cancelConversationRun: async (_conversationId, runId) => ({
         [runId]: "cancelled",
       }),
       retrieveRun: async (runId) => terminalRun(runId),
       runtimeStatus: async () => inactiveRuntime(),
+      sleep: async () => {},
+      timeoutMs: 100,
+    },
+  );
+
+  expect(asked.length).toBeGreaterThan(0);
+  expect(asked.every((runId) => runId === "run-own")).toBe(true);
+  expect(result.status).toBe("unconfirmed");
+});
+
+test("a reconnected listener that settles the preserved lease confirms", async () => {
+  // Disconnect: first snapshot has no harness. Reconnect: the same listener
+  // answers the exact abort with a settled lease, so TaskStop can confirm.
+  let reconnected = false;
+  const result = await cancelAcceptedRemoteTurn(
+    { ...receipt, connection_id: "listener-1" },
+    {
+      dequeue: async () => ({
+        client_message_id: receipt.client_message_id,
+        status: "too_late",
+      }),
+      exact: async () =>
+        exact({ status: "CAN", cancelled_at: "now", run_ids: ["run-own"] }),
+      abortListenerRun: async (_receipt, runId) => {
+        expect(runId).toBe("run-own");
+        if (!reconnected) {
+          reconnected = true;
+          throw new Error("listener reconnecting");
+        }
+        return true;
+      },
+      cancelConversationRun: async (_conversationId, runId) => ({
+        [runId]: "cancelled",
+      }),
+      retrieveRun: async (runId) => terminalRun(runId),
+      runtimeStatus: async () => inactiveRuntime(),
+      sleep: async () => {},
+      timeoutMs: 1_000,
+    },
+  );
+
+  expect(reconnected).toBe(true);
+  expect(result).toEqual({ status: "confirmed" });
+});
+
+test("a replaced owner releases the old receipt listener", async () => {
+  const result = await cancelAcceptedRemoteTurn(
+    { ...receipt, connection_id: "old-listener" },
+    {
+      dequeue: async () => ({
+        client_message_id: receipt.client_message_id,
+        status: "too_late",
+      }),
+      exact: async () =>
+        exact({ status: "CAN", cancelled_at: "now", run_ids: ["run-own"] }),
+      abortListenerRun: async () => {
+        throw new Error("must not contact a replaced owner");
+      },
+      cancelConversationRun: async (_conversationId, runId) => ({
+        [runId]: "cancelled",
+      }),
+      retrieveRun: async (runId) => terminalRun(runId),
+      runtimeStatus: async () => ({
+        ...inactiveRuntime(),
+        statuses: [
+          {
+            ...runtimeEntry(),
+            active_harness: { connection_id: "new-listener" },
+          },
+        ],
+      }),
       sleep: async () => {},
       timeoutMs: 100,
     },

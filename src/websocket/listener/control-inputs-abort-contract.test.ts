@@ -6,7 +6,10 @@
  * - a second exact abort for a lease that is already cancelling joins it and
  *   reports settlement instead of "not active";
  * - an exact abort for a run whose lease already settled says so, even after
- *   the idle conversation runtime was evicted.
+ *   the idle conversation runtime was evicted;
+ * - an exact abort whose run cannot be cancelled fails closed and never widens
+ *   to the whole conversation, whatever its queue intent;
+ * - queue_paused reports whether queued input is actually parked.
  */
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import type { AbortMessageCommand } from "@/types/protocol_v2";
@@ -42,6 +45,9 @@ function abort(
     message: IncomingMessage,
   ) => Promise<void> = async () => {},
   cancelRun: (agentId: string, runId: string) => Promise<void> = async () => {},
+  cancelConversation: () => Promise<void> = async () => {
+    throw new Error("must not widen exact cancellation");
+  },
 ) {
   return abortMessageInput(
     listener,
@@ -53,9 +59,7 @@ function abort(
     },
     {
       cancelRun,
-      cancelConversation: async () => {
-        throw new Error("must not widen exact cancellation");
-      },
+      cancelConversation,
       settlementTimeoutMs: 1_000,
     },
   );
@@ -210,5 +214,85 @@ describe("abort_message response contract", () => {
     ).toMatchObject({ aborted: false, outcome: "not_applicable" });
     expect(runtime.turnLifecycle.kind).toBe("active");
     expect(cancelRun).not.toHaveBeenCalled();
+  });
+
+  test("an exact abort without pause_queue:false never widens on cancel failure", async () => {
+    // cancelListenerInput and other existing callers send run_id without any
+    // queue flag; a failed exact cancel must not become cancel-all.
+    const listener = createRuntime();
+    setActiveRuntime(listener);
+    const { runtime, lease } = startTurn(listener, "run-exact");
+    const widened = mock(async () => {});
+
+    const pending = abort(
+      listener,
+      { run_id: "run-exact", wait_for_settlement: true },
+      undefined,
+      async () => {
+        throw new Error("backend refused exact cancel");
+      },
+      widened,
+    );
+    await Bun.sleep(5);
+    finishListenerTurn(runtime, lease, {
+      stopReason: "cancelled",
+      socket: createOpenTransport(),
+      runId: "run-exact",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    });
+    await pending;
+    expect(widened).not.toHaveBeenCalled();
+  });
+
+  test("queue_paused reports the parked queue, not the request", async () => {
+    const listener = createRuntime();
+    setActiveRuntime(listener);
+    const { runtime, lease } = startTurn(listener, "run-a");
+    expect(
+      enqueueInboundUserMessage(runtime, {
+        type: "message",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        messages: [{ role: "user", content: "queued" }],
+      }),
+    ).toBe(true);
+
+    // A pausing abort parks the queued item.
+    const first = abort(listener, {
+      run_id: "run-a",
+      wait_for_settlement: true,
+      pause_queue: true,
+    });
+    await Bun.sleep(1);
+    // A non-pausing duplicate still sees the queue parked.
+    const duplicate = abort(listener, {
+      run_id: "run-a",
+      wait_for_settlement: true,
+      pause_queue: false,
+    });
+    finishListenerTurn(runtime, lease, {
+      stopReason: "cancelled",
+      socket: createOpenTransport(),
+      runId: "run-a",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    });
+    expect(await first).toMatchObject({
+      outcome: "interrupted",
+      queuePaused: true,
+    });
+    expect(await duplicate).toMatchObject({
+      outcome: "joined",
+      queuePaused: true,
+    });
+    expect(
+      await abort(listener, { run_id: "run-a", wait_for_settlement: true }),
+    ).toMatchObject({ outcome: "already_settled", queuePaused: true });
+
+    runtime.queueRuntime.resume();
+    expect(
+      await abort(listener, { run_id: "run-a", wait_for_settlement: true }),
+    ).toMatchObject({ outcome: "already_settled", queuePaused: false });
   });
 });

@@ -533,11 +533,12 @@ export async function abortMessageInput(
     ? scopedRuntime.turnLifecycle.matchRun(exactRunId)
     : "current";
   if (runMatch === null) return notApplicable;
+  const queueParked = () => scopedRuntime.queueRuntime.pausedCount > 0;
   if (runMatch === "settled") {
     return {
       aborted: true,
       outcome: "already_settled",
-      queuePaused: false,
+      queuePaused: queueParked(),
       leaseSettled: waitForSettlement,
     };
   }
@@ -557,7 +558,7 @@ export async function abortMessageInput(
     return {
       aborted: true,
       outcome: "joined",
-      queuePaused: pauseQueue,
+      queuePaused: queueParked(),
       leaseSettled: waitForSettlement,
     };
   }
@@ -570,7 +571,7 @@ export async function abortMessageInput(
     return {
       aborted: false,
       outcome: "queue_fenced",
-      queuePaused: true,
+      queuePaused: queueParked(),
       leaseSettled: false,
     };
   }
@@ -689,6 +690,14 @@ export async function abortMessageInput(
     cancelAgentId && cancelRunId
       ? resolvedDeps.cancelRun(cancelAgentId, cancelRunId).catch((error) => {
           if (params.command.pause_queue === false) throw error;
+          // An exact run_id is the caller's whole scope. Retry through the
+          // conversation-scoped route for that same run, never cancel-all:
+          // widening could stop a turn this caller never targeted.
+          if (params.command.run_id)
+            return resolvedDeps.cancelConversationRun(
+              cancelConversationId,
+              cancelRunId,
+            );
           return resolvedDeps.cancelConversation(
             cancelAgentId,
             cancelConversationId,
@@ -735,7 +744,7 @@ export async function abortMessageInput(
   return {
     aborted: true,
     outcome: "interrupted",
-    queuePaused: pauseQueue,
+    queuePaused: queueParked(),
     leaseSettled: waitForSettlement,
   };
 }

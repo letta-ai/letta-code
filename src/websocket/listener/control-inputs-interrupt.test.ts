@@ -296,7 +296,12 @@ describe("listener interrupt queue handoff", () => {
       throw new Error("run-scoped cancellation unavailable");
     });
     const cancelConversation = mock(
-      async (_agentId: string, _conversationId: string) => cancellation.promise,
+      async (_agentId: string, _conversationId: string) => {},
+    );
+    // The fallback stays exact: same run, conversation-scoped route.
+    const cancelConversationRun = mock(
+      async (_conversationId: string, _runId?: string | null) =>
+        cancellation.promise,
     );
     const processedTurns: IncomingMessage[] = [];
     const processQueuedTurn = mock(async (incoming: IncomingMessage) => {
@@ -320,7 +325,7 @@ describe("listener interrupt queue handoff", () => {
           opts: options,
           processQueuedTurn,
         },
-        { cancelRun, cancelConversation },
+        { cancelRun, cancelConversation, cancelConversationRun },
       ),
     ).toBe(true);
 
@@ -350,7 +355,8 @@ describe("listener interrupt queue handoff", () => {
     expect(runtime.queueRuntime.length).toBe(1);
     expect(processedTurns).toEqual([]);
     expect(cancelRun).toHaveBeenCalledWith("agent-1", "run-old");
-    expect(cancelConversation).toHaveBeenCalledWith("agent-1", "conv-1");
+    expect(cancelConversationRun).toHaveBeenCalledWith("conv-1", "run-old");
+    expect(cancelConversation).not.toHaveBeenCalled();
 
     cancellation.resolve();
     await waitFor(
@@ -368,7 +374,8 @@ describe("listener interrupt queue handoff", () => {
       },
     ]);
     expect(cancelRun).toHaveBeenCalledTimes(1);
-    expect(cancelConversation).toHaveBeenCalledTimes(1);
+    expect(cancelConversationRun).toHaveBeenCalledTimes(1);
+    expect(cancelConversation).not.toHaveBeenCalled();
     expect(processQueuedTurn).toHaveBeenCalledTimes(1);
   });
 
