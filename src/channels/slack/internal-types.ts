@@ -142,6 +142,7 @@ export type SlackBlock =
       type: "section";
       text: SlackTextObject;
       accessory?: SlackBlockElement;
+      expand?: boolean;
     }
   | {
       type: "markdown";
