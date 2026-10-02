@@ -56,6 +56,8 @@ export interface StartAppServerOptions {
   connectionName?: string;
   /** Serve OpenAI-compatible models, Chat Completions, and Responses routes. */
   openaiApi?: boolean;
+  /** @internal OpenAI 兼容 SSE 心跳间隔的测试覆盖（毫秒）。 */
+  openaiSseHeartbeatIntervalMs?: number;
   onListening?: (info: AppServerListeningInfo) => void;
   onLog?: (message: string) => void;
   /** @internal Test override for the liveness ping cadence (ms). */
@@ -307,6 +309,7 @@ export async function startAppServer(
       void handleOpenAiCompatRequest(request, response, {
         authPolicy,
         onLog: options.onLog,
+        sseHeartbeatIntervalMs: options.openaiSseHeartbeatIntervalMs,
       });
       return;
     }
