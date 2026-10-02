@@ -1,4 +1,6 @@
+import { APIError } from "@letta-ai/letta-client/core/error";
 import { type Backend, getBackend } from "@/backend";
+import type { CloudReflectionConfig } from "@/backend/api/reflection";
 import {
   formatReflectionReceipt,
   REFLECTION_UNSUPPORTED,
@@ -26,10 +28,20 @@ export async function requestCloudReflectionRun(
       "Unable to determine reflection ownership on this backend.",
     );
   }
-  const config = await backend.retrieveReflectionConfig(
-    capturedScope.agentId,
-    actingUserRequestOptions(capturedScope.actingUserId),
-  );
+  let config: CloudReflectionConfig | null;
+  try {
+    config = await backend.retrieveReflectionConfig(
+      capturedScope.agentId,
+      actingUserRequestOptions(capturedScope.actingUserId),
+    );
+  } catch (error) {
+    // A 404 from the cutover preflight means the server has no reflection
+    // endpoint for this agent — mirror the automatic path, which logs the
+    // failed cutover check and falls through to the local reflection agent
+    // instead of aborting the manual command (#4849).
+    if (error instanceof APIError && error.status === 404) return null;
+    throw error;
+  }
   if (config === null || config.cutover === false) return null;
   if (config.cutover !== true) {
     throw new Error(
