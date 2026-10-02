@@ -247,3 +247,21 @@ test("first-party custom channel has configSchema", () => {
   expect(urlField?.type).toBe("text");
   expect(urlField?.required).toBe(true);
 });
+
+test("first-party X Chat channel exposes runtime and account schema", () => {
+  expect(isSupportedChannelId("xchat")).toBe(true);
+  expect(getChannelPluginMetadata("xchat")).toMatchObject({
+    id: "xchat",
+    displayName: "X Chat",
+    firstParty: true,
+    runtimeModules: [
+      "@chat-adapter/x/chat",
+      "@xdevplatform/chat-xdk",
+      "@xdevplatform/xdk",
+      "juicebox-sdk/juicebox-sdk_bg.js",
+    ],
+    configSchema: {
+      version: 1,
+    },
+  });
+});
