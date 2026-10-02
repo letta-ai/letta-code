@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, mock } from "bun:test";
+import { beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
+
 import {
   deriveListenerInstanceId,
   registerWithCloud,
@@ -273,6 +274,101 @@ describe("registerWithCloud", () => {
 
     expect(result.connectionId).toBe("conn-4");
     expect(slept).toEqual([1000]);
+  });
+
+  it("clamps Retry-After sleep to the remaining total retry budget", async () => {
+    let now = 1_000_000;
+    const clock = spyOn(Date, "now").mockImplementation(() => now);
+    mockFetch.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: "Rate limit exceeded for this endpoint.",
+          errorCode: "route_rps_rate_limit_exceeded",
+        }),
+        {
+          status: 429,
+          headers: {
+            "Content-Type": "application/json",
+            "Retry-After": "3600",
+          },
+        },
+      ),
+    );
+
+    const slept: number[] = [];
+
+    try {
+      await expect(
+        registerWithCloudRetry(defaultOpts, {
+          fetchImpl: mockFetch as unknown as typeof fetch,
+          maxDurationMs: 1000,
+          random: () => 0,
+          sleep: async (delayMs) => {
+            slept.push(delayMs);
+            now += delayMs;
+          },
+        }),
+      ).rejects.toThrow("route_rps_rate_limit_exceeded");
+    } finally {
+      clock.mockRestore();
+    }
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(slept).toEqual([1000]);
+  });
+
+  it("preserves Infinity maxDurationMs behavior", async () => {
+    let now = 1_000_000;
+    const clock = spyOn(Date, "now").mockImplementation(() => now);
+    mockFetch
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            error: "Rate limit exceeded for this endpoint.",
+            errorCode: "route_rps_rate_limit_exceeded",
+          }),
+          {
+            status: 429,
+            headers: {
+              "Content-Type": "application/json",
+              "Retry-After": "3600",
+            },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            connectionId: "conn-infinity",
+            wsUrl: "wss://example.com",
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      );
+
+    const slept: number[] = [];
+
+    try {
+      const result = await registerWithCloudRetry(defaultOpts, {
+        fetchImpl: mockFetch as unknown as typeof fetch,
+        maxDurationMs: Infinity,
+        random: () => 0,
+        sleep: async (delayMs) => {
+          slept.push(delayMs);
+          now += delayMs;
+        },
+      });
+
+      expect(result.connectionId).toBe("conn-infinity");
+    } finally {
+      clock.mockRestore();
+    }
+
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(slept).toEqual([3_600_000]);
   });
 
   it("adds bounded positive jitter to retry delays", async () => {
