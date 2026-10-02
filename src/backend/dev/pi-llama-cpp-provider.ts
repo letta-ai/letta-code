@@ -4,7 +4,7 @@ import {
   LOCAL_ENDPOINT_DEFAULT_CONTEXT_WINDOW,
   type LocalEndpointDiscover,
   type LocalEndpointModelMetadata,
-  modelIdsFromOpenAICompatibleList,
+  modelMetadataFromOpenAICompatibleList,
 } from "./pi-local-endpoint-provider";
 
 export const LLAMA_CPP_PI_PROVIDER_ID = "llama-cpp";
@@ -189,26 +189,32 @@ const llamaCppDiscover: LocalEndpointDiscover = async (context) => {
   }
 
   const list = await context.fetchJson(`${context.openAIBaseURL}/models`);
-  const modelIds = modelIdsFromOpenAICompatibleList(list);
+  const models = modelMetadataFromOpenAICompatibleList(list);
   return Promise.all(
-    modelIds.map(async (modelId) => {
+    models.map(async (metadata) => {
       try {
         const props = parseLlamaCppProps(
           await context.fetchJson(
-            `${context.nativeBaseURL}/props?model=${encodeURIComponent(modelId)}`,
+            `${context.nativeBaseURL}/props?model=${encodeURIComponent(metadata.id)}`,
           ),
         );
         return context.buildModel(
-          llamaCppModelMetadata(modelId, {
-            ...(props.vision !== undefined ? { vision: props.vision } : {}),
+          llamaCppModelMetadata(metadata.id, {
+            ...(props.vision !== undefined || metadata.vision !== undefined
+              ? { vision: props.vision ?? metadata.vision }
+              : {}),
             ...(props.contextLength
               ? { contextLength: props.contextLength }
               : {}),
           }),
         );
       } catch {
+        if (metadata.vision !== undefined) {
+          return context.buildModel(metadata);
+        }
         return (
-          context.lastKnown.get(modelId) ?? context.buildModel({ id: modelId })
+          context.lastKnown.get(metadata.id) ??
+          context.buildModel({ id: metadata.id })
         );
       }
     }),
