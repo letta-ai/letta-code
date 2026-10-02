@@ -64,7 +64,7 @@ processing-pdfs/
 
 Every SKILL.md in Letta Code consists of:
 
-- **Frontmatter** (YAML): Contains `name` and `description` fields. These are the only fields that the Letta Code agent reads to determine when the skill gets used, thus it is very important to be clear and comprehensive in describing what the skill is, and when it should be used.
+- **Frontmatter** (YAML): Contains `name` and `description` fields. The Letta Code agent reads these to determine when the skill gets used (an optional `when_to_use` field, when present, is appended to the description as additional trigger guidance), thus it is very important to be clear and comprehensive in describing what the skill is, and when it should be used.
 - **Body** (Markdown): Instructions and guidance for using the skill. Only loaded AFTER the skill triggers (if at all).
 
 #### Bundled Resources (optional)
@@ -325,7 +325,7 @@ description: Extracts text and tables from PDF files, fills forms, and merges do
 ---
 ```
 
-**Note:** The spec allows optional fields (`license`, `compatibility`, `metadata`, `allowed-tools`) but most skills don't need them. See [agentskills.io/specification](https://agentskills.io/specification) for details.
+**Note:** The spec allows optional fields (`license`, `compatibility`, `metadata`, `allowed-tools`) but most skills don't need them. See [agentskills.io/specification](https://agentskills.io/specification) for details. Letta Code additionally supports optional invocation fields: `when_to_use` (extra trigger guidance appended to the description), `argument-hint` (hint shown after the command in slash-command autocomplete), `disable-model-invocation` (set `true` to hide the skill from automatic model invocation), and `user-invocable` (set `false` to hide the skill from slash-command invocation).
 
 ##### Body
 
