@@ -11,6 +11,7 @@ This file explains how to work effectively in this repo. It covers the rules enf
 3. **One PR per logical change.** Don't bundle unrelated changes — harder to revert if something breaks.
 4. **Never amend commits.** Always create a new commit.
 5. **Check the current branch** before editing files. If in doubt, ask.
+6. **Complete the PR template's AI Disclosure and Human Verification sections.** The disclosure requires exactly one authorship option; leaving it unchecked keeps the PR `BLOCKED` at the required-review gate even with all CI green.
 
 ---
 
@@ -476,6 +477,12 @@ exact string match.
 - Verify the exact matched strings still exist and the throw-on-missing guard is
   preserved.
 - After editing vendor files, must run build for changes to take effect.
+- `ink` must stay a **runtime dependency** (pinned, currently `5.2.1`) and
+  `ink-link` at `^4.1.0`, not dev-only: `ink-link@5` peers on `ink >= 6`, which
+  the vendored patch cannot patch, so a clean install ships an unpatched
+  Node-runtime CLI with no Bun transpiler cache. The package smoke test asserts
+  a `.pile` cache appears after a tarball install, so verify dependency/runtime
+  changes on a clean install path, not just `bun run dev`.
 
 ---
 
@@ -916,6 +923,10 @@ and create draft parity PRs when warranted.
 ### Review Workflow
 
 - `review.yml` runs on ALL non-draft PRs (not just Caren's).
+- The `review` and `sync` checks run the AI-reviewer action and a remote agent;
+  they can fail with `exit code 1` and hidden output as a harness/agent issue
+  independent of the diff. Rerun the job and re-check, rather than treating the
+  check itself as a code failure.
 - Silent by default: only posts inline review comments when flagging issues.
 - Final response: `LGTM` or `Left comments`.
 - Conversation persistence via `summary_search` API lookup.
@@ -966,3 +977,9 @@ Automated cross-repository release orchestration publishes Agent SDK and ACP to
 follow every stable Letta Code release. Not Dependabot, it needs multi-step
 package releases in lockstep. Currently blocked by token permissions
 (`amelia-letta` has read-only access to downstream repos).
+
+A stable publish is triggered by a `chore: bump version to <version>` commit on
+`main` (release.yml only publishes when the merge commit's subject matches that
+pattern), so keep version bumps in their own dedicated PR (`prepare-release.yml`
+creates one) with that exact title; do not bundle a version change into a
+feature PR or the package will not publish.
