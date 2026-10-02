@@ -64,6 +64,46 @@ describe("MemFS v2 pre-commit hook", () => {
     if (repo) rmSync(repo, { recursive: true, force: true });
   });
 
+  test.each(["modify", "delete", "rename", "mode", "create"])(
+    "protects config-selected files against %s, including non-Markdown",
+    (operation) => {
+      repo = initRepo("memfs-readonly-");
+      seedConstraints(repo, { readOnlyFiles: ["locked.*"] });
+      writeFileSync(join(repo, "MEMORY.md"), "# Memory\n");
+      writeFileSync(join(repo, "locked.txt"), "accepted\n");
+      execFileSync("git", ["add", "."], { cwd: repo });
+      execFileSync("git", ["commit", "-qm", "seed memory"], { cwd: repo });
+      installPreCommitHook(repo, true);
+      if (operation === "modify")
+        writeFileSync(join(repo, "locked.txt"), "changed\n");
+      if (operation === "delete")
+        execFileSync("git", ["rm", "locked.txt"], { cwd: repo });
+      if (operation === "rename")
+        execFileSync("git", ["mv", "locked.txt", "other.txt"], { cwd: repo });
+      if (operation === "mode")
+        execFileSync("git", ["update-index", "--chmod=+x", "locked.txt"], {
+          cwd: repo,
+        });
+      if (operation === "create")
+        writeFileSync(join(repo, "locked.new"), "new\n");
+      if (operation !== "mode")
+        execFileSync("git", ["add", "-A"], { cwd: repo });
+      const head = execFileSync("git", ["rev-parse", "HEAD"], {
+        cwd: repo,
+        encoding: "utf8",
+      });
+      const result = tryCommit(repo, "reject protected change");
+      expect(result.status).not.toBe(0);
+      expect(result.stdout + result.stderr).toContain("read-only");
+      expect(
+        execFileSync("git", ["rev-parse", "HEAD"], {
+          cwd: repo,
+          encoding: "utf8",
+        }),
+      ).toBe(head);
+    },
+  );
+
   test("requires indexes for Markdown directories while ignoring skills", () => {
     repo = initRepo("memfs-v2-hook-");
     installPreCommitHook(repo, true);
