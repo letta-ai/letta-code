@@ -1803,7 +1803,17 @@ async function executeModTool(
             const { sendMessageStreamWithBackend } = await import(
               "@/agent/message"
             );
-            return sendMessageStreamWithBackend(...sendArgs);
+            const [backend, conversationId, messages, opts, requestOptions] =
+              sendArgs;
+            const agentId =
+              opts?.agentId ?? executionScope.agentId ?? undefined;
+            return sendMessageStreamWithBackend(
+              backend,
+              conversationId,
+              messages,
+              { ...opts, agentId },
+              requestOptions,
+            );
           },
           workingDirectory: options.workingDirectory,
         }),
@@ -2454,6 +2464,13 @@ export async function executeTool(
 ): Promise<ToolExecutionResult> {
   const [name, args, options] = params;
   const toolEndArgsRef = { current: args };
+  // Snapshot ambient + vault secrets before the tool runs: a runtime
+  // credential can rotate mid-tool, and the post-run capture alone would
+  // miss the pre-rotation value coming back through a mod override.
+  const preRunAgentId = options?.toolContextId
+    ? getExecutionContextById(options.toolContextId)?.runtimeContext?.agentId
+    : undefined;
+  const preRunRedactions = captureSecretRedactions(preRunAgentId);
   const res = await executeToolInner(name, args, {
     ...options,
     toolEndArgsRef,
@@ -2486,6 +2503,7 @@ export async function executeTool(
 
   const overrideRedactions = captureSecretRedactions(
     executionScope.agentId ?? undefined,
+    preRunRedactions,
   );
   const override = await emitToolEndEvent({
     args: toolEndArgsRef.current,

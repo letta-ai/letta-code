@@ -33,7 +33,7 @@
   "src/providers/chatgpt-usage-service.ts": 1112,
   "src/settings-manager.test.ts": 1635,
   "src/settings-manager.ts": 2092,
-  "src/tools/manager.ts": 2589,
+  "src/tools/manager.ts": 2607,
   "src/tools/tool-execution-context.test.ts": 1092,
   "src/types/protocol_v2.ts": 2542,
   "src/websocket/listen-client-concurrency.test.ts": 2557,
