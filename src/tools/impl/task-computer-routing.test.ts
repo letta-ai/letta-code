@@ -33,6 +33,7 @@ mock.module("@/agent/subagents", () => ({
   getAllSubagentConfigs: async () => ({
     "general-purpose": config,
     fork: { ...config, name: "fork", fork: true },
+    memory: { ...config, name: "memory" },
   }),
   clearSubagentConfigCache: () => {},
   discoverSubagents: async () => ({ subagents: [], errors: [] }),
@@ -144,6 +145,25 @@ describe("task computer routing", () => {
         "Error: The computer option requires a Letta Cloud backend.",
       );
       expect(result).toContain("omit the computer field");
+      expect(spawn).not.toHaveBeenCalled();
+      expect(forkConversation).not.toHaveBeenCalled();
+      expect(retrieveAgent).not.toHaveBeenCalled();
+      expect(backgroundTasks.size).toBe(0);
+    },
+  );
+
+  test.each([true, false])(
+    "rejects remote memory workers before launch (routing=%s)",
+    async (routing) => {
+      capabilities.environmentRouting = routing;
+      const result = await task({
+        ...launchArgs,
+        subagent_type: "memory",
+        computer: " office-mac ",
+      });
+      expect(result).toContain(
+        "Memory workers must run on the current machine",
+      );
       expect(spawn).not.toHaveBeenCalled();
       expect(forkConversation).not.toHaveBeenCalled();
       expect(retrieveAgent).not.toHaveBeenCalled();

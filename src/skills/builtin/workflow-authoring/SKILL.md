@@ -64,20 +64,24 @@ the tool's `model` input) accepts any handle or alias listed by
 `letta model list`; an unknown value resolves that call to `null`. Use a
 cheaper model for mechanical stages only when you know a valid handle.
 
-Workflow subagents require the API backend.
+Use the invoking backend for workflow workers. Local execution requires an Agent
+SDK and App Server with local conversation support; `decide()` still uses the
+Cloud decisions service.
 
 ## Script body hooks
 
 - `agent(prompt, opts?)` → Promise. Spawn one subagent. Resolves to its final
-  text, or with `json: true` to the parsed JSON value (say in the prompt what
-  shape to return — nothing validates it; a reply that is not JSON resolves to
-  `null`). Resolves to `null` on any failure — filter with `.filter(Boolean)`.
-  Options: `label` (display name), `phase` (progress group — use this inside
-  pipeline()/parallel() stages to avoid races on the global phase() state),
+  text, or with `schema` (JSON Schema) to a validated object. Prefer `schema`
+  for shaped results: invalid or missing output is retried, then resolves to
+  `null` with validation detail in the journal. `json: true` still parses
+  without validating; `schema` wins if both are set. Resolves to `null` on
+  failure — filter with `.filter(Boolean)`. Options: `label` (display name),
+  `phase` (progress group — use this inside concurrent stages), `schema`,
   `json`, `model`, `effort` (`'low'` for mechanical stages, higher for the
   hardest verify/judge stages), `allowedTools`, `systemPrompt` (extra system
   prompt for this subagent), `timeoutMs` (default 10 minutes), `maxToolCalls`
-  (positive safe integer; default 1000 unique tool calls for this subagent).
+  (positive safe integer; default 1000 unique tool calls for this subagent),
+  `conversationId` (resume a worker — see "Diagnosing a run").
 - `pipeline(items, stage1, stage2, ...)` → run each item through all stages
   independently, NO barrier between stages. Item A can be in stage 3 while
   item B is still in stage 1. This is the DEFAULT for multi-stage work.
@@ -94,8 +98,29 @@ Workflow subagents require the API backend.
 - `phase(title)` — start a new phase; subsequent agent() calls are grouped
   under this title in progress output.
 - `log(message)` — emit a progress message to the user.
+- `decide(state, questions, opts?)` → Promise; not a subagent call. Ask a
+  calibrated Jev model (chosen internally — no model option) questions about
+  `state`. `questions` is a non-empty OBJECT keyed by question id — never an
+  array. Each question needs `instructions` and a `type`: `choice` (criteria
+  map of id → description, ≤255), `score` (criteria array of strings, unlike
+  `questions`), `noul` (no criteria). Returns a response whose `answers` are
+  keyed by the same ids and calibrated, or `null` after one retried invalid
+  answer — guard `if (!call)`; API errors throw.
+
+      const call = await decide(evidence, {
+        behavior: { type: 'choice', instructions: 'Is this behavior a bug?',
+          criteria: { bad: 'Wrong or harmful', not_bad: 'Expected or harmless' } },
+      })
+      const verdict = call?.answers?.behavior?.choice  // 'bad' | 'not_bad'
+
 - `args` — the value passed as the tool's `args` input, verbatim. Pass
   arrays/objects as actual JSON values, NOT as a JSON-encoded string.
+
+`decide()` sees only the `state` you pass; it cannot read files. When compact,
+bounded items are already prepared, pass them via `args` and call `decide()`
+on each directly — don't spawn `agent()` readers just to relay inputs. Raw
+large traces don't belong in `args`: prepare bounded state that preserves the
+user instruction, observed action, and outcome, and mark what was omitted.
 
 Scripts are plain JavaScript, NOT TypeScript — type annotations, interfaces,
 and generics fail to parse. The script body runs in an async context — use
@@ -124,9 +149,9 @@ A barrier is NOT justified by:
   slowest takes 3× the fastest, a barrier wastes 2/3 of the fast finders'
   idle time.
 
-Concurrent agent() calls are capped per run (`maxConcurrent`, default 16) —
-excess calls queue and run as slots free up, so passing 100 items is fine.
-Total agent count across a run is capped at 1000 — a runaway-loop backstop.
+`agent()` and `decide()` share one pool of concurrent slots per run
+(`maxConcurrent`, default 16) — excess calls queue and run as slots free up,
+so passing 100 items is fine. Each has its own 1000-call lifetime backstop.
 A single parallel()/pipeline() call accepts at most 4096 items.
 
 When a barrier IS correct — dedup across all findings before expensive
@@ -215,3 +240,10 @@ diagnosing why a workflow returned an empty or unexpected result, read that
 journal — it records each agent's actual return value and, for a `null`,
 which guard or error produced it. A failed run is not resumable: fix the
 script and launch it again.
+
+The script is never replayed, but one worker can continue:
+`agent(prompt, {conversationId})` re-prompts it with history and model intact,
+using a journal ID and only once its last Run is terminal. Local workers can
+only continue inside the same workflow execution that observed their completed
+turn. Tools default to `[]`; `schema` and `effort` are chosen per turn. Needs
+SDK 0.8.20+.

@@ -222,7 +222,7 @@ jobs:
     if: needs.classify.outputs.run_heavy_ci == 'true'
     name: Package / ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 10
+    timeout-minutes: ${{ matrix.runner == 'windows-latest' && 15 || 10 }}
     strategy:
       fail-fast: false
       matrix:
@@ -270,6 +270,40 @@ jobs:
       - name: Build bundle
         run: bun run build
 
+      - name: Verify image worker with a newer Sharp runtime
+        if: runner.os == 'Linux' && runner.arch == 'X64'
+        run: node scripts/smoke-image-worker.mjs
+
+      - name: MCP OAuth NodeNext declaration smoke test
+        if: runner.os == 'Linux' && runner.arch == 'X64'
+        run: |
+          package_json="$(npm pack --json)"
+          tarball="$(node -e 'const fs=require("fs"); const rows=JSON.parse(fs.readFileSync(0,"utf8")); process.stdout.write(rows[0].filename)' <<<"$package_json")"
+          consumer="$(mktemp -d)"
+          trap 'rm -rf "$consumer" "$tarball"' EXIT
+          mkdir -p "$consumer/node_modules/@letta-ai/letta-code"
+          tar -xzf "$tarball" -C "$consumer/node_modules/@letta-ai/letta-code" --strip-components=1
+          cat > "$consumer/package.json" <<'JSON'
+          {"private":true,"type":"module"}
+          JSON
+          cat > "$consumer/tsconfig.json" <<'JSON'
+          {"compilerOptions":{"strict":true,"noEmit":true,"target":"ES2022","lib":["ES2022","DOM"],"module":"NodeNext","moduleResolution":"NodeNext","skipLibCheck":false},"include":["index.ts"]}
+          JSON
+          cat > "$consumer/index.ts" <<'TS'
+          import { authorizeMcpServerWithStorage, type McpOAuthStorage } from "@letta-ai/letta-code/mcp-oauth";
+          const storage: McpOAuthStorage = { get: async (_key, _signal) => null, set: async (_key, _value, _signal) => {}, delete: async (_key, _signal) => false };
+          void authorizeMcpServerWithStorage({ agentId: "agent", storageNamespace: "consumer", storage, serverName: "server", serverUrl: "https://mcp.example" });
+          TS
+          ./node_modules/.bin/tsc --project "$consumer/tsconfig.json"
+          node - <<'NODE'
+          const fs = require('fs');
+          const version = require('./package.json').version.replaceAll('.', '\\.');
+          const artifact = fs.readFileSync('./dist/mcp-oauth.js', 'utf8');
+          if (!new RegExp(`version:\\s*["']${version}["']`).test(artifact) || artifact.includes('typeof LETTA_VERSION')) {
+            throw new Error('MCP OAuth artifact does not embed the package version');
+          }
+          NODE
+
       - name: CLI help smoke test
         run: ./letta.js --help
 
@@ -309,14 +343,16 @@ jobs:
           npm pack
           npm install -g ./letta-ai-letta-code-*.tgz
           letta --help
+          cache_dir="$(mktemp -d)"
+          BUN_RUNTIME_TRANSPILER_CACHE_PATH="$cache_dir" letta --version
+          test -n "$(find "$cache_dir" -type f -name '*.pile' -print -quit)"
 
-      - name: Headless smoke test (API)
-        # Only run on push to main or non-Dependabot PRs from the same repo
-        # (fork and Dependabot PRs cannot access secrets).
-        if: ${{ github.event_name == 'push' || (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository) }}
+      - name: Headless smoke test (packaged local backend)
         env:
-          LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
-        run: ./letta.js --prompt "ping" --tools "" --permission-mode standard
+          LETTA_LOCAL_BACKEND_EXPERIMENTAL: '1'
+          LETTA_LOCAL_BACKEND_EXECUTOR: deterministic
+          LETTA_LOCAL_BACKEND_DIR: ${{ runner.temp }}/letta-package-smoke
+        run: ./letta.js --backend local --new-agent --prompt "ping" --tools "" --permission-mode standard --output-format text
 
       - name: Windows integration test
         # Only run on Windows, with API key available
@@ -511,6 +547,9 @@ jobs:
     if: ${{ needs.classify.outputs.run_heavy_ci == 'true' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository)) }}
     name: Reflection / Headless
     runs-on: ubuntu-latest
+    # This is live Cloud/model coverage. Keep its diagnostics visible without
+    # letting a provider outage block packaging and release readiness.
+    continue-on-error: true
     timeout-minutes: 10
     steps:
       - name: Checkout

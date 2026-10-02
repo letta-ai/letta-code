@@ -2,6 +2,8 @@
 
 Use these examples when constructing `model_settings`. Send only fields supported by the target provider.
 
+Before choosing a handle, follow the billing-path guidance in `SKILL.md` ("Billing path when changing models").
+
 ## Reasoning shapes
 
 | Provider/model handle | Reasoning shape |

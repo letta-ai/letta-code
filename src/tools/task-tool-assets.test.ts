@@ -61,7 +61,11 @@ describe("task() computer guard", () => {
     const guardIndex = source.indexOf(
       "The computer option requires a Letta Cloud backend",
     );
-    const spawnIndex = source.indexOf("spawnBackgroundSubagentTask({");
+    const launchStart = source.indexOf("export async function launchSubagent(");
+    const spawnIndex = source.indexOf(
+      "spawnBackgroundSubagentTask({",
+      launchStart,
+    );
     expect(guardIndex).toBeGreaterThan(-1);
     expect(spawnIndex).toBeGreaterThan(-1);
     expect(guardIndex).toBeLessThan(spawnIndex);
@@ -83,7 +87,7 @@ describe("resolveBackendSpecificToolAssets Task dispatch", () => {
   test("strips computer for a non-cloud server", async () => {
     process.env.LETTA_BASE_URL = "http://localhost:8283";
     const { resolveBackendSpecificToolAssets } = await import(
-      "./memory-tool-assets"
+      "./task-tool-assets"
     );
     const resolved = await resolveBackendSpecificToolAssets(
       "Task",
@@ -99,7 +103,7 @@ describe("resolveBackendSpecificToolAssets Task dispatch", () => {
   test("keeps computer for the Cloud server", async () => {
     process.env.LETTA_BASE_URL = "https://api.letta.com";
     const { resolveBackendSpecificToolAssets } = await import(
-      "./memory-tool-assets"
+      "./task-tool-assets"
     );
     const resolved = await resolveBackendSpecificToolAssets(
       "Task",

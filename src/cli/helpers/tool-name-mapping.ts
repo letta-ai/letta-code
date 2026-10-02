@@ -3,8 +3,7 @@
  * Centralizes tool name remapping logic used across the UI.
  */
 
-import { isInteractiveApprovalTool } from "@/tools/interactive-policy";
-
+// Retired memory tools; kept so saved transcripts still render them.
 const MEMORY_TOOL_NAMES = new Set(["memory", "memory_apply_patch"]);
 
 /**
@@ -53,6 +52,7 @@ export function getDisplayToolName(rawName: string): string {
 
   // Additional tools
   if (rawName === "KillBash") return "Kill Bash";
+  // Retired output pollers; kept so saved transcripts still render them.
   if (rawName === "BashOutput") return "Shell Output";
   if (rawName === "TaskOutput") return "Task Output";
   if (rawName === "MultiEdit") return "Update";
@@ -125,17 +125,6 @@ export function isFancyUITool(name: string): boolean {
 }
 
 /**
- * Checks if a tool always requires user interaction, even in unrestricted mode.
- * These are tools that fundamentally need user input to proceed:
- * - AskUserQuestion: needs user to answer questions
- *
- * Other tools (bash, file edits) should respect unrestricted mode and auto-approve.
- */
-export function alwaysRequiresUserInput(name: string): boolean {
-  return isInteractiveApprovalTool(name);
-}
-
-/**
  * Checks if a tool is a memory tool (client-side MemFS memory editing)
  */
 export function isMemoryTool(name: string): boolean {
@@ -198,7 +187,8 @@ export function isShellTool(name: string): boolean {
 
 /**
  * Checks if a tool should use shell-style streaming output rendering.
- * Includes shell command tools plus TaskOutput/BashOutput pollers.
+ * Includes shell command tools plus the retired TaskOutput/BashOutput pollers,
+ * which saved transcripts still contain.
  */
 export function isShellOutputTool(name: string): boolean {
   const n = name.toLowerCase();

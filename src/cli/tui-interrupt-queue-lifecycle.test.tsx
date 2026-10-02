@@ -11,7 +11,7 @@
  * turn started by typing has no such callback.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -231,7 +231,9 @@ async function renderTestApp(executor: HeadlessTurnExecutor): Promise<{
   backend: FakeHeadlessBackend;
   stdin: NodeJS.ReadStream;
 }> {
-  const agentId = "agent-tui-interrupt-queue";
+  // This fixture is local. A Cloud-shaped ID makes skill discovery query
+  // attached repositories over HTTP before each otherwise-fake turn.
+  const agentId = "agent-local-tui-interrupt-queue";
   const backend = new FakeHeadlessBackend(agentId, executor);
   __testSetBackend(backend);
   const agentState = await backend.retrieveAgent(agentId);
@@ -283,14 +285,31 @@ describe("TUI interrupt queue lifecycle", () => {
     const source = await startMonitor(input);
     // An event drives another complete turn while the source stays connected.
     source.socket.send("normal monitor event");
-    await waitFor(() => inputs.length === 2, "the Monitor notification turn");
+    await waitFor(
+      () =>
+        readFileSync(source.state.outputFile as string, "utf8").includes(
+          "normal monitor event",
+        ),
+      "the normal Monitor event to be received",
+    );
+    // Receipt and TUI delivery are separate stages. On Windows the 200 ms
+    // Monitor batch plus Ink dequeue can exceed the generic fixture deadline.
+    await waitFor(
+      () => inputs.length === 2,
+      "the Monitor notification turn",
+      10_000,
+    );
     await sleep(300);
     expect(source.state.status).toBe("running");
     stdin.push("\u001b");
     await sleep(100);
     expect(source.isClosed()).toBe(false);
     source.socket.send("still watching after idle Esc");
-    await waitFor(() => inputs.length === 3, "the event after idle Esc");
+    await waitFor(
+      () => inputs.length === 3,
+      "the event after idle Esc",
+      10_000,
+    );
     expect(JSON.stringify(inputs[2]?.body)).toContain(
       "still watching after idle Esc",
     );
@@ -298,7 +317,7 @@ describe("TUI interrupt queue lifecycle", () => {
       "Any pending monitors",
     );
     expect(source.state.status).toBe("running");
-  }, 15_000);
+  }, 30_000);
 
   test("an idle Monitor notification starts an agent turn without user input", async () => {
     const executor = new DelayedInterruptExecutor();
@@ -328,7 +347,10 @@ describe("TUI interrupt queue lifecycle", () => {
     const source = await startMonitor(input);
     source.socket.send("queued before Esc");
     await waitFor(
-      () => source.state.stdout.join("\n").includes("queued before Esc"),
+      () =>
+        readFileSync(source.state.outputFile as string, "utf8").includes(
+          "queued before Esc",
+        ),
       "the real Monitor event to be received",
     );
     // Monitor batches events for 200ms before handing them to the TUI queue.

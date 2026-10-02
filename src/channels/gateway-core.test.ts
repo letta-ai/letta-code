@@ -29,6 +29,9 @@ test("direct started input activates sources immediately", async () => {
   await gateway.submit(
     makeDelivery({ sources: [source], clientMessageId: "cm-1" }),
   );
+  expect(client.submittedInputs[0]?.payload).toMatchObject({
+    client_preferences: {},
+  });
 
   // Should emit queued lifecycle for each source
   expect(lifecycleEvents.filter((e) => e.type === "queued")).toHaveLength(1);
@@ -628,6 +631,7 @@ test("runtime registration happens before input submission", async () => {
   expect(startOpts?.preserve_skill_sources).toBe(true);
   expect(startOpts?.external_tools).toEqual([
     {
+      scope_id: expect.stringMatching(/^channel-turn-/),
       tools: [
         {
           name: "MessageChannel",
@@ -845,7 +849,7 @@ test("runtime registration removes MessageChannel when no route remains", async 
   gateway.close();
 });
 
-test("runtime registration is skipped when signature matches", async () => {
+test("each delivery registers its immutable external tool scope", async () => {
   const client = new FakeClient();
   const { hooks } = makeHooks();
   const gateway = new ChannelGateway(client, hooks);
@@ -854,9 +858,10 @@ test("runtime registration is skipped when signature matches", async () => {
   await gateway.submit(makeDelivery({ clientMessageId: "cm-1" }));
   expect(client.startedRuntimes).toHaveLength(1);
 
-  // Second submit with same delivery params should not re-register
+  // A later queued input has a distinct selector and must retain both groups.
   await gateway.submit(makeDelivery({ clientMessageId: "cm-2" }));
-  expect(client.startedRuntimes).toHaveLength(1);
+  expect(client.startedRuntimes).toHaveLength(2);
+  expect(client.startedRuntimes[1]?.external_tools).toHaveLength(2);
 
   gateway.close();
 });

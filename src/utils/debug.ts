@@ -67,34 +67,70 @@ function printDebugLine(line: string, level: "log" | "warn" = "log"): void {
 
 const DEBUG_LOG_DIR = join(homedir(), ".letta", "logs", "debug");
 const MAX_SESSION_FILES = 5;
+const MAX_LOG_BYTES = 10 * 1024 * 1024; // 10 MB per session file
 const DEFAULT_TAIL_LINES = 50;
+
+interface DebugLogFileOptions {
+  /** Override the log root (tests). Defaults to ~/.letta/logs/debug. */
+  dir?: string;
+  /** Override the per-file size cap in bytes (tests). */
+  maxBytes?: number;
+}
 
 class DebugLogFile {
   private logPath: string | null = null;
   private agentDir: string | null = null;
   private dirCreated = false;
+  private bytesWritten = 0;
+  private maxBytes = MAX_LOG_BYTES;
+  private truncationNoted = false;
 
   /**
    * Initialize for an agent + session. Call once at session start.
    * After this, every debugLog/debugWarn call is persisted to disk.
    * Respects LETTA_CODE_TELEM=0 — skips file logging when telemetry is disabled.
    */
-  init(agentId: string, sessionId: string): void {
+  init(
+    agentId: string,
+    sessionId: string,
+    options: DebugLogFileOptions = {},
+  ): void {
     const telem = process.env.LETTA_CODE_TELEM;
     if (telem === "0" || telem === "false") return;
 
-    this.agentDir = join(DEBUG_LOG_DIR, agentId);
+    this.agentDir = join(options.dir ?? DEBUG_LOG_DIR, agentId);
     this.logPath = join(this.agentDir, `${sessionId}.log`);
+    this.maxBytes = options.maxBytes ?? MAX_LOG_BYTES;
     this.dirCreated = false;
+    this.bytesWritten = 0;
+    this.truncationNoted = false;
     this.pruneOldSessions();
   }
 
   /** Append a single line to the log file (best-effort, sync). */
   appendLine(line: string): void {
     if (!this.logPath) return;
+    // Cap per-file size so a long session cannot fill the disk. Unlike the
+    // listener session log we do not rotate here: the file is addressed by
+    // session id, and getTail() reads this exact path.
+    if (this.bytesWritten >= this.maxBytes) {
+      if (!this.truncationNoted) {
+        this.truncationNoted = true;
+        this.writeRaw(
+          `${new Date().toISOString()} [debug] log truncated after ${this.maxBytes} bytes\n`,
+        );
+      }
+      return;
+    }
+    this.writeRaw(line);
+  }
+
+  private writeRaw(line: string): void {
+    if (!this.logPath) return;
     this.ensureDir();
     try {
       appendFileSync(this.logPath, line, { encoding: "utf8" });
+      this.bytesWritten += Buffer.byteLength(line, "utf8");
     } catch {
       // Best-effort — never crash the app for debug logging
     }

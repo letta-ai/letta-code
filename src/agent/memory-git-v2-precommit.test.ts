@@ -15,7 +15,9 @@ import {
   MEMORY_CONSTRAINTS_UPDATE_ENV,
   MEMORY_CONSTRAINTS_VALIDATOR_NAME,
 } from "./memory-constraints";
+import { commitMemoryWrite, initializeLocalMemoryRepo } from "./memory-git";
 import {
+  buildPreCommitHookScript,
   installPreCommitHook,
   installSharedMemoryPreCommitHook,
 } from "./memory-git-hooks";
@@ -437,6 +439,106 @@ describe("MemFS v2 pre-commit hook", () => {
   });
 });
 
+describe("local memory commit hook policy", () => {
+  let repo = "";
+  const author = {
+    agentId: "agent-local-hook-policy",
+    authorName: "Local Hook Test",
+    authorEmail: "local-hook-test@letta.com",
+  };
+
+  afterEach(() => {
+    if (repo) rmSync(repo, { recursive: true, force: true });
+  });
+
+  test("keeps root-marker validation after a local memory write", async () => {
+    repo = mkdtempSync(join(tmpdir(), "local-root-hook-policy-"));
+    await initializeLocalMemoryRepo({
+      memoryDir: repo,
+      agentId: author.agentId,
+      authorName: author.authorName,
+      files: [
+        { relativePath: "MEMORY.md", content: "# Memory\n" },
+        {
+          relativePath: "persona.md",
+          content: v2Memory("Initial.\n", "Persona"),
+        },
+      ],
+    });
+
+    writeFileSync(join(repo, "persona.md"), v2Memory("Updated.\n", "Persona"));
+    const committed = await commitMemoryWrite({
+      memoryDir: repo,
+      pathspecs: ["persona.md"],
+      reason: "test: update root memory",
+      author,
+      syncMode: "local",
+    });
+
+    expect(committed.committed).toBe(true);
+    expect(
+      readFileSync(join(repo, ".git", "letta-memory-layout-policy"), "utf8"),
+    ).toBe("root-marker\n");
+
+    writeFileSync(join(repo, "notes.md"), "Missing frontmatter.\n");
+    await expect(
+      commitMemoryWrite({
+        memoryDir: repo,
+        pathspecs: ["notes.md"],
+        reason: "test: reject invalid root memory",
+        author,
+        syncMode: "local",
+      }),
+    ).rejects.toThrow("Memory validation failed");
+
+    rmSync(join(repo, "MEMORY.md"));
+    await expect(
+      commitMemoryWrite({
+        memoryDir: repo,
+        pathspecs: ["MEMORY.md"],
+        reason: "test: reject root marker deletion",
+        author,
+        syncMode: "local",
+      }),
+    ).rejects.toThrow("root memory index is required for MemFS v2");
+    expect(
+      readFileSync(join(repo, ".git", "letta-memory-layout-policy"), "utf8"),
+    ).toBe("root-marker\n");
+  });
+
+  test("keeps markerless local repositories on legacy validation", async () => {
+    repo = mkdtempSync(join(tmpdir(), "local-legacy-hook-policy-"));
+    await initializeLocalMemoryRepo({
+      memoryDir: repo,
+      agentId: author.agentId,
+      authorName: author.authorName,
+      files: [
+        {
+          relativePath: "system/persona.md",
+          content: "---\ndescription: Persona\n---\nInitial.\n",
+        },
+      ],
+    });
+
+    writeFileSync(
+      join(repo, "system", "persona.md"),
+      "---\ndescription: Persona\n---\nUpdated.\n",
+    );
+    const committed = await commitMemoryWrite({
+      memoryDir: repo,
+      pathspecs: ["system/persona.md"],
+      reason: "test: update legacy memory",
+      author,
+      syncMode: "local",
+    });
+
+    expect(committed.committed).toBe(true);
+    expect(
+      readFileSync(join(repo, ".git", "letta-memory-layout-policy"), "utf8"),
+    ).toBe("legacy-only\n");
+  });
+});
+
 describe("legacy MemFS pre-commit hook", () => {
   let repo = "";
 
@@ -518,4 +620,77 @@ describe("shared-memory pre-commit hook", () => {
       "exceeds 70 from maxFileCharacters",
     );
   });
+
+  test("rejects an unrelated commit when tracked memory is already invalid", () => {
+    repo = initRepo("shared-memory-existing-invalid-");
+    writeFileSync(join(repo, "invalid.md"), "missing frontmatter\n");
+    execFileSync("git", ["add", "invalid.md"], { cwd: repo });
+    execFileSync("git", ["commit", "-qm", "seed invalid memory"], {
+      cwd: repo,
+    });
+    installSharedMemoryPreCommitHook(repo);
+
+    writeFileSync(join(repo, "unrelated.txt"), "not memory\n");
+    execFileSync("git", ["add", "unrelated.txt"], { cwd: repo });
+    const result = tryCommit(repo, "reject existing invalid memory");
+    expect(result.status).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain(
+      "invalid.md: missing frontmatter",
+    );
+  });
+
+  test("validates a large tracked tree without passing every path to the runtime", () => {
+    repo = initRepo("shared-memory-many-paths-");
+    for (let index = 0; index < 240; index += 1) {
+      writeFileSync(
+        join(
+          repo,
+          `notes-${String(index).padStart(4, "0")}-${"x".repeat(145)}.md`,
+        ),
+        v2Memory("valid\n"),
+      );
+    }
+    execFileSync("git", ["add", "."], { cwd: repo });
+    // Seed the tracked tree before installing the hook. The tested commit only
+    // stages a non-Markdown file, but v2 validation must still scan the tree.
+    execFileSync("git", ["commit", "-qm", "seed many memory files"], {
+      cwd: repo,
+    });
+    installSharedMemoryPreCommitHook(repo);
+
+    const shim = join(repo, "git-bash-runtime");
+    writeFileSync(
+      shim,
+      `#!/bin/sh
+length=0
+for arg do length=$((length + \${#arg} + 1)); done
+if [ "$length" -gt 32767 ]; then
+  echo "simulated Windows command line limit" >&2
+  exit 90
+fi
+exec node "$@"
+`,
+      { mode: 0o755 },
+    );
+    writeFileSync(
+      join(repo, ".git", "hooks", "pre-commit"),
+      buildPreCommitHookScript({ execPath: shim, electron: false }),
+      { mode: 0o755 },
+    );
+
+    writeFileSync(join(repo, "unrelated.txt"), "not memory\n");
+    execFileSync("git", ["add", "unrelated.txt"], { cwd: repo });
+    const valid = tryCommit(repo, "commit despite many memory paths");
+    expect(valid.stdout + valid.stderr).not.toContain(
+      "simulated Windows command line limit",
+    );
+    expect(valid.status).toBe(0);
+
+    const firstMemoryPath = `notes-0000-${"x".repeat(145)}.md`;
+    writeFileSync(join(repo, firstMemoryPath), "invalid\n");
+    execFileSync("git", ["add", firstMemoryPath], { cwd: repo });
+    const invalid = tryCommit(repo, "reject bad memory in large tree");
+    expect(invalid.status).not.toBe(0);
+    expect(invalid.stdout + invalid.stderr).toContain("missing frontmatter");
+  }, 30_000);
 });

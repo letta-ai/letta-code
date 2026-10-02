@@ -32,7 +32,9 @@ describe("queue ordering wiring", () => {
     // Queue is now drained via QueueRuntime.consumeItems; setQueueDisplay is
     // updated automatically via the onDequeued callback — no direct setState here.
     expect(segment).toContain("tuiQueueRef.current?.consumeItems(queueLen)");
-    expect(segment).toContain("onSubmitRef.current(concatenatedMessage)");
+    expect(segment).toMatch(
+      /onSubmitRef\s*\.current\(concatenatedMessage, submitOptions\)/,
+    );
     expect(segment).toContain("!dequeueInFlightRef.current");
     expect(segment).toContain("queuedOverlayAction,");
   });

@@ -9,6 +9,10 @@ import type {
 import type { ToolReturnMessage } from "@letta-ai/letta-client/resources/tools";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import { INTERRUPTED_BY_USER } from "@/constants";
+import {
+  deliverDiskSpaceReminder,
+  watchDiskSpaceDuring,
+} from "@/reminders/disk-space";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import {
   executeTool,
@@ -37,33 +41,16 @@ export function getDisplayableToolReturn(content: ToolReturnContent): string {
  * Tools that are safe to execute in parallel (read-only or independent).
  * These tools don't modify files or shared state, so they can't race with each other.
  * Note: Bash/shell tools are intentionally excluded - they can run arbitrary commands that may write files.
- *
- * Includes equivalent tools across all toolsets (Anthropic and Codex/OpenAI).
  */
 const PARALLEL_SAFE_TOOLS = new Set([
-  // === Anthropic toolset (default) ===
   "Read",
   "ViewImage",
   "Grep",
   "Glob",
-
-  // === Codex/OpenAI toolset ===
-  // snake_case variants
-  "read_file",
-  "list_dir",
-  "grep_files",
-  // PascalCase variants
-  "ReadFile",
-  "ListDir",
-  "GrepFiles",
-
-  // === Cross-toolset tools ===
   // Search/fetch tools (external APIs or read-only queries)
   "conversation_search",
   "web_search",
   "fetch_webpage",
-  // Background task output (read-only check)
-  "TaskOutput",
   // Task spawns independent subagents
   "Task",
   "Agent",
@@ -80,12 +67,7 @@ function isParallelSafe(toolName: string, toolContextId?: string): boolean {
  * Tools that modify a single file and use `file_path` as their resource identifier.
  * These can run in parallel when targeting different files.
  */
-const FILE_PATH_TOOLS = new Set([
-  // Anthropic toolset
-  "Edit",
-  "Write",
-  "MultiEdit",
-]);
+const FILE_PATH_TOOLS = new Set(["Edit", "Write"]);
 
 /**
  * Tools that use a global lock (can touch multiple resources or have arbitrary side effects).
@@ -94,15 +76,9 @@ const FILE_PATH_TOOLS = new Set([
 const GLOBAL_LOCK_TOOLS = new Set([
   // Shell tools (arbitrary side effects)
   "Bash",
-  "KillBash",
-  // Memory tool (file + git side effects)
-  "memory",
-  "shell_command",
   "exec_command",
   "write_stdin",
-  "shell",
-  "ShellCommand",
-  "Shell",
+  // Patch tool (can touch several files in one call)
   "ApplyPatch",
 ]);
 
@@ -360,6 +336,19 @@ export async function executeApprovalBatch(
     parentScope?: { agentId: string; conversationId: string };
     onFileWrite?: (filePath: string, content: string) => void;
   },
+): Promise<ApprovalResult[]> {
+  // Tools are what fill the disk, so watch it while they run.
+  return watchDiskSpaceDuring(
+    options?.workingDirectory ?? getCurrentWorkingDirectory(),
+    (text) => deliverDiskSpaceReminder(text, options?.parentScope),
+    () => executeApprovalBatchUnwatched(decisions, onChunk, options),
+  );
+}
+
+async function executeApprovalBatchUnwatched(
+  decisions: ApprovalDecision[],
+  onChunk: ((chunk: ToolReturnMessage) => void) | undefined,
+  options: Parameters<typeof executeApprovalBatch>[2],
 ): Promise<ApprovalResult[]> {
   const toolContextId =
     options?.toolContextId ??

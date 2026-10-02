@@ -24,7 +24,7 @@ export interface TaskNotification {
   status: "completed" | "failed";
   summary: string;
   result: string;
-  outputFile: string;
+  outputFile?: string;
   usage?: {
     totalTokens?: number;
     toolUses?: number;
@@ -111,18 +111,16 @@ export function formatTaskNotification(notification: TaskNotification): string {
 <status>${notification.status}</status>
 <summary>${escapedSummary}</summary>
 <result>${escapedResult}</result>${usageBlock}
-</task-notification>
-Full transcript available at: ${notification.outputFile}`;
+</task-notification>${notification.outputFile ? `\nFull transcript available at: ${notification.outputFile}` : ""}`;
 }
 
 export function formatMonitorEventNotification(notification: {
   taskId: string;
-  description: string;
   event: string;
 }): string {
   return `<task-notification>
 <task-id>${escapeXml(notification.taskId)}</task-id>
-<summary>${escapeXml(`Monitor event: "${notification.description}"`)}</summary>
+<summary>${escapeXml(`Monitor event: "${notification.event}"`)}</summary>
 <result>
 <event>${escapeXml(notification.event)}</event>
 </result>

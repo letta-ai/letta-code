@@ -59,16 +59,11 @@ import {
 } from "./agent/chatgpt-plan-rotation";
 import { setAgentContext, setConversationId } from "./agent/context";
 import { createAgent } from "./agent/create";
+import { prepareExistingHeadlessModel } from "./agent/headless-model-startup";
 import { handleListMessages } from "./agent/list-messages-handler";
 import { getStreamToolContextId, sendMessageStream } from "./agent/message";
-import {
-  getModelPresetUpdateForAgent,
-  getModelUpdateArgs,
-  getResumeRefreshArgs,
-  preservableContextWindow,
-  resolveModel,
-} from "./agent/model";
-import { updateAgentLLMConfig, updateAgentSystemPrompt } from "./agent/modify";
+import { getModelUpdateArgs, resolveModel } from "./agent/model";
+import { updateAgentSystemPrompt } from "./agent/modify";
 import { buildCreateAgentOptionsForPersonality } from "./agent/personality";
 import { resolvePersonalityId } from "./agent/personality-presets";
 import {
@@ -181,10 +176,7 @@ import {
 import { getCurrentWorkingDirectory } from "./runtime-context";
 import { settingsManager, shouldPersistSessionState } from "./settings-manager";
 import { writeWireMessage, writeWireMessageAsync } from "./stream-json-writer";
-import {
-  INTERACTIVE_USER_INPUT_TOOL_NAMES,
-  isInteractiveApprovalTool,
-} from "./tools/interactive-policy";
+import { shutdownBackgroundMemoryTasks } from "./tools/impl/memory-task-lifecycle";
 import {
   type ExternalToolDefinition,
   registerExternalTools,
@@ -434,7 +426,6 @@ async function prepareHeadlessToolExecutionContext(params: {
     conversationId: params.conversationId,
     overrideModel: params.overrideModel,
     workingDirectory: getCurrentWorkingDirectory(),
-    exclude: [...INTERACTIVE_USER_INPUT_TOOL_NAMES],
     cachedAgent: params.cachedAgent,
     modContext: params.modContext,
     modEvents: params.modEvents,
@@ -806,6 +797,8 @@ export async function handleHeadlessCommand(
     computer: explicitEnvironmentSelector,
     ephemeral: values.ephemeral,
   });
+  if (values["client-message-id"] !== undefined && !usesRemoteEnvironment)
+    throw new Error("--client-message-id requires a Cloud input destination");
   const startupBackend = createStartupBackend(backend, usesRemoteEnvironment);
 
   // Resolve agent (same logic as interactive mode)
@@ -850,10 +843,7 @@ export async function handleHeadlessCommand(
     );
     disableLocalBackendMemfsForProcess();
   }
-  // Startup policy for the git-backed memory pull on session init.
-  // "blocking" (default): await the pull before proceeding.
-  // "background": fire the pull async, emit init without waiting.
-  // "skip": skip the pull entirely this session.
+  // MemFS startup: block (default), pull in background, or skip this session.
   const memfsStartupRaw = values["memfs-startup"];
   const memfsStartupPolicy: "blocking" | "background" | "skip" =
     memfsStartupRaw === "background" || memfsStartupRaw === "skip"
@@ -1281,47 +1271,27 @@ export async function handleHeadlessCommand(
   const publicAgentId = ephemeralFlag ? null : agent.id;
   telemetry.setCurrentAgent(publicAgentId, agent.tags);
   const isResumingAgent = !ephemeralFlag && !!(specifiedAgentId || !forceNew);
+  let conversationModel: Partial<ConversationCreateBody> | undefined;
   // Refresh presets before applying optional model/system-prompt overrides.
 
   if (isResumingAgent) {
-    if (model) {
-      const modelHandle = resolveModel(model);
-      if (typeof modelHandle !== "string") {
-        console.error(`Error: Invalid model "${model}"`);
-        process.exit(1);
-      }
-
-      // Always apply model update - different model IDs can share the same
-      // handle but have different settings (e.g., gpt-5.2-medium vs gpt-5.2-xhigh)
-      const updateArgs = getModelUpdateArgs(model);
-      agent = await updateAgentLLMConfig(agent.id, modelHandle, updateArgs);
-    } else {
-      const presetRefresh = getModelPresetUpdateForAgent(agent);
-      if (presetRefresh) {
-        const { updateArgs: resumeRefreshUpdateArgs, needsUpdate } =
-          getResumeRefreshArgs(presetRefresh.updateArgs, agent);
-
-        if (needsUpdate) {
-          // Resume refresh must not reset the context window; preserve it by
-          // re-sending the agent's current value explicitly (omitting it
-          // makes the server re-derive + clamp to a legacy 128k default —
-          // LET-9786). A current value that looks like that clamp is not
-          // preserved, letting the agent heal.
-          const preservedContextWindow = preservableContextWindow(
-            agent.llm_config?.context_window,
-            presetRefresh.modelHandle,
-          );
-          agent = await updateAgentLLMConfig(
-            agent.id,
-            presetRefresh.modelHandle,
-            resumeRefreshUpdateArgs,
-            preservedContextWindow !== undefined
-              ? { contextWindowOverride: preservedContextWindow }
-              : undefined,
-          );
-        }
-      }
+    const modelHandle = model ? resolveModel(model) : undefined;
+    if (model && typeof modelHandle !== "string") {
+      console.error(`Error: Invalid model "${model}"`);
+      process.exit(1);
     }
+    const prepared = await prepareExistingHeadlessModel({
+      agent,
+      modelIdentifier: model,
+      modelHandle: modelHandle ?? undefined,
+      createsConversation:
+        !specifiedConversationId &&
+        (forceNewConversation ||
+          process.env.LETTA_CODE_AGENT_ROLE !== "subagent"),
+      localModelCatalog: backend.capabilities.localModelCatalog,
+    });
+    agent = prepared.agent;
+    conversationModel = prepared.conversationModel;
   }
 
   // Determine which conversation to use
@@ -1367,10 +1337,7 @@ export async function handleHeadlessCommand(
   //   "background"           – fire pull async; session init proceeds immediately.
   //   "skip"                 – skip the pull this session.
   if (isStatelessSession) {
-    // This is a session launch policy: do not hydrate tags, auto-enable,
-    // clone, or pull MemFS. Recording false also keeps downstream client tools,
-    // skills, reflection, and init metadata aligned without mutating the
-    // server-side agent configuration.
+    // Stateless subagents retain the inherited checkout without enabling their own MemFS.
     settingsManager.setMemfsEnabled(agent.id, false);
   } else if (!backend.capabilities.remoteMemfs) {
     if (backend.capabilities.localMemfs) {
@@ -1479,9 +1446,7 @@ export async function handleHeadlessCommand(
     agent = result.agent;
   }
 
-  // Maintain managed system prompt versions without blocking startup.
-  // This updates only agents whose current prompt still matches the stored
-  // managed prompt hash, so custom edits are preserved.
+  // Refresh unchanged managed prompts on resume without blocking startup.
   if (isResumingAgent && !systemPromptPreset) {
     const {
       ensureLettaCodeOriginTag,
@@ -1564,6 +1529,7 @@ export async function handleHeadlessCommand(
     // body fields unchanged — remove the cast once the SDK is bumped.
     const createParams: ConversationCreateBody = {
       agent_id: agent.id,
+      ...conversationModel,
     };
     if (fromAgentId) {
       (createParams as { hidden?: boolean }).hidden = true;
@@ -1582,6 +1548,7 @@ export async function handleHeadlessCommand(
     // Use --conv default to explicitly target the agent's primary conversation.
     const conversation = await startupBackend.createConversation({
       agent_id: agent.id,
+      ...conversationModel,
     });
     conversationId = conversation.id;
     conversationOpenReason = "new";
@@ -1693,12 +1660,17 @@ export async function handleHeadlessCommand(
     preparedEffectiveModel =
       initialToolContext.preparedToolContext.effectiveModel;
   }
+  const reportModel =
+    conversationModel?.model ??
+    preparedEffectiveModel ??
+    agent.llm_config?.model;
 
   // If input-format is stream-json, use bidirectional mode
   if (isBidirectionalMode) {
     await runBidirectionalMode(
       agent,
       conversationId,
+      reportModel,
       outputFormat,
       includePartialMessages,
       availableTools,
@@ -1750,6 +1722,7 @@ export async function handleHeadlessCommand(
       await telemetry.flush();
     } finally {
       headlessModAdapter.dispose();
+      await shutdownBackgroundMemoryTasks(code);
       telemetry.setSessionStatsGetter(undefined);
     }
     return await flushAndExit(code);
@@ -1763,7 +1736,7 @@ export async function handleHeadlessCommand(
       session_id: sessionId,
       agent_id: publicAgentId,
       conversation_id: conversationId,
-      model: agent.llm_config?.model ?? "",
+      model: reportModel ?? "",
       tools: availableTools,
       cwd: getCurrentWorkingDirectory(),
       mcp_servers: [],
@@ -1974,11 +1947,7 @@ export async function handleHeadlessCommand(
   // Add user prompt
   pushPart(prompt);
 
-  telemetry.trackUserInput(
-    prompt,
-    "user",
-    agent.llm_config?.model ?? "unknown",
-  );
+  telemetry.trackUserInput(prompt, "user", reportModel ?? "unknown");
 
   if (usesRemoteEnvironment) {
     const environmentSelector = explicitEnvironmentSelector ?? "";
@@ -2002,6 +1971,7 @@ export async function handleHeadlessCommand(
       : { source: "same-environment" };
     const launchParams: Parameters<typeof launchListenerConversation>[0] = {
       noWait: Boolean(values["no-wait"]),
+      clientMessageId: values["client-message-id"],
       connectionId,
       scope: {
         agent_id: agent.id,
@@ -2635,7 +2605,6 @@ export async function handleHeadlessCommand(
 
         const { autoAllowed, autoDenied, needsUserInput } =
           await classifyApprovals(approvals, {
-            alwaysRequiresUserInput: isInteractiveApprovalTool,
             requireArgsForAutoApprove: true,
             missingNameReason: "Tool call incomplete - missing name",
             toolContextId: turnToolContextId ?? undefined,
@@ -3128,6 +3097,7 @@ export async function handleHeadlessCommand(
   }
 
   await runPostTurnMemorySync({
+    conversationId,
     agentId: agent.id,
     isEnabled: (id) => settingsManager.isMemfsEnabled(id),
     debugLabel: "Post-turn headless memory sync",
@@ -3181,7 +3151,7 @@ export async function handleHeadlessCommand(
   if (!lastAssistant && (lastReasoning || lastToolResult)) {
     trackEndTurnNoAssistant({
       fallbackKind: lastReasoning ? "reasoning" : "tool_call",
-      modelHandle: agent.llm_config?.model ?? model,
+      modelHandle: reportModel ?? model,
       runId: lastKnownRunId ?? undefined,
       isSubagent,
       subagentType:
@@ -3287,6 +3257,7 @@ export async function handleHeadlessCommand(
 async function runBidirectionalMode(
   agent: AgentState,
   conversationId: string,
+  effectiveModel: string | null | undefined,
   _outputFormat: string,
   includePartialMessages: boolean,
   availableTools: string[],
@@ -3297,7 +3268,8 @@ async function runBidirectionalMode(
 ): Promise<void> {
   const sessionId = agent.id;
   const backend = getBackend();
-  const telemetryModelId = agent.llm_config?.model ?? "unknown";
+  const telemetryModelId =
+    effectiveModel ?? agent.llm_config?.model ?? "unknown";
   const readline = await import("node:readline");
   const systemPromptRecompileByConversation = new Map<string, Promise<void>>();
   const queuedSystemPromptRecompileByConversation = new Set<string>();
@@ -3329,6 +3301,7 @@ async function runBidirectionalMode(
       await telemetry.flush();
     } finally {
       headlessModAdapter.dispose();
+      await shutdownBackgroundMemoryTasks(code);
     }
     return await flushAndExit(code);
   };
@@ -3340,7 +3313,7 @@ async function runBidirectionalMode(
     session_id: sessionId,
     agent_id: agent.id,
     conversation_id: conversationId,
-    model: agent.llm_config?.model ?? "",
+    model: effectiveModel ?? agent.llm_config?.model ?? "",
     tools: availableTools,
     cwd: getCurrentWorkingDirectory(),
     mcp_servers: [],
@@ -3911,7 +3884,7 @@ async function runBidirectionalMode(
             request_id: requestId ?? "",
             response: {
               agent_id: agent.id,
-              model: agent.llm_config?.model,
+              model: effectiveModel ?? agent.llm_config?.model,
               tools: availableTools,
               memfs_enabled: settingsManager.isMemfsEnabled(agent.id),
               skill_sources: skillSources,
@@ -4044,7 +4017,7 @@ async function runBidirectionalMode(
           sessionContext: {
             agentId: agent.id,
             conversationId,
-            model: agent.llm_config?.model,
+            model: effectiveModel ?? agent.llm_config?.model,
             tools: availableTools,
             memfsEnabled: settingsManager.isMemfsEnabled(agent.id),
             sessionId,
@@ -4541,7 +4514,6 @@ async function runBidirectionalMode(
 
             const { autoAllowed, autoDenied, needsUserInput } =
               await classifyApprovals(approvals, {
-                alwaysRequiresUserInput: isInteractiveApprovalTool,
                 requireArgsForAutoApprove: true,
                 missingNameReason: "Tool call incomplete - missing name",
                 toolContextId: turnToolContextId ?? undefined,
@@ -4576,8 +4548,7 @@ async function runBidirectionalMode(
               }
 
               if (permResponse.decision === "allow") {
-                // If provided updatedInput (e.g., for AskUserQuestion with answers),
-                // update the approval's toolArgs to use it
+                // Apply tool arguments edited by the permission response.
                 const finalApproval = permResponse.updatedInput
                   ? {
                       ...ac.approval,
@@ -4771,6 +4742,7 @@ async function runBidirectionalMode(
         writeWireMessage(errorResultMsg);
       } finally {
         await runPostTurnMemorySync({
+          conversationId,
           agentId: agent.id,
           isEnabled: (id) => settingsManager.isMemfsEnabled(id),
           debugLabel: "Post-turn headless memory sync",

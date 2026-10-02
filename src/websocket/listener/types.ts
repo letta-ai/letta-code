@@ -10,7 +10,6 @@ import type { SkillSource } from "@/agent/skill-sources";
 import type { ContextTracker } from "@/cli/helpers/context-tracker";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import type { ModAdapter } from "@/mods/mod-adapter";
-import type { ApprovalContext } from "@/permissions/analyzer";
 import type {
   DequeuedBatch,
   QueueBlockedReason,
@@ -107,6 +106,7 @@ export interface IncomingMessage {
   imageFailureMode?: "strict" | "drop";
   clientToolAllowlist?: string[];
   clientToolset?: ClientToolsetConfig;
+  clientPreferences?: import("@/types/client-preferences").ClientPreferences;
   externalToolScopeIds?: string[];
   /** Exclude interactive user-input tools (AskUserQuestion) from this turn's toolset. */
   excludeInteractiveTools?: boolean;
@@ -198,18 +198,9 @@ export type PendingApprovalResolver = {
   controlRequest?: ControlRequest;
 };
 
-export type RecoveredPendingApproval = {
-  approval: ApprovalRequest;
-  controlRequest: ControlRequest;
-  approvalContext: ApprovalContext | null;
-};
-
 export type RecoveredApprovalState = {
   agentId: string;
   conversationId: string;
-  approvalsByRequestId: Map<string, RecoveredPendingApproval>;
-  pendingRequestIds: Set<string>;
-  responsesByRequestId: Map<string, ApprovalResponseBody>;
   autoDecisions?: ApprovalDecision[];
   allApprovals?: ApprovalRequest[];
 };
@@ -254,6 +245,11 @@ export type ConversationRuntime = {
   dequeuedClientMessageIdsByBatchId: Map<string, string[]>;
   queuePumpActive: boolean;
   queuePumpScheduled: boolean;
+  /**
+   * Inbound messages chained on messageQueue that captured this runtime but
+   * have not settled. Blocks idle eviction so they never run detached.
+   */
+  pendingInboundDispatches: number;
   pendingTurns: number;
   readonly loopStatus: LoopStatus;
   currentToolset: ToolsetName | null;
@@ -361,6 +357,10 @@ export type ListenerRuntime = {
   processServicesStarted: boolean;
   /** Invalidates process-service attempts that outlive an outbound connection. */
   processServicesGeneration: number;
+  /** Invalidates detached external-tool notifications after an authoritative reset. */
+  externalToolNotificationEpochByConversation: Map<string, number>;
+  /** Holds detached completions while a conversation reset may still fail. */
+  externalToolNotificationBarrierByConversation: Map<string, Promise<void>>;
   /** Coalesces concurrent connection attempts while process services initialize. */
   processServicesReady: Promise<void> | null;
   /** Generation owned by processServicesReady, or null when no attempt is active. */

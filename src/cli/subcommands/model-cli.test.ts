@@ -2,6 +2,49 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import {
+  filterStructuredOutputRows,
+  structuredOutputSupport,
+} from "@/cli/subcommands/model";
+
+test("a BYOK model's capability overrides a matching hosted preset", () => {
+  const preset = {
+    id: "preset",
+    handle: "openai/example",
+    label: "Example",
+    description: "",
+    supportsStructuredOutputs: true,
+  };
+  expect(structuredOutputSupport(preset, new Map())).toBe(true);
+  expect(
+    structuredOutputSupport(preset, new Map([[preset.handle, false]])),
+  ).toBe(false);
+  expect(
+    structuredOutputSupport(preset, new Map([[preset.handle, undefined]])),
+  ).toBeNull();
+  expect(
+    structuredOutputSupport(
+      { ...preset, supportsStructuredOutputs: false },
+      new Map([[preset.handle, true]]),
+    ),
+  ).toBe(true);
+});
+
+test("the structured-output filter keeps only explicit support", () => {
+  const supported = {
+    handle: "supported",
+    supports_structured_outputs: true,
+  };
+  const rows = [
+    supported,
+    { handle: "unsupported", supports_structured_outputs: false },
+    { handle: "not-reported", supports_structured_outputs: null },
+  ];
+  expect(filterStructuredOutputRows(rows)).toEqual({
+    supported: [supported],
+    unknownCount: 1,
+  });
+});
 
 // Real CLI subprocesses and disk-backed local backend; no inference or mocks.
 describe("model CLI", () => {
@@ -200,9 +243,33 @@ describe("model CLI", () => {
       ["list", "--byok", "--hosted"],
       ["get", "--byok"],
       ["set", nextModel, "--hosted"],
+      ["get", "--structured-outputs"],
+      ["set", nextModel, "--structured-outputs"],
     ]) {
       const result = await cli(args);
       expect(result.code, result.stderr).toBe(1);
+    }
+  }, 30000);
+
+  test("does not silently hide local models without capability metadata", async () => {
+    const listed = await cli(["list"]);
+    expect(listed.code, listed.stderr).toBe(0);
+    expect(JSON.parse(listed.stdout)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ supports_structured_outputs: null }),
+      ]),
+    );
+
+    for (const flags of [
+      ["--structured-outputs"],
+      ["--byok", "--structured-outputs"],
+    ]) {
+      const result = await cli(["list", ...flags]);
+      expect(result.code, result.stderr).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(
+        "Structured-output support is unavailable",
+      );
     }
   }, 30000);
 

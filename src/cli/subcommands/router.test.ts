@@ -33,6 +33,22 @@ describe("subcommand router", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("routes permissions help before TUI startup", async () => {
+    const messages: string[] = [];
+    const originalLog = console.log;
+    console.log = (message?: unknown) => {
+      messages.push(String(message));
+    };
+
+    try {
+      expect(subcommandNeedsEarlyBackendMode("permissions")).toBe(true);
+      expect(await runSubcommand(["permissions", "--help"])).toBe(0);
+      expect(messages.join("\n")).toContain("letta permissions [--agent <id>]");
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
   test("routes feedback help before TUI startup", async () => {
     const messages: string[] = [];
     const originalLog = console.log;
@@ -52,10 +68,16 @@ describe("subcommand router", () => {
 
   test("routes unified MCP help before TUI startup", async () => {
     const messages: string[] = [];
-    const originalLog = console.log;
-    console.log = (message?: unknown) => {
-      messages.push(String(message));
-    };
+    const originalWrite = process.stdout.write;
+    process.stdout.write = ((
+      chunk: string | Uint8Array,
+      ...args: unknown[]
+    ) => {
+      messages.push(String(chunk));
+      const callback = args.find((arg) => typeof arg === "function");
+      if (typeof callback === "function") callback();
+      return true;
+    }) as typeof process.stdout.write;
 
     try {
       const exitCode = await runSubcommand(["mcp", "--help"]);
@@ -64,7 +86,7 @@ describe("subcommand router", () => {
       expect(messages.join("\n")).toContain("letta mcp tools");
       expect(messages.join("\n")).toContain("letta mcp call");
     } finally {
-      console.log = originalLog;
+      process.stdout.write = originalWrite;
     }
   });
 
@@ -207,6 +229,7 @@ describe("subcommand router", () => {
     expect(subcommandNeedsEarlyBackendMode("model")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("models")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("mods")).toBe(true);
+    expect(subcommandNeedsEarlyBackendMode("permissions")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("sandbox")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("teleport")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("version")).toBe(false);

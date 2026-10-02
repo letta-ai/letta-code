@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getBackend } from "@/backend";
@@ -10,6 +16,7 @@ import { TOOLSET_CATALOG } from "@/tools/toolset-catalog";
 import {
   __resetWorkflowExecutionsForTests,
   getWorkflowExecution,
+  listWorkflowExecutions,
 } from "@/tools/workflow/execution-registry";
 import type { SubagentSpawner } from "@/tools/workflow/types";
 import {
@@ -17,15 +24,25 @@ import {
   type QueuedMessage,
   setMessageQueueAdder,
 } from "@/utils/message-queue-bridge";
-import { backgroundProcesses } from "./process_manager";
-import { task_output } from "./task-output";
+import { buildBackgroundProcessSnapshot } from "@/websocket/listener/background-process-snapshot";
+import {
+  backgroundProcesses,
+  subscribeToBackgroundProcessState,
+} from "./process_manager";
 import { task_stop } from "./task-stop";
 import {
   __setWorkflowSpawnerFactoryForTests,
+  __setWorkflowStartupTimeoutForTests,
   createSdkSpawnerHandle,
   normalizeWorkflowArgs,
   workflow,
 } from "./workflow";
+
+/** Progress lines written to a workflow's output file so far. */
+function progressLineCount(outputFile: string | undefined): number {
+  if (!outputFile) return 0;
+  return readFileSync(outputFile, "utf8").split("\n").filter(Boolean).length;
+}
 
 async function waitFor(
   predicate: () => boolean,
@@ -154,6 +171,7 @@ describe("Workflow tool (background launch)", () => {
     backgroundProcesses.clear();
     __resetWorkflowExecutionsForTests();
     __setWorkflowSpawnerFactoryForTests(null);
+    __setWorkflowStartupTimeoutForTests(null);
     setMessageQueueAdder(null);
     clearPendingMessages();
     if (previousScratchpad === undefined) {
@@ -183,7 +201,7 @@ describe("Workflow tool (background launch)", () => {
       ).mockResolvedValue({
         id: "conv-child",
         model: "openai/gpt-4.1-mini",
-      } as Awaited<ReturnType<typeof backend.retrieveConversation>>);
+      } as unknown as Awaited<ReturnType<typeof backend.retrieveConversation>>);
       try {
         await runWithRuntimeContext(
           { agentId, conversationId: "conv-ambient" },
@@ -209,6 +227,32 @@ describe("Workflow tool (background launch)", () => {
       }
     },
   );
+
+  test("resolves nested workflow lineage through the active backend", async () => {
+    const backend = getBackend();
+    const retrieveConversation = spyOn(
+      backend,
+      "retrieveConversation",
+    ).mockResolvedValue({
+      id: "conv-child",
+      agent_id: null,
+      parent_agent_id: "agent-parent",
+      model: "openai/gpt-4.1-mini",
+    } as unknown as Awaited<ReturnType<typeof backend.retrieveConversation>>);
+    try {
+      const handle = await createSdkSpawnerHandle({
+        model: "openai/gpt-4.1-mini",
+        parentScope: {
+          agentId: "agent-free:conv-child",
+          conversationId: "conv-child",
+        },
+      });
+      await handle.cleanup();
+      expect(retrieveConversation).toHaveBeenCalledWith("conv-child");
+    } finally {
+      retrieveConversation.mockRestore();
+    }
+  });
 
   test("rejects an unknown default model before creating a client", async () => {
     await expect(
@@ -287,6 +331,116 @@ describe("Workflow tool (background launch)", () => {
     expect(backgroundProcesses.size).toBe(0);
   });
 
+  test("times out a stuck startup at the tool boundary without creating a run", async () => {
+    __setWorkflowStartupTimeoutForTests(40);
+    __setWorkflowSpawnerFactoryForTests(async (_args, setStage) => {
+      setStage("loading Agent SDK");
+      return new Promise<never>(() => {});
+    });
+    const started = Date.now();
+    const result = await workflow({ script: SCRIPT });
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(result).toMatchObject({ status: "error" });
+    expect(result.toolReturn).toContain(
+      "Workflow startup failed during loading Agent SDK",
+    );
+    expect(result.toolReturn).toContain("timed out after 40ms");
+    expect(backgroundProcesses.size).toBe(0);
+    expect(listWorkflowExecutions()).toHaveLength(0);
+    expect(existsSync(join(scratchpad, ".letta", "workflows"))).toBe(false);
+    expect(queuedMessages).toHaveLength(0);
+  });
+
+  test("preserves a non-Error startup rejection and its stage", async () => {
+    __setWorkflowSpawnerFactoryForTests(async (_args, setStage) => {
+      setStage("loading Agent SDK");
+      throw "JavaScript execution terminated.";
+    });
+    expect(await workflow({ script: SCRIPT })).toEqual({
+      status: "error",
+      toolReturn:
+        "Workflow startup failed during loading Agent SDK: JavaScript execution terminated.",
+    });
+    expect(listWorkflowExecutions()).toHaveLength(0);
+  });
+
+  test.each(["timeout", "cancel"])(
+    "a %s during startup disposes its eventual handle without launching workers",
+    async (reason) => {
+      let resolveStartup!: (handle: {
+        spawner: SubagentSpawner;
+        cleanup(): Promise<void>;
+      }) => void;
+      let spawned = 0;
+      const controller = new AbortController();
+      __setWorkflowStartupTimeoutForTests(40);
+      __setWorkflowSpawnerFactoryForTests(
+        () =>
+          new Promise((resolve) => {
+            resolveStartup = resolve;
+          }),
+      );
+      const pending = workflow({ script: SCRIPT, signal: controller.signal });
+      await waitFor(() => typeof resolveStartup === "function");
+      if (reason === "cancel") controller.abort();
+      const result = await pending;
+      expect(result.status).toBe("error");
+      expect(result.toolReturn).toContain(
+        reason === "cancel" ? "cancelled by caller" : "timed out after 40ms",
+      );
+      resolveStartup({
+        spawner: async () => {
+          spawned++;
+          return { value: null, failed: false };
+        },
+        cleanup: async () => {
+          cleanupCalls++;
+          throw new Error("dispose failed");
+        },
+      });
+      await waitFor(() => cleanupCalls === 1);
+      expect(spawned).toBe(0);
+      expect(backgroundProcesses.size).toBe(0);
+      expect(listWorkflowExecutions()).toHaveLength(0);
+      expect(existsSync(join(scratchpad, ".letta", "workflows"))).toBe(false);
+      expect(queuedMessages).toHaveLength(0);
+    },
+  );
+
+  test("abort after factory fulfillment but before launch does not register a run", async () => {
+    const controller = new AbortController();
+    let cleanupCallsForHandle = 0;
+    let spawned = 0;
+    __setWorkflowSpawnerFactoryForTests(() => {
+      const handle = {
+        spawner: async () => {
+          spawned++;
+          return { value: null, failed: false };
+        },
+        cleanup: async () => {
+          cleanupCallsForHandle++;
+        },
+      };
+      // The factory has fulfilled; abort in the microtask before workflow's
+      // await continuation can cross the registration boundary.
+      queueMicrotask(() =>
+        queueMicrotask(() => queueMicrotask(() => controller.abort())),
+      );
+      return Promise.resolve(handle);
+    });
+    const result = await workflow({
+      script: SCRIPT,
+      signal: controller.signal,
+    });
+    expect(controller.signal.aborted).toBe(true);
+    expect(result.status).toBe("error");
+    await waitFor(() => cleanupCallsForHandle === 1);
+    expect(spawned).toBe(0);
+    expect(backgroundProcesses.size).toBe(0);
+    expect(listWorkflowExecutions()).toHaveLength(0);
+    expect(existsSync(join(scratchpad, ".letta", "workflows"))).toBe(false);
+  });
+
   test("returns immediately with a task id, streams progress, then notifies", async () => {
     installSpawner(gatedSpawner());
     const result = await workflow({ script: SCRIPT });
@@ -294,6 +448,7 @@ describe("Workflow tool (background launch)", () => {
     const taskId = taskIdOf(result.toolReturn);
     expect(result.toolReturn).toContain("Script file:");
     expect(result.toolReturn).toContain("journal.jsonl");
+    expect(result.toolReturn).toContain("Output file:");
 
     const processState = backgroundProcesses.get(taskId);
     expect(processState?.kind).toBe("workflow");
@@ -302,8 +457,8 @@ describe("Workflow tool (background launch)", () => {
       "Quick demo workflow with parallel agents",
     );
 
-    // The progress log is what TaskOutput reads while the run is live.
-    await waitFor(() => (processState?.stdout.length ?? 0) >= 3);
+    // The progress log is what Read inspects while the run is live.
+    await waitFor(() => progressLineCount(processState?.outputFile) >= 3);
     const live = getWorkflowExecution(taskId);
     expect(live).toMatchObject({
       status: "running",
@@ -313,12 +468,9 @@ describe("Workflow tool (background launch)", () => {
       logs: ["starting"],
     });
     expect(live?.phases[0]?.title).toBe("Find");
-    const running = await task_output({
-      task_id: taskId,
-      block: false,
-      timeout: 100,
-    });
-    expect(running.status).toBe("running");
+    expect(readFileSync(processState?.outputFile as string, "utf8")).toContain(
+      "starting",
+    );
     expect(queuedMessages).toHaveLength(0);
 
     releaseAgents?.();
@@ -360,12 +512,72 @@ describe("Workflow tool (background launch)", () => {
     expect(journal.trim().split("\n")).toHaveLength(2);
   });
 
+  test("usage updates live status without duplicating agent start lines", async () => {
+    const liveTokens: number[] = [];
+    const unsubscribe = subscribeToBackgroundProcessState((scope) => {
+      const snapshot = buildBackgroundProcessSnapshot(
+        scope?.agentId,
+        scope?.conversationId,
+      );
+      for (const process of snapshot) {
+        if (process.kind === "workflow" && process.progress)
+          liveTokens.push(process.progress.total_tokens);
+      }
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    installSpawner(async (request, _signal, hooks) => {
+      hooks?.onUsage?.(500);
+      hooks?.onUsage?.(1_200);
+      await gate;
+      return {
+        value: request.prompt,
+        failed: false,
+        totalTokens: 1_200,
+      };
+    });
+    const launched = await workflow({ script: SCRIPT });
+    const taskId = taskIdOf(launched.toolReturn);
+    const processState = backgroundProcesses.get(taskId);
+    try {
+      await waitFor(() => getWorkflowExecution(taskId)?.totalTokens === 2_400);
+      await waitFor(() => liveTokens.includes(2_400));
+      expect(getWorkflowExecution(taskId)).toMatchObject({
+        status: "running",
+        agentsRunning: 2,
+        totalTokens: 2_400,
+      });
+      expect(
+        readFileSync(processState?.outputFile as string, "utf8")
+          .split("\n")
+          .filter((line) => line.startsWith("▶ ")),
+      ).toEqual(["▶ a", "▶ b"]);
+    } finally {
+      unsubscribe();
+      release();
+    }
+    await waitFor(() => cleanupCalls === 1);
+    expect(processState?.status).toBe("completed");
+    expect(
+      readFileSync(processState?.outputFile as string, "utf8")
+        .split("\n")
+        .filter((line) => line.startsWith("✓ ")),
+    ).toEqual(["✓ a", "✓ b"]);
+    expect(getWorkflowExecution(taskId)).toMatchObject({
+      status: "completed",
+      agentsDone: 2,
+      totalTokens: 2_400,
+    });
+  });
+
   test("TaskStop aborts the run without waking the agent", async () => {
     installSpawner(gatedSpawner());
     const result = await workflow({ script: SCRIPT });
     const taskId = taskIdOf(result.toolReturn);
     const processState = backgroundProcesses.get(taskId);
-    await waitFor(() => (processState?.stdout.length ?? 0) >= 3);
+    await waitFor(() => progressLineCount(processState?.outputFile) >= 3);
 
     const stopped = await task_stop({ task_id: taskId });
     expect(stopped.killed).toBe(true);

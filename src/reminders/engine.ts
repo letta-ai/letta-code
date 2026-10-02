@@ -17,6 +17,7 @@ import {
   type SharedReminderId,
   type SharedReminderMode,
 } from "./catalog";
+import { evaluateDiskSpaceReminder } from "./disk-space";
 import type { SessionContextReason, SharedReminderState } from "./state";
 
 export interface AgentReminderContext {
@@ -206,32 +207,48 @@ function formatMcpServerEntry(entry: McpServerReminderEntry): string {
   return `${entry.name} (${entry.toolCount} ${entry.toolCount === 1 ? "tool" : "tools"})`;
 }
 
+export function buildMcpServersReminderText(
+  entries: McpServerReminderEntry[],
+): string {
+  if (entries.length === 0) {
+    return `${SYSTEM_REMINDER_OPEN}\nMCP servers with available tools: None\n${SYSTEM_REMINDER_CLOSE}`;
+  }
+  const rendered = entries.map(formatMcpServerEntry).join(", ");
+  return `${SYSTEM_REMINDER_OPEN}\nMCP servers with available tools: ${rendered}\nFind tools (with schemas) with \`letta mcp search "<what you want to do>"\`, list one server's tools with \`letta mcp tools <server>\` (\`--full\` includes schemas, \`letta mcp schema <tool-name>\` fetches one), and invoke one with \`letta mcp call <tool-name> --args '{"key":"value"}'\`.\n${SYSTEM_REMINDER_CLOSE}`;
+}
+
+export async function listMcpServersForAgent(
+  agentId: string,
+  state: SharedReminderContext["state"],
+  deps: McpServersReminderDependencies = {},
+): Promise<McpServerReminderEntry[]> {
+  const localNames = (
+    deps.getLocalServerNames ??
+    ((id: string) =>
+      settingsManager.getMcpServers(id).map((server) => server.name))
+  )(agentId);
+  const entries: McpServerReminderEntry[] = localNames.map((name) => ({
+    name,
+    toolCount: null,
+  }));
+  const serverSideEntries = await (
+    deps.listServerSideServers ??
+    ((id: string) => defaultListServerSideServers(id, state))
+  )(agentId);
+  if (serverSideEntries) entries.push(...serverSideEntries);
+  return [...new Map(entries.map((entry) => [entry.name, entry])).values()];
+}
+
 export async function buildMcpServersInfoReminderText(
   context: Pick<SharedReminderContext, "agent" | "state">,
   deps: McpServersReminderDependencies = {},
 ): Promise<string | null> {
   try {
-    const localNames = (
-      deps.getLocalServerNames ??
-      ((agentId: string) =>
-        settingsManager.getMcpServers(agentId).map((server) => server.name))
-    )(context.agent.id);
-    const entries: McpServerReminderEntry[] = localNames.map((name) => ({
-      name,
-      toolCount: null,
-    }));
-    const serverSideEntries = await (
-      deps.listServerSideServers ??
-      ((agentId: string) =>
-        defaultListServerSideServers(agentId, context.state))
-    )(context.agent.id);
-    if (serverSideEntries) {
-      entries.push(...serverSideEntries);
-    }
-
-    const uniqueEntries = [
-      ...new Map(entries.map((entry) => [entry.name, entry])).values(),
-    ];
+    const uniqueEntries = await listMcpServersForAgent(
+      context.agent.id,
+      context.state,
+      deps,
+    );
     const namesKey = uniqueEntries
       .map((entry) => `${entry.name}\u0001${entry.toolCount ?? ""}`)
       .join("\0");
@@ -244,11 +261,7 @@ export async function buildMcpServersInfoReminderText(
     context.state.hasSentMcpServersInfo = true;
     context.state.lastSentMcpServerNamesKey = namesKey;
 
-    if (uniqueEntries.length === 0) {
-      return `${SYSTEM_REMINDER_OPEN}\nMCP servers with available tools: None\n${SYSTEM_REMINDER_CLOSE}`;
-    }
-    const rendered = uniqueEntries.map(formatMcpServerEntry).join(", ");
-    return `${SYSTEM_REMINDER_OPEN}\nMCP servers with available tools: ${rendered}\nFind tools (with schemas) with \`letta mcp search "<what you want to do>"\`, list one server's tools with \`letta mcp tools <server>\` (\`--full\` includes schemas, \`letta mcp schema <tool-name>\` fetches one), and invoke one with \`letta mcp call <tool-name> --args '{"key":"value"}'\`.\n${SYSTEM_REMINDER_CLOSE}`;
+    return buildMcpServersReminderText(uniqueEntries);
   } catch (error) {
     debugLog(
       "mcp",
@@ -480,6 +493,17 @@ ${changeBlocks.join("\n\n")}
 ${SYSTEM_REMINDER_CLOSE}`;
 }
 
+async function buildDiskSpaceReminder(
+  context: SharedReminderContext,
+): Promise<string | null> {
+  const result = evaluateDiskSpaceReminder({
+    workingDirectory: context.workingDirectory ?? process.cwd(),
+    notified: context.state.hasNotifiedLowDiskSpace,
+  });
+  context.state.hasNotifiedLowDiskSpace = result.notified;
+  return result.text;
+}
+
 export const sharedReminderProviders: Record<
   SharedReminderId,
   SharedReminderProvider
@@ -493,6 +517,7 @@ export const sharedReminderProviders: Record<
   "memory-git-sync": buildMemoryGitSyncReminder,
   "command-io": buildCommandIoReminder,
   "toolset-change": buildToolsetChangeReminder,
+  "disk-space": buildDiskSpaceReminder,
 };
 
 export function assertSharedReminderCoverage(): void {

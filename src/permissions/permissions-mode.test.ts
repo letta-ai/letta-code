@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
+import { join, resolve } from "node:path";
 import { checkPermission } from "@/permissions/checker";
 import { cliPermissions } from "@/permissions/cli-permissions-instance";
 import { permissionMode } from "@/permissions/mode";
@@ -35,56 +36,6 @@ test("default mode - no overrides", () => {
   expect(result.reason).toBe("Default behavior for tool");
 });
 
-test("default mode - auto-allows memory", () => {
-  permissionMode.setMode("standard");
-
-  const permissions: PermissionRules = {
-    allow: [],
-    deny: [],
-    ask: [],
-  };
-
-  const result = checkPermission(
-    "memory",
-    {
-      command: "create",
-      reason: "seed",
-      path: "system/human/profile.md",
-      description: "Profile",
-      file_text: "hello",
-    },
-    permissions,
-    "/Users/test/project",
-  );
-
-  expect(result.decision).toBe("allow");
-  expect(result.reason).toBe("Default behavior for tool");
-});
-
-test("default mode - auto-allows memory_apply_patch", () => {
-  permissionMode.setMode("standard");
-
-  const permissions: PermissionRules = {
-    allow: [],
-    deny: [],
-    ask: [],
-  };
-
-  const result = checkPermission(
-    "memory_apply_patch",
-    {
-      reason: "seed",
-      input:
-        "*** Begin Patch\n*** Add File: system/human/profile.md\n+---\n+description: Profile\n+---\n+hello\n*** End Patch\n",
-    },
-    permissions,
-    "/Users/test/project",
-  );
-
-  expect(result.decision).toBe("allow");
-  expect(result.reason).toBe("Default behavior for tool");
-});
-
 test("default mode - treats Agent like Task for safe subagent auto-approval", () => {
   permissionMode.setMode("standard");
 
@@ -102,6 +53,24 @@ test("default mode - treats Agent like Task for safe subagent auto-approval", ()
       description: "Search history",
     },
     permissions,
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("allow");
+  expect(result.reason).toBe("Default behavior for tool");
+});
+
+test("default mode - auto-approves the sandboxed memory worker", () => {
+  permissionMode.setMode("standard");
+
+  const result = checkPermission(
+    "Agent",
+    {
+      subagent_type: "memory",
+      prompt: "Remember that the user prefers tabs",
+      description: "Update memory",
+    },
+    { allow: [], deny: [], ask: [] },
     "/Users/test/project",
   );
 
@@ -313,58 +282,6 @@ test("acceptEdits mode - allows ApplyPatch", () => {
   expect(result.reason).toBe("Permission mode: acceptEdits");
 });
 
-test("acceptEdits mode - allows memory", () => {
-  permissionMode.setMode("acceptEdits");
-
-  const permissions: PermissionRules = {
-    allow: [],
-    deny: [],
-    ask: [],
-  };
-
-  const result = checkPermission(
-    "memory",
-    {
-      command: "create",
-      reason: "seed",
-      path: "system/human/profile.md",
-      description: "Profile",
-      file_text: "hello",
-    },
-    permissions,
-    "/Users/test/project",
-  );
-
-  expect(result.decision).toBe("allow");
-  expect(result.matchedRule).toBe("acceptEdits mode");
-  expect(result.reason).toBe("Permission mode: acceptEdits");
-});
-
-test("acceptEdits mode - allows memory_apply_patch", () => {
-  permissionMode.setMode("acceptEdits");
-
-  const permissions: PermissionRules = {
-    allow: [],
-    deny: [],
-    ask: [],
-  };
-
-  const result = checkPermission(
-    "memory_apply_patch",
-    {
-      reason: "seed",
-      input:
-        "*** Begin Patch\n*** Add File: system/human/profile.md\n+---\n+description: Profile\n+---\n+hello\n*** End Patch\n",
-    },
-    permissions,
-    "/Users/test/project",
-  );
-
-  expect(result.decision).toBe("allow");
-  expect(result.matchedRule).toBe("acceptEdits mode");
-  expect(result.reason).toBe("Permission mode: acceptEdits");
-});
-
 test("acceptEdits mode - does NOT allow Bash", () => {
   permissionMode.setMode("acceptEdits");
 
@@ -493,33 +410,6 @@ test("strict mode - Skill tool defaults to ask (no auto-allow)", () => {
   expect(result.reason).toBe("Default behavior for tool");
 });
 
-test("strict mode - memory tool defaults to ask (no auto-allow)", () => {
-  permissionMode.setMode("strict");
-
-  const permissions: PermissionRules = {
-    allow: [],
-    deny: [],
-    ask: [],
-  };
-
-  const result = checkPermission(
-    "memory",
-    {
-      command: "create",
-      reason: "seed",
-      path: "system/human/profile.md",
-      description: "Profile",
-      file_text: "hello",
-    },
-    permissions,
-    "/Users/test/project",
-  );
-
-  // In standard mode, memory auto-allows; strict mode forces "ask"
-  expect(result.decision).toBe("ask");
-  expect(result.reason).toBe("Default behavior for tool");
-});
-
 test("strict mode - Write tool defaults to ask", () => {
   permissionMode.setMode("strict");
 
@@ -625,4 +515,73 @@ test("strict mode - CLI --allowedTools still work", () => {
   expect(result.decision).toBe("allow");
   expect(result.matchedRule).toContain("(CLI)");
   expect(result.reason).toBe("Matched --allowedTools flag");
+});
+
+// ============================================================================
+// Default decisions for tools that only touch agent-owned state
+// ============================================================================
+
+const NO_RULES: PermissionRules = { allow: [], deny: [], ask: [] };
+
+test.each([
+  ["TaskCreate", { subject: "Plan", description: "Outline the work" }],
+  ["TaskGet", { taskId: "1" }],
+  ["TaskList", {}],
+  ["TaskUpdate", { taskId: "1", status: "completed" }],
+  ["read_artifact_file", { path: "notes/today.md" }],
+  ["write_artifact_file", { path: "notes/today.md", content: "hello" }],
+  ["Wake", { action: "create", prompt: "check back", after_seconds: 60 }],
+])("standard and acceptEdits modes run %s without asking", (tool, args) => {
+  for (const mode of ["standard", "acceptEdits"] as const) {
+    permissionMode.setMode(mode);
+    const result = checkPermission(tool, args, NO_RULES, "/Users/test/project");
+    expect(result.decision).toBe("allow");
+    expect(result.reason).toBe("Default behavior for tool");
+  }
+});
+
+test.each([
+  ["ViewImage", "path"],
+  ["ReadLSP", "file_path"],
+])("%s runs without asking only inside the working directory", (tool, key) => {
+  permissionMode.setMode("standard");
+  // resolve() keeps these absolute on every platform (drive-rooted on Windows).
+  const project = resolve("/Users/test/project");
+
+  const inside = checkPermission(
+    tool,
+    { [key]: join(project, "src", "diagram.png") },
+    NO_RULES,
+    project,
+  );
+  expect(inside.decision).toBe("allow");
+  expect(inside.reason).toBe("Within working directory");
+
+  const outside = checkPermission(
+    tool,
+    { [key]: resolve(project, "..", "elsewhere", "diagram.png") },
+    NO_RULES,
+    project,
+  );
+  expect(outside.decision).toBe("ask");
+});
+
+test("standard mode - SetWorkingDirectory still asks", () => {
+  // Moving the working directory widens where file tools run without asking.
+  permissionMode.setMode("standard");
+  const result = checkPermission(
+    "SetWorkingDirectory",
+    { path: "/" },
+    NO_RULES,
+    "/Users/test/project",
+  );
+  expect(result.decision).toBe("ask");
+});
+
+test("strict mode - agent-owned-state tools still ask", () => {
+  permissionMode.setMode("strict");
+  for (const tool of ["TaskCreate", "Wake", "write_artifact_file"]) {
+    const result = checkPermission(tool, {}, NO_RULES, "/Users/test/project");
+    expect(result.decision).toBe("ask");
+  }
 });

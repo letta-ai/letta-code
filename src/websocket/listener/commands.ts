@@ -48,7 +48,12 @@ import {
   emitDeviceStatusUpdate,
 } from "./protocol-outbound";
 import { flushRemoteSettingsWrites } from "./remote-settings";
-import { clearConversationRuntimeState, emitListenerStatus } from "./runtime";
+import {
+  beginExternalToolNotificationReset,
+  clearConversationRuntimeState,
+  emitListenerStatus,
+  invalidateExternalToolNotifications,
+} from "./runtime";
 import {
   ensureSecretsHydratedForAgent,
   invalidateSecretsCacheForAgent,
@@ -666,46 +671,56 @@ async function handleClearCommand(
     throw new Error("/clear-messages is not supported by the local backend.");
   }
 
-  // /clear-messages always resets the API agent's message history.
-  // /clear only resets when leaving the default API conversation.
-  // Local/headless backends model /clear by switching to a fresh conversation.
-  if (
-    !backend.capabilities.localModelCatalog &&
-    (opts.resetAllAgentMessages ||
-      conversationRuntime.conversationId === "default")
-  ) {
-    const { getClient } = await import("@/backend/api/client");
-    const client = await getClient();
-    await client.agents.messages.reset(agentId, {
-      add_default_initial_messages: false,
-    });
+  // Hold detached results until this reset either commits or fails. A
+  // successful clear changes their epoch; a failed clear releases them.
+  const finishNotificationReset =
+    beginExternalToolNotificationReset(conversationRuntime);
+  try {
+    // /clear-messages always resets the API agent's message history.
+    // /clear only resets when leaving the default API conversation.
+    // Local/headless backends model /clear by switching to a fresh conversation.
+    if (
+      !backend.capabilities.localModelCatalog &&
+      (opts.resetAllAgentMessages ||
+        conversationRuntime.conversationId === "default")
+    ) {
+      const { getClient } = await import("@/backend/api/client");
+      const client = await getClient();
+      await client.agents.messages.reset(agentId, {
+        add_default_initial_messages: false,
+      });
+      // The old message history is gone even if creating its replacement fails.
+      invalidateExternalToolNotifications(conversationRuntime);
+    }
+
+    // Create a new conversation, attributing it to the human who ran
+    // /clear when the frame was relayed by cloud with an acting user.
+    const conversation = await backend.createConversation(
+      {
+        agent_id: agentId,
+      },
+      actingUserRequestOptions(opts.actingUserId),
+    );
+
+    // Clear runtime state for the current conversation
+    clearConversationRuntimeState(conversationRuntime);
+
+    // Update the runtime's conversation ID to the new one
+    conversationRuntime.conversationId = conversation.id;
+
+    // Emit updated status so the web app picks up the new conversation
+    emitListenerStatus(
+      conversationRuntime.listener,
+      opts.onStatusChange,
+      opts.connectionId,
+    );
+
+    return opts.resetAllAgentMessages
+      ? "All agent messages reset"
+      : "Agent's in-context messages cleared & moved to conversation history";
+  } finally {
+    finishNotificationReset();
   }
-
-  // Create a new conversation, attributing it to the human who ran
-  // /clear when the frame was relayed by cloud with an acting user.
-  const conversation = await backend.createConversation(
-    {
-      agent_id: agentId,
-    },
-    actingUserRequestOptions(opts.actingUserId),
-  );
-
-  // Clear runtime state for the current conversation
-  clearConversationRuntimeState(conversationRuntime);
-
-  // Update the runtime's conversation ID to the new one
-  conversationRuntime.conversationId = conversation.id;
-
-  // Emit updated status so the web app picks up the new conversation
-  emitListenerStatus(
-    conversationRuntime.listener,
-    opts.onStatusChange,
-    opts.connectionId,
-  );
-
-  return opts.resetAllAgentMessages
-    ? "All agent messages reset"
-    : "Agent's in-context messages cleared & moved to conversation history";
 }
 
 /**

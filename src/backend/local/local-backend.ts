@@ -1,10 +1,10 @@
 import { GIT_MEMORY_ENABLED_TAG } from "@/agent/agent-tags";
+import { stampRootMemoryOnCreateBody } from "@/agent/memory-filesystem";
 import {
   type InitializeLocalMemoryRepoFile,
   initializeLocalMemoryRepo,
 } from "@/agent/memory-git";
 import type {
-  AgentCreateBody,
   Backend,
   BackendCapabilities,
   ConversationCreateBody,
@@ -44,6 +44,7 @@ import {
   summarizeLocalMessagesAll,
   summarizeLocalMessagesSlidingWindow,
 } from "./compaction";
+import { initialMemoryFilesFromCreateBody } from "./initial-memory";
 import {
   createLocalExecutor,
   type LocalBackendExecutionMode,
@@ -106,71 +107,6 @@ export interface LocalBackendModEventHooks {
   }) => void | Promise<void>;
   onLlmStart?: (info: LlmStartInfo) => void | Promise<void>;
   onLlmEnd?: (info: LlmEndInfo) => void | Promise<void>;
-}
-
-function sanitizeFrontmatterValue(value: string): string {
-  return value.replace(/\r?\n/g, " ").trim();
-}
-
-function memoryBlockPath(label: string): string {
-  const normalized = label.trim().replace(/\\/g, "/").replace(/\.md$/, "");
-  if (normalized === "system" || normalized.startsWith("system/")) {
-    return `${normalized}.md`;
-  }
-  return `system/${normalized}.md`;
-}
-
-function renderInitialMemoryFile(input: {
-  label: string;
-  value: string;
-  description?: string | null;
-}): InitializeLocalMemoryRepoFile | null {
-  const relativePath = memoryBlockPath(input.label);
-  const segments = relativePath.split("/").filter(Boolean);
-  if (
-    segments.length === 0 ||
-    segments.some((segment) => segment === "." || segment === "..")
-  ) {
-    return null;
-  }
-  const description =
-    typeof input.description === "string" && input.description.trim()
-      ? input.description.trim()
-      : `Memory block ${input.label}`;
-  return {
-    relativePath: segments.join("/"),
-    content: [
-      "---",
-      `description: ${sanitizeFrontmatterValue(description)}`,
-      "---",
-      input.value,
-    ].join("\n"),
-  };
-}
-
-function initialMemoryFilesFromCreateBody(
-  body: AgentCreateBody,
-): InitializeLocalMemoryRepoFile[] {
-  const bodyRecord = body as Record<string, unknown>;
-  const blocks = Array.isArray(bodyRecord.memory_blocks)
-    ? bodyRecord.memory_blocks
-    : [];
-  const files = new Map<string, InitializeLocalMemoryRepoFile>();
-  for (const block of blocks) {
-    if (!block || typeof block !== "object") continue;
-    const record = block as Record<string, unknown>;
-    if (typeof record.label !== "string") continue;
-    const file = renderInitialMemoryFile({
-      label: record.label,
-      value: typeof record.value === "string" ? record.value : "",
-      description:
-        typeof record.description === "string" ? record.description : null,
-    });
-    if (file) files.set(file.relativePath, file);
-  }
-  return [...files.values()].sort((a, b) =>
-    a.relativePath.localeCompare(b.relativePath),
-  );
 }
 
 type LocalCompactionSettingsRecord = Record<string, unknown>;
@@ -387,6 +323,7 @@ export class LocalBackend extends HeadlessBackend {
     let [body, ...restArgs] = args;
     // Stamp local memfs agents so downstream tag checks enable memory sync.
     if (this.isLocalMemfsEnabled()) {
+      body = stampRootMemoryOnCreateBody(body);
       const bodyRecord = body as Record<string, unknown>;
       const existingTags = Array.isArray(bodyRecord.tags)
         ? (bodyRecord.tags as string[])
@@ -467,6 +404,22 @@ export class LocalBackend extends HeadlessBackend {
     return conversation;
   }
 
+  async createEphemeralConversation(body: {
+    model: string;
+    system: string;
+    model_settings?: Record<string, unknown>;
+    context_window_limit?: number | null;
+    parent_agent_id?: string | null;
+    name?: string;
+    is_subagent?: boolean;
+  }): Promise<
+    Awaited<ReturnType<NonNullable<Backend["createEphemeralConversation"]>>>
+  > {
+    return this.store.createEphemeralConversation(body) as unknown as Awaited<
+      ReturnType<NonNullable<Backend["createEphemeralConversation"]>>
+    >;
+  }
+
   override async recompileConversation(
     conversationId: string,
     body?: ConversationRecompileBody,
@@ -514,6 +467,19 @@ export class LocalBackend extends HeadlessBackend {
     history: StoredMessage[];
     uiMessages: LocalMessage[];
   }): Promise<{ systemPrompt: string; midConversationSystemPrompt?: string }> {
+    if (this.store.isAgentFreeConversation(input.conversationId)) {
+      const clientSkills = Array.isArray(
+        (input.body as Record<string, unknown>).client_skills,
+      )
+        ? ((input.body as Record<string, unknown>).client_skills as unknown[])
+        : [];
+      return {
+        systemPrompt: appendAvailableSkillsBlock(
+          input.agent.system,
+          clientSkills,
+        ),
+      };
+    }
     const persisted = await this.getOrCompileSystemPrompt(
       input.conversationId,
       input.agentId,
@@ -627,7 +593,10 @@ export class LocalBackend extends HeadlessBackend {
       return (conversationModelSettings as { context_window_limit: number })
         .context_window_limit;
     }
-    const agent = this.store.retrieveAgentRecord(agentId);
+    const agent = this.store.retrieveExecutionAgentRecord(
+      conversationId,
+      agentId,
+    );
     return typeof agent.model_settings.context_window_limit === "number"
       ? agent.model_settings.context_window_limit
       : undefined;
@@ -646,7 +615,10 @@ export class LocalBackend extends HeadlessBackend {
     conversationId: string,
     agentId: string,
   ): LocalAgentRecord {
-    const agent = this.store.retrieveAgentRecord(agentId);
+    const agent = this.store.retrieveExecutionAgentRecord(
+      conversationId,
+      agentId,
+    );
     const conversation = this.store.retrieveConversation(
       conversationId,
       agentId,

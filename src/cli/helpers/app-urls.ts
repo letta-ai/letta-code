@@ -37,6 +37,25 @@ export function buildChatUrl(
 }
 
 /**
+ * Build the chat.letta.com desktop viewer URL for a sandbox desktop-session
+ * relay URL. Chat reads the relay path and expiry from the hash, so they never
+ * reach a server log as a query string. Anyone holding the result can view and
+ * control the desktop until it expires.
+ */
+export function buildDesktopViewerUrl(
+  relayUrl: string,
+  expiresAt: string,
+): string {
+  const relay = new URL(relayUrl);
+  const viewer = new URL("/desktop", CHAT_BASE);
+  viewer.hash = new URLSearchParams({
+    path: `${relay.pathname}${relay.search}`,
+    expiresAt,
+  }).toString();
+  return viewer.toString();
+}
+
+/**
  * Build a user-facing agent reference. API-backed agents can link to Chat,
  * but local-backend agents are not available there, so show the ID.
  */

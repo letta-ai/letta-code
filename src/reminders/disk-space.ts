@@ -1,0 +1,262 @@
+import { statfs } from "node:fs/promises";
+import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
+import { isManagedCloudRuntime } from "@/managed-cloud-runtime";
+import {
+  addToMessageQueue,
+  isQueueBridgeConnected,
+} from "@/utils/message-queue-bridge";
+import { resolveNotificationScope } from "@/utils/task-notifications";
+
+/** Warn when at least this fraction of the volume is used... */
+export const LOW_DISK_USED_FRACTION = 0.9;
+/** ...or when less than this many bytes remain available. */
+export const LOW_DISK_AVAILABLE_BYTES = 1024 ** 3;
+/** Minimum time between disk measurements. */
+export const DISK_SPACE_CHECK_INTERVAL_MS = 60_000;
+
+export interface DiskSpaceSample {
+  path: string;
+  totalBytes: number;
+  availableBytes: number;
+}
+
+type StatfsFn = (path: string) => Promise<{
+  bsize: number;
+  blocks: number;
+  bavail: number;
+}>;
+
+interface DiskSpaceCache {
+  sample: DiskSpaceSample | null;
+  lastCheckStartedAtMs: number;
+  inFlight: boolean;
+}
+
+const cache: DiskSpaceCache = {
+  sample: null,
+  lastCheckStartedAtMs: Number.NEGATIVE_INFINITY,
+  inFlight: false,
+};
+
+export function isDiskSpaceLow(sample: DiskSpaceSample): boolean {
+  if (sample.totalBytes <= 0) return false;
+  const usedFraction = 1 - sample.availableBytes / sample.totalBytes;
+  return (
+    usedFraction >= LOW_DISK_USED_FRACTION ||
+    sample.availableBytes < LOW_DISK_AVAILABLE_BYTES
+  );
+}
+
+/**
+ * Start a background measurement if the last one is old enough. Never awaits
+ * and never throws: a failed measurement leaves the previous sample in place.
+ */
+export function refreshDiskSpaceSample(
+  path: string,
+  options: { nowMs?: number; statfsFn?: StatfsFn } = {},
+): void {
+  const nowMs = options.nowMs ?? Date.now();
+  if (cache.inFlight) return;
+  if (nowMs - cache.lastCheckStartedAtMs < DISK_SPACE_CHECK_INTERVAL_MS) {
+    return;
+  }
+  cache.inFlight = true;
+  cache.lastCheckStartedAtMs = nowMs;
+  const statfsFn = options.statfsFn ?? statfs;
+  let pending: Promise<unknown>;
+  try {
+    pending = statfsFn(path).then((stats) => {
+      cache.sample = {
+        path,
+        totalBytes: stats.blocks * stats.bsize,
+        availableBytes: stats.bavail * stats.bsize,
+      };
+    });
+  } catch {
+    cache.inFlight = false;
+    return;
+  }
+  void pending
+    .catch(() => {})
+    .finally(() => {
+      cache.inFlight = false;
+    });
+}
+
+export function getCachedDiskSpaceSample(): DiskSpaceSample | null {
+  return cache.sample;
+}
+
+export function resetDiskSpaceCacheForTests(): void {
+  cache.sample = null;
+  cache.lastCheckStartedAtMs = Number.NEGATIVE_INFINITY;
+  cache.inFlight = false;
+}
+
+function formatBytes(bytes: number): string {
+  const gib = bytes / 1024 ** 3;
+  if (gib >= 1) return `${gib.toFixed(1)} GB`;
+  return `${Math.max(0, Math.round(bytes / 1024 ** 2))} MB`;
+}
+
+export function formatLowDiskSpaceReminder(sample: DiskSpaceSample): string {
+  const usedPercent = Math.round(
+    (1 - sample.availableBytes / sample.totalBytes) * 100,
+  );
+  return `${SYSTEM_REMINDER_OPEN}
+LOW DISK SPACE: The sandbox volume holding ${sample.path} is ${usedPercent}% full (${formatBytes(sample.availableBytes)} available of ${formatBytes(sample.totalBytes)}). When it fills, file writes, installs, builds, and memory git commits start failing.
+
+Before continuing with disk-heavy work, free space: use \`du -xh --max-depth=2 <dir> | sort -h\` to find large directories, then delete regenerable data such as package manager caches, build outputs, old worktrees you created, and temporary files. Do not delete the user's source files, uncommitted work, or memory without asking.
+${SYSTEM_REMINDER_CLOSE}`;
+}
+
+/** Escalate a second time once the volume is this full. */
+export const CRITICAL_DISK_USED_FRACTION = 0.95;
+/** How often to re-check the disk while a tool batch is running. */
+export const DISK_SPACE_POLL_INTERVAL_MS = 30_000;
+
+type AlertLevel = 0 | 1 | 2;
+
+function alertLevel(sample: DiskSpaceSample): AlertLevel {
+  if (!isDiskSpaceLow(sample)) return 0;
+  const usedFraction = 1 - sample.availableBytes / sample.totalBytes;
+  return usedFraction >= CRITICAL_DISK_USED_FRACTION ? 2 : 1;
+}
+
+// Highest level already pushed as a notification in this process. Shared by
+// every loop here because they share the disk; resets when space recovers.
+let pushedLevel: AlertLevel = 0;
+
+/**
+ * Measure now and return a reminder only when the level rises (low, then
+ * critical). Used on a timer while tools run, so a long install or a running
+ * subagent can't fill the disk between turns unnoticed.
+ */
+export async function checkDiskSpaceNow(
+  path: string,
+  options: { env?: NodeJS.ProcessEnv; statfsFn?: StatfsFn } = {},
+): Promise<string | null> {
+  try {
+    if (!isManagedCloudRuntime(options.env)) return null;
+    const stats = await (options.statfsFn ?? statfs)(path);
+    const sample = {
+      path,
+      totalBytes: stats.blocks * stats.bsize,
+      availableBytes: stats.bavail * stats.bsize,
+    };
+    cache.sample = sample;
+    const level = alertLevel(sample);
+    if (level <= pushedLevel) {
+      if (level === 0) pushedLevel = 0;
+      return null;
+    }
+    pushedLevel = level;
+    return formatLowDiskSpaceReminder(sample);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Poll the disk while `work` runs and hand any new alert to `deliver`
+ * (a queued task notification), so it reaches the agent without waiting
+ * for the next user turn.
+ */
+export async function watchDiskSpaceDuring<T>(
+  path: string,
+  deliver: (reminder: string) => void,
+  work: () => Promise<T>,
+  options: {
+    env?: NodeJS.ProcessEnv;
+    statfsFn?: StatfsFn;
+    intervalMs?: number;
+  } = {},
+): Promise<T> {
+  if (!isManagedCloudRuntime(options.env)) return work();
+  const check = () =>
+    void checkDiskSpaceNow(path, options).then((text) => {
+      if (text) deliver(text);
+    });
+  const timer = setInterval(
+    check,
+    options.intervalMs ?? DISK_SPACE_POLL_INTERVAL_MS,
+  );
+  timer.unref?.();
+  try {
+    return await work();
+  } finally {
+    clearInterval(timer);
+    check();
+  }
+}
+
+// Alert waiting for the next model request in loops with no queue consumer
+// (headless one-shot, which includes every subagent).
+let pendingRequestReminder: string | null = null;
+
+/**
+ * Queue the alert like a task notification so an idle agent wakes for it.
+ * Subagents have no queue, so it rides their next model request instead.
+ */
+export function deliverDiskSpaceReminder(
+  text: string,
+  parentScope?: { agentId: string; conversationId: string },
+): void {
+  if (!isQueueBridgeConnected()) {
+    pendingRequestReminder = text;
+    return;
+  }
+  addToMessageQueue({
+    kind: "task_notification",
+    text,
+    ...resolveNotificationScope(parentScope),
+  });
+}
+
+/** Take (and clear) an alert held for the next model request. */
+export function takePendingDiskSpaceReminder(): string | null {
+  const text = pendingRequestReminder;
+  pendingRequestReminder = null;
+  return text;
+}
+
+export function resetDiskSpaceAlertForTests(): void {
+  pushedLevel = 0;
+  pendingRequestReminder = null;
+}
+
+export interface DiskSpaceReminderInput {
+  workingDirectory: string;
+  /** Per-conversation flag: true once the current low-disk episode was reported. */
+  notified: boolean;
+  env?: NodeJS.ProcessEnv;
+  nowMs?: number;
+  statfsFn?: StatfsFn;
+}
+
+/**
+ * Fire-and-forget low-disk check for managed Cloud sandboxes. The turn never
+ * waits on the filesystem: it reads the last cached sample and schedules a
+ * fresh one for a later turn. Reports once per low-disk episode.
+ */
+export function evaluateDiskSpaceReminder(input: DiskSpaceReminderInput): {
+  text: string | null;
+  notified: boolean;
+} {
+  try {
+    if (!isManagedCloudRuntime(input.env)) {
+      return { text: null, notified: input.notified };
+    }
+    refreshDiskSpaceSample(input.workingDirectory, {
+      nowMs: input.nowMs,
+      statfsFn: input.statfsFn,
+    });
+    const sample = getCachedDiskSpaceSample();
+    if (!sample) return { text: null, notified: input.notified };
+    if (!isDiskSpaceLow(sample)) return { text: null, notified: false };
+    if (input.notified) return { text: null, notified: true };
+    return { text: formatLowDiskSpaceReminder(sample), notified: true };
+  } catch {
+    return { text: null, notified: input.notified };
+  }
+}

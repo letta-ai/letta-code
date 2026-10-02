@@ -13,7 +13,17 @@ import { dirname, join, resolve } from "node:path";
 const root = process.cwd();
 const app = resolve(process.argv[2]);
 // sharp-electron is only reachable under Electron, never our bundled Node.
-const roots = ["ws", "@vscode/ripgrep", "node-pty", "grammy"];
+// @shikijs/langs is external in the bundle so lazily-loaded grammars
+// (LET-13149) resolve from here at runtime.
+const roots = [
+  "ws",
+  "@vscode/ripgrep",
+  "node-pty",
+  "grammy",
+  "@pierre/diffs",
+  "@shikijs/langs",
+  "sharp",
+];
 
 function locate(name, from) {
   for (let dir = from; ; dir = dirname(dir)) {
@@ -60,17 +70,6 @@ function copy(name, from, dest, ancestors = new Set()) {
   }
 }
 for (const name of roots) copy(name, root, app);
-// Bun bundles Sharp JS but leaves its computed @img native requires unresolved.
-const sharp = locate("sharp", root);
-const sharpPackage = JSON.parse(readFileSync(join(sharp, "package.json")));
-for (const name of Object.keys(sharpPackage.optionalDependencies || {})) {
-  try {
-    locate(name, sharp);
-  } catch {
-    continue;
-  }
-  copy(name, sharp, app);
-}
 
 // Retain license notices for code in the JS bundle as well as external modules.
 function licenses(dir, destination) {

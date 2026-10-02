@@ -46,7 +46,6 @@ function fakeMonitor(
     stderr: [],
     status: "running",
     exitCode: null,
-    lastReadIndex: { stdout: 0, stderr: 0 },
     runtimeScope: { agentId: "agent-a", conversationId: "conv-a" },
   };
   backgroundProcesses.set(id, process);

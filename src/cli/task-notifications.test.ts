@@ -140,19 +140,18 @@ ACTION REQUIRED: Resolve pending reflection memory merge.
     test("formats monitor events as task notifications and escapes output", () => {
       const formatted = formatMonitorEventNotification({
         taskId: "monitor_1",
-        description: "deploy <status>",
         event: "failed & needs <attention>",
       });
 
       expect(formatted).toContain("<task-id>monitor_1</task-id>");
       expect(formatted).toContain(
-        '<summary>Monitor event: "deploy &lt;status&gt;"</summary>',
+        '<summary>Monitor event: "failed &amp; needs &lt;attention&gt;"</summary>',
       );
       expect(formatted).toContain(
         "<event>failed &amp; needs &lt;attention&gt;</event>",
       );
       expect(extractTaskNotificationsForDisplay(formatted)).toEqual({
-        notifications: ['Monitor event: "deploy <status>"'],
+        notifications: ['Monitor event: "failed & needs <attention>"'],
         cleanedText: "",
       });
     });

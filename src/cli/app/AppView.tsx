@@ -46,7 +46,7 @@ import { PendingApprovalStub } from "@/cli/components/PendingApprovalStub";
 import { PersonalitySelector } from "@/cli/components/PersonalitySelector";
 import { PinDialog } from "@/cli/components/PinDialog";
 import { ProviderSelector } from "@/cli/components/ProviderSelector";
-import { ReasoningMessage } from "@/cli/components/ReasoningMessageRich";
+import { LiveReasoningMessage } from "@/cli/components/ReasoningMessageRich";
 import { SkillsDialog } from "@/cli/components/SkillsDialog";
 import { SleeptimeSelector } from "@/cli/components/SleeptimeSelector";
 import { StatusMessage } from "@/cli/components/StatusMessage";
@@ -55,7 +55,7 @@ import { SubagentManager } from "@/cli/components/SubagentManager";
 import { SystemPromptSelector } from "@/cli/components/SystemPromptSelector";
 import { ToolCallMessage } from "@/cli/components/ToolCallMessageRich";
 import { ToolsetSelector } from "@/cli/components/ToolsetSelector";
-import { UserMessage } from "@/cli/components/UserMessageRich";
+import { LiveUserMessage as UserMessage } from "@/cli/components/UserMessageRich";
 import { WelcomeScreen } from "@/cli/components/WelcomeScreen";
 import { WindowTitlePicker } from "@/cli/components/WindowTitlePicker";
 import { WorktreeDiffSelector } from "@/cli/components/WorktreeDiffSelector";
@@ -228,7 +228,6 @@ type AppViewProps = {
     commandId?: string | null,
   ) => Promise<void>;
   handleProfileEscapeCancel: () => void;
-  handleQuestionSubmit: (answers: Record<string, string>) => Promise<void>;
   handleReflectionArenaChoiceCancel: () => void;
   handleReflectionArenaChoiceSubmit: (
     answers: Record<string, string>,
@@ -410,7 +409,6 @@ export function AppView(props: AppViewProps) {
     handlePermissionModeChange,
     handlePersonalitySelect,
     handleProfileEscapeCancel,
-    handleQuestionSubmit,
     handleReflectionArenaChoiceCancel,
     handleReflectionArenaChoiceSubmit,
     handleSleeptimeModeSelect,
@@ -576,7 +574,6 @@ export function AppView(props: AppViewProps) {
                             onApproveAlways={handleApproveAlways}
                             onDeny={handleDenyCurrent}
                             onCancel={handleCancelApprovals}
-                            onQuestionSubmit={handleQuestionSubmit}
                             precomputedDiff={
                               ln.toolCallId
                                 ? precomputedDiffsRef.current.get(ln.toolCallId)
@@ -601,7 +598,7 @@ export function AppView(props: AppViewProps) {
                         ) : ln.kind === "user" ? (
                           <UserMessage line={ln} prompt={statusLinePrompt} />
                         ) : ln.kind === "reasoning" ? (
-                          <ReasoningMessage line={ln} />
+                          <LiveReasoningMessage line={ln} />
                         ) : ln.kind === "assistant" ? (
                           <AssistantMessage line={ln} />
                         ) : ln.kind === "tool_call" &&
@@ -663,7 +660,6 @@ export function AppView(props: AppViewProps) {
                     onApproveAlways={handleApproveAlways}
                     onDeny={handleDenyCurrent}
                     onCancel={handleCancelApprovals}
-                    onQuestionSubmit={handleQuestionSubmit}
                     allDiffs={precomputedDiffsRef.current}
                     isFocused={true}
                     approveAlwaysText={
@@ -1725,8 +1721,6 @@ export function AppView(props: AppViewProps) {
             )}
 
             {/* Plan Mode Dialog - NOW RENDERED INLINE with tool call (see liveItems above) */}
-
-            {/* AskUserQuestion now rendered inline via InlineQuestionApproval */}
           </>
         )}
       </Box>

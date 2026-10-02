@@ -11,6 +11,14 @@ import {
   isCloudAgentId,
 } from "./agent/agent-id";
 import {
+  type AgentSettings,
+  clientPreferencesUpdate,
+  readClientPreferences,
+  readToolsetPreference,
+  stripEmptyAgentSettings,
+  toolsetPreferenceUpdate,
+} from "./agent-settings";
+import {
   getLocalBackendStorageDir,
   isLocalBackendEnvEnabled,
   LOCAL_BACKEND_DIR_ENV,
@@ -26,8 +34,8 @@ import type {
 } from "./reflection-settings";
 import { getRuntimeContext } from "./runtime-context";
 import { trackBoundaryError } from "./telemetry/error-reporting";
-import { isToolsetPreference } from "./tools/toolset-catalog";
 import type { ToolsetPreference } from "./tools/toolset-types";
+import type { ClientPreferences } from "./types/client-preferences";
 import { debugWarn } from "./utils/debug.js";
 import { exists, mkdir, readFile, writeFile } from "./utils/fs.js";
 import {
@@ -51,19 +59,7 @@ export interface WindowTitleConfig {
   items: string[]; // Ordered list of enabled field keys (e.g. ["agent-name", "model-name"])
 }
 
-/** Per-agent settings; baseUrl is omitted for the Letta API. */
-export interface AgentSettings {
-  agentId: string;
-  baseUrl?: string; // undefined = Letta API (api.letta.com)
-  pinned?: boolean; // true if agent is pinned
-  memfs?: boolean; // true if memory filesystem is enabled
-  toolset?: ToolsetPreference; // Virtual default-conversation preference
-  toolsetsByConversation?: Record<string, Exclude<ToolsetPreference, "auto">>;
-  systemPromptPreset?: string; // known preset ID, "custom", or undefined (legacy/subagent)
-  systemPromptHash?: string; // hash of the managed prompt content last written by Letta Code
-  systemPromptVersion?: string; // Letta Code version that wrote systemPromptHash
-  mcpServers?: McpServerConfig[]; // MCP servers available only to this agent
-}
+export type { AgentSettings } from "./agent-settings";
 
 export interface Settings {
   lastAgent: string | null; // DEPRECATED: kept for migration to lastSession
@@ -266,22 +262,6 @@ function shouldSkipLegacyLocalBackendSessionFallback(): boolean {
   );
 }
 
-function stripEmptyAgentSettings(settings: AgentSettings): AgentSettings {
-  if (!settings.pinned) delete settings.pinned;
-  if (settings.memfs === undefined) delete settings.memfs;
-  if (!settings.toolset || settings.toolset === "auto") delete settings.toolset;
-  if (Object.keys(settings.toolsetsByConversation ?? {}).length === 0) {
-    delete settings.toolsetsByConversation;
-  }
-  if (!settings.systemPromptPreset) delete settings.systemPromptPreset;
-  if (!settings.systemPromptHash) delete settings.systemPromptHash;
-  if (!settings.systemPromptVersion) delete settings.systemPromptVersion;
-  if (!settings.mcpServers || settings.mcpServers.length === 0) {
-    delete settings.mcpServers;
-  }
-  if (!settings.baseUrl) delete settings.baseUrl;
-  return settings;
-}
 /**
  * Get the current server key for indexing settings.
  * Uses the local backend storage path when local backend mode is active,
@@ -1742,12 +1722,10 @@ class SettingsManager {
   }
   /** Resolve the manual override for one conversation; unset means auto. */
   getToolsetPreference(agentId: string, conversationId = "default") {
-    const agentSettings = this.getAgentSettings(agentId);
-    const preference =
-      !conversationId || conversationId === "default"
-        ? agentSettings?.toolset
-        : agentSettings?.toolsetsByConversation?.[conversationId];
-    return isToolsetPreference(preference) ? preference : "auto";
+    return readToolsetPreference(
+      this.getAgentSettings(agentId),
+      conversationId,
+    );
   }
 
   /** Persist a manual override for one conversation; auto clears it. */
@@ -1756,22 +1734,35 @@ class SettingsManager {
     preference: ToolsetPreference,
     conversationId: string = "default",
   ): void {
-    const agentSettings = this.getAgentSettings(agentId);
-    if (!conversationId || conversationId === "default") {
-      if (preference === "auto" && agentSettings?.toolset === undefined) return;
-      this.upsertAgentSettings(agentId, { toolset: preference });
-      return;
-    }
-    const toolsetsByConversation = {
-      ...agentSettings?.toolsetsByConversation,
-    };
-    if (preference === "auto") {
-      if (!(conversationId in toolsetsByConversation)) return;
-      delete toolsetsByConversation[conversationId];
-    } else {
-      toolsetsByConversation[conversationId] = preference;
-    }
-    this.upsertAgentSettings(agentId, { toolsetsByConversation });
+    const update = toolsetPreferenceUpdate(
+      this.getAgentSettings(agentId),
+      preference,
+      conversationId,
+    );
+    if (update) this.upsertAgentSettings(agentId, update);
+  }
+
+  getClientPreferences(
+    agentId: string,
+    conversationId = "default",
+  ): ClientPreferences {
+    return readClientPreferences(
+      this.getAgentSettings(agentId),
+      conversationId,
+    );
+  }
+
+  setClientPreferences(
+    agentId: string,
+    conversationId: string,
+    preferences: ClientPreferences,
+  ): void {
+    const update = clientPreferencesUpdate(
+      this.getAgentSettings(agentId),
+      preferences,
+      conversationId,
+    );
+    if (update) this.upsertAgentSettings(agentId, update);
   }
 
   /**

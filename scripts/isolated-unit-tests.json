@@ -1,6 +1,21 @@
 {
   "tests": [
     {
+      "path": "src/websocket/ask-user-question-async.test.ts",
+      "timeoutMs": 30000,
+      "reason": "Runs a real local App Server with isolated HOME, settings, backend, and WebSocket clients to verify nonblocking questions and later responses."
+    },
+    {
+      "path": "src/websocket/listener/ask-user-question-turn.test.ts",
+      "timeoutMs": 30000,
+      "reason": "Checks per-input question tool opt-in with process-global backend, settings, and environment isolation."
+    },
+    {
+      "path": "src/websocket/listener/turn-cleanup-memory-update.e2e.test.ts",
+      "timeoutMs": 30000,
+      "reason": "Exercises real MemFS Git pushes and listener notifications with isolated HOME, settings, backend, auth environment, and repository-list fetch."
+    },
+    {
       "path": "src/tools/impl/task-fork-receipt.test.ts",
       "timeoutMs": 15000,
       "reason": "Replaces billing I/O and the child process while exercising real fork launch state and task receipts with process-global backend, settings, and subagent state."
@@ -171,16 +186,6 @@
       "reason": "Spawns real Git processes and mutates HOME, USER_CWD, cwd, and runtime singletons."
     },
     {
-      "path": "src/tools/memory-apply-patch.test.ts",
-      "timeoutMs": 15000,
-      "reason": "Uses a top-level Bun module mock for the backend client."
-    },
-    {
-      "path": "src/tools/memory-tool.test.ts",
-      "timeoutMs": 15000,
-      "reason": "Uses a top-level Bun module mock for the backend client."
-    },
-    {
       "path": "src/agent/available-models.test.ts",
       "timeoutMs": 15000,
       "reason": "Mutates the backend singleton, shared model catalog cache, and Date.now while testing cache freshness."
@@ -196,9 +201,19 @@
       "reason": "Uses a top-level Bun module mock for the backend client."
     },
     {
+      "path": "src/websocket/app-server-openai.test.ts",
+      "timeoutMs": 30000,
+      "reason": "Starts a real App Server and swaps the process-global backend while exercising persistent LocalBackend conversation state."
+    },
+    {
       "path": "src/websocket/listen-client-concurrency.test.ts",
       "timeoutMs": 30000,
       "reason": "Uses several top-level Bun module mocks and exercises real concurrent listener state."
+    },
+    {
+      "path": "src/websocket/launch-subagent.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Runs a real App Server and child CLI while mutating HOME, settings, backend, environment, background tasks, and subagent state."
     },
     {
       "path": "src/websocket/listener/auth-lifecycle.test.ts",

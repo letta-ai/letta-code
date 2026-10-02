@@ -12,6 +12,7 @@
  * On stop: clears interval, releases lease.
  */
 
+import { isLocalAgentId } from "@/agent/agent-id";
 import { getBackend } from "@/backend";
 import type { ConversationCreateBody } from "@/backend/backend";
 import type { CronPromptQueueItem, DequeuedBatch } from "@/queue/queue-runtime";
@@ -32,16 +33,18 @@ import type {
 import {
   type CronRunOutcome,
   type CronRunReason,
+  type CronSchedulerScope,
   type CronTask,
   claimSchedulerLease,
   garbageCollect,
   getActiveTasks,
   getCronFileMtime,
   getTask,
+  readCronFile,
   recordTaskQueued,
+  refreshSchedulerLease,
   releaseSchedulerLease,
   updateTask,
-  verifySchedulerLease,
 } from "./cron-file";
 import { cronMatchesTime, isValidCron } from "./parse-interval";
 import {
@@ -50,6 +53,7 @@ import {
   getIntendedCronOccurrence,
 } from "./prompt";
 import { safeAppendCronRunLogForTask } from "./run-log";
+import { isManagedCloudSandbox } from "./runner";
 import { SCHEDULE_ORIGIN_TAG } from "./scheduled-task-prompt";
 
 export {
@@ -68,6 +72,7 @@ type ProcessQueuedTurn = (
 
 interface SchedulerState {
   token: string;
+  scope: CronSchedulerScope;
   tickInterval: NodeJS.Timeout;
   gcInterval: NodeJS.Timeout;
   socket: ListenerTransport;
@@ -83,9 +88,31 @@ interface SchedulerState {
   lastMinuteKey: string;
   /** Pending jitter-delayed timers — cleared on stop/lease loss. */
   pendingTimers: Set<NodeJS.Timeout>;
+  /** Last live `scheduler_owner` token, used to recognize a sibling tombstone. */
+  tombstoneToken: string | undefined;
+  /** Scoped-only heartbeat that restores the mixed-version tombstone. */
+  tombstoneInterval: NodeJS.Timeout | null;
 }
 
 let schedulerState: SchedulerState | null = null;
+
+export const CRON_SCHEDULER_SCOPE_ENV = "LETTA_CRON_SCHEDULER_SCOPE";
+
+export function resolveCronSchedulerScope(
+  value = process.env[CRON_SCHEDULER_SCOPE_ENV],
+): CronSchedulerScope {
+  return value === "cloud" || value === "local" ? value : "all";
+}
+
+export function taskMatchesCronSchedulerScope(
+  task: CronTask,
+  scope: CronSchedulerScope,
+): boolean {
+  if (scope === "all") return true;
+  return scope === "local"
+    ? isLocalAgentId(task.agent_id)
+    : !isLocalAgentId(task.agent_id);
+}
 
 /**
  * Listener context stored independently of the scheduler lease.
@@ -103,6 +130,7 @@ let listenerFireContext: {
 
 const TICK_INTERVAL_MS = 60_000;
 const GC_INTERVAL_MS = 60 * 60_000; // 1 hour
+const TOMBSTONE_HEARTBEAT_MS = 1_000;
 const LEASE_RETRY_MS = 30_000; // 30 seconds between lease claim retries
 const MAX_LEASE_RETRIES = 3;
 const NEW_CONVERSATION_TARGET = "new";
@@ -115,6 +143,40 @@ function logScheduler(opts: StartListenerOptions, message: string): void {
     return;
   }
   debugWarn("Cron", message);
+}
+
+function holdSchedulerLease(
+  state: SchedulerState,
+  opts: StartListenerOptions,
+): boolean {
+  if (refreshSchedulerLease(state.token, state.scope, state.tombstoneToken)) {
+    return true;
+  }
+  if (state.scope === "all") {
+    logScheduler(opts, "Scheduler lease lost. Stopping.");
+    stopScheduler();
+    return false;
+  }
+  try {
+    state.token = claimSchedulerLease(state.scope);
+    state.tombstoneToken = readCronFile().scheduler_owner?.token;
+    logScheduler(opts, "Reclaimed scoped scheduler lease.");
+    return true;
+  } catch (err) {
+    logScheduler(
+      opts,
+      `Scheduler lease lost; retrying: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    clearPendingFireTimers(state);
+    return false;
+  }
+}
+
+function clearPendingFireTimers(state: SchedulerState): void {
+  for (const handle of state.pendingTimers) {
+    clearTimeout(handle);
+  }
+  state.pendingTimers.clear();
 }
 
 export function minuteKey(date: Date): string {
@@ -441,6 +503,14 @@ export async function runCronTaskNow(taskId: string): Promise<{
   task?: CronTask;
   error?: string;
 }> {
+  if (isManagedCloudSandbox()) {
+    return {
+      success: false,
+      found: false,
+      error: "Local schedules cannot run in a managed Cloud sandbox",
+    };
+  }
+
   const task = getTask(taskId);
   if (!task) {
     return { success: false, found: false, error: "Schedule not found" };
@@ -501,10 +571,8 @@ function tick(
   opts: StartListenerOptions,
   processQueuedTurn: ProcessQueuedTurn,
 ): void {
-  // Verify we still hold the lease
-  if (!verifySchedulerLease(state.token)) {
-    logScheduler(opts, "Scheduler lease lost. Stopping.");
-    stopScheduler();
+  // Verify we still hold the lease and keep the mixed-version tombstone live.
+  if (!holdSchedulerLease(state, opts)) {
     return;
   }
 
@@ -521,6 +589,7 @@ function tick(
 
   for (const task of state.cachedTasks) {
     if (task.status !== "active") continue;
+    if (!taskMatchesCronSchedulerScope(task, state.scope)) continue;
 
     // Older clients could persist expressions that the current cron dialect
     // rejects. Surface that state once rather than silently never firing.
@@ -545,10 +614,26 @@ function tick(
       const jitterMs = task.recurring ? task.jitter_offset_ms : 0;
       const taskId = task.id;
       const doFire = () => {
-        // Revalidate before firing: scheduler may have stopped, lease may
-        // have been lost, or the task may have been deleted/cancelled during
-        // the jitter window.
+        // Revalidate before firing. Catch lock timeouts so a skipped jitter
+        // fire cannot terminate the listener.
         if (!schedulerState) return;
+        try {
+          if (
+            !refreshSchedulerLease(
+              schedulerState.token,
+              schedulerState.scope,
+              schedulerState.tombstoneToken,
+            )
+          ) {
+            return;
+          }
+        } catch (err) {
+          logScheduler(
+            opts,
+            `Jitter fire lease check error: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          return;
+        }
         const freshTask = getTask(taskId);
         if (!freshTask || freshTask.status !== "active") return;
 
@@ -612,6 +697,10 @@ export function startScheduler(
   processQueuedTurn: ProcessQueuedTurn,
   _retryCount = 0,
 ): void {
+  if (isManagedCloudSandbox()) {
+    return;
+  }
+
   // Always store the listener context so runCronTaskNow ("Send now") works
   // even when this process doesn't hold the scheduler lease.
   listenerFireContext = { socket, opts, processQueuedTurn };
@@ -619,8 +708,9 @@ export function startScheduler(
   if (schedulerState) return;
 
   let token: string;
+  const scope = resolveCronSchedulerScope();
   try {
-    token = claimSchedulerLease();
+    token = claimSchedulerLease(scope);
   } catch (err) {
     if (_retryCount < MAX_LEASE_RETRIES) {
       logScheduler(
@@ -651,6 +741,7 @@ export function startScheduler(
   const now = new Date();
   const state: SchedulerState = {
     token,
+    scope,
     tickInterval: null as unknown as NodeJS.Timeout,
     gcInterval: null as unknown as NodeJS.Timeout,
     socket,
@@ -661,10 +752,21 @@ export function startScheduler(
     firedThisMinute: new Set(),
     lastMinuteKey: minuteKey(now),
     pendingTimers: new Set(),
+    tombstoneToken: readCronFile().scheduler_owner?.token,
+    tombstoneInterval: null,
   };
 
-  // Initial tick
+  schedulerState = state;
+
+  // Initial tick after the process is recorded as running so zero-jitter
+  // fires are not dropped by the `if (!schedulerState) return` revalidation.
   tick(state, socket, opts, processQueuedTurn);
+  // tick() calls stopScheduler() when an all-agent lease is already gone.
+  // Do not arm intervals on that detached state or the failed scheduler wakes
+  // forever. Scoped lease loss keeps this process recorded so heartbeat can retry.
+  if (schedulerState !== state) {
+    return;
+  }
 
   state.tickInterval = setInterval(() => {
     tick(state, socket, opts, processQueuedTurn);
@@ -684,7 +786,18 @@ export function startScheduler(
     }
   }, GC_INTERVAL_MS);
 
-  schedulerState = state;
+  if (scope !== "all") {
+    state.tombstoneInterval = setInterval(() => {
+      try {
+        holdSchedulerLease(state, opts);
+      } catch (err) {
+        logScheduler(
+          opts,
+          `Tombstone heartbeat error: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }, TOMBSTONE_HEARTBEAT_MS);
+  }
 }
 
 /**
@@ -696,15 +809,14 @@ export function stopScheduler(): void {
 
   clearInterval(schedulerState.tickInterval);
   clearInterval(schedulerState.gcInterval);
-
-  // Cancel all jitter-delayed fires that haven't executed yet.
-  for (const handle of schedulerState.pendingTimers) {
-    clearTimeout(handle);
+  if (schedulerState.tombstoneInterval) {
+    clearInterval(schedulerState.tombstoneInterval);
   }
-  schedulerState.pendingTimers.clear();
+
+  clearPendingFireTimers(schedulerState);
 
   try {
-    releaseSchedulerLease(schedulerState.token);
+    releaseSchedulerLease(schedulerState.token, schedulerState.scope);
   } catch {
     // Best effort
   }

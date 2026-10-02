@@ -1,6 +1,6 @@
 /**
  * The workflow engine: parses the meta block, builds the script-facing hooks
- * (agent / parallel / pipeline / phase / log / args), executes the script
+ * (agent / decide / parallel / pipeline / phase / log / args), executes the script
  * body inside a node:vm context, and appends every subagent outcome to the
  * run's journal.
  *
@@ -16,6 +16,7 @@
  */
 
 import vm from "node:vm";
+import { submitWorkflowDecision } from "./decide.ts";
 import { appendJournalEntry } from "./journal.ts";
 import { parseWorkflowMeta, stripMetaExport } from "./meta.ts";
 import type {
@@ -28,6 +29,7 @@ import type {
 
 export const DEFAULT_MAX_CONCURRENT = 16;
 const DEFAULT_MAX_TOTAL_AGENTS = 1000;
+const DEFAULT_MAX_TOTAL_DECISIONS = 1000;
 const MAX_ITEMS_PER_HELPER = 4096;
 
 class Semaphore {
@@ -74,23 +76,81 @@ export async function executeWorkflow(
   // settle until all of them have, so a completion never precedes a worker.
   const inFlight = new Set<Promise<unknown>>();
   const maxTotalAgents = options.maxTotalAgents ?? DEFAULT_MAX_TOTAL_AGENTS;
+  const maxTotalDecisions =
+    options.maxTotalDecisions ?? DEFAULT_MAX_TOTAL_DECISIONS;
   const semaphore = new Semaphore(
     options.maxConcurrent ?? DEFAULT_MAX_CONCURRENT,
   );
 
   let currentPhase: string | null = null;
   let callCounter = 0;
+  let decisionCounter = 0;
   let agentsSpawned = 0;
   let totalTokens = 0;
 
-  function agent(prompt: unknown, callOptions?: unknown): Promise<unknown> {
-    const pending = callAgent(prompt, callOptions);
+  function trackCall<T>(pending: Promise<T>): Promise<T> {
     // Scripts can forget to await a call; that must not surface as an
     // unhandled rejection. Awaiting it still observes the original error.
     void pending.catch(() => {});
     inFlight.add(pending);
     void pending.finally(() => inFlight.delete(pending)).catch(() => {});
     return pending;
+  }
+
+  function agent(prompt: unknown, callOptions?: unknown): Promise<unknown> {
+    return trackCall(callAgent(prompt, callOptions));
+  }
+
+  function decide(
+    state: unknown,
+    questions: unknown,
+    callOptions?: unknown,
+  ): Promise<unknown> {
+    return trackCall(callDecision(state, questions, callOptions));
+  }
+
+  async function callDecision(
+    state: unknown,
+    questions: unknown,
+    callOptions?: unknown,
+  ): Promise<unknown> {
+    if (signal.aborted) throw new Error("Workflow aborted.");
+    if (decisionCounter >= maxTotalDecisions) {
+      throw new Error(`Lifetime decision cap of ${maxTotalDecisions} reached.`);
+    }
+    if (
+      callOptions !== undefined &&
+      (!callOptions ||
+        typeof callOptions !== "object" ||
+        Array.isArray(callOptions))
+    ) {
+      throw new Error("decide() options must be an object.");
+    }
+    decisionCounter++;
+    await semaphore.acquire();
+    try {
+      if (signal.aborted) throw new Error("Workflow aborted.");
+      return await submitWorkflowDecision(
+        {
+          ...(callOptions as Record<string, unknown> | undefined),
+          state,
+          questions,
+        },
+        signal,
+        (result) => {
+          totalTokens += result.totalTokens;
+          emit({ kind: "decision_usage", totalTokens: result.totalTokens });
+          if (options.journalPath) {
+            appendJournalEntry(options.journalPath, {
+              kind: "decision",
+              ...result,
+            });
+          }
+        },
+      );
+    } finally {
+      semaphore.release();
+    }
   }
 
   async function callAgent(
@@ -114,6 +174,15 @@ export async function executeWorkflow(
     }
     const opts: AgentCallOptions = { ...(callOptions as AgentCallOptions) };
     if (
+      opts.conversationId !== undefined &&
+      (typeof opts.conversationId !== "string" ||
+        !/^(?:conv-|local-conv-)[A-Za-z0-9_-]+$/.test(opts.conversationId))
+    ) {
+      throw new Error(
+        "agent() conversationId must be a conv-... or local-conv-... ID.",
+      );
+    }
+    if (
       opts.maxToolCalls !== undefined &&
       (!Number.isSafeInteger(opts.maxToolCalls) || opts.maxToolCalls <= 0)
     ) {
@@ -132,6 +201,27 @@ export async function executeWorkflow(
       const outcome = await spawner(
         { prompt, options: opts, callIndex },
         signal,
+        {
+          onStarted: (conversationId) => {
+            if (options.journalPath) {
+              appendJournalEntry(options.journalPath, {
+                kind: "agent_started",
+                callIndex,
+                conversationId,
+              });
+            }
+          },
+          // Live usage so status rows can show tokens before the agent ends.
+          onUsage: (totalTokens) =>
+            emit({
+              kind: "agent",
+              callIndex,
+              label,
+              phase,
+              status: "running",
+              totalTokens,
+            }),
+        },
       );
       // Account for the outcome even when the run was aborted meanwhile: the
       // spawner returns what the interrupted subagent had already consumed.
@@ -141,6 +231,9 @@ export async function executeWorkflow(
           callIndex,
           label,
           prompt,
+          ...(opts.conversationId
+            ? { resumedConversationId: opts.conversationId }
+            : {}),
           outcome,
         });
       }
@@ -231,6 +324,7 @@ export async function executeWorkflow(
 
   const context = vm.createContext({
     agent,
+    decide,
     parallel,
     pipeline,
     phase,

@@ -1,3 +1,5 @@
+import type { InputCreateMessagePayload } from "@/types/protocol_v2";
+import type { ConversationRuntimeScope } from "@/types/runtime-scope";
 import { getOrCreateProcessTransport } from "./connection";
 import {
   enqueueInboundUserMessage,
@@ -8,19 +10,45 @@ import {
   shouldProcessInboundMessageDirectly,
   shouldQueueInboundMessage,
 } from "./queue";
-import { emitListenerStatus, getActiveRuntime } from "./runtime";
+import {
+  emitListenerStatus,
+  evictConversationRuntimeIfIdle,
+  getActiveRuntime,
+} from "./runtime";
 import { isRuntimeTeleportPending } from "./teleport";
 import type { ListenerTransport } from "./transport";
 import type { handleIncomingMessage } from "./turn";
 import type {
   ConversationRuntime,
   IncomingMessage,
+  ListenerConnectionId,
   ListenerRuntime,
   ProcessQueuedTurn,
   StartListenerOptions,
 } from "./types";
 
 const MAX_ACCEPTED_INPUT_DISPOSITIONS = 4096;
+
+export function createIncomingMessage(
+  scope: ConversationRuntimeScope,
+  payload: InputCreateMessagePayload,
+  connectionId?: ListenerConnectionId,
+): IncomingMessage {
+  return {
+    type: "message",
+    connectionId,
+    ...(scope.agent_id ? { agentId: scope.agent_id } : {}),
+    conversationId: scope.conversation_id,
+    clientToolAllowlist: payload.client_tool_allowlist,
+    clientToolset: payload.client_toolset,
+    clientPreferences: payload.client_preferences,
+    externalToolScopeIds: payload.external_tool_scope_ids,
+    excludeInteractiveTools: payload.exclude_interactive_tools,
+    responseFormat: payload.response_format,
+    imageFailureMode: payload.image_failure_mode,
+    messages: payload.messages,
+  };
+}
 
 export function getAcceptedInputDisposition(
   runtime: ConversationRuntime,
@@ -92,6 +120,10 @@ export function dispatchInboundMessageWhenReady(params: {
     onInputAccepted?.(result);
   };
 
+  // The chained work below uses this exact runtime object. Reserve it so a
+  // preceding turn's post-cleanup eviction cannot unregister it first; a
+  // detached runtime projects WAITING_ON_INPUT for its whole turn.
+  runtime.pendingInboundDispatches += 1;
   runtime.messageQueue = runtime.messageQueue
     .then(async () => {
       if (listener !== getActiveRuntime() || listener.intentionallyClosed) {
@@ -187,5 +219,9 @@ export function dispatchInboundMessageWhenReady(params: {
         options.connectionId,
       );
       scheduleQueuePump(runtime, socket, options, processQueuedTurn);
+    })
+    .finally(() => {
+      runtime.pendingInboundDispatches -= 1;
+      evictConversationRuntimeIfIdle(runtime);
     });
 }

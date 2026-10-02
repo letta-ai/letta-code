@@ -44,6 +44,7 @@ import {
   updateRuntimeExternalTools,
 } from "./external-tools";
 import {
+  createIncomingMessage,
   dispatchInboundMessageWhenReady,
   getAcceptedInputDisposition,
   rememberAcceptedInputDisposition,
@@ -277,17 +278,18 @@ export function createListenerMessageHandler(
         return;
       }
 
-      if (parsed.type === "monitor_stop") {
-        const { handleMonitorStopCommand } = await import(
-          "./commands/monitors"
+      if (parsed.type === "launch_subagent" || parsed.type === "monitor_stop") {
+        const { handleTaskControlCommand } = await import(
+          "./commands/task-control"
         );
-        const response = await handleMonitorStopCommand(parsed, runtime);
-        safeSocketSend(
+        await handleTaskControlCommand(parsed, {
+          runtime,
           socket,
-          response,
-          "monitor_stop_response",
-          "monitor_stop",
-        );
+          connectionId,
+          getOrCreateScopedRuntime,
+          runDetachedListenerTask,
+          safeSocketSend,
+        });
         return;
       }
 
@@ -295,7 +297,6 @@ export function createListenerMessageHandler(
         handleAppServerInfoCommand(parsed, { socket, safeSocketSend });
         return;
       }
-
       if (
         handleRuntimeStartProtocolCommand(parsed, {
           socket,
@@ -305,11 +306,12 @@ export function createListenerMessageHandler(
           runDetachedListenerTask,
           getOrCreateScopedRuntime,
           replaySyncStateForRuntime,
+          queuePumpOptions: opts,
+          processQueuedTurn,
         })
       ) {
         return;
       }
-
       if (parsed.type === "teleport_probe") {
         handleTeleportProbe(parsed, socket, safeSocketSend);
         return;
@@ -484,6 +486,7 @@ export function createListenerMessageHandler(
             return;
           }
           const approvals = parsed.payload.continuation?.approvals;
+          const clientPreferences = parsed.payload.client_preferences;
           if (scopedRuntime.isProcessing) {
             acknowledgeInput(
               false,
@@ -500,6 +503,7 @@ export function createListenerMessageHandler(
                 connectionId,
                 agentId: teleportAgentId,
                 conversationId: parsed.runtime.conversation_id,
+                clientPreferences,
                 messages: buildTeleportContinuationMessages({
                   teleportId,
                   approvals,
@@ -548,21 +552,11 @@ export function createListenerMessageHandler(
           acknowledgeInput(false, error);
           return;
         }
-        const incoming: IncomingMessage = {
-          type: "message",
+        const incoming = createIncomingMessage(
+          parsed.runtime,
+          inputPayload,
           connectionId,
-          ...(parsed.runtime.agent_id
-            ? { agentId: parsed.runtime.agent_id }
-            : {}),
-          conversationId: parsed.runtime.conversation_id,
-          clientToolAllowlist: inputPayload.client_tool_allowlist,
-          clientToolset: inputPayload.client_toolset,
-          externalToolScopeIds: inputPayload.external_tool_scope_ids,
-          excludeInteractiveTools: inputPayload.exclude_interactive_tools,
-          responseFormat: inputPayload.response_format,
-          imageFailureMode: inputPayload.image_failure_mode,
-          messages: inputPayload.messages,
-        };
+        );
         const hasApprovalPayload = incoming.messages.some(
           (payload): payload is ApprovalCreate =>
             "type" in payload && payload.type === "approval",

@@ -538,6 +538,52 @@ test.each(["run", "messages", "super-run"] as const)(
   },
 );
 
+test("initial assignment identity survives enqueue without leaking into later launches", async () => {
+  const submitted: string[] = [];
+  for (const clientMessageId of [
+    "assignment:initial-input",
+    undefined,
+    undefined,
+  ]) {
+    const wire = transport();
+    const result = await launchListenerConversation(
+      {
+        connectionId: "conn-target",
+        scope,
+        content: "work",
+        clientMessageId,
+        backend,
+        settings,
+        mode: "standard",
+        noWait: true,
+      },
+      {
+        client: wire.client,
+        enqueue: async (input) => {
+          submitted.push(input.clientMessageId);
+          return receipt(input.clientMessageId);
+        },
+      },
+    );
+    expect(result).toMatchObject({
+      status: "queued",
+      receipt: { client_message_id: submitted.at(-1) },
+    });
+    expect(wire.commands[0]).not.toHaveProperty("client_message_id");
+    expect(wire.commands[0]).not.toMatchObject({
+      request_id: submitted.at(-1),
+    });
+    expect(settings).not.toHaveProperty("client_message_id");
+  }
+  expect(submitted[0]).toBe("assignment:initial-input");
+  for (const id of submitted.slice(1)) {
+    expect(id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+  }
+  expect(new Set(submitted).size).toBe(3);
+});
+
 test("noWait returns the enqueue receipt once Cloud accepts the send and reads nothing else", async () => {
   // The Agent tool's child uses this: it configures the listener, submits,
   // and exits. The parent process follows the remote turn from the receipt.

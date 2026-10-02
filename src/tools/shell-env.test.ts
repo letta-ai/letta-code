@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { getMemoryFilesystemRoot } from "@/agent/memory-filesystem";
@@ -223,6 +223,52 @@ describe("shellEnv letta shim", () => {
     });
     expect(versionResult.status).toBe(0);
     expect(versionResult.stdout.trim()).toBe("shimmed-letta --version");
+  });
+
+  test("Electron shim exports Node mode from a fresh shell without changing other launchers", () => {
+    if (process.platform === "win32") return;
+
+    const directory = mkdtempSync(path.join(tmpdir(), "letta-electron-shim-"));
+    const stub = path.join(directory, "fake Electron executable");
+    const otherStub = path.join(directory, "ordinary runtime");
+    const probe =
+      '#!/bin/sh\nprintf "env=%s\\n" "$ELECTRON_RUN_AS_NODE"\nprintf "arg=%s\\n" "$@"\n';
+    try {
+      writeFileSync(stub, probe, { mode: 0o755 });
+      writeFileSync(otherStub, probe, { mode: 0o755 });
+      const env = { ...process.env };
+      delete env.ELECTRON_RUN_AS_NODE;
+
+      const electronShim = ensureLettaShimDir(
+        { command: stub, args: ["fixed argument", "it's quoted"] },
+        stub,
+      );
+      const electronResult = spawnSync(
+        path.join(electronShim as string, "letta"),
+        ["--version", "user argument"],
+        { env, encoding: "utf8" },
+      );
+      expect(electronResult.status).toBe(0);
+      expect(electronResult.stdout).toBe(
+        "env=1\narg=fixed argument\narg=it's quoted\narg=--version\narg=user argument\n",
+      );
+
+      const ordinaryShim = ensureLettaShimDir({
+        command: otherStub,
+        args: ["fixed argument"],
+      });
+      const ordinaryResult = spawnSync(
+        path.join(ordinaryShim as string, "letta"),
+        ["--version"],
+        { env, encoding: "utf8" },
+      );
+      expect(ordinaryResult.status).toBe(0);
+      expect(ordinaryResult.stdout).toBe(
+        "env=\narg=fixed argument\narg=--version\n",
+      );
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   test("sandboxed processes place the letta shim under harness state", () => {

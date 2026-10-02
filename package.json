@@ -1,6 +1,6 @@
 {
   "name": "@letta-ai/letta-code",
-  "version": "0.32.15",
+  "version": "0.34.2",
   "lettaStartupLogProtocol": 1,
   "description": "Letta Code is a CLI tool for interacting with stateful Letta agents from the terminal.",
   "type": "module",
@@ -27,10 +27,16 @@
     "dist/memory-constraints.js.map",
     "dist/mcp-client.js",
     "dist/mcp-client.js.map",
+    "dist/mcp-oauth.js",
+    "dist/mcp-oauth.js.map",
     "dist/agent-presets.js",
     "dist/agent-presets.js.map",
     "dist/schedules.js",
     "dist/schedules.js.map",
+    "dist/ask-user-question.js",
+    "dist/ask-user-question.js.map",
+    "dist/ask-user-question.cjs",
+    "dist/ask-user-question.cjs.map",
     "dist/channels-public.js",
     "dist/channels-public.js.map",
     "dist/gateway-core.js",
@@ -46,6 +52,13 @@
   ],
   "exports": {
     ".": "./letta.js",
+    "./ask-user-question": {
+      "types": "./dist/types/ask-user-question.d.ts",
+      "browser": "./dist/ask-user-question.js",
+      "import": "./dist/ask-user-question.js",
+      "require": "./dist/ask-user-question.cjs",
+      "default": "./dist/ask-user-question.js"
+    },
     "./app-server-protocol": {
       "types": "./dist/types/types/app-server-protocol.d.ts"
     },
@@ -70,6 +83,11 @@
       "types": "./dist/types/mcp-client.d.ts",
       "import": "./dist/mcp-client.js",
       "default": "./dist/mcp-client.js"
+    },
+    "./mcp-oauth": {
+      "types": "./dist/types/mcp-oauth-public.d.ts",
+      "import": "./dist/mcp-oauth.js",
+      "default": "./dist/mcp-oauth.js"
     },
     "./protocol": {
       "types": "./dist/types/types/protocol.d.ts"
@@ -130,18 +148,20 @@
     "access": "public"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "^0.86.0",
+    "@earendil-works/pi-ai": "^0.99.1",
     "@janhapke/sharp-electron": "0.35.3-electron.1",
-    "@letta-ai/letta-agent-sdk": "^0.8.11",
+    "@letta-ai/letta-agent-sdk": "0.8.24",
     "@letta-ai/letta-client": "^1.10.2",
     "@letta-ai/trajectory": "0.2.0",
     "@modelcontextprotocol/sdk": "1.30.0",
     "@pierre/diffs": "1.2.2",
     "@scarf/scarf": "^1.4.0",
+    "@shikijs/langs": "4.0.2",
     "cron-parser": "^5.6.1",
     "cross-spawn": "^7.0.6",
     "glob": "^13.0.0",
-    "ink-link": "^5.0.0",
+    "ink": "5.2.1",
+    "ink-link": "^4.1.0",
     "node-pty": "^1.1.0",
     "open": "^10.2.0",
     "react": "18.2.0",
@@ -165,7 +185,6 @@
     "diff": "^8.0.2",
     "grammy": "^1.42.0",
     "husky": "9.1.7",
-    "ink": "^5.0.0",
     "ink-spinner": "^5.0.0",
     "ink-text-input": "^5.0.0",
     "lint-staged": "16.2.4",
@@ -206,6 +225,9 @@
   },
   "typesVersions": {
     "*": {
+      "ask-user-question": [
+        "./dist/types/ask-user-question.d.ts"
+      ],
       "agent-presets": [
         "./dist/types/agent-presets.d.ts"
       ],
@@ -226,6 +248,9 @@
       ],
       "mcp-client": [
         "./dist/types/mcp-client.d.ts"
+      ],
+      "mcp-oauth": [
+        "./dist/types/mcp-oauth-public.d.ts"
       ],
       "channels": [
         "./dist/types/channels-public.d.ts"

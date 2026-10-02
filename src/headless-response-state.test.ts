@@ -18,6 +18,10 @@ import { parseCliArgs } from "./src/cli/args";
 import { handleHeadlessCommand } from "./src/headless";
 import { settingsManager } from "./src/settings-manager";
 await settingsManager.initialize();
+// The fake backend reports an OpenAI endpoint type for its fake model, so
+// auto toolset detection resolves codex; pin "default" so the fixture's
+// Bash/Read tool calls exist regardless of model-based toolset detection.
+settingsManager.setToolsetPreference("agent-headless-response-state", "default");
 const reviewed = process.env.RESPONSE_STATE_REVIEWED === "1";
 const bidirectional = process.env.RESPONSE_STATE_BIDIRECTIONAL === "1";
 let turns = 0;

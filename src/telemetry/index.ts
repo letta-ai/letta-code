@@ -14,6 +14,7 @@ import {
   type TelemetryAgentOrigin,
 } from "./agent-origin";
 import { extractInputChannel } from "./channel";
+import { isPermanentRejection, TelemetryEventQueueCap } from "./event-queue";
 import { installFatalErrorHandlers } from "./fatal-error-handler";
 
 export type TelemetrySurface =
@@ -318,6 +319,7 @@ class TelemetryManager {
   private serverVersion: string | null = null;
   /** Deduplicates concurrent flushes (prevents the 429 double-flush race on shutdown). */
   private inflightFlush: Promise<void> | null = null;
+  private eventQueueCap = new TelemetryEventQueueCap();
 
   private async resolveTelemetryApiKey(): Promise<string | undefined> {
     if (process.env.LETTA_API_KEY) {
@@ -515,6 +517,8 @@ class TelemetryManager {
 
     this.eventActingUsers.set(event, getRuntimeActingUserId());
     this.events.push(event);
+    // Drop the oldest events if failed re-queues have grown the queue to its bound.
+    this.eventQueueCap.enforce(this.events);
 
     // Flush if batch size is reached
     if (this.events.length >= this.MAX_BATCH_SIZE) {
@@ -753,9 +757,6 @@ class TelemetryManager {
     });
   }
 
-  /**
-   * Track errors
-   */
   trackError(
     errorType: string,
     errorMessage: string,
@@ -769,14 +770,13 @@ class TelemetryManager {
       subagentType?: string;
       modelHandle?: string;
       fallbackKind?: string;
+      omitDebugLogTail?: boolean;
     },
   ) {
-    // Skip error telemetry for self-hosted users to avoid spamming cloud analytics
     if (!this.isCloudUser()) {
       return;
     }
 
-    // Skip non-actionable errors that create noise
     if (isNonActionableError(errorMessage)) {
       return;
     }
@@ -789,7 +789,9 @@ class TelemetryManager {
       model_id: options?.modelId,
       run_id: options?.runId,
       recent_chunks: options?.recentChunks,
-      debug_log_tail: debugLogFile.getTail(),
+      debug_log_tail: options?.omitDebugLogTail
+        ? undefined
+        : debugLogFile.getTail(),
       is_subagent: options?.isSubagent,
       subagent_type: options?.subagentType,
       model_handle: options?.modelHandle,
@@ -800,10 +802,7 @@ class TelemetryManager {
     this.track("error", data);
   }
 
-  /**
-   * Track user input
-   * Note: agent_id is automatically added from currentAgentId
-   */
+  /** Agent ID is automatically added to user input from currentAgentId. */
   trackUserInput(input: string, messageType: string, modelId: string) {
     this.messageCount++;
 
@@ -943,7 +942,9 @@ class TelemetryManager {
             },
             { signal: AbortSignal.timeout(5000), actingUserId },
           );
-        } catch {
+        } catch (error) {
+          // Permanent 4xx rejections fail on every retry, so drop the group.
+          if (isPermanentRejection(error)) return;
           for (const event of events) failed.add(event);
         }
       }),
@@ -951,6 +952,7 @@ class TelemetryManager {
     // Keep failed snapshots in their original order, ahead of late arrivals.
     // Successful groups must not be duplicated when another identity fails.
     this.events.unshift(...eventsToSend.filter((event) => failed.has(event)));
+    this.eventQueueCap.enforce(this.events);
   }
 
   /** Await in-flight flush and drain remaining queue (bounded by DRAIN_TIMEOUT_MS). Replaces fire-and-forget flush on exit. */

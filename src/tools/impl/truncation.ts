@@ -134,100 +134,6 @@ export function truncateByChars(
 }
 
 /**
- * Truncates text by line count.
- * Optionally enforces max characters per line.
- * Optionally writes full output to an overflow file.
- */
-export function truncateByLines(
-  text: string,
-  maxLines: number,
-  maxCharsPerLine?: number,
-  toolName: string = "output",
-  options?: TruncationOptions,
-): {
-  content: string;
-  wasTruncated: boolean;
-  originalLineCount: number;
-  linesShown: number;
-  overflowPath?: string;
-} {
-  const lines = text.split("\n");
-  const originalLineCount = lines.length;
-
-  // Determine if we should use middle truncation
-  const useMiddleTruncation =
-    options?.useMiddleTruncation ?? OVERFLOW_CONFIG.MIDDLE_TRUNCATE;
-
-  let selectedLines: string[];
-  if (useMiddleTruncation && lines.length > maxLines) {
-    // Middle truncation: keep beginning and end lines
-    const halfMax = Math.floor(maxLines / 2);
-    const beginning = lines.slice(0, halfMax);
-    const end = lines.slice(-halfMax);
-    const omittedLines = lines.length - maxLines;
-    selectedLines = [
-      ...beginning,
-      `... [${omittedLines.toLocaleString()} lines omitted] ...`,
-      ...end,
-    ];
-  } else {
-    // Post truncation: keep beginning lines only
-    selectedLines = lines.slice(0, maxLines);
-  }
-
-  let linesWereTruncatedInLength = false;
-
-  // Apply per-line character limit if specified
-  if (maxCharsPerLine !== undefined) {
-    selectedLines = selectedLines.map((line) => {
-      if (line.length > maxCharsPerLine) {
-        linesWereTruncatedInLength = true;
-        return `${line.slice(0, maxCharsPerLine)}... [line truncated]`;
-      }
-      return line;
-    });
-  }
-
-  const wasTruncated = lines.length > maxLines || linesWereTruncatedInLength;
-
-  const overflowPath = wasTruncated
-    ? writeOverflow(() => text, toolName, options)
-    : undefined;
-
-  let content = selectedLines.join("\n");
-
-  if (wasTruncated) {
-    const notices: string[] = [];
-
-    if (lines.length > maxLines) {
-      notices.push(
-        `[Output truncated: showing ${maxLines.toLocaleString()} of ${originalLineCount.toLocaleString()} lines.]`,
-      );
-    }
-
-    if (linesWereTruncatedInLength && maxCharsPerLine) {
-      notices.push(
-        `[Some lines exceeded ${maxCharsPerLine.toLocaleString()} characters and were truncated.]`,
-      );
-    }
-
-    if (overflowPath) {
-      notices.push(`[Full output written to: ${overflowPath}]`);
-    }
-
-    content += `\n\n${notices.join(" ")}`;
-  }
-
-  return {
-    content,
-    wasTruncated,
-    originalLineCount,
-    linesShown: selectedLines.length,
-    overflowPath,
-  };
-}
-
-/**
  * Truncates an array of items (file paths, directory entries, etc.)
  * Optionally writes full output to an overflow file.
  */
@@ -286,13 +192,4 @@ export function truncateArray<T>(
     wasTruncated: true,
     overflowPath,
   };
-}
-
-/**
- * Format bytes for human-readable display
- */
-export function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} bytes`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }

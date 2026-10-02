@@ -4,7 +4,7 @@ import type {
 } from "@/types/task-control-protocol";
 import { addToMessageQueue } from "@/utils/message-queue-bridge";
 import { formatMonitorEventNotification } from "@/utils/task-notifications";
-import { kill_bash } from "./kill-bash";
+import { killBackgroundProcess } from "./kill-bash";
 import { backgroundProcesses } from "./process_manager";
 
 export async function stopMonitor(
@@ -33,8 +33,7 @@ export async function stopMonitor(
   }
   if (process.status !== "running") return { ...response, success: true };
 
-  const result = await kill_bash({ shell_id: command.process_id });
-  if (!result.killed)
+  if (!killBackgroundProcess(command.process_id))
     return { ...response, error: "Monitor could not be stopped" };
 
   addToMessageQueue({
@@ -44,7 +43,6 @@ export async function stopMonitor(
     actingUserId: command.runtime.acting_user_id,
     text: formatMonitorEventNotification({
       taskId: command.process_id,
-      description: process.description ?? command.process_id,
       event:
         "The user cancelled this Monitor. Do not restart it unless the user asks.",
     }),

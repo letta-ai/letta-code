@@ -134,7 +134,7 @@ export async function tryCloudHeadlessSend(
   const format = values["output-format"] ?? "text";
   const noWait = Boolean(values["no-wait"]);
   const started = Date.now();
-  const clientMessageId = randomUUID();
+  const clientMessageId = values["client-message-id"] ?? randomUUID();
   const controller = new AbortController();
   const submissionTimeout = setTimeout(
     () =>

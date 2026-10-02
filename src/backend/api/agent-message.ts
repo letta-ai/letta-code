@@ -104,7 +104,7 @@ export async function resolveAgentMessageDestination(
     conversationId === input.currentConversation?.conversationId
   ) {
     throw new Error(
-      "Cannot message the current conversation. Use a Monitor or schedule for self-invocation.",
+      "Cannot message the current conversation. Use Monitor for external events or Wake for timed self-invocation.",
     );
   }
   return { agentId, conversationId };

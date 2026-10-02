@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { clearCapturedToolExecutionContexts } from "@/tools/manager";
+import {
+  clearCapturedToolExecutionContexts,
+  getServerToolName,
+} from "@/tools/manager";
 import { prepareToolExecutionContextForResolvedTarget } from "@/tools/toolset";
 import { TOOLSET_CATALOG } from "@/tools/toolset-catalog";
 
@@ -14,22 +17,21 @@ describe("request-scoped client toolsets", () => {
       toolsetPreference: "auto",
       clientToolset: {
         base: "none",
-        include: ["Read", "LS", "Glob", "Grep"],
+        include: ["Read", "Glob", "Grep"],
       },
-      clientToolAllowlist: ["Read", "LS", "Glob", "Grep"],
+      clientToolAllowlist: ["Read", "Glob", "Grep"],
     });
 
     expect(prepared.toolset).toBe("none");
     expect(prepared.toolsetPreference).toBe("auto");
     expect(prepared.preparedToolContext.loadedToolNames).toEqual([
       "Read",
-      "LS",
       "Glob",
       "Grep",
     ]);
     expect(
       prepared.preparedToolContext.clientTools.map((tool) => tool.name),
-    ).toEqual(["Read", "LS", "Glob", "Grep"]);
+    ).toEqual(["Read", "Glob", "Grep"]);
   });
 
   test("applies exclusions after additive tool includes", async () => {
@@ -37,7 +39,7 @@ describe("request-scoped client toolsets", () => {
       modelIdentifier: "anthropic/claude-sonnet-5",
       toolsetPreference: "auto",
       clientToolset: { include: ["AskUserQuestion"] },
-      exclude: ["AskUserQuestion"],
+      exclude: ["AskUserQuestionAsync"],
       clientToolAllowlist: ["Read", "AskUserQuestion"],
     });
 
@@ -78,15 +80,15 @@ describe("request-scoped client toolsets", () => {
 
       expect(prepared.toolset).toBe("letta");
       expect(prepared.preparedToolContext.loadedToolNames).toEqual(
-        TOOLSET_CATALOG.letta.tools.map((name) =>
-          name === "Task" ? "Agent" : name,
-        ),
+        TOOLSET_CATALOG.letta.tools.map(getServerToolName),
       );
       expect(prepared.preparedToolContext.loadedToolNames).toContain("Edit");
       expect(prepared.preparedToolContext.loadedToolNames).not.toContain(
         "ApplyPatch",
       );
-      expect(prepared.preparedToolContext.loadedToolNames).toContain("memory");
+      expect(prepared.preparedToolContext.loadedToolNames).not.toContain(
+        "memory",
+      );
       expect(prepared.preparedToolContext.loadedToolNames).not.toContain(
         "memory_apply_patch",
       );
@@ -94,6 +96,7 @@ describe("request-scoped client toolsets", () => {
         "exec_command",
       );
       expect(prepared.preparedToolContext.loadedToolNames).toContain("Monitor");
+      expect(prepared.preparedToolContext.loadedToolNames).toContain("Wake");
     }
   });
 
@@ -115,15 +118,14 @@ describe("request-scoped client toolsets", () => {
     const prepared = await prepareToolExecutionContextForResolvedTarget({
       modelIdentifier: "anthropic/claude-sonnet-5",
       toolsetPreference: "auto",
-      clientToolAllowlist: ["Read", "LS", "Glob", "Grep"],
+      clientToolAllowlist: ["Read", "Glob", "Grep"],
     });
 
-    // LS, Glob and Grep are not in the default base; allowlisting them is
-    // what loads them.
+    // Glob and Grep are not in the default base; allowlisting them is what
+    // loads them.
     expect([...prepared.preparedToolContext.loadedToolNames].sort()).toEqual([
       "Glob",
       "Grep",
-      "LS",
       "Read",
     ]);
   });
@@ -161,5 +163,33 @@ describe("request-scoped client toolsets", () => {
         clientToolset: { include: ["NotABundledTool"] },
       }),
     ).rejects.toThrow("Unknown bundled client tool: NotABundledTool");
+  });
+
+  test("names a removed bundled tool as removed", async () => {
+    await expect(
+      prepareToolExecutionContextForResolvedTarget({
+        modelIdentifier: "anthropic/claude-sonnet-5",
+        toolsetPreference: "auto",
+        clientToolset: { include: ["Read", "MultiEdit"] },
+      }),
+    ).rejects.toThrow(
+      "Unknown bundled client tool: MultiEdit (removed from Letta Code)",
+    );
+  });
+
+  test("keeps Docs Ezra's request-scoped read-only tools available", async () => {
+    const prepared = await prepareToolExecutionContextForResolvedTarget({
+      modelIdentifier: "openai/gpt-5.6-sol",
+      toolsetPreference: "auto",
+      clientToolset: { base: "none", include: ["Read", "LS", "Glob", "Grep"] },
+      clientToolAllowlist: ["Read", "LS", "Glob", "Grep"],
+    });
+
+    expect(prepared.preparedToolContext.loadedToolNames).toEqual([
+      "Read",
+      "LS",
+      "Glob",
+      "Grep",
+    ]);
   });
 });

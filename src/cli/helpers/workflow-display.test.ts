@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { WorkflowExecutionSnapshot } from "@/tools/workflow/execution-registry";
-import { renderWorkflowTree } from "./workflow-display";
+import {
+  formatWorkflowLaunchLine,
+  formatWorkflowStatusRow,
+  parseWorkflowTaskId,
+  renderWorkflowTree,
+} from "./workflow-display";
 
 const SNAPSHOT: WorkflowExecutionSnapshot = {
   taskId: "workflow_1",
@@ -79,5 +84,30 @@ describe("renderWorkflowTree", () => {
     expect(lines[0]).toStartWith("✗ review");
     expect(lines[1]).toBe("  1/3 agents done · 9s · 133.6k tokens · failed");
     expect(lines[2]).toBe("  error: Workflow stopped");
+  });
+});
+
+describe("launch line and status row", () => {
+  test("parses the task id from a launch result and summarizes it", () => {
+    const result =
+      "Workflow launched in background. Task ID: workflow_7\nSummary: x";
+    expect(parseWorkflowTaskId(result)).toBe("workflow_7");
+    expect(formatWorkflowLaunchLine(result)).toBe(
+      "Launched in background · task workflow_7 · /workflows to watch",
+    );
+    expect(parseWorkflowTaskId("Provide `script`")).toBeNull();
+    expect(formatWorkflowLaunchLine("Provide `script`")).toBeNull();
+  });
+
+  test("status row carries glyph, name, description and progress", () => {
+    expect(formatWorkflowStatusRow(SNAPSHOT)).toEqual({
+      glyph: "○",
+      name: "review",
+      description: "Review changed files",
+      progress: "1/3 agents done · 9s · 133.6k tokens",
+    });
+    expect(
+      formatWorkflowStatusRow({ ...SNAPSHOT, status: "failed" }).progress,
+    ).toBe("1/3 agents done · 9s · 133.6k tokens · failed");
   });
 });

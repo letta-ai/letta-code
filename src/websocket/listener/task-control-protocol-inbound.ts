@@ -1,8 +1,23 @@
 import type {
+  ExecuteCommandCommand,
   MonitorStopCommand,
   RemoveQueueItemCommand,
 } from "@/types/task-control-protocol";
 import { isAgentRuntimeScope } from "./protocol-validation";
+
+export function isExecuteCommandCommand(
+  value: unknown,
+): value is ExecuteCommandCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as Partial<ExecuteCommandCommand>;
+  return (
+    c.type === "execute_command" &&
+    typeof c.command_id === "string" &&
+    typeof c.request_id === "string" &&
+    isAgentRuntimeScope(c.runtime) &&
+    (c.args === undefined || typeof c.args === "string")
+  );
+}
 
 export function isRemoveQueueItemCommand(
   value: unknown,

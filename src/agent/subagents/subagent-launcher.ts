@@ -28,6 +28,7 @@ import {
 } from "@/utils/subagent-launch-marker";
 import { TRANSCRIPT_ROOT_ENV } from "@/utils/transcript-paths";
 import type { SubagentLaunchProfile, SubagentMemoryScope } from ".";
+import { MEMORY_WORKER_SESSION_ENV } from "./memory-worker-session";
 
 interface ResolveSubagentLauncherOptions {
   env?: NodeJS.ProcessEnv;
@@ -202,7 +203,7 @@ function resolveMemorySubagentScratchpad(
  *   - MEMORY_DIR / LETTA_MEMORY_DIR are only overridden when the subagent
  *     declares the memory-subagent launch profile. Those subagents operate on
  *     the parent's memory as their working filesystem (reflection, memory,
- *     init, history-analyzer). Other subagents keep whatever MEMORY_DIR they
+ *     init). Other subagents keep whatever MEMORY_DIR they
  *     inherited from the parent process (usually unset).
  *
  * Pure function, no side effects — straightforward to unit-test.
@@ -232,9 +233,10 @@ export function composeSubagentChildEnv(
     ...(inheritedBaseUrl && { LETTA_BASE_URL: inheritedBaseUrl }),
     ...(actingUserId && { [ACTING_USER_ID_ENV]: actingUserId }),
     LETTA_CODE_AGENT_ROLE: "subagent",
+    [MEMORY_WORKER_SESSION_ENV]: subagentType === "memory" ? "1" : undefined,
     [SUBAGENT_LAUNCH_ENV]: "1",
     [SUBAGENT_LAUNCH_PROFILE_ENV]: launchProfile ?? "default",
-    ...(subagentType === "reflection" && {
+    ...((subagentType === "reflection" || subagentType === "memory") && {
       [LETTA_MOD_CAPABILITY_PROFILE_ENV]: PROVIDERS_ONLY_MOD_CAPABILITY_PROFILE,
     }),
     // Replace inherited parent addresses even when the new scope is unknown.

@@ -363,7 +363,8 @@ export function formatArgsDisplay(
             return { display, parsed };
           }
 
-          // TaskOutput: show task id with optional non-blocking marker
+          // TaskOutput (retired; still in saved transcripts): show task id
+          // with optional non-blocking marker
           if (toolName.toLowerCase() === "taskoutput" && parsed.task_id) {
             const taskId = String(parsed.task_id);
             const isNonBlocking = parsed.block === false;
