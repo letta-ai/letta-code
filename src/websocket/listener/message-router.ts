@@ -38,6 +38,10 @@ import {
   getOrCreateProcessTransport,
   subscribeListenerConnection,
 } from "./connection";
+import {
+  type AbortMessageResult,
+  abortMessageResponseFields,
+} from "./control-inputs";
 import { getBootWorkingDirectory } from "./cwd";
 import {
   handleExternalToolCallResponseCommand,
@@ -179,7 +183,7 @@ type MessageRouterParams = {
       };
       processQueuedTurn: ProcessQueuedTurn;
     },
-  ) => Promise<boolean>;
+  ) => Promise<boolean | AbortMessageResult>;
   stampInboundUserMessageOtids: (incoming: IncomingMessage) => IncomingMessage;
   safeSocketSend: SafeSocketSend;
   runDetachedListenerTask: RunDetachedListenerTask;
@@ -691,7 +695,7 @@ export function createListenerMessageHandler(
           return;
         }
         try {
-          const aborted = await handleAbortMessageInput(runtime, {
+          const result = await handleAbortMessageInput(runtime, {
             command: parsed,
             connectionId,
             socket,
@@ -708,9 +712,7 @@ export function createListenerMessageHandler(
                 type: "abort_message_response",
                 request_id: parsed.request_id,
                 runtime: parsed.runtime,
-                aborted,
-                success: true,
-                ...(parsed.wait_for_settlement && { lease_settled: aborted }),
+                ...abortMessageResponseFields(parsed, result),
               },
               "abort_message_response",
               "abort_message",

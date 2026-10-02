@@ -252,7 +252,19 @@ export function createConversationRuntime(
     normalizedAgentId,
     normalizedConversationId,
   );
-  const turnLifecycle = new TurnLifecycle();
+  listener.settledRunIdsByConversation ??= new Map();
+  let settledRunIds = listener.settledRunIdsByConversation.get(runtimeKey);
+  if (!settledRunIds) {
+    settledRunIds = [];
+    listener.settledRunIdsByConversation.set(runtimeKey, settledRunIds);
+    // Bound memory: drop the oldest conversations that have no live runtime.
+    for (const key of listener.settledRunIdsByConversation.keys()) {
+      if (listener.settledRunIdsByConversation.size <= 256) break;
+      if (key !== runtimeKey && !listener.conversationRuntimes.has(key))
+        listener.settledRunIdsByConversation.delete(key);
+    }
+  }
+  const turnLifecycle = new TurnLifecycle(undefined, settledRunIds);
   const conversationRuntime: ConversationRuntime = {
     listener,
     key: runtimeKey,

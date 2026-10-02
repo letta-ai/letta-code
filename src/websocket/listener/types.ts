@@ -395,6 +395,8 @@ export type ListenerRuntime = {
   conversationRuntimes: Map<string, ConversationRuntime>;
   /** Recent run-to-send snapshots survive idle conversation runtime eviction. */
   clientMessageIdsByRunIdByConversation?: Map<string, Map<string, string[]>>;
+  /** Recently settled run IDs per conversation, kept across runtime eviction. */
+  settledRunIdsByConversation?: Map<string, string[]>;
   /** Per-conversation worktree directory watchers for CWD auto-detection fallback. */
   worktreeWatcherByConversation: Map<
     string,

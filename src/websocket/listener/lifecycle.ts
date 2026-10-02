@@ -39,7 +39,7 @@ import {
   MAX_RETRY_DURATION_MS,
 } from "./constants";
 import {
-  handleAbortMessageInput,
+  abortMessageInput,
   handleApprovalResponseInput,
   handleChangeDeviceStateInput,
 } from "./control-inputs";
@@ -505,7 +505,7 @@ export async function attachOpenListenerSocket(
     getOrCreateScopedRuntime,
     handleApprovalResponseInput,
     handleChangeDeviceStateInput,
-    handleAbortMessageInput,
+    handleAbortMessageInput: abortMessageInput,
     stampInboundUserMessageOtids,
     safeSocketSend,
     runDetachedListenerTask,
@@ -785,7 +785,7 @@ async function connectWithRetry(
     getOrCreateScopedRuntime,
     handleApprovalResponseInput,
     handleChangeDeviceStateInput,
-    handleAbortMessageInput,
+    handleAbortMessageInput: abortMessageInput,
     stampInboundUserMessageOtids,
     safeSocketSend,
     runDetachedListenerTask,

@@ -30,6 +30,8 @@ type ActiveTurnState = {
   loopStatus: ActiveTurnLoopStatus;
   workingDirectory: string;
   runId: string | null;
+  /** Every run this lease has owned, so a late exact abort still matches. */
+  runIds: readonly string[];
   executingToolCallIds: readonly string[];
 };
 
@@ -39,6 +41,7 @@ type CancellingTurnState = {
   lease: TurnLease;
   abortController: AbortController;
   runId: string | null;
+  runIds: readonly string[];
   executingToolCallIds: readonly string[];
   loopStatus: "WAITING_ON_INPUT";
   ownerFinished: boolean;
@@ -54,11 +57,19 @@ type TurnState =
 export type TurnLifecycleSnapshot =
   | IdleTurnState
   | CommandTurnState
-  | Omit<ActiveTurnState, "abortController">
+  | Omit<ActiveTurnState, "abortController" | "runIds">
   | Omit<
       CancellingTurnState,
-      "abortController" | "ownerFinished" | "externalSettlementPending"
+      | "abortController"
+      | "ownerFinished"
+      | "externalSettlementPending"
+      | "runIds"
     >;
+
+/** How an exact run ID relates to this conversation's turn leases. */
+export type TurnRunMatch = "current" | "settled" | null;
+
+const SETTLED_RUN_HISTORY_LIMIT = 32;
 
 export type TurnCancellationTransition = {
   transitioned: boolean;
@@ -87,9 +98,18 @@ export class TurnLifecycle {
   readonly #createId: () => string;
   #state: TurnState = IDLE_STATE;
   #lastStopReason: StopReasonType | null = null;
+  readonly #settledRunIds: string[];
 
-  constructor(createId: () => string = () => crypto.randomUUID()) {
+  /**
+   * `settledRunIds` may be shared with the listener so settled-run history
+   * survives eviction of an idle conversation runtime.
+   */
+  constructor(
+    createId: () => string = () => crypto.randomUUID(),
+    settledRunIds: string[] = [],
+  ) {
     this.#createId = createId;
+    this.#settledRunIds = settledRunIds;
   }
 
   get kind(): TurnState["kind"] {
@@ -134,6 +154,31 @@ export class TurnLifecycle {
       return this.#state.lease;
     }
     return null;
+  }
+
+  /**
+   * Match an exact run against the unsettled lease, then against recently
+   * settled leases. Lets a second abort for the same run join or observe the
+   * first one instead of reporting the run as unknown.
+   */
+  matchRun(runId: string): TurnRunMatch {
+    const state = this.#state;
+    if (
+      (state.kind === "active" || state.kind === "cancelling") &&
+      state.runIds.includes(runId)
+    ) {
+      return "current";
+    }
+    return this.#settledRunIds.includes(runId) ? "settled" : null;
+  }
+
+  #becomeIdle(state: ActiveTurnState | CancellingTurnState): void {
+    for (const runId of state.runIds) {
+      if (!this.#settledRunIds.includes(runId)) this.#settledRunIds.push(runId);
+    }
+    const overflow = this.#settledRunIds.length - SETTLED_RUN_HISTORY_LIMIT;
+    if (overflow > 0) this.#settledRunIds.splice(0, overflow);
+    this.#state = IDLE_STATE;
   }
 
   snapshot(): TurnLifecycleSnapshot {
@@ -188,6 +233,7 @@ export class TurnLifecycle {
       loopStatus: options.initialStatus ?? "SENDING_API_REQUEST",
       workingDirectory: options.workingDirectory,
       runId: null,
+      runIds: [],
       executingToolCallIds: [...(options.executingToolCallIds ?? [])],
     };
     this.#lastStopReason = null;
@@ -220,7 +266,11 @@ export class TurnLifecycle {
     if (this.#state.runId === runId) {
       return false;
     }
-    this.#state = { ...this.#state, runId };
+    const runIds =
+      runId && !this.#state.runIds.includes(runId)
+        ? [...this.#state.runIds, runId]
+        : this.#state.runIds;
+    this.#state = { ...this.#state, runId, runIds };
     return true;
   }
 
@@ -296,6 +346,7 @@ export class TurnLifecycle {
       lease: state.lease,
       abortController: state.abortController,
       runId: state.runId,
+      runIds: state.runIds,
       executingToolCallIds: [...state.executingToolCallIds],
       loopStatus: "WAITING_ON_INPUT",
       ownerFinished: false,
@@ -326,7 +377,7 @@ export class TurnLifecycle {
         ownerFinished: true,
       };
     } else {
-      this.#state = IDLE_STATE;
+      this.#becomeIdle(state);
     }
     return {
       finished: true,
@@ -346,7 +397,7 @@ export class TurnLifecycle {
     }
 
     if (state.ownerFinished) {
-      this.#state = IDLE_STATE;
+      this.#becomeIdle(state);
       return { settled: true, released: true };
     }
 
@@ -364,7 +415,7 @@ export class TurnLifecycle {
         state.abortController.abort();
       }
       this.#lastStopReason = stopReason;
-      this.#state = IDLE_STATE;
+      this.#becomeIdle(state);
       return {
         finished: true,
         previousKind: state.kind,

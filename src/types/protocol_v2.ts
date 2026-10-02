@@ -32,6 +32,10 @@ import type {
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import type { ConnectProviderOAuthConfig } from "@/types/provider-oauth-config";
 import type {
+  AbortMessageCommand,
+  AbortMessageResponseMessage,
+} from "./abort-message-protocol";
+import type {
   AppServerInfoCommand,
   AppServerInfoResponseMessage,
 } from "./app-server-info";
@@ -86,6 +90,7 @@ import type {
   ToolsetPreference,
 } from "./toolset-protocol";
 
+export type * from "./abort-message-protocol";
 export type * from "./approval-classification-protocol";
 export type * from "./background-process-protocol";
 export type * from "./cwd-protocol";
@@ -677,14 +682,6 @@ export interface ChangeDeviceStateCommand {
   payload: ChangeDeviceStatePayload;
 }
 
-export interface AbortMessageCommand {
-  type: "abort_message";
-  runtime: ConversationRuntimeScope;
-  request_id?: string; // Sends a control-channel response when provided.
-  run_id?: string | null;
-  wait_for_settlement?: boolean;
-  pause_queue?: boolean;
-}
 export interface SyncCommand {
   type: "sync";
   runtime: ConversationRuntimeScope;
@@ -744,16 +741,6 @@ export interface TerminalExitedMessage {
   type: "terminal_exited";
   terminal_id: string;
   exitCode: number;
-  error?: string;
-}
-
-export interface AbortMessageResponseMessage {
-  type: "abort_message_response";
-  request_id: string;
-  runtime: ConversationRuntimeScope;
-  aborted: boolean; // Active turn or pending approval was interrupted.
-  lease_settled?: boolean; // Listener waited for its original lease.
-  success: boolean;
   error?: string;
 }
 

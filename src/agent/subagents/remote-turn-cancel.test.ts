@@ -77,7 +77,7 @@ test("a dequeued queued send is confirmed only after its exact Super Run settles
 
 test.each([
   { name: "listener-owned", connection_id: "listener-1" },
-  { name: "ownerless", connection_id: undefined },
+  { name: "cloud-only (no listener receipt)", connection_id: undefined },
 ])(
   "$name non-default execution is only confirmed after it becomes terminal",
   async (variant) => {
@@ -285,7 +285,7 @@ test("only the currently owned continuation is listener-aborted in a multi-run a
   expect(aborted).toEqual(["run-current"]);
 });
 
-test("a stale receipt connection uses ownerless exact Cloud fallback", async () => {
+test("a stale receipt connection uses the exact Cloud-only fallback", async () => {
   const result = await cancelAcceptedRemoteTurn(
     { ...receipt, connection_id: "disconnected-listener" },
     {
@@ -593,4 +593,55 @@ test("a child run 404 is not terminal proof for an accepted receipt", async () =
   expect(result.status).toBe("unconfirmed");
   if (result.status === "unconfirmed")
     expect(result.detail).toContain("correlated run is still non-terminal");
+});
+
+test("a Cloud relay that settles the listener first still credits the direct abort", async () => {
+  // C1 (exact Cloud cancel, relayed to the listener by Cloud) lands before C2
+  // (TaskStop's direct listener abort). The listener answers C2 with
+  // joined/already_settled plus lease_settled, so TaskStop can confirm.
+  const order: string[] = [];
+  let reads = 0;
+  const listenerActive = () => !order.includes("listener");
+  const result = await cancelAcceptedRemoteTurn(
+    { ...receipt, connection_id: "listener-1" },
+    {
+      dequeue: async () => ({
+        client_message_id: receipt.client_message_id,
+        status: "too_late",
+      }),
+      exact: async () =>
+        ++reads === 1
+          ? exact({ run_ids: ["run-own"] })
+          : exact({ status: "CAN", cancelled_at: "now", run_ids: ["run-own"] }),
+      cancelConversationRun: async (_conversationId, runId) => {
+        order.push("cloud");
+        return { [runId]: "cancelled" };
+      },
+      runtimeStatus: async () =>
+        listenerActive()
+          ? {
+              ...inactiveRuntime(),
+              statuses: [
+                {
+                  ...runtimeEntry(),
+                  state: "ACTIVE" as const,
+                  active_harness: { connection_id: "listener-1" },
+                  active_run_ids: ["run-own"],
+                },
+              ],
+            }
+          : inactiveRuntime(),
+      abortListenerRun: async (_receipt, runId) => {
+        order.push("listener");
+        expect(runId).toBe("run-own");
+        return true;
+      },
+      retrieveRun: async (runId) => terminalRun(runId),
+      sleep: async () => {},
+      timeoutMs: 1_000,
+    },
+  );
+
+  expect(order).toEqual(["cloud", "listener"]);
+  expect(result).toEqual({ status: "confirmed" });
 });

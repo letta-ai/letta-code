@@ -7,6 +7,7 @@ import { migratePermissionMode } from "@/permissions/mode";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import type {
   AbortMessageCommand,
+  AbortMessageOutcome,
   ApprovalResponseBody,
   ChangeDeviceStateCommand,
 } from "@/types/protocol_v2";
@@ -347,7 +348,76 @@ export async function handleChangeDeviceStateInput(
   return true;
 }
 
+export type AbortMessageResult = {
+  aborted: boolean;
+  outcome: AbortMessageOutcome;
+  queuePaused: boolean;
+  /** Set when the caller asked to wait: the target lease is gone. */
+  leaseSettled: boolean;
+};
+
+/** Boolean form for callers that only need "did this stop something". */
 export async function handleAbortMessageInput(
+  ...args: Parameters<typeof abortMessageInput>
+): Promise<boolean> {
+  return (await abortMessageInput(...args)).aborted;
+}
+
+/**
+ * Success fields of abort_message_response. A boolean handler result keeps
+ * the pre-outcome response shape exactly.
+ */
+export function abortMessageResponseFields(
+  command: AbortMessageCommand,
+  value: boolean | AbortMessageResult,
+) {
+  const result =
+    typeof value === "boolean"
+      ? {
+          aborted: value,
+          outcome: undefined,
+          queuePaused: undefined,
+          leaseSettled: value,
+        }
+      : value;
+  return {
+    aborted: result.aborted,
+    ...(result.outcome && { outcome: result.outcome }),
+    ...(result.queuePaused !== undefined && {
+      queue_paused: result.queuePaused,
+    }),
+    success: true as const,
+    ...(command.wait_for_settlement && { lease_settled: result.leaseSettled }),
+  };
+}
+
+async function waitForLeaseRelease(
+  scopedRuntime: ConversationRuntime,
+  leaseId: string,
+  timeoutMs: number,
+  runLabel: string | null,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let snapshot = scopedRuntime.turnLifecycle.snapshot();
+  while (
+    (snapshot.kind === "active" || snapshot.kind === "cancelling") &&
+    snapshot.lease.id === leaseId
+  ) {
+    if (Date.now() >= deadline)
+      throw new Error(`Timed out waiting for run ${runLabel} to settle`);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    snapshot = scopedRuntime.turnLifecycle.snapshot();
+  }
+}
+
+/**
+ * Apply an abort_message. Exact (run_id) aborts only touch the lease that
+ * owned that run: a second abort for a lease that is already cancelling joins
+ * it, and one for a lease that already settled says so instead of "unknown".
+ * Broad aborts with no turn to stop still fence the queue unless pause_queue
+ * is false.
+ */
+export async function abortMessageInput(
   listener: ListenerRuntime,
   params: {
     command: AbortMessageCommand;
@@ -381,7 +451,13 @@ export async function handleAbortMessageInput(
     ) => Promise<void>;
     settlementTimeoutMs: number;
   }> = {},
-): Promise<boolean> {
+): Promise<AbortMessageResult> {
+  const notApplicable: AbortMessageResult = {
+    aborted: false,
+    outcome: "not_applicable",
+    queuePaused: false,
+    leaseSettled: false,
+  };
   const resolvedDeps = {
     getActiveRuntime,
     getPendingControlRequestCount,
@@ -431,7 +507,7 @@ export async function handleAbortMessageInput(
     listener !== resolvedDeps.getActiveRuntime() ||
     listener.intentionallyClosed
   ) {
-    return false;
+    return notApplicable;
   }
 
   const scope = {
@@ -445,19 +521,58 @@ export async function handleAbortMessageInput(
     scope.agent_id,
     scope.conversation_id,
   );
-  const hasActiveTurn = scopedRuntime.turnLifecycle.kind === "active";
+  const lifecycleSnapshot = scopedRuntime.turnLifecycle.snapshot();
+  const hasActiveTurn = lifecycleSnapshot.kind === "active";
+  const pauseQueue = params.command.pause_queue !== false;
+  const waitForSettlement = params.command.wait_for_settlement === true;
+  const exactRunId = params.command.run_id ?? null;
 
   // A CLI waiter may observe completion just before its abort arrives. Never
   // apply an old run's cancellation to the replacement conversation turn.
-  if (
-    params.command.run_id &&
-    params.command.run_id !== scopedRuntime.activeRunId
-  ) {
-    return false;
+  const runMatch = exactRunId
+    ? scopedRuntime.turnLifecycle.matchRun(exactRunId)
+    : "current";
+  if (runMatch === null) return notApplicable;
+  if (runMatch === "settled") {
+    return {
+      aborted: true,
+      outcome: "already_settled",
+      queuePaused: false,
+      leaseSettled: waitForSettlement,
+    };
+  }
+
+  // Another caller (for example Cloud relaying the same TaskStop) already
+  // cancelled this lease. Join it instead of racing a second cancellation.
+  if (lifecycleSnapshot.kind === "cancelling") {
+    if (pauseQueue) scopedRuntime.queueRuntime.pause();
+    if (waitForSettlement) {
+      await waitForLeaseRelease(
+        scopedRuntime,
+        lifecycleSnapshot.lease.id,
+        resolvedDeps.settlementTimeoutMs,
+        exactRunId ?? lifecycleSnapshot.runId,
+      );
+    }
+    return {
+      aborted: true,
+      outcome: "joined",
+      queuePaused: pauseQueue,
+      leaseSettled: waitForSettlement,
+    };
   }
 
   if (!hasActiveTurn && !hasPendingApprovals) {
-    return false;
+    if (exactRunId || !pauseQueue) return notApplicable;
+    // Nothing to stop, but a broad stop must still keep queued user input
+    // from starting after the caller is told the conversation stopped.
+    scopedRuntime.queueRuntime.pause();
+    return {
+      aborted: false,
+      outcome: "queue_fenced",
+      queuePaused: true,
+      leaseSettled: false,
+    };
   }
 
   const cancellation = scopedRuntime.turnLifecycle.requestCancellation({
@@ -466,7 +581,7 @@ export async function handleAbortMessageInput(
   // Interrupt semantics: the current turn stops and the user's queued messages
   // park until resume_queue or the user's next message. System items (task
   // notifications, cron, mod continuations) still drain once idle.
-  if (params.command.pause_queue !== false) scopedRuntime.queueRuntime.pause();
+  if (pauseQueue) scopedRuntime.queueRuntime.pause();
   const interruptedRunId = cancellation.runId;
   const pendingRequestsSnapshot = hasPendingApprovals
     ? resolvedDeps.getPendingControlRequests(listener, scope)
@@ -609,21 +724,20 @@ export async function handleAbortMessageInput(
     params.opts as StartListenerOptions,
     params.processQueuedTurn,
   );
-  if (params.command.wait_for_settlement && cancellation.lease) {
-    const leaseId = cancellation.lease.id;
-    const deadline = Date.now() + resolvedDeps.settlementTimeoutMs;
-    let snapshot = scopedRuntime.turnLifecycle.snapshot();
-    while (
-      (snapshot.kind === "active" || snapshot.kind === "cancelling") &&
-      snapshot.lease.id === leaseId
-    ) {
-      if (Date.now() >= deadline)
-        throw new Error(`Timed out waiting for run ${cancelRunId} to settle`);
-      await new Promise((resolve) => setTimeout(resolve, 5));
-      snapshot = scopedRuntime.turnLifecycle.snapshot();
-    }
+  if (waitForSettlement && cancellation.lease) {
+    await waitForLeaseRelease(
+      scopedRuntime,
+      cancellation.lease.id,
+      resolvedDeps.settlementTimeoutMs,
+      cancelRunId,
+    );
   }
-  return true;
+  return {
+    aborted: true,
+    outcome: "interrupted",
+    queuePaused: pauseQueue,
+    leaseSettled: waitForSettlement,
+  };
 }
 
 export async function handleCwdChange(
