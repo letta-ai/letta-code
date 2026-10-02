@@ -32,7 +32,6 @@ import {
 import { cliPermissions } from "@/permissions/cli-permissions-instance";
 import { resolveAllowedMemoryRoots } from "@/permissions/memory-paths";
 import { sessionPermissions } from "@/permissions/session";
-import { beginDiskSpaceActivity } from "@/reminders/disk-space-monitor";
 import {
   getCurrentWorkingDirectory,
   getRuntimeContext,
@@ -958,12 +957,8 @@ async function spawnSubagentInContext(
     });
   }
 
-  // The child shares this disk; keep the parent's monitor polling meanwhile.
-  const releaseDiskWatch = beginDiskSpaceActivity({
-    agentId: resolvedParentAgentId,
-    conversationId: resolvedParentConversationId,
-  });
-  const result = executeSubagent(
+  // Execute subagent - state updates are handled via the state store
+  const result = await executeSubagent(
     type,
     config,
     model,
@@ -984,7 +979,8 @@ async function spawnSubagentInContext(
     resolvedParentConversationId,
     clientMessageId,
   );
-  return result.finally(releaseDiskWatch);
+
+  return result;
 }
 
 export function spawnSubagent(

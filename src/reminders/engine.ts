@@ -17,6 +17,7 @@ import {
   type SharedReminderId,
   type SharedReminderMode,
 } from "./catalog";
+import { evaluateDiskSpaceReminder } from "./disk-space";
 import type { SessionContextReason, SharedReminderState } from "./state";
 
 export interface AgentReminderContext {
@@ -492,6 +493,17 @@ ${changeBlocks.join("\n\n")}
 ${SYSTEM_REMINDER_CLOSE}`;
 }
 
+async function buildDiskSpaceReminder(
+  context: SharedReminderContext,
+): Promise<string | null> {
+  const result = evaluateDiskSpaceReminder({
+    workingDirectory: context.workingDirectory ?? process.cwd(),
+    notified: context.state.hasNotifiedLowDiskSpace,
+  });
+  context.state.hasNotifiedLowDiskSpace = result.notified;
+  return result.text;
+}
+
 export const sharedReminderProviders: Record<
   SharedReminderId,
   SharedReminderProvider
@@ -505,6 +517,7 @@ export const sharedReminderProviders: Record<
   "memory-git-sync": buildMemoryGitSyncReminder,
   "command-io": buildCommandIoReminder,
   "toolset-change": buildToolsetChangeReminder,
+  "disk-space": buildDiskSpaceReminder,
 };
 
 export function assertSharedReminderCoverage(): void {

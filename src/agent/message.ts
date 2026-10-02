@@ -13,7 +13,7 @@ import type { MessageCreateParams as ConversationMessageCreateParams } from "@le
 import { ACTING_USER_ID_ENV, ACTING_USER_ID_HEADER } from "@/agent/acting-user";
 import type { SkillSource } from "@/agent/skill-sources";
 import { type Backend, getBackend } from "@/backend";
-import { prepareDiskSpaceReminderForRequest } from "@/reminders/disk-space-monitor";
+import { takePendingDiskSpaceReminder } from "@/reminders/disk-space";
 import { getRuntimeContext } from "@/runtime-context";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import {
@@ -446,13 +446,10 @@ export async function sendMessageStreamWithBackend(
   // Deliver at the next model boundary (including tool continuations), not by
   // launching an unsolicited run from a filesystem watcher. Keep approvals and
   // the original input/otid in place, then append the runtime reminder.
-  // Low-disk alerts held for loops without a queue consumer (headless
-  // one-shot, including subagents) ride the same boundary.
-  const diskReminder = await prepareDiskSpaceReminderForRequest({
-    agentId: opts.agentId,
-    conversationId,
-  });
-  const runtimeReminders = [skillReminder, diskReminder?.text].filter(
+  // A low-disk alert held for a loop with no queue (e.g. a subagent) rides
+  // this same boundary.
+  const diskReminder = takePendingDiskSpaceReminder();
+  const runtimeReminders = [skillReminder, diskReminder].filter(
     (text): text is string => Boolean(text),
   );
   const requestMessages = [
@@ -594,7 +591,6 @@ export async function sendMessageStreamWithBackend(
       );
       // A rejected request must not consume the notification; retries need it.
       sentClientSkills.set(skillScope, clientSkills);
-      diskReminder?.commit();
       stream = attachResponseStateTracking(stream, {
         scope: responseStateScope,
         conversationId: resolvedConversationId,

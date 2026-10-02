@@ -1,122 +1,256 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import {
-  advanceDiskPressure,
-  classifyDiskPressure,
-  createDiskPressureState,
-  type DiskSpaceSample,
-  formatLowDiskSpaceReminder,
-  measureDiskSpace,
+  DISK_SPACE_CHECK_INTERVAL_MS,
+  deliverDiskSpaceReminder,
+  evaluateDiskSpaceReminder,
+  getCachedDiskSpaceSample,
+  isDiskSpaceLow,
+  refreshDiskSpaceSample,
+  resetDiskSpaceAlertForTests,
+  resetDiskSpaceCacheForTests,
+  takePendingDiskSpaceReminder,
+  watchDiskSpaceDuring,
 } from "@/reminders/disk-space";
+import {
+  clearPendingMessages,
+  type QueuedMessage,
+  setMessageQueueAdder,
+} from "@/utils/message-queue-bridge";
 
 const GIB = 1024 ** 3;
-const MIB = 1024 ** 2;
+const SANDBOX_ENV = { LETTA_MANAGED_CLOUD_RUNTIME: "1" };
 
-function sampleAt(usedPercent: number, totalBytes = 100 * GIB) {
-  return {
-    path: "/work",
-    totalBytes,
-    availableBytes: totalBytes * (1 - usedPercent / 100),
-  } satisfies DiskSpaceSample;
+function fakeStatfs(totalBytes: number, availableBytes: number) {
+  const calls: string[] = [];
+  const fn = async (path: string) => {
+    calls.push(path);
+    return {
+      bsize: 1024,
+      blocks: totalBytes / 1024,
+      bavail: availableBytes / 1024,
+    };
+  };
+  return { fn, calls };
 }
 
-describe("classifyDiskPressure", () => {
-  test("warning at 85% used or under 2 GiB free", () => {
-    expect(classifyDiskPressure(sampleAt(84))).toBe("ok");
-    expect(classifyDiskPressure(sampleAt(85))).toBe("warning");
-    // 12 GiB volume with 1.9 GiB free is only 84% used.
+async function flush() {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+afterEach(() => {
+  resetDiskSpaceCacheForTests();
+});
+
+describe("isDiskSpaceLow", () => {
+  test("low at 90% used", () => {
     expect(
-      classifyDiskPressure({
+      isDiskSpaceLow({
         path: "/",
-        totalBytes: 12 * GIB,
-        availableBytes: 1.9 * GIB,
+        totalBytes: 100 * GIB,
+        availableBytes: 10 * GIB,
       }),
-    ).toBe("warning");
+    ).toBe(true);
   });
 
-  test("critical at 95% used or under 512 MiB free", () => {
-    expect(classifyDiskPressure(sampleAt(95))).toBe("critical");
+  test("low under 1 GiB free even below 90% used", () => {
+    // 5 GiB volume, 0.8 GiB free = 84% used, but under the 1 GiB floor.
     expect(
-      classifyDiskPressure({
+      isDiskSpaceLow({
         path: "/",
-        totalBytes: 4 * GIB,
-        availableBytes: 500 * MIB,
+        totalBytes: 5 * GIB,
+        availableBytes: 0.8 * GIB,
       }),
-    ).toBe("critical");
+    ).toBe(true);
   });
 
-  test("an empty or unreadable volume is never low", () => {
+  test("not low with room to spare", () => {
     expect(
-      classifyDiskPressure({ path: "/", totalBytes: 0, availableBytes: 0 }),
-    ).toBe("ok");
+      isDiskSpaceLow({
+        path: "/",
+        totalBytes: 20 * GIB,
+        availableBytes: 15 * GIB,
+      }),
+    ).toBe(false);
+  });
+
+  test("zero-size volume is never low", () => {
+    expect(
+      isDiskSpaceLow({ path: "/", totalBytes: 0, availableBytes: 0 }),
+    ).toBe(false);
   });
 });
 
-describe("advanceDiskPressure hysteresis", () => {
-  function run(percents: number[]) {
-    let state = createDiskPressureState();
-    const fired: Array<string | null> = [];
-    for (const percent of percents) {
-      const next = advanceDiskPressure(state, sampleAt(percent));
-      state = next.state;
-      fired.push(next.fire);
-    }
-    return fired;
-  }
+describe("evaluateDiskSpaceReminder", () => {
+  test("does nothing outside managed Cloud sandboxes", () => {
+    const statfs = fakeStatfs(20 * GIB, 0.1 * GIB);
+    const result = evaluateDiskSpaceReminder({
+      workingDirectory: "/root",
+      notified: false,
+      env: {},
+      statfsFn: statfs.fn,
+    });
+    expect(result.text).toBeNull();
+    expect(statfs.calls).toEqual([]);
+  });
 
-  test("each escalation fires once", () => {
-    expect(run([80, 86, 88, 90, 96, 99, 100])).toEqual([
-      null,
-      "warning",
-      null,
-      null,
-      "critical",
-      null,
-      null,
+  test("first turn does not wait on the filesystem; the next turn reports", async () => {
+    const statfs = fakeStatfs(20 * GIB, 0.5 * GIB);
+    const first = evaluateDiskSpaceReminder({
+      workingDirectory: "/root/workspace",
+      notified: false,
+      env: SANDBOX_ENV,
+      nowMs: 0,
+      statfsFn: statfs.fn,
+    });
+    expect(first.text).toBeNull();
+    expect(statfs.calls).toEqual(["/root/workspace"]);
+
+    await flush();
+    const second = evaluateDiskSpaceReminder({
+      workingDirectory: "/root/workspace",
+      notified: first.notified,
+      env: SANDBOX_ENV,
+      nowMs: 1_000,
+      statfsFn: statfs.fn,
+    });
+    expect(second.text).toContain("LOW DISK SPACE");
+    expect(second.text).toContain("/root/workspace");
+    expect(second.text).toContain("512 MB available");
+    expect(second.notified).toBe(true);
+    // Throttled: the second turn inside the interval did not re-measure.
+    expect(statfs.calls).toHaveLength(1);
+  });
+
+  test("reports once per episode and re-arms after recovery", async () => {
+    let available = 0.5 * GIB;
+    const fn = async () => ({
+      bsize: 1024,
+      blocks: (20 * GIB) / 1024,
+      bavail: available / 1024,
+    });
+    const run = (notified: boolean, nowMs: number) =>
+      evaluateDiskSpaceReminder({
+        workingDirectory: "/root",
+        notified,
+        env: SANDBOX_ENV,
+        nowMs,
+        statfsFn: fn,
+      });
+
+    let state = run(false, 0);
+    await flush();
+    state = run(state.notified, 1);
+    expect(state.text).not.toBeNull();
+
+    state = run(state.notified, 2);
+    expect(state.text).toBeNull();
+    expect(state.notified).toBe(true);
+
+    available = 10 * GIB;
+    state = run(state.notified, DISK_SPACE_CHECK_INTERVAL_MS + 2);
+    await flush();
+    state = run(state.notified, DISK_SPACE_CHECK_INTERVAL_MS + 3);
+    expect(state.text).toBeNull();
+    expect(state.notified).toBe(false);
+
+    available = 0.2 * GIB;
+    state = run(state.notified, 2 * DISK_SPACE_CHECK_INTERVAL_MS + 3);
+    await flush();
+    state = run(state.notified, 2 * DISK_SPACE_CHECK_INTERVAL_MS + 4);
+    expect(state.text).toContain("LOW DISK SPACE");
+  });
+
+  test("statfs rejection and synchronous throw are silent", async () => {
+    const rejecting = async () => {
+      throw new Error("EACCES");
+    };
+    const result = evaluateDiskSpaceReminder({
+      workingDirectory: "/root",
+      notified: false,
+      env: SANDBOX_ENV,
+      nowMs: 0,
+      statfsFn: rejecting,
+    });
+    expect(result.text).toBeNull();
+    await flush();
+    expect(getCachedDiskSpaceSample()).toBeNull();
+
+    const throwing = (() => {
+      throw new Error("boom");
+    }) as unknown as typeof rejecting;
+    refreshDiskSpaceSample("/root", {
+      nowMs: DISK_SPACE_CHECK_INTERVAL_MS,
+      statfsFn: throwing,
+    });
+    expect(getCachedDiskSpaceSample()).toBeNull();
+  });
+
+  test("measures the real volume without throwing", async () => {
+    refreshDiskSpaceSample(process.cwd());
+    for (let i = 0; i < 20 && !getCachedDiskSpaceSample(); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    const sample = getCachedDiskSpaceSample();
+    expect(sample?.totalBytes).toBeGreaterThan(0);
+  });
+});
+
+describe("watchDiskSpaceDuring", () => {
+  const managed = { LETTA_MANAGED_CLOUD_RUNTIME: "1" } as NodeJS.ProcessEnv;
+  afterEach(() => {
+    resetDiskSpaceAlertForTests();
+    setMessageQueueAdder(null);
+    clearPendingMessages();
+  });
+
+  test("a subagent loop gets the alert on its next request while tools run", async () => {
+    let free = 10 * GIB;
+    const statfsFn = async (path: string) =>
+      fakeStatfs(20 * GIB, free).fn(path);
+    await watchDiskSpaceDuring(
+      "/work",
+      (text) => deliverDiskSpaceReminder(text),
+      async () => {
+        free = 1.5 * GIB; // a long install fills the disk mid-batch
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      },
+      { env: managed, statfsFn, intervalMs: 10 },
+    );
+    expect(takePendingDiskSpaceReminder()).toContain("LOW DISK SPACE");
+    expect(takePendingDiskSpaceReminder()).toBeNull();
+  });
+
+  test("an idle parent gets a queued notification, escalating once to critical", async () => {
+    const queued: QueuedMessage[] = [];
+    setMessageQueueAdder((message) => queued.push(message));
+    let free = 1.5 * GIB;
+    const statfsFn = async (path: string) =>
+      fakeStatfs(20 * GIB, free).fn(path);
+    const deliver = (text: string) =>
+      deliverDiskSpaceReminder(text, {
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      });
+    await watchDiskSpaceDuring("/work", deliver, async () => {}, {
+      env: managed,
+      statfsFn,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    free = 0.5 * GIB; // 97.5% used
+    await watchDiskSpaceDuring("/work", deliver, async () => {}, {
+      env: managed,
+      statfsFn,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await watchDiskSpaceDuring("/work", deliver, async () => {}, {
+      env: managed,
+      statfsFn,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(queued.map((m) => m.kind)).toEqual([
+      "task_notification",
+      "task_notification",
     ]);
-  });
-
-  test("jumping straight to critical does not fire a later warning", () => {
-    expect(run([96, 92, 86])).toEqual(["critical", null, null]);
-  });
-
-  test("critical re-arms only after dropping below its re-arm mark", () => {
-    // 92% is below critical but above the 90% re-arm mark.
-    expect(run([96, 92, 96])).toEqual(["critical", null, null]);
-    expect(run([96, 89, 96])).toEqual(["critical", null, "critical"]);
-  });
-
-  test("warning re-arms only after dropping below its re-arm mark", () => {
-    expect(run([86, 82, 86])).toEqual(["warning", null, null]);
-    expect(run([86, 79, 86])).toEqual(["warning", null, "warning"]);
-  });
-});
-
-describe("formatLowDiskSpaceReminder", () => {
-  test("is a system reminder with usage, cleanup targets, and what to keep", () => {
-    const text = formatLowDiskSpaceReminder("warning", sampleAt(88, 20 * GIB));
-    expect(text.startsWith("<system-reminder>")).toBe(true);
-    expect(text).toContain("88% full (2.4 GB available of 20.0 GB)");
-    for (const target of [
-      "node_modules",
-      "_cacache",
-      "bun",
-      "pip",
-      "uv",
-      "dist/",
-      "/tmp",
-      "git worktree remove",
-      "Pause large installs and builds",
-      "Keep source files, uncommitted changes",
-    ]) {
-      expect(text).toContain(target);
-    }
-  });
-});
-
-describe("measureDiskSpace", () => {
-  test("reads the real volume holding a directory", async () => {
-    const sample = await measureDiskSpace(process.cwd());
-    expect(sample.totalBytes).toBeGreaterThan(0);
-    expect(sample.availableBytes).toBeGreaterThanOrEqual(0);
+    expect(queued[0]?.conversationId).toBe("conv-1");
   });
 });

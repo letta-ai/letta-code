@@ -127,19 +127,6 @@ export function formatMonitorEventNotification(notification: {
 </task-notification>`;
 }
 
-/** Harness-originated event (not a task completion), e.g. low disk space. */
-export function formatHarnessEventNotification(notification: {
-  taskId: string;
-  summary: string;
-  result: string;
-}): string {
-  return `<task-notification>
-<task-id>${escapeXml(notification.taskId)}</task-id>
-<summary>${escapeXml(notification.summary)}</summary>
-<result>${escapeXml(notification.result)}</result>
-</task-notification>`;
-}
-
 export function extractTaskNotificationsForDisplay(message: string): {
   notifications: string[];
   cleanedText: string;
