@@ -35,7 +35,11 @@ const SEND = (chatId: string, message: string) => ({
 
 function createResolver(
   sendMessage: ReturnType<typeof mock>,
-  opts: { errorString?: string; onHandleAction?: () => void } = {},
+  opts: {
+    errorString?: string;
+    onHandleAction?: () => void;
+    supportSendRich?: boolean;
+  } = {},
 ): MessageChannelExecutionResolver {
   const transport: ChannelMessageActionTransport = { sendMessage };
   return {
@@ -58,7 +62,21 @@ function createResolver(
               return opts.errorString ?? "Error:";
             },
           }
-        : createSlackMessageActionAdapter({ react: true, uploadFile: true }),
+        : opts.supportSendRich
+          ? {
+              describeMessageTool: () => ({ actions: ["send", "send-rich"] }),
+              handleAction: async ({ request, route, adapter }) => {
+                const result = await adapter.sendMessage({
+                  channel: request.channel,
+                  accountId: route.accountId,
+                  chatId: request.chatId,
+                  text: request.message ?? "",
+                  threadId: request.threadId ?? route.threadId,
+                });
+                return `Message sent to slack (message_id: ${result.messageId})`;
+              },
+            }
+          : createSlackMessageActionAdapter({ react: true, uploadFile: true }),
     }),
     resolveProactiveContext: () => "Error: not used",
   };
@@ -248,6 +266,88 @@ describe("MessageChannel idempotency (executor)", () => {
     expect(sendMessage).toHaveBeenCalledTimes(0);
     expect(actionCalls).toBe(2);
   });
+
+  test("relay suppresses matching successful explicit text even after another action", async () => {
+    const sendMessage = mock(async () => ({ messageId: "m-relay" }));
+    const resolver = createResolver(sendMessage);
+    const scope = createMessageChannelIdempotencyScope();
+    const explicit = execOpts(resolver, scope);
+    const relay = { ...explicit, idempotencyMode: "relay" as const };
+
+    await executeMessageChannel(SEND("C123", "  final reply  "), explicit);
+    await executeMessageChannel(
+      SEND("C123", "early acknowledgement"),
+      explicit,
+    );
+    await expect(
+      executeMessageChannel(SEND("C123", "final reply"), relay),
+    ).rejects.toBeInstanceOf(MessageChannelDuplicateActionError);
+
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+  });
+
+  test("matching explicit send is suppressed after automatic relay", async () => {
+    const sendMessage = mock(async () => ({ messageId: "m-relay-first" }));
+    const resolver = createResolver(sendMessage);
+    const scope = createMessageChannelIdempotencyScope();
+    const explicit = execOpts(resolver, scope);
+    const relay = { ...explicit, idempotencyMode: "relay" as const };
+
+    await executeMessageChannel(SEND("C123", "final reply"), relay);
+    await expect(
+      executeMessageChannel(SEND("C123", " final reply "), explicit),
+    ).rejects.toBeInstanceOf(MessageChannelDuplicateActionError);
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  test("transfers successful text-delivery fingerprints across handoff", async () => {
+    const sendMessage = mock(async () => ({ messageId: "m-handoff" }));
+    const resolver = createResolver(sendMessage, { supportSendRich: true });
+    const sourceScope = createMessageChannelIdempotencyScope();
+
+    await executeMessageChannel(
+      { ...SEND("C123", "final reply"), action: "send-rich" },
+      execOpts(resolver, sourceScope),
+    );
+    const snapshot = sourceScope.snapshot();
+    expect(snapshot).not.toBeNull();
+    const destinationScope = createMessageChannelIdempotencyScope(
+      snapshot ?? undefined,
+    );
+
+    await expect(
+      executeMessageChannel(SEND("C123", " final reply "), {
+        ...execOpts(resolver, destinationScope),
+        idempotencyMode: "relay",
+      }),
+    ).rejects.toBeInstanceOf(MessageChannelDuplicateActionError);
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  test("relay does not suppress the same text for another thread or failed send", async () => {
+    let call = 0;
+    const sendMessage = mock(async () => {
+      call++;
+      if (call === 1) throw new Error("temporary failure");
+      return { messageId: `m-relay-${call}` };
+    });
+    const resolver = createResolver(sendMessage);
+    const scope = createMessageChannelIdempotencyScope();
+    const relay = {
+      ...execOpts(resolver, scope),
+      idempotencyMode: "relay" as const,
+    };
+    const input = SEND("C123", "reply");
+
+    expect(await executeMessageChannel(input, relay)).toContain(
+      "temporary failure",
+    );
+    await executeMessageChannel(input, relay);
+    await executeMessageChannel({ ...input, threadId: "thread-2" }, relay);
+
+    expect(sendMessage).toHaveBeenCalledTimes(3);
+  });
 });
 
 describe("MessageChannel idempotency (gateway)", () => {
@@ -270,6 +370,18 @@ describe("MessageChannel idempotency (gateway)", () => {
     const results: ExternalToolCallResult[] = [];
     const resolver = createResolver(sendMessage);
     const { hooks } = makeHooks({
+      relayAssistantText: async ({ text, sources, idempotencyScope }) => {
+        const source = sources[0];
+        if (!source) throw new Error("relay source required");
+        const result = await executeMessageChannel(SEND(source.chatId, text), {
+          resolver,
+          scope: SCOPE,
+          channelTurnSources: sources,
+          idempotencyScope,
+          idempotencyMode: "relay",
+        });
+        if (result.startsWith("Error:")) throw new Error(result);
+      },
       executeExternalTool: async (req, _s, scope) => {
         const rt = req.runtime;
         if (!rt?.agent_id) throw new Error("agent runtime required");
@@ -345,6 +457,96 @@ describe("MessageChannel idempotency (gateway)", () => {
     );
     client.emitExternalToolCall(toolReq("call-c", input));
     await Bun.sleep(10);
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    gateway.close();
+  });
+
+  test("explicit send after finalized automatic relay is contained without reordering later output", async () => {
+    const delivered: string[] = [];
+    const sendMessage = mock(async ({ text }: { text: string }) => {
+      delivered.push(text);
+      return { messageId: `m-${delivered.length}` };
+    });
+    const resolver = createResolver(sendMessage);
+    const client = new FakeClient();
+    const { hooks } = makeHooks({
+      relayAssistantText: async ({ text, sources, idempotencyScope }) => {
+        await executeMessageChannel(SEND("C123", text), {
+          resolver,
+          scope: SCOPE,
+          channelTurnSources: sources,
+          idempotencyScope,
+          idempotencyMode: "relay",
+        });
+      },
+      executeExternalTool: async (request, sources, idempotencyScope) => {
+        const text = await executeMessageChannel(request.input, {
+          resolver,
+          scope: SCOPE,
+          channelTurnSources: sources,
+          idempotencyScope,
+        });
+        return {
+          content: [{ type: "text", text }],
+          is_error: text.startsWith("Error:"),
+        };
+      },
+    });
+    const gateway = new ChannelGateway(client, hooks);
+    const source = makeSource({
+      channel: "slack",
+      accountId: "app-1",
+      chatId: "C123",
+    });
+
+    await gateway.submit(
+      makeDelivery({ sources: [source], clientMessageId: "cm-relay-first" }),
+    );
+    client.emit({
+      ...makeStreamDelta({
+        message_type: "assistant_message",
+        id: "assistant-relay-first",
+        content: "hello",
+      }),
+      idempotency_key: "assistant-relay-first",
+    });
+    client.emit(
+      makeStreamDelta({
+        message_type: "tool_call_message",
+        id: "tool-boundary-relay-first",
+        tool_call: {
+          tool_call_id: "tool-call-boundary-relay-first",
+          name: "Bash",
+          arguments: "{}",
+        },
+      }),
+    );
+    await Bun.sleep(0);
+    expect(delivered).toEqual(["hello"]);
+
+    const duplicateResult = await client.requestExternalToolCall(
+      toolReq("call-after-relay", SEND("C123", "hello")),
+    );
+    expect(delivered).toEqual(["hello"]);
+    expect(duplicateResult.is_error).toBe(true);
+    expect(duplicateResult.content[0]?.text).toContain(
+      "Duplicate MessageChannel action suppressed",
+    );
+
+    client.emit({
+      ...makeStreamDelta({
+        message_type: "assistant_message",
+        id: "assistant-relay-later",
+        content: "later",
+      }),
+      idempotency_key: "assistant-relay-later",
+    });
+    client.emit(
+      makeStreamDelta({ message_type: "stop_reason", stop_reason: "end_turn" }),
+    );
+    await Bun.sleep(0);
+
+    expect(delivered).toEqual(["hello", "later"]);
     expect(sendMessage).toHaveBeenCalledTimes(2);
     gateway.close();
   });

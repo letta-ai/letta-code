@@ -162,4 +162,39 @@ describe("queue noCoalesce batching", () => {
     expect(second?.dequeuedBatch.items).toHaveLength(1);
     expect(second?.queuedTurn.connectionId).toBe("client-b");
   });
+
+  test("messages with different external tool scopes never coalesce", () => {
+    const runtime = getOrCreateScopedRuntime(
+      createRuntime(),
+      "agent-1",
+      "conv-1",
+    );
+    for (const [id, externalToolScopeIds] of [
+      ["slack", ["scope-slack"]],
+      ["telegram", ["scope-telegram"]],
+      ["relay", []],
+    ] as const) {
+      expect(
+        enqueueInboundUserMessage(runtime, {
+          type: "message",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+          externalToolScopeIds: [...externalToolScopeIds],
+          messages: [
+            { role: "user", content: id, client_message_id: `message-${id}` },
+          ],
+        }),
+      ).toBe(true);
+    }
+
+    expect(consumeQueuedTurn(runtime)?.queuedTurn.externalToolScopeIds).toEqual(
+      ["scope-slack"],
+    );
+    expect(consumeQueuedTurn(runtime)?.queuedTurn.externalToolScopeIds).toEqual(
+      ["scope-telegram"],
+    );
+    expect(consumeQueuedTurn(runtime)?.queuedTurn.externalToolScopeIds).toEqual(
+      [],
+    );
+  });
 });

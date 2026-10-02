@@ -260,6 +260,8 @@ describe("local pi provider catalog", () => {
 
     expect(localApiKeyProviderIds.has("anthropic")).toBe(true);
     expect(localOAuthProviderIds.has("anthropic-oauth")).toBe(true);
+    expect(localApiKeyProviderIds.has("openai")).toBe(true);
+    expect(localOAuthProviderIds.has("openai-oauth")).toBe(true);
     expect(localApiKeyProviderIds.has("openrouter")).toBe(true);
     expect(localOAuthProviderIds.has("openrouter-oauth")).toBe(true);
     expect(localApiKeyProviderIds.has("openai-codex")).toBe(false);

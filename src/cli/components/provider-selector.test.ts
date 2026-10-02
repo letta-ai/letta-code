@@ -205,6 +205,7 @@ describe("ProviderSelector provider filtering", () => {
       "kimi-coding",
       "meta",
       "openai-codex-oauth",
+      "openai-oauth",
       "openrouter-oauth",
       "radius",
       "xai",

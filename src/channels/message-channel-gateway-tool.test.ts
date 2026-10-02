@@ -3,10 +3,12 @@ import {
   __testOverrideLoadChannelAccounts,
   __testOverrideSaveChannelAccounts,
   clearChannelAccountStores,
+  getChannelAccount,
   upsertChannelAccount,
 } from "@/channels/accounts";
 import { ChannelRegistry, getChannelRegistry } from "@/channels/registry";
 import type { ChannelAdapter } from "@/channels/types";
+import { makeSource } from "./gateway-test-support";
 import { buildGatewayMessageChannelTool } from "./message-channel-gateway-tool";
 
 afterEach(async () => {
@@ -18,6 +20,159 @@ afterEach(async () => {
 
 test("does not build MessageChannel without an eligible route or proactive account", async () => {
   expect(await buildGatewayMessageChannelTool([])).toBeNull();
+});
+
+test("does not attach MessageChannel to relay-only routed turns", async () => {
+  __testOverrideLoadChannelAccounts(() => []);
+  __testOverrideSaveChannelAccounts(() => {});
+  upsertChannelAccount("slack", {
+    channel: "slack",
+    accountId: "account-1",
+    displayName: "Slack",
+    enabled: true,
+    dmPolicy: "pairing",
+    replyMode: "relay",
+    allowedUsers: [],
+    createdAt: "2026-08-13T00:00:00.000Z",
+    updatedAt: "2026-08-13T00:00:00.000Z",
+    mode: "socket",
+    botToken: "xoxb-test",
+    appToken: "xapp-test",
+    agentId: "agent-1",
+    defaultPermissionMode: "standard",
+  });
+
+  const source = makeSource({
+    channel: "slack",
+    accountId: "account-1",
+    chatId: "C123",
+  });
+  await expect(buildGatewayMessageChannelTool([source])).resolves.toBeNull();
+});
+
+test("exposes all routed accounts when mixed reply modes make relay ambiguous", async () => {
+  __testOverrideLoadChannelAccounts(() => []);
+  __testOverrideSaveChannelAccounts(() => {});
+  upsertChannelAccount("slack", {
+    channel: "slack",
+    accountId: "relay-account",
+    displayName: "Slack Relay",
+    enabled: true,
+    dmPolicy: "pairing",
+    replyMode: "relay",
+    allowedUsers: [],
+    createdAt: "2026-08-13T00:00:00.000Z",
+    updatedAt: "2026-08-13T00:00:00.000Z",
+    mode: "socket",
+    botToken: "xoxb-test",
+    appToken: "xapp-test",
+    agentId: "agent-1",
+    defaultPermissionMode: "standard",
+  });
+  upsertChannelAccount("telegram", {
+    channel: "telegram",
+    accountId: "tool-account",
+    displayName: "Telegram Tool",
+    enabled: true,
+    dmPolicy: "pairing",
+    replyMode: "tool",
+    allowedUsers: [],
+    createdAt: "2026-08-13T00:00:00.000Z",
+    updatedAt: "2026-08-13T00:00:00.000Z",
+    token: "telegram-test",
+    binding: { agentId: "agent-1", conversationId: null },
+  });
+
+  const tool = await buildGatewayMessageChannelTool([
+    makeSource({
+      channel: "slack",
+      accountId: "relay-account",
+      chatId: "C123",
+    }),
+    makeSource({
+      channel: "telegram",
+      accountId: "tool-account",
+      chatId: "515978553",
+    }),
+  ]);
+
+  expect(tool?.description).toContain(
+    "Currently active channels: Slack, Telegram.",
+  );
+});
+
+test("exposes all relay accounts when distinct destinations make relay ambiguous", async () => {
+  __testOverrideLoadChannelAccounts(() => []);
+  __testOverrideSaveChannelAccounts(() => {});
+  for (const accountId of ["relay-one", "relay-two"]) {
+    upsertChannelAccount("slack", {
+      channel: "slack",
+      accountId,
+      displayName: `Slack ${accountId}`,
+      enabled: true,
+      dmPolicy: "pairing",
+      replyMode: "relay",
+      allowedUsers: [],
+      createdAt: "2026-08-13T00:00:00.000Z",
+      updatedAt: "2026-08-13T00:00:00.000Z",
+      mode: "socket",
+      botToken: "xoxb-test",
+      appToken: "xapp-test",
+      agentId: "agent-1",
+      defaultPermissionMode: "standard",
+    });
+  }
+
+  const tool = await buildGatewayMessageChannelTool([
+    makeSource({
+      channel: "slack",
+      accountId: "relay-one",
+      chatId: "C111",
+    }),
+    makeSource({
+      channel: "slack",
+      accountId: "relay-two",
+      chatId: "C222",
+    }),
+  ]);
+
+  expect(tool).not.toBeNull();
+  expect(tool?.description).toContain("relay-one");
+  expect(tool?.description).toContain("relay-two");
+});
+
+test("does not treat duplicate sources for one relay destination as ambiguous", async () => {
+  __testOverrideLoadChannelAccounts(() => []);
+  __testOverrideSaveChannelAccounts(() => {});
+  upsertChannelAccount("slack", {
+    channel: "slack",
+    accountId: "relay-account",
+    displayName: "Slack Relay",
+    enabled: true,
+    dmPolicy: "pairing",
+    replyMode: "relay",
+    allowedUsers: [],
+    createdAt: "2026-08-13T00:00:00.000Z",
+    updatedAt: "2026-08-13T00:00:00.000Z",
+    mode: "socket",
+    botToken: "xoxb-test",
+    appToken: "xapp-test",
+    agentId: "agent-1",
+    defaultPermissionMode: "standard",
+  });
+  const source = makeSource({
+    channel: "slack",
+    accountId: "relay-account",
+    chatId: "C123",
+    threadId: "thread-1",
+  });
+
+  await expect(
+    buildGatewayMessageChannelTool([
+      source,
+      { ...source, messageId: "message-2" },
+    ]),
+  ).resolves.toBeNull();
 });
 
 test("builds proactive Slack for a fresh conversation owned by the account agent", async () => {
@@ -62,10 +217,102 @@ test("builds proactive Slack for a fresh conversation owned by the account agent
     "currently scoped to a routed external channel turn",
   );
 
+  const account = getChannelAccount("slack", "account-1");
+  if (!account) throw new Error("Slack account missing");
+  upsertChannelAccount("slack", {
+    ...account,
+    replyMode: "relay",
+  });
+  await expect(
+    buildGatewayMessageChannelTool([], {
+      agent_id: "agent-1",
+      conversation_id: "conv-schedule-1",
+    }),
+  ).resolves.toBeNull();
+
   await expect(
     buildGatewayMessageChannelTool([], {
       agent_id: "agent-other",
       conversation_id: "conv-schedule-2",
     }),
   ).resolves.toBeNull();
+});
+
+test("policy false does not expose a relay-only proactive account", async () => {
+  __testOverrideLoadChannelAccounts(() => []);
+  __testOverrideSaveChannelAccounts(() => {});
+  const registry = new ChannelRegistry();
+  registry.registerAdapter({
+    id: "slack:relay-proactive",
+    channelId: "slack",
+    accountId: "relay-proactive",
+    name: "Slack",
+    start: async () => {},
+    stop: async () => {},
+    isRunning: () => true,
+    sendMessage: async () => ({ messageId: "unused" }),
+    sendDirectReply: async () => {},
+  });
+  upsertChannelAccount("slack", {
+    channel: "slack",
+    accountId: "relay-proactive",
+    displayName: "Relay proactive",
+    enabled: true,
+    dmPolicy: "pairing",
+    replyMode: "relay",
+    allowedUsers: [],
+    createdAt: "2026-08-13T00:00:00.000Z",
+    updatedAt: "2026-08-13T00:00:00.000Z",
+    mode: "socket",
+    botToken: "xoxb-test",
+    appToken: "xapp-test",
+    agentId: "agent-1",
+    defaultPermissionMode: "standard",
+  });
+
+  await expect(
+    buildGatewayMessageChannelTool(
+      [],
+      { agent_id: "agent-1", conversation_id: "conv-proactive" },
+      { automaticRelay: false },
+    ),
+  ).resolves.toBeNull();
+});
+
+test("policy false keeps routed tool instructions after live mode becomes relay", async () => {
+  __testOverrideLoadChannelAccounts(() => []);
+  __testOverrideSaveChannelAccounts(() => {});
+  upsertChannelAccount("slack", {
+    channel: "slack",
+    accountId: "mode-changed",
+    displayName: "Mode changed",
+    enabled: true,
+    dmPolicy: "pairing",
+    replyMode: "relay",
+    allowedUsers: [],
+    createdAt: "2026-08-13T00:00:00.000Z",
+    updatedAt: "2026-08-13T00:00:00.000Z",
+    mode: "socket",
+    botToken: "xoxb-test",
+    appToken: "xapp-test",
+    agentId: "agent-1",
+    defaultPermissionMode: "standard",
+  });
+
+  const tool = await buildGatewayMessageChannelTool(
+    [
+      makeSource({
+        channel: "slack",
+        accountId: "mode-changed",
+        chatId: "C-mode-changed",
+      }),
+    ],
+    undefined,
+    { automaticRelay: false },
+  );
+
+  expect(tool?.description).toContain(
+    "Plain assistant text is not delivered to that external user.",
+  );
+  expect(tool?.description).not.toContain("uses automatic relay");
 });

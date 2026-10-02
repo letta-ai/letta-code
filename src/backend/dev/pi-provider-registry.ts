@@ -138,10 +138,10 @@ export const PI_TUI_DEFAULT_MODEL_IDS: Partial<Record<KnownProvider, string>> =
     moonshotai: "kimi-k2.6",
     "moonshotai-cn": "kimi-k2.6",
     huggingface: "moonshotai/Kimi-K2.6",
-    fireworks: "accounts/fireworks/models/kimi-k2p6",
-    together: "moonshotai/Kimi-K2.6",
+    fireworks: "accounts/fireworks/models/kimi-k3",
+    together: "moonshotai/Kimi-K3",
     opencode: "kimi-k2.6",
-    "opencode-go": "kimi-k2.6",
+    "opencode-go": "kimi-k3",
     "kimi-coding": "kimi-for-coding",
     meta: "muse-spark-1.3",
     "cloudflare-workers-ai": "@cf/moonshotai/kimi-k2.6",
@@ -158,7 +158,9 @@ export const PI_TUI_DEFAULT_MODEL_IDS: Partial<Record<KnownProvider, string>> =
 // These pi-ai providers are intentionally absent from Pi TUI's
 // `defaultModelPerProvider`. Keep the omission explicit so newly added pi-ai
 // providers cannot silently inherit catalog-order defaults without review.
-export const PI_TUI_DEFAULTLESS_PROVIDER_IDS: ReadonlySet<string> = new Set([]);
+export const PI_TUI_DEFAULTLESS_PROVIDER_IDS: ReadonlySet<string> = new Set([
+  "typesafe",
+]);
 
 const PI_PROVIDER_OVERRIDES: Partial<
   Record<KnownProvider, PiProviderOverride>
