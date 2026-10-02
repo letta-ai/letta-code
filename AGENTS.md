@@ -39,6 +39,22 @@ transcript behavior must identify and run the focused tests for every affected
 path. `bun run check` is always required, but it does not replace those behavior
 tests.
 
+### Tool Output Secret Scrubbing
+
+Model-facing tool output is scrubbed of ambient runtime credentials (inherited
+`LETTA_API_KEY`, the settings-env key, the Desktop access token, and its base64
+`letta:<token>` git-credential encoding). The scrub applies to **every** tool
+return (not just shell tools), streamed chunks, thrown error messages, hook
+feedback, and `tool_end` mod overrides. It must run **after** PostToolUse hook
+feedback is appended and **after** a `tool_end` mod replaces the result, and
+before truncation or overflow writes; doing it earlier lets a hook or mod echo
+the credential back to the model (LET-10106). Streamed output holds back
+trailing bytes that are a prefix of a known secret so a value split across
+chunks is still caught. Key code lives in `src/tools/secret-substitution.ts`,
+`src/tools/hook-feedback.ts`, and the shell/exec/monitor stream scrubbers in
+`src/tools/manager.ts`. Any code that adds a new tool output sink must extend
+scrub coverage to it.
+
 ---
 
 ## Rules and Why They Exist
@@ -476,6 +492,13 @@ exact string match.
 - Verify the exact matched strings still exist and the throw-on-missing guard is
   preserved.
 - After editing vendor files, must run build for changes to take effect.
+- `ink` is a pinned **runtime** dependency (do not move it back to
+  devDependencies) and `ink-link` is pinned so its peer dependency does not
+  slide `ink` to an unpatchable major. Upgrading `ink` or `ink-link` can
+  silently break every vendored patch. The postinstall swallows total patch
+  failure by default (`vendor patches skipped`), so confirm patch application
+  in the packaged artifact (the Unix package smoke assert on the `.pile` cache)
+  rather than assuming install succeeded.
 
 ---
 
@@ -924,6 +947,12 @@ and create draft parity PRs when warranted.
 - Compact prompt for re-reviews (existing conversation detected).
 - Background agent gets stuck on complex reviews requiring repo setup + extensive
   reading. Do those in the foreground.
+- A red `review` check is the AI review action (`letta-ai/letta-code-action`)
+  itself failing (agent exit code 1 within ~20-30s, output hidden), **not** a
+  source failure. Verify the source suite separately before treating it as a
+  problem; rerun the single job (`gh run rerun <run-id> --job <job-id>`) to
+  clear it. A `sync` check fail with the same signature is the same harness
+  issue.
 
 ### Secret Injection Syntax
 
