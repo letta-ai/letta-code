@@ -16,12 +16,6 @@ export interface MemoryConstraintsConfig {
   fileCharacterLimits?: MemoryFileCharacterLimit[];
   /** Repo-relative globs. Matching paths cannot be created, changed or removed. */
   readOnlyFiles?: string[];
-  /** Opt-in Markdown hygiene checks; never rewrite staged contents. */
-  formatting?: {
-    lineEndings?: "lf";
-    finalNewline?: boolean;
-    trailingWhitespace?: boolean;
-  };
 }
 
 export interface MemoryTreeReader {
@@ -139,49 +133,6 @@ export async function validateMemoryTreeConstraints(
       errors.push(`${path}: memory Markdown must be a regular file`);
       continue;
     }
-    if (options.config.formatting) {
-      const bytes = await reader.readFile(path);
-      if (bytes === null)
-        throw new Error(`${path}: listed memory file is missing`);
-      const content = new TextDecoder("utf-8", { ignoreBOM: true }).decode(
-        bytes,
-      );
-      const format = options.config.formatting;
-      if (format.lineEndings === "lf" && content.includes("\r")) {
-        errors.push(`${path}: formatting requires LF line endings`);
-      }
-      if (format.finalNewline && content.length && !content.endsWith("\n")) {
-        errors.push(`${path}: formatting requires a final newline`);
-      }
-      if (format.trailingWhitespace) {
-        let fence = "";
-        for (const [index, line] of content
-          .replaceAll("\r\n", "\n")
-          .split("\n")
-          .entries()) {
-          const proseLine = line.replace(/^(?: {0,3}> ?)+/, "");
-          const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(proseLine);
-          if (
-            marker &&
-            (!fence ||
-              (marker[1]?.[0] === fence[0] &&
-                (marker[1]?.length ?? 0) >= fence.length &&
-                !marker[2]?.trim()))
-          ) {
-            fence = fence ? "" : (marker[1] ?? "");
-            continue;
-          }
-          // Two spaces are a Markdown hard break; whitespace in code is content.
-          if (fence || /^( {4}|\t)/.test(proseLine)) continue;
-          const trailing = /[ \t]+$/.exec(proseLine)?.[0];
-          if (trailing && !(trailing === "  " && proseLine.trim())) {
-            errors.push(
-              `${path}:${index + 1}: formatting disallows trailing whitespace`,
-            );
-          }
-        }
-      }
-    }
     const depth = path.split("/").length - 1;
     if (
       options.config.maxDepth !== undefined &&
@@ -264,7 +215,6 @@ export function parseMemoryConstraintsConfig(
     "maxCoreMemoryCharacters",
     "fileCharacterLimits",
     "readOnlyFiles",
-    "formatting",
   ]);
   for (const key of Object.keys(config)) {
     if (!keys.has(key)) errors.push(`${path}: unknown field '${key}'`);
@@ -311,21 +261,6 @@ export function parseMemoryConstraintsConfig(
       config.readOnlyFiles.forEach((pattern, index) => {
         validatePattern(pattern, `${path}: readOnlyFiles[${index}]`);
       });
-  }
-  if (config.formatting !== undefined) {
-    const format = config.formatting;
-    if (!format || typeof format !== "object" || Array.isArray(format))
-      errors.push(`${path}: formatting must be an object`);
-    else
-      for (const [key, value] of Object.entries(format)) {
-        if (key === "lineEndings") {
-          if (value !== "lf")
-            errors.push(`${path}: formatting.lineEndings must be 'lf'`);
-        } else if (key === "finalNewline" || key === "trailingWhitespace") {
-          if (typeof value !== "boolean")
-            errors.push(`${path}: formatting.${key} must be a boolean`);
-        } else errors.push(`${path}: formatting: unknown field '${key}'`);
-      }
   }
   if (overrides !== undefined && !Array.isArray(overrides)) {
     errors.push(`${path}: fileCharacterLimits must be an array`);

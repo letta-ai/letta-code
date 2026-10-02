@@ -104,50 +104,6 @@ describe("MemFS v2 pre-commit hook", () => {
     },
   );
 
-  test("checks staged formatting without rewriting files and preserves Markdown semantics", () => {
-    repo = initRepo("memfs-format-");
-    seedConstraints(repo, {
-      formatting: {
-        lineEndings: "lf",
-        finalNewline: true,
-        trailingWhitespace: true,
-      },
-    });
-    // Keep the intentionally invalid CRLF bytes in the index even with Windows
-    // autocrlf enabled; the hook checks the index, not the working-tree encoding.
-    writeFileSync(join(repo, ".gitattributes"), "MEMORY.md -text\n");
-    execFileSync("git", ["add", ".gitattributes"], { cwd: repo });
-    installPreCommitHook(repo, true);
-    const invalid = "# Memory\r\ntext \r\nmissing newline";
-    // Exercise the installed validator under the distribution's Node runtime.
-    writeFileSync(
-      join(repo, ".git", "hooks", "pre-commit"),
-      buildPreCommitHookScript({ execPath: "node", electron: false }),
-    );
-    writeFileSync(join(repo, "MEMORY.md"), invalid);
-    execFileSync("git", ["-c", "core.autocrlf=true", "add", "MEMORY.md"], {
-      cwd: repo,
-    });
-    const valid =
-      "# Memory\n\nline  \nhard break\n\n````text\n```\ncode   \n````\n\n    indented code   \n\n> ~~~\n> quoted code   \n> ~~~\n";
-    writeFileSync(join(repo, "MEMORY.md"), valid);
-    const rejected = tryCommit(repo, "reject staged formatting");
-    expect(rejected.status).not.toBe(0);
-    expect(rejected.stdout + rejected.stderr).toContain("formatting");
-    expect(rejected.stdout + rejected.stderr).toContain("LF line endings");
-    expect(rejected.stdout + rejected.stderr).toContain("final newline");
-    expect(rejected.stdout + rejected.stderr).toContain("trailing whitespace");
-    expect(readFileSync(join(repo, "MEMORY.md"), "utf8")).toBe(valid);
-    expect(
-      execFileSync("git", ["show", ":MEMORY.md"], {
-        cwd: repo,
-        encoding: "utf8",
-      }),
-    ).toBe(invalid);
-    execFileSync("git", ["add", "MEMORY.md"], { cwd: repo });
-    expect(tryCommit(repo, "accept formatting").status).toBe(0);
-  });
-
   test("requires indexes for Markdown directories while ignoring skills", () => {
     repo = initRepo("memfs-v2-hook-");
     installPreCommitHook(repo, true);

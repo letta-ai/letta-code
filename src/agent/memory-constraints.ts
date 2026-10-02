@@ -16,7 +16,6 @@
  *   projected memory file
  * - `readOnlyFiles`: repo-relative globs protecting any matching file's contents,
  *   path and Git mode against changes relative to HEAD
- * - `formatting`: opt-in LF, final-newline and Markdown trailing-whitespace checks
  *
  * File limits count the complete staged file, including frontmatter.
  */
@@ -115,9 +114,6 @@ function report(errors) {
     console.error("Split files above their per-file limit, then retry the commit.");
     if (errors.some((error) => error.includes("read-only"))) {
       console.error("Restore protected files to HEAD; ask the user to change readOnlyFiles if an edit is needed.");
-    }
-    if (errors.some((error) => error.includes("formatting"))) {
-      console.error("Fix the reported Markdown formatting and stage the intended files again; validation never rewrites files.");
     }
     console.error(
       "Limits come from .memfs.config.json, or the Letta Code defaults when it is absent.",
