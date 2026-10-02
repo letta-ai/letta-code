@@ -24,7 +24,11 @@ import {
   type QueuedMessage,
   setMessageQueueAdder,
 } from "@/utils/message-queue-bridge";
-import { backgroundProcesses } from "./process_manager";
+import { buildBackgroundProcessSnapshot } from "@/websocket/listener/background-process-snapshot";
+import {
+  backgroundProcesses,
+  subscribeToBackgroundProcessState,
+} from "./process_manager";
 import { task_stop } from "./task-stop";
 import {
   __setWorkflowSpawnerFactoryForTests,
@@ -509,6 +513,17 @@ describe("Workflow tool (background launch)", () => {
   });
 
   test("usage updates live status without duplicating agent start lines", async () => {
+    const liveTokens: number[] = [];
+    const unsubscribe = subscribeToBackgroundProcessState((scope) => {
+      const snapshot = buildBackgroundProcessSnapshot(
+        scope?.agentId,
+        scope?.conversationId,
+      );
+      for (const process of snapshot) {
+        if (process.kind === "workflow" && process.progress)
+          liveTokens.push(process.progress.total_tokens);
+      }
+    });
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
@@ -528,6 +543,7 @@ describe("Workflow tool (background launch)", () => {
     const processState = backgroundProcesses.get(taskId);
     try {
       await waitFor(() => getWorkflowExecution(taskId)?.totalTokens === 2_400);
+      await waitFor(() => liveTokens.includes(2_400));
       expect(getWorkflowExecution(taskId)).toMatchObject({
         status: "running",
         agentsRunning: 2,
@@ -539,6 +555,7 @@ describe("Workflow tool (background launch)", () => {
           .filter((line) => line.startsWith("▶ ")),
       ).toEqual(["▶ a", "▶ b"]);
     } finally {
+      unsubscribe();
       release();
     }
     await waitFor(() => cleanupCalls === 1);
