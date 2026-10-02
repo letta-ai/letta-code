@@ -24,6 +24,13 @@ export interface LocalEndpointModelMetadata {
   thinking?: boolean;
   /** Engine-reported available window; the shared builder applies its default cap. */
   contextLength?: number;
+  /**
+   * The endpoint's own catalog reports `contextLength` as the served window
+   * (a remote OpenAI-compatible API publishing per-model context limits), so
+   * the shared builder publishes it as-is instead of applying the
+   * conservative local-engine cap.
+   */
+  authoritativeWindow?: boolean;
   /** Engine-specific output cap; defaults to the shared constant. */
   maxTokens?: number;
   /** Engine-specific OpenAI-compat overrides merged over the defaults. */
@@ -95,6 +102,48 @@ export function modelIdsFromOpenAICompatibleList(data: unknown): string[] {
     .filter((id): id is string => id !== undefined);
 }
 
+function positiveNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? value
+    : undefined;
+}
+
+/**
+ * Parses a plain OpenAI-compatible `/models` list into model metadata,
+ * keeping the context/output limits gateways commonly publish alongside the
+ * id (`context_length`, `context_window`, `max_context_length`,
+ * `max_output_tokens`). Entries without usable limits fall back to the
+ * shared defaults in `buildModel`.
+ */
+export function openAICompatibleModelMetadata(
+  data: unknown,
+): LocalEndpointModelMetadata[] {
+  if (!data || typeof data !== "object") return [];
+  const records = (data as { data?: unknown }).data;
+  if (!Array.isArray(records)) return [];
+  const models: LocalEndpointModelMetadata[] = [];
+  for (const entry of records) {
+    if (!entry || typeof entry !== "object") continue;
+    const id = (entry as { id?: unknown }).id;
+    if (typeof id !== "string" || id.length === 0) continue;
+    const record = entry as Record<string, unknown>;
+    const contextLength =
+      positiveNumber(record.context_length) ??
+      positiveNumber(record.context_window) ??
+      positiveNumber(record.max_context_length);
+    const maxTokens = positiveNumber(record.max_output_tokens);
+    models.push({
+      id,
+      ...(contextLength !== undefined ? { contextLength } : {}),
+      ...(maxTokens !== undefined ? { maxTokens } : {}),
+      ...(contextLength !== undefined || maxTokens !== undefined
+        ? { authoritativeWindow: true }
+        : {}),
+    });
+  }
+  return models;
+}
+
 /**
  * Real dynamic pi-ai Provider for an OpenAI-compatible local engine. The
  * provider owns keyless/keyed auth, model discovery, complete Model
@@ -155,10 +204,16 @@ export function createLocalEndpointPiProvider(
     // Engine catalogs mix loaded runtime windows with architectural maxima.
     // Publish a conservative harness default either way; an explicit
     // /context-limit setting can still clone the Model with a larger window.
-    const contextWindow = Math.min(
-      metadata.contextLength ?? LOCAL_ENDPOINT_DEFAULT_CONTEXT_WINDOW,
-      LOCAL_ENDPOINT_DEFAULT_CONTEXT_WINDOW,
-    );
+    // An endpoint whose own catalog reports the served window
+    // (`authoritativeWindow`) is published as-reported instead.
+    const contextWindow =
+      metadata.authoritativeWindow === true &&
+      positiveNumber(metadata.contextLength) !== undefined
+        ? (metadata.contextLength as number)
+        : Math.min(
+            metadata.contextLength ?? LOCAL_ENDPOINT_DEFAULT_CONTEXT_WINDOW,
+            LOCAL_ENDPOINT_DEFAULT_CONTEXT_WINDOW,
+          );
     const maxTokens = Math.min(
       metadata.maxTokens ?? LOCAL_ENDPOINT_DEFAULT_MAX_TOKENS,
       contextWindow,
