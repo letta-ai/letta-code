@@ -18,6 +18,8 @@ type GlobalWithModPermissions = typeof globalThis & {
 
 export interface ModPermissionDefinition extends ModPermission {
   activationSignal: AbortSignal;
+  /** Set on per-engine registry rows when this engine registered the global map. */
+  installedProcessGlobal?: boolean;
   recordDiagnostic?: (
     diagnostic: Pick<
       ModDiagnostic,
