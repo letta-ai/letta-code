@@ -5,6 +5,7 @@ import {
   backgroundProcesses,
   backgroundTasks,
 } from "@/tools/impl/process_manager";
+import { getWorkflowExecution } from "@/tools/workflow/execution-registry";
 import type { BackgroundProcessSummary } from "@/types/protocol_v2";
 
 function belongsToRuntime(
@@ -73,13 +74,40 @@ export function buildBackgroundProcessSnapshot(
         proc.status === "running" &&
         (!runtimeScope || belongsToRuntime(proc, runtimeScope)),
     )
-    .map(([processId, proc]) => ({
-      process_id: processId,
-      kind: "workflow",
-      description: proc.description ?? proc.command,
-      started_at_ms: proc.startTime?.getTime() ?? 0,
-      status: "running",
-    }));
+    .map(([processId, proc]): BackgroundProcessSummary => {
+      const execution = getWorkflowExecution(processId);
+      return {
+        process_id: processId,
+        kind: "workflow",
+        description: proc.description ?? proc.command,
+        started_at_ms: proc.startTime?.getTime() ?? 0,
+        status: "running",
+        ...(execution
+          ? {
+              progress: {
+                agents_total: execution.agentsTotal,
+                agents_done: execution.agentsDone,
+                agents_failed: execution.agentsFailed,
+                agents_running: execution.agentsRunning,
+                total_tokens: execution.totalTokens,
+                phases: execution.phases.map(({ title, agents }) => ({
+                  title,
+                  agents_total: agents.length,
+                  agents_done: agents.filter((a) => a.status === "done").length,
+                  agents_failed: agents.filter((a) => a.status === "error")
+                    .length,
+                  agents_running: agents.filter((a) => a.status === "running")
+                    .length,
+                  total_tokens: agents.reduce(
+                    (sum, a) => sum + (a.totalTokens ?? 0),
+                    0,
+                  ),
+                })),
+              },
+            }
+          : {}),
+      };
+    });
 
   const taskProcesses: BackgroundProcessSummary[] = Array.from(
     backgroundTasks.entries(),
