@@ -88,18 +88,13 @@ describe("subagent depth", () => {
     expect(launchChild(listenerTurnEnv)[SUBAGENT_DEPTH_ENV]).toBe("2");
   });
 
-  test("a model-supplied depth in inherited env is replaced, not trusted", () => {
-    const listenerTurnEnv = getRuntimeExecutionEnv(
-      { PATH: "/bin", [SUBAGENT_DEPTH_ENV]: "0" },
-      {
-        allowed_tools: [],
-        disallowed_tools: [],
-        disable_memory_guard: false,
-        agent_role: "subagent",
-      },
+  test("a turn without a per-turn depth keeps its process depth (SDK Workflow app servers)", () => {
+    const workerTurnEnv = getRuntimeExecutionEnv(
+      { PATH: "/bin", [SUBAGENT_DEPTH_ENV]: "2" },
+      { allowed_tools: [], disallowed_tools: [], disable_memory_guard: true },
     );
-    // Role without an explicit depth is an older parent's child: depth 1.
-    expect(launchChild(listenerTurnEnv)[SUBAGENT_DEPTH_ENV]).toBe("2");
+    expect(workerTurnEnv[SUBAGENT_DEPTH_ENV]).toBe("2");
+    expect(launchChild(workerTurnEnv)[SUBAGENT_DEPTH_ENV]).toBe("3");
   });
 
   test("general-purpose children get Agent only above the leaf depth, and SendAgentMessage always", () => {

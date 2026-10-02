@@ -19,6 +19,7 @@ import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { resolveModel } from "@/agent/model-catalog";
+import { getCurrentSubagentDepth } from "@/agent/subagents/subagent-depth";
 import { getPrimaryAgentModelHandle } from "@/agent/subagents/subagent-model";
 import { getBackend } from "@/backend";
 import { resolveBackendMode } from "@/backend/backend-mode";
@@ -205,6 +206,7 @@ export async function createSdkSpawnerHandle(
       resolveModel,
       allowedTools: args.allowedTools ?? [...DEFAULT_ALLOWED_TOOLS],
       cwd: getCurrentWorkingDirectory(),
+      workerDepth: getCurrentSubagentDepth() + 1,
       supportsAgentFreeResume: sdk.supportsAgentFreeResume,
       verifyPersistedRuns: backendMode === "api",
       ...(parentModelSettings ? { parentModelSettings } : {}),

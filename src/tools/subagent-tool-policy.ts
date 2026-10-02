@@ -38,7 +38,7 @@ export function resolvedModelForm(
 }
 
 /**
- * Remove Agent (internal `Task`) at the maximum depth and give subagents the
+ * Remove Agent (internal `Task`) and Workflow at the maximum depth and give subagents the
  * SendAgentMessage description written for talking to a parent.
  */
 export function applySubagentToolPolicy<T extends PolicyToolDefinition>(
@@ -47,7 +47,11 @@ export function applySubagentToolPolicy<T extends PolicyToolDefinition>(
 ): Map<string, T> {
   if (depth === 0) return registry;
   const scoped = new Map(registry);
-  if (!canLaunchSubagentsAtDepth(depth)) scoped.delete("Task");
+  if (!canLaunchSubagentsAtDepth(depth)) {
+    // Both tools launch subagents: Agent directly, Workflow through SDK workers.
+    scoped.delete("Task");
+    scoped.delete("Workflow");
+  }
   const send = scoped.get("SendAgentMessage");
   if (send) {
     const description = SendAgentMessageSubagentDescription.trim();

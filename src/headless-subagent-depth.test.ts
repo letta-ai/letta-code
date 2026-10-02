@@ -53,7 +53,7 @@ async function childInitTools(
   }
 }
 
-test("a forked child keeps Agent at depth 1, loses it at depth 2, and keeps SendAgentMessage at both", async () => {
+test("a forked child keeps Agent and Workflow at depth 1, loses both at depth 2, and keeps SendAgentMessage at both", async () => {
   const home = await mkdtemp(join(tmpdir(), "letta-subagent-depth-"));
   try {
     const root = createIsolatedCliTestEnv({
@@ -67,11 +67,12 @@ test("a forked child keeps Agent at depth 1, loses it at depth 2, and keeps Send
     });
     const depth1 = await childInitTools(home, root);
     expect(depth1.tools).toEqual(
-      expect.arrayContaining(["Agent", "SendAgentMessage"]),
+      expect.arrayContaining(["Agent", "Workflow", "SendAgentMessage"]),
     );
     const depth2 = await childInitTools(home, depth1.env);
     expect(depth2.tools).toContain("SendAgentMessage");
     expect(depth2.tools).not.toContain("Agent");
+    expect(depth2.tools).not.toContain("Workflow");
   } finally {
     await rm(home, { recursive: true, force: true });
   }
