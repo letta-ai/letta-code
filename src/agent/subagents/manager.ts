@@ -53,6 +53,7 @@ import {
 import { buildSubagentPrompt } from "./context-budget";
 import { allocateSubagentName } from "./names";
 import { collectRemoteTurnResult } from "./remote-turn-wait";
+import { resolveSubagentHarnessTools } from "./subagent-depth";
 import {
   composeSubagentChildEnv,
   resolveSubagentInheritedPrimaryRoot,
@@ -336,6 +337,7 @@ async function executeSubagent(
       {
         backendMode,
         promptTransport: "stdin",
+        extraTools: resolveSubagentHarnessTools(type, config),
         parentAgentId,
         systemPromptOverride,
         environment,
