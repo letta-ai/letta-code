@@ -294,6 +294,12 @@ directory first. Otherwise the run reads and mutates your real
   cached (total = input + cache_creation + cache_read). Gemini:
   `prompt_token_count` already includes cached. Getting this wrong breaks
   summarizer triggering.
+- **Persist reasoning as consolidated text, not per-chunk provider metadata.**
+  letta-code stores assistant reasoning as a single joined string
+  (`reasoning_message`); never add raw per-delta provider metadata (such as
+  OpenRouter `reasoning_details`) to stored messages. Pathological streams can
+  inflate compaction input and context estimates far beyond the reasoning text
+  itself; trace such persistence issues to the owning runtime adapter.
 - **OTID workaround.** Backend returns same OTID for reasoning and tool_call in
   same step. Client suffixes OTID with message type to differentiate. Without
   this, reasoning before tool calls gets swallowed.
