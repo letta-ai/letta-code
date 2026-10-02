@@ -342,7 +342,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     cwd: userCwd,
     env: secretEnv ? { ...getShellEnv(), ...secretEnv } : getShellEnv(),
   });
-  const redactions = captureSecretRedactions(secretEnv ?? {});
+  const redactions = captureSecretRedactions(undefined, secretEnv ?? {});
   const sanitizeOutput = (text: string) =>
     scrubSecretsFromString(text, redactions);
   // Per-stream scrubbers hold back potential partial secret matches so a

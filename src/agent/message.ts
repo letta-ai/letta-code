@@ -24,6 +24,7 @@ import {
   waitForToolsetReady,
 } from "@/tools/manager";
 import type { PermissionModeState } from "@/tools/permission-mode-state";
+import { scrubOutgoingMessageContent } from "@/tools/secret-substitution";
 import { isCloudApiShutdownRejection } from "@/utils/cloud-api-shutdown";
 import { debugLog, debugWarn, isDebugEnabled } from "@/utils/debug";
 import { ImageWorkerMissingError } from "@/utils/image-resize";
@@ -382,9 +383,22 @@ export async function sendMessageStreamWithBackend(
     messages,
     opts.approvalNormalization,
   );
+  // Scrub vault and ambient secret values from outgoing message text before
+  // they enter the conversation transcript. ApprovalCreate carries tool-call
+  // payloads, not user text, and has no `role` field — so `role` presence
+  // discriminates the union.
+  const scrubbedMessages = canonicalMessages.map((message) => {
+    if (!("role" in message) || message.role !== "user") {
+      return message;
+    }
+    return {
+      ...message,
+      content: scrubOutgoingMessageContent(message.content, opts.agentId),
+    };
+  });
   let normalizedMessages: Array<MessageCreate | ApprovalCreate>;
   try {
-    normalizedMessages = await normalizeMessageImageParts(canonicalMessages, {
+    normalizedMessages = await normalizeMessageImageParts(scrubbedMessages, {
       failureModesByMessageOtid: opts.imageFailureModesByMessageOtid,
     });
   } catch (error) {
