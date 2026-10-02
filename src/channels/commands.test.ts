@@ -428,6 +428,7 @@ describe("channel slash commands", () => {
     const payloads: Record<string, unknown>[] = [];
     __testOverrideSubmitChannelFeedback(async (payload) => {
       payloads.push(payload);
+      return { success: true };
     });
 
     try {
@@ -527,6 +528,7 @@ describe("channel slash commands", () => {
     let submissions = 0;
     __testOverrideSubmitChannelFeedback(async () => {
       submissions += 1;
+      return { success: true };
     });
 
     try {
