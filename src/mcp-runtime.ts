@@ -100,13 +100,20 @@ export async function replaceClientMcpServers(
   return states;
 }
 
-async function oauthSessionForConfig(
+/**
+ * Exported for tests: decides whether a client-local OAuth session should be
+ * created for this server. Config-level opt-out (`oauth: false`) and an
+ * explicit Authorization header both durably skip OAuth; every other
+ * http/sse server keeps today's default behavior unchanged.
+ */
+export async function oauthSessionForConfig(
   agentId: string,
   config: McpServerConfig,
   options: ReplaceClientMcpServersOptions,
 ) {
   if (config.transport !== "http" && config.transport !== "sse")
     return undefined;
+  if (config.oauth === false) return undefined;
   if (hasAuthorizationHeader(config.headers)) return undefined;
   return createMcpOAuthSession(agentId, config.name, config.url, {
     interactive: options.interactiveOAuth === true,
