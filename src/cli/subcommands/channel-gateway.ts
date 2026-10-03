@@ -32,6 +32,53 @@ function isGatewayCommandEnvelope(
   );
 }
 
+/**
+ * Minimal surface of `process` this module registers failure handlers on, so
+ * tests can observe registration without installing global handlers.
+ */
+export interface ChannelFailureContainmentTarget {
+  on(event: "uncaughtException", listener: (error: Error) => void): unknown;
+  on(event: "unhandledRejection", listener: (reason: unknown) => void): unknown;
+}
+
+/**
+ * Keep a channel adapter's background failure from killing the gateway.
+ *
+ * Adapter startup is already guarded — `startChannelAccounts` catches per
+ * account and reports a failure. But an adapter's own background work escapes
+ * that guard: Slack's socket-mode client keeps retrying `apps.connections.open`
+ * on its own timer, and once a token is revoked that rejection surfaces on the
+ * gateway's event loop with nothing awaiting it.
+ *
+ * Left uncaught it exits the process, the supervisor restarts it, the same
+ * revoked token fails again — an unkillable loop that also takes down every
+ * other channel and, because the listener restarts alongside it, leaves the
+ * Desktop environment permanently "Connecting...". A permanently-bad
+ * credential is not something a restart can fix, so contain it here: report it
+ * and keep serving the channels that do work.
+ */
+export function installChannelFailureContainment(
+  target: ChannelFailureContainmentTarget = process,
+  log: (message: string) => void = (message) => {
+    console.error(message);
+  },
+): void {
+  const report = (scope: string, error: unknown): void => {
+    const message = error instanceof Error ? error.message : String(error);
+    log(`[ChannelGateway] contained ${scope}: ${message}`);
+    if (error instanceof Error && error.stack) {
+      log(error.stack);
+    }
+  };
+
+  target.on("uncaughtException", (error) => {
+    report("uncaughtException", error);
+  });
+  target.on("unhandledRejection", (reason) => {
+    report("unhandledRejection", reason);
+  });
+}
+
 export async function runChannelGatewaySubcommand(
   argv: string[],
 ): Promise<number> {
@@ -96,6 +143,8 @@ export async function runChannelGatewaySubcommand(
       await ensureChannelRuntimeInstalled(channelName);
     }
   }
+
+  installChannelFailureContainment();
 
   return await new Promise<number>((resolve) => {
     let closing = false;
