@@ -405,41 +405,51 @@ describe("mcp subcommand", () => {
     expect(closes.count).toBe(1);
   });
 
-  test("calls a real stdio MCP server through the generated tool name", async () => {
-    const stdout: string[] = [];
-    const stderr: string[] = [];
-    const deps: McpSubcommandDependencies = {
-      env: { AGENT_ID: "agent-1" },
-      initializeSettings: async () => {},
-      isServerMcpAvailable: () => false,
-      getLocalServers: () => [
-        {
-          name: "everything",
-          transport: "stdio",
-          command: process.execPath,
-          args: [EVERYTHING_SERVER],
+  test.each([false, true])(
+    "calls a real stdio MCP server with inherited scope=%s",
+    async (inherited) => {
+      const stdout: string[] = [];
+      const stderr: string[] = [];
+      const deps: McpSubcommandDependencies = {
+        env: {
+          AGENT_ID: "agent-1",
+          ...(inherited ? { LETTA_MCP_AGENT_ID: "parent" } : {}),
         },
-      ],
-      stdout: (message) => stdout.push(message),
-      stderr: (message) => stderr.push(message),
-    };
+        initializeSettings: async () => {},
+        isServerMcpAvailable: () => false,
+        getLocalServers: (id) => {
+          expect(id).toBe(inherited ? "parent" : "agent-1");
+          return [
+            {
+              name: "everything",
+              transport: "stdio",
+              command: process.execPath,
+              args: [EVERYTHING_SERVER],
+            },
+          ];
+        },
+        stdout: (message) => stdout.push(message),
+        stderr: (message) => stderr.push(message),
+      };
 
-    expect(
-      await runMcpSubcommand(
-        [
-          "call",
-          "mcp__everything__echo",
-          "--args",
-          '{"message":"hello from CLI"}',
-        ],
-        deps,
-      ),
-    ).toBe(0);
-    expect(stderr).toEqual([]);
-    expect(JSON.parse(stdout[0] ?? "{}")).toEqual({
-      content: [{ type: "text", text: "Echo: hello from CLI" }],
-    });
-  }, 20_000);
+      expect(
+        await runMcpSubcommand(
+          [
+            "call",
+            "mcp__everything__echo",
+            "--args",
+            '{"message":"hello from CLI"}',
+          ],
+          deps,
+        ),
+      ).toBe(0);
+      expect(stderr).toEqual([]);
+      expect(JSON.parse(stdout[0] ?? "{}")).toEqual({
+        content: [{ type: "text", text: "Echo: hello from CLI" }],
+      });
+    },
+    20_000,
+  );
 
   test("prints MCP protocol errors and returns exit code 2", async () => {
     const harness = localHarness({

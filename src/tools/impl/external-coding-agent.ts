@@ -3,9 +3,11 @@ import { once } from "node:events";
 import type { SubagentConfig, SubagentResult } from "@/agent/subagents";
 import { getCurrentSubagentDepth } from "@/agent/subagents/subagent-depth";
 import { spawnSubagentProcess } from "@/agent/subagents/subagent-process";
+import { getMcpScopeAgentId } from "@/mcp-scope";
 import {
   buildMcpServersReminderText,
   listMcpServersForAgent,
+  type McpServersReminderDependencies,
 } from "@/reminders/engine";
 import { createSharedReminderState } from "@/reminders/state";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
@@ -175,20 +177,22 @@ export function buildExternalCodingAgentMcpReminder(
 
 /**
  * Resolve the parent agent's MCP servers into the discovery reminder passed to
- * an external coding agent. Returns undefined when inheritance is not
- * requested; throws when the inventory cannot be read.
+ * an external coding agent. Inherits by default; explicit false disables the
+ * reminder. Throws when the inventory cannot be read.
  */
 export async function resolveExternalCodingAgentMcpReminder(
   parentAgentId: string,
   mcp: ExternalCodingAgentMcpOptions | undefined,
+  deps: McpServersReminderDependencies = {},
 ): Promise<string | undefined> {
-  if (!mcp?.inherit) return undefined;
+  if (mcp?.inherit === false) return undefined;
   const inventory = await listMcpServersForAgent(
-    parentAgentId,
+    getMcpScopeAgentId(parentAgentId),
     createSharedReminderState(),
+    deps,
   );
   return buildExternalCodingAgentMcpReminder(
-    selectExternalCodingAgentMcpEntries(inventory, mcp.servers),
+    selectExternalCodingAgentMcpEntries(inventory, mcp?.servers),
   );
 }
 
@@ -377,6 +381,7 @@ export async function runExternalCodingAgent(
     ...(deps.env ?? process.env),
     AGENT_ID: options.parentAgentId,
     LETTA_AGENT_ID: options.parentAgentId,
+    LETTA_MCP_AGENT_ID: getMcpScopeAgentId(options.parentAgentId, deps.env),
     // A Letta CLI launched from the worker's shell stays inside the depth bound.
     [SUBAGENT_DEPTH_ENV]: String(getCurrentSubagentDepth() + 1),
   };

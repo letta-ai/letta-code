@@ -31,11 +31,11 @@
     },
     "mcp": {
       "type": "object",
-      "description": "For claude-code or codex, optionally expose discovery metadata for MCP servers available to the parent agent. This does not grant new authorization.",
+      "description": "Claude Code and Codex automatically inherit parent MCP discovery. Use this to opt out or advertise a subset; it does not change authorization.",
       "properties": {
         "inherit": {
           "type": "boolean",
-          "description": "When true, inject MCP discovery metadata into the external coding agent."
+          "description": "Inherit MCP discovery metadata (default true). Set false to omit the discovery reminder."
         },
         "servers": {
           "type": "array",

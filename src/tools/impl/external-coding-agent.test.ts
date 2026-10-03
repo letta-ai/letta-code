@@ -5,6 +5,7 @@ import {
   formatExternalCodingAgentId,
   parseExternalCodingAgentId,
   parseExternalCodingAgentOutput,
+  resolveExternalCodingAgentMcpReminder,
   runExternalCodingAgent,
   selectExternalCodingAgentMcpEntries,
   validateExternalCodingAgentMcpOptions,
@@ -95,6 +96,39 @@ describe("external coding agent MCP metadata", () => {
     expect(
       buildExternalCodingAgentMcpReminder([{ name: "exa", toolCount: 2 }]),
     ).toContain("MCP servers with available tools: exa (2 tools)");
+  });
+
+  test("inherits local and cloud MCP discovery by default, with explicit opt-out", async () => {
+    const deps = {
+      getLocalServerNames: (id: string) => {
+        expect(id).toBe("parent");
+        return ["filesystem"];
+      },
+      listServerSideServers: async (id: string) => {
+        expect(id).toBe("parent");
+        return inventory;
+      },
+    };
+    const reminder = await resolveExternalCodingAgentMcpReminder(
+      "parent",
+      undefined,
+      deps,
+    );
+    expect(reminder).toContain("filesystem, exa (2 tools), linear");
+    expect(
+      await resolveExternalCodingAgentMcpReminder(
+        "parent",
+        { inherit: false },
+        deps,
+      ),
+    ).toBeUndefined();
+    const subset = await resolveExternalCodingAgentMcpReminder(
+      "parent",
+      { inherit: true, servers: ["linear"] },
+      deps,
+    );
+    expect(subset).toContain("available tools: linear");
+    expect(subset).not.toContain("filesystem");
   });
 
   test("fails missing subsets and servers without inheritance", () => {
@@ -259,6 +293,7 @@ describe("external coding agent output and preflight", () => {
       );
       expect(receivedEnv?.AGENT_ID).toBe("parent");
       expect(receivedEnv?.LETTA_AGENT_ID).toBe("parent");
+      expect(receivedEnv?.LETTA_MCP_AGENT_ID).toBe("parent");
     },
   );
 });

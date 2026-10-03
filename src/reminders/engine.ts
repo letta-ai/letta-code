@@ -8,6 +8,7 @@ import {
 } from "@/cli/helpers/session-context";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { experimentManager } from "@/experiments/manager";
+import { getMcpScopeAgentId } from "@/mcp-scope";
 import { permissionMode } from "@/permissions/mode";
 import { settingsManager } from "@/settings-manager";
 import { debugLog } from "@/utils/debug";
@@ -245,7 +246,7 @@ export async function buildMcpServersInfoReminderText(
 ): Promise<string | null> {
   try {
     const uniqueEntries = await listMcpServersForAgent(
-      context.agent.id,
+      getMcpScopeAgentId(context.agent.id),
       context.state,
       deps,
     );

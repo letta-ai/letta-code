@@ -11,6 +11,7 @@ export interface RuntimeExecutionSettings {
   disallowed_tools: string[];
   max_turns?: number;
   parent_agent_id?: string;
+  mcp_agent_id?: string;
   parent_conversation_id?: string;
   agent_role?: "subagent";
   /** Harness-owned nesting depth; see SUBAGENT_DEPTH_ENV. */
@@ -45,6 +46,7 @@ export function isRuntimeExecutionSettings(
         settings.subagent_depth >= 0)) &&
     [
       "parent_agent_id",
+      "mcp_agent_id",
       "parent_conversation_id",
       "transcript_path",
       "memory_directory",
@@ -62,6 +64,7 @@ export function getRuntimeExecutionEnv(
   const scoped = { ...env };
   // Absence is meaningful: a child must not inherit another turn's identity.
   delete scoped.LETTA_PARENT_AGENT_ID;
+  delete scoped.LETTA_MCP_AGENT_ID;
   delete scoped.LETTA_PARENT_CONVERSATION_ID;
   delete scoped.LETTA_CODE_AGENT_ROLE;
   delete scoped[SUBAGENT_DEPTH_ENV];
@@ -70,6 +73,7 @@ export function getRuntimeExecutionEnv(
   delete scoped.LETTA_MEMORY_DIR;
   if (settings.parent_agent_id)
     scoped.LETTA_PARENT_AGENT_ID = settings.parent_agent_id;
+  if (settings.mcp_agent_id) scoped.LETTA_MCP_AGENT_ID = settings.mcp_agent_id;
   if (settings.parent_conversation_id)
     scoped.LETTA_PARENT_CONVERSATION_ID = settings.parent_conversation_id;
   if (settings.agent_role) scoped.LETTA_CODE_AGENT_ROLE = settings.agent_role;

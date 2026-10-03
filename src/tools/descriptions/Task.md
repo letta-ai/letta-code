@@ -35,7 +35,9 @@ Use `subagent_type: "claude-code"` or `subagent_type: "codex"` to start a coding
 
 The initial receipt includes a synthetic `claude_...` or `codex_...` agent ID as soon as the native session starts. Pass that ID to `SendAgentMessage` to steer active work or start one tracked follow-up turn when idle.
 
-External coding agents can receive the current agent's MCP discovery metadata and use the existing `letta mcp` CLI through their shell:
+Fresh Letta subagents automatically discover and call the parent's MCP servers through `letta mcp`. This includes local and cloud-attached servers without copying connections or credentials. Deploying an existing agent keeps that agent's MCP scope.
+
+Claude Code and Codex automatically receive the parent's MCP discovery metadata and use the same `letta mcp` CLI through their shell. To advertise a subset:
 
 ```typescript
 Agent({
@@ -49,7 +51,7 @@ Agent({
 })
 ```
 
-`mcp: { inherit: true }` advertises every MCP server currently available to the parent agent. Adding `servers` advertises exactly that named subset and fails before launch if a requested server is unavailable. This passes discovery metadata, not new authorization; the worker calls tools through `letta mcp` under the parent agent identity.
+Omitting `mcp` advertises every MCP server currently available to the parent. `mcp: { inherit: false }` omits the discovery reminder. Adding `servers` advertises exactly that named subset and fails before launch if a requested server is unavailable. These options control discovery, not authorization or a security allowlist.
 
 ## Deploying an Existing Agent
 
