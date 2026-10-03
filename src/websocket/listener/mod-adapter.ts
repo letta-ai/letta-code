@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type Letta from "@letta-ai/letta-client";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { getBackend } from "@/backend";
+import { getDisabledAgentModFiles } from "@/mods/agent-mod-overrides";
 import { buildModInvocationContext } from "@/mods/context";
 import type { ModEvents } from "@/mods/event-emitter";
 import { createModAdapter, type ModAdapter } from "@/mods/mod-adapter";
@@ -46,6 +47,7 @@ const LISTENER_AGENT_MOD_CAPABILITIES: ModCapabilities = {
 
 export interface CreateListenerModAdapterOptions {
   agentModsDirectory?: string;
+  getDisabledAgentModFiles?: () => ReadonlySet<string>;
   cacheDirectory?: string;
   capabilities?: ModCapabilities;
   diagnosticsRootDirectory?: string;
@@ -123,6 +125,9 @@ export function createListenerModAdapter(
   return createModAdapter({
     ...(options.agentModsDirectory
       ? { agentModsDirectory: options.agentModsDirectory }
+      : {}),
+    ...(options.getDisabledAgentModFiles
+      ? { getDisabledAgentModFiles: options.getDisabledAgentModFiles }
       : {}),
     ...(options.cacheDirectory
       ? { cacheDirectory: options.cacheDirectory }
@@ -202,6 +207,13 @@ function resolveListenerAgentModCacheDirectory(agentId: string): string {
 }
 
 let resolveAgentModsDirectory = resolveListenerAgentModsDirectory;
+
+/** The agent's MemFS mods directory as this listener resolves it. */
+export function resolveListenerAgentModsDirectoryForAgent(
+  agentId: string,
+): string | null {
+  return resolveAgentModsDirectory(agentId);
+}
 let resolveAgentModCacheDirectory = resolveListenerAgentModCacheDirectory;
 let ensureAgentMemfsSynced = ensureMemfsSyncedForAgent;
 
@@ -232,6 +244,7 @@ export async function ensureListenerAgentModAdapter(
 
       const adapter = createListenerModAdapter({
         agentModsDirectory,
+        getDisabledAgentModFiles: () => getDisabledAgentModFiles(agentId),
         cacheDirectory: resolveAgentModCacheDirectory(agentId),
         capabilities: LISTENER_AGENT_MOD_CAPABILITIES,
         includeGlobalMods: false,
@@ -322,12 +335,24 @@ export async function reloadListenerModAdapter(
   await adapter.reload();
 
   if (!agentId) return;
-  const agentAdapter = runtime.agentModAdapters?.get(agentId);
+  await reloadListenerAgentModAdapter(runtime, agentId);
+}
+
+/** Reload only this agent's mods, leaving the listener's global mods alone. */
+export async function reloadListenerAgentModAdapter(
+  runtime: ListenerRuntime,
+  agentId: string,
+): Promise<void> {
   if (!resolveAgentModsDirectory(agentId)) {
-    agentAdapter?.dispose();
+    runtime.agentModAdapters?.get(agentId)?.dispose();
     runtime.agentModAdapters?.delete(agentId);
     return;
   }
+  // A load already in flight may have resolved its sources before the
+  // caller's change, so let it settle and then reload.
+  const pending = runtime.agentModAdapterLoads?.get(agentId);
+  if (pending) await pending.catch(() => null);
+  const agentAdapter = runtime.agentModAdapters?.get(agentId);
   if (agentAdapter) {
     await agentAdapter.reload();
     return;

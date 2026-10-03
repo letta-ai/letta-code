@@ -1,3 +1,4 @@
+import { basename } from "node:path";
 import type {
   AgentState,
   MessageCreate,
@@ -11,7 +12,11 @@ import {
   AUTO_REFLECTION_DESCRIPTION,
   launchReflectionSubagent,
 } from "@/cli/helpers/reflection-launcher";
-import { getTurnStartCancel } from "@/mods/turn-start-cancel";
+import {
+  getTurnStartCancel,
+  getTurnStartCancelSource,
+} from "@/mods/turn-start-cancel";
+import type { ModTurnStartCancelSource } from "@/mods/types";
 import { settingsManager } from "@/settings-manager";
 import { getListenerTelemetrySurface } from "@/telemetry";
 import type { StreamDelta } from "@/types/protocol_v2";
@@ -46,7 +51,33 @@ export type ListenerTurnStartEmission =
       handlerCount: number;
       input: Array<MessageCreate | ApprovalCreate>;
     }
-  | { cancelled: true; reason: string };
+  | {
+      cancelled: true;
+      reason: string;
+      cancelledBy: ModTurnStartCancelSource | null;
+    };
+
+/**
+ * Append recovery guidance when an agent-scoped mod cancels the turn. The
+ * user can't fix the mod by talking to the agent, because every turn is
+ * cancelled, so point them at the out-of-turn `/mods` command.
+ */
+export function formatTurnStartCancelReason(
+  reason: string,
+  source: ModTurnStartCancelSource | null,
+): string {
+  if (!source) return reason;
+  const file = basename(source.path);
+  const origin =
+    source.scope === "agent"
+      ? `agent mod ${file} (${source.path})`
+      : `${source.scope} mod ${file} (${source.path})`;
+  const recovery =
+    source.scope === "agent"
+      ? ` To recover, run /mods disable ${file} for this agent. The mod's file is not changed, and /mods enable ${file} undoes it.`
+      : "";
+  return `${reason}\n\nCancelled by ${origin}.${recovery}`;
+}
 
 export async function emitListenerTurnStart(options: {
   agentId: string;
@@ -80,7 +111,12 @@ export async function emitListenerTurnStart(options: {
     );
     const cancel = getTurnStartCancel(event);
     if (cancel) {
-      return { cancelled: true, reason: cancel.reason };
+      const cancelledBy = getTurnStartCancelSource(event);
+      return {
+        cancelled: true,
+        reason: formatTurnStartCancelReason(cancel.reason, cancelledBy),
+        cancelledBy,
+      };
     }
     return {
       cancelled: false,

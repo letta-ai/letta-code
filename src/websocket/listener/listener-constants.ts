@@ -15,6 +15,7 @@ export const SUPPORTED_REMOTE_COMMANDS: readonly string[] = [
   "init",
   "compact",
   "reload",
+  "mods",
   "context-limit",
   "channels",
   "upgrade-letta-code",
