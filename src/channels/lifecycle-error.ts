@@ -66,6 +66,33 @@ export const CHANNEL_LIFECYCLE_TRANSIENT_ERROR_MESSAGE =
 export const CHANNEL_LIFECYCLE_CONVERSATION_BUSY_TITLE =
   CONVERSATION_BUSY_TITLE;
 
+// Request-time quota and credit rejections reach channels as a generic `error`
+// stop reason with only the server's text, so fall back to the server wording
+// (letta-cloud handleUnifiedRateLimiting) when no structured reason is set.
+const BILLING_LIMIT_ERROR_PATTERNS = [
+  /\binsufficient credits\b/i,
+  /\bnot-enough-credits\b/i,
+  /\bpurchase more credits\b/i,
+  /\btier model inferences for this\b/i,
+  /\b(?:free|basic|standard|premium)-usage-exceeded\b/i,
+  /\bexceeded-quota\b/i,
+];
+
+/**
+ * True when a turn failed because the account is out of credits or quota.
+ * There is nothing for Letta to debug in these cases, so channels should not
+ * offer an error-report action for them.
+ */
+export function isChannelLifecycleBillingLimitError(params: {
+  stopReason?: string | null;
+  errorText?: string | null;
+}): boolean {
+  if (params.stopReason === "insufficient_credits") return true;
+  const text = params.errorText;
+  if (!text) return false;
+  return BILLING_LIMIT_ERROR_PATTERNS.some((pattern) => pattern.test(text));
+}
+
 function stripTrailingRunIdPunctuation(runId: string): string {
   return runId.replace(/[)"'.,;]+$/g, "");
 }

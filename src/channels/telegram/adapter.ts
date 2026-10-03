@@ -12,6 +12,7 @@ import {
   type InboundDebouncer,
 } from "@/channels/inbound-debounce";
 import { formatChannelControlRequestPrompt } from "@/channels/interactive";
+import { isChannelLifecycleBillingLimitError } from "@/channels/lifecycle-error";
 import {
   buildChannelLifecycleErrorReport,
   submitChannelLifecycleErrorReport,
@@ -527,6 +528,7 @@ export function createTelegramAdapter(
     dedupeKey: string,
     errorText: string,
     runId?: string | null,
+    stopReason?: string | null,
   ): Promise<void> {
     if (!rememberLifecycleErrorReply(dedupeKey)) {
       return;
@@ -547,20 +549,24 @@ export function createTelegramAdapter(
       ...(threadId ? { message_thread_id: Number(threadId) } : {}),
       ...(reply_parameters ? { reply_parameters } : {}),
     };
-    options.reply_markup = {
-      inline_keyboard: [
-        [
-          {
-            text: "Report error",
-            callback_data: rememberLifecycleErrorReport(
-              source,
-              errorText,
-              runId,
-            ),
-          },
+    // Out-of-credits and quota failures need the user to top up or wait, so a
+    // report to Letta would only add noise.
+    if (!isChannelLifecycleBillingLimitError({ stopReason, errorText })) {
+      options.reply_markup = {
+        inline_keyboard: [
+          [
+            {
+              text: "Report error",
+              callback_data: rememberLifecycleErrorReport(
+                source,
+                errorText,
+                runId,
+              ),
+            },
+          ],
         ],
-      ],
-    };
+      };
+    }
 
     await telegramBot.api.sendMessage(
       source.chatId,
@@ -888,6 +894,7 @@ export function createTelegramAdapter(
               key,
               event.error ?? "Turn failed",
               event.runId,
+              event.stopReason,
             );
           } catch (error) {
             console.warn(
