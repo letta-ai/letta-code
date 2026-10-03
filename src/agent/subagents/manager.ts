@@ -522,19 +522,6 @@ async function executeSubagent(
       processStreamEvent(stdoutBuffer, state, subagentId);
     }
 
-    // Cloud accepted a computer-routed send. Follow it, or cancel it when a
-    // stop killed the child after the receipt; the remote listener owns it.
-    if (state.enqueueReceipt) {
-      return withModel(
-        await collectRemoteTurnResult(
-          state.enqueueReceipt,
-          state,
-          subagentId,
-          signal,
-        ),
-      );
-    }
-
     // Check if process was aborted by user
     if (runningProcess.wasAborted()) {
       return withModel({
@@ -629,6 +616,19 @@ async function executeSubagent(
         error:
           propagatedError || describeSubagentExit(exitCode, exitSignal, stderr),
       });
+    }
+
+    // The child submitted a computer-routed send and exited with the receipt.
+    // Follow the remote turn from here; the remote listener owns execution.
+    if (state.enqueueReceipt) {
+      return withModel(
+        await collectRemoteTurnResult(
+          state.enqueueReceipt,
+          state,
+          subagentId,
+          signal,
+        ),
+      );
     }
 
     // Return captured result if available

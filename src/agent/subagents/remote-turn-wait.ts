@@ -11,7 +11,6 @@ import { INTERRUPTED_BY_USER } from "@/constants";
 import { cancelAcceptedListenerInput } from "@/headless-listener-launch";
 import { waitForAcceptedSuperRun } from "@/headless-super-run-wait";
 import { getErrorMessage } from "@/utils/error";
-import { type RemoteStopStatus, stopRemoteRuns } from "./remote-run-stop";
 import { type ExecutionState, processStreamEvent } from "./subagent-stream";
 
 /** The submitting CLI has exited. The harness follows its Cloud receipt. */
@@ -58,17 +57,13 @@ export async function collectRemoteTurnResult(
     };
   } catch (error) {
     let detail = getErrorMessage(error);
-    let remoteStop: RemoteStopStatus | undefined;
     if (signal.aborted) {
-      const [cancelled, stop] = await Promise.all([
-        cancelAcceptedListenerInput(receipt).catch(() => false),
-        stopRemoteRuns(receipt),
-      ]);
-      remoteStop = stop;
-      detail =
-        cancelled || stop === "stopped"
-          ? INTERRUPTED_BY_USER
-          : `${INTERRUPTED_BY_USER} (could not confirm cancellation of remote Super Run ${receipt.super_run_id})`;
+      const cancelled = await cancelAcceptedListenerInput(receipt).catch(
+        () => false,
+      );
+      detail = cancelled
+        ? INTERRUPTED_BY_USER
+        : `${INTERRUPTED_BY_USER} (could not confirm cancellation of remote Super Run ${receipt.super_run_id})`;
     }
     return {
       agentId: receipt.agent_id,
@@ -77,7 +72,6 @@ export async function collectRemoteTurnResult(
       success: false,
       error: detail,
       durationMs: Date.now() - startedAt,
-      remoteStop,
     };
   }
 }
