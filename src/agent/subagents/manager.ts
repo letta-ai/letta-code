@@ -310,6 +310,7 @@ async function executeSubagent(
     updateSubagent(subagentId, { model });
   }
 
+  let generatedScratchpad: string | undefined;
   try {
     const activeBackend = getBackend();
     const backendMode: BackendMode = activeBackend.capabilities.localMemfs
@@ -424,7 +425,15 @@ async function executeSubagent(
       inheritedPrimaryRoot,
       memoryScope,
       localBackendStorageDir,
+      env: childEnv,
     });
+    if (effectiveLaunchProfile === "memory-subagent") {
+      generatedScratchpad =
+        sandbox?.sandboxEnv.LETTA_SCRATCHPAD ??
+        (!parentProcessEnv.LETTA_SCRATCHPAD?.trim()
+          ? childEnv.LETTA_SCRATCHPAD
+          : undefined);
+    }
     const spawnLauncher = sandbox
       ? { command: sandbox.command, args: sandbox.args }
       : launcher;
@@ -500,21 +509,6 @@ async function executeSubagent(
 
     // Wait for process to complete
     const { exitCode, exitSignal } = await runningProcess.completion;
-
-    if (
-      effectiveLaunchProfile === "memory-subagent" &&
-      !parentProcessEnv.LETTA_SCRATCHPAD?.trim() &&
-      childEnv.LETTA_SCRATCHPAD
-    ) {
-      try {
-        rmSync(childEnv.LETTA_SCRATCHPAD, { recursive: true, force: true });
-      } catch (error) {
-        debugWarn(
-          "subagent",
-          `Failed to clean up memory-subagent scratchpad: ${getErrorMessage(error)}`,
-        );
-      }
-    }
 
     // Ensure the trailing partial line is processed before completing.
     // Without this, late tool events can be dropped before Task marks completion.
@@ -733,6 +727,14 @@ async function executeSubagent(
       success: false,
       error: getErrorMessage(error),
     });
+  } finally {
+    if (generatedScratchpad) {
+      try {
+        rmSync(generatedScratchpad, { recursive: true, force: true });
+      } catch (error) {
+        debugWarn("subagent", `scratch cleanup: ${getErrorMessage(error)}`);
+      }
+    }
   }
 }
 

@@ -1,7 +1,8 @@
-import { mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
 import {
   buildMemorySubagentSandboxPolicy,
+  canonicalizeRoot,
   getCrossBackendAgentsTreeRoots,
   getLettaHomeRoot,
 } from "@/permissions/sandbox-policy";
@@ -78,6 +79,32 @@ export interface WrapSubagentLauncherResult {
   backend: SandboxBackend;
 }
 
+function isWritableScratchpad(
+  scratchpad: string,
+  policy: ReturnType<typeof buildMemorySubagentSandboxPolicy>,
+): boolean {
+  // The child may have a different cwd. Relative paths cannot be classified
+  // against the parent's policy without changing what the child resolves.
+  if (!isAbsolute(scratchpad)) return false;
+  const path = canonicalizeRoot(scratchpad);
+  const contains = (root: string) =>
+    existsSync(root) && (path === root || path.startsWith(`${root}/`));
+
+  // The final writable carve wins inside the masked agents tree. Otherwise a
+  // base writable root is usable only outside denied and readonly roots. An
+  // absent root is not a carve under bwrap's --bind-try, so fail closed.
+  return (
+    policy.writableRoots.some(contains) ||
+    (policy.baseWritableRoots.some(contains) &&
+      !policy.deniedRoots.some(
+        (root) => path === root || path.startsWith(`${root}/`),
+      ) &&
+      !policy.readonlyRoots.some(
+        (root) => path === root || path.startsWith(`${root}/`),
+      ))
+  );
+}
+
 /**
  * Wrap a subagent launcher under a memory-subagent sandbox, or return null to
  * spawn it unchanged (flag off, not memory-subagent, no backend on host, or
@@ -142,6 +169,15 @@ export function wrapSubagentLauncher(
   // inside the existing harness write scope instead of opening the host temp dir.
   const scratchRoot = join(getLettaHomeRoot(), "tmp");
   mkdirSync(scratchRoot, { recursive: true });
+  // LETTA_SCRATCHPAD takes precedence over TMPDIR for Bash output. Desktop may
+  // set it outside ~/.letta; inheriting it would make every memory-subagent
+  // Bash call fail under the write-scoped sandbox. Give this child a private
+  // harness scratchpad rather than broadening the sandbox's writable paths.
+  const configuredScratchpad = env.LETTA_SCRATCHPAD?.trim();
+  const sandboxScratchpad =
+    configuredScratchpad && !isWritableScratchpad(configuredScratchpad, policy)
+      ? mkdtempSync(join(scratchRoot, "memory-subagent-"))
+      : undefined;
   return {
     command: command as string,
     args,
@@ -150,6 +186,7 @@ export function wrapSubagentLauncher(
       TMPDIR: scratchRoot,
       TMP: scratchRoot,
       TEMP: scratchRoot,
+      ...(sandboxScratchpad && { LETTA_SCRATCHPAD: sandboxScratchpad }),
     },
     backend: availability.backend,
   };
