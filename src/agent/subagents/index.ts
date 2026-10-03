@@ -85,6 +85,8 @@ export interface SubagentResult {
   totalTokens?: number;
   stepCount?: number;
   durationMs?: number;
+  /** Set when a stop aborted a remote turn: whether its Cloud run is terminal. */
+  remoteStop?: "stopped" | "unconfirmed";
 }
 
 export interface SubagentConfig {

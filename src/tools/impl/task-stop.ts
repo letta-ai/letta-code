@@ -11,6 +11,7 @@ interface TaskStopArgs {
 
 interface TaskStopResult {
   killed: boolean;
+  output?: string;
 }
 
 export async function task_stop(args: TaskStopArgs): Promise<TaskStopResult> {
@@ -26,6 +27,14 @@ export async function task_stop(args: TaskStopArgs): Promise<TaskStopResult> {
       await task.completion;
       task.status = "failed";
       scheduleBackgroundTaskCleanup(task_id);
+      if (task.remoteStop === "stopped")
+        return { killed: true, output: "Remote subagent stopped" };
+      if (task.remoteStop === "unconfirmed")
+        return {
+          killed: false,
+          output:
+            "Cancel requested for the remote subagent, not yet confirmed: its Cloud run may still be running",
+        };
       return { killed: true };
     }
     // Task exists but isn't running or doesn't have abort controller

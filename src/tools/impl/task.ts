@@ -302,6 +302,7 @@ export function spawnBackgroundSubagentTask(
     startTime: new Date(),
     outputFile,
     abortController,
+    remoteStop: environment ? "unconfirmed" : undefined,
     runtimeScope: resolvedParentScope,
     actingUserId,
   };
@@ -386,6 +387,7 @@ export function spawnBackgroundSubagentTask(
       : execute());
   const taskLifecycle = subagentExecution
     .then(async (result) => {
+      if (result.remoteStop) bgTask.remoteStop = result.remoteStop;
       await copyGitHubPullRequestTagsFn(
         result.conversationId,
         resolvedParentScope?.conversationId,
