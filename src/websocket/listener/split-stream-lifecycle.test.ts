@@ -265,7 +265,7 @@ describe("split stream listener lifecycle", () => {
 
   function acceptConnection(
     index: number,
-    overrides?: { generation?: string },
+    overrides?: { generation?: string; incarnation?: string },
   ): void {
     const url = connectionUrls[index];
     const socket = connections[index];
@@ -276,6 +276,9 @@ describe("split stream listener lifecycle", () => {
         connection_generation:
           overrides?.generation ?? url.searchParams.get("connectionGeneration"),
         connection_attempt: Number(url.searchParams.get("connectionAttempt")),
+        ...(overrides?.incarnation
+          ? { connection_incarnation: overrides.incarnation }
+          : {}),
       }),
     );
   }
@@ -298,7 +301,7 @@ describe("split stream listener lifecycle", () => {
     const controlUrl = connectionUrls[controlIndex];
     expect(controlUrl?.searchParams.get("connectionGeneration")).toBeTruthy();
     expect(controlUrl?.searchParams.get("connectionAttempt")).toBe("1");
-    acceptConnection(controlIndex);
+    acceptConnection(controlIndex, { incarnation: "control-incarnation-1" });
 
     await waitFor(
       () => countConnectionsForChannel("stream") === 1,
@@ -311,6 +314,9 @@ describe("split stream listener lifecycle", () => {
     expect(
       connectionUrls[streamIndex]?.searchParams.get("connectionAttempt"),
     ).toBe("1");
+    expect(
+      connectionUrls[streamIndex]?.searchParams.get("connectionIncarnation"),
+    ).toBe("control-incarnation-1");
     expect(onConnected).not.toHaveBeenCalled();
     expect(receivedFrames[controlIndex]).toEqual([]);
     expect(receivedFrames[streamIndex]).toEqual([]);
@@ -320,7 +326,7 @@ describe("split stream listener lifecycle", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(receivedFrames[controlIndex]).toEqual([]);
 
-    acceptConnection(streamIndex);
+    acceptConnection(streamIndex, { incarnation: "control-incarnation-1" });
     await waitFor(
       () => onConnected.mock.calls.length === 1,
       "listener runtime did not open after both sockets were accepted",
@@ -332,6 +338,62 @@ describe("split stream listener lifecycle", () => {
             (frame as { request_id?: string }).request_id === "during-startup",
         ) ?? false,
       "control frame buffered during startup was not handled",
+    );
+  });
+
+  test("stream acceptance must echo the control-issued incarnation", async () => {
+    const onConnected = mock(() => {});
+    await startClient({
+      onConnected,
+      supportsPairedListenerGenerations: true,
+    });
+    await waitFor(
+      () => countConnectionsForChannel("control") === 1,
+      "paired control socket did not open",
+    );
+    const controlIndex = lastConnectionIndexForChannel("control");
+    acceptConnection(controlIndex, { incarnation: "control-incarnation-1" });
+    await waitFor(
+      () => countConnectionsForChannel("stream") === 1,
+      "paired stream socket did not open",
+    );
+    const streamIndex = lastConnectionIndexForChannel("stream");
+    expect(
+      connectionUrls[streamIndex]?.searchParams.get("connectionIncarnation"),
+    ).toBe("control-incarnation-1");
+
+    acceptConnection(streamIndex, { incarnation: "replacement-incarnation" });
+
+    await waitFor(
+      () => countConnectionsForChannel("control") === 2,
+      "listener did not reconnect after mismatched stream incarnation",
+    );
+    expect(onConnected).not.toHaveBeenCalled();
+  });
+
+  test("old Cloud acknowledgements without an incarnation remain compatible", async () => {
+    const onConnected = mock(() => {});
+    await startClient({
+      onConnected,
+      supportsPairedListenerGenerations: true,
+    });
+    await waitFor(
+      () => countConnectionsForChannel("control") === 1,
+      "paired control socket did not open",
+    );
+    acceptConnection(lastConnectionIndexForChannel("control"));
+    await waitFor(
+      () => countConnectionsForChannel("stream") === 1,
+      "legacy paired stream socket did not open",
+    );
+    const streamIndex = lastConnectionIndexForChannel("stream");
+    expect(
+      connectionUrls[streamIndex]?.searchParams.has("connectionIncarnation"),
+    ).toBe(false);
+    acceptConnection(streamIndex);
+    await waitFor(
+      () => onConnected.mock.calls.length === 1,
+      "legacy pair did not become active",
     );
   });
 

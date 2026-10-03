@@ -20,10 +20,11 @@ export interface ListenerReadyMessage {
   type: "listener_ready";
   connection_generation: string;
   connection_attempt: number;
+  connection_incarnation?: string;
 }
 
 type PairedSocketAcceptanceResult =
-  | { status: "accepted" }
+  | { status: "accepted"; connectionIncarnation: string | undefined }
   | { status: "closed" }
   | { status: "mismatched" }
   | { status: "timed_out"; timeoutMs: number };
@@ -67,6 +68,14 @@ export function applyListenerPairIdentity(
   url.searchParams.set("connectionAttempt", String(identity.connectionAttempt));
 }
 
+export function applyListenerStreamIncarnation(
+  url: URL,
+  connectionIncarnation: string | undefined,
+): void {
+  if (connectionIncarnation)
+    url.searchParams.set("connectionIncarnation", connectionIncarnation);
+}
+
 export function parseListenerReadyMessage(
   data: WebSocket.RawData,
 ): ListenerReadyMessage | null {
@@ -77,7 +86,10 @@ export function parseListenerReadyMessage(
       typeof parsed.connection_generation === "string" &&
       typeof parsed.connection_attempt === "number" &&
       Number.isInteger(parsed.connection_attempt) &&
-      parsed.connection_attempt > 0
+      parsed.connection_attempt > 0 &&
+      (parsed.connection_incarnation === undefined ||
+        (typeof parsed.connection_incarnation === "string" &&
+          parsed.connection_incarnation.length > 0))
     ) {
       return parsed as ListenerReadyMessage;
     }
@@ -214,7 +226,10 @@ async function waitForPairedSocketAcceptance(
         settle({ status: "mismatched" });
         return;
       }
-      settle({ status: "accepted" });
+      settle({
+        status: "accepted",
+        connectionIncarnation: ready.connection_incarnation,
+      });
     }
 
     socket.on("message", handleMessage);
@@ -303,7 +318,7 @@ export async function preparePairedListenerTransport(params: {
   runtime: ListenerRuntime;
   controlSocket: WebSocket;
   identity: ListenerPairIdentity;
-  createStreamSocket: () => WebSocket;
+  createStreamSocket: (connectionIncarnation?: string) => WebSocket;
   trackListenerError: TrackListenerError;
 }): Promise<PairedListenerOpenOutcome> {
   const { runtime, controlSocket, identity, trackListenerError } = params;
@@ -328,7 +343,8 @@ export async function preparePairedListenerTransport(params: {
     return { kind: "stale" };
   }
 
-  const streamSocket = params.createStreamSocket();
+  const controlIncarnation = controlAcceptance.connectionIncarnation;
+  const streamSocket = params.createStreamSocket(controlIncarnation);
   runtime.streamSocket = streamSocket;
   const streamAcceptance = await waitForPairedSocketAcceptance(
     streamSocket,
@@ -341,6 +357,15 @@ export async function preparePairedListenerTransport(params: {
     rejectPairedSocketAcceptance({
       channel: "stream",
       result: streamAcceptance,
+      trackListenerError,
+    });
+    terminateCurrentSocketPair(runtime, controlSocket, streamSocket);
+    return { kind: "stale" };
+  }
+  if (streamAcceptance.connectionIncarnation !== controlIncarnation) {
+    rejectPairedSocketAcceptance({
+      channel: "stream",
+      result: { status: "mismatched" },
       trackListenerError,
     });
     terminateCurrentSocketPair(runtime, controlSocket, streamSocket);

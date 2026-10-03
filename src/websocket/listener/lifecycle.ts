@@ -78,6 +78,7 @@ import {
 } from "./runtime";
 import {
   applyListenerPairIdentity,
+  applyListenerStreamIncarnation,
   attachSplitStreamSocketHandlers,
   createListenerPairIdentity,
   handleListenerSocketOpenFailure,
@@ -800,7 +801,6 @@ async function connectWithRetry(
       trackListenerError,
     });
   }
-
   socket.on("open", () => {
     void (async () => {
       const streamOpen = pairIdentity
@@ -808,8 +808,9 @@ async function connectWithRetry(
             runtime,
             controlSocket: socket,
             identity: pairIdentity,
-            createStreamSocket: () => {
+            createStreamSocket: (connectionIncarnation) => {
               if (!streamUrl) throw new Error("Paired stream URL is missing");
+              applyListenerStreamIncarnation(streamUrl, connectionIncarnation);
               streamSocket = new WebSocket(streamUrl.toString(), { headers });
               return streamSocket;
             },
@@ -864,7 +865,6 @@ async function connectWithRetry(
       });
     });
   });
-
   socket.on("message", (data: WebSocket.RawData) => {
     if (
       pairIdentity &&
