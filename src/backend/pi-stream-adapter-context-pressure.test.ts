@@ -119,6 +119,79 @@ function compactionEvent(events: ProviderStreamEvent[]) {
 }
 
 describe("PiStreamAdapter context pressure", () => {
+  test.each(["usage", "estimate"])(
+    "compacts before a pending memory update exceeds the reserve (%s, #4893)",
+    async (source) => {
+      const base = turnInput();
+      base.uiMessages =
+        source === "usage"
+          ? [
+              {
+                ...assistantMessage({ usage: usage(72_000) }),
+                id: "assistant-usage",
+              },
+              {
+                id: "user-next",
+                role: "user",
+                content: "next",
+                timestamp: Date.now(),
+              },
+            ]
+          : [
+              {
+                id: "user-large",
+                role: "user",
+                content: "x".repeat(72_000 * 4),
+                timestamp: Date.now(),
+              },
+            ];
+      base.midConversationSystemPrompt = `<memory_update>\n${"m".repeat(118_000)}\n</memory_update>`;
+      const order: string[] = [];
+      const contexts: Context[] = [];
+      const pressures: LocalContextPressure[] = [];
+      const adapter = new PiStreamAdapter({
+        stream: (_model, context) => {
+          order.push("provider");
+          contexts.push(context);
+          return streamFromMessage(assistantMessage());
+        },
+        onContextPressure: async (_input, pressure) => {
+          order.push("compaction");
+          pressures.push(pressure);
+          return {
+            uiMessages: [
+              {
+                id: "user-summary",
+                role: "user",
+                content: "compacted summary",
+                timestamp: Date.now(),
+              },
+            ],
+            summary: "compacted summary",
+          };
+        },
+      });
+
+      const events = await collectEvents(adapter.stream(base));
+
+      expect(order).toEqual(["compaction", "provider"]);
+      expect(pressures).toEqual([
+        {
+          contextTokens: expect.any(Number),
+          contextWindow: 100_000,
+          phase: "preflight",
+          source: "estimate",
+        },
+      ]);
+      expect(pressures[0]?.contextTokens).toBeGreaterThan(100_000);
+      expect(contexts[0]?.messages).toEqual([
+        expect.objectContaining({ role: "user", content: "compacted summary" }),
+        expect.objectContaining({ content: base.midConversationSystemPrompt }),
+      ]);
+      expect(compactionEvent(events)).toBeDefined();
+    },
+  );
+
   test("compacts a 96k request before dispatching it into a 100k window", async () => {
     let providerCalls = 0;
     let providerContext: Context | undefined;
