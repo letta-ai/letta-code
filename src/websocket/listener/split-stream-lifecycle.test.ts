@@ -397,6 +397,78 @@ describe("split stream listener lifecycle", () => {
     );
   });
 
+  test("a new control ack with an old stream ack rejects the pair and reconnects", async () => {
+    // Mixed rollout: no same-version pod affinity, so control can land on a
+    // new pod that issues an incarnation while stream lands on an old pod
+    // that omits it. The pair must never start the runtime.
+    const onConnected = mock(() => {});
+    await startClient({
+      onConnected,
+      supportsPairedListenerGenerations: true,
+    });
+    await waitFor(
+      () => countConnectionsForChannel("control") === 1,
+      "paired control socket did not open",
+    );
+    const controlIndex = lastConnectionIndexForChannel("control");
+    const firstGeneration = connectionUrls[controlIndex]?.searchParams.get(
+      "connectionGeneration",
+    );
+    acceptConnection(controlIndex, { incarnation: "control-incarnation-1" });
+    await waitFor(
+      () => countConnectionsForChannel("stream") === 1,
+      "paired stream socket did not open",
+    );
+    const streamIndex = lastConnectionIndexForChannel("stream");
+    expect(
+      connectionUrls[streamIndex]?.searchParams.get("connectionIncarnation"),
+    ).toBe("control-incarnation-1");
+
+    acceptConnection(streamIndex);
+
+    await waitFor(
+      () => countConnectionsForChannel("control") === 2,
+      "listener did not reconnect after an old stream ack",
+    );
+    expect(onConnected).not.toHaveBeenCalled();
+    expect(
+      connectionUrls[
+        lastConnectionIndexForChannel("control")
+      ]?.searchParams.get("connectionGeneration"),
+    ).not.toBe(firstGeneration);
+  });
+
+  test("an old control ack with a new stream ack rejects the pair and reconnects", async () => {
+    // Inverse mixed case: an incarnation the control session never issued
+    // cannot be adopted from the stream side.
+    const onConnected = mock(() => {});
+    await startClient({
+      onConnected,
+      supportsPairedListenerGenerations: true,
+    });
+    await waitFor(
+      () => countConnectionsForChannel("control") === 1,
+      "paired control socket did not open",
+    );
+    acceptConnection(lastConnectionIndexForChannel("control"));
+    await waitFor(
+      () => countConnectionsForChannel("stream") === 1,
+      "paired stream socket did not open",
+    );
+    const streamIndex = lastConnectionIndexForChannel("stream");
+    expect(
+      connectionUrls[streamIndex]?.searchParams.has("connectionIncarnation"),
+    ).toBe(false);
+
+    acceptConnection(streamIndex, { incarnation: "stream-only-incarnation" });
+
+    await waitFor(
+      () => countConnectionsForChannel("control") === 2,
+      "listener did not reconnect after an unissued stream incarnation",
+    );
+    expect(onConnected).not.toHaveBeenCalled();
+  });
+
   test("mismatched acceptance reconnects with a new generation and attempt", async () => {
     const onConnected = mock(() => {});
     const onError = mock(() => {});
