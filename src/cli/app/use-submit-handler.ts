@@ -123,11 +123,7 @@ import {
   SYSTEM_REMINDER_OPEN,
 } from "@/constants";
 import { experimentManager } from "@/experiments/manager";
-import {
-  runPreCompactHooks,
-  runSessionStartHooks,
-  runUserPromptSubmitHooks,
-} from "@/hooks";
+import { runPreCompactHooks, runUserPromptSubmitHooks } from "@/hooks";
 import { createModConversationHandle } from "@/mods/conversation-handle";
 import type { QueueRuntime } from "@/queue/queue-runtime";
 import {
@@ -278,7 +274,6 @@ type SubmitHandlerContext = {
   resetPendingReasoningCycle: () => void;
   resetTrajectoryBases: () => void;
   runEndHooks: (reason?: ModConversationCloseReason) => Promise<void>;
-  sessionHooksRanRef: MutableRefObject<boolean>;
   sessionStartFeedbackRef: MutableRefObject<string[]>;
   sessionStatsRef: MutableRefObject<SessionStats>;
   openOverlay: (
@@ -291,7 +286,10 @@ type SubmitHandlerContext = {
   setAgentState: Dispatch<SetStateAction<AgentState | null | undefined>>;
   setCommandRunning: (value: boolean) => void;
   setConversationAutoTitleEligibility: (enabled: boolean) => void;
-  setConversationIdAndRef: (nextConversationId: string) => void;
+  setConversationIdAndRef: (
+    nextConversationId: string,
+    isNewSession?: boolean,
+  ) => void;
   setConversationSummary: (summary: string | null) => void;
   setConversationOverrideContextWindowLimit: Dispatch<
     SetStateAction<number | null>
@@ -533,7 +531,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     resetPendingReasoningCycle,
     resetTrajectoryBases,
     runEndHooks,
-    sessionHooksRanRef,
     sessionStartFeedbackRef,
     sessionStatsRef,
     openOverlay,
@@ -1781,7 +1778,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
             // Update conversationId state and ref together so the next turn
             // cannot observe a stale conversation handoff.
-            setConversationIdAndRef(conversation.id);
+            setConversationIdAndRef(conversation.id, true);
 
             pendingConversationSwitchRef.current = {
               origin: "new",
@@ -1798,21 +1795,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             // Ensure bootstrap reminders are re-injected for the new conversation.
             resetBootstrapReminderState(true);
 
-            // Re-run SessionStart hooks for new conversation
-            sessionHooksRanRef.current = false;
-            runSessionStartHooks(
-              true, // isNewSession
-              agentId,
-              agentName ?? undefined,
-              conversation.id,
-            )
-              .then((result) => {
-                if (result.feedback.length > 0) {
-                  sessionStartFeedbackRef.current = result.feedback;
-                }
-              })
-              .catch(() => {});
-            sessionHooksRanRef.current = true;
             void modAdapter.events.emit(
               "conversation_open",
               {
@@ -1878,7 +1860,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
             await maybeCarryOverActiveConversationModel(forked.id);
 
-            setConversationIdAndRef(forked.id);
+            setConversationIdAndRef(forked.id, true);
 
             pendingConversationSwitchRef.current = {
               origin: "fork",
@@ -1891,20 +1873,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             resetContextHistory(contextTrackerRef.current);
             resetBootstrapReminderState();
 
-            sessionHooksRanRef.current = false;
-            runSessionStartHooks(
-              true,
-              agentId,
-              agentName ?? undefined,
-              forked.id,
-            )
-              .then((result) => {
-                if (result.feedback.length > 0) {
-                  sessionStartFeedbackRef.current = result.feedback;
-                }
-              })
-              .catch(() => {});
-            sessionHooksRanRef.current = true;
             void modAdapter.events.emit(
               "conversation_open",
               {
@@ -1988,7 +1956,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
             setConversationAutoTitleEligibility(true);
             await maybeCarryOverActiveConversationModel(conversation.id);
-            setConversationIdAndRef(conversation.id);
+            setConversationIdAndRef(conversation.id, true);
             pendingConversationSwitchRef.current = {
               origin: "clear",
               conversationId: conversation.id,
@@ -1998,20 +1966,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             settingsManager.persistSession(agentId, conversation.id);
             resetContextHistory(contextTrackerRef.current);
             resetBootstrapReminderState(true);
-            sessionHooksRanRef.current = false;
-            runSessionStartHooks(
-              true, // isNewSession
-              agentId,
-              agentName ?? undefined,
-              conversation.id,
-            )
-              .then((result) => {
-                if (result.feedback.length > 0) {
-                  sessionStartFeedbackRef.current = result.feedback;
-                }
-              })
-              .catch(() => {});
-            sessionHooksRanRef.current = true;
             void modAdapter.events.emit(
               "conversation_open",
               {

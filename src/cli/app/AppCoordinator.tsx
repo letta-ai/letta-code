@@ -154,7 +154,7 @@ import {
   wrapCronPrompt,
 } from "@/cron";
 import { experimentManager } from "@/experiments/manager";
-import { runSessionEndHooks, runSessionStartHooks } from "@/hooks";
+import { runSessionEndHooks } from "@/hooks";
 import type { ApprovalContext } from "@/permissions/analyzer";
 import { type PermissionMode, permissionMode } from "@/permissions/mode";
 import {
@@ -250,6 +250,7 @@ import { useFeedbackHandler } from "./use-feedback-handler";
 import { useInterruptHandler } from "./use-interrupt-handler";
 import { useQueuedApprovalSubmit } from "./use-queued-approval-submit";
 import { useReasoningCycle } from "./use-reasoning-cycle";
+import { useSessionStartHooks } from "./use-session-start-hooks";
 import { useSubmitHandler } from "./use-submit-handler";
 
 function buildStartupCommandHints(options: {
@@ -413,13 +414,18 @@ export function App({
   }, [agentId]);
 
   const conversationIdRef = useRef(conversationId);
+  const isNewSessionRef = useRef(!initialConversationId);
   useEffect(() => {
     conversationIdRef.current = conversationId;
   }, [conversationId]);
-  const setConversationIdAndRef = useCallback((nextConversationId: string) => {
-    conversationIdRef.current = nextConversationId;
-    setConversationId(nextConversationId);
-  }, []);
+  const setConversationIdAndRef = useCallback(
+    (nextConversationId: string, isNewSession = false) => {
+      isNewSessionRef.current = isNewSession;
+      conversationIdRef.current = nextConversationId;
+      setConversationId(nextConversationId);
+    },
+    [],
+  );
 
   // Tracks the transcript start index for the current user turn across
   // approval continuations (requires_approval -> approval result round-trip).
@@ -1055,7 +1061,6 @@ export function App({
   // Session stats tracking
   const sessionStatsRef = useRef(new SessionStats());
   const sessionStartTimeRef = useRef(Date.now());
-  const sessionHooksRanRef = useRef(false);
   const sessionModStartAttemptedRef = useRef(false);
   const modAdapterRef = useRef<LocalModAdapter | null>(null);
 
@@ -1133,29 +1138,14 @@ export function App({
   // SessionStart hook feedback to prepend to first user message
   const sessionStartFeedbackRef = useRef<string[]>([]);
 
-  // Run SessionStart hooks when agent becomes available (not the "loading" placeholder)
-  useEffect(() => {
-    if (agentId && agentId !== "loading" && !sessionHooksRanRef.current) {
-      sessionHooksRanRef.current = true;
-      // Determine if this is a new session or resumed
-      const isNewSession = !initialConversationId;
-      runSessionStartHooks(
-        isNewSession,
-        agentId,
-        agentName ?? undefined,
-        conversationIdRef.current ?? undefined,
-      )
-        .then((result) => {
-          // Store feedback to prepend to first user message
-          if (result.feedback.length > 0) {
-            sessionStartFeedbackRef.current = result.feedback;
-          }
-        })
-        .catch(() => {
-          // Silently ignore hook errors
-        });
-    }
-  }, [agentId, agentName, initialConversationId]);
+  useSessionStartHooks({
+    agentId,
+    agentName,
+    conversationId,
+    commandRunning,
+    isNewSessionRef,
+    feedbackRef: sessionStartFeedbackRef,
+  });
 
   // Run SessionEnd hooks helper
   const runEndHooks = useCallback(
@@ -4028,8 +4018,6 @@ export function App({
     resetPendingReasoningCycle,
     resetTrajectoryBases,
     runEndHooks,
-    sessionHooksRanRef,
-    sessionStartFeedbackRef,
     setActiveOverlay,
     setAgentId,
     setAgentState,
@@ -4186,7 +4174,6 @@ export function App({
     resetPendingReasoningCycle,
     resetTrajectoryBases,
     runEndHooks,
-    sessionHooksRanRef,
     sessionStartFeedbackRef,
     sessionStatsRef,
     openOverlay,

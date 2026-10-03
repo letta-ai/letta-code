@@ -304,7 +304,7 @@ type AppViewProps = {
   setBtwState: Dispatch<SetStateAction<BtwState>>;
   setCommandRunning: (value: boolean) => void;
   setConversationAutoTitleEligibility: (enabled: boolean) => void;
-  setConversationIdAndRef: (nextConversationId: string) => void;
+  setConversationIdAndRef: (id: string, isNewSession?: boolean) => void;
   setConversationSummary: (summary: string | null) => void;
   setLines: Dispatch<SetStateAction<Line[]>>;
   setModelReasoningPrompt: Dispatch<
@@ -1361,7 +1361,7 @@ export function AppView(props: AppViewProps) {
                     await maybeCarryOverActiveConversationModel(
                       conversation.id,
                     );
-                    setConversationIdAndRef(conversation.id);
+                    setConversationIdAndRef(conversation.id, true);
                     setConversationAutoTitleEligibility(true);
                     setConversationSummary(null);
                     settingsManager.persistSession(agentId, conversation.id);
