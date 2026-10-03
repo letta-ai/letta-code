@@ -313,31 +313,36 @@ describe("Codex app-server lifecycle", () => {
     );
   });
 
-  test("does not duplicate MCP reminder in the initial user prompt", async () => {
-    const fake = new FakeCodexTransport();
-    await startCodexTurn(
-      {
-        prompt: "Implement it",
-        parentAgentId: "parent",
-        cwd: "/repo",
-        mcpReminder: "MCP reminder",
-      },
-      { createTransport: () => fake.transport() },
-    );
-    const threadStart = fake.requests.find(
-      (request) => request.method === "thread/start",
-    );
-    const turnStart = fake.requests.find(
-      (request) => request.method === "turn/start",
-    );
-    expect(threadStart?.params).toMatchObject({
-      developerInstructions: "MCP reminder",
-    });
-    expect(turnStart?.params).toMatchObject({
-      input: [{ type: "text", text: "Implement it" }],
-      sandboxPolicy: { networkAccess: true },
-    });
-  });
+  test.each([false, true])(
+    "passes MCP reminder to new and resumed threads without duplicating user text (resume=%s)",
+    async (resume) => {
+      const fake = new FakeCodexTransport();
+      await startCodexTurn(
+        {
+          prompt: "Implement it",
+          parentAgentId: "parent",
+          cwd: "/repo",
+          mcpReminder: "MCP reminder",
+          ...(resume ? { resumeThreadId: "thread-1" } : {}),
+        },
+        { createTransport: () => fake.transport() },
+      );
+      const threadStart = fake.requests.find(
+        (request) =>
+          request.method === (resume ? "thread/resume" : "thread/start"),
+      );
+      const turnStart = fake.requests.find(
+        (request) => request.method === "turn/start",
+      );
+      expect(threadStart?.params).toMatchObject({
+        developerInstructions: "MCP reminder",
+      });
+      expect(turnStart?.params).toMatchObject({
+        input: [{ type: "text", text: "Implement it" }],
+        sandboxPolicy: { networkAccess: true },
+      });
+    },
+  );
 
   test("interrupts the active turn on cancellation", async () => {
     const fake = new FakeCodexTransport();

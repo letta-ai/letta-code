@@ -6,6 +6,7 @@ export interface RuntimeExecutionSettings {
   disallowed_tools: string[];
   max_turns?: number;
   parent_agent_id?: string;
+  mcp_agent_id?: string;
   agent_role?: "subagent";
   transcript_path?: string;
   memory_directory?: string;
@@ -31,7 +32,12 @@ export function isRuntimeExecutionSettings(
         Number.isSafeInteger(settings.max_turns) &&
         settings.max_turns > 0)) &&
     (settings.agent_role === undefined || settings.agent_role === "subagent") &&
-    ["parent_agent_id", "transcript_path", "memory_directory"].every(
+    [
+      "parent_agent_id",
+      "mcp_agent_id",
+      "transcript_path",
+      "memory_directory",
+    ].every(
       (key) => settings[key] === undefined || typeof settings[key] === "string",
     )
   );
@@ -45,12 +51,14 @@ export function getRuntimeExecutionEnv(
   const scoped = { ...env };
   // Absence is meaningful: a child must not inherit another turn's identity.
   delete scoped.LETTA_PARENT_AGENT_ID;
+  delete scoped.LETTA_MCP_AGENT_ID;
   delete scoped.LETTA_CODE_AGENT_ROLE;
   delete scoped.TRANSCRIPT_PATH;
   delete scoped.MEMORY_DIR;
   delete scoped.LETTA_MEMORY_DIR;
   if (settings.parent_agent_id)
     scoped.LETTA_PARENT_AGENT_ID = settings.parent_agent_id;
+  if (settings.mcp_agent_id) scoped.LETTA_MCP_AGENT_ID = settings.mcp_agent_id;
   if (settings.agent_role) scoped.LETTA_CODE_AGENT_ROLE = settings.agent_role;
   if (settings.transcript_path)
     scoped.TRANSCRIPT_PATH = settings.transcript_path;

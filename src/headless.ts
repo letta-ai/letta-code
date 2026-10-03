@@ -1944,7 +1944,6 @@ export async function handleHeadlessCommand(
     );
   }
 
-  // Add user prompt
   pushPart(prompt);
 
   telemetry.trackUserInput(prompt, "user", reportModel ?? "unknown");
@@ -2017,6 +2016,7 @@ export async function handleHeadlessCommand(
         max_turns: maxTurns,
         preload_skills: parseCsvListFlag(preLoadSkillsRaw),
         parent_agent_id: process.env.LETTA_PARENT_AGENT_ID,
+        mcp_agent_id: process.env.LETTA_MCP_AGENT_ID,
         ...(process.env.LETTA_CODE_AGENT_ROLE === "subagent"
           ? { agent_role: "subagent" as const }
           : {}),
