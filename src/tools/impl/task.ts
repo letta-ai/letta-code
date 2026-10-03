@@ -302,6 +302,7 @@ export function spawnBackgroundSubagentTask(
     startTime: new Date(),
     outputFile,
     abortController,
+    remote: Boolean(environment),
     runtimeScope: resolvedParentScope,
     actingUserId,
   };
