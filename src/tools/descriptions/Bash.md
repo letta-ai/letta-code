@@ -117,6 +117,8 @@ gh pr create --title "the pr title" --body '## Summary
 👾 Generated with [Letta Code](https://letta.com)'
 </example>
 
+4. Passing `gh pr checks` does not mean GitHub will merge the PR — unresolved review threads and still-pending required checks leave the merge state BLOCKED. If WatchPR is available and you will follow the PR toward merge, start it on the PR URL, and call the PR ready, green, or mergeable only once WatchPR reports it merge-ready.
+
 Important:
 - DO NOT use the TaskCreate or Task tools
 - Return the PR URL when you're done, so the user can see it
