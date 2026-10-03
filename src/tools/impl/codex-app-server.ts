@@ -379,7 +379,12 @@ async function createSession(
     await client.initialize();
     const method = options.resumeThreadId ? "thread/resume" : "thread/start";
     const params = options.resumeThreadId
-      ? { threadId: options.resumeThreadId }
+      ? {
+          threadId: options.resumeThreadId,
+          ...(options.mcpReminder
+            ? { developerInstructions: options.mcpReminder }
+            : {}),
+        }
       : {
           cwd: options.cwd,
           model: options.model,

@@ -1,12 +1,21 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   DISK_SPACE_CHECK_INTERVAL_MS,
+  deliverDiskSpaceReminder,
   evaluateDiskSpaceReminder,
   getCachedDiskSpaceSample,
   isDiskSpaceLow,
   refreshDiskSpaceSample,
+  resetDiskSpaceAlertForTests,
   resetDiskSpaceCacheForTests,
+  takePendingDiskSpaceReminder,
+  watchDiskSpaceDuring,
 } from "@/reminders/disk-space";
+import {
+  clearPendingMessages,
+  type QueuedMessage,
+  setMessageQueueAdder,
+} from "@/utils/message-queue-bridge";
 
 const GIB = 1024 ** 3;
 const SANDBOX_ENV = { LETTA_MANAGED_CLOUD_RUNTIME: "1" };
@@ -183,5 +192,65 @@ describe("evaluateDiskSpaceReminder", () => {
     }
     const sample = getCachedDiskSpaceSample();
     expect(sample?.totalBytes).toBeGreaterThan(0);
+  });
+});
+
+describe("watchDiskSpaceDuring", () => {
+  const managed = { LETTA_MANAGED_CLOUD_RUNTIME: "1" } as NodeJS.ProcessEnv;
+  afterEach(() => {
+    resetDiskSpaceAlertForTests();
+    setMessageQueueAdder(null);
+    clearPendingMessages();
+  });
+
+  test("a subagent loop gets the alert on its next request while tools run", async () => {
+    let free = 10 * GIB;
+    const statfsFn = async (path: string) =>
+      fakeStatfs(20 * GIB, free).fn(path);
+    await watchDiskSpaceDuring(
+      "/work",
+      (text) => deliverDiskSpaceReminder(text),
+      async () => {
+        free = 1.5 * GIB; // a long install fills the disk mid-batch
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      },
+      { env: managed, statfsFn, intervalMs: 10 },
+    );
+    expect(takePendingDiskSpaceReminder()).toContain("LOW DISK SPACE");
+    expect(takePendingDiskSpaceReminder()).toBeNull();
+  });
+
+  test("an idle parent gets a queued notification, escalating once to critical", async () => {
+    const queued: QueuedMessage[] = [];
+    setMessageQueueAdder((message) => queued.push(message));
+    let free = 1.5 * GIB;
+    const statfsFn = async (path: string) =>
+      fakeStatfs(20 * GIB, free).fn(path);
+    const deliver = (text: string) =>
+      deliverDiskSpaceReminder(text, {
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      });
+    await watchDiskSpaceDuring("/work", deliver, async () => {}, {
+      env: managed,
+      statfsFn,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    free = 0.5 * GIB; // 97.5% used
+    await watchDiskSpaceDuring("/work", deliver, async () => {}, {
+      env: managed,
+      statfsFn,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await watchDiskSpaceDuring("/work", deliver, async () => {}, {
+      env: managed,
+      statfsFn,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(queued.map((m) => m.kind)).toEqual([
+      "task_notification",
+      "task_notification",
+    ]);
+    expect(queued[0]?.conversationId).toBe("conv-1");
   });
 });

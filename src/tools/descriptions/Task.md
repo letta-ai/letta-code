@@ -19,7 +19,8 @@ When using the Agent tool, you must specify a subagent_type parameter to select 
 - Always include a short description (3-5 words) summarizing what the agent will do
 - Launch multiple agents concurrently whenever possible, to maximize performance; to do that, use a single message with multiple tool uses
 - When the agent is done, it will return a single message back to you along with its conversation ID. The result returned by the agent is not visible to the user. To show the user the result, you should send a text message back to the user with a concise summary of the result.
-- Agents always run in the background. The tool result includes a task ID and an output_file path, and you will be notified automatically via a <task-notification> message when it completes, so there is no need to poll. The output file receives the report when the agent finishes; it has no interim progress. You can continue working while agents run.
+- Agents run in the background. The tool result includes a task ID and an output_file path, and you will be notified automatically via a <task-notification> message when it completes, so there is no need to poll. The output file receives the report when the agent finishes; it has no interim progress. You can continue working while agents run.
+- If you are yourself a subagent, Agent runs in the foreground instead: the call returns the child's final report. Several Agent calls in one message still run in parallel.
 - Agents can be resumed using the `conversation_id` parameter by passing the conversation ID from a previous invocation. When resumed, the agent continues with its full previous context preserved.
 - Provide clear, detailed prompts so the agent can work autonomously and return exactly the information you need.
 - Agents with "access to current context" can see the full conversation history before the tool call. When using these agents, you can write concise prompts that reference earlier context (e.g., "investigate the error discussed above") instead of repeating information. The agent will receive all prior messages and understand the context.
@@ -34,7 +35,9 @@ Use `subagent_type: "claude-code"` or `subagent_type: "codex"` to start a coding
 
 The initial receipt includes a synthetic `claude_...` or `codex_...` agent ID as soon as the native session starts. Pass that ID to `SendAgentMessage` to steer active work or start one tracked follow-up turn when idle.
 
-External coding agents can receive the current agent's MCP discovery metadata and use the existing `letta mcp` CLI through their shell:
+Fresh Letta subagents automatically discover and call the parent's MCP servers through `letta mcp`. This includes local and cloud-attached servers without copying connections or credentials. Deploying an existing agent keeps that agent's MCP scope.
+
+Claude Code and Codex automatically receive the parent's MCP discovery metadata and use the same `letta mcp` CLI through their shell. To advertise a subset:
 
 ```typescript
 Agent({
@@ -48,7 +51,7 @@ Agent({
 })
 ```
 
-`mcp: { inherit: true }` advertises every MCP server currently available to the parent agent. Adding `servers` advertises exactly that named subset and fails before launch if a requested server is unavailable. This passes discovery metadata, not new authorization; the worker calls tools through `letta mcp` under the parent agent identity.
+Omitting `mcp` advertises every MCP server currently available to the parent. `mcp: { inherit: false }` omits the discovery reminder. Adding `servers` advertises exactly that named subset and fails before launch if a requested server is unavailable. These options control discovery, not authorization or a security allowlist.
 
 ## Deploying an Existing Agent
 

@@ -14,6 +14,8 @@
  *   null limit leaves matching files uncapped
  * - `maxDepth`: the number of directories allowed between the repo root and a
  *   projected memory file
+ * - `readOnlyFiles`: repo-relative globs protecting any matching file's contents,
+ *   path and Git mode against changes relative to HEAD
  *
  * File limits count the complete staged file, including frontmatter.
  */
@@ -110,6 +112,9 @@ function report(errors) {
       );
     }
     console.error("Split files above their per-file limit, then retry the commit.");
+    if (errors.some((error) => error.includes("read-only"))) {
+      console.error("Restore protected files to HEAD; ask the user to change readOnlyFiles if an edit is needed.");
+    }
     console.error(
       "Limits come from .memfs.config.json, or the Letta Code defaults when it is absent.",
     );
@@ -131,6 +136,9 @@ async function main() {
     "--",
     CONFIG_PATH,
   ]);
+  const acceptedRevision = gitSucceeds(["rev-parse", "--verify", "HEAD"])
+    ? runGit(["rev-parse", "HEAD"]).trim()
+    : null;
   if (configChanged && process.env[CONFIG_UPDATE_ENV] !== "1") {
     errors.push(
       CONFIG_PATH + " is protected and requires human approval to change",
@@ -193,7 +201,24 @@ async function main() {
         child.on("close", (code) => code === 0 ? resolveBytes(Buffer.concat(chunks)) : reject(new Error(stderr || "git show failed for " + path)));
       });
     },
-  }, { config, layout: layoutPolicy, requireRootMarker: AUDIT_MODE || gitSucceeds(["cat-file", "-e", "HEAD:MEMORY.md"]) }));
+  }, {
+    config,
+    layout: layoutPolicy,
+    requireRootMarker: AUDIT_MODE || gitSucceeds(["cat-file", "-e", "HEAD:MEMORY.md"]),
+    acceptedTree: {
+      async listFiles() {
+        if (!acceptedRevision) return [];
+        return runGit(["ls-tree", "-r", "-z", acceptedRevision]).split("\0").filter(Boolean).map((entry) => {
+          const separator = entry.indexOf("\t");
+          return { path: entry.slice(separator + 1), mode: entry.split(" ", 1)[0] };
+        });
+      },
+      async readFile(path) {
+        if (!acceptedRevision || !gitSucceeds(["cat-file", "-e", acceptedRevision + ":" + path])) return null;
+        return runGit(["show", acceptedRevision + ":" + path], null);
+      },
+    },
+  }));
 
   report(errors);
 }

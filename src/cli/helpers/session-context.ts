@@ -3,9 +3,10 @@
 // Contains device/environment information only. Agent metadata is in agentMetadata.ts.
 
 import { platform } from "node:os";
+import { basename } from "node:path";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import type { SessionContextReason } from "@/reminders/state";
-import type { ShellContext } from "@/utils/shell-context";
+import { detectShellContext, type ShellContext } from "@/utils/shell-context";
 import { getVersion } from "@/version";
 import { gatherGitContextSnapshot } from "./git-context";
 
@@ -30,8 +31,7 @@ export function getLocalTime(): string {
 /**
  * Get device type based on platform
  */
-export function getDeviceType(): string {
-  const p = platform();
+export function getDeviceType(p: NodeJS.Platform = platform()): string {
   switch (p) {
     case "darwin":
       return "macOS";
@@ -81,6 +81,19 @@ export interface BuildSessionContextOptions {
   source?: SessionContextSource;
   reason?: SessionContextReason;
   shellContext?: ShellContext;
+  /** Override the host platform (tests). Defaults to `os.platform()`. */
+  platform?: NodeJS.Platform;
+}
+
+/**
+ * Name the shell Bash/Monitor spawn on macOS/Linux, mirroring Claude Code's
+ * `Shell:` env line and Codex's `<shell>` environment_context field.
+ * Windows keeps its dedicated shell notes instead.
+ */
+export function buildUnixShellLine(shellContext: ShellContext): string {
+  const shellName =
+    basename(shellContext.displayName) || shellContext.displayName;
+  return `- **Shell**: ${shellName}\n`;
 }
 
 function getIntroText(
@@ -140,6 +153,7 @@ export function buildSessionContext(
     const cwd = options?.cwd ?? process.cwd();
     const source = options?.source ?? "interactive-cli";
     const reason = options?.reason ?? "initial_attach";
+    const currentPlatform = options?.platform ?? platform();
 
     // Gather info with safe fallbacks
     let version = "unknown";
@@ -151,7 +165,7 @@ export function buildSessionContext(
 
     let deviceType = "unknown";
     try {
-      deviceType = getDeviceType();
+      deviceType = getDeviceType(currentPlatform);
     } catch {
       // deviceType stays "unknown"
     }
@@ -161,6 +175,18 @@ export function buildSessionContext(
       localTime = getLocalTime();
     } catch {
       // localTime stays "unknown"
+    }
+
+    let unixShellLine = "";
+    if (currentPlatform !== "win32") {
+      try {
+        unixShellLine = buildUnixShellLine(
+          options?.shellContext ??
+            detectShellContext(process.env, currentPlatform),
+        );
+      } catch {
+        // omit the shell line
+      }
     }
 
     const gitInfo = getGitInfo(cwd);
@@ -173,7 +199,7 @@ ${getIntroText(source, reason)}
 ## Device Information
 - **Local time**: ${localTime}
 - **Device type**: ${deviceType}
-- **Letta Code version**: ${version}
+${unixShellLine}- **Letta Code version**: ${version}
 - **Current working directory**: ${cwd}
 `;
 
@@ -198,7 +224,7 @@ ${gitInfo.status}
     }
 
     // Add Windows-specific shell guidance
-    if (platform() === "win32") {
+    if (currentPlatform === "win32") {
       context += buildWindowsShellNotes(options?.shellContext);
     }
 

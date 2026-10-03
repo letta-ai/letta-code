@@ -259,10 +259,12 @@ test("releases the matching active delivery without a terminal lifecycle", async
   await gateway.adoptActiveDelivery(
     makeHandoff({ clientMessageId: "cm-release" }),
   );
-  expect(gateway.releaseActiveDelivery(TEST_RUNTIME, "cm-other")).toBe(false);
+  expect(gateway.releaseActiveDelivery(TEST_RUNTIME, "cm-other")).toBeNull();
   expect(client.runtimeToolUpdates).toHaveLength(0);
 
-  expect(gateway.releaseActiveDelivery(TEST_RUNTIME, "cm-release")).toBe(true);
+  expect(
+    gateway.releaseActiveDelivery(TEST_RUNTIME, "cm-release"),
+  ).not.toBeNull();
   expect(client.runtimeToolUpdates).toHaveLength(0);
   await gateway.releaseRuntimeTools(TEST_RUNTIME);
   expect(client.runtimeToolUpdates).toEqual([
@@ -280,6 +282,356 @@ test("releases the matching active delivery without a terminal lifecycle", async
     collector.lifecycleEvents.filter((event) => event.type === "finished"),
   ).toEqual([]);
   gateway.close();
+});
+
+test("transfers accumulated assistant text across an active handoff", async () => {
+  const client = new FakeClient();
+  const relays: string[] = [];
+  const sourceHooks = makeHooks();
+  const destinationHooks = makeHooks({
+    relayAssistantText: ({ text }) => {
+      relays.push(text);
+    },
+  });
+  const sourceGateway = new ChannelGateway(client, sourceHooks.hooks);
+  const destinationGateway = new ChannelGateway(client, destinationHooks.hooks);
+  const handoff = makeHandoff({ clientMessageId: "cm-text-handoff" });
+
+  await sourceGateway.adoptActiveDelivery({
+    ...handoff,
+    activeTurnState: {
+      assistantText: {
+        currentMessageId: null,
+        currentText: "",
+        deltaKeys: [],
+        finalizedMessageIds: [],
+      },
+      idempotency: {
+        successfulActionKeys: [],
+        successfulTextDeliveryKeys: [],
+        lastSuccessfulActionKey: null,
+      },
+    },
+  });
+  client.emit({
+    ...makeStreamDelta({
+      message_type: "assistant_message",
+      id: "assistant-before",
+      otid: "stable-assistant",
+      content: "Before",
+    }),
+    idempotency_key: "assistant-before",
+  });
+  await Bun.sleep(0);
+  const activeTurnState = sourceGateway.releaseActiveDelivery(
+    TEST_RUNTIME,
+    "cm-text-handoff",
+  );
+  expect(activeTurnState).not.toBeNull();
+  await destinationGateway.adoptActiveDelivery({
+    ...handoff,
+    activeTurnState: activeTurnState ?? undefined,
+  });
+  client.emit({
+    ...makeStreamDelta({
+      message_type: "assistant_message",
+      id: "assistant-after",
+      otid: "stable-assistant",
+      content: " after",
+    }),
+    idempotency_key: "assistant-after",
+  });
+  client.emit(makeTurnFinished("end_turn"));
+  await Bun.sleep(0);
+
+  expect(relays).toEqual(["Before after"]);
+  sourceGateway.close();
+  destinationGateway.close();
+});
+
+test("preserves tool reply policy across an active handoff", async () => {
+  const client = new FakeClient();
+  const relays: string[] = [];
+  const destinationGateway = new ChannelGateway(
+    client,
+    makeHooks({
+      relayAssistantText: ({ text }) => {
+        relays.push(text);
+      },
+    }).hooks,
+  );
+  const handoff = makeHandoff({ clientMessageId: "cm-tool-policy-handoff" });
+
+  await destinationGateway.adoptActiveDelivery({
+    ...handoff,
+    activeTurnState: {
+      assistantText: {
+        currentMessageId: null,
+        currentText: "",
+        deltaKeys: [],
+        finalizedMessageIds: [],
+      },
+      idempotency: {
+        successfulActionKeys: [],
+        successfulTextDeliveryKeys: [],
+        lastSuccessfulActionKey: null,
+      },
+      automaticRelay: false,
+    },
+  });
+  client.emit(
+    makeStreamDelta({
+      message_type: "assistant_message",
+      id: "tool-policy-confirmation",
+      content: "Sent.",
+    }),
+  );
+  client.emit(makeTurnFinished("end_turn"));
+  await Bun.sleep(0);
+
+  expect(relays).toEqual([]);
+  destinationGateway.close();
+});
+
+test("active handoff retains scoped tool callback ownership", async () => {
+  const sourceClient = new FakeClient();
+  const destinationClient = new FakeClient();
+  const source = makeSource({ channel: "slack", chatId: "C-scoped-handoff" });
+  const sourceGateway = new ChannelGateway(sourceClient, makeHooks().hooks);
+  let callbackSources: ChannelTurnSource[] = [];
+  const destinationGateway = new ChannelGateway(
+    destinationClient,
+    makeHooks({
+      executeExternalTool: async (_request, sources) => {
+        callbackSources = sources;
+        return { content: [{ type: "text", text: "sent" }] };
+      },
+    }).hooks,
+  );
+  const delivery = makeDelivery({
+    clientMessageId: "cm-scoped-handoff",
+    sources: [source],
+  });
+
+  await sourceGateway.submit(delivery);
+  const payload = sourceClient.submittedInputs[0]?.payload as {
+    external_tool_scope_ids?: string[];
+  };
+  const scopeId = payload.external_tool_scope_ids?.[0];
+  expect(scopeId).toBeString();
+  await Bun.sleep(0);
+  const activeTurnState = sourceGateway.releaseActiveDelivery(
+    TEST_RUNTIME,
+    delivery.clientMessageId,
+  );
+  expect(activeTurnState?.toolScopes?.[0]?.id).toBe(scopeId);
+  if (!scopeId || !activeTurnState) throw new Error("missing handoff scope");
+
+  await destinationGateway.adoptActiveDelivery({
+    runtime: delivery.runtime,
+    sources: delivery.sources,
+    clientMessageId: delivery.clientMessageId,
+    activeTurnState,
+  });
+  expect(destinationClient.startedRuntimes[0]?.external_tools).toMatchObject([
+    { scope_id: scopeId },
+  ]);
+  await destinationClient.requestExternalToolCall({
+    type: "external_tool_call_request",
+    request_id: "scoped-handoff-request",
+    runtime: TEST_RUNTIME,
+    scope_id: scopeId,
+    tool_call_id: "scoped-handoff-call",
+    tool_name: "MessageChannel",
+    input: { action: "send", channel: "slack", chat_id: source.chatId },
+  });
+  expect(callbackSources).toEqual([source]);
+
+  sourceGateway.close();
+  destinationGateway.close();
+});
+
+test("release waits for queued finalized relay before handing off ownership", async () => {
+  const client = new FakeClient();
+  const relays: string[] = [];
+  let releaseProgress!: () => void;
+  const progressBlocked = new Promise<void>((resolve) => {
+    releaseProgress = resolve;
+  });
+  const relayAssistantText = ({ text }: { text: string }) => {
+    relays.push(text);
+  };
+  const sourceGateway = new ChannelGateway(
+    client,
+    makeHooks({
+      onProgress: async () => await progressBlocked,
+      relayAssistantText,
+    }).hooks,
+  );
+  const destinationGateway = new ChannelGateway(
+    client,
+    makeHooks({ relayAssistantText }).hooks,
+  );
+  const handoff = makeHandoff({ clientMessageId: "cm-queued-relay-handoff" });
+
+  await sourceGateway.adoptActiveDelivery({
+    ...handoff,
+    activeTurnState: {
+      assistantText: {
+        currentMessageId: null,
+        currentText: "",
+        deltaKeys: [],
+        finalizedMessageIds: [],
+      },
+      idempotency: {
+        successfulActionKeys: [],
+        successfulTextDeliveryKeys: [],
+        lastSuccessfulActionKey: null,
+      },
+    },
+  });
+  client.emit(
+    makeStreamDelta({
+      message_type: "reasoning_message",
+      id: "reasoning-before-relay",
+      content: "working",
+    }),
+  );
+  const finalized = {
+    ...makeStreamDelta({
+      message_type: "assistant_message",
+      id: "assistant-before-handoff",
+      content: "Before handoff",
+    }),
+    idempotency_key: "assistant-before-handoff",
+  };
+  client.emit(finalized);
+  client.emit(
+    makeStreamDelta({
+      message_type: "tool_call_message",
+      id: "tool-before-handoff",
+      tool_call: {
+        tool_call_id: "tool-call-before-handoff",
+        name: "Bash",
+        arguments: "{}",
+      },
+    }),
+  );
+
+  expect(
+    sourceGateway.releaseActiveDelivery(
+      TEST_RUNTIME,
+      "cm-queued-relay-handoff",
+    ),
+  ).toBeNull();
+  expect(relays).toEqual([]);
+
+  releaseProgress();
+  await Bun.sleep(0);
+  expect(relays).toEqual(["Before handoff"]);
+  const activeTurnState = sourceGateway.releaseActiveDelivery(
+    TEST_RUNTIME,
+    "cm-queued-relay-handoff",
+  );
+  expect(activeTurnState).not.toBeNull();
+
+  await destinationGateway.adoptActiveDelivery({
+    ...handoff,
+    activeTurnState: activeTurnState ?? undefined,
+  });
+  client.emit(finalized);
+  client.emit(
+    makeStreamDelta({
+      message_type: "assistant_message",
+      id: "assistant-after-handoff",
+      content: "After handoff",
+    }),
+  );
+  client.emit(
+    makeStreamDelta({ message_type: "stop_reason", stop_reason: "end_turn" }),
+  );
+  client.emit(makeTurnFinished("end_turn"));
+  await Bun.sleep(0);
+
+  expect(relays).toEqual(["Before handoff", "After handoff"]);
+  sourceGateway.close();
+  destinationGateway.close();
+});
+
+test("handoff preserves finalized identities and does not resend replayed text", async () => {
+  const client = new FakeClient();
+  const relays: string[] = [];
+  const relayAssistantText = ({ text }: { text: string }) => {
+    relays.push(text);
+  };
+  const sourceGateway = new ChannelGateway(
+    client,
+    makeHooks({ relayAssistantText }).hooks,
+  );
+  const destinationGateway = new ChannelGateway(
+    client,
+    makeHooks({ relayAssistantText }).hooks,
+  );
+  const handoff = makeHandoff({ clientMessageId: "cm-finalized-handoff" });
+
+  await sourceGateway.adoptActiveDelivery({
+    ...handoff,
+    activeTurnState: {
+      assistantText: {
+        currentMessageId: null,
+        currentText: "",
+        deltaKeys: [],
+        finalizedMessageIds: [],
+      },
+      idempotency: {
+        successfulActionKeys: [],
+        successfulTextDeliveryKeys: [],
+        lastSuccessfulActionKey: null,
+      },
+    },
+  });
+  const first = {
+    ...makeStreamDelta({
+      message_type: "assistant_message",
+      id: "assistant-finalized",
+      content: "Already sent",
+    }),
+    idempotency_key: "assistant-finalized",
+  };
+  client.emit(first);
+  client.emit(
+    makeStreamDelta({
+      message_type: "tool_call_message",
+      id: "tool-boundary",
+      tool_call: {
+        tool_call_id: "tool-call-boundary",
+        name: "Bash",
+        arguments: "{}",
+      },
+    }),
+  );
+  await Bun.sleep(0);
+  expect(relays).toEqual(["Already sent"]);
+
+  const activeTurnState = sourceGateway.releaseActiveDelivery(
+    TEST_RUNTIME,
+    "cm-finalized-handoff",
+  );
+  expect(activeTurnState).not.toBeNull();
+  await destinationGateway.adoptActiveDelivery({
+    ...handoff,
+    activeTurnState: activeTurnState ?? undefined,
+  });
+  client.emit(first);
+  client.emit(
+    makeStreamDelta({ message_type: "stop_reason", stop_reason: "end_turn" }),
+  );
+  client.emit(makeTurnFinished("end_turn"));
+  await Bun.sleep(0);
+
+  expect(relays).toEqual(["Already sent"]);
+  sourceGateway.close();
+  destinationGateway.close();
 });
 
 test("failed destination registration leaves no adopted or deduped state", async () => {

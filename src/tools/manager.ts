@@ -49,6 +49,7 @@ import {
   type RuntimeContextSnapshot,
   runWithRuntimeContext,
 } from "@/runtime-context";
+import { getRuntimeExecutionEnv } from "@/runtime-execution-settings";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { messageChannelTelemetry } from "@/telemetry/channel";
@@ -69,6 +70,7 @@ export type {
 import { waitForToolCheckouts } from "@/utils/checkout-readiness";
 import { debugLog } from "@/utils/debug";
 import { refreshAndListSecrets } from "@/utils/secrets-store";
+import { readSubagentDepth } from "@/utils/subagent-depth-env";
 import { isRecord } from "@/utils/type-guards";
 import {
   selectModelFacingExternalTools,
@@ -82,11 +84,7 @@ import {
   collectPostToolHookFeedback,
 } from "./hook-feedback";
 import { clampToolReturnContent } from "./impl/tool-return-clamp";
-import {
-  functionToolForm,
-  type JsonSchema,
-  type ModelFacingToolForm,
-} from "./model-facing-tool";
+import type { JsonSchema, ModelFacingToolForm } from "./model-facing-tool";
 import {
   getEffectivePermissionModeState,
   type PermissionModeState,
@@ -102,32 +100,17 @@ import {
   scrubAmbientSecrets,
   scrubSecretsFromString,
 } from "./secret-substitution";
+import {
+  applySubagentToolPolicy,
+  resolvedModelForm,
+} from "./subagent-tool-policy";
 import { resolveBackendSpecificToolAssets } from "./task-tool-assets";
 import { TOOL_DEFINITIONS, type ToolName } from "./tool-definitions";
+import { getInternalToolName, getServerToolName } from "./tool-name-mapping";
+
+export { getInternalToolName, getServerToolName };
 
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
-
-function resolvedModelForm(
-  base: ModelFacingToolForm,
-  description: string,
-  inputSchema: JsonSchema,
-): ModelFacingToolForm {
-  if (base.type === "custom") {
-    return {
-      ...base,
-      functionFallback: {
-        ...base.functionFallback,
-        description,
-        parameters: inputSchema,
-      },
-    };
-  }
-
-  return functionToolForm({
-    description,
-    parameters: inputSchema,
-  });
-}
 
 const STREAMING_SHELL_TOOLS = new Set([
   "Bash",
@@ -141,31 +124,6 @@ const SCOPED_BACKGROUND_TOOLS = new Set(["Monitor", "Workflow"]);
 
 // Tools that write files — used to trigger onFileWrite broadcast after execution.
 const FILE_MUTATING_TOOLS = new Set(["Edit", "Write"]);
-
-// Maps internal implementation names to the names shown to the model.
-const TOOL_NAME_MAPPINGS: Partial<Record<ToolName, string>> = {
-  // Align subagent-spawning tool with Claude Code: surface internal `Task` as `Agent`.
-  // Internal implementation name stays `Task` for backward compat with existing
-  // agent states; getInternalToolName("Agent") resolves back to "Task".
-  Task: "Agent",
-  AskUserQuestionAsync: "AskUserQuestion",
-};
-
-/** Get the server-facing name for a tool (maps internal names to what the model sees). */
-export function getServerToolName(internalName: string): string {
-  return TOOL_NAME_MAPPINGS[internalName as ToolName] || internalName;
-}
-
-/** Get the internal tool name from a server-facing name (tool calls/approvals arrive with server names). */
-export function getInternalToolName(serverName: string): string {
-  for (const [internal, server] of Object.entries(TOOL_NAME_MAPPINGS)) {
-    if (server === serverName) {
-      return internal;
-    }
-  }
-  // If not in mapping, the server name is the internal name
-  return serverName;
-}
 
 function matchesClientToolAllowlistEntry(
   allowSet: Set<string> | null,
@@ -793,9 +751,14 @@ function capturePreparedToolExecutionContext(
   const runtimeContext = buildExecutionRuntimeContextSnapshot(options);
   const clientToolAllowlist =
     options?.clientToolAllowlist ?? toolFilter.getEnabledTools() ?? undefined;
-  const toolRegistrySnapshot = filterToolRegistryByClientAllowlist(
-    snapshot.toolRegistry,
-    clientToolAllowlist,
+  const toolRegistrySnapshot = applySubagentToolPolicy(
+    filterToolRegistryByClientAllowlist(
+      snapshot.toolRegistry,
+      clientToolAllowlist,
+    ),
+    readSubagentDepth(
+      getRuntimeExecutionEnv(process.env, runtimeContext.executionSettings),
+    ),
   );
   const executionSnapshot: ToolExecutionContextSnapshot = {
     toolRegistry: toolRegistrySnapshot,
