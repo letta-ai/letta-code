@@ -331,6 +331,7 @@ export function createListenerMessageHandler(
           listener: runtime,
           command: parsed,
           socket,
+          connectionId,
           onStatusChange: opts.onStatusChange,
           getOrCreateScopedRuntime,
           runDetachedListenerTask,

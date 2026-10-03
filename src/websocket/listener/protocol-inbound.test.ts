@@ -235,6 +235,7 @@ describe("teleport protocol-inbound validators", () => {
     },
     {
       type: "teleport_failed",
+      request_id: "failure-1",
       teleport_id: "teleport-1",
       runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
       error: "Target failed to start",
@@ -243,6 +244,34 @@ describe("teleport protocol-inbound validators", () => {
     expect(parseServerMessage(Buffer.from(JSON.stringify(message)))?.type).toBe(
       message.type,
     );
+  });
+
+  test("accepts legacy teleport_failed without request_id", () => {
+    const message = {
+      type: "teleport_failed" as const,
+      teleport_id: "teleport-1",
+      runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+      error: "Target failed to start",
+    };
+    expect(parseServerMessage(Buffer.from(JSON.stringify(message)))).toEqual(
+      message,
+    );
+  });
+
+  test("rejects teleport_failed with a non-string request_id", () => {
+    expect(
+      parseServerMessage(
+        Buffer.from(
+          JSON.stringify({
+            type: "teleport_failed",
+            request_id: 123,
+            teleport_id: "teleport-1",
+            runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+            error: "Target failed to start",
+          }),
+        ),
+      ),
+    ).toBeNull();
   });
 });
 

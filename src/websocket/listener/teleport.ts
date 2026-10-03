@@ -4,6 +4,7 @@ import { getLocalChannelTeleportError } from "@/channels/teleport-guard";
 import { getStoredClientPreferences } from "@/tools/client-preferences";
 import type {
   TeleportContinuation,
+  TeleportFailedAckMessage,
   TeleportFailedCommand,
   TeleportProbeCommand,
   TeleportReadyMessage,
@@ -163,6 +164,7 @@ export function isRuntimeTeleportPending(
   return [...(runtime.pendingTeleports?.values() ?? [])].some(
     (pending) =>
       !pending.error &&
+      pending.failureRecovery !== "applied" &&
       pending.agentId === agentId &&
       pending.conversationId === conversationId,
   );
@@ -245,17 +247,39 @@ function sendTeleportReady(
   return true;
 }
 
+function scheduleTeleportRecoveryExpiry(
+  runtime: ListenerRuntime,
+  pending: PendingTeleport,
+): void {
+  const expiresAt = pending.recoveryExpiresAt;
+  if (expiresAt === undefined) return;
+  const timeout = setTimeout(
+    () => {
+      const current = runtime.pendingTeleports?.get(pending.teleportId);
+      if (current !== pending) return;
+      if (pending.failureRecovery === "in_flight") {
+        pending.recoveryExpiresAt = Date.now() + 1_000;
+        scheduleTeleportRecoveryExpiry(runtime, pending);
+        return;
+      }
+      const remaining = (pending.recoveryExpiresAt ?? 0) - Date.now();
+      if (remaining > 0) {
+        scheduleTeleportRecoveryExpiry(runtime, pending);
+        return;
+      }
+      runtime.pendingTeleports?.delete(pending.teleportId);
+    },
+    Math.max(1, expiresAt - Date.now()),
+  );
+  timeout.unref?.();
+}
+
 function retainTeleportForRecovery(
   runtime: ListenerRuntime,
   pending: PendingTeleport,
 ): void {
-  const timeout = setTimeout(() => {
-    const current = runtime.pendingTeleports?.get(pending.teleportId);
-    if (current === pending) {
-      runtime.pendingTeleports?.delete(pending.teleportId);
-    }
-  }, TELEPORT_RECOVERY_TTL_MS);
-  timeout.unref?.();
+  pending.recoveryExpiresAt = Date.now() + TELEPORT_RECOVERY_TTL_MS;
+  scheduleTeleportRecoveryExpiry(runtime, pending);
 }
 
 export function handleTeleportProbe(
@@ -272,6 +296,7 @@ export function handleTeleportProbe(
       supported: resolveBackendMode() === "api",
       drains_accepted_inputs: true,
       idempotent_continuation: true,
+      acknowledges_failed_teleports: true,
     },
     "teleport_probe_response",
     "teleport_probe",
@@ -455,7 +480,7 @@ export function finishPendingTeleport(runtime: ConversationRuntime): void {
   if (claimed) emitClaimedTeleportReady(runtime.listener, claimed);
 }
 
-function takeFailedTeleport(params: {
+function findFailedTeleport(params: {
   listener: ListenerRuntime;
   teleportId: string;
   agentId: string;
@@ -469,14 +494,36 @@ function takeFailedTeleport(params: {
   ) {
     return null;
   }
-  params.listener.pendingTeleports?.delete(params.teleportId);
   return pending;
+}
+
+function acknowledgeTeleportFailure(params: {
+  listener: ListenerRuntime;
+  command: TeleportFailedCommand;
+  socket: ListenerTransport;
+  connectionId: ListenerConnectionId;
+}): void {
+  if (params.command.request_id === undefined) return;
+  const message: TeleportFailedAckMessage = {
+    type: "teleport_failed_ack",
+    request_id: params.command.request_id,
+    teleport_id: params.command.teleport_id,
+    runtime: params.command.runtime,
+  };
+  emitProtocolV2Message(
+    params.socket,
+    params.listener,
+    message,
+    message.runtime,
+    toListenerConnection(params.connectionId),
+  );
 }
 
 export function handleTeleportFailure(params: {
   listener: ListenerRuntime;
   command: TeleportFailedCommand;
   socket: ListenerTransport;
+  connectionId: ListenerConnectionId;
   onStatusChange?: StartListenerOptions["onStatusChange"];
   getOrCreateScopedRuntime: (
     listener: ListenerRuntime,
@@ -495,7 +542,7 @@ export function handleTeleportFailure(params: {
     connectionId?: string,
   ) => Promise<void>;
 }): void {
-  const pending = takeFailedTeleport({
+  const pending = findFailedTeleport({
     listener: params.listener,
     teleportId: params.command.teleport_id,
     agentId: params.command.runtime.agent_id,
@@ -503,6 +550,12 @@ export function handleTeleportFailure(params: {
   });
   // Rejected requests never yielded, so their source turn needs no recovery.
   if (!pending || pending.error) return;
+  if (pending.failureRecovery === "applied") {
+    acknowledgeTeleportFailure(params);
+    return;
+  }
+  if (pending.failureRecovery === "in_flight") return;
+  pending.failureRecovery = "in_flight";
 
   const runtime = params.getOrCreateScopedRuntime(
     params.listener,
@@ -517,22 +570,30 @@ export function handleTeleportFailure(params: {
     conversationId: pending.conversationId,
   });
   params.runDetachedListenerTask("teleport_failed", async () => {
-    await params.processIncomingMessage(
-      {
-        type: "message",
-        connectionId: pending.connectionId,
-        agentId: pending.agentId,
-        conversationId: pending.conversationId,
-        messages: buildTeleportFailureMessages({
-          teleportId: params.command.teleport_id,
-          error: params.command.error,
-          approvals: pending.continuation?.approvals,
-        }),
-      },
-      params.socket,
-      runtime,
-      params.onStatusChange,
-      pending.connectionId,
-    );
+    try {
+      await params.processIncomingMessage(
+        {
+          type: "message",
+          connectionId: pending.connectionId,
+          agentId: pending.agentId,
+          conversationId: pending.conversationId,
+          messages: buildTeleportFailureMessages({
+            teleportId: params.command.teleport_id,
+            error: params.command.error,
+            approvals: pending.continuation?.approvals,
+          }),
+        },
+        params.socket,
+        runtime,
+        params.onStatusChange,
+        pending.connectionId,
+      );
+    } catch (error) {
+      pending.failureRecovery = undefined;
+      throw error;
+    }
+    pending.failureRecovery = "applied";
+    retainTeleportForRecovery(params.listener, pending);
+    acknowledgeTeleportFailure(params);
   });
 }

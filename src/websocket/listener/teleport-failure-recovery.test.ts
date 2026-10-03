@@ -20,6 +20,7 @@ import {
   claimPendingTeleportAtBoundary,
   finishTeleport,
   handleTeleportRequest,
+  isRuntimeTeleportPending,
 } from "./teleport";
 import type {
   ConversationRuntime,
@@ -107,6 +108,7 @@ async function deliverTeleportFailure(params: {
   socket: MockSocket;
   processIncomingMessage: (incoming: IncomingMessage) => Promise<void>;
   error: string;
+  requestId?: string;
 }): Promise<void> {
   let detachedTask: Promise<void> | undefined;
   const handleMessage = createListenerMessageHandler({
@@ -134,6 +136,7 @@ async function deliverTeleportFailure(params: {
     Buffer.from(
       JSON.stringify({
         type: "teleport_failed",
+        ...(params.requestId ? { request_id: params.requestId } : {}),
         teleport_id: "teleport-1",
         runtime: {
           agent_id: "agent-1",
@@ -200,7 +203,7 @@ test("failed same-runtime teleport keeps the source preference snapshot", async 
   }
 });
 
-test("terminal teleport failure resumes the source without approvals", async () => {
+test("old teleport failure without request_id recovers without an ack", async () => {
   const listener = createRuntime();
   const runtime = getOrCreateScopedRuntime(
     listener,
@@ -253,7 +256,186 @@ test("terminal teleport failure resumes the source without approvals", async () 
       }),
     }),
   );
-  expect(listener.pendingTeleports?.has("teleport-1")).toBe(false);
+  expect(
+    socket.sent.some(
+      (message) =>
+        (message as { type?: string }).type === "teleport_failed_ack",
+    ),
+  ).toBe(false);
+  expect(listener.pendingTeleports?.get("teleport-1")?.failureRecovery).toBe(
+    "applied",
+  );
+  expect(
+    listener.pendingTeleports?.get("teleport-1")?.recoveryExpiresAt,
+  ).toBeGreaterThan(Date.now());
+});
+
+test("teleport failure acks only after recovery is applied", async () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    "agent-1",
+    "conversation-1",
+  );
+  const socket = new MockSocket();
+  let startRecovery: (() => void) | undefined;
+  const recoveryStarted = new Promise<void>((resolve) => {
+    startRecovery = resolve;
+  });
+  let finishRecovery: (() => void) | undefined;
+  const recoveryFinished = new Promise<void>((resolve) => {
+    finishRecovery = resolve;
+  });
+  const processIncomingMessage = mock(async () => {
+    startRecovery?.();
+    await recoveryFinished;
+  });
+  setActiveRuntime(listener);
+  prepareSourceTeleport(listener, runtime, socket);
+
+  const delivery = deliverTeleportFailure({
+    listener,
+    runtime,
+    socket,
+    requestId: "failure-1",
+    error: "Destination unavailable",
+    processIncomingMessage,
+  });
+  await recoveryStarted;
+  await deliverTeleportFailure({
+    listener,
+    runtime,
+    socket,
+    requestId: "failure-2",
+    error: "Destination unavailable",
+    processIncomingMessage,
+  });
+
+  expect(processIncomingMessage).toHaveBeenCalledTimes(1);
+  expect(
+    socket.sent.some(
+      (message) =>
+        (message as { type?: string }).type === "teleport_failed_ack",
+    ),
+  ).toBe(false);
+  expect(isRuntimeTeleportPending(listener, "agent-1", "conversation-1")).toBe(
+    true,
+  );
+
+  finishRecovery?.();
+  await delivery;
+
+  const acknowledgements = socket.sent.filter(
+    (message) => (message as { type?: string }).type === "teleport_failed_ack",
+  );
+  expect(acknowledgements).toHaveLength(1);
+  expect(acknowledgements[0]).toMatchObject({
+    type: "teleport_failed_ack",
+    request_id: "failure-1",
+    teleport_id: "teleport-1",
+    runtime: {
+      agent_id: "agent-1",
+      conversation_id: "conversation-1",
+    },
+  });
+  expect(isRuntimeTeleportPending(listener, "agent-1", "conversation-1")).toBe(
+    false,
+  );
+});
+
+test("duplicate teleport failure re-acks without applying recovery twice", async () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    "agent-1",
+    "conversation-1",
+  );
+  const socket = new MockSocket();
+  const processIncomingMessage = mock(async () => {});
+  setActiveRuntime(listener);
+  prepareSourceTeleport(listener, runtime, socket);
+
+  await deliverTeleportFailure({
+    listener,
+    runtime,
+    socket,
+    requestId: "failure-1",
+    error: "Destination unavailable",
+    processIncomingMessage,
+  });
+  await deliverTeleportFailure({
+    listener,
+    runtime,
+    socket,
+    requestId: "failure-2",
+    error: "Destination unavailable",
+    processIncomingMessage,
+  });
+
+  expect(processIncomingMessage).toHaveBeenCalledTimes(1);
+  expect(
+    socket.sent
+      .filter(
+        (message) =>
+          (message as { type?: string }).type === "teleport_failed_ack",
+      )
+      .map((message) => (message as { request_id: string }).request_id),
+  ).toEqual(["failure-1", "failure-2"]);
+});
+
+test("failed recovery sends no ack and remains retryable", async () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    "agent-1",
+    "conversation-1",
+  );
+  const socket = new MockSocket();
+  let attempts = 0;
+  const processIncomingMessage = mock(async () => {
+    attempts += 1;
+    if (attempts === 1) throw new Error("apply failed");
+  });
+  setActiveRuntime(listener);
+  prepareSourceTeleport(listener, runtime, socket);
+
+  await expect(
+    deliverTeleportFailure({
+      listener,
+      runtime,
+      socket,
+      requestId: "failure-1",
+      error: "Destination unavailable",
+      processIncomingMessage,
+    }),
+  ).rejects.toThrow("apply failed");
+  expect(
+    socket.sent.some(
+      (message) =>
+        (message as { type?: string }).type === "teleport_failed_ack",
+    ),
+  ).toBe(false);
+  expect(listener.pendingTeleports?.get("teleport-1")?.failureRecovery).toBe(
+    undefined,
+  );
+
+  await deliverTeleportFailure({
+    listener,
+    runtime,
+    socket,
+    requestId: "failure-2",
+    error: "Destination unavailable",
+    processIncomingMessage,
+  });
+
+  expect(processIncomingMessage).toHaveBeenCalledTimes(2);
+  expect(socket.sent).toContainEqual(
+    expect.objectContaining({
+      type: "teleport_failed_ack",
+      request_id: "failure-2",
+      teleport_id: "teleport-1",
+    }),
+  );
 });
 
 test("terminal teleport failure preserves approval results before resuming", async () => {

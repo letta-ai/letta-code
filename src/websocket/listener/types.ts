@@ -164,6 +164,8 @@ export type PendingTeleport = {
   readyAt?: number;
   error?: string;
   continuation?: TeleportContinuation;
+  failureRecovery?: "in_flight" | "applied";
+  recoveryExpiresAt?: number;
 };
 
 export interface ModeChangePayload {
