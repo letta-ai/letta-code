@@ -167,6 +167,7 @@ export function evictConversationRuntimeIfIdle(
     runtime.pendingTurns > 0 ||
     runtime.pendingApprovalResolvers.size > 0 ||
     runtime.pendingApprovalBatchByToolCallId.size > 0 ||
+    runtime.pendingAsyncQuestionToolCallIds.size > 0 ||
     runtime.recoveredApprovalState !== null ||
     runtime.pendingInterruptedResults !== null ||
     runtime.pendingInterruptedContext !== null ||
@@ -305,6 +306,7 @@ export function createConversationRuntime(
     transientChannelRuntimeTools: false,
     pendingApprovalBatchByToolCallId: new Map(),
     approvalMessageIdByToolCallId: new Map(),
+    pendingAsyncQuestionToolCallIds: new Set(),
     pendingInterruptedResults: null,
     pendingInterruptedContext: null,
     continuationEpoch: 0,
@@ -417,6 +419,7 @@ export function clearConversationRuntimeState(
   });
   runtime.pendingApprovalBatchByToolCallId.clear();
   runtime.approvalMessageIdByToolCallId.clear();
+  runtime.pendingAsyncQuestionToolCallIds.clear();
   runtime.pendingInterruptedResults = null;
   runtime.pendingInterruptedContext = null;
   runtime.pendingInterruptedToolCallIds = null;

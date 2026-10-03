@@ -27,6 +27,7 @@ import {
   buildApprovalSuggestionPayload,
   classifyApprovalsWithSuggestions,
 } from "./approval-suggestions";
+import { registerPendingAsyncQuestions } from "./async-question-status";
 import { TO_SUBSCRIBERS } from "./connection";
 import { appendQueuedTurnToInput } from "./continuation-input";
 import {
@@ -594,6 +595,10 @@ export async function handleApprovalStop(params: {
     })),
     persistedExecutionResults,
   );
+  // Register unanswered AskUserQuestionAsync receipts before any
+  // shouldInterrupt check: a turn interrupted after execution still leaves
+  // the question pending, and the turn-terminal state emit relays it.
+  registerPendingAsyncQuestions(runtime, decisions, persistedExecutionResults);
   emitToolExecutionFinishedEvents(socket, runtime, {
     approvals: persistedExecutionResults,
     runId: executionRunId,

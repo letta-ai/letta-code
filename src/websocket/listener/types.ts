@@ -259,6 +259,13 @@ export type ConversationRuntime = {
   transientChannelRuntimeTools: boolean;
   pendingApprovalBatchByToolCallId: Map<string, string>;
   /**
+   * Tool call IDs of AskUserQuestionAsync receipts whose answers have not
+   * arrived yet. Non-empty keeps the runtime un-evicted so the sidebar can
+   * show a "waiting for your answer" indicator until the answer (or /clear)
+   * arrives.
+   */
+  pendingAsyncQuestionToolCallIds: Set<string>;
+  /**
    * tool_call_id -> server-assigned id of the approval_request_message that
    * carried the tool call. client_tool_start/end reuse this id instead of
    * minting a phantom `message-*` id (LET-10608). Populated and cleared
