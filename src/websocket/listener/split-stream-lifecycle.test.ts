@@ -43,6 +43,9 @@ describe("split stream listener lifecycle", () => {
   const originalBaseUrl = process.env.LETTA_BASE_URL;
   const originalStreamOpenTimeout =
     process.env.LETTA_LISTENER_STREAM_OPEN_TIMEOUT_MS;
+  const originalRetryDuration = process.env.LETTA_LISTENER_RETRY_DURATION_MS;
+  const originalInitialRetryDelay =
+    process.env.LETTA_LISTENER_INITIAL_RETRY_DELAY_MS;
   const originalGetSettingsWithSecureTokens =
     settingsManager.getSettingsWithSecureTokens;
   const originalUpdateSettings = settingsManager.updateSettings;
@@ -207,6 +210,13 @@ describe("split stream listener lifecycle", () => {
     } else {
       process.env.LETTA_BASE_URL = originalBaseUrl;
     }
+    for (const [name, value] of [
+      ["LETTA_LISTENER_RETRY_DURATION_MS", originalRetryDuration],
+      ["LETTA_LISTENER_INITIAL_RETRY_DELAY_MS", originalInitialRetryDelay],
+    ] as const) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
     if (originalStreamOpenTimeout === undefined) {
       delete process.env.LETTA_LISTENER_STREAM_OPEN_TIMEOUT_MS;
     } else {
@@ -265,7 +275,11 @@ describe("split stream listener lifecycle", () => {
 
   function acceptConnection(
     index: number,
-    overrides?: { generation?: string; incarnation?: string },
+    overrides?: {
+      generation?: string;
+      attempt?: number;
+      incarnation?: string;
+    },
   ): void {
     const url = connectionUrls[index];
     const socket = connections[index];
@@ -275,7 +289,9 @@ describe("split stream listener lifecycle", () => {
         type: "listener_ready",
         connection_generation:
           overrides?.generation ?? url.searchParams.get("connectionGeneration"),
-        connection_attempt: Number(url.searchParams.get("connectionAttempt")),
+        connection_attempt:
+          overrides?.attempt ??
+          Number(url.searchParams.get("connectionAttempt")),
         ...(overrides?.incarnation
           ? { connection_incarnation: overrides.incarnation }
           : {}),
@@ -496,6 +512,109 @@ describe("split stream listener lifecycle", () => {
       () => onConnected.mock.calls.length === 1,
       "replacement pair did not become active",
     );
+  });
+
+  test("version-skewed pairs past the connect budget never end the listener", async () => {
+    // Mixed Cloud pods have no affinity guarantee, so skewed pairs can repeat
+    // for as long as the rollout takes. Shrink the ordinary connect budget,
+    // skew every pair well past it, then let both sides match.
+    process.env.LETTA_LISTENER_RETRY_DURATION_MS = "150";
+    process.env.LETTA_LISTENER_INITIAL_RETRY_DELAY_MS = "10";
+    const onConnected = mock(() => {});
+    const onError = mock((_error: Error) => {});
+    await startClient({
+      onConnected,
+      onError,
+      supportsPairedListenerGenerations: true,
+    });
+
+    const startedAt = Date.now();
+    let skewedPairs = 0;
+    while (Date.now() - startedAt < 600 || skewedPairs < 4) {
+      await waitFor(
+        () => countConnectionsForChannel("control") > skewedPairs,
+        `control socket ${skewedPairs + 1} did not open`,
+      );
+      const controlIndex = lastConnectionIndexForChannel("control");
+      const streams = countConnectionsForChannel("stream");
+      // Alternate which side came from the new pod.
+      const newControl = skewedPairs % 2 === 0;
+      acceptConnection(
+        controlIndex,
+        newControl ? { incarnation: `control-${skewedPairs}` } : undefined,
+      );
+      await waitFor(
+        () => countConnectionsForChannel("stream") === streams + 1,
+        `stream socket ${skewedPairs + 1} did not open`,
+      );
+      acceptConnection(
+        lastConnectionIndexForChannel("stream"),
+        newControl ? undefined : { incarnation: `stream-${skewedPairs}` },
+      );
+      skewedPairs += 1;
+      await waitFor(
+        () => countConnectionsForChannel("control") > skewedPairs,
+        `listener stopped reconnecting after skewed pair ${skewedPairs}`,
+      );
+      expect(onError).not.toHaveBeenCalled();
+      expect(onConnected).not.toHaveBeenCalled();
+    }
+    expect(Date.now() - startedAt).toBeGreaterThan(150 * 3);
+
+    // The rollout drains: both acknowledgements now come from new pods.
+    const controlIndex = lastConnectionIndexForChannel("control");
+    const streams = countConnectionsForChannel("stream");
+    acceptConnection(controlIndex, { incarnation: "drained" });
+    await waitFor(
+      () => countConnectionsForChannel("stream") === streams + 1,
+      "stream socket did not open after the rollout drained",
+    );
+    acceptConnection(lastConnectionIndexForChannel("stream"), {
+      incarnation: "drained",
+    });
+    await waitFor(
+      () => onConnected.mock.calls.length === 1,
+      "listener did not activate once both sides matched",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(onConnected).toHaveBeenCalledTimes(1);
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  test("ordinary pair failures still exhaust the connect budget", async () => {
+    // The skew exemption is narrow: a plain mismatched generation keeps the
+    // normal terminal budget.
+    process.env.LETTA_LISTENER_RETRY_DURATION_MS = "150";
+    process.env.LETTA_LISTENER_INITIAL_RETRY_DELAY_MS = "10";
+    const onError = mock((_error: Error) => {});
+    await startClient({ onError, supportsPairedListenerGenerations: true });
+
+    let pairs = 0;
+    while (onError.mock.calls.length === 0) {
+      await waitFor(
+        () =>
+          onError.mock.calls.length > 0 ||
+          countConnectionsForChannel("control") > pairs,
+        `control socket ${pairs + 1} did not open`,
+      );
+      if (onError.mock.calls.length > 0) break;
+      // Alternate stale generation and stale attempt.
+      acceptConnection(
+        lastConnectionIndexForChannel("control"),
+        pairs % 2 === 0
+          ? { generation: "stale-generation" }
+          : { attempt: 999_999 },
+      );
+      pairs += 1;
+      await waitFor(
+        () =>
+          onError.mock.calls.length > 0 ||
+          countConnectionsForChannel("control") > pairs,
+        `listener neither retried nor failed after pair ${pairs}`,
+      );
+    }
+    expect(pairs).toBeGreaterThanOrEqual(2);
+    expect(onError.mock.calls[0]?.[0].message).toContain("Failed to connect");
   });
 
   test("mismatched acceptance reconnects with a new generation and attempt", async () => {

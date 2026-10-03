@@ -32,12 +32,7 @@ import {
   createConnectionTurnProcessor,
 } from "./connection-lifecycle";
 import { emitInitialConnectionState as emitInitialState } from "./connection-state-sync";
-import {
-  INITIAL_RETRY_DELAY_MS,
-  LISTENER_PONG_TIMEOUT_MS,
-  MAX_RETRY_DELAY_MS,
-  MAX_RETRY_DURATION_MS,
-} from "./constants";
+import { LISTENER_PONG_TIMEOUT_MS, MAX_RETRY_DELAY_MS } from "./constants";
 import {
   abortMessageInput,
   handleApprovalResponseInput,
@@ -696,7 +691,7 @@ async function connectWithRetry(
   const elapsedTime = Date.now() - startTime;
 
   if (attempt > 0) {
-    if (elapsedTime >= MAX_RETRY_DURATION_MS) {
+    if (elapsedTime >= retryPolicy.listenerRetryDurationMs()) {
       // If we ever had a successful connection, try to re-register instead
       // of giving up. This keeps established sessions alive through transient
       // outages (e.g. Cloudflare 521, server deploys).
@@ -709,7 +704,7 @@ async function connectWithRetry(
     }
 
     const delay = Math.min(
-      INITIAL_RETRY_DELAY_MS * 2 ** (attempt - 1),
+      retryPolicy.listenerInitialRetryDelayMs() * 2 ** (attempt - 1),
       MAX_RETRY_DELAY_MS,
     );
     const maxAttempts = retryPolicy.MAX_RETRY_ATTEMPTS;

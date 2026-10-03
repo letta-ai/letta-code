@@ -371,9 +371,12 @@ export async function preparePairedListenerTransport(params: {
     return { kind: "stale" };
   }
   if (streamAcceptance.connectionIncarnation !== controlIncarnation) {
+    // Exactly one side carrying an incarnation is Cloud pod version skew in
+    // either direction (no same-version affinity), not a stale pair. It stays
+    // rejected but must not exhaust the startup budget.
     if (
-      controlIncarnation !== undefined &&
-      streamAcceptance.connectionIncarnation === undefined
+      (controlIncarnation === undefined) !==
+      (streamAcceptance.connectionIncarnation === undefined)
     ) {
       rolloutSkewRetries.add(runtime);
     }
