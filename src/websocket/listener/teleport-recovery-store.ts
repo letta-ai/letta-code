@@ -43,7 +43,7 @@ function defaultDirectory(): string {
     serverUrl = process.env.LETTA_BASE_URL || LETTA_CLOUD_API_URL;
   }
   return join(
-    homedir(),
+    process.env.HOME || homedir(),
     ".letta",
     "listener-state",
     createHash("sha256").update(serverUrl).digest("hex").slice(0, 24),
