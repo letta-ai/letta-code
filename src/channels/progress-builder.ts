@@ -11,6 +11,7 @@ import {
   type ToolCallSummary,
   type ToolReturnSummary,
 } from "./progress-formatting";
+import { completedToolPlan } from "./progress-plan";
 import type { ChannelTurnProgressUpdate } from "./progress-types";
 
 function getMessageType(delta: Record<string, unknown>): string | null {
@@ -425,6 +426,7 @@ export function createChannelTurnProgressBuilder(
               {
                 kind: "tool",
                 state: status,
+                ...completedToolPlan(toolWithAccumulatedArgs, status),
                 message: status === "error" ? "Tool failed" : "Tool finished",
                 ...(summary.id ? { toolCallId: summary.id } : {}),
                 ...(summary.name ? { toolName: summary.name } : {}),
@@ -492,6 +494,7 @@ export function createChannelTurnProgressBuilder(
             {
               kind: "tool",
               state,
+              ...completedToolPlan(toolWithAccumulatedArgs, state),
               message: state === "error" ? "Tool failed" : "Tool finished",
               ...(tool?.id ? { toolCallId: tool.id } : {}),
               ...(tool?.name ? { toolName: tool.name } : {}),
