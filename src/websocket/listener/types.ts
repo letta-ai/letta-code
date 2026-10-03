@@ -36,6 +36,7 @@ import type {
   ServiceCommandRequest,
   ServiceCommandResponse,
 } from "@/types/service-protocol";
+import type { TeleportRecoveryStore } from "./teleport-recovery-store";
 import type { ListenerTransport } from "./transport";
 import type { TurnLifecycle } from "./turn-lifecycle";
 
@@ -412,6 +413,8 @@ export type ListenerRuntime = {
   pendingExternalToolCalls: Map<string, PendingExternalToolCall>;
   /** Active-session source handoffs; durable recovery proof lives on disk. */
   pendingTeleports?: Map<string, PendingTeleport>;
+  /** Optional runtime-scoped durable store override, primarily for isolated app-server tests. */
+  teleportRecoveryStore?: TeleportRecoveryStore;
   /**
    * Agent metadata warmups for listen-mode reminders. The cached promise is
    * reused while the listener stays connected so first-turn reminders can join

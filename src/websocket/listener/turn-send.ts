@@ -6,6 +6,7 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { sendMessageStream } from "@/agent/message";
 import { getRetryDelayMs } from "@/agent/turn-recovery-policy";
+import { getBackend } from "@/backend";
 import { getRetryStatusMessage } from "@/cli/helpers/error-formatter";
 import type { StopReasonType } from "@/types/protocol_v2";
 import {
@@ -47,6 +48,7 @@ export async function startTurnInput(
     overrideModel: SendOptions["overrideModel"];
     responseFormat?: SendOptions["responseFormat"];
     actingUserId?: string;
+    onInputAccepted?: () => void;
     getInput: () => TurnInputState;
     getInterruptedToolCallIds: () => string[];
   },
@@ -87,6 +89,41 @@ export async function startTurnInput(
   const input = params.getInput();
   const withSkills = injectQueuedSkillContent(input.messages, params);
   const result = await sender.send(withSkills);
+  const cleanUpAdmittedStream = async (): Promise<void> => {
+    if (result.kind !== "stream") return;
+    result.stream.controller.abort();
+    const cancelled = await getBackend().cancelConversation(
+      params.conversationId,
+    );
+    if (!Object.values(cancelled).includes("cancelled")) {
+      throw new Error(
+        `Backend did not settle the admitted run for ${params.conversationId}`,
+      );
+    }
+  };
+  if (
+    params.turnLease.signal.aborted ||
+    !params.runtime.turnLifecycle.isCurrent(params.turnLease)
+  ) {
+    if (result.kind === "stream") result.stream.controller.abort();
+    throw new Error("Turn ownership changed during Core input admission");
+  }
+  try {
+    params.onInputAccepted?.();
+  } catch (error) {
+    try {
+      await cleanUpAdmittedStream();
+    } catch (cleanupError) {
+      throw Object.assign(
+        new AggregateError(
+          [error, cleanupError],
+          "Core admitted input but recovery ownership and cleanup both failed",
+        ),
+        { admittedInputCleanupFailed: true },
+      );
+    }
+    throw error;
+  }
   return {
     sender,
     buildSendOptions: sendParams.buildSendOptions,

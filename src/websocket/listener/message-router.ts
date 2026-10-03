@@ -325,6 +325,7 @@ export function createListenerMessageHandler(
           listener: runtime,
           command: parsed,
           connectionId,
+          recoveryStore: teleportRecoveryStore,
         });
         return;
       }

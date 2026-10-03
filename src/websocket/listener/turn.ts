@@ -287,11 +287,8 @@ async function handleIncomingMessageInner(
         pendingNormalizationInterruptedToolCallIds,
       onTerminal: noteFinalization,
       getTurnId: () => activeDequeuedBatchId,
+      onInputAccepted,
     });
-    // startTurnInput resolves only after Core has durably admitted (or
-    // idempotently recovered) the request. Notify protocol owners before the
-    // provider stream, tools, or approvals can block turn completion.
-    onInputAccepted?.();
     const {
       sender: turnInputSender,
       stream: initialStream,

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, mock, test } from "bun:test";
+import { readdirSync, utimesSync } from "node:fs";
 import WebSocket from "ws";
 import { settingsManager } from "@/settings-manager";
 import { TestDirectory } from "@/test-utils/test-fs";
@@ -8,11 +9,13 @@ import {
 } from "@/tools/client-preferences";
 import type { TeleportContinuation } from "@/types/protocol_v2";
 import {
+  closeListenerConnection,
   markListenerConnectionInitialized,
   openListenerConnection,
   subscribeListenerConnection,
 } from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
+import { createInterruptedTurnStore } from "./interrupted-turn-record";
 import { createRuntime } from "./lifecycle";
 import { createListenerMessageHandler } from "./message-router";
 import { setActiveRuntime } from "./runtime";
@@ -22,6 +25,7 @@ import {
   finishTeleport,
   handleTeleportRequest,
   isRuntimeTeleportPending,
+  setTeleportInterruptedTurnStoreForTests,
 } from "./teleport";
 import {
   createTeleportRecoveryStore,
@@ -48,11 +52,19 @@ class MockSocket {
   }
 }
 
-function makeOptions(): StartListenerOptions {
+const interruptedStores = new WeakMap<
+  ListenerRuntime,
+  ReturnType<typeof createInterruptedTurnStore>
+>();
+
+function makeOptions(
+  connectionId = "source",
+  deviceId = "source-device",
+): StartListenerOptions {
   return {
-    connectionId: "source",
+    connectionId,
     wsUrl: "ws://app-server.test",
-    deviceId: "source-device",
+    deviceId,
     connectionName: "Source",
     onConnected: () => {},
     onDisconnected: () => {},
@@ -63,18 +75,27 @@ function makeOptions(): StartListenerOptions {
 function openSourceConnection(
   listener: ListenerRuntime,
   socket: MockSocket,
+  connectionId = "source",
+  deviceId = "source-device",
 ): void {
+  if (!interruptedStores.has(listener)) {
+    const store = createInterruptedTurnStore(
+      `${stateDirectory.path}/interrupted-turns`,
+    );
+    interruptedStores.set(listener, store);
+    setTeleportInterruptedTurnStoreForTests(listener, store);
+  }
   openListenerConnection({
     runtime: listener,
-    connectionId: "source",
+    connectionId,
     writer: socket as never,
-    options: makeOptions(),
+    options: makeOptions(connectionId, deviceId),
   });
-  subscribeListenerConnection(listener, "source", {
+  subscribeListenerConnection(listener, connectionId, {
     agent_id: "agent-1",
     conversation_id: "conversation-1",
   });
-  markListenerConnectionInitialized(listener, "source");
+  markListenerConnectionInitialized(listener, connectionId);
 }
 
 function prepareSourceTeleport(
@@ -82,15 +103,16 @@ function prepareSourceTeleport(
   runtime: ConversationRuntime,
   socket: MockSocket,
   continuation?: TeleportContinuation,
+  connectionId = "source",
 ): void {
-  openSourceConnection(listener, socket);
+  openSourceConnection(listener, socket, connectionId);
   const lease = runtime.turnLifecycle.begin({
     origin: "message",
     workingDirectory: process.cwd(),
   });
   handleTeleportRequest({
     listener,
-    connectionId: "source",
+    connectionId,
     command: {
       type: "teleport_request",
       request_id: "teleport-1",
@@ -111,6 +133,15 @@ function prepareSourceTeleport(
     ...(continuation ? { continuation } : {}),
   });
   if (!pending) throw new Error("Teleport did not reach the source boundary");
+  interruptedStores.get(listener)?.write({
+    agentId: "agent-1",
+    conversationId: "conversation-1",
+    runId: "run-source",
+    toolCallIds: [],
+    results: [],
+    requestOtid: "source-request",
+    workingDirectory: process.cwd(),
+  });
   finishTeleport(runtime, lease, pending);
 }
 
@@ -126,12 +157,14 @@ async function deliverTeleportFailure(params: {
   agentId?: string;
   conversationId?: string;
   recoveryStore?: TeleportRecoveryStore;
+  connectionId?: string;
 }): Promise<void> {
   let detachedTask: Promise<void> | undefined;
   const handleMessage = createListenerMessageHandler({
     runtime: params.listener,
     socket: params.socket as unknown as WebSocket,
-    opts: makeOptions(),
+    connectionId: params.connectionId,
+    opts: makeOptions(params.connectionId),
     processQueuedTurn: async () => {},
     fileCommandSession: { handle: () => false },
     getParsedRuntimeScope: () => null,
@@ -234,6 +267,26 @@ test("stale turn leases cannot persist yielded Teleport authority", () => {
 
   expect(finishTeleport(runtime, lease, pending).finished).toBe(false);
   expect(createTeleportRecoveryStore().read("teleport-stale")).toBeNull();
+  handleTeleportRequest({
+    listener,
+    connectionId: "source",
+    command: {
+      type: "teleport_request",
+      request_id: "teleport-stale-retry",
+      teleport_id: "teleport-stale",
+      runtime: { agent_id: "agent-1", conversation_id: "conversation-1" },
+      target: {
+        connection_id: "target",
+        device_id: "target-device",
+        connection_name: "Target",
+      },
+    },
+  });
+  expect(
+    socket.sent.filter(
+      (message) => (message as { type?: string }).type === "teleport_ready",
+    ),
+  ).toHaveLength(0);
 });
 
 test("failed same-runtime teleport keeps the source preference snapshot", async () => {
@@ -557,11 +610,18 @@ test("durable accepted recovery re-acks after listener restart without replay", 
   );
   const firstSocket = new MockSocket();
   setActiveRuntime(firstListener);
-  prepareSourceTeleport(firstListener, firstRuntime, firstSocket);
+  prepareSourceTeleport(
+    firstListener,
+    firstRuntime,
+    firstSocket,
+    undefined,
+    "app-server-5",
+  );
   await deliverTeleportFailure({
     listener: firstListener,
     runtime: firstRuntime,
     socket: firstSocket,
+    connectionId: "app-server-5",
     requestId: "failure-1",
     error: "Destination unavailable",
     processIncomingMessage: async () => {},
@@ -574,13 +634,14 @@ test("durable accepted recovery re-acks after listener restart without replay", 
     "conversation-1",
   );
   const restartedSocket = new MockSocket();
-  openSourceConnection(restartedListener, restartedSocket);
+  openSourceConnection(restartedListener, restartedSocket, "app-server-0");
   setActiveRuntime(restartedListener);
   const processIncomingMessage = mock(async () => {});
   await deliverTeleportFailure({
     listener: restartedListener,
     runtime: restartedRuntime,
     socket: restartedSocket,
+    connectionId: "app-server-0",
     requestId: "failure-after-restart",
     error: "Destination unavailable",
     processIncomingMessage,
@@ -591,6 +652,48 @@ test("durable accepted recovery re-acks after listener restart without replay", 
     expect.objectContaining({
       type: "teleport_failed_ack",
       request_id: "failure-after-restart",
+    }),
+  );
+});
+
+test("same-process app-server reconnect routes durable unwind through the new socket", async () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    "agent-1",
+    "conversation-1",
+  );
+  const oldSocket = new MockSocket();
+  setActiveRuntime(listener);
+  prepareSourceTeleport(
+    listener,
+    runtime,
+    oldSocket,
+    undefined,
+    "app-server-5",
+  );
+  closeListenerConnection(listener, "app-server-5");
+  const reconnectedSocket = new MockSocket();
+  openSourceConnection(listener, reconnectedSocket, "app-server-6");
+  const seenConnectionIds: Array<string | undefined> = [];
+
+  await deliverTeleportFailure({
+    listener,
+    runtime,
+    socket: reconnectedSocket,
+    connectionId: "app-server-6",
+    requestId: "failure-after-reconnect",
+    error: "Destination unavailable",
+    processIncomingMessage: async (incoming) => {
+      seenConnectionIds.push(incoming.connectionId);
+    },
+  });
+
+  expect(seenConnectionIds).toEqual(["app-server-6"]);
+  expect(reconnectedSocket.sent).toContainEqual(
+    expect.objectContaining({
+      type: "teleport_failed_ack",
+      request_id: "failure-after-reconnect",
     }),
   );
 });
@@ -637,16 +740,34 @@ test("yield proof survives beyond five minutes and newer Teleport eviction", asy
 });
 
 test("recovery proof is pruned only after outliving the Cloud retry window", () => {
-  const store = createTeleportRecoveryStore();
+  const directory = `${stateDirectory.path}/expiry-ledger`;
+  const store = createTeleportRecoveryStore(directory);
+  const expiredAt = Date.now() - 25 * 60 * 60_000;
   store.write({
     teleportId: "teleport-expired",
     agentId: "agent-1",
     conversationId: "conversation-1",
-    sourceConnectionId: "source",
+    sourceDeviceId: "source-device",
+    sourceSessionId: "listen-original",
     disposition: "yielded",
-    recordedAt: Date.now() - 25 * 60 * 60_000,
-    recoveryAcceptedAt: Date.now() - 25 * 60 * 60_000,
+    phase: "ready",
+    readiness: {
+      client_preferences: getStoredClientPreferences(
+        "agent-1",
+        "conversation-1",
+      ),
+      success: true,
+      active_turn: true,
+      mode: "standard",
+    },
+    recordedAt: expiredAt,
+    recoveryAcceptedAt: expiredAt,
   });
+  const [recordName] = readdirSync(directory).filter((name) =>
+    name.endsWith(".json"),
+  );
+  if (!recordName) throw new Error("missing recovery record file");
+  utimesSync(`${directory}/${recordName}`, expiredAt / 1000, expiredAt / 1000);
 
   expect(store.read("teleport-expired")).toBeNull();
 });
@@ -712,6 +833,7 @@ test("ledger write failure after Core acceptance retries the same recovery OTID"
       }
       durableStore.write(record);
     },
+    remove: (teleportId) => durableStore.remove(teleportId),
   };
   const visibleRecoveryOtids = new Set<string>();
   const processIncomingMessage = mock(async (incoming: IncomingMessage) => {
@@ -762,9 +884,20 @@ test("matching source-rejected Teleport acks as a no-op but mismatch does not", 
     teleportId: "teleport-rejected",
     agentId: "agent-1",
     conversationId: "conversation-1",
-    sourceConnectionId: "source",
+    sourceDeviceId: "source-device",
+    sourceSessionId: "listen-original",
     disposition: "rejected",
-    error: "Conversation already has a teleport pending",
+    phase: "ready",
+    readiness: {
+      client_preferences: getStoredClientPreferences(
+        "agent-1",
+        "conversation-1",
+      ),
+      success: false,
+      active_turn: false,
+      mode: "standard",
+      error: "Conversation already has a teleport pending",
+    },
     recordedAt: Date.now(),
   });
   const listener = createRuntime();

@@ -1,6 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
+  closeSync,
+  existsSync,
+  fsyncSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
   renameSync,
@@ -8,7 +12,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { ApprovalResult } from "@/agent/approval-execution";
 import { STALE_APPROVAL_RECOVERY_DENIAL_REASON } from "@/agent/turn-recovery-policy";
 import { getServerUrl } from "@/backend/api/server-url";
@@ -43,11 +47,50 @@ export function createInterruptedTurnStore(
     createHash("sha256").update(getServerUrl()).digest("hex").slice(0, 24),
   ),
 ) {
+  function syncDirectory(path: string): void {
+    if (process.platform === "win32") return;
+    const descriptor = openSync(path, "r");
+    try {
+      fsyncSync(descriptor);
+    } finally {
+      closeSync(descriptor);
+    }
+  }
+
+  function ensureDirectory(): void {
+    const missing: string[] = [];
+    for (let path = directory; !existsSync(path); path = dirname(path)) {
+      missing.push(path);
+    }
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    for (const path of missing.reverse()) syncDirectory(dirname(path));
+  }
+
   function path(agentId: string, conversationId: string) {
     return join(
       directory,
       `${encodeURIComponent(agentId)}_${encodeURIComponent(conversationId)}.json`,
     );
+  }
+  function writeRecord(record: InterruptedTurnRecord, durable: boolean): void {
+    if (durable) ensureDirectory();
+    else mkdirSync(directory, { recursive: true, mode: 0o700 });
+    const destination = path(record.agentId, record.conversationId);
+    const temporary = `${destination}.${randomUUID()}.tmp`;
+    try {
+      writeFileSync(
+        temporary,
+        JSON.stringify({ ...record, revision: randomUUID() }),
+        {
+          mode: 0o600,
+          flush: true,
+        },
+      );
+      renameSync(temporary, destination);
+      if (durable) syncDirectory(directory);
+    } finally {
+      rmSync(temporary, { force: true });
+    }
   }
   function readRecord(file: string): InterruptedTurnRecord | null {
     try {
@@ -101,22 +144,11 @@ export function createInterruptedTurnStore(
       return readRecord(path(agentId, conversationId));
     },
     write(record: InterruptedTurnRecord): void {
-      mkdirSync(directory, { recursive: true, mode: 0o700 });
-      const destination = path(record.agentId, record.conversationId);
-      const temporary = `${destination}.${randomUUID()}.tmp`;
-      try {
-        writeFileSync(
-          temporary,
-          JSON.stringify({ ...record, revision: randomUUID() }),
-          {
-            mode: 0o600,
-            flush: true,
-          },
-        );
-        renameSync(temporary, destination);
-      } finally {
-        rmSync(temporary, { force: true });
-      }
+      writeRecord(record, false);
+    },
+    /** Flush the containing directory before Teleport readiness can escape. */
+    writeDurable(record: InterruptedTurnRecord): void {
+      writeRecord(record, true);
     },
     remove(agentId: string, conversationId: string): void {
       rmSync(path(agentId, conversationId), { force: true });
