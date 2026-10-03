@@ -155,6 +155,19 @@ function terminateCurrentSocketPair(
   terminateSocketIfOpenOrConnecting(controlSocket);
 }
 
+function terminateRejectedStreamPair(
+  runtime: ListenerRuntime,
+  controlSocket: WebSocket,
+  streamSocket: WebSocket,
+): void {
+  const absorbLateError = (): void => undefined;
+  streamSocket.on("error", absorbLateError);
+  streamSocket.once("close", () => {
+    streamSocket.off("error", absorbLateError);
+  });
+  terminateCurrentSocketPair(runtime, controlSocket, streamSocket);
+}
+
 export function terminateControlAfterStreamClose(
   runtime: ListenerRuntime,
   streamSocket: WebSocket,
@@ -367,7 +380,7 @@ export async function preparePairedListenerTransport(params: {
       result: streamAcceptance,
       trackListenerError,
     });
-    terminateCurrentSocketPair(runtime, controlSocket, streamSocket);
+    terminateRejectedStreamPair(runtime, controlSocket, streamSocket);
     return { kind: "stale" };
   }
   if (streamAcceptance.connectionIncarnation !== controlIncarnation) {
@@ -385,7 +398,7 @@ export async function preparePairedListenerTransport(params: {
       result: { status: "mismatched" },
       trackListenerError,
     });
-    terminateCurrentSocketPair(runtime, controlSocket, streamSocket);
+    terminateRejectedStreamPair(runtime, controlSocket, streamSocket);
     return { kind: "stale" };
   }
 
