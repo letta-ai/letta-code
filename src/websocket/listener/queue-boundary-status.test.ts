@@ -254,13 +254,13 @@ test("a new connection's runtime_start resumes queued work after the startup pum
       agent_id: agent.id,
       conversation_id: "default",
     });
-    runtime.queueRuntime.enqueue({
-      kind: "cron_prompt",
-      source: "cron",
-      text: "queued cron",
-      agentId: agent.id,
-      conversationId: "default",
-    } as Parameters<typeof runtime.queueRuntime.enqueue>[0]);
+    expect(
+      enqueueInboundUserMessage(runtime, {
+        ...queuedMessage("queued input"),
+        agentId: agent.id,
+        conversationId: "default",
+      }),
+    ).toBe(true);
     oldSocket.readyState = WebSocket.CLOSED;
     suspendListenerConnection(listener, oldOptions.connectionId);
     openListenerConnection({
@@ -344,7 +344,7 @@ test("a new connection's runtime_start resumes queued work after the startup pum
     ).toEqual([nextOptions.connectionId]);
     await waitFor(() => processed.length === 1);
     await runtime.messageQueue;
-    expect(processed).toEqual(["queued cron"]);
+    expect(processed).toEqual(["queued input"]);
     expect(runtime.queueRuntime.length).toBe(0);
     expect(oldSocket.sentPayloads).toEqual([]);
     expect(nextSocket.sentPayloads.length).toBeGreaterThan(0);
@@ -375,6 +375,45 @@ test("a local listener runs queued work without a remote subscriber", async () =
   });
   await runtime.messageQueue;
   expect(processed).toEqual(["local"]);
+  expect(runtime.queueRuntime.length).toBe(0);
+});
+
+test("process-originated work drains without a subscriber to its conversation", async () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+  const options = makeListenerOptions();
+  const socket = new MockSocket();
+  setActiveRuntime(listener);
+  openListenerConnection({
+    runtime: listener,
+    connectionId: options.connectionId,
+    writer: socket as unknown as WebSocket,
+    options,
+  });
+  markListenerConnectionInitialized(listener, options.connectionId);
+  subscribeListenerConnection(listener, options.connectionId, {
+    agent_id: "agent-1",
+    conversation_id: "conv-other",
+  });
+  runtime.queueRuntime.enqueue({
+    kind: "cron_prompt",
+    source: "cron",
+    text: "scheduled",
+    cronTaskId: "task-1",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  } as Parameters<typeof runtime.queueRuntime.enqueue>[0]);
+  const processed: string[] = [];
+  scheduleQueuePump(
+    runtime,
+    getOrCreateProcessTransport(listener),
+    options,
+    async () => {
+      processed.push("scheduled");
+    },
+  );
+  await runtime.messageQueue;
+  expect(processed).toEqual(["scheduled"]);
   expect(runtime.queueRuntime.length).toBe(0);
 });
 
