@@ -111,6 +111,42 @@ describe("loop state executing tool call ids", () => {
     });
     expect(loopStatus.status).toBe("WAITING_ON_INPUT");
     expect(loopStatus.executing_tool_call_ids).toEqual([]);
+    expect(loopStatus.execution_lease).toBeNull();
+    expect(loopStatus.runtime_session_id).toEqual(expect.any(String));
+  });
+
+  test("keeps cancelling lease provenance after active run ids disappear", () => {
+    const runtime = createScopedRuntime();
+    const lease = beginTurn(runtime, {
+      initialStatus: "EXECUTING_CLIENT_SIDE_TOOL",
+    });
+    runtime.turnLifecycle.setRunId(lease, "run-1");
+
+    const active = buildLoopStatus(runtime.listener, {
+      agent_id: "agent-1",
+      conversation_id: "conv-a",
+    });
+    runtime.turnLifecycle.requestCancellation({
+      waitForExternalSettlement: true,
+    });
+    const cancelling = buildLoopStatus(runtime.listener, {
+      agent_id: "agent-1",
+      conversation_id: "conv-a",
+    });
+
+    expect(active.execution_lease).toEqual({
+      state: "active",
+      run_id: "run-1",
+    });
+    expect(cancelling).toMatchObject({
+      status: "WAITING_ON_INPUT",
+      active_run_ids: [],
+      execution_lease: {
+        state: "cancelling",
+        run_id: "run-1",
+      },
+      runtime_session_id: active.runtime_session_id,
+    });
   });
 });
 

@@ -297,6 +297,7 @@ export function buildLoopStatus(
     scopedAgentId,
     scopedConversationId,
   );
+  const lifecycle = conversationRuntime?.turnLifecycle.snapshot();
   const interruptedCacheActive = hasInterruptedCacheForScope(listener, scope);
   const status = interruptedCacheActive
     ? !conversationRuntime?.isProcessing
@@ -307,6 +308,14 @@ export function buildLoopStatus(
     : (conversationRuntime?.loopStatus ?? "WAITING_ON_INPUT");
   return {
     status,
+    runtime_session_id: listener.sessionId,
+    execution_lease:
+      lifecycle?.kind === "active" || lifecycle?.kind === "cancelling"
+        ? {
+            state: lifecycle.kind,
+            run_id: lifecycle.runId,
+          }
+        : null,
     active_run_ids:
       interruptedCacheActive && !conversationRuntime?.isProcessing
         ? []

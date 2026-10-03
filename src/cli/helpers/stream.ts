@@ -23,6 +23,7 @@ import {
   cleanupStreamAbortRelay,
   createStreamAbortRelay,
 } from "@/utils/stream-abort-relay";
+import { LOCAL_IN_PROCESS_STREAM } from "@/utils/stream-transport";
 import { formatDuration, logTiming } from "@/utils/timing";
 import { recordTuiJsonPayload, recordTuiPerf } from "@/utils/tui-perf";
 
@@ -134,16 +135,27 @@ export async function drainStream(
   let fallbackError: string | null = null;
   let lastChunkDebugSummary = "none";
 
+  // The stall and terminal-EOF guards repair dead HTTP reads by aborting only
+  // the transport and reconnecting to the same server-side run. A local
+  // in-process stream has no independent HTTP transport (and no SSE pings), so
+  // aborting its exposed controller would cancel the provider run itself.
+  const supportsHttpReadRecovery = !(
+    stream as unknown as { [LOCAL_IN_PROCESS_STREAM]?: boolean }
+  )[LOCAL_IN_PROCESS_STREAM];
+
   // Track if we triggered abort via our listener (for eager cancellation)
   let abortedViaListener = false;
 
   // Terminal-EOF guard: once the terminal SSE sequence has arrived, don't wait
   // forever for HTTP body EOF (see stream-terminal-eof-guard.ts).
-  const terminalEofGuard = createTerminalEofGuard({
-    getStopReason: () => streamProcessor.stopReason,
-    getRunId: () => streamProcessor.lastRunId,
-    abortHttpRead: () => abortStreamController(stream, "terminal_eof_guard"),
-  });
+  const terminalEofGuard = supportsHttpReadRecovery
+    ? createTerminalEofGuard({
+        getStopReason: () => streamProcessor.stopReason,
+        getRunId: () => streamProcessor.lastRunId,
+        abortHttpRead: () =>
+          abortStreamController(stream, "terminal_eof_guard"),
+      })
+    : { arm: () => {}, clear: () => {}, fired: () => false };
 
   // Stall reconciler: if the stream goes silent mid-run (server pings every
   // ~20s, so silence means a dead read, not a slow model), then abort the dead
@@ -151,19 +163,21 @@ export async function drainStream(
   // check avoids reconnecting an active run when it is available.
   const requestContext = getStreamRequestContext(stream);
   const recoveryActingUserId = actingUserId ?? requestContext?.actingUserId;
-  const stallReconciler = createStreamStallReconciler({
-    getRunId: () => streamProcessor.lastRunId,
-    getStopReason: () => streamProcessor.stopReason,
-    canResumeWithoutRunId: () => Boolean(requestContext?.otid),
-    retrieveRunStatus: async (runId, signal) =>
-      (
-        await getBackend().retrieveRun(runId, {
-          ...(actingUserRequestOptions(recoveryActingUserId) ?? {}),
-          signal,
-        } as RunRetrieveOptions)
-      ).status,
-    abortHttpRead: () => abortStreamController(stream, "stall_reconciler"),
-  });
+  const stallReconciler = supportsHttpReadRecovery
+    ? createStreamStallReconciler({
+        getRunId: () => streamProcessor.lastRunId,
+        getStopReason: () => streamProcessor.stopReason,
+        canResumeWithoutRunId: () => Boolean(requestContext?.otid),
+        retrieveRunStatus: async (runId, signal) =>
+          (
+            await getBackend().retrieveRun(runId, {
+              ...(actingUserRequestOptions(recoveryActingUserId) ?? {}),
+              signal,
+            } as RunRetrieveOptions)
+          ).status,
+        abortHttpRead: () => abortStreamController(stream, "stall_reconciler"),
+      })
+    : { arm: () => {}, clear: () => {}, fired: () => false };
 
   // Capture the abort generation at stream start to detect if handleInterrupt ran
   const startAbortGen = buffers.abortGeneration || 0;

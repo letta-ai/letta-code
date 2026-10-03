@@ -74,9 +74,9 @@ export function modOAuthAuth(
       type: "oauth",
       ...(await config.login(legacyCallbacksFromInteraction(interaction))),
     }),
-    refresh: async (credential) => ({
+    refresh: async (credential, signal) => ({
       type: "oauth",
-      ...(await config.refreshToken(credential)),
+      ...(await config.refreshToken(credential, signal)),
     }),
     toAuth: async (credential) => {
       const apiKey = config.getApiKey(credential);

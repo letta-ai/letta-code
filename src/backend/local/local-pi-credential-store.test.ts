@@ -88,6 +88,61 @@ describe("createLocalPiCredentialStore", () => {
     expect(maxConcurrent).toBe(1);
   });
 
+  test("cancelling a queued mutation does not bypass the active predecessor", async () => {
+    const storageDir = await makeStorageDir();
+    setLocalOAuthProvider({
+      storageDir,
+      providerName: "anthropic",
+      providerType: "anthropic",
+      auth: localOAuthAuthFromCredentials({
+        access: "a",
+        refresh: "r",
+        expires: Date.now() - 1,
+      }),
+    });
+    const store = createLocalPiCredentialStore(storageDir);
+    let releaseFirst: (() => void) | undefined;
+    let firstStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      firstStarted = resolve;
+    });
+    const first = store.modify("anthropic", async (current) => {
+      firstStarted?.();
+      await new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      return current;
+    });
+    await started;
+
+    let cancelledMutationStarted = false;
+    const controller = new AbortController();
+    const cancelled = store.modify(
+      "anthropic",
+      async (current) => {
+        cancelledMutationStarted = true;
+        return current;
+      },
+      { signal: controller.signal },
+    );
+    controller.abort(new DOMException("cancelled", "AbortError"));
+    await expect(cancelled).rejects.toMatchObject({ name: "AbortError" });
+
+    let successorStarted = false;
+    const successor = store.modify("anthropic", async (current) => {
+      successorStarted = true;
+      return current;
+    });
+    await Promise.resolve();
+    expect(cancelledMutationStarted).toBe(false);
+    expect(successorStarted).toBe(false);
+
+    releaseFirst?.();
+    await Promise.all([first, successor]);
+    expect(cancelledMutationStarted).toBe(false);
+    expect(successorStarted).toBe(true);
+  });
+
   test("a mod overriding a built-in id keeps that provider's record aliases", async () => {
     const storageDir = await makeStorageDir();
     try {

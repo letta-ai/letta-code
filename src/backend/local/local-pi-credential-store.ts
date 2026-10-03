@@ -1,4 +1,8 @@
-import type { Credential, CredentialStore } from "@earendil-works/pi-ai";
+import type {
+  AuthOperationOptions,
+  Credential,
+  CredentialStore,
+} from "@earendil-works/pi-ai";
 import { getRegisteredPiProvider } from "@/backend/dev/pi-provider-mod-registry";
 import {
   getPiProviderSpec,
@@ -23,8 +27,10 @@ import {
  * source of truth: `Models.getAuth()` reads stored keys/OAuth tokens from
  * here and persists OAuth refreshes back through `modify`, which is
  * serialized per provider as the contract requires so concurrent requests
- * cannot double-refresh a rotated token. (auth.json writes are same-process
- * only today; cross-process locking would live in the auth store itself.)
+ * cannot double-refresh a rotated token. An active mutation that is cancelled
+ * releases the queue, but its late callback result is fenced from persistence.
+ * (auth.json writes are same-process only today; cross-process locking would
+ * live in the auth store itself.)
  *
  * Records store more than credentials (base URLs, timeouts, regions) —
  * that remains Letta-owned provider config; only the credential facet is
@@ -90,29 +96,54 @@ export function createLocalPiCredentialStore(
   storageDir?: string,
 ): CredentialStore {
   // Per-provider mutation queue: `modify`/`delete` for the same provider run
-  // strictly in sequence (the pi-ai contract's serialized read-modify-write).
+  // in sequence, except an actively cancelled callback releases its successor
+  // while its own eventual result remains fenced from persistence.
   const mutationQueues = new Map<string, Promise<unknown>>();
   function serialized<T>(
     providerId: string,
     run: () => Promise<T>,
+    signal?: AbortSignal,
+    canReleaseOnActiveAbort: () => boolean = () => true,
   ): Promise<T> {
     const previous = mutationQueues.get(providerId) ?? Promise.resolve();
-    const next = previous.then(run, run);
-    mutationQueues.set(
-      providerId,
-      next.catch(() => {}),
+    let started = false;
+    const start = () => {
+      signal?.throwIfAborted();
+      started = true;
+      return run();
+    };
+    const operation = previous.then(
+      () => start(),
+      () => start(),
     );
+    const next = raceCredentialMutationWithAbort(operation, signal);
+    const tail = credentialMutationQueueTail(
+      operation,
+      signal,
+      () => started && canReleaseOnActiveAbort(),
+    );
+    mutationQueues.set(providerId, tail);
+    void tail.then(() => {
+      if (mutationQueues.get(providerId) === tail) {
+        mutationQueues.delete(providerId);
+      }
+    });
     return next;
   }
 
-  const read = async (providerId: string): Promise<Credential | undefined> => {
+  const read = async (
+    providerId: string,
+    options?: AuthOperationOptions,
+  ): Promise<Credential | undefined> => {
+    options?.signal?.throwIfAborted();
     const record = recordForProviderId(providerId, storageDir);
     return record ? credentialFromRecord(record) : undefined;
   };
 
   return {
     read,
-    async list() {
+    async list(options) {
+      options?.signal?.throwIfAborted();
       return listLocalProviderRecords(storageDir).flatMap((record) => {
         const credential = credentialFromRecord(record);
         return credential
@@ -125,45 +156,130 @@ export function createLocalPiCredentialStore(
           : [];
       });
     },
-    modify(providerId, fn) {
-      return serialized(providerId, async () => {
-        const record = recordForProviderId(providerId, storageDir);
-        const current = record ? credentialFromRecord(record) : undefined;
-        const next = await fn(current);
-        if (next === undefined) return current;
-        const providerName =
-          record?.name ?? localNamesForProviderId(providerId)[0] ?? providerId;
-        if (next.type === "oauth") {
-          setLocalOAuthProvider({
-            providerName,
-            providerType: record?.provider_type ?? providerId,
-            auth: localOAuthAuthFromCredentials(next),
-            storageDir,
-          });
+    modify(providerId, fn, options) {
+      let commitStarted = false;
+      return serialized(
+        providerId,
+        async () => {
+          options?.signal?.throwIfAborted();
+          const record = recordForProviderId(providerId, storageDir);
+          const current = record ? credentialFromRecord(record) : undefined;
+          const next = await fn(current);
+          // A legacy mod callback may ignore its optional signal. The caller and
+          // provider mutation queue still release on abort, but this underlying
+          // promise remains observed. Fence its late result before persistence.
+          options?.signal?.throwIfAborted();
+          if (next === undefined) return current;
+          const providerName =
+            record?.name ??
+            localNamesForProviderId(providerId)[0] ??
+            providerId;
+          if (next.type === "oauth") {
+            commitStarted = true;
+            setLocalOAuthProvider({
+              providerName,
+              providerType: record?.provider_type ?? providerId,
+              auth: localOAuthAuthFromCredentials(next),
+              storageDir,
+            });
+            return next;
+          }
+          if (next.key) {
+            commitStarted = true;
+            // Read-modify-write: every non-credential record field survives
+            // (createOrUpdateLocalProvider keeps base URL/timeout itself, but
+            // Bedrock's access key/region/profile must be re-supplied).
+            await createOrUpdateLocalProvider({
+              providerName,
+              providerType: record?.provider_type ?? providerId,
+              apiKey: next.key,
+              ...(record?.access_key ? { accessKey: record.access_key } : {}),
+              ...(record?.region ? { region: record.region } : {}),
+              ...(record?.profile ? { profile: record.profile } : {}),
+              storageDir,
+            });
+          }
           return next;
-        }
-        if (next.key) {
-          // Read-modify-write: every non-credential record field survives
-          // (createOrUpdateLocalProvider keeps base URL/timeout itself, but
-          // Bedrock's access key/region/profile must be re-supplied).
-          await createOrUpdateLocalProvider({
-            providerName,
-            providerType: record?.provider_type ?? providerId,
-            apiKey: next.key,
-            ...(record?.access_key ? { accessKey: record.access_key } : {}),
-            ...(record?.region ? { region: record.region } : {}),
-            ...(record?.profile ? { profile: record.profile } : {}),
-            storageDir,
-          });
-        }
-        return next;
-      });
+        },
+        options?.signal,
+        () => !commitStarted,
+      );
     },
-    delete(providerId) {
-      return serialized(providerId, async () => {
-        const record = recordForProviderId(providerId, storageDir);
-        if (record) await removeLocalProviderByName(record.name, storageDir);
-      });
+    delete(providerId, options) {
+      let deleteStarted = false;
+      return serialized(
+        providerId,
+        async () => {
+          options?.signal?.throwIfAborted();
+          const record = recordForProviderId(providerId, storageDir);
+          if (record) {
+            deleteStarted = true;
+            await removeLocalProviderByName(record.name, storageDir);
+          }
+        },
+        options?.signal,
+        () => !deleteStarted,
+      );
     },
   };
+}
+
+function raceCredentialMutationWithAbort<T>(
+  operation: Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  if (!signal) return operation;
+  if (signal.aborted) {
+    void operation.catch(() => {});
+    return Promise.reject(signal.reason);
+  }
+
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      signal.removeEventListener("abort", onAbort);
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    operation.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+}
+
+function credentialMutationQueueTail<T>(
+  operation: Promise<T>,
+  signal: AbortSignal | undefined,
+  canReleaseOnAbort: () => boolean,
+): Promise<void> {
+  if (!signal)
+    return operation.then(
+      () => {},
+      () => {},
+    );
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    };
+    const onAbort = () => {
+      // A queued operation must keep waiting on its active predecessor. An
+      // operation already committing to storage must also settle before its
+      // successor starts, because that side effect cannot be rolled back.
+      if (canReleaseOnAbort()) settle();
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
+    operation.then(settle, settle);
+  });
 }

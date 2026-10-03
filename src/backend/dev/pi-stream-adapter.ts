@@ -62,6 +62,11 @@ const LOCAL_PROVIDER_MAX_RETRIES = 3;
 const LOCAL_PROVIDER_ADAPTIVE_IMAGE_ELISION_AFTER_RETRIES =
   LOCAL_PROVIDER_MAX_RETRIES - 1;
 const LOCAL_CONTEXT_OVERFLOW_MAX_COMPACTIONS = 3;
+const NEVER_ABORTED_SIGNAL = new AbortController().signal;
+
+function providerTurnSignal(input: ProviderTurnInput): AbortSignal {
+  return input.signal ?? NEVER_ABORTED_SIGNAL;
+}
 
 export type PiStreamFunction = (
   model: Model<string>,
@@ -535,6 +540,8 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
   private async compactBeforeProviderCall(
     input: ProviderTurnInput,
   ): Promise<LocalCompactionResult | null> {
+    const signal = providerTurnSignal(input);
+    signal.throwIfAborted();
     if (!this.onContextPressure) return null;
 
     const contextTokens = estimateProviderContextTokens(input);
@@ -548,6 +555,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       modelSettings: input.agent.model_settings,
       storageDir: this.localProviderAuthStorageDir,
       modelsRuntime: this.modelsRuntime,
+      signal,
     });
     const resolved = await resolvePiModelForAgent(
       localModel.model,
@@ -555,7 +563,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       {
         localProviderAuthStorageDir: this.localProviderAuthStorageDir,
         modelsRuntime: this.modelsRuntime,
-        ...(this.abortSignal ? { abortSignal: this.abortSignal } : {}),
+        abortSignal: signal,
       },
     );
     const contextWindow = resolved.model.contextWindow;
@@ -574,12 +582,15 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
   private async *streamOnce(
     input: ProviderTurnInput,
   ): AsyncIterable<ProviderStreamEvent> {
+    const signal = providerTurnSignal(input);
+    signal.throwIfAborted();
     const tools = toPiTools(input.clientTools);
     const localModel = await resolveAvailableLocalModelForTurn({
       model: input.agent.model,
       modelSettings: input.agent.model_settings,
       storageDir: this.localProviderAuthStorageDir,
       modelsRuntime: this.modelsRuntime,
+      signal,
     });
     const resolved = await resolvePiModelForAgent(
       localModel.model,
@@ -587,7 +598,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       {
         localProviderAuthStorageDir: this.localProviderAuthStorageDir,
         modelsRuntime: this.modelsRuntime,
-        ...(this.abortSignal ? { abortSignal: this.abortSignal } : {}),
+        abortSignal: signal,
       },
     );
     assertPromptFloorFitsContextWindow(input, resolved.model);
@@ -619,7 +630,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       ...(resolved.apiKey ? { apiKey: resolved.apiKey } : {}),
       ...(resolved.timeout !== false ? { timeoutMs: resolved.timeout } : {}),
       ...(headers ? { headers } : {}),
-      ...(this.abortSignal ? { signal: this.abortSignal } : {}),
+      signal,
       maxRetries: 0,
       sessionId: input.conversationId,
       // streamSimple drops provider-specific named options; samplingParams is
@@ -793,12 +804,19 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
   }
 
   async *stream(input: ProviderTurnInput): AsyncIterable<ProviderStreamEvent> {
-    let activeInput = input;
+    const turnSignal = providerTurnSignal(input);
+    let activeInput: ProviderTurnInput = this.abortSignal
+      ? {
+          ...input,
+          signal: AbortSignal.any([turnSignal, this.abortSignal]),
+        }
+      : { ...input, signal: turnSignal };
     let preflightCompactionChecked = false;
     let contextOverflowCompactions = 0;
     let transientRetries = 0;
 
     while (true) {
+      providerTurnSignal(activeInput).throwIfAborted();
       if (!preflightCompactionChecked) {
         // Check once per turn. If compaction still cannot make the request fit,
         // the provider overflow path remains the bounded recovery mechanism.
@@ -806,6 +824,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
         // recreate the behavior deliberately removed in #3355.
         preflightCompactionChecked = true;
         const compaction = await this.compactBeforeProviderCall(activeInput);
+        providerTurnSignal(activeInput).throwIfAborted();
         if (compaction) {
           activeInput = { ...activeInput, uiMessages: compaction.uiMessages };
           yield* this.emitCompactionChunks(compaction, "context_window_limit");
@@ -834,6 +853,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
             activeInput,
             error,
           );
+          providerTurnSignal(activeInput).throwIfAborted();
           if (!compaction) throw error;
 
           contextOverflowCompactions += 1;
@@ -869,7 +889,10 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
               imageElision.requestByteLimit,
               imageElision.requestByteTarget,
             );
-            activeInput = imageElision.input;
+            activeInput = {
+              ...imageElision.input,
+              signal: providerTurnSignal(activeInput),
+            };
             transientRetries = 0;
             continue;
           }
@@ -887,6 +910,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
           } catch {
             compaction = null;
           }
+          providerTurnSignal(activeInput).throwIfAborted();
           if (compaction) {
             contextOverflowCompactions += 1;
             activeInput = { ...activeInput, uiMessages: compaction.uiMessages };
@@ -921,7 +945,10 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
               imageElision.requestByteLimit,
               imageElision.requestByteTarget,
             );
-            activeInput = imageElision.input;
+            activeInput = {
+              ...imageElision.input,
+              signal: providerTurnSignal(activeInput),
+            };
             transientRetries = 0;
             continue;
           }
@@ -957,7 +984,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
             message: localProviderRetryMessage(error),
           },
         } as never);
-        await sleepWithAbort(delayMs, this.abortSignal);
+        await sleepWithAbort(delayMs, providerTurnSignal(activeInput));
       }
     }
   }

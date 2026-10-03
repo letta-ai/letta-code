@@ -47,6 +47,17 @@ export type LoopStatus =
 export interface LoopState {
   status: LoopStatus;
   active_run_ids: string[];
+  /**
+   * Listener-owned execution lease provenance. Unlike active_run_ids this
+   * remains present while cancellation waits for external provider/tool
+   * settlement.
+   */
+  execution_lease?: {
+    state: "active" | "cancelling";
+    run_id: string | null;
+  } | null;
+  /** Stable across reconnects of the same listener process. */
+  runtime_session_id?: string;
   /** Exact send identities consumed by each recently observed run. */
   client_message_ids_by_run_id?: Record<string, string[]>;
   /**

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import {
+  closeListenerConnection,
   markListenerConnectionInitialized,
   openListenerConnection,
 } from "./connection";
@@ -27,6 +28,92 @@ class MockTransport implements LocalTransport {
     this.sent.push(data);
   }
 }
+
+function listenerOptions(connectionId: string): StartListenerOptions {
+  return {
+    connectionId,
+    wsUrl: "local://cloud-relay",
+    deviceId: "test-device",
+    connectionName: connectionId,
+    onConnected: () => {},
+    onDisconnected: () => {},
+    onError: () => {},
+  };
+}
+
+async function replayRuntimeSessionId(options: {
+  listener: ReturnType<typeof createRuntime>;
+  transport: MockTransport;
+  connectionId: string;
+}): Promise<string> {
+  const scope = { agent_id: "agent-1", conversation_id: "conv-1" };
+  const runtime = getOrCreateScopedRuntime(
+    options.listener,
+    scope.agent_id,
+    scope.conversation_id,
+  );
+  const connectionOptions = listenerOptions(options.connectionId);
+  openListenerConnection({
+    runtime: options.listener,
+    connectionId: options.connectionId,
+    writer: options.transport,
+    options: connectionOptions,
+  });
+  markListenerConnectionInitialized(options.listener, options.connectionId);
+  await replaySubscribedConnectionState(
+    options.listener,
+    options.transport,
+    runtime,
+    scope,
+    { refreshGitContext: async () => {} },
+  );
+  const frame = options.transport.sent
+    .map((payload) => JSON.parse(payload))
+    .find((candidate) => candidate.type === "update_loop_status");
+  expect(frame).toBeDefined();
+  return frame.loop_status.runtime_session_id;
+}
+
+test("reconnecting the same listener runtime preserves its projected session id", async () => {
+  const listener = createRuntime();
+  const firstSessionId = await replayRuntimeSessionId({
+    listener,
+    transport: new MockTransport(),
+    connectionId: "cloud-relay",
+  });
+
+  closeListenerConnection(listener, "cloud-relay");
+
+  const reconnectedSessionId = await replayRuntimeSessionId({
+    listener,
+    transport: new MockTransport(),
+    connectionId: "cloud-relay",
+  });
+
+  expect(reconnectedSessionId).toBe(firstSessionId);
+  expect(reconnectedSessionId).toBe(listener.sessionId);
+});
+
+test("a replacement listener runtime projects a different session id", async () => {
+  const originalListener = createRuntime();
+  const replacementListener = createRuntime();
+  const connectionId = "cloud-relay";
+
+  const originalSessionId = await replayRuntimeSessionId({
+    listener: originalListener,
+    transport: new MockTransport(),
+    connectionId,
+  });
+  const replacementSessionId = await replayRuntimeSessionId({
+    listener: replacementListener,
+    transport: new MockTransport(),
+    connectionId,
+  });
+
+  expect(originalSessionId).toBe(originalListener.sessionId);
+  expect(replacementSessionId).toBe(replacementListener.sessionId);
+  expect(replacementSessionId).not.toBe(originalSessionId);
+});
 
 test("an adopted connection starts recorded recovery even when process services already exist", async () => {
   const runtime = createRuntime();

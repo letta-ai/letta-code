@@ -6,7 +6,17 @@ import type {
   AssistantMessage,
   SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
-import { createOrUpdateLocalProvider } from "@/backend/local/local-provider-auth-store";
+import { UNSELECTED_LOCAL_MODEL_HANDLE } from "@/backend/dev/pi-model-factory";
+import { LocalPiModelsRuntime } from "@/backend/dev/pi-models-runtime";
+import {
+  type PiProviderModelRegistration,
+  registerPiProvider,
+  unregisterPiProvider,
+} from "@/backend/dev/pi-provider-mod-registry";
+import {
+  createOrUpdateLocalProvider,
+  setLocalOAuthProvider,
+} from "@/backend/local/local-provider-auth-store";
 import { summarizeLocalMessagesAll } from "./compaction";
 import { emptyLocalUsage, type LocalMessage } from "./local-message";
 
@@ -23,7 +33,142 @@ function summaryAssistantMessage(): AssistantMessage {
   };
 }
 
+function registeredSummaryModel(id: string): PiProviderModelRegistration {
+  return {
+    id,
+    name: id,
+    reasoning: false,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 100_000,
+    maxTokens: 16_000,
+  };
+}
+
+function summaryInput(provider: string) {
+  return {
+    conversationId: `conv-${provider}`,
+    agent: {
+      id: "agent-local-1",
+      name: "Local",
+      description: null,
+      system: "",
+      tags: [],
+      model: UNSELECTED_LOCAL_MODEL_HANDLE,
+      model_settings: { provider_type: provider },
+    },
+    messages: [
+      {
+        id: "ui-msg-1",
+        role: "user" as const,
+        content: "please summarize this conversation",
+        timestamp: Date.now(),
+      },
+    ],
+  };
+}
+
 describe("local compaction summarizer options", () => {
+  test("cancels blocked catalog discovery through the compaction signal", async () => {
+    const provider = "compaction-catalog-cancel";
+    let discoverySignal: AbortSignal | undefined;
+    registerPiProvider(provider, {
+      api: "openai-completions",
+      baseUrl: "https://api.compaction-catalog.test/v1",
+      connect: false,
+      listModels: async (_connection, signal) => {
+        discoverySignal = signal;
+        return await new Promise<never>((_resolve, reject) => {
+          signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("cancelled", "AbortError")),
+            { once: true },
+          );
+        });
+      },
+    });
+    try {
+      const controller = new AbortController();
+      const pending = summarizeLocalMessagesAll({
+        ...summaryInput(provider),
+        abortSignal: controller.signal,
+        modelsRuntime: new LocalPiModelsRuntime(),
+        complete: async () => {
+          throw new Error("provider request must not start");
+        },
+      });
+      while (!discoverySignal) await Promise.resolve();
+
+      controller.abort(new DOMException("cancelled", "AbortError"));
+
+      await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+      expect(discoverySignal?.aborted).toBe(true);
+    } finally {
+      unregisterPiProvider(provider);
+    }
+  });
+
+  test("cancels blocked OAuth refresh through the compaction signal", async () => {
+    const provider = "compaction-oauth-cancel";
+    const storageDir = await mkdtemp(join(tmpdir(), "compaction-oauth-abort-"));
+    let refreshSignal: AbortSignal | undefined;
+    registerPiProvider(provider, {
+      api: "openai-completions",
+      baseUrl: "https://api.compaction-oauth.test/v1",
+      models: [registeredSummaryModel("summary-model")],
+      oauth: {
+        login: async () => {
+          throw new Error("not used in this test");
+        },
+        refreshToken: async (_credentials, signal) => {
+          refreshSignal = signal;
+          return await new Promise<never>((_resolve, reject) => {
+            signal?.addEventListener(
+              "abort",
+              () => reject(new DOMException("cancelled", "AbortError")),
+              { once: true },
+            );
+          });
+        },
+        getApiKey: (credentials) => credentials.access,
+      },
+    });
+    try {
+      setLocalOAuthProvider({
+        providerName: provider,
+        providerType: provider,
+        auth: {
+          type: "oauth",
+          access: "expired-access",
+          refresh: "refresh-token",
+          expires: Date.now() - 1,
+        },
+        storageDir,
+      });
+      const controller = new AbortController();
+      const base = summaryInput(provider);
+      const pending = summarizeLocalMessagesAll({
+        ...base,
+        agent: { ...base.agent, model: `${provider}/summary-model` },
+        abortSignal: controller.signal,
+        localProviderAuthStorageDir: storageDir,
+        modelsRuntime: new LocalPiModelsRuntime({ storageDir }),
+        complete: async () => {
+          throw new Error("provider request must not start");
+        },
+      });
+      while (!refreshSignal) await Promise.resolve();
+
+      controller.abort(new DOMException("cancelled", "AbortError"));
+
+      await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+      expect(refreshSignal?.aborted).toBe(true);
+    } finally {
+      unregisterPiProvider(provider);
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("sends the OpenCode Go conversation identity during compaction", async () => {
     const previousKey = process.env.OPENCODE_API_KEY;
     process.env.OPENCODE_API_KEY = "test-opencode-key";

@@ -466,7 +466,9 @@ export class LocalBackend extends HeadlessBackend {
     body: ConversationMessageCreateBody | ConversationMessageStreamBody;
     history: StoredMessage[];
     uiMessages: LocalMessage[];
+    signal: AbortSignal;
   }): Promise<{ systemPrompt: string; midConversationSystemPrompt?: string }> {
+    input.signal.throwIfAborted();
     if (this.store.isAgentFreeConversation(input.conversationId)) {
       const clientSkills = Array.isArray(
         (input.body as Record<string, unknown>).client_skills,
@@ -486,6 +488,7 @@ export class LocalBackend extends HeadlessBackend {
       input.agent,
       input.history.length,
     );
+    input.signal.throwIfAborted();
     const clientSkills = Array.isArray(
       (input.body as Record<string, unknown>).client_skills,
     )
@@ -537,6 +540,8 @@ export class LocalBackend extends HeadlessBackend {
       input.conversationId,
       input.agentId,
       "context_window_overflow",
+      undefined,
+      input.signal,
     );
     return {
       uiMessages: this.store.listLocalMessages(
@@ -560,6 +565,8 @@ export class LocalBackend extends HeadlessBackend {
       input.conversationId,
       input.agentId,
       "context_window_limit",
+      undefined,
+      input.signal,
     );
     return {
       uiMessages: this.store.listLocalMessages(
@@ -707,18 +714,21 @@ export class LocalBackend extends HeadlessBackend {
     agentId: string,
     trigger: string,
     body?: ConversationMessageCompactBody,
+    signal?: AbortSignal,
   ): Promise<{
     numMessagesBefore: number;
     numMessagesAfter: number;
     summary: string;
     stats: LocalCompactionStats;
   }> {
+    signal?.throwIfAborted();
     await this.emitCompactStart(conversationId, agentId, trigger);
     const result = await this.compactLocalConversationInner(
       conversationId,
       agentId,
       trigger,
       body,
+      signal,
     );
     await this.emitCompactEnd(conversationId, agentId, trigger, result.stats);
     return result;
@@ -729,12 +739,14 @@ export class LocalBackend extends HeadlessBackend {
     agentId: string,
     trigger: string,
     body?: ConversationMessageCompactBody,
+    signal?: AbortSignal,
   ): Promise<{
     numMessagesBefore: number;
     numMessagesAfter: number;
     summary: string;
     stats: LocalCompactionStats;
   }> {
+    signal?.throwIfAborted();
     const agent = this.effectiveAgentForConversation(conversationId, agentId);
     const settings = this.resolveCompactionSettings(agent, body);
     let result: {
@@ -751,6 +763,7 @@ export class LocalBackend extends HeadlessBackend {
           agent,
           trigger,
           settings,
+          signal,
         );
         if (
           result.stats.context_window === undefined ||
@@ -780,6 +793,7 @@ export class LocalBackend extends HeadlessBackend {
         mode: "all",
         prompt: settings.prompt, // not a user mode switch: keep it (#3955)
       },
+      signal,
     );
     await this.compileAndMaybePersistSystemPrompt(conversationId, agentId, {
       dryRun: false,
@@ -793,12 +807,14 @@ export class LocalBackend extends HeadlessBackend {
     agent: LocalAgentRecord,
     trigger: string,
     settings: ResolvedLocalCompactionSettings,
+    signal?: AbortSignal,
   ): Promise<{
     numMessagesBefore: number;
     numMessagesAfter: number;
     summary: string;
     stats: LocalCompactionStats;
   }> {
+    signal?.throwIfAborted();
     const messages = this.store.listLocalMessages(conversationId, agentId);
     const contextTokensBefore = estimateLocalMessageTokens(messages);
     const plan = planLocalAllCompaction(messages);
@@ -811,7 +827,9 @@ export class LocalBackend extends HeadlessBackend {
       clipChars: settings.clipChars,
       localProviderAuthStorageDir: this.storageDir,
       modelsRuntime: this.piModelsRuntime,
+      ...(signal ? { abortSignal: signal } : {}),
     });
+    signal?.throwIfAborted();
     const stats: LocalCompactionStats = {
       trigger,
       context_tokens_before: contextTokensBefore,
@@ -844,12 +862,14 @@ export class LocalBackend extends HeadlessBackend {
     agent: LocalAgentRecord,
     trigger: string,
     settings: ResolvedLocalCompactionSettings,
+    signal?: AbortSignal,
   ): Promise<{
     numMessagesBefore: number;
     numMessagesAfter: number;
     summary: string;
     stats: LocalCompactionStats;
   }> {
+    signal?.throwIfAborted();
     const messages = this.store.listLocalMessages(conversationId, agentId);
     const contextWindow = this.effectiveContextWindow(conversationId, agentId);
     const plan = planLocalSlidingWindowCompaction(messages, {
@@ -865,7 +885,9 @@ export class LocalBackend extends HeadlessBackend {
       clipChars: settings.clipChars,
       localProviderAuthStorageDir: this.storageDir,
       modelsRuntime: this.piModelsRuntime,
+      ...(signal ? { abortSignal: signal } : {}),
     });
+    signal?.throwIfAborted();
     const contextTokensAfter =
       Math.ceil(summary.length / 4) +
       estimateLocalMessageTokens(plan.messagesToKeep);

@@ -3611,7 +3611,7 @@ describe("listen-client v2 status builders", () => {
       JSON.parse(payload as string),
     );
     expect(outbound[0].device_status.pending_control_requests).toEqual([]);
-    expect(outbound[1].loop_status).toEqual({
+    expect(outbound[1].loop_status).toMatchObject({
       status: "WAITING_ON_INPUT",
       active_run_ids: [],
       executing_tool_call_ids: [],
@@ -3726,7 +3726,7 @@ describe("listen-client v2 status builders", () => {
         agent_id: "agent-1",
         conversation_id: "conv-b",
       }),
-    ).toEqual({
+    ).toMatchObject({
       status: "WAITING_ON_APPROVAL",
       active_run_ids: [],
       executing_tool_call_ids: [],

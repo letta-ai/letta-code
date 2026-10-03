@@ -98,11 +98,14 @@ async function exerciseCancellation(withAgentOwner: boolean): Promise<void> {
       } as never,
     );
     const streamResult = (async () => {
+      let terminal: string | undefined;
       try {
-        for await (const _chunk of stream) {
-          // The first deterministic provider stream remains pending.
+        for await (const chunk of stream) {
+          if (chunk.message_type === "stop_reason") {
+            terminal = (chunk as { stop_reason?: string }).stop_reason;
+          }
         }
-        return "completed";
+        return terminal ?? "completed";
       } catch (error) {
         return error instanceof Error ? error.name : "error";
       }
@@ -157,7 +160,7 @@ async function exerciseCancellation(withAgentOwner: boolean): Promise<void> {
       () => runtime.turnLifecycle.kind === "idle",
       "turn lifecycle did not settle after backend cancellation",
     );
-    expect(await streamResult).toBe("AbortError");
+    expect(await streamResult).toBe("cancelled");
     expect(await backend.retrieveRun("local-run-1")).toMatchObject({
       status: "cancelled",
       stop_reason: "cancelled",

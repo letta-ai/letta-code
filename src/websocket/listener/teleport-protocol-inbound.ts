@@ -43,6 +43,7 @@ export function parseTeleportCommand(
   }
   if (
     value.type === "teleport_failed" &&
+    (value.request_id === undefined || typeof value.request_id === "string") &&
     typeof value.teleport_id === "string" &&
     typeof value.error === "string"
   ) {

@@ -174,6 +174,7 @@ describe("listener protocol ergonomics", () => {
           supported,
           drains_accepted_inputs: true,
           idempotent_continuation: true,
+          acknowledges_failed_teleports: true,
         });
       } finally {
         setConfiguredBackendMode(previousBackend);

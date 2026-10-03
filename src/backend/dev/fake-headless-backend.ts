@@ -25,7 +25,14 @@ import {
 import { isLocalStateChunkOnly } from "@/backend/local/local-stream-chunks";
 import type { LocalAgentRecord } from "@/backend/local/local-types";
 import { TURN_DID_NOT_COMPLETE } from "@/constants";
+import { debugWarn } from "@/utils/debug";
+import { LOCAL_IN_PROCESS_STREAM } from "@/utils/stream-transport";
 import { isRecord } from "@/utils/type-guards";
+import {
+  isCancelledStreamIteration,
+  nextUntilRunCancelled,
+  settleProviderIterator,
+} from "./cancellable-stream-iterator";
 import {
   DeterministicPongExecutor,
   type HeadlessTurnExecutor,
@@ -158,6 +165,7 @@ function createReplayStream(
   const controller = new AbortController();
   return {
     controller,
+    [LOCAL_IN_PROCESS_STREAM]: true,
     async *[Symbol.asyncIterator]() {
       for (const chunk of chunks) {
         yield cloneStreamingChunk(chunk);
@@ -200,6 +208,7 @@ export class HeadlessBackend implements Backend {
   private readonly executor: HeadlessTurnExecutor;
   private readonly runs = new Map<string, Run>();
   private readonly activeRunByConversation = new Map<string, string>();
+  private readonly operationRunByConversation = new Map<string, string>();
   private readonly runControllerByRunId = new Map<string, AbortController>();
   private readonly runChunksByRunId = new Map<
     string,
@@ -357,15 +366,25 @@ export class HeadlessBackend implements Backend {
   async createConversationMessageStream(
     conversationId: string,
     body: ConversationMessageCreateBody,
+    options?: Parameters<Backend["createConversationMessageStream"]>[2],
   ) {
-    return this.executeConversationTurn(conversationId, body);
+    return this.executeConversationTurn(
+      conversationId,
+      body,
+      options?.signal ?? undefined,
+    );
   }
 
   async streamConversationMessages(
     conversationId: string,
     body: ConversationMessageStreamBody,
+    options?: Parameters<Backend["streamConversationMessages"]>[2],
   ) {
-    return this.executeConversationTurn(conversationId, body);
+    return this.executeConversationTurn(
+      conversationId,
+      body,
+      options?.signal ?? undefined,
+    );
   }
 
   async cancelConversation(...args: Parameters<Backend["cancelConversation"]>) {
@@ -373,22 +392,10 @@ export class HeadlessBackend implements Backend {
     const runId =
       this.activeRunByConversation.get(conversationIdOrAgentId) ??
       this.findActiveRunByAgentId(conversationIdOrAgentId);
-    const run = runId ? this.runs.get(runId) : undefined;
-    if (run?.conversation_id && run.agent_id) {
-      this.store.settleInterruptedToolCalls(run.conversation_id, {
-        agentId: run.agent_id,
-      });
+    if (runId) {
+      this.markRunCancelled(runId);
     } else {
       this.store.settleInterruptedToolCalls(conversationIdOrAgentId);
-    }
-    if (runId) {
-      const controller = this.runControllerByRunId.get(runId);
-      this.recordRunChunk(runId, {
-        message_type: "stop_reason",
-        stop_reason: "cancelled",
-      } as LettaStreamingResponse);
-      this.completeRun(runId, "cancelled");
-      controller?.abort();
     }
     return { status: "cancelled" } as never;
   }
@@ -409,20 +416,7 @@ export class HeadlessBackend implements Backend {
       return { [runId]: "failed" } as never;
     }
 
-    if (run.conversation_id) {
-      this.store.settleInterruptedToolCalls(run.conversation_id, {
-        agentId: run.agent_id,
-      });
-    } else {
-      this.store.settleInterruptedToolCalls(run.agent_id);
-    }
-    const controller = this.runControllerByRunId.get(runId);
-    this.recordRunChunk(runId, {
-      message_type: "stop_reason",
-      stop_reason: "cancelled",
-    } as LettaStreamingResponse);
-    this.completeRun(runId, "cancelled");
-    controller?.abort();
+    this.markRunCancelled(runId);
     return { [runId]: "cancelled" } as never;
   }
 
@@ -469,12 +463,14 @@ export class HeadlessBackend implements Backend {
   private async executeConversationTurn(
     conversationId: string,
     body: ConversationMessageCreateBody | ConversationMessageStreamBody,
+    requestSignal?: AbortSignal,
   ) {
-    const activeRunId = this.activeRunByConversation.get(conversationId);
-    const activeRun = activeRunId ? this.runs.get(activeRunId) : undefined;
-    if (activeRun && !isTerminalRun(activeRun)) {
+    requestSignal?.throwIfAborted();
+    const activeOperationRunId =
+      this.operationRunByConversation.get(conversationId);
+    if (activeOperationRunId) {
       throw new Error(
-        `Conversation ${conversationId} already has an active run (${activeRun.id})`,
+        `Conversation ${conversationId} already has an active run (${activeOperationRunId})`,
       );
     }
     // Settle any tool calls left without results from a prior interrupted turn.
@@ -502,6 +498,26 @@ export class HeadlessBackend implements Backend {
       turnInput.agentId,
       body,
     );
+    const runController = new AbortController();
+    this.runControllerByRunId.set(run.id, runController);
+    const markCancelled = () => {
+      this.markRunCancelled(run.id, runController.signal.reason);
+    };
+    runController.signal.addEventListener("abort", markCancelled, {
+      once: true,
+    });
+    const relayRequestAbort = () => {
+      if (!runController.signal.aborted) {
+        runController.abort(requestSignal?.reason);
+      }
+    };
+    if (requestSignal?.aborted) {
+      relayRequestAbort();
+    } else {
+      requestSignal?.addEventListener("abort", relayRequestAbort, {
+        once: true,
+      });
+    }
     const history = this.store.listConversationMessages(
       turnInput.conversationId,
       {
@@ -523,24 +539,27 @@ export class HeadlessBackend implements Backend {
         turnInput.agentId,
       ),
     );
-    const resolvedPrompt = await this.resolveSystemPromptForTurn({
-      conversationId: turnInput.conversationId,
-      agentId: turnInput.agentId,
-      agent,
-      body,
-      history,
-      uiMessages,
-    });
-    const systemPrompt =
-      typeof resolvedPrompt === "string"
-        ? resolvedPrompt
-        : resolvedPrompt.systemPrompt;
-    const midConversationSystemPrompt =
-      typeof resolvedPrompt === "string"
-        ? undefined
-        : resolvedPrompt.midConversationSystemPrompt;
     let stream: Stream<LettaStreamingResponse>;
     try {
+      runController.signal.throwIfAborted();
+      const resolvedPrompt = await this.resolveSystemPromptForTurn({
+        conversationId: turnInput.conversationId,
+        agentId: turnInput.agentId,
+        agent,
+        body,
+        history,
+        uiMessages,
+        signal: runController.signal,
+      });
+      runController.signal.throwIfAborted();
+      const systemPrompt =
+        typeof resolvedPrompt === "string"
+          ? resolvedPrompt
+          : resolvedPrompt.systemPrompt;
+      const midConversationSystemPrompt =
+        typeof resolvedPrompt === "string"
+          ? undefined
+          : resolvedPrompt.midConversationSystemPrompt;
       stream = await this.executor.execute({
         conversationId: turnInput.conversationId,
         agentId: turnInput.agentId,
@@ -550,17 +569,38 @@ export class HeadlessBackend implements Backend {
         body,
         history,
         uiMessages,
+        signal: runController.signal,
       });
     } catch (error) {
+      requestSignal?.removeEventListener("abort", relayRequestAbort);
+      runController.signal.removeEventListener("abort", markCancelled);
       this.failRun(run.id, error);
+      this.releaseRunOperation(run.id);
       throw error;
     }
-    this.runControllerByRunId.set(run.id, stream.controller);
+    const abortExecutorStream = () => {
+      if (!stream.controller.signal.aborted) {
+        stream.controller.abort(runController.signal.reason);
+      }
+    };
+    if (runController.signal.aborted) {
+      abortExecutorStream();
+    } else {
+      runController.signal.addEventListener("abort", abortExecutorStream, {
+        once: true,
+      });
+    }
     return this.persistExecutorStream(
       turnInput.conversationId,
       turnInput.agentId,
       stream,
       run.id,
+      runController,
+      () => {
+        requestSignal?.removeEventListener("abort", relayRequestAbort);
+        runController.signal.removeEventListener("abort", markCancelled);
+        runController.signal.removeEventListener("abort", abortExecutorStream);
+      },
     );
   }
 
@@ -571,6 +611,7 @@ export class HeadlessBackend implements Backend {
     body: ConversationMessageCreateBody | ConversationMessageStreamBody;
     history: ReturnType<LocalStore["listConversationMessages"]>;
     uiMessages: ReturnType<LocalStore["listLocalMessages"]>;
+    signal: AbortSignal;
   }): Promise<
     string | { systemPrompt: string; midConversationSystemPrompt?: string }
   > {
@@ -600,7 +641,18 @@ export class HeadlessBackend implements Backend {
     } as Run;
     this.runs.set(run.id, run);
     this.activeRunByConversation.set(conversationId, run.id);
+    this.operationRunByConversation.set(conversationId, run.id);
     return run;
+  }
+
+  private releaseRunOperation(runId: string): void {
+    const run = this.runs.get(runId);
+    if (
+      run?.conversation_id &&
+      this.operationRunByConversation.get(run.conversation_id) === runId
+    ) {
+      this.operationRunByConversation.delete(run.conversation_id);
+    }
   }
 
   private completeRun(
@@ -688,22 +740,134 @@ export class HeadlessBackend implements Backend {
     return recorded;
   }
 
+  private markRunCancelled(runId: string, reason?: unknown): boolean {
+    const run = this.runs.get(runId);
+    if (!run || isTerminalRun(run)) return false;
+    const controller = this.runControllerByRunId.get(runId);
+    this.recordRunChunk(runId, {
+      message_type: "stop_reason",
+      stop_reason: "cancelled",
+    } as LettaStreamingResponse);
+    this.completeRun(runId, "cancelled");
+    if (controller && !controller.signal.aborted) {
+      controller.abort(reason);
+    }
+    try {
+      if (run.conversation_id) {
+        this.store.settleInterruptedToolCalls(run.conversation_id, {
+          agentId: run.agent_id,
+        });
+      } else {
+        this.store.settleInterruptedToolCalls(run.agent_id);
+      }
+    } catch (error) {
+      debugWarn(
+        "local-backend",
+        "Failed to persist interrupted tool cleanup after cancelling run %s: %s",
+        runId,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    return true;
+  }
+
+  private isRunCancelled(runId: string): boolean {
+    return this.runs.get(runId)?.status === "cancelled";
+  }
+
+  private cancelledRunTerminal(runId: string): LettaStreamingResponse {
+    const recorded = this.runChunksByRunId
+      .get(runId)
+      ?.findLast((chunk) => runStopReason(chunk) === "cancelled");
+    return recorded
+      ? cloneStreamingChunk(recorded)
+      : attachRunId(localStopReasonChunk("cancelled"), runId);
+  }
+
   private persistExecutorStream(
     conversationId: string,
     agentId: string,
     stream: Stream<LettaStreamingResponse>,
     runId: string,
+    runController: AbortController,
+    disposeAbortRelay: () => void,
   ): Stream<LettaStreamingResponse> {
     const store = this.store;
     const backend = this;
+    let iterator: AsyncIterator<LettaStreamingResponse>;
+    try {
+      iterator = stream[Symbol.asyncIterator]();
+    } catch (error) {
+      disposeAbortRelay();
+      backend.failRun(runId, error);
+      backend.releaseRunOperation(runId);
+      throw error;
+    }
+    let abortRelayDisposed = false;
+    const disposeAbortRelayOnce = () => {
+      if (abortRelayDisposed) return;
+      abortRelayDisposed = true;
+      disposeAbortRelay();
+    };
+    let providerSettlement: Promise<void> | undefined;
+    const settleIterator = (inFlightNext?: Promise<void>) => {
+      providerSettlement ??= settleProviderIterator(
+        iterator,
+        inFlightNext,
+      ).finally(() => {
+        disposeAbortRelayOnce();
+        backend.releaseRunOperation(runId);
+      });
+      return providerSettlement;
+    };
+    let consumerStarted = false;
+    const settleWithoutConsumer = () => {
+      if (!consumerStarted) void settleIterator();
+    };
+    if (runController.signal.aborted) {
+      settleWithoutConsumer();
+    } else {
+      runController.signal.addEventListener("abort", settleWithoutConsumer, {
+        once: true,
+      });
+    }
     return {
-      controller: stream.controller,
+      controller: runController,
+      [LOCAL_IN_PROCESS_STREAM]: true,
       async *[Symbol.asyncIterator]() {
+        consumerStarted = true;
+        runController.signal.removeEventListener(
+          "abort",
+          settleWithoutConsumer,
+        );
         let sawStopReason = false;
         let sawApprovalRequest = false;
         let pendingErrorInfo: RunErrorMetadata | undefined;
         try {
-          for await (const rawChunk of stream) {
+          while (true) {
+            const iteration = await nextUntilRunCancelled(
+              iterator,
+              runController.signal,
+            );
+            if (isCancelledStreamIteration(iteration)) {
+              const settlement = settleIterator(iteration.settled);
+              if (backend.isRunCancelled(runId)) {
+                yield backend.cancelledRunTerminal(runId);
+              }
+              // The terminal becomes visible promptly, but the independent
+              // operation lease remains held until both the in-flight next()
+              // and iterator cleanup settle.
+              await settlement;
+              return;
+            }
+            if (backend.isRunCancelled(runId)) {
+              const settlement = settleIterator();
+              yield backend.cancelledRunTerminal(runId);
+              await settlement;
+              return;
+            }
+            if (iteration.done) break;
+            const rawChunk = iteration.value;
             const chunk = attachRunId(rawChunk, runId);
             if (chunk.message_type === "approval_request_message") {
               sawApprovalRequest = true;
@@ -729,6 +893,12 @@ export class HeadlessBackend implements Backend {
                 attachRunId(persisted, runId),
               );
             }
+          }
+          if (backend.isRunCancelled(runId)) {
+            const settlement = settleIterator();
+            yield backend.cancelledRunTerminal(runId);
+            await settlement;
+            return;
           }
           if (!sawStopReason) {
             if (pendingErrorInfo) {
@@ -768,8 +938,18 @@ export class HeadlessBackend implements Backend {
             }
           }
         } catch (error) {
+          if (backend.isRunCancelled(runId)) {
+            const settlement = settleIterator();
+            yield backend.cancelledRunTerminal(runId);
+            await settlement;
+            return;
+          }
           backend.failRun(runId, error);
           throw error;
+        } finally {
+          await settleIterator();
+          disposeAbortRelayOnce();
+          backend.releaseRunOperation(runId);
         }
       },
     } as unknown as Stream<LettaStreamingResponse>;

@@ -43,6 +43,7 @@ function input(): HeadlessTurnExecutorInput {
     body: { messages: [] } as never,
     history: [],
     uiMessages: [],
+    signal: new AbortController().signal,
   };
 }
 
@@ -69,6 +70,33 @@ function assistantMessage(usage = emptyLocalUsage()): LocalAssistantMessage {
 }
 
 describe("ProviderTurnExecutor", () => {
+  test("aborts the provider adapter when the returned stream is cancelled", async () => {
+    let providerSignal: AbortSignal | undefined;
+    const adapter: ProviderStreamAdapter = {
+      async *stream(providerInput) {
+        providerSignal = providerInput.signal;
+        if (!providerInput.signal) {
+          throw new Error("Expected a per-turn provider abort signal");
+        }
+        const signal = providerInput.signal;
+        await new Promise<void>((_resolve, reject) => {
+          signal.addEventListener(
+            "abort",
+            () => reject(new DOMException("cancelled", "AbortError")),
+            { once: true },
+          );
+        });
+      },
+    };
+    const stream = await new ProviderTurnExecutor(adapter).execute(input());
+    const collecting = collect(stream);
+
+    stream.controller.abort();
+    await collecting;
+
+    expect(providerSignal?.aborted).toBe(true);
+  });
+
   test("reserves Pi's output headroom before the context window is full", () => {
     expect(contextCompactionThreshold(100_000)).toBe(83_616);
     expect(

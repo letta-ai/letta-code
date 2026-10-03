@@ -51,6 +51,100 @@ async function collect(
 }
 
 describe("LocalBackend context pressure", () => {
+  test("cancelled compaction cannot overwrite a replacement turn", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-cancelled-compaction-"),
+    );
+    try {
+      let releaseStaleSummary!: (message: AssistantMessage) => void;
+      const staleSummary = new Promise<AssistantMessage>((resolve) => {
+        releaseStaleSummary = resolve;
+      });
+      let compactionCalls = 0;
+      let staleCompactionSignal: AbortSignal | undefined;
+      const complete = async (
+        _model: unknown,
+        _context: unknown,
+        options?: { signal?: AbortSignal },
+      ): Promise<AssistantMessage> => {
+        compactionCalls += 1;
+        if (compactionCalls === 1) {
+          staleCompactionSignal = options?.signal;
+          return staleSummary;
+        }
+        return assistantMessage("replacement summary");
+      };
+      const stream: PiStreamFunction = () =>
+        streamFromMessage(assistantMessage("replacement response"));
+      const backend = new LocalBackend({
+        storageDir,
+        stream,
+        complete: complete as never,
+        memfsEnabled: false,
+      });
+      const agent = await backend.createAgent({
+        name: "Cancelled Compaction",
+        model: "openai/gpt-5.5",
+        model_settings: {
+          provider_type: "openai",
+          context_window_limit: 1_000,
+        },
+      } as never);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as never);
+      const controller = new AbortController();
+      const firstStream = await backend.createConversationMessageStream(
+        conversation.id,
+        {
+          agent_id: agent.id,
+          messages: [{ role: "user", content: "x".repeat(4_000) }],
+        } as ConversationMessageCreateBody,
+        { signal: controller.signal },
+      );
+      const firstCollect = collect(firstStream);
+      while (compactionCalls === 0) await Promise.resolve();
+
+      controller.abort(new DOMException("cancelled", "AbortError"));
+      expect(staleCompactionSignal?.aborted).toBe(true);
+
+      await expect(
+        backend.createConversationMessageStream(conversation.id, {
+          agent_id: agent.id,
+          messages: [{ role: "user", content: "replacement" }],
+        } as ConversationMessageCreateBody),
+      ).rejects.toThrow("already has an active run");
+
+      releaseStaleSummary(assistantMessage("stale summary"));
+      expect(await firstCollect).toEqual([
+        expect.objectContaining({
+          message_type: "stop_reason",
+          stop_reason: "cancelled",
+        }),
+      ]);
+      const replacementChunks = await collect(
+        await backend.createConversationMessageStream(conversation.id, {
+          agent_id: agent.id,
+          messages: [{ role: "user", content: "replacement" }],
+        } as ConversationMessageCreateBody),
+      );
+      expect(JSON.stringify(replacementChunks)).toContain(
+        "replacement summary",
+      );
+      const messages = await backend.listConversationMessages(conversation.id, {
+        agent_id: agent.id,
+        order: "asc",
+      } as never);
+      const persistedMessages = messages.getPaginatedItems();
+      expect(JSON.stringify(persistedMessages)).toContain(
+        "replacement summary",
+      );
+      expect(JSON.stringify(persistedMessages)).not.toContain("stale summary");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("persists preflight compaction before dispatching the provider request", async () => {
     const storageDir = await mkdtemp(
       join(tmpdir(), "local-backend-context-pressure-"),

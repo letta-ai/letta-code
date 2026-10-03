@@ -7,6 +7,12 @@ import type {
   SimpleStreamOptions,
   Usage,
 } from "@earendil-works/pi-ai";
+import { UNSELECTED_LOCAL_MODEL_HANDLE } from "@/backend/dev/pi-model-factory";
+import { LocalPiModelsRuntime } from "@/backend/dev/pi-models-runtime";
+import {
+  registerPiProvider,
+  unregisterPiProvider,
+} from "@/backend/dev/pi-provider-mod-registry";
 import {
   type LocalContextPressure,
   PiStreamAdapter,
@@ -119,6 +125,52 @@ function compactionEvent(events: ProviderStreamEvent[]) {
 }
 
 describe("PiStreamAdapter context pressure", () => {
+  test("cancels preflight automatic model discovery through the turn signal", async () => {
+    const provider = "context-pressure-cancel";
+    let discoverySignal: AbortSignal | undefined;
+    registerPiProvider(provider, {
+      api: "openai-completions",
+      baseUrl: "https://api.context-pressure.test/v1",
+      connect: false,
+      listModels: async (_connection, signal) => {
+        discoverySignal = signal;
+        return await new Promise<never>((_resolve, reject) => {
+          signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("cancelled", "AbortError")),
+            { once: true },
+          );
+        });
+      },
+    });
+    try {
+      const controller = new AbortController();
+      const baseInput = turnInput({ content: "x".repeat(96_000 * 4) });
+      const pending = collectEvents(
+        new PiStreamAdapter({
+          modelsRuntime: new LocalPiModelsRuntime(),
+          onContextPressure: async () => null,
+        }).stream({
+          ...baseInput,
+          signal: controller.signal,
+          agent: {
+            ...baseInput.agent,
+            model: UNSELECTED_LOCAL_MODEL_HANDLE,
+            model_settings: { provider_type: provider },
+          },
+        }),
+      );
+      while (!discoverySignal) await Promise.resolve();
+
+      controller.abort(new DOMException("cancelled", "AbortError"));
+
+      await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+      expect(discoverySignal?.aborted).toBe(true);
+    } finally {
+      unregisterPiProvider(provider);
+    }
+  });
+
   test("compacts a 96k request before dispatching it into a 100k window", async () => {
     let providerCalls = 0;
     let providerContext: Context | undefined;

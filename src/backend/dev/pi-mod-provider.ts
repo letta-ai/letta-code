@@ -112,11 +112,15 @@ export function createModPiProvider(options: ModPiProviderOptions): Provider {
           context.credential?.type === "oauth"
             ? config.oauth?.getApiKey(context.credential)
             : context.credential?.key;
-        const listed = await listRegisteredPiProviderModels(registered, {
-          apiKey,
-          baseUrl: record?.base_url ?? config.baseUrl,
-          headers: declaredHeaders,
-        });
+        const listed = await listRegisteredPiProviderModels(
+          registered,
+          {
+            apiKey,
+            baseUrl: record?.base_url ?? config.baseUrl,
+            headers: declaredHeaders,
+          },
+          context.signal,
+        );
         return listed.map(toModel);
       }
     : undefined;

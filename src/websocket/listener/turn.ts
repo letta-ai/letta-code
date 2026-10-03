@@ -96,6 +96,7 @@ export async function handleIncomingMessage(
   dequeuedBatchId: string = `batch-direct-${crypto.randomUUID()}`,
   existingTurnLease?: TurnLease,
   existingTurnCorrelation?: TurnCorrelation,
+  onInputAccepted?: () => void,
 ): Promise<void> {
   notifyTurnStarted(msg);
   try {
@@ -108,6 +109,7 @@ export async function handleIncomingMessage(
       dequeuedBatchId,
       existingTurnLease,
       existingTurnCorrelation,
+      onInputAccepted,
     );
   } finally {
     notifyTurnFinished(msg);
@@ -127,6 +129,7 @@ async function handleIncomingMessageInner(
   dequeuedBatchId: string = `batch-direct-${crypto.randomUUID()}`,
   existingTurnLease?: TurnLease,
   existingTurnCorrelation?: TurnCorrelation,
+  onInputAccepted?: () => void,
 ): Promise<void> {
   const agentId = normalizeCwdAgentId(msg.agentId);
   const requestedConversationId = msg.conversationId || undefined;
@@ -284,6 +287,7 @@ async function handleIncomingMessageInner(
         pendingNormalizationInterruptedToolCallIds,
       onTerminal: noteFinalization,
       getTurnId: () => activeDequeuedBatchId,
+      onInputAccepted,
     });
     const {
       sender: turnInputSender,
