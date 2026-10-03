@@ -174,6 +174,7 @@ import {
   enqueueMemoryGitSyncReminder,
 } from "./reminders/state";
 import { getCurrentWorkingDirectory } from "./runtime-context";
+import { subagentExecutionSettings } from "./runtime-execution-settings";
 import { settingsManager, shouldPersistSessionState } from "./settings-manager";
 import { writeWireMessage, writeWireMessageAsync } from "./stream-json-writer";
 import { shutdownBackgroundMemoryTasks } from "./tools/impl/memory-task-lifecycle";
@@ -2015,11 +2016,8 @@ export async function handleHeadlessCommand(
         disable_memory_guard: cliPermissions.isMemoryGuardDisabled(),
         max_turns: maxTurns,
         preload_skills: parseCsvListFlag(preLoadSkillsRaw),
-        parent_agent_id: process.env.LETTA_PARENT_AGENT_ID,
         mcp_agent_id: process.env.LETTA_MCP_AGENT_ID,
-        ...(process.env.LETTA_CODE_AGENT_ROLE === "subagent"
-          ? { agent_role: "subagent" as const }
-          : {}),
+        ...subagentExecutionSettings(process.env),
         ...(!environmentSelector
           ? {
               transcript_path: process.env.TRANSCRIPT_PATH,

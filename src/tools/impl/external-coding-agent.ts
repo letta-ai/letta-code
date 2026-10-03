@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import type { SubagentConfig, SubagentResult } from "@/agent/subagents";
+import { getCurrentSubagentDepth } from "@/agent/subagents/subagent-depth";
 import { spawnSubagentProcess } from "@/agent/subagents/subagent-process";
 import { getMcpScopeAgentId } from "@/mcp-scope";
 import {
@@ -10,6 +11,7 @@ import {
 } from "@/reminders/engine";
 import { createSharedReminderState } from "@/reminders/state";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { SUBAGENT_DEPTH_ENV } from "@/utils/subagent-depth-env";
 import { runClaudeTurn } from "./claude-stream-session";
 import { runCodexTurn } from "./codex-app-server";
 import {
@@ -380,6 +382,8 @@ export async function runExternalCodingAgent(
     AGENT_ID: options.parentAgentId,
     LETTA_AGENT_ID: options.parentAgentId,
     LETTA_MCP_AGENT_ID: getMcpScopeAgentId(options.parentAgentId, deps.env),
+    // A Letta CLI launched from the worker's shell stays inside the depth bound.
+    [SUBAGENT_DEPTH_ENV]: String(getCurrentSubagentDepth() + 1),
   };
   const cwd = options.cwd ?? getCurrentWorkingDirectory();
   const scope = options.parentConversationId

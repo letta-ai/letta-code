@@ -12,7 +12,7 @@
     },
     "conversation_id": {
       "type": "string",
-      "description": "The existing message thread to send to. Each conversation has its own message history. A conv-... ID is sufficient; to use an agent's default thread, also supply agent_id."
+      "description": "The existing message thread to send to. Each conversation has its own message history. A conv-... ID is sufficient; to use an agent's default thread, also supply agent_id. A subagent that omits both conversation_id and agent_id messages its parent."
     },
     "computer": {
       "type": ["string", "null"],

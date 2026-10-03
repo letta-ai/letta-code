@@ -677,3 +677,38 @@ test("a rejected enqueue to a child is not tracked", async () => {
   expect(result.status).toBe("error");
   expect(f.tracked).toHaveLength(0);
 });
+
+test("a subagent that omits the destination messages the conversation that launched it", async () => {
+  const f = fixture();
+  const settings = {
+    allowed_tools: [],
+    disallowed_tools: [],
+    disable_memory_guard: false,
+    agent_role: "subagent" as const,
+    subagent_depth: 1,
+    parent_agent_id: "agent-target",
+    parent_conversation_id: "conv-parent",
+  };
+  const result = await runWithRuntimeContext(
+    { ...caller, executionSettings: settings },
+    () => send_agent_message({ message: "Blocked on the schema choice." }, f),
+  );
+  expect(result.status).toBe("success");
+  expect(f.submissions[0]).toMatchObject({
+    agentId: "agent-target",
+    conversationId: "conv-parent",
+  });
+
+  // A root agent still has to choose a destination.
+  const rootSettings = {
+    allowed_tools: [],
+    disallowed_tools: [],
+    disable_memory_guard: false,
+  };
+  const root = await runWithRuntimeContext(
+    { ...caller, executionSettings: rootSettings },
+    () => send_agent_message({ message: "hello" }, fixture()),
+  );
+  expect(root.status).toBe("error");
+  expect(root.content).toContain("Choose a destination");
+});
