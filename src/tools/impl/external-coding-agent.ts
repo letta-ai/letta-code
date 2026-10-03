@@ -187,7 +187,7 @@ export async function resolveExternalCodingAgentMcpReminder(
 ): Promise<string | undefined> {
   if (mcp?.inherit === false) return undefined;
   const inventory = await listMcpServersForAgent(
-    getMcpScopeAgentId(parentAgentId),
+    await getMcpScopeAgentId(parentAgentId, undefined, deps.lookupParentAgent),
     createSharedReminderState(),
     deps,
   );
@@ -381,7 +381,8 @@ export async function runExternalCodingAgent(
     ...(deps.env ?? process.env),
     AGENT_ID: options.parentAgentId,
     LETTA_AGENT_ID: options.parentAgentId,
-    LETTA_MCP_AGENT_ID: getMcpScopeAgentId(options.parentAgentId, deps.env),
+    LETTA_PARENT_AGENT_ID: options.parentAgentId,
+    LETTA_CODE_AGENT_ROLE: "subagent",
     // A Letta CLI launched from the worker's shell stays inside the depth bound.
     [SUBAGENT_DEPTH_ENV]: String(getCurrentSubagentDepth() + 1),
   };

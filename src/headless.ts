@@ -1945,6 +1945,7 @@ export async function handleHeadlessCommand(
     );
   }
 
+  // Add user prompt
   pushPart(prompt);
 
   telemetry.trackUserInput(prompt, "user", reportModel ?? "unknown");
@@ -2016,7 +2017,6 @@ export async function handleHeadlessCommand(
         disable_memory_guard: cliPermissions.isMemoryGuardDisabled(),
         max_turns: maxTurns,
         preload_skills: parseCsvListFlag(preLoadSkillsRaw),
-        mcp_agent_id: process.env.LETTA_MCP_AGENT_ID,
         ...subagentExecutionSettings(process.env),
         ...(!environmentSelector
           ? {

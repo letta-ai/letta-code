@@ -14,13 +14,6 @@ describe("MCP command input", () => {
     ).toBe("agent-2");
   });
 
-  test("inherits MCP scope while explicit agent flags still override it", () => {
-    const env = { LETTA_MCP_AGENT_ID: "parent", LETTA_AGENT_ID: "worker" };
-    expect(resolveMcpAgentId(undefined, undefined, env)).toBe("parent");
-    expect(resolveMcpAgentId("other", undefined, env)).toBe("other");
-    expect(resolveMcpAgentId(undefined, "other", env)).toBe("other");
-  });
-
   test("loads inline, file, and stdin JSON objects", async () => {
     await expect(
       loadMcpToolArgs('{"query":"letta"}', undefined, {}),
