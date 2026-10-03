@@ -153,6 +153,62 @@ test("telegram adapter hides raw generic lifecycle errors", async () => {
   );
 });
 
+const OUT_OF_CREDITS_ERROR =
+  "You've used all of your Letta tier model inferences for this day (30,000 per day). Quota resets in 11m. Please upgrade your plan or try again after the reset. Insufficient credits ($-0.766) to fulfill this request: minimum $1 in credits is required. Please purchase more credits at https://chat.letta.com/preferences/usage";
+
+test.each([
+  ["request-time quota rejection", "error", OUT_OF_CREDITS_ERROR],
+  [
+    "insufficient_credits stop reason",
+    "insufficient_credits",
+    "The usage limit has been reached.",
+  ],
+] as const)(
+  "telegram omits Report error for %s",
+  async (_label, stopReason, error) => {
+    const adapter = createTelegramAdapter({
+      ...telegramAccountDefaults,
+      channel: "telegram",
+      enabled: true,
+      token: "test-token",
+      dmPolicy: "pairing",
+      allowedUsers: [],
+    });
+
+    await adapter.start();
+    await adapter.handleTurnLifecycleEvent?.({
+      type: "finished",
+      batchId: "batch-1",
+      outcome: "error",
+      stopReason,
+      error,
+      runId: "run-1",
+      sources: [
+        {
+          channel: "telegram",
+          accountId: "telegram-test-account",
+          chatId: "123",
+          chatType: "direct",
+          messageId: "77",
+          threadId: null,
+          agentId: "agent-1",
+          conversationId: "conv-1",
+        },
+      ],
+    });
+
+    const bot = FakeBot.instances[0];
+    expect(bot?.api.sendMessage).toHaveBeenCalledTimes(1);
+    const call = bot?.api.sendMessage.mock.calls[0] as unknown[] | undefined;
+    const text = String(call?.[1] ?? "");
+    const options = call?.[2] as Record<string, unknown> | undefined;
+    expect(text).toContain(error);
+    expect(text).toContain("Run ID: run-1");
+    expect(options).toMatchObject({ reply_parameters: { message_id: 77 } });
+    expect(options).not.toHaveProperty("reply_markup");
+  },
+);
+
 test("telegram adapter prettifies conversation-busy lifecycle errors", async () => {
   const adapter = createTelegramAdapter({
     ...telegramAccountDefaults,

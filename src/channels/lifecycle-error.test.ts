@@ -6,6 +6,7 @@ import {
   CHANNEL_LIFECYCLE_TRANSIENT_ERROR_MESSAGE,
   extractChannelLifecycleRunId,
   formatChannelLifecycleErrorMessage,
+  isChannelLifecycleBillingLimitError,
   normalizeChannelLifecycleErrorMessage,
   sanitizeChannelLifecycleErrorText,
 } from "./lifecycle-error";
@@ -174,5 +175,37 @@ describe("sanitizeChannelLifecycleErrorText", () => {
       "Usage limit reached.",
     );
     expect(extractChannelLifecycleRunId(rawError)).toBe("run-abc");
+  });
+});
+
+describe("isChannelLifecycleBillingLimitError", () => {
+  test("matches the insufficient_credits stop reason", () => {
+    expect(
+      isChannelLifecycleBillingLimitError({
+        stopReason: "insufficient_credits",
+        errorText: "anything",
+      }),
+    ).toBe(true);
+  });
+
+  test.each([
+    "Insufficient credits ($-0.766) to fulfill this request: minimum $1 in credits is required.",
+    "You've used all of your Letta tier model inferences for this day (30,000 per day). Quota resets in 11m.",
+    "402 not-enough-credits",
+    "429 premium-usage-exceeded",
+  ])("matches billing text on a generic error stop: %s", (errorText) => {
+    expect(
+      isChannelLifecycleBillingLimitError({ stopReason: "error", errorText }),
+    ).toBe(true);
+  });
+
+  test.each([
+    "Something went wrong while processing that message. Please try again.",
+    "ChatGPT usage limit reached. Resets at 1:00 PM.",
+    "canceling statement due to lock timeout",
+  ])("keeps reportable errors reportable: %s", (errorText) => {
+    expect(
+      isChannelLifecycleBillingLimitError({ stopReason: "error", errorText }),
+    ).toBe(false);
   });
 });
