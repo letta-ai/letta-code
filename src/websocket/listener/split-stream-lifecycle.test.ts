@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { EventEmitter } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer, type Server as HttpServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -18,7 +19,10 @@ import {
 } from "@/websocket/listener/approval";
 import { getOrCreateScopedRuntime } from "@/websocket/listener/conversation-runtime";
 import { getActiveRuntime } from "@/websocket/listener/runtime";
-import { handleListenerSocketOpenFailure } from "@/websocket/listener/split-stream-lifecycle";
+import {
+  handleListenerSocketOpenFailure,
+  retainRejectedStreamErrorSink,
+} from "@/websocket/listener/split-stream-lifecycle";
 
 type ListenerSettings = Awaited<
   ReturnType<typeof settingsManager.getSettingsWithSecureTokens>
@@ -148,6 +152,16 @@ describe("split stream listener lifecycle", () => {
         receivedFrames[index]?.push(JSON.parse(data.toString()) as unknown);
       });
     });
+  });
+
+  test("a rejected stream absorbs an error delivered after close", () => {
+    const socket = new EventEmitter();
+    retainRejectedStreamErrorSink(socket as unknown as WebSocket);
+
+    socket.emit("close");
+    expect(() =>
+      socket.emit("error", new Error("late stream error")),
+    ).not.toThrow();
   });
 
   afterEach(async () => {

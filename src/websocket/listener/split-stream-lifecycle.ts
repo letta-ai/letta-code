@@ -155,16 +155,19 @@ function terminateCurrentSocketPair(
   terminateSocketIfOpenOrConnecting(controlSocket);
 }
 
+export function retainRejectedStreamErrorSink(streamSocket: WebSocket): void {
+  // Bun/ws can deliver an ErrorEvent queued before close only after close has
+  // fired. Keep the sink for this discarded socket's remaining lifetime; the
+  // detached socket and handler are collected together.
+  streamSocket.on("error", () => undefined);
+}
+
 function terminateRejectedStreamPair(
   runtime: ListenerRuntime,
   controlSocket: WebSocket,
   streamSocket: WebSocket,
 ): void {
-  const absorbLateError = (): void => undefined;
-  streamSocket.on("error", absorbLateError);
-  streamSocket.once("close", () => {
-    streamSocket.off("error", absorbLateError);
-  });
+  retainRejectedStreamErrorSink(streamSocket);
   terminateCurrentSocketPair(runtime, controlSocket, streamSocket);
 }
 
