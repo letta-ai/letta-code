@@ -3,7 +3,6 @@
 // so it covers local child processes and listener-hosted subagent turns alike.
 
 import { canLaunchSubagentsAtDepth } from "@/agent/subagents/subagent-depth";
-import SendAgentMessageSubagentDescription from "./descriptions/SendAgentMessageSubagent.md";
 import {
   functionToolForm,
   type JsonSchema,
@@ -38,8 +37,7 @@ export function resolvedModelForm(
 }
 
 /**
- * Remove Agent (internal `Task`) at the maximum depth and give subagents the
- * SendAgentMessage description written for talking to a parent.
+ * Remove Agent (internal `Task`) at the maximum depth.
  */
 export function applySubagentToolPolicy<T extends PolicyToolDefinition>(
   registry: Map<string, T>,
@@ -48,18 +46,5 @@ export function applySubagentToolPolicy<T extends PolicyToolDefinition>(
   if (depth === 0) return registry;
   const scoped = new Map(registry);
   if (!canLaunchSubagentsAtDepth(depth)) scoped.delete("Task");
-  const send = scoped.get("SendAgentMessage");
-  if (send) {
-    const description = SendAgentMessageSubagentDescription.trim();
-    scoped.set("SendAgentMessage", {
-      ...send,
-      schema: { ...send.schema, description },
-      modelForm: resolvedModelForm(
-        send.modelForm,
-        description,
-        send.schema.input_schema,
-      ),
-    });
-  }
   return scoped;
 }
