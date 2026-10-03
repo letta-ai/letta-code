@@ -48,6 +48,9 @@ describe("split stream listener lifecycle", () => {
   const originalStreamOpenTimeout =
     process.env.LETTA_LISTENER_STREAM_OPEN_TIMEOUT_MS;
   const originalRetryDuration = process.env.LETTA_LISTENER_RETRY_DURATION_MS;
+  // Process-global; removed in afterEach so a failing wait can't leak it into
+  // later tests and mask their crashes.
+  let uncaughtRecorder: ((error: unknown) => void) | null = null;
   const originalInitialRetryDelay =
     process.env.LETTA_LISTENER_INITIAL_RETRY_DELAY_MS;
   const originalGetSettingsWithSecureTokens =
@@ -165,6 +168,10 @@ describe("split stream listener lifecycle", () => {
   });
 
   afterEach(async () => {
+    if (uncaughtRecorder) {
+      process.off("uncaughtException", uncaughtRecorder);
+      uncaughtRecorder = null;
+    }
     stopListenerClient();
     for (const socket of stalledUpgradeSockets) socket.destroy();
     await Promise.all(
@@ -546,8 +553,8 @@ describe("split stream listener lifecycle", () => {
     // Inject one on every stream the listener abandons; with no error listener
     // armed it surfaces as an uncaught exception that would kill the CLI.
     const uncaught: unknown[] = [];
-    const recordUncaught = (error: unknown) => uncaught.push(error);
-    process.on("uncaughtException", recordUncaught);
+    uncaughtRecorder = (error: unknown) => uncaught.push(error);
+    process.on("uncaughtException", uncaughtRecorder);
     const instrumented = new WeakSet<WebSocket>();
     const instrumentStream = () => {
       const stream = getActiveRuntime()?.streamSocket;
@@ -612,7 +619,6 @@ describe("split stream listener lifecycle", () => {
       "listener did not activate once both sides matched",
     );
     await new Promise((resolve) => setTimeout(resolve, 100));
-    process.off("uncaughtException", recordUncaught);
     expect(uncaught).toEqual([]);
     expect(onConnected).toHaveBeenCalledTimes(1);
     expect(onError).not.toHaveBeenCalled();
