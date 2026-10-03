@@ -204,11 +204,15 @@ export function mapHandleToLlmConfigPatch(
 export function getErrorHintForStopReason(
   stopReason: StopReasonType | null,
   currentModelId: string | null,
-  modelEndpointType?: string | null,
+  llmConfig?: Pick<LlmConfig, "model_endpoint_type" | "max_tokens"> | null,
 ): string {
+  if (stopReason === "max_tokens_exceeded") {
+    return maxTokensExceededHint(llmConfig?.max_tokens);
+  }
   if (stopReason !== "llm_api_error") {
     return ERROR_FEEDBACK_HINT;
   }
+  const modelEndpointType = llmConfig?.model_endpoint_type;
 
   // When the user is on an auto-routed model (letta/auto*), the reported
   // model_endpoint_type reflects whichever downstream provider the proxy chose,
@@ -229,4 +233,18 @@ export function getErrorHintForStopReason(
   }
 
   return `Downstream provider is experiencing errors. Use /model to swap to a model from a different provider, or try again later.`;
+}
+
+// max_tokens_exceeded means one response hit the model's per-response output
+// limit (provider finish reason "length"). It is not a spend or quota limit,
+// so say what was hit and how to avoid it rather than the generic hint.
+function maxTokensExceededHint(maxTokens: number | null | undefined): string {
+  const limit =
+    typeof maxTokens === "number" && maxTokens > 0
+      ? `its ${maxTokens.toLocaleString("en-US")}-token output limit`
+      : "its output token limit";
+  return [
+    `The model reached ${limit} before finishing (this is a per-response output limit, not an account quota or spending cap).`,
+    `Try lowering reasoning effort or switching models with /model, or breaking your request into smaller steps.`,
+  ].join(" ");
 }

@@ -2674,7 +2674,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                     getErrorHintForStopReason(
                       stopReasonToHandle,
                       currentModelId,
-                      llmConfigRef.current?.model_endpoint_type,
+                      llmConfigRef.current,
                     ),
                     true,
                   );
@@ -2694,7 +2694,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   getErrorHintForStopReason(
                     stopReasonToHandle,
                     currentModelId,
-                    llmConfigRef.current?.model_endpoint_type,
+                    llmConfigRef.current,
                   ),
                   true,
                 );
@@ -2714,7 +2714,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 getErrorHintForStopReason(
                   stopReasonToHandle,
                   currentModelId,
-                  llmConfigRef.current?.model_endpoint_type,
+                  llmConfigRef.current,
                 ),
                 true,
               );
@@ -2748,7 +2748,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               getErrorHintForStopReason(
                 stopReasonToHandle,
                 currentModelId,
-                llmConfigRef.current?.model_endpoint_type,
+                llmConfigRef.current,
               ),
               true,
             );
