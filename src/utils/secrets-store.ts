@@ -12,6 +12,7 @@ import { isLocalAgentId } from "@/agent/agent-id";
 import { getCurrentAgentId } from "@/agent/context";
 import { getBackend } from "@/backend";
 import { getLocalBackendStorageDir } from "@/backend/local/paths";
+import { debugLog } from "@/utils/debug";
 import {
   deleteSecretValue,
   getSecretValue,
@@ -60,6 +61,7 @@ export function __testSeedSecretsCache(
   secrets: Record<string, string>,
 ): void {
   setCache(agentId, secrets);
+  getHydrationState().hydratedAgents.add(agentId);
 }
 
 function getSecretsBackend(): SecretsBackend {
@@ -186,6 +188,26 @@ function getCache(): SecretsCache {
     global[SECRETS_CACHE_KEY] = new Map();
   }
   return global[SECRETS_CACHE_KEY];
+}
+
+const SECRETS_HYDRATION_STATE_KEY = Symbol.for("@letta/secretsHydrationState");
+type SecretsHydrationState = {
+  hydratedAgents: Set<string>;
+  inFlight: Map<string, Promise<void>>;
+};
+type GlobalWithHydrationState = typeof globalThis & {
+  [key: symbol]: SecretsHydrationState | undefined;
+};
+
+function getHydrationState(): SecretsHydrationState {
+  const global = globalThis as GlobalWithHydrationState;
+  if (!global[SECRETS_HYDRATION_STATE_KEY]) {
+    global[SECRETS_HYDRATION_STATE_KEY] = {
+      hydratedAgents: new Set(),
+      inFlight: new Map(),
+    };
+  }
+  return global[SECRETS_HYDRATION_STATE_KEY];
 }
 
 function setCache(agentId: string, secrets: Record<string, string>): void {
@@ -365,29 +387,63 @@ function resolveSecretsAgentId(explicitAgentId?: string): string | null {
  * Initialize the agent-scoped secrets cache. Cloud agents fetch from the
  * server. Local agents read from OS secure storage through Bun.secrets.
  */
-export async function initSecretsFromServer(agentId: string): Promise<void> {
-  if (isLocalAgentId(agentId)) {
-    setCache(agentId, await loadLocalAgentSecrets(agentId));
+async function hydrateAgentSecrets(
+  agentId: string,
+  forceRefresh: boolean,
+): Promise<void> {
+  const state = getHydrationState();
+  if (!forceRefresh && state.hydratedAgents.has(agentId)) {
     return;
   }
 
-  const backend = getSecretsBackend();
-  if (!backend.capabilities.serverSecrets) {
-    setCache(agentId, {});
+  const existing = state.inFlight.get(agentId);
+  if (existing) {
+    await existing;
     return;
   }
-  const agentSecrets = await backend.listAgentSecrets(agentId);
 
-  const secrets: Record<string, string> = {};
-  if (Array.isArray(agentSecrets)) {
-    for (const env of agentSecrets) {
-      if (env.key && env.value) {
-        secrets[env.key] = env.value;
+  const hydration = (async () => {
+    let secrets: Record<string, string>;
+    if (isLocalAgentId(agentId)) {
+      secrets = await loadLocalAgentSecrets(agentId);
+    } else {
+      const backend = getSecretsBackend();
+      if (!backend.capabilities.serverSecrets) {
+        secrets = {};
+      } else {
+        const agentSecrets = await backend.listAgentSecrets(agentId);
+        secrets = {};
+        if (Array.isArray(agentSecrets)) {
+          for (const env of agentSecrets) {
+            if (env.key && env.value) {
+              secrets[env.key] = env.value;
+            }
+          }
+        }
       }
     }
-  }
 
-  setCache(agentId, secrets);
+    setCache(agentId, secrets);
+    // 空对象也表示已成功同步，避免没有密钥的 agent 每次执行 shell 都请求服务端。
+    state.hydratedAgents.add(agentId);
+    debugLog(
+      "secrets",
+      `Hydrated ${Object.keys(secrets).length} secrets for agent ${agentId}`,
+    );
+  })();
+
+  state.inFlight.set(agentId, hydration);
+  try {
+    await hydration;
+  } finally {
+    if (state.inFlight.get(agentId) === hydration) {
+      state.inFlight.delete(agentId);
+    }
+  }
+}
+
+export async function initSecretsFromServer(agentId: string): Promise<void> {
+  await hydrateAgentSecrets(agentId, true);
 }
 
 /**
@@ -400,6 +456,21 @@ export function loadSecrets(agentId?: string): Record<string, string> {
     return {};
   }
   return { ...(getCache().get(resolvedAgentId) ?? {}) };
+}
+
+/**
+ * 确保 shell 替换使用的缓存已经同步；首次空结果也会被记录为已同步。
+ */
+export async function loadSecretsForSubstitution(
+  agentId?: string,
+): Promise<Record<string, string>> {
+  const resolvedAgentId = resolveSecretsAgentId(agentId);
+  if (!resolvedAgentId) {
+    return {};
+  }
+
+  await hydrateAgentSecrets(resolvedAgentId, false);
+  return loadSecrets(resolvedAgentId);
 }
 
 /**
@@ -552,14 +623,18 @@ export async function deleteSecretOnServer(
  * Clear the in-memory cache (useful for testing).
  */
 export function clearSecretsCache(agentId?: string | null): void {
+  const state = getHydrationState();
   if (agentId === null) {
     getCache().clear();
+    state.hydratedAgents.clear();
     return;
   }
   const resolvedAgentId = resolveSecretsAgentId(agentId);
   if (resolvedAgentId) {
     getCache().delete(resolvedAgentId);
+    state.hydratedAgents.delete(resolvedAgentId);
     return;
   }
   getCache().clear();
+  state.hydratedAgents.clear();
 }
