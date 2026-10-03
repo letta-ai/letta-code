@@ -26,11 +26,14 @@ describe("mcp servers info reminder", () => {
           allowed_tools: [],
           disallowed_tools: [],
           disable_memory_guard: false,
-          mcp_agent_id: "parent",
+          parent_agent_id: "parent",
+          agent_role: "subagent",
         },
       },
       () =>
         buildReminder(createSharedReminderState(), {
+          lookupParentAgent: async (id) =>
+            id === MCP_AGENT_ID ? "parent" : undefined,
           getLocalServerNames: (id) => {
             expect(id).toBe("parent");
             return ["filesystem"];

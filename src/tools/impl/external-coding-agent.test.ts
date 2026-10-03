@@ -293,7 +293,8 @@ describe("external coding agent output and preflight", () => {
       );
       expect(receivedEnv?.AGENT_ID).toBe("parent");
       expect(receivedEnv?.LETTA_AGENT_ID).toBe("parent");
-      expect(receivedEnv?.LETTA_MCP_AGENT_ID).toBe("parent");
+      expect(receivedEnv?.LETTA_PARENT_AGENT_ID).toBe("parent");
+      expect(receivedEnv?.LETTA_CODE_AGENT_ROLE).toBe("subagent");
     },
   );
 });

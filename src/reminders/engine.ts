@@ -8,7 +8,7 @@ import {
 } from "@/cli/helpers/session-context";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { experimentManager } from "@/experiments/manager";
-import { getMcpScopeAgentId } from "@/mcp-scope";
+import { getMcpScopeAgentId, type ParentAgentLookup } from "@/mcp-scope";
 import { permissionMode } from "@/permissions/mode";
 import { settingsManager } from "@/settings-manager";
 import { debugLog } from "@/utils/debug";
@@ -134,6 +134,7 @@ export interface McpServerReminderEntry {
 }
 
 export interface McpServersReminderDependencies {
+  lookupParentAgent?: ParentAgentLookup;
   getLocalServerNames?: (agentId: string) => string[];
   /** Returns cloud-connected servers, or null when unavailable. */
   listServerSideServers?: (
@@ -246,7 +247,11 @@ export async function buildMcpServersInfoReminderText(
 ): Promise<string | null> {
   try {
     const uniqueEntries = await listMcpServersForAgent(
-      getMcpScopeAgentId(context.agent.id),
+      await getMcpScopeAgentId(
+        context.agent.id,
+        undefined,
+        deps.lookupParentAgent,
+      ),
       context.state,
       deps,
     );

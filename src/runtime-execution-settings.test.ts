@@ -16,7 +16,6 @@ function child(parent: string): RuntimeExecutionSettings {
   return {
     agent_role: "subagent",
     parent_agent_id: parent,
-    mcp_agent_id: parent,
     allowed_tools: [`Read(${parent}/**)`],
     disallowed_tools: [`Write(${parent}/private/**)`],
     disable_memory_guard: false,

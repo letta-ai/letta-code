@@ -1,4 +1,11 @@
-/** Spawn and coordinate subagents through the Letta CLI. */
+/**
+ * Subagent manager for spawning and coordinating subagents
+ *
+ * This module handles:
+ * - Spawning subagents via letta CLI in headless mode
+ * - Executing subagents and collecting final reports
+ * - Managing parallel subagent execution
+ */
 
 import { rmSync } from "node:fs";
 import { platform } from "node:os";
@@ -22,7 +29,6 @@ import {
   SYSTEM_REMINDER_CLOSE,
   SYSTEM_REMINDER_OPEN,
 } from "@/constants";
-import { getMcpScopeAgentId } from "@/mcp-scope";
 import { cliPermissions } from "@/permissions/cli-permissions-instance";
 import { resolveAllowedMemoryRoots } from "@/permissions/memory-paths";
 import { sessionPermissions } from "@/permissions/session";
@@ -384,11 +390,6 @@ async function executeSubagent(
         getRuntimeContext()?.executionSettings,
       ),
       USER_CWD: subagentWorkingDirectory,
-      LETTA_MCP_AGENT_ID:
-        (existingAgentId || existingConversationId) &&
-        existingAgentId !== parentAgentId
-          ? undefined
-          : getMcpScopeAgentId(parentAgentId ?? ""),
     };
     const childEnv = composeSubagentChildEnv({
       parentProcessEnv,

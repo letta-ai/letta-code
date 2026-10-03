@@ -405,20 +405,25 @@ describe("mcp subcommand", () => {
     expect(closes.count).toBe(1);
   });
 
-  test.each([false, true])(
-    "calls a real stdio MCP server with inherited scope=%s",
-    async (inherited) => {
+  test.each([undefined, "--agent", "--agent-id"] as const)(
+    "calls a real stdio MCP server with exact override=%s",
+    async (override) => {
       const stdout: string[] = [];
       const stderr: string[] = [];
       const deps: McpSubcommandDependencies = {
         env: {
           AGENT_ID: "agent-1",
-          ...(inherited ? { LETTA_MCP_AGENT_ID: "parent" } : {}),
+          LETTA_PARENT_AGENT_ID: "parent",
+          LETTA_CODE_AGENT_ROLE: "subagent",
+        },
+        lookupParentAgent: async (id) => {
+          expect(override).toBeUndefined();
+          return id === "agent-1" ? "parent" : undefined;
         },
         initializeSettings: async () => {},
         isServerMcpAvailable: () => false,
         getLocalServers: (id) => {
-          expect(id).toBe(inherited ? "parent" : "agent-1");
+          expect(id).toBe(override ? "agent-1" : "parent");
           return [
             {
               name: "everything",
@@ -439,6 +444,7 @@ describe("mcp subcommand", () => {
             "mcp__everything__echo",
             "--args",
             '{"message":"hello from CLI"}',
+            ...(override ? [override, "agent-1"] : []),
           ],
           deps,
         ),
