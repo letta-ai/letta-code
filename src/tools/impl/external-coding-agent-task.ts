@@ -87,6 +87,7 @@ export function spawnExternalCodingAgentFollowup(args: {
     config: createExternalCodingAgentConfig(target.type),
     prompt: args.message,
     description: `Continue ${target.type} session`,
+    existingAgentId: args.agentId,
     parentScope: args.parentScope,
     deps: {
       spawnSubagentImpl: async (_type, prompt, _model, subagentId, signal) =>
