@@ -69,6 +69,7 @@ import {
   type recoverRecordedTurns,
   scheduleRecordedTurnRecovery,
 } from "./recover-recorded-turn";
+import * as retryPolicy from "./retry-policy";
 import {
   clearConversationRuntimeState,
   clearRuntimeTimers,
@@ -80,6 +81,7 @@ import {
   applyListenerPairIdentity,
   applyListenerStreamIncarnation,
   attachSplitStreamSocketHandlers,
+  consumeRolloutSkewRetry,
   createListenerPairIdentity,
   handleListenerSocketOpenFailure,
   isCurrentSocketPair,
@@ -342,8 +344,7 @@ export async function startConnectedListenerRuntime(
   if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) return;
   sealStartupLogs();
   installExternalToolBridge(runtime);
-  // Opt out when another process already holds the cron scheduler lease.
-  // LETTA_DISABLE_CRON_SCHEDULER=1 suppresses recurring lease-held messages.
+  // Opt out when another process holds the cron lease or the env disables it.
   const shouldStartCronScheduler =
     options.startCronScheduler !== false &&
     process.env.LETTA_DISABLE_CRON_SCHEDULER !== "1";
@@ -601,7 +602,6 @@ export async function attachOpenListenerSocket(
 export async function startListenerClient(
   opts: StartListenerOptions,
 ): Promise<void> {
-  // Replace any existing runtime without stale callback leakage.
   const existingRuntime = getActiveRuntime();
   if (existingRuntime) {
     stopRuntime(existingRuntime, true);
@@ -712,10 +712,7 @@ async function connectWithRetry(
       INITIAL_RETRY_DELAY_MS * 2 ** (attempt - 1),
       MAX_RETRY_DELAY_MS,
     );
-    const maxAttempts = Math.ceil(
-      Math.log2(MAX_RETRY_DURATION_MS / INITIAL_RETRY_DELAY_MS),
-    );
-
+    const maxAttempts = retryPolicy.MAX_RETRY_ATTEMPTS;
     opts.onRetrying?.(attempt, maxAttempts, delay, opts.connectionId);
 
     await new Promise<void>((resolve) => {
@@ -951,11 +948,15 @@ async function connectWithRetry(
       return;
     }
 
-    // If we had connected before, restart backoff from zero for this outage window.
-    const nextAttempt = runtime.hasSuccessfulConnection ? 0 : attempt + 1;
-    const nextStartTime = runtime.hasSuccessfulConnection
-      ? Date.now()
-      : startTime;
+    const rolloutSkewRetry = consumeRolloutSkewRetry(runtime);
+    const nextRetry = retryPolicy.resolveNextListenerRetry({
+      attempt,
+      startTime,
+      hasSuccessfulConnection: runtime.hasSuccessfulConnection,
+      rolloutSkewRetry,
+    });
+    const nextAttempt = nextRetry.attempt;
+    const nextStartTime = nextRetry.startTime;
     runtime.hasSuccessfulConnection = false;
 
     connectWithRetry(runtime, opts, nextAttempt, nextStartTime).catch(
@@ -974,7 +975,6 @@ async function connectWithRetry(
     if (isDebugEnabled()) {
       console.error("[Listen] WebSocket error:", error);
     }
-    // Error triggers close(), which handles retry logic.
   });
 }
 

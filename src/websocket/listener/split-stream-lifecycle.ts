@@ -5,6 +5,14 @@ import { getActiveRuntime } from "./runtime";
 import type { ListenerTransport } from "./transport";
 import type { ListenerRuntime } from "./types";
 
+const rolloutSkewRetries = new WeakSet<ListenerRuntime>();
+
+export function consumeRolloutSkewRetry(runtime: ListenerRuntime): boolean {
+  const pending = rolloutSkewRetries.has(runtime);
+  rolloutSkewRetries.delete(runtime);
+  return pending;
+}
+
 type TrackListenerError = (
   errorType: string,
   error: unknown,
@@ -363,6 +371,12 @@ export async function preparePairedListenerTransport(params: {
     return { kind: "stale" };
   }
   if (streamAcceptance.connectionIncarnation !== controlIncarnation) {
+    if (
+      controlIncarnation !== undefined &&
+      streamAcceptance.connectionIncarnation === undefined
+    ) {
+      rolloutSkewRetries.add(runtime);
+    }
     rejectPairedSocketAcceptance({
       channel: "stream",
       result: { status: "mismatched" },

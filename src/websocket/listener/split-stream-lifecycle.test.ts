@@ -402,8 +402,10 @@ describe("split stream listener lifecycle", () => {
     // new pod that issues an incarnation while stream lands on an old pod
     // that omits it. The pair must never start the runtime.
     const onConnected = mock(() => {});
+    const onError = mock(() => {});
     await startClient({
       onConnected,
+      onError,
       supportsPairedListenerGenerations: true,
     });
     await waitFor(
@@ -424,18 +426,35 @@ describe("split stream listener lifecycle", () => {
       connectionUrls[streamIndex]?.searchParams.get("connectionIncarnation"),
     ).toBe("control-incarnation-1");
 
-    acceptConnection(streamIndex);
-
-    await waitFor(
-      () => countConnectionsForChannel("control") === 2,
-      "listener did not reconnect after an old stream ack",
-    );
+    const originalNow = Date.now;
+    try {
+      const afterStartupBudget = originalNow() + 5 * 60 * 1000 + 1;
+      Date.now = () => afterStartupBudget;
+      acceptConnection(streamIndex);
+      await waitFor(
+        () => countConnectionsForChannel("control") === 2,
+        "listener did not reconnect after rollout skew exhausted startup budget",
+      );
+    } finally {
+      Date.now = originalNow;
+    }
     expect(onConnected).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
     expect(
       connectionUrls[
         lastConnectionIndexForChannel("control")
       ]?.searchParams.get("connectionGeneration"),
     ).not.toBe(firstGeneration);
+    acceptConnection(lastConnectionIndexForChannel("control"));
+    await waitFor(
+      () => countConnectionsForChannel("stream") === 2,
+      "replacement legacy stream did not open",
+    );
+    acceptConnection(lastConnectionIndexForChannel("stream"));
+    await waitFor(
+      () => onConnected.mock.calls.length === 1,
+      "replacement pair did not become active",
+    );
   });
 
   test("an old control ack with a new stream ack rejects the pair and reconnects", async () => {
@@ -467,6 +486,16 @@ describe("split stream listener lifecycle", () => {
       "listener did not reconnect after an unissued stream incarnation",
     );
     expect(onConnected).not.toHaveBeenCalled();
+    acceptConnection(lastConnectionIndexForChannel("control"));
+    await waitFor(
+      () => countConnectionsForChannel("stream") === 2,
+      "replacement legacy stream did not open",
+    );
+    acceptConnection(lastConnectionIndexForChannel("stream"));
+    await waitFor(
+      () => onConnected.mock.calls.length === 1,
+      "replacement pair did not become active",
+    );
   });
 
   test("mismatched acceptance reconnects with a new generation and attempt", async () => {
