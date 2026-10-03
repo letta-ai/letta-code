@@ -19,6 +19,7 @@ import { getListenerBlockedReason } from "@/websocket/helpers/listener-queue-ada
 import {
   getOrCreateProcessTransport,
   getSubscribedListenerConnections,
+  hasSuspendedSubscriber,
 } from "./connection";
 import { getInboundImageFailureMode } from "./image-policy";
 import { getInboundClientMessageIds } from "./inbound-queue";
@@ -398,7 +399,21 @@ function resolveQueuePumpTransport(
     // ProcessRuntimeTransport.isOpen() only means *some* connection is open.
     // Queued input for this scope must have a live recipient before dequeue;
     // otherwise its user echo and status are silently dropped. Local channel
-    // listeners intentionally execute without a remote subscriber.
+    // listeners intentionally execute without a remote subscriber, and so do
+    // scheduled prompts for a conversation nobody is watching (a fresh
+    // `--conversation new` target never gets a subscriber, so waiting for one
+    // strands the schedule). If a suspended client was watching this scope,
+    // wait for it to reconnect instead.
+    const scope = {
+      agent_id: runtime.agentId,
+      conversation_id: runtime.conversationId,
+    };
+    if (
+      runtime.queueRuntime.peekReady()[0]?.kind === "cron_prompt" &&
+      !hasSuspendedSubscriber(runtime.listener, scope)
+    ) {
+      return transport;
+    }
     const localConnection = [...runtime.listener.connections.values()].some(
       (connection) =>
         connection.initialized &&

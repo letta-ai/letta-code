@@ -327,6 +327,25 @@ export function closeListenerConnection(
   return connection;
 }
 
+/**
+ * Whether a suspended connection will resume with a subscription to this
+ * scope. Its queued work should wait for that subscriber to come back.
+ */
+export function hasSuspendedSubscriber(
+  runtime: ListenerRuntime,
+  scope: { agent_id: string | null; conversation_id?: string | null },
+): boolean {
+  if (scope.agent_id === null) return false;
+  const runtimeKey = getConversationRuntimeKey(
+    scope.agent_id,
+    scope.conversation_id,
+  );
+  for (const state of getResumeStates(runtime).values()) {
+    if (state.subscriptions.has(runtimeKey)) return true;
+  }
+  return false;
+}
+
 export function suspendListenerConnection(
   runtime: ListenerRuntime,
   connectionId: ListenerConnectionId,

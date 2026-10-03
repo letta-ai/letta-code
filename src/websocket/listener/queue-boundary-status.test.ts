@@ -378,6 +378,46 @@ test("a local listener runs queued work without a remote subscriber", async () =
   expect(runtime.queueRuntime.length).toBe(0);
 });
 
+test("a scheduled prompt runs in a conversation nobody is subscribed to", async () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-new");
+  const options = makeListenerOptions();
+  const socket = new MockSocket();
+  setActiveRuntime(listener);
+  openListenerConnection({
+    runtime: listener,
+    connectionId: options.connectionId,
+    writer: socket as unknown as WebSocket,
+    options,
+  });
+  markListenerConnectionInitialized(listener, options.connectionId);
+  subscribeListenerConnection(listener, options.connectionId, {
+    agent_id: "agent-1",
+    conversation_id: "conv-other",
+  });
+  runtime.queueRuntime.enqueue({
+    kind: "cron_prompt",
+    source: "cron",
+    text: "scheduled digest",
+    agentId: "agent-1",
+    conversationId: "conv-new",
+  } as Parameters<typeof runtime.queueRuntime.enqueue>[0]);
+  const processed: string[] = [];
+  scheduleQueuePump(
+    runtime,
+    socket as unknown as WebSocket,
+    options,
+    async (turn: IncomingMessage) => {
+      const message = turn.messages[0];
+      if (message && "content" in message)
+        processed.push(String(message.content));
+    },
+  );
+  await runtime.messageQueue;
+  expect(processed).toEqual(["scheduled digest"]);
+  expect(runtime.queueRuntime.length).toBe(0);
+});
+
 test("an active pump switches transport after reconnect without replaying its turn", async () => {
   const listener = createRuntime();
   const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
