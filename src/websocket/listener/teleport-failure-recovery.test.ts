@@ -1,4 +1,4 @@
-import { afterEach, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, expect, mock, test } from "bun:test";
 import WebSocket from "ws";
 import { settingsManager } from "@/settings-manager";
 import { TestDirectory } from "@/test-utils/test-fs";
@@ -18,10 +18,15 @@ import { createListenerMessageHandler } from "./message-router";
 import { setActiveRuntime } from "./runtime";
 import {
   claimPendingTeleportAtBoundary,
+  clearPriorReadyTeleports,
   finishTeleport,
   handleTeleportRequest,
   isRuntimeTeleportPending,
 } from "./teleport";
+import {
+  createTeleportRecoveryStore,
+  type TeleportRecoveryStore,
+} from "./teleport-recovery-store";
 import type {
   ConversationRuntime,
   IncomingMessage,
@@ -55,11 +60,9 @@ function makeOptions(): StartListenerOptions {
   };
 }
 
-function prepareSourceTeleport(
+function openSourceConnection(
   listener: ListenerRuntime,
-  runtime: ConversationRuntime,
   socket: MockSocket,
-  continuation?: TeleportContinuation,
 ): void {
   openListenerConnection({
     runtime: listener,
@@ -72,6 +75,15 @@ function prepareSourceTeleport(
     conversation_id: "conversation-1",
   });
   markListenerConnectionInitialized(listener, "source");
+}
+
+function prepareSourceTeleport(
+  listener: ListenerRuntime,
+  runtime: ConversationRuntime,
+  socket: MockSocket,
+  continuation?: TeleportContinuation,
+): void {
+  openSourceConnection(listener, socket);
   const lease = runtime.turnLifecycle.begin({
     origin: "message",
     workingDirectory: process.cwd(),
@@ -109,6 +121,11 @@ async function deliverTeleportFailure(params: {
   processIncomingMessage: (incoming: IncomingMessage) => Promise<void>;
   error: string;
   requestId?: string;
+  acceptInput?: boolean;
+  teleportId?: string;
+  agentId?: string;
+  conversationId?: string;
+  recoveryStore?: TeleportRecoveryStore;
 }): Promise<void> {
   let detachedTask: Promise<void> | undefined;
   const handleMessage = createListenerMessageHandler({
@@ -129,7 +146,14 @@ async function deliverTeleportFailure(params: {
       detachedTask = task();
     },
     trackListenerError: () => {},
-    processIncomingMessage: params.processIncomingMessage,
+    processIncomingMessage: async (...args) => {
+      const processing = params.processIncomingMessage(args[0]);
+      if (params.acceptInput !== false) args[8]?.();
+      await processing;
+    },
+    ...(params.recoveryStore
+      ? { teleportRecoveryStore: params.recoveryStore }
+      : {}),
   });
 
   await handleMessage(
@@ -137,10 +161,10 @@ async function deliverTeleportFailure(params: {
       JSON.stringify({
         type: "teleport_failed",
         ...(params.requestId ? { request_id: params.requestId } : {}),
-        teleport_id: "teleport-1",
+        teleport_id: params.teleportId ?? "teleport-1",
         runtime: {
-          agent_id: "agent-1",
-          conversation_id: "conversation-1",
+          agent_id: params.agentId ?? "agent-1",
+          conversation_id: params.conversationId ?? "conversation-1",
         },
         error: params.error,
       }),
@@ -149,8 +173,67 @@ async function deliverTeleportFailure(params: {
   await detachedTask;
 }
 
+let stateDirectory: TestDirectory;
+let previousHome: string | undefined;
+let previousListenerStateDirectory: string | undefined;
+
+beforeEach(() => {
+  previousHome = process.env.HOME;
+  previousListenerStateDirectory = process.env.LETTA_LISTENER_STATE_DIR;
+  stateDirectory = new TestDirectory();
+  process.env.HOME = stateDirectory.path;
+  process.env.LETTA_LISTENER_STATE_DIR = stateDirectory.path;
+});
+
 afterEach(() => {
   setActiveRuntime(null);
+  if (previousHome === undefined) delete process.env.HOME;
+  else process.env.HOME = previousHome;
+  if (previousListenerStateDirectory === undefined)
+    delete process.env.LETTA_LISTENER_STATE_DIR;
+  else process.env.LETTA_LISTENER_STATE_DIR = previousListenerStateDirectory;
+  stateDirectory.cleanup();
+});
+
+test("stale turn leases cannot persist yielded Teleport authority", () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    "agent-1",
+    "conversation-1",
+  );
+  const socket = new MockSocket();
+  openSourceConnection(listener, socket);
+  const lease = runtime.turnLifecycle.begin({
+    origin: "message",
+    workingDirectory: process.cwd(),
+  });
+  handleTeleportRequest({
+    listener,
+    connectionId: "source",
+    command: {
+      type: "teleport_request",
+      request_id: "teleport-stale",
+      teleport_id: "teleport-stale",
+      runtime: { agent_id: "agent-1", conversation_id: "conversation-1" },
+      target: {
+        connection_id: "target",
+        device_id: "target-device",
+        connection_name: "Target",
+      },
+    },
+  });
+  const pending = claimPendingTeleportAtBoundary({
+    listener,
+    agentId: "agent-1",
+    conversationId: "conversation-1",
+    activeTurn: true,
+  });
+  if (!pending) throw new Error("Teleport did not reach the source boundary");
+  runtime.turnLifecycle.reset();
+
+  expect(finishTeleport(runtime, lease, pending).finished).toBe(false);
+  expect(createTeleportRecoveryStore().read("teleport-stale")).toBeNull();
 });
 
 test("failed same-runtime teleport keeps the source preference snapshot", async () => {
@@ -262,15 +345,10 @@ test("old teleport failure without request_id recovers without an ack", async ()
         (message as { type?: string }).type === "teleport_failed_ack",
     ),
   ).toBe(false);
-  expect(listener.pendingTeleports?.get("teleport-1")?.failureRecovery).toBe(
-    "applied",
-  );
-  expect(
-    listener.pendingTeleports?.get("teleport-1")?.recoveryExpiresAt,
-  ).toBeGreaterThan(Date.now());
+  expect(listener.pendingTeleports?.has("teleport-1")).toBe(false);
 });
 
-test("teleport failure acks only after recovery is applied", async () => {
+test("teleport failure acks after durable input acceptance without waiting for completion", async () => {
   const listener = createRuntime();
   const runtime = getOrCreateScopedRuntime(
     listener,
@@ -313,34 +391,19 @@ test("teleport failure acks only after recovery is applied", async () => {
 
   expect(processIncomingMessage).toHaveBeenCalledTimes(1);
   expect(
-    socket.sent.some(
-      (message) =>
-        (message as { type?: string }).type === "teleport_failed_ack",
-    ),
-  ).toBe(false);
+    socket.sent
+      .filter(
+        (message) =>
+          (message as { type?: string }).type === "teleport_failed_ack",
+      )
+      .map((message) => (message as { request_id: string }).request_id),
+  ).toEqual(["failure-1", "failure-2"]);
   expect(isRuntimeTeleportPending(listener, "agent-1", "conversation-1")).toBe(
-    true,
+    false,
   );
 
   finishRecovery?.();
   await delivery;
-
-  const acknowledgements = socket.sent.filter(
-    (message) => (message as { type?: string }).type === "teleport_failed_ack",
-  );
-  expect(acknowledgements).toHaveLength(1);
-  expect(acknowledgements[0]).toMatchObject({
-    type: "teleport_failed_ack",
-    request_id: "failure-1",
-    teleport_id: "teleport-1",
-    runtime: {
-      agent_id: "agent-1",
-      conversation_id: "conversation-1",
-    },
-  });
-  expect(isRuntimeTeleportPending(listener, "agent-1", "conversation-1")).toBe(
-    false,
-  );
 });
 
 test("duplicate teleport failure re-acks without applying recovery twice", async () => {
@@ -407,6 +470,7 @@ test("failed recovery sends no ack and remains retryable", async () => {
       requestId: "failure-1",
       error: "Destination unavailable",
       processIncomingMessage,
+      acceptInput: false,
     }),
   ).rejects.toThrow("apply failed");
   expect(
@@ -482,4 +546,265 @@ test("terminal teleport failure preserves approval results before resuming", asy
       otid: "teleport-1:failed",
     },
   ]);
+});
+
+test("durable accepted recovery re-acks after listener restart without replay", async () => {
+  const firstListener = createRuntime();
+  const firstRuntime = getOrCreateScopedRuntime(
+    firstListener,
+    "agent-1",
+    "conversation-1",
+  );
+  const firstSocket = new MockSocket();
+  setActiveRuntime(firstListener);
+  prepareSourceTeleport(firstListener, firstRuntime, firstSocket);
+  await deliverTeleportFailure({
+    listener: firstListener,
+    runtime: firstRuntime,
+    socket: firstSocket,
+    requestId: "failure-1",
+    error: "Destination unavailable",
+    processIncomingMessage: async () => {},
+  });
+
+  const restartedListener = createRuntime();
+  const restartedRuntime = getOrCreateScopedRuntime(
+    restartedListener,
+    "agent-1",
+    "conversation-1",
+  );
+  const restartedSocket = new MockSocket();
+  openSourceConnection(restartedListener, restartedSocket);
+  setActiveRuntime(restartedListener);
+  const processIncomingMessage = mock(async () => {});
+  await deliverTeleportFailure({
+    listener: restartedListener,
+    runtime: restartedRuntime,
+    socket: restartedSocket,
+    requestId: "failure-after-restart",
+    error: "Destination unavailable",
+    processIncomingMessage,
+  });
+
+  expect(processIncomingMessage).not.toHaveBeenCalled();
+  expect(restartedSocket.sent).toContainEqual(
+    expect.objectContaining({
+      type: "teleport_failed_ack",
+      request_id: "failure-after-restart",
+    }),
+  );
+});
+
+test("yield proof survives beyond five minutes and newer Teleport eviction", async () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    "agent-1",
+    "conversation-1",
+  );
+  const socket = new MockSocket();
+  setActiveRuntime(listener);
+  prepareSourceTeleport(listener, runtime, socket);
+  const store = createTeleportRecoveryStore();
+  const proof = store.read("teleport-1");
+  if (!proof) throw new Error("missing durable Teleport proof");
+  store.write({ ...proof, recordedAt: Date.now() - 6 * 60_000 });
+  clearPriorReadyTeleports({
+    listener,
+    agentId: "agent-1",
+    conversationId: "conversation-1",
+    currentTeleportId: "teleport-2",
+  });
+  expect(listener.pendingTeleports?.has("teleport-1")).toBe(false);
+
+  const processIncomingMessage = mock(async () => {});
+  await deliverTeleportFailure({
+    listener,
+    runtime,
+    socket,
+    requestId: "failure-late",
+    error: "Destination unavailable",
+    processIncomingMessage,
+  });
+
+  expect(processIncomingMessage).toHaveBeenCalledTimes(1);
+  expect(socket.sent).toContainEqual(
+    expect.objectContaining({
+      type: "teleport_failed_ack",
+      request_id: "failure-late",
+    }),
+  );
+});
+
+test("recovery proof is pruned only after outliving the Cloud retry window", () => {
+  const store = createTeleportRecoveryStore();
+  store.write({
+    teleportId: "teleport-expired",
+    agentId: "agent-1",
+    conversationId: "conversation-1",
+    sourceConnectionId: "source",
+    disposition: "yielded",
+    recordedAt: Date.now() - 25 * 60 * 60_000,
+    recoveryAcceptedAt: Date.now() - 25 * 60 * 60_000,
+  });
+
+  expect(store.read("teleport-expired")).toBeNull();
+});
+
+test("exact Teleport key and runtime mismatches do not recover or ack", async () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    "agent-1",
+    "conversation-1",
+  );
+  const socket = new MockSocket();
+  setActiveRuntime(listener);
+  prepareSourceTeleport(listener, runtime, socket);
+  const processIncomingMessage = mock(async () => {});
+
+  await deliverTeleportFailure({
+    listener,
+    runtime,
+    socket,
+    requestId: "wrong-key",
+    teleportId: "teleport-other",
+    error: "Destination unavailable",
+    processIncomingMessage,
+  });
+  await deliverTeleportFailure({
+    listener,
+    runtime,
+    socket,
+    requestId: "wrong-runtime",
+    agentId: "agent-other",
+    error: "Destination unavailable",
+    processIncomingMessage,
+  });
+
+  expect(processIncomingMessage).not.toHaveBeenCalled();
+  expect(
+    socket.sent.some(
+      (message) =>
+        (message as { type?: string }).type === "teleport_failed_ack",
+    ),
+  ).toBe(false);
+});
+
+test("ledger write failure after Core acceptance retries the same recovery OTID", async () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    "agent-1",
+    "conversation-1",
+  );
+  const socket = new MockSocket();
+  setActiveRuntime(listener);
+  prepareSourceTeleport(listener, runtime, socket);
+  const durableStore = createTeleportRecoveryStore();
+  let failAcceptedWrite = true;
+  const crashingStore: TeleportRecoveryStore = {
+    read: (teleportId) => durableStore.read(teleportId),
+    write: (record) => {
+      if (record.recoveryAcceptedAt && failAcceptedWrite) {
+        failAcceptedWrite = false;
+        throw new Error("simulated ledger crash window");
+      }
+      durableStore.write(record);
+    },
+  };
+  const visibleRecoveryOtids = new Set<string>();
+  const processIncomingMessage = mock(async (incoming: IncomingMessage) => {
+    const user = incoming.messages.find((message) => "content" in message);
+    if (user?.otid) visibleRecoveryOtids.add(user.otid);
+  });
+
+  await expect(
+    deliverTeleportFailure({
+      listener,
+      runtime,
+      socket,
+      requestId: "failure-crash",
+      error: "Destination unavailable",
+      processIncomingMessage,
+      recoveryStore: crashingStore,
+    }),
+  ).rejects.toThrow("simulated ledger crash window");
+  expect(
+    socket.sent.some(
+      (message) =>
+        (message as { request_id?: string }).request_id === "failure-crash",
+    ),
+  ).toBe(false);
+
+  await deliverTeleportFailure({
+    listener,
+    runtime,
+    socket,
+    requestId: "failure-retry",
+    error: "Destination unavailable",
+    processIncomingMessage,
+    recoveryStore: crashingStore,
+  });
+  expect(processIncomingMessage).toHaveBeenCalledTimes(2);
+  expect(visibleRecoveryOtids).toEqual(new Set(["teleport-1:failed"]));
+  expect(socket.sent).toContainEqual(
+    expect.objectContaining({
+      type: "teleport_failed_ack",
+      request_id: "failure-retry",
+    }),
+  );
+});
+
+test("matching source-rejected Teleport acks as a no-op but mismatch does not", async () => {
+  const store = createTeleportRecoveryStore();
+  store.write({
+    teleportId: "teleport-rejected",
+    agentId: "agent-1",
+    conversationId: "conversation-1",
+    sourceConnectionId: "source",
+    disposition: "rejected",
+    error: "Conversation already has a teleport pending",
+    recordedAt: Date.now(),
+  });
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    "agent-1",
+    "conversation-1",
+  );
+  const socket = new MockSocket();
+  openSourceConnection(listener, socket);
+  setActiveRuntime(listener);
+  const processIncomingMessage = mock(async () => {});
+
+  await deliverTeleportFailure({
+    listener,
+    runtime,
+    socket,
+    teleportId: "teleport-rejected",
+    requestId: "rejected-match",
+    error: "Destination unavailable",
+    processIncomingMessage,
+  });
+  await deliverTeleportFailure({
+    listener,
+    runtime,
+    socket,
+    teleportId: "teleport-rejected",
+    requestId: "rejected-mismatch",
+    conversationId: "conversation-other",
+    error: "Destination unavailable",
+    processIncomingMessage,
+  });
+
+  expect(processIncomingMessage).not.toHaveBeenCalled();
+  expect(
+    socket.sent
+      .filter(
+        (message) =>
+          (message as { type?: string }).type === "teleport_failed_ack",
+      )
+      .map((message) => (message as { request_id: string }).request_id),
+  ).toEqual(["rejected-match"]);
 });

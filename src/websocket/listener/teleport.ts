@@ -19,6 +19,10 @@ import {
 } from "./protocol-outbound";
 import { emitLoopErrorNotice } from "./recoverable-notices";
 import { getConversationRuntime } from "./runtime";
+import {
+  createTeleportRecoveryStore,
+  type TeleportRecoveryStore,
+} from "./teleport-recovery-store";
 import { isListenerTransportOpen, type ListenerTransport } from "./transport";
 import type { TurnFinishTransition, TurnLease } from "./turn-lifecycle";
 import type {
@@ -37,7 +41,18 @@ type SafeSocketSend = (
   context: string,
 ) => boolean;
 
-const TELEPORT_RECOVERY_TTL_MS = 5 * 60_000;
+type RecoveryMessageProcessor = (
+  msg: IncomingMessage,
+  socket: ListenerTransport,
+  runtime: ConversationRuntime,
+  onStatusChange?: StartListenerOptions["onStatusChange"],
+  connectionId?: string,
+  dequeuedBatchId?: string,
+  existingTurnLease?: undefined,
+  existingTurnCorrelation?: undefined,
+  onInputAccepted?: () => void,
+) => Promise<void>;
+
 /**
  * How long a destination waits for the `teleport_continue` announced by its
  * `runtime_start` before sync recovery may again finish stale approvals on its
@@ -247,39 +262,43 @@ function sendTeleportReady(
   return true;
 }
 
-function scheduleTeleportRecoveryExpiry(
-  runtime: ListenerRuntime,
+function persistTeleportProof(
   pending: PendingTeleport,
+  disposition: "yielded" | "rejected",
+  store = createTeleportRecoveryStore(),
 ): void {
-  const expiresAt = pending.recoveryExpiresAt;
-  if (expiresAt === undefined) return;
-  const timeout = setTimeout(
-    () => {
-      const current = runtime.pendingTeleports?.get(pending.teleportId);
-      if (current !== pending) return;
-      if (pending.failureRecovery === "in_flight") {
-        pending.recoveryExpiresAt = Date.now() + 1_000;
-        scheduleTeleportRecoveryExpiry(runtime, pending);
-        return;
-      }
-      const remaining = (pending.recoveryExpiresAt ?? 0) - Date.now();
-      if (remaining > 0) {
-        scheduleTeleportRecoveryExpiry(runtime, pending);
-        return;
-      }
-      runtime.pendingTeleports?.delete(pending.teleportId);
-    },
-    Math.max(1, expiresAt - Date.now()),
-  );
-  timeout.unref?.();
-}
-
-function retainTeleportForRecovery(
-  runtime: ListenerRuntime,
-  pending: PendingTeleport,
-): void {
-  pending.recoveryExpiresAt = Date.now() + TELEPORT_RECOVERY_TTL_MS;
-  scheduleTeleportRecoveryExpiry(runtime, pending);
+  const existing = store.read(pending.teleportId);
+  if (
+    existing &&
+    (existing.agentId !== pending.agentId ||
+      existing.conversationId !== pending.conversationId ||
+      existing.sourceConnectionId !== pending.connectionId)
+  ) {
+    throw new Error(
+      "Teleport ID is already bound to a different source runtime",
+    );
+  }
+  if (
+    existing?.disposition === disposition &&
+    existing.error === pending.error &&
+    JSON.stringify(existing.continuation) ===
+      JSON.stringify(pending.continuation)
+  ) {
+    return;
+  }
+  store.write({
+    teleportId: pending.teleportId,
+    agentId: pending.agentId,
+    conversationId: pending.conversationId,
+    sourceConnectionId: pending.connectionId,
+    disposition,
+    recordedAt: existing?.recordedAt ?? Date.now(),
+    ...(pending.error ? { error: pending.error } : {}),
+    ...(pending.continuation ? { continuation: pending.continuation } : {}),
+    ...(existing?.recoveryAcceptedAt
+      ? { recoveryAcceptedAt: existing.recoveryAcceptedAt }
+      : {}),
+  });
 }
 
 export function handleTeleportProbe(
@@ -335,11 +354,11 @@ export function handleTeleportRequest(params: {
     pending.readyAt = Date.now();
     pending.error = channelError;
     pendingTeleports.set(pending.teleportId, pending);
+    persistTeleportProof(pending, "rejected");
     sendTeleportReady(listener, pending, {
       success: false,
       error: channelError,
     });
-    retainTeleportForRecovery(listener, pending);
     return;
   }
   const conflicting = findPendingTeleportForRuntime(
@@ -351,11 +370,11 @@ export function handleTeleportRequest(params: {
     pendingTeleports.set(pending.teleportId, pending);
     pending.readyAt = Date.now();
     pending.error = "Conversation already has a teleport pending";
+    persistTeleportProof(pending, "rejected");
     sendTeleportReady(listener, pending, {
       success: false,
       error: pending.error,
     });
-    retainTeleportForRecovery(listener, pending);
     return;
   }
 
@@ -419,12 +438,13 @@ export function emitClaimedTeleportReady(
   listener: ListenerRuntime,
   pending: PendingTeleport,
 ): boolean {
+  // Durable proof must precede readiness: once Cloud observes ready, this source
+  // may need to unwind after a process restart.
+  persistTeleportProof(pending, "yielded");
   if (listener.connectionId?.startsWith("conn-"))
     suspendRecordedTeleport(pending, true);
   const sent = sendTeleportReady(listener, pending, { success: true });
-  if (sent) {
-    retainTeleportForRecovery(listener, pending);
-  } else if (listener.connectionId?.startsWith("conn-")) {
+  if (!sent && listener.connectionId?.startsWith("conn-")) {
     suspendRecordedTeleport(pending, false);
   }
   return sent;
@@ -448,6 +468,12 @@ export function finishTeleport(
   lease: TurnLease,
   pending: PendingTeleport,
 ): TurnFinishTransition {
+  if (!runtime.turnLifecycle.isCurrent(lease)) {
+    return runtime.turnLifecycle.finish(lease, "cancelled");
+  }
+  // Persistence and lifecycle finalization are synchronous, so no replacement
+  // lease can interleave after this current-owner check and before finish().
+  persistTeleportProof(pending, "yielded");
   const transition = runtime.turnLifecycle.finish(lease, "cancelled");
   if (!transition.finished) return transition;
   emitRuntimeStateUpdates(runtime, {
@@ -485,15 +511,61 @@ function findFailedTeleport(params: {
   teleportId: string;
   agentId: string;
   conversationId: string;
+  connectionId: ListenerConnectionId;
+  store: TeleportRecoveryStore;
 }): PendingTeleport | null {
+  const stored = params.store.read(params.teleportId);
+  if (stored) {
+    if (
+      stored.agentId !== params.agentId ||
+      stored.conversationId !== params.conversationId ||
+      stored.sourceConnectionId !== params.connectionId
+    ) {
+      return null;
+    }
+    const pending = params.listener.pendingTeleports?.get(params.teleportId);
+    if (pending) {
+      pending.failureRecovery = stored.recoveryAcceptedAt
+        ? "applied"
+        : pending.failureRecovery;
+      if (stored.disposition === "rejected" && !pending.error) {
+        pending.error =
+          stored.error ?? "Teleport request was rejected by source";
+      }
+      return pending;
+    }
+    return {
+      teleportId: stored.teleportId,
+      connectionId: stored.sourceConnectionId,
+      agentId: stored.agentId,
+      conversationId: stored.conversationId,
+      requestedAt: stored.recordedAt,
+      drainAcceptedInputs: false,
+      activeTurn: false,
+      readyAt: stored.recordedAt,
+      ...(stored.disposition === "rejected"
+        ? { error: stored.error ?? "Teleport request was rejected by source" }
+        : {}),
+      ...(stored.continuation ? { continuation: stored.continuation } : {}),
+      ...(stored.recoveryAcceptedAt ? { failureRecovery: "applied" } : {}),
+    };
+  }
+
+  // Compatibility for an in-memory handoff created by an older listener build.
   const pending = params.listener.pendingTeleports?.get(params.teleportId);
   if (
     !pending ||
     pending.agentId !== params.agentId ||
-    pending.conversationId !== params.conversationId
+    pending.conversationId !== params.conversationId ||
+    pending.connectionId !== params.connectionId
   ) {
     return null;
   }
+  persistTeleportProof(
+    pending,
+    pending.error ? "rejected" : "yielded",
+    params.store,
+  );
   return pending;
 }
 
@@ -534,24 +606,29 @@ export function handleTeleportFailure(params: {
     commandName: string,
     task: () => Promise<void>,
   ) => void;
-  processIncomingMessage: (
-    msg: IncomingMessage,
-    socket: ListenerTransport,
-    runtime: ConversationRuntime,
-    onStatusChange?: StartListenerOptions["onStatusChange"],
-    connectionId?: string,
-  ) => Promise<void>;
+  processIncomingMessage: RecoveryMessageProcessor;
+  recoveryStore?: TeleportRecoveryStore;
 }): void {
+  const recoveryStore = params.recoveryStore ?? createTeleportRecoveryStore();
   const pending = findFailedTeleport({
     listener: params.listener,
     teleportId: params.command.teleport_id,
     agentId: params.command.runtime.agent_id,
     conversationId: params.command.runtime.conversation_id,
+    connectionId: params.connectionId,
+    store: recoveryStore,
   });
-  // Rejected requests never yielded, so their source turn needs no recovery.
-  if (!pending || pending.error) return;
+  if (!pending) return;
+  // A source-rejected request never yielded. A matching correlated unwind is an
+  // exact no-op, but still settles so older Cloud callers cannot hang.
+  if (pending.error) {
+    acknowledgeTeleportFailure(params);
+    params.listener.pendingTeleports?.delete(pending.teleportId);
+    return;
+  }
   if (pending.failureRecovery === "applied") {
     acknowledgeTeleportFailure(params);
+    params.listener.pendingTeleports?.delete(pending.teleportId);
     return;
   }
   if (pending.failureRecovery === "in_flight") return;
@@ -570,6 +647,8 @@ export function handleTeleportFailure(params: {
     conversationId: pending.conversationId,
   });
   params.runDetachedListenerTask("teleport_failed", async () => {
+    let accepted = false;
+    let acceptanceError: unknown;
     try {
       await params.processIncomingMessage(
         {
@@ -587,13 +666,46 @@ export function handleTeleportFailure(params: {
         runtime,
         params.onStatusChange,
         pending.connectionId,
+        undefined,
+        undefined,
+        undefined,
+        () => {
+          try {
+            const proof = recoveryStore.read(pending.teleportId);
+            if (
+              !proof ||
+              proof.disposition !== "yielded" ||
+              proof.agentId !== pending.agentId ||
+              proof.conversationId !== pending.conversationId ||
+              proof.sourceConnectionId !== pending.connectionId
+            ) {
+              throw new Error(
+                "Teleport recovery proof changed before admission",
+              );
+            }
+            // Core accepted the deterministic OTIDs before this local atomic
+            // write. If this write crashes, retrying those OTIDs is idempotent;
+            // if it succeeds, all later retries re-ack without replaying.
+            recoveryStore.write({ ...proof, recoveryAcceptedAt: Date.now() });
+            accepted = true;
+            pending.failureRecovery = "applied";
+            acknowledgeTeleportFailure(params);
+            params.listener.pendingTeleports?.delete(pending.teleportId);
+          } catch (error) {
+            acceptanceError = error;
+            throw error;
+          }
+        },
       );
+      if (!accepted) {
+        throw (
+          acceptanceError ??
+          new Error("Teleport recovery input was not accepted")
+        );
+      }
     } catch (error) {
       pending.failureRecovery = undefined;
       throw error;
     }
-    pending.failureRecovery = "applied";
-    retainTeleportForRecovery(params.listener, pending);
-    acknowledgeTeleportFailure(params);
   });
 }

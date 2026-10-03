@@ -78,6 +78,7 @@ import {
   handleTeleportRequest,
   isRuntimeTeleportPending,
 } from "./teleport";
+import type { TeleportRecoveryStore } from "./teleport-recovery-store";
 import type { ListenerTransport } from "./transport";
 import { handleIncomingMessage } from "./turn";
 import type {
@@ -185,6 +186,7 @@ type MessageRouterParams = {
   runDetachedListenerTask: RunDetachedListenerTask;
   trackListenerError: TrackListenerError;
   processIncomingMessage?: typeof handleIncomingMessage;
+  teleportRecoveryStore?: TeleportRecoveryStore;
 };
 
 function logV2Command(opts: StartListenerOptions, message: string): void {
@@ -216,6 +218,7 @@ export function createListenerMessageHandler(
     runDetachedListenerTask,
     trackListenerError,
     processIncomingMessage = handleIncomingMessage,
+    teleportRecoveryStore,
   } = params;
   const connectionId = explicitConnectionId ?? opts.connectionId;
 
@@ -336,6 +339,7 @@ export function createListenerMessageHandler(
           getOrCreateScopedRuntime,
           runDetachedListenerTask,
           processIncomingMessage,
+          recoveryStore: teleportRecoveryStore,
         });
         return;
       }

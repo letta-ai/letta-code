@@ -165,7 +165,6 @@ export type PendingTeleport = {
   error?: string;
   continuation?: TeleportContinuation;
   failureRecovery?: "in_flight" | "applied";
-  recoveryExpiresAt?: number;
 };
 
 export interface ModeChangePayload {
@@ -411,7 +410,7 @@ export type ListenerRuntime = {
   /** Agent IDs whose cached secrets are stale and must re-fetch on the next hydration call. */
   secretsDirtyAgents: Set<string>;
   pendingExternalToolCalls: Map<string, PendingExternalToolCall>;
-  /** Source handoffs retained briefly so a failed destination can resume. */
+  /** Active-session source handoffs; durable recovery proof lives on disk. */
   pendingTeleports?: Map<string, PendingTeleport>;
   /**
    * Agent metadata warmups for listen-mode reminders. The cached promise is
