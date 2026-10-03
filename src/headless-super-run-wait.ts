@@ -151,7 +151,11 @@ export async function waitForAcceptedSuperRun(
         `Remote child run ${runId} ${run.status}${run.stop_reason ? ` (${run.stop_reason})` : ""}.`,
       );
     }
-    if (run.status !== "completed" || run.stop_reason === "requires_approval") {
+    // The Super Run is already terminal here. A requires_approval child is the
+    // normal mid-turn boundary; it can be the newest linked run when the
+    // listener's later loop frames were lost (e.g. a socket drop), so it must
+    // not hold the wait open after Cloud has closed the send.
+    if (run.status !== "completed") {
       await sleep(pollMs, signal);
       continue;
     }
