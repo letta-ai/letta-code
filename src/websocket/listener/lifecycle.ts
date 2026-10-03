@@ -80,6 +80,7 @@ import {
   createListenerPairIdentity,
   handleListenerSocketOpenFailure,
   isCurrentSocketPair,
+  openListenerStreamSocket,
   parseListenerReadyMessage,
   preparePairedListenerTransport,
   prepareSplitStreamTransport,
@@ -753,7 +754,7 @@ async function connectWithRetry(
   const socket = new WebSocket(url.toString(), { headers });
   let streamSocket =
     streamUrl && !pairIdentity
-      ? new WebSocket(streamUrl.toString(), { headers })
+      ? openListenerStreamSocket(streamUrl.toString(), { headers })
       : null;
 
   const fileCommandSession = createFileCommandSession({
@@ -803,7 +804,9 @@ async function connectWithRetry(
             createStreamSocket: (connectionIncarnation) => {
               if (!streamUrl) throw new Error("Paired stream URL is missing");
               applyListenerStreamIncarnation(streamUrl, connectionIncarnation);
-              streamSocket = new WebSocket(streamUrl.toString(), { headers });
+              streamSocket = openListenerStreamSocket(streamUrl.toString(), {
+                headers,
+              });
               return streamSocket;
             },
             trackListenerError,

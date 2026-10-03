@@ -542,6 +542,26 @@ describe("split stream listener lifecycle", () => {
       supportsPairedListenerGenerations: true,
     });
 
+    // A rejected stream can still emit a late ErrorEvent while it terminates.
+    // Inject one on every stream the listener abandons; with no error listener
+    // armed it surfaces as an uncaught exception that would kill the CLI.
+    const uncaught: unknown[] = [];
+    const recordUncaught = (error: unknown) => uncaught.push(error);
+    process.on("uncaughtException", recordUncaught);
+    const instrumented = new WeakSet<WebSocket>();
+    const instrumentStream = () => {
+      const stream = getActiveRuntime()?.streamSocket;
+      if (!stream || instrumented.has(stream)) return;
+      instrumented.add(stream);
+      const terminate = stream.terminate.bind(stream);
+      stream.terminate = () => {
+        terminate();
+        queueMicrotask(() =>
+          stream.emit("error", new Error("late terminate error")),
+        );
+      };
+    };
+
     const startedAt = Date.now();
     let skewedPairs = 0;
     while (Date.now() - startedAt < 600 || skewedPairs < 4) {
@@ -561,6 +581,7 @@ describe("split stream listener lifecycle", () => {
         () => countConnectionsForChannel("stream") === streams + 1,
         `stream socket ${skewedPairs + 1} did not open`,
       );
+      instrumentStream();
       acceptConnection(
         lastConnectionIndexForChannel("stream"),
         newControl ? undefined : { incarnation: `stream-${skewedPairs}` },
@@ -591,6 +612,8 @@ describe("split stream listener lifecycle", () => {
       "listener did not activate once both sides matched",
     );
     await new Promise((resolve) => setTimeout(resolve, 100));
+    process.off("uncaughtException", recordUncaught);
+    expect(uncaught).toEqual([]);
     expect(onConnected).toHaveBeenCalledTimes(1);
     expect(onError).not.toHaveBeenCalled();
   });

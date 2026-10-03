@@ -138,6 +138,9 @@ export function closeListenerRuntimeConnections(
   for (const socket of socketsToClose) {
     if (suppressCallbacks) {
       socket.removeAllListeners();
+      // close() on a socket still handshaking emits a late ErrorEvent; with
+      // every listener stripped it would be uncaught and kill the process.
+      if (typeof socket.on === "function") socket.on("error", () => {});
     }
     if (
       socket.readyState === WebSocket.OPEN ||

@@ -107,6 +107,23 @@ export function parseListenerReadyMessage(
   return null;
 }
 
+/**
+ * Opens a listener stream socket with an error sink armed for its whole life.
+ * Its other error listeners come and go (the acceptance wait drops its own on
+ * listener_ready, persistent handlers attach only once the pair is ready, and
+ * reconnect cleanup strips handlers), and a rejected, stale, replaced or failed
+ * stream can deliver a late ErrorEvent even after close. Uncaught, that kills
+ * the CLI. Real errors are still reported by the other handlers while attached.
+ */
+export function openListenerStreamSocket(
+  url: string,
+  options: WebSocket.ClientOptions,
+): WebSocket {
+  const socket = new WebSocket(url, options);
+  socket.on("error", () => {});
+  return socket;
+}
+
 function terminateSocketIfOpenOrConnecting(socket: WebSocket | null): void {
   if (
     socket &&
