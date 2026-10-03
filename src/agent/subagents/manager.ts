@@ -732,10 +732,7 @@ async function executeSubagent(
       try {
         rmSync(generatedScratchpad, { recursive: true, force: true });
       } catch (error) {
-        debugWarn(
-          "subagent",
-          `Failed to clean up memory-subagent scratchpad: ${getErrorMessage(error)}`,
-        );
+        debugWarn("subagent", `scratch cleanup: ${getErrorMessage(error)}`);
       }
     }
   }
