@@ -178,7 +178,7 @@ test("background checkouts do not gate unrelated file access; repository access 
   }
 });
 
-test("shell access waits for discovery and retries a failed checkout", async () => {
+test("shell access waits for discovery and retries a failed checkout it references", async () => {
   const agent = `retry-${crypto.randomUUID()}`;
   const path = `/tmp/${agent}/shared`;
   let attempts = 0;
@@ -191,7 +191,7 @@ test("shell access waits for discovery and retries a failed checkout", async () 
   await waitForToolCheckouts(
     agent,
     "exec_command",
-    { cmd: "python script.py" },
+    { cmd: `python ${path}/script.py` },
     "/tmp",
   );
   expect(attempts).toBe(2);
@@ -282,4 +282,100 @@ test("patch headers and symlinked file destinations wait for the actual checkout
     await pending;
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("refreshing an existing checkout does not block shell access", async () => {
+  const root = await mkdtemp(join(tmpdir(), "checkout-refresh-"));
+  const repository = join(root, "shared");
+  await mkdir(join(repository, ".git"), { recursive: true });
+  let release!: () => void;
+  const refresh = startCheckout(
+    root,
+    repository,
+    () =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+    true,
+  );
+  try {
+    expect(isCheckoutPending(repository)).toBe(false);
+    await waitForToolCheckouts(
+      root,
+      "Bash",
+      { command: `ls ${repository}` },
+      repository,
+    );
+    await waitForToolCheckouts(
+      root,
+      "Read",
+      { file_path: join(repository, "MEMORY.md") },
+      root,
+    );
+  } finally {
+    release();
+    await refresh;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a pending first clone blocks writes into its path but not unrelated commands", async () => {
+  const root = await mkdtemp(join(tmpdir(), "checkout-first-"));
+  const repository = join(root, "shared");
+  let release!: () => void;
+  const clone = startCheckout(
+    root,
+    repository,
+    () =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+  );
+  let completed = 0;
+  const accesses = [
+    waitForToolCheckouts(
+      root,
+      "Bash",
+      { command: `echo hi > ${repository}/notes.md` },
+      tmpdir(),
+    ),
+    waitForToolCheckouts(
+      root,
+      "Bash",
+      { command: "echo hi > $MEMORY_DIR/../shared/notes.md" },
+      tmpdir(),
+    ),
+    waitForToolCheckouts(
+      root,
+      "Bash",
+      { command: "touch notes.md" },
+      repository,
+    ),
+    waitForToolCheckouts(
+      root,
+      "Write",
+      { file_path: join(repository, "notes.md"), content: "hi" },
+      tmpdir(),
+    ),
+  ].map((access) =>
+    access.then(() => {
+      completed++;
+    }),
+  );
+  try {
+    await waitForToolCheckouts(
+      root,
+      "Bash",
+      { command: "git status && ls src/" },
+      join(tmpdir(), "unrelated-project"),
+    );
+    await waitForToolCheckouts(root, "Skill", { skill: "unrelated" }, tmpdir());
+    await nextTick();
+    expect(completed).toBe(0);
+  } finally {
+    release();
+    await Promise.all([clone, ...accesses]);
+    await rm(root, { recursive: true, force: true });
+  }
+  expect(completed).toBe(4);
 });
