@@ -19,6 +19,16 @@ Do not freeze different queued destinations to one runtime-global schema.
 Relay inputs need unique selectors without tools; unscoped proactive tools
 return only at idle. Check this owner before editing `registry-routes.ts`.
 
+## Keep niche behavior out of the shared core
+
+Every host, including Cloud's Slack, iMessage, and Teams gateways, inherits
+`ChannelGateway`, gateway-core, and the `MessageChannel` contract, so put niche
+or opt-in behavior (reply policies, delivery modes, custom routing) in a mod or
+custom channel instead. Any opt-in feature must leave the default path unchanged
+when it is off, and new channel protocol concepts need the channels owner's
+review ([#4043](https://github.com/letta-ai/letta-code/pull/4043) is the
+cautionary example).
+
 ## Pure logic is shared through package subpaths, transport is not
 
 Cloud reuses channel logic through the published subpaths (`channels`,
