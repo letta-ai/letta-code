@@ -26,7 +26,7 @@ function printUsage(): void {
   console.log(`Usage:
   letta model get [--default] [--agent <id> | --conversation <id>]
   letta model list [--byok | --hosted] [--structured-outputs]
-  letta model set [handle] [--reasoning <level>] [--default] [--agent <id> | --conversation <id>]
+  letta model set [handle] [--reasoning <level>] [--model-settings <json>] [--default] [--agent <id> | --conversation <id>]
 
   get   Show the effective model, context limit, and full redacted model_settings.
   list  List the active backend's models, catalog IDs, reasoning levels, and structured-output support.
@@ -37,6 +37,10 @@ Options:
   --agent <id>          Agent defaults; ignore the session conversation
   --conversation <id>   One conversation's model override (--conv is an alias)
   --reasoning <level>   Use a level advertised by model list for this model
+  --model-settings <json>
+                        Shallow-merge a JSON object into the target's current
+                        model_settings, e.g. '{"temperature":0.2}'.
+                        Applied after any model/reasoning selection.
   --byok               List only BYOK/user-configured models
   --hosted             List only hosted (non-BYOK) models
   --structured-outputs List only models supporting structured outputs
@@ -46,7 +50,8 @@ Without target flags, infer AGENT_ID and CONVERSATION_ID from the session.
 A persisted conversation gets an override; absent/default conversation means
 agent scope. Agent-default changes do not remove conversation overrides.
 Selecting a model applies its settings/context defaults; reasoning-only updates
-keep the model and other settings. The command does not
+keep the model and other settings; --model-settings changes only the given
+top-level fields and keeps the model. The command does not
 interrupt or restart an in-flight inference. All output is JSON.`);
 }
 
@@ -91,6 +96,7 @@ export async function runModelSubcommand(argv: string[]): Promise<number> {
         conversation: { type: "string" },
         conv: { type: "string" },
         reasoning: { type: "string" },
+        "model-settings": { type: "string" },
         default: { type: "boolean" },
         byok: { type: "boolean" },
         hosted: { type: "boolean" },
@@ -110,15 +116,24 @@ export async function runModelSubcommand(argv: string[]): Promise<number> {
       action === "set"
         ? positionals.length > 2 ||
           (model !== undefined && !model.trim()) ||
-          (!model && values.reasoning === undefined)
+          (!model &&
+            values.reasoning === undefined &&
+            values["model-settings"] === undefined)
         : positionals.length !== 1
     ) {
       throw new Error(
-        "Usage: letta model get | list | set [handle] [--reasoning <level>] (set requires a model or --reasoning)",
+        "Usage: letta model get | list | set [handle] [--reasoning <level>] [--model-settings <json>] (set requires a model, --reasoning, or --model-settings)",
       );
     }
     if (action !== "set" && values.reasoning !== undefined)
       throw new Error("--reasoning is only supported by model set");
+    if (action !== "set" && values["model-settings"] !== undefined)
+      throw new Error("--model-settings is only supported by model set");
+    // Validate before resolving targets so bad input never causes a write.
+    const modelSettingsPatch =
+      values["model-settings"] === undefined
+        ? undefined
+        : parseModelSettingsPatch(values["model-settings"]);
     if (values.byok && values.hosted)
       throw new Error("Use either --byok or --hosted, not both");
     if (
@@ -235,7 +250,11 @@ export async function runModelSubcommand(argv: string[]): Promise<number> {
     return runModelConfigAction(
       values,
       action === "set"
-        ? { model: model?.trim(), reasoning: values.reasoning }
+        ? {
+            model: model?.trim(),
+            reasoning: values.reasoning,
+            modelSettings: modelSettingsPatch,
+          }
         : undefined,
       action === "get" ? "config" : "report",
     );
@@ -243,6 +262,23 @@ export async function runModelSubcommand(argv: string[]): Promise<number> {
     console.error(error instanceof Error ? error.message : String(error));
     return 1;
   }
+}
+
+/** Parse a --model-settings value; only a JSON object can be merged. */
+export function parseModelSettingsPatch(raw: string): Record<string, unknown> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(
+      `--model-settings must be a JSON object: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (!isRecord(parsed))
+    throw new Error(
+      `--model-settings must be a JSON object, got ${parsed === null ? "null" : Array.isArray(parsed) ? "array" : typeof parsed}`,
+    );
+  return parsed;
 }
 
 function availableModel(handle: string): AvailableModel | undefined {
@@ -425,7 +461,11 @@ async function runModelConfigAction(
     conv?: string;
     default?: boolean;
   },
-  update?: { model?: string; reasoning?: string },
+  update?: {
+    model?: string;
+    reasoning?: string;
+    modelSettings?: Record<string, unknown>;
+  },
   output: "config" | "report" = "report",
 ): Promise<number> {
   try {
@@ -450,7 +490,9 @@ async function runModelConfigAction(
         ? undefined
         : (conversationId ?? process.env.CONVERSATION_ID);
     let agentId = explicitAgentId ?? process.env.AGENT_ID;
-    let conversation = null;
+    let conversation: Awaited<
+      ReturnType<typeof backend.retrieveConversation>
+    > | null = null;
     if (currentConversationId && currentConversationId !== "default") {
       conversation = await backend.retrieveConversation(currentConversationId);
       if (typeof conversation.agent_id !== "string")
@@ -469,8 +511,30 @@ async function runModelConfigAction(
       throw new Error(
         "Set AGENT_ID or pass --agent/--conversation to select configuration",
       );
-    let agent = await backend.retrieveAgent(agentId);
-    if (update) {
+    const targetAgentId = agentId;
+    let agent = await backend.retrieveAgent(targetAgentId);
+    // Write the target's model_settings: the conversation override when one
+    // is targeted, otherwise the agent default.
+    const writeModelSettings = async (settings: Record<string, unknown>) => {
+      if (conversation)
+        await backend.updateConversation(conversation.id, {
+          model_settings: settings,
+        } as Parameters<typeof backend.updateConversation>[1]);
+      else
+        await backend.updateAgent(targetAgentId, {
+          model_settings: settings,
+        } as Parameters<typeof backend.updateAgent>[1]);
+      if (conversation)
+        conversation = await backend.retrieveConversation(conversation.id);
+      agent = await backend.retrieveAgent(targetAgentId);
+    };
+    const currentModelSettings = (): Record<string, unknown> => {
+      const rawSettings = isRecord(conversation?.model_settings)
+        ? conversation.model_settings
+        : agent.model_settings;
+      return isRecord(rawSettings) ? { ...rawSettings } : {};
+    };
+    if (update && (update.model || update.reasoning !== undefined)) {
       const current = buildAgentConfigReport(agent, conversation).effective;
       const selected = update.model ?? current.model;
       if (typeof selected !== "string" || !selected)
@@ -482,10 +546,7 @@ async function runModelConfigAction(
       if (!update.model) {
         // Keep the configured model, limits, and unrelated settings. Only
         // replace provider-specific reasoning fields from the selected tier.
-        const rawSettings = isRecord(conversation?.model_settings)
-          ? conversation.model_settings
-          : agent.model_settings;
-        const settings = isRecord(rawSettings) ? { ...rawSettings } : {};
+        const settings = currentModelSettings();
         const reasoningSettings = buildModelSettings(
           handle,
           {
@@ -511,16 +572,7 @@ async function runModelConfigAction(
                 : value;
           }
         }
-        if (conversation)
-          await backend.updateConversation(conversation.id, {
-            model_settings: settings,
-          } as Parameters<typeof backend.updateConversation>[1]);
-        else
-          await backend.updateAgent(agentId, {
-            model_settings: settings,
-          } as Parameters<typeof backend.updateAgent>[1]);
-        if (conversation)
-          conversation = await backend.retrieveConversation(conversation.id);
+        await writeModelSettings(settings);
       } else if (conversation) {
         await updateConversationLLMConfig(conversation.id, handle, updateArgs);
         conversation = await backend.retrieveConversation(conversation.id);
@@ -528,6 +580,13 @@ async function runModelConfigAction(
         await updateAgentLLMConfig(agentId, handle, updateArgs);
       }
       agent = await backend.retrieveAgent(agentId);
+    }
+    if (update?.modelSettings) {
+      // Shallow merge after any model selection so explicit fields win.
+      await writeModelSettings({
+        ...currentModelSettings(),
+        ...update.modelSettings,
+      });
     }
     const report = buildAgentConfigReport(agent, conversation);
     const { model, context_window_limit, model_settings } = report.effective;
