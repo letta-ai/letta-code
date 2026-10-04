@@ -35,7 +35,7 @@
   "src/settings-manager.ts": 2092,
   "src/tools/manager.ts": 2610,
   "src/tools/tool-execution-context.test.ts": 1092,
-  "src/types/protocol_v2.ts": 2542,
+  "src/types/protocol_v2.ts": 2548,
   "src/websocket/listen-client-concurrency.test.ts": 2557,
   "src/websocket/listen-client-protocol.test.ts": 5707,
   "src/websocket/listener/commands/memory.ts": 1114,

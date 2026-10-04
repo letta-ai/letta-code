@@ -177,7 +177,6 @@ export async function handleAccountConfigLifecycleCommand(
           enabled:
             "enabled" in parsed.account ? parsed.account.enabled : undefined,
           dmPolicy: parsed.account.dm_policy,
-          replyMode: parsed.account.reply_mode,
           allowedUsers: parsed.account.allowed_users,
           config: pluginConfig,
         },
@@ -249,7 +248,6 @@ export async function handleAccountConfigLifecycleCommand(
             : undefined,
         enabled: "enabled" in parsed.patch ? parsed.patch.enabled : undefined,
         dmPolicy: parsed.patch.dm_policy,
-        replyMode: parsed.patch.reply_mode,
         allowedUsers: parsed.patch.allowed_users,
         config: pluginConfig,
       };
@@ -604,7 +602,6 @@ export async function handleAccountConfigLifecycleCommand(
         parsed.channel_id,
         {
           dmPolicy: parsed.config.dm_policy,
-          replyMode: parsed.config.reply_mode,
           allowedUsers: parsed.config.allowed_users,
           config: pluginConfig,
         },

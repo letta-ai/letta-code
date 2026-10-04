@@ -5,7 +5,6 @@ import type {
   ChannelAllowBotsMode,
   ChannelChatType,
   ChannelDefaultPermissionMode,
-  ChannelReplyMode,
   ChannelRoute,
   DiscordChannelMode,
   DmPolicy,
@@ -147,7 +146,6 @@ export interface ChannelCommonAccountPatch {
   displayName?: string;
   enabled?: boolean;
   dmPolicy?: DmPolicy;
-  replyMode?: ChannelReplyMode;
   allowedUsers?: string[];
 }
 
@@ -204,7 +202,7 @@ export type ChannelAccountPatch = ChannelCommonAccountPatch &
 
 export type ChannelConfigPatch = Pick<
   ChannelCommonAccountPatch,
-  "dmPolicy" | "replyMode" | "allowedUsers"
+  "dmPolicy" | "allowedUsers"
 > &
   ChannelPluginAccountPatch & {
     /** Plugin-owned snake_case config accepted from the websocket protocol. */

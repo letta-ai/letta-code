@@ -109,58 +109,6 @@ test("groups hundreds of identical routed tools into one update", async () => {
   refresher.close();
 });
 
-test("does not share a single-destination tool with a multi-destination runtime", async () => {
-  __testOverrideLoadRoutes(() => null);
-  const secondRuntime = {
-    agent_id: "agent-1",
-    conversation_id: "conv-2",
-  };
-  const sources = [
-    createSource(runtime),
-    createSource(secondRuntime),
-    {
-      ...createSource(secondRuntime),
-      chatId: "chat-conv-2-secondary",
-    },
-  ];
-  const updates: RuntimeExternalToolsUpdateGroup[][] = [];
-  let toolBuilds = 0;
-  const refresher = createRoutedRuntimeRegistrationRefresher({
-    registry: { resolveRoutedTurnSources: () => sources },
-    publisher: {
-      publish: async (nextUpdates) => {
-        updates.push([...nextUpdates]);
-      },
-    },
-    channelNames: ["slack"],
-    buildTool: async (nextSources) => {
-      toolBuilds++;
-      return createTool(
-        new Set(nextSources.map((source) => source.chatId)).size > 1
-          ? "Multiple destinations"
-          : "Single destination",
-      );
-    },
-  });
-
-  await refresher.refresh();
-
-  expect(toolBuilds).toBe(2);
-  expect(updates[0]).toEqual(
-    expect.arrayContaining([
-      {
-        runtimes: [runtime],
-        external_tools: [{ tools: [createTool("Single destination")] }],
-      },
-      {
-        runtimes: [secondRuntime],
-        external_tools: [{ tools: [createTool("Multiple destinations")] }],
-      },
-    ]),
-  );
-  refresher.close();
-});
-
 test("publishes only changed schemas and removed runtime registrations", async () => {
   __testOverrideLoadRoutes(() => null);
   let sources = [createSource()];

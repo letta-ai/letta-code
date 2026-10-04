@@ -38,9 +38,7 @@ export interface FakeClientOptions {
 export class FakeClient implements ChannelGatewayClient {
   private messageListeners: Array<(message: WsProtocolMessage) => void> = [];
   private externalToolListeners: Array<
-    (
-      request: ExternalToolCallRequestMessage,
-    ) => Promise<ExternalToolCallResult> | ExternalToolCallResult
+    (request: ExternalToolCallRequestMessage) => unknown
   > = [];
   readonly submittedInputs: Array<{
     runtime: RuntimeScope<string | null>;
@@ -152,14 +150,6 @@ export class FakeClient implements ChannelGatewayClient {
 
   emitExternalToolCall(request: ExternalToolCallRequestMessage): void {
     for (const listener of this.externalToolListeners) listener(request);
-  }
-
-  async requestExternalToolCall(
-    request: ExternalToolCallRequestMessage,
-  ): Promise<ExternalToolCallResult> {
-    const listener = this.externalToolListeners[0];
-    if (!listener) throw new Error("No external tool listener registered");
-    return await listener(request);
   }
 }
 

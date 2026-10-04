@@ -1,23 +1,10 @@
-export interface MessageChannelIdempotencyState {
-  successfulActionKeys: string[];
-  successfulTextDeliveryKeys: string[];
-  successfulRelayTextDeliveryKeys?: string[];
-  lastSuccessfulActionKey: string | null;
+export interface MessageChannelIdempotencyScope {
+  execute(key: string | null, effect: () => Promise<string>): Promise<string>;
 }
 
-export interface MessageChannelIdempotencyScope {
-  execute(
-    actionKey: string | null,
-    textDeliveryKey: string | null,
-    effect: () => Promise<string>,
-  ): Promise<string>;
-  executeRelay(
-    actionKey: string | null,
-    textDeliveryKey: string | null,
-    effect: () => Promise<string>,
-  ): Promise<string>;
-  snapshot(): MessageChannelIdempotencyState | null;
-}
+type LastSuccessfulAction = {
+  key: string;
+};
 
 export class MessageChannelDuplicateActionError extends Error {
   constructor(state: "in-flight" | "completed") {
@@ -37,134 +24,46 @@ function isErrorResult(result: string): boolean {
 }
 
 /**
- * Explicit calls suppress an adjacent repeat plus text already delivered by an
- * automatic relay. Relay suppression remembers every successful text delivery,
- * regardless of whether it used send or send-rich. In-flight state cannot be
- * serialized, so snapshot returns null until all dispatches settle.
+ * Suppress only an adjacent repeat of the last successful action. Distinct
+ * MessageChannel actions clear the remembered result. Suppressed duplicates
+ * throw so the agent receives explicit feedback instead of a false success.
  */
-export function createMessageChannelIdempotencyScope(
-  state?: MessageChannelIdempotencyState,
-): MessageChannelIdempotencyScope {
-  const inFlightActionKeys = new Map<string, Promise<string>>();
-  const inFlightTextDeliveryKeys = new Map<string, number>();
-  const inFlightRelayTextDeliveryKeys = new Set<string>();
-  const successfulActionKeys = new Set(state?.successfulActionKeys ?? []);
-  const successfulTextDeliveryKeys = new Set(
-    state?.successfulTextDeliveryKeys ?? [],
-  );
-  const successfulRelayTextDeliveryKeys = new Set(
-    state?.successfulRelayTextDeliveryKeys ?? [],
-  );
-  let lastSuccessfulActionKey = state?.lastSuccessfulActionKey ?? null;
+export function createMessageChannelIdempotencyScope(): MessageChannelIdempotencyScope {
+  const inFlight = new Map<string, Promise<string>>();
+  let lastSuccessful: LastSuccessfulAction | null = null;
   let latestInvocation = 0;
 
-  const addInFlightTextDelivery = (key: string | null): void => {
-    if (key) {
-      inFlightTextDeliveryKeys.set(
-        key,
-        (inFlightTextDeliveryKeys.get(key) ?? 0) + 1,
-      );
-    }
-  };
-  const removeInFlightTextDelivery = (key: string | null): void => {
-    if (!key) return;
-    const remaining = (inFlightTextDeliveryKeys.get(key) ?? 1) - 1;
-    if (remaining > 0) inFlightTextDeliveryKeys.set(key, remaining);
-    else inFlightTextDeliveryKeys.delete(key);
-  };
-
   return {
-    async execute(actionKey, textDeliveryKey, effect) {
-      if (!actionKey) {
+    async execute(key, effect) {
+      if (!key) {
         latestInvocation += 1;
-        lastSuccessfulActionKey = null;
+        lastSuccessful = null;
         return await effect();
       }
 
-      if (
-        inFlightActionKeys.has(actionKey) ||
-        (textDeliveryKey && inFlightRelayTextDeliveryKeys.has(textDeliveryKey))
-      ) {
+      const pendingDuplicate = inFlight.get(key);
+      if (pendingDuplicate) {
         throw new MessageChannelDuplicateActionError("in-flight");
       }
-      if (
-        lastSuccessfulActionKey === actionKey ||
-        (textDeliveryKey &&
-          successfulRelayTextDeliveryKeys.has(textDeliveryKey))
-      ) {
+      if (lastSuccessful?.key === key) {
         throw new MessageChannelDuplicateActionError("completed");
       }
 
       const invocation = ++latestInvocation;
-      lastSuccessfulActionKey = null;
+      // A different MessageChannel action makes a later repeat legitimate.
+      lastSuccessful = null;
       const pending = Promise.resolve().then(effect);
-      inFlightActionKeys.set(actionKey, pending);
-      addInFlightTextDelivery(textDeliveryKey);
+      inFlight.set(key, pending);
 
       try {
         const result = await pending;
-        if (!isErrorResult(result)) {
-          successfulActionKeys.add(actionKey);
-          if (textDeliveryKey) successfulTextDeliveryKeys.add(textDeliveryKey);
-          if (invocation === latestInvocation) {
-            lastSuccessfulActionKey = actionKey;
-          }
+        if (invocation === latestInvocation && !isErrorResult(result)) {
+          lastSuccessful = { key };
         }
         return result;
       } finally {
-        if (inFlightActionKeys.get(actionKey) === pending) {
-          inFlightActionKeys.delete(actionKey);
-        }
-        removeInFlightTextDelivery(textDeliveryKey);
+        if (inFlight.get(key) === pending) inFlight.delete(key);
       }
-    },
-    async executeRelay(actionKey, textDeliveryKey, effect) {
-      if (!actionKey) return await effect();
-      if (
-        inFlightActionKeys.has(actionKey) ||
-        (textDeliveryKey && inFlightTextDeliveryKeys.has(textDeliveryKey))
-      ) {
-        throw new MessageChannelDuplicateActionError("in-flight");
-      }
-      if (
-        successfulActionKeys.has(actionKey) ||
-        (textDeliveryKey && successfulTextDeliveryKeys.has(textDeliveryKey))
-      ) {
-        throw new MessageChannelDuplicateActionError("completed");
-      }
-      const pending = Promise.resolve().then(effect);
-      inFlightActionKeys.set(actionKey, pending);
-      addInFlightTextDelivery(textDeliveryKey);
-      if (textDeliveryKey) inFlightRelayTextDeliveryKeys.add(textDeliveryKey);
-      try {
-        const result = await pending;
-        if (!isErrorResult(result)) {
-          successfulActionKeys.add(actionKey);
-          if (textDeliveryKey) {
-            successfulTextDeliveryKeys.add(textDeliveryKey);
-            successfulRelayTextDeliveryKeys.add(textDeliveryKey);
-          }
-        }
-        return result;
-      } finally {
-        if (inFlightActionKeys.get(actionKey) === pending) {
-          inFlightActionKeys.delete(actionKey);
-        }
-        removeInFlightTextDelivery(textDeliveryKey);
-        if (textDeliveryKey)
-          inFlightRelayTextDeliveryKeys.delete(textDeliveryKey);
-      }
-    },
-    snapshot() {
-      if (inFlightActionKeys.size > 0 || inFlightTextDeliveryKeys.size > 0) {
-        return null;
-      }
-      return {
-        successfulActionKeys: [...successfulActionKeys],
-        successfulTextDeliveryKeys: [...successfulTextDeliveryKeys],
-        successfulRelayTextDeliveryKeys: [...successfulRelayTextDeliveryKeys],
-        lastSuccessfulActionKey,
-      };
     },
   };
 }
