@@ -33,6 +33,7 @@ import {
 } from "@/mods/deprecated-api";
 import { isTypeScriptModFileExtension } from "@/mods/file-extensions";
 import * as modInvocationContext from "@/mods/invocation-context";
+import { resolveModCacheExtension } from "@/mods/mod-cache-extension";
 import { createModChangeBatcher } from "@/mods/mod-change-batcher";
 import {
   appendModDiagnostic,
@@ -513,10 +514,8 @@ function createImportableModPath(
   const baseName = path
     .basename(modPath, fileExtension)
     .replace(/[^a-zA-Z0-9_-]/g, "-");
-  const importPath = path.join(
-    importCacheDirectory,
-    `.letta-mod-${baseName}-${hash}.mjs`,
-  );
+  const cacheEntry = `.letta-mod-${baseName}-${hash}${resolveModCacheExtension(modPath, importableSource)}`;
+  const importPath = path.join(importCacheDirectory, cacheEntry);
 
   if (!existsSync(importPath)) {
     writeFileSync(importPath, importableSource, "utf8");
