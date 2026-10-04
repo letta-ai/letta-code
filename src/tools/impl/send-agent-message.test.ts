@@ -10,6 +10,7 @@ const CLAUDE_SESSION_ID = "11111111-1111-4111-8111-111111111111";
 const CLAUDE_AGENT_ID = `claude_${CLAUDE_SESSION_ID}`;
 const CODEX_THREAD_ID = "22222222-2222-4222-8222-222222222222";
 const CODEX_AGENT_ID = `codex_${CODEX_THREAD_ID}`;
+const TARGET_CONV = "conv-33333333-3333-4333-8333-333333333333";
 
 function fixture(targetTags: readonly string[] = []) {
   const submissions: EnqueueConversationInput[] = [];
@@ -56,7 +57,7 @@ const caller = {
   actingUserId: "user-caller",
 };
 const message = {
-  conversation_id: "conv-target",
+  conversation_id: TARGET_CONV,
   message: "Please check the tests.",
 };
 
@@ -267,7 +268,7 @@ test("tracks an idle Codex new turn through background lifecycle", async () => {
   });
 });
 
-test.each([{ conversation_id: "conv-target" }, { computer: "cloud" }])(
+test.each([{ conversation_id: TARGET_CONV }, { computer: "cloud" }])(
   "rejects incompatible external coding-agent routing: %j",
   async (extra) => {
     const f = fixture();
@@ -286,7 +287,7 @@ test.each([{ conversation_id: "conv-target" }, { computer: "cloud" }])(
   },
 );
 
-test.each(["conv-caller", "default"])(
+test.each(["conv-44444444-4444-4444-8444-444444444444", "default"])(
   "rejects the tool's current conversation %s before enqueue",
   async (conversationId) => {
     const f = fixture();
@@ -315,7 +316,7 @@ test.each(["conv-caller", "default"])(
   },
 );
 
-test.each(["conv-fork", "default", undefined])(
+test.each(["conv-55555555-5555-4555-8555-555555555555", "default", undefined])(
   "allows the same agent in another tool destination %s",
   async (conversationId) => {
     const f = fixture();
@@ -348,12 +349,12 @@ test("returns acceptance and an explicit return address, with no task or answer"
   expect(receipt).toMatchObject({
     status: "queued",
     agent_id: "agent-target",
-    conversation_id: "conv-target",
+    conversation_id: TARGET_CONV,
     super_run_id: "sr-1",
   });
   expect(receipt).not.toHaveProperty("task_id");
   expect(receipt).not.toHaveProperty("result");
-  expect(receipt.status_command).toContain("--conversation conv-target");
+  expect(receipt.status_command).toContain(`--conversation ${TARGET_CONV}`);
   expect(f.submissions).toHaveLength(1);
   expect(f.submissions[0]).toMatchObject({ actingUserId: "user-caller" });
   expect(f.submissions[0]?.content).toEqual([
@@ -478,7 +479,7 @@ test("agent-only sends create a hidden conversation; default requires its agent"
 test.each([
   { message: "hello" },
   { ...message, message: " " },
-  { ...message, conversation_id: "conv-target; echo bad" },
+  { ...message, conversation_id: `${TARGET_CONV}; echo bad` },
   { ...message, agent_id: "agent-wrong" },
 ])(
   "invalid destination or input is rejected without submission: %j",
@@ -490,6 +491,29 @@ test.each([
     ).toBe("error");
     expect(f.submissions).toHaveLength(0);
     expect(f.created).toHaveLength(0);
+  },
+);
+
+test.each([
+  ["conv-7741e323", "truncated IDs are rejected"],
+  [TARGET_CONV.slice(0, -1), "truncated IDs are rejected"],
+  ["agent-target", "is an agent ID; pass it as agent_id instead"],
+])(
+  "conversation_id %j gets an actionable error without lookup",
+  async (conversation_id, expected) => {
+    const f = fixture();
+    let lookups = 0;
+    f.backend.retrieveConversation = async () => {
+      lookups += 1;
+      throw new Error("404 Conversation not found");
+    };
+    const result = await runWithRuntimeContext(caller, () =>
+      send_agent_message({ ...message, conversation_id }, f),
+    );
+    expect(result.status).toBe("error");
+    expect(JSON.parse(result.content).error).toContain(expected);
+    expect(lookups).toBe(0);
+    expect(f.submissions).toHaveLength(0);
   },
 );
 
@@ -537,7 +561,7 @@ test.each([403, 409, 503, "network"])(
         ? "submission_failed"
         : "acceptance_unknown",
     );
-    expect(receipt.conversation_id).toBe("conv-target");
+    expect(receipt.conversation_id).toBe(TARGET_CONV);
   },
 );
 

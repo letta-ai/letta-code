@@ -16,7 +16,8 @@ conversations, each with its own message history.
 
 - Supply `conversation_id` to message an existing thread, or `agent_id` alone to
   start a new hidden thread with that agent. To use an agent's default conversation,
-  supply its `agent_id` and `conversation_id: "default"`.
+  supply its `agent_id` and `conversation_id: "default"`. Pass the full
+  conversation ID; truncated IDs are rejected.
 - Your agent and conversation IDs are attached automatically as the return address.
   To reply, the recipient must explicitly send to that address. Ordinary assistant
   output is not forwarded back to you.
