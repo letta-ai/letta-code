@@ -17,6 +17,10 @@ import {
   scrubSecretsFromString,
 } from "@/tools/secret-substitution";
 import {
+  type QueuedMessage,
+  setMessageQueueAdder,
+} from "@/utils/message-queue-bridge";
+import {
   __testSeedSecretsCache,
   clearSecretsCache,
 } from "@/utils/secrets-store";
@@ -55,6 +59,19 @@ function expectLiteralSecrets(output: string): void {
   expect(output).toContain("he$$o");
   expect(output).toContain("`whoami`");
   expect(output).toContain("$foo$bar");
+}
+
+async function waitForQueuedMessage(
+  messages: QueuedMessage[],
+  predicate: (message: QueuedMessage) => boolean,
+): Promise<QueuedMessage> {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    const message = messages.find(predicate);
+    if (message) return message;
+    await Bun.sleep(10);
+  }
+  throw new Error("Timed out waiting for the background completion notice");
 }
 
 async function waitForFileContent(
@@ -197,6 +214,11 @@ describe("shell secret execution", () => {
     const runtimeScript = createTempRuntimeScriptCommand(
       "const value = process.env.PASSWORD ?? ''; process.stdout.write(value.slice(0, 2)); setTimeout(() => process.stdout.write(value.slice(2)), 25)",
     );
+    // Receive the completion notice here. Otherwise it waits in the
+    // process-wide queue bridge and a later test file's listener runs it as
+    // an extra turn.
+    const queued: QueuedMessage[] = [];
+    setMessageQueueAdder((message) => queued.push(message));
     try {
       const launched = await executeTool(
         "Bash",
@@ -218,7 +240,16 @@ describe("shell secret execution", () => {
       );
       expect(output).toContain("PASSWORD=<REDACTED>");
       expect(output).not.toContain(seededSecrets.PASSWORD);
+
+      const notice = await waitForQueuedMessage(
+        queued,
+        (message) =>
+          message.kind === "task_notification" &&
+          message.text.includes(`<task-id>${taskId}</task-id>`),
+      );
+      expect(notice.text).not.toContain(seededSecrets.PASSWORD);
     } finally {
+      setMessageQueueAdder(null);
       releaseToolExecutionContext(context.contextId);
       runtimeScript.cleanup();
     }
