@@ -95,7 +95,7 @@ jobs:
 
             ## Scope check
 
-            Before any line-level review, step back and call out major danger zones. A multi-thousand-line PR is an immediate red flag. So is any edit to dangerous ground with no clear code owner driving it:
+            Before any line-level review, step back and call out major danger zones. Anything past roughly 1k changed lines is baseline suspicious — not an auto-reject, but start asking whether the PR is properly scoped and owned, and a multi-thousand-line PR is still an immediate red flag. So is any edit to dangerous ground with no clear code owner driving it:
 
             - New or changed listener/app-server protocol commands or fields — that's modifying our API, not just adding code.
             - Queueing or turn-batching behavior — extremely bug-prone when the author doesn't fully understand it.
