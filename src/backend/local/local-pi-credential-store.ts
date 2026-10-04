@@ -1,5 +1,3 @@
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
 import type { Credential, CredentialStore } from "@earendil-works/pi-ai";
 import { getRegisteredPiProvider } from "@/backend/dev/pi-provider-mod-registry";
 import {
@@ -8,10 +6,8 @@ import {
   PI_PROVIDER_SPECS,
 } from "@/backend/dev/pi-provider-registry";
 import { getRegisteredPiProviderLocalNames } from "@/backend/dev/registered-pi-provider-runtime";
-import { type FileLockOptions, withFileLock } from "@/utils/file-lock";
 import {
   createOrUpdateLocalProvider,
-  getLocalProviderAuthPath,
   getLocalProviderRecordByName,
   type LocalProviderRecord,
   listLocalProviderRecords,
@@ -19,6 +15,7 @@ import {
   localProviderApiKeyFromRecord,
   removeLocalProviderByName,
   setLocalOAuthProvider,
+  withLocalProviderAuthLock,
 } from "./local-provider-auth-store";
 
 /**
@@ -91,17 +88,6 @@ function credentialFromRecord(
   return key ? { type: "api_key", key } : undefined;
 }
 
-// `modify` may run an OAuth refresh (a network call) while holding the lock,
-// so the lock is reaped only when its holder process is gone, never by age:
-// age-based reaping could let a second process refresh the same rotating
-// token while a slow holder is still mid-refresh. A live but hung holder
-// then makes waiters fail after `timeoutMs` instead of double-refreshing.
-const AUTH_FILE_LOCK_OPTIONS: FileLockOptions = {
-  reapOnlyDeadOwner: true,
-  retryMs: 50,
-  timeoutMs: 120_000,
-};
-
 export function createLocalPiCredentialStore(
   storageDir?: string,
 ): CredentialStore {
@@ -114,11 +100,7 @@ export function createLocalPiCredentialStore(
     providerId: string,
     body: () => Promise<T>,
   ): Promise<T> {
-    const run = () => {
-      const authPath = getLocalProviderAuthPath(storageDir);
-      mkdirSync(dirname(authPath), { recursive: true, mode: 0o700 });
-      return withFileLock(`${authPath}.lock`, body, AUTH_FILE_LOCK_OPTIONS);
-    };
+    const run = () => withLocalProviderAuthLock(body, storageDir);
     const previous = mutationQueues.get(providerId) ?? Promise.resolve();
     const next = previous.then(run, run);
     mutationQueues.set(
