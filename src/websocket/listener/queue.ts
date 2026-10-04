@@ -78,10 +78,6 @@ function hasSameQueueScope(a: QueueItem, b: QueueItem): boolean {
   );
 }
 
-function externalToolScopeSelection(message?: IncomingMessage): string {
-  return JSON.stringify(message?.externalToolScopeIds ?? []);
-}
-
 function getBatchActingUserId(items: QueueItem[]): string | undefined {
   const actingUserId = items[0]?.actingUserId;
   if (
@@ -232,7 +228,6 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
   let batchPreferences = JSON.stringify(
     getStoredClientPreferences(runtime.agentId, runtime.conversationId),
   );
-  let batchExternalToolScopes: string | null = null;
   const isNoCoalesce = (candidate: (typeof queuedItems)[number]): boolean =>
     candidate.kind === "message" && candidate.noCoalesce === true;
   for (const item of queuedItems) {
@@ -243,16 +238,6 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
       break;
     }
     const incoming = runtime.queuedMessagesByItemId.get(item.id);
-    if (item.kind === "message") {
-      const externalToolScopes = externalToolScopeSelection(incoming);
-      if (
-        batchExternalToolScopes !== null &&
-        externalToolScopes !== batchExternalToolScopes
-      ) {
-        break;
-      }
-      batchExternalToolScopes = externalToolScopes;
-    }
     if (incoming?.clientPreferences !== undefined) {
       const preferences = JSON.stringify(
         normalizeClientPreferences(incoming.clientPreferences),

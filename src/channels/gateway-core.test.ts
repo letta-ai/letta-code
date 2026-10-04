@@ -631,7 +631,6 @@ test("runtime registration happens before input submission", async () => {
   expect(startOpts?.preserve_skill_sources).toBe(true);
   expect(startOpts?.external_tools).toEqual([
     {
-      scope_id: expect.stringMatching(/^channel-turn-/),
       tools: [
         {
           name: "MessageChannel",
@@ -849,7 +848,7 @@ test("runtime registration removes MessageChannel when no route remains", async 
   gateway.close();
 });
 
-test("each delivery registers its immutable external tool scope", async () => {
+test("runtime registration is skipped when signature matches", async () => {
   const client = new FakeClient();
   const { hooks } = makeHooks();
   const gateway = new ChannelGateway(client, hooks);
@@ -858,10 +857,9 @@ test("each delivery registers its immutable external tool scope", async () => {
   await gateway.submit(makeDelivery({ clientMessageId: "cm-1" }));
   expect(client.startedRuntimes).toHaveLength(1);
 
-  // A later queued input has a distinct selector and must retain both groups.
+  // Second submit with same delivery params should not re-register
   await gateway.submit(makeDelivery({ clientMessageId: "cm-2" }));
-  expect(client.startedRuntimes).toHaveLength(2);
-  expect(client.startedRuntimes[1]?.external_tools).toHaveLength(2);
+  expect(client.startedRuntimes).toHaveLength(1);
 
   gateway.close();
 });

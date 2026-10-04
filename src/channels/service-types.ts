@@ -2,7 +2,6 @@ import type { ChannelProtocolConfig } from "./plugin-types";
 import type {
   ChannelAllowBotsMode,
   ChannelDefaultPermissionMode,
-  ChannelReplyMode,
   DiscordChannelMode,
   DmPolicy,
   SignalGroupMode,
@@ -32,7 +31,6 @@ export interface ChannelConfigSnapshot {
   enabled: boolean;
   mode?: SlackChannelMode;
   dmPolicy: DmPolicy;
-  replyMode?: ChannelReplyMode;
   allowedUsers: string[];
   config: ChannelProtocolConfig;
   hasToken?: boolean;
@@ -114,7 +112,6 @@ export interface ChannelAccountSnapshot {
   running: boolean;
   mode?: SlackChannelMode;
   dmPolicy: DmPolicy;
-  replyMode?: ChannelReplyMode;
   allowedUsers: string[];
   config: ChannelProtocolConfig;
   hasToken?: boolean;
