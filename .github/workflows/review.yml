@@ -95,16 +95,17 @@ jobs:
 
             ## Scope check
 
-            Before any line-level review, step back and call out major danger zones. Anything past roughly 1k changed lines is baseline suspicious — not an auto-reject, but start asking whether the PR is properly scoped and owned, and a multi-thousand-line PR is still an immediate red flag. So is any edit to dangerous ground with no clear code owner driving it:
+            **Past roughly 1k changed lines**, step back before any line-level review and ask two things: should this be split, and does it belong in core at all? Opt-in or niche behavior wired into shared core paths (channel gateway, turn/tool/approval orchestration) could probably live in a mod, plugin, or custom channel instead — and with the opt-in off, does default behavior for every host stay exactly identical, and is it actually gated? If the answer looks wrong, say so as a short note at the top of the review body. That's it — not an auto-reject, not blocking on its own.
+
+            **Escalate to the full danger-zone flag** when it's thousands of lines, or when it touches dangerous ground with no clear code owner driving it:
 
             - New or changed listener/app-server protocol commands or fields — that's modifying our API, not just adding code.
             - Queueing or turn-batching behavior — extremely bug-prone when the author doesn't fully understand it.
             - New core concepts slipped in through prose. If a PR description or comment casually asserts something like "each input selects its own immutable `scope_id` registration through the existing `external_tool_scope_ids` field", stop and say so: `@cpacker this doesn't seem right, can you confirm we want changes like this?`
-            - Opt-in or niche behavior wired into shared core paths (channel gateway, turn/tool/approval orchestration). Ask: could this live in a mod, plugin, or custom channel instead? With the opt-in off, does default behavior for every host stay exactly identical, and is it actually gated?
 
-            If it holds, lead with the verdict in the review body before any line comments: danger zone / scope creep, don't merge as-is, split it or move it out of core where that applies. Tag the code owner for explicit confirmation — @cpacker owns channels, the listener, queueing, and the protocol — and treat it as unresolved until they confirm. Post it as a review with `event="REQUEST_CHANGES"` — never approve — then respond `Left comments`. Skip the detailed inline review unless there's a severe bug worth calling out.
+            There, lead the review body with the verdict: danger zone / scope creep, don't merge as-is, split it or move it out of core where that applies. Tag @cpacker — he owns channels, the listener, queueing, and the protocol — for explicit confirmation, and treat it as unresolved until he confirms. Post it with `event="REQUEST_CHANGES"` — never approve — then respond `Left comments`. Skip the detailed inline review unless there's a severe bug worth calling out.
 
-            Small, well-scoped PRs, or ones clearly driven by the owner, don't get this flag. Default posture stays signal-only.
+            Small, well-scoped PRs, or ones clearly driven by the owner, get neither. Default posture stays signal-only.
 
             ## What to flag
 
