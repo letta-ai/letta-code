@@ -41,6 +41,10 @@ const RETRYABLE_LOCAL_PROVIDER_DETAIL_PATTERNS = [
   "timed out",
   "terminated",
   "retry delay",
+  // ChatGPT's transient model-access check ("Unable to verify ... access.
+  // Please try again."). Cloud gets the same text with a
+  // service_unavailable code; the local Codex stream drops the code.
+  "unable to verify",
 ];
 
 function stringValue(value: unknown): string | undefined {

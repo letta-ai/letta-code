@@ -29,6 +29,19 @@ describe("LocalProviderErrors", () => {
     });
   });
 
+  test("classifies ChatGPT model-access check failures as retryable", () => {
+    const error = new Error(
+      "Codex error: Unable to verify model access. Please try again.",
+    );
+
+    expect(isRetryableLocalProviderError(error)).toBe(true);
+    expect(normalizeLocalProviderError(error)).toMatchObject({
+      error_type: "llm_error",
+      retryable: true,
+      stop_reason: "llm_api_error",
+    });
+  });
+
   test("keeps ChatGPT usage limits non-retryable", () => {
     const error = new Error(
       'Codex error: {"type":"error","error":{"type":"usage_limit_reached","code":"usage_limit_reached","message":"The usage limit has been reached","plan_type":"team"}}',
