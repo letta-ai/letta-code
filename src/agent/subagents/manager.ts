@@ -424,6 +424,7 @@ async function executeSubagent(
       inheritedPrimaryRoot,
       memoryScope,
       localBackendStorageDir,
+      scratchpadDir: childEnv.LETTA_SCRATCHPAD,
     });
     const spawnLauncher = sandbox
       ? { command: sandbox.command, args: sandbox.args }
