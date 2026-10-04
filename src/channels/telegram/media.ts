@@ -13,6 +13,8 @@ export {
 
 export const TELEGRAM_MEDIA_GROUP_FLUSH_MS = 150;
 export const TELEGRAM_DOWNLOAD_TIMEOUT_MS = 15_000;
+export const TELEGRAM_DOWNLOAD_MAX_ATTEMPTS = 3;
+export const TELEGRAM_DOWNLOAD_RETRY_DELAY_MS = 100;
 export const MAX_TELEGRAM_DOWNLOAD_BYTES = 50 * 1024 * 1024;
 export const MAX_TELEGRAM_INLINE_IMAGE_BYTES = 5 * 1024 * 1024;
 
@@ -420,18 +422,70 @@ async function saveTelegramAttachment(params: {
   return filePath;
 }
 
-async function fetchTelegramFile(
+type TelegramFileFetchResult =
+  | { response: Response; kind: "http-error" }
+  | { response: Response; kind: "too-large"; contentLength: number }
+  | { response: Response; kind: "downloaded"; buffer: Buffer };
+
+async function fetchTelegramFileOnce(
   url: string,
   timeoutMs: number,
-): Promise<Response> {
+): Promise<TelegramFileFetchResult> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    return await fetch(url, { signal: controller.signal });
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) {
+      return { response, kind: "http-error" };
+    }
+
+    const contentLength = response.headers.get("content-length");
+    if (contentLength) {
+      const parsedLength = Number(contentLength);
+      if (
+        Number.isFinite(parsedLength) &&
+        parsedLength > MAX_TELEGRAM_DOWNLOAD_BYTES
+      ) {
+        return {
+          response,
+          kind: "too-large",
+          contentLength: parsedLength,
+        };
+      }
+    }
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+    return { response, kind: "downloaded", buffer };
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function fetchTelegramFile(
+  url: string,
+  timeoutMs: number,
+): Promise<TelegramFileFetchResult> {
+  let lastError: unknown;
+
+  for (
+    let attempt = 1;
+    attempt <= TELEGRAM_DOWNLOAD_MAX_ATTEMPTS;
+    attempt += 1
+  ) {
+    try {
+      return await fetchTelegramFileOnce(url, timeoutMs);
+    } catch (error) {
+      lastError = error;
+      if (attempt < TELEGRAM_DOWNLOAD_MAX_ATTEMPTS) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, TELEGRAM_DOWNLOAD_RETRY_DELAY_MS),
+        );
+      }
+    }
+  }
+
+  throw lastError;
 }
 
 async function downloadTelegramAttachment(params: {
@@ -462,10 +516,11 @@ async function downloadTelegramAttachment(params: {
     return null;
   }
 
-  const response = await fetchTelegramFile(
+  const result = await fetchTelegramFile(
     buildTelegramFileUrl(params.token, remotePath),
     TELEGRAM_DOWNLOAD_TIMEOUT_MS,
   );
+  const { response } = result;
   if (!response.ok) {
     console.warn(
       `[Telegram] Failed to download attachment ${candidate.name ?? candidate.fileId} from ${remotePath}: ${response.status} ${response.statusText}`,
@@ -473,21 +528,18 @@ async function downloadTelegramAttachment(params: {
     return null;
   }
 
-  const contentLength = response.headers.get("content-length");
-  if (contentLength) {
-    const parsedLength = Number(contentLength);
-    if (
-      Number.isFinite(parsedLength) &&
-      parsedLength > MAX_TELEGRAM_DOWNLOAD_BYTES
-    ) {
-      console.warn(
-        `[Telegram] Refusing attachment ${candidate.name ?? candidate.fileId}: content-length ${parsedLength} exceeds limit ${MAX_TELEGRAM_DOWNLOAD_BYTES}.`,
-      );
-      return null;
-    }
+  if (result.kind === "too-large") {
+    console.warn(
+      `[Telegram] Refusing attachment ${candidate.name ?? candidate.fileId}: content-length ${result.contentLength} exceeds limit ${MAX_TELEGRAM_DOWNLOAD_BYTES}.`,
+    );
+    return null;
   }
 
-  const buffer = Buffer.from(await response.arrayBuffer());
+  if (result.kind !== "downloaded") {
+    return null;
+  }
+
+  const { buffer } = result;
   if (buffer.byteLength > MAX_TELEGRAM_DOWNLOAD_BYTES) {
     console.warn(
       `[Telegram] Refusing attachment ${candidate.name ?? candidate.fileId}: downloaded size ${buffer.byteLength} exceeds limit ${MAX_TELEGRAM_DOWNLOAD_BYTES}.`,

@@ -169,6 +169,82 @@ test("telegram adapter preserves photo mime type when Telegram download responds
   }
 });
 
+test("telegram adapter retries when an inbound image body download is terminated", async () => {
+  let fetchAttempt = 0;
+  globalThis.fetch = mock(async () => {
+    fetchAttempt += 1;
+    if (fetchAttempt === 1) {
+      return {
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: new Headers({ "content-type": "image/jpeg" }),
+        arrayBuffer: async () => {
+          throw new Error("terminated");
+        },
+      } as unknown as Response;
+    }
+
+    return new Response(Buffer.from("recovered-jpeg"), {
+      status: 200,
+      headers: { "content-type": "image/jpeg" },
+    });
+  }) as unknown as typeof fetch;
+
+  FakeBot.nextGetFileImpl = async () => ({
+    file_path: "photos/retry.jpg",
+  });
+
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+
+  const bot = FakeBot.instances[0];
+  try {
+    await bot?.emit("message", {
+      message: {
+        chat: { id: 123 },
+        from: { id: 456, username: "alice", first_name: "Alice" },
+        date: 1_736_380_800,
+        message_id: 10,
+        photo: [
+          { file_id: "photo1", file_unique_id: "unique-1", file_size: 14 },
+        ],
+      },
+    });
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    const firstCall = onMessage.mock.calls[0] as unknown as
+      | [InboundChannelMessage]
+      | undefined;
+    expect(firstCall).toBeDefined();
+    if (!firstCall) {
+      throw new Error("Expected recovered Telegram photo to emit a message");
+    }
+
+    const [inbound] = firstCall;
+    expect(inbound.attachments).toHaveLength(1);
+    expect(inbound.attachments?.[0]).toMatchObject({
+      kind: "image",
+      mimeType: "image/jpeg",
+      imageDataBase64: Buffer.from("recovered-jpeg").toString("base64"),
+    });
+  } finally {
+    resetTelegramChannelRoot();
+  }
+});
+
 test("telegram adapter does not inline SVG documents as model images", async () => {
   const svgBytes = Buffer.from(
     '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="#ff6600" /></svg>',
@@ -405,6 +481,7 @@ test("telegram adapter logs attachment download failures", async () => {
   expect(onMessage).toHaveBeenCalledWith(
     expect.objectContaining({ attachments: undefined }),
   );
+  expect(globalThis.fetch).toHaveBeenCalledTimes(3);
   expect(consoleWarnSpy).toHaveBeenCalledWith(
     "[Telegram] Attachment download failed for fail.wav: network down",
   );
