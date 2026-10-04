@@ -236,7 +236,9 @@ test("an older listener cannot silently discard child restrictions", async () =>
       },
       { client: wire.client, enqueue },
     ),
-  ).rejects.toThrow("does not support scoped CLI launch settings");
+  ).rejects.toThrow(
+    "does not support scoped CLI launch settings; update it to 0.32.4 or newer",
+  );
   expect(enqueue).not.toHaveBeenCalled();
 });
 

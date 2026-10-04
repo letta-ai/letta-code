@@ -138,6 +138,9 @@ export async function cancelAcceptedListenerInput(
   }
 }
 
+/** First listener release that echoes runtime_start execution_settings (#4389). */
+const SCOPED_LAUNCH_MIN_VERSION = "0.32.4";
+
 /** The CLI remains the caller; the existing listener owns model and tool execution. */
 export async function launchListenerConversation(
   params: {
@@ -277,7 +280,7 @@ export async function launchListenerConversation(
       throw new Error(runtime.error ?? "Listener rejected launch settings");
     if (!runtime.execution_settings)
       throw new Error(
-        "This listener does not support scoped CLI launch settings; upgrade it before launching children",
+        `The target computer's Letta Code does not support scoped CLI launch settings; update it to ${SCOPED_LAUNCH_MIN_VERSION} or newer before launching children there`,
       );
     if (interrupted) throw new Error("Launch cancelled before input was sent");
     const accepted = await (deps.enqueue ?? enqueueConversationMessage)(
