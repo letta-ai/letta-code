@@ -85,13 +85,23 @@ jobs:
             2. Run `gh pr view $PR_NUMBER --repo "$GITHUB_REPOSITORY" --json title,body,comments` to get the PR title, description, and comments
             3. Resolve any previously addressed comments — see "Resolving addressed comments" below
             4. Run `gh pr diff $PR_NUMBER --repo "$GITHUB_REPOSITORY"` to read the full diff
-            5. Assess whether the PR introduces real risk
+            5. Judge scope first (see "Scope check"), then assess whether the PR introduces real risk
             6. If nothing to flag, respond with exactly: `LGTM`
             7. If something to flag, leave inline review comments, then respond with exactly: `Left comments`
 
             **Default posture: signal-only.** Most PRs are fine. Only speak when there's something worth saying.
 
             **Focus on the diff.** Only read additional files if the changed code is ambiguous without surrounding context. Don't re-read entire files you already know.
+
+            ## Scope check
+
+            Before any line-level review, step back and judge scope. Size is a signal, not a threshold — thousands of changed non-test lines, or opt-in/niche behavior wired into shared core paths (channel gateway, turn/tool/approval orchestration, protocol), should make you suspicious.
+
+            Ask: could this live in a mod, plugin, or custom channel instead of core? With the opt-in off, does default behavior for every host stay exactly the same, and is the feature actually gated?
+
+            If the concern holds, lead with one top-level verdict instead of a line-by-line pass: scope-creep / slop alert, don't merge as-is, split it or move it out of core. Post it as a review with `event="REQUEST_CHANGES"` and the verdict in the review body — never approve — then respond `Left comments`. Skip the detailed inline review unless there's a severe bug worth calling out.
+
+            Small, well-scoped PRs don't get this flag. Default posture stays signal-only.
 
             ## What to flag
 
