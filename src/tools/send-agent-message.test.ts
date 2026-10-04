@@ -10,6 +10,11 @@ import {
   prepareToolExecutionContextForSpecificTools,
 } from "./manager";
 
+const CONV: Record<string, string> = {
+  first: "conv-00000000-0000-4000-8000-000000000001",
+  second: "conv-00000000-0000-4000-8000-000000000002",
+  recipient: "conv-00000000-0000-4000-8000-000000000003",
+};
 const computers = [undefined, null, "", " \t", "desktop"];
 test.each(computers)("HTTP send: computer %j", async (computer) => {
   const home = process.env.HOME;
@@ -81,7 +86,7 @@ test.each(computers)("HTTP send: computer %j", async (computer) => {
       lookups.push(options);
       return {
         id,
-        agent_id: id === "conv-first" ? "agent-first" : "agent-recipient",
+        agent_id: id === CONV.first ? "agent-first" : "agent-recipient",
       };
     },
   } as unknown as Backend);
@@ -95,7 +100,7 @@ test.each(computers)("HTTP send: computer %j", async (computer) => {
         prepareToolExecutionContextForSpecificTools(["SendAgentMessage"], {
           runtimeContext: {
             agentId: `agent-${id}`,
-            conversationId: `conv-${id}`,
+            conversationId: CONV[id],
             actingUserId: `user-${id}`,
           },
         }),
@@ -104,7 +109,7 @@ test.each(computers)("HTTP send: computer %j", async (computer) => {
     const selfSend = await executeTool(
       "SendAgentMessage",
       {
-        conversation_id: "conv-first",
+        conversation_id: CONV.first,
         message: "Invoke myself",
         sender_agent_id: "agent-spoofed",
         parentScope: {
@@ -124,7 +129,7 @@ test.each(computers)("HTTP send: computer %j", async (computer) => {
         executeTool(
           "SendAgentMessage",
           {
-            conversation_id: "conv-recipient",
+            conversation_id: CONV.recipient,
             message: `Message ${index}`,
             computer,
             sender_agent_id: "agent-spoofed",
@@ -141,7 +146,7 @@ test.each(computers)("HTTP send: computer %j", async (computer) => {
       expect(result.status).toBe("success");
       expect(JSON.parse(String(result.toolReturn))).toMatchObject({
         status: "queued",
-        conversation_id: "conv-recipient",
+        conversation_id: CONV.recipient,
       });
     }
     expect(requests).toHaveLength(computer === undefined ? 3 : 2);
@@ -155,7 +160,7 @@ test.each(computers)("HTTP send: computer %j", async (computer) => {
     for (const id of ["first", "second"]) {
       const request = requests.find((value) => value.user === `user-${id}`);
       expect(request?.path).toBe(
-        "/v1/conversations/conv-recipient/messages/enqueue",
+        `/v1/conversations/${CONV.recipient}/messages/enqueue`,
       );
       expect(request?.body).toMatchObject({
         agent_id: "agent-recipient",
@@ -173,7 +178,7 @@ test.each(computers)("HTTP send: computer %j", async (computer) => {
             {
               type: "text",
               text: expect.stringContaining(
-                `agent-${id}, conversation conv-${id}`,
+                `agent-${id}, conversation ${CONV[id]}`,
               ),
             },
             { type: "text", text: `Message ${id === "first" ? 0 : 1}` },
@@ -181,7 +186,7 @@ test.each(computers)("HTTP send: computer %j", async (computer) => {
         },
       ]);
       expect(JSON.stringify(request?.body.messages)).toContain(
-        `agent-${id}, conversation conv-${id}`,
+        `agent-${id}, conversation ${CONV[id]}`,
       );
       expect(JSON.stringify(request?.body.messages)).not.toContain(
         "wrong-global",
