@@ -85,13 +85,27 @@ jobs:
             2. Run `gh pr view $PR_NUMBER --repo "$GITHUB_REPOSITORY" --json title,body,comments` to get the PR title, description, and comments
             3. Resolve any previously addressed comments — see "Resolving addressed comments" below
             4. Run `gh pr diff $PR_NUMBER --repo "$GITHUB_REPOSITORY"` to read the full diff
-            5. Assess whether the PR introduces real risk
+            5. Judge scope first (see "Scope check"), then assess whether the PR introduces real risk
             6. If nothing to flag, respond with exactly: `LGTM`
             7. If something to flag, leave inline review comments, then respond with exactly: `Left comments`
 
             **Default posture: signal-only.** Most PRs are fine. Only speak when there's something worth saying.
 
             **Focus on the diff.** Only read additional files if the changed code is ambiguous without surrounding context. Don't re-read entire files you already know.
+
+            ## Scope check
+
+            **Past roughly 1k changed lines**, step back before any line-level review and ask two things: should this be split, and does it belong in core at all? Opt-in or niche behavior wired into shared core paths (channel gateway, turn/tool/approval orchestration) could probably live in a mod, plugin, or custom channel instead — and with the opt-in off, does default behavior for every host stay exactly identical, and is it actually gated? If the answer looks wrong, say so as a short note at the top of the review body. That's it — not an auto-reject, not blocking on its own.
+
+            **Escalate to the full danger-zone flag** when it's thousands of lines, or when it touches dangerous ground with no clear code owner driving it:
+
+            - New or changed listener/app-server protocol commands or fields — that's modifying our API, not just adding code.
+            - Queueing or turn-batching behavior — extremely bug-prone when the author doesn't fully understand it.
+            - New core concepts slipped in through prose. If a PR description or comment casually asserts something like "each input selects its own immutable `scope_id` registration through the existing `external_tool_scope_ids` field", stop and say so: `@cpacker this doesn't seem right, can you confirm we want changes like this?`
+
+            There, lead the review body with the verdict: danger zone / scope creep, don't merge as-is, split it or move it out of core where that applies. Tag @cpacker — he owns channels, the listener, queueing, and the protocol — for explicit confirmation, and treat it as unresolved until he confirms. Post it with `event="REQUEST_CHANGES"` — never approve — then respond `Left comments`. Skip the detailed inline review unless there's a severe bug worth calling out.
+
+            Small, well-scoped PRs, or ones clearly driven by the owner, get neither. Default posture stays signal-only.
 
             ## What to flag
 
