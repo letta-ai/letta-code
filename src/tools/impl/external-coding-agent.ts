@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import type { SubagentConfig, SubagentResult } from "@/agent/subagents";
 import { getCurrentSubagentDepth } from "@/agent/subagents/subagent-depth";
-import { spawnSubagentProcess } from "@/agent/subagents/subagent-process";
+import {
+  spawnManagedWorkloadProcess,
+  spawnSubagentProcess,
+} from "@/agent/subagents/subagent-process";
 import { getMcpScopeAgentId } from "@/mcp-scope";
 import {
   buildMcpServersReminderText,
@@ -236,7 +239,7 @@ async function runProcess(
   command: ExternalCodingAgentCommand,
   options: { cwd: string; env: NodeJS.ProcessEnv; signal?: AbortSignal },
 ): Promise<ExternalCodingAgentProcessResult> {
-  const running = spawnSubagentProcess(
+  const running = spawnManagedWorkloadProcess(
     command.executable,
     command.args,
     options,
