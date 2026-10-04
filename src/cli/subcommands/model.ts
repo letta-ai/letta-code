@@ -17,6 +17,7 @@ import {
   updateAgentLLMConfig,
   updateConversationLLMConfig,
 } from "@/agent/modify";
+import { withReasoningSettings } from "@/agent/reasoning-model-settings";
 import { initializeModelCatalog } from "@/agent/remote-model-catalog";
 import { getBackend } from "@/backend";
 import { settingsManager } from "@/settings-manager";
@@ -485,32 +486,18 @@ async function runModelConfigAction(
         const rawSettings = isRecord(conversation?.model_settings)
           ? conversation.model_settings
           : agent.model_settings;
-        const settings = isRecord(rawSettings) ? { ...rawSettings } : {};
+        const current = isRecord(rawSettings) ? rawSettings : {};
         const reasoningSettings = buildModelSettings(
           handle,
           {
             ...updateArgs,
-            ...(typeof settings.provider_type === "string" && {
-              provider_type: settings.provider_type,
+            ...(typeof current.provider_type === "string" && {
+              provider_type: current.provider_type,
             }),
           },
           backend.capabilities.localModelCatalog,
         );
-        for (const key of [
-          "reasoning",
-          "reasoning_effort",
-          "effort",
-          "thinking",
-          "thinking_config",
-        ]) {
-          if (key in reasoningSettings) {
-            const value = (reasoningSettings as Record<string, unknown>)[key];
-            settings[key] =
-              isRecord(settings[key]) && isRecord(value)
-                ? { ...settings[key], ...value }
-                : value;
-          }
-        }
+        const settings = withReasoningSettings(current, reasoningSettings);
         if (conversation)
           await backend.updateConversation(conversation.id, {
             model_settings: settings,
