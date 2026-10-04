@@ -187,7 +187,11 @@ export class ChannelGateway {
             state,
             delivery,
             automaticRelay,
-            this.runtimeToolScopes.registrationGroups(delivery.runtime, false),
+            // runtime_start replaces prior tools; relay turns hide unscoped ones.
+            this.runtimeToolScopes.registrationGroups(
+              delivery.runtime,
+              !automaticRelay,
+            ),
           );
           return scope;
         } catch (error) {
@@ -411,7 +415,10 @@ export class ChannelGateway {
           state,
           { ...delivery, content: "" },
           active.relayEligible,
-          this.runtimeToolScopes.registrationGroups(delivery.runtime, false),
+          this.runtimeToolScopes.registrationGroups(
+            delivery.runtime,
+            !active.relayEligible,
+          ),
         );
         if (state.active !== active) return;
         active.richDraft =
