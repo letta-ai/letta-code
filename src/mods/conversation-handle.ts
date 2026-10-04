@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { updateModelConfig } from "@/agent/modify";
 import type { Backend } from "@/backend";
 import { loadModConversationHistoryFromBackend } from "@/mods/conversation-history";
@@ -17,6 +18,21 @@ type SendModConversationMessageStream = (
   options?: ModConversationSendMessageOptions & { agentId?: string },
   requestOptions?: ModConversationSendMessageRequestOptions,
 ) => ReturnType<ModConversationHandle["sendMessageStream"]>;
+
+const conversationModelUpdates = new AsyncLocalStorage<Map<string, string>>();
+
+/**
+ * Runs `callback` and reports the conversation-scope model handles that mods
+ * persisted through `updateLlmConfig` while it ran, keyed by conversation ID.
+ * Lets a caller refresh an in-flight request only after a real model switch.
+ */
+export async function trackModConversationModelUpdates<TResult>(
+  callback: () => Promise<TResult>,
+): Promise<{ result: TResult; modelUpdates: ReadonlyMap<string, string> }> {
+  const modelUpdates = new Map<string, string>();
+  const result = await conversationModelUpdates.run(modelUpdates, callback);
+  return { result, modelUpdates };
+}
 
 export function createModConversationHandle(options: {
   agentId?: string | null;
@@ -105,6 +121,9 @@ export function createModConversationHandle(options: {
         { scope: "conversation", conversationId, agentId: options.agentId },
         config,
       );
+      if (config.model) {
+        conversationModelUpdates.getStore()?.set(conversationId, config.model);
+      }
     },
   };
 }
