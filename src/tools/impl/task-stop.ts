@@ -24,7 +24,14 @@ async function cancelRemoteRun(subagentId: string): Promise<TaskStopResult> {
     child?.conversationId === "default" ? child.agentId : child?.conversationId;
   try {
     if (!target) throw new Error("its conversation is not known yet");
-    await getBackend().cancelConversation(target);
+    const results = await getBackend().cancelConversation(target);
+    const outcomes = Object.values(results);
+    if (
+      outcomes.length === 0 ||
+      outcomes.some((status) => status !== "cancelled")
+    ) {
+      throw new Error("Cloud did not cancel every run");
+    }
     return { killed: true, output: "Cancelled the remote run" };
   } catch (error) {
     return {
@@ -45,6 +52,7 @@ export async function task_stop(args: TaskStopArgs): Promise<TaskStopResult> {
       const remote = task.remote
         ? await cancelRemoteRun(task.subagentId)
         : undefined;
+      if (remote && !remote.killed) return remote;
       task.abortController.abort();
       task.error = "Aborted by user";
       await task.completion;
