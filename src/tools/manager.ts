@@ -92,8 +92,8 @@ import {
 import {
   captureSecretRedactions,
   createScrubbedOutputStreamer,
-  extractSecretEnvFromCommand,
   getAmbientRedactionSecrets,
+  resolveSecretEnvFromCommand,
   type ScrubbedOutputStreamer,
   sanitizeOutputLines,
   sanitizeToolReturnContent,
@@ -2245,7 +2245,7 @@ async function executeToolInner(
           typeof command === "string" ||
           (Array.isArray(command) &&
             command.every((part) => typeof part === "string"))
-            ? extractSecretEnvFromCommand(command, scopedAgentId)
+            ? await resolveSecretEnvFromCommand(command, scopedAgentId)
             : {};
         invocationRedactions = captureSecretRedactions(invocationSecrets);
         if (options?.onOutput) {
