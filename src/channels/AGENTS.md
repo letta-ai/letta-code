@@ -27,7 +27,9 @@ or opt-in behavior (reply policies, delivery modes, custom routing) in a mod or
 custom channel instead. Any opt-in feature must leave the default path unchanged
 when it is off, and new channel protocol concepts need the channels owner's
 review ([#4043](https://github.com/letta-ai/letta-code/pull/4043) is the
-cautionary example).
+cautionary example). Bundled platform integrations (Slack, Telegram, WhatsApp,
+etc.) live here for historical reasons and are expected to move out of
+letta-code, so do not add new channel-specific logic to core.
 
 ## Pure logic is shared through package subpaths, transport is not
 
