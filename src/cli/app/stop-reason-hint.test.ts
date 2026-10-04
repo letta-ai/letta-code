@@ -23,6 +23,19 @@ describe("getErrorHintForStopReason", () => {
     expect(hint).toContain("not an account quota or spending cap");
   });
 
+  test("omits the number for a local agent whose output limit is unset", () => {
+    // Local agents expose model_settings.max_tokens through llm_config, and it
+    // is null when the user never set one (e.g. LM Studio on the local backend).
+    const hint = getErrorHintForStopReason(
+      "max_tokens_exceeded",
+      "lmstudio/qwen3-8b",
+      { model_endpoint_type: "openai", max_tokens: null },
+    );
+
+    expect(hint).toContain("its output token limit");
+    expect(hint).not.toMatch(/\d-token/);
+  });
+
   test("keeps the generic feedback hint for other non-provider stop reasons", () => {
     expect(getErrorHintForStopReason("error", null, null)).toBe(
       ERROR_FEEDBACK_HINT,
