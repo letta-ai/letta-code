@@ -15,6 +15,7 @@ import {
   localProviderApiKeyFromRecord,
   removeLocalProviderByName,
   setLocalOAuthProvider,
+  withLocalProviderAuthLock,
 } from "./local-provider-auth-store";
 
 /**
@@ -22,9 +23,10 @@ import {
  * keyed by pi-ai provider id. This makes the Models runtime the credential
  * source of truth: `Models.getAuth()` reads stored keys/OAuth tokens from
  * here and persists OAuth refreshes back through `modify`, which is
- * serialized per provider as the contract requires so concurrent requests
- * cannot double-refresh a rotated token. (auth.json writes are same-process
- * only today; cross-process locking would live in the auth store itself.)
+ * serialized as the contract requires so concurrent requests cannot
+ * double-refresh a rotated token. Serialization is per provider within a
+ * process and, through a lock file next to auth.json, across every process
+ * sharing the storage dir (e.g. a channel listener and an App Server).
  *
  * Records store more than credentials (base URLs, timeouts, regions) —
  * that remains Letta-owned provider config; only the credential facet is
@@ -91,11 +93,14 @@ export function createLocalPiCredentialStore(
 ): CredentialStore {
   // Per-provider mutation queue: `modify`/`delete` for the same provider run
   // strictly in sequence (the pi-ai contract's serialized read-modify-write).
+  // The queue keeps same-process callers off the file lock; the file lock
+  // serializes against other processes sharing auth.json.
   const mutationQueues = new Map<string, Promise<unknown>>();
   function serialized<T>(
     providerId: string,
-    run: () => Promise<T>,
+    body: () => Promise<T>,
   ): Promise<T> {
+    const run = () => withLocalProviderAuthLock(body, storageDir);
     const previous = mutationQueues.get(providerId) ?? Promise.resolve();
     const next = previous.then(run, run);
     mutationQueues.set(
