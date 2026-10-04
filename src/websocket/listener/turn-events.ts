@@ -11,7 +11,10 @@ import {
   AUTO_REFLECTION_DESCRIPTION,
   launchReflectionSubagent,
 } from "@/cli/helpers/reflection-launcher";
-import { getTurnStartCancel } from "@/mods/turn-start-cancel";
+import {
+  getTurnStartCancel,
+  getTurnStartCancelSource,
+} from "@/mods/turn-start-cancel";
 import { settingsManager } from "@/settings-manager";
 import { getListenerTelemetrySurface } from "@/telemetry";
 import type { StreamDelta } from "@/types/protocol_v2";
@@ -80,7 +83,11 @@ export async function emitListenerTurnStart(options: {
     );
     const cancel = getTurnStartCancel(event);
     if (cancel) {
-      return { cancelled: true, reason: cancel.reason };
+      const source = getTurnStartCancelSource(event);
+      const reason = source
+        ? `${cancel.reason}\n\nCancelled by mod \`${source.path}\`. Edit or remove it, then run /reload.`
+        : cancel.reason;
+      return { cancelled: true, reason };
     }
     return {
       cancelled: false,
