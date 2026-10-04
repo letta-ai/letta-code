@@ -16,6 +16,7 @@ import {
   PROVIDERS_ONLY_MOD_CAPABILITY_PROFILE,
 } from "@/mods/capabilities";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { trackBoundaryError } from "@/telemetry/error-reporting";
 import {
   resolveEntryScriptPath,
   resolveLettaInvocation,
@@ -31,6 +32,7 @@ import {
   SUBAGENT_NAME_ENV,
 } from "@/utils/subagent-launch-marker";
 import { TRANSCRIPT_ROOT_ENV } from "@/utils/transcript-paths";
+import { getActiveRuntime } from "@/websocket/listener/runtime";
 import type { SubagentLaunchProfile, SubagentMemoryScope } from ".";
 import { MEMORY_WORKER_SESSION_ENV } from "./memory-worker-session";
 
@@ -283,9 +285,41 @@ export function composeSubagentChildEnv(
     }
   } else if (listenerConnectionId?.startsWith("conn-")) {
     childEnv[LISTENER_CONNECTION_ENV] = listenerConnectionId;
+  } else if (
+    isUnattachedListenerLaunch({
+      listenerConnectionId,
+      launchProfile,
+      listenerConnectionCount: getActiveRuntime()?.connections.size ?? 0,
+    })
+  ) {
+    // A direct-API child inside a listener is unowned; later sends to it
+    // start a second harness on its conversation.
+    trackBoundaryError({
+      errorType: "subagent_launch_missing_listener_connection",
+      error: new Error(
+        "Subagent launched in a listener without its connection",
+      ),
+      context: "subagent_launch",
+    });
   }
 
   return childEnv;
+}
+
+/**
+ * A child launched inside a running listener but without its connection would
+ * fall back to a direct-API process that no listener owns.
+ */
+export function isUnattachedListenerLaunch(options: {
+  listenerConnectionId?: string | null;
+  launchProfile?: string;
+  listenerConnectionCount: number;
+}): boolean {
+  return (
+    !options.listenerConnectionId &&
+    options.launchProfile !== "memory-subagent" &&
+    options.listenerConnectionCount > 0
+  );
 }
 
 export function shouldLaunchThroughListener(options: {

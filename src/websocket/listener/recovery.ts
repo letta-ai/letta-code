@@ -18,6 +18,7 @@ import { drainStreamWithResume } from "@/cli/helpers/stream";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import type { StopReasonType, StreamDelta } from "@/types/protocol_v2";
 import { normalizeCloudRetryWireMessage } from "./cloud-retry-message";
+import { resolveTurnExecutionConnectionId } from "./connection";
 import {
   LISTENER_STREAM_RESUME_POLICY,
   MAX_POST_STOP_APPROVAL_RECOVERY,
@@ -552,6 +553,11 @@ async function executeRecoveredApprovalContinuation(params: {
         return;
       }
       const preparedToolContext = await prepareToolExecutionContext({
+        connectionId: resolveTurnExecutionConnectionId(
+          runtime.listener,
+          scope,
+          opts?.connectionId,
+        ),
         agentId: recovered.agentId,
         conversationId: recovered.conversationId,
         workingDirectory,
