@@ -19,6 +19,10 @@ import {
 } from "@/utils/task-notifications.js";
 import { noteExpectedWorktreeForLauncher } from "@/websocket/listener/worktree-ownership";
 import {
+  commandRunsForegroundSleep,
+  FOREGROUND_SLEEP_BLOCKED_MESSAGE,
+} from "./foreground-sleep.js";
+import {
   appendBackgroundProcessOutput,
   appendToOutputFile,
   assertBackgroundProcessCapacity,
@@ -367,6 +371,13 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     return {
       content: [{ type: "text", text: output.trim() }],
       status: "success",
+    };
+  }
+
+  if (!run_in_background && commandRunsForegroundSleep(command)) {
+    return {
+      content: [{ type: "text", text: FOREGROUND_SLEEP_BLOCKED_MESSAGE }],
+      status: "error",
     };
   }
 
