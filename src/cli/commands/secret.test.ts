@@ -208,7 +208,7 @@ describe("/secret command", () => {
 
     expect(secondList.output).toContain("No secrets stored.");
     expect(
-      extractSecretEnvFromCommand("echo $API_TOKEN", secondAgentId),
+      await extractSecretEnvFromCommand("echo $API_TOKEN", secondAgentId),
     ).toEqual({});
 
     setCurrentAgentId(firstAgentId);
@@ -217,7 +217,7 @@ describe("/secret command", () => {
 
     expect(firstList.output).toContain("$API_TOKEN");
     expect(
-      extractSecretEnvFromCommand("echo $API_TOKEN", firstAgentId),
+      await extractSecretEnvFromCommand("echo $API_TOKEN", firstAgentId),
     ).toEqual({ API_TOKEN: "first-secret" });
     expect(
       scrubSecretsFromString("value=first-secret", {

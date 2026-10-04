@@ -2245,7 +2245,7 @@ async function executeToolInner(
           typeof command === "string" ||
           (Array.isArray(command) &&
             command.every((part) => typeof part === "string"))
-            ? extractSecretEnvFromCommand(command, scopedAgentId)
+            ? await extractSecretEnvFromCommand(command, scopedAgentId)
             : {};
         invocationRedactions = captureSecretRedactions(invocationSecrets);
         if (options?.onOutput) {
