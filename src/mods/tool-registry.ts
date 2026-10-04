@@ -19,6 +19,8 @@ type GlobalWithModTools = typeof globalThis & {
 
 export interface ModToolDefinition extends ModTool {
   activationSignal: AbortSignal;
+  /** Set on per-engine registry rows when this engine registered the global map. */
+  installedProcessGlobal?: boolean;
   recordDiagnostic?: (
     diagnostic: Pick<
       ModDiagnostic,
