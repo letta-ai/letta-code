@@ -8,6 +8,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { __testSetBackend, type Backend } from "@/backend";
 import { truncateHookFeedback } from "@/hooks/executor";
 import type { ModToolEndEvent } from "@/mods/types";
 import { settingsManager } from "@/settings-manager";
@@ -127,6 +128,99 @@ describe("scoped secret helpers", () => {
     expect(scrubSecretsFromString(SECRET_B, { [SECRET_KEY]: SECRET_A })).toBe(
       SECRET_B,
     );
+  });
+});
+
+describe("subagent secret inheritance", () => {
+  const PARENT_ONLY_KEY = "WS_PARENT_ONLY_TOKEN";
+  const PARENT_ONLY_VALUE = "parentonlysecret";
+  let lookups: string[] = [];
+
+  beforeEach(() => {
+    lookups = [];
+    __testSetBackend({
+      retrieveAgent: async (agentId: string) => {
+        lookups.push(agentId);
+        return agentId === AGENT_A
+          ? { tags: ["role:subagent", `parent:${AGENT_B}`] }
+          : { tags: [] };
+      },
+    } as unknown as Backend);
+    __testSeedSecretsCache(AGENT_A, { [SECRET_KEY]: SECRET_A });
+    __testSeedSecretsCache(AGENT_B, {
+      [SECRET_KEY]: SECRET_B,
+      [PARENT_ONLY_KEY]: PARENT_ONLY_VALUE,
+    });
+  });
+
+  afterEach(() => {
+    __testSetBackend(null);
+  });
+
+  async function runBash(script: string, subagent: boolean): Promise<string> {
+    const runtimeScript = createTempRuntimeScriptCommand(script);
+    const prepared = await prepareToolExecutionContextForSpecificTools(
+      ["Bash"],
+      {
+        runtimeContext: {
+          agentId: AGENT_A,
+          workingDirectory: process.cwd(),
+          // Always scoped so the test ignores any ambient subagent env.
+          executionSettings: {
+            allowed_tools: [],
+            disallowed_tools: [],
+            disable_memory_guard: false,
+            ...(subagent && {
+              agent_role: "subagent" as const,
+              parent_agent_id: AGENT_B,
+            }),
+          },
+        },
+        workingDirectory: process.cwd(),
+      },
+    );
+    try {
+      const result = await executeTool(
+        "Bash",
+        {
+          command: `${runtimeScript.command} $${PARENT_ONLY_KEY} $${SECRET_KEY}`,
+          timeout: 5000,
+        },
+        { toolContextId: prepared.contextId },
+      );
+      expect(result.status).toBe("success");
+      return asText(result.toolReturn);
+    } finally {
+      releaseToolExecutionContext(prepared.contextId);
+      runtimeScript.cleanup();
+    }
+  }
+
+  test("a subagent resolves a parent-only secret and scrubs it from output", async () => {
+    const text = await runBash(
+      `const v = process.env.${PARENT_ONLY_KEY}; process.stdout.write((v === ${JSON.stringify(PARENT_ONLY_VALUE)} ? 'inherited ' : 'missing ') + (v ?? ''))`,
+      true,
+    );
+    expect(text).toContain("inherited");
+    expect(text).toContain(`${PARENT_ONLY_KEY}=<REDACTED>`);
+    expect(text).not.toContain(PARENT_ONLY_VALUE);
+  });
+
+  test("the subagent's own secret overrides the parent's", async () => {
+    const text = await runBash(
+      `process.stdout.write(process.env.${SECRET_KEY} === ${JSON.stringify(SECRET_A)} ? 'own' : 'parent')`,
+      true,
+    );
+    expect(text).toContain("own");
+  });
+
+  test("a non-subagent agent does not inherit secrets", async () => {
+    const text = await runBash(
+      `process.stdout.write(process.env.${PARENT_ONLY_KEY} ? 'inherited' : 'missing')`,
+      false,
+    );
+    expect(text).toContain("missing");
+    expect(lookups).toEqual([]);
   });
 });
 

@@ -4,8 +4,9 @@
 
 import stripAnsi from "strip-ansi";
 import { getDesktopAccessToken } from "@/auth/desktop-credentials";
+import { getMcpScopeAgentId, lookupParentAgent } from "@/mcp-scope";
 import { settingsManager } from "@/settings-manager";
-import { loadSecrets } from "@/utils/secrets-store";
+import { ensureSecretsLoaded, loadSecrets } from "@/utils/secrets-store";
 
 /**
  * Pattern to match $SECRET_NAME references where SECRET_NAME is uppercase with
@@ -52,6 +53,52 @@ export function extractSecretEnvFromCommand(
   }
 
   return env;
+}
+
+// Parent tags are persisted at subagent creation, so memoize lookups to keep
+// ordinary `$PATH`-style references from costing a roundtrip per command.
+const parentLookups = new Map<string, Promise<string | undefined>>();
+function cachedLookupParentAgent(agentId: string) {
+  let lookup = parentLookups.get(agentId);
+  if (!lookup) {
+    lookup = lookupParentAgent(agentId);
+    lookup.catch(() => parentLookups.delete(agentId));
+    parentLookups.set(agentId, lookup);
+  }
+  return lookup;
+}
+
+/**
+ * Like extractSecretEnvFromCommand, but a subagent falls back to the vault of
+ * the agent it inherits MCP from (same parent linkage and trust boundary as
+ * getMcpScopeAgentId). The subagent's own secrets win; non-subagents are
+ * unchanged.
+ */
+export async function resolveSecretEnvFromCommand(
+  command: string | readonly string[],
+  agentId?: string,
+): Promise<Record<string, string>> {
+  const own = extractSecretEnvFromCommand(command, agentId);
+  const parts = typeof command === "string" ? [command] : command;
+  const missing = parts.some((part) =>
+    [...part.matchAll(SECRET_PATTERN)].some(
+      (match) => match[1] !== undefined && !(match[1] in own),
+    ),
+  );
+  if (!agentId || !missing) return own;
+  try {
+    const scopeAgentId = await getMcpScopeAgentId(
+      agentId,
+      undefined,
+      cachedLookupParentAgent,
+    );
+    if (scopeAgentId === agentId) return own;
+    await ensureSecretsLoaded(scopeAgentId);
+    return { ...extractSecretEnvFromCommand(command, scopeAgentId), ...own };
+  } catch {
+    // Unresolvable parent linkage never widens access; keep own secrets only.
+    return own;
+  }
 }
 
 /**

@@ -7,7 +7,9 @@ export type ParentAgentLookup = (
   agentId: string,
 ) => Promise<string | undefined>;
 
-async function lookupParentAgent(agentId: string): Promise<string | undefined> {
+export async function lookupParentAgent(
+  agentId: string,
+): Promise<string | undefined> {
   const agent = await getBackend().retrieveAgent(agentId, {
     include: ["agent.tags"],
   });
