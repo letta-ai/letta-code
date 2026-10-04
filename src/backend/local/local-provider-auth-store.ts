@@ -1,8 +1,13 @@
+import { randomUUID } from "node:crypto";
 import {
-  chmodSync,
+  closeSync,
   existsSync,
+  fsyncSync,
   mkdirSync,
+  openSync,
   readFileSync,
+  renameSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
@@ -113,11 +118,25 @@ function readAuthFile(storageDir?: string): LocalProviderAuthFile {
 function writeAuthFile(file: LocalProviderAuthFile, storageDir?: string): void {
   const path = getLocalProviderAuthPath(storageDir);
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  writeFileSync(path, `${JSON.stringify(file, null, 2)}\n`, {
-    encoding: "utf8",
-    mode: 0o600,
-  });
-  chmodSync(path, 0o600);
+  // Publish a complete snapshot: readers in other processes never see a
+  // half-written file, and a failed write leaves the previous file intact.
+  const temporaryPath = `${path}.${randomUUID()}.tmp`;
+  const fd = openSync(temporaryPath, "wx", 0o600);
+  try {
+    try {
+      writeFileSync(fd, `${JSON.stringify(file, null, 2)}\n`, "utf8");
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    renameSync(temporaryPath, path);
+  } finally {
+    try {
+      unlinkSync(temporaryPath);
+    } catch {
+      // Usually already renamed. Cleanup must not mask a failed write/rename.
+    }
+  }
 }
 
 function providerId(providerName: string): string {
