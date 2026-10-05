@@ -1,4 +1,4 @@
-#!/usr/bin/env tsx
+#!/usr/bin/env node
 import { existsSync, readFileSync } from "node:fs";
 
 type Args = Record<string, string | boolean>;
