@@ -50,8 +50,10 @@ If a broken model or prompt prevents the agent from completing a turn, recover o
 Local settings, server state, and the current process are different sources of truth. Inspect the layer you intend to change before writing it.
 
 - `letta model list [--byok | --hosted]` lists available models.
-- `letta model set [model_handle] [--reasoning <reasoning-option>] [--default]` changes the current conversation's model or reasoning; add `--default` only when the user asks for the agent default.
-- `letta model get [--default]` gets the current model configuration; `--default` gets the agent's default configuration.
+- `letta model set [model_handle] [--reasoning <reasoning-option>] [--model-settings <json>] [--default]` changes the current conversation's model, reasoning, or individual `model_settings` fields; add `--default` only when the user asks for the agent default.
+- `letta model get [--default]` gets the current model configuration, including the full redacted `model_settings`; `--default` gets the agent's default configuration.
+
+`letta model` reads and writes through the active backend, so it works the same on every backend. Prefer it over the REST helper scripts for anything model-related.
 
 ### Account credits and model quota
 
@@ -77,14 +79,12 @@ Use the secret-safe local/runtime report for harness settings, permissions, and 
 python3 <SKILL_DIR>/scripts/show_config.py --cwd "$PWD"
 ```
 
-Before changing server state, the targeted helper can also read either scope without printing full system prompts or credentials:
+Read each model scope with `letta model get` before changing it:
 
 ```bash
-npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts \
-  --target agent --agent-id "$AGENT_ID" --show
-
-npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts \
-  --target conversation --conversation-id "$CONVERSATION_ID" --show
+letta model get                               # current conversation (or agent if none)
+letta model get --default                     # agent default
+letta model get --conversation "$CONVERSATION_ID"
 ```
 
 Do not infer an agent default from one conversation or infer a conversation override from the agent. Report both when diagnosing model or context differences.
@@ -116,7 +116,27 @@ Do not use API system-prompt replacement for ordinary learning. That can clobber
 
 ## Server-side agent and conversation settings
 
-Server fields control model execution and agent metadata. Use the conversation endpoint for model changes. Use the agent endpoint only when the user asks for the agent default.
+Server fields control model execution and agent metadata. Change the current conversation for model changes. Change the agent default only when the user asks for it.
+
+### Model and model settings
+
+Use `letta model` for the model handle, reasoning level, and any `model_settings` field (for example the output-token limit, `temperature`, or `parallel_tool_calls`). It goes through the active backend, so it needs no extra credentials or base URL.
+
+```bash
+letta model set "openai/gpt-5.2"                          # select a model (applies its defaults)
+letta model set --reasoning high                          # change reasoning only
+letta model set --model-settings '{"max_tokens":16384}'          # use the key `letta model get` shows
+letta model set --model-settings '{"temperature":0.2}' --default   # agent default
+letta model get                                           # verify
+```
+
+`--model-settings` takes a JSON object and shallow-merges it into the target's current `model_settings` (the conversation override when a conversation is targeted, otherwise the agent default). It keeps the model and every field you do not name. Keys are written as given, so use the field names that `letta model get` shows for the target; for example the output-token limit is stored as `max_tokens` on some backends and `max_output_tokens` on others. Nested objects such as `reasoning` are replaced as a whole, so include every nested key you want to keep. With a handle or `--reasoning`, the model selection is applied first and the given fields are merged on top. Selecting a new handle resets settings to that model's defaults, so reapply custom fields in the same command if needed.
+
+Provider reasoning fields differ. Read [`references/model-settings.md`](references/model-settings.md) before changing reasoning or provider-specific settings.
+
+### REST helper for other fields
+
+`scripts/update-agent-settings.ts` covers fields `letta model` does not: `context_window_limit`, name, description, and system prompt replacement. It talks to the REST API at `LETTA_BASE_URL` and requires `LETTA_API_KEY`, so it only works against a server that exposes the REST API; it does not work on the embedded local backend.
 
 Required environment for live API writes:
 
@@ -135,13 +155,12 @@ The scripts in this skill default to `AGENT_ID`, `CONVERSATION_ID`, and `LETTA_B
 npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts --help
 ```
 
-Patch the current conversation for a model/settings change:
+Patch the current conversation's context window limit:
 
 ```bash
 npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts \
   --target conversation \
   --conversation-id "$CONVERSATION_ID" \
-  --model "openai/gpt-5.2" \
   --context-window-limit 64000 \
   --dry-run
 ```
@@ -152,7 +171,6 @@ Patch the agent default only when the user asks for it:
 npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts \
   --target agent \
   --agent-id "$AGENT_ID" \
-  --model "openai/gpt-5.2" \
   --context-window-limit 64000
 ```
 
@@ -176,31 +194,7 @@ npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts \
   --dry-run
 ```
 
-Do not patch `llm_config` directly. Use `model`, `context_window_limit`, and `model_settings`. For metadata, use `name` and `description`. Then read back the agent or conversation and verify the returned `llm_config.context_window`, `model_settings`, and metadata fields.
-
-### Model settings
-
-`model_settings` is usually replacement-style. Fetch the current object first and preserve fields you still need, or pass `--merge-model-settings`. Merge dry runs fetch current state and require `LETTA_API_KEY` because they preview preserved fields, not just the local patch fragment.
-
-```bash
-cat > /tmp/model-settings.json <<'JSON'
-{
-  "provider_type": "openai",
-  "parallel_tool_calls": true,
-  "reasoning": { "reasoning_effort": "medium" }
-}
-JSON
-
-npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts \
-  --target agent \
-  --agent-id "$AGENT_ID" \
-  --model "openai/gpt-5.2" \
-  --model-settings-file /tmp/model-settings.json \
-  --merge-model-settings \
-  --dry-run
-```
-
-Provider reasoning fields differ. Read [`references/model-settings.md`](references/model-settings.md) before changing reasoning or provider-specific settings.
+Do not patch `llm_config` directly. Use `letta model` for the model and `model_settings`, `context_window_limit` for the context limit, and `name`/`description` for metadata. Then read back the agent or conversation (`letta model get` for model fields) and verify the result.
 
 ### Compaction settings
 
@@ -447,7 +441,7 @@ Do not start a second listener for the same channel accounts merely to apply new
 
 | Script | Purpose |
 | --- | --- |
-| `scripts/update-agent-settings.ts` | Show or patch agent/conversation server settings safely |
+| `scripts/update-agent-settings.ts` | Show or patch REST-only agent/conversation fields (context limit, name, description, system prompt); needs a REST server and `LETTA_API_KEY` |
 | `scripts/update-compaction-prompt.ts` | Preserve existing compaction settings while replacing the prompt |
 | `scripts/add_permission.py` | Add allow/deny/ask/alwaysAsk rules to a chosen settings scope |
 | `scripts/show_config.py` | Show runtime/local settings without dumping secret values |

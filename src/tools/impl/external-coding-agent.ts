@@ -1,13 +1,20 @@
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import type { SubagentConfig, SubagentResult } from "@/agent/subagents";
-import { spawnSubagentProcess } from "@/agent/subagents/subagent-process";
+import { getCurrentSubagentDepth } from "@/agent/subagents/subagent-depth";
+import {
+  spawnManagedWorkloadProcess,
+  spawnSubagentProcess,
+} from "@/agent/subagents/subagent-process";
+import { getMcpScopeAgentId } from "@/mcp-scope";
 import {
   buildMcpServersReminderText,
   listMcpServersForAgent,
+  type McpServersReminderDependencies,
 } from "@/reminders/engine";
 import { createSharedReminderState } from "@/reminders/state";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { SUBAGENT_DEPTH_ENV } from "@/utils/subagent-depth-env";
 import { runClaudeTurn } from "./claude-stream-session";
 import { runCodexTurn } from "./codex-app-server";
 import {
@@ -173,20 +180,22 @@ export function buildExternalCodingAgentMcpReminder(
 
 /**
  * Resolve the parent agent's MCP servers into the discovery reminder passed to
- * an external coding agent. Returns undefined when inheritance is not
- * requested; throws when the inventory cannot be read.
+ * an external coding agent. Inherits by default; explicit false disables the
+ * reminder. Throws when the inventory cannot be read.
  */
 export async function resolveExternalCodingAgentMcpReminder(
   parentAgentId: string,
   mcp: ExternalCodingAgentMcpOptions | undefined,
+  deps: McpServersReminderDependencies = {},
 ): Promise<string | undefined> {
-  if (!mcp?.inherit) return undefined;
+  if (mcp?.inherit === false) return undefined;
   const inventory = await listMcpServersForAgent(
-    parentAgentId,
+    await getMcpScopeAgentId(parentAgentId, undefined, deps.lookupParentAgent),
     createSharedReminderState(),
+    deps,
   );
   return buildExternalCodingAgentMcpReminder(
-    selectExternalCodingAgentMcpEntries(inventory, mcp.servers),
+    selectExternalCodingAgentMcpEntries(inventory, mcp?.servers),
   );
 }
 
@@ -230,7 +239,7 @@ async function runProcess(
   command: ExternalCodingAgentCommand,
   options: { cwd: string; env: NodeJS.ProcessEnv; signal?: AbortSignal },
 ): Promise<ExternalCodingAgentProcessResult> {
-  const running = spawnSubagentProcess(
+  const running = spawnManagedWorkloadProcess(
     command.executable,
     command.args,
     options,
@@ -375,6 +384,10 @@ export async function runExternalCodingAgent(
     ...(deps.env ?? process.env),
     AGENT_ID: options.parentAgentId,
     LETTA_AGENT_ID: options.parentAgentId,
+    LETTA_PARENT_AGENT_ID: options.parentAgentId,
+    LETTA_CODE_AGENT_ROLE: "subagent",
+    // A Letta CLI launched from the worker's shell stays inside the depth bound.
+    [SUBAGENT_DEPTH_ENV]: String(getCurrentSubagentDepth() + 1),
   };
   const cwd = options.cwd ?? getCurrentWorkingDirectory();
   const scope = options.parentConversationId

@@ -391,8 +391,14 @@ function resolveQueuePumpTransport(
         connection.writer.kind === "local" &&
         isListenerTransportOpen(connection.writer),
     );
+    // Only client-sent input waits for a subscriber. Process-originated work
+    // (cron, task notifications) has no client waiting to receive its echo.
+    const hasClientInput = runtime.queueRuntime
+      .peekReady()
+      .some((item) => item.source === "user");
     if (
       !localConnection &&
+      hasClientInput &&
       getSubscribedListenerConnections(runtime.listener, {
         agent_id: runtime.agentId,
         conversation_id: runtime.conversationId,

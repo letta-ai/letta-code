@@ -5,7 +5,7 @@ import type { Writable } from "node:stream";
 import type { SubagentResult } from "@/agent/subagents";
 import {
   type RunningSubagentProcess,
-  spawnSubagentProcess,
+  spawnManagedWorkloadProcess,
 } from "@/agent/subagents/subagent-process";
 
 export interface ClaudeSessionTransport {
@@ -139,7 +139,7 @@ function createTransport(options: {
   env: NodeJS.ProcessEnv;
   signal?: AbortSignal;
 }): RunningSubagentProcess {
-  return spawnSubagentProcess("claude", options.args, options);
+  return spawnManagedWorkloadProcess("claude", options.args, options);
 }
 
 function successResult(session: ClaudeSession): SubagentResult {

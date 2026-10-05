@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -214,4 +214,25 @@ test("memoryScope confines a reflection subagent to an exact worktree plus git m
       value.replace(/^\d+=/, ""),
     ),
   ).toContain(canonicalizeRoot("/home/u/.letta/agents/parent"));
+});
+
+test("an inherited scratchpad outside ~/.letta stays writable", () => {
+  const parent = mkdtempSync(join(tmpdir(), "memory-sandbox-scratch-"));
+  const scratchpad = join(parent, "scratch");
+  try {
+    const result = wrapSubagentLauncher({
+      ...baseInput(),
+      scratchpadDir: scratchpad,
+    });
+    expect(result).not.toBeNull();
+    // Created up front so bwrap's --bind-try does not skip it.
+    expect(existsSync(scratchpad)).toBe(true);
+    expect(
+      defineValues(result?.args ?? [], "-DBASEWRITABLE_").map((value) =>
+        value.replace(/^\d+=/, ""),
+      ),
+    ).toContain(canonicalizeRoot(scratchpad));
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+  }
 });

@@ -2,6 +2,7 @@ import { spawn as nodeSpawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
 import type { SubagentResult } from "@/agent/subagents";
+import { wrapManagedWorkloadLauncher } from "@/utils/systemd-workload-scope";
 
 declare const LETTA_VERSION: string | undefined;
 
@@ -97,7 +98,11 @@ function spawnTransport(options: {
   cwd: string;
   env: NodeJS.ProcessEnv;
 }): CodexAppServerTransport {
-  const child = nodeSpawn("codex", ["app-server", "--stdio"], {
+  const [command = "codex", ...args] = wrapManagedWorkloadLauncher(
+    ["codex", "app-server", "--stdio"],
+    { env: options.env },
+  );
+  const child = nodeSpawn(command, args, {
     cwd: options.cwd,
     env: options.env,
     stdio: ["pipe", "pipe", "pipe"],
@@ -379,7 +384,12 @@ async function createSession(
     await client.initialize();
     const method = options.resumeThreadId ? "thread/resume" : "thread/start";
     const params = options.resumeThreadId
-      ? { threadId: options.resumeThreadId }
+      ? {
+          threadId: options.resumeThreadId,
+          ...(options.mcpReminder
+            ? { developerInstructions: options.mcpReminder }
+            : {}),
+        }
       : {
           cwd: options.cwd,
           model: options.model,

@@ -27,7 +27,12 @@ import {
 import { createRuntime } from "./lifecycle";
 import { getOutboundQueueStats, OUTBOUND_QUEUE_LIMITS } from "./outbound-wire";
 import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
-import { setActiveRuntime } from "./runtime";
+import { shouldProcessInboundMessageDirectly } from "./queue";
+import {
+  evictConversationRuntimeIfIdle,
+  getConversationRuntime,
+  setActiveRuntime,
+} from "./runtime";
 import { handleApprovalStop } from "./turn-approval";
 import { createTurnInputState } from "./turn-input-state";
 import type { StartListenerOptions } from "./types";
@@ -710,4 +715,192 @@ test("direct remote turn follows the replacement WS pair after reconnect", async
   expect(branchResult?.kind).toBe("terminal");
   expect(executeApprovalBatch).toHaveBeenCalledTimes(1);
   expect(sendApprovalContinuation).toHaveBeenCalledTimes(1);
+});
+
+test("direct turn dispatched during previous turn cleanup keeps reporting its loop status", async () => {
+  const listener = createRuntime();
+  setActiveRuntime(listener);
+  const socket = new MockSocket();
+  openListenerConnection({
+    runtime: listener,
+    connectionId: "sdk",
+    writer: socket as never,
+    options: makeOptions("sdk"),
+  });
+  markListenerConnectionInitialized(listener, "sdk");
+  const scope = { agent_id: "agent-1", conversation_id: "conversation-1" };
+  subscribeListenerConnection(listener, "sdk", scope);
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    scope.agent_id,
+    scope.conversation_id,
+  );
+
+  // Turn A mirrors handleIncomingMessage: terminal transition, then awaited
+  // post-turn cleanup, then evictConversationRuntimeIfIdle (turn.ts finally).
+  let releaseCleanup!: () => void;
+  const cleanupGate = new Promise<void>((resolve) => {
+    releaseCleanup = resolve;
+  });
+  let turnAFinished = false;
+  dispatchInboundMessageWhenReady({
+    listener,
+    runtime,
+    incoming: {
+      type: "message",
+      connectionId: "sdk",
+      agentId: scope.agent_id,
+      conversationId: scope.conversation_id,
+      messages: [{ role: "user", content: "turn A" }],
+    },
+    socket: socket as never,
+    options: makeOptions("sdk"),
+    processQueuedTurn: mock(async () => {}),
+    processIncomingMessage: mock(async () => {
+      const lease = runtime.turnLifecycle.begin({
+        origin: "message",
+        workingDirectory: process.cwd(),
+      });
+      runtime.turnLifecycle.finish(lease, "end_turn");
+      turnAFinished = true;
+      await cleanupGate;
+      evictConversationRuntimeIfIdle(runtime);
+    }),
+    trackListenerError: mock(() => {}),
+  });
+  await waitFor(() => turnAFinished, "turn A did not finish");
+
+  // Turn B arrives while A is still in cleanup. The router resolves the same
+  // runtime and, because the lifecycle is idle, routes it directly.
+  const scopedRuntime = getOrCreateScopedRuntime(
+    listener,
+    scope.agent_id,
+    scope.conversation_id,
+  );
+  expect(scopedRuntime).toBe(runtime);
+  const incomingB = {
+    type: "message" as const,
+    connectionId: "sdk",
+    agentId: scope.agent_id,
+    conversationId: scope.conversation_id,
+    messages: [{ role: "user" as const, content: "printf MARKER" }],
+  };
+  expect(shouldProcessInboundMessageDirectly(scopedRuntime, incomingB)).toBe(
+    true,
+  );
+
+  const approval = {
+    toolCallId: "exec-marker",
+    toolName: "Bash",
+    toolArgs: JSON.stringify({ command: "printf MARKER" }),
+  };
+  let releaseTool!: () => void;
+  const toolGate = new Promise<void>((resolve) => {
+    releaseTool = resolve;
+  });
+  let toolRunning = false;
+  let loopStatusDuringTool: string[] = [];
+  const statusFrames = () =>
+    socket.sent
+      .filter(
+        (message) =>
+          (message as { type?: string }).type === "update_loop_status",
+      )
+      .map(
+        (message) =>
+          (message as { loop_status: { status: string } }).loop_status.status,
+      );
+  dispatchInboundMessageWhenReady({
+    listener,
+    runtime: scopedRuntime,
+    incoming: incomingB,
+    socket: socket as never,
+    options: makeOptions("sdk"),
+    processQueuedTurn: mock(async () => {}),
+    processIncomingMessage: mock(
+      async (_incoming, turnTransport, turnRuntime) => {
+        const turnLease = turnRuntime.turnLifecycle.begin({
+          origin: "message",
+          workingDirectory: process.cwd(),
+          initialStatus: "PROCESSING_API_RESPONSE",
+        });
+        turnRuntime.turnLifecycle.setRunId(turnLease, "run-b");
+        const framesBeforeTool = statusFrames().length;
+        await handleApprovalStop({
+          approvals: [approval],
+          runtime: turnRuntime,
+          socket: turnTransport,
+          agentId: scope.agent_id,
+          conversationId: scope.conversation_id,
+          turnWorkingDirectory: process.cwd(),
+          turnPermissionModeState:
+            getOrCreateConversationPermissionModeStateRef(
+              listener,
+              scope.agent_id,
+              scope.conversation_id,
+            ),
+          dequeuedBatchId: "batch-b",
+          runId: "run-b",
+          msgRunIds: ["run-b"],
+          turnInput: createTurnInputState([]),
+          pendingNormalizationInterruptedToolCallIds: [],
+          turnToolContextId: null,
+          turnLease,
+          buildSendOptions: () => ({ streamTokens: true }),
+          dependencies: {
+            classifyApprovals: mock(async () => ({
+              autoAllowed: [
+                {
+                  approval,
+                  permission: { decision: "allow" },
+                  context: null,
+                  parsedArgs: { command: "printf MARKER" },
+                },
+              ],
+              autoDenied: [],
+              needsUserInput: [],
+            })),
+            executeApprovalBatch: mock(async () => {
+              toolRunning = true;
+              loopStatusDuringTool = statusFrames().slice(framesBeforeTool);
+              await toolGate;
+              return [
+                {
+                  type: "tool" as const,
+                  tool_call_id: approval.toolCallId,
+                  status: "success" as const,
+                  tool_return: "MARKER",
+                },
+              ] satisfies ApprovalResult[];
+            }),
+            ensureSecretsHydrated: mock(async () => {}),
+            sendApprovalContinuation: mock(async () => ({
+              kind: "terminal" as const,
+              drainResult: {
+                stopReason: "end_turn" as const,
+                apiDurationMs: 0,
+              },
+            })),
+            waitForApprovalTransportOpen: mock(
+              async (): Promise<"open" | "interrupted"> => "open",
+            ),
+          } as never,
+        });
+        turnRuntime.turnLifecycle.finish(turnLease, "end_turn");
+      },
+    ),
+    trackListenerError: mock(() => {}),
+  });
+
+  releaseCleanup();
+  await waitFor(() => toolRunning, "turn B tool did not start");
+
+  expect(loopStatusDuringTool).toContain("EXECUTING_CLIENT_SIDE_TOOL");
+  expect(loopStatusDuringTool).not.toContain("WAITING_ON_INPUT");
+  expect(
+    getConversationRuntime(listener, scope.agent_id, scope.conversation_id),
+  ).toBe(runtime);
+
+  releaseTool();
+  await runtime.messageQueue;
 });

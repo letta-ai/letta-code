@@ -53,16 +53,30 @@ function detectWindowsShell(env: NodeJS.ProcessEnv): ShellContext {
   return { family: "unknown", displayName: "Windows shell" };
 }
 
+/**
+ * The shell the Bash and Monitor tools spawn first on macOS/Linux.
+ *
+ * Source of truth for `unixLaunchers()` in `@/tools/impl/shell-launchers`:
+ * macOS always prefers /bin/zsh (bash 3.2 mis-parses heredocs with odd
+ * apostrophe counts); elsewhere the user's $SHELL wins, then /bin/bash.
+ */
+export function getPreferredUnixShell(
+  env: NodeJS.ProcessEnv = process.env,
+  currentPlatform: NodeJS.Platform = platform(),
+): string {
+  if (currentPlatform === "darwin") return "/bin/zsh";
+  return env.SHELL?.trim() || "/bin/bash";
+}
+
 export function detectShellContext(
   env: NodeJS.ProcessEnv = process.env,
   currentPlatform: NodeJS.Platform = platform(),
 ): ShellContext {
   if (currentPlatform !== "win32") {
-    const shell = env.SHELL?.trim();
-    if (shell) {
-      return { family: "bash", displayName: shell };
-    }
-    return { family: "unknown", displayName: "shell" };
+    return {
+      family: "bash",
+      displayName: getPreferredUnixShell(env, currentPlatform),
+    };
   }
 
   return detectWindowsShell(env);

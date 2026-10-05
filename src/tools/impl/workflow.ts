@@ -467,10 +467,29 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
   });
   notifyBackgroundProcessStateChanged(scope);
 
+  // Coalesce bursts of queued workers and usage updates; publish even when
+  // the parent turn is idle. Launch and finish remain immediate.
+  let progressTimer: ReturnType<typeof setTimeout> | undefined;
+  const publishProgress = () => {
+    if (progressTimer || processState.status !== "running") return;
+    progressTimer = setTimeout(() => {
+      progressTimer = undefined;
+      if (
+        backgroundProcesses.get(taskId) === processState &&
+        processState.status === "running"
+      ) {
+        notifyBackgroundProcessStateChanged(scope);
+      }
+    }, 100);
+    progressTimer.unref();
+  };
+
   const finish = (outcome: {
     run?: WorkflowExecutionResult;
     error?: string;
   }) => {
+    clearTimeout(progressTimer);
+    progressTimer = undefined;
     if (backgroundProcesses.get(taskId) !== processState) return;
     // A TaskStop already marked the entry failed and suppressed notification.
     if (processState.status === "running") {
@@ -532,6 +551,7 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
     signal: abortController.signal,
     onProgress: (event) => {
       recordWorkflowProgress(taskId, event);
+      if (event.kind !== "log") publishProgress();
       // Usage callbacks update the registry, but only the initial transition
       // to running belongs in the append-only TaskOutput progress log.
       if (

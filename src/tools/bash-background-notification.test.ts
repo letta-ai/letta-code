@@ -228,7 +228,7 @@ describe("Background bash completion notifications", () => {
 
   test("stays silent when an automatically yielded shell is stopped", async () => {
     const bashId = await startAutomaticBackground({
-      command: isWindows ? "Start-Sleep -Seconds 5" : "sleep 5",
+      command: command("setTimeout(() => {}, 5000)"),
       description: "Cancel automatic command",
     });
 

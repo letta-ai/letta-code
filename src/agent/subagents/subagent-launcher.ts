@@ -21,6 +21,10 @@ import {
   resolveLettaInvocation,
 } from "@/tools/impl/shell-env";
 import {
+  readSubagentDepth,
+  SUBAGENT_DEPTH_ENV,
+} from "@/utils/subagent-depth-env";
+import {
   LISTENER_CONNECTION_ENV,
   SUBAGENT_LAUNCH_ENV,
   SUBAGENT_LAUNCH_PROFILE_ENV,
@@ -242,6 +246,8 @@ export function composeSubagentChildEnv(
     // Replace inherited parent addresses even when the new scope is unknown.
     LETTA_PARENT_AGENT_ID: parentAgentId,
     LETTA_PARENT_CONVERSATION_ID: options.parentConversationId,
+    // Children are one level below the process (or listener turn) launching them.
+    [SUBAGENT_DEPTH_ENV]: String(readSubagentDepth(parentProcessEnv) + 1),
     ...(transcriptPath && { TRANSCRIPT_PATH: transcriptPath }),
   };
 

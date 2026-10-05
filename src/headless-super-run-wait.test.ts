@@ -189,6 +189,21 @@ test("a listener failure wins over the preceding requires_approval child", async
   expect(childReads).toBe(0);
 });
 
+test("a completed Super Run whose newest linked run is requires_approval is done", async () => {
+  const result = await waitForAcceptedSuperRun(
+    receipt,
+    new AbortController().signal,
+    deps({
+      run: async () => run("completed", "requires_approval"),
+      sleep: async () => {
+        throw new Error("must not keep waiting after the Super Run completed");
+      },
+    }),
+  );
+  expect(result.text).toBe("Done");
+  expect(result.stopReason).toBe("requires_approval");
+});
+
 test("retries a transient Cloud read without resubmitting", async () => {
   let reads = 0;
   const result = await waitForAcceptedSuperRun(

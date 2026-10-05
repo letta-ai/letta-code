@@ -251,6 +251,11 @@ export type ConversationRuntime = {
   dequeuedClientMessageIdsByBatchId: Map<string, string[]>;
   queuePumpActive: boolean;
   queuePumpScheduled: boolean;
+  /**
+   * Inbound messages chained on messageQueue that captured this runtime but
+   * have not settled. Blocks idle eviction so they never run detached.
+   */
+  pendingInboundDispatches: number;
   pendingTurns: number;
   readonly loopStatus: LoopStatus;
   currentToolset: ToolsetName | null;
