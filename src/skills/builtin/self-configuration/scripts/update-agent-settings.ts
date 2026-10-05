@@ -9,7 +9,7 @@ const SECRET_FIELD_PATTERN =
 
 function usage(): never {
   console.error(`Usage:
-  npx tsx scripts/update-agent-settings.ts --target agent|conversation [options]
+  node scripts/update-agent-settings.ts --target agent|conversation [options]
 
 Options:
   --target <agent|conversation>       Required
