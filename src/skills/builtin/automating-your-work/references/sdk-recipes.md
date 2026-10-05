@@ -1,0 +1,373 @@
+# Agent SDK recipes for automations
+
+These examples show ways to use `@letta-ai/letta-agent-sdk` from TypeScript. The package is 0.x, so check the installed `node_modules/@letta-ai/letta-agent-sdk/dist/*.d.ts` types when an API is version-sensitive. Docs: https://docs.letta.com/agent-sdk
+
+```bash
+bun init -y && bun add @letta-ai/letta-agent-sdk  # pin the exact version in package.json
+```
+
+## Choose the execution computer
+
+With the cloud backend, agent state lives in Letta Cloud. If no `computer` is selected, the SDK creates a managed cloud sandbox where the agent runs its tools.
+
+```ts
+import {
+  LettaAgentClient,
+  type LettaCodeCloudSandboxOptions,
+} from "@letta-ai/letta-agent-sdk";
+
+const client = new LettaAgentClient({
+  backend: "cloud",
+  apiKey: process.env.LETTA_API_KEY,
+});
+```
+
+The SDK offers the following execution options:
+
+- `backend: "cloud"` — a managed cloud sandbox runs tools for the session.
+- `backend: "cloud"` with `computer: { name: "work-laptop" }` — a connected computer runs the tools. Stable selectors include `deviceId` and computer `id`. A `connectionId` identifies one live connection.
+- `backend: "local"` — agent state and tools stay on the current machine. The SDK owns the App Server subprocess.
+- `backend: "remote"` — tools run on a separately operated App Server computer; the App Server backend determines where agent state lives.
+- `computer` and `sandbox` are mutually exclusive.
+
+Managed sandboxes provide clean isolation and support concurrent workers. Provisioning can add cold-start latency. A connected organization computer avoids sandbox provisioning and gives the agent access to its files, tools, and credentials.
+
+The SDK can list online computers before it selects one:
+
+```ts
+const { computers } = await client.computers.list({ onlineOnly: true });
+for (const computer of computers) {
+  console.log(computer.name, computer.deviceId, computer.status);
+}
+
+const computer = computers[0];
+if (!computer) throw new Error("No online computers are available");
+
+await using session = client.resumeSession(AGENT_ID, {
+  computer: { deviceId: computer.deviceId },
+  cwd: "/workspace/project",
+});
+```
+
+The same API can route separate conversations to a fleet of connected computers. Examples include CI machines, infrastructure nodes, and platform-specific test machines. A larger fleet can use the bounded-concurrency pattern later in this guide.
+
+Sandbox files last until the sandbox expires. Agent memory, conversation history, or application storage can hold state that must outlive the sandbox. A sandbox `cwd` refers to a path inside the sandbox; it does not mount a local path. Changing computers never copies files or credentials between them. See the [Computers documentation](https://docs.letta.com/platform/computers) and [Agent SDK deployment guide](https://docs.letta.com/agent-sdk/deployment).
+
+## Call yourself for a one-off task
+
+This example starts a new conversation on your existing agent, streams one turn, records the result, and exits. `AUTOMATION_AGENT_ID` can contain your agent ID.
+
+```ts
+// release-audit.ts — invoked by a person or another program.
+const AGENT_ID = process.env.AUTOMATION_AGENT_ID!; // agent-xxx
+
+await using session = client.createSession(AGENT_ID); // new conversation for this run
+
+await session.send(
+  [
+    "Audit the latest release for doc drift.",
+    `Release notes:\n${releaseNotes}`,
+    "Report: contradictions with current docs, deprecated references, required patches.",
+  ].join("\n\n"),
+);
+
+for await (const event of session.stream()) {
+  if (event.type === "assistant") process.stdout.write(event.content); // incremental chunks
+  if (event.type === "result") {
+    // event.result = full final text; event.success, event.stopReason, event.runIds
+    await writeReceipt({ runIds: event.runIds, ok: event.success });
+  }
+}
+// `await using` disposes the session; the conversation and its history persist on the agent.
+```
+
+Turn anatomy: one `send()` + one pass through `stream()`; the stream terminates after the turn's `result` event. `abort()` stops a turn without closing the session; `close()`/`await using` releases session-scoped resources (client tools, MCP connections, cwd/env). A session whose connection died cannot be reused — `resumeSession(conversationId)` and continue.
+
+## Select a model for an automation conversation
+
+`createSession()` and `resumeSession()` accept a `model` option. A non-default conversation can use a lower-cost model while it keeps the same agent memory and identity.
+
+```ts
+const AUTOMATION_MODEL = process.env.AUTOMATION_MODEL!;
+
+await using session = client.createSession(AGENT_ID, {
+  model: AUTOMATION_MODEL,
+});
+```
+
+The program can also apply the model when it continues a saved conversation:
+
+```ts
+await using session = client.resumeSession(CONVERSATION_ID, {
+  model: AUTOMATION_MODEL,
+});
+```
+
+This also allows different automation conversations to use different models. For example, collection and formatting conversations can use a lower-cost model, while a review conversation can use another model.
+
+`resumeSession(agentId, { model })` resumes the agent's default conversation, so the model update applies to the agent. `createSession(agentId, { model })` creates a non-default conversation, and `resumeSession(conversationId, { model })` updates that conversation.
+
+## Ask temporary worker agents for help
+
+A temporary worker can use a separate context, model, and toolset for one part of your automation. This example creates a hidden worker without its own memory filesystem, runs one task, and deletes the worker.
+
+```ts
+const READ_TOOLS = ["Read", "Grep", "Glob", "LS"];
+
+async function askWorker(
+  task: string,
+  context: { sandbox?: LettaCodeCloudSandboxOptions; cwd?: string } = {},
+): Promise<string | undefined> {
+  const workerId = await client.createAgent({
+    model: process.env.WORKER_MODEL ?? "haiku",
+    hidden: true,
+    memfs: false,
+    baseTools: [],
+  });
+
+  try {
+    const result = await client.prompt(task, workerId, {
+      toolset: { base: "none", include: READ_TOOLS },
+      allowedTools: READ_TOOLS,
+      permissionMode: "strict",
+      canUseTool: async () => ({ behavior: "allow" }),
+      sandbox: context.sandbox,
+      cwd: context.cwd,
+    });
+    return result.result;
+  } finally {
+    await client.agents.delete(workerId);
+  }
+}
+```
+
+`toolset` selects the bundled client tools to load. `allowedTools` filters the session to the listed tools. `permissionMode: "strict"` routes each offered call through `canUseTool`; this callback allows the read-only list above.
+
+### Give each worker a cloud sandbox
+
+The cloud client creates a managed sandbox for each worker session. `githubRepositories` clones a repository into `/root/workspace`, and `cwd` selects the cloned repository:
+
+```ts
+const repository = { owner: "letta-ai", repo: "letta-code" };
+const workerContext = {
+  sandbox: {
+    githubRepositories: [repository],
+    terminateOnClose: true,
+  },
+  cwd: `/root/workspace/${repository.repo}`,
+};
+```
+
+Private repositories use the GitHub integration for the organization. `terminateOnClose` requests sandbox cleanup when the worker session closes.
+
+### Run workers with a concurrency limit
+
+The script can hold intermediate results and limit how many workers run at once:
+
+```ts
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  run: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+
+  async function takeNext(): Promise<void> {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await run(items[index]);
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, takeNext),
+  );
+  return results;
+}
+
+const reports = await mapWithConcurrency(files, 4, (file) =>
+  askWorker(
+    `Review ${file} and return only concrete findings.`,
+    workerContext,
+  ),
+);
+```
+
+The result from one worker can become the input to another worker. For example, a review stage can try to refute each report:
+
+```ts
+const reviewed = await mapWithConcurrency(
+  reports.filter((report): report is string => Boolean(report)),
+  4,
+  (report) =>
+    askWorker(
+      `Try to refute this finding. Return the finding only if it survives review:\n\n${report}`,
+      workerContext,
+    ),
+);
+```
+
+The script can also compare plans from different models or collect patches from separate cloud sandboxes. [letta-agent-sdk#261](https://github.com/letta-ai/letta-agent-sdk/pull/261) contains complete examples for audits, fix loops, planning panels, research, and file migrations.
+
+## Dedicated automation agent
+
+An automation can use your existing agent, temporary workers, or a dedicated agent. A dedicated agent keeps its own memory and identity across repeated work.
+
+```ts
+const agentId = await client.createAgent({
+  name: "pr-shepherd",
+  persona:
+    "You review pull-request state for one repository. You judge staleness, risk, and what deserves human attention. You report conclusions, not raw data.",
+});
+// The application can store agentId and resume this agent later.
+```
+
+## One conversation per resource
+
+Conversations are addressable state: `createSession(agentId)` opens a new conversation, and `resumeSession("conv-xxx")` continues it. This example stores the resource-to-conversation map in SQLite.
+
+```ts
+import { Database } from "bun:sqlite";
+const db = new Database("automation-state.sqlite");
+db.run(`CREATE TABLE IF NOT EXISTS resources (
+  key TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, last_event_id TEXT
+)`);
+
+async function sessionFor(resourceKey: string) {
+  const row = db
+    .query<{ conversation_id: string }, [string]>(
+      "SELECT conversation_id FROM resources WHERE key = ?",
+    )
+    .get(resourceKey);
+  if (row) return client.resumeSession(row.conversation_id);
+
+  const session = client.createSession(AGENT_ID);
+  await session.send(`You now own ${resourceKey}. Acknowledge.`);
+  for await (const e of session.stream()) if (e.type === "result") break;
+  db.run("INSERT INTO resources (key, conversation_id) VALUES (?, ?)", [
+    resourceKey,
+    session.conversationId!, // resolved after the backend assigns it
+  ]);
+  return session;
+}
+```
+
+Conversation granularity can follow the reasoning context. For example, one conversation per repository can compare related file changes. One conversation per pull request can keep a long review history.
+
+## Scheduled program
+
+The same program can run from `letta cron`, an operating-system scheduler, or another scheduling service. For example:
+
+```
+*/30 * * * * cd /opt/automations/pr-shepherd && bun run sweep.ts >> sweep.log 2>&1
+```
+
+A lock file can prevent two scheduled runs from using the same state at the same time.
+
+## Event-driven program
+
+This example accepts an event, persists the agent's decision, and then delivers any escalation. Decision completion and outbound delivery are separate states: recording a decision must not cause a failed delivery to be skipped on retry. The dispatcher must serialize calls for each event ID with a database-backed lock or resource queue so two workers cannot deliver the same event concurrently.
+
+```ts
+db.run(`CREATE TABLE IF NOT EXISTS effects (
+  event_id TEXT PRIMARY KEY,
+  decision TEXT NOT NULL,
+  run_ids TEXT NOT NULL,
+  decided_at INTEGER NOT NULL,
+  delivered_at INTEGER
+)`);
+
+// One iteration of a poll loop or one webhook delivery.
+async function handleEvent(evt: { id: string; resource: string; payload: string }) {
+  let effect = db
+    .query<
+      { decision: string; delivered_at: number | null },
+      [string]
+    >("SELECT decision, delivered_at FROM effects WHERE event_id = ?")
+    .get(evt.id);
+
+  if (!effect) {
+    await using session = await sessionFor(evt.resource);
+    let assistantText = "";
+    await session.send(
+      [
+        `Event ${evt.id} on ${evt.resource}:`,
+        evt.payload,
+        "Decide: no action, or a one-line escalation with reason.",
+      ].join("\n"),
+    );
+
+    for await (const e of session.stream()) {
+      if (e.type === "assistant") assistantText += e.content;
+      if (e.type === "result") {
+        if (!e.success) throw new Error(`Decision failed for ${evt.id}`);
+        const decision = (e.result ?? assistantText).trim();
+        if (!decision) throw new Error(`Decision was empty for ${evt.id}`);
+        db.run(
+          "INSERT INTO effects (event_id, decision, run_ids, decided_at) VALUES (?, ?, ?, ?)",
+          [evt.id, decision, JSON.stringify(e.runIds ?? []), Date.now()],
+        );
+        effect = { decision, delivered_at: null };
+      }
+    }
+  }
+
+  if (!effect || effect.delivered_at) return;
+  if (effect.decision.startsWith("ESCALATE:")) {
+    await reportToCoordinator(evt.id, effect.decision);
+  }
+  db.run("UPDATE effects SET delivered_at = ? WHERE event_id = ?", [
+    Date.now(),
+    evt.id,
+  ]);
+}
+```
+
+A worker conversation can report a conclusion to a coordinator conversation. The event marker makes an unknown-delivery retry reconcilable: before sending, scan the durable conversation history for the same marker.
+
+```ts
+function containsMarker(message: { message_type?: string; content?: unknown }, marker: string) {
+  return (
+    message.message_type === "user_message" &&
+    typeof message.content === "string" &&
+    message.content.includes(marker)
+  );
+}
+
+async function reportToCoordinator(eventId: string, packet: string) {
+  await using main = client.resumeSession(MAIN_CONVERSATION_ID);
+  const marker = `[pr-shepherd:event:${eventId}]`;
+  let before: string | undefined;
+
+  do {
+    const page = await main.listMessages({
+      conversationId: MAIN_CONVERSATION_ID,
+      order: "desc",
+      limit: 100,
+      before,
+    });
+    if (page.messages.some((message) => containsMarker(message, marker))) return;
+    if (page.hasMore === false || !page.nextBefore) break;
+    before = page.nextBefore;
+  } while (true);
+
+  await main.send(`${marker} ${packet}`);
+  for await (const e of main.stream()) if (e.type === "result") break;
+}
+```
+
+If the process stops after the coordinator accepts the message but before `delivered_at` is updated, the next attempt finds the marker and finishes the local record without sending a duplicate. For an external destination, use its native idempotency key or query it by a stable action ID before retrying.
+
+[Operations options](operations.md) describes event envelopes, cursors, reconciliation, action records, limits, and manifests for repeated programs.
+
+## Connection and retry behavior
+
+- `CloudManagedSandboxExpiredError` occurs before `send()` transmits the message. The program can resume the same conversation in a new session and retry once.
+- A connection failure after `send()` succeeds has an unknown delivery state. `client.conversations.listMessages(...)` or `bootstrapState()` can show whether the message reached the conversation before the program retries it.
+- The SDK does not replay stream events missed during a disconnect. Conversation history provides the durable record after the program resumes.
+- The `result` event includes run IDs that can connect stream events, history, and application records.
+
+## Approval options
+
+An Agent SDK session can ask for interactive approval, approve selected tools through `canUseTool`, or deny an action and report it to the application. If a session closes with an approval pending, a new session can inspect it with `recoverPendingApprovals()`. See https://docs.letta.com/agent-sdk/permissions
