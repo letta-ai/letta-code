@@ -367,6 +367,46 @@ function emitTurnBoundaryStatus(
   emitLoopStatusUpdate(socket, runtime, scope);
 }
 
+function reportQueueStatusCallbackError(error: unknown): void {
+  trackBoundaryError({
+    errorType: "listener_status_callback_failed",
+    error,
+    context: "listener_queue_pump",
+  });
+  debugWarn("Listen", "Error in listener status callback:", error);
+}
+
+function emitQueueListenerStatus(
+  runtime: ConversationRuntime,
+  opts: StartListenerOptions,
+): void {
+  try {
+    emitListenerStatus(
+      runtime.listener,
+      opts.onStatusChange,
+      opts.connectionId,
+    );
+  } catch (error) {
+    reportQueueStatusCallbackError(error);
+  }
+}
+
+function emitQueuePumpBoundary(operation: () => void): void {
+  try {
+    operation();
+  } catch (error) {
+    // Queue ownership has already transferred. Outbound projection failures must
+    // not strand committed work, and restoring after a partial send could replay
+    // user-visible side effects.
+    trackBoundaryError({
+      errorType: "listener_queue_boundary_failed",
+      error,
+      context: "listener_queue_pump",
+    });
+    debugWarn("Listen", "Error emitting listener queue boundary:", error);
+  }
+}
+
 function resolveQueuePumpTransport(
   runtime: ConversationRuntime,
   socket: ListenerTransport,
@@ -461,14 +501,18 @@ async function drainQueuedMessages(
       }
 
       const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
-      emitDequeuedUserMessage(
-        turnTransport,
-        runtime,
-        queuedTurn,
-        dequeuedBatch,
+      emitQueuePumpBoundary(() =>
+        emitDequeuedUserMessage(
+          turnTransport,
+          runtime,
+          queuedTurn,
+          dequeuedBatch,
+        ),
       );
       // Turn start boundary: unconditional snapshot even when nothing changed.
-      emitTurnBoundaryStatus(runtime, turnTransport);
+      emitQueuePumpBoundary(() =>
+        emitTurnBoundaryStatus(runtime, turnTransport),
+      );
 
       const preTurnStatus =
         getListenerStatus(runtime.listener) === "processing"
@@ -479,18 +523,24 @@ async function drainQueuedMessages(
         runtime.listener.lastEmittedStatus !== preTurnStatus
       ) {
         runtime.listener.lastEmittedStatus = preTurnStatus;
-        opts.onStatusChange?.(preTurnStatus, opts.connectionId);
+        try {
+          opts.onStatusChange?.(preTurnStatus, opts.connectionId);
+        } catch (error) {
+          // The item is already dequeued and its stable ID is committed. A host
+          // callback must not strand accepted work that a retry will deduplicate.
+          reportQueueStatusCallbackError(error);
+        }
       }
       await processQueuedTurn(queuedTurn, dequeuedBatch);
-      emitListenerStatus(
-        runtime.listener,
-        opts.onStatusChange,
-        opts.connectionId,
-      );
+      emitQueueListenerStatus(runtime, opts);
       // Turn end boundary: repair any queue/loop frame the turn's own
       // change-driven emissions failed to deliver.
       const endTransport = resolveQueuePumpTransport(runtime, socket);
-      if (endTransport) emitTurnBoundaryStatus(runtime, endTransport);
+      if (endTransport) {
+        emitQueuePumpBoundary(() =>
+          emitTurnBoundaryStatus(runtime, endTransport),
+        );
+      }
       evictConversationRuntimeIfIdle(runtime);
     }
   } finally {
@@ -531,11 +581,7 @@ export function scheduleQueuePump(
         context: "listener_queue_pump",
       });
       debugWarn("Listen", "Error in queue pump:", error);
-      emitListenerStatus(
-        runtime.listener,
-        opts.onStatusChange,
-        opts.connectionId,
-      );
+      emitQueueListenerStatus(runtime, opts);
       evictConversationRuntimeIfIdle(runtime);
     });
 }

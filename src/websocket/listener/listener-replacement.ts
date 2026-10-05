@@ -1,5 +1,10 @@
-import { getActiveRuntime } from "./runtime";
+import {
+  getActiveRuntime,
+  getLatestRuntimeAuthorityEpoch,
+  getRuntimeAuthorityEpoch,
+} from "./runtime";
 import { resolveStartupLineageId } from "./startup-ingress";
+import { cloneTurnCorrelationIndex } from "./turn-correlation";
 import type {
   ListenerClientReplacement,
   ListenerRuntime,
@@ -23,8 +28,10 @@ type ListenerReplacementProvenance = {
   connectionName: string;
   lineageId: string;
   generation: number;
+  authorityEpoch: number | null;
   ledger: ListenerClientReplacement["ledger"];
-  startupFrames: ListenerClientReplacement["startupFrames"];
+  startupFrameHandoff: ListenerClientReplacement["startupFrameHandoff"];
+  clientMessageIdsByRunIdByConversation: ListenerClientReplacement["clientMessageIdsByRunIdByConversation"];
 };
 
 /**
@@ -45,22 +52,38 @@ function rejectReplacement(reason: ListenerReplacementRejection): never {
   throw new Error(`Invalid listener replacement lineage: ${reason}`);
 }
 
+function cloneStartupFrameHandoff(
+  handoff: ListenerClientReplacement["startupFrameHandoff"],
+): ListenerClientReplacement["startupFrameHandoff"] {
+  return handoff.kind === "overflow"
+    ? { ...handoff }
+    : { ...handoff, frames: [...handoff.frames] };
+}
+
 export function createListenerClientReplacement(
   runtime: ListenerRuntime,
   opts: StartListenerOptions,
 ): ListenerClientReplacement {
   const lineageId = resolveStartupLineageId(runtime, opts);
   const generation = runtime.startupGenerationByLineage.get(lineageId) ?? 0;
-  const startupFrames = [
-    ...(runtime.pendingStartupFramesByLineage.get(lineageId) ?? []),
-  ];
+  const startupFrameHandoff = cloneStartupFrameHandoff(
+    runtime.pendingStartupFramesByLineage.get(lineageId) ?? {
+      kind: "frames",
+      frames: [],
+      byteLength: 0,
+    },
+  );
+  const clientMessageIdsByRunIdByConversation = cloneTurnCorrelationIndex(
+    runtime.clientMessageIdsByRunIdByConversation,
+  );
   const replacement = Object.freeze({
     deviceId: opts.deviceId,
     connectionName: opts.connectionName,
     lineageId,
     generation,
     ledger: runtime.acceptedInputDispositionLedger,
-    startupFrames,
+    startupFrameHandoff,
+    clientMessageIdsByRunIdByConversation,
   });
   replacementProvenance.set(replacement, {
     issuer: runtime,
@@ -68,8 +91,12 @@ export function createListenerClientReplacement(
     connectionName: opts.connectionName,
     lineageId,
     generation,
+    authorityEpoch: getRuntimeAuthorityEpoch(runtime),
     ledger: runtime.acceptedInputDispositionLedger,
-    startupFrames: [...startupFrames],
+    startupFrameHandoff: cloneStartupFrameHandoff(startupFrameHandoff),
+    clientMessageIdsByRunIdByConversation: cloneTurnCorrelationIndex(
+      clientMessageIdsByRunIdByConversation,
+    ),
   });
   return replacement;
 }
@@ -106,6 +133,15 @@ function resolveAdoptableReplacement(
     provenance.generation
   ) {
     rejectReplacement("stale_generation");
+  }
+  // Clearing the active pointer for a stopped runtime does not erase history.
+  // The issuer remains authoritative only until some different non-null runtime
+  // becomes active, even if that newer runtime has also stopped by adoption.
+  if (
+    provenance.authorityEpoch === null ||
+    provenance.authorityEpoch !== getLatestRuntimeAuthorityEpoch()
+  ) {
+    rejectReplacement("unauthoritative_issuer");
   }
   // 1008 tears the predecessor down before re-registering, so an intentionally
   // stopped runtime is the authoritative predecessor. A still-running issuer
@@ -144,13 +180,20 @@ export function adoptListenerClientReplacement(
   replacementProvenance.delete(replacement);
   succeededListenerRuntimes.add(provenance.issuer);
   runtime.acceptedInputDispositionLedger = provenance.ledger;
+  runtime.clientMessageIdsByRunIdByConversation = cloneTurnCorrelationIndex(
+    provenance.clientMessageIdsByRunIdByConversation,
+  );
   runtime.startupGenerationByLineage.set(
     provenance.lineageId,
     provenance.generation,
   );
-  if (provenance.startupFrames.length > 0) {
-    runtime.pendingStartupFramesByLineage.set(provenance.lineageId, [
-      ...provenance.startupFrames,
-    ]);
+  if (
+    provenance.startupFrameHandoff.kind === "overflow" ||
+    provenance.startupFrameHandoff.frames.length > 0
+  ) {
+    runtime.pendingStartupFramesByLineage.set(
+      provenance.lineageId,
+      cloneStartupFrameHandoff(provenance.startupFrameHandoff),
+    );
   }
 }

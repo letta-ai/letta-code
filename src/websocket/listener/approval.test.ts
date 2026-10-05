@@ -505,7 +505,9 @@ describe("listener approval lifecycle", () => {
 
     const cancellingRuntime = createScopedRuntime();
     const turnLease = beginApprovalWait(cancellingRuntime);
-    cancellingRuntime.turnLifecycle.requestCancellation();
+    cancellingRuntime.turnLifecycle.requestCancellation({
+      cause: "explicit_user",
+    });
     await expect(
       requestApprovalOverWS(
         cancellingRuntime,
@@ -556,7 +558,7 @@ describe("listener approval lifecycle", () => {
     );
 
     expect(runtime.pendingApprovalResolvers.size).toBe(1);
-    runtime.turnLifecycle.requestCancellation();
+    runtime.turnLifecycle.requestCancellation({ cause: "explicit_user" });
 
     await expect(pending).rejects.toThrow("Cancelled by user");
     expect(runtime.pendingApprovalResolvers.size).toBe(0);

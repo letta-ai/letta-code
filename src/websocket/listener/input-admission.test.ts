@@ -362,6 +362,125 @@ test("a throwing status callback rejects then recovers the same id exactly once"
   ).toBe(1);
 });
 
+test("a queued stable ID survives a throwing status callback without replay", async () => {
+  const listener = createRuntime();
+  setActiveRuntime(listener);
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    "agent-1",
+    "conversation-1",
+  );
+  parkQueueItem(runtime, "parked");
+  const options: StartListenerOptions = {
+    ...makeOptions(),
+    onStatusChange: () => {
+      throw new Error("hostile queued status callback");
+    },
+  };
+  const acknowledgements: Array<{
+    accepted: boolean;
+    disposition?: "started" | "queued";
+  }> = [];
+  const processQueuedTurn = mock(async () => {});
+  const dispatch = (): void =>
+    dispatchInboundMessageWhenReady({
+      listener,
+      runtime,
+      incoming: incoming("cm-queued-status-boom"),
+      socket: {
+        kind: "local",
+        bufferedAmount: 0,
+        isOpen: () => true,
+        send: () => {},
+      },
+      options,
+      processQueuedTurn,
+      processIncomingMessage: async () => {},
+      trackListenerError: () => {},
+      onInputAccepted: (ack) => acknowledgements.push(ack),
+    });
+
+  dispatch();
+  await runtime.messageQueue;
+  await runtime.messageQueue;
+
+  expect(acknowledgements).toEqual([{ accepted: true, disposition: "queued" }]);
+  expect(processQueuedTurn).toHaveBeenCalledTimes(1);
+  expect(runtime.queueRuntime.length).toBe(0);
+  expect(
+    getInputDisposition(
+      runtime,
+      ordinaryInputIdentity("cm-queued-status-boom"),
+    ),
+  ).toBe("queued");
+
+  dispatch();
+  await runtime.messageQueue;
+
+  expect(acknowledgements).toEqual([
+    { accepted: true, disposition: "queued" },
+    { accepted: true, disposition: "queued" },
+  ]);
+  expect(processQueuedTurn).toHaveBeenCalledTimes(1);
+  expect(listener.acceptedInputDispositionLedger.entries.size).toBe(1);
+
+  // An always-throwing callback must not leave the settled pump unusable for
+  // newly accepted queued work.
+  parkQueueItem(runtime, "follow-up-parked");
+  dispatchInboundMessageWhenReady({
+    listener,
+    runtime,
+    incoming: incoming("cm-queued-status-follow-up"),
+    socket: {
+      kind: "local",
+      bufferedAmount: 0,
+      isOpen: () => true,
+      send: () => {},
+    },
+    options,
+    processQueuedTurn,
+    processIncomingMessage: async () => {},
+    trackListenerError: () => {},
+    onInputAccepted: (ack) => acknowledgements.push(ack),
+  });
+  await runtime.messageQueue;
+  await runtime.messageQueue;
+
+  expect(processQueuedTurn).toHaveBeenCalledTimes(2);
+  expect(runtime.queueRuntime.length).toBe(0);
+  expect(acknowledgements.at(-1)).toEqual({
+    accepted: true,
+    disposition: "queued",
+  });
+
+  // Exercise the queue-pump catch path itself: its recovery status emission is
+  // also best-effort even when the host callback always throws.
+  parkQueueItem(runtime, "catch-path-parked");
+  const failingQueuedTurn = mock(async () => {
+    throw new Error("queued turn failed");
+  });
+  dispatchInboundMessageWhenReady({
+    listener,
+    runtime,
+    incoming: incoming("cm-queued-status-catch"),
+    socket: {
+      kind: "local",
+      bufferedAmount: 0,
+      isOpen: () => true,
+      send: () => {},
+    },
+    options,
+    processQueuedTurn: failingQueuedTurn,
+    processIncomingMessage: async () => {},
+    trackListenerError: () => {},
+    onInputAccepted: (ack) => acknowledgements.push(ack),
+  });
+  await expect(runtime.messageQueue).resolves.toBeUndefined();
+  await expect(runtime.messageQueue).resolves.toBeUndefined();
+  expect(failingQueuedTurn).toHaveBeenCalledTimes(1);
+  expect(runtime.queueRuntime.length).toBe(0);
+});
+
 test("a queue admission that throws after admission releases its reservation", async () => {
   const listener = createRuntime();
   const runtime = getOrCreateScopedRuntime(

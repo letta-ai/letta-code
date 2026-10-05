@@ -266,6 +266,24 @@ export type StartupIngressOwner = {
   readonly handoffEnabled: boolean;
 };
 
+export type StartupFrameCapacity = "frame_count" | "byte_count";
+
+/**
+ * Bounded startup payload, or a bounded poison marker when the lineage exceeded
+ * ingress capacity. The marker must survive every replacement hop so a later
+ * connection cannot mistake discarded requestless input for an empty handoff.
+ */
+export type StartupFrameHandoff =
+  | {
+      readonly kind: "frames";
+      readonly frames: WebSocket.RawData[];
+      readonly byteLength: number;
+    }
+  | {
+      readonly kind: "overflow";
+      readonly capacity: StartupFrameCapacity;
+    };
+
 /** Opaque, one-shot ownership transfer across Cloud re-registration. */
 export type ListenerClientReplacement = {
   readonly deviceId: string;
@@ -273,7 +291,11 @@ export type ListenerClientReplacement = {
   readonly lineageId: string;
   readonly generation: number;
   readonly ledger: AcceptedInputDispositionLedger;
-  readonly startupFrames: WebSocket.RawData[];
+  readonly startupFrameHandoff: StartupFrameHandoff;
+  readonly clientMessageIdsByRunIdByConversation: Map<
+    string,
+    Map<string, string[]>
+  >;
 };
 
 export type ConversationRuntime = {
@@ -481,8 +503,8 @@ export type ListenerRuntime = {
    * lineage transfers this object across re-registration.
    */
   acceptedInputDispositionLedger: AcceptedInputDispositionLedger;
-  /** Pre-ready requestless frames keyed by explicit replacement lineage. */
-  pendingStartupFramesByLineage: Map<string, WebSocket.RawData[]>;
+  /** Bounded pre-ready requestless state keyed by explicit replacement lineage. */
+  pendingStartupFramesByLineage: Map<string, StartupFrameHandoff>;
   /** Generation currently owned by each explicit replacement lineage. */
   startupGenerationByLineage: Map<string, number>;
   /** Recent run-to-send snapshots survive idle conversation runtime eviction. */

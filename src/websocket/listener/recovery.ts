@@ -774,6 +774,7 @@ async function executeRecoveredApprovalContinuation(params: {
     );
     if ((await awaitRecoveryDeliveries(terminalDeliveries)) === "interrupted") {
       if (runtime.turnLifecycle.isCurrent(recoveryLease)) {
+        runtime.turnLifecycle.markTransportInterruption(recoveryLease);
         populateInterruptQueue(runtime, {
           lastExecutionResults: approvalResults,
           lastExecutingToolCallIds: [],

@@ -5,11 +5,16 @@ import { TO_SUBSCRIBERS } from "./connection";
 import { forgetListenerWork } from "./interrupted-turn-record";
 import {
   emitInterruptedStatusDelta,
-  emitProtocolV2Message,
   emitRuntimeStateUpdates,
 } from "./protocol-outbound";
 import { emitLoopErrorNotice } from "./recoverable-notices";
 import type { ListenerTransport } from "./transport";
+import {
+  type createTurnFinishedStore,
+  emitDurableTurnFinished,
+  prepareTurnFinished,
+  type ReplayableTurnFinished,
+} from "./turn-finished-replay";
 import type { TurnFinishTransition, TurnLease } from "./turn-lifecycle";
 import type { ConversationRuntime } from "./types";
 
@@ -44,16 +49,41 @@ export function finishListenerTurn(
       "stopReason" | "isTerminal"
     >;
     usage?: UsageStatistics;
+    /** Deterministic persistence seams for listener durability tests. */
+    forgetWork?: () => void;
+    turnFinishedStore?: ReturnType<typeof createTurnFinishedStore>;
   },
 ): TurnFinishTransition {
+  if (!runtime.turnLifecycle.isCurrent(lease)) {
+    return runtime.turnLifecycle.finish(lease, options.stopReason);
+  }
+  const turnFinishedMessage: ReplayableTurnFinished | null =
+    options.socket && options.turnId
+      ? {
+          type: "turn_finished",
+          turn_id: options.turnId,
+          stop_reason: options.stopReason,
+          ...((options.runId ?? runtime.activeRunId)
+            ? { run_id: options.runId ?? runtime.activeRunId ?? undefined }
+            : {}),
+          ...(options.error ? { error: options.error } : {}),
+          ...(options.usage ? { usage: options.usage } : {}),
+        }
+      : null;
+  // Disk/capacity failure leaves the lease current so its owner can fail
+  // visibly or retry; never finalize first and discover afterward that no
+  // durable terminal exists.
+  const preparedTurnFinished = turnFinishedMessage
+    ? prepareTurnFinished(
+        runtime,
+        turnFinishedMessage,
+        options.turnFinishedStore,
+      )
+    : null;
   const transition = runtime.turnLifecycle.finish(lease, options.stopReason);
   if (!transition.finished) {
     return transition;
   }
-  if (options.stopReason === "end_turn" || options.stopReason === "cancelled") {
-    forgetListenerWork(runtime);
-  }
-
   // Publish the terminal failure before idle can complete the accepted send.
   // The lifecycle transition above prevents stale or duplicate finalizers
   // from emitting either the failure or its following status snapshots.
@@ -93,26 +123,25 @@ export function finishListenerTurn(
       conversation_id: options.conversationId,
     });
   }
-  if (options.socket && options.turnId) {
-    emitProtocolV2Message(
+  if (options.socket && turnFinishedMessage && preparedTurnFinished) {
+    emitDurableTurnFinished(
       options.socket,
       runtime,
-      {
-        type: "turn_finished",
-        turn_id: options.turnId,
-        stop_reason: options.stopReason,
-        ...((options.runId ?? transition.runId)
-          ? { run_id: options.runId ?? transition.runId ?? undefined }
-          : {}),
-        ...(options.error ? { error: options.error } : {}),
-        ...(options.usage ? { usage: options.usage } : {}),
-      },
-      {
-        agent_id: options.agentId,
-        conversation_id: options.conversationId,
-      },
+      turnFinishedMessage,
       TO_SUBSCRIBERS,
+      options.turnFinishedStore,
+      preparedTurnFinished,
     );
+  }
+  // Once the terminal is either queued or durably represented, successful and
+  // explicit-user terminal paths can destructively retire execution evidence.
+  // Transport interruption retains it for continuation recovery.
+  if (
+    options.stopReason === "end_turn" ||
+    (options.stopReason === "cancelled" &&
+      transition.interruptionCause !== "transport")
+  ) {
+    (options.forgetWork ?? (() => forgetListenerWork(runtime)))();
   }
   return transition;
 }

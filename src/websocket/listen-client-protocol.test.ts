@@ -4255,7 +4255,7 @@ describe("listen-client capability-gated approval flow", () => {
     const resolvePendingApprovalResolverMock = mock(() => false);
 
     beginTestTurn(targetRuntime);
-    targetRuntime.turnLifecycle.requestCancellation();
+    targetRuntime.turnLifecycle.requestCancellation({ cause: "explicit_user" });
 
     const handled = await __listenClientTestUtils.handleApprovalResponseInput(
       listener,
@@ -5155,12 +5155,12 @@ describe("listen-client approval continuation run handoff", () => {
 describe("listen-client interrupt persistence normalization", () => {
   test("forces interrupted in-flight tool results to status=error when cancelRequested", () => {
     const runtime = __listenClientTestUtils.createRuntime();
-    beginTestTurn(runtime);
-    runtime.turnLifecycle.requestCancellation();
-
+    const lease = beginTestTurn(runtime);
+    runtime.turnLifecycle.requestCancellation({ cause: "explicit_user" });
     const normalized =
       __listenClientTestUtils.normalizeExecutionResultsForInterruptParity(
         runtime,
+        lease,
         [
           {
             type: "tool",
@@ -5181,13 +5181,13 @@ describe("listen-client interrupt persistence normalization", () => {
       },
     ]);
   });
-
   test("leaves tool status unchanged when not in cancel flow", () => {
     const runtime = __listenClientTestUtils.createRuntime();
-
+    const lease = beginTestTurn(runtime);
     const normalized =
       __listenClientTestUtils.normalizeExecutionResultsForInterruptParity(
         runtime,
+        lease,
         [
           {
             type: "tool",

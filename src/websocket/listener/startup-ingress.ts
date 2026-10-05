@@ -8,6 +8,8 @@ import {
 import type {
   ListenerRuntime,
   StartListenerOptions,
+  StartupFrameCapacity,
+  StartupFrameHandoff,
   StartupIngressOwner,
 } from "./types";
 
@@ -95,12 +97,26 @@ export function reserveStartupIngressOwner(
   };
 }
 
+function emptyStartupFrameHandoff(): StartupFrameHandoff {
+  return { kind: "frames", frames: [], byteLength: 0 };
+}
+
+function exceededStartupCapacity(
+  frameCount: number,
+  byteLength: number,
+): StartupFrameCapacity | null {
+  if (frameCount > MAX_PENDING_STARTUP_FRAMES) return "frame_count";
+  if (byteLength > MAX_PENDING_STARTUP_FRAME_BYTES) return "byte_count";
+  return null;
+}
+
 /**
  * Park this owner's still-unprocessed requestless frames for its successor.
  *
  * The buffer surrenders those frames, so repeated aborts of the same owner
- * park each frame exactly once. Returns whether this owner was still the
- * lineage's authoritative owner and therefore performed the handoff.
+ * park each frame exactly once. The lineage update is a single discriminated
+ * state write: cumulative overflow replaces payload with bounded poison rather
+ * than an empty handoff that a successor could accidentally accept.
  */
 export function handoffRequestlessStartupFrames(
   runtime: ListenerRuntime,
@@ -116,49 +132,84 @@ export function handoffRequestlessStartupFrames(
   const frames = buffer.takeRequestlessInputFrames();
   if (frames.length === 0) return false;
   const prior =
-    runtime.pendingStartupFramesByLineage.get(owner.lineageId) ?? [];
-  const combined = [...prior, ...frames];
-  const bytes = combined.reduce(
+    runtime.pendingStartupFramesByLineage.get(owner.lineageId) ??
+    emptyStartupFrameHandoff();
+  if (prior.kind === "overflow") {
+    return true;
+  }
+  const addedBytes = frames.reduce(
     (total, frame) => total + rawDataByteLength(frame),
     0,
   );
-  // Match ordinary startup ingress bounds. Repeated replacement overflow fails
-  // closed for this lineage without affecting concurrent connections.
-  runtime.pendingStartupFramesByLineage.set(
-    owner.lineageId,
-    combined.length <= MAX_PENDING_STARTUP_FRAMES &&
-      bytes <= MAX_PENDING_STARTUP_FRAME_BYTES
-      ? combined
-      : [],
+  const byteLength = prior.byteLength + addedBytes;
+  const capacity = exceededStartupCapacity(
+    prior.frames.length + frames.length,
+    byteLength,
   );
+  const next: StartupFrameHandoff = capacity
+    ? { kind: "overflow", capacity }
+    : {
+        kind: "frames",
+        frames: [...prior.frames, ...frames],
+        byteLength,
+      };
+  runtime.pendingStartupFramesByLineage.set(owner.lineageId, next);
   return true;
 }
 
-export function takeRequestlessStartupFrameHandoff(
+export type StartupFrameHandoffClaim = {
+  readonly handoff: StartupFrameHandoff;
+  /** Commit only after the successor buffer has accepted the inherited state. */
+  commit(): void;
+};
+
+export function claimRequestlessStartupFrameHandoff(
   runtime: ListenerRuntime,
   owner: StartupIngressOwner,
-): WebSocket.RawData[] {
+): StartupFrameHandoffClaim {
   if (
     !owner.handoffEnabled ||
     runtime.startupGenerationByLineage.get(owner.lineageId) !== owner.generation
   ) {
-    return [];
+    return { handoff: emptyStartupFrameHandoff(), commit: () => {} };
   }
-  const frames =
-    runtime.pendingStartupFramesByLineage.get(owner.lineageId) ?? [];
-  runtime.pendingStartupFramesByLineage.delete(owner.lineageId);
-  return frames;
+  const handoff =
+    runtime.pendingStartupFramesByLineage.get(owner.lineageId) ??
+    emptyStartupFrameHandoff();
+  return {
+    handoff,
+    commit: () => {
+      // Delete only the exact payload this claim exposed. A newer generation or
+      // concurrent handoff must never be erased by a stale activation.
+      if (
+        handoff.kind === "frames" &&
+        runtime.startupGenerationByLineage.get(owner.lineageId) ===
+          owner.generation &&
+        runtime.pendingStartupFramesByLineage.get(owner.lineageId) === handoff
+      ) {
+        runtime.pendingStartupFramesByLineage.delete(owner.lineageId);
+      }
+    },
+  };
 }
 
 export function activateStartupIngress(
   buffer: StartupFrameBuffer,
   handleMessage: (data: WebSocket.RawData) => Promise<void>,
   isCurrentAndOpen: () => boolean,
-  takeHandoff?: () => WebSocket.RawData[],
+  claimHandoff?: () => StartupFrameHandoffClaim,
 ): () => Promise<boolean> {
   return () => {
-    const handoff = takeHandoff?.() ?? [];
-    if (!buffer.prepend(handoff)) return Promise.resolve(false);
+    const claim = claimHandoff?.() ?? {
+      handoff: emptyStartupFrameHandoff(),
+      commit: () => {},
+    };
+    if (claim.handoff.kind === "overflow") {
+      buffer.failOverflow();
+      return Promise.resolve(false);
+    }
+    if (!buffer.prepend(claim.handoff.frames)) return Promise.resolve(false);
+    claim.commit();
     return buffer.drainToLive(handleMessage, isCurrentAndOpen);
   };
 }

@@ -694,6 +694,7 @@ export async function handleApprovalStop(params: {
   }
   const persistedExecutionResults = normalizeExecutionResultsForInterruptParity(
     runtime,
+    turnLease,
     executionResults,
     lastExecutingToolCallIds,
   );
@@ -731,6 +732,7 @@ export async function handleApprovalStop(params: {
     !processOwnedTurn &&
     (await awaitTerminalDeliveries(terminalDeliveries)) === "interrupted"
   ) {
+    runtime.turnLifecycle.markTransportInterruption(turnLease);
     return interruptTermination();
   }
 

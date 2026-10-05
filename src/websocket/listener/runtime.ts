@@ -18,12 +18,33 @@ import type {
 } from "./types";
 
 let activeRuntime: ListenerRuntime | null = null;
+/**
+ * Process-wide authority history. Clearing the active pointer deliberately does
+ * not reset this epoch: a stopped predecessor remains current only until a new
+ * non-null runtime takes ownership.
+ */
+let activeRuntimeAuthorityEpoch = 0;
+const authorityEpochByRuntime = new WeakMap<ListenerRuntime, number>();
 
 export function getActiveRuntime(): ListenerRuntime | null {
   return activeRuntime;
 }
 
+export function getLatestRuntimeAuthorityEpoch(): number {
+  return activeRuntimeAuthorityEpoch;
+}
+
+export function getRuntimeAuthorityEpoch(
+  runtime: ListenerRuntime,
+): number | null {
+  return authorityEpochByRuntime.get(runtime) ?? null;
+}
+
 export function setActiveRuntime(runtime: ListenerRuntime | null): void {
+  if (runtime !== null && runtime !== activeRuntime) {
+    activeRuntimeAuthorityEpoch += 1;
+    authorityEpochByRuntime.set(runtime, activeRuntimeAuthorityEpoch);
+  }
   activeRuntime = runtime;
 }
 

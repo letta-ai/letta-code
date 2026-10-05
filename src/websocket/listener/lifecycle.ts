@@ -97,10 +97,10 @@ import {
 import { StartupFrameBuffer } from "./startup-frame-buffer";
 import {
   activateStartupIngress,
+  claimRequestlessStartupFrameHandoff,
   createReportedIngressHandler,
   handoffRequestlessStartupFrames,
   reserveStartupIngressOwner,
-  takeRequestlessStartupFrameHandoff,
   waitForStartupOrAbort,
 } from "./startup-ingress";
 import { notifyStreamObserversRuntimeStopped } from "./stream-observers";
@@ -519,7 +519,7 @@ export async function attachOpenListenerSocket(
               isListenerTransportOpen(connection.writer),
           ),
         () =>
-          takeRequestlessStartupFrameHandoff(runtime, connection.startupOwner),
+          claimRequestlessStartupFrameHandoff(runtime, connection.startupOwner),
       ),
     },
   );
@@ -809,7 +809,7 @@ async function connectWithRetry(
                   !connection.cancellation.signal.aborted &&
                   isListenerTransportOpen(connection.writer),
               ),
-            () => takeRequestlessStartupFrameHandoff(runtime, startupOwner),
+            () => claimRequestlessStartupFrameHandoff(runtime, startupOwner),
           ),
         },
       );

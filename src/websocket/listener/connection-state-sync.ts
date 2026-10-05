@@ -13,6 +13,7 @@ import {
 } from "./protocol-outbound";
 import { getActiveRuntime } from "./runtime";
 import type { ListenerTransport } from "./transport";
+import { replayPendingTurnFinishedToConnection } from "./turn-finished-replay";
 import type {
   ConversationRuntime,
   ListenerConnectionState,
@@ -101,6 +102,13 @@ export async function completeInitialConnectionStartup(
   }
   markListenerConnectionInitialized(listener, options.connectionId, connection);
   if (!isCurrent() || !connection.initialized) return false;
+  for (const runtime of listener.conversationRuntimes.values()) {
+    replayPendingTurnFinishedToConnection(
+      transport,
+      runtime,
+      options.connectionId,
+    );
+  }
   return isCurrent() && connection.initialized;
 }
 
@@ -129,6 +137,8 @@ export async function replaySubscribedConnectionState(
       connection.id,
       connection,
     );
+    if (!isCurrent()) return;
+    replayPendingTurnFinishedToConnection(transport, runtime, connection.id);
     if (!isCurrent()) return;
   }
   emitStateSync(transport, listener, scope, {

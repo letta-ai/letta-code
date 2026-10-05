@@ -96,7 +96,9 @@ export function cleanupListenerConnection(
         if (awaitsRotatingTerminalHandoff) {
           conversationRuntime.activeConnectionId = null;
         } else {
-          conversationRuntime.turnLifecycle.requestCancellation();
+          conversationRuntime.turnLifecycle.requestCancellation({
+            cause: "transport",
+          });
         }
       }
     }

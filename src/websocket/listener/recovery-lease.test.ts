@@ -581,7 +581,7 @@ describe("recovered approval lease boundaries", () => {
     );
     await waitFor(() => executionStarted);
 
-    runtime.turnLifecycle.requestCancellation();
+    runtime.turnLifecycle.requestCancellation({ cause: "explicit_user" });
     rejectExecution(new Error("denial processing crashed"));
     await handled.catch(() => {});
 

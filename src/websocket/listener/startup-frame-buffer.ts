@@ -39,9 +39,7 @@ export class StartupFrameBuffer {
       this.#frames.length >= MAX_PENDING_STARTUP_FRAMES ||
       bytes > MAX_PENDING_STARTUP_FRAME_BYTES - this.#bytes
     ) {
-      this.clear();
-      this.#phase = "terminated";
-      this.onOverflow();
+      this.failOverflow();
       return false;
     }
     this.#frames.push(data);
@@ -69,9 +67,7 @@ export class StartupFrameBuffer {
       frames.length + this.#frames.length > MAX_PENDING_STARTUP_FRAMES ||
       bytes > MAX_PENDING_STARTUP_FRAME_BYTES - this.#bytes
     ) {
-      this.clear();
-      this.#phase = "terminated";
-      this.onOverflow();
+      this.failOverflow();
       return false;
     }
     this.#frames = [...frames, ...this.#frames];
@@ -124,6 +120,14 @@ export class StartupFrameBuffer {
     if (this.#phase === "terminated") return;
     this.clear();
     this.#phase = "terminated";
+  }
+
+  /** Fail closed when an inherited handoff already exceeded startup capacity. */
+  failOverflow(): void {
+    if (this.#phase === "terminated") return;
+    this.clear();
+    this.#phase = "terminated";
+    this.onOverflow();
   }
 
   accept(

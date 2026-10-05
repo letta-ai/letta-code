@@ -459,6 +459,7 @@ export async function handleAbortMessageInput(
   }
 
   const cancellation = scopedRuntime.turnLifecycle.requestCancellation({
+    cause: "explicit_user",
     waitForExternalSettlement: hasActiveTurn,
   });
   // Interrupt semantics: the current turn stops and the user's queued messages

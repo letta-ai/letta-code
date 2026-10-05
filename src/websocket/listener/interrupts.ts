@@ -15,6 +15,7 @@ import {
 } from "./protocol-outbound";
 import { clearRecoveredApprovalState } from "./runtime";
 import type { ListenerTransport } from "./transport";
+import type { TurnLease } from "./turn-lifecycle";
 import type {
   ConversationRuntime,
   InterruptPopulateInput,
@@ -172,10 +173,14 @@ export function normalizeInterruptedApprovalsForQueue(
 
 export function normalizeExecutionResultsForInterruptParity(
   runtime: ConversationRuntime,
+  lease: TurnLease,
   executionResults: ApprovalResult[],
   executingToolCallIds: string[],
 ): ApprovalResult[] {
-  if (!runtime.cancelRequested || executionResults.length === 0) {
+  if (
+    runtime.turnLifecycle.getInterruptionCause(lease) !== "explicit_user" ||
+    executionResults.length === 0
+  ) {
     return executionResults;
   }
 

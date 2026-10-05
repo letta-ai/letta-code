@@ -16,9 +16,9 @@ import {
 } from "./startup-frame-buffer";
 import {
   activateStartupIngress,
+  claimRequestlessStartupFrameHandoff,
   handoffRequestlessStartupFrames,
   reserveStartupIngressOwner,
-  takeRequestlessStartupFrameHandoff,
 } from "./startup-ingress";
 import type { IncomingMessage, StartListenerOptions } from "./types";
 
@@ -176,8 +176,9 @@ describe("startup frame buffering", () => {
         options: optionsFor(connectionId, false),
       });
       expect(
-        takeRequestlessStartupFrameHandoff(runtime, unrelated.startupOwner),
-      ).toEqual([]);
+        claimRequestlessStartupFrameHandoff(runtime, unrelated.startupOwner)
+          .handoff,
+      ).toEqual({ kind: "frames", frames: [], byteLength: 0 });
       closeListenerConnection(runtime, unrelated.id);
       expect(runtime.startupGenerationByLineage.has(connectionId)).toBe(false);
     }
@@ -222,15 +223,19 @@ describe("startup frame buffering", () => {
         handleReplacementMessage,
         () => true,
         () =>
-          takeRequestlessStartupFrameHandoff(runtime, replacement.startupOwner),
+          claimRequestlessStartupFrameHandoff(
+            runtime,
+            replacement.startupOwner,
+          ),
       )(),
     ).resolves.toBe(true);
     await dispatchedRuntime.messageQueue;
 
     expect(executeTurn).toHaveBeenCalledTimes(2);
     expect(
-      takeRequestlessStartupFrameHandoff(runtime, replacement.startupOwner),
-    ).toEqual([]);
+      claimRequestlessStartupFrameHandoff(runtime, replacement.startupOwner)
+        .handoff,
+    ).toEqual({ kind: "frames", frames: [], byteLength: 0 });
   });
 
   test("hands off frames buffered before a connection exists exactly once", async () => {
@@ -303,17 +308,27 @@ describe("startup frame buffering", () => {
     });
     expect(connection.startupOwner).toBe(nextOwner);
 
-    const handed = takeRequestlessStartupFrameHandoff(
+    const claim = claimRequestlessStartupFrameHandoff(
       runtime,
       connection.startupOwner,
     );
-    expect(handed.map((frame) => frame.toString())).toEqual([
+    expect(claim.handoff.kind).toBe("frames");
+    if (claim.handoff.kind !== "frames") {
+      throw new Error("Expected frame handoff");
+    }
+    expect(claim.handoff.frames.map((frame) => frame.toString())).toEqual([
       legacyFrame.toString(),
       requestlessV2Frame.toString(),
     ]);
+    // Claiming is non-destructive until the successor accepts the payload.
+    expect(runtime.pendingStartupFramesByLineage.has(owner.lineageId)).toBe(
+      true,
+    );
+    claim.commit();
     expect(
-      takeRequestlessStartupFrameHandoff(runtime, connection.startupOwner),
-    ).toEqual([]);
+      claimRequestlessStartupFrameHandoff(runtime, connection.startupOwner)
+        .handoff,
+    ).toEqual({ kind: "frames", frames: [], byteLength: 0 });
     closeListenerConnection(runtime, connection.id);
   });
 

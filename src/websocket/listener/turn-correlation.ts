@@ -9,6 +9,25 @@ import type {
 const MAX_RECENT_RUN_CORRELATIONS = 32;
 const MAX_RECENT_CONVERSATIONS = 256;
 
+export type TurnCorrelationIndex = Map<string, Map<string, string[]>>;
+
+export function cloneTurnCorrelationIndex(
+  source: TurnCorrelationIndex | undefined,
+): TurnCorrelationIndex {
+  return new Map(
+    [...(source ?? new Map())]
+      .slice(-MAX_RECENT_CONVERSATIONS)
+      .map(([conversationKey, runs]) => [
+        conversationKey,
+        new Map(
+          [...runs]
+            .slice(-MAX_RECENT_RUN_CORRELATIONS)
+            .map(([runId, clientMessageIds]) => [runId, [...clientMessageIds]]),
+        ),
+      ]),
+  );
+}
+
 function takeDequeuedClientMessageIds(
   runtime: ConversationRuntime,
   batchId: string,
