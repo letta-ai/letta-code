@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import type WebSocket from "ws";
 import {
+  closeListenerConnection,
   markListenerConnectionInitialized,
   openListenerConnection,
 } from "./connection";
@@ -15,7 +16,8 @@ import {
 } from "./startup-frame-buffer";
 import {
   activateStartupIngress,
-  handoffLegacyStartupFrames,
+  handoffRequestlessStartupFrames,
+  takeRequestlessStartupFrameHandoff,
 } from "./startup-ingress";
 import type { IncomingMessage, StartListenerOptions } from "./types";
 
@@ -87,7 +89,7 @@ describe("startup frame buffering", () => {
     expect(buffer.drain()).toEqual([]);
   });
 
-  test("hands a pre-ready legacy message to the exact replacement once", async () => {
+  test("hands requestless input only to its explicit replacement lineage", async () => {
     const runtime = createRuntime();
     const socket = {
       kind: "local" as const,
@@ -95,22 +97,94 @@ describe("startup frame buffering", () => {
       isOpen: () => true,
       send: () => {},
     };
-    const options: StartListenerOptions = {
-      connectionId: "replacement",
+    const optionsFor = (
+      connectionId: string,
+      connectionIdCanResume = true,
+    ): StartListenerOptions => ({
+      connectionId,
       wsUrl: "local://test",
       deviceId: "device",
       connectionName: "test",
+      connectionIdCanResume,
       onConnected: () => {},
       onDisconnected: () => {},
       onError: () => {},
-    };
-    const connection = openListenerConnection({
+    });
+    const staleConnection = openListenerConnection({
+      runtime,
+      connectionId: "connection-a",
+      writer: socket,
+      options: optionsFor("connection-a"),
+    });
+    const legacyFrame = Buffer.from(
+      JSON.stringify({
+        type: "message",
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        messages: [{ role: "user", content: "legacy pre-ready" }],
+      }),
+    );
+    const requestlessV2Frame = Buffer.from(
+      JSON.stringify({
+        type: "input",
+        runtime: {
+          agent_id: "agent-1",
+          conversation_id: "conversation-1",
+        },
+        payload: {
+          kind: "create_message",
+          messages: [{ role: "user", content: "v2 pre-ready" }],
+        },
+      }),
+    );
+    const ackCapableFrame = Buffer.from(
+      JSON.stringify({
+        type: "input",
+        request_id: "request-a",
+        runtime: {
+          agent_id: "agent-1",
+          conversation_id: "conversation-1",
+        },
+        payload: {
+          kind: "create_message",
+          messages: [{ role: "user", content: "must fail closed" }],
+        },
+      }),
+    );
+    const staleBuffer = new StartupFrameBuffer();
+    for (const frame of [legacyFrame, requestlessV2Frame, ackCapableFrame]) {
+      staleBuffer.accept(frame, async () => {
+        throw new Error("stale connection processed input");
+      });
+    }
+    handoffRequestlessStartupFrames(runtime, staleConnection, staleBuffer);
+    staleBuffer.abort();
+    closeListenerConnection(runtime, staleConnection.id);
+
+    // App Server may have unrelated B/C connections starting concurrently. They
+    // cannot claim A's requestless input or its output/approval ownership.
+    for (const connectionId of ["connection-b", "connection-c"]) {
+      const unrelated = openListenerConnection({
+        runtime,
+        connectionId,
+        writer: socket,
+        options: optionsFor(connectionId, false),
+      });
+      expect(takeRequestlessStartupFrameHandoff(runtime, unrelated)).toEqual(
+        [],
+      );
+      closeListenerConnection(runtime, unrelated.id);
+      expect(runtime.startupGenerationByLineage.has(connectionId)).toBe(false);
+    }
+
+    const options = optionsFor("connection-a");
+    const replacement = openListenerConnection({
       runtime,
       connectionId: options.connectionId,
       writer: socket,
       options,
     });
-    markListenerConnectionInitialized(runtime, connection.id, connection);
+    markListenerConnectionInitialized(runtime, replacement.id, replacement);
     setActiveRuntime(runtime);
     const executeTurn = mock(async (_incoming: IncomingMessage) => {});
     const dispatchedRuntime = getOrCreateScopedRuntime(
@@ -121,7 +195,7 @@ describe("startup frame buffering", () => {
     const handleReplacementMessage = createListenerMessageHandler({
       runtime,
       socket: socket as unknown as WebSocket,
-      connectionId: connection.id,
+      connectionId: replacement.id,
       opts: options,
       processQueuedTurn: async () => {},
       fileCommandSession: { handle: () => false },
@@ -137,34 +211,20 @@ describe("startup frame buffering", () => {
       trackListenerError: () => {},
       processIncomingMessage: executeTurn,
     });
-    const legacyFrame = Buffer.from(
-      JSON.stringify({
-        type: "message",
-        agentId: "agent-1",
-        conversationId: "conversation-1",
-        messages: [{ role: "user", content: "legacy pre-ready" }],
-      }),
-    );
-    const staleBuffer = new StartupFrameBuffer();
-    staleBuffer.accept(legacyFrame, async () => {
-      throw new Error("stale connection processed input");
-    });
-
-    handoffLegacyStartupFrames(runtime, staleBuffer);
-    staleBuffer.abort();
-    const replacementBuffer = new StartupFrameBuffer();
     await expect(
       activateStartupIngress(
-        replacementBuffer,
+        new StartupFrameBuffer(),
         handleReplacementMessage,
         () => true,
-        () => runtime.pendingLegacyStartupFrames?.splice(0) ?? [],
+        () => takeRequestlessStartupFrameHandoff(runtime, replacement),
       )(),
     ).resolves.toBe(true);
     await dispatchedRuntime.messageQueue;
 
-    expect(executeTurn).toHaveBeenCalledTimes(1);
-    expect(runtime.pendingLegacyStartupFrames).toEqual([]);
+    expect(executeTurn).toHaveBeenCalledTimes(2);
+    expect(takeRequestlessStartupFrameHandoff(runtime, replacement)).toEqual(
+      [],
+    );
   });
 
   test("terminates when one frame exceeds the byte limit", () => {

@@ -79,7 +79,7 @@ export class StartupFrameBuffer {
     return true;
   }
 
-  takeLegacyMessageFrames(): WebSocket.RawData[] {
+  takeRequestlessInputFrames(): WebSocket.RawData[] {
     if (this.#phase === "terminated") return [];
     const legacy: WebSocket.RawData[] = [];
     const retained: WebSocket.RawData[] = [];
@@ -88,8 +88,17 @@ export class StartupFrameBuffer {
         const bytes = Array.isArray(frame)
           ? Buffer.concat(frame)
           : Buffer.from(frame as ArrayBuffer);
-        const parsed = JSON.parse(bytes.toString("utf8")) as { type?: unknown };
-        (parsed.type === "message" ? legacy : retained).push(frame);
+        const parsed = JSON.parse(bytes.toString("utf8")) as {
+          type?: unknown;
+          request_id?: unknown;
+          payload?: { kind?: unknown };
+        };
+        const isRequestlessInput =
+          parsed.type === "message" ||
+          (parsed.type === "input" &&
+            parsed.request_id === undefined &&
+            parsed.payload?.kind === "create_message");
+        (isRequestlessInput ? legacy : retained).push(frame);
       } catch {
         retained.push(frame);
       }

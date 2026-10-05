@@ -15,10 +15,11 @@ import {
 } from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { enqueueInboundUserMessage } from "./inbound-queue";
-import { createRuntime, safeSocketSend } from "./lifecycle";
+import { createRuntime } from "./lifecycle";
 import { createListenerMessageHandler } from "./message-router";
 import { scheduleQueuePump } from "./queue";
 import { setActiveRuntime } from "./runtime";
+import { safeSocketSend } from "./socket-send";
 import { isListenerTransportOpen, type ListenerTransport } from "./transport";
 import type {
   IncomingMessage,

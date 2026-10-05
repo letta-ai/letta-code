@@ -7,8 +7,9 @@ import {
   getInboundClientMessageId,
 } from "./inbound-queue";
 import {
-  getInputDisposition,
-  rememberInputDisposition,
+  commitInputDisposition,
+  reserveInputDisposition,
+  rollbackInputDisposition,
 } from "./input-disposition";
 import {
   scheduleQueuePump,
@@ -105,11 +106,20 @@ export function dispatchInboundMessageWhenReady(params: {
         acknowledgeInput({ accepted: false });
         return;
       }
-      const acceptedDisposition = getInputDisposition(runtime, clientMessageId);
-      if (acceptedDisposition) {
-        acknowledgeInput({ accepted: true, disposition: acceptedDisposition });
+      const admission = reserveInputDisposition(runtime, clientMessageId);
+      if (admission.kind === "duplicate") {
+        acknowledgeInput({
+          accepted: true,
+          disposition: admission.disposition,
+        });
         return;
       }
+      if (admission.kind === "full") {
+        acknowledgeInput({ accepted: false });
+        return;
+      }
+      const reservation =
+        admission.kind === "reserved" ? admission.reservation : undefined;
       if (
         isRuntimeTeleportPending(
           listener,
@@ -117,6 +127,7 @@ export function dispatchInboundMessageWhenReady(params: {
           runtime.conversationId,
         )
       ) {
+        rollbackInputDisposition(runtime, reservation);
         acknowledgeInput({ accepted: false });
         return;
       }
@@ -130,7 +141,9 @@ export function dispatchInboundMessageWhenReady(params: {
           actingUserId,
         );
         if (accepted) {
-          rememberInputDisposition(runtime, clientMessageId, "queued");
+          commitInputDisposition(runtime, reservation, "queued");
+        } else {
+          rollbackInputDisposition(runtime, reservation);
         }
         acknowledgeInput({
           accepted,
@@ -147,7 +160,7 @@ export function dispatchInboundMessageWhenReady(params: {
         options.onStatusChange,
         options.connectionId,
       );
-      rememberInputDisposition(runtime, clientMessageId, "started");
+      commitInputDisposition(runtime, reservation, "started");
       acknowledgeInput({ accepted: true, disposition: "started" });
       // Queued turns store the actor on the queue item. Direct turns skip that
       // item, so carry the actor on the message consumed by turn.ts instead.

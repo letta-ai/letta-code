@@ -10,7 +10,7 @@ import type {
   ApprovalResponseBody,
   ChangeDeviceStateCommand,
 } from "@/types/protocol_v2";
-import { debugLog, isDebugEnabled } from "@/utils/debug";
+import { isDebugEnabled } from "@/utils/debug";
 import { getErrorMessage } from "@/utils/error";
 import { sealStartupLogs } from "@/utils/startup-log-boundary";
 import {
@@ -53,15 +53,17 @@ import {
   getInboundClientMessageId,
 } from "./inbound-queue";
 import {
+  commitInputDisposition,
   getInputDisposition,
-  rememberInputDisposition,
+  reserveInputDisposition,
+  rollbackInputDisposition,
 } from "./input-disposition";
 import {
   isExecuteCommandCommand,
   parseServerLifecycleMessage,
   parseServerMessage,
 } from "./protocol-inbound";
-import { summarizeV2Command } from "./protocol-logging";
+import { logV2Command, summarizeV2Command } from "./protocol-logging";
 import { emitDeviceStatusUpdate } from "./protocol-outbound";
 import {
   scheduleQueuePump,
@@ -190,14 +192,6 @@ type MessageRouterParams = {
   processIncomingMessage?: typeof handleIncomingMessage;
 };
 
-function logV2Command(opts: StartListenerOptions, message: string): void {
-  if (opts.onLog) {
-    opts.onLog(`[Listen V2] ${message}`);
-    return;
-  }
-  debugLog("Listen V2", message);
-}
-
 export function createListenerMessageHandler(
   params: MessageRouterParams,
 ): (data: WebSocket.RawData) => Promise<void> {
@@ -230,17 +224,13 @@ export function createListenerMessageHandler(
 
     const lifecycleMessage =
       parseListenerReadyMessage(data) ?? parseServerLifecycleMessage(data);
-    // Legacy relays can deliver input before onConnected. Fail outside the
-    // handler catch so no parsing, logging, or dispatch follows a failed seal.
-    // Only projected pongs are content-free; ready frames retain extra fields.
+    // Seal before parsing; only projected pongs are content-free.
     if (lifecycleMessage?.type !== "pong") sealStartupLogs();
     const raw = data.toString();
     let parsedScope: ParsedRuntimeScope = null;
 
     try {
       if (lifecycleMessage) {
-        // Record relay pongs so the heartbeat watchdog can detect a half-open
-        // socket (no pong within the timeout) and force a reconnect.
         if (lifecycleMessage.type === "pong") {
           runtime.lastPongAt = Date.now();
         }
@@ -253,7 +243,6 @@ export function createListenerMessageHandler(
       if (parsed) {
         safeEmitWsEvent("recv", "client", parsed);
       } else {
-        // Log unparseable frames so protocol drift is visible in debug mode
         safeEmitWsEvent("recv", "lifecycle", {
           type: "_ws_unparseable",
           raw,
@@ -472,39 +461,41 @@ export function createListenerMessageHandler(
             return;
           }
           const teleportId = parsed.payload.teleport_id;
-          clearPriorReadyTeleports({
-            listener: runtime,
-            agentId: teleportAgentId,
-            conversationId: parsed.runtime.conversation_id,
-            currentTeleportId: teleportId,
-          });
           const scopedRuntime = getOrCreateScopedRuntime(
             runtime,
             parsed.runtime.agent_id,
             parsed.runtime.conversation_id,
           );
-          // The continuation this scope's runtime_start announced has arrived;
-          // sync recovery may act on its own again from here.
-          clearExpectedInboundTeleport(scopedRuntime);
           const acceptedKey = `teleport:${teleportId}`;
-          const previousDisposition = getInputDisposition(
-            scopedRuntime,
-            acceptedKey,
-          );
-          if (previousDisposition) {
-            acknowledgeInput(true, undefined, previousDisposition);
+          const admission = reserveInputDisposition(scopedRuntime, acceptedKey);
+          if (admission.kind === "duplicate") {
+            acknowledgeInput(true, undefined, admission.disposition);
             return;
           }
+          if (admission.kind === "full") {
+            acknowledgeInput(false, "Stable input ledger is at capacity");
+            return;
+          }
+          const reservation =
+            admission.kind === "reserved" ? admission.reservation : undefined;
           const approvals = parsed.payload.continuation?.approvals;
           const clientPreferences = parsed.payload.client_preferences;
           if (scopedRuntime.isProcessing) {
+            rollbackInputDisposition(scopedRuntime, reservation);
             acknowledgeInput(
               false,
               "Destination runtime is already processing",
             );
             return;
           }
-          rememberInputDisposition(scopedRuntime, acceptedKey, "started");
+          clearPriorReadyTeleports({
+            listener: runtime,
+            agentId: teleportAgentId,
+            conversationId: parsed.runtime.conversation_id,
+            currentTeleportId: teleportId,
+          });
+          clearExpectedInboundTeleport(scopedRuntime);
+          commitInputDisposition(scopedRuntime, reservation, "started");
           acknowledgeInput(true, undefined, "started");
           runDetachedListenerTask("teleport_continue", async () => {
             await processIncomingMessage(
@@ -643,14 +634,30 @@ export function createListenerMessageHandler(
             return;
           }
 
+          const admission = reserveInputDisposition(
+            scopedRuntime,
+            clientMessageId,
+          );
+          if (admission.kind === "duplicate") {
+            acknowledgeInput(true, undefined, admission.disposition);
+            return;
+          }
+          if (admission.kind === "full") {
+            acknowledgeInput(false, "Stable input ledger is at capacity");
+            return;
+          }
+          const reservation =
+            admission.kind === "reserved" ? admission.reservation : undefined;
           const enqueued = enqueueInboundUserMessage(
             scopedRuntime,
             stampedIncoming,
             parsed.runtime.acting_user_id,
           );
           if (enqueued) {
-            rememberInputDisposition(scopedRuntime, clientMessageId, "queued");
+            commitInputDisposition(scopedRuntime, reservation, "queued");
             scheduleQueuePump(scopedRuntime, socket, opts, processQueuedTurn);
+          } else {
+            rollbackInputDisposition(scopedRuntime, reservation);
           }
           acknowledgeInput(
             enqueued,
@@ -826,7 +833,6 @@ export function createListenerMessageHandler(
         return;
       }
 
-      // Channels management commands (device/live management)
       if (runtime.serviceCommandTypes.has(parsed.type)) {
         runDetachedListenerTask("service_command", async () => {
           const serviceCommandHandler = runtime.serviceCommandHandler;
@@ -885,9 +891,7 @@ export function createListenerMessageHandler(
         return;
       }
 
-      // Slash commands (execute_command)
       if (isExecuteCommandCommand(parsed)) {
-        // Internal-only: refresh doctor state after recompile (no chat output)
         if (parsed.command_id === "refresh_doctor_state") {
           const agentId = parsed.runtime.agent_id;
           if (agentId && settingsManager.isMemfsEnabled(agentId)) {
@@ -898,15 +902,12 @@ export function createListenerMessageHandler(
               const memoryDir = getScopedMemoryFilesystemRoot(agentId);
               const tokens = estimateActiveMemorySystemPromptTokens(memoryDir);
               setSystemPromptDoctorState(agentId, tokens);
-            } catch {
-              // best-effort
-            }
+            } catch {}
           }
           emitDeviceStatusUpdate(socket, runtime, parsed.runtime);
           return;
         }
 
-        // Slash commands need a scoped runtime for the conversation context
         const scopedRuntime = getOrCreateScopedRuntime(
           runtime,
           parsed.runtime.agent_id,
@@ -945,7 +946,6 @@ export function createListenerMessageHandler(
         return;
       }
 
-      // Terminal commands (no runtime scope required)
       if (parsed.type === "terminal_spawn") {
         handleTerminalSpawn(
           parsed,

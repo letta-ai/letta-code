@@ -55,7 +55,9 @@ export interface StartListenerOptions {
     connection: ListenerConnectionState,
   ) => void | Promise<void>;
   onDisconnected: () => void;
-  onNeedsReregister?: () => void;
+  onNeedsReregister?: (replacement: ListenerClientReplacement) => void;
+  /** Explicit state lineage supplied only by onNeedsReregister. */
+  replacement?: ListenerClientReplacement;
   onError: (error: Error) => void;
   onStatusChange?: (
     status: "idle" | "receiving" | "processing",
@@ -214,9 +216,35 @@ export type RecoveredApprovalState = {
 export type AcceptedInputDisposition = "started" | "queued";
 
 export type AcceptedInputDispositionEntry = {
-  disposition: AcceptedInputDisposition;
+  disposition: AcceptedInputDisposition | null;
   acceptedAt: number;
+  expiresAt: number;
   runtimeKey: string;
+  generation: number;
+};
+
+export type AcceptedInputDispositionLedger = {
+  entries: Map<string, AcceptedInputDispositionEntry>;
+  scopeCounts: Map<string, number>;
+  expiryQueue: Array<{ key: string; expiresAt: number; generation: number }>;
+  expiryQueueHead: number;
+  nextGeneration: number;
+};
+
+export type InputDispositionReservation = {
+  key: string;
+  generation: number;
+  runtimeKey: string;
+};
+
+/** Opaque, one-shot ownership transfer across Cloud re-registration. */
+export type ListenerClientReplacement = {
+  readonly deviceId: string;
+  readonly connectionName: string;
+  readonly lineageId: string;
+  readonly generation: number;
+  readonly ledger: AcceptedInputDispositionLedger;
+  readonly startupFrames: WebSocket.RawData[];
 };
 
 export type ConversationRuntime = {
@@ -325,6 +353,11 @@ export type ListenerMessageRouting =
 export type ListenerConnectionState = {
   id: ListenerConnectionId;
   ordinal: number;
+  /** Explicit replacement lineage; unrelated concurrent connections differ. */
+  startupLineageId: string;
+  startupGeneration: number;
+  /** False for connections that cannot prove an exact replacement identity. */
+  startupHandoffEnabled: boolean;
   writer: ListenerTransport;
   streamWriter: ListenerTransport | null;
   cancellation: AbortController;
@@ -417,13 +450,15 @@ export type ListenerRuntime = {
   connectionName: string | null;
   conversationRuntimes: Map<string, ConversationRuntime>;
   /**
-   * Process-scoped LRU/TTL ledger for stable input identities. Its composite
-   * key includes the exact conversation runtime key, so identical client IDs
-   * in different scopes do not collide and retries survive idle eviction.
+   * Process-scoped TTL ledger for stable input identities. Its composite key
+   * includes the exact conversation runtime key; an explicit Cloud replacement
+   * lineage transfers this object across re-registration.
    */
-  acceptedInputDispositions?: Map<string, AcceptedInputDispositionEntry>;
-  /** Legacy pre-ready frames handed from an ordinary replaced connection. */
-  pendingLegacyStartupFrames?: WebSocket.RawData[];
+  acceptedInputDispositionLedger: AcceptedInputDispositionLedger;
+  /** Pre-ready requestless frames keyed by explicit replacement lineage. */
+  pendingStartupFramesByLineage: Map<string, WebSocket.RawData[]>;
+  /** Generation currently owned by each explicit replacement lineage. */
+  startupGenerationByLineage: Map<string, number>;
   /** Recent run-to-send snapshots survive idle conversation runtime eviction. */
   clientMessageIdsByRunIdByConversation?: Map<string, Map<string, string[]>>;
   /** Per-conversation worktree directory watchers for CWD auto-detection fallback. */

@@ -1,8 +1,3 @@
-/**
- * CLI subcommand: letta server --name \"george\"
- * Register letta-code as a listener to receive messages from Letta Cloud
- */
-
 import { hostname } from "node:os";
 import { parseArgs } from "node:util";
 import { MessageChannel } from "node:worker_threads";
@@ -62,6 +57,7 @@ import {
   shouldAcquireManualListenerLock,
 } from "@/websocket/listener/manual-instance-lock";
 import { flushRemoteSettingsWrites } from "@/websocket/listener/remote-settings";
+import type { ListenerClientReplacement } from "@/websocket/listener/types";
 
 type ListenerProcessAnchor = {
   close: () => void;
@@ -69,9 +65,6 @@ type ListenerProcessAnchor = {
 
 type CreateListenerProcessAnchor = () => ListenerProcessAnchor;
 
-// Keep listener process anchors reachable for the lifetime of the CLI command.
-// Without a retained reference, the MessageChannel anchor could be garbage
-// collected even though it is intended to hold channel-only listeners open.
 const activeListenerProcessAnchors = new Set<ListenerProcessAnchor>();
 
 function formatTimestamp(): string {
@@ -797,8 +790,10 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         url: string,
         nextSupportsSplitStatusChannels: boolean,
         nextSupportsPairedListenerGenerations: boolean,
+        replacement?: ListenerClientReplacement,
       ): Promise<void> => {
         await startListenerClient({
+          replacement,
           connectionId: connId,
           wsUrl: url,
           supportsSplitStatusChannels: nextSupportsSplitStatusChannels,
@@ -844,7 +839,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
               );
             }
           },
-          onNeedsReregister: async () => {
+          onNeedsReregister: async (replacement) => {
             readiness.setCloudReconnecting();
             if (debugMode) {
               console.log(
@@ -858,6 +853,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
                 result.wsUrl,
                 result.supportsSplitStatusChannels,
                 result.supportsPairedListenerGenerations,
+                replacement,
               );
             } catch (error) {
               const msg =
@@ -916,8 +912,10 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         url: string,
         nextSupportsSplitStatusChannels: boolean,
         nextSupportsPairedListenerGenerations: boolean,
+        replacement?: ListenerClientReplacement,
       ): Promise<void> => {
         await startListenerClient({
+          replacement,
           connectionId: connId,
           wsUrl: url,
           supportsSplitStatusChannels: nextSupportsSplitStatusChannels,
@@ -945,7 +943,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             );
             updateRetryStatusCallback?.(attempt, nextRetryIn);
           },
-          onNeedsReregister: async () => {
+          onNeedsReregister: async (replacement) => {
             sessionLog.log("Computer connection expired, re-registering...");
             try {
               const result = await reregister();
@@ -954,6 +952,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
                 result.wsUrl,
                 result.supportsSplitStatusChannels,
                 result.supportsPairedListenerGenerations,
+                replacement,
               );
             } catch (error) {
               const msg =

@@ -5,7 +5,7 @@ import {
   rawDataByteLength,
   type StartupFrameBuffer,
 } from "./startup-frame-buffer";
-import type { ListenerRuntime } from "./types";
+import type { ListenerConnectionState, ListenerRuntime } from "./types";
 
 export function createReportedIngressHandler(
   handleMessage: (data: WebSocket.RawData) => Promise<void>,
@@ -43,34 +43,65 @@ export async function waitForStartupOrAbort(
   }
 }
 
-export function handoffLegacyStartupFrames(
+export function handoffRequestlessStartupFrames(
   runtime: ListenerRuntime,
+  connection: ListenerConnectionState,
   buffer: StartupFrameBuffer,
 ): void {
-  const frames = buffer.takeLegacyMessageFrames();
+  if (
+    !connection.startupHandoffEnabled ||
+    runtime.startupGenerationByLineage.get(connection.startupLineageId) !==
+      connection.startupGeneration
+  ) {
+    return;
+  }
+  const frames = buffer.takeRequestlessInputFrames();
   if (frames.length === 0) return;
-  const combined = [...(runtime.pendingLegacyStartupFrames ?? []), ...frames];
+  const prior =
+    runtime.pendingStartupFramesByLineage.get(connection.startupLineageId) ??
+    [];
+  const combined = [...prior, ...frames];
   const bytes = combined.reduce(
     (total, frame) => total + rawDataByteLength(frame),
     0,
   );
-  // Match the ordinary startup ingress bounds. If repeated replacement exceeds
-  // them, fail closed rather than retaining an unbounded process-level queue.
-  runtime.pendingLegacyStartupFrames =
+  // Match ordinary startup ingress bounds. Repeated replacement overflow fails
+  // closed for this lineage without affecting concurrent connections.
+  runtime.pendingStartupFramesByLineage.set(
+    connection.startupLineageId,
     combined.length <= MAX_PENDING_STARTUP_FRAMES &&
-    bytes <= MAX_PENDING_STARTUP_FRAME_BYTES
+      bytes <= MAX_PENDING_STARTUP_FRAME_BYTES
       ? combined
-      : [];
+      : [],
+  );
+}
+
+export function takeRequestlessStartupFrameHandoff(
+  runtime: ListenerRuntime,
+  connection: ListenerConnectionState,
+): WebSocket.RawData[] {
+  if (
+    !connection.startupHandoffEnabled ||
+    runtime.startupGenerationByLineage.get(connection.startupLineageId) !==
+      connection.startupGeneration
+  ) {
+    return [];
+  }
+  const frames =
+    runtime.pendingStartupFramesByLineage.get(connection.startupLineageId) ??
+    [];
+  runtime.pendingStartupFramesByLineage.delete(connection.startupLineageId);
+  return frames;
 }
 
 export function activateStartupIngress(
   buffer: StartupFrameBuffer,
   handleMessage: (data: WebSocket.RawData) => Promise<void>,
   isCurrentAndOpen: () => boolean,
-  takeLegacyHandoff?: () => WebSocket.RawData[],
+  takeHandoff?: () => WebSocket.RawData[],
 ): () => Promise<boolean> {
   return () => {
-    const handoff = takeLegacyHandoff?.() ?? [];
+    const handoff = takeHandoff?.() ?? [];
     if (!buffer.prepend(handoff)) return Promise.resolve(false);
     return buffer.drainToLive(handleMessage, isCurrentAndOpen);
   };

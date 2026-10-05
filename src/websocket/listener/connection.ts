@@ -96,9 +96,23 @@ export function openListenerConnection(params: {
   const startupReady = new Promise<void>((resolve) => {
     resolveStartupReady = resolve;
   });
+  const replacement = params.options.replacement;
+  const startupLineageId = replacement?.lineageId ?? params.connectionId;
+  const priorStartupGeneration =
+    params.runtime.startupGenerationByLineage.get(startupLineageId) ??
+    replacement?.generation ??
+    0;
+  const startupGeneration = priorStartupGeneration + 1;
+  params.runtime.startupGenerationByLineage.set(
+    startupLineageId,
+    startupGeneration,
+  );
   const connection: ListenerConnectionState = {
     id: params.connectionId,
     ordinal: resumed?.ordinal ?? params.runtime.nextConnectionOrdinal,
+    startupLineageId,
+    startupGeneration,
+    startupHandoffEnabled: params.options.connectionIdCanResume !== false,
     writer: params.writer,
     streamWriter: params.streamWriter ?? null,
     cancellation: params.cancellation ?? new AbortController(),
@@ -363,6 +377,14 @@ export function closeListenerConnection(
   runtime.connections.delete(connectionId);
   connection.resolveStartupReady();
   connection.cancellation.abort();
+  if (
+    !connection.startupHandoffEnabled &&
+    runtime.startupGenerationByLineage.get(connection.startupLineageId) ===
+      connection.startupGeneration
+  ) {
+    runtime.startupGenerationByLineage.delete(connection.startupLineageId);
+    runtime.pendingStartupFramesByLineage.delete(connection.startupLineageId);
+  }
   closeOutboundTransportQueue(connection.writer);
   if (connection.streamWriter) {
     closeOutboundTransportQueue(connection.streamWriter);

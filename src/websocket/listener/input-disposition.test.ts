@@ -4,11 +4,19 @@ import { dispatchInboundMessageWhenReady } from "./inbound-dispatch";
 import { enqueueInboundUserMessage } from "./inbound-queue";
 import {
   ACCEPTED_INPUT_DISPOSITION_TTL_MS,
+  forgetQueuedInputDisposition,
   getInputDisposition,
+  MAX_ACCEPTED_INPUT_DISPOSITIONS,
   MAX_ACCEPTED_INPUT_DISPOSITIONS_PER_SCOPE,
   rememberInputDisposition,
+  reserveInputDisposition,
+  rollbackInputDisposition,
 } from "./input-disposition";
 import { createRuntime } from "./lifecycle";
+import {
+  adoptListenerClientReplacement,
+  createListenerClientReplacement,
+} from "./listener-replacement";
 import { getConversationRuntime, setActiveRuntime } from "./runtime";
 import type { IncomingMessage, StartListenerOptions } from "./types";
 
@@ -104,6 +112,59 @@ test("completed input replay survives idle runtime eviction", async () => {
   ]);
 });
 
+test("accepted tombstone transfers only through explicit listener replacement", () => {
+  const original = createRuntime();
+  const originalRuntime = getOrCreateScopedRuntime(
+    original,
+    "agent-1",
+    "conversation-1",
+  );
+  rememberInputDisposition(originalRuntime, "ack-lost", "started");
+  const replacement = createListenerClientReplacement(original, options);
+
+  const unrelated = createRuntime();
+  const unrelatedRuntime = getOrCreateScopedRuntime(
+    unrelated,
+    "agent-1",
+    "conversation-1",
+  );
+  expect(getInputDisposition(unrelatedRuntime, "ack-lost")).toBeUndefined();
+  expect(() =>
+    adoptListenerClientReplacement(unrelated, {
+      ...options,
+      connectionName: "other-account-lineage",
+      replacement,
+    }),
+  ).toThrow("Invalid listener replacement lineage");
+  expect(() =>
+    adoptListenerClientReplacement(unrelated, {
+      ...options,
+      replacement: { ...replacement },
+    }),
+  ).toThrow("Invalid listener replacement lineage");
+
+  const next = createRuntime();
+  adoptListenerClientReplacement(next, { ...options, replacement });
+  expect(() =>
+    adoptListenerClientReplacement(createRuntime(), {
+      ...options,
+      replacement,
+    }),
+  ).toThrow("Invalid listener replacement lineage");
+  const nextRuntime = getOrCreateScopedRuntime(
+    next,
+    "agent-1",
+    "conversation-1",
+  );
+  const otherScope = getOrCreateScopedRuntime(
+    next,
+    "agent-1",
+    "conversation-2",
+  );
+  expect(getInputDisposition(nextRuntime, "ack-lost")).toBe("started");
+  expect(getInputDisposition(otherScope, "ack-lost")).toBeUndefined();
+});
+
 test("soft-limit eviction forgets queued acceptance so retry restores work", () => {
   const listener = createRuntime();
   const runtime = getOrCreateScopedRuntime(
@@ -125,8 +186,9 @@ test("soft-limit eviction forgets queued acceptance so retry restores work", () 
   expect(runtime.queueRuntime.peek().at(-1)?.clientMessageId).toBe("cm-0");
 });
 
-test("ledger is scope-exact and preserves the prior per-scope bound", () => {
+test("per-scope capacity rejects before execution without dropping a tombstone", async () => {
   const listener = createRuntime();
+  setActiveRuntime(listener);
   const runtime = getOrCreateScopedRuntime(
     listener,
     "agent-1",
@@ -137,20 +199,102 @@ test("ledger is scope-exact and preserves the prior per-scope bound", () => {
     "agent-1",
     "conversation-2",
   );
-  rememberInputDisposition(runtime, "same-id", "started");
+  expect(rememberInputDisposition(runtime, "same-id", "started")).toBe(true);
   expect(getInputDisposition(otherRuntime, "same-id")).toBeUndefined();
-
   for (
-    let index = 0;
-    index <= MAX_ACCEPTED_INPUT_DISPOSITIONS_PER_SCOPE;
+    let index = 1;
+    index < MAX_ACCEPTED_INPUT_DISPOSITIONS_PER_SCOPE;
     index += 1
   ) {
-    rememberInputDisposition(runtime, `bounded-${index}`, "started");
+    expect(
+      rememberInputDisposition(runtime, `bounded-${index}`, "started"),
+    ).toBe(true);
   }
-  expect(listener.acceptedInputDispositions?.size).toBe(
+
+  const processIncomingMessage = mock(async () => {});
+  const acknowledgements: boolean[] = [];
+  dispatchInboundMessageWhenReady({
+    listener,
+    runtime,
+    incoming: incoming("excess"),
+    socket: {
+      kind: "local",
+      bufferedAmount: 0,
+      isOpen: () => true,
+      send: () => {},
+    },
+    options,
+    processQueuedTurn: async () => {},
+    processIncomingMessage,
+    trackListenerError: () => {},
+    onInputAccepted: ({ accepted }) => acknowledgements.push(accepted),
+  });
+  await runtime.messageQueue;
+
+  expect(processIncomingMessage).not.toHaveBeenCalled();
+  expect(runtime.queueRuntime.length).toBe(0);
+  expect(acknowledgements).toEqual([false]);
+  expect(getInputDisposition(runtime, "same-id")).toBe("started");
+  expect(listener.acceptedInputDispositionLedger.entries.size).toBe(
     MAX_ACCEPTED_INPUT_DISPOSITIONS_PER_SCOPE,
   );
-  expect(getInputDisposition(runtime, "same-id")).toBeUndefined();
+});
+
+test("global capacity rejects excess work without evicting prior scopes", async () => {
+  const listener = createRuntime();
+  const scopeCount =
+    MAX_ACCEPTED_INPUT_DISPOSITIONS / MAX_ACCEPTED_INPUT_DISPOSITIONS_PER_SCOPE;
+  for (let scope = 0; scope < scopeCount; scope += 1) {
+    const runtime = getOrCreateScopedRuntime(
+      listener,
+      `agent-${scope}`,
+      `conversation-${scope}`,
+    );
+    for (
+      let index = 0;
+      index < MAX_ACCEPTED_INPUT_DISPOSITIONS_PER_SCOPE;
+      index += 1
+    ) {
+      expect(rememberInputDisposition(runtime, `id-${index}`, "started")).toBe(
+        true,
+      );
+    }
+  }
+  const first = getOrCreateScopedRuntime(listener, "agent-0", "conversation-0");
+  const excess = getOrCreateScopedRuntime(
+    listener,
+    "agent-excess",
+    "conversation-excess",
+  );
+
+  setActiveRuntime(listener);
+  const processIncomingMessage = mock(async () => {});
+  const acknowledgements: boolean[] = [];
+  dispatchInboundMessageWhenReady({
+    listener,
+    runtime: excess,
+    incoming: incoming("excess"),
+    socket: {
+      kind: "local",
+      bufferedAmount: 0,
+      isOpen: () => true,
+      send: () => {},
+    },
+    options,
+    processQueuedTurn: async () => {},
+    processIncomingMessage,
+    trackListenerError: () => {},
+    onInputAccepted: ({ accepted }) => acknowledgements.push(accepted),
+  });
+  await excess.messageQueue;
+
+  expect(processIncomingMessage).not.toHaveBeenCalled();
+  expect(excess.queueRuntime.length).toBe(0);
+  expect(acknowledgements).toEqual([false]);
+  expect(getInputDisposition(first, "id-0")).toBe("started");
+  expect(listener.acceptedInputDispositionLedger.entries.size).toBe(
+    MAX_ACCEPTED_INPUT_DISPOSITIONS,
+  );
 });
 
 test("ledger expires entries after the full sender retry horizon", () => {
@@ -161,12 +305,58 @@ test("ledger expires entries after the full sender retry horizon", () => {
     "conversation-1",
   );
   rememberInputDisposition(runtime, "expired-id", "started");
-  const entry = listener.acceptedInputDispositions?.values().next().value;
+  const entry = listener.acceptedInputDispositionLedger.entries
+    .values()
+    .next().value;
+  const expiry = listener.acceptedInputDispositionLedger.expiryQueue[0];
   expect(entry).toBeDefined();
-  if (entry) {
+  expect(expiry).toBeDefined();
+  if (entry && expiry) {
     entry.acceptedAt = Date.now() - ACCEPTED_INPUT_DISPOSITION_TTL_MS;
+    entry.expiresAt = Date.now();
+    expiry.expiresAt = entry.expiresAt;
   }
   expect(getInputDisposition(runtime, "expired-id")).toBeUndefined();
+});
+
+test("rolled-back admissions do not grow the expiry index", () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    "agent-1",
+    "conversation-1",
+  );
+  for (let index = 0; index < 10_000; index += 1) {
+    const admission = reserveInputDisposition(runtime, `rolled-back-${index}`);
+    expect(admission.kind).toBe("reserved");
+    if (admission.kind === "reserved") {
+      rollbackInputDisposition(runtime, admission.reservation);
+    }
+  }
+  expect(listener.acceptedInputDispositionLedger.entries.size).toBe(0);
+  expect(listener.acceptedInputDispositionLedger.scopeCounts.size).toBe(0);
+  expect(listener.acceptedInputDispositionLedger.expiryQueue).toEqual([]);
+});
+
+test("discard churn keeps stale expiry records bounded", () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    "agent-1",
+    "conversation-1",
+  );
+  for (let index = 0; index < 10_000; index += 1) {
+    const clientMessageId = `discarded-${index}`;
+    expect(rememberInputDisposition(runtime, clientMessageId, "queued")).toBe(
+      true,
+    );
+    forgetQueuedInputDisposition(runtime, clientMessageId);
+  }
+  expect(listener.acceptedInputDispositionLedger.entries.size).toBe(0);
+  expect(listener.acceptedInputDispositionLedger.scopeCounts.size).toBe(0);
+  expect(
+    listener.acceptedInputDispositionLedger.expiryQueue.length,
+  ).toBeLessThanOrEqual(1024);
 });
 
 test("explicit remove and clear forget queued acceptance", () => {

@@ -54,6 +54,11 @@ import {
   getParsedRuntimeScope,
   stampInboundUserMessageOtids,
 } from "./inbound-runtime-scope";
+import { createAcceptedInputDispositionLedger } from "./input-disposition";
+import {
+  adoptListenerClientReplacement,
+  createListenerClientReplacement,
+} from "./listener-replacement";
 import { createListenerMessageHandler } from "./message-router";
 import {
   disposeListenerModAdapter,
@@ -78,6 +83,7 @@ import {
   safeEmitWsEvent,
   setActiveRuntime,
 } from "./runtime";
+import { safeSocketSend } from "./socket-send";
 import {
   applyListenerPairIdentity,
   attachSplitStreamSocketHandlers,
@@ -92,7 +98,8 @@ import { StartupFrameBuffer } from "./startup-frame-buffer";
 import {
   activateStartupIngress,
   createReportedIngressHandler,
-  handoffLegacyStartupFrames,
+  handoffRequestlessStartupFrames,
+  takeRequestlessStartupFrameHandoff,
   waitForStartupOrAbort,
 } from "./startup-ingress";
 import { notifyStreamObserversRuntimeStopped } from "./stream-observers";
@@ -104,6 +111,7 @@ import {
   LocalListenerTransport,
 } from "./transport";
 import type {
+  ListenerConnectionState,
   ListenerRuntime,
   ProcessQueuedTurn,
   StartListenerOptions,
@@ -121,30 +129,6 @@ function trackListenerError(
     error,
     context,
   });
-}
-
-export function safeSocketSend(
-  socket: WebSocket,
-  payload: unknown,
-  errorType: string,
-  context: string,
-): boolean {
-  if (socket.readyState !== WebSocket.OPEN) {
-    return false;
-  }
-
-  try {
-    const serialized =
-      typeof payload === "string" ? payload : JSON.stringify(payload);
-    socket.send(serialized);
-    return true;
-  } catch (error) {
-    trackListenerError(errorType, error, context);
-    if (isDebugEnabled()) {
-      console.error(`[Listen] ${context} send failed:`, error);
-    }
-    return false;
-  }
 }
 
 function safeTransportSend(
@@ -228,8 +212,9 @@ export function createRuntime(): ListenerRuntime {
     connectionId: null,
     connectionName: null,
     conversationRuntimes: new Map(),
-    acceptedInputDispositions: new Map(),
-    pendingLegacyStartupFrames: [],
+    acceptedInputDispositionLedger: createAcceptedInputDispositionLedger(),
+    pendingStartupFramesByLineage: new Map(),
+    startupGenerationByLineage: new Map(),
     memfsSyncedAgents: new Map(),
     secretsHydrationByAgent: new Map(),
     secretsHydrationFreshnessByAgent: new Map(),
@@ -488,7 +473,7 @@ export async function attachOpenListenerSocket(
     trackListenerError,
   );
   const abortStartupIngress = (): void => {
-    handoffLegacyStartupFrames(runtime, pendingStartupFrames);
+    handoffRequestlessStartupFrames(runtime, connection, pendingStartupFrames);
     pendingStartupFrames.abort();
   };
   connection.cancellation.signal.addEventListener(
@@ -574,7 +559,7 @@ export async function attachOpenListenerSocket(
               !connection.cancellation.signal.aborted &&
               isListenerTransportOpen(connection.writer),
           ),
-        () => runtime.pendingLegacyStartupFrames?.splice(0) ?? [],
+        () => takeRequestlessStartupFrameHandoff(runtime, connection),
       ),
     },
   );
@@ -593,6 +578,7 @@ export async function startListenerClient(
   }
 
   const runtime = createRuntime();
+  adoptListenerClientReplacement(runtime, opts);
   runtime.onWsEvent = opts.onWsEvent;
   runtime.connectionId = opts.connectionId;
   runtime.connectionName = opts.connectionName;
@@ -686,7 +672,7 @@ async function connectWithRetry(
       // of giving up. This keeps established sessions alive through transient
       // outages (e.g. Cloudflare 521, server deploys).
       if (runtime.everConnected && opts.onNeedsReregister) {
-        opts.onNeedsReregister();
+        opts.onNeedsReregister(createListenerClientReplacement(runtime, opts));
         return;
       }
       opts.onError(new Error("Failed to connect after 5 minutes of retrying"));
@@ -778,8 +764,15 @@ async function connectWithRetry(
     () => streamSocket,
     trackListenerError,
   );
+  let startupConnection: ListenerConnectionState | null = null;
   const abortStartupIngress = (): void => {
-    handoffLegacyStartupFrames(runtime, pendingStartupFrames);
+    if (startupConnection) {
+      handoffRequestlessStartupFrames(
+        runtime,
+        startupConnection,
+        pendingStartupFrames,
+      );
+    }
     pendingStartupFrames.abort();
   };
   if (streamSocket) {
@@ -827,6 +820,7 @@ async function connectWithRetry(
         streamWriter: streamTransport,
         options: opts,
       });
+      startupConnection = connection;
       await startConnectedListenerRuntime(
         runtime,
         transport,
@@ -847,7 +841,7 @@ async function connectWithRetry(
                   !connection.cancellation.signal.aborted &&
                   isListenerTransportOpen(connection.writer),
               ),
-            () => runtime.pendingLegacyStartupFrames?.splice(0) ?? [],
+            () => takeRequestlessStartupFrameHandoff(runtime, connection),
           ),
         },
       );
@@ -926,6 +920,8 @@ async function connectWithRetry(
     runtime.streamSocket = null;
     runtime.streamTransport = null;
     if (terminalClose) {
+      const replacement =
+        code === 1008 ? createListenerClientReplacement(runtime, opts) : null;
       if (getActiveRuntime() === runtime) {
         setActiveRuntime(null);
       }
@@ -936,7 +932,10 @@ async function connectWithRetry(
           console.log("[Listen] Environment not found, re-registering...");
         }
         if (opts.onNeedsReregister) {
-          opts.onNeedsReregister();
+          if (!replacement) {
+            throw new Error("Missing listener replacement lineage");
+          }
+          opts.onNeedsReregister(replacement);
         } else {
           opts.onDisconnected();
         }
