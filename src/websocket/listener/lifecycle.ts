@@ -92,6 +92,7 @@ import { StartupFrameBuffer } from "./startup-frame-buffer";
 import {
   activateStartupIngress,
   createReportedIngressHandler,
+  handoffLegacyStartupFrames,
   waitForStartupOrAbort,
 } from "./startup-ingress";
 import { notifyStreamObserversRuntimeStopped } from "./stream-observers";
@@ -227,6 +228,8 @@ export function createRuntime(): ListenerRuntime {
     connectionId: null,
     connectionName: null,
     conversationRuntimes: new Map(),
+    acceptedInputDispositions: new Map(),
+    pendingLegacyStartupFrames: [],
     memfsSyncedAgents: new Map(),
     secretsHydrationByAgent: new Map(),
     secretsHydrationFreshnessByAgent: new Map(),
@@ -484,6 +487,15 @@ export async function attachOpenListenerSocket(
     () => streamSocket,
     trackListenerError,
   );
+  const abortStartupIngress = (): void => {
+    handoffLegacyStartupFrames(runtime, pendingStartupFrames);
+    pendingStartupFrames.abort();
+  };
+  connection.cancellation.signal.addEventListener(
+    "abort",
+    abortStartupIngress,
+    { once: true },
+  );
   socket.on("message", (data: WebSocket.RawData) => {
     pendingStartupFrames.accept(data, handleIngressMessage);
   });
@@ -497,7 +509,7 @@ export async function attachOpenListenerSocket(
     }
 
     const reasonText = reason.toString();
-    pendingStartupFrames.abort();
+    abortStartupIngress();
     safeEmitWsEvent("recv", "lifecycle", {
       type: "_ws_close",
       code,
@@ -535,6 +547,7 @@ export async function attachOpenListenerSocket(
     connection.cancellation.signal.aborted ||
     runtime.connections.get(opts.connectionId) !== connection
   ) {
+    abortStartupIngress();
     return;
   }
 
@@ -561,6 +574,7 @@ export async function attachOpenListenerSocket(
               !connection.cancellation.signal.aborted &&
               isListenerTransportOpen(connection.writer),
           ),
+        () => runtime.pendingLegacyStartupFrames?.splice(0) ?? [],
       ),
     },
   );
@@ -764,6 +778,10 @@ async function connectWithRetry(
     () => streamSocket,
     trackListenerError,
   );
+  const abortStartupIngress = (): void => {
+    handoffLegacyStartupFrames(runtime, pendingStartupFrames);
+    pendingStartupFrames.abort();
+  };
   if (streamSocket) {
     attachSplitStreamSocketHandlers({
       runtime,
@@ -829,12 +847,13 @@ async function connectWithRetry(
                   !connection.cancellation.signal.aborted &&
                   isListenerTransportOpen(connection.writer),
               ),
+            () => runtime.pendingLegacyStartupFrames?.splice(0) ?? [],
           ),
         },
       );
       if (!isCurrentInitializedListenerConnection(runtime, connection)) return;
     })().catch((error) => {
-      pendingStartupFrames.abort();
+      abortStartupIngress();
       handleListenerSocketOpenFailure({
         runtime,
         controlSocket: socket,
@@ -850,7 +869,7 @@ async function connectWithRetry(
   });
 
   socket.on("close", (code: number, reason: Buffer) => {
-    pendingStartupFrames.abort();
+    abortStartupIngress();
     if (!shouldHandleControlSocketClose(runtime, socket, opts.connectionId)) {
       return;
     }

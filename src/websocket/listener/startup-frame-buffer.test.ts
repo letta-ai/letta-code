@@ -1,9 +1,25 @@
-import { describe, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
+import type WebSocket from "ws";
+import {
+  markListenerConnectionInitialized,
+  openListenerConnection,
+} from "./connection";
+import { getOrCreateScopedRuntime } from "./conversation-runtime";
+import { createRuntime } from "./lifecycle";
+import { createListenerMessageHandler } from "./message-router";
+import { setActiveRuntime } from "./runtime";
 import {
   MAX_PENDING_STARTUP_FRAME_BYTES,
   MAX_PENDING_STARTUP_FRAMES,
   StartupFrameBuffer,
 } from "./startup-frame-buffer";
+import {
+  activateStartupIngress,
+  handoffLegacyStartupFrames,
+} from "./startup-ingress";
+import type { IncomingMessage, StartListenerOptions } from "./types";
+
+afterEach(() => setActiveRuntime(null));
 
 describe("startup frame buffering", () => {
   test("drains arrivals accepted during startup in strict FIFO order", async () => {
@@ -69,6 +85,86 @@ describe("startup frame buffering", () => {
     expect(streamTerminate).toHaveBeenCalledTimes(1);
     expect(report).toHaveBeenCalledTimes(1);
     expect(buffer.drain()).toEqual([]);
+  });
+
+  test("hands a pre-ready legacy message to the exact replacement once", async () => {
+    const runtime = createRuntime();
+    const socket = {
+      kind: "local" as const,
+      bufferedAmount: 0,
+      isOpen: () => true,
+      send: () => {},
+    };
+    const options: StartListenerOptions = {
+      connectionId: "replacement",
+      wsUrl: "local://test",
+      deviceId: "device",
+      connectionName: "test",
+      onConnected: () => {},
+      onDisconnected: () => {},
+      onError: () => {},
+    };
+    const connection = openListenerConnection({
+      runtime,
+      connectionId: options.connectionId,
+      writer: socket,
+      options,
+    });
+    markListenerConnectionInitialized(runtime, connection.id, connection);
+    setActiveRuntime(runtime);
+    const executeTurn = mock(async (_incoming: IncomingMessage) => {});
+    const dispatchedRuntime = getOrCreateScopedRuntime(
+      runtime,
+      "agent-1",
+      "conversation-1",
+    );
+    const handleReplacementMessage = createListenerMessageHandler({
+      runtime,
+      socket: socket as unknown as WebSocket,
+      connectionId: connection.id,
+      opts: options,
+      processQueuedTurn: async () => {},
+      fileCommandSession: { handle: () => false },
+      getParsedRuntimeScope: () => null,
+      replaySyncStateForRuntime: async () => {},
+      getOrCreateScopedRuntime: () => dispatchedRuntime,
+      handleApprovalResponseInput: async () => false,
+      handleChangeDeviceStateInput: async () => false,
+      handleAbortMessageInput: async () => false,
+      stampInboundUserMessageOtids: (incoming) => incoming,
+      safeSocketSend: () => true,
+      runDetachedListenerTask: () => {},
+      trackListenerError: () => {},
+      processIncomingMessage: executeTurn,
+    });
+    const legacyFrame = Buffer.from(
+      JSON.stringify({
+        type: "message",
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        messages: [{ role: "user", content: "legacy pre-ready" }],
+      }),
+    );
+    const staleBuffer = new StartupFrameBuffer();
+    staleBuffer.accept(legacyFrame, async () => {
+      throw new Error("stale connection processed input");
+    });
+
+    handoffLegacyStartupFrames(runtime, staleBuffer);
+    staleBuffer.abort();
+    const replacementBuffer = new StartupFrameBuffer();
+    await expect(
+      activateStartupIngress(
+        replacementBuffer,
+        handleReplacementMessage,
+        () => true,
+        () => runtime.pendingLegacyStartupFrames?.splice(0) ?? [],
+      )(),
+    ).resolves.toBe(true);
+    await dispatchedRuntime.messageQueue;
+
+    expect(executeTurn).toHaveBeenCalledTimes(1);
+    expect(runtime.pendingLegacyStartupFrames).toEqual([]);
   });
 
   test("terminates when one frame exceeds the byte limit", () => {

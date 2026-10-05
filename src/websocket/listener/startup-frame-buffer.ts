@@ -3,7 +3,7 @@ import type WebSocket from "ws";
 export const MAX_PENDING_STARTUP_FRAMES = 256;
 export const MAX_PENDING_STARTUP_FRAME_BYTES = 1024 * 1024;
 
-function rawDataByteLength(data: WebSocket.RawData): number {
+export function rawDataByteLength(data: WebSocket.RawData): number {
   if (Array.isArray(data)) {
     return data.reduce((total, chunk) => total + chunk.byteLength, 0);
   }
@@ -55,6 +55,51 @@ export class StartupFrameBuffer {
     this.#frames = [];
     this.#bytes = 0;
     return frames;
+  }
+
+  prepend(frames: WebSocket.RawData[]): boolean {
+    if (this.#phase !== "buffering" || frames.length === 0) {
+      return frames.length === 0;
+    }
+    const bytes = frames.reduce(
+      (total, frame) => total + rawDataByteLength(frame),
+      0,
+    );
+    if (
+      frames.length + this.#frames.length > MAX_PENDING_STARTUP_FRAMES ||
+      bytes > MAX_PENDING_STARTUP_FRAME_BYTES - this.#bytes
+    ) {
+      this.clear();
+      this.#phase = "terminated";
+      this.onOverflow();
+      return false;
+    }
+    this.#frames = [...frames, ...this.#frames];
+    this.#bytes += bytes;
+    return true;
+  }
+
+  takeLegacyMessageFrames(): WebSocket.RawData[] {
+    if (this.#phase === "terminated") return [];
+    const legacy: WebSocket.RawData[] = [];
+    const retained: WebSocket.RawData[] = [];
+    for (const frame of this.#frames) {
+      try {
+        const bytes = Array.isArray(frame)
+          ? Buffer.concat(frame)
+          : Buffer.from(frame as ArrayBuffer);
+        const parsed = JSON.parse(bytes.toString("utf8")) as { type?: unknown };
+        (parsed.type === "message" ? legacy : retained).push(frame);
+      } catch {
+        retained.push(frame);
+      }
+    }
+    this.#frames = retained;
+    this.#bytes = retained.reduce(
+      (total, frame) => total + rawDataByteLength(frame),
+      0,
+    );
+    return legacy;
   }
 
   clear(): void {

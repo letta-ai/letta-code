@@ -211,6 +211,14 @@ export type RecoveredApprovalState = {
   allApprovals?: ApprovalRequest[];
 };
 
+export type AcceptedInputDisposition = "started" | "queued";
+
+export type AcceptedInputDispositionEntry = {
+  disposition: AcceptedInputDisposition;
+  acceptedAt: number;
+  runtimeKey: string;
+};
+
 export type ConversationRuntime = {
   listener: ListenerRuntime;
   key: string;
@@ -225,8 +233,6 @@ export type ConversationRuntime = {
   activeConnectionId: ListenerConnectionId | null;
   turnLifecycle: TurnLifecycle;
   messageQueue: Promise<void>;
-  /** Recently accepted ingress IDs, retained for idempotent client retries. */
-  acceptedInputDispositions: Map<string, "started" | "queued">;
   pendingApprovalResolvers: Map<string, PendingApprovalResolver>;
   recoveredApprovalState: RecoveredApprovalState | null;
   /**
@@ -410,6 +416,14 @@ export type ListenerRuntime = {
   connectionId: string | null;
   connectionName: string | null;
   conversationRuntimes: Map<string, ConversationRuntime>;
+  /**
+   * Process-scoped LRU/TTL ledger for stable input identities. Its composite
+   * key includes the exact conversation runtime key, so identical client IDs
+   * in different scopes do not collide and retries survive idle eviction.
+   */
+  acceptedInputDispositions?: Map<string, AcceptedInputDispositionEntry>;
+  /** Legacy pre-ready frames handed from an ordinary replaced connection. */
+  pendingLegacyStartupFrames?: WebSocket.RawData[];
   /** Recent run-to-send snapshots survive idle conversation runtime eviction. */
   clientMessageIdsByRunIdByConversation?: Map<string, Map<string, string[]>>;
   /** Per-conversation worktree directory watchers for CWD auto-detection fallback. */

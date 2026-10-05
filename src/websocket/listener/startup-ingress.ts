@@ -1,5 +1,11 @@
 import type WebSocket from "ws";
-import type { StartupFrameBuffer } from "./startup-frame-buffer";
+import {
+  MAX_PENDING_STARTUP_FRAME_BYTES,
+  MAX_PENDING_STARTUP_FRAMES,
+  rawDataByteLength,
+  type StartupFrameBuffer,
+} from "./startup-frame-buffer";
+import type { ListenerRuntime } from "./types";
 
 export function createReportedIngressHandler(
   handleMessage: (data: WebSocket.RawData) => Promise<void>,
@@ -37,10 +43,35 @@ export async function waitForStartupOrAbort(
   }
 }
 
+export function handoffLegacyStartupFrames(
+  runtime: ListenerRuntime,
+  buffer: StartupFrameBuffer,
+): void {
+  const frames = buffer.takeLegacyMessageFrames();
+  if (frames.length === 0) return;
+  const combined = [...(runtime.pendingLegacyStartupFrames ?? []), ...frames];
+  const bytes = combined.reduce(
+    (total, frame) => total + rawDataByteLength(frame),
+    0,
+  );
+  // Match the ordinary startup ingress bounds. If repeated replacement exceeds
+  // them, fail closed rather than retaining an unbounded process-level queue.
+  runtime.pendingLegacyStartupFrames =
+    combined.length <= MAX_PENDING_STARTUP_FRAMES &&
+    bytes <= MAX_PENDING_STARTUP_FRAME_BYTES
+      ? combined
+      : [];
+}
+
 export function activateStartupIngress(
   buffer: StartupFrameBuffer,
   handleMessage: (data: WebSocket.RawData) => Promise<void>,
   isCurrentAndOpen: () => boolean,
+  takeLegacyHandoff?: () => WebSocket.RawData[],
 ): () => Promise<boolean> {
-  return () => buffer.drainToLive(handleMessage, isCurrentAndOpen);
+  return () => {
+    const handoff = takeLegacyHandoff?.() ?? [];
+    if (!buffer.prepend(handoff)) return Promise.resolve(false);
+    return buffer.drainToLive(handleMessage, isCurrentAndOpen);
+  };
 }

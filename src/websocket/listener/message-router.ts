@@ -47,13 +47,15 @@ import {
 import {
   createIncomingMessage,
   dispatchInboundMessageWhenReady,
-  getAcceptedInputDisposition,
-  rememberAcceptedInputDisposition,
 } from "./inbound-dispatch";
 import {
   enqueueInboundUserMessage,
   getInboundClientMessageId,
 } from "./inbound-queue";
+import {
+  getInputDisposition,
+  rememberInputDisposition,
+} from "./input-disposition";
 import {
   isExecuteCommandCommand,
   parseServerLifecycleMessage,
@@ -485,8 +487,10 @@ export function createListenerMessageHandler(
           // sync recovery may act on its own again from here.
           clearExpectedInboundTeleport(scopedRuntime);
           const acceptedKey = `teleport:${teleportId}`;
-          const previousDisposition =
-            scopedRuntime.acceptedInputDispositions.get(acceptedKey);
+          const previousDisposition = getInputDisposition(
+            scopedRuntime,
+            acceptedKey,
+          );
           if (previousDisposition) {
             acknowledgeInput(true, undefined, previousDisposition);
             return;
@@ -500,7 +504,7 @@ export function createListenerMessageHandler(
             );
             return;
           }
-          scopedRuntime.acceptedInputDispositions.set(acceptedKey, "started");
+          rememberInputDisposition(scopedRuntime, acceptedKey, "started");
           acknowledgeInput(true, undefined, "started");
           runDetachedListenerTask("teleport_continue", async () => {
             await processIncomingMessage(
@@ -614,7 +618,7 @@ export function createListenerMessageHandler(
         if (shouldQueueInboundMessage(incoming)) {
           const stampedIncoming = stampInboundUserMessageOtids(incoming);
           const clientMessageId = getInboundClientMessageId(stampedIncoming);
-          const acceptedDisposition = getAcceptedInputDisposition(
+          const acceptedDisposition = getInputDisposition(
             scopedRuntime,
             clientMessageId,
           );
@@ -645,11 +649,7 @@ export function createListenerMessageHandler(
             parsed.runtime.acting_user_id,
           );
           if (enqueued) {
-            rememberAcceptedInputDisposition(
-              scopedRuntime,
-              clientMessageId,
-              "queued",
-            );
+            rememberInputDisposition(scopedRuntime, clientMessageId, "queued");
             scheduleQueuePump(scopedRuntime, socket, opts, processQueuedTurn);
           }
           acknowledgeInput(

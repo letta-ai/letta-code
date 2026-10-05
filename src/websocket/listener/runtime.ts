@@ -264,7 +264,6 @@ export function createConversationRuntime(
     activeConnectionId: null,
     turnLifecycle,
     messageQueue: Promise.resolve(),
-    acceptedInputDispositions: new Map(),
     pendingApprovalResolvers: new Map(),
     recoveredApprovalState: null,
     expectedTeleportId: null,

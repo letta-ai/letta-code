@@ -1,5 +1,6 @@
 import { type QueueItem, QueueRuntime } from "@/queue/queue-runtime";
 import type { QueueRemovalTransition } from "@/types/queue-update-protocol";
+import { forgetQueuedInputDisposition } from "./input-disposition";
 import { getQueueItemScope, getQueueItemsScope } from "./queue";
 import { scheduleQueueEmit } from "./queue-update-outbound";
 import {
@@ -7,6 +8,14 @@ import {
   getOrCreateConversationRuntime,
 } from "./runtime";
 import type { ConversationRuntime, ListenerRuntime } from "./types";
+
+function discardQueuedItem(
+  runtime: ConversationRuntime,
+  item: QueueItem,
+): void {
+  runtime.queuedMessagesByItemId.delete(item.id);
+  forgetQueuedInputDisposition(runtime, item.clientMessageId);
+}
 
 function queueRemovalTransition(
   item: QueueItem,
@@ -54,6 +63,7 @@ export function ensureConversationQueueRuntime(
       },
       onCleared: (_reason, _clearedCount, items) => {
         runtime.pendingTurns = 0;
+        for (const item of items) discardQueuedItem(runtime, item);
         scheduleQueueEmit(
           listener,
           getQueueItemsScope(items),
@@ -63,7 +73,7 @@ export function ensureConversationQueueRuntime(
       },
       onDropped: (item, _reason, queueLen) => {
         runtime.pendingTurns = queueLen;
-        runtime.queuedMessagesByItemId.delete(item.id);
+        discardQueuedItem(runtime, item);
         scheduleQueueEmit(listener, getQueueItemScope(item), [
           queueRemovalTransition(item, "cancelled"),
         ]);
@@ -71,7 +81,7 @@ export function ensureConversationQueueRuntime(
       },
       onRemoved: (item, queueLen) => {
         runtime.pendingTurns = queueLen;
-        runtime.queuedMessagesByItemId.delete(item.id);
+        discardQueuedItem(runtime, item);
         scheduleQueueEmit(listener, getQueueItemScope(item), [
           queueRemovalTransition(item, "cancelled"),
         ]);

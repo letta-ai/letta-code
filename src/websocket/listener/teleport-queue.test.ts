@@ -7,6 +7,7 @@ import {
 } from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { dispatchInboundMessageWhenReady } from "./inbound-dispatch";
+import { rememberInputDisposition } from "./input-disposition";
 import { createRuntime } from "./lifecycle";
 import { createListenerMessageHandler } from "./message-router";
 import { setActiveRuntime } from "./runtime";
@@ -115,7 +116,7 @@ test("new production input waits outside a pending teleport", async () => {
   openSource(listener, socket);
   setActiveRuntime(listener);
   requestTeleport(listener);
-  runtime.acceptedInputDispositions.set("cm-known", "queued");
+  rememberInputDisposition(runtime, "cm-known", "queued");
   const handleMessage = createListenerMessageHandler({
     runtime: listener,
     socket: socket as unknown as WebSocket,
