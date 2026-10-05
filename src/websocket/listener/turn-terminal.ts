@@ -1,6 +1,7 @@
 import type { Buffers } from "@/cli/helpers/accumulator";
 import type { UsageStatistics } from "@/types/protocol";
 import type { StopReasonType } from "@/types/protocol_v2";
+import { debugWarn } from "@/utils/debug";
 import { TO_SUBSCRIBERS } from "./connection";
 import { forgetListenerWork } from "./interrupted-turn-record";
 import {
@@ -70,16 +71,22 @@ export function finishListenerTurn(
           ...(options.usage ? { usage: options.usage } : {}),
         }
       : null;
-  // Disk/capacity failure leaves the lease current so its owner can fail
-  // visibly or retry; never finalize first and discover afterward that no
-  // durable terminal exists.
-  const preparedTurnFinished = turnFinishedMessage
-    ? prepareTurnFinished(
-        runtime,
-        turnFinishedMessage,
-        options.turnFinishedStore,
-      )
-    : null;
+  let preparedTurnFinished: ReturnType<typeof prepareTurnFinished> | null =
+    null;
+  try {
+    preparedTurnFinished = turnFinishedMessage
+      ? prepareTurnFinished(
+          runtime,
+          turnFinishedMessage,
+          options.turnFinishedStore,
+        )
+      : null;
+  } catch (error) {
+    // Persistence failure is visible to the owner, but it must not strand the
+    // active lease forever (notably when the bounded store reaches capacity).
+    runtime.turnLifecycle.finish(lease, options.stopReason);
+    throw error;
+  }
   const transition = runtime.turnLifecycle.finish(lease, options.stopReason);
   if (!transition.finished) {
     return transition;
@@ -141,7 +148,13 @@ export function finishListenerTurn(
     (options.stopReason === "cancelled" &&
       transition.interruptionCause !== "transport")
   ) {
-    (options.forgetWork ?? (() => forgetListenerWork(runtime)))();
+    try {
+      (options.forgetWork ?? (() => forgetListenerWork(runtime)))();
+    } catch (error) {
+      // The terminal transition already owns cleanup. A failed unlink is
+      // recoverable evidence, not a reason to wedge or reject a detached turn.
+      debugWarn("recovery", "Failed to retire completed listener work", error);
+    }
   }
   return transition;
 }

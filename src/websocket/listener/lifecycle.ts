@@ -40,7 +40,10 @@ import {
   handleApprovalResponseInput,
   handleChangeDeviceStateInput,
 } from "./control-inputs";
-import { getOrCreateScopedRuntime } from "./conversation-runtime";
+import {
+  getOrCreateScopedRuntime,
+  restoreDurableQueuedInputs,
+} from "./conversation-runtime";
 import { loadPersistedCwdMap } from "./cwd";
 import {
   createExternalToolNotificationState,
@@ -302,6 +305,9 @@ export async function startConnectedListenerRuntime(
   // Managed remote listeners adopt an open gateway and resume local records.
   scheduleRecordedTurnRecovery(runtime, options.recoverRecordedWork);
 
+  // This must precede the existing startup pump loop: a queued acknowledgement
+  // is final to Cloud, so only the durable local payload can recreate the work.
+  restoreDurableQueuedInputs(runtime);
   const processTransport = getOrCreateProcessTransport(runtime);
   for (const conversationRuntime of runtime.conversationRuntimes.values()) {
     if (conversationRuntime.queueRuntime?.isEmpty === false) {

@@ -85,21 +85,35 @@ export function admitTeleportContinueInput(params: {
       currentTeleportId: teleportId,
     });
     clearExpectedInboundTeleport(scopedRuntime);
-    commitInputDisposition(scopedRuntime, reservation, "started");
+    const identity = teleportInputIdentity(teleportId);
+    const continuationInput = {
+      type: "message" as const,
+      connectionId,
+      agentId,
+      conversationId,
+      clientPreferences: payload.client_preferences,
+      messages: buildTeleportContinuationMessages({
+        teleportId,
+        approvals: payload.continuation?.approvals,
+      }),
+      durableInputIdentity: identity,
+    };
+    if (
+      !commitInputDisposition(scopedRuntime, reservation, "started", {
+        incoming: continuationInput,
+      })
+    ) {
+      rollbackInputDisposition(scopedRuntime, reservation);
+      acknowledgeInput(
+        false,
+        "Stable input disposition could not be persisted",
+      );
+      return;
+    }
     acknowledgeInput(true, undefined, "started");
     params.runDetachedListenerTask("teleport_continue", async () => {
       await params.processIncomingMessage(
-        {
-          type: "message",
-          connectionId,
-          agentId,
-          conversationId,
-          clientPreferences: payload.client_preferences,
-          messages: buildTeleportContinuationMessages({
-            teleportId,
-            approvals: payload.continuation?.approvals,
-          }),
-        },
+        continuationInput,
         getOrCreateProcessTransport(listener),
         scopedRuntime,
         params.onStatusChange,

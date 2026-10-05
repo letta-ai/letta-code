@@ -412,14 +412,14 @@ test("a queued stable ID survives a throwing status callback without replay", as
       runtime,
       ordinaryInputIdentity("cm-queued-status-boom"),
     ),
-  ).toBe("queued");
+  ).toBe("started");
 
   dispatch();
   await runtime.messageQueue;
 
   expect(acknowledgements).toEqual([
     { accepted: true, disposition: "queued" },
-    { accepted: true, disposition: "queued" },
+    { accepted: true, disposition: "started" },
   ]);
   expect(processQueuedTurn).toHaveBeenCalledTimes(1);
   expect(listener.acceptedInputDispositionLedger.entries.size).toBe(1);

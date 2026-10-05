@@ -83,6 +83,37 @@ describe("TurnLifecycle", () => {
     );
   });
 
+  test("explicit abort upgrades a transport cancellation with an external fence", () => {
+    const lifecycle = new TurnLifecycle(() => "lease-1");
+    const lease = lifecycle.begin({
+      origin: "message",
+      workingDirectory: "/tmp/worktree",
+    });
+    lifecycle.setRunId(lease, "run-1");
+
+    lifecycle.requestCancellation({ cause: "transport" });
+    expect(
+      lifecycle.requestCancellation({
+        cause: "explicit_user",
+        waitForExternalSettlement: true,
+      }),
+    ).toMatchObject({
+      transitioned: false,
+      lease,
+      runId: "run-1",
+      interruptionCause: "explicit_user",
+    });
+    expect(lifecycle.finish(lease, "cancelled").interruptionCause).toBe(
+      "explicit_user",
+    );
+    expect(lifecycle.kind).toBe("cancelling");
+    expect(lifecycle.settleCancellation(lease)).toEqual({
+      settled: true,
+      released: true,
+    });
+    expect(lifecycle.kind).toBe("idle");
+  });
+
   test("cancellation waits for both its owner and external cleanup", () => {
     const lifecycle = new TurnLifecycle(() => "lease-1");
     const lease = lifecycle.begin({

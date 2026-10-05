@@ -297,13 +297,17 @@ export class TurnLifecycle {
     const state = this.#state;
     if (state.kind === "cancelling") {
       // A later explicit user abort is authoritative over an earlier transport
-      // interruption: the human asked to discard the continuation. Transport
-      // interruption never weakens an already explicit cancellation.
-      if (
-        options.cause === "explicit_user" &&
-        state.interruptionCause !== "explicit_user"
-      ) {
-        this.#state = { ...state, interruptionCause: "explicit_user" };
+      // interruption: the human asked to discard the continuation. It also adds
+      // the external-settlement fence because backend cancellation still has to
+      // complete before a replacement turn may start.
+      if (options.cause === "explicit_user") {
+        this.#state = {
+          ...state,
+          interruptionCause: "explicit_user",
+          externalSettlementPending:
+            state.externalSettlementPending ||
+            options.waitForExternalSettlement === true,
+        };
       }
       return {
         transitioned: false,

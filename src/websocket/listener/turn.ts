@@ -28,6 +28,10 @@ import { isDebugEnabled } from "@/utils/debug";
 import { EMPTY_RESPONSE_MAX_RETRIES } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
 import {
+  completeInputReplay,
+  ordinaryInputIdentity,
+} from "./input-disposition";
+import {
   emitInterruptToolReturnMessage,
   emitToolExecutionFinishedEvents,
   getInterruptApprovalsForEmission,
@@ -173,6 +177,7 @@ async function handleIncomingMessageInner(
     throw new Error("Cannot continue a turn with a stale lifecycle lease");
   const turnAbortSignal = turnLease.signal;
   let finalizedByThisInvocation = false;
+  let replayRetirementError: Error | null = null;
   const buffers = createBuffers(agentId ?? undefined);
   const noteFinalization = (
     transition: ReturnType<typeof finishListenerTurn>,
@@ -180,8 +185,8 @@ async function handleIncomingMessageInner(
     finalizedByThisInvocation ||= transition.finished;
     return transition;
   };
-  const finishTurn = (options: Parameters<typeof finishListenerTurn>[2]) =>
-    noteFinalization(
+  const finishTurn = (options: Parameters<typeof finishListenerTurn>[2]) => {
+    const transition = noteFinalization(
       finishListenerTurn(runtime, turnLease, {
         ...options,
         socket: options.socket ?? socket,
@@ -199,6 +204,23 @@ async function handleIncomingMessageInner(
           : {}),
       }),
     );
+    if (transition.finished) {
+      const identities = [
+        ...turnCorrelation.clientMessageIds.flatMap((id) => {
+          const identity = ordinaryInputIdentity(id);
+          return identity ? [identity] : [];
+        }),
+        ...(msg.durableInputIdentity ? [msg.durableInputIdentity] : []),
+      ];
+      if (!completeInputReplay(runtime, identities)) {
+        replayRetirementError = new Error(
+          "Failed to durably retire accepted-input replay payload",
+        );
+        throw replayRetirementError;
+      }
+    }
+    return transition;
+  };
   const finishIfInterrupted = (runId?: string | null): boolean => {
     if (
       !turnAbortSignal.aborted &&
@@ -862,6 +884,7 @@ async function handleIncomingMessageInner(
       );
     }
   } catch (error) {
+    if (error === replayRetirementError) throw error;
     trackBoundaryError({
       errorType: "listener_turn_processing_failed",
       error,

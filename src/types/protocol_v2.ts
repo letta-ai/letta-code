@@ -1,9 +1,7 @@
 /**
  * Protocol V2 (alpha hard-cut contract)
- *
  * This file defines the runtime-scoped websocket contract for device-mode UIs.
- * It is intentionally self-defined and does not import transport/event shapes
- * from the legacy protocol.ts surface.
+ * It is self-defined rather than importing legacy transport/event shapes.
  */
 
 import type {
@@ -31,6 +29,7 @@ import type {
 } from "@letta-ai/letta-client/resources/conversations/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import type { ConnectProviderOAuthConfig } from "@/types/provider-oauth-config";
+import type { TurnFinishedAckCommand } from "@/types/turn-finished-protocol";
 import type {
   AppServerInfoCommand,
   AppServerInfoResponseMessage,
@@ -2346,6 +2345,7 @@ export interface SecretApplyResponse {
 }
 
 export type WsProtocolCommand =
+  | TurnFinishedAckCommand
   | InputCommand
   | ChangeDeviceStateCommand
   | AbortMessageCommand

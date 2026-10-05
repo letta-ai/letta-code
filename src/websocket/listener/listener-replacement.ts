@@ -6,9 +6,11 @@ import {
 import { resolveStartupLineageId } from "./startup-ingress";
 import { cloneTurnCorrelationIndex } from "./turn-correlation";
 import type {
+  AcceptedInputDispositionLedger,
   ListenerClientReplacement,
   ListenerRuntime,
   StartListenerOptions,
+  StartupFrameHandoff,
 } from "./types";
 
 /**
@@ -29,9 +31,9 @@ type ListenerReplacementProvenance = {
   lineageId: string;
   generation: number;
   authorityEpoch: number | null;
-  ledger: ListenerClientReplacement["ledger"];
-  startupFrameHandoff: ListenerClientReplacement["startupFrameHandoff"];
-  clientMessageIdsByRunIdByConversation: ListenerClientReplacement["clientMessageIdsByRunIdByConversation"];
+  ledger: AcceptedInputDispositionLedger;
+  startupFrameHandoff: StartupFrameHandoff;
+  clientMessageIdsByRunIdByConversation: Map<string, Map<string, string[]>>;
 };
 
 /**
@@ -52,12 +54,34 @@ function rejectReplacement(reason: ListenerReplacementRejection): never {
   throw new Error(`Invalid listener replacement lineage: ${reason}`);
 }
 
+function cloneRawData(frame: import("ws").RawData): import("ws").RawData {
+  if (Array.isArray(frame)) return frame.map((chunk) => Buffer.from(chunk));
+  if (Buffer.isBuffer(frame)) return Buffer.from(frame);
+  if (frame instanceof ArrayBuffer) return frame.slice(0);
+  return Buffer.from(new Uint8Array(frame));
+}
+
 function cloneStartupFrameHandoff(
-  handoff: ListenerClientReplacement["startupFrameHandoff"],
-): ListenerClientReplacement["startupFrameHandoff"] {
+  handoff: StartupFrameHandoff,
+): StartupFrameHandoff {
   return handoff.kind === "overflow"
     ? { ...handoff }
-    : { ...handoff, frames: [...handoff.frames] };
+    : { ...handoff, frames: handoff.frames.map(cloneRawData) };
+}
+
+function cloneDispositionLedger(
+  ledger: AcceptedInputDispositionLedger,
+): AcceptedInputDispositionLedger {
+  return {
+    entries: new Map(
+      [...ledger.entries].map(([key, entry]) => [key, structuredClone(entry)]),
+    ),
+    scopeCounts: new Map(ledger.scopeCounts),
+    expiryQueue: ledger.expiryQueue.map((entry) => ({ ...entry })),
+    expiryQueueHead: ledger.expiryQueueHead,
+    nextGeneration: ledger.nextGeneration,
+    persistentPath: ledger.persistentPath,
+  };
 }
 
 export function createListenerClientReplacement(
@@ -81,9 +105,6 @@ export function createListenerClientReplacement(
     connectionName: opts.connectionName,
     lineageId,
     generation,
-    ledger: runtime.acceptedInputDispositionLedger,
-    startupFrameHandoff,
-    clientMessageIdsByRunIdByConversation,
   });
   replacementProvenance.set(replacement, {
     issuer: runtime,
@@ -92,7 +113,7 @@ export function createListenerClientReplacement(
     lineageId,
     generation,
     authorityEpoch: getRuntimeAuthorityEpoch(runtime),
-    ledger: runtime.acceptedInputDispositionLedger,
+    ledger: cloneDispositionLedger(runtime.acceptedInputDispositionLedger),
     startupFrameHandoff: cloneStartupFrameHandoff(startupFrameHandoff),
     clientMessageIdsByRunIdByConversation: cloneTurnCorrelationIndex(
       clientMessageIdsByRunIdByConversation,
@@ -179,7 +200,9 @@ export function adoptListenerClientReplacement(
   if (!provenance || !replacement) return;
   replacementProvenance.delete(replacement);
   succeededListenerRuntimes.add(provenance.issuer);
-  runtime.acceptedInputDispositionLedger = provenance.ledger;
+  runtime.acceptedInputDispositionLedger = cloneDispositionLedger(
+    provenance.ledger,
+  );
   runtime.clientMessageIdsByRunIdByConversation = cloneTurnCorrelationIndex(
     provenance.clientMessageIdsByRunIdByConversation,
   );

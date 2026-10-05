@@ -187,6 +187,7 @@ export async function handleApprovalStop(params: {
     ensureSecretsHydrated?: typeof ensureSecretsHydratedForAgent;
     sendApprovalContinuation?: typeof sendApprovalContinuationWithRetry;
     waitForApprovalTransportOpen?: WaitForApprovalTransportOpen;
+    recordListenerWork?: typeof recordListenerWork;
   };
 }): Promise<ApprovalBranchResult> {
   const {
@@ -221,6 +222,8 @@ export async function handleApprovalStop(params: {
     dependencies?.sendApprovalContinuation ?? sendApprovalContinuationWithRetry;
   const waitForTransportOpen =
     dependencies?.waitForApprovalTransportOpen ?? waitForApprovalTransportOpen;
+  const checkpointListenerWork =
+    dependencies?.recordListenerWork ?? recordListenerWork;
 
   if (approvals.length === 0) {
     return {
@@ -559,7 +562,7 @@ export async function handleApprovalStop(params: {
   lastExecutingToolCallIds = approvedDecisions.map(
     (decision) => decision.approval.toolCallId,
   );
-  recordListenerWork(
+  checkpointListenerWork(
     runtime,
     {
       toolCallIds: decisions.map((decision) => decision.approval.toolCallId),
@@ -680,18 +683,6 @@ export async function handleApprovalStop(params: {
   if (!runtime.turnLifecycle.isCurrent(turnLease)) {
     return interruptTermination();
   }
-  // A relay can disconnect after client-side execution begins. Do not drop the
-  // terminal tool frames into the startup barrier of its replacement: wait
-  // until that connection has completed state sync and becomes routable.
-  if (!processOwnedTurn && !isDeliveryReady()) {
-    const transportOpenResult = await waitForTransportOpen(
-      isDeliveryReady,
-      shouldInterrupt,
-    );
-    if (transportOpenResult === "interrupted") {
-      return interruptTermination();
-    }
-  }
   const persistedExecutionResults = normalizeExecutionResultsForInterruptParity(
     runtime,
     turnLease,
@@ -706,18 +697,34 @@ export async function handleApprovalStop(params: {
     })),
     persistedExecutionResults,
   );
+  lastExecutionResults = persistedExecutionResults;
+  // Tool side effects are already committed. Durably replace the pre-execution
+  // empty checkpoint before any transport readiness or delivery await so a
+  // crash/re-registration recovers the exact outcomes rather than stale denials.
+  checkpointListenerWork(
+    runtime,
+    { results: persistedExecutionResults },
+    "after_tool_execution",
+  );
+
+  // A relay can disconnect after client-side execution begins. Do not drop the
+  // terminal tool frames into the startup barrier of its replacement: wait
+  // until that connection has completed state sync and becomes routable.
+  if (!processOwnedTurn && !isDeliveryReady()) {
+    const transportOpenResult = await waitForTransportOpen(
+      isDeliveryReady,
+      shouldInterrupt,
+    );
+    if (transportOpenResult === "interrupted") {
+      return interruptTermination();
+    }
+  }
   const terminalDeliveries = emitToolExecutionFinishedEvents(socket, runtime, {
     approvals: persistedExecutionResults,
     runId: executionRunId,
     agentId,
     conversationId,
   });
-  lastExecutionResults = persistedExecutionResults;
-  recordListenerWork(
-    runtime,
-    { results: persistedExecutionResults },
-    "after_tool_execution",
-  );
   terminalDeliveries.push(
     ...emitInterruptToolReturnMessage(
       socket,

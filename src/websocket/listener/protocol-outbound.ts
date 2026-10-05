@@ -381,6 +381,7 @@ export function emitProtocolV2Message(
     | undefined,
   routing: ListenerMessageRouting,
   notifyObservers = true,
+  envelope?: { idempotencyKey?: string },
 ): OutboundMessageDelivery {
   const listener = getListenerRuntime(runtime);
   const runtimeScope = resolveRuntimeScope(
@@ -398,6 +399,7 @@ export function emitProtocolV2Message(
         scope,
         toListenerConnection(connectionId),
         false,
+        envelope,
       ),
     );
   if (!runtimeScope) return delivery([]);
@@ -429,7 +431,9 @@ export function emitProtocolV2Message(
           runtime: runtimeScope,
           event_seq: eventSeq,
           emitted_at: new Date().toISOString(),
-          idempotency_key: `${message.type}:${eventSeq}:${crypto.randomUUID()}`,
+          idempotency_key:
+            envelope?.idempotencyKey ??
+            `${message.type}:${eventSeq}:${crypto.randomUUID()}`,
         } as WsProtocolMessage;
         let payload: string;
         try {
@@ -791,9 +795,7 @@ export function emitStateSync(
   emitSubagentStateUpdate(socket, runtime, scope, routing);
 }
 
-// ─────────────────────────────────────────────
 // Subagent state
-// ─────────────────────────────────────────────
 
 function resolveSubagentScopeForSnapshot(
   runtime: RuntimeCarrier,

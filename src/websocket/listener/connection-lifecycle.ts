@@ -169,6 +169,19 @@ export function closeListenerRuntimeConnections(
   for (const socket of socketsToClose) {
     if (suppressCallbacks) {
       socket.removeAllListeners();
+      if (
+        socket.readyState !== WebSocket.CLOSED &&
+        typeof socket.on === "function" &&
+        typeof socket.once === "function" &&
+        typeof socket.removeListener === "function"
+      ) {
+        // ws can emit an error after close() while a handshake is still pending.
+        const ignoreError = () => {};
+        socket.on("error", ignoreError);
+        socket.once("close", () => {
+          socket.removeListener("error", ignoreError);
+        });
+      }
     }
     if (
       socket.readyState === WebSocket.OPEN ||

@@ -1,5 +1,13 @@
-import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { afterEach, expect, setSystemTime, test } from "bun:test";
+import {
+  existsSync,
+  linkSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -11,16 +19,22 @@ import {
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { createInterruptedTurnStore } from "./interrupted-turn-record";
 import { createRuntime } from "./lifecycle";
+import { parseServerMessage } from "./protocol-inbound";
 import type { ListenerTransport } from "./transport";
 import {
+  acknowledgeTurnFinished,
   createTurnFinishedStore,
+  encodeTurnFinishedScope,
+  prepareTurnFinished,
   replayPendingTurnFinishedToConnection,
+  TURN_FINISHED_REPLAY_TTL_MS,
 } from "./turn-finished-replay";
 import { finishListenerTurn } from "./turn-terminal";
 
 const directories: string[] = [];
 
 afterEach(() => {
+  setSystemTime();
   for (const directory of directories.splice(0)) {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -30,6 +44,14 @@ function temporaryDirectory(): string {
   const directory = mkdtempSync(join(tmpdir(), "listener-durability-"));
   directories.push(directory);
   return directory;
+}
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate()) return;
+    await Bun.sleep(10);
+  }
+  throw new Error("Timed out waiting for durability state");
 }
 
 function recordedWork() {
@@ -114,6 +136,7 @@ test("a backpressure drop replays turn_finished once to its replacement", async 
       wsUrl: "local://test",
       deviceId: "device",
       connectionName: "test",
+      connectionIdCanResume: false,
       onConnected: () => {},
       onDisconnected: () => {},
       onError: () => {},
@@ -128,6 +151,7 @@ test("a backpressure drop replays turn_finished once to its replacement", async 
     blockedConnection.id,
     blockedConnection,
   );
+  predecessorRuntime.activeConnectionId = blockedConnection.id;
   const lease = predecessorRuntime.turnLifecycle.begin({
     origin: "message",
     workingDirectory: process.cwd(),
@@ -143,7 +167,11 @@ test("a backpressure drop replays turn_finished once to its replacement", async 
     turnFinishedStore: store,
     forgetWork: () => {},
   });
-  await Bun.sleep(0);
+  await waitFor(
+    () =>
+      store.read("agent-1", "conversation-1")?.terminals[0]?.claim ===
+      undefined,
+  );
   expect(
     store
       .read("agent-1", "conversation-1")
@@ -200,10 +228,31 @@ test("a backpressure drop replays turn_finished once to its replacement", async 
   await Bun.sleep(0);
 
   const terminals = sent
-    .map((payload) => JSON.parse(payload) as { type: string; turn_id?: string })
+    .map(
+      (payload) =>
+        JSON.parse(payload) as {
+          type: string;
+          turn_id?: string;
+          idempotency_key?: string;
+        },
+    )
     .filter((message) => message.type === "turn_finished");
   expect(terminals).toHaveLength(1);
   expect(terminals[0]?.turn_id).toBe("turn-1");
+  expect(terminals[0]?.idempotency_key).toBe(
+    store.read("agent-1", "conversation-1")?.terminals[0]?.id,
+  );
+  // Local send settlement is not an application receipt.
+  expect(store.read("agent-1", "conversation-1")?.terminals).toHaveLength(1);
+  expect(
+    acknowledgeTurnFinished({
+      agentId: "agent-1",
+      conversationId: "conversation-1",
+      connectionId: connection.id,
+      idempotencyKey: terminals[0]?.idempotency_key ?? "",
+      store,
+    }),
+  ).toBe(true);
   expect(store.read("agent-1", "conversation-1")).toBeNull();
 });
 
@@ -245,7 +294,7 @@ test("process-style terminal recovery retains a terminal with no owner", async (
   ).toEqual(["turn-process"]);
 });
 
-test("an observer receipt cannot retire the authoritative owner's terminal", async () => {
+test("an observer never receives or retires the authoritative owner's terminal", async () => {
   const store = createTurnFinishedStore(temporaryDirectory());
   const listener = createRuntime();
   listener.connectionId = "conn-owner";
@@ -310,7 +359,7 @@ test("an observer receipt cannot retire the authoritative owner's terminal", asy
   await Bun.sleep(0);
   expect(
     observerPayloads.some((payload) => payload.includes("turn_finished")),
-  ).toBe(true);
+  ).toBe(false);
   expect(store.read("agent-1", "conversation-1")?.terminals).toHaveLength(1);
 
   suspendListenerConnection(listener, "conn-owner");
@@ -318,7 +367,7 @@ test("an observer receipt cannot retire the authoritative owner's terminal", asy
   expect(store.read("agent-1", "conversation-1")?.terminals).toHaveLength(1);
 });
 
-test("terminal persistence failure leaves the turn lease active", () => {
+test("terminal persistence failure is visible without wedging the turn lease", () => {
   const listener = createRuntime();
   const runtime = getOrCreateScopedRuntime(
     listener,
@@ -352,6 +401,391 @@ test("terminal persistence failure leaves the turn lease active", () => {
       turnFinishedStore: failingStore,
     }),
   ).toThrow("durable terminal unavailable");
-  expect(runtime.turnLifecycle.kind).toBe("active");
-  expect(runtime.turnLifecycle.isCurrent(lease)).toBe(true);
+  expect(runtime.turnLifecycle.kind).toBe("idle");
+  expect(runtime.turnLifecycle.isCurrent(lease)).toBe(false);
+});
+
+test("arbitrary stable connection ids receive durable terminals", async () => {
+  const store = createTurnFinishedStore(temporaryDirectory());
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(listener, null, "app-conversation");
+  const sent: string[] = [];
+  const connectionId = "app-server-generation-17";
+  const transport: ListenerTransport = {
+    kind: "local",
+    bufferedAmount: 0,
+    isOpen: () => true,
+    send: (payload: string) => sent.push(payload),
+  };
+  const connection = openListenerConnection({
+    runtime: listener,
+    connectionId,
+    writer: transport,
+    options: {
+      connectionId,
+      wsUrl: "local://app-server",
+      deviceId: "device",
+      connectionName: "app-server",
+      connectionIdCanResume: true,
+      onConnected: () => {},
+      onDisconnected: () => {},
+      onError: () => {},
+    },
+  });
+  subscribeListenerConnection(listener, connectionId, {
+    agent_id: null,
+    conversation_id: "app-conversation",
+  });
+  markListenerConnectionInitialized(listener, connectionId, connection);
+  runtime.activeConnectionId = connectionId;
+  const lease = runtime.turnLifecycle.begin({
+    origin: "message",
+    workingDirectory: process.cwd(),
+  });
+
+  finishListenerTurn(runtime, lease, {
+    socket: transport,
+    turnId: "app-turn",
+    stopReason: "end_turn",
+    agentId: null,
+    conversationId: "app-conversation",
+    turnFinishedStore: store,
+    forgetWork: () => {},
+  });
+  await Bun.sleep(0);
+
+  const terminal = sent
+    .map(
+      (payload) =>
+        JSON.parse(payload) as { type?: string; idempotency_key?: string },
+    )
+    .find((frame) => frame.type === "turn_finished");
+  expect(terminal?.idempotency_key).toBe(
+    store.read(null, "app-conversation")?.terminals[0]?.id,
+  );
+  expect(store.read(null, "app-conversation")?.terminals).toHaveLength(1);
+});
+
+test("rotating App Server and process-owned terminals remain explicit best effort", () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(listener, null, "app-conversation");
+  const connectionId = "app-server-generation-17";
+  const connection = openListenerConnection({
+    runtime: listener,
+    connectionId,
+    writer: {
+      kind: "local",
+      bufferedAmount: 0,
+      isOpen: () => true,
+      send: () => {},
+    },
+    options: {
+      connectionId,
+      wsUrl: "local://app-server",
+      deviceId: "device",
+      connectionName: "app-server",
+      connectionIdCanResume: false,
+      onConnected: () => {},
+      onDisconnected: () => {},
+      onError: () => {},
+    },
+  });
+  subscribeListenerConnection(listener, connectionId, {
+    agent_id: null,
+    conversation_id: "app-conversation",
+  });
+  markListenerConnectionInitialized(listener, connectionId, connection);
+  runtime.activeConnectionId = connectionId;
+
+  expect(
+    prepareTurnFinished(runtime, {
+      type: "turn_finished",
+      turn_id: "app-turn",
+      stop_reason: "end_turn",
+    }),
+  ).toEqual({ kind: "ephemeral" });
+
+  runtime.activeConnectionId = null;
+  expect(
+    prepareTurnFinished(runtime, {
+      type: "turn_finished",
+      turn_id: "process-turn",
+      stop_reason: "end_turn",
+    }),
+  ).toEqual({ kind: "ephemeral" });
+});
+
+test("the 65th process terminal is bounded and client capacity failure cleans its lease", () => {
+  const store = createTurnFinishedStore(temporaryDirectory());
+  for (let index = 0; index < 65; index += 1) {
+    store.put(null, "process", {
+      type: "turn_finished",
+      turn_id: `process-${index}`,
+      stop_reason: "end_turn",
+    });
+  }
+  expect(store.read(null, "process")?.terminals).toHaveLength(64);
+  expect(store.read(null, "process")?.terminals.at(-1)?.message.turn_id).toBe(
+    "process-64",
+  );
+
+  for (let index = 0; index < 64; index += 1) {
+    store.put(
+      "agent-capacity",
+      "client",
+      {
+        type: "turn_finished",
+        turn_id: `client-${index}`,
+        stop_reason: "end_turn",
+      },
+      { connectionId: "owner", canRotate: false, lineageId: null },
+    );
+  }
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    "agent-capacity",
+    "client",
+  );
+  runtime.activeConnectionId = "owner";
+  const lease = runtime.turnLifecycle.begin({
+    origin: "message",
+    workingDirectory: process.cwd(),
+  });
+  expect(() =>
+    finishListenerTurn(runtime, lease, {
+      socket: {
+        kind: "local",
+        bufferedAmount: 0,
+        isOpen: () => true,
+        send: () => {},
+      },
+      turnId: "client-65",
+      stopReason: "end_turn",
+      conversationId: "client",
+      turnFinishedStore: store,
+    }),
+  ).toThrow("capacity exceeded");
+  expect(runtime.turnLifecycle.kind).toBe("idle");
+});
+
+test("terminal replay identity survives an offline restart before 24 hours", () => {
+  const directory = temporaryDirectory();
+  const startedAt = Date.UTC(2026, 0, 1);
+  setSystemTime(new Date(startedAt));
+  const terminal = createTurnFinishedStore(directory).put(
+    "agent",
+    "conversation",
+    { type: "turn_finished", turn_id: "stable", stop_reason: "end_turn" },
+    { connectionId: "owner", canRotate: false, lineageId: null },
+  );
+
+  setSystemTime(new Date(startedAt + TURN_FINISHED_REPLAY_TTL_MS - 1));
+  const restarted = createTurnFinishedStore(directory);
+  expect(restarted.read("agent", "conversation")?.terminals[0]?.id).toBe(
+    terminal.id,
+  );
+});
+
+test("terminal replay expires at 24 hours and removes an empty scope file", () => {
+  const directory = temporaryDirectory();
+  const startedAt = Date.UTC(2026, 0, 1);
+  setSystemTime(new Date(startedAt));
+  createTurnFinishedStore(directory).put("agent", "conversation", {
+    type: "turn_finished",
+    turn_id: "expired",
+    stop_reason: "end_turn",
+  });
+  const recordPath = join(
+    directory,
+    `${encodeTurnFinishedScope("agent", "conversation")}.json`,
+  );
+  expect(existsSync(recordPath)).toBe(true);
+
+  setSystemTime(new Date(startedAt + TURN_FINISHED_REPLAY_TTL_MS));
+  expect(
+    createTurnFinishedStore(directory).read("agent", "conversation"),
+  ).toBeNull();
+  expect(existsSync(recordPath)).toBe(false);
+});
+
+test("expired terminals free the preserved 64-record capacity", () => {
+  const directory = temporaryDirectory();
+  const startedAt = Date.UTC(2026, 0, 1);
+  setSystemTime(new Date(startedAt));
+  const first = createTurnFinishedStore(directory);
+  for (let index = 0; index < 64; index += 1) {
+    first.put(
+      "agent",
+      "conversation",
+      {
+        type: "turn_finished",
+        turn_id: `old-${index}`,
+        stop_reason: "end_turn",
+      },
+      { connectionId: "owner", canRotate: false, lineageId: null },
+    );
+  }
+
+  setSystemTime(new Date(startedAt + TURN_FINISHED_REPLAY_TTL_MS));
+  const fresh = createTurnFinishedStore(directory).put(
+    "agent",
+    "conversation",
+    { type: "turn_finished", turn_id: "fresh", stop_reason: "end_turn" },
+    { connectionId: "owner", canRotate: false, lineageId: null },
+  );
+  expect(fresh.message.turn_id).toBe("fresh");
+  expect(
+    createTurnFinishedStore(directory)
+      .read("agent", "conversation")
+      ?.terminals.map((terminal) => terminal.message.turn_id),
+  ).toEqual(["fresh"]);
+});
+
+test("completed-work removal rejection cannot escape terminal cleanup", () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(listener, "agent", "conversation");
+  const lease = runtime.turnLifecycle.begin({
+    origin: "message",
+    workingDirectory: process.cwd(),
+  });
+  expect(() =>
+    finishListenerTurn(runtime, lease, {
+      stopReason: "end_turn",
+      conversationId: "conversation",
+      forgetWork: () => {
+        throw new Error("unlink failed");
+      },
+    }),
+  ).not.toThrow();
+  expect(runtime.turnLifecycle.kind).toBe("idle");
+});
+
+test("scope tuple encoding cannot collide through separators or null", () => {
+  const scopes = [
+    encodeTurnFinishedScope(null, "agent-a_conversation-b"),
+    encodeTurnFinishedScope("a", "conversation-b"),
+    encodeTurnFinishedScope("a_b", "conversation-b"),
+    encodeTurnFinishedScope("null", "agent-a_conversation-b"),
+  ];
+  expect(new Set(scopes).size).toBe(scopes.length);
+});
+
+test("the explicit terminal application acknowledgement parses inbound", () => {
+  expect(
+    parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "turn_finished_ack",
+          runtime: { agent_id: null, conversation_id: "conversation" },
+          idempotency_key: "turn_finished:stable",
+        }),
+      ),
+    ),
+  ).toEqual({
+    type: "turn_finished_ack",
+    runtime: { agent_id: null, conversation_id: "conversation" },
+    idempotency_key: "turn_finished:stable",
+  });
+  expect(
+    parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "turn_finished_ack",
+          runtime: { agent_id: null, conversation_id: "conversation" },
+          idempotency_key: "x".repeat(257),
+        }),
+      ),
+    ),
+  ).toBeNull();
+});
+
+test("delivery claims are atomic across stores and retain one stable identity", () => {
+  const directory = temporaryDirectory();
+  const first = createTurnFinishedStore(directory);
+  const second = createTurnFinishedStore(directory);
+  const terminal = first.put(
+    "agent",
+    "conversation",
+    { type: "turn_finished", turn_id: "turn", stop_reason: "end_turn" },
+    { connectionId: "owner", canRotate: false, lineageId: null },
+  );
+  expect(first.claim("agent", "conversation", terminal.id, "owner")?.id).toBe(
+    terminal.id,
+  );
+  expect(
+    second.claim("agent", "conversation", terminal.id, "owner"),
+  ).toBeNull();
+  expect(first.read("agent", "conversation")?.terminals[0]?.id).toBe(
+    terminal.id,
+  );
+});
+
+test("corrupt terminal records fail closed and are never overwritten", () => {
+  const directory = temporaryDirectory();
+  const recordPath = join(
+    directory,
+    `${encodeTurnFinishedScope("agent", "conversation")}.json`,
+  );
+  writeFileSync(recordPath, "{corrupt", { mode: 0o600 });
+  const store = createTurnFinishedStore(directory);
+  expect(() =>
+    store.put("agent", "conversation", {
+      type: "turn_finished",
+      turn_id: "must-not-overwrite",
+      stop_reason: "end_turn",
+    }),
+  ).toThrow();
+  expect(readFileSync(recordPath, "utf8")).toBe("{corrupt");
+});
+
+test("record locks never evict a live paused owner and recover a dead owner", () => {
+  const directory = temporaryDirectory();
+  const recordPath = join(
+    directory,
+    `${encodeTurnFinishedScope("agent", "conversation")}.json`,
+  );
+  const lockPath = `${recordPath}.lock`;
+  const ownersPath = `${lockPath}-owners`;
+  mkdirSync(ownersPath, { recursive: true });
+  const liveOwner = join(ownersPath, `${process.pid}-live.json`);
+  writeFileSync(
+    liveOwner,
+    JSON.stringify({ token: "live", pid: process.pid, processStart: null }),
+  );
+  linkSync(liveOwner, lockPath);
+  const store = createTurnFinishedStore(directory, { lockAttempts: 1 });
+  expect(() =>
+    store.put("agent", "conversation", {
+      type: "turn_finished",
+      turn_id: "blocked",
+      stop_reason: "end_turn",
+    }),
+  ).toThrow("Timed out acquiring");
+  expect(existsSync(lockPath)).toBe(true);
+
+  rmSync(lockPath);
+  rmSync(liveOwner);
+  const deadOwner = join(ownersPath, "2147483647-dead.json");
+  writeFileSync(
+    deadOwner,
+    JSON.stringify({
+      token: "dead",
+      pid: 2_147_483_647,
+      processStart: "dead",
+    }),
+  );
+  linkSync(deadOwner, lockPath);
+  const recovered = createTurnFinishedStore(directory, { lockAttempts: 2 }).put(
+    "agent",
+    "conversation",
+    {
+      type: "turn_finished",
+      turn_id: "recovered",
+      stop_reason: "end_turn",
+    },
+  );
+  expect(recovered.message.turn_id).toBe("recovered");
+  expect(existsSync(lockPath)).toBe(false);
+  expect(existsSync(deadOwner)).toBe(false);
 });

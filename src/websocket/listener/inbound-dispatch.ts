@@ -8,6 +8,7 @@ import {
 } from "./inbound-queue";
 import {
   commitInputDisposition,
+  forgetQueuedInputDisposition,
   ordinaryInputIdentity,
   reserveInputDisposition,
   rollbackInputDisposition,
@@ -141,21 +142,37 @@ export function dispatchInboundMessageWhenReady(params: {
           shouldQueueInboundMessage(incoming) &&
           !shouldProcessInboundMessageDirectly(runtime, incoming)
         ) {
-          const accepted = enqueueInboundUserMessage(
+          // The replayable payload and queued disposition commit before the
+          // volatile enqueue and before acknowledgement. A crash at either
+          // boundary is recovered from the durable payload on process startup.
+          const committed = commitInputDisposition(
             runtime,
-            incoming,
-            actingUserId,
+            reservation,
+            "queued",
+            { incoming, actingUserId },
           );
-          if (accepted) {
-            commitInputDisposition(runtime, reservation, "queued");
-          } else {
-            rollbackInputDisposition(runtime, reservation);
+          let accepted = false;
+          try {
+            accepted =
+              committed &&
+              enqueueInboundUserMessage(runtime, incoming, actingUserId);
+          } catch (error) {
+            if (committed) forgetQueuedInputDisposition(runtime, identity);
+            throw error;
+          }
+          const durablyAccepted = committed && accepted;
+          if (!durablyAccepted) {
+            if (committed) {
+              forgetQueuedInputDisposition(runtime, identity);
+            } else {
+              rollbackInputDisposition(runtime, reservation);
+            }
           }
           acknowledgeInput({
-            accepted,
-            ...(accepted ? { disposition: "queued" } : {}),
+            accepted: durablyAccepted,
+            ...(durablyAccepted ? { disposition: "queued" } : {}),
           });
-          if (accepted) {
+          if (durablyAccepted) {
             scheduleQueuePump(runtime, socket, options, processQueuedTurn);
           }
           return;
@@ -166,14 +183,27 @@ export function dispatchInboundMessageWhenReady(params: {
           options.onStatusChange,
           options.connectionId,
         );
-        commitInputDisposition(runtime, reservation, "started");
-        acknowledgeInput({ accepted: true, disposition: "started" });
         // Queued turns store the actor on the queue item. Direct turns skip
-        // that item, so carry the actor on the message consumed by turn.ts.
-        const attributedIncoming =
-          actingUserId && incoming.actingUserId !== actingUserId
-            ? { ...incoming, actingUserId }
-            : incoming;
+        // that item, so carry the actor and durable identity on the replayable
+        // message committed before acknowledgement.
+        const attributedIncoming = {
+          ...incoming,
+          ...(actingUserId && incoming.actingUserId !== actingUserId
+            ? { actingUserId }
+            : {}),
+          ...(identity ? { durableInputIdentity: identity } : {}),
+        };
+        if (
+          !commitInputDisposition(runtime, reservation, "started", {
+            incoming: attributedIncoming,
+            actingUserId,
+          })
+        ) {
+          rollbackInputDisposition(runtime, reservation);
+          acknowledgeInput({ accepted: false });
+          return;
+        }
+        acknowledgeInput({ accepted: true, disposition: "started" });
         await processIncomingMessage(
           attributedIncoming,
           getOrCreateProcessTransport(listener),

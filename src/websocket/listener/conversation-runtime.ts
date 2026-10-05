@@ -1,7 +1,10 @@
 import { type QueueItem, QueueRuntime } from "@/queue/queue-runtime";
 import type { QueueRemovalTransition } from "@/types/queue-update-protocol";
+import { enqueueInboundUserMessage } from "./inbound-queue";
 import {
-  forgetQueuedInputDisposition,
+  forgetQueuedInputDispositions,
+  loadDurableQueuedInputs,
+  markQueuedInputDispositionsStarted,
   ordinaryInputIdentity,
 } from "./input-disposition";
 import { getQueueItemScope, getQueueItemsScope } from "./queue";
@@ -17,10 +20,18 @@ function discardQueuedItem(
   item: QueueItem,
 ): void {
   runtime.queuedMessagesByItemId.delete(item.id);
-  forgetQueuedInputDisposition(
-    runtime,
-    ordinaryInputIdentity(item.clientMessageId),
-  );
+}
+
+function itemIdentities(
+  runtime: ConversationRuntime,
+  items: readonly QueueItem[],
+) {
+  return items.flatMap((item) => {
+    const identity =
+      runtime.queuedMessagesByItemId.get(item.id)?.durableInputIdentity ??
+      ordinaryInputIdentity(item.clientMessageId);
+    return identity ? [identity] : [];
+  });
 }
 
 function queueRemovalTransition(
@@ -42,6 +53,18 @@ export function ensureConversationQueueRuntime(
   }
   runtime.queueRuntime = new QueueRuntime({
     callbacks: {
+      beforeDequeued: (items) =>
+        markQueuedInputDispositionsStarted(
+          runtime,
+          itemIdentities(runtime, items),
+        ),
+      beforeDropped: (item) =>
+        forgetQueuedInputDispositions(runtime, itemIdentities(runtime, [item])),
+      beforeRemoved: (item) =>
+        forgetQueuedInputDispositions(runtime, itemIdentities(runtime, [item])),
+      beforeCleared: (reason, items) =>
+        reason === "shutdown" ||
+        forgetQueuedInputDispositions(runtime, itemIdentities(runtime, items)),
       onEnqueued: (item, queueLen) => {
         runtime.pendingTurns = queueLen;
         scheduleQueueEmit(listener, getQueueItemScope(item));
@@ -67,9 +90,17 @@ export function ensureConversationQueueRuntime(
           conversation_id: runtime.conversationId,
         });
       },
-      onCleared: (_reason, _clearedCount, items) => {
+      onCleared: (reason, _clearedCount, items) => {
         runtime.pendingTurns = 0;
-        for (const item of items) discardQueuedItem(runtime, item);
+        // Runtime replacement clears volatile queues but deliberately retains
+        // durable payloads for the successor process to restore.
+        if (reason === "shutdown") {
+          for (const item of items) {
+            runtime.queuedMessagesByItemId.delete(item.id);
+          }
+        } else {
+          for (const item of items) discardQueuedItem(runtime, item);
+        }
         scheduleQueueEmit(
           listener,
           getQueueItemsScope(items),
@@ -107,4 +138,48 @@ export function getOrCreateScopedRuntime(
     listener,
     getOrCreateConversationRuntime(listener, agentId, conversationId),
   );
+}
+
+/**
+ * Rehydrate every durable queued input before startup schedules its first queue
+ * pump. Existing volatile items win during same-process graceful replacement;
+ * their stable client id prevents a second queue item from being inserted.
+ */
+export function restoreDurableQueuedInputs(listener: ListenerRuntime): number {
+  let restored = 0;
+  for (const payload of loadDurableQueuedInputs(listener)) {
+    const runtime = getOrCreateScopedRuntime(
+      listener,
+      payload.scope.agentId,
+      payload.scope.conversationId,
+    );
+    const alreadyRestored = [...runtime.queuedMessagesByItemId.values()].some(
+      (incoming) =>
+        (incoming.durableInputIdentity?.domain === payload.identity.domain &&
+          incoming.durableInputIdentity.id === payload.identity.id) ||
+        (payload.identity.domain === "input" &&
+          ordinaryInputIdentity(
+            incoming.messages.flatMap((message) => {
+              if (!("content" in message)) return [];
+              const id = (message as { client_message_id?: unknown })
+                .client_message_id;
+              return typeof id === "string" ? [id] : [];
+            })[0],
+          )?.id === payload.identity.id),
+    );
+    if (alreadyRestored) continue;
+    // A dead connection id cannot own restored work. The process transport and
+    // current scope subscriber become the delivery path after startup. Preserve
+    // the explicit identity so teleport payloads never enter the ordinary id domain.
+    const incoming = {
+      ...payload.incoming,
+      connectionId: undefined,
+      durableInputIdentity: payload.identity,
+    };
+    if (!enqueueInboundUserMessage(runtime, incoming, payload.actingUserId)) {
+      throw new Error("Durable queued input exceeded runtime queue capacity");
+    }
+    restored += 1;
+  }
+  return restored;
 }

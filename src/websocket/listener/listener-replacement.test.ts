@@ -6,7 +6,6 @@ import {
 } from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import {
-  createAcceptedInputDispositionLedger,
   getInputDisposition,
   ordinaryInputIdentity,
   rememberInputDisposition,
@@ -138,9 +137,12 @@ test("a multi-hop re-registration chain keeps its original lineage after suspend
     marker: "hop-1",
   });
   expect(firstReplacement.lineageId).toBe("conn-1");
-  expect(
-    frameMarkers(handoffFrames(firstReplacement.startupFrameHandoff)),
-  ).toEqual(["hop-1"]);
+  expect(Object.keys(firstReplacement).sort()).toEqual([
+    "connectionName",
+    "deviceId",
+    "generation",
+    "lineageId",
+  ]);
 
   // Cloud hands back a brand-new physical connection id on every hop. The
   // lineage must stay on conn-1 so the second hop's handoff lands in the same
@@ -155,9 +157,6 @@ test("a multi-hop re-registration chain keeps its original lineage after suspend
   });
 
   expect(secondReplacement.lineageId).toBe("conn-1");
-  expect(
-    frameMarkers(handoffFrames(secondReplacement.startupFrameHandoff)),
-  ).toEqual(["hop-1", "hop-2"]);
 
   const third = createRuntime();
   const thirdOpts = optionsFor("conn-3", secondReplacement);
@@ -215,10 +214,7 @@ test("cumulative 200 plus 100 requestless frames poison the lineage across token
   });
 
   const secondReplacement = createListenerClientReplacement(second, secondOpts);
-  expect(secondReplacement.startupFrameHandoff).toEqual({
-    kind: "overflow",
-    capacity: "frame_count",
-  });
+  expect("startupFrameHandoff" in secondReplacement).toBe(false);
   setActiveRuntime(null);
   stopRuntime(second, true);
 
@@ -252,7 +248,7 @@ test("cumulative 200 plus 100 requestless frames poison the lineage across token
   });
 });
 
-test("a successor prepend overflow retains the unaccepted lineage payload", async () => {
+test("a successor prepend count overflow poisons the lineage before clearing local frames", async () => {
   const runtime = createRuntime();
   const opts = optionsFor("conn-prepend");
   const owner = reserveStartupIngressOwner(runtime, opts);
@@ -281,10 +277,57 @@ test("a successor prepend overflow retains the unaccepted lineage payload", asyn
   ).resolves.toBe(false);
 
   expect(successorBuffer.phase).toBe("terminated");
-  const retained = runtime.pendingStartupFramesByLineage.get("conn-prepend");
-  expect(retained?.kind).toBe("frames");
-  if (retained?.kind !== "frames") throw new Error("Expected retained frames");
-  expect(retained.frames).toHaveLength(200);
+  expect(runtime.pendingStartupFramesByLineage.get("conn-prepend")).toEqual({
+    kind: "overflow",
+    capacity: "frame_count",
+  });
+
+  // A later successor must fail closed rather than seeing A's 200 frames as a
+  // healthy handoff after B's 100 local frames were cleared.
+  const laterOwner = reserveStartupIngressOwner(runtime, opts);
+  const laterBuffer = new StartupFrameBuffer();
+  await expect(
+    activateStartupIngress(
+      laterBuffer,
+      async () => {
+        throw new Error("poisoned lineage must not execute");
+      },
+      () => true,
+      () => claimRequestlessStartupFrameHandoff(runtime, laterOwner),
+    )(),
+  ).resolves.toBe(false);
+  expect(laterBuffer.phase).toBe("terminated");
+});
+
+test("a successor prepend byte overflow records byte poison before local clear", async () => {
+  const runtime = createRuntime();
+  const opts = optionsFor("conn-prepend-bytes");
+  const firstOwner = reserveStartupIngressOwner(runtime, opts);
+  const predecessorBuffer = new StartupFrameBuffer();
+  predecessorBuffer.push(
+    legacyFrameOfByteLength(MAX_PENDING_STARTUP_FRAME_BYTES - 1_000),
+  );
+  expect(
+    handoffRequestlessStartupFrames(runtime, firstOwner, predecessorBuffer),
+  ).toBe(true);
+
+  const successorOwner = reserveStartupIngressOwner(runtime, opts);
+  const successorBuffer = new StartupFrameBuffer();
+  successorBuffer.push(legacyFrameOfByteLength(2_000));
+  await expect(
+    activateStartupIngress(
+      successorBuffer,
+      async () => {},
+      () => true,
+      () => claimRequestlessStartupFrameHandoff(runtime, successorOwner),
+    )(),
+  ).resolves.toBe(false);
+  expect(
+    runtime.pendingStartupFramesByLineage.get("conn-prepend-bytes"),
+  ).toEqual({
+    kind: "overflow",
+    capacity: "byte_count",
+  });
 });
 
 test("cumulative handoff accepts the byte bound and classifies the next frame as byte overflow", () => {
@@ -432,9 +475,6 @@ test("an unadoptable replacement is rejected before the predecessor is stopped",
     connectionName: "test",
     lineageId: "conn-1",
     generation: 1,
-    ledger: createAcceptedInputDispositionLedger(),
-    startupFrameHandoff: { kind: "frames", frames: [], byteLength: 0 },
-    clientMessageIdsByRunIdByConversation: new Map(),
   };
 
   await expect(
@@ -482,6 +522,38 @@ test("a stopped predecessor stays stale after its newer successor also stops", (
   ).not.toThrow();
 });
 
+test("replacement privately snapshots frame bytes across token consumption", () => {
+  const predecessor = createRuntime();
+  setActiveRuntime(predecessor);
+  const opts = optionsFor("conn-frame-snapshot");
+  const owner = reserveStartupIngressOwner(predecessor, opts);
+  const mutableFrame = legacyFrame("original");
+  const buffer = new StartupFrameBuffer();
+  buffer.push(mutableFrame);
+  handoffRequestlessStartupFrames(predecessor, owner, buffer);
+  const replacement = createListenerClientReplacement(predecessor, opts);
+
+  mutableFrame.fill(0);
+  const parked = predecessor.pendingStartupFramesByLineage.get(owner.lineageId);
+  if (parked?.kind === "frames" && Buffer.isBuffer(parked.frames[0])) {
+    parked.frames[0].fill(1);
+  }
+  setActiveRuntime(null);
+  stopRuntime(predecessor, true);
+
+  const successor = createRuntime();
+  const successorOpts = optionsFor("conn-frame-snapshot-next", replacement);
+  adoptListenerClientReplacement(successor, successorOpts);
+  const successorOwner = reserveStartupIngressOwner(successor, successorOpts);
+  expect(
+    frameMarkers(
+      handoffFrames(
+        claimRequestlessStartupFrameHandoff(successor, successorOwner).handoff,
+      ),
+    ),
+  ).toEqual(["original"]);
+});
+
 test("replacement privately transfers a deep correlation snapshot", () => {
   const predecessor = createRuntime();
   setActiveRuntime(predecessor);
@@ -496,16 +568,16 @@ test("replacement privately transfers a deep correlation snapshot", () => {
     optionsFor("conn-correlation"),
   );
 
-  // Neither later predecessor mutation nor mutable public-token contents are
-  // trusted by adoption.
+  // No mutable payload is exposed, and later predecessor mutation cannot alter
+  // the private issuance snapshot.
+  expect(Object.isFrozen(replacement)).toBe(true);
+  expect("ledger" in replacement).toBe(false);
+  expect("startupFrameHandoff" in replacement).toBe(false);
+  expect("clientMessageIdsByRunIdByConversation" in replacement).toBe(false);
   predecessor.clientMessageIdsByRunIdByConversation
     .get("agent:agent-1::conversation:conversation-1")
     ?.get("run-1")
     ?.push("cm-predecessor-late");
-  replacement.clientMessageIdsByRunIdByConversation
-    .get("agent:agent-1::conversation:conversation-1")
-    ?.get("run-1")
-    ?.push("cm-token-forged");
   setActiveRuntime(null);
   stopRuntime(predecessor, true);
 
@@ -546,16 +618,21 @@ test("replacement correlation snapshots enforce conversation and run bounds", ()
     ]),
   );
 
-  const replacement = createListenerClientReplacement(
-    predecessor,
-    optionsFor("conn-bounded-correlation"),
+  const opts = optionsFor("conn-bounded-correlation");
+  const replacement = createListenerClientReplacement(predecessor, opts);
+  setActiveRuntime(null);
+  stopRuntime(predecessor, true);
+  const successor = createRuntime();
+  adoptListenerClientReplacement(
+    successor,
+    optionsFor("conn-bounded-correlation-next", replacement),
   );
-  expect(replacement.clientMessageIdsByRunIdByConversation.size).toBe(256);
+  expect(successor.clientMessageIdsByRunIdByConversation?.size).toBe(256);
   expect(
-    [...replacement.clientMessageIdsByRunIdByConversation.keys()].at(0),
+    [...(successor.clientMessageIdsByRunIdByConversation?.keys() ?? [])].at(0),
   ).toBe("conversation-4");
   const newestRuns =
-    replacement.clientMessageIdsByRunIdByConversation.get("conversation-259");
+    successor.clientMessageIdsByRunIdByConversation?.get("conversation-259");
   expect(newestRuns?.size).toBe(32);
   expect([...(newestRuns?.keys() ?? [])].at(0)).toBe("run-3");
 });

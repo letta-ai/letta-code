@@ -161,6 +161,8 @@ export type StartupFrameHandoffClaim = {
   readonly handoff: StartupFrameHandoff;
   /** Commit only after the successor buffer has accepted the inherited state. */
   commit(): void;
+  /** Poison the lineage before an overflowing successor buffer clears itself. */
+  poison(capacity: StartupFrameCapacity): void;
 };
 
 export function claimRequestlessStartupFrameHandoff(
@@ -171,7 +173,11 @@ export function claimRequestlessStartupFrameHandoff(
     !owner.handoffEnabled ||
     runtime.startupGenerationByLineage.get(owner.lineageId) !== owner.generation
   ) {
-    return { handoff: emptyStartupFrameHandoff(), commit: () => {} };
+    return {
+      handoff: emptyStartupFrameHandoff(),
+      commit: () => {},
+      poison: () => {},
+    };
   }
   const handoff =
     runtime.pendingStartupFramesByLineage.get(owner.lineageId) ??
@@ -190,6 +196,21 @@ export function claimRequestlessStartupFrameHandoff(
         runtime.pendingStartupFramesByLineage.delete(owner.lineageId);
       }
     },
+    poison: (capacity) => {
+      // Persist loss before StartupFrameBuffer.failOverflow() clears the local
+      // successor frames. Otherwise a later C could inherit A's retained frames
+      // and incorrectly treat the lineage as healthy after B's frames vanished.
+      if (
+        runtime.startupGenerationByLineage.get(owner.lineageId) ===
+          owner.generation &&
+        runtime.pendingStartupFramesByLineage.get(owner.lineageId) === handoff
+      ) {
+        runtime.pendingStartupFramesByLineage.set(owner.lineageId, {
+          kind: "overflow",
+          capacity,
+        });
+      }
+    },
   };
 }
 
@@ -203,8 +224,18 @@ export function activateStartupIngress(
     const claim = claimHandoff?.() ?? {
       handoff: emptyStartupFrameHandoff(),
       commit: () => {},
+      poison: () => {},
     };
     if (claim.handoff.kind === "overflow") {
+      buffer.failOverflow();
+      return Promise.resolve(false);
+    }
+    const capacity = exceededStartupCapacity(
+      claim.handoff.frames.length + buffer.frameCount,
+      claim.handoff.byteLength + buffer.byteLength,
+    );
+    if (capacity) {
+      claim.poison(capacity);
       buffer.failOverflow();
       return Promise.resolve(false);
     }

@@ -146,6 +146,7 @@ import {
   isTeleportContinuePayload,
   parseTeleportCommand,
 } from "./teleport-protocol-inbound";
+import { isTurnFinishedAckCommand } from "./turn-finished-protocol-inbound";
 import type { InvalidInputCommand, ParsedServerMessage } from "./types";
 
 export type ServerLifecycleMessage = {
@@ -1926,12 +1927,9 @@ export function parseServerLifecycleMessage(
     ) {
       return { type: "pong" };
     }
-  } catch {
-    // Non-JSON frames are handled by the regular unparseable-frame path.
-  }
+  } catch {}
   return null;
 }
-
 export function parseServerMessage(
   data: WebSocket.RawData,
 ): ParsedServerMessage | null {
@@ -1945,6 +1943,7 @@ export function parseServerMessage(
     const teleportCommand = parseTeleportCommand(parsed);
     if (teleportCommand) return teleportCommand;
     if (
+      isTurnFinishedAckCommand(parsed) ||
       isInputCommand(parsed) ||
       isChangeDeviceStateCommand(parsed) ||
       isAbortMessageCommand(parsed) ||

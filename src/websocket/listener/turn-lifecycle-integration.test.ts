@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Letta } from "@letta-ai/letta-client";
 import { ACTING_USER_ID_HEADER } from "@/agent/acting-user";
 import {
@@ -16,6 +19,11 @@ import {
 import { openListenerConnection } from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { enqueueInboundUserMessage } from "./inbound-queue";
+import {
+  createInterruptedTurnStore,
+  type InterruptedTurnRecord,
+  recordedToolResults,
+} from "./interrupted-turn-record";
 import { createRuntime } from "./lifecycle";
 import { shouldProcessInboundMessageDirectly } from "./queue";
 import { finalizeHandledRecoveryTurn } from "./recovery";
@@ -533,6 +541,109 @@ describe("listener turn lifecycle integration", () => {
     expect(listener.pendingTeleports?.get("teleport-text")?.readyAt).toEqual(
       expect.any(Number),
     );
+  });
+
+  test("checkpoints exact tool outcomes before waiting for replacement transport", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "approval-checkpoint-"));
+    try {
+      const store = createInterruptedTurnStore(directory);
+      const runtime = getOrCreateScopedRuntime(
+        createRuntime(),
+        "agent-1",
+        "conv-1",
+      );
+      const turnLease = runtime.turnLifecycle.begin({
+        origin: "message",
+        workingDirectory: process.cwd(),
+        initialStatus: "PROCESSING_API_RESPONSE",
+      });
+      runtime.turnLifecycle.setRunId(turnLease, "run-checkpoint");
+      const approval = {
+        toolCallId: "call-checkpoint",
+        toolName: "Bash",
+        toolArgs: '{"command":"pwd"}',
+      };
+      const exactResults = [
+        {
+          type: "tool" as const,
+          tool_call_id: approval.toolCallId,
+          status: "success" as const,
+          tool_return: "/workspace/exact",
+        },
+      ];
+      let transportOpen = true;
+      let durableRecord: InterruptedTurnRecord = {
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        runId: "run-checkpoint",
+        toolCallIds: [],
+        results: [],
+        requestOtid: "initial-otid",
+        workingDirectory: process.cwd(),
+      };
+      let enterTransportWait!: () => void;
+      const transportWaitEntered = new Promise<void>((resolve) => {
+        enterTransportWait = resolve;
+      });
+      let releaseTransportWait!: (result: "interrupted") => void;
+      const transportWait = new Promise<"interrupted">((resolve) => {
+        releaseTransportWait = resolve;
+      });
+
+      const approvalPromise = startToolApproval(runtime, turnLease, {
+        approvals: [approval],
+        socket: {
+          kind: "runtime",
+          bufferedAmount: 0,
+          isOpen: () => transportOpen,
+          send: () => {},
+        },
+        dependencies: {
+          classifyApprovals: async () => ({
+            autoAllowed: [
+              { approval, parsedArgs: { command: "pwd" }, context: null },
+            ],
+            autoDenied: [],
+            needsUserInput: [],
+          }),
+          executeApprovalBatch: async () => {
+            transportOpen = false;
+            return exactResults;
+          },
+          ensureSecretsHydrated: async () => {},
+          recordListenerWork: (
+            _runtime: typeof runtime,
+            update: Partial<InterruptedTurnRecord>,
+          ) => {
+            durableRecord = { ...durableRecord, ...update };
+            store.write(durableRecord);
+          },
+          waitForApprovalTransportOpen: async () => {
+            enterTransportWait();
+            return transportWait;
+          },
+        } as never,
+      });
+
+      await transportWaitEntered;
+      // Simulate a crash/re-registration while terminal delivery is still
+      // blocked: a fresh store instance must recover the executed outcome, not
+      // synthesize the stale-denial fallback from the earlier empty checkpoint.
+      const recovered = createInterruptedTurnStore(directory).read(
+        "agent-1",
+        "conv-1",
+      );
+      expect(recovered?.results).toEqual(exactResults);
+      expect(
+        recovered && recordedToolResults(recovered, [approval.toolCallId]),
+      ).toEqual(exactResults);
+
+      runtime.turnLifecycle.requestCancellation({ cause: "transport" });
+      releaseTransportWait("interrupted");
+      expect((await approvalPromise).kind).toBe("interrupted");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   // Guards the gate's polarity and its default. A relay turn's results must

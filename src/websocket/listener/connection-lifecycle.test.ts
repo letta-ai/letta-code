@@ -1,5 +1,7 @@
-import { describe, expect, test } from "bun:test";
-import WebSocket from "ws";
+import { describe, expect, mock, test } from "bun:test";
+import { EventEmitter } from "node:events";
+import type { AddressInfo } from "node:net";
+import WebSocket, { WebSocketServer } from "ws";
 import {
   markListenerConnectionInitialized,
   openListenerConnection,
@@ -14,7 +16,7 @@ import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { createRuntime } from "./lifecycle";
 import type { StartListenerOptions } from "./types";
 
-class MockSocket {
+class MockSocket extends EventEmitter {
   readonly bufferedAmount = 0;
   readyState = WebSocket.OPEN;
   closeCalls = 0;
@@ -30,9 +32,11 @@ class MockSocket {
     this.closeCalls += 1;
   }
 
-  removeAllListeners(): this {
+  override removeAllListeners(event?: string | symbol): this {
     this.removeAllListenersCalls += 1;
-    return this;
+    return event === undefined
+      ? super.removeAllListeners()
+      : super.removeAllListeners(event);
   }
 }
 
@@ -162,5 +166,38 @@ describe("listener connection lifecycle", () => {
     expect(socketB.removeAllListenersCalls).toBe(1);
     expect(socketA.closeCalls).toBe(1);
     expect(socketB.closeCalls).toBe(1);
+    expect(socketA.listenerCount("error")).toBe(1);
+    expect(socketB.listenerCount("error")).toBe(1);
+  });
+
+  test("suppressed shutdown absorbs a connecting WebSocket error until close", async () => {
+    const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+    await new Promise<void>((resolve) => server.once("listening", resolve));
+    const address = server.address() as AddressInfo;
+    const socket = new WebSocket(`ws://127.0.0.1:${address.port}`);
+    const originalErrorCallback = mock(() => {});
+    socket.on("error", originalErrorCallback);
+    const emit = mock(socket.emit.bind(socket));
+    socket.emit = emit as typeof socket.emit;
+    const runtime = createRuntime();
+    runtime.socket = socket;
+
+    try {
+      closeListenerRuntimeConnections(runtime, true);
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if (socket.readyState === WebSocket.CLOSED) break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+
+      expect(emit.mock.calls.some(([event]) => event === "error")).toBe(true);
+      expect(originalErrorCallback).not.toHaveBeenCalled();
+      expect(socket.listenerCount("error")).toBe(0);
+      expect(socket.readyState).toBe(WebSocket.CLOSED);
+    } finally {
+      if (socket.readyState !== WebSocket.CLOSED) socket.terminate();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
   });
 });

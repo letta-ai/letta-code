@@ -1,7 +1,32 @@
+import { randomUUID } from "node:crypto";
+import {
+  chmodSync,
+  closeSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import {
+  acquireDurableFileLock,
+  currentDurableLockOwner,
+  type DurableLockOwner,
+  durableLockOwnerIsAlive,
+} from "./durable-file-lock";
+import { getConversationRuntimeKey } from "./runtime";
 import type {
   AcceptedInputDisposition,
+  AcceptedInputDispositionEntry,
   AcceptedInputDispositionLedger,
   ConversationRuntime,
+  DurableQueuedInput,
   InputDispositionReservation,
   InputIdentity,
   ListenerRuntime,
@@ -11,6 +36,9 @@ import type {
 export const ACCEPTED_INPUT_DISPOSITION_TTL_MS = 60 * 60 * 1000;
 export const MAX_ACCEPTED_INPUT_DISPOSITIONS_PER_SCOPE = 4096;
 export const MAX_ACCEPTED_INPUT_DISPOSITIONS = 65_536;
+export const MAX_DURABLE_QUEUED_INPUT_BYTES = 1024 * 1024;
+export const MAX_INPUT_DISPOSITION_STORE_BYTES = 64 * 1024 * 1024;
+const LOCK_WAIT_MS = 2_000;
 
 /** A client-chosen `client_message_id`. Never shares keys with teleport ids. */
 export function ordinaryInputIdentity(
@@ -25,18 +53,44 @@ export function teleportInputIdentity(teleportId: string): InputIdentity {
 }
 
 function dispositionKey(runtimeKey: string, identity: InputIdentity): string {
-  // The domain is its own array element rather than a string prefix so no
-  // caller-supplied id can be spelled to land in another domain's key space.
   return JSON.stringify([runtimeKey, identity.domain, identity.id]);
 }
 
-export function createAcceptedInputDispositionLedger(): AcceptedInputDispositionLedger {
+function parseDispositionKey(
+  key: string,
+): [string, "input" | "teleport", string] {
+  const parsed = JSON.parse(key) as unknown;
+  if (
+    !Array.isArray(parsed) ||
+    parsed.length !== 3 ||
+    typeof parsed[0] !== "string" ||
+    (parsed[1] !== "input" && parsed[1] !== "teleport") ||
+    typeof parsed[2] !== "string" ||
+    parsed[2].length === 0
+  ) {
+    throw new Error("Invalid accepted-input disposition key");
+  }
+  return parsed as [string, "input" | "teleport", string];
+}
+
+function defaultPersistentPath(): string | null {
+  if (process.env.NODE_ENV === "test") return null;
+  return join(homedir(), ".letta", "state", "input-dispositions-v2.json");
+}
+
+export function createAcceptedInputDispositionLedger(options?: {
+  persistentPath?: string | null;
+}): AcceptedInputDispositionLedger {
   return {
     entries: new Map(),
     scopeCounts: new Map(),
     expiryQueue: [],
     expiryQueueHead: 0,
     nextGeneration: 0,
+    persistentPath:
+      options && "persistentPath" in options
+        ? (options.persistentPath ?? null)
+        : defaultPersistentPath(),
   };
 }
 
@@ -84,10 +138,6 @@ function deleteCurrentEntry(
   return true;
 }
 
-/**
- * Expiry records are append-only and accepted timestamps never move. Each record
- * is visited once; stale records from rollback/forget are ignored by generation.
- */
 function expireAcceptedInputDispositions(
   ledger: AcceptedInputDispositionLedger,
   now: number,
@@ -96,11 +146,21 @@ function expireAcceptedInputDispositions(
     const expiry = ledger.expiryQueue[ledger.expiryQueueHead];
     if (!expiry || expiry.expiresAt > now) break;
     ledger.expiryQueueHead += 1;
-    deleteCurrentEntry(ledger, expiry.key, expiry.generation);
+    const entry = ledger.entries.get(expiry.key);
+    if (entry?.generation === expiry.generation && entry.queuedInput) {
+      // Once accepted, replay responsibility lasts until a terminal transition
+      // retires the payload. The sender retry horizon only bounds tombstones;
+      // it must not erase in-flight work during a long turn or offline restart.
+      entry.expiresAt = now + ACCEPTED_INPUT_DISPOSITION_TTL_MS;
+      ledger.expiryQueue.push({
+        key: expiry.key,
+        expiresAt: entry.expiresAt,
+        generation: entry.generation,
+      });
+    } else {
+      deleteCurrentEntry(ledger, expiry.key, expiry.generation);
+    }
   }
-
-  // Amortized compaction: copying only after at least half the backing array has
-  // already been consumed keeps aggregate maintenance linear in insertions.
   if (
     ledger.expiryQueueHead >= 1024 &&
     ledger.expiryQueueHead * 2 >= ledger.expiryQueue.length
@@ -110,33 +170,356 @@ function expireAcceptedInputDispositions(
   }
 }
 
+type ProcessOwner = DurableLockOwner;
+
+type DurableReservation = ProcessOwner & {
+  runtimeKey: string;
+  generation: number;
+};
+
+type DurableStore = {
+  version: 3;
+  nextGeneration: number;
+  entries: Record<string, AcceptedInputDispositionEntry>;
+  reservations: Record<string, DurableReservation>;
+};
+
+function emptyDurableStore(): DurableStore {
+  return { version: 3, nextGeneration: 0, entries: {}, reservations: {} };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function validateQueuedInput(value: unknown): value is DurableQueuedInput {
+  if (!isRecord(value) || !isRecord(value.scope) || !isRecord(value.incoming)) {
+    return false;
+  }
+  return (
+    (typeof value.scope.agentId === "string" || value.scope.agentId === null) &&
+    typeof value.scope.conversationId === "string" &&
+    isRecord(value.identity) &&
+    (value.identity.domain === "input" ||
+      value.identity.domain === "teleport") &&
+    typeof value.identity.id === "string" &&
+    value.identity.id.length > 0 &&
+    value.incoming.type === "message" &&
+    Array.isArray(value.incoming.messages) &&
+    (value.actingUserId === undefined || typeof value.actingUserId === "string")
+  );
+}
+
+function validateDurableStore(value: unknown): DurableStore {
+  if (
+    !isRecord(value) ||
+    (value.version !== 2 && value.version !== 3) ||
+    !Number.isSafeInteger(value.nextGeneration) ||
+    (value.nextGeneration as number) < 0 ||
+    !isRecord(value.entries) ||
+    !isRecord(value.reservations)
+  ) {
+    throw new Error("Invalid accepted-input disposition store");
+  }
+  for (const [key, rawEntry] of Object.entries(value.entries)) {
+    const [runtimeKey, domain, identityId] = parseDispositionKey(key);
+    if (
+      !isRecord(rawEntry) ||
+      (rawEntry.disposition !== "started" &&
+        rawEntry.disposition !== "queued") ||
+      typeof rawEntry.acceptedAt !== "number" ||
+      typeof rawEntry.expiresAt !== "number" ||
+      rawEntry.runtimeKey !== runtimeKey ||
+      !Number.isSafeInteger(rawEntry.generation)
+    ) {
+      throw new Error("Invalid accepted-input disposition entry");
+    }
+    // v2 wrote ordinary queued payloads without an explicit namespace and
+    // payload-free started tombstones. Upgrade those records in memory; all new
+    // writes are v3 and must carry either replay data or a completion marker.
+    if (value.version === 2) {
+      if (
+        rawEntry.queuedInput !== undefined &&
+        isRecord(rawEntry.queuedInput)
+      ) {
+        if (domain !== "input") {
+          throw new Error(
+            "Legacy replay payload has an invalid identity domain",
+          );
+        }
+        rawEntry.queuedInput.identity = { domain, id: identityId };
+        if (isRecord(rawEntry.queuedInput.incoming)) {
+          rawEntry.queuedInput.incoming.durableInputIdentity = {
+            domain,
+            id: identityId,
+          };
+        }
+      } else if (rawEntry.disposition === "started") {
+        rawEntry.replayCompleted = true;
+      }
+    }
+    if (rawEntry.queuedInput !== undefined) {
+      if (!validateQueuedInput(rawEntry.queuedInput)) {
+        throw new Error("Disposition replay payload is invalid");
+      }
+      const replayInput = rawEntry.queuedInput;
+      if (
+        getConversationRuntimeKey(
+          replayInput.scope.agentId,
+          replayInput.scope.conversationId,
+        ) !== runtimeKey ||
+        getConversationRuntimeKey(
+          replayInput.incoming.agentId,
+          replayInput.incoming.conversationId,
+        ) !== runtimeKey ||
+        replayInput.identity.domain !== domain ||
+        replayInput.identity.id !== identityId ||
+        dispositionKey(runtimeKey, replayInput.identity) !== key ||
+        Buffer.byteLength(JSON.stringify(replayInput)) >
+          MAX_DURABLE_QUEUED_INPUT_BYTES
+      ) {
+        throw new Error("Disposition replay payload identity is invalid");
+      }
+    } else if (rawEntry.replayCompleted !== true) {
+      throw new Error(
+        "Disposition is missing replay payload or terminal marker",
+      );
+    }
+    if (
+      rawEntry.queuedInput !== undefined &&
+      rawEntry.replayCompleted !== undefined
+    ) {
+      throw new Error("Disposition cannot be both replayable and completed");
+    }
+  }
+  for (const [key, rawReservation] of Object.entries(value.reservations)) {
+    const [runtimeKey] = parseDispositionKey(key);
+    if (
+      !isRecord(rawReservation) ||
+      rawReservation.runtimeKey !== runtimeKey ||
+      !Number.isSafeInteger(rawReservation.generation) ||
+      typeof rawReservation.token !== "string" ||
+      !Number.isSafeInteger(rawReservation.pid) ||
+      (rawReservation.pid as number) <= 0 ||
+      (rawReservation.processStart !== null &&
+        typeof rawReservation.processStart !== "string")
+    ) {
+      throw new Error("Invalid accepted-input disposition reservation");
+    }
+  }
+  value.version = 3;
+  return value as DurableStore;
+}
+
+function readDurableStore(path: string): DurableStore {
+  if (!existsSync(path)) return emptyDurableStore();
+  const size = statSync(path).size;
+  if (size > MAX_INPUT_DISPOSITION_STORE_BYTES) {
+    throw new Error("Accepted-input disposition store exceeds its size limit");
+  }
+  return validateDurableStore(JSON.parse(readFileSync(path, "utf8")));
+}
+
+function prepareStateDirectory(path: string): void {
+  const dir = dirname(path);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  chmodSync(dir, 0o700);
+}
+
+function fsyncDirectory(path: string): void {
+  const fd = openSync(path, "r");
+  try {
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function writeDurableStore(path: string, store: DurableStore): void {
+  prepareStateDirectory(path);
+  const serialized = JSON.stringify(store);
+  if (Buffer.byteLength(serialized) > MAX_INPUT_DISPOSITION_STORE_BYTES) {
+    throw new Error("Accepted-input disposition store exceeds its size limit");
+  }
+  const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    writeFileSync(temporaryPath, serialized, { mode: 0o600, flag: "wx" });
+    const fd = openSync(temporaryPath, "r");
+    try {
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    renameSync(temporaryPath, path);
+    fsyncDirectory(dirname(path));
+  } catch (error) {
+    try {
+      unlinkSync(temporaryPath);
+      fsyncDirectory(dirname(path));
+    } catch {}
+    throw error;
+  }
+}
+
+function currentProcessOwner(): ProcessOwner {
+  return currentDurableLockOwner();
+}
+
+function isOwnerAlive(owner: ProcessOwner): boolean {
+  return durableLockOwnerIsAlive(owner);
+}
+
+function acquireLock(path: string, waitMs = LOCK_WAIT_MS): () => void {
+  prepareStateDirectory(path);
+  return acquireDurableFileLock(path, { waitMs });
+}
+
+function pruneDurableStore(store: DurableStore, now: number): boolean {
+  let changed = false;
+  for (const [key, entry] of Object.entries(store.entries)) {
+    if (entry.expiresAt <= now) {
+      if (entry.queuedInput) {
+        entry.expiresAt = now + ACCEPTED_INPUT_DISPOSITION_TTL_MS;
+      } else {
+        delete store.entries[key];
+      }
+      changed = true;
+    }
+  }
+  for (const [key, reservation] of Object.entries(store.reservations)) {
+    if (!isOwnerAlive(reservation)) {
+      delete store.reservations[key];
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+function durableTransaction<T>(
+  path: string,
+  transaction: (store: DurableStore) => { result: T; changed: boolean },
+): T {
+  const release = acquireLock(path);
+  try {
+    const store = readDurableStore(path);
+    const pruned = pruneDurableStore(store, Date.now());
+    const { result, changed } = transaction(store);
+    if (pruned || changed) writeDurableStore(path, store);
+    return result;
+  } finally {
+    release();
+  }
+}
+
+function syncMemoryFromDurable(
+  ledger: AcceptedInputDispositionLedger,
+  store: DurableStore,
+): void {
+  ledger.entries.clear();
+  ledger.scopeCounts.clear();
+  ledger.expiryQueue = [];
+  ledger.expiryQueueHead = 0;
+  ledger.nextGeneration = store.nextGeneration;
+  for (const [key, entry] of Object.entries(store.entries)) {
+    ledger.entries.set(key, { ...entry });
+    ledger.scopeCounts.set(
+      entry.runtimeKey,
+      (ledger.scopeCounts.get(entry.runtimeKey) ?? 0) + 1,
+    );
+    ledger.expiryQueue.push({
+      key,
+      expiresAt: entry.expiresAt,
+      generation: entry.generation,
+    });
+  }
+  ledger.expiryQueue.sort((left, right) => left.expiresAt - right.expiresAt);
+}
+
 export type InputDispositionAdmission =
   | { kind: "untracked" }
   | { kind: "duplicate"; disposition: AcceptedInputDisposition }
   | { kind: "reserved"; reservation: InputDispositionReservation }
   | { kind: "full" };
 
-/**
- * Atomically checks a stable ID and reserves ledger capacity. Callers must do
- * this before queue ownership or execution side effects, then commit or roll
- * back the returned reservation.
- */
+function reserveDurably(
+  ledger: AcceptedInputDispositionLedger,
+  runtimeKey: string,
+  key: string,
+): InputDispositionAdmission {
+  const path = ledger.persistentPath;
+  if (!path) return { kind: "full" };
+  try {
+    return durableTransaction<InputDispositionAdmission>(path, (store) => {
+      syncMemoryFromDurable(ledger, store);
+      const existing = store.entries[key];
+      if (existing) {
+        if (!existing.disposition) {
+          throw new Error("Durable disposition entry is uncommitted");
+        }
+        return {
+          result: { kind: "duplicate", disposition: existing.disposition },
+          changed: false,
+        };
+      }
+      if (store.reservations[key]) {
+        return { result: { kind: "full" }, changed: false };
+      }
+      const scopeCount = Object.values(store.entries).filter(
+        (entry) => entry.runtimeKey === runtimeKey,
+      ).length;
+      const reservedScopeCount = Object.values(store.reservations).filter(
+        (entry) => entry.runtimeKey === runtimeKey,
+      ).length;
+      if (
+        Object.keys(store.entries).length +
+          Object.keys(store.reservations).length >=
+          MAX_ACCEPTED_INPUT_DISPOSITIONS ||
+        scopeCount + reservedScopeCount >=
+          MAX_ACCEPTED_INPUT_DISPOSITIONS_PER_SCOPE
+      ) {
+        return { result: { kind: "full" }, changed: false };
+      }
+      const generation = ++store.nextGeneration;
+      const owner = currentProcessOwner();
+      store.reservations[key] = { runtimeKey, generation, ...owner };
+      ledger.nextGeneration = generation;
+      return {
+        result: {
+          kind: "reserved",
+          reservation: {
+            key,
+            generation,
+            runtimeKey,
+            token: owner.token,
+            ownerPid: owner.pid,
+            ownerProcessStart: owner.processStart,
+          },
+        },
+        changed: true,
+      };
+    });
+  } catch {
+    return { kind: "full" };
+  }
+}
+
+/** Atomically checks a stable ID and reserves capacity before side effects. */
 export function reserveInputDisposition(
   runtime: ConversationRuntime,
   identity: InputIdentity | undefined,
 ): InputDispositionAdmission {
   if (!identity) return { kind: "untracked" };
   const ledger = getLedger(runtime.listener);
+  const key = dispositionKey(runtime.key, identity);
+  if (ledger.persistentPath) return reserveDurably(ledger, runtime.key, key);
+
   const now = Date.now();
   expireAcceptedInputDispositions(ledger, now);
-  const key = dispositionKey(runtime.key, identity);
   const existing = ledger.entries.get(key);
   if (existing) {
     if (existing.disposition) {
       return { kind: "duplicate", disposition: existing.disposition };
     }
-    // A reservation can only span synchronous admission work. Treat a reentrant
-    // duplicate as unavailable rather than executing it without a tombstone.
     return { kind: "full" };
   }
   if (
@@ -146,9 +529,7 @@ export function reserveInputDisposition(
   ) {
     return { kind: "full" };
   }
-
-  const generation = ledger.nextGeneration + 1;
-  ledger.nextGeneration = generation;
+  const generation = ++ledger.nextGeneration;
   ledger.entries.set(key, {
     disposition: null,
     acceptedAt: now,
@@ -166,45 +547,132 @@ export function reserveInputDisposition(
   };
 }
 
+function serializeQueuedInput(
+  runtime: ConversationRuntime,
+  identity: InputIdentity,
+  queuedInput: Omit<DurableQueuedInput, "scope" | "identity"> | undefined,
+): DurableQueuedInput | undefined {
+  if (!queuedInput) return undefined;
+  const payload: DurableQueuedInput = {
+    scope: {
+      agentId: runtime.agentId,
+      conversationId: runtime.conversationId,
+    },
+    identity,
+    incoming: { ...queuedInput.incoming, durableInputIdentity: identity },
+    ...(queuedInput.actingUserId
+      ? { actingUserId: queuedInput.actingUserId }
+      : {}),
+  };
+  const serialized = JSON.stringify(payload);
+  if (Buffer.byteLength(serialized) > MAX_DURABLE_QUEUED_INPUT_BYTES) {
+    throw new Error("Queued input exceeds its durable size limit");
+  }
+  return JSON.parse(serialized) as DurableQueuedInput;
+}
+
 export function commitInputDisposition(
   runtime: ConversationRuntime,
   reservation: InputDispositionReservation | undefined,
   disposition: AcceptedInputDisposition,
-): void {
-  if (!reservation) return;
-  const entry = getLedger(runtime.listener).entries.get(reservation.key);
-  if (
-    entry?.generation === reservation.generation &&
-    entry.runtimeKey === runtime.key
-  ) {
-    if (entry.disposition) return;
-    const acceptedAt = Date.now();
-    entry.acceptedAt = acceptedAt;
-    entry.expiresAt = acceptedAt + ACCEPTED_INPUT_DISPOSITION_TTL_MS;
-    entry.disposition = disposition;
-    getLedger(runtime.listener).expiryQueue.push({
-      key: reservation.key,
-      expiresAt: entry.expiresAt,
-      generation: entry.generation,
-    });
+  queuedInput?: Omit<DurableQueuedInput, "scope" | "identity">,
+): boolean {
+  if (!reservation) {
+    // A queued acknowledgement is final to Cloud. Without a stable identity it
+    // cannot be represented in the durable store or restored exactly once.
+    return !(
+      disposition === "queued" && getLedger(runtime.listener).persistentPath
+    );
   }
+  const ledger = getLedger(runtime.listener);
+  let durableQueuedInput: DurableQueuedInput | undefined;
+  try {
+    const [, domain, id] = parseDispositionKey(reservation.key);
+    durableQueuedInput = serializeQueuedInput(
+      runtime,
+      { domain, id },
+      queuedInput,
+    );
+  } catch {
+    return false;
+  }
+  if (!durableQueuedInput && ledger.persistentPath) {
+    return false;
+  }
+  if (ledger.persistentPath) {
+    try {
+      return durableTransaction(ledger.persistentPath, (store) => {
+        const held = store.reservations[reservation.key];
+        if (
+          !held ||
+          held.token !== reservation.token ||
+          held.generation !== reservation.generation ||
+          held.runtimeKey !== runtime.key
+        ) {
+          syncMemoryFromDurable(ledger, store);
+          return { result: false, changed: false };
+        }
+        const acceptedAt = Date.now();
+        store.entries[reservation.key] = {
+          disposition,
+          acceptedAt,
+          expiresAt: acceptedAt + ACCEPTED_INPUT_DISPOSITION_TTL_MS,
+          runtimeKey: runtime.key,
+          generation: held.generation,
+          ...(durableQueuedInput ? { queuedInput: durableQueuedInput } : {}),
+        };
+        delete store.reservations[reservation.key];
+        syncMemoryFromDurable(ledger, store);
+        return { result: true, changed: true };
+      });
+    } catch {
+      return false;
+    }
+  }
+
+  const entry = ledger.entries.get(reservation.key);
+  if (
+    entry?.generation !== reservation.generation ||
+    entry.runtimeKey !== runtime.key
+  ) {
+    return false;
+  }
+  if (entry.disposition) return true;
+  const acceptedAt = Date.now();
+  entry.acceptedAt = acceptedAt;
+  entry.expiresAt = acceptedAt + ACCEPTED_INPUT_DISPOSITION_TTL_MS;
+  entry.disposition = disposition;
+  if (durableQueuedInput) entry.queuedInput = durableQueuedInput;
+  ledger.expiryQueue.push({
+    key: reservation.key,
+    expiresAt: entry.expiresAt,
+    generation: entry.generation,
+  });
+  return true;
 }
 
-/**
- * Releases a reservation that never reached a disposition.
- *
- * Rollback is deliberately commit-aware: once a reservation is committed the
- * side effect it guards is already under way, so an exception unwinding past
- * it must leave the tombstone in place and let the sender's retry observe the
- * real disposition. Only the uncommitted placeholder — which would otherwise
- * never expire and would hold scope capacity forever — is reclaimed.
- */
 export function rollbackInputDisposition(
   runtime: ConversationRuntime,
   reservation: InputDispositionReservation | undefined,
 ): void {
   if (!reservation) return;
   const ledger = getLedger(runtime.listener);
+  if (ledger.persistentPath) {
+    try {
+      durableTransaction(ledger.persistentPath, (store) => {
+        const held = store.reservations[reservation.key];
+        const matches =
+          !!held &&
+          held.token === reservation.token &&
+          held.generation === reservation.generation &&
+          held.runtimeKey === runtime.key;
+        if (matches) delete store.reservations[reservation.key];
+        syncMemoryFromDurable(ledger, store);
+        return { result: undefined, changed: matches };
+      });
+    } catch {}
+    return;
+  }
   const entry = ledger.entries.get(reservation.key);
   if (!entry || entry.disposition !== null) return;
   deleteCurrentEntry(ledger, reservation.key, reservation.generation);
@@ -216,11 +684,22 @@ export function getInputDisposition(
 ): AcceptedInputDisposition | undefined {
   if (!identity) return undefined;
   const ledger = getLedger(runtime.listener);
+  const key = dispositionKey(runtime.key, identity);
+  if (ledger.persistentPath) {
+    try {
+      return durableTransaction(ledger.persistentPath, (store) => {
+        syncMemoryFromDurable(ledger, store);
+        return {
+          result: store.entries[key]?.disposition ?? undefined,
+          changed: false,
+        };
+      });
+    } catch {
+      return undefined;
+    }
+  }
   expireAcceptedInputDispositions(ledger, Date.now());
-  return (
-    ledger.entries.get(dispositionKey(runtime.key, identity))?.disposition ??
-    undefined
-  );
+  return ledger.entries.get(key)?.disposition ?? undefined;
 }
 
 /** Test/setup helper; production ingress should use reserve/commit/rollback. */
@@ -228,12 +707,18 @@ export function rememberInputDisposition(
   runtime: ConversationRuntime,
   identity: InputIdentity | undefined,
   disposition: AcceptedInputDisposition,
+  queuedInput?: Omit<DurableQueuedInput, "scope" | "identity">,
 ): boolean {
   const admission = reserveInputDisposition(runtime, identity);
   if (admission.kind === "duplicate") return true;
   if (admission.kind === "full") return false;
   if (admission.kind === "reserved") {
-    commitInputDisposition(runtime, admission.reservation, disposition);
+    return commitInputDisposition(
+      runtime,
+      admission.reservation,
+      disposition,
+      queuedInput,
+    );
   }
   return true;
 }
@@ -242,12 +727,175 @@ export function rememberInputDisposition(
 export function forgetQueuedInputDisposition(
   runtime: ConversationRuntime,
   identity: InputIdentity | undefined,
-): void {
-  if (!identity) return;
-  const ledger = runtime.listener.acceptedInputDispositionLedger;
-  if (!ledger) return;
-  const key = dispositionKey(runtime.key, identity);
-  if (ledger.entries.get(key)?.disposition === "queued") {
-    deleteCurrentEntry(ledger, key);
-  }
+): boolean {
+  return forgetQueuedInputDispositions(runtime, identity ? [identity] : []);
 }
+
+/** Atomically discard a queue mutation's complete set of durable payloads. */
+export function forgetQueuedInputDispositions(
+  runtime: ConversationRuntime,
+  identities: readonly InputIdentity[],
+): boolean {
+  if (identities.length === 0) return true;
+  const ledger = runtime.listener.acceptedInputDispositionLedger;
+  if (!ledger) return true;
+  const keys = [
+    ...new Set(
+      identities.map((identity) => dispositionKey(runtime.key, identity)),
+    ),
+  ];
+  if (ledger.persistentPath) {
+    try {
+      return durableTransaction(ledger.persistentPath, (store) => {
+        for (const key of keys) {
+          const entry = store.entries[key];
+          if (
+            entry &&
+            entry.disposition !== "queued" &&
+            !(entry.disposition === "started" && entry.queuedInput)
+          ) {
+            syncMemoryFromDurable(ledger, store);
+            return { result: false, changed: false };
+          }
+        }
+        let changed = false;
+        for (const key of keys) {
+          if (store.entries[key]) {
+            delete store.entries[key];
+            changed = true;
+          }
+        }
+        syncMemoryFromDurable(ledger, store);
+        return { result: true, changed };
+      });
+    } catch {
+      return false;
+    }
+  }
+  for (const key of keys) {
+    const entry = ledger.entries.get(key);
+    if (
+      entry?.disposition === "queued" ||
+      (entry?.disposition === "started" && entry.queuedInput)
+    ) {
+      deleteCurrentEntry(ledger, key);
+    }
+  }
+  return true;
+}
+
+/** Atomically transition queued dispositions while retaining crash-replay payloads. */
+export function markQueuedInputDispositionsStarted(
+  runtime: ConversationRuntime,
+  identities: readonly InputIdentity[],
+): boolean {
+  if (identities.length === 0) return true;
+  const ledger = getLedger(runtime.listener);
+  const keys = [
+    ...new Set(
+      identities.map((identity) => dispositionKey(runtime.key, identity)),
+    ),
+  ];
+  if (ledger.persistentPath) {
+    try {
+      return durableTransaction(ledger.persistentPath, (store) => {
+        const queuedKeys = keys.filter(
+          (key) => store.entries[key]?.disposition === "queued",
+        );
+        if (
+          queuedKeys.some(
+            (key) => store.entries[key]?.queuedInput === undefined,
+          )
+        ) {
+          syncMemoryFromDurable(ledger, store);
+          return { result: false, changed: false };
+        }
+        for (const key of queuedKeys) {
+          const entry = store.entries[key];
+          if (!entry) throw new Error("Queued disposition vanished");
+          entry.disposition = "started";
+        }
+        syncMemoryFromDurable(ledger, store);
+        return { result: true, changed: queuedKeys.length > 0 };
+      });
+    } catch {
+      return false;
+    }
+  }
+  for (const key of keys) {
+    const entry = ledger.entries.get(key);
+    if (entry?.disposition === "queued") entry.disposition = "started";
+  }
+  return true;
+}
+
+/** Atomically retain disposition tombstones while retiring replay payloads. */
+export function completeInputReplay(
+  runtime: ConversationRuntime,
+  identities: readonly InputIdentity[],
+): boolean {
+  if (identities.length === 0) return true;
+  const ledger = getLedger(runtime.listener);
+  const keys = [
+    ...new Set(
+      identities.map((identity) => dispositionKey(runtime.key, identity)),
+    ),
+  ];
+  if (ledger.persistentPath) {
+    try {
+      return durableTransaction(ledger.persistentPath, (store) => {
+        for (const key of keys) {
+          const entry = store.entries[key];
+          if (entry && !entry.disposition) {
+            syncMemoryFromDurable(ledger, store);
+            return { result: false, changed: false };
+          }
+        }
+        let changed = false;
+        for (const key of keys) {
+          const entry = store.entries[key];
+          if (!entry) continue;
+          if (entry.queuedInput !== undefined) {
+            delete entry.queuedInput;
+            entry.replayCompleted = true;
+            changed = true;
+          }
+        }
+        syncMemoryFromDurable(ledger, store);
+        return { result: true, changed };
+      });
+    } catch {
+      return false;
+    }
+  }
+  for (const key of keys) {
+    const entry = ledger.entries.get(key);
+    if (!entry) continue;
+    if (!entry.disposition) return false;
+    delete entry.queuedInput;
+    entry.replayCompleted = true;
+  }
+  return true;
+}
+
+/** Read every replay payload under the store lock for startup restore. */
+export function loadDurableQueuedInputs(
+  listener: ListenerRuntime,
+): DurableQueuedInput[] {
+  const ledger = getLedger(listener);
+  if (!ledger.persistentPath) return [];
+  return durableTransaction(ledger.persistentPath, (store) => {
+    syncMemoryFromDurable(ledger, store);
+    return {
+      result: Object.values(store.entries).flatMap((entry) =>
+        entry.queuedInput ? [structuredClone(entry.queuedInput)] : [],
+      ),
+      changed: false,
+    };
+  });
+}
+
+export const __inputDispositionTestUtils = {
+  acquireLock,
+  currentProcessOwner,
+};

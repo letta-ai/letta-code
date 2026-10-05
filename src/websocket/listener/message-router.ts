@@ -53,6 +53,7 @@ import {
 } from "./inbound-queue";
 import {
   commitInputDisposition,
+  forgetQueuedInputDisposition,
   getInputDisposition,
   ordinaryInputIdentity,
   reserveInputDisposition,
@@ -83,6 +84,7 @@ import {
 import { admitTeleportContinueInput } from "./teleport-continue-input";
 import type { ListenerTransport } from "./transport";
 import { handleIncomingMessage } from "./turn";
+import { acknowledgeTurnFinished } from "./turn-finished-replay";
 import type {
   ConversationRuntime,
   IncomingMessage,
@@ -269,6 +271,16 @@ export function createListenerMessageHandler(
           isTerminal: false,
           agentId: parsed.runtime.agent_id,
           conversationId: parsed.runtime.conversation_id,
+        });
+        return;
+      }
+
+      if (parsed.type === "turn_finished_ack") {
+        acknowledgeTurnFinished({
+          agentId: parsed.runtime.agent_id,
+          conversationId: parsed.runtime.conversation_id,
+          connectionId,
+          idempotencyKey: parsed.idempotency_key,
         });
         return;
       }
@@ -606,21 +618,43 @@ export function createListenerMessageHandler(
           const reservation =
             admission.kind === "reserved" ? admission.reservation : undefined;
           try {
-            const enqueued = enqueueInboundUserMessage(
+            const committed = commitInputDisposition(
               scopedRuntime,
-              stampedIncoming,
-              parsed.runtime.acting_user_id,
+              reservation,
+              "queued",
+              {
+                incoming: stampedIncoming,
+                actingUserId: parsed.runtime.acting_user_id,
+              },
             );
-            if (enqueued) {
-              commitInputDisposition(scopedRuntime, reservation, "queued");
+            let enqueued = false;
+            try {
+              enqueued =
+                committed &&
+                enqueueInboundUserMessage(
+                  scopedRuntime,
+                  stampedIncoming,
+                  parsed.runtime.acting_user_id,
+                );
+            } catch (error) {
+              if (committed)
+                forgetQueuedInputDisposition(scopedRuntime, identity);
+              throw error;
+            }
+            const durablyAccepted = committed && enqueued;
+            if (durablyAccepted) {
               scheduleQueuePump(scopedRuntime, socket, opts, processQueuedTurn);
+            } else if (committed) {
+              forgetQueuedInputDisposition(scopedRuntime, identity);
             } else {
               rollbackInputDisposition(scopedRuntime, reservation);
             }
             acknowledgeInput(
-              enqueued,
-              enqueued ? undefined : "Input was rejected by the queue",
-              enqueued ? "queued" : undefined,
+              durablyAccepted,
+              durablyAccepted
+                ? undefined
+                : "Input was rejected by the queue or durable ledger",
+              durablyAccepted ? "queued" : undefined,
             );
           } catch (error) {
             rollbackInputDisposition(scopedRuntime, reservation);

@@ -443,24 +443,30 @@ export async function handleAbortMessageInput(
     scope.agent_id,
     scope.conversation_id,
   );
-  const hasActiveTurn = scopedRuntime.turnLifecycle.kind === "active";
+  const lifecycleSnapshot = scopedRuntime.turnLifecycle.snapshot();
+  const hasCurrentTurn =
+    lifecycleSnapshot.kind === "active" ||
+    (lifecycleSnapshot.kind === "cancelling" &&
+      scopedRuntime.turnLifecycle.currentLease?.id ===
+        lifecycleSnapshot.lease.id);
 
-  // A CLI waiter may observe completion just before its abort arrives. Never
-  // apply an old run's cancellation to the replacement conversation turn.
+  // A CLI waiter may observe completion just before its abort arrives. Match
+  // against the current lease's run even after transport cancellation moved it
+  // to `cancelling`; never apply an old run's abort to a replacement turn.
   if (
     params.command.run_id &&
-    params.command.run_id !== scopedRuntime.activeRunId
+    (!hasCurrentTurn || params.command.run_id !== lifecycleSnapshot.runId)
   ) {
     return false;
   }
 
-  if (!hasActiveTurn && !hasPendingApprovals) {
+  if (!hasCurrentTurn && !hasPendingApprovals) {
     return false;
   }
 
   const cancellation = scopedRuntime.turnLifecycle.requestCancellation({
     cause: "explicit_user",
-    waitForExternalSettlement: hasActiveTurn,
+    waitForExternalSettlement: hasCurrentTurn,
   });
   // Interrupt semantics: the current turn stops and the user's queued messages
   // park until resume_queue or the user's next message. System items (task
@@ -496,7 +502,7 @@ export async function handleAbortMessageInput(
   // Also set interrupt context for active turns without tracked tool IDs
   // (e.g., background Task tools that spawn subagents)
   if (
-    hasActiveTurn &&
+    hasCurrentTurn &&
     cancellation.executingToolCallIds.length === 0 &&
     !scopedRuntime.pendingInterruptedContext
   ) {
@@ -513,7 +519,7 @@ export async function handleAbortMessageInput(
     listener,
     scope,
   );
-  if (recoveredApprovalState && !hasActiveTurn) {
+  if (recoveredApprovalState && !hasCurrentTurn) {
     resolvedDeps.stashRecoveredApprovalInterrupts(
       scopedRuntime,
       recoveredApprovalState,
@@ -527,7 +533,7 @@ export async function handleAbortMessageInput(
     );
   }
 
-  if (hasActiveTurn) {
+  if (hasCurrentTurn) {
     resolvedDeps.emitRuntimeStateUpdates(scopedRuntime, scope);
     resolvedDeps.emitInterruptedStatusDelta(params.socket, scopedRuntime, {
       runId: interruptedRunId,

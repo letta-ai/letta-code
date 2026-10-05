@@ -112,6 +112,14 @@ export class StartupFrameBuffer {
     this.#bytes = 0;
   }
 
+  get frameCount(): number {
+    return this.#frames.length;
+  }
+
+  get byteLength(): number {
+    return this.#bytes;
+  }
+
   get phase(): "buffering" | "draining" | "live" | "terminated" {
     return this.#phase;
   }

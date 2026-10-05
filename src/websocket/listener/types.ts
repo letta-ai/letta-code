@@ -131,6 +131,8 @@ export interface IncomingMessage {
    * self-hosted, single-user, or pre-channel-split flows.
    */
   actingUserId?: string;
+  /** Stable durable-ledger identity carried only by locally replayed/admitted work. */
+  durableInputIdentity?: InputIdentity;
 }
 
 export type ProcessQueuedTurn = (
@@ -230,12 +232,29 @@ export type InputIdentity = {
   readonly id: string;
 };
 
+export type DurableQueuedInput = {
+  scope: {
+    agentId: string | null;
+    conversationId: string;
+  };
+  /** Exact ledger namespace/id; never inferred from message-shaped payload data. */
+  identity: InputIdentity;
+  /** Complete create-message execution context, including client preferences. */
+  incoming: IncomingMessage;
+  /** Sender attribution forwarded separately from the protocol payload. */
+  actingUserId?: string;
+};
+
 export type AcceptedInputDispositionEntry = {
   disposition: AcceptedInputDisposition | null;
   acceptedAt: number;
   expiresAt: number;
   runtimeKey: string;
   generation: number;
+  /** Present while accepted work must be replayed after a process crash. */
+  queuedInput?: DurableQueuedInput;
+  /** Durable terminal/successor marker set atomically when replay data is retired. */
+  replayCompleted?: true;
 };
 
 export type AcceptedInputDispositionLedger = {
@@ -244,12 +263,18 @@ export type AcceptedInputDispositionLedger = {
   expiryQueue: Array<{ key: string; expiresAt: number; generation: number }>;
   expiryQueueHead: number;
   nextGeneration: number;
+  /** Durable cross-process store; null is used by isolated unit runtimes. */
+  persistentPath: string | null;
 };
 
 export type InputDispositionReservation = {
   key: string;
   generation: number;
   runtimeKey: string;
+  /** Unforgeable owner for a filesystem reservation. */
+  token?: string;
+  ownerPid?: number;
+  ownerProcessStart?: string | null;
 };
 
 /**
@@ -284,19 +309,19 @@ export type StartupFrameHandoff =
       readonly capacity: StartupFrameCapacity;
     };
 
-/** Opaque, one-shot ownership transfer across Cloud re-registration. */
-export type ListenerClientReplacement = {
-  readonly deviceId: string;
-  readonly connectionName: string;
-  readonly lineageId: string;
-  readonly generation: number;
-  readonly ledger: AcceptedInputDispositionLedger;
-  readonly startupFrameHandoff: StartupFrameHandoff;
-  readonly clientMessageIdsByRunIdByConversation: Map<
-    string,
-    Map<string, string[]>
-  >;
-};
+/**
+ * Opaque, one-shot ownership transfer across Cloud re-registration.
+ *
+ * Only routing metadata is public. All mutable successor state is retained in
+ * private provenance keyed by this token, so possession never grants mutation
+ * authority over the handoff before or after adoption.
+ */
+export type ListenerClientReplacement = Readonly<{
+  deviceId: string;
+  connectionName: string;
+  lineageId: string;
+  generation: number;
+}>;
 
 export type ConversationRuntime = {
   listener: ListenerRuntime;
