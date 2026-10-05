@@ -138,6 +138,8 @@ Provider reasoning fields differ. Read [`references/model-settings.md`](referenc
 
 `scripts/update-agent-settings.ts` covers fields `letta model` does not: `context_window_limit`, name, description, and system prompt replacement. It talks to the REST API at `LETTA_BASE_URL` and requires `LETTA_API_KEY`, so it only works against a server that exposes the REST API; it does not work on the embedded local backend.
 
+On the embedded local backend these fields are changed from the session instead, with slash commands the user types: `/context-limit [tokens]`, `/rename agent <name>`, `/description <text>`, `/system` for the system prompt, and `/compaction` for compaction settings. Like a model change, `/context-limit` updates the agent default only in the virtual `default` conversation; in a named conversation it writes that conversation's override, so the user switches with `/resume default` first to change the default.
+
 Required environment for live API writes:
 
 ```bash
@@ -152,13 +154,13 @@ The scripts in this skill default to `AGENT_ID`, `CONVERSATION_ID`, and `LETTA_B
 ### Dry-runable update script
 
 ```bash
-npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts --help
+node <SKILL_DIR>/scripts/update-agent-settings.ts --help
 ```
 
 Patch the current conversation's context window limit:
 
 ```bash
-npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts \
+node <SKILL_DIR>/scripts/update-agent-settings.ts \
   --target conversation \
   --conversation-id "$CONVERSATION_ID" \
   --context-window-limit 64000 \
@@ -168,7 +170,7 @@ npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts \
 Patch the agent default only when the user asks for it:
 
 ```bash
-npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts \
+node <SKILL_DIR>/scripts/update-agent-settings.ts \
   --target agent \
   --agent-id "$AGENT_ID" \
   --context-window-limit 64000
@@ -181,13 +183,13 @@ Name and description are agent-level metadata. Do not pass them with `--target c
 When the user renames you, this patch is the authoritative change — editing a name written in persona memory does not change the agent's actual name. Do both: patch the agent name here, then update any memory file that states your name so they agree.
 
 ```bash
-npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts \
+node <SKILL_DIR>/scripts/update-agent-settings.ts \
   --target agent \
   --agent-id "$AGENT_ID" \
   --name "repo-maintainer" \
   --dry-run
 
-npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts \
+node <SKILL_DIR>/scripts/update-agent-settings.ts \
   --target agent \
   --agent-id "$AGENT_ID" \
   --description "Maintains repository configuration and review-ready PRs." \
@@ -203,7 +205,7 @@ Compaction controls how old messages are summarized when context is evicted. Bad
 Use the helper for prompt changes. Even `--dry-run` fetches current compaction settings so omitted fields are preserved in the preview. Live writes require `--confirm-compaction-prompt`.
 
 ```bash
-npx tsx <SKILL_DIR>/scripts/update-compaction-prompt.ts \
+node <SKILL_DIR>/scripts/update-compaction-prompt.ts \
   --prompt-file /tmp/compaction-prompt.txt \
   --mode self_compact_sliding_window \
   --clip-chars 50000 \
@@ -217,7 +219,7 @@ Read [`references/compaction-prompt-patterns.md`](references/compaction-prompt-p
 This is a sharp tool. A bad system prompt can self-brick the agent. Use it only when the user explicitly asks to replace the server-side system prompt or when repairing a known server-side prompt state. Live writes require `--confirm-system-replacement`; dry runs do not.
 
 ```bash
-npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts \
+node <SKILL_DIR>/scripts/update-agent-settings.ts \
   --target agent \
   --agent-id "$AGENT_ID" \
   --system-file /tmp/new-system-prompt.txt \

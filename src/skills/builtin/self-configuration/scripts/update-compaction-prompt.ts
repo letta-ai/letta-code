@@ -36,7 +36,7 @@ function parseArgs(argv: string[]): Args {
 
 function usage(): never {
   console.error(`Usage:
-  npx tsx scripts/update-compaction-prompt.ts --prompt-file prompt.txt [options]
+  node scripts/update-compaction-prompt.ts --prompt-file prompt.txt [options]
 
 Options:
   --agent-id <id>                  Defaults to AGENT_ID

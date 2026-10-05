@@ -262,7 +262,7 @@ When creating a new skill from scratch, always run the `init-skill.ts` script. T
 Usage:
 
 ```bash
-npx tsx <SKILL_DIR>/scripts/init-skill.ts <skill-name> --path <output-directory>
+node <SKILL_DIR>/scripts/init-skill.ts <skill-name> --path <output-directory>
 ```
 Where `<SKILL_DIR>` is the Skill Directory shown when the skill was loaded (visible in the injection header). If no Skill Directory is shown, create the skill directory and `SKILL.md` directly instead.
 
@@ -337,13 +337,13 @@ Package the skill only when it needs to be distributed as a file, for example wh
 To package a skill into a distributable .skill file, run the packaging script. The packaging process automatically validates the skill first to ensure it meets all requirements:
 
 ```bash
-npx tsx <SKILL_DIR>/scripts/package-skill.ts <path/to/skill-folder>
+node <SKILL_DIR>/scripts/package-skill.ts <path/to/skill-folder>
 ```
 
 Optional output directory specification:
 
 ```bash
-npx tsx <SKILL_DIR>/scripts/package-skill.ts <path/to/skill-folder> ./dist
+node <SKILL_DIR>/scripts/package-skill.ts <path/to/skill-folder> ./dist
 ```
 
 The packaging script will:
