@@ -23,6 +23,7 @@ import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
 import { apiFetch, getApiRequestConfig } from "@/backend/api/request";
 import { resolveBackendMode } from "@/backend/backend-mode";
 import { debugLog, debugWarn } from "@/utils/debug";
+import { isLoopbackUrl } from "@/utils/url";
 
 const CATALOG_PATH = "/v1/models/catalog";
 const REFRESH_TTL_MS = 5 * 60 * 1000; // matches available-models cache TTL
@@ -369,9 +370,13 @@ async function refreshRuntimeModelCatalog(
 }
 
 function isCloudCatalogSource(source: string): boolean {
+  // Desktop's API backend reaches Cloud through its authenticated loopback
+  // proxy. Keep requests on that transport, but load Cloud presets rather
+  // than treating the proxy as a custom server. Local mode is handled first.
   return (
     normalizeCatalogSource(source) ===
-    normalizeCatalogSource(LETTA_CLOUD_API_URL)
+      normalizeCatalogSource(LETTA_CLOUD_API_URL) ||
+    (process.env.LETTA_DESKTOP_MODE === "1" && isLoopbackUrl(source))
   );
 }
 
