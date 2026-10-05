@@ -60,6 +60,7 @@ Return one of:
 ```ts
 { decision: "allow", reason?: string }
 { decision: "ask", reason?: string }
+{ decision: "alwaysAsk", reason?: string }
 { decision: "deny", reason?: string }
 undefined // no opinion
 ```
@@ -67,6 +68,7 @@ undefined // no opinion
 Composition rules across overlays:
 
 - `deny` wins
+- then `alwaysAsk`
 - then `ask`
 - then `allow`
 - `undefined` means no opinion
