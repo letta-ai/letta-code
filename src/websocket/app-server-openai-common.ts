@@ -10,10 +10,30 @@ import type {
 } from "@/websocket/app-server-openai-turn";
 
 const MAX_REQUEST_BODY_BYTES = 20 * 1024 * 1024;
+const OPENAI_SSE_HEARTBEAT_INTERVAL_MS = 30_000;
 
 export interface OpenAiCompatOptions {
   authPolicy: WebsocketAuthPolicy;
   onLog?: (message: string) => void;
+  /** @internal OpenAI 兼容 SSE 心跳间隔的测试覆盖（毫秒）。 */
+  sseHeartbeatIntervalMs?: number;
+}
+
+export function startOpenAiSseHeartbeat(
+  response: ServerResponse,
+  isClientClosed: () => boolean,
+  intervalMs = OPENAI_SSE_HEARTBEAT_INTERVAL_MS,
+): () => void {
+  if (!Number.isFinite(intervalMs) || intervalMs <= 0) return () => {};
+
+  const timer = setInterval(() => {
+    if (isClientClosed() || response.destroyed || response.writableEnded) {
+      return;
+    }
+    response.write(": keepalive\n\n");
+  }, intervalMs);
+  timer.unref?.();
+  return () => clearInterval(timer);
 }
 
 export interface OpenAiChatMessagePart {
