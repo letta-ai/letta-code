@@ -6,6 +6,7 @@
 import { createHash } from "node:crypto";
 import { getDesktopAccessToken } from "@/auth/desktop-credentials";
 import { getSelfUpdateStatus } from "@/updater/auto-update";
+import { getMachineMetadata } from "@/utils/machine-metadata";
 import { getVersion } from "@/version.ts";
 import { SUPPORTED_REMOTE_COMMANDS } from "./listener/listener-constants";
 
@@ -130,6 +131,7 @@ export async function registerWithCloud(
         lettaCodeVersion: getVersion(),
         os: process.platform,
         nodeVersion: process.version,
+        machine: await getMachineMetadata(),
         environmentMessageProtocol: "v2-input",
         supportsPairedListenerGenerations: true,
         supported_commands: SUPPORTED_REMOTE_COMMANDS,
