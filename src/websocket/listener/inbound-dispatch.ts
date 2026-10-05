@@ -8,6 +8,7 @@ import {
 } from "./inbound-queue";
 import {
   commitInputDisposition,
+  ordinaryInputIdentity,
   reserveInputDisposition,
   rollbackInputDisposition,
 } from "./input-disposition";
@@ -85,7 +86,7 @@ export function dispatchInboundMessageWhenReady(params: {
     trackListenerError,
     onInputAccepted,
   } = params;
-  const clientMessageId = getInboundClientMessageId(incoming);
+  const identity = ordinaryInputIdentity(getInboundClientMessageId(incoming));
   let inputAcknowledged = false;
   const acknowledgeInput = (result: {
     accepted: boolean;
@@ -106,7 +107,7 @@ export function dispatchInboundMessageWhenReady(params: {
         acknowledgeInput({ accepted: false });
         return;
       }
-      const admission = reserveInputDisposition(runtime, clientMessageId);
+      const admission = reserveInputDisposition(runtime, identity);
       if (admission.kind === "duplicate") {
         acknowledgeInput({
           accepted: true,
@@ -120,76 +121,93 @@ export function dispatchInboundMessageWhenReady(params: {
       }
       const reservation =
         admission.kind === "reserved" ? admission.reservation : undefined;
-      if (
-        isRuntimeTeleportPending(
-          listener,
-          runtime.agentId,
-          runtime.conversationId,
-        )
-      ) {
-        rollbackInputDisposition(runtime, reservation);
-        acknowledgeInput({ accepted: false });
-        return;
-      }
-      if (
-        shouldQueueInboundMessage(incoming) &&
-        !shouldProcessInboundMessageDirectly(runtime, incoming)
-      ) {
-        const accepted = enqueueInboundUserMessage(
-          runtime,
-          incoming,
-          actingUserId,
-        );
-        if (accepted) {
-          commitInputDisposition(runtime, reservation, "queued");
-        } else {
+      // Everything past the reservation runs inside this callback. An
+      // acknowledgement callback, the queue, or the turn itself can throw, and
+      // an uncommitted placeholder left behind would never expire and would
+      // reject the sender's stable-ID retry forever.
+      try {
+        if (
+          isRuntimeTeleportPending(
+            listener,
+            runtime.agentId,
+            runtime.conversationId,
+          )
+        ) {
           rollbackInputDisposition(runtime, reservation);
+          acknowledgeInput({ accepted: false });
+          return;
         }
-        acknowledgeInput({
-          accepted,
-          ...(accepted ? { disposition: "queued" } : {}),
-        });
-        if (accepted) {
+        if (
+          shouldQueueInboundMessage(incoming) &&
+          !shouldProcessInboundMessageDirectly(runtime, incoming)
+        ) {
+          const accepted = enqueueInboundUserMessage(
+            runtime,
+            incoming,
+            actingUserId,
+          );
+          if (accepted) {
+            commitInputDisposition(runtime, reservation, "queued");
+          } else {
+            rollbackInputDisposition(runtime, reservation);
+          }
+          acknowledgeInput({
+            accepted,
+            ...(accepted ? { disposition: "queued" } : {}),
+          });
+          if (accepted) {
+            scheduleQueuePump(runtime, socket, options, processQueuedTurn);
+          }
+          return;
+        }
+
+        emitListenerStatus(
+          listener,
+          options.onStatusChange,
+          options.connectionId,
+        );
+        commitInputDisposition(runtime, reservation, "started");
+        acknowledgeInput({ accepted: true, disposition: "started" });
+        // Queued turns store the actor on the queue item. Direct turns skip
+        // that item, so carry the actor on the message consumed by turn.ts.
+        const attributedIncoming =
+          actingUserId && incoming.actingUserId !== actingUserId
+            ? { ...incoming, actingUserId }
+            : incoming;
+        await processIncomingMessage(
+          attributedIncoming,
+          getOrCreateProcessTransport(listener),
+          runtime,
+          options.onStatusChange,
+          options.connectionId,
+        );
+        emitListenerStatus(
+          listener,
+          options.onStatusChange,
+          options.connectionId,
+        );
+        if (
+          runtime.queueRuntime.length > 0 ||
+          runtime.queuePumpScheduled ||
+          runtime.queuePumpActive
+        ) {
           scheduleQueuePump(runtime, socket, options, processQueuedTurn);
         }
-        return;
-      }
-
-      emitListenerStatus(
-        listener,
-        options.onStatusChange,
-        options.connectionId,
-      );
-      commitInputDisposition(runtime, reservation, "started");
-      acknowledgeInput({ accepted: true, disposition: "started" });
-      // Queued turns store the actor on the queue item. Direct turns skip that
-      // item, so carry the actor on the message consumed by turn.ts instead.
-      const attributedIncoming =
-        actingUserId && incoming.actingUserId !== actingUserId
-          ? { ...incoming, actingUserId }
-          : incoming;
-      await processIncomingMessage(
-        attributedIncoming,
-        getOrCreateProcessTransport(listener),
-        runtime,
-        options.onStatusChange,
-        options.connectionId,
-      );
-      emitListenerStatus(
-        listener,
-        options.onStatusChange,
-        options.connectionId,
-      );
-      if (
-        runtime.queueRuntime.length > 0 ||
-        runtime.queuePumpScheduled ||
-        runtime.queuePumpActive
-      ) {
-        scheduleQueuePump(runtime, socket, options, processQueuedTurn);
+      } catch (error) {
+        rollbackInputDisposition(runtime, reservation);
+        throw error;
       }
     })
     .catch((error: unknown) => {
-      acknowledgeInput({ accepted: false });
+      try {
+        acknowledgeInput({ accepted: false });
+      } catch (acknowledgementError) {
+        trackListenerError(
+          "listener_input_acknowledgement_failed",
+          acknowledgementError,
+          "listener_message_queue",
+        );
+      }
       trackListenerError(
         "listener_queued_input_failed",
         error,
@@ -198,12 +216,28 @@ export function dispatchInboundMessageWhenReady(params: {
       if (isDebugEnabled()) {
         console.error("[Listen] Error handling queued input:", error);
       }
-      emitListenerStatus(
-        listener,
-        options.onStatusChange,
-        options.connectionId,
-      );
-      scheduleQueuePump(runtime, socket, options, processQueuedTurn);
+      try {
+        emitListenerStatus(
+          listener,
+          options.onStatusChange,
+          options.connectionId,
+        );
+      } catch (statusError) {
+        trackListenerError(
+          "listener_status_callback_failed",
+          statusError,
+          "listener_message_queue",
+        );
+      }
+      try {
+        scheduleQueuePump(runtime, socket, options, processQueuedTurn);
+      } catch (queuePumpError) {
+        trackListenerError(
+          "listener_queue_pump_schedule_failed",
+          queuePumpError,
+          "listener_message_queue",
+        );
+      }
     })
     .finally(() => {
       runtime.pendingInboundDispatches -= 1;

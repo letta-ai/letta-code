@@ -1,6 +1,7 @@
 import type WebSocket from "ws";
 import { closeOutboundTransportQueue } from "./outbound-wire";
 import { getConversationRuntimeKey, nextEventSeq } from "./runtime";
+import { reserveStartupIngressOwner } from "./startup-ingress";
 import {
   isListenerTransportOpen,
   type ListenerTransport,
@@ -12,6 +13,7 @@ import type {
   ListenerMessageRouting,
   ListenerRuntime,
   StartListenerOptions,
+  StartupIngressOwner,
 } from "./types";
 
 export const TO_SUBSCRIBERS = {
@@ -83,6 +85,8 @@ export function openListenerConnection(params: {
   streamWriter?: ListenerTransport | null;
   cancellation?: AbortController;
   options: StartListenerOptions;
+  /** Owner already reserved before the transport existed; claimed as-is. */
+  startupOwner?: StartupIngressOwner;
 }): ListenerConnectionState {
   const existing = params.runtime.connections.get(params.connectionId);
   if (existing) {
@@ -96,23 +100,17 @@ export function openListenerConnection(params: {
   const startupReady = new Promise<void>((resolve) => {
     resolveStartupReady = resolve;
   });
-  const replacement = params.options.replacement;
-  const startupLineageId = replacement?.lineageId ?? params.connectionId;
-  const priorStartupGeneration =
-    params.runtime.startupGenerationByLineage.get(startupLineageId) ??
-    replacement?.generation ??
-    0;
-  const startupGeneration = priorStartupGeneration + 1;
-  params.runtime.startupGenerationByLineage.set(
-    startupLineageId,
-    startupGeneration,
-  );
+  const startupOwner =
+    params.startupOwner ??
+    reserveStartupIngressOwner(params.runtime, {
+      connectionId: params.connectionId,
+      replacement: params.options.replacement,
+      connectionIdCanResume: params.options.connectionIdCanResume,
+    });
   const connection: ListenerConnectionState = {
     id: params.connectionId,
     ordinal: resumed?.ordinal ?? params.runtime.nextConnectionOrdinal,
-    startupLineageId,
-    startupGeneration,
-    startupHandoffEnabled: params.options.connectionIdCanResume !== false,
+    startupOwner,
     writer: params.writer,
     streamWriter: params.streamWriter ?? null,
     cancellation: params.cancellation ?? new AbortController(),
@@ -377,13 +375,13 @@ export function closeListenerConnection(
   runtime.connections.delete(connectionId);
   connection.resolveStartupReady();
   connection.cancellation.abort();
+  const { lineageId, generation, handoffEnabled } = connection.startupOwner;
   if (
-    !connection.startupHandoffEnabled &&
-    runtime.startupGenerationByLineage.get(connection.startupLineageId) ===
-      connection.startupGeneration
+    !handoffEnabled &&
+    runtime.startupGenerationByLineage.get(lineageId) === generation
   ) {
-    runtime.startupGenerationByLineage.delete(connection.startupLineageId);
-    runtime.pendingStartupFramesByLineage.delete(connection.startupLineageId);
+    runtime.startupGenerationByLineage.delete(lineageId);
+    runtime.pendingStartupFramesByLineage.delete(lineageId);
   }
   closeOutboundTransportQueue(connection.writer);
   if (connection.streamWriter) {

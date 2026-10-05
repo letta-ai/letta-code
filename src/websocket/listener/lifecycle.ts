@@ -31,7 +31,6 @@ import {
 import { completeInitialConnectionStartup } from "./connection-state-sync";
 import {
   INITIAL_RETRY_DELAY_MS,
-  LISTENER_PONG_TIMEOUT_MS,
   MAX_RETRY_ATTEMPTS,
   MAX_RETRY_DELAY_MS,
   MAX_RETRY_DURATION_MS,
@@ -49,7 +48,7 @@ import {
   rejectPendingExternalToolCalls,
 } from "./external-tools";
 import { createFileCommandSession } from "./file-commands";
-import { startConnectionHeartbeat } from "./heartbeat";
+import { startListenerPongHeartbeat } from "./heartbeat";
 import {
   getParsedRuntimeScope,
   stampInboundUserMessageOtids,
@@ -57,6 +56,7 @@ import {
 import { createAcceptedInputDispositionLedger } from "./input-disposition";
 import {
   adoptListenerClientReplacement,
+  assertAdoptableListenerClientReplacement,
   createListenerClientReplacement,
 } from "./listener-replacement";
 import { createListenerMessageHandler } from "./message-router";
@@ -99,6 +99,7 @@ import {
   activateStartupIngress,
   createReportedIngressHandler,
   handoffRequestlessStartupFrames,
+  reserveStartupIngressOwner,
   takeRequestlessStartupFrameHandoff,
   waitForStartupOrAbort,
 } from "./startup-ingress";
@@ -111,7 +112,6 @@ import {
   LocalListenerTransport,
 } from "./transport";
 import type {
-  ListenerConnectionState,
   ListenerRuntime,
   ProcessQueuedTurn,
   StartListenerOptions,
@@ -129,30 +129,6 @@ function trackListenerError(
     error,
     context,
   });
-}
-
-function safeTransportSend(
-  transport: ListenerTransport,
-  payload: unknown,
-  errorType: string,
-  context: string,
-): boolean {
-  if (!isListenerTransportOpen(transport)) {
-    return false;
-  }
-
-  try {
-    const serialized =
-      typeof payload === "string" ? payload : JSON.stringify(payload);
-    transport.send(serialized);
-    return true;
-  } catch (error) {
-    trackListenerError(errorType, error, context);
-    if (isDebugEnabled()) {
-      console.error(`[Listen] ${context} send failed:`, error);
-    }
-    return false;
-  }
 }
 
 export function runDetachedListenerTask(
@@ -319,28 +295,7 @@ export async function startConnectedListenerRuntime(
   await opts.onConnectionReady?.(startupConnection);
   if (!isExactOpenConnection() || !startupConnection.ingressReady) return;
   if (options.startHeartbeat !== false) {
-    startConnectionHeartbeat(
-      runtime,
-      transport,
-      () => {
-        trackListenerError(
-          "listener_pong_timeout",
-          new Error(
-            `No relay pong within ${LISTENER_PONG_TIMEOUT_MS}ms; terminating half-open socket to force reconnect`,
-          ),
-          "listener_heartbeat",
-        );
-        runtime.socket?.terminate();
-      },
-      (heartbeatTransport) => {
-        return safeTransportSend(
-          heartbeatTransport,
-          { type: "ping" },
-          "listener_ping_send_failed",
-          "listener_heartbeat",
-        );
-      },
-    );
+    startListenerPongHeartbeat(runtime, transport, trackListenerError);
   }
 
   if (options.startProcessServices === false) return;
@@ -473,7 +428,11 @@ export async function attachOpenListenerSocket(
     trackListenerError,
   );
   const abortStartupIngress = (): void => {
-    handoffRequestlessStartupFrames(runtime, connection, pendingStartupFrames);
+    handoffRequestlessStartupFrames(
+      runtime,
+      connection.startupOwner,
+      pendingStartupFrames,
+    );
     pendingStartupFrames.abort();
   };
   connection.cancellation.signal.addEventListener(
@@ -559,7 +518,8 @@ export async function attachOpenListenerSocket(
               !connection.cancellation.signal.aborted &&
               isListenerTransportOpen(connection.writer),
           ),
-        () => takeRequestlessStartupFrameHandoff(runtime, connection),
+        () =>
+          takeRequestlessStartupFrameHandoff(runtime, connection.startupOwner),
       ),
     },
   );
@@ -571,6 +531,11 @@ export async function attachOpenListenerSocket(
 export async function startListenerClient(
   opts: StartListenerOptions,
 ): Promise<void> {
+  // Prove the replacement token belongs to the exact authoritative predecessor
+  // before anything is torn down. A stale or replayed token must fail here,
+  // while the runtime it claims to replace is still intact.
+  assertAdoptableListenerClientReplacement(opts);
+
   // Replace any existing runtime without stale callback leakage.
   const existingRuntime = getActiveRuntime();
   if (existingRuntime) {
@@ -764,15 +729,18 @@ async function connectWithRetry(
     () => streamSocket,
     trackListenerError,
   );
-  let startupConnection: ListenerConnectionState | null = null;
+  // Ingress is buffered from the moment the control socket opens, which is
+  // before the stream channel is prepared and therefore before a connection
+  // can be opened. Claim the lineage up front so requestless frames buffered
+  // in that window are handed to the successor exactly once instead of being
+  // dropped when the attempt dies with no connection to attribute them to.
+  const startupOwner = reserveStartupIngressOwner(runtime, opts);
   const abortStartupIngress = (): void => {
-    if (startupConnection) {
-      handoffRequestlessStartupFrames(
-        runtime,
-        startupConnection,
-        pendingStartupFrames,
-      );
-    }
+    handoffRequestlessStartupFrames(
+      runtime,
+      startupOwner,
+      pendingStartupFrames,
+    );
     pendingStartupFrames.abort();
   };
   if (streamSocket) {
@@ -819,8 +787,8 @@ async function connectWithRetry(
         writer: socket,
         streamWriter: streamTransport,
         options: opts,
+        startupOwner,
       });
-      startupConnection = connection;
       await startConnectedListenerRuntime(
         runtime,
         transport,
@@ -841,7 +809,7 @@ async function connectWithRetry(
                   !connection.cancellation.signal.aborted &&
                   isListenerTransportOpen(connection.writer),
               ),
-            () => takeRequestlessStartupFrameHandoff(runtime, connection),
+            () => takeRequestlessStartupFrameHandoff(runtime, startupOwner),
           ),
         },
       );

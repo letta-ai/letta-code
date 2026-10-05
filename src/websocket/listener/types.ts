@@ -215,6 +215,21 @@ export type RecoveredApprovalState = {
 
 export type AcceptedInputDisposition = "started" | "queued";
 
+/**
+ * Identity domains that share the accepted-input ledger.
+ *
+ * `input` holds client-chosen `client_message_id`s and `teleport` holds
+ * cloud-chosen teleport ids. They are separate key spaces: a client that sends
+ * `client_message_id: "teleport:<id>"` must never collide with, suppress, or
+ * be suppressed by a teleport continuation carrying that same id.
+ */
+export type InputIdentityDomain = "input" | "teleport";
+
+export type InputIdentity = {
+  readonly domain: InputIdentityDomain;
+  readonly id: string;
+};
+
 export type AcceptedInputDispositionEntry = {
   disposition: AcceptedInputDisposition | null;
   acceptedAt: number;
@@ -235,6 +250,20 @@ export type InputDispositionReservation = {
   key: string;
   generation: number;
   runtimeKey: string;
+};
+
+/**
+ * Explicit owner of one startup ingress buffer.
+ *
+ * Reserved before the transport that will carry it exists, so pre-ready
+ * requestless frames always have an exact lineage to be handed to even when a
+ * connection attempt dies before any `ListenerConnectionState` is opened.
+ */
+export type StartupIngressOwner = {
+  readonly lineageId: string;
+  readonly generation: number;
+  /** False for connections that cannot prove an exact replacement identity. */
+  readonly handoffEnabled: boolean;
 };
 
 /** Opaque, one-shot ownership transfer across Cloud re-registration. */
@@ -354,10 +383,7 @@ export type ListenerConnectionState = {
   id: ListenerConnectionId;
   ordinal: number;
   /** Explicit replacement lineage; unrelated concurrent connections differ. */
-  startupLineageId: string;
-  startupGeneration: number;
-  /** False for connections that cannot prove an exact replacement identity. */
-  startupHandoffEnabled: boolean;
+  startupOwner: StartupIngressOwner;
   writer: ListenerTransport;
   streamWriter: ListenerTransport | null;
   cancellation: AbortController;

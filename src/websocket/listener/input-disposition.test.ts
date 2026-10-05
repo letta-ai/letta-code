@@ -8,6 +8,7 @@ import {
   getInputDisposition,
   MAX_ACCEPTED_INPUT_DISPOSITIONS,
   MAX_ACCEPTED_INPUT_DISPOSITIONS_PER_SCOPE,
+  ordinaryInputIdentity,
   rememberInputDisposition,
   reserveInputDisposition,
   rollbackInputDisposition,
@@ -114,12 +115,19 @@ test("completed input replay survives idle runtime eviction", async () => {
 
 test("accepted tombstone transfers only through explicit listener replacement", () => {
   const original = createRuntime();
+  // The retry-exhausted path re-registers while its predecessor is still the
+  // active runtime, so that is the authoritative issuer here.
+  setActiveRuntime(original);
   const originalRuntime = getOrCreateScopedRuntime(
     original,
     "agent-1",
     "conversation-1",
   );
-  rememberInputDisposition(originalRuntime, "ack-lost", "started");
+  rememberInputDisposition(
+    originalRuntime,
+    ordinaryInputIdentity("ack-lost"),
+    "started",
+  );
   const replacement = createListenerClientReplacement(original, options);
 
   const unrelated = createRuntime();
@@ -128,7 +136,9 @@ test("accepted tombstone transfers only through explicit listener replacement", 
     "agent-1",
     "conversation-1",
   );
-  expect(getInputDisposition(unrelatedRuntime, "ack-lost")).toBeUndefined();
+  expect(
+    getInputDisposition(unrelatedRuntime, ordinaryInputIdentity("ack-lost")),
+  ).toBeUndefined();
   expect(() =>
     adoptListenerClientReplacement(unrelated, {
       ...options,
@@ -161,8 +171,12 @@ test("accepted tombstone transfers only through explicit listener replacement", 
     "agent-1",
     "conversation-2",
   );
-  expect(getInputDisposition(nextRuntime, "ack-lost")).toBe("started");
-  expect(getInputDisposition(otherScope, "ack-lost")).toBeUndefined();
+  expect(
+    getInputDisposition(nextRuntime, ordinaryInputIdentity("ack-lost")),
+  ).toBe("started");
+  expect(
+    getInputDisposition(otherScope, ordinaryInputIdentity("ack-lost")),
+  ).toBeUndefined();
 });
 
 test("soft-limit eviction forgets queued acceptance so retry restores work", () => {
@@ -177,11 +191,17 @@ test("soft-limit eviction forgets queued acceptance so retry restores work", () 
     expect(enqueueInboundUserMessage(runtime, incoming(clientMessageId))).toBe(
       true,
     );
-    rememberInputDisposition(runtime, clientMessageId, "queued");
+    rememberInputDisposition(
+      runtime,
+      ordinaryInputIdentity(clientMessageId),
+      "queued",
+    );
   }
 
   expect(runtime.queueRuntime.length).toBe(100);
-  expect(getInputDisposition(runtime, "cm-0")).toBeUndefined();
+  expect(
+    getInputDisposition(runtime, ordinaryInputIdentity("cm-0")),
+  ).toBeUndefined();
   expect(enqueueInboundUserMessage(runtime, incoming("cm-0"))).toBe(true);
   expect(runtime.queueRuntime.peek().at(-1)?.clientMessageId).toBe("cm-0");
 });
@@ -199,15 +219,27 @@ test("per-scope capacity rejects before execution without dropping a tombstone",
     "agent-1",
     "conversation-2",
   );
-  expect(rememberInputDisposition(runtime, "same-id", "started")).toBe(true);
-  expect(getInputDisposition(otherRuntime, "same-id")).toBeUndefined();
+  expect(
+    rememberInputDisposition(
+      runtime,
+      ordinaryInputIdentity("same-id"),
+      "started",
+    ),
+  ).toBe(true);
+  expect(
+    getInputDisposition(otherRuntime, ordinaryInputIdentity("same-id")),
+  ).toBeUndefined();
   for (
     let index = 1;
     index < MAX_ACCEPTED_INPUT_DISPOSITIONS_PER_SCOPE;
     index += 1
   ) {
     expect(
-      rememberInputDisposition(runtime, `bounded-${index}`, "started"),
+      rememberInputDisposition(
+        runtime,
+        ordinaryInputIdentity(`bounded-${index}`),
+        "started",
+      ),
     ).toBe(true);
   }
 
@@ -234,7 +266,9 @@ test("per-scope capacity rejects before execution without dropping a tombstone",
   expect(processIncomingMessage).not.toHaveBeenCalled();
   expect(runtime.queueRuntime.length).toBe(0);
   expect(acknowledgements).toEqual([false]);
-  expect(getInputDisposition(runtime, "same-id")).toBe("started");
+  expect(getInputDisposition(runtime, ordinaryInputIdentity("same-id"))).toBe(
+    "started",
+  );
   expect(listener.acceptedInputDispositionLedger.entries.size).toBe(
     MAX_ACCEPTED_INPUT_DISPOSITIONS_PER_SCOPE,
   );
@@ -255,9 +289,13 @@ test("global capacity rejects excess work without evicting prior scopes", async 
       index < MAX_ACCEPTED_INPUT_DISPOSITIONS_PER_SCOPE;
       index += 1
     ) {
-      expect(rememberInputDisposition(runtime, `id-${index}`, "started")).toBe(
-        true,
-      );
+      expect(
+        rememberInputDisposition(
+          runtime,
+          ordinaryInputIdentity(`id-${index}`),
+          "started",
+        ),
+      ).toBe(true);
     }
   }
   const first = getOrCreateScopedRuntime(listener, "agent-0", "conversation-0");
@@ -291,7 +329,9 @@ test("global capacity rejects excess work without evicting prior scopes", async 
   expect(processIncomingMessage).not.toHaveBeenCalled();
   expect(excess.queueRuntime.length).toBe(0);
   expect(acknowledgements).toEqual([false]);
-  expect(getInputDisposition(first, "id-0")).toBe("started");
+  expect(getInputDisposition(first, ordinaryInputIdentity("id-0"))).toBe(
+    "started",
+  );
   expect(listener.acceptedInputDispositionLedger.entries.size).toBe(
     MAX_ACCEPTED_INPUT_DISPOSITIONS,
   );
@@ -304,7 +344,11 @@ test("ledger expires entries after the full sender retry horizon", () => {
     "agent-1",
     "conversation-1",
   );
-  rememberInputDisposition(runtime, "expired-id", "started");
+  rememberInputDisposition(
+    runtime,
+    ordinaryInputIdentity("expired-id"),
+    "started",
+  );
   const entry = listener.acceptedInputDispositionLedger.entries
     .values()
     .next().value;
@@ -316,7 +360,9 @@ test("ledger expires entries after the full sender retry horizon", () => {
     entry.expiresAt = Date.now();
     expiry.expiresAt = entry.expiresAt;
   }
-  expect(getInputDisposition(runtime, "expired-id")).toBeUndefined();
+  expect(
+    getInputDisposition(runtime, ordinaryInputIdentity("expired-id")),
+  ).toBeUndefined();
 });
 
 test("rolled-back admissions do not grow the expiry index", () => {
@@ -327,7 +373,10 @@ test("rolled-back admissions do not grow the expiry index", () => {
     "conversation-1",
   );
   for (let index = 0; index < 10_000; index += 1) {
-    const admission = reserveInputDisposition(runtime, `rolled-back-${index}`);
+    const admission = reserveInputDisposition(
+      runtime,
+      ordinaryInputIdentity(`rolled-back-${index}`),
+    );
     expect(admission.kind).toBe("reserved");
     if (admission.kind === "reserved") {
       rollbackInputDisposition(runtime, admission.reservation);
@@ -347,10 +396,17 @@ test("discard churn keeps stale expiry records bounded", () => {
   );
   for (let index = 0; index < 10_000; index += 1) {
     const clientMessageId = `discarded-${index}`;
-    expect(rememberInputDisposition(runtime, clientMessageId, "queued")).toBe(
-      true,
+    expect(
+      rememberInputDisposition(
+        runtime,
+        ordinaryInputIdentity(clientMessageId),
+        "queued",
+      ),
+    ).toBe(true);
+    forgetQueuedInputDisposition(
+      runtime,
+      ordinaryInputIdentity(clientMessageId),
     );
-    forgetQueuedInputDisposition(runtime, clientMessageId);
   }
   expect(listener.acceptedInputDispositionLedger.entries.size).toBe(0);
   expect(listener.acceptedInputDispositionLedger.scopeCounts.size).toBe(0);
@@ -370,7 +426,11 @@ test("explicit remove and clear forget queued acceptance", () => {
     expect(enqueueInboundUserMessage(runtime, incoming(clientMessageId))).toBe(
       true,
     );
-    rememberInputDisposition(runtime, clientMessageId, "queued");
+    rememberInputDisposition(
+      runtime,
+      ordinaryInputIdentity(clientMessageId),
+      "queued",
+    );
   }
 
   const removeItem = runtime.queueRuntime
@@ -380,9 +440,13 @@ test("explicit remove and clear forget queued acceptance", () => {
   expect(
     runtime.queueRuntime.removeItem(removeItem?.id ?? "missing"),
   ).not.toBeNull();
-  expect(getInputDisposition(runtime, "cm-remove")).toBeUndefined();
+  expect(
+    getInputDisposition(runtime, ordinaryInputIdentity("cm-remove")),
+  ).toBeUndefined();
 
   runtime.queueRuntime.clear("cancelled");
-  expect(getInputDisposition(runtime, "cm-clear")).toBeUndefined();
+  expect(
+    getInputDisposition(runtime, ordinaryInputIdentity("cm-clear")),
+  ).toBeUndefined();
   expect(runtime.queuedMessagesByItemId.size).toBe(0);
 });

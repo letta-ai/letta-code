@@ -17,6 +17,7 @@ import {
 import {
   activateStartupIngress,
   handoffRequestlessStartupFrames,
+  reserveStartupIngressOwner,
   takeRequestlessStartupFrameHandoff,
 } from "./startup-ingress";
 import type { IncomingMessage, StartListenerOptions } from "./types";
@@ -157,7 +158,11 @@ describe("startup frame buffering", () => {
         throw new Error("stale connection processed input");
       });
     }
-    handoffRequestlessStartupFrames(runtime, staleConnection, staleBuffer);
+    handoffRequestlessStartupFrames(
+      runtime,
+      staleConnection.startupOwner,
+      staleBuffer,
+    );
     staleBuffer.abort();
     closeListenerConnection(runtime, staleConnection.id);
 
@@ -170,9 +175,9 @@ describe("startup frame buffering", () => {
         writer: socket,
         options: optionsFor(connectionId, false),
       });
-      expect(takeRequestlessStartupFrameHandoff(runtime, unrelated)).toEqual(
-        [],
-      );
+      expect(
+        takeRequestlessStartupFrameHandoff(runtime, unrelated.startupOwner),
+      ).toEqual([]);
       closeListenerConnection(runtime, unrelated.id);
       expect(runtime.startupGenerationByLineage.has(connectionId)).toBe(false);
     }
@@ -216,15 +221,100 @@ describe("startup frame buffering", () => {
         new StartupFrameBuffer(),
         handleReplacementMessage,
         () => true,
-        () => takeRequestlessStartupFrameHandoff(runtime, replacement),
+        () =>
+          takeRequestlessStartupFrameHandoff(runtime, replacement.startupOwner),
       )(),
     ).resolves.toBe(true);
     await dispatchedRuntime.messageQueue;
 
     expect(executeTurn).toHaveBeenCalledTimes(2);
-    expect(takeRequestlessStartupFrameHandoff(runtime, replacement)).toEqual(
-      [],
+    expect(
+      takeRequestlessStartupFrameHandoff(runtime, replacement.startupOwner),
+    ).toEqual([]);
+  });
+
+  test("hands off frames buffered before a connection exists exactly once", async () => {
+    const runtime = createRuntime();
+    const socket = {
+      kind: "local" as const,
+      bufferedAmount: 0,
+      isOpen: () => true,
+      send: () => {},
+    };
+    const options: StartListenerOptions = {
+      connectionId: "connection-a",
+      wsUrl: "local://test",
+      deviceId: "device",
+      connectionName: "test",
+      onConnected: () => {},
+      onDisconnected: () => {},
+      onError: () => {},
+    };
+    const frameFor = (payload: Record<string, unknown>) =>
+      Buffer.from(JSON.stringify(payload));
+    const legacyFrame = frameFor({
+      type: "message",
+      agentId: "agent-1",
+      conversationId: "conversation-1",
+      messages: [{ role: "user", content: "legacy pre-ready" }],
+    });
+    const requestlessV2Frame = frameFor({
+      type: "input",
+      runtime: { agent_id: "agent-1", conversation_id: "conversation-1" },
+      payload: {
+        kind: "create_message",
+        messages: [{ role: "user", content: "v2 pre-ready" }],
+      },
+    });
+    const ackCapableFrame = frameFor({
+      type: "input",
+      request_id: "request-a",
+      runtime: { agent_id: "agent-1", conversation_id: "conversation-1" },
+      payload: {
+        kind: "create_message",
+        messages: [{ role: "user", content: "must fail closed" }],
+      },
+    });
+
+    // The control socket is already buffering while the stream channel is
+    // being prepared, so no ListenerConnectionState exists yet.
+    const owner = reserveStartupIngressOwner(runtime, options);
+    const buffer = new StartupFrameBuffer();
+    for (const frame of [legacyFrame, requestlessV2Frame, ackCapableFrame]) {
+      buffer.accept(frame, async () => {
+        throw new Error("pre-ready frame executed on a dying attempt");
+      });
+    }
+
+    // The attempt dies in that window. Both the open-handler catch and the
+    // socket close handler abort the same ingress; the frames must be parked
+    // once, not twice and not never.
+    expect(handoffRequestlessStartupFrames(runtime, owner, buffer)).toBe(true);
+    buffer.abort();
+    expect(handoffRequestlessStartupFrames(runtime, owner, buffer)).toBe(false);
+
+    const nextOwner = reserveStartupIngressOwner(runtime, options);
+    const connection = openListenerConnection({
+      runtime,
+      connectionId: options.connectionId,
+      writer: socket,
+      options,
+      startupOwner: nextOwner,
+    });
+    expect(connection.startupOwner).toBe(nextOwner);
+
+    const handed = takeRequestlessStartupFrameHandoff(
+      runtime,
+      connection.startupOwner,
     );
+    expect(handed.map((frame) => frame.toString())).toEqual([
+      legacyFrame.toString(),
+      requestlessV2Frame.toString(),
+    ]);
+    expect(
+      takeRequestlessStartupFrameHandoff(runtime, connection.startupOwner),
+    ).toEqual([]);
+    closeListenerConnection(runtime, connection.id);
   });
 
   test("terminates when one frame exceeds the byte limit", () => {

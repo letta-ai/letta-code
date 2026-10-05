@@ -1,53 +1,156 @@
+import { getActiveRuntime } from "./runtime";
+import { resolveStartupLineageId } from "./startup-ingress";
 import type {
   ListenerClientReplacement,
   ListenerRuntime,
   StartListenerOptions,
 } from "./types";
 
-const issuedListenerReplacements = new WeakSet<ListenerClientReplacement>();
+/**
+ * Why a replacement token is not adoptable. Reported in the thrown message so
+ * a rejected re-registration is diagnosable without leaking token contents.
+ */
+type ListenerReplacementRejection =
+  | "unknown_provenance"
+  | "identity_mismatch"
+  | "superseded_issuer"
+  | "stale_generation"
+  | "unauthoritative_issuer";
+
+type ListenerReplacementProvenance = {
+  issuer: ListenerRuntime;
+  deviceId: string;
+  connectionName: string;
+  lineageId: string;
+  generation: number;
+  ledger: ListenerClientReplacement["ledger"];
+  startupFrames: ListenerClientReplacement["startupFrames"];
+};
+
+/**
+ * Private provenance for every issued token. Adoption is authorized by this
+ * table alone — never by the token's own fields — so a structural clone, a
+ * hand-built object, or a replay of an already-consumed token cannot transfer
+ * accepted-input ownership.
+ */
+const replacementProvenance = new WeakMap<
+  ListenerClientReplacement,
+  ListenerReplacementProvenance
+>();
+
+/** Predecessors that already handed their ownership to a successor runtime. */
+const succeededListenerRuntimes = new WeakSet<ListenerRuntime>();
+
+function rejectReplacement(reason: ListenerReplacementRejection): never {
+  throw new Error(`Invalid listener replacement lineage: ${reason}`);
+}
 
 export function createListenerClientReplacement(
   runtime: ListenerRuntime,
   opts: StartListenerOptions,
 ): ListenerClientReplacement {
-  const connection = runtime.connections.get(opts.connectionId);
-  const lineageId = connection?.startupLineageId ?? opts.connectionId;
+  const lineageId = resolveStartupLineageId(runtime, opts);
+  const generation = runtime.startupGenerationByLineage.get(lineageId) ?? 0;
+  const startupFrames = [
+    ...(runtime.pendingStartupFramesByLineage.get(lineageId) ?? []),
+  ];
   const replacement = Object.freeze({
     deviceId: opts.deviceId,
     connectionName: opts.connectionName,
     lineageId,
-    generation: runtime.startupGenerationByLineage.get(lineageId) ?? 0,
+    generation,
     ledger: runtime.acceptedInputDispositionLedger,
-    startupFrames: [
-      ...(runtime.pendingStartupFramesByLineage.get(lineageId) ?? []),
-    ],
+    startupFrames,
   });
-  issuedListenerReplacements.add(replacement);
+  replacementProvenance.set(replacement, {
+    issuer: runtime,
+    deviceId: opts.deviceId,
+    connectionName: opts.connectionName,
+    lineageId,
+    generation,
+    ledger: runtime.acceptedInputDispositionLedger,
+    startupFrames: [...startupFrames],
+  });
   return replacement;
+}
+
+/**
+ * Resolve the exact authoritative predecessor behind `opts.replacement`.
+ *
+ * Returns null when no token was supplied. Throws — without mutating anything
+ * — when a token was supplied but is not adoptable, so a stale or replayed
+ * token is rejected harmlessly instead of destroying a healthy runtime.
+ */
+function resolveAdoptableReplacement(
+  opts: StartListenerOptions,
+): ListenerReplacementProvenance | null {
+  const replacement = opts.replacement;
+  if (!replacement) return null;
+  const provenance = replacementProvenance.get(replacement);
+  if (!provenance) rejectReplacement("unknown_provenance");
+  if (
+    provenance.deviceId !== opts.deviceId ||
+    provenance.connectionName !== opts.connectionName
+  ) {
+    rejectReplacement("identity_mismatch");
+  }
+  const issuer = provenance.issuer;
+  if (succeededListenerRuntimes.has(issuer)) {
+    rejectReplacement("superseded_issuer");
+  }
+  // The issuer must still own the generation it issued against. A late socket
+  // that reconnected after the token was minted advances it, which makes the
+  // token a stale view of a runtime that is once again serving.
+  if (
+    (issuer.startupGenerationByLineage.get(provenance.lineageId) ?? 0) !==
+    provenance.generation
+  ) {
+    rejectReplacement("stale_generation");
+  }
+  // 1008 tears the predecessor down before re-registering, so an intentionally
+  // stopped runtime is the authoritative predecessor. A still-running issuer
+  // only qualifies while it is the active runtime being replaced.
+  const activeRuntime = getActiveRuntime();
+  if (issuer.intentionallyClosed) {
+    if (activeRuntime !== null && activeRuntime !== issuer) {
+      rejectReplacement("unauthoritative_issuer");
+    }
+  } else if (issuer !== activeRuntime) {
+    rejectReplacement("unauthoritative_issuer");
+  }
+  return provenance;
+}
+
+/**
+ * Validate an inbound replacement token before any teardown happens.
+ *
+ * Callers must run this before stopping the runtime they are replacing: the
+ * adoption below is what carries accepted-input ownership forward, and a
+ * runtime stopped ahead of a failed validation can never get it back.
+ */
+export function assertAdoptableListenerClientReplacement(
+  opts: StartListenerOptions,
+): void {
+  resolveAdoptableReplacement(opts);
 }
 
 export function adoptListenerClientReplacement(
   runtime: ListenerRuntime,
   opts: StartListenerOptions,
 ): void {
+  const provenance = resolveAdoptableReplacement(opts);
   const replacement = opts.replacement;
-  if (!replacement) return;
-  if (
-    !issuedListenerReplacements.has(replacement) ||
-    replacement.deviceId !== opts.deviceId ||
-    replacement.connectionName !== opts.connectionName
-  ) {
-    throw new Error("Invalid listener replacement lineage");
-  }
-  issuedListenerReplacements.delete(replacement);
-  runtime.acceptedInputDispositionLedger = replacement.ledger;
+  if (!provenance || !replacement) return;
+  replacementProvenance.delete(replacement);
+  succeededListenerRuntimes.add(provenance.issuer);
+  runtime.acceptedInputDispositionLedger = provenance.ledger;
   runtime.startupGenerationByLineage.set(
-    replacement.lineageId,
-    replacement.generation,
+    provenance.lineageId,
+    provenance.generation,
   );
-  if (replacement.startupFrames.length > 0) {
-    runtime.pendingStartupFramesByLineage.set(replacement.lineageId, [
-      ...replacement.startupFrames,
+  if (provenance.startupFrames.length > 0) {
+    runtime.pendingStartupFramesByLineage.set(provenance.lineageId, [
+      ...provenance.startupFrames,
     ]);
   }
 }

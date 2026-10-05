@@ -1,6 +1,9 @@
 import { type QueueItem, QueueRuntime } from "@/queue/queue-runtime";
 import type { QueueRemovalTransition } from "@/types/queue-update-protocol";
-import { forgetQueuedInputDisposition } from "./input-disposition";
+import {
+  forgetQueuedInputDisposition,
+  ordinaryInputIdentity,
+} from "./input-disposition";
 import { getQueueItemScope, getQueueItemsScope } from "./queue";
 import { scheduleQueueEmit } from "./queue-update-outbound";
 import {
@@ -14,7 +17,10 @@ function discardQueuedItem(
   item: QueueItem,
 ): void {
   runtime.queuedMessagesByItemId.delete(item.id);
-  forgetQueuedInputDisposition(runtime, item.clientMessageId);
+  forgetQueuedInputDisposition(
+    runtime,
+    ordinaryInputIdentity(item.clientMessageId),
+  );
 }
 
 function queueRemovalTransition(

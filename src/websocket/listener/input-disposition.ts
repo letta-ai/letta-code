@@ -3,6 +3,7 @@ import type {
   AcceptedInputDispositionLedger,
   ConversationRuntime,
   InputDispositionReservation,
+  InputIdentity,
   ListenerRuntime,
 } from "./types";
 
@@ -11,8 +12,22 @@ export const ACCEPTED_INPUT_DISPOSITION_TTL_MS = 60 * 60 * 1000;
 export const MAX_ACCEPTED_INPUT_DISPOSITIONS_PER_SCOPE = 4096;
 export const MAX_ACCEPTED_INPUT_DISPOSITIONS = 65_536;
 
-function dispositionKey(runtimeKey: string, clientMessageId: string): string {
-  return JSON.stringify([runtimeKey, clientMessageId]);
+/** A client-chosen `client_message_id`. Never shares keys with teleport ids. */
+export function ordinaryInputIdentity(
+  clientMessageId: string | undefined,
+): InputIdentity | undefined {
+  return clientMessageId ? { domain: "input", id: clientMessageId } : undefined;
+}
+
+/** A cloud-chosen teleport id. Never shares keys with client message ids. */
+export function teleportInputIdentity(teleportId: string): InputIdentity {
+  return { domain: "teleport", id: teleportId };
+}
+
+function dispositionKey(runtimeKey: string, identity: InputIdentity): string {
+  // The domain is its own array element rather than a string prefix so no
+  // caller-supplied id can be spelled to land in another domain's key space.
+  return JSON.stringify([runtimeKey, identity.domain, identity.id]);
 }
 
 export function createAcceptedInputDispositionLedger(): AcceptedInputDispositionLedger {
@@ -108,13 +123,13 @@ export type InputDispositionAdmission =
  */
 export function reserveInputDisposition(
   runtime: ConversationRuntime,
-  clientMessageId: string | undefined,
+  identity: InputIdentity | undefined,
 ): InputDispositionAdmission {
-  if (!clientMessageId) return { kind: "untracked" };
+  if (!identity) return { kind: "untracked" };
   const ledger = getLedger(runtime.listener);
   const now = Date.now();
   expireAcceptedInputDispositions(ledger, now);
-  const key = dispositionKey(runtime.key, clientMessageId);
+  const key = dispositionKey(runtime.key, identity);
   const existing = ledger.entries.get(key);
   if (existing) {
     if (existing.disposition) {
@@ -175,38 +190,46 @@ export function commitInputDisposition(
   }
 }
 
+/**
+ * Releases a reservation that never reached a disposition.
+ *
+ * Rollback is deliberately commit-aware: once a reservation is committed the
+ * side effect it guards is already under way, so an exception unwinding past
+ * it must leave the tombstone in place and let the sender's retry observe the
+ * real disposition. Only the uncommitted placeholder — which would otherwise
+ * never expire and would hold scope capacity forever — is reclaimed.
+ */
 export function rollbackInputDisposition(
   runtime: ConversationRuntime,
   reservation: InputDispositionReservation | undefined,
 ): void {
   if (!reservation) return;
-  deleteCurrentEntry(
-    getLedger(runtime.listener),
-    reservation.key,
-    reservation.generation,
-  );
+  const ledger = getLedger(runtime.listener);
+  const entry = ledger.entries.get(reservation.key);
+  if (!entry || entry.disposition !== null) return;
+  deleteCurrentEntry(ledger, reservation.key, reservation.generation);
 }
 
 export function getInputDisposition(
   runtime: ConversationRuntime,
-  clientMessageId: string | undefined,
+  identity: InputIdentity | undefined,
 ): AcceptedInputDisposition | undefined {
-  if (!clientMessageId) return undefined;
+  if (!identity) return undefined;
   const ledger = getLedger(runtime.listener);
   expireAcceptedInputDispositions(ledger, Date.now());
   return (
-    ledger.entries.get(dispositionKey(runtime.key, clientMessageId))
-      ?.disposition ?? undefined
+    ledger.entries.get(dispositionKey(runtime.key, identity))?.disposition ??
+    undefined
   );
 }
 
 /** Test/setup helper; production ingress should use reserve/commit/rollback. */
 export function rememberInputDisposition(
   runtime: ConversationRuntime,
-  clientMessageId: string | undefined,
+  identity: InputIdentity | undefined,
   disposition: AcceptedInputDisposition,
 ): boolean {
-  const admission = reserveInputDisposition(runtime, clientMessageId);
+  const admission = reserveInputDisposition(runtime, identity);
   if (admission.kind === "duplicate") return true;
   if (admission.kind === "full") return false;
   if (admission.kind === "reserved") {
@@ -218,12 +241,12 @@ export function rememberInputDisposition(
 /** A discarded queued input is no longer accepted; its stable-ID retry may restore it. */
 export function forgetQueuedInputDisposition(
   runtime: ConversationRuntime,
-  clientMessageId: string | undefined,
+  identity: InputIdentity | undefined,
 ): void {
-  if (!clientMessageId) return;
+  if (!identity) return;
   const ledger = runtime.listener.acceptedInputDispositionLedger;
   if (!ledger) return;
-  const key = dispositionKey(runtime.key, clientMessageId);
+  const key = dispositionKey(runtime.key, identity);
   if (ledger.entries.get(key)?.disposition === "queued") {
     deleteCurrentEntry(ledger, key);
   }

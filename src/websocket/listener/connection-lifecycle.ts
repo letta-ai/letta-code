@@ -8,7 +8,10 @@ import {
 } from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { rejectPendingExternalToolCallsForConnection } from "./external-tools";
-import { forgetQueuedInputDisposition } from "./input-disposition";
+import {
+  forgetQueuedInputDisposition,
+  ordinaryInputIdentity,
+} from "./input-disposition";
 import { evictConversationRuntimeIfIdle } from "./runtime";
 import { getListenerTransportKind, type ListenerTransport } from "./transport";
 import { handleIncomingMessage } from "./turn";
@@ -45,7 +48,10 @@ export function createConnectionTurnProcessor(
           dequeuedBatch.batchId,
         ) ?? [];
       for (const clientMessageId of discardedClientMessageIds) {
-        forgetQueuedInputDisposition(scopedRuntime, clientMessageId);
+        forgetQueuedInputDisposition(
+          scopedRuntime,
+          ordinaryInputIdentity(clientMessageId),
+        );
       }
       scopedRuntime.dequeuedClientMessageIdsByBatchId.delete(
         dequeuedBatch.batchId,

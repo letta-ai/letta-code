@@ -35,7 +35,6 @@ import { handleSecretsCommand } from "./commands/secrets";
 import { handleSettingsProtocolCommand } from "./commands/settings";
 import { handleSkillAgentProtocolCommand } from "./commands/skills-agents";
 import {
-  getOrCreateProcessTransport,
   subscribeListenerConnection,
   waitForListenerConnectionStartup,
 } from "./connection";
@@ -55,6 +54,7 @@ import {
 import {
   commitInputDisposition,
   getInputDisposition,
+  ordinaryInputIdentity,
   reserveInputDisposition,
   rollbackInputDisposition,
 } from "./input-disposition";
@@ -75,14 +75,12 @@ import { getActiveRuntime, safeEmitWsEvent } from "./runtime";
 import { parseListenerReadyMessage } from "./split-stream-lifecycle";
 import { validateResponseFormat } from "./structured-output";
 import {
-  buildTeleportContinuationMessages,
-  clearExpectedInboundTeleport,
-  clearPriorReadyTeleports,
   handleTeleportFailure,
   handleTeleportProbe,
   handleTeleportRequest,
   isRuntimeTeleportPending,
 } from "./teleport";
+import { admitTeleportContinueInput } from "./teleport-continue-input";
 import type { ListenerTransport } from "./transport";
 import { handleIncomingMessage } from "./turn";
 import type {
@@ -460,61 +458,21 @@ export function createListenerMessageHandler(
             );
             return;
           }
-          const teleportId = parsed.payload.teleport_id;
-          const scopedRuntime = getOrCreateScopedRuntime(
-            runtime,
-            parsed.runtime.agent_id,
-            parsed.runtime.conversation_id,
-          );
-          const acceptedKey = `teleport:${teleportId}`;
-          const admission = reserveInputDisposition(scopedRuntime, acceptedKey);
-          if (admission.kind === "duplicate") {
-            acknowledgeInput(true, undefined, admission.disposition);
-            return;
-          }
-          if (admission.kind === "full") {
-            acknowledgeInput(false, "Stable input ledger is at capacity");
-            return;
-          }
-          const reservation =
-            admission.kind === "reserved" ? admission.reservation : undefined;
-          const approvals = parsed.payload.continuation?.approvals;
-          const clientPreferences = parsed.payload.client_preferences;
-          if (scopedRuntime.isProcessing) {
-            rollbackInputDisposition(scopedRuntime, reservation);
-            acknowledgeInput(
-              false,
-              "Destination runtime is already processing",
-            );
-            return;
-          }
-          clearPriorReadyTeleports({
+          admitTeleportContinueInput({
             listener: runtime,
+            scopedRuntime: getOrCreateScopedRuntime(
+              runtime,
+              parsed.runtime.agent_id,
+              parsed.runtime.conversation_id,
+            ),
+            connectionId,
             agentId: teleportAgentId,
             conversationId: parsed.runtime.conversation_id,
-            currentTeleportId: teleportId,
-          });
-          clearExpectedInboundTeleport(scopedRuntime);
-          commitInputDisposition(scopedRuntime, reservation, "started");
-          acknowledgeInput(true, undefined, "started");
-          runDetachedListenerTask("teleport_continue", async () => {
-            await processIncomingMessage(
-              {
-                type: "message",
-                connectionId,
-                agentId: teleportAgentId,
-                conversationId: parsed.runtime.conversation_id,
-                clientPreferences,
-                messages: buildTeleportContinuationMessages({
-                  teleportId,
-                  approvals,
-                }),
-              },
-              getOrCreateProcessTransport(runtime),
-              scopedRuntime,
-              opts.onStatusChange,
-              connectionId,
-            );
+            payload: parsed.payload,
+            onStatusChange: opts.onStatusChange,
+            acknowledgeInput,
+            runDetachedListenerTask,
+            processIncomingMessage,
           });
           return;
         }
@@ -608,10 +566,12 @@ export function createListenerMessageHandler(
 
         if (shouldQueueInboundMessage(incoming)) {
           const stampedIncoming = stampInboundUserMessageOtids(incoming);
-          const clientMessageId = getInboundClientMessageId(stampedIncoming);
+          const identity = ordinaryInputIdentity(
+            getInboundClientMessageId(stampedIncoming),
+          );
           const acceptedDisposition = getInputDisposition(
             scopedRuntime,
-            clientMessageId,
+            identity,
           );
           if (acceptedDisposition) {
             acknowledgeInput(true, undefined, acceptedDisposition);
@@ -634,10 +594,7 @@ export function createListenerMessageHandler(
             return;
           }
 
-          const admission = reserveInputDisposition(
-            scopedRuntime,
-            clientMessageId,
-          );
+          const admission = reserveInputDisposition(scopedRuntime, identity);
           if (admission.kind === "duplicate") {
             acknowledgeInput(true, undefined, admission.disposition);
             return;
@@ -648,22 +605,27 @@ export function createListenerMessageHandler(
           }
           const reservation =
             admission.kind === "reserved" ? admission.reservation : undefined;
-          const enqueued = enqueueInboundUserMessage(
-            scopedRuntime,
-            stampedIncoming,
-            parsed.runtime.acting_user_id,
-          );
-          if (enqueued) {
-            commitInputDisposition(scopedRuntime, reservation, "queued");
-            scheduleQueuePump(scopedRuntime, socket, opts, processQueuedTurn);
-          } else {
+          try {
+            const enqueued = enqueueInboundUserMessage(
+              scopedRuntime,
+              stampedIncoming,
+              parsed.runtime.acting_user_id,
+            );
+            if (enqueued) {
+              commitInputDisposition(scopedRuntime, reservation, "queued");
+              scheduleQueuePump(scopedRuntime, socket, opts, processQueuedTurn);
+            } else {
+              rollbackInputDisposition(scopedRuntime, reservation);
+            }
+            acknowledgeInput(
+              enqueued,
+              enqueued ? undefined : "Input was rejected by the queue",
+              enqueued ? "queued" : undefined,
+            );
+          } catch (error) {
             rollbackInputDisposition(scopedRuntime, reservation);
+            throw error;
           }
-          acknowledgeInput(
-            enqueued,
-            enqueued ? undefined : "Input was rejected by the queue",
-            enqueued ? "queued" : undefined,
-          );
           return;
         }
 
