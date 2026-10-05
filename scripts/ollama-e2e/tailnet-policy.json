@@ -1,0 +1,20 @@
+{
+  "tagOwners": {
+    "tag:letta-ollama-ci": ["autogroup:admin"],
+    "tag:letta-ollama-server": ["autogroup:admin"]
+  },
+  "grants": [
+    {
+      "src": ["tag:letta-ollama-ci"],
+      "dst": ["tag:letta-ollama-server"],
+      "ip": ["tcp:11434"]
+    }
+  ],
+  "tests": [
+    {
+      "src": "tag:letta-ollama-ci",
+      "accept": ["tag:letta-ollama-server:11434"],
+      "deny": ["tag:letta-ollama-server:22"]
+    }
+  ]
+}
