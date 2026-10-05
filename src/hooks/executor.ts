@@ -225,7 +225,9 @@ function executeWithLauncher(
 ): Promise<HookResult> {
   // The child inherits the credential present at launch, which may rotate
   // before the hook exits or its feedback is written to an overflow file.
-  const redactions = captureSecretRedactions();
+  const redactions = captureSecretRedactions(
+    "agent_id" in input ? input.agent_id : undefined,
+  );
   return new Promise<HookResult>((resolve, reject) => {
     let stdout = "";
     let stderr = "";
