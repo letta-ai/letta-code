@@ -70,6 +70,16 @@ function text(value: unknown): string | undefined {
     : undefined;
 }
 
+function modelName(value: unknown): string | undefined {
+  const name = text(value);
+  return name &&
+    !/^(system product name|to be filled by o\.?e\.?m\.?|default string)$/i.test(
+      name,
+    )
+    ? name
+    : undefined;
+}
+
 function records(value: unknown): Record<string, unknown>[] {
   return Array.isArray(value)
     ? value.filter(
@@ -107,7 +117,7 @@ function parseMac(output: string): Partial<MachineMetadata> {
 function parseWindows(output: string): Partial<MachineMetadata> {
   const data = JSON.parse(output.replace(/^\uFEFF/, ""));
   return {
-    model: text(data?.model),
+    model: modelName(data?.model),
     osName: text(data?.osName),
     osVersion: text(data?.osVersion),
     cpu: text(data?.cpu),
@@ -200,16 +210,8 @@ export async function collectMachineMetadata(
           .map(Number)
           .filter((n) => Number.isFinite(n) && n > 0),
       );
-      const modelName = text(model);
       assign({
-        model: container
-          ? "Container"
-          : modelName &&
-              !/^(system product name|to be filled by o\.?e\.?m\.?|default string)$/i.test(
-                modelName,
-              )
-            ? modelName
-            : undefined,
+        model: container ? "Container" : modelName(model),
         osName: osField("NAME"),
         osVersion: osField("VERSION_ID"),
         memoryBytes,

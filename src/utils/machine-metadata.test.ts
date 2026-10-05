@@ -115,6 +115,29 @@ describe("machine metadata", () => {
     });
   });
 
+  it("omits generic Windows model placeholders so the UI can use the OS", async () => {
+    for (const model of [
+      "System Product Name",
+      "To Be Filled By O.E.M.",
+      "Default string",
+    ]) {
+      const machine = await collectMachineMetadata(
+        sources(
+          "win32",
+          {},
+          {
+            "powershell.exe": JSON.stringify({
+              model,
+              osName: "Microsoft Windows 11 Pro",
+            }),
+          },
+        ),
+      );
+      expect(machine.model).toBeUndefined();
+      expect(machine.osName).toBe("Microsoft Windows 11 Pro");
+    }
+  });
+
   it("does not advertise host DMI or PCI devices inside a container", async () => {
     const input = sources(
       "linux",
@@ -176,4 +199,15 @@ describe("machine metadata", () => {
     expect(getMachineMetadata()).toBe(getMachineMetadata());
     expect((await getMachineMetadata()).architecture).toBe(process.arch);
   });
+
+  it("smokes native probes on the current CI machine within a bounded time", async () => {
+    // No fixture sources: this invokes system_profiler, PowerShell CIM, or the
+    // Linux probes on the matching CI runner. Hardware remains best effort.
+    const machine = await collectMachineMetadata();
+    expect(machine.architecture).toBe(process.arch);
+    expect(machine.osName).toBeString();
+    expect(machine.osName?.length).toBeGreaterThan(0);
+    if (process.platform === "darwin") expect(machine.osName).toBe("macOS");
+    if (process.platform === "win32") expect(machine.osName).toMatch(/Windows/);
+  }, 5_000);
 });
