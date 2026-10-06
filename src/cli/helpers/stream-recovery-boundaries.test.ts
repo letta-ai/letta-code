@@ -64,13 +64,67 @@ function stop(runId: string, seqId: number): LettaStreamingResponse {
   } as LettaStreamingResponse;
 }
 
-function approvalRequest() {
+function batchedApproval(runId: string, seqId: number): LettaStreamingResponse {
   return {
-    toolCallId: "tool-approval-1",
+    message_type: "approval_request_message",
+    id: "message-approval-batch",
+    run_id: runId,
+    seq_id: seqId,
+    tool_calls: ["tool-approval-a", "tool-approval-b"].map((toolCallId) => ({
+      tool_call_id: toolCallId,
+      name: "exec_command",
+      arguments: `{"cmd":"${toolCallId}"}`,
+    })),
+  } as unknown as LettaStreamingResponse;
+}
+
+function approvalRequest(toolCallId = "tool-approval-1") {
+  return {
+    toolCallId,
     toolName: "exec_command",
-    toolArgs: '{"cmd":"git status"}',
-    messageId: "message-tool-approval-1",
+    toolArgs:
+      toolCallId === "tool-approval-1"
+        ? '{"cmd":"git status"}'
+        : `{"cmd":"${toolCallId}"}`,
+    messageId:
+      toolCallId === "tool-approval-1"
+        ? "message-tool-approval-1"
+        : "message-approval-batch",
   };
+}
+
+function singularToolReturn(
+  runId: string,
+  seqId: number,
+  toolCallId: string,
+): LettaStreamingResponse {
+  return {
+    message_type: "tool_return_message",
+    run_id: runId,
+    seq_id: seqId,
+    tool_call_id: toolCallId,
+    status: "success",
+    tool_return: "done",
+  } as unknown as LettaStreamingResponse;
+}
+
+function pluralToolReturn(
+  runId: string,
+  seqId: number,
+  toolCallId: string,
+): LettaStreamingResponse {
+  return {
+    message_type: "tool_return_message",
+    run_id: runId,
+    seq_id: seqId,
+    tool_returns: [
+      {
+        tool_call_id: toolCallId,
+        status: "success",
+        tool_return: "done",
+      },
+    ],
+  } as unknown as LettaStreamingResponse;
 }
 
 async function drain(
@@ -215,6 +269,62 @@ test("failed candidate status reconciliation is not immediately repeated", async
   expect(result.stopReason).toBe("error");
   expect(retrieveRun).toHaveBeenCalledTimes(1);
 });
+
+test.each([
+  {
+    name: "secondary approval via deprecated singular return",
+    resolvedId: "tool-approval-b",
+    pendingId: "tool-approval-a",
+    replay: singularToolReturn,
+  },
+  {
+    name: "primary approval via plural returns",
+    resolvedId: "tool-approval-a",
+    pendingId: "tool-approval-b",
+    replay: pluralToolReturn,
+  },
+])(
+  "parallel replay keeps the $name pending sibling",
+  async ({ resolvedId, pendingId, replay }) => {
+    const streamRunMessages = mock(async () =>
+      stream([replay("run-1", 3, resolvedId), stop("run-1", 4)]),
+    );
+    __testSetBackend({
+      capabilities,
+      streamRunMessages,
+    } as unknown as Backend);
+    const current = approvalRequest(pendingId);
+    const loadCurrentPendingApprovals = mock(async () => [current]);
+    const buffers = createBuffers("agent-1");
+
+    const result = await drain(
+      stream(
+        [ping("run-1", 1), batchedApproval("run-1", 2)],
+        new Error("initial stream disconnected"),
+      ),
+      buffers,
+      loadCurrentPendingApprovals,
+    );
+
+    expect(result.stopReason).toBe("requires_approval");
+    expect(result.approvals).toEqual([current]);
+    expect(result.approval).toEqual(current);
+    expect(
+      (
+        buffers.byId.get(buffers.toolCallIdToLineId.get(resolvedId) ?? "") as
+          | { phase?: string }
+          | undefined
+      )?.phase,
+    ).toBe("finished");
+    expect(
+      (
+        buffers.byId.get(buffers.toolCallIdToLineId.get(pendingId) ?? "") as
+          | { phase?: string }
+          | undefined
+      )?.phase,
+    ).toBe("ready");
+  },
+);
 
 test("production revalidation supports named agentless conversations", async () => {
   const retrieveConversation = mock(async () => ({

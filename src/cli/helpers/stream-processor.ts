@@ -185,11 +185,12 @@ export class StreamProcessor {
       // );
 
       // Normalize tool calls: support both legacy tool_call and new tool_calls array
-      const toolCalls = Array.isArray(chunk.tool_calls)
-        ? chunk.tool_calls
-        : chunk.tool_call
-          ? [chunk.tool_call]
-          : [];
+      const toolCalls =
+        Array.isArray(chunk.tool_calls) && chunk.tool_calls.length > 0
+          ? chunk.tool_calls
+          : chunk.tool_call
+            ? [chunk.tool_call]
+            : [];
 
       for (const toolCall of toolCalls) {
         const toolCallId = toolCall?.tool_call_id;
