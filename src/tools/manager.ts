@@ -93,11 +93,15 @@ import {
   captureSecretRedactions,
   createScrubbedOutputStreamer,
   getAmbientRedactionSecrets,
+  type InvocationSecretRedactions,
   resolveSecretEnvFromCommand,
   type ScrubbedOutputStreamer,
   sanitizeOutputLines,
   sanitizeToolReturnContent,
   scrubAmbientSecrets,
+  scrubModToolLines,
+  scrubModToolReturnContent,
+  scrubModToolString,
   scrubSecretsFromString,
 } from "./secret-substitution";
 import {
@@ -1424,8 +1428,6 @@ function isMultimodalContent(
 
 const MOD_SECRET_NAME_PATTERN = /^[A-Z_][A-Z0-9_]*$/;
 
-type InvocationSecretRedactions = Map<string, string>;
-
 function normalizeModSecretName(name: string): string {
   const normalized = name.toUpperCase();
   if (!MOD_SECRET_NAME_PATTERN.test(normalized)) {
@@ -1434,50 +1436,6 @@ function normalizeModSecretName(name: string): string {
     );
   }
   return normalized;
-}
-
-function scrubInvocationSecretRedactions(
-  input: string,
-  redactions: InvocationSecretRedactions,
-): string {
-  let result = input;
-  const entries = Array.from(redactions.entries()).sort(
-    ([, a], [, b]) => b.length - a.length,
-  );
-  for (const [name, value] of entries) {
-    if (value.length > 0) {
-      result = result.replaceAll(value, `${name}=<REDACTED>`);
-    }
-  }
-  return result;
-}
-
-function scrubModToolString(
-  input: string,
-  redactions: InvocationSecretRedactions,
-): string {
-  return scrubInvocationSecretRedactions(input, redactions);
-}
-
-function scrubModToolReturnContent(
-  content: ToolReturnContent,
-  redactions: InvocationSecretRedactions,
-): ToolReturnContent {
-  if (typeof content === "string") {
-    return scrubModToolString(content, redactions);
-  }
-  return content.map((block) =>
-    block.type === "text"
-      ? { ...block, text: scrubModToolString(block.text, redactions) }
-      : block,
-  );
-}
-
-function scrubModToolLines(
-  lines: string[] | undefined,
-  redactions: InvocationSecretRedactions,
-): string[] | undefined {
-  return lines?.map((line) => scrubModToolString(line, redactions));
 }
 
 function createScrubbedError(error: unknown, message: string): Error {
@@ -1773,16 +1731,16 @@ async function executeModTool(
     tool.activationSignal,
   ]);
   const { signal } = linkedSignal;
-  const redactions: InvocationSecretRedactions = new Map();
+  // Mod-spawned subprocesses inherit the runtime env; redact its auth values
+  // and the scoped agent's vault secrets.
+  const redactions: InvocationSecretRedactions = new Map(
+    Object.entries(getAmbientRedactionSecrets(options.scopedAgentId)),
+  );
   const addRedaction = (name: string, value: string): void => {
     if (value.length > 0) {
       redactions.set(name, value);
     }
   };
-  // Mod-spawned subprocesses inherit the runtime env; redact its auth values.
-  for (const [name, value] of Object.entries(getAmbientRedactionSecrets())) {
-    addRedaction(name, value);
-  }
 
   const run = async (): Promise<ToolExecutionResult> => {
     const preHookResult = await runPreToolUseHooks(
@@ -1830,7 +1788,17 @@ async function executeModTool(
             const { sendMessageStreamWithBackend } = await import(
               "@/agent/message"
             );
-            return sendMessageStreamWithBackend(...sendArgs);
+            const [backend, conversationId, messages, opts, requestOptions] =
+              sendArgs;
+            const agentId =
+              opts?.agentId ?? executionScope.agentId ?? undefined;
+            return sendMessageStreamWithBackend(
+              backend,
+              conversationId,
+              messages,
+              { ...opts, agentId },
+              requestOptions,
+            );
           },
           workingDirectory: options.workingDirectory,
         }),
@@ -2227,7 +2195,7 @@ async function executeToolInner(
     if (options?.toolEndArgsRef) options.toolEndArgsRef.current = args;
 
     let invocationSecrets: Record<string, string> = {};
-    let invocationRedactions = captureSecretRedactions();
+    let invocationRedactions = captureSecretRedactions(scopedAgentId);
     let outputStreamer: ScrubbedOutputStreamer | null = null;
 
     try {
@@ -2247,7 +2215,12 @@ async function executeToolInner(
             command.every((part) => typeof part === "string"))
             ? await resolveSecretEnvFromCommand(command, scopedAgentId)
             : {};
-        invocationRedactions = captureSecretRedactions(invocationSecrets);
+        // Referenced secrets redact regardless of length; merge them over
+        // the always-on vault + ambient set.
+        invocationRedactions = captureSecretRedactions(
+          scopedAgentId,
+          invocationSecrets,
+        );
         if (options?.onOutput) {
           outputStreamer = createScrubbedOutputStreamer(
             invocationRedactions,
@@ -2474,9 +2447,15 @@ async function executeToolInner(
 export async function executeTool(
   ...params: Parameters<typeof executeToolInner>
 ): Promise<ToolExecutionResult> {
-  const toolRedactions = captureSecretRedactions();
   const [name, args, options] = params;
   const toolEndArgsRef = { current: args };
+  // Snapshot ambient + vault secrets before the tool runs: a runtime
+  // credential can rotate mid-tool, and the post-run capture alone would
+  // miss the pre-rotation value coming back through a mod override.
+  const preRunAgentId = options?.toolContextId
+    ? getExecutionContextById(options.toolContextId)?.runtimeContext?.agentId
+    : undefined;
+  const preRunRedactions = captureSecretRedactions(preRunAgentId);
   const res = await executeToolInner(name, args, {
     ...options,
     toolEndArgsRef,
@@ -2507,7 +2486,10 @@ export async function executeTool(
         executionScope.workingDirectory ?? getCurrentWorkingDirectory(),
     });
 
-  const overrideRedactions = captureSecretRedactions(toolRedactions);
+  const overrideRedactions = captureSecretRedactions(
+    executionScope.agentId ?? undefined,
+    preRunRedactions,
+  );
   const override = await emitToolEndEvent({
     args: toolEndArgsRef.current,
     events: modEvents,
