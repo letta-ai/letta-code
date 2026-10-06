@@ -90,9 +90,8 @@ export async function revalidateRecoveredApprovalBoundary(
   context: StreamRequestContext | undefined,
   loadCurrentPendingApprovals?: CurrentPendingApprovalLoader,
 ): Promise<boolean> {
-  if (!authoritativeApprovalBoundary || (result.approvals?.length ?? 0) === 0) {
-    return authoritativeApprovalBoundary;
-  }
+  if (!authoritativeApprovalBoundary) return false;
+  if ((result.approvals?.length ?? 0) === 0) return false;
   result.approvals = await revalidateRecoveredApprovals({
     recoveredApprovals: result.approvals ?? [],
     context,

@@ -120,6 +120,30 @@ async function drain(
   );
 }
 
+async function drainSuccessfulSplitApprovalReplay(
+  currentApprovals: ReturnType<typeof approvalRequest>[],
+) {
+  const streamRunMessages = mock(async () =>
+    stream([
+      approval("run-1", 3, '{"cmd":"pwd"}', "tool-approval-2"),
+      stop("run-1", 4, "requires_approval"),
+    ]),
+  );
+  __testSetBackend({ capabilities, streamRunMessages } as unknown as Backend);
+  const buffers = createBuffers("agent-1");
+  const loadCurrentPendingApprovals = mock(async () => currentApprovals);
+  const result = await drain(
+    stream(
+      [ping("run-1", 1), approval("run-1", 2)],
+      new Error("initial stream disconnected"),
+    ),
+    immediateRetries,
+    buffers,
+    loadCurrentPendingApprovals,
+  );
+  return { result, buffers, loadCurrentPendingApprovals };
+}
+
 afterEach(() => {
   __testSetBackend(null);
 });
@@ -290,24 +314,13 @@ describe("stream recovery", () => {
   });
 
   test("unions approval IDs split across a successful replay", async () => {
-    const streamRunMessages = mock(async () =>
-      stream([
-        approval("run-1", 3, '{"cmd":"pwd"}', "tool-approval-2"),
-        stop("run-1", 4, "requires_approval"),
-      ]),
-    );
-    __testSetBackend({ capabilities, streamRunMessages } as unknown as Backend);
-    const buffers = createBuffers("agent-1");
+    const { result, buffers, loadCurrentPendingApprovals } =
+      await drainSuccessfulSplitApprovalReplay([
+        approvalRequest("tool-approval-1"),
+        approvalRequest("tool-approval-2"),
+      ]);
 
-    const result = await drain(
-      stream(
-        [ping("run-1", 1), approval("run-1", 2)],
-        new Error("initial stream disconnected"),
-      ),
-      immediateRetries,
-      buffers,
-    );
-
+    expect(loadCurrentPendingApprovals).toHaveBeenCalledTimes(1);
     expect(result.stopReason).toBe("requires_approval");
     expect(result.approvals?.map((item) => item.toolCallId)).toEqual([
       "tool-approval-1",
@@ -320,6 +333,37 @@ describe("stream recovery", () => {
       phase: "ready",
     });
   });
+
+  test.each([
+    ["empty", []],
+    ["subset", [approvalRequest("tool-approval-1")]],
+    [
+      "superset",
+      [
+        approvalRequest("tool-approval-1"),
+        approvalRequest("tool-approval-2"),
+        approvalRequest("tool-approval-3"),
+      ],
+    ],
+  ])(
+    "fails closed when current state has a %s batch after successful replay",
+    async (_caseName, currentApprovals) => {
+      const { result, buffers, loadCurrentPendingApprovals } =
+        await drainSuccessfulSplitApprovalReplay(currentApprovals);
+
+      expect(loadCurrentPendingApprovals).toHaveBeenCalledTimes(1);
+      expect(result.stopReason).toBe("error");
+      expect(result.approvals).toEqual([]);
+      expect(buffers.byId.get("tool-approval-1")).toMatchObject({
+        phase: "finished",
+        resultText: "Stream error",
+      });
+      expect(buffers.byId.get("tool-approval-2")).toMatchObject({
+        phase: "finished",
+        resultText: "Stream error",
+      });
+    },
+  );
 
   test("stops retrying when polling shows the run failed", async () => {
     const streamRunMessages = mock(async () => {

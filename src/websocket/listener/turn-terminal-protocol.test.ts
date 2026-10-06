@@ -452,3 +452,30 @@ test("status and proxy marker are not combined across nested sources", () => {
     }),
   ).not.toBe("Connection to Letta service failed. Please retry.");
 });
+
+test("status-only run metadata does not borrow direct proxy text", () => {
+  const proxyDetail = "Error occurred while trying to proxy to api.letta.com";
+
+  expect(
+    getConsumerLoopErrorMessage({
+      message: proxyDetail,
+      errorInfo: { message: proxyDetail, detail: proxyDetail },
+      runErrorInfo: { error_type: "server_error", status_code: 503 },
+    }),
+  ).not.toBe("Connection to Letta service failed. Please retry.");
+});
+
+test("status-only nested metadata does not borrow nested proxy text", () => {
+  const proxyDetail = "Error occurred while trying to proxy to api.letta.com";
+  const error = Object.assign(new Error(proxyDetail), {
+    errorInfo: { message: proxyDetail, detail: proxyDetail },
+    runErrorInfo: { error_type: "server_error", status_code: 503 },
+  });
+
+  expect(
+    getConsumerLoopErrorMessage({
+      message: error.message,
+      error,
+    }),
+  ).not.toBe("Connection to Letta service failed. Please retry.");
+});

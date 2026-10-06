@@ -228,12 +228,16 @@ export function getLoopErrorNoticeDecision(params: {
   const proxyStatus = apiStatus ?? statusTextSource?.status_code;
   const proxyDetail =
     apiStatus !== undefined
-      ? (extractConflictDetail(params.error) ?? detail)
-      : (statusTextSource?.detail ?? statusTextSource?.message ?? detail);
+      ? (extractConflictDetail(params.error) ?? "")
+      : statusTextSource
+        ? (statusTextSource.detail ?? statusTextSource.message ?? "")
+        : detail;
   const proxyMessage =
     apiStatus !== undefined
       ? params.message
-      : (statusTextSource?.message ?? params.message);
+      : statusTextSource
+        ? (statusTextSource.message ?? statusTextSource.detail ?? "")
+        : params.message;
 
   if (
     params.cancelRequested ||

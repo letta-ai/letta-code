@@ -658,6 +658,7 @@ export async function drainStreamWithResume(
     false;
   let replayGenericError = false;
   let authoritativeApprovalBoundary = false;
+  let replayedApprovalBoundary = false;
   if (
     resumePolicy &&
     result.stopReason === "error" &&
@@ -880,6 +881,10 @@ export async function drainStreamWithResume(
         result.approvals = originalApprovals;
         result.approval = originalApproval;
       }
+      if (result.stopReason === "requires_approval") {
+        authoritativeApprovalBoundary = true;
+        replayedApprovalBoundary = true;
+      }
     } catch (resumeError) {
       // Defer cleanup until authoritative approval recovery classifies the result.
       resumeFailed = true;
@@ -913,6 +918,11 @@ export async function drainStreamWithResume(
     streamRequestContext,
     loadCurrentPendingApprovals,
   );
+  if (replayedApprovalBoundary && !authoritativeApprovalBoundary) {
+    result.stopReason = "error";
+    result.fallbackError ??= "Approval boundary is no longer current";
+    resumeFailed = true;
+  }
 
   if (
     recoverApprovalBoundaryAfterResumeFailure(
