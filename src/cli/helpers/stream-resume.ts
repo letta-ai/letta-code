@@ -31,6 +31,21 @@ export type RunsListClient = {
 const FALLBACK_RUN_DISCOVERY_TIMEOUT_MS = 5000;
 const RUN_STATUS_RECONCILIATION_TIMEOUT_MS = 10_000;
 
+export class RunStatusReconciliationError extends Error {
+  constructor(error: unknown) {
+    super(error instanceof Error ? error.message : String(error), {
+      cause: error,
+    });
+    this.name = "RunStatusReconciliationError";
+  }
+}
+
+export function isRunStatusReconciliationError(
+  error: unknown,
+): error is RunStatusReconciliationError {
+  return error instanceof RunStatusReconciliationError;
+}
+
 export async function retrieveRunForResume(
   backend: Pick<Backend, "retrieveRun">,
   runId: string,
@@ -39,7 +54,9 @@ export async function retrieveRunForResume(
   timeoutMs = RUN_STATUS_RECONCILIATION_TIMEOUT_MS,
 ): Promise<Run> {
   if (parentSignal.aborted) {
-    throw parentSignal.reason ?? new Error("Run status reconciliation aborted");
+    throw new RunStatusReconciliationError(
+      parentSignal.reason ?? new Error("Run status reconciliation aborted"),
+    );
   }
 
   const requestAbort = new AbortController();
@@ -49,25 +66,30 @@ export async function retrieveRunForResume(
     onAbort = () => {
       const error =
         parentSignal.reason ?? new Error("Run status reconciliation aborted");
+      reject(new RunStatusReconciliationError(error));
       requestAbort.abort(error);
-      reject(error);
     };
     parentSignal.addEventListener("abort", onAbort, { once: true });
     timeout = setTimeout(() => {
       const error = new Error("Run status reconciliation timed out");
+      reject(new RunStatusReconciliationError(error));
       requestAbort.abort(error);
-      reject(error);
     }, timeoutMs);
   });
 
   try {
-    return await Promise.race([
-      backend.retrieveRun(runId, {
-        ...(options ?? {}),
-        signal: requestAbort.signal,
-      } as RunRetrieveOptions),
-      bounded,
-    ]);
+    try {
+      return await Promise.race([
+        backend.retrieveRun(runId, {
+          ...(options ?? {}),
+          signal: requestAbort.signal,
+        } as RunRetrieveOptions),
+        bounded,
+      ]);
+    } catch (error) {
+      if (isRunStatusReconciliationError(error)) throw error;
+      throw new RunStatusReconciliationError(error);
+    }
   } finally {
     if (timeout) clearTimeout(timeout);
     if (onAbort) parentSignal.removeEventListener("abort", onAbort);

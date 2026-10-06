@@ -59,6 +59,7 @@ import {
   discoverFallbackRunIdWithTimeout,
   isCompletedApprovalBoundary,
   isReplayableRun,
+  isRunStatusReconciliationError,
   mergeApprovalRequests,
   recoverApprovalBoundaryAfterResumeFailure,
   retrieveRunForResume,
@@ -816,7 +817,7 @@ export async function drainStreamWithResume(
           }
         } catch (resumeError) {
           lastResumeError = resumeError;
-          if (runIdToResume) {
+          if (runIdToResume && !isRunStatusReconciliationError(resumeError)) {
             try {
               const run = await retrieveRunForResume(
                 backend,

@@ -197,6 +197,25 @@ test("run status reconciliation aborts its backend read on timeout", async () =>
   expect(retrieveRun.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
 });
 
+test("failed candidate status reconciliation is not immediately repeated", async () => {
+  const streamRunMessages = mock(async () => stream([]));
+  const retrieveRun = mock(async () => {
+    throw new Error("status lookup failed");
+  });
+  __testSetBackend({
+    capabilities,
+    streamRunMessages,
+    retrieveRun,
+  } as unknown as Backend);
+
+  const result = await drain(
+    stream([ping("run-1", 1)], new Error("initial stream disconnected")),
+  );
+
+  expect(result.stopReason).toBe("error");
+  expect(retrieveRun).toHaveBeenCalledTimes(1);
+});
+
 test("production revalidation supports named agentless conversations", async () => {
   const retrieveConversation = mock(async () => ({
     id: "conv-agentless",
