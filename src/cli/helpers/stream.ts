@@ -657,6 +657,7 @@ export async function drainStreamWithResume(
     result.fallbackError?.includes("waiting for approval on a tool call") ??
     false;
   let replayGenericError = false;
+  let authoritativeApprovalBoundary = false;
   if (
     resumePolicy &&
     result.stopReason === "error" &&
@@ -666,9 +667,12 @@ export async function drainStreamWithResume(
     !abortSignal.aborted
   ) {
     try {
-      replayGenericError = isReplayableRun(
-        await getBackend().retrieveRun(runIdToResume, recoveryRequestOptions),
+      const run = await getBackend().retrieveRun(
+        runIdToResume,
+        recoveryRequestOptions,
       );
+      authoritativeApprovalBoundary = isCompletedApprovalBoundary(run);
+      replayGenericError = isReplayableRun(run);
     } catch {
       // If status cannot be checked, keep the streamed stop reason authoritative.
     }
@@ -680,7 +684,6 @@ export async function drainStreamWithResume(
     (runIdToResume || runIdSource === "otid") &&
     abortSignal &&
     !abortSignal.aborted;
-  let authoritativeApprovalBoundary = false;
   let resumeFailed = false;
 
   if (canResume) {
@@ -846,34 +849,17 @@ export async function drainStreamWithResume(
       // approval_request_message chunks from before the disconnect (they
       // had seq_id <= lastSeqId).
       //
-      // Two cases:
-      // 1. All approval chunks were before the drop (resume has no approvals):
-      //    carry over the originals unchanged.
-      // 2. Approval args were split across the drop (original has prefix,
-      //    resume has suffix): merge them so the full args string is intact.
+      // Preserve every approval ID seen on either side of the disconnect. The
+      // merge also concatenates same-ID argument fragments in stream order.
       if (
         result.stopReason === "requires_approval" &&
         (originalApprovals?.length ?? 0) > 0
       ) {
-        if ((result.approvals?.length ?? 0) === 0) {
-          // Case 1: full carry-over
-          result.approvals = originalApprovals;
-          result.approval = originalApproval;
-        } else {
-          // Case 2: merge prefix args from original with suffix args from resume
-          result.approvals = (result.approvals ?? []).map((resumeApproval) => {
-            const orig = originalApprovals?.find(
-              (a) => a.toolCallId === resumeApproval.toolCallId,
-            );
-            if (!orig) return resumeApproval;
-            return {
-              ...resumeApproval,
-              toolName: resumeApproval.toolName || orig.toolName,
-              toolArgs: (orig.toolArgs || "") + (resumeApproval.toolArgs || ""),
-            };
-          });
-          result.approval = result.approvals[0] ?? null;
-        }
+        result.approvals = mergeApprovalRequests(
+          originalApprovals,
+          result.approvals,
+        );
+        result.approval = result.approvals[0] ?? originalApproval;
       } else if (
         result.stopReason === "end_turn" &&
         (originalApprovals?.length ?? 0) > 0

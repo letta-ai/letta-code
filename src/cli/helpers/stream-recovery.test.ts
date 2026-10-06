@@ -79,7 +79,7 @@ function approvalRequest(toolCallId: string) {
 function stop(
   runId: string,
   seqId: number,
-  stopReason: "end_turn" | "error",
+  stopReason: "end_turn" | "error" | "requires_approval",
 ): LettaStreamingResponse {
   return {
     message_type: "stop_reason",
@@ -249,6 +249,74 @@ describe("stream recovery", () => {
 
     expect(result.stopReason).toBe("requires_approval");
     expect(buffers.byId.get("tool-approval-1")).toMatchObject({
+      phase: "ready",
+    });
+  });
+
+  test("retains pre-replay approval state when the next status lookup fails", async () => {
+    const streamRunMessages = mock(async () => {
+      throw new Error("resume endpoint unavailable");
+    });
+    let retrieveCount = 0;
+    __testSetBackend({
+      capabilities,
+      streamRunMessages,
+      retrieveRun: mock(async () => {
+        retrieveCount += 1;
+        if (retrieveCount > 1) throw new Error("status endpoint unavailable");
+        return {
+          ...runningRun(),
+          status: "completed" as const,
+          stop_reason: "requires_approval" as const,
+        };
+      }),
+    } as unknown as Backend);
+    const buffers = createBuffers("agent-1");
+
+    const result = await drain(
+      stream([
+        ping("run-1", 1),
+        approval("run-1", 2),
+        stop("run-1", 3, "error"),
+      ]),
+      immediateRetries,
+      buffers,
+    );
+
+    expect(result.stopReason).toBe("requires_approval");
+    expect(buffers.byId.get("tool-approval-1")).toMatchObject({
+      phase: "ready",
+    });
+  });
+
+  test("unions approval IDs split across a successful replay", async () => {
+    const streamRunMessages = mock(async () =>
+      stream([
+        approval("run-1", 3, '{"cmd":"pwd"}', "tool-approval-2"),
+        stop("run-1", 4, "requires_approval"),
+      ]),
+    );
+    __testSetBackend({ capabilities, streamRunMessages } as unknown as Backend);
+    const buffers = createBuffers("agent-1");
+
+    const result = await drain(
+      stream(
+        [ping("run-1", 1), approval("run-1", 2)],
+        new Error("initial stream disconnected"),
+      ),
+      immediateRetries,
+      buffers,
+    );
+
+    expect(result.stopReason).toBe("requires_approval");
+    expect(result.approvals?.map((item) => item.toolCallId)).toEqual([
+      "tool-approval-1",
+      "tool-approval-2",
+    ]);
+    expect(buffers.byId.get("tool-approval-1")).toMatchObject({
+      phase: "ready",
+    });
+    expect(buffers.byId.get("tool-approval-2")).toMatchObject({
       phase: "ready",
     });
   });
