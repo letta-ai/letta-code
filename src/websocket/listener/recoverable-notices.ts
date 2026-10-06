@@ -179,14 +179,17 @@ function isProxyTransportError(
   message: string,
   structuredStatus?: number,
 ): boolean {
-  const hasProxyFailureText =
+  const hasCanonicalProxyFailureText =
     detail.toLowerCase().includes("error occurred while trying to proxy") ||
     message.toLowerCase().includes("error occurred while trying to proxy");
+  const hasProxyMarker =
+    detail.toLowerCase().includes("trying to proxy") ||
+    message.toLowerCase().includes("trying to proxy");
 
   const status = error instanceof APIError ? error.status : structuredStatus;
-  if (status !== undefined) return status >= 500 && hasProxyFailureText;
+  if (status !== undefined) return status >= 500 && hasProxyMarker;
 
-  return hasProxyFailureText;
+  return hasCanonicalProxyFailureText;
 }
 
 export function getLoopErrorNoticeDecision(params: {

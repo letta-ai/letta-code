@@ -289,3 +289,22 @@ test("proxy transport 5xx errors retain the service outage message", () => {
     }),
   ).toBe("Connection to Letta service failed. Please retry.");
 });
+
+test("noncanonical proxy 5xx errors retain the service outage message", () => {
+  const error = new APIError(
+    504,
+    {
+      detail:
+        "Upstream timed out while trying to proxy to https://api.letta.com",
+    },
+    undefined,
+    new Headers(),
+  );
+
+  expect(
+    getConsumerLoopErrorMessage({
+      message: error.message,
+      error,
+    }),
+  ).toBe("Connection to Letta service failed. Please retry.");
+});
