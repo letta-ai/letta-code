@@ -8,6 +8,7 @@ import type {
 import { __testSetBackend, type Backend } from "@/backend";
 import { createBuffers } from "@/cli/helpers/accumulator";
 import { drainStreamWithResume } from "@/cli/helpers/stream";
+import type { CurrentPendingApprovalLoader } from "@/cli/helpers/stream-approval-recovery";
 import type { StreamResumePolicy } from "@/cli/helpers/stream-resume";
 
 const capabilities = {
@@ -90,6 +91,10 @@ async function drain(
   initialStream: Stream<LettaStreamingResponse>,
   policy = immediateRetries,
   buffers = createBuffers("agent-1"),
+  loadCurrentPendingApprovals: CurrentPendingApprovalLoader = async (
+    _context,
+    recovered,
+  ) => recovered,
 ) {
   return drainStreamWithResume(
     initialStream,
@@ -101,6 +106,7 @@ async function drain(
     undefined,
     undefined,
     policy,
+    loadCurrentPendingApprovals,
   );
 }
 
@@ -383,6 +389,42 @@ describe("stream recovery", () => {
     expect(retrieveRun).toHaveBeenCalledTimes(1);
     expect(buffers.byId.get("tool-approval-1")).toMatchObject({
       phase: "ready",
+    });
+  });
+
+  test("does not recover an approval already resolved in current conversation state", async () => {
+    const streamRunMessages = mock(async () =>
+      stream([], new Error("resumed stream disconnected")),
+    );
+    __testSetBackend({
+      capabilities,
+      streamRunMessages,
+      retrieveRun: mock(async () => ({
+        ...runningRun(),
+        status: "completed" as const,
+        stop_reason: "requires_approval" as const,
+      })),
+    } as unknown as Backend);
+    const buffers = createBuffers("agent-1");
+    const loadCurrentPendingApprovals = mock(async () => []);
+
+    const result = await drain(
+      stream(
+        [ping("run-1", 1), approval("run-1", 2)],
+        new Error("initial stream disconnected"),
+      ),
+      { ...immediateRetries, maxAttempts: 1 },
+      buffers,
+      loadCurrentPendingApprovals,
+    );
+
+    expect(loadCurrentPendingApprovals).toHaveBeenCalledTimes(1);
+    expect(result.stopReason).toBe("error");
+    expect(result.approvals).toEqual([]);
+    expect(buffers.byId.get("tool-approval-1")).toMatchObject({
+      phase: "finished",
+      resultOk: false,
+      resultText: "Stream error",
     });
   });
 });

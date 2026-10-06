@@ -37,6 +37,10 @@ import {
 import { chunkLog } from "./chunk-log";
 import type { ContextTracker } from "./context-tracker";
 import {
+  type CurrentPendingApprovalLoader,
+  revalidateRecoveredApprovalBoundary,
+} from "./stream-approval-recovery";
+import {
   abortStreamController,
   summarizeChunkForDebug,
   summarizeStreamForDebug,
@@ -561,6 +565,7 @@ export async function drainStreamWithResume(
   contextTracker?: ContextTracker,
   seenSequenceCursor?: StreamSequenceCursor | null,
   resumePolicy?: StreamResumePolicy,
+  loadCurrentPendingApprovals?: CurrentPendingApprovalLoader,
 ): Promise<DrainResult> {
   const overallStartTime = performance.now();
   recordTuiPerf("stream_lifecycle:start");
@@ -594,11 +599,7 @@ export async function drainStreamWithResume(
   let runIdSource: "stream_chunk" | "discovery" | "otid" | null =
     result.lastRunId ? "stream_chunk" : null;
 
-  // If the stream failed before exposing run_id, attempt to find the right run.
-  // Prefer OTID-based lookup via the conversations stream endpoint: it lets the
-  // server resolve exactly which run corresponds to this client's message, which
-  // is safe in multi-client scenarios (timestamp heuristic is not).
-  // Fall back to timestamp-based discovery if OTID is unavailable.
+  // Prefer OTID lookup; fall back to timestamp discovery when unavailable.
   if (
     result.stopReason === "error" &&
     !runIdToResume &&
@@ -607,7 +608,6 @@ export async function drainStreamWithResume(
     !abortSignal.aborted
   ) {
     if (streamOtid) {
-      // OTID path: server resolves the run — no client-side discovery needed.
       runIdSource = "otid";
       debugLog(
         "stream",
@@ -615,7 +615,6 @@ export async function drainStreamWithResume(
         streamOtid,
       );
     } else {
-      // Fallback: timestamp-based run discovery.
       try {
         debugLog(
           "stream",
@@ -653,13 +652,7 @@ export async function drainStreamWithResume(
     }
   }
 
-  // If stream ended without proper stop_reason and we have resume info, try once to reconnect.
-  // Only resume if we have an abortSignal AND it's not aborted (explicit check prevents
-  // undefined abortSignal from accidentally allowing resume after user cancellation).
-  // Approval-pending conflicts are not resumable disconnects — let App's approval
-  // recovery path handle them instead.
-  // "waiting for approval on a tool call" = server in requires_approval state, not resumable
-  // (distinct from "is currently being processed" = conversation-busy 409, which IS resumable)
+  // Approval-pending conflicts are terminal; conversation-busy conflicts can replay.
   const isApprovalPendingConflict =
     result.fallbackError?.includes("waiting for approval on a tool call") ??
     false;
@@ -691,7 +684,6 @@ export async function drainStreamWithResume(
   let resumeFailed = false;
 
   if (canResume) {
-    // Preserve original state in case resume needs to merge or fails
     const originalFallbackError = result.fallbackError;
     let originalApprovals = result.approvals;
     let originalApproval = result.approval;
@@ -724,8 +716,7 @@ export async function drainStreamWithResume(
           streamOtid ?? "none",
         );
 
-        // Reset interrupted state before each replay so resumed chunks can be
-        // accumulated. The final failure path below cancels incomplete tools.
+        // Let replayed chunks accumulate; final failure cleans up incomplete tools.
         buffers.commitGeneration = (buffers.commitGeneration || 0) + 1;
         buffers.interrupted = false;
 
@@ -929,6 +920,13 @@ export async function drainStreamWithResume(
       );
     }
   }
+
+  authoritativeApprovalBoundary = await revalidateRecoveredApprovalBoundary(
+    result,
+    authoritativeApprovalBoundary,
+    streamRequestContext,
+    loadCurrentPendingApprovals,
+  );
 
   if (
     recoverApprovalBoundaryAfterResumeFailure(
