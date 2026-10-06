@@ -19,6 +19,7 @@ import {
   currentDurableLockOwner,
   type DurableLockOwner,
   durableLockOwnerIsAlive,
+  fsyncDirectory,
 } from "./durable-file-lock";
 import { getConversationRuntimeKey } from "./runtime";
 import type {
@@ -323,15 +324,6 @@ function prepareStateDirectory(path: string): void {
   const dir = dirname(path);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   chmodSync(dir, 0o700);
-}
-
-function fsyncDirectory(path: string): void {
-  const fd = openSync(path, "r");
-  try {
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
-  }
 }
 
 function writeDurableStore(path: string, store: DurableStore): void {

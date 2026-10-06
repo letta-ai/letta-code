@@ -20,6 +20,7 @@ import { dirname, join } from "node:path";
 
 const MAX_OWNER_BYTES = 4096;
 const WAIT_SLICE_MS = 5;
+let cachedCurrentProcessStart: string | null | undefined;
 
 export type DurableLockOwner = {
   token: string;
@@ -93,10 +94,13 @@ export function getProcessStart(
 }
 
 export function currentDurableLockOwner(): DurableLockOwner {
+  if (cachedCurrentProcessStart === undefined) {
+    cachedCurrentProcessStart = getProcessStart(process.pid);
+  }
   return {
     token: randomUUID(),
     pid: process.pid,
-    processStart: getProcessStart(process.pid),
+    processStart: cachedCurrentProcessStart,
   };
 }
 
