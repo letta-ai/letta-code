@@ -688,6 +688,7 @@ export async function drainStreamWithResume(
     abortSignal &&
     !abortSignal.aborted;
   let authoritativeApprovalBoundary = false;
+  let resumeFailed = false;
 
   if (canResume) {
     // Preserve original state in case resume needs to merge or fails
@@ -903,10 +904,8 @@ export async function drainStreamWithResume(
         result.approval = originalApproval;
       }
     } catch (resumeError) {
-      // Resume failed - cancel tools and finalize the streaming line now
-      // (both were skipped in the initial drain's catch block above)
-      markIncompleteToolsAsCancelled(buffers, false, "stream_error", true);
-      markCurrentLineAsFinished(buffers);
+      // Defer cleanup until authoritative approval recovery classifies the result.
+      resumeFailed = true;
       const resumeErrorMsg =
         resumeError instanceof Error
           ? resumeError.message
@@ -954,12 +953,14 @@ export async function drainStreamWithResume(
     if (!abortSignal) skipReasons.push("no_abort_signal");
     if (abortSignal?.aborted) skipReasons.push("user_aborted");
 
-    // Only log if we actually skipped for a reason (i.e., we didn't enter the resume branch above)
-    if (skipReasons.length > 0) {
-      // No resume — cancel tools and finalize the streaming line now
-      // (both were skipped in the initial drain's catch block above)
+    if (resumeFailed || skipReasons.length > 0) {
+      // Clean up only after ruling out a recovered approval boundary.
       markIncompleteToolsAsCancelled(buffers, false, "stream_error", true);
       markCurrentLineAsFinished(buffers);
+    }
+
+    // Only log if we actually skipped for a reason (i.e., we didn't enter the resume branch above)
+    if (skipReasons.length > 0) {
       debugLog(
         "stream",
         "Mid-stream resume skipped: %s",

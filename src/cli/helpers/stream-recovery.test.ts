@@ -89,10 +89,11 @@ function runningRun(): Run {
 async function drain(
   initialStream: Stream<LettaStreamingResponse>,
   policy = immediateRetries,
+  buffers = createBuffers("agent-1"),
 ) {
   return drainStreamWithResume(
     initialStream,
-    createBuffers("agent-1"),
+    buffers,
     () => {},
     new AbortController().signal,
     undefined,
@@ -368,15 +369,20 @@ describe("stream recovery", () => {
       retrieveRun,
     } as unknown as Backend);
 
+    const buffers = createBuffers("agent-1");
     const result = await drain(
       stream(
         [ping("run-1", 1), approval("run-1", 2)],
         new Error("initial stream disconnected"),
       ),
       { ...immediateRetries, maxAttempts: 1 },
+      buffers,
     );
 
     expect(result.stopReason).toBe("requires_approval");
     expect(retrieveRun).toHaveBeenCalledTimes(1);
+    expect(buffers.byId.get("tool-approval-1")).toMatchObject({
+      phase: "ready",
+    });
   });
 });
