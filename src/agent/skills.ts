@@ -20,7 +20,7 @@ import { ALL_SKILL_SOURCES, type SkillSource } from "./skill-sources";
  * Get the bundled skills directory path
  * This is where skills ship with the package (skills/ directory next to letta.js)
  */
-function getBundledSkillsPath(): string {
+export function getBundledSkillsPath(): string {
   // In dev mode (running from src/), look in src/skills/builtin/
   // In production (running from letta.js), look in skills/ next to letta.js
   const thisDir = dirname(fileURLToPath(import.meta.url));

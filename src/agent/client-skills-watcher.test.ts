@@ -145,4 +145,31 @@ describe("ClientSkillsWatcher", () => {
     calls[0]?.listener("rename", ".agents");
     expect(onChange).toHaveBeenCalledTimes(1);
   });
+
+  test("reports roots that cannot be watched and retries them", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "letta-skill-watch-fail-"));
+    tempRoots.push(tempRoot);
+    const skillsRoot = join(tempRoot, "skills");
+    await mkdir(skillsRoot, { recursive: true });
+    const harness = createWatchHarness();
+    let failing = true;
+    const watcher = new ClientSkillsWatcher(
+      () => {},
+      (path, options, listener) => {
+        if (failing) {
+          throw Object.assign(new Error("ENOSPC"), { code: "ENOSPC" });
+        }
+        return harness.watchFunction(path, options, listener);
+      },
+    );
+
+    expect(watcher.ensureRoots([skillsRoot])).toBe(false);
+    expect(watcher.ensureRoots([skillsRoot])).toBe(false);
+
+    failing = false;
+    expect(watcher.ensureRoots([skillsRoot])).toBe(true);
+    expect(harness.calls).toHaveLength(1);
+    expect(watcher.ensureRoots([skillsRoot])).toBe(true);
+    expect(harness.calls).toHaveLength(1);
+  });
 });

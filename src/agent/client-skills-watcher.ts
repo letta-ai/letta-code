@@ -105,14 +105,22 @@ export class ClientSkillsWatcher {
     private readonly watchFunction: SkillWatchFunction = defaultWatchFunction,
   ) {}
 
-  ensureRoots(roots: string[]): void {
+  /**
+   * Returns false when any root could not be watched. Callers must not serve
+   * a cached snapshot for those roots, since nothing would invalidate it.
+   */
+  ensureRoots(roots: string[]): boolean {
+    let allWatched = true;
     for (const root of roots) {
       const normalizedRoot = resolve(root.trim());
       if (!root.trim() || this.watchersByRoot.has(normalizedRoot)) {
         continue;
       }
-      this.watchRoot(normalizedRoot);
+      if (!this.watchRoot(normalizedRoot)) {
+        allWatched = false;
+      }
     }
+    return allWatched;
   }
 
   close(): void {
@@ -124,10 +132,10 @@ export class ClientSkillsWatcher {
     this.watchersByRoot.clear();
   }
 
-  private watchRoot(root: string): void {
+  private watchRoot(root: string): boolean {
     const existingDirectory = findNearestExistingDirectory(root);
     if (!existingDirectory) {
-      return;
+      return false;
     }
 
     const watchPaths = new Set<string>();
@@ -169,12 +177,15 @@ export class ClientSkillsWatcher {
         watchers.push(watcher);
       }
       this.watchersByRoot.set(root, watchers);
+      return true;
     } catch {
       for (const watcher of watchers) {
         watcher.close();
       }
-      // Match Codex's fallback: a platform without filesystem watching keeps
-      // the current snapshot until explicit invalidation or process restart.
+      // Watching can fail (e.g. inotify limit reached, unsupported platform).
+      // Report it so callers rediscover instead of serving a snapshot that
+      // nothing will ever invalidate.
+      return false;
     }
   }
 }
