@@ -21,7 +21,6 @@ import {
   __inputDispositionTestUtils,
   ACCEPTED_INPUT_DISPOSITION_TTL_MS,
   commitInputDisposition,
-  completeInputReplay,
   createAcceptedInputDispositionLedger,
   forgetQueuedInputDisposition,
   getInputDisposition,
@@ -34,6 +33,7 @@ import {
   rollbackInputDisposition,
   teleportInputIdentity,
 } from "./input-disposition";
+import { completeInputReplay } from "./input-terminal-journal";
 import { createRuntime } from "./lifecycle";
 import {
   adoptListenerClientReplacement,

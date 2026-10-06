@@ -4,10 +4,11 @@ import type {
   AgentRuntimeStatusSnapshot,
 } from "@/backend/api/agents";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
-import { createRuntime } from "./lifecycle";
+import { createRuntime, stopRuntime } from "./lifecycle";
 import {
   acquireRecoveryClaim,
   canRecoverConversation,
+  revokeRecoveryClaims,
 } from "./recovery-ownership";
 import { evictConversationRuntimeIfIdle } from "./runtime";
 import {
@@ -226,7 +227,133 @@ describe("recovery ownership", () => {
     expect(claim?.owned).toBe(true);
     now = 15_500;
     expect(claim?.owned).toBe(false);
+    expect(lost).toBe(true);
     expect(await claim?.renew()).toBe(false);
     expect(lost).toBe(true);
+  });
+
+  test("failed completion reports claim loss for retry", async () => {
+    const value = runtime();
+    let losses = 0;
+    const claim = await acquireRecoveryClaim(
+      value,
+      () => {
+        losses += 1;
+      },
+      {
+        request: (async (_agentId: string, body: { action: string }) =>
+          body.action === "acquire"
+            ? { token: "token-1", fence: 1, expires_at: 30_000 }
+            : { completed: false }) as never,
+        schedule: () => 1,
+        cancel: () => {},
+      },
+    );
+
+    expect(await claim?.complete()).toBe(false);
+    expect(losses).toBe(1);
+  });
+
+  test("an in-flight renewal cannot report loss after intentional teardown", async () => {
+    const value = runtime();
+    let resolveRenewal: ((value: unknown) => void) | undefined;
+    let losses = 0;
+    const claim = await acquireRecoveryClaim(
+      value,
+      () => {
+        losses += 1;
+      },
+      {
+        request: (async (_agentId: string, body: { action: string }) => {
+          if (body.action === "acquire") {
+            return { token: "token-1", fence: 1, expires_at: 30_000 };
+          }
+          return await new Promise((resolve) => {
+            resolveRenewal = resolve;
+          });
+        }) as never,
+        schedule: () => 1,
+        cancel: () => {},
+      },
+    );
+
+    const renewal = claim?.renew();
+    claim?.abandon();
+    resolveRenewal?.({ token: "stale", fence: 0, expires_at: 0 });
+
+    expect(await renewal).toBe(false);
+    expect(losses).toBe(0);
+  });
+
+  test("disconnect revokes its registered recovery claim", async () => {
+    const value = runtime();
+    const actions: string[] = [];
+    const scheduled: Array<() => void> = [];
+    let losses = 0;
+    const claim = await acquireRecoveryClaim(
+      value,
+      () => {
+        losses += 1;
+      },
+      {
+        request: (async (_agentId: string, body: { action: string }) => {
+          actions.push(body.action);
+          return body.action === "acquire"
+            ? { token: "token-1", fence: 1, expires_at: 30_000 }
+            : { released: true };
+        }) as never,
+        schedule: (callback) => {
+          scheduled.push(callback);
+          return callback;
+        },
+        cancel: () => {},
+      },
+    );
+    expect(value.listener.activeRecoveryClaims?.has(claim as never)).toBe(true);
+
+    revokeRecoveryClaims(value.listener, "conn-self");
+    await Promise.resolve();
+    scheduled[0]?.();
+    await Promise.resolve();
+
+    expect(actions).toEqual(["acquire", "release"]);
+    expect(losses).toBe(0);
+    expect(claim?.owned).toBe(false);
+    expect(value.listener.activeRecoveryClaims?.size).toBe(0);
+  });
+
+  test("runtime stop revokes every registered recovery claim", async () => {
+    const value = runtime();
+    const actions: string[] = [];
+    const scheduled: Array<() => void> = [];
+    let losses = 0;
+    await acquireRecoveryClaim(
+      value,
+      () => {
+        losses += 1;
+      },
+      {
+        request: (async (_agentId: string, body: { action: string }) => {
+          actions.push(body.action);
+          return body.action === "acquire"
+            ? { token: "token-stop", fence: 2, expires_at: 30_000 }
+            : { released: true };
+        }) as never,
+        schedule: (callback) => {
+          scheduled.push(callback);
+          return callback;
+        },
+        cancel: () => {},
+      },
+    );
+
+    stopRuntime(value.listener, true);
+    await Promise.resolve();
+    scheduled[0]?.();
+    await Promise.resolve();
+
+    expect(actions).toEqual(["acquire", "release"]);
+    expect(losses).toBe(0);
+    expect(value.listener.activeRecoveryClaims?.size).toBe(0);
   });
 });

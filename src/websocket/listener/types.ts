@@ -20,6 +20,7 @@ import type { SharedReminderState } from "@/reminders/state";
 import type { RuntimeWorkspaceSandbox } from "@/runtime-context";
 import type { RuntimeExecutionSettings } from "@/runtime-execution-settings";
 import type { ToolsetName, ToolsetPreference } from "@/tools/toolset";
+import type { UsageStatistics } from "@/types/protocol";
 import type {
   ApprovalResponseBody,
   AvailableSkillSummary,
@@ -249,6 +250,25 @@ export type DurableQueuedInput = {
   actingUserId?: string;
 };
 
+/** Terminal intent committed in the same durable transaction that retires input replay. */
+export type DurablePreparedInputTerminal = {
+  scope: { agentId: string | null; conversationId: string };
+  message: {
+    type: "turn_finished";
+    turn_id: string;
+    stop_reason: StopReasonType;
+    terminal_consumer_ids?: string[];
+    run_id?: string;
+    error?: string;
+    usage?: UsageStatistics;
+  };
+  owner: {
+    connectionId: string | null;
+    canRotate: boolean;
+    lineageId: string | null;
+  };
+};
+
 export type AcceptedInputDispositionEntry = {
   disposition: AcceptedInputDisposition | null;
   acceptedAt: number;
@@ -259,6 +279,16 @@ export type AcceptedInputDispositionEntry = {
   queuedInput?: DurableQueuedInput;
   /** Durable terminal/successor marker set atomically when replay data is retired. */
   replayCompleted?: true;
+  /** Pending promotion into the terminal replay store after an atomic effect commit. */
+  preparedTerminal?: DurablePreparedInputTerminal;
+};
+
+export type ActiveRecoveryClaim = {
+  readonly connectionId: string;
+  readonly connectionGeneration: string;
+  readonly owned: boolean;
+  release(): Promise<void>;
+  abandon(): void;
 };
 
 export type AcceptedInputDispositionLedger = {
@@ -493,6 +523,8 @@ export type ListenerRuntime = {
   processServicesReady: Promise<void> | null;
   /** Generation owned by processServicesReady, or null when no attempt is active. */
   processServicesReadyGeneration: number | null;
+  /** Reconcile durable interrupted work without importing the turn cycle. */
+  scheduleRecordedRecovery?: () => void;
   serviceCommandHandler:
     | ((command: ServiceCommandRequest) => Promise<ServiceCommandResponse>)
     | null;
@@ -534,6 +566,8 @@ export type ListenerRuntime = {
    * lineage transfers this object across re-registration.
    */
   acceptedInputDispositionLedger: AcceptedInputDispositionLedger;
+  /** Live Cloud recovery capabilities, synchronously revoked on disconnect/stop. */
+  activeRecoveryClaims?: Set<ActiveRecoveryClaim>;
   /** Bounded pre-ready requestless state keyed by explicit replacement lineage. */
   pendingStartupFramesByLineage: Map<string, StartupFrameHandoff>;
   /** Generation currently owned by each explicit replacement lineage. */

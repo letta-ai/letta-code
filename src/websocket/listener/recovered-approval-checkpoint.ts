@@ -3,6 +3,32 @@ import type {
   ApprovalResult,
 } from "@/agent/approval-execution";
 
+export const RECOVERED_APPROVAL_OUTCOME_UNKNOWN =
+  "Tool execution may have completed, but the listener stopped before recording its result";
+
+/** Evidence written before execution so a hard death never masquerades as denial. */
+export function recoveredApprovalInFlightResults(
+  decisions: ApprovalDecision[],
+): ApprovalResult[] {
+  return decisions.map((decision) => {
+    const id = decision.approval.toolCallId;
+    if (decision.type === "deny") {
+      return {
+        type: "approval",
+        tool_call_id: id,
+        approve: false,
+        reason: decision.reason,
+      };
+    }
+    return {
+      type: "tool",
+      tool_call_id: id,
+      status: "error",
+      tool_return: RECOVERED_APPROVAL_OUTCOME_UNKNOWN,
+    };
+  });
+}
+
 /** Preserve reported partial effects and conservatively close unknown ones. */
 export function recoveredApprovalFailureResults(
   decisions: ApprovalDecision[],

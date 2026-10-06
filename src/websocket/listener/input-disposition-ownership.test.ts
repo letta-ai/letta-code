@@ -4,13 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import {
-  completeInputReplay,
   createAcceptedInputDispositionLedger,
   getInputDisposition,
   loadDurableQueuedInputs,
   ordinaryInputIdentity,
   rememberInputDisposition,
 } from "./input-disposition";
+import { completeInputReplay } from "./input-terminal-journal";
 import { createRuntime } from "./lifecycle";
 import type { IncomingMessage } from "./types";
 

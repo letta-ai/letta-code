@@ -3,6 +3,10 @@ import type { UsageStatistics } from "@/types/protocol";
 import type { StopReasonType } from "@/types/protocol_v2";
 import { debugWarn } from "@/utils/debug";
 import { TO_SUBSCRIBERS } from "./connection";
+import {
+  completePreparedInputTerminal,
+  prepareInputTerminal,
+} from "./input-terminal-journal";
 import { forgetListenerWork } from "./interrupted-turn-record";
 import {
   emitInterruptedStatusDelta,
@@ -13,11 +17,12 @@ import type { ListenerTransport } from "./transport";
 import {
   type createTurnFinishedStore,
   emitDurableTurnFinished,
+  getTurnFinishedOwner,
   prepareTurnFinished,
   type ReplayableTurnFinished,
 } from "./turn-finished-replay";
 import type { TurnFinishTransition, TurnLease } from "./turn-lifecycle";
-import type { ConversationRuntime } from "./types";
+import type { ConversationRuntime, InputIdentity } from "./types";
 
 export function buildTurnUsage(usage: Buffers["usage"]): UsageStatistics {
   return {
@@ -51,13 +56,27 @@ export function finishListenerTurn(
     >;
     usage?: UsageStatistics;
     terminalConsumerIds?: readonly string[];
+    durableInputIdentities?: readonly InputIdentity[];
+    /** Recovery claims fence terminal persistence and transport emission. */
+    canCommit?: () => boolean;
     /** Deterministic persistence seams for listener durability tests. */
     forgetWork?: () => void;
     turnFinishedStore?: ReturnType<typeof createTurnFinishedStore>;
+    prepareInputTerminal?: typeof prepareInputTerminal;
+    completePreparedInputTerminal?: typeof completePreparedInputTerminal;
   },
 ): TurnFinishTransition {
+  const rejectedCommit = (): TurnFinishTransition => ({
+    finished: false,
+    previousKind: null,
+    runId: null,
+    interruptionCause: null,
+  });
   if (!runtime.turnLifecycle.isCurrent(lease)) {
     return runtime.turnLifecycle.finish(lease, options.stopReason);
+  }
+  if (options.canCommit && !options.canCommit()) {
+    return rejectedCommit();
   }
   const turnFinishedMessage: ReplayableTurnFinished | null =
     options.socket && options.turnId
@@ -81,6 +100,29 @@ export function finishListenerTurn(
       : null;
   let preparedTurnFinished: ReturnType<typeof prepareTurnFinished> | null =
     null;
+  if (
+    turnFinishedMessage &&
+    !(options.prepareInputTerminal ?? prepareInputTerminal)(
+      runtime,
+      options.durableInputIdentities ?? [],
+      {
+        scope: {
+          agentId: runtime.agentId,
+          conversationId: runtime.conversationId,
+        },
+        message: turnFinishedMessage,
+        owner: getTurnFinishedOwner(runtime),
+      },
+    )
+  ) {
+    // No state transition is safe: the accepted input is still replayable.
+    throw new Error("Failed to atomically prepare accepted-input terminal");
+  }
+  // The input journal fsync above can cross a claim's local expiry. Leave the
+  // prepared journal for the successor rather than persisting as a stale owner.
+  if (options.canCommit && !options.canCommit()) {
+    return rejectedCommit();
+  }
   try {
     preparedTurnFinished = turnFinishedMessage
       ? prepareTurnFinished(
@@ -89,11 +131,28 @@ export function finishListenerTurn(
           options.turnFinishedStore,
         )
       : null;
+    if (
+      turnFinishedMessage &&
+      !(options.completePreparedInputTerminal ?? completePreparedInputTerminal)(
+        runtime,
+        options.durableInputIdentities ?? [],
+        turnFinishedMessage.turn_id,
+      )
+    ) {
+      throw new Error("Failed to promote accepted-input terminal");
+    }
   } catch (error) {
     // Persistence failure is visible to the owner, but it must not strand the
     // active lease forever (notably when the bounded store reaches capacity).
     runtime.turnLifecycle.finish(lease, options.stopReason);
     throw error;
+  }
+  // Terminal-store locking and fsync can also cross expiry. At this point the
+  // terminal has a durable home, so a successor can replay it without rerunning
+  // the input; only the stale owner's lifecycle transition is fenced.
+  const mayEmit = !options.canCommit || options.canCommit();
+  if (!mayEmit) {
+    return rejectedCommit();
   }
   const transition = runtime.turnLifecycle.finish(lease, options.stopReason);
   if (!transition.finished) {
@@ -102,7 +161,7 @@ export function finishListenerTurn(
   // Publish the terminal failure before idle can complete the accepted send.
   // The lifecycle transition above prevents stale or duplicate finalizers
   // from emitting either the failure or its following status snapshots.
-  if (options.socket && options.errorNotice) {
+  if (mayEmit && options.socket && options.errorNotice) {
     const runId =
       options.errorNotice.runId ?? options.runId ?? transition.runId;
     const message = emitLoopErrorNotice(options.socket, runtime, {
@@ -123,7 +182,8 @@ export function finishListenerTurn(
   if (
     options.stopReason === "cancelled" &&
     transition.previousKind === "active" &&
-    options.socket
+    options.socket &&
+    mayEmit
   ) {
     emitInterruptedStatusDelta(options.socket, runtime, {
       runId: options.runId ?? transition.runId,
@@ -132,13 +192,18 @@ export function finishListenerTurn(
     });
   }
 
-  if (transition.previousKind === "active") {
+  if (mayEmit && transition.previousKind === "active") {
     emitRuntimeStateUpdates(runtime, {
       agent_id: options.agentId ?? null,
       conversation_id: options.conversationId,
     });
   }
-  if (options.socket && turnFinishedMessage && preparedTurnFinished) {
+  if (
+    mayEmit &&
+    options.socket &&
+    turnFinishedMessage &&
+    preparedTurnFinished
+  ) {
     emitDurableTurnFinished(
       options.socket,
       runtime,

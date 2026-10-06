@@ -6,10 +6,7 @@ import {
 } from "@/agent/approval-execution";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
 import {
-  isApprovalPendingError,
-  isInvalidToolCallIdsError,
   normalizeStreamErrorTypeToStopReason,
-  shouldAttemptApprovalRecovery,
   shouldRetryPostStreamRunError,
 } from "@/agent/turn-recovery-policy";
 import { getBackend } from "@/backend";
@@ -17,19 +14,16 @@ import { createBuffers } from "@/cli/helpers/accumulator";
 import { drainStreamWithResume } from "@/cli/helpers/stream";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import type { StopReasonType, StreamDelta } from "@/types/protocol_v2";
-import { isDebugEnabled } from "@/utils/debug";
+import { debugWarn, isDebugEnabled } from "@/utils/debug";
 import { normalizeCloudRetryWireMessage } from "./cloud-retry-message";
 import {
   findListenerConnectionByTransport,
   getSubscribedListenerConnections,
 } from "./connection";
-import {
-  LISTENER_STREAM_RESUME_POLICY,
-  MAX_POST_STOP_APPROVAL_RECOVERY,
-} from "./constants";
+import { LISTENER_STREAM_RESUME_POLICY } from "./constants";
 import { appendQueuedTurnToInput } from "./continuation-input";
+import { promotePreparedInputTerminals } from "./conversation-runtime";
 import { getConversationWorkingDirectory } from "./cwd";
-import { completeInputReplay } from "./input-disposition";
 import { recordListenerWork } from "./interrupted-turn-record";
 import {
   createToolExecutionOutputEmitter,
@@ -59,7 +53,18 @@ import {
   emitLoopErrorNotice,
   getTranscriptLoopErrorMessage,
 } from "./recoverable-notices";
-import { recoveredApprovalFailureResults } from "./recovered-approval-checkpoint";
+import {
+  recoveredApprovalFailureResults,
+  recoveredApprovalInFlightResults,
+} from "./recovered-approval-checkpoint";
+
+export {
+  getApprovalToolCallDesyncErrorText,
+  isApprovalToolCallDesyncError,
+  shouldAttemptPostStopApprovalRecovery,
+} from "./recovery-error-policy";
+
+import { scheduleRecoveredApprovalRetry } from "./recovered-approval-retry";
 import {
   acquireRecoveryClaim,
   canRecoverConversation,
@@ -79,50 +84,13 @@ import {
   createTurnCorrelation,
   type TurnCorrelation,
 } from "./turn-correlation";
+import { createTurnDurabilityOwnership } from "./turn-durability-ownership";
+import { replayPendingTurnFinishedToConnection } from "./turn-finished-replay";
 import { createTurnInputState } from "./turn-input-state";
 import type { TurnLease } from "./turn-lifecycle";
 import { setTurnLoopStatus } from "./turn-status";
 import { finishListenerTurn } from "./turn-terminal";
 import type { ConversationRuntime, IncomingMessage } from "./types";
-
-export function isApprovalToolCallDesyncError(detail: unknown): boolean {
-  return isInvalidToolCallIdsError(detail) || isApprovalPendingError(detail);
-}
-
-export function getApprovalToolCallDesyncErrorText(errorInfo: {
-  detail?: unknown;
-  message?: unknown;
-}): string | null {
-  const detail = errorInfo.detail;
-  if (typeof detail === "string" && isApprovalToolCallDesyncError(detail)) {
-    return detail;
-  }
-  const message = errorInfo.message;
-  if (typeof message === "string" && isApprovalToolCallDesyncError(message)) {
-    return message;
-  }
-  return null;
-}
-
-export function shouldAttemptPostStopApprovalRecovery(params: {
-  stopReason: string | null | undefined;
-  runIdsSeen: number;
-  retries: number;
-  runErrorDetail: string | null;
-  latestErrorText: string | null;
-  fallbackError?: string | null;
-}): boolean {
-  const approvalDesyncDetected =
-    isApprovalToolCallDesyncError(params.runErrorDetail) ||
-    isApprovalToolCallDesyncError(params.latestErrorText) ||
-    isApprovalToolCallDesyncError(params.fallbackError);
-
-  return shouldAttemptApprovalRecovery({
-    approvalPendingDetected: approvalDesyncDetected,
-    retries: params.retries,
-    maxRetries: MAX_POST_STOP_APPROVAL_RECOVERY,
-  });
-}
 
 export async function isRetriablePostStopError(
   stopReason: StopReasonType,
@@ -266,16 +234,18 @@ export async function drainRecoveryStreamWithEmission(
 export function finalizeHandledRecoveryTurn(
   runtime: ConversationRuntime,
   socket: ListenerTransport,
-  turnLease: TurnLease,
   params: {
     drainResult: Awaited<ReturnType<typeof drainStreamWithResume>>;
     agentId?: string | null;
     conversationId: string;
     turnId: string;
   },
+  finalize: (
+    options: Parameters<typeof finishListenerTurn>[2],
+  ) => ReturnType<typeof finishListenerTurn>,
 ): ReturnType<typeof finishListenerTurn> {
   if (params.drainResult.stopReason === "end_turn") {
-    return finishListenerTurn(runtime, turnLease, {
+    return finalize({
       stopReason: "end_turn",
       socket,
       agentId: params.agentId,
@@ -285,7 +255,7 @@ export function finalizeHandledRecoveryTurn(
   }
 
   if (params.drainResult.stopReason === "cancelled") {
-    return finishListenerTurn(runtime, turnLease, {
+    return finalize({
       stopReason: "cancelled",
       socket,
       runId: runtime.activeRunId,
@@ -303,7 +273,7 @@ export function finalizeHandledRecoveryTurn(
     agentId: params.agentId,
     conversationId: params.conversationId,
   };
-  const transition = finishListenerTurn(runtime, turnLease, {
+  const transition = finalize({
     stopReason: terminalStopReason,
     socket,
     agentId: params.agentId,
@@ -397,6 +367,7 @@ type RecoveredContinuationProcessTurn = (
   dequeuedBatchId?: string,
   existingTurnLease?: TurnLease,
   existingTurnCorrelation?: TurnCorrelation,
+  terminalCommitGuard?: () => boolean,
 ) => Promise<void>;
 
 export type RecoveredContinuationDependencies = {
@@ -406,6 +377,7 @@ export type RecoveredContinuationDependencies = {
   executeApprovalBatch?: typeof executeApprovalBatch;
   recordListenerWork?: typeof recordListenerWork;
   acquireRecoveryClaim?: typeof acquireRecoveryClaim;
+  canRecover?: typeof canRecoverConversation;
 };
 
 type RecoveryDeliveryOrigin = {
@@ -422,13 +394,7 @@ type RecoveredContinuationOptions = {
   dependencies?: RecoveredContinuationDependencies;
 };
 
-/**
- * Restart recovery found pending approvals. Finish the
- * interrupted turn now: send the stale denials as this conversation's next
- * turn so the model can re-issue the work, instead of parking them until a
- * user message happens to arrive. Returns false when the recovered state is
- * not in that shape or another owner holds the conversation.
- */
+/** Resume recovered approvals immediately instead of parking them for input. */
 export async function startRecoveredApprovalContinuation(
   runtime: ConversationRuntime,
   socket: ListenerTransport,
@@ -466,7 +432,9 @@ export async function startRecoveredApprovalContinuation(
           originConnection.options.connectionIdCanResume !== false,
       }
     : null;
-  if (!(await canRecoverConversation(runtime))) {
+  if (
+    !(await (opts?.dependencies?.canRecover ?? canRecoverConversation)(runtime))
+  ) {
     if (runtime.recoveredApprovalState === recovered) {
       clearRecoveredApprovalState(runtime);
     }
@@ -493,9 +461,12 @@ export async function startRecoveredApprovalContinuation(
     recovered.conversationId,
   );
   let recoveryLease: TurnLease | undefined;
+  let retryAfterClaimLoss = false;
+  let sideEffectMayHaveRun = false;
   const acquireClaim =
     opts?.dependencies?.acquireRecoveryClaim ?? acquireRecoveryClaim;
   const recoveryClaim = await acquireClaim(runtime, () => {
+    retryAfterClaimLoss = true;
     if (recoveryLease && runtime.turnLifecycle.isCurrent(recoveryLease)) {
       runtime.turnLifecycle.requestCancellation({ cause: "transport" });
     }
@@ -527,7 +498,33 @@ export async function startRecoveredApprovalContinuation(
     processTurn,
     opts,
     deliveryOrigin,
+    onSideEffectStarted: () => {
+      sideEffectMayHaveRun = true;
+    },
   });
+  if (
+    retryAfterClaimLoss &&
+    runtime.recoveredApprovalState === recovered &&
+    !runtime.listener.intentionallyClosed
+  ) {
+    if (sideEffectMayHaveRun) {
+      try {
+        promotePreparedInputTerminals(runtime.listener);
+        const connectionId = runtime.activeConnectionId ?? opts?.connectionId;
+        if (connectionId) {
+          replayPendingTurnFinishedToConnection(socket, runtime, connectionId);
+        }
+      } catch (error) {
+        debugWarn("recovery", "Failed to replay claim-loss terminal", error);
+      }
+      clearRecoveredApprovalState(runtime);
+      runtime.listener.scheduleRecordedRecovery?.();
+    } else {
+      scheduleRecoveredApprovalRetry(runtime, () =>
+        startRecoveredApprovalContinuation(runtime, socket, processTurn, opts),
+      );
+    }
+  }
   return true;
 }
 
@@ -543,6 +540,7 @@ async function executeRecoveredApprovalContinuation(params: {
   processTurn: RecoveredContinuationProcessTurn;
   opts?: RecoveredContinuationOptions;
   deliveryOrigin: RecoveryDeliveryOrigin | null;
+  onSideEffectStarted: () => void;
 }): Promise<void> {
   const {
     recoveryClaim,
@@ -556,6 +554,7 @@ async function executeRecoveredApprovalContinuation(params: {
     processTurn,
     opts,
     deliveryOrigin,
+    onSideEffectStarted,
   } = params;
   const dependencies = opts?.dependencies;
   const ensureSecretsHydrated =
@@ -574,13 +573,9 @@ async function executeRecoveredApprovalContinuation(params: {
     const transition = finishListenerTurn(runtime, recoveryLease, {
       ...options,
       terminalConsumerIds: recovered.terminalConsumerIds,
+      durableInputIdentities: recovered.durableInputIdentities,
+      canCommit: hasRecoveryOwnership,
     });
-    if (
-      transition.finished &&
-      !completeInputReplay(runtime, recovered.durableInputIdentities ?? [])
-    ) {
-      throw new Error("Failed to retire recovered accepted-input identities");
-    }
     return transition;
   };
   const scope = {
@@ -751,12 +746,17 @@ async function executeRecoveredApprovalContinuation(params: {
           toolCallIds: decisions.map(
             (decision) => decision.approval.toolCallId,
           ),
-          results: [],
+          results: recoveredApprovalInFlightResults(decisions),
           requestOtid: continuationOtid,
         },
         "before_tool_execution",
       );
+      // recordWork fsyncs synchronously and can cross the local claim expiry.
+      // Recheck after that durable boundary and immediately before any tool can
+      // perform an irreversible side effect.
+      if (!hasRecoveryOwnership()) return;
       sideEffectStarted = true;
+      onSideEffectStarted();
       try {
         approvalResults = await executeApprovals(decisions, undefined, {
           abortSignal: recoveryLease.signal,
@@ -876,9 +876,12 @@ async function executeRecoveredApprovalContinuation(params: {
     ]);
     let continuationBatchId = `batch-recovered-${crypto.randomUUID()}`;
     let continuationCorrelation: TurnCorrelation | undefined;
+    const continuationOwnership = createTurnDurabilityOwnership();
+    continuationOwnership.recordInput(recovered);
     const consumedQueuedTurn = consumeQueuedTurn(runtime);
     if (consumedQueuedTurn) {
       const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
+      continuationOwnership.recordInput(queuedTurn);
       continuationBatchId = dequeuedBatch.batchId;
       continuationInput = appendQueuedTurnToInput(
         continuationInput,
@@ -890,6 +893,8 @@ async function executeRecoveredApprovalContinuation(params: {
           type: "message",
           agentId: recovered.agentId,
           conversationId: recovered.conversationId,
+          durableInputIdentities: continuationOwnership.durableInputIdentities,
+          terminalConsumerIds: continuationOwnership.terminalConsumerIds,
           messages: continuationInput.messages,
         },
         continuationBatchId,
@@ -910,8 +915,8 @@ async function executeRecoveredApprovalContinuation(params: {
         agentId: recovered.agentId,
         conversationId: recovered.conversationId,
         connectionId: continuationConnectionId,
-        durableInputIdentities: recovered.durableInputIdentities,
-        terminalConsumerIds: recovered.terminalConsumerIds,
+        durableInputIdentities: continuationOwnership.durableInputIdentities,
+        terminalConsumerIds: continuationOwnership.terminalConsumerIds,
         messages: continuationInput.messages,
       },
       socket,
@@ -921,6 +926,7 @@ async function executeRecoveredApprovalContinuation(params: {
       continuationBatchId,
       recoveryLease,
       continuationCorrelation,
+      hasRecoveryOwnership,
     );
 
     if (runtime.turnLifecycle.isCurrent(recoveryLease)) {

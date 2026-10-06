@@ -53,7 +53,10 @@ export function teleportInputIdentity(teleportId: string): InputIdentity {
   return { domain: "teleport", id: teleportId };
 }
 
-function dispositionKey(runtimeKey: string, identity: InputIdentity): string {
+export function dispositionKey(
+  runtimeKey: string,
+  identity: InputIdentity,
+): string {
   return JSON.stringify([runtimeKey, identity.domain, identity.id]);
 }
 
@@ -95,7 +98,9 @@ export function createAcceptedInputDispositionLedger(options?: {
   };
 }
 
-function getLedger(listener: ListenerRuntime): AcceptedInputDispositionLedger {
+export function getLedger(
+  listener: ListenerRuntime,
+): AcceptedInputDispositionLedger {
   listener.acceptedInputDispositionLedger ??=
     createAcceptedInputDispositionLedger();
   return listener.acceptedInputDispositionLedger;
@@ -148,7 +153,10 @@ function expireAcceptedInputDispositions(
     if (!expiry || expiry.expiresAt > now) break;
     ledger.expiryQueueHead += 1;
     const entry = ledger.entries.get(expiry.key);
-    if (entry?.generation === expiry.generation && entry.queuedInput) {
+    if (
+      entry?.generation === expiry.generation &&
+      (entry.queuedInput || entry.preparedTerminal)
+    ) {
       // Once accepted, replay responsibility lasts until a terminal transition
       // retires the payload. The sender retry horizon only bounds tombstones;
       // it must not erase in-flight work during a long turn or offline restart.
@@ -178,15 +186,15 @@ type DurableReservation = ProcessOwner & {
   generation: number;
 };
 
-type DurableStore = {
-  version: 3;
+export type DurableStore = {
+  version: 4;
   nextGeneration: number;
   entries: Record<string, AcceptedInputDispositionEntry>;
   reservations: Record<string, DurableReservation>;
 };
 
 function emptyDurableStore(): DurableStore {
-  return { version: 3, nextGeneration: 0, entries: {}, reservations: {} };
+  return { version: 4, nextGeneration: 0, entries: {}, reservations: {} };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -214,7 +222,7 @@ function validateQueuedInput(value: unknown): value is DurableQueuedInput {
 function validateDurableStore(value: unknown): DurableStore {
   if (
     !isRecord(value) ||
-    (value.version !== 2 && value.version !== 3) ||
+    (value.version !== 2 && value.version !== 3 && value.version !== 4) ||
     !Number.isSafeInteger(value.nextGeneration) ||
     (value.nextGeneration as number) < 0 ||
     !isRecord(value.entries) ||
@@ -237,7 +245,7 @@ function validateDurableStore(value: unknown): DurableStore {
     }
     // v2 wrote ordinary queued payloads without an explicit namespace and
     // payload-free started tombstones. Upgrade those records in memory; all new
-    // writes are v3 and must carry either replay data or a completion marker.
+    // writes are v4 and must carry either replay data or a completion marker.
     if (value.version === 2) {
       if (
         rawEntry.queuedInput !== undefined &&
@@ -291,6 +299,43 @@ function validateDurableStore(value: unknown): DurableStore {
     ) {
       throw new Error("Disposition cannot be both replayable and completed");
     }
+    if (rawEntry.preparedTerminal !== undefined) {
+      const prepared = rawEntry.preparedTerminal;
+      if (
+        !isRecord(prepared) ||
+        !isRecord(prepared.scope) ||
+        (prepared.scope.agentId !== null &&
+          typeof prepared.scope.agentId !== "string") ||
+        typeof prepared.scope.conversationId !== "string" ||
+        getConversationRuntimeKey(
+          prepared.scope.agentId,
+          prepared.scope.conversationId,
+        ) !== runtimeKey ||
+        !isRecord(prepared.message) ||
+        prepared.message.type !== "turn_finished" ||
+        typeof prepared.message.turn_id !== "string" ||
+        typeof prepared.message.stop_reason !== "string" ||
+        (prepared.message.terminal_consumer_ids !== undefined &&
+          (!Array.isArray(prepared.message.terminal_consumer_ids) ||
+            !prepared.message.terminal_consumer_ids.every(
+              (id) => typeof id === "string",
+            ))) ||
+        (prepared.message.run_id !== undefined &&
+          typeof prepared.message.run_id !== "string") ||
+        (prepared.message.error !== undefined &&
+          typeof prepared.message.error !== "string") ||
+        !isRecord(prepared.owner) ||
+        (prepared.owner.connectionId !== null &&
+          typeof prepared.owner.connectionId !== "string") ||
+        typeof prepared.owner.canRotate !== "boolean" ||
+        (prepared.owner.lineageId !== null &&
+          typeof prepared.owner.lineageId !== "string") ||
+        rawEntry.queuedInput !== undefined ||
+        rawEntry.replayCompleted !== true
+      ) {
+        throw new Error("Prepared input terminal is invalid");
+      }
+    }
   }
   for (const [key, rawReservation] of Object.entries(value.reservations)) {
     const [runtimeKey] = parseDispositionKey(key);
@@ -307,7 +352,7 @@ function validateDurableStore(value: unknown): DurableStore {
       throw new Error("Invalid accepted-input disposition reservation");
     }
   }
-  value.version = 3;
+  value.version = 4;
   return value as DurableStore;
 }
 
@@ -370,7 +415,7 @@ function pruneDurableStore(store: DurableStore, now: number): boolean {
   let changed = false;
   for (const [key, entry] of Object.entries(store.entries)) {
     if (entry.expiresAt <= now) {
-      if (entry.queuedInput) {
+      if (entry.queuedInput || entry.preparedTerminal) {
         entry.expiresAt = now + ACCEPTED_INPUT_DISPOSITION_TTL_MS;
       } else {
         delete store.entries[key];
@@ -387,7 +432,7 @@ function pruneDurableStore(store: DurableStore, now: number): boolean {
   return changed;
 }
 
-function durableTransaction<T>(
+export function durableTransaction<T>(
   path: string,
   transaction: (store: DurableStore) => { result: T; changed: boolean },
 ): T {
@@ -403,7 +448,7 @@ function durableTransaction<T>(
   }
 }
 
-function syncMemoryFromDurable(
+export function syncMemoryFromDurable(
   ledger: AcceptedInputDispositionLedger,
   store: DurableStore,
 ): void {
@@ -817,55 +862,6 @@ export function markQueuedInputDispositionsStarted(
   for (const key of keys) {
     const entry = ledger.entries.get(key);
     if (entry?.disposition === "queued") entry.disposition = "started";
-  }
-  return true;
-}
-
-/** Atomically retain disposition tombstones while retiring replay payloads. */
-export function completeInputReplay(
-  runtime: ConversationRuntime,
-  identities: readonly InputIdentity[],
-): boolean {
-  if (identities.length === 0) return true;
-  const ledger = getLedger(runtime.listener);
-  const keys = [
-    ...new Set(
-      identities.map((identity) => dispositionKey(runtime.key, identity)),
-    ),
-  ];
-  if (ledger.persistentPath) {
-    try {
-      return durableTransaction(ledger.persistentPath, (store) => {
-        for (const key of keys) {
-          const entry = store.entries[key];
-          if (entry && (!entry.disposition || entry.disposition === "queued")) {
-            syncMemoryFromDurable(ledger, store);
-            return { result: false, changed: false };
-          }
-        }
-        let changed = false;
-        for (const key of keys) {
-          const entry = store.entries[key];
-          if (!entry) continue;
-          if (entry.queuedInput !== undefined) {
-            delete entry.queuedInput;
-            entry.replayCompleted = true;
-            changed = true;
-          }
-        }
-        syncMemoryFromDurable(ledger, store);
-        return { result: true, changed };
-      });
-    } catch {
-      return false;
-    }
-  }
-  for (const key of keys) {
-    const entry = ledger.entries.get(key);
-    if (!entry) continue;
-    if (!entry.disposition || entry.disposition === "queued") return false;
-    delete entry.queuedInput;
-    entry.replayCompleted = true;
   }
   return true;
 }

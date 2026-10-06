@@ -31,6 +31,7 @@ import {
   updateTurnInputMessagesPreservingOtids,
 } from "./turn-input-state";
 import type { TurnFinishTransition, TurnLease } from "./turn-lifecycle";
+import type { finishListenerTurn } from "./turn-terminal";
 import type { ConversationRuntime } from "./types";
 
 type SendOptions = NonNullable<Parameters<typeof sendMessageStream>[2]>;
@@ -160,6 +161,9 @@ export function createTurnInputSender(params: {
   turnLease: TurnLease;
   buildSendOptions: () => Parameters<typeof sendMessageStream>[2];
   onTerminal: (transition: TurnFinishTransition) => void;
+  finalizeTerminal: (
+    options: Parameters<typeof finishListenerTurn>[2],
+  ) => TurnFinishTransition;
   getTurnId: () => string;
 }): {
   send: (
@@ -201,13 +205,13 @@ export function createTurnInputSender(params: {
         finalizeHandledRecoveryTurn(
           params.runtime,
           params.socket,
-          params.turnLease,
           {
             drainResult: result.drainResult,
             agentId: params.agentId,
             conversationId: params.conversationId,
             turnId: params.getTurnId(),
           },
+          params.finalizeTerminal,
         ),
       );
       return null;

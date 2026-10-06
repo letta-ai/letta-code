@@ -141,6 +141,32 @@ test("a paused live owner is never evicted and contender candidates are cleaned"
   }
 });
 
+test("candidate sweep removes only a provably dead owner", () => {
+  const f = fixture();
+  try {
+    const deadCandidate = `${f.lock}.candidate-dead-orphan`;
+    const liveCandidate = `${f.lock}.candidate-live-owner`;
+    const malformedCandidate = `${f.lock}.candidate-malformed`;
+    const emptyCandidate = `${f.lock}.candidate-empty`;
+    f.populate(deadCandidate, deadOwner);
+    f.populate(liveCandidate, liveOwner);
+    mkdirSync(malformedCandidate);
+    writeFileSync(join(malformedCandidate, "owner.json"), "not-json");
+    mkdirSync(emptyCandidate);
+
+    acquireDurableFileLock(f.path, { waitMs: 50 })();
+
+    expect(existsSync(deadCandidate)).toBe(false);
+    expect(readdirSync(liveCandidate)).toEqual([f.ownerName(liveOwner)]);
+    expect(readFileSync(join(malformedCandidate, "owner.json"), "utf8")).toBe(
+      "not-json",
+    );
+    expect(readdirSync(emptyCandidate)).toEqual([]);
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
 test("candidate setup failure cleans its private directory", () => {
   const f = fixture();
   try {

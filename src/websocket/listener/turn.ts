@@ -27,7 +27,6 @@ import { isCloudApiDeploymentInterrupted } from "@/utils/cloud-api-shutdown";
 import { isDebugEnabled } from "@/utils/debug";
 import { EMPTY_RESPONSE_MAX_RETRIES } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
-import { completeInputReplay } from "./input-disposition";
 import {
   emitInterruptToolReturnMessage,
   emitToolExecutionFinishedEvents,
@@ -65,6 +64,7 @@ import {
   createTurnCorrelation,
   type TurnCorrelation,
 } from "./turn-correlation";
+import { createTurnDurabilityOwnership } from "./turn-durability-ownership";
 import {
   createDeploymentRecoveryTurnInput,
   rebuildTurnInputWithFreshDenials,
@@ -97,6 +97,7 @@ export async function handleIncomingMessage(
   dequeuedBatchId: string = `batch-direct-${crypto.randomUUID()}`,
   existingTurnLease?: TurnLease,
   existingTurnCorrelation?: TurnCorrelation,
+  terminalCommitGuard?: () => boolean,
 ): Promise<void> {
   notifyTurnStarted(msg);
   try {
@@ -109,6 +110,7 @@ export async function handleIncomingMessage(
       dequeuedBatchId,
       existingTurnLease,
       existingTurnCorrelation,
+      terminalCommitGuard,
     );
   } finally {
     notifyTurnFinished(msg);
@@ -128,6 +130,7 @@ async function handleIncomingMessageInner(
   dequeuedBatchId: string = `batch-direct-${crypto.randomUUID()}`,
   existingTurnLease?: TurnLease,
   existingTurnCorrelation?: TurnCorrelation,
+  terminalCommitGuard?: () => boolean,
 ): Promise<void> {
   const agentId = normalizeCwdAgentId(msg.agentId);
   const requestedConversationId = msg.conversationId || undefined;
@@ -157,6 +160,8 @@ async function handleIncomingMessageInner(
   let lastExecutionResults: ApprovalResult[] | null = null;
   let lastExecutingToolCallIds: string[] = [];
   let lastNeedsUserInputToolCallIds: string[] = [];
+  const durabilityOwnership = createTurnDurabilityOwnership();
+  durabilityOwnership.recordInput(msg);
   const turnLease =
     existingTurnLease ??
     runtime.turnLifecycle.begin({
@@ -174,7 +179,6 @@ async function handleIncomingMessageInner(
     throw new Error("Cannot continue a turn with a stale lifecycle lease");
   const turnAbortSignal = turnLease.signal;
   let finalizedByThisInvocation = false;
-  let replayRetirementError: Error | null = null;
   const buffers = createBuffers(agentId ?? undefined);
   const noteFinalization = (
     transition: ReturnType<typeof finishListenerTurn>,
@@ -188,7 +192,9 @@ async function handleIncomingMessageInner(
         ...options,
         socket: options.socket ?? socket,
         turnId: activeDequeuedBatchId,
-        terminalConsumerIds: msg.terminalConsumerIds,
+        terminalConsumerIds: durabilityOwnership.terminalConsumerIds,
+        durableInputIdentities: durabilityOwnership.durableInputIdentities,
+        ...(terminalCommitGuard ? { canCommit: terminalCommitGuard } : {}),
         ...(options.errorNotice
           ? {
               errorNotice: {
@@ -202,15 +208,6 @@ async function handleIncomingMessageInner(
           : {}),
       }),
     );
-    if (transition.finished) {
-      const identities = msg.durableInputIdentities ?? [];
-      if (!completeInputReplay(runtime, identities)) {
-        replayRetirementError = new Error(
-          "Failed to durably retire accepted-input replay payload",
-        );
-        throw replayRetirementError;
-      }
-    }
     return transition;
   };
   const finishIfInterrupted = (runId?: string | null): boolean => {
@@ -301,6 +298,7 @@ async function handleIncomingMessageInner(
       getInterruptedToolCallIds: () =>
         pendingNormalizationInterruptedToolCallIds,
       onTerminal: noteFinalization,
+      finalizeTerminal: finishTurn,
       getTurnId: () => activeDequeuedBatchId,
     });
     const {
@@ -803,6 +801,8 @@ async function handleIncomingMessageInner(
         turnToolContextId,
         turnLease,
         turnCorrelation,
+        onConsumeQueuedTurn: (queuedTurn) =>
+          durabilityOwnership.recordInput(queuedTurn),
         processOwnedTurn: msg.processOwnedTurn === true,
         originConnectionId: msg.connectionId,
         originConnectionCanResume,
@@ -828,10 +828,11 @@ async function handleIncomingMessageInner(
       pendingNormalizationInterruptedToolCallIds =
         approvalResult.pendingNormalizationInterruptedToolCallIds;
       turnToolContextId = approvalResult.turnToolContextId;
-      lastExecutionResults = approvalResult.lastExecutionResults;
-      lastExecutingToolCallIds = approvalResult.lastExecutingToolCallIds;
-      lastNeedsUserInputToolCallIds =
-        approvalResult.lastNeedsUserInputToolCallIds;
+      ({
+        lastExecutionResults,
+        lastExecutingToolCallIds,
+        lastNeedsUserInputToolCallIds,
+      } = durabilityOwnership.record(approvalResult));
       lastApprovalContinuationAccepted =
         approvalResult.lastApprovalContinuationAccepted;
 
@@ -862,12 +863,17 @@ async function handleIncomingMessageInner(
 
       if (approvalResult.kind === "terminal") {
         noteFinalization(
-          finalizeHandledRecoveryTurn(runtime, socket, turnLease, {
-            drainResult: approvalResult.drainResult,
-            agentId,
-            conversationId,
-            turnId: activeDequeuedBatchId,
-          }),
+          finalizeHandledRecoveryTurn(
+            runtime,
+            socket,
+            {
+              drainResult: approvalResult.drainResult,
+              agentId,
+              conversationId,
+              turnId: activeDequeuedBatchId,
+            },
+            finishTurn,
+          ),
         );
         return;
       }
@@ -878,7 +884,6 @@ async function handleIncomingMessageInner(
       );
     }
   } catch (error) {
-    if (error === replayRetirementError) throw error;
     trackBoundaryError({
       errorType: "listener_turn_processing_failed",
       error,

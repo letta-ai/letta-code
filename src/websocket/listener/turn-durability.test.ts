@@ -409,6 +409,103 @@ test("terminal persistence failure is visible without wedging the turn lease", (
   expect(runtime.turnLifecycle.isCurrent(lease)).toBe(false);
 });
 
+test("lost recovery ownership cannot persist or emit a stale terminal", () => {
+  const runtime = getOrCreateScopedRuntime(
+    createRuntime(),
+    "agent-1",
+    "conversation-1",
+  );
+  const lease = runtime.turnLifecycle.begin({
+    origin: "approval_recovery",
+    workingDirectory: process.cwd(),
+  });
+  let persisted = 0;
+  let emitted = 0;
+  const store = {
+    put: () => {
+      persisted += 1;
+      throw new Error("stale owner reached persistence");
+    },
+  } as unknown as ReturnType<typeof createTurnFinishedStore>;
+
+  const transition = finishListenerTurn(runtime, lease, {
+    socket: {
+      kind: "local",
+      bufferedAmount: 0,
+      isOpen: () => true,
+      send: () => {
+        emitted += 1;
+      },
+    },
+    turnId: "stale-recovery",
+    stopReason: "end_turn",
+    agentId: "agent-1",
+    conversationId: "conversation-1",
+    terminalConsumerIds: ["slack:agent-1"],
+    turnFinishedStore: store,
+    canCommit: () => false,
+  });
+
+  expect(transition.finished).toBe(false);
+  expect(persisted).toBe(0);
+  expect(emitted).toBe(0);
+  expect(runtime.turnLifecycle.isCurrent(lease)).toBe(true);
+});
+
+test.each([
+  { expiresOnCheck: 2, persisted: 0, boundary: "input journal" },
+  { expiresOnCheck: 3, persisted: 1, boundary: "terminal store" },
+])(
+  "ownership expiry across the $boundary fence cannot emit or clean evidence",
+  ({ expiresOnCheck, persisted }) => {
+    const store = createTurnFinishedStore(temporaryDirectory());
+    const runtime = getOrCreateScopedRuntime(
+      createRuntime(),
+      "agent-1",
+      "conversation-1",
+    );
+    const lease = runtime.turnLifecycle.begin({
+      origin: "approval_recovery",
+      workingDirectory: process.cwd(),
+    });
+    let checks = 0;
+    let emitted = 0;
+    let forgot = 0;
+
+    const transition = finishListenerTurn(runtime, lease, {
+      socket: {
+        kind: "local",
+        bufferedAmount: 0,
+        isOpen: () => true,
+        send: () => {
+          emitted += 1;
+        },
+      },
+      turnId: `claim-expiry-${expiresOnCheck}`,
+      stopReason: "end_turn",
+      agentId: "agent-1",
+      conversationId: "conversation-1",
+      terminalConsumerIds: ["slack:agent-1"],
+      turnFinishedStore: store,
+      canCommit: () => {
+        checks += 1;
+        return checks < expiresOnCheck;
+      },
+      forgetWork: () => {
+        forgot += 1;
+      },
+    });
+
+    expect(transition.finished).toBe(false);
+    expect(store.read("agent-1", "conversation-1")?.terminals.length ?? 0).toBe(
+      persisted,
+    );
+    expect(emitted).toBe(0);
+    expect(forgot).toBe(0);
+    expect(runtime.turnLifecycle.isCurrent(lease)).toBe(true);
+  },
+);
+
 test("agent-free App Server terminals are explicitly best effort", async () => {
   const store = createTurnFinishedStore(temporaryDirectory());
   const listener = createRuntime();

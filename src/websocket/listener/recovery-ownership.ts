@@ -79,19 +79,23 @@ export class RecoveryClaim {
   }
 
   get owned(): boolean {
-    return (
-      !this.ownershipLost &&
-      !this.stopped &&
-      this.now() < this.localExpiresAt &&
-      this.runtime.listener.connectionId === this.connectionId &&
-      this.runtime.listener.connectionGeneration === this.connectionGeneration
-    );
+    if (this.ownershipLost || this.stopped) return false;
+    if (
+      this.now() >= this.localExpiresAt ||
+      this.runtime.listener.connectionId !== this.connectionId ||
+      this.runtime.listener.connectionGeneration !== this.connectionGeneration
+    ) {
+      this.lose();
+      return false;
+    }
+    return true;
   }
 
   private lose(): void {
     if (this.ownershipLost) return;
     this.ownershipLost = true;
     this.stopTimer();
+    this.runtime.listener.activeRecoveryClaims?.delete(this);
     this.onLost();
   }
 
@@ -110,10 +114,9 @@ export class RecoveryClaim {
   }
 
   async renew(): Promise<boolean> {
-    if (!this.owned || this.renewalInFlight) {
-      if (!this.owned) this.lose();
+    if (this.stopped || this.ownershipLost || this.renewalInFlight)
       return false;
-    }
+    if (!this.owned) return false;
     this.stopTimer();
     this.renewalInFlight = true;
     const requestedAt = this.now();
@@ -126,6 +129,7 @@ export class RecoveryClaim {
         token: this.token,
         ttl_seconds: RECOVERY_CLAIM_TTL_MS / 1_000,
       });
+      if (this.stopped || this.ownershipLost) return false;
       if (
         response.token !== this.token ||
         response.fence !== this.fence ||
@@ -141,7 +145,7 @@ export class RecoveryClaim {
       return true;
     } catch (error) {
       debugWarn("recovery", "Recovery claim renewal failed", error);
-      this.lose();
+      if (!this.stopped && !this.ownershipLost) this.lose();
       return false;
     } finally {
       this.renewalInFlight = false;
@@ -156,6 +160,7 @@ export class RecoveryClaim {
     }
     this.stopped = true;
     this.stopTimer();
+    this.runtime.listener.activeRecoveryClaims?.delete(this);
     try {
       const response = await this.request(this.agentId, {
         action: "complete",
@@ -164,7 +169,11 @@ export class RecoveryClaim {
         connection_generation: this.connectionGeneration,
         token: this.token,
       });
-      return response.completed === true;
+      if (response.completed !== true) {
+        this.lose();
+        return false;
+      }
+      return true;
     } catch (error) {
       debugWarn("recovery", "Recovery claim completion failed", error);
       this.lose();
@@ -179,6 +188,7 @@ export class RecoveryClaim {
     }
     this.stopped = true;
     this.stopTimer();
+    this.runtime.listener.activeRecoveryClaims?.delete(this);
     try {
       await this.request(this.agentId, {
         action: "release",
@@ -195,6 +205,18 @@ export class RecoveryClaim {
   abandon(): void {
     this.stopped = true;
     this.stopTimer();
+    this.runtime.listener.activeRecoveryClaims?.delete(this);
+  }
+}
+
+/** Revoke capabilities synchronously before a listener identity can be reused. */
+export function revokeRecoveryClaims(
+  listener: ConversationRuntime["listener"],
+  connectionId?: string,
+): void {
+  for (const claim of [...(listener.activeRecoveryClaims ?? [])]) {
+    if (connectionId && claim.connectionId !== connectionId) continue;
+    void claim.release();
   }
 }
 
@@ -245,7 +267,7 @@ export async function acquireRecoveryClaim(
       }
       return null;
     }
-    return new RecoveryClaim(
+    const claim = new RecoveryClaim(
       runtime,
       runtime.agentId,
       runtime.conversationId,
@@ -262,6 +284,9 @@ export async function acquireRecoveryClaim(
       now,
       requestedAt + RECOVERY_CLAIM_TTL_MS - RECOVERY_CLAIM_EXPIRY_MARGIN_MS,
     );
+    runtime.listener.activeRecoveryClaims ??= new Set();
+    runtime.listener.activeRecoveryClaims.add(claim);
+    return claim;
   } catch (error) {
     debugWarn("recovery", "Recovery claim acquisition failed", error);
     return null;

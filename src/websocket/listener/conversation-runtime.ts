@@ -7,12 +7,17 @@ import {
   markQueuedInputDispositionsStarted,
   ordinaryInputIdentity,
 } from "./input-disposition";
+import {
+  clearPreparedInputTerminalByTurnId,
+  loadPreparedInputTerminals,
+} from "./input-terminal-journal";
 import { getQueueItemScope, getQueueItemsScope } from "./queue";
 import { scheduleQueueEmit } from "./queue-update-outbound";
 import {
   evictConversationRuntimeIfIdle,
   getOrCreateConversationRuntime,
 } from "./runtime";
+import { createTurnFinishedStore } from "./turn-finished-replay";
 import type { ConversationRuntime, ListenerRuntime } from "./types";
 
 function discardQueuedItem(
@@ -147,7 +152,11 @@ export function getOrCreateScopedRuntime(
  * pump. Existing volatile items win during same-process graceful replacement;
  * their stable client id prevents a second queue item from being inserted.
  */
-export function restoreDurableQueuedInputs(listener: ListenerRuntime): number {
+export function restoreDurableQueuedInputs(
+  listener: ListenerRuntime,
+  terminalStore = createTurnFinishedStore(),
+): number {
+  promotePreparedInputTerminals(listener, terminalStore);
   let restored = 0;
   for (const payload of loadDurableQueuedInputs(listener)) {
     const runtime = getOrCreateScopedRuntime(
@@ -187,4 +196,26 @@ export function restoreDurableQueuedInputs(listener: ListenerRuntime): number {
     restored += 1;
   }
   return restored;
+}
+
+/** Promote terminal journals before connection state-sync attempts replay. */
+export function promotePreparedInputTerminals(
+  listener: ListenerRuntime,
+  terminalStore = createTurnFinishedStore(),
+): void {
+  for (const prepared of loadPreparedInputTerminals(listener)) {
+    if (prepared.message.terminal_consumer_ids?.length) {
+      terminalStore.put(
+        prepared.scope.agentId,
+        prepared.scope.conversationId,
+        prepared.message,
+        prepared.owner,
+      );
+    }
+    if (
+      !clearPreparedInputTerminalByTurnId(listener, prepared.message.turn_id)
+    ) {
+      throw new Error("Failed to promote prepared input terminal");
+    }
+  }
 }

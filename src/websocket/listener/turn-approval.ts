@@ -70,7 +70,11 @@ import {
 } from "./turn-input-state";
 import type { TurnLease } from "./turn-lifecycle";
 import { setTurnLoopStatus } from "./turn-status";
-import type { ConversationRuntime, PendingTeleport } from "./types";
+import type {
+  ConversationRuntime,
+  IncomingMessage,
+  PendingTeleport,
+} from "./types";
 
 type ApprovalTransportOpenResult = "open" | "interrupted";
 
@@ -212,6 +216,8 @@ export async function handleApprovalStop(params: {
   turnToolContextId: string | null;
   turnLease: TurnLease;
   turnCorrelation?: TurnCorrelation;
+  /** Transfer durability ownership when steering is consumed into this turn. */
+  onConsumeQueuedTurn?: (queuedTurn: IncomingMessage) => void;
   /** This turn's output is owned by an in-process caller, not a relay client. */
   processOwnedTurn?: boolean;
   /** Relay connection that originated this turn; replacements retain this id. */
@@ -843,6 +849,7 @@ export async function handleApprovalStop(params: {
   const consumedQueuedTurn = consumeQueuedTurn(runtime);
   if (consumedQueuedTurn) {
     const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
+    params.onConsumeQueuedTurn?.(queuedTurn);
     turnCorrelation?.appendDequeuedBatch(dequeuedBatch.batchId);
     continuationBatchId = dequeuedBatch.batchId;
     nextTurnInput = appendQueuedTurnToInput(nextTurnInput, queuedTurn);

@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import {
   chmodSync,
   closeSync,
+  existsSync,
   fstatSync,
   fsyncSync,
   mkdirSync,
@@ -16,7 +17,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 const MAX_OWNER_BYTES = 4096;
 const WAIT_SLICE_MS = 5;
@@ -44,6 +45,47 @@ type ProcessStartCommand = (
   options?: { env?: NodeJS.ProcessEnv },
 ) => string;
 type ProcessProbe = (pid: number) => void;
+
+function installCandidateDirectory(
+  candidatePath: string,
+  lockPath: string,
+  platform: NodeJS.Platform = process.platform,
+): void {
+  if (platform !== "win32") {
+    renameSync(candidatePath, lockPath);
+    return;
+  }
+  try {
+    // Node's Windows rename may replace an existing file with a directory.
+    // Directory.Move is atomic on the same volume and refuses every existing
+    // destination path type. Pass paths through the environment, never source.
+    execFileSync(
+      "powershell",
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "[System.IO.Directory]::Move($env:LETTA_LOCK_SOURCE, $env:LETTA_LOCK_TARGET)",
+      ],
+      {
+        env: {
+          ...process.env,
+          LETTA_LOCK_SOURCE: candidatePath,
+          LETTA_LOCK_TARGET: lockPath,
+        },
+        stdio: "ignore",
+        windowsHide: true,
+      },
+    );
+  } catch (error) {
+    if (!existsSync(lockPath)) throw error;
+    const conflict = new Error("Durable lock destination exists") as Error & {
+      code: string;
+    };
+    conflict.code = "EEXIST";
+    throw conflict;
+  }
+}
 
 /** Windows does not support opening/fsyncing directories. File fsyncs still run. */
 export function fsyncDirectory(
@@ -215,6 +257,36 @@ function removeDeadOwner(
   removeDirectoryIfEmpty(lockPath, parent);
 }
 
+function sweepDeadCandidates(
+  lockPath: string,
+  parent: string,
+  isOwnerAlive: (owner: DurableLockOwner) => boolean,
+): void {
+  const prefix = `${basename(lockPath)}.candidate-`;
+  for (const entry of readdirSync(parent, { withFileTypes: true })) {
+    if (!entry.name.startsWith(prefix) || !entry.isDirectory()) continue;
+    const candidatePath = join(parent, entry.name);
+    let candidate: ReturnType<typeof readOwnerDirectory>;
+    try {
+      candidate = readOwnerDirectory(candidatePath);
+    } catch {
+      // Malformed or concurrently moving candidates are unverifiable. They do
+      // not contend for the canonical lock, so leave them rather than guessing.
+      continue;
+    }
+    // An empty candidate may be in the live mkdir -> owner-write interval.
+    if (!candidate) continue;
+    let alive: boolean;
+    try {
+      alive = isOwnerAlive(candidate.owner);
+    } catch {
+      continue;
+    }
+    if (alive) continue;
+    removeDeadOwner(candidatePath, parent, candidate.ownerPath);
+  }
+}
+
 function prepareCandidate(
   lockPath: string,
   parent: string,
@@ -264,8 +336,9 @@ export function acquireDurableFileLock(
   const owner = options.owner ?? currentDurableLockOwner();
   // Validate injected owners before constructing any path from their fields.
   parseOwner(owner);
-  const candidatePath = prepareCandidate(lockPath, parent, owner);
   const isAlive = options.isOwnerAlive ?? durableLockOwnerIsAlive;
+  sweepDeadCandidates(lockPath, parent, isAlive);
+  const candidatePath = prepareCandidate(lockPath, parent, owner);
   const waitMs = options.waitMs ?? 2_000;
   const startedAt = Date.now();
   const waitOrThrow = (): void => {
@@ -279,7 +352,7 @@ export function acquireDurableFileLock(
   try {
     while (true) {
       try {
-        renameSync(candidatePath, lockPath);
+        installCandidateDirectory(candidatePath, lockPath);
         installed = true;
         fsyncDirectory(parent);
         break;

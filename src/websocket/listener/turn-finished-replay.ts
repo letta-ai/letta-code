@@ -448,7 +448,9 @@ export type PreparedTurnFinished =
     }
   | { kind: "ephemeral" };
 
-function terminalOwner(runtime: ConversationRuntime): TurnFinishedOwner {
+export function getTurnFinishedOwner(
+  runtime: ConversationRuntime,
+): TurnFinishedOwner {
   // Only a connection which actually owns the turn may own its terminal.
   // A service-level listener connection is not provenance for cron/task work.
   const connectionId = runtime.activeConnectionId;
@@ -468,7 +470,7 @@ export function prepareTurnFinished(
   message: ReplayableTurnFinished,
   providedStore?: ReturnType<typeof createTurnFinishedStore>,
 ): PreparedTurnFinished {
-  const owner = terminalOwner(runtime);
+  const owner = getTurnFinishedOwner(runtime);
   // Process-owned work and rotating App Server clients have no peer that
   // implements the Cloud terminal acknowledgement contract. Keep those paths
   // explicitly ephemeral rather than accumulating records that can never be

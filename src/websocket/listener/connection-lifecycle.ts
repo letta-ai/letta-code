@@ -12,6 +12,7 @@ import {
   forgetQueuedInputDisposition,
   ordinaryInputIdentity,
 } from "./input-disposition";
+import { revokeRecoveryClaims } from "./recovery-ownership";
 import { evictConversationRuntimeIfIdle } from "./runtime";
 import { getListenerTransportKind, type ListenerTransport } from "./transport";
 import { handleIncomingMessage } from "./turn";
@@ -73,6 +74,7 @@ export function cleanupListenerConnection(
   runtime: ListenerRuntime,
   connectionId: ListenerConnectionId,
 ): void {
+  revokeRecoveryClaims(runtime, connectionId);
   for (const conversationRuntime of runtime.conversationRuntimes.values()) {
     if (conversationRuntime.activeConnectionId === connectionId) {
       const closingConnection = runtime.connections.get(connectionId);

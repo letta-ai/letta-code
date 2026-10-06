@@ -30,6 +30,7 @@ import {
 } from "@/websocket/listener/transport";
 import { handleApprovalStop } from "@/websocket/listener/turn-approval";
 import { createTurnInputState } from "@/websocket/listener/turn-input-state";
+import { finishListenerTurn } from "@/websocket/listener/turn-terminal";
 
 type ListenerSettings = Awaited<
   ReturnType<typeof settingsManager.getSettingsWithSecureTokens>
@@ -503,13 +504,13 @@ describe("listener approval reconnect timing", () => {
     finalizeHandledRecoveryTurn(
       conversationRuntime,
       capturedTransport,
-      turnLease,
       {
         drainResult: result.drainResult,
         agentId: "agent-1",
         conversationId: "conv-1",
         turnId: "run-restart",
       },
+      (options) => finishListenerTurn(conversationRuntime, turnLease, options),
     );
     await waitFor(
       () =>
@@ -763,13 +764,13 @@ describe("listener approval reconnect timing", () => {
     const transition = finalizeHandledRecoveryTurn(
       conversationRuntime,
       capturedTransport,
-      turnLease,
       {
         drainResult: result.drainResult,
         agentId: "agent-1",
         conversationId: "conv-1",
         turnId: "run-disconnected",
       },
+      (options) => finishListenerTurn(conversationRuntime, turnLease, options),
     );
     expect(transition.finished).toBe(true);
     expect(deps.executeApprovalBatch).toHaveBeenCalledTimes(1);

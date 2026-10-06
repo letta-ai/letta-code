@@ -77,15 +77,96 @@ test("a successful teleport receipt retires saved work without sending results",
 import { createInterruptedTurnStore } from "./interrupted-turn-record";
 import { createRuntime } from "./lifecycle";
 import { recoverRecordedTurns } from "./recover-recorded-turn";
+import { setActiveRuntime } from "./runtime";
+import type { handleIncomingMessage } from "./turn";
 import type { IncomingMessage } from "./types";
 
-const acquireTestClaim = async () =>
-  ({
-    owned: true,
-    complete: async () => true,
-    release: async () => {},
-    abandon: () => {},
-  }) as never;
+const acquireTestClaim = async () => {
+  let owned = true;
+  return {
+    get owned() {
+      return owned;
+    },
+    complete: async () => {
+      owned = false;
+      return true;
+    },
+    release: async () => {
+      owned = false;
+    },
+    abandon: () => {
+      owned = false;
+    },
+  } as never;
+};
+
+test("post-start claim loss schedules one coalesced recorded recovery retry", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "recorded-claim-loss-"));
+  const store = createInterruptedTurnStore(directory);
+  const listener = createRuntime();
+  listener.connectionId = "conn-replacement";
+  setActiveRuntime(listener);
+  const lostCallbacks: Array<() => void> = [];
+  const pendingTurns: Array<() => void> = [];
+  const terminalGuards: Array<() => boolean> = [];
+  let starts = 0;
+  try {
+    store.write({
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      runId: "run-1",
+      toolCallIds: ["call-1"],
+      results: [],
+      requestOtid: "request-1",
+      workingDirectory: "/project",
+    });
+    const deps = {
+      store,
+      backend: { retrieveAgent: async () => ({ id: "agent-1" }) } as never,
+      resume: (async () => ({
+        pendingApprovals: [
+          { toolCallId: "call-1", toolName: "Bash", toolArgs: "{}" },
+        ],
+      })) as never,
+      canRecover: async () => true,
+      acquireClaim: (async (_runtime: unknown, onLost: () => void) => {
+        let owned = true;
+        lostCallbacks.push(() => {
+          owned = false;
+          onLost();
+        });
+        return {
+          get owned() {
+            return owned;
+          },
+          complete: async () => false,
+          release: async () => {},
+          abandon: () => {},
+        } as never;
+      }) as never,
+      setCwd: () => {},
+      processTurn: async (
+        ...args: Parameters<typeof handleIncomingMessage>
+      ) => {
+        starts += 1;
+        terminalGuards.push(args[8] ?? (() => true));
+        await new Promise<void>((resolve) => pendingTurns.push(resolve));
+      },
+    };
+
+    await recoverRecordedTurns(listener, deps);
+    expect(starts).toBe(1);
+    lostCallbacks[0]?.();
+    lostCallbacks[0]?.();
+    expect(terminalGuards[0]?.()).toBe(false);
+    await Bun.sleep(10);
+    expect(starts).toBe(2);
+  } finally {
+    listener.intentionallyClosed = true;
+    for (const resolve of pendingTurns) resolve();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test("an accepted continuation still generating output is retained even with no pending tools", async () => {
   const directory = mkdtempSync(join(tmpdir(), "recorded-generating-"));
@@ -359,6 +440,7 @@ test("a tool generated while the listener was down is recovered only from its re
     );
     store.write(record);
     messageRunId = "run-other-process";
+    await Bun.sleep(1);
     await recoverRecordedTurns(runtime, deps);
     expect(sent).toHaveLength(1);
     expect(store.read("agent-1", "conv-1")).toBeNull();

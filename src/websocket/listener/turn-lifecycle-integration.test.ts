@@ -33,6 +33,7 @@ import type { ListenerTransport } from "./transport";
 import { handleApprovalStop } from "./turn-approval";
 import { releaseListenerTurnContext } from "./turn-context";
 import type { TurnLease } from "./turn-lifecycle";
+import { finishListenerTurn } from "./turn-terminal";
 
 function createOpenTransport(sentPayloads: string[] = []): ListenerTransport {
   return {
@@ -812,13 +813,13 @@ describe("listener turn lifecycle integration", () => {
     const transition = finalizeHandledRecoveryTurn(
       runtime,
       createOpenTransport(sentPayloads),
-      lease,
       {
         drainResult: { stopReason: "error" } as never,
         agentId: "agent-1",
         conversationId: "conv-1",
         turnId: "test-turn-1",
       },
+      (options) => finishListenerTurn(runtime, lease, options),
     );
     const payloads = sentPayloads.map((payload) => JSON.parse(payload));
 
@@ -855,13 +856,13 @@ describe("listener turn lifecycle integration", () => {
     const transition = finalizeHandledRecoveryTurn(
       runtime,
       createOpenTransport(sentPayloads),
-      staleLease,
       {
         drainResult: { stopReason: "error" } as never,
         agentId: "agent-1",
         conversationId: "conv-1",
         turnId: "test-turn-1",
       },
+      (options) => finishListenerTurn(runtime, staleLease, options),
     );
 
     expect(transition.finished).toBe(false);

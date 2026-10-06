@@ -17,13 +17,17 @@ import {
 } from "./recovery-ownership";
 import { getActiveRuntime } from "./runtime";
 import { handleIncomingMessage } from "./turn";
+import type { TurnLease } from "./turn-lifecycle";
 import type { ListenerRuntime } from "./types";
 
 export function scheduleRecordedTurnRecovery(
   listener: ListenerRuntime,
   recover = recoverRecordedTurns,
 ): void {
+  if (scheduledRecoveries.has(listener)) return;
+  scheduledRecoveries.add(listener);
   setImmediate(() => {
+    scheduledRecoveries.delete(listener);
     if (listener !== getActiveRuntime() || listener.intentionallyClosed) return;
     void recover(listener).catch((error) => {
       debugWarn("recovery", "Recorded restart recovery failed", error);
@@ -31,6 +35,7 @@ export function scheduleRecordedTurnRecovery(
   });
 }
 
+const scheduledRecoveries = new WeakSet<ListenerRuntime>();
 const recovering = new WeakSet<ListenerRuntime>();
 const retryTimers = new WeakMap<
   ListenerRuntime,
@@ -76,13 +81,17 @@ export async function recoverRecordedTurns(
         !listener.intentionallyClosed &&
         store.read(record.agentId, record.conversationId)?.revision ===
           record.revision;
-      if (runtime.turnLifecycle.kind !== "idle") continue;
+      if (runtime.turnLifecycle.kind !== "idle") {
+        deferred = true;
+        continue;
+      }
       if (!(await canRecover(runtime))) {
         deferred = true;
         continue;
       }
       let recoveryClaim: RecoveryClaim | null | undefined;
       let continuationStarted = false;
+      let continuationLease: TurnLease | undefined;
       try {
         if (record.teleportId) {
           const teleport = await (deps.teleportStatus ?? getTeleportStatus)(
@@ -184,9 +193,16 @@ export async function recoverRecordedTurns(
         recoveryClaim = await (deps.acquireClaim ?? acquireRecoveryClaim)(
           runtime,
           () => {
-            if (runtime.turnLifecycle.kind !== "idle") {
+            if (
+              continuationLease &&
+              runtime.turnLifecycle.isCurrent(continuationLease)
+            ) {
               runtime.turnLifecycle.requestCancellation({ cause: "transport" });
+              runtime.turnLifecycle.finish(continuationLease, "cancelled");
             }
+            scheduleRecordedTurnRecovery(listener, () =>
+              recoverRecordedTurns(listener, deps),
+            );
           },
         );
         if (listener.connectionId?.startsWith("conn-") && !recoveryClaim) {
@@ -213,6 +229,10 @@ export async function recoverRecordedTurns(
               requestOtid: randomUUID(),
             };
         store.write(continuation);
+        const persistedContinuation = store.read(
+          continuation.agentId,
+          continuation.conversationId,
+        );
         // An observer sync may have parked generic stale denials. The saved
         // results below replace those, rather than appending a second result.
         runtime.pendingInterruptedResults = null;
@@ -224,7 +244,13 @@ export async function recoverRecordedTurns(
           record.conversationId,
           record.workingDirectory,
         );
+        continuationLease = runtime.turnLifecycle.begin({
+          origin: "approval_recovery",
+          workingDirectory: record.workingDirectory,
+        });
         continuationStarted = true;
+        const hasRecoveryOwnership = () =>
+          !recoveryClaim || recoveryClaim.owned;
         void (deps.processTurn ?? handleIncomingMessage)(
           {
             type: "message",
@@ -239,9 +265,39 @@ export async function recoverRecordedTurns(
           },
           getOrCreateProcessTransport(listener),
           runtime,
+          undefined,
+          undefined,
+          undefined,
+          continuationLease,
+          undefined,
+          hasRecoveryOwnership,
         )
           .then(async () => {
-            if (recoveryClaim) await recoveryClaim.complete();
+            if (recoveryClaim && !(await recoveryClaim.complete())) {
+              if (
+                continuationLease &&
+                runtime.turnLifecycle.isCurrent(continuationLease)
+              ) {
+                runtime.turnLifecycle.requestCancellation({
+                  cause: "transport",
+                });
+                runtime.turnLifecycle.finish(continuationLease, "cancelled");
+              }
+              scheduleRecordedTurnRecovery(listener, () =>
+                recoverRecordedTurns(listener, deps),
+              );
+              return;
+            }
+            const current = store.read(
+              continuation.agentId,
+              continuation.conversationId,
+            );
+            if (
+              current?.revision &&
+              current.revision === persistedContinuation?.revision
+            ) {
+              store.remove(continuation.agentId, continuation.conversationId);
+            }
           })
           .catch((error) => {
             recoveryClaim?.abandon();
@@ -250,6 +306,16 @@ export async function recoverRecordedTurns(
               "Recorded continuation failed; retaining local work",
               error,
             );
+          })
+          .finally(() => {
+            if (
+              recoveryClaim &&
+              !recoveryClaim.owned &&
+              continuationLease &&
+              runtime.turnLifecycle.isCurrent(continuationLease)
+            ) {
+              runtime.turnLifecycle.finish(continuationLease, "cancelled");
+            }
           });
       } catch (error) {
         if (recoveryClaim && !continuationStarted) {

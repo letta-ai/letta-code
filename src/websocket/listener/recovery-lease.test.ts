@@ -13,9 +13,11 @@ import { enqueueInboundUserMessage } from "./inbound-queue";
 import { consumeInterruptQueue } from "./interrupts";
 import { createRuntime } from "./lifecycle";
 import { getOutboundQueueStats, OUTBOUND_QUEUE_LIMITS } from "./outbound-wire";
+import { RECOVERED_APPROVAL_OUTCOME_UNKNOWN } from "./recovered-approval-checkpoint";
 import { startRecoveredApprovalContinuation } from "./recovery";
 import { clearConversationRuntimeState } from "./runtime";
 import type { ListenerTransport } from "./transport";
+import { finishListenerTurn } from "./turn-terminal";
 import type { RecoveredApprovalState, StartListenerOptions } from "./types";
 
 class MockSocket {
@@ -138,6 +140,164 @@ afterEach(() => {
 });
 
 describe("recovered approval lease boundaries", () => {
+  test.each(["before terminal send", "during continuation callback"])(
+    "claim loss %s fences the stale recovered terminal",
+    async (lossPoint) => {
+      const listener = createRuntime();
+      const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+      runtime.recoveredApprovalState = createRecoveredState();
+      const sent: string[] = [];
+      let owned = true;
+      let attempted: ReturnType<typeof finishListenerTurn> | null = null;
+      const processTurn = mock(
+        async (
+          message,
+          socket,
+          ownerRuntime,
+          _onStatusChange,
+          _connectionId,
+          batchId,
+          turnLease,
+          _correlation,
+          terminalCommitGuard,
+        ) => {
+          if (lossPoint === "during continuation callback") {
+            await Promise.resolve();
+          }
+          owned = false;
+          if (!turnLease) throw new Error("expected recovery lease");
+          attempted = finishListenerTurn(ownerRuntime, turnLease, {
+            socket,
+            turnId: batchId,
+            stopReason: "end_turn",
+            agentId: message.agentId,
+            conversationId: message.conversationId ?? "default",
+            terminalConsumerIds: message.terminalConsumerIds,
+            durableInputIdentities: message.durableInputIdentities,
+            canCommit: terminalCommitGuard,
+          });
+        },
+      );
+
+      expect(
+        await startRecoveredApprovalContinuation(
+          runtime,
+          createTransport(sent),
+          processTurn,
+          {
+            dependencies: {
+              ensureSecretsHydrated: async () => {},
+              ensureModAdapters: async () => [],
+              prepareToolExecutionContext: async () =>
+                createPreparedToolContext(),
+              executeApprovalBatch: async () => createDenialResults(),
+              recordListenerWork: () => {},
+              acquireRecoveryClaim: (async () => ({
+                get owned() {
+                  return owned;
+                },
+                complete: async () => false,
+                release: async () => {},
+                abandon: () => {},
+              })) as never,
+            },
+          },
+        ),
+      ).toBe(true);
+      expect(attempted).toMatchObject({ finished: false });
+      expect(
+        sent.some(
+          (payload) =>
+            (JSON.parse(payload) as { type?: string }).type === "turn_finished",
+        ),
+      ).toBe(false);
+      expect(runtime.turnLifecycle.kind).toBe("idle");
+    },
+  );
+
+  test("claim loss reacquires and resumes on the same healthy connection", async () => {
+    const listener = createRuntime();
+    listener.connectionId = "conn-hosted";
+    listener.connectionGeneration = "generation-hosted";
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    runtime.recoveredApprovalState = createRecoveredState();
+    const sent: string[] = [];
+    let acquisitions = 0;
+    let firstLoss: (() => void) | undefined;
+    const processTurn = mock(
+      async (
+        message,
+        socket,
+        ownerRuntime,
+        _onStatusChange,
+        _connectionId,
+        batchId,
+        turnLease,
+        _correlation,
+        terminalCommitGuard,
+      ) => {
+        if (!turnLease) throw new Error("expected recovery lease");
+        finishListenerTurn(ownerRuntime, turnLease, {
+          socket,
+          turnId: batchId,
+          stopReason: "end_turn",
+          agentId: message.agentId,
+          conversationId: message.conversationId ?? "default",
+          terminalConsumerIds: message.terminalConsumerIds,
+          durableInputIdentities: message.durableInputIdentities,
+          canCommit: terminalCommitGuard,
+          forgetWork: () => {},
+        });
+      },
+    );
+
+    await startRecoveredApprovalContinuation(
+      runtime,
+      createTransport(sent),
+      processTurn,
+      {
+        dependencies: {
+          canRecover: async () => true,
+          ensureSecretsHydrated: async () => {},
+          ensureModAdapters: async () => [],
+          prepareToolExecutionContext: async () => createPreparedToolContext(),
+          executeApprovalBatch: async () => createDenialResults(),
+          recordListenerWork: () => {
+            if (acquisitions === 1) firstLoss?.();
+          },
+          acquireRecoveryClaim: (async (
+            _runtime: unknown,
+            onLost: () => void,
+          ) => {
+            acquisitions += 1;
+            if (acquisitions === 2) return null;
+            let owned = true;
+            if (acquisitions === 1) {
+              firstLoss = () => {
+                owned = false;
+                onLost();
+              };
+            }
+            return {
+              get owned() {
+                return owned;
+              },
+              complete: async () => true,
+              release: async () => {},
+              abandon: () => {},
+            } as never;
+          }) as never,
+        },
+      },
+    );
+
+    await Bun.sleep(300);
+    await waitFor(() => acquisitions === 3);
+    await waitFor(() => runtime.recoveredApprovalState === null);
+    expect(processTurn).toHaveBeenCalledTimes(1);
+    expect(runtime.turnLifecycle.kind).toBe("idle");
+  });
+
   test("timed-out recovery replays terminal pairs to a later App Server owner", async () => {
     let now = 1_000;
     spyOn(Date, "now").mockImplementation(() => now);
@@ -397,6 +557,12 @@ describe("recovered approval lease boundaries", () => {
       "before_tool_execution",
       "after_tool_execution",
     ]);
+    expect(checkpoints[0]?.update.results).toEqual([
+      expect.objectContaining({
+        status: "error",
+        tool_return: RECOVERED_APPROVAL_OUTCOME_UNKNOWN,
+      }),
+    ]);
     expect(checkpoints[1]?.update.results).toEqual([
       expect.objectContaining({ status: "error" }),
     ]);
@@ -580,6 +746,57 @@ describe("recovered approval lease boundaries", () => {
     expect(runtime.turnLifecycle.isCurrent(replacementLease)).toBe(true);
     expect(sentPayloads).toEqual([]);
     expect(recordedResults.at(-1)).toEqual(createDenialResults());
+  });
+
+  test("claim expiry during the pre-effect checkpoint skips execution", async () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    runtime.recoveredApprovalState = createApprovedRecoveredState();
+    const executeApprovalBatch = mock(async () => createToolResults());
+    let expired = false;
+    let lost = false;
+
+    expect(
+      await startRecoveredApprovalContinuation(
+        runtime,
+        createTransport([]),
+        mock(async () => {}),
+        {
+          dependencies: {
+            ensureSecretsHydrated: async () => {},
+            ensureModAdapters: async () => [],
+            prepareToolExecutionContext: async () =>
+              createPreparedToolContext(),
+            executeApprovalBatch,
+            recordListenerWork: (_runtime, _update, phase) => {
+              if (phase === "before_tool_execution") {
+                expired = true;
+                listener.intentionallyClosed = true;
+              }
+            },
+            acquireRecoveryClaim: (async (
+              _runtime: unknown,
+              onLost: () => void,
+            ) => ({
+              get owned() {
+                if (expired && !lost) {
+                  lost = true;
+                  onLost();
+                }
+                return !expired;
+              },
+              complete: async () => false,
+              release: async () => {},
+              abandon: () => {},
+            })) as never,
+          },
+        },
+      ),
+    ).toBe(true);
+
+    expect(executeApprovalBatch).not.toHaveBeenCalled();
+    expect(lost).toBe(true);
+    expect(runtime.turnLifecycle.kind).toBe("idle");
   });
 
   test("aborted recovered denial processing that throws finalizes exactly once without tool starts", async () => {

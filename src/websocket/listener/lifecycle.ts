@@ -42,6 +42,7 @@ import {
 } from "./control-inputs";
 import {
   getOrCreateScopedRuntime,
+  promotePreparedInputTerminals,
   restoreDurableQueuedInputs,
 } from "./conversation-runtime";
 import { loadPersistedCwdMap } from "./cwd";
@@ -79,6 +80,7 @@ import {
   type recoverRecordedTurns,
   scheduleRecordedTurnRecovery,
 } from "./recover-recorded-turn";
+import { revokeRecoveryClaims } from "./recovery-ownership";
 import {
   clearConversationRuntimeState,
   clearRuntimeTimers,
@@ -194,6 +196,7 @@ export function createRuntime(): ListenerRuntime {
     connectionName: null,
     conversationRuntimes: new Map(),
     acceptedInputDispositionLedger: createAcceptedInputDispositionLedger(),
+    activeRecoveryClaims: new Set(),
     pendingStartupFramesByLineage: new Map(),
     startupGenerationByLineage: new Map(),
     memfsSyncedAgents: new Map(),
@@ -210,6 +213,7 @@ export function stopRuntime(
   runtime: ListenerRuntime,
   suppressCallbacks: boolean,
 ): void {
+  revokeRecoveryClaims(runtime);
   notifyStreamObserversRuntimeStopped(runtime);
   disposeListenerModAdapter(runtime);
   rejectPendingExternalToolCalls(runtime, "Listener runtime stopped");
@@ -279,6 +283,10 @@ export async function startConnectedListenerRuntime(
         ? "_ws_open"
         : "_local_open",
   });
+  // Terminal intent and input replay are one journaled transition. Promote it
+  // before state sync so this very connection can replay the terminal instead
+  // of waiting for another reconnect.
+  promotePreparedInputTerminals(runtime);
   if (
     !(await completeInitialConnectionStartup(
       runtime,
@@ -305,6 +313,8 @@ export async function startConnectedListenerRuntime(
 
   if (options.startProcessServices === false) return;
   // Managed remote listeners adopt an open gateway and resume local records.
+  runtime.scheduleRecordedRecovery = () =>
+    scheduleRecordedTurnRecovery(runtime, options.recoverRecordedWork);
   scheduleRecordedTurnRecovery(runtime, options.recoverRecordedWork);
 
   // This must precede the existing startup pump loop: a queued acknowledgement
