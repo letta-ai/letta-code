@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { APIError } from "@letta-ai/letta-client/error";
+import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { createRuntime } from "./lifecycle";
 import {
@@ -344,6 +345,80 @@ test("structured 4xx status is used when APIError status is undefined", () => {
       errorInfo: { message: detail, detail, status_code: 400 },
     }),
   ).not.toBe("Connection to Letta service failed. Please retry.");
+});
+
+test("direct apiError 4xx status prevents proxy outage classification", () => {
+  const detail =
+    "Error occurred while trying to proxy: No active runs found for this conversation.";
+
+  expect(
+    getConsumerLoopErrorMessage({
+      message: detail,
+      apiError: {
+        message_type: "error_message",
+        message: detail,
+        detail,
+        error_type: "invalid_request_error",
+        run_id: "run-1",
+        status_code: 400,
+      } as LettaStreamingResponse.LettaErrorMessage,
+    }),
+  ).not.toBe("Connection to Letta service failed. Please retry.");
+});
+
+test("direct apiError 5xx status preserves proxy outage classification", () => {
+  const detail = "Upstream timed out while trying to proxy to api.letta.com";
+
+  expect(
+    getConsumerLoopErrorMessage({
+      message: detail,
+      apiError: {
+        message_type: "error_message",
+        message: detail,
+        detail,
+        error_type: "server_error",
+        run_id: "run-1",
+        status_code: 503,
+      } as LettaStreamingResponse.LettaErrorMessage,
+    }),
+  ).toBe("Connection to Letta service failed. Please retry.");
+});
+
+test("nested apiError 4xx status prevents proxy outage classification", () => {
+  const detail =
+    "Error occurred while trying to proxy: No active runs found for this conversation.";
+  const error = Object.assign(new Error(detail), {
+    apiError: {
+      message_type: "error_message",
+      message: detail,
+      detail,
+      error_type: "invalid_request_error",
+      run_id: "run-1",
+      status_code: 400,
+    },
+  });
+
+  expect(
+    getConsumerLoopErrorMessage({ message: error.message, error }),
+  ).not.toBe("Connection to Letta service failed. Please retry.");
+});
+
+test("nested apiError 5xx status preserves proxy outage classification", () => {
+  const detail = "Upstream timed out while trying to proxy to api.letta.com";
+  const error = Object.assign(new Error(detail), {
+    apiError: {
+      message_type: "error_message",
+      message: detail,
+      detail,
+      error_type: "server_error",
+      run_id: "run-1",
+      status_code: 503,
+    },
+  });
+
+  expect(getConsumerLoopErrorMessage({ message: error.message, error })).toBe(
+    "Connection to Letta service failed. Please retry.",
+  );
 });
 
 test("nested structured detail participates in known 5xx proxy detection", () => {

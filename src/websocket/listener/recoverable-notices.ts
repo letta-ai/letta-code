@@ -34,6 +34,10 @@ type StructuredLoopErrorInfo =
   | RunErrorInfo
   | LettaStreamingResponse.LettaErrorMessage;
 
+type RuntimeApiError = LettaStreamingResponse.LettaErrorMessage & {
+  status_code?: number;
+};
+
 export interface LoopErrorNoticeDecision {
   visibility: LifecycleNoticeVisibility;
   message: string;
@@ -99,13 +103,13 @@ function toStructuredApiError(
 
 function getStructuredApiErrorFromError(
   error: unknown,
-): LettaStreamingResponse.LettaErrorMessage | undefined {
+): RuntimeApiError | undefined {
   if (!(error instanceof Error)) {
     return undefined;
   }
 
   const errorWithStructuredInfo = error as Error & {
-    apiError?: LettaStreamingResponse.LettaErrorMessage;
+    apiError?: RuntimeApiError;
     runErrorInfo?: RunErrorInfo;
   };
 
@@ -205,11 +209,12 @@ export function getLoopErrorNoticeDecision(params: {
   unclassifiedFallback?: FormatErrorDetailsOptions["unclassifiedFallback"];
 }): LoopErrorNoticeDecision {
   const apiError =
-    params.apiError ??
+    (params.apiError as RuntimeApiError | undefined) ??
     toStructuredApiError(params.errorInfo) ??
     toStructuredApiError(params.runErrorInfo) ??
     getStructuredApiErrorFromError(params.error);
   const nestedStructuredSources = getStructuredSourcesFromError(params.error);
+  const nestedApiError = getStructuredApiErrorFromError(params.error);
   const detail =
     apiError?.detail ??
     params.errorInfo?.detail ??
@@ -219,8 +224,10 @@ export function getLoopErrorNoticeDecision(params: {
     extractConflictDetail(params.error) ??
     "";
   const statusTextSource = [
+    params.apiError as RuntimeApiError | undefined,
     params.errorInfo,
     params.runErrorInfo,
+    nestedApiError,
     ...nestedStructuredSources,
   ].find((source) => source?.status_code !== undefined);
   const apiStatus =

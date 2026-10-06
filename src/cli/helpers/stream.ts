@@ -920,6 +920,7 @@ export async function drainStreamWithResume(
     authoritativeApprovalBoundary,
     streamRequestContext,
     loadCurrentPendingApprovals,
+    abortSignal,
   );
   if (replayedApprovalBoundary && !authoritativeApprovalBoundary) {
     result.stopReason = "error";

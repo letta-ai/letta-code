@@ -11,6 +11,45 @@ export type CurrentPendingApprovalLoader = (
   recoveredApprovals: ApprovalRequest[],
 ) => Promise<ApprovalRequest[]>;
 
+const APPROVAL_REVALIDATION_TIMEOUT_MS = 10_000;
+
+async function runBoundedApprovalRead<T>(
+  read: () => Promise<T>,
+  abortSignal?: AbortSignal,
+  timeoutMs = APPROVAL_REVALIDATION_TIMEOUT_MS,
+): Promise<T> {
+  if (abortSignal?.aborted) {
+    throw Object.assign(new Error("Approval revalidation aborted"), {
+      name: "AbortError",
+    });
+  }
+
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  const bounded = new Promise<never>((_, reject) => {
+    timeout = setTimeout(
+      () => reject(new Error("Approval revalidation timed out")),
+      timeoutMs,
+    );
+    if (abortSignal) {
+      onAbort = () =>
+        reject(
+          Object.assign(new Error("Approval revalidation aborted"), {
+            name: "AbortError",
+          }),
+        );
+      abortSignal.addEventListener("abort", onAbort, { once: true });
+    }
+  });
+
+  try {
+    return await Promise.race([read(), bounded]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+    if (onAbort) abortSignal?.removeEventListener("abort", onAbort);
+  }
+}
+
 export function retainIncompleteApprovalRequests(
   buffers: ReturnType<typeof createBuffers>,
   approvals: ApprovalRequest[] | undefined,
@@ -66,6 +105,8 @@ export async function revalidateRecoveredApprovals(params: {
   recoveredApprovals: ApprovalRequest[];
   context: StreamRequestContext | undefined;
   loadCurrentPendingApprovals?: CurrentPendingApprovalLoader;
+  abortSignal?: AbortSignal;
+  timeoutMs?: number;
 }): Promise<ApprovalRequest[]> {
   if (params.recoveredApprovals.length === 0) return [];
   if (!params.context && !params.loadCurrentPendingApprovals) {
@@ -77,9 +118,15 @@ export async function revalidateRecoveredApprovals(params: {
   }
 
   try {
-    const currentApprovals = await (
-      params.loadCurrentPendingApprovals ?? loadCurrentPendingApprovals
-    )(params.context as StreamRequestContext, params.recoveredApprovals);
+    const currentApprovals = await runBoundedApprovalRead(
+      () =>
+        (params.loadCurrentPendingApprovals ?? loadCurrentPendingApprovals)(
+          params.context as StreamRequestContext,
+          params.recoveredApprovals,
+        ),
+      params.abortSignal,
+      params.timeoutMs,
+    );
     const currentByToolCallId = new Map(
       currentApprovals.map((approval) => [approval.toolCallId, approval]),
     );
@@ -120,6 +167,7 @@ export async function revalidateRecoveredApprovalBoundary(
   authoritativeApprovalBoundary: boolean,
   context: StreamRequestContext | undefined,
   loadCurrentPendingApprovals?: CurrentPendingApprovalLoader,
+  abortSignal?: AbortSignal,
 ): Promise<boolean> {
   if (!authoritativeApprovalBoundary) return false;
   if ((result.approvals?.length ?? 0) === 0) return false;
@@ -127,6 +175,7 @@ export async function revalidateRecoveredApprovalBoundary(
     recoveredApprovals: result.approvals ?? [],
     context,
     loadCurrentPendingApprovals,
+    abortSignal,
   });
   result.approval = result.approvals[0] ?? null;
   return result.approvals.length > 0;
