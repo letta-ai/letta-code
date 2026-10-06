@@ -52,18 +52,28 @@ function approval(
   runId: string,
   seqId: number,
   toolArgs = '{"cmd":"git status"}',
+  toolCallId = "tool-approval-1",
 ): LettaStreamingResponse {
   return {
     message_type: "approval_request_message",
-    id: "message-approval-1",
+    id: `message-${toolCallId}`,
     run_id: runId,
     seq_id: seqId,
     tool_call: {
-      tool_call_id: "tool-approval-1",
+      tool_call_id: toolCallId,
       name: "exec_command",
       arguments: toolArgs,
     },
   } as unknown as LettaStreamingResponse;
+}
+
+function approvalRequest(toolCallId: string) {
+  return {
+    toolCallId,
+    toolName: "exec_command",
+    toolArgs: '{"cmd":"git status"}',
+    messageId: `message-${toolCallId}`,
+  };
 }
 
 function stop(
@@ -291,7 +301,7 @@ describe("stream recovery", () => {
         toolCallId: "tool-approval-1",
         toolName: "exec_command",
         toolArgs: '{"cmd":"git status"}',
-        messageId: "message-approval-1",
+        messageId: "message-tool-approval-1",
       },
     ]);
     expect(streamRunMessages).toHaveBeenCalledTimes(3);
@@ -355,7 +365,7 @@ describe("stream recovery", () => {
         toolCallId: "tool-approval-1",
         toolName: "exec_command",
         toolArgs: '{"cmd":"git status"}',
-        messageId: "message-approval-1",
+        messageId: "message-tool-approval-1",
       },
     ]);
   });
@@ -424,6 +434,83 @@ describe("stream recovery", () => {
     expect(buffers.byId.get("tool-approval-1")).toMatchObject({
       phase: "finished",
       resultOk: false,
+      resultText: "Stream error",
+    });
+  });
+
+  test("fails closed when the stream missed part of the current approval batch", async () => {
+    const streamRunMessages = mock(async () =>
+      stream([], new Error("resumed stream disconnected")),
+    );
+    __testSetBackend({
+      capabilities,
+      streamRunMessages,
+      retrieveRun: mock(async () => ({
+        ...runningRun(),
+        status: "completed" as const,
+        stop_reason: "requires_approval" as const,
+      })),
+    } as unknown as Backend);
+    const buffers = createBuffers("agent-1");
+
+    const result = await drain(
+      stream(
+        [ping("run-1", 1), approval("run-1", 2)],
+        new Error("initial stream disconnected"),
+      ),
+      { ...immediateRetries, maxAttempts: 1 },
+      buffers,
+      async () => [
+        approvalRequest("tool-approval-1"),
+        approvalRequest("tool-approval-2"),
+      ],
+    );
+
+    expect(result.stopReason).toBe("error");
+    expect(result.approvals).toEqual([]);
+    expect(buffers.byId.get("tool-approval-1")).toMatchObject({
+      phase: "finished",
+      resultText: "Stream error",
+    });
+  });
+
+  test("fails closed when current state has resolved part of the recovered batch", async () => {
+    const streamRunMessages = mock(async () =>
+      stream([], new Error("resumed stream disconnected")),
+    );
+    __testSetBackend({
+      capabilities,
+      streamRunMessages,
+      retrieveRun: mock(async () => ({
+        ...runningRun(),
+        status: "completed" as const,
+        stop_reason: "requires_approval" as const,
+      })),
+    } as unknown as Backend);
+    const buffers = createBuffers("agent-1");
+
+    const result = await drain(
+      stream(
+        [
+          ping("run-1", 1),
+          approval("run-1", 2),
+          approval("run-1", 3, '{"cmd":"pwd"}', "tool-approval-2"),
+        ],
+        new Error("initial stream disconnected"),
+      ),
+      { ...immediateRetries, maxAttempts: 1 },
+      buffers,
+      async () => [approvalRequest("tool-approval-1")],
+    );
+
+    expect(result.stopReason).toBe("error");
+    expect(result.approvals).toEqual([]);
+    expect(buffers.byId.get("tool-approval-1")).toMatchObject({
+      phase: "finished",
+      resultText: "Stream error",
+    });
+    expect(buffers.byId.get("tool-approval-2")).toMatchObject({
+      phase: "finished",
       resultText: "Stream error",
     });
   });

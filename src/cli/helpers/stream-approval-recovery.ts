@@ -52,6 +52,21 @@ export async function revalidateRecoveredApprovals(params: {
     const currentByToolCallId = new Map(
       currentApprovals.map((approval) => [approval.toolCallId, approval]),
     );
+    const recoveredToolCallIds = new Set(
+      params.recoveredApprovals.map((approval) => approval.toolCallId),
+    );
+    if (
+      currentByToolCallId.size !== recoveredToolCallIds.size ||
+      !currentApprovals.every((approval) =>
+        recoveredToolCallIds.has(approval.toolCallId),
+      )
+    ) {
+      debugWarn(
+        "stream",
+        "Recovered approval batch does not match current pending tool-call IDs",
+      );
+      return [];
+    }
     return params.recoveredApprovals.flatMap((approval) => {
       const current = currentByToolCallId.get(approval.toolCallId);
       return current ? [current] : [];
