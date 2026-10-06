@@ -7,7 +7,10 @@ import {
   completePreparedInputTerminal,
   prepareInputTerminal,
 } from "./input-terminal-journal";
-import { forgetListenerWork } from "./interrupted-turn-record";
+import {
+  forgetListenerWork,
+  readInterruptedTurn,
+} from "./interrupted-turn-record";
 import {
   emitInterruptedStatusDelta,
   emitRuntimeStateUpdates,
@@ -98,6 +101,8 @@ export function finishListenerTurn(
           ...(options.usage ? { usage: options.usage } : {}),
         }
       : null;
+  const interruptedRevision = readInterruptedTurn(runtime)?.revision;
+  const terminalOwner = getTurnFinishedOwner(runtime, interruptedRevision);
   let preparedTurnFinished: ReturnType<typeof prepareTurnFinished> | null =
     null;
   if (
@@ -111,11 +116,12 @@ export function finishListenerTurn(
           conversationId: runtime.conversationId,
         },
         message: turnFinishedMessage,
-        owner: getTurnFinishedOwner(runtime),
+        owner: terminalOwner,
       },
     )
   ) {
     // No state transition is safe: the accepted input is still replayable.
+    runtime.turnLifecycle.finish(lease, options.stopReason);
     throw new Error("Failed to atomically prepare accepted-input terminal");
   }
   // The input journal fsync above can cross a claim's local expiry. Leave the
@@ -123,16 +129,24 @@ export function finishListenerTurn(
   if (options.canCommit && !options.canCommit()) {
     return rejectedCommit();
   }
+  const deferUntilReplayOwner =
+    runtime.listener.connectionId?.startsWith("conn-") === true &&
+    !!turnFinishedMessage?.terminal_consumer_ids?.length &&
+    terminalOwner.connectionId === null &&
+    !options.turnFinishedStore;
   try {
-    preparedTurnFinished = turnFinishedMessage
-      ? prepareTurnFinished(
-          runtime,
-          turnFinishedMessage,
-          options.turnFinishedStore,
-        )
-      : null;
+    preparedTurnFinished =
+      turnFinishedMessage && !deferUntilReplayOwner
+        ? prepareTurnFinished(
+            runtime,
+            turnFinishedMessage,
+            options.turnFinishedStore,
+            terminalOwner,
+          )
+        : null;
     if (
       turnFinishedMessage &&
+      !deferUntilReplayOwner &&
       !(options.completePreparedInputTerminal ?? completePreparedInputTerminal)(
         runtime,
         options.durableInputIdentities ?? [],

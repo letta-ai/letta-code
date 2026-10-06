@@ -4,8 +4,16 @@ import { getBackend } from "@/backend";
 import { getTeleportStatus } from "@/backend/api/environments";
 import { debugWarn } from "@/utils/debug";
 import { getOrCreateProcessTransport } from "./connection";
-import { getOrCreateScopedRuntime } from "./conversation-runtime";
+import {
+  getOrCreateScopedRuntime,
+  promotePreparedInputTerminals,
+} from "./conversation-runtime";
 import { setConversationWorkingDirectory } from "./cwd";
+import { hasCompletedInputTerminalRevision } from "./input-disposition";
+import {
+  hasPreparedInputTerminalRevision,
+  prepareInputTerminal,
+} from "./input-terminal-journal";
 import {
   createInterruptedTurnStore,
   recordedToolResults,
@@ -14,9 +22,14 @@ import {
   acquireRecoveryClaim,
   canRecoverConversation,
   type RecoveryClaim,
+  resolveRecoveryEligibility,
 } from "./recovery-ownership";
-import { getActiveRuntime } from "./runtime";
+import { getActiveRuntime, getConversationRuntimeKey } from "./runtime";
 import { handleIncomingMessage } from "./turn";
+import {
+  createTurnFinishedStore,
+  getTurnFinishedOwner,
+} from "./turn-finished-replay";
 import type { TurnLease } from "./turn-lifecycle";
 import type { ListenerRuntime } from "./types";
 
@@ -54,6 +67,7 @@ export async function recoverRecordedTurns(
     processTurn: typeof handleIncomingMessage;
     setCwd: typeof setConversationWorkingDirectory;
     teleportStatus: typeof getTeleportStatus;
+    terminalStore: ReturnType<typeof createTurnFinishedStore>;
   }> = {},
 ): Promise<void> {
   if (
@@ -67,10 +81,45 @@ export async function recoverRecordedTurns(
   if (timer) clearTimeout(timer);
   retryTimers.delete(listener);
   const store = deps.store ?? createInterruptedTurnStore();
+  const terminalStore = deps.terminalStore ?? createTurnFinishedStore();
   const canRecover = deps.canRecover ?? canRecoverConversation;
   let deferred = false;
   try {
     for (const record of store.list()) {
+      if (record.revision) {
+        const scope = {
+          agentId: record.agentId,
+          conversationId: record.conversationId,
+        };
+        if (
+          hasPreparedInputTerminalRevision(listener, scope, record.revision)
+        ) {
+          promotePreparedInputTerminals(listener, terminalStore, scope);
+          if (
+            hasPreparedInputTerminalRevision(listener, scope, record.revision)
+          ) {
+            deferred = true;
+            continue;
+          }
+        }
+        if (
+          hasCompletedInputTerminalRevision(
+            listener,
+            getConversationRuntimeKey(record.agentId, record.conversationId),
+            record.durableInputIdentities ?? [],
+            record.revision,
+          ) ||
+          terminalStore
+            .read(record.agentId, record.conversationId)
+            ?.terminals.some(
+              (terminal) =>
+                terminal.owner.interruptedRevision === record.revision,
+            )
+        ) {
+          store.remove(record.agentId, record.conversationId);
+          continue;
+        }
+      }
       const runtime = getOrCreateScopedRuntime(
         listener,
         record.agentId,
@@ -163,6 +212,44 @@ export async function recoverRecordedTurns(
             deferred = true;
             continue;
           }
+          if (record.durableInputIdentities?.length) {
+            const ownerConnection = [...listener.connections.values()].find(
+              (connection) =>
+                connection.initialized &&
+                connection.subscriptions.has(runtime.key),
+            );
+            runtime.activeConnectionId = ownerConnection?.id ?? null;
+            const turnId = `turn-recovered-complete-${randomUUID()}`;
+            if (
+              !prepareInputTerminal(runtime, record.durableInputIdentities, {
+                scope: {
+                  agentId: record.agentId,
+                  conversationId: record.conversationId,
+                },
+                message: {
+                  type: "turn_finished",
+                  turn_id: turnId,
+                  stop_reason: "end_turn",
+                  ...(record.terminalConsumerIds?.length
+                    ? {
+                        terminal_consumer_ids: [
+                          ...new Set(record.terminalConsumerIds),
+                        ],
+                      }
+                    : {}),
+                  ...(recordedRunId ? { run_id: recordedRunId } : {}),
+                },
+                owner: getTurnFinishedOwner(runtime, record.revision),
+              })
+            ) {
+              deferred = true;
+              continue;
+            }
+            promotePreparedInputTerminals(listener, terminalStore, {
+              agentId: record.agentId,
+              conversationId: record.conversationId,
+            });
+          }
           store.remove(record.agentId, record.conversationId);
           continue;
         }
@@ -188,18 +275,21 @@ export async function recoverRecordedTurns(
           continue;
         }
         if (owned.length !== pending.length) continue;
-        if (!(await canRecover(runtime))) continue;
+        const eligibility = await resolveRecoveryEligibility(
+          runtime,
+          deps.canRecover,
+        );
+        if (eligibility !== "owned") {
+          if (eligibility === "unavailable") deferred = true;
+          continue;
+        }
         if (!unchanged()) continue;
         recoveryClaim = await (deps.acquireClaim ?? acquireRecoveryClaim)(
           runtime,
           () => {
-            if (
-              continuationLease &&
-              runtime.turnLifecycle.isCurrent(continuationLease)
-            ) {
-              runtime.turnLifecycle.requestCancellation({ cause: "transport" });
-              runtime.turnLifecycle.finish(continuationLease, "cancelled");
-            }
+            // Do not abort an effect which may already be committing. The
+            // authority guard fences transport and terminal publication; a
+            // successor starts only after this detached predecessor settles.
             scheduleRecordedTurnRecovery(listener, () =>
               recoverRecordedTurns(listener, deps),
             );
@@ -248,15 +338,19 @@ export async function recoverRecordedTurns(
           origin: "approval_recovery",
           workingDirectory: record.workingDirectory,
         });
-        continuationStarted = true;
         const hasRecoveryOwnership = () =>
           !recoveryClaim || recoveryClaim.owned;
-        void (deps.processTurn ?? handleIncomingMessage)(
+        const continuationPromise = (deps.processTurn ?? handleIncomingMessage)(
           {
             type: "message",
             agentId: record.agentId,
             conversationId: record.conversationId,
             actingUserId: record.actingUserId,
+            connectionId: [...listener.connections.values()].find(
+              (connection) =>
+                connection.initialized &&
+                connection.subscriptions.has(runtime.key),
+            )?.id,
             durableInputIdentities: record.durableInputIdentities,
             terminalConsumerIds: record.terminalConsumerIds,
             messages: [
@@ -271,7 +365,9 @@ export async function recoverRecordedTurns(
           continuationLease,
           undefined,
           hasRecoveryOwnership,
-        )
+        );
+        continuationStarted = true;
+        void continuationPromise
           .then(async () => {
             if (recoveryClaim && !(await recoveryClaim.complete())) {
               if (
@@ -299,12 +395,22 @@ export async function recoverRecordedTurns(
               store.remove(continuation.agentId, continuation.conversationId);
             }
           })
-          .catch((error) => {
-            recoveryClaim?.abandon();
+          .catch(async (error) => {
+            if (
+              continuationLease &&
+              runtime.turnLifecycle.isCurrent(continuationLease)
+            ) {
+              runtime.turnLifecycle.requestCancellation({ cause: "transport" });
+              runtime.turnLifecycle.finish(continuationLease, "cancelled");
+            }
+            await recoveryClaim?.release();
             debugWarn(
               "recovery",
               "Recorded continuation failed; retaining local work",
               error,
+            );
+            scheduleRecordedTurnRecovery(listener, () =>
+              recoverRecordedTurns(listener, deps),
             );
           })
           .finally(() => {

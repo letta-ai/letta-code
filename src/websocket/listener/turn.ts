@@ -47,7 +47,7 @@ import {
   shouldAttemptPostStopApprovalRecovery,
 } from "./recovery";
 import {
-  clearRecoveredApprovalStateForScope,
+  clearRecoveredApprovalStateUnlessRetained,
   evictConversationRuntimeIfIdle,
 } from "./runtime";
 import { normalizeCwdAgentId } from "./scope";
@@ -84,7 +84,6 @@ import { drainTurnStreamWithEmission } from "./turn-stream";
 import { buildTurnUsage, finishListenerTurn } from "./turn-terminal";
 import { seedInboundUserTranscriptLines } from "./turn-transcript";
 import type { ConversationRuntime, IncomingMessage } from "./types";
-
 export async function handleIncomingMessage(
   msg: IncomingMessage,
   socket: ListenerTransport,
@@ -98,6 +97,7 @@ export async function handleIncomingMessage(
   existingTurnLease?: TurnLease,
   existingTurnCorrelation?: TurnCorrelation,
   terminalCommitGuard?: () => boolean,
+  retainRecoveredApprovalState: boolean = false,
 ): Promise<void> {
   notifyTurnStarted(msg);
   try {
@@ -111,13 +111,12 @@ export async function handleIncomingMessage(
       existingTurnLease,
       existingTurnCorrelation,
       terminalCommitGuard,
+      retainRecoveredApprovalState,
     );
   } finally {
     notifyTurnFinished(msg);
-    tp.finishPendingTeleport(runtime);
   }
 }
-
 async function handleIncomingMessageInner(
   msg: IncomingMessage,
   socket: ListenerTransport,
@@ -131,6 +130,7 @@ async function handleIncomingMessageInner(
   existingTurnLease?: TurnLease,
   existingTurnCorrelation?: TurnCorrelation,
   terminalCommitGuard?: () => boolean,
+  retainRecoveredApprovalState: boolean = false,
 ): Promise<void> {
   const agentId = normalizeCwdAgentId(msg.agentId);
   const requestedConversationId = msg.conversationId || undefined;
@@ -191,7 +191,7 @@ async function handleIncomingMessageInner(
       finishListenerTurn(runtime, turnLease, {
         ...options,
         socket: options.socket ?? socket,
-        turnId: activeDequeuedBatchId,
+        turnId: durabilityOwnership.terminalTurnId,
         terminalConsumerIds: durabilityOwnership.terminalConsumerIds,
         durableInputIdentities: durabilityOwnership.durableInputIdentities,
         ...(terminalCommitGuard ? { canCommit: terminalCommitGuard } : {}),
@@ -233,10 +233,10 @@ async function handleIncomingMessageInner(
       agent_id: agentId ?? null,
       conversation_id: conversationId,
     });
-    clearRecoveredApprovalStateForScope(runtime.listener, {
-      agent_id: agentId ?? null,
-      conversation_id: conversationId,
-    });
+    clearRecoveredApprovalStateUnlessRetained(
+      runtime,
+      retainRecoveredApprovalState,
+    );
     emitRuntimeStateUpdates(runtime, {
       agent_id: agentId ?? null,
       conversation_id: conversationId,
@@ -340,8 +340,8 @@ async function handleIncomingMessageInner(
           turnCorrelation,
           msgRunIds,
           runId,
-          durableInputIdentities: msg.durableInputIdentities,
-          terminalConsumerIds: msg.terminalConsumerIds,
+          durableInputIdentities: durabilityOwnership.durableInputIdentities,
+          terminalConsumerIds: durabilityOwnership.terminalConsumerIds,
         },
       );
       const result = drained.result;
@@ -393,7 +393,7 @@ async function handleIncomingMessageInner(
           : null;
         if (pendingTeleport) {
           noteFinalization(
-            tp.finishTeleport(runtime, turnLease, pendingTeleport),
+            tp.finishClaimedTeleport(runtime, pendingTeleport, finishTurn),
           );
           return;
         }
@@ -419,11 +419,12 @@ async function handleIncomingMessageInner(
         ) {
           break;
         }
-        finishTurn({
+        const transition = finishTurn({
           stopReason: "end_turn",
           agentId,
           conversationId,
         });
+        if (agentId) tp.finishDrainedTeleport(runtime, transition);
         break;
       }
       if (stopReason === "cancelled") {
@@ -806,6 +807,7 @@ async function handleIncomingMessageInner(
         processOwnedTurn: msg.processOwnedTurn === true,
         originConnectionId: msg.connectionId,
         originConnectionCanResume,
+        authorityGuard: terminalCommitGuard,
         buildSendOptions,
       });
       if (approvalResult.kind === "error") {
@@ -838,7 +840,9 @@ async function handleIncomingMessageInner(
 
       if (approvalResult.kind === "teleport") {
         const pending = approvalResult.pendingTeleport;
-        noteFinalization(tp.finishTeleport(runtime, turnLease, pending));
+        noteFinalization(
+          tp.finishClaimedTeleport(runtime, pending, finishTurn),
+        );
         return;
       }
       if (approvalResult.kind === "interrupted") {

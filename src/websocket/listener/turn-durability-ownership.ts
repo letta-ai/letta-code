@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { ApprovalResult } from "@/agent/approval-execution";
 import type { IncomingMessage, InputIdentity } from "./types";
 
@@ -15,6 +16,7 @@ export function createTurnDurabilityOwnership() {
   const durableInputIdentities = new Map<string, InputIdentity>();
   const terminalConsumerIds = new Set<string>();
   return {
+    terminalTurnId: `turn-${randomUUID()}`,
     recordInput(
       input: Pick<
         IncomingMessage,

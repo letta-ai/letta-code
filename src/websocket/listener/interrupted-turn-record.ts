@@ -57,13 +57,23 @@ function fsyncDirectory(
   }
 }
 
-export function createInterruptedTurnStore(
-  directory = join(
+function defaultInterruptedTurnDirectory(): string {
+  let serverUrl: string;
+  try {
+    serverUrl = getServerUrl();
+  } catch {
+    serverUrl = process.env.LETTA_BASE_URL ?? "uninitialized";
+  }
+  return join(
     homedir(),
     ".letta",
     "listener-state",
-    createHash("sha256").update(getServerUrl()).digest("hex").slice(0, 24),
-  ),
+    createHash("sha256").update(serverUrl).digest("hex").slice(0, 24),
+  );
+}
+
+export function createInterruptedTurnStore(
+  directory = defaultInterruptedTurnDirectory(),
   dependencies: { fsyncDirectory?: (directory: string) => void } = {},
 ) {
   const syncDirectory = dependencies.fsyncDirectory ?? fsyncDirectory;

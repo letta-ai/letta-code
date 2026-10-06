@@ -64,11 +64,16 @@ export {
   shouldAttemptPostStopApprovalRecovery,
 } from "./recovery-error-policy";
 
-import { scheduleRecoveredApprovalRetry } from "./recovered-approval-retry";
+import {
+  fenceLostRecoveryClaim,
+  scheduleRecoveredApprovalRetry,
+} from "./recovered-approval-retry";
+import { rehydrateClaimLostQueuedTurn } from "./recovered-queue-rehydration";
 import {
   acquireRecoveryClaim,
-  canRecoverConversation,
+  type canRecoverConversation,
   type RecoveryClaim,
+  resolveRecoveryEligibility,
 } from "./recovery-ownership";
 import {
   clearRecoveredApprovalState,
@@ -91,7 +96,6 @@ import type { TurnLease } from "./turn-lifecycle";
 import { setTurnLoopStatus } from "./turn-status";
 import { finishListenerTurn } from "./turn-terminal";
 import type { ConversationRuntime, IncomingMessage } from "./types";
-
 export async function isRetriablePostStopError(
   stopReason: StopReasonType,
   lastRunId: string | null | undefined,
@@ -368,6 +372,7 @@ type RecoveredContinuationProcessTurn = (
   existingTurnLease?: TurnLease,
   existingTurnCorrelation?: TurnCorrelation,
   terminalCommitGuard?: () => boolean,
+  retainRecoveredApprovalState?: boolean,
 ) => Promise<void>;
 
 export type RecoveredContinuationDependencies = {
@@ -379,12 +384,10 @@ export type RecoveredContinuationDependencies = {
   acquireRecoveryClaim?: typeof acquireRecoveryClaim;
   canRecover?: typeof canRecoverConversation;
 };
-
 type RecoveryDeliveryOrigin = {
   connectionId: string;
   connectionIdCanResume: boolean;
 };
-
 type RecoveredContinuationOptions = {
   onStatusChange?: (
     status: "idle" | "receiving" | "processing",
@@ -392,8 +395,8 @@ type RecoveredContinuationOptions = {
   ) => void;
   connectionId?: string;
   dependencies?: RecoveredContinuationDependencies;
+  onLeaseAcquired?: () => Promise<void>;
 };
-
 /** Resume recovered approvals immediately instead of parking them for input. */
 export async function startRecoveredApprovalContinuation(
   runtime: ConversationRuntime,
@@ -432,9 +435,10 @@ export async function startRecoveredApprovalContinuation(
           originConnection.options.connectionIdCanResume !== false,
       }
     : null;
-  if (
-    !(await (opts?.dependencies?.canRecover ?? canRecoverConversation)(runtime))
-  ) {
+  const canRecover = opts?.dependencies?.canRecover;
+  const eligibility = await resolveRecoveryEligibility(runtime, canRecover);
+  if (eligibility !== "owned") {
+    if (eligibility === "unavailable") return false;
     if (runtime.recoveredApprovalState === recovered) {
       clearRecoveredApprovalState(runtime);
     }
@@ -467,9 +471,7 @@ export async function startRecoveredApprovalContinuation(
     opts?.dependencies?.acquireRecoveryClaim ?? acquireRecoveryClaim;
   const recoveryClaim = await acquireClaim(runtime, () => {
     retryAfterClaimLoss = true;
-    if (recoveryLease && runtime.turnLifecycle.isCurrent(recoveryLease)) {
-      runtime.turnLifecycle.requestCancellation({ cause: "transport" });
-    }
+    fenceLostRecoveryClaim(runtime, recoveryLease, sideEffectMayHaveRun);
   });
   if (runtime.listener.connectionId?.startsWith("conn-") && !recoveryClaim) {
     return false;
@@ -486,6 +488,7 @@ export async function startRecoveredApprovalContinuation(
     workingDirectory,
     initialStatus: "EXECUTING_CLIENT_SIDE_TOOL",
   });
+  await opts?.onLeaseAcquired?.();
   await executeRecoveredApprovalContinuation({
     recoveryClaim,
     runtime,
@@ -502,11 +505,7 @@ export async function startRecoveredApprovalContinuation(
       sideEffectMayHaveRun = true;
     },
   });
-  if (
-    retryAfterClaimLoss &&
-    runtime.recoveredApprovalState === recovered &&
-    !runtime.listener.intentionallyClosed
-  ) {
+  if (retryAfterClaimLoss && !runtime.listener.intentionallyClosed) {
     if (sideEffectMayHaveRun) {
       try {
         promotePreparedInputTerminals(runtime.listener);
@@ -517,8 +516,12 @@ export async function startRecoveredApprovalContinuation(
       } catch (error) {
         debugWarn("recovery", "Failed to replay claim-loss terminal", error);
       }
-      clearRecoveredApprovalState(runtime);
-      runtime.listener.scheduleRecordedRecovery?.();
+      if (runtime.recoveredApprovalState === recovered) {
+        clearRecoveredApprovalState(runtime);
+      }
+    }
+    if (runtime.listener.scheduleRecordedRecovery) {
+      runtime.listener.scheduleRecordedRecovery();
     } else {
       scheduleRecoveredApprovalRetry(runtime, () =>
         startRecoveredApprovalContinuation(runtime, socket, processTurn, opts),
@@ -904,6 +907,16 @@ async function executeRecoveredApprovalContinuation(params: {
 
     if (!hasRecoveryOwnership()) {
       runtime.dequeuedClientMessageIdsByBatchId.delete(continuationBatchId);
+      if (consumedQueuedTurn) {
+        const { queuedTurn } = consumedQueuedTurn;
+        rehydrateClaimLostQueuedTurn(
+          runtime,
+          socket,
+          queuedTurn,
+          opts,
+          processTurn,
+        );
+      }
       return;
     }
 
@@ -927,6 +940,7 @@ async function executeRecoveredApprovalContinuation(params: {
       recoveryLease,
       continuationCorrelation,
       hasRecoveryOwnership,
+      true,
     );
 
     if (runtime.turnLifecycle.isCurrent(recoveryLease)) {

@@ -291,7 +291,9 @@ describe("recovered approval lease boundaries", () => {
       },
     );
 
-    await Bun.sleep(300);
+    // The first failed reacquire enters bounded exponential backoff instead of
+    // polling the authenticated claim route four times per second forever.
+    await Bun.sleep(1_100);
     await waitFor(() => acquisitions === 3);
     await waitFor(() => runtime.recoveredApprovalState === null);
     expect(processTurn).toHaveBeenCalledTimes(1);
@@ -687,6 +689,67 @@ describe("recovered approval lease boundaries", () => {
       '"attribution":{"acting_user_id":"cloud-user-charles"}',
     );
     expect(recordedToolCallIds).toEqual([["call-1"]]);
+  });
+
+  test("claim loss after dequeue rehydrates the queued user before retry", async () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    runtime.recoveredApprovalState = createRecoveredState();
+    enqueueInboundUserMessage(
+      runtime,
+      {
+        type: "message",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        messages: [{ role: "user", content: "must survive" }],
+      },
+      "cloud-user-charles",
+    );
+    const scheduleRecordedRecovery = mock(() => {});
+    listener.scheduleRecordedRecovery = scheduleRecordedRecovery;
+    const processTurn = mock(async () => {});
+
+    expect(
+      await startRecoveredApprovalContinuation(
+        runtime,
+        createTransport([]),
+        processTurn,
+        {
+          dependencies: {
+            ensureSecretsHydrated: async () => {},
+            ensureModAdapters: async () => [],
+            prepareToolExecutionContext: async () =>
+              createPreparedToolContext(),
+            executeApprovalBatch: async () => createDenialResults(),
+            recordListenerWork: () => {},
+            acquireRecoveryClaim: (async (
+              _runtime: unknown,
+              onLost: () => void,
+            ) => {
+              let lossReported = false;
+              return {
+                get owned() {
+                  // Ownership is lost in the exact destructive-dequeue window.
+                  const owned = !runtime.queueRuntime.isEmpty;
+                  if (!owned && !lossReported) {
+                    lossReported = true;
+                    onLost();
+                  }
+                  return owned;
+                },
+                complete: async () => false,
+                release: async () => {},
+                abandon: () => {},
+              };
+            }) as never,
+          },
+        },
+      ),
+    ).toBe(true);
+    expect(processTurn).toHaveBeenCalledTimes(0);
+    expect(runtime.queueRuntime.length).toBe(1);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(scheduleRecordedRecovery).toHaveBeenCalledTimes(1);
   });
 
   test("stale recovered denial processing emits nothing into a replacement run", async () => {

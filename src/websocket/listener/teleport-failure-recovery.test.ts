@@ -18,7 +18,7 @@ import { createListenerMessageHandler } from "./message-router";
 import { setActiveRuntime } from "./runtime";
 import {
   claimPendingTeleportAtBoundary,
-  finishTeleport,
+  finalizeClaimedTeleport,
   handleTeleportRequest,
 } from "./teleport";
 import type {
@@ -98,7 +98,9 @@ function prepareSourceTeleport(
     ...(continuation ? { continuation } : {}),
   });
   if (!pending) throw new Error("Teleport did not reach the source boundary");
-  finishTeleport(runtime, lease, pending);
+  finalizeClaimedTeleport(listener, pending, () =>
+    runtime.turnLifecycle.finish(lease, "cancelled"),
+  );
 }
 
 async function deliverTeleportFailure(params: {
@@ -300,4 +302,66 @@ test("terminal teleport failure preserves approval results before resuming", asy
       otid: "teleport-1:failed",
     },
   ]);
+});
+
+test("teleport readiness is fenced by durable source terminal commit", () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    "agent-1",
+    "conversation-1",
+  );
+  runtime.turnLifecycle.begin({
+    origin: "message",
+    workingDirectory: process.cwd(),
+  });
+  const socket = new MockSocket();
+  openListenerConnection({
+    runtime: listener,
+    connectionId: "source",
+    writer: socket as never,
+    options: makeOptions(),
+  });
+  subscribeListenerConnection(listener, "source", {
+    agent_id: "agent-1",
+    conversation_id: "conversation-1",
+  });
+  markListenerConnectionInitialized(listener, "source");
+  handleTeleportRequest({
+    listener,
+    connectionId: "source",
+    command: {
+      type: "teleport_request",
+      request_id: "teleport-gated",
+      teleport_id: "teleport-gated",
+      runtime: { agent_id: "agent-1", conversation_id: "conversation-1" },
+      target: {
+        connection_id: "target",
+        device_id: "target-device",
+        connection_name: "Target",
+      },
+    },
+  });
+  const pending = claimPendingTeleportAtBoundary({
+    listener,
+    agentId: "agent-1",
+    conversationId: runtime.conversationId,
+    activeTurn: true,
+  });
+  if (!pending) throw new Error("expected claimed teleport");
+  socket.sent.length = 0;
+
+  expect(
+    finalizeClaimedTeleport(listener, pending, () => ({ finished: false })),
+  ).toEqual({ finished: false });
+  expect(socket.sent).toEqual([]);
+  expect(
+    finalizeClaimedTeleport(listener, pending, () => ({ finished: true })),
+  ).toEqual({ finished: true });
+  expect(socket.sent).toContainEqual(
+    expect.objectContaining({
+      type: "teleport_ready",
+      teleport_id: "teleport-gated",
+    }),
+  );
 });

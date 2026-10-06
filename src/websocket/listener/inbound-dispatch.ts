@@ -78,6 +78,8 @@ export function dispatchInboundMessageWhenReady(params: {
     accepted: boolean;
     disposition?: "started" | "queued";
   }) => void;
+  forgetQueuedInput?: typeof forgetQueuedInputDisposition;
+  enqueueInput?: typeof enqueueInboundUserMessage;
 }): void {
   const {
     listener,
@@ -90,6 +92,8 @@ export function dispatchInboundMessageWhenReady(params: {
     actingUserId,
     trackListenerError,
     onInputAccepted,
+    forgetQueuedInput = forgetQueuedInputDisposition,
+    enqueueInput = enqueueInboundUserMessage,
   } = params;
   const identity = ordinaryInputIdentity(getInboundClientMessageId(incoming));
   let inputAcknowledged = false;
@@ -100,6 +104,20 @@ export function dispatchInboundMessageWhenReady(params: {
     if (inputAcknowledged) return;
     inputAcknowledged = true;
     onInputAccepted?.(result);
+  };
+  const recoverRetainedQueuedInput = (): void => {
+    const retry = () => {
+      if (listener !== getActiveRuntime() || listener.intentionallyClosed)
+        return;
+      try {
+        listener.restoreDurableQueuedInputs?.();
+        scheduleQueuePump(runtime, socket, options, processQueuedTurn);
+      } catch {
+        const timer = setTimeout(retry, 1_000);
+        timer.unref();
+      }
+    };
+    setImmediate(retry);
   };
 
   // The chained work below uses this exact runtime object. Reserve it so a
@@ -166,19 +184,23 @@ export function dispatchInboundMessageWhenReady(params: {
           try {
             accepted =
               committed &&
-              enqueueInboundUserMessage(
-                runtime,
-                attributedIncoming,
-                actingUserId,
-              );
+              enqueueInput(runtime, attributedIncoming, actingUserId);
           } catch (error) {
-            if (committed) forgetQueuedInputDisposition(runtime, identity);
+            if (committed && !forgetQueuedInput(runtime, identity)) {
+              recoverRetainedQueuedInput();
+              acknowledgeInput({ accepted: true, disposition: "queued" });
+              return;
+            }
             throw error;
           }
           const durablyAccepted = committed && accepted;
           if (!durablyAccepted) {
             if (committed) {
-              forgetQueuedInputDisposition(runtime, identity);
+              if (!forgetQueuedInput(runtime, identity)) {
+                recoverRetainedQueuedInput();
+                acknowledgeInput({ accepted: true, disposition: "queued" });
+                return;
+              }
             } else {
               rollbackInputDisposition(runtime, reservation);
             }

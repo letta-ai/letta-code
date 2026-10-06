@@ -78,6 +78,25 @@ test("a dead lock directory is recovered", () => {
   }
 });
 
+test("a dead legacy file lock is reclaimed without replacing a live file", () => {
+  const f = fixture();
+  try {
+    writeFileSync(f.lock, JSON.stringify(deadOwner), { mode: 0o600 });
+    const release = acquireDurableFileLock(f.path, { waitMs: 50 });
+    expect(readdirSync(f.lock)).toHaveLength(1);
+    release();
+    expect(existsSync(f.lock)).toBe(false);
+
+    writeFileSync(f.lock, JSON.stringify(liveOwner), { mode: 0o600 });
+    expect(() => acquireDurableFileLock(f.path, { waitMs: 10 })).toThrow(
+      "Timed out acquiring",
+    );
+    expect(readFileSync(f.lock, "utf8")).toBe(JSON.stringify(liveOwner));
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
 test("stale M0 cleanup cannot remove atomically installed live M1", () => {
   const f = fixture();
   try {
@@ -162,6 +181,24 @@ test("candidate sweep removes only a provably dead owner", () => {
       "not-json",
     );
     expect(readdirSync(emptyCandidate)).toEqual([]);
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test("candidate sweep removes incomplete artifacts from a dead creator", () => {
+  const f = fixture();
+  try {
+    const empty = `${f.lock}.candidate-${deadOwner.pid}-empty-token-id`;
+    const truncated = `${f.lock}.candidate-${deadOwner.pid}-bad-token-id`;
+    mkdirSync(empty);
+    mkdirSync(truncated);
+    writeFileSync(join(truncated, "owner.json"), "{");
+
+    acquireDurableFileLock(f.path, { waitMs: 50 })();
+
+    expect(existsSync(empty)).toBe(false);
+    expect(existsSync(truncated)).toBe(false);
   } finally {
     rmSync(f.root, { recursive: true, force: true });
   }

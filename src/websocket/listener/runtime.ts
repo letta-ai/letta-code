@@ -500,6 +500,17 @@ export function clearRecoveredApprovalStateForScope(
   }
 }
 
+export function clearRecoveredApprovalStateUnlessRetained(
+  runtime: ConversationRuntime,
+  retain: boolean,
+): void {
+  if (retain) return;
+  clearRecoveredApprovalStateForScope(runtime.listener, {
+    agent_id: runtime.agentId,
+    conversation_id: runtime.conversationId,
+  });
+}
+
 export function getPendingControlRequests(
   runtime: ListenerRuntime,
   params?: {

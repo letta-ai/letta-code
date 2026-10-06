@@ -52,6 +52,7 @@ import {
   type OutboundMessageDelivery,
 } from "./protocol-outbound";
 import { consumeQueuedTurn } from "./queue";
+import { recoveredApprovalInFlightResults } from "./recovered-approval-checkpoint";
 import { debugLogApprovalResumeState } from "./recovery";
 import { ensureSecretsHydratedForAgent } from "./secrets-sync";
 import {
@@ -224,6 +225,8 @@ export async function handleApprovalStop(params: {
   originConnectionId?: string;
   /** Whether the origin can return under the same logical connection id. */
   originConnectionCanResume?: boolean;
+  /** Recovery authority fences transport/finalization without aborting effects. */
+  authorityGuard?: () => boolean;
   buildSendOptions: () => Parameters<
     typeof sendApprovalContinuationWithRetry
   >[2];
@@ -254,6 +257,7 @@ export async function handleApprovalStop(params: {
     processOwnedTurn = false,
     originConnectionId,
     originConnectionCanResume = true,
+    authorityGuard = () => true,
     buildSendOptions,
     dependencies,
   } = params;
@@ -329,7 +333,9 @@ export async function handleApprovalStop(params: {
   let lastExecutingToolCallIds: string[] = [];
 
   const shouldInterrupt = () =>
-    abortSignal.aborted || !runtime.turnLifecycle.isCurrent(turnLease);
+    abortSignal.aborted ||
+    !runtime.turnLifecycle.isCurrent(turnLease) ||
+    !authorityGuard();
   const isDeliveryReady = (): boolean => {
     const listener = runtime.listener;
     const scopedSubscribers = getSubscribedListenerConnections(listener, {
@@ -612,7 +618,7 @@ export async function handleApprovalStop(params: {
     runtime,
     {
       toolCallIds: decisions.map((decision) => decision.approval.toolCallId),
-      results: [],
+      results: recoveredApprovalInFlightResults(decisions),
       requestOtid: crypto.randomUUID(),
     },
     "before_tool_execution",
@@ -646,7 +652,8 @@ export async function handleApprovalStop(params: {
       runId: executionRunId,
       agentId,
       conversationId,
-      shouldEmit: () => runtime.turnLifecycle.isCurrent(turnLease),
+      shouldEmit: () =>
+        runtime.turnLifecycle.isCurrent(turnLease) && authorityGuard(),
     },
   );
 
@@ -657,7 +664,8 @@ export async function handleApprovalStop(params: {
   // Broadcast new file content to web clients when a file-mutating tool
   // (Edit, Write) writes to disk, so all windows update immediately.
   const onFileWrite = (filePath: string, content: string) => {
-    if (!runtime.turnLifecycle.isCurrent(turnLease)) return;
+    if (!runtime.turnLifecycle.isCurrent(turnLease) || !authorityGuard())
+      return;
     emitProtocolV2Message(
       socket,
       runtime,
@@ -699,21 +707,19 @@ export async function handleApprovalStop(params: {
     // effects. Persist every reported partial result and conservatively mark
     // every unknown outcome failed before transport readiness or delivery can
     // block. Recovery must never execute this batch again after a crash.
-    if (!shouldInterrupt()) {
-      const failureResults = approvalExecutionFailureResults(decisions, error);
-      validateApprovalResultIds(
-        decisions.map((decision) => ({
-          approval: { toolCallId: decision.approval.toolCallId },
-        })),
-        failureResults,
-      );
-      lastExecutionResults = failureResults;
-      checkpointListenerWork(
-        runtime,
-        { results: failureResults },
-        "after_tool_execution",
-      );
-    }
+    const failureResults = approvalExecutionFailureResults(decisions, error);
+    validateApprovalResultIds(
+      decisions.map((decision) => ({
+        approval: { toolCallId: decision.approval.toolCallId },
+      })),
+      failureResults,
+    );
+    lastExecutionResults = failureResults;
+    checkpointListenerWork(
+      runtime,
+      { results: failureResults },
+      "after_tool_execution",
+    );
 
     // Execution threw before normal finished-event emission. Close the
     // client_tool_start lifecycle explicitly or observer UIs shimmer forever.

@@ -77,7 +77,7 @@ import {
 } from "./process-services";
 import { scheduleQueuePump } from "./queue";
 import {
-  type recoverRecordedTurns,
+  recoverRecordedTurns,
   scheduleRecordedTurnRecovery,
 } from "./recover-recorded-turn";
 import { revokeRecoveryClaims } from "./recovery-ownership";
@@ -213,11 +213,11 @@ export function stopRuntime(
   runtime: ListenerRuntime,
   suppressCallbacks: boolean,
 ): void {
+  runtime.intentionallyClosed = true;
   revokeRecoveryClaims(runtime);
   notifyStreamObserversRuntimeStopped(runtime);
   disposeListenerModAdapter(runtime);
   rejectPendingExternalToolCalls(runtime, "Listener runtime stopped");
-  runtime.intentionallyClosed = true;
   invalidateProcessServices(runtime);
   for (const conversationRuntime of runtime.conversationRuntimes.values()) {
     rejectPendingApprovalResolvers(
@@ -283,9 +283,10 @@ export async function startConnectedListenerRuntime(
         ? "_ws_open"
         : "_local_open",
   });
-  // Terminal intent and input replay are one journaled transition. Promote it
-  // before state sync so this very connection can replay the terminal instead
-  // of waiting for another reconnect.
+  runtime.promotePreparedInputTerminals = () =>
+    promotePreparedInputTerminals(runtime);
+  runtime.restoreDurableQueuedInputs = () =>
+    restoreDurableQueuedInputs(runtime);
   promotePreparedInputTerminals(runtime);
   if (
     !(await completeInitialConnectionStartup(
@@ -315,7 +316,7 @@ export async function startConnectedListenerRuntime(
   // Managed remote listeners adopt an open gateway and resume local records.
   runtime.scheduleRecordedRecovery = () =>
     scheduleRecordedTurnRecovery(runtime, options.recoverRecordedWork);
-  scheduleRecordedTurnRecovery(runtime, options.recoverRecordedWork);
+  await (options.recoverRecordedWork ?? recoverRecordedTurns)(runtime);
 
   // This must precede the existing startup pump loop: a queued acknowledgement
   // is final to Cloud, so only the durable local payload can recreate the work.
@@ -896,6 +897,15 @@ async function connectWithRetry(
           "Listener connection closed",
         );
       }
+    }
+    const closingGeneration = pairIdentity?.connectionGeneration;
+    if (
+      closingGeneration &&
+      runtime.connectionGeneration === closingGeneration &&
+      isCurrentSocketPair(runtime, socket, streamSocket)
+    ) {
+      runtime.connectionGeneration = null;
+      revokeRecoveryClaims(runtime, undefined, closingGeneration);
     }
     suspendListenerConnection(runtime, opts.connectionId);
     killAllTerminals();

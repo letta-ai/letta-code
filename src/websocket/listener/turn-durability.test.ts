@@ -963,3 +963,22 @@ test("record locks never evict a live paused owner and recover a dead owner", ()
   expect(existsSync(lockPath)).toBe(false);
   expect(existsSync(deadOwner)).toBe(false);
 });
+
+test("129 durable puts stay within the Windows CI lock budget", () => {
+  const directory = temporaryDirectory();
+  const store = createTurnFinishedStore(directory);
+  const startedAt = Date.now();
+  for (let index = 0; index < 129; index += 1) {
+    store.put(
+      "agent",
+      `conversation-${index}`,
+      {
+        type: "turn_finished",
+        turn_id: `turn-${index}`,
+        stop_reason: "end_turn",
+      },
+      { connectionId: null, canRotate: false, lineageId: null },
+    );
+  }
+  expect(Date.now() - startedAt).toBeLessThan(15_000);
+}, 15_000);

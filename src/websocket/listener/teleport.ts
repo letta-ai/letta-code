@@ -12,14 +12,11 @@ import type {
 import { toListenerConnection } from "./connection";
 import { createInterruptedTurnStore } from "./interrupted-turn-record";
 import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
-import {
-  emitProtocolV2Message,
-  emitRuntimeStateUpdates,
-} from "./protocol-outbound";
+import { emitProtocolV2Message } from "./protocol-outbound";
 import { emitLoopErrorNotice } from "./recoverable-notices";
 import { getConversationRuntime } from "./runtime";
 import { isListenerTransportOpen, type ListenerTransport } from "./transport";
-import type { TurnFinishTransition, TurnLease } from "./turn-lifecycle";
+import type { TurnFinishTransition } from "./turn-lifecycle";
 import type {
   ConversationRuntime,
   IncomingMessage,
@@ -405,6 +402,17 @@ export function emitClaimedTeleportReady(
   return sent;
 }
 
+/** Publish transfer readiness only after the source turn's durable terminal commits. */
+export function finalizeClaimedTeleport<T extends { finished: boolean }>(
+  runtime: ListenerRuntime,
+  pending: PendingTeleport,
+  commitTerminal: () => T,
+): T {
+  const transition = commitTerminal();
+  if (transition.finished) emitClaimedTeleportReady(runtime, pending);
+  return transition;
+}
+
 function suspendRecordedTeleport(
   pending: PendingTeleport,
   suspended: boolean,
@@ -418,41 +426,38 @@ function suspendRecordedTeleport(
     });
 }
 
-export function finishTeleport(
+export function finishClaimedTeleport(
   runtime: ConversationRuntime,
-  lease: TurnLease,
   pending: PendingTeleport,
+  commit: (options: {
+    stopReason: "cancelled";
+    agentId: string;
+    conversationId: string;
+  }) => TurnFinishTransition,
 ): TurnFinishTransition {
-  const transition = runtime.turnLifecycle.finish(lease, "cancelled");
-  if (!transition.finished) return transition;
-  emitRuntimeStateUpdates(runtime, {
-    agent_id: pending.agentId,
-    conversation_id: pending.conversationId,
-  });
-  emitClaimedTeleportReady(runtime.listener, pending);
-  return transition;
+  return finalizeClaimedTeleport(runtime.listener, pending, () =>
+    commit({
+      stopReason: "cancelled",
+      agentId: pending.agentId,
+      conversationId: pending.conversationId,
+    }),
+  );
 }
 
-export function finishPendingTeleport(runtime: ConversationRuntime): void {
+export function finishDrainedTeleport(
+  runtime: ConversationRuntime,
+  transition: TurnFinishTransition,
+): void {
   if (!runtime.agentId) return;
-  const pending = findPendingTeleportForRuntime(
-    runtime.listener,
-    runtime.agentId,
-    runtime.conversationId,
-  );
-  if (
-    !pending ||
-    (runtime.lastStopReason !== "end_turn" && !pending.drainAcceptedInputs)
-  ) {
-    return;
-  }
-  const claimed = claimPendingTeleportAtBoundary({
+  const pending = claimPendingTeleportAtBoundary({
     listener: runtime.listener,
     agentId: runtime.agentId,
     conversationId: runtime.conversationId,
     activeTurn: false,
   });
-  if (claimed) emitClaimedTeleportReady(runtime.listener, claimed);
+  if (pending) {
+    finalizeClaimedTeleport(runtime.listener, pending, () => transition);
+  }
 }
 
 function takeFailedTeleport(params: {

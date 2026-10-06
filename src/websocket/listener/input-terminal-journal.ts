@@ -95,6 +95,10 @@ export function completePreparedInputTerminal(
         for (const key of keys) {
           const entry = store.entries[key];
           if (entry?.preparedTerminal?.message.turn_id === turnId) {
+            if (entry.preparedTerminal.owner.interruptedRevision) {
+              entry.completedTerminalRevision =
+                entry.preparedTerminal.owner.interruptedRevision;
+            }
             delete entry.preparedTerminal;
             changed = true;
           }
@@ -109,6 +113,10 @@ export function completePreparedInputTerminal(
   for (const key of keys) {
     const entry = ledger.entries.get(key);
     if (entry?.preparedTerminal?.message.turn_id === turnId) {
+      if (entry.preparedTerminal.owner.interruptedRevision) {
+        entry.completedTerminalRevision =
+          entry.preparedTerminal.owner.interruptedRevision;
+      }
       delete entry.preparedTerminal;
     }
   }
@@ -125,7 +133,18 @@ export function loadPreparedInputTerminals(
     for (const entry of entries) {
       const prepared = entry.preparedTerminal;
       if (prepared) {
-        byTurnId.set(prepared.message.turn_id, structuredClone(prepared));
+        const key =
+          prepared.owner.terminalIdentity ??
+          JSON.stringify([
+            prepared.scope.agentId,
+            prepared.scope.conversationId,
+            prepared.message.turn_id,
+          ]);
+        const existing = byTurnId.get(key);
+        if (existing && JSON.stringify(existing) !== JSON.stringify(prepared)) {
+          throw new Error("Prepared terminal identity collision");
+        }
+        byTurnId.set(key, structuredClone(prepared));
       }
     }
     return [...byTurnId.values()];
@@ -140,9 +159,24 @@ export function loadPreparedInputTerminals(
   });
 }
 
-export function clearPreparedInputTerminalByTurnId(
+export function hasPreparedInputTerminalRevision(
   listener: ListenerRuntime,
+  scope: DurablePreparedInputTerminal["scope"],
+  interruptedRevision: string,
+): boolean {
+  return loadPreparedInputTerminals(listener).some(
+    (prepared) =>
+      prepared.scope.agentId === scope.agentId &&
+      prepared.scope.conversationId === scope.conversationId &&
+      prepared.owner.interruptedRevision === interruptedRevision,
+  );
+}
+
+export function clearPreparedInputTerminal(
+  listener: ListenerRuntime,
+  scope: DurablePreparedInputTerminal["scope"],
   turnId: string,
+  terminalIdentity?: string,
 ): boolean {
   const ledger = getLedger(listener);
   if (ledger.persistentPath) {
@@ -150,7 +184,19 @@ export function clearPreparedInputTerminalByTurnId(
       return durableTransaction(ledger.persistentPath, (store) => {
         let changed = false;
         for (const entry of Object.values(store.entries)) {
-          if (entry.preparedTerminal?.message.turn_id === turnId) {
+          const prepared = entry.preparedTerminal;
+          if (!prepared) continue;
+          if (
+            (terminalIdentity
+              ? prepared.owner.terminalIdentity === terminalIdentity
+              : prepared.message.turn_id === turnId) &&
+            prepared.scope.agentId === scope.agentId &&
+            prepared.scope.conversationId === scope.conversationId
+          ) {
+            if (prepared.owner.interruptedRevision) {
+              entry.completedTerminalRevision =
+                prepared.owner.interruptedRevision;
+            }
             delete entry.preparedTerminal;
             changed = true;
           }
@@ -163,7 +209,18 @@ export function clearPreparedInputTerminalByTurnId(
     }
   }
   for (const entry of ledger.entries.values()) {
-    if (entry.preparedTerminal?.message.turn_id === turnId) {
+    const prepared = entry.preparedTerminal;
+    if (!prepared) continue;
+    if (
+      (terminalIdentity
+        ? prepared.owner.terminalIdentity === terminalIdentity
+        : prepared.message.turn_id === turnId) &&
+      prepared.scope.agentId === scope.agentId &&
+      prepared.scope.conversationId === scope.conversationId
+    ) {
+      if (prepared.owner.interruptedRevision) {
+        entry.completedTerminalRevision = prepared.owner.interruptedRevision;
+      }
       delete entry.preparedTerminal;
     }
   }

@@ -3,21 +3,28 @@ import type { QueueRemovalTransition } from "@/types/queue-update-protocol";
 import { enqueueInboundUserMessage } from "./inbound-queue";
 import {
   forgetQueuedInputDispositions,
-  loadDurableQueuedInputs,
+  loadDurableQueuedInputEntries,
   markQueuedInputDispositionsStarted,
   ordinaryInputIdentity,
 } from "./input-disposition";
 import {
-  clearPreparedInputTerminalByTurnId,
+  clearPreparedInputTerminal,
   loadPreparedInputTerminals,
 } from "./input-terminal-journal";
+import {
+  createInterruptedTurnStore,
+  type InterruptedTurnRecord,
+} from "./interrupted-turn-record";
 import { getQueueItemScope, getQueueItemsScope } from "./queue";
 import { scheduleQueueEmit } from "./queue-update-outbound";
 import {
   evictConversationRuntimeIfIdle,
   getOrCreateConversationRuntime,
 } from "./runtime";
-import { createTurnFinishedStore } from "./turn-finished-replay";
+import {
+  createTurnFinishedStore,
+  TurnFinishedCapacityError,
+} from "./turn-finished-replay";
 import type { ConversationRuntime, ListenerRuntime } from "./types";
 
 function discardQueuedItem(
@@ -155,10 +162,40 @@ export function getOrCreateScopedRuntime(
 export function restoreDurableQueuedInputs(
   listener: ListenerRuntime,
   terminalStore = createTurnFinishedStore(),
+  providedInterruptedRecords?: InterruptedTurnRecord[],
 ): number {
   promotePreparedInputTerminals(listener, terminalStore);
   let restored = 0;
-  for (const payload of loadDurableQueuedInputs(listener)) {
+  const interruptedRecords =
+    providedInterruptedRecords ?? createInterruptedTurnStore().list();
+  const interruptedIdentityKeys = new Set(
+    interruptedRecords.flatMap((record) =>
+      (record.durableInputIdentities ?? []).map((identity) =>
+        JSON.stringify([
+          record.agentId,
+          record.conversationId,
+          identity.domain,
+          identity.id,
+        ]),
+      ),
+    ),
+  );
+  for (const { disposition, payload } of loadDurableQueuedInputEntries(
+    listener,
+  )) {
+    if (
+      disposition === "started" &&
+      interruptedIdentityKeys.has(
+        JSON.stringify([
+          payload.scope.agentId,
+          payload.scope.conversationId,
+          payload.identity.domain,
+          payload.identity.id,
+        ]),
+      )
+    ) {
+      continue;
+    }
     const runtime = getOrCreateScopedRuntime(
       listener,
       payload.scope.agentId,
@@ -185,9 +222,13 @@ export function restoreDurableQueuedInputs(
     // A dead connection id cannot own restored work. The process transport and
     // current scope subscriber become the delivery path after startup. Preserve
     // the explicit identity so teleport payloads never enter the ordinary id domain.
+    const replayOwner = [...listener.connections.values()].find(
+      (connection) =>
+        connection.initialized && connection.subscriptions.has(runtime.key),
+    );
     const incoming = {
       ...payload.incoming,
-      connectionId: undefined,
+      connectionId: replayOwner?.id,
       durableInputIdentities: [payload.identity],
     };
     if (!enqueueInboundUserMessage(runtime, incoming, payload.actingUserId)) {
@@ -202,20 +243,70 @@ export function restoreDurableQueuedInputs(
 export function promotePreparedInputTerminals(
   listener: ListenerRuntime,
   terminalStore = createTurnFinishedStore(),
-): void {
+  onlyScope?: { agentId: string | null; conversationId: string },
+): number {
+  let promoted = 0;
   for (const prepared of loadPreparedInputTerminals(listener)) {
-    if (prepared.message.terminal_consumer_ids?.length) {
-      terminalStore.put(
-        prepared.scope.agentId,
-        prepared.scope.conversationId,
-        prepared.message,
-        prepared.owner,
-      );
+    if (
+      onlyScope &&
+      (prepared.scope.agentId !== onlyScope.agentId ||
+        prepared.scope.conversationId !== onlyScope.conversationId)
+    ) {
+      continue;
+    }
+    let owner = prepared.owner;
+    try {
+      if (prepared.message.terminal_consumer_ids?.length) {
+        const existing = terminalStore
+          .read(prepared.scope.agentId, prepared.scope.conversationId)
+          ?.terminals.find((terminal) =>
+            prepared.owner.terminalIdentity
+              ? terminal.owner.terminalIdentity ===
+                prepared.owner.terminalIdentity
+              : terminal.owner.terminalIdentity === undefined &&
+                terminal.message.turn_id === prepared.message.turn_id,
+          );
+        if (!existing && owner.connectionId === null) {
+          const runtime = getOrCreateScopedRuntime(
+            listener,
+            prepared.scope.agentId,
+            prepared.scope.conversationId,
+          );
+          const connection = [...listener.connections.values()].find(
+            (candidate) =>
+              candidate.initialized && candidate.subscriptions.has(runtime.key),
+          );
+          if (!connection) continue;
+          runtime.activeConnectionId = connection.id;
+          owner = {
+            ...owner,
+            connectionId: connection.id,
+            canRotate: connection.options.connectionIdCanResume === false,
+            lineageId: connection.startupOwner.lineageId,
+          };
+        }
+        terminalStore.put(
+          prepared.scope.agentId,
+          prepared.scope.conversationId,
+          prepared.message,
+          existing ? prepared.owner : owner,
+        );
+      }
+    } catch (error) {
+      if (error instanceof TurnFinishedCapacityError) continue;
+      throw error;
     }
     if (
-      !clearPreparedInputTerminalByTurnId(listener, prepared.message.turn_id)
+      !clearPreparedInputTerminal(
+        listener,
+        prepared.scope,
+        prepared.message.turn_id,
+        prepared.owner.terminalIdentity,
+      )
     ) {
       throw new Error("Failed to promote prepared input terminal");
     }
+    promoted += 1;
   }
+  return promoted;
 }

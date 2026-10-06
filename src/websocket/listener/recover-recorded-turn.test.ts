@@ -1,8 +1,15 @@
-import { expect, test } from "bun:test";
+import { expect, mock, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
+import {
+  commitInputDisposition,
+  createAcceptedInputDispositionLedger,
+  ordinaryInputIdentity,
+  reserveInputDisposition,
+} from "./input-disposition";
+import { prepareInputTerminal } from "./input-terminal-journal";
 
 test("one recovered long-running turn does not block another conversation", async () => {
   const directory = mkdtempSync(join(tmpdir(), "recorded-many-"));
@@ -74,11 +81,127 @@ test("a successful teleport receipt retires saved work without sending results",
   }
 });
 
+test("a revision-matched durable terminal retires the interrupted record", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "recorded-terminal-revision-"));
+  const store = createInterruptedTurnStore(join(directory, "interrupted"));
+  const terminalStore = createTurnFinishedStore(join(directory, "terminals"));
+  const listener = createRuntime();
+  listener.connectionId = "conn-replacement";
+  try {
+    store.write({
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      runId: "run-1",
+      toolCallIds: ["call-1"],
+      results: [],
+      requestOtid: "request-1",
+      workingDirectory: "/project",
+    });
+    const persisted = store.read("agent-1", "conv-1");
+    if (!persisted?.revision) throw new Error("expected persisted revision");
+    terminalStore.put(
+      "agent-1",
+      "conv-1",
+      {
+        type: "turn_finished",
+        turn_id: "turn-revision-owned",
+        stop_reason: "end_turn",
+        terminal_consumer_ids: ["slack:agent-1"],
+      },
+      {
+        connectionId: "conn-owner",
+        canRotate: false,
+        lineageId: "lineage-owner",
+        interruptedRevision: persisted.revision,
+      },
+    );
+
+    await recoverRecordedTurns(listener, { store, terminalStore });
+    expect(store.read("agent-1", "conv-1")).toBeNull();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("a prepared revision is promoted before recorded work can replay", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "recorded-prepared-revision-"));
+  const store = createInterruptedTurnStore(join(directory, "interrupted"));
+  const terminalStore = createTurnFinishedStore(join(directory, "terminals"));
+  const listener = createRuntime();
+  listener.connectionId = "conn-replacement";
+  listener.acceptedInputDispositionLedger =
+    createAcceptedInputDispositionLedger({
+      persistentPath: join(directory, "inputs.json"),
+    });
+  try {
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const identity = ordinaryInputIdentity("cm-effect-complete");
+    if (!identity) throw new Error("expected identity");
+    const admission = reserveInputDisposition(runtime, identity);
+    if (admission.kind !== "reserved") throw new Error("expected reservation");
+    expect(
+      commitInputDisposition(runtime, admission.reservation, "started", {
+        incoming: {
+          type: "message",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+          messages: [{ role: "user", content: "effect" }],
+        },
+      }),
+    ).toBe(true);
+    store.write({
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      runId: "run-1",
+      toolCallIds: ["call-1"],
+      results: [],
+      requestOtid: "request-1",
+      workingDirectory: "/project",
+      durableInputIdentities: [identity],
+    });
+    const revision = store.read("agent-1", "conv-1")?.revision;
+    if (!revision) throw new Error("expected revision");
+    expect(
+      prepareInputTerminal(runtime, [identity], {
+        scope: { agentId: "agent-1", conversationId: "conv-1" },
+        message: {
+          type: "turn_finished",
+          turn_id: "batch-1",
+          stop_reason: "end_turn",
+          terminal_consumer_ids: ["slack:agent-1"],
+        },
+        owner: {
+          connectionId: "conn-owner",
+          canRotate: false,
+          lineageId: "lineage-owner",
+          terminalIdentity: "terminal-effect-complete",
+          interruptedRevision: revision,
+        },
+      }),
+    ).toBe(true);
+    const resume = mock(async () => {
+      throw new Error("completed effect must not replay");
+    });
+
+    await recoverRecordedTurns(listener, {
+      store,
+      terminalStore,
+      resume: resume as never,
+    });
+    expect(resume).toHaveBeenCalledTimes(0);
+    expect(store.read("agent-1", "conv-1")).toBeNull();
+    expect(terminalStore.read("agent-1", "conv-1")?.terminals).toHaveLength(1);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 import { createInterruptedTurnStore } from "./interrupted-turn-record";
 import { createRuntime } from "./lifecycle";
 import { recoverRecordedTurns } from "./recover-recorded-turn";
 import { setActiveRuntime } from "./runtime";
 import type { handleIncomingMessage } from "./turn";
+import { createTurnFinishedStore } from "./turn-finished-replay";
 import type { IncomingMessage } from "./types";
 
 const acquireTestClaim = async () => {
@@ -159,7 +282,66 @@ test("post-start claim loss schedules one coalesced recorded recovery retry", as
     lostCallbacks[0]?.();
     lostCallbacks[0]?.();
     expect(terminalGuards[0]?.()).toBe(false);
+    // A successor must not begin until the detached predecessor has unwound.
     await Bun.sleep(10);
+    expect(starts).toBe(1);
+    pendingTurns.shift()?.();
+    await Bun.sleep(10);
+    expect(starts).toBe(2);
+  } finally {
+    listener.intentionallyClosed = true;
+    for (const resolve of pendingTurns) resolve();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("a detached recovered turn rejection releases its lease and retries", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "recorded-rejection-"));
+  const store = createInterruptedTurnStore(directory);
+  const listener = createRuntime();
+  listener.connectionId = "conn-replacement";
+  setActiveRuntime(listener);
+  let starts = 0;
+  let releases = 0;
+  const pendingTurns: Array<() => void> = [];
+  try {
+    store.write({
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      runId: "run-1",
+      toolCallIds: ["call-1"],
+      results: [],
+      requestOtid: "request-1",
+      workingDirectory: "/project",
+    });
+    await recoverRecordedTurns(listener, {
+      store,
+      backend: { retrieveAgent: async () => ({ id: "agent-1" }) } as never,
+      resume: (async () => ({
+        pendingApprovals: [
+          { toolCallId: "call-1", toolName: "Bash", toolArgs: "{}" },
+        ],
+      })) as never,
+      canRecover: async () => true,
+      acquireClaim: (async () => ({
+        owned: true,
+        complete: async () => false,
+        release: async () => {
+          releases += 1;
+        },
+        abandon: () => {},
+      })) as never,
+      setCwd: () => {},
+      processTurn: async () => {
+        starts += 1;
+        if (starts === 1) throw new Error("detached continuation failed");
+        await new Promise<void>((resolve) => pendingTurns.push(resolve));
+      },
+    });
+    for (let attempt = 0; attempt < 100 && starts < 2; attempt += 1) {
+      await Bun.sleep(1);
+    }
+    expect(releases).toBeGreaterThanOrEqual(1);
     expect(starts).toBe(2);
   } finally {
     listener.intentionallyClosed = true;

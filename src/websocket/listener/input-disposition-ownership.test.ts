@@ -6,6 +6,7 @@ import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import {
   createAcceptedInputDispositionLedger,
   getInputDisposition,
+  inputDispositionPersistentPath,
   loadDurableQueuedInputs,
   ordinaryInputIdentity,
   rememberInputDisposition,
@@ -28,6 +29,14 @@ function durableIncoming(clientMessageId: string): IncomingMessage {
     ],
   };
 }
+
+test("durable input ledgers are isolated by backend URL", () => {
+  const cloud = inputDispositionPersistentPath("https://api.letta.com");
+  const local = inputDispositionPersistentPath("http://localhost:8283");
+  expect(cloud).not.toBe(local);
+  expect(cloud.endsWith("input-dispositions-v2.json")).toBe(true);
+  expect(local.endsWith("input-dispositions-v2.json")).toBe(true);
+});
 
 function persistentRuntime(path: string) {
   const listener = createRuntime();

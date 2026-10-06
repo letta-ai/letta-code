@@ -266,6 +266,10 @@ export type DurablePreparedInputTerminal = {
     connectionId: string | null;
     canRotate: boolean;
     lineageId: string | null;
+    /** Stable identity for this exact terminal operation across journal promotion. */
+    terminalIdentity?: string;
+    /** Exact interrupted-work revision this terminal supersedes. */
+    interruptedRevision?: string;
   };
 };
 
@@ -281,6 +285,8 @@ export type AcceptedInputDispositionEntry = {
   replayCompleted?: true;
   /** Pending promotion into the terminal replay store after an atomic effect commit. */
   preparedTerminal?: DurablePreparedInputTerminal;
+  /** Interrupted-work revision already superseded by a durable terminal. */
+  completedTerminalRevision?: string;
 };
 
 export type ActiveRecoveryClaim = {
@@ -288,6 +294,8 @@ export type ActiveRecoveryClaim = {
   readonly connectionGeneration: string;
   readonly owned: boolean;
   release(): Promise<void>;
+  /** Synchronously fence local ownership, then release the Cloud token best-effort. */
+  revoke(): void;
   abandon(): void;
 };
 
@@ -525,6 +533,10 @@ export type ListenerRuntime = {
   processServicesReadyGeneration: number | null;
   /** Reconcile durable interrupted work without importing the turn cycle. */
   scheduleRecordedRecovery?: () => void;
+  /** Retry capacity-deferred input-terminal promotion after an ACK frees space. */
+  promotePreparedInputTerminals?: () => number;
+  /** Rehydrate a committed queued input after volatile enqueue failure. */
+  restoreDurableQueuedInputs?: () => number;
   serviceCommandHandler:
     | ((command: ServiceCommandRequest) => Promise<ServiceCommandResponse>)
     | null;

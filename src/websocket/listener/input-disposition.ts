@@ -12,8 +12,8 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
+import { getServerUrl } from "@/backend/api/server-url";
 import {
   acquireDurableFileLock,
   currentDurableLockOwner,
@@ -21,6 +21,7 @@ import {
   durableLockOwnerIsAlive,
   fsyncDirectory,
 } from "./durable-file-lock";
+import { inputDispositionPersistentPath } from "./input-disposition-path";
 import { getConversationRuntimeKey } from "./runtime";
 import type {
   AcceptedInputDisposition,
@@ -77,9 +78,17 @@ function parseDispositionKey(
   return parsed as [string, "input" | "teleport", string];
 }
 
+export { inputDispositionPersistentPath } from "./input-disposition-path";
+
 function defaultPersistentPath(): string | null {
   if (process.env.NODE_ENV === "test") return null;
-  return join(homedir(), ".letta", "state", "input-dispositions-v2.json");
+  let serverUrl: string;
+  try {
+    serverUrl = getServerUrl();
+  } catch {
+    serverUrl = process.env.LETTA_BASE_URL ?? "uninitialized";
+  }
+  return inputDispositionPersistentPath(serverUrl);
 }
 
 export function createAcceptedInputDispositionLedger(options?: {
@@ -330,11 +339,21 @@ function validateDurableStore(value: unknown): DurableStore {
         typeof prepared.owner.canRotate !== "boolean" ||
         (prepared.owner.lineageId !== null &&
           typeof prepared.owner.lineageId !== "string") ||
+        (prepared.owner.terminalIdentity !== undefined &&
+          typeof prepared.owner.terminalIdentity !== "string") ||
+        (prepared.owner.interruptedRevision !== undefined &&
+          typeof prepared.owner.interruptedRevision !== "string") ||
         rawEntry.queuedInput !== undefined ||
         rawEntry.replayCompleted !== true
       ) {
         throw new Error("Prepared input terminal is invalid");
       }
+    }
+    if (
+      rawEntry.completedTerminalRevision !== undefined &&
+      typeof rawEntry.completedTerminalRevision !== "string"
+    ) {
+      throw new Error("Completed terminal revision is invalid");
     }
   }
   for (const [key, rawReservation] of Object.entries(value.reservations)) {
@@ -866,6 +885,48 @@ export function markQueuedInputDispositionsStarted(
   return true;
 }
 
+/** Return a destructively dequeued input to durable queued ownership. */
+export function requeueStartedInputDispositions(
+  runtime: ConversationRuntime,
+  identities: readonly InputIdentity[],
+): boolean {
+  if (identities.length === 0) return true;
+  const ledger = getLedger(runtime.listener);
+  const keys = [
+    ...new Set(
+      identities.map((identity) => dispositionKey(runtime.key, identity)),
+    ),
+  ];
+  if (ledger.persistentPath) {
+    try {
+      return durableTransaction(ledger.persistentPath, (store) => {
+        let changed = false;
+        for (const key of keys) {
+          const entry = store.entries[key];
+          if (!entry || !entry.queuedInput) {
+            syncMemoryFromDurable(ledger, store);
+            return { result: false, changed: false };
+          }
+          if (entry.disposition === "started") {
+            entry.disposition = "queued";
+            changed = true;
+          }
+        }
+        syncMemoryFromDurable(ledger, store);
+        return { result: true, changed };
+      });
+    } catch {
+      return false;
+    }
+  }
+  for (const key of keys) {
+    const entry = ledger.entries.get(key);
+    if (!entry?.queuedInput) return false;
+    if (entry.disposition === "started") entry.disposition = "queued";
+  }
+  return true;
+}
+
 /** Read every replay payload under the store lock for startup restore. */
 export function loadDurableQueuedInputs(
   listener: ListenerRuntime,
@@ -880,6 +941,56 @@ export function loadDurableQueuedInputs(
       ),
       changed: false,
     };
+  });
+}
+
+export function loadDurableQueuedInputEntries(
+  listener: ListenerRuntime,
+): Array<{
+  disposition: AcceptedInputDisposition;
+  payload: DurableQueuedInput;
+}> {
+  const ledger = getLedger(listener);
+  const collect = (entries: Iterable<AcceptedInputDispositionEntry>) =>
+    [...entries].flatMap((entry) =>
+      entry.queuedInput && entry.disposition
+        ? [
+            {
+              disposition: entry.disposition,
+              payload: structuredClone(entry.queuedInput),
+            },
+          ]
+        : [],
+    );
+  if (!ledger.persistentPath) return collect(ledger.entries.values());
+  return durableTransaction(ledger.persistentPath, (store) => {
+    syncMemoryFromDurable(ledger, store);
+    return {
+      result: collect(Object.values(store.entries)),
+      changed: false,
+    };
+  });
+}
+
+export function hasCompletedInputTerminalRevision(
+  listener: ListenerRuntime,
+  runtimeKey: string,
+  identities: readonly InputIdentity[],
+  revision: string,
+): boolean {
+  if (identities.length === 0) return false;
+  const ledger = getLedger(listener);
+  const keys = identities.map((identity) =>
+    dispositionKey(runtimeKey, identity),
+  );
+  const matches = (entries: Map<string, AcceptedInputDispositionEntry>) =>
+    keys.every(
+      (key) => entries.get(key)?.completedTerminalRevision === revision,
+    );
+  if (!ledger.persistentPath) return matches(ledger.entries);
+  return durableTransaction(ledger.persistentPath, (store) => {
+    syncMemoryFromDurable(ledger, store);
+    return { result: matches(ledger.entries), changed: false };
   });
 }
 

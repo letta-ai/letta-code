@@ -8,6 +8,7 @@ import { createRuntime, stopRuntime } from "./lifecycle";
 import {
   acquireRecoveryClaim,
   canRecoverConversation,
+  getRecoveryEligibility,
   revokeRecoveryClaims,
 } from "./recovery-ownership";
 import { evictConversationRuntimeIfIdle } from "./runtime";
@@ -101,6 +102,11 @@ describe("recovery ownership", () => {
         throw new Error("offline");
       }),
     ).toBe(false);
+    expect(
+      await getRecoveryEligibility(runtime(), async () => {
+        throw new Error("offline");
+      }),
+    ).toBe("unavailable");
   });
   test("handoff or connection replacement during lookup prevents recovery", async () => {
     const value = runtime();
@@ -317,7 +323,7 @@ describe("recovery ownership", () => {
     await Promise.resolve();
 
     expect(actions).toEqual(["acquire", "release"]);
-    expect(losses).toBe(0);
+    expect(losses).toBe(1);
     expect(claim?.owned).toBe(false);
     expect(value.listener.activeRecoveryClaims?.size).toBe(0);
   });
@@ -353,7 +359,36 @@ describe("recovery ownership", () => {
     await Promise.resolve();
 
     expect(actions).toEqual(["acquire", "release"]);
-    expect(losses).toBe(0);
+    expect(losses).toBe(1);
     expect(value.listener.activeRecoveryClaims?.size).toBe(0);
+  });
+
+  test("a delayed old close revokes only its physical generation", async () => {
+    const value = runtime();
+    const losses: string[] = [];
+    const request = (async (_agentId: string, body: { action: string }) =>
+      body.action === "acquire"
+        ? { token: crypto.randomUUID(), fence: 1, expires_at: 30_000 }
+        : { released: true }) as never;
+    value.listener.connectionGeneration = "generation-old";
+    const oldClaim = await acquireRecoveryClaim(
+      value,
+      () => losses.push("old"),
+      { request, schedule: () => 1, cancel: () => {} },
+    );
+    value.listener.connectionGeneration = "generation-new";
+    const newClaim = await acquireRecoveryClaim(
+      value,
+      () => losses.push("new"),
+      { request, schedule: () => 2, cancel: () => {} },
+    );
+
+    revokeRecoveryClaims(value.listener, undefined, "generation-old");
+    await Promise.resolve();
+
+    expect(losses).toEqual(["old"]);
+    expect(oldClaim?.owned).toBe(false);
+    expect(newClaim?.owned).toBe(true);
+    newClaim?.abandon();
   });
 });

@@ -14,7 +14,7 @@ import {
   claimPendingTeleportAtBoundary,
   clearExpectedInboundTeleport,
   expectInboundTeleport,
-  finishTeleport,
+  finalizeClaimedTeleport,
   handleTeleportRequest,
   isInboundTeleportExpected,
   isRuntimeTeleportPending,
@@ -201,7 +201,9 @@ describe("sync replay on a teleport source", () => {
       },
     });
     if (!pending) throw new Error("Expected pending source handoff");
-    finishTeleport(runtime, lease, pending);
+    finalizeClaimedTeleport(runtime.listener, pending, () =>
+      runtime.turnLifecycle.finish(lease, "cancelled"),
+    );
     await sync(runtime, transport, processed);
     await sync(runtime, transport, processed);
     await Bun.sleep(20);

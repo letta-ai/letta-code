@@ -38,7 +38,17 @@ export type TurnFinishedOwner = {
   canRotate: boolean;
   /** Explicit startup lineage, retained for same-lineage replacement checks. */
   lineageId: string | null;
+  terminalIdentity?: string;
+  /** Exact interrupted-work revision superseded by this terminal. */
+  interruptedRevision?: string;
 };
+
+export class TurnFinishedCapacityError extends Error {
+  constructor() {
+    super("Pending turn-finished durability capacity exceeded");
+    this.name = "TurnFinishedCapacityError";
+  }
+}
 
 type DeliveryClaim = {
   token: string;
@@ -170,7 +180,11 @@ export function createTurnFinishedStore(
             !!terminal.owner &&
             (terminal.owner.connectionId === null ||
               typeof terminal.owner.connectionId === "string") &&
-            typeof terminal.owner.canRotate === "boolean",
+            typeof terminal.owner.canRotate === "boolean" &&
+            (terminal.owner.terminalIdentity === undefined ||
+              typeof terminal.owner.terminalIdentity === "string") &&
+            (terminal.owner.interruptedRevision === undefined ||
+              typeof terminal.owner.interruptedRevision === "string"),
         )
       ) {
         throw new Error("Invalid turn-finished record");
@@ -293,10 +307,21 @@ export function createTurnFinishedStore(
           conversationId,
           terminals: [],
         };
-        const existing = record.terminals.find(
-          (terminal) => terminal.message.turn_id === message.turn_id,
+        const existing = record.terminals.find((terminal) =>
+          owner.terminalIdentity
+            ? terminal.owner.terminalIdentity === owner.terminalIdentity
+            : terminal.owner.terminalIdentity === undefined &&
+              terminal.message.turn_id === message.turn_id,
         );
-        if (existing) return existing;
+        if (existing) {
+          if (
+            JSON.stringify(existing.message) !== JSON.stringify(message) ||
+            JSON.stringify(existing.owner) !== JSON.stringify(owner)
+          ) {
+            throw new Error("Turn-finished identity collision");
+          }
+          return existing;
+        }
         if (record.terminals.length >= MAX_PENDING_TERMINALS_PER_CONVERSATION) {
           if (owner.connectionId === null) {
             const oldestProcessTerminal = record.terminals.findIndex(
@@ -305,14 +330,10 @@ export function createTurnFinishedStore(
             if (oldestProcessTerminal >= 0) {
               record.terminals.splice(oldestProcessTerminal, 1);
             } else {
-              throw new Error(
-                "Pending turn-finished durability capacity exceeded",
-              );
+              throw new TurnFinishedCapacityError();
             }
           } else {
-            throw new Error(
-              "Pending turn-finished durability capacity exceeded",
-            );
+            throw new TurnFinishedCapacityError();
           }
         }
         const terminal: PersistedTurnFinished = {
@@ -450,6 +471,7 @@ export type PreparedTurnFinished =
 
 export function getTurnFinishedOwner(
   runtime: ConversationRuntime,
+  interruptedRevision?: string,
 ): TurnFinishedOwner {
   // Only a connection which actually owns the turn may own its terminal.
   // A service-level listener connection is not provenance for cron/task work.
@@ -461,6 +483,8 @@ export function getTurnFinishedOwner(
     connectionId,
     canRotate: connection?.options.connectionIdCanResume === false,
     lineageId: connection?.startupOwner.lineageId ?? null,
+    terminalIdentity: randomUUID(),
+    ...(interruptedRevision ? { interruptedRevision } : {}),
   };
 }
 
@@ -469,8 +493,9 @@ export function prepareTurnFinished(
   runtime: ConversationRuntime,
   message: ReplayableTurnFinished,
   providedStore?: ReturnType<typeof createTurnFinishedStore>,
+  providedOwner?: TurnFinishedOwner,
 ): PreparedTurnFinished {
-  const owner = getTurnFinishedOwner(runtime);
+  const owner = providedOwner ?? getTurnFinishedOwner(runtime);
   // Process-owned work and rotating App Server clients have no peer that
   // implements the Cloud terminal acknowledgement contract. Keep those paths
   // explicitly ephemeral rather than accumulating records that can never be

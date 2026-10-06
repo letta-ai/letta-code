@@ -1,6 +1,14 @@
 import { expect, test } from "bun:test";
 import { createTurnDurabilityOwnership } from "./turn-durability-ownership";
 
+test("terminal identities do not repeat when a process restarts its batch counter", () => {
+  const first = createTurnDurabilityOwnership().terminalTurnId;
+  const restarted = createTurnDurabilityOwnership().terminalTurnId;
+  expect(first).not.toBe(restarted);
+  expect(first.startsWith("turn-")).toBe(true);
+  expect(restarted.startsWith("turn-")).toBe(true);
+});
+
 test("multiple generic approval continuations retain every operation", () => {
   const ownership = createTurnDurabilityOwnership();
   ownership.record({

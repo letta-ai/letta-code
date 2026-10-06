@@ -904,3 +904,46 @@ test("direct turn dispatched during previous turn cleanup keeps reporting its lo
   releaseTool();
   await runtime.messageQueue;
 });
+
+test("failed enqueue plus failed durable rollback acknowledges retained work", async () => {
+  const listener = createRuntime();
+  setActiveRuntime(listener);
+  const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+  runtime.turnLifecycle.begin({
+    origin: "message",
+    workingDirectory: process.cwd(),
+  });
+  const accepted: Array<{ accepted: boolean; disposition?: string }> = [];
+  const restoreDurableQueuedInputs = mock(() => 0);
+  listener.restoreDurableQueuedInputs = restoreDurableQueuedInputs;
+
+  dispatchInboundMessageWhenReady({
+    listener,
+    runtime,
+    incoming: {
+      type: "message",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      messages: [
+        {
+          role: "user",
+          content: "retained after rollback failure",
+          client_message_id: "cm-retained",
+        },
+      ],
+    },
+    socket: new MockSocket() as never,
+    options: makeOptions("sdk"),
+    processQueuedTurn: async () => {},
+    processIncomingMessage: async () => {},
+    trackListenerError: () => {},
+    onInputAccepted: (result) => accepted.push(result),
+    forgetQueuedInput: () => false,
+    enqueueInput: () => false,
+  });
+  await runtime.messageQueue;
+  await new Promise((resolve) => setImmediate(resolve));
+
+  expect(accepted).toEqual([{ accepted: true, disposition: "queued" }]);
+  expect(restoreDurableQueuedInputs).toHaveBeenCalledTimes(1);
+});

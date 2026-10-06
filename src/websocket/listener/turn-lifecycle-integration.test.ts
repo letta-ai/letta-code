@@ -28,7 +28,7 @@ import { createRuntime } from "./lifecycle";
 import { shouldProcessInboundMessageDirectly } from "./queue";
 import { finalizeHandledRecoveryTurn } from "./recovery";
 import { clearConversationRuntimeState } from "./runtime";
-import { finishPendingTeleport, handleTeleportRequest } from "./teleport";
+import { finishDrainedTeleport, handleTeleportRequest } from "./teleport";
 import type { ListenerTransport } from "./transport";
 import { handleApprovalStop } from "./turn-approval";
 import { releaseListenerTurnContext } from "./turn-context";
@@ -536,8 +536,10 @@ describe("listener turn lifecycle integration", () => {
       },
     });
 
-    runtime.turnLifecycle.finish(lease, "end_turn");
-    finishPendingTeleport(runtime);
+    finishDrainedTeleport(
+      runtime,
+      runtime.turnLifecycle.finish(lease, "end_turn"),
+    );
 
     expect(listener.pendingTeleports?.get("teleport-text")?.readyAt).toEqual(
       expect.any(Number),

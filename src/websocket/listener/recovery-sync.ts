@@ -14,7 +14,7 @@ import {
 } from "@/agent/turn-recovery-policy";
 import { getBackend } from "@/backend";
 import { readInterruptedTurn } from "./interrupted-turn-record";
-import { canRecoverConversation } from "./recovery-ownership";
+import { getRecoveryEligibility } from "./recovery-ownership";
 import {
   clearRecoveredApprovalState,
   hasInterruptedCacheForScope,
@@ -73,8 +73,9 @@ export async function recoverApprovalStateForSync(
     return;
   }
 
-  if (!(await canRecoverConversation(runtime))) {
-    clearRecoveredApprovalState(runtime);
+  const initialEligibility = await getRecoveryEligibility(runtime);
+  if (initialEligibility !== "owned") {
+    if (initialEligibility === "conflict") clearRecoveredApprovalState(runtime);
     return "deferred";
   }
 
@@ -115,7 +116,7 @@ export async function recoverApprovalStateForSync(
 
   // Re-check liveness after the backend awaits: a turn or live approval that
   // started meanwhile owns this conversation's approval state.
-  if (!(await canRecoverConversation(runtime))) return "deferred";
+  if ((await getRecoveryEligibility(runtime)) !== "owned") return "deferred";
   if (
     hasInterruptedCacheForScope(runtime.listener, scope) ||
     (sameActiveScope &&

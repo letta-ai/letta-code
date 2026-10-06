@@ -84,7 +84,7 @@ import {
 import { admitTeleportContinueInput } from "./teleport-continue-input";
 import type { ListenerTransport } from "./transport";
 import { handleIncomingMessage } from "./turn";
-import { acknowledgeTurnFinished } from "./turn-finished-replay";
+import { handleTurnFinishedAck } from "./turn-finished-ack";
 import type {
   ConversationRuntime,
   IncomingMessage,
@@ -276,13 +276,7 @@ export function createListenerMessageHandler(
       }
 
       if (parsed.type === "turn_finished_ack") {
-        acknowledgeTurnFinished({
-          agentId: parsed.runtime.agent_id,
-          conversationId: parsed.runtime.conversation_id,
-          connectionId,
-          idempotencyKey: parsed.idempotency_key,
-          consumerId: parsed.consumer_id,
-        });
+        handleTurnFinishedAck(runtime, socket, connectionId, parsed);
         return;
       }
 

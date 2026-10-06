@@ -3,9 +3,10 @@ import { randomUUID } from "node:crypto";
 import {
   chmodSync,
   closeSync,
-  existsSync,
   fstatSync,
   fsyncSync,
+  linkSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readdirSync,
@@ -21,6 +22,7 @@ import { basename, dirname, join } from "node:path";
 
 const MAX_OWNER_BYTES = 4096;
 const WAIT_SLICE_MS = 5;
+const MAX_CANDIDATE_SWEEP = 128;
 let cachedCurrentProcessStart: string | null | undefined;
 
 export type DurableLockOwner = {
@@ -49,42 +51,19 @@ type ProcessProbe = (pid: number) => void;
 function installCandidateDirectory(
   candidatePath: string,
   lockPath: string,
-  platform: NodeJS.Platform = process.platform,
 ): void {
-  if (platform !== "win32") {
-    renameSync(candidatePath, lockPath);
-    return;
-  }
-  try {
-    // Node's Windows rename may replace an existing file with a directory.
-    // Directory.Move is atomic on the same volume and refuses every existing
-    // destination path type. Pass paths through the environment, never source.
-    execFileSync(
-      "powershell",
-      [
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        "[System.IO.Directory]::Move($env:LETTA_LOCK_SOURCE, $env:LETTA_LOCK_TARGET)",
-      ],
-      {
-        env: {
-          ...process.env,
-          LETTA_LOCK_SOURCE: candidatePath,
-          LETTA_LOCK_TARGET: lockPath,
-        },
-        stdio: "ignore",
-        windowsHide: true,
-      },
-    );
-  } catch (error) {
-    if (!existsSync(lockPath)) throw error;
-    const conflict = new Error("Durable lock destination exists") as Error & {
-      code: string;
-    };
-    conflict.code = "EEXIST";
-    throw conflict;
-  }
+  // mkdir is the one portable no-replacement primitive available on every
+  // supported platform. The already-fsynced candidate remains beside the
+  // temporarily empty canonical directory, proving whether its installer is
+  // live if the process dies before the owner-file rename.
+  mkdirSync(lockPath, { mode: 0o700 });
+  const names = readdirSync(candidatePath);
+  if (names.length !== 1) throw new Error("Invalid durable lock candidate");
+  renameSync(
+    join(candidatePath, names[0] as string),
+    join(lockPath, names[0] as string),
+  );
+  rmdirSync(candidatePath);
 }
 
 /** Windows does not support opening/fsyncing directories. File fsyncs still run. */
@@ -225,6 +204,33 @@ function readOwnerDirectory(lockPath: string): {
   }
 }
 
+function readOwnerFile(path: string): DurableLockOwner {
+  const fd = openSync(path, "r");
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.size > MAX_OWNER_BYTES) {
+      throw new Error("Invalid durable lock owner file");
+    }
+    const bytes = Buffer.alloc(stat.size);
+    const read = readSync(fd, bytes, 0, bytes.length, 0);
+    if (read !== bytes.length) throw new Error("Short durable lock owner read");
+    return parseOwner(JSON.parse(bytes.toString("utf8")));
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function sameFile(first: string, second: string): boolean {
+  try {
+    const left = lstatSync(first);
+    const right = lstatSync(second);
+    return left.dev === right.dev && left.ino === right.ino;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
 function removeDirectoryIfEmpty(path: string, parent: string): boolean {
   try {
     rmdirSync(path);
@@ -261,30 +267,88 @@ function sweepDeadCandidates(
   lockPath: string,
   parent: string,
   isOwnerAlive: (owner: DurableLockOwner) => boolean,
-): void {
+  ignoredPath?: string,
+): boolean {
   const prefix = `${basename(lockPath)}.candidate-`;
-  for (const entry of readdirSync(parent, { withFileTypes: true })) {
-    if (!entry.name.startsWith(prefix) || !entry.isDirectory()) continue;
+  const allCandidates = readdirSync(parent, { withFileTypes: true }).filter(
+    (entry) => entry.name.startsWith(prefix) && entry.isDirectory(),
+  );
+  // Cleanup work is bounded per pass. Any unswept candidate remains a
+  // conservative live-installer witness until a later pass proves it dead.
+  let hasUnresolvedCandidate = allCandidates.length > MAX_CANDIDATE_SWEEP;
+  const candidates = allCandidates.slice(0, MAX_CANDIDATE_SWEEP);
+  for (const entry of candidates) {
     const candidatePath = join(parent, entry.name);
+    if (candidatePath === ignoredPath) continue;
     let candidate: ReturnType<typeof readOwnerDirectory>;
     try {
       candidate = readOwnerDirectory(candidatePath);
     } catch {
-      // Malformed or concurrently moving candidates are unverifiable. They do
-      // not contend for the canonical lock, so leave them rather than guessing.
+      const creatorPid = Number(
+        entry.name.slice(prefix.length).split("-", 1)[0],
+      );
+      if (!Number.isSafeInteger(creatorPid) || creatorPid <= 0) {
+        hasUnresolvedCandidate = true;
+        continue;
+      }
+      try {
+        if (
+          isOwnerAlive({
+            token: "candidate",
+            pid: creatorPid,
+            processStart: null,
+          })
+        ) {
+          hasUnresolvedCandidate = true;
+          continue;
+        }
+      } catch {
+        hasUnresolvedCandidate = true;
+        continue;
+      }
+      rmSync(candidatePath, { recursive: true, force: true });
+      fsyncDirectory(parent);
       continue;
     }
-    // An empty candidate may be in the live mkdir -> owner-write interval.
-    if (!candidate) continue;
+    if (!candidate) {
+      const creatorPid = Number(
+        entry.name.slice(prefix.length).split("-", 1)[0],
+      );
+      try {
+        if (
+          !Number.isSafeInteger(creatorPid) ||
+          creatorPid <= 0 ||
+          isOwnerAlive({
+            token: "candidate",
+            pid: creatorPid,
+            processStart: null,
+          })
+        ) {
+          hasUnresolvedCandidate = true;
+          continue;
+        }
+      } catch {
+        hasUnresolvedCandidate = true;
+        continue;
+      }
+      rmSync(candidatePath, { recursive: true, force: true });
+      fsyncDirectory(parent);
+      continue;
+    }
     let alive: boolean;
     try {
       alive = isOwnerAlive(candidate.owner);
     } catch {
+      hasUnresolvedCandidate = true;
       continue;
     }
-    if (alive) continue;
+    if (alive) {
+      hasUnresolvedCandidate = true;
+      continue;
+    }
     removeDeadOwner(candidatePath, parent, candidate.ownerPath);
   }
+  return hasUnresolvedCandidate;
 }
 
 function prepareCandidate(
@@ -333,6 +397,8 @@ export function acquireDurableFileLock(
   mkdirSync(parent, { recursive: true, mode: 0o700 });
   chmodSync(parent, 0o700);
   const lockPath = `${path}.lock`;
+  const legacyMarkerPath = `${lockPath}.recovery`;
+  const legacyOwnersPath = `${lockPath}-owners`;
   const owner = options.owner ?? currentDurableLockOwner();
   // Validate injected owners before constructing any path from their fields.
   parseOwner(owner);
@@ -348,9 +414,39 @@ export function acquireDurableFileLock(
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, WAIT_SLICE_MS);
   };
 
+  const finishLegacyRecovery = (): boolean => {
+    let marked: DurableLockOwner;
+    try {
+      marked = readOwnerFile(legacyMarkerPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
+    }
+    if (isAlive(marked)) {
+      waitOrThrow();
+      return true;
+    }
+    if (sameFile(lockPath, legacyMarkerPath)) {
+      unlinkSync(lockPath);
+      fsyncDirectory(parent);
+    }
+    const legacyOwnerPath = join(
+      legacyOwnersPath,
+      `${marked.pid}-${marked.token}.json`,
+    );
+    if (sameFile(legacyOwnerPath, legacyMarkerPath)) {
+      unlinkSync(legacyOwnerPath);
+      fsyncDirectory(legacyOwnersPath);
+    }
+    unlinkSync(legacyMarkerPath);
+    fsyncDirectory(parent);
+    return true;
+  };
+
   let installed = false;
   try {
     while (true) {
+      if (finishLegacyRecovery()) continue;
       try {
         installCandidateDirectory(candidatePath, lockPath);
         installed = true;
@@ -372,14 +468,36 @@ export function acquireDurableFileLock(
       try {
         incumbent = readOwnerDirectory(lockPath);
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === "ENOENT") {
           waitOrThrow();
+          continue;
+        }
+        if (code === "ENOTDIR") {
+          const legacyOwner = readOwnerFile(lockPath);
+          if (isAlive(legacyOwner)) {
+            waitOrThrow();
+            continue;
+          }
+          try {
+            linkSync(lockPath, legacyMarkerPath);
+            fsyncDirectory(parent);
+          } catch (linkError) {
+            const linkCode = (linkError as NodeJS.ErrnoException).code;
+            if (linkCode !== "EEXIST" && linkCode !== "ENOENT") {
+              throw linkError;
+            }
+          }
           continue;
         }
         throw error; // Corrupt or multiple-owner directories fail closed.
       }
       if (incumbent === null) {
-        removeDirectoryIfEmpty(lockPath, parent);
+        if (sweepDeadCandidates(lockPath, parent, isAlive, candidatePath)) {
+          waitOrThrow();
+        } else {
+          removeDirectoryIfEmpty(lockPath, parent);
+        }
         continue;
       }
       if (isAlive(incumbent.owner)) {

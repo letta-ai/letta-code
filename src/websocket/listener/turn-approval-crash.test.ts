@@ -9,6 +9,7 @@ import {
   recordedToolResults,
 } from "./interrupted-turn-record";
 import { createRuntime } from "./lifecycle";
+import { RECOVERED_APPROVAL_OUTCOME_UNKNOWN } from "./recovered-approval-checkpoint";
 import { handleApprovalStop } from "./turn-approval";
 
 test("a thrown approval batch checkpoints failure before reconnect delivery", async () => {
@@ -40,6 +41,7 @@ test("a thrown approval batch checkpoints failure before reconnect delivery", as
       requestOtid: "initial-otid",
       workingDirectory: process.cwd(),
     };
+    let preEffectResults: InterruptedTurnRecord["results"] = [];
     let enterTransportWait!: () => void;
     const transportWaitEntered = new Promise<void>((resolve) => {
       enterTransportWait = resolve;
@@ -84,6 +86,7 @@ test("a thrown approval batch checkpoints failure before reconnect delivery", as
           needsUserInput: [],
         }),
         executeApprovalBatch: async () => {
+          preEffectResults = structuredClone(durableRecord.results);
           transportOpen = false;
           throw new Error("batch exploded after execution boundary");
         },
@@ -103,6 +106,14 @@ test("a thrown approval batch checkpoints failure before reconnect delivery", as
     });
 
     await transportWaitEntered;
+    expect(preEffectResults).toEqual([
+      {
+        type: "tool",
+        tool_call_id: approval.toolCallId,
+        status: "error",
+        tool_return: RECOVERED_APPROVAL_OUTCOME_UNKNOWN,
+      },
+    ]);
     const recovered = createInterruptedTurnStore(directory).read(
       "agent-1",
       "conv-1",
@@ -128,4 +139,89 @@ test("a thrown approval batch checkpoints failure before reconnect delivery", as
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test("authority loss waits for effects and checkpoints exact returned results", async () => {
+  const runtime = getOrCreateScopedRuntime(
+    createRuntime(),
+    "agent-1",
+    "conv-1",
+  );
+  const turnLease = runtime.turnLifecycle.begin({
+    origin: "approval_recovery",
+    workingDirectory: process.cwd(),
+    initialStatus: "PROCESSING_API_RESPONSE",
+  });
+  const approval = {
+    toolCallId: "call-settles",
+    toolName: "Bash",
+    toolArgs: '{"command":"deploy"}',
+  };
+  let authority = true;
+  let executionStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    executionStarted = resolve;
+  });
+  let settleExecution!: (value: unknown[]) => void;
+  const execution = new Promise<unknown[]>((resolve) => {
+    settleExecution = resolve;
+  });
+  const checkpoints: Array<Partial<InterruptedTurnRecord>> = [];
+
+  const resultPromise = handleApprovalStop({
+    approvals: [approval],
+    runtime,
+    socket: {
+      kind: "runtime",
+      bufferedAmount: 0,
+      isOpen: () => true,
+      send: () => {},
+    },
+    agentId: "agent-1",
+    conversationId: "conv-1",
+    turnWorkingDirectory: process.cwd(),
+    turnPermissionModeState: { mode: "strict" },
+    dequeuedBatchId: "batch-settles",
+    msgRunIds: [],
+    turnInput: { messages: [] },
+    pendingNormalizationInterruptedToolCallIds: [],
+    turnToolContextId: null,
+    turnLease,
+    processOwnedTurn: true,
+    authorityGuard: () => authority,
+    buildSendOptions: () => ({}) as never,
+    dependencies: {
+      classifyApprovals: async () => ({
+        autoAllowed: [
+          { approval, parsedArgs: { command: "deploy" }, context: null },
+        ],
+        autoDenied: [],
+        needsUserInput: [],
+      }),
+      executeApprovalBatch: (async () => {
+        executionStarted();
+        return await execution;
+      }) as never,
+      ensureSecretsHydrated: async () => {},
+      recordListenerWork: (
+        _owner: unknown,
+        update: Partial<InterruptedTurnRecord>,
+      ) => checkpoints.push(update),
+    } as never,
+  });
+
+  await started;
+  authority = false;
+  const exact = {
+    type: "tool" as const,
+    tool_call_id: "call-settles",
+    status: "success" as const,
+    tool_return: "deployed",
+  };
+  settleExecution([exact]);
+  const result = await resultPromise;
+
+  expect(turnLease.signal.aborted).toBe(false);
+  expect(result.kind).toBe("interrupted");
+  expect(checkpoints.at(-1)?.results).toEqual([exact]);
 });

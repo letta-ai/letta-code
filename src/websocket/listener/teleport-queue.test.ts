@@ -17,8 +17,8 @@ import { setActiveRuntime } from "./runtime";
 import {
   claimPendingTeleportAtBoundary,
   expectInboundTeleport,
-  finishPendingTeleport,
-  finishTeleport,
+  finalizeClaimedTeleport,
+  finishDrainedTeleport,
   handleTeleportRequest,
   isInboundTeleportExpected,
   isRuntimeTeleportPending,
@@ -216,7 +216,9 @@ test("serialized direct input cannot start after source readiness", async () => 
   });
   expect(pending).not.toBeNull();
   if (!pending) throw new Error("Teleport did not reach the source boundary");
-  finishTeleport(runtime, lease, pending);
+  finalizeClaimedTeleport(listener, pending, () =>
+    runtime.turnLifecycle.finish(lease, "cancelled"),
+  );
   releaseCurrentTurn?.();
   await runtime.messageQueue;
 
@@ -257,8 +259,10 @@ test("accepted queue drains before teleport readiness", () => {
       activeTurn: true,
     }),
   ).toBeNull();
-  runtime.turnLifecycle.finish(firstLease, "end_turn");
-  finishPendingTeleport(runtime);
+  finishDrainedTeleport(
+    runtime,
+    runtime.turnLifecycle.finish(firstLease, "end_turn"),
+  );
   expect(pending?.readyAt).toBeUndefined();
 
   runtime.queueRuntime.consumeItems(1);
@@ -274,8 +278,10 @@ test("accepted queue drains before teleport readiness", () => {
       activeTurn: true,
     }),
   ).toBeNull();
-  runtime.turnLifecycle.finish(queuedLease, "error");
-  finishPendingTeleport(runtime);
+  finishDrainedTeleport(
+    runtime,
+    runtime.turnLifecycle.finish(queuedLease, "error"),
+  );
 
   expect(pending?.readyAt).toEqual(expect.any(Number));
   expect(pending?.activeTurn).toBe(false);
