@@ -846,17 +846,18 @@ export async function drainStreamWithResume(
         resumeResult.stopReason,
       );
       result = resumeResult;
+      if (result.stopReason !== "requires_approval") {
+        buffers.approvalsPending = false;
+      }
 
       // Preserve approval IDs and same-ID argument fragments from both sides
       // of the disconnect; the fresh resume processor lacks earlier chunks.
-      const pendingOriginalApprovals = retainIncompleteApprovalRequests(
-        buffers,
-        originalApprovals,
-      );
-      if (
-        result.stopReason === "requires_approval" &&
-        pendingOriginalApprovals.length > 0
-      ) {
+      const pendingOriginalApprovals =
+        result.stopReason === "requires_approval" ||
+        result.stopReason === "end_turn"
+          ? retainIncompleteApprovalRequests(buffers, originalApprovals)
+          : [];
+      if (result.stopReason === "requires_approval") {
         result.approvals = retainIncompleteApprovalRequests(
           buffers,
           mergeApprovalRequests(pendingOriginalApprovals, result.approvals),
@@ -941,7 +942,6 @@ export async function drainStreamWithResume(
     );
   }
 
-  // Log when stream errored but resume was NOT attempted, with reasons why
   if (result.stopReason === "error") {
     const skipReasons: string[] = [];
     if (result.sawStopReasonChunk && !replayGenericError)
@@ -952,12 +952,10 @@ export async function drainStreamWithResume(
     if (abortSignal?.aborted) skipReasons.push("user_aborted");
 
     if (resumeFailed || skipReasons.length > 0) {
-      // Clean up only after ruling out a recovered approval boundary.
       markIncompleteToolsAsCancelled(buffers, false, "stream_error", true);
       markCurrentLineAsFinished(buffers);
     }
 
-    // Only log if we actually skipped for a reason (i.e., we didn't enter the resume branch above)
     if (skipReasons.length > 0) {
       debugLog(
         "stream",
@@ -975,9 +973,6 @@ export async function drainStreamWithResume(
     }
   }
 
-  // If the initial drain's catch block set buffers.interrupted=true (skipCancelToolsOnError)
-  // but the stream ended with complete requires_approval data (stop_reason chunk arrived
-  // before the drop), no resume is needed — clean up so the approval prompt renders correctly.
   if (
     result.stopReason === "requires_approval" &&
     (result.approvals?.length ?? 0) > 0 &&
@@ -987,7 +982,6 @@ export async function drainStreamWithResume(
     markCurrentLineAsFinished(buffers);
   }
 
-  // Update duration to reflect total time (including resume attempt)
   result.apiDurationMs = performance.now() - overallStartTime;
   recordTuiPerf(`stream_lifecycle:end:${result.stopReason}`, {
     ms: result.apiDurationMs,

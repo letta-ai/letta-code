@@ -165,6 +165,11 @@ export class StreamProcessor {
       if (chunk.tool_call_id) {
         this.pendingApprovals.delete(chunk.tool_call_id);
       }
+      for (const toolReturn of chunk.tool_returns ?? []) {
+        if (toolReturn.tool_call_id) {
+          this.pendingApprovals.delete(toolReturn.tool_call_id);
+        }
+      }
       // Continue processing this chunk (for UI display)
     }
 

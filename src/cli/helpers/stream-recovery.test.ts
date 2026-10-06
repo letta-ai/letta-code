@@ -91,10 +91,27 @@ function toolReturn(
   } as unknown as LettaStreamingResponse;
 }
 
+function parallelToolReturn(
+  runId: string,
+  seqId: number,
+  toolCallIds: string[],
+): LettaStreamingResponse {
+  return {
+    message_type: "tool_return_message",
+    run_id: runId,
+    seq_id: seqId,
+    tool_returns: toolCallIds.map((toolCallId) => ({
+      tool_call_id: toolCallId,
+      status: "success",
+      tool_return: "done",
+    })),
+  } as unknown as LettaStreamingResponse;
+}
+
 function stop(
   runId: string,
   seqId: number,
-  stopReason: "end_turn" | "error" | "requires_approval",
+  stopReason: "end_turn" | "error" | "llm_api_error" | "requires_approval",
 ): LettaStreamingResponse {
   return {
     message_type: "stop_reason",
@@ -480,6 +497,69 @@ describe("stream recovery", () => {
         new Error("initial stream disconnected"),
       ),
       { ...immediateRetries, maxAttempts: 1 },
+      buffers,
+      loadCurrentPendingApprovals,
+    );
+
+    expect(loadCurrentPendingApprovals).toHaveBeenCalledTimes(1);
+    expect(result.stopReason).toBe("requires_approval");
+    expect(result.approvals?.map((item) => item.toolCallId)).toEqual([
+      "tool-approval-2",
+    ]);
+    expect(buffers.byId.get("tool-approval-1")).toMatchObject({
+      phase: "finished",
+      resultOk: true,
+      resultText: "done",
+    });
+    expect(buffers.byId.get("tool-approval-2")).toMatchObject({
+      phase: "ready",
+    });
+  });
+
+  test("terminal replay errors do not reconstruct stale approval rows", async () => {
+    const streamRunMessages = mock(async () =>
+      stream([stop("run-1", 3, "llm_api_error")]),
+    );
+    __testSetBackend({ capabilities, streamRunMessages } as unknown as Backend);
+    const buffers = createBuffers("agent-1");
+    const loadCurrentPendingApprovals = mock(async () => []);
+
+    const result = await drain(
+      stream(
+        [ping("run-1", 1), approval("run-1", 2)],
+        new Error("initial stream disconnected"),
+      ),
+      immediateRetries,
+      buffers,
+      loadCurrentPendingApprovals,
+    );
+
+    expect(loadCurrentPendingApprovals).not.toHaveBeenCalled();
+    expect(result.stopReason).toBe("llm_api_error");
+    expect(result.approvals).toEqual([]);
+    expect(result.approval).toBeNull();
+    expect(buffers.byId.has("tool-approval-1")).toBe(false);
+    expect(buffers.approvalsPending).toBe(false);
+  });
+
+  test("plural tool returns retain only replay approvals still pending", async () => {
+    const streamRunMessages = mock(async () =>
+      stream([
+        approval("run-1", 2),
+        approval("run-1", 3, '{"cmd":"pwd"}', "tool-approval-2"),
+        parallelToolReturn("run-1", 4, ["tool-approval-1"]),
+        stop("run-1", 5, "requires_approval"),
+      ]),
+    );
+    __testSetBackend({ capabilities, streamRunMessages } as unknown as Backend);
+    const buffers = createBuffers("agent-1");
+    const loadCurrentPendingApprovals = mock(async () => [
+      approvalRequest("tool-approval-2"),
+    ]);
+
+    const result = await drain(
+      stream([ping("run-1", 1)], new Error("initial stream disconnected")),
+      immediateRetries,
       buffers,
       loadCurrentPendingApprovals,
     );
