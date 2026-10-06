@@ -235,6 +235,22 @@ test("semantic proxy-wrapped 400 errors are not reported as service outages", ()
   expect(message).not.toBe("Connection to Letta service failed. Please retry.");
 });
 
+test("structured proxy-wrapped 400 errors are not reported as service outages", () => {
+  const message = getConsumerLoopErrorMessage({
+    message:
+      "Error occurred while trying to proxy: No active runs found for this conversation.",
+    errorInfo: {
+      message:
+        "Error occurred while trying to proxy: No active runs found for this conversation.",
+      detail:
+        "Error occurred while trying to proxy: No active runs found for this conversation.",
+      status_code: 400,
+    },
+  });
+
+  expect(message).not.toBe("Connection to Letta service failed. Please retry.");
+});
+
 test("proxy transport 5xx errors retain the service outage message", () => {
   const error = new APIError(
     504,

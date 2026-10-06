@@ -156,6 +156,35 @@ export function isReplayableRun(run: Run): boolean {
   );
 }
 
+export function isCompletedApprovalBoundary(run: Run): boolean {
+  return (
+    !run.metadata?.error &&
+    run.status === "completed" &&
+    run.stop_reason === "requires_approval"
+  );
+}
+
+export function recoverApprovalBoundaryAfterResumeFailure(
+  result: {
+    stopReason: string;
+    sawStopReasonChunk?: boolean;
+    approvals?: ApprovalRequest[];
+    fallbackError?: string | null;
+  },
+  authoritativeApprovalBoundary: boolean,
+): boolean {
+  if (
+    !authoritativeApprovalBoundary ||
+    result.stopReason !== "error" ||
+    result.sawStopReasonChunk ||
+    (result.approvals?.length ?? 0) === 0
+  )
+    return false;
+  result.stopReason = "requires_approval";
+  result.fallbackError = null;
+  return true;
+}
+
 export async function waitForResumeRetry(
   delayMs: number,
   abortSignal: AbortSignal,

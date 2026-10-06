@@ -47,7 +47,11 @@ function ping(runId: string, seqId: number): LettaStreamingResponse {
   } as unknown as LettaStreamingResponse;
 }
 
-function approval(runId: string, seqId: number): LettaStreamingResponse {
+function approval(
+  runId: string,
+  seqId: number,
+  toolArgs = '{"cmd":"git status"}',
+): LettaStreamingResponse {
   return {
     message_type: "approval_request_message",
     id: "message-approval-1",
@@ -56,7 +60,7 @@ function approval(runId: string, seqId: number): LettaStreamingResponse {
     tool_call: {
       tool_call_id: "tool-approval-1",
       name: "exec_command",
-      arguments: '{"cmd":"git status"}',
+      arguments: toolArgs,
     },
   } as unknown as LettaStreamingResponse;
 }
@@ -281,5 +285,68 @@ describe("stream recovery", () => {
       },
     ]);
     expect(streamRunMessages).toHaveBeenCalledTimes(3);
+  });
+
+  test("does not revive an approval after the run failed", async () => {
+    const streamRunMessages = mock(async () => {
+      throw new Error("resume endpoint unavailable");
+    });
+    __testSetBackend({
+      capabilities,
+      streamRunMessages,
+      retrieveRun: mock(async () => ({
+        ...runningRun(),
+        status: "failed" as const,
+        stop_reason: "error" as const,
+      })),
+    } as unknown as Backend);
+
+    const result = await drain(
+      stream(
+        [ping("run-1", 1), approval("run-1", 2)],
+        new Error("initial stream disconnected"),
+      ),
+    );
+
+    expect(result.stopReason).toBe("error");
+    expect(streamRunMessages).toHaveBeenCalledTimes(1);
+  });
+
+  test("keeps approval chunks merged from a failed replay", async () => {
+    const streamRunMessages = mock(async () => {
+      if (streamRunMessages.mock.calls.length === 1) {
+        return stream(
+          [approval("run-1", 3, ' status"}')],
+          new Error("resumed stream disconnected"),
+        );
+      }
+      throw new Error("resume endpoint unavailable");
+    });
+    __testSetBackend({
+      capabilities,
+      streamRunMessages,
+      retrieveRun: mock(async () => ({
+        ...runningRun(),
+        status: "completed" as const,
+        stop_reason: "requires_approval" as const,
+      })),
+    } as unknown as Backend);
+
+    const result = await drain(
+      stream(
+        [ping("run-1", 1), approval("run-1", 2, '{"cmd":"git')],
+        new Error("initial stream disconnected"),
+      ),
+    );
+
+    expect(result.stopReason).toBe("requires_approval");
+    expect(result.approvals).toEqual([
+      {
+        toolCallId: "tool-approval-1",
+        toolName: "exec_command",
+        toolArgs: '{"cmd":"git status"}',
+        messageId: "message-approval-1",
+      },
+    ]);
   });
 });

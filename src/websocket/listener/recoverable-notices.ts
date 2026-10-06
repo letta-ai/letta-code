@@ -165,14 +165,14 @@ function isProxyTransportError(
   detail: string,
   error: unknown,
   message: string,
+  structuredStatus?: number,
 ): boolean {
   const hasProxyFailureText =
     detail.toLowerCase().includes("error occurred while trying to proxy") ||
     message.toLowerCase().includes("error occurred while trying to proxy");
 
-  if (error instanceof APIError) {
-    return error.status >= 500 && hasProxyFailureText;
-  }
+  const status = error instanceof APIError ? error.status : structuredStatus;
+  if (status !== undefined) return status >= 500 && hasProxyFailureText;
 
   return hasProxyFailureText;
 }
@@ -235,7 +235,14 @@ export function getLoopErrorNoticeDecision(params: {
     };
   }
 
-  if (isProxyTransportError(detail, params.error, params.message)) {
+  if (
+    isProxyTransportError(
+      detail,
+      params.error,
+      params.message,
+      params.errorInfo?.status_code ?? params.runErrorInfo?.status_code,
+    )
+  ) {
     return {
       visibility: "transcript",
       message: "Connection to Letta service failed. Please retry.",

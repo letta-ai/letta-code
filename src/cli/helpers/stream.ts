@@ -52,8 +52,10 @@ import {
 } from "./stream-processor";
 import {
   discoverFallbackRunIdWithTimeout,
+  isCompletedApprovalBoundary,
   isReplayableRun,
   mergeApprovalRequests,
+  recoverApprovalBoundaryAfterResumeFailure,
   type StreamResumePolicy,
   waitForResumeRetry,
 } from "./stream-resume";
@@ -685,11 +687,9 @@ export async function drainStreamWithResume(
     (runIdToResume || runIdSource === "otid") &&
     abortSignal &&
     !abortSignal.aborted;
+  let authoritativeApprovalBoundary = false;
 
   if (canResume) {
-    // Resume path: markCurrentLineAsFinished was skipped in the catch block.
-    // If resume fails below, we call it in the catch. If no resume condition is
-    // met (else branch), we call it there instead.
     // Preserve original state in case resume needs to merge or fails
     const originalFallbackError = result.fallbackError;
     let originalApprovals = result.approvals;
@@ -811,6 +811,7 @@ export async function drainStreamWithResume(
               runIdToResume,
               recoveryRequestOptions,
             );
+            authoritativeApprovalBoundary = isCompletedApprovalBoundary(run);
             if (!isReplayableRun(run)) break;
           }
         } catch (resumeError) {
@@ -821,6 +822,7 @@ export async function drainStreamWithResume(
                 runIdToResume,
                 recoveryRequestOptions,
               );
+              authoritativeApprovalBoundary = isCompletedApprovalBoundary(run);
               if (!isReplayableRun(run)) break;
             } catch {
               // A failed status check should not hide a recoverable stream drop.
@@ -910,6 +912,8 @@ export async function drainStreamWithResume(
           ? resumeError.message
           : String(resumeError);
       result.fallbackError = originalFallbackError ?? resumeErrorMsg;
+      result.approvals = originalApprovals;
+      result.approval = originalApproval;
       debugWarn(
         "stream",
         "[MID-STREAM RESUME] ❌ Failed (runId=%s): %s",
@@ -928,17 +932,16 @@ export async function drainStreamWithResume(
   }
 
   if (
-    result.stopReason === "error" &&
-    !result.sawStopReasonChunk &&
-    (result.approvals?.length ?? 0) > 0
+    recoverApprovalBoundaryAfterResumeFailure(
+      result,
+      authoritativeApprovalBoundary,
+    )
   ) {
     debugWarn(
       "stream",
       "Recovering approval boundary after stream ended without stop_reason (runId=%s)",
       result.lastRunId ?? "unknown",
     );
-    result.stopReason = "requires_approval";
-    result.fallbackError = null;
   }
 
   // Log when stream errored but resume was NOT attempted, with reasons why
