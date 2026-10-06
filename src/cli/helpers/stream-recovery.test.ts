@@ -427,6 +427,36 @@ describe("stream recovery", () => {
     });
   });
 
+  test("does not restore the singular approval after replay resolves it", async () => {
+    const streamRunMessages = mock(async () =>
+      stream([toolReturn("run-1", 3), stop("run-1", 4, "requires_approval")]),
+    );
+    __testSetBackend({ capabilities, streamRunMessages } as unknown as Backend);
+    const buffers = createBuffers("agent-1");
+    const loadCurrentPendingApprovals = mock(async () => []);
+
+    const result = await drain(
+      stream(
+        [ping("run-1", 1), approval("run-1", 2)],
+        new Error("initial stream disconnected"),
+      ),
+      immediateRetries,
+      buffers,
+      loadCurrentPendingApprovals,
+    );
+
+    expect(loadCurrentPendingApprovals).not.toHaveBeenCalled();
+    expect(result.stopReason).toBe("error");
+    expect(result.approvals).toEqual([]);
+    expect(result.approval).toBeNull();
+    expect(buffers.approvalsPending).toBe(false);
+    expect(buffers.byId.get("tool-approval-1")).toMatchObject({
+      phase: "finished",
+      resultOk: true,
+      resultText: "done",
+    });
+  });
+
   test("revalidates only unresolved approvals after a partial replay resolution", async () => {
     const streamRunMessages = mock(async () =>
       stream([toolReturn("run-1", 4), stop("run-1", 5, "end_turn")]),

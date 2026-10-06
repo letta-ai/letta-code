@@ -691,7 +691,6 @@ export async function drainStreamWithResume(
   if (canResume) {
     const originalFallbackError = result.fallbackError;
     let originalApprovals = result.approvals;
-    let originalApproval = result.approval;
 
     try {
       const backend = getBackend();
@@ -801,7 +800,6 @@ export async function drainStreamWithResume(
             originalApprovals,
             candidate.approvals,
           );
-          originalApproval = originalApprovals[0] ?? null;
 
           if (runIdToResume) {
             const run = await backend.retrieveRun(
@@ -862,7 +860,7 @@ export async function drainStreamWithResume(
           buffers,
           mergeApprovalRequests(pendingOriginalApprovals, result.approvals),
         );
-        result.approval = result.approvals[0] ?? originalApproval;
+        result.approval = result.approvals[0] ?? null;
       } else if (
         result.stopReason === "end_turn" &&
         pendingOriginalApprovals.length > 0
@@ -881,7 +879,7 @@ export async function drainStreamWithResume(
         );
         result.stopReason = "requires_approval";
         result.approvals = pendingOriginalApprovals;
-        result.approval = pendingOriginalApprovals[0] ?? originalApproval;
+        result.approval = pendingOriginalApprovals[0] ?? null;
       }
       if (result.stopReason === "requires_approval") {
         authoritativeApprovalBoundary = true;
@@ -926,6 +924,7 @@ export async function drainStreamWithResume(
   if (replayedApprovalBoundary && !authoritativeApprovalBoundary) {
     result.stopReason = "error";
     result.fallbackError ??= "Approval boundary is no longer current";
+    buffers.approvalsPending = false;
     resumeFailed = true;
   }
 
