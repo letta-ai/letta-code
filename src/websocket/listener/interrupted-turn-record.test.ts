@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, mock, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +7,80 @@ import {
   type InterruptedTurnRecord,
   recordedToolResults,
 } from "./interrupted-turn-record";
+
+test("fsyncs the parent after publishing and removing a checkpoint", () => {
+  const directory = mkdtempSync(join(tmpdir(), "listener-fsync-"));
+  try {
+    const observations: Array<"present" | "absent"> = [];
+    let store!: ReturnType<typeof createInterruptedTurnStore>;
+    const syncDirectory = mock((syncedDirectory: string) => {
+      expect(syncedDirectory).toBe(directory);
+      observations.push(
+        store.read("agent-test", "conv-test") ? "present" : "absent",
+      );
+    });
+    store = createInterruptedTurnStore(directory, {
+      fsyncDirectory: syncDirectory,
+    });
+    store.write({
+      agentId: "agent-test",
+      conversationId: "conv-test",
+      runId: "run-test",
+      toolCallIds: ["call-test"],
+      results: [],
+      requestOtid: "request-test",
+      workingDirectory: "/project",
+    });
+    store.remove("agent-test", "conv-test");
+
+    expect(observations).toEqual(["present", "absent"]);
+    expect(syncDirectory).toHaveBeenCalledTimes(2);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("retains checkpoint evidence when removal fsync fails", () => {
+  const directory = mkdtempSync(join(tmpdir(), "listener-fsync-failure-"));
+  try {
+    let syncCount = 0;
+    const store = createInterruptedTurnStore(directory, {
+      fsyncDirectory: () => {
+        syncCount += 1;
+        if (syncCount >= 2) throw new Error("directory fsync failed");
+      },
+    });
+    store.write({
+      agentId: "agent-test",
+      conversationId: "conv-test",
+      runId: "run-test",
+      toolCallIds: ["call-test"],
+      results: [],
+      requestOtid: "request-test",
+      workingDirectory: "/project",
+    });
+
+    expect(() => store.remove("agent-test", "conv-test")).toThrow(
+      "directory fsync failed",
+    );
+    expect(store.read("agent-test", "conv-test")).not.toBeNull();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("does not fsync when removing a checkpoint that does not exist", () => {
+  const directory = mkdtempSync(join(tmpdir(), "listener-fsync-missing-"));
+  try {
+    const syncDirectory = mock(() => {});
+    createInterruptedTurnStore(directory, {
+      fsyncDirectory: syncDirectory,
+    }).remove("agent-test", "conv-test");
+    expect(syncDirectory).not.toHaveBeenCalled();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test("a replacement reads completed results; another sandbox has nothing to recover", () => {
   const directory = mkdtempSync(join(tmpdir(), "listener-restart-"));

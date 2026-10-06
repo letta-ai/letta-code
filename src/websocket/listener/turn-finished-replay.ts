@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 import {
   closeSync,
+  type Dirent,
   fsyncSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -51,6 +53,8 @@ export type PersistedTurnFinished = {
   createdAt: number;
   message: ReplayableTurnFinished;
   owner: TurnFinishedOwner;
+  requiredConsumerIds: string[];
+  acknowledgedConsumerIds: string[];
   claim?: DeliveryClaim;
 };
 
@@ -96,7 +100,32 @@ export function encodeTurnFinishedScope(
   );
 }
 
+function decodeTurnFinishedScope(
+  encoded: string,
+): [agentId: string | null, conversationId: string] | null {
+  try {
+    const value = JSON.parse(
+      Buffer.from(encoded, "base64url").toString("utf8"),
+    ) as unknown;
+    if (
+      !Array.isArray(value) ||
+      value.length !== 2 ||
+      (value[0] !== null && typeof value[0] !== "string") ||
+      typeof value[1] !== "string" ||
+      encodeTurnFinishedScope(value[0], value[1]) !== encoded
+    ) {
+      return null;
+    }
+    return [value[0], value[1]];
+  } catch {
+    return null;
+  }
+}
+
 function fsyncDirectory(directory: string): void {
+  // Windows has no fsync-able directory handle. File data is still flushed by
+  // writeFileSync(..., { flush: true }); POSIX keeps the rename/unlink barrier.
+  if (process.platform === "win32") return;
   const fd = openSync(directory, "r");
   try {
     fsyncSync(fd);
@@ -130,6 +159,14 @@ export function createTurnFinishedStore(
             Number.isFinite(terminal.createdAt) &&
             terminal.message?.type === "turn_finished" &&
             typeof terminal.message.turn_id === "string" &&
+            Array.isArray(terminal.requiredConsumerIds) &&
+            terminal.requiredConsumerIds.every(
+              (id) => typeof id === "string",
+            ) &&
+            Array.isArray(terminal.acknowledgedConsumerIds) &&
+            terminal.acknowledgedConsumerIds.every(
+              (id) => typeof id === "string",
+            ) &&
             !!terminal.owner &&
             (terminal.owner.connectionId === null ||
               typeof terminal.owner.connectionId === "string") &&
@@ -206,6 +243,38 @@ export function createTurnFinishedStore(
       return null;
     }
   };
+  const sweepExpiredRecords = (): void => {
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(directory, { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw error;
+    }
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+      const scope = decodeTurnFinishedScope(entry.name.slice(0, -5));
+      if (!scope) continue; // Unknown/corrupt names are never deleted.
+      try {
+        withRecordLock(scope[0], scope[1], () => {
+          readPrunedRecord(scope[0], scope[1]);
+        });
+      } catch (error) {
+        // A validated filename with corrupt/mismatched contents also fails
+        // closed. Other scopes must still receive their exact-horizon sweep.
+        debugWarn(
+          "recovery",
+          "Ignoring unreadable turn-finished record",
+          error,
+        );
+      }
+    }
+  };
+
+  // Sweep every reversible record namespace at construction, not merely scopes
+  // whose runtimes happen to be recreated after an offline restart.
+  sweepExpiredRecords();
+
   return {
     read,
     put(
@@ -251,6 +320,10 @@ export function createTurnFinishedStore(
           createdAt: Date.now(),
           message,
           owner,
+          requiredConsumerIds: [
+            ...new Set(message.terminal_consumer_ids ?? []),
+          ],
+          acknowledgedConsumerIds: [],
         };
         record.terminals.push(terminal);
         write(record);
@@ -311,6 +384,7 @@ export function createTurnFinishedStore(
       conversationId: string,
       id: string,
       connectionId: string,
+      consumerId: string,
     ): boolean {
       return withRecordLock(agentId, conversationId, () => {
         const record = readPrunedRecord(agentId, conversationId);
@@ -318,8 +392,24 @@ export function createTurnFinishedStore(
         const terminal = record.terminals.find(
           (candidate) => candidate.id === id,
         );
-        if (!terminal || terminal.claim?.connectionId !== connectionId)
+        if (
+          !terminal ||
+          terminal.claim?.connectionId !== connectionId ||
+          !terminal.requiredConsumerIds.includes(consumerId)
+        ) {
           return false;
+        }
+        if (!terminal.acknowledgedConsumerIds.includes(consumerId)) {
+          terminal.acknowledgedConsumerIds.push(consumerId);
+        }
+        if (
+          terminal.requiredConsumerIds.some(
+            (required) => !terminal.acknowledgedConsumerIds.includes(required),
+          )
+        ) {
+          write(record);
+          return true;
+        }
         record.terminals = record.terminals.filter(
           (candidate) => candidate.id !== id,
         );
@@ -383,7 +473,13 @@ export function prepareTurnFinished(
   // implements the Cloud terminal acknowledgement contract. Keep those paths
   // explicitly ephemeral rather than accumulating records that can never be
   // retired. Tests may opt into bounded unattended persistence with a store.
-  if (!providedStore && (owner.connectionId === null || owner.canRotate)) {
+  // Agent-free App Server scopes likewise have no Cloud application consumer;
+  // their terminal is intentionally best-effort even on a stable connection.
+  if (
+    runtime.agentId === null ||
+    !message.terminal_consumer_ids?.length ||
+    (!providedStore && (owner.connectionId === null || owner.canRotate))
+  ) {
     return { kind: "ephemeral" };
   }
   const store = providedStore ?? createTurnFinishedStore();
@@ -591,6 +687,7 @@ export function acknowledgeTurnFinished(params: {
   conversationId?: string;
   connectionId: string;
   idempotencyKey: string;
+  consumerId: string;
   store?: ReturnType<typeof createTurnFinishedStore>;
 }): boolean {
   const agentId = params.runtime?.agentId ?? params.agentId ?? null;
@@ -603,6 +700,7 @@ export function acknowledgeTurnFinished(params: {
       conversationId,
       params.idempotencyKey,
       params.connectionId,
+      params.consumerId,
     );
   } catch (error) {
     debugWarn("recovery", "Failed to retire acknowledged turn-finished", error);

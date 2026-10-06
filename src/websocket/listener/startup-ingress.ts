@@ -157,6 +157,24 @@ export function handoffRequestlessStartupFrames(
   return true;
 }
 
+export function poisonCurrentStartupIngressOwner(
+  runtime: ListenerRuntime,
+  owner: StartupIngressOwner,
+  capacity: StartupFrameCapacity,
+): boolean {
+  if (
+    !owner.handoffEnabled ||
+    runtime.startupGenerationByLineage.get(owner.lineageId) !== owner.generation
+  ) {
+    return false;
+  }
+  runtime.pendingStartupFramesByLineage.set(owner.lineageId, {
+    kind: "overflow",
+    capacity,
+  });
+  return true;
+}
+
 export type StartupFrameHandoffClaim = {
   readonly handoff: StartupFrameHandoff;
   /** Commit only after the successor buffer has accepted the inherited state. */

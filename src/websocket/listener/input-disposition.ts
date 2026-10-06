@@ -249,10 +249,9 @@ function validateDurableStore(value: unknown): DurableStore {
         }
         rawEntry.queuedInput.identity = { domain, id: identityId };
         if (isRecord(rawEntry.queuedInput.incoming)) {
-          rawEntry.queuedInput.incoming.durableInputIdentity = {
-            domain,
-            id: identityId,
-          };
+          rawEntry.queuedInput.incoming.durableInputIdentities = [
+            { domain, id: identityId },
+          ];
         }
       } else if (rawEntry.disposition === "started") {
         rawEntry.replayCompleted = true;
@@ -559,7 +558,7 @@ function serializeQueuedInput(
       conversationId: runtime.conversationId,
     },
     identity,
-    incoming: { ...queuedInput.incoming, durableInputIdentity: identity },
+    incoming: { ...queuedInput.incoming, durableInputIdentities: [identity] },
     ...(queuedInput.actingUserId
       ? { actingUserId: queuedInput.actingUserId }
       : {}),
@@ -846,7 +845,7 @@ export function completeInputReplay(
       return durableTransaction(ledger.persistentPath, (store) => {
         for (const key of keys) {
           const entry = store.entries[key];
-          if (entry && !entry.disposition) {
+          if (entry && (!entry.disposition || entry.disposition === "queued")) {
             syncMemoryFromDurable(ledger, store);
             return { result: false, changed: false };
           }
@@ -871,7 +870,7 @@ export function completeInputReplay(
   for (const key of keys) {
     const entry = ledger.entries.get(key);
     if (!entry) continue;
-    if (!entry.disposition) return false;
+    if (!entry.disposition || entry.disposition === "queued") return false;
     delete entry.queuedInput;
     entry.replayCompleted = true;
   }

@@ -39,6 +39,7 @@ export function createIncomingMessage(
   scope: ConversationRuntimeScope,
   payload: InputCreateMessagePayload,
   connectionId?: ListenerConnectionId,
+  terminalConsumerId?: string,
 ): IncomingMessage {
   return {
     type: "message",
@@ -52,6 +53,9 @@ export function createIncomingMessage(
     excludeInteractiveTools: payload.exclude_interactive_tools,
     responseFormat: payload.response_format,
     imageFailureMode: payload.image_failure_mode,
+    ...(terminalConsumerId
+      ? { terminalConsumerIds: [terminalConsumerId] }
+      : {}),
     messages: payload.messages,
   };
 }
@@ -122,6 +126,13 @@ export function dispatchInboundMessageWhenReady(params: {
       }
       const reservation =
         admission.kind === "reserved" ? admission.reservation : undefined;
+      const attributedIncoming = {
+        ...incoming,
+        ...(actingUserId && incoming.actingUserId !== actingUserId
+          ? { actingUserId }
+          : {}),
+        ...(identity ? { durableInputIdentities: [identity] } : {}),
+      };
       // Everything past the reservation runs inside this callback. An
       // acknowledgement callback, the queue, or the turn itself can throw, and
       // an uncommitted placeholder left behind would never expire and would
@@ -149,13 +160,17 @@ export function dispatchInboundMessageWhenReady(params: {
             runtime,
             reservation,
             "queued",
-            { incoming, actingUserId },
+            { incoming: attributedIncoming, actingUserId },
           );
           let accepted = false;
           try {
             accepted =
               committed &&
-              enqueueInboundUserMessage(runtime, incoming, actingUserId);
+              enqueueInboundUserMessage(
+                runtime,
+                attributedIncoming,
+                actingUserId,
+              );
           } catch (error) {
             if (committed) forgetQueuedInputDisposition(runtime, identity);
             throw error;
@@ -186,13 +201,6 @@ export function dispatchInboundMessageWhenReady(params: {
         // Queued turns store the actor on the queue item. Direct turns skip
         // that item, so carry the actor and durable identity on the replayable
         // message committed before acknowledgement.
-        const attributedIncoming = {
-          ...incoming,
-          ...(actingUserId && incoming.actingUserId !== actingUserId
-            ? { actingUserId }
-            : {}),
-          ...(identity ? { durableInputIdentity: identity } : {}),
-        };
         if (
           !commitInputDisposition(runtime, reservation, "started", {
             incoming: attributedIncoming,

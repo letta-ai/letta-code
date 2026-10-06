@@ -126,6 +126,7 @@ import { isResumeQueueCommand } from "./queue-pause-protocol-inbound";
 
 export { isConnectProviderCommand } from "./connect-provider-protocol-inbound";
 
+import { isTerminalConsumerId } from "@/types/turn-finished-protocol";
 import { isConnectProviderCommand } from "./connect-provider-protocol-inbound";
 import {
   isExternalToolCallResponseCommand,
@@ -149,9 +150,7 @@ import {
 import { isTurnFinishedAckCommand } from "./turn-finished-protocol-inbound";
 import type { InvalidInputCommand, ParsedServerMessage } from "./types";
 
-export type ServerLifecycleMessage = {
-  type: "pong";
-};
+export type ServerLifecycleMessage = { type: "pong" };
 
 function isInputCommand(value: unknown): value is InputCommand {
   if (!value || typeof value !== "object") {
@@ -160,10 +159,16 @@ function isInputCommand(value: unknown): value is InputCommand {
   const candidate = value as {
     type?: unknown;
     request_id?: unknown;
+    terminal_consumer_id?: unknown;
     runtime?: unknown;
     payload?: unknown;
   };
-  if (candidate.type !== "input" || !isRuntimeScope(candidate.runtime)) {
+  if (
+    candidate.type !== "input" ||
+    !isRuntimeScope(candidate.runtime) ||
+    (candidate.terminal_consumer_id !== undefined &&
+      !isTerminalConsumerId(candidate.terminal_consumer_id))
+  ) {
     return false;
   }
   if (
@@ -1104,11 +1109,6 @@ export function isCreateAgentCommand(
   value: unknown,
 ): value is CreateAgentCommand {
   if (!value || typeof value !== "object") return false;
-  /**
-   * Treat inbound values as untrusted protocol data.
-   * Each supported field is validated before narrowing the command type.
-   * Optional tags must contain only strings.
-   */
   const c = value as Record<string, unknown>;
   return (
     c.type === "create_agent" &&

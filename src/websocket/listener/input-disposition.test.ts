@@ -831,7 +831,7 @@ test("started teleport restore preserves the teleport identity namespace", () =>
     expect(restoreDurableQueuedInputs(restarted.listener)).toBe(0);
     const item = restarted.queueRuntime.peek()[0];
     const restored = item && restarted.queuedMessagesByItemId.get(item.id);
-    expect(restored?.durableInputIdentity).toEqual(identity);
+    expect(restored?.durableInputIdentities).toEqual([identity]);
     expect(
       reserveInputDisposition(restarted, ordinaryInputIdentity("tp-restored")),
     ).toMatchObject({ kind: "reserved" });

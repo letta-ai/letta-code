@@ -99,6 +99,46 @@ type Decision =
       reason: string;
     };
 
+function approvalExecutionFailureResults(
+  decisions: Decision[],
+  error: unknown,
+): ApprovalResult[] {
+  const partial =
+    error && typeof error === "object"
+      ? (("results" in error && Array.isArray(error.results)
+          ? error.results
+          : "partialResults" in error && Array.isArray(error.partialResults)
+            ? error.partialResults
+            : []) as ApprovalResult[])
+      : [];
+  const partialById = new Map(
+    partial
+      .filter((result) => result && typeof result.tool_call_id === "string")
+      .map((result) => [result.tool_call_id, result]),
+  );
+  const failure = `Approval batch failed: ${String(error)}`;
+  return decisions.map((decision) => {
+    const toolCallId = decision.approval.toolCallId;
+    const completed = partialById.get(toolCallId);
+    if (completed) return completed;
+    if (decision.type === "deny") {
+      return {
+        type: "approval",
+        tool_call_id: toolCallId,
+        approve: false,
+        reason: decision.reason,
+      };
+    }
+    return {
+      type: "tool",
+      tool_call_id: toolCallId,
+      tool_return: failure,
+      status: "error",
+      reason: decision.reason,
+    };
+  });
+}
+
 type ApprovalBranchProgress = {
   turnInput: TurnInputState;
   dequeuedBatchId: string;
@@ -649,14 +689,30 @@ export async function handleApprovalStop(params: {
       onFileWrite,
     });
   } catch (error) {
-    // Execution threw before results exist, so the normal finished-events
-    // emission below never runs. Close the client_tool_start lifecycle
-    // events explicitly or observer UIs shimmer these tool calls forever.
-    // Flush buffered tool output first so no progress frame lands after
-    // the terminal end events. Skip emission when this owner lost the
-    // turn lease (a replacement runtime owns terminal state now) or when
-    // an interrupt is in flight (the interrupt path emits finished events
-    // from the interrupted-results cache).
+    // The batch boundary may throw after one or more tools committed side
+    // effects. Persist every reported partial result and conservatively mark
+    // every unknown outcome failed before transport readiness or delivery can
+    // block. Recovery must never execute this batch again after a crash.
+    if (!shouldInterrupt()) {
+      const failureResults = approvalExecutionFailureResults(decisions, error);
+      validateApprovalResultIds(
+        decisions.map((decision) => ({
+          approval: { toolCallId: decision.approval.toolCallId },
+        })),
+        failureResults,
+      );
+      lastExecutionResults = failureResults;
+      checkpointListenerWork(
+        runtime,
+        { results: failureResults },
+        "after_tool_execution",
+      );
+    }
+
+    // Execution threw before normal finished-event emission. Close the
+    // client_tool_start lifecycle explicitly or observer UIs shimmer forever.
+    // Abort retains precedence: its cached interrupted results own terminal
+    // delivery when cancellation raced the exception.
     emitToolExecutionOutput.flush();
     if (!shouldInterrupt() && !processOwnedTurn && !isDeliveryReady()) {
       await waitForTransportOpen(isDeliveryReady, shouldInterrupt);

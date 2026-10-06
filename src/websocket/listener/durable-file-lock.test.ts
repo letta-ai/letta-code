@@ -7,6 +7,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,6 +15,8 @@ import { join } from "node:path";
 import {
   acquireDurableFileLock,
   type DurableLockOwner,
+  durableLockOwnerIsAlive,
+  fsyncDirectory,
   getProcessStart,
 } from "./durable-file-lock";
 
@@ -114,6 +117,109 @@ test("a paused live owner is never evicted and failed contenders clean candidate
     expect(readdirSync(f.owners)).toEqual([
       `${liveOwner.pid}-${liveOwner.token}.json`,
     ]);
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test("a stale M0 recoverer never unlinks an interleaved live M1 marker", () => {
+  const f = fixture();
+  try {
+    const deadPath = f.install(deadOwner, f.marker);
+    let interleaved = false;
+    expect(() =>
+      acquireDurableFileLock(f.path, {
+        waitMs: 10,
+        beforeExactUnlink: (target) => {
+          if (target !== f.marker || interleaved) return;
+          interleaved = true;
+          unlinkSync(f.marker);
+          if (existsSync(deadPath)) unlinkSync(deadPath);
+          const livePath = f.install(liveOwner, f.lock);
+          linkSync(livePath, f.marker);
+        },
+      }),
+    ).toThrow("Timed out acquiring");
+    expect(readFileSync(f.marker, "utf8")).toBe(JSON.stringify(liveOwner));
+    expect(readFileSync(f.lock, "utf8")).toBe(JSON.stringify(liveOwner));
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test("a failed release marker race remains retryable", () => {
+  const f = fixture();
+  try {
+    let interleaved = false;
+    const release = acquireDurableFileLock(f.path, {
+      waitMs: 50,
+      beforeExactUnlink: (target) => {
+        if (target !== f.marker || interleaved) return;
+        interleaved = true;
+        unlinkSync(f.marker);
+        const livePath = f.install(liveOwner, f.lock);
+        linkSync(livePath, f.marker);
+      },
+    });
+    expect(release).toThrow("changed recovery marker");
+    expect(readFileSync(f.marker, "utf8")).toBe(JSON.stringify(liveOwner));
+
+    const livePath = join(f.owners, `${liveOwner.pid}-${liveOwner.token}.json`);
+    unlinkSync(f.marker);
+    unlinkSync(f.lock);
+    unlinkSync(livePath);
+    expect(release).not.toThrow();
+    expect(existsSync(f.owners)).toBe(false);
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test("process creation identity uses safe macOS and Windows argv", () => {
+  const calls: Array<[string, string[]]> = [];
+  const run = (executable: string, args: string[]) => {
+    calls.push([executable, args]);
+    return executable === "powershell"
+      ? "1337\n"
+      : "Mon Jan  1 00:00:00 2024\n";
+  };
+  expect(getProcessStart(42, "darwin", run)).toBe("Mon Jan  1 00:00:00 2024");
+  expect(getProcessStart(42, "win32", run)).toBe("1337");
+  expect(calls[0]).toEqual(["ps", ["-o", "lstart=", "-p", "42"]]);
+  expect(calls[1]?.[0]).toBe("powershell");
+  expect(calls[1]?.[1]).toContain("-NonInteractive");
+});
+
+test("unknown process identity fails closed while a mismatch detects reuse", () => {
+  expect(
+    durableLockOwnerIsAlive(
+      { ...liveOwner, processStart: "recorded" },
+      () => null,
+    ),
+  ).toBe(true);
+  expect(
+    durableLockOwnerIsAlive(
+      { ...liveOwner, processStart: "recorded" },
+      () => "replacement",
+    ),
+  ).toBe(false);
+});
+
+test("Windows skips unsupported directory fsync", () => {
+  expect(() => fsyncDirectory("Z:\\definitely-missing", "win32")).not.toThrow();
+});
+
+test("released locks remove empty per-record owner directories", () => {
+  const f = fixture();
+  try {
+    rmSync(f.owners, { recursive: true });
+    for (let index = 0; index < 20; index += 1) {
+      acquireDurableFileLock(f.path, { waitMs: 50 })();
+      expect(existsSync(f.owners)).toBe(false);
+    }
+    expect(
+      readdirSync(f.root).filter((name) => name.endsWith(".lock-owners")),
+    ).toEqual([]);
   } finally {
     rmSync(f.root, { recursive: true, force: true });
   }

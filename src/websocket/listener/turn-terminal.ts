@@ -50,6 +50,7 @@ export function finishListenerTurn(
       "stopReason" | "isTerminal"
     >;
     usage?: UsageStatistics;
+    terminalConsumerIds?: readonly string[];
     /** Deterministic persistence seams for listener durability tests. */
     forgetWork?: () => void;
     turnFinishedStore?: ReturnType<typeof createTurnFinishedStore>;
@@ -64,6 +65,13 @@ export function finishListenerTurn(
           type: "turn_finished",
           turn_id: options.turnId,
           stop_reason: options.stopReason,
+          ...(options.terminalConsumerIds?.length
+            ? {
+                terminal_consumer_ids: [
+                  ...new Set(options.terminalConsumerIds),
+                ],
+              }
+            : {}),
           ...((options.runId ?? runtime.activeRunId)
             ? { run_id: options.runId ?? runtime.activeRunId ?? undefined }
             : {}),

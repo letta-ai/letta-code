@@ -16,30 +16,39 @@ export class StartupFrameBuffer {
   #bytes = 0;
   #phase: "buffering" | "draining" | "live" | "terminated" = "buffering";
 
-  constructor(private readonly onOverflow: () => void = () => {}) {}
+  constructor(
+    private readonly onOverflow: (
+      capacity: "frame_count" | "byte_count",
+    ) => void = () => {},
+  ) {}
 
   static forSockets(
     controlSocket: Pick<WebSocket, "terminate">,
     getStreamSocket: () => Pick<WebSocket, "terminate"> | null,
     report: (errorType: string, error: unknown, context: string) => void,
+    onOverflow?: (capacity: "frame_count" | "byte_count") => void,
   ): StartupFrameBuffer {
-    return new StartupFrameBuffer(() =>
+    return new StartupFrameBuffer((capacity) => {
+      onOverflow?.(capacity);
       StartupFrameBuffer.terminateIngress(
         controlSocket,
         getStreamSocket(),
         report,
-      ),
-    );
+      );
+    });
   }
 
   push(data: WebSocket.RawData): boolean {
     if (this.#phase === "terminated") return false;
     const bytes = rawDataByteLength(data);
-    if (
-      this.#frames.length >= MAX_PENDING_STARTUP_FRAMES ||
-      bytes > MAX_PENDING_STARTUP_FRAME_BYTES - this.#bytes
-    ) {
-      this.failOverflow();
+    const capacity =
+      this.#frames.length >= MAX_PENDING_STARTUP_FRAMES
+        ? "frame_count"
+        : bytes > MAX_PENDING_STARTUP_FRAME_BYTES - this.#bytes
+          ? "byte_count"
+          : null;
+    if (capacity) {
+      this.failOverflow(capacity);
       return false;
     }
     this.#frames.push(data);
@@ -63,11 +72,14 @@ export class StartupFrameBuffer {
       (total, frame) => total + rawDataByteLength(frame),
       0,
     );
-    if (
-      frames.length + this.#frames.length > MAX_PENDING_STARTUP_FRAMES ||
-      bytes > MAX_PENDING_STARTUP_FRAME_BYTES - this.#bytes
-    ) {
-      this.failOverflow();
+    const capacity =
+      frames.length + this.#frames.length > MAX_PENDING_STARTUP_FRAMES
+        ? "frame_count"
+        : bytes > MAX_PENDING_STARTUP_FRAME_BYTES - this.#bytes
+          ? "byte_count"
+          : null;
+    if (capacity) {
+      this.failOverflow(capacity);
       return false;
     }
     this.#frames = [...frames, ...this.#frames];
@@ -130,12 +142,14 @@ export class StartupFrameBuffer {
     this.#phase = "terminated";
   }
 
-  /** Fail closed when an inherited handoff already exceeded startup capacity. */
-  failOverflow(): void {
+  /** Fail closed when startup ingress exceeds capacity. */
+  failOverflow(capacity: "frame_count" | "byte_count" = "frame_count"): void {
     if (this.#phase === "terminated") return;
+    // Record lineage poison before clearing the payload. Close handlers run after
+    // socket termination and must not mistake the emptied buffer for healthy state.
+    this.onOverflow(capacity);
     this.clear();
     this.#phase = "terminated";
-    this.onOverflow();
   }
 
   accept(

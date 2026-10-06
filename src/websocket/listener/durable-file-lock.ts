@@ -1,7 +1,9 @@
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   chmodSync,
   closeSync,
+  fstatSync,
   fsyncSync,
   linkSync,
   lstatSync,
@@ -10,6 +12,7 @@ import {
   readdirSync,
   readFileSync,
   readSync,
+  rmdirSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -28,9 +31,23 @@ export type DurableFileLockOptions = {
   waitMs?: number;
   owner?: DurableLockOwner;
   isOwnerAlive?: (owner: DurableLockOwner) => boolean;
+  /** Deterministic race injection used by the lock's adversarial tests. */
+  beforeExactUnlink?: (path: string) => void;
 };
 
-function fsyncDirectory(path: string): void {
+type FileIdentity = { dev: number; ino: number };
+type ProcessStartCommand = (
+  executable: string,
+  args: string[],
+  options?: { env?: NodeJS.ProcessEnv },
+) => string;
+
+/** Windows does not support opening/fsyncing directories. File fsyncs still run. */
+export function fsyncDirectory(
+  path: string,
+  platform: NodeJS.Platform = process.platform,
+): void {
+  if (platform === "win32") return;
   const fd = openSync(path, "r");
   try {
     fsyncSync(fd);
@@ -39,12 +56,37 @@ function fsyncDirectory(path: string): void {
   }
 }
 
-export function getProcessStart(pid: number): string | null {
+/** Synchronous process identity for a synchronous inter-process lock protocol. */
+export function getProcessStart(
+  pid: number,
+  platform: NodeJS.Platform = process.platform,
+  run: ProcessStartCommand = (executable, args, options) =>
+    execFileSync(executable, args, {
+      ...options,
+      encoding: "utf8",
+      windowsHide: true,
+    }),
+): string | null {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return null;
   try {
-    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
-    const closeParen = stat.lastIndexOf(")");
-    if (closeParen < 0) return null;
-    return stat.slice(closeParen + 2).split(" ")[19] ?? null;
+    if (platform === "linux") {
+      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+      const closeParen = stat.lastIndexOf(")");
+      if (closeParen < 0) return null;
+      return stat.slice(closeParen + 2).split(" ")[19] ?? null;
+    }
+    const started =
+      platform === "win32"
+        ? run("powershell", [
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToFileTimeUtc()`,
+          ])
+        : run("ps", ["-o", "lstart=", "-p", String(pid)], {
+            env: { ...process.env, TZ: "UTC", LC_ALL: "C" },
+          });
+    return started.trim() || null;
   } catch {
     return null;
   }
@@ -58,16 +100,19 @@ export function currentDurableLockOwner(): DurableLockOwner {
   };
 }
 
-export function durableLockOwnerIsAlive(owner: DurableLockOwner): boolean {
+export function durableLockOwnerIsAlive(
+  owner: DurableLockOwner,
+  readStart: (pid: number) => string | null = getProcessStart,
+): boolean {
   if (!Number.isSafeInteger(owner.pid) || owner.pid <= 0) return false;
   try {
     process.kill(owner.pid, 0);
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === "EPERM";
   }
-  const actualStart = getProcessStart(owner.pid);
-  // If the platform cannot supply a start identity, conservatively treat a
-  // reachable PID as live. When both identities exist, PID reuse is detectable.
+  const actualStart = readStart(owner.pid);
+  // Unknown identity fails closed: never evict a reachable process unless both
+  // recorded and current creation identities prove that the pid was reused.
   return (
     owner.processStart === null ||
     actualStart === null ||
@@ -94,36 +139,75 @@ function parseOwner(value: unknown): DurableLockOwner {
   return value as DurableLockOwner;
 }
 
-function readOwner(path: string): DurableLockOwner {
+function readOwner(path: string): {
+  owner: DurableLockOwner;
+  identity: FileIdentity;
+  links: number;
+  close: () => void;
+} {
   const fd = openSync(path, "r");
   try {
-    const stat = lstatSync(path);
+    const stat = fstatSync(fd);
     if (!stat.isFile() || stat.size > MAX_OWNER_BYTES) {
       throw new Error("Invalid durable lock owner file");
     }
     const bytes = Buffer.alloc(stat.size);
     const read = readSync(fd, bytes, 0, bytes.length, 0);
     if (read !== bytes.length) throw new Error("Short durable lock owner read");
-    return parseOwner(JSON.parse(bytes.toString("utf8")));
-  } finally {
-    closeSync(fd);
-  }
-}
-
-function sameInode(first: string, second: string): boolean {
-  try {
-    const a = lstatSync(first);
-    const b = lstatSync(second);
-    return a.dev === b.dev && a.ino === b.ino;
+    return {
+      owner: parseOwner(JSON.parse(bytes.toString("utf8"))),
+      identity: { dev: stat.dev, ino: stat.ino },
+      links: stat.nlink,
+      // Holding this descriptor pins the inode, preventing a removed M0 inode
+      // number from being recycled for M1 during exact-path revalidation.
+      close: () => closeSync(fd),
+    };
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    closeSync(fd);
     throw error;
   }
 }
 
-function unlinkAndSync(path: string, directory: string): void {
+function identityAt(path: string): FileIdentity | null {
+  try {
+    const stat = lstatSync(path);
+    return { dev: stat.dev, ino: stat.ino };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+function identitiesEqual(
+  first: FileIdentity | null,
+  second: FileIdentity,
+): boolean {
+  return first?.dev === second.dev && first.ino === second.ino;
+}
+
+function unlinkExact(
+  path: string,
+  directory: string,
+  expected: FileIdentity,
+  before?: (path: string) => void,
+): boolean {
+  before?.(path);
+  if (!identitiesEqual(identityAt(path), expected)) return false;
   unlinkSync(path);
   fsyncDirectory(directory);
+  return true;
+}
+
+function removeOwnersDirectory(ownersPath: string, parent: string): void {
+  try {
+    rmdirSync(ownersPath);
+    fsyncDirectory(parent);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT" && code !== "ENOTEMPTY" && code !== "EEXIST") {
+      throw error;
+    }
+  }
 }
 
 /**
@@ -148,8 +232,15 @@ export function acquireDurableFileLock(
   const owner = options.owner ?? currentDurableLockOwner();
   const ownerPath = join(ownersPath, `${owner.pid}-${owner.token}.json`);
   writeFileSync(ownerPath, JSON.stringify(owner), { mode: 0o600, flag: "wx" });
-  const ownerFd = openSync(ownerPath, "r");
+  // Windows rejects FlushFileBuffers for a read-only handle. Use a writable
+  // handle for an actual file fsync; only directory fsync is platform-skipped.
+  const ownerFd = openSync(ownerPath, "r+");
+  let ownerIdentity: FileIdentity;
   try {
+    ownerIdentity = (() => {
+      const stat = fstatSync(ownerFd);
+      return { dev: stat.dev, ino: stat.ino };
+    })();
     fsyncSync(ownerFd);
   } finally {
     closeSync(ownerFd);
@@ -164,19 +255,27 @@ export function acquireDurableFileLock(
   for (const name of readdirSync(ownersPath)) {
     const candidate = join(ownersPath, name);
     if (candidate === ownerPath) continue;
-    let candidateOwner: DurableLockOwner;
+    let candidateOwner: ReturnType<typeof readOwner>;
     try {
       candidateOwner = readOwner(candidate);
     } catch {
       continue; // Unknown/corrupt files fail closed.
     }
-    if (isAlive(candidateOwner)) continue;
     try {
-      if (lstatSync(candidate).nlink !== 1) continue;
-      unlinkSync(candidate);
-      sweptOwners = true;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      if (isAlive(candidateOwner.owner) || candidateOwner.links !== 1) continue;
+      try {
+        sweptOwners =
+          unlinkExact(
+            candidate,
+            ownersPath,
+            candidateOwner.identity,
+            options.beforeExactUnlink,
+          ) || sweptOwners;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+    } finally {
+      candidateOwner.close();
     }
   }
   if (sweptOwners) fsyncDirectory(ownersPath);
@@ -192,29 +291,43 @@ export function acquireDurableFileLock(
   };
 
   const finishRecoveryMarker = (): boolean => {
-    let marked: DurableLockOwner;
+    let marked: ReturnType<typeof readOwner>;
     try {
       marked = readOwner(markerPath);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
       throw error; // Corrupt markers fail closed.
     }
-    if (isAlive(marked)) {
-      waitOrThrow();
+    try {
+      if (isAlive(marked.owner)) {
+        waitOrThrow();
+        return true;
+      }
+      // Every removal revalidates the inode pinned by readOwner. A concurrent
+      // recoverer may finish M0 and a live contender may create M1 between any
+      // two steps; stale M0 work must then become a no-op rather than unlink M1.
+      unlinkExact(lockPath, parent, marked.identity, options.beforeExactUnlink);
+      const markedOwnerPath = join(
+        ownersPath,
+        `${marked.owner.pid}-${marked.owner.token}.json`,
+      );
+      unlinkExact(
+        markedOwnerPath,
+        ownersPath,
+        marked.identity,
+        options.beforeExactUnlink,
+      );
+      unlinkExact(
+        markerPath,
+        parent,
+        marked.identity,
+        options.beforeExactUnlink,
+      );
+      removeOwnersDirectory(ownersPath, parent);
       return true;
+    } finally {
+      marked.close();
     }
-    if (sameInode(lockPath, markerPath)) unlinkAndSync(lockPath, parent);
-    // With canonical absent, no replacement can appear until this marker is
-    // removed because every conforming acquisition checks the marker.
-    const markedOwnerPath = join(
-      ownersPath,
-      `${marked.pid}-${marked.token}.json`,
-    );
-    if (sameInode(markedOwnerPath, markerPath)) {
-      unlinkAndSync(markedOwnerPath, ownersPath);
-    }
-    unlinkAndSync(markerPath, parent);
-    return true;
   };
 
   try {
@@ -228,7 +341,12 @@ export function acquireDurableFileLock(
         // gone; if it pinned us, it will observe this live owner and wait.
         try {
           lstatSync(markerPath);
-          if (sameInode(lockPath, ownerPath)) unlinkAndSync(lockPath, parent);
+          unlinkExact(
+            lockPath,
+            parent,
+            ownerIdentity,
+            options.beforeExactUnlink,
+          );
           waitOrThrow();
           continue;
         } catch (error) {
@@ -240,23 +358,33 @@ export function acquireDurableFileLock(
       }
 
       const incumbent = readOwner(lockPath); // Corrupt canonical locks fail closed.
-      if (isAlive(incumbent)) {
-        waitOrThrow();
-        continue;
-      }
       try {
-        // This pins exactly the inode just observed. If canonical changed first,
-        // the marker pins the replacement and its liveness is re-evaluated.
-        linkSync(lockPath, markerPath);
-        fsyncDirectory(parent);
-      } catch (error) {
-        const code = (error as NodeJS.ErrnoException).code;
-        if (code !== "EEXIST" && code !== "ENOENT") throw error;
+        if (isAlive(incumbent.owner)) {
+          waitOrThrow();
+          continue;
+        }
+        try {
+          // If canonical changed first, the marker pins the replacement and its
+          // liveness is re-evaluated by finishRecoveryMarker.
+          linkSync(lockPath, markerPath);
+          fsyncDirectory(parent);
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException).code;
+          if (code !== "EEXIST" && code !== "ENOENT") throw error;
+        }
+      } finally {
+        incumbent.close();
       }
     }
   } catch (error) {
     try {
-      unlinkAndSync(ownerPath, ownersPath);
+      unlinkExact(
+        ownerPath,
+        ownersPath,
+        ownerIdentity,
+        options.beforeExactUnlink,
+      );
+      removeOwnersDirectory(ownersPath, parent);
     } catch {}
     throw error;
   }
@@ -264,25 +392,66 @@ export function acquireDurableFileLock(
   let released = false;
   return () => {
     if (released) return;
-    released = true;
     try {
       linkSync(lockPath, markerPath);
       fsyncDirectory(parent);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-      throw error;
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") {
+        const markerIdentity = identityAt(markerPath);
+        if (markerIdentity && !identitiesEqual(markerIdentity, ownerIdentity)) {
+          throw new Error("Refusing to release a replacement recovery marker");
+        }
+        if (
+          markerIdentity &&
+          !unlinkExact(
+            markerPath,
+            parent,
+            ownerIdentity,
+            options.beforeExactUnlink,
+          ) &&
+          identityAt(markerPath) !== null
+        ) {
+          throw new Error("Refusing to release a changed recovery marker");
+        }
+        unlinkExact(
+          ownerPath,
+          ownersPath,
+          ownerIdentity,
+          options.beforeExactUnlink,
+        );
+        removeOwnersDirectory(ownersPath, parent);
+        released = true;
+        return;
+      }
+      // A prior failed release may already have installed our exact marker.
+      if (code !== "EEXIST") throw error;
     }
     // Any failure below deliberately leaves the marker behind. It blocks new
-    // mutations and is safely takeover-able after this exact owner dies.
-    if (!sameInode(markerPath, ownerPath)) {
+    // mutations and is safely retryable; released is set only after every exact
+    // path has either been removed or proven absent.
+    if (!identitiesEqual(identityAt(markerPath), ownerIdentity)) {
       throw new Error("Refusing to release a replacement durable lock");
     }
-    if (sameInode(lockPath, ownerPath)) unlinkAndSync(lockPath, parent);
-    unlinkAndSync(markerPath, parent);
-    try {
-      unlinkAndSync(ownerPath, ownersPath);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    unlinkExact(lockPath, parent, ownerIdentity, options.beforeExactUnlink);
+    if (
+      !unlinkExact(
+        markerPath,
+        parent,
+        ownerIdentity,
+        options.beforeExactUnlink,
+      ) &&
+      identityAt(markerPath) !== null
+    ) {
+      throw new Error("Refusing to release a changed recovery marker");
     }
+    unlinkExact(
+      ownerPath,
+      ownersPath,
+      ownerIdentity,
+      options.beforeExactUnlink,
+    );
+    removeOwnersDirectory(ownersPath, parent);
+    released = true;
   };
 }

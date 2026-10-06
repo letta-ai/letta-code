@@ -4,6 +4,7 @@ import {
   linkSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -164,6 +165,7 @@ test("a backpressure drop replays turn_finished once to its replacement", async 
     stopReason: "cancelled",
     agentId: "agent-1",
     conversationId: "conversation-1",
+    terminalConsumerIds: ["slack:agent-1"],
     turnFinishedStore: store,
     forgetWork: () => {},
   });
@@ -250,6 +252,7 @@ test("a backpressure drop replays turn_finished once to its replacement", async 
       conversationId: "conversation-1",
       connectionId: connection.id,
       idempotencyKey: terminals[0]?.idempotency_key ?? "",
+      consumerId: "slack:agent-1",
       store,
     }),
   ).toBe(true);
@@ -353,6 +356,7 @@ test("an observer never receives or retires the authoritative owner's terminal",
     stopReason: "end_turn",
     agentId: "agent-1",
     conversationId: "conversation-1",
+    terminalConsumerIds: ["slack:agent-1"],
     turnFinishedStore: store,
     forgetWork: () => {},
   });
@@ -398,6 +402,7 @@ test("terminal persistence failure is visible without wedging the turn lease", (
       stopReason: "end_turn",
       agentId: "agent-1",
       conversationId: "conversation-1",
+      terminalConsumerIds: ["slack:agent-1"],
       turnFinishedStore: failingStore,
     }),
   ).toThrow("durable terminal unavailable");
@@ -405,7 +410,7 @@ test("terminal persistence failure is visible without wedging the turn lease", (
   expect(runtime.turnLifecycle.isCurrent(lease)).toBe(false);
 });
 
-test("arbitrary stable connection ids receive durable terminals", async () => {
+test("agent-free App Server terminals are explicitly best effort", async () => {
   const store = createTurnFinishedStore(temporaryDirectory());
   const listener = createRuntime();
   const runtime = getOrCreateScopedRuntime(listener, null, "app-conversation");
@@ -460,10 +465,14 @@ test("arbitrary stable connection ids receive durable terminals", async () => {
         JSON.parse(payload) as { type?: string; idempotency_key?: string },
     )
     .find((frame) => frame.type === "turn_finished");
-  expect(terminal?.idempotency_key).toBe(
-    store.read(null, "app-conversation")?.terminals[0]?.id,
+  // Best effort still delivers the terminal; it simply never becomes
+  // replayable. The frame carries a transport sequence key, never a durable
+  // replay identity minted by the store.
+  expect(terminal).toBeDefined();
+  expect(store.read(null, "app-conversation")).toBeNull();
+  expect(terminal?.idempotency_key).not.toMatch(
+    /^turn_finished:[0-9a-f-]{36}$/,
   );
-  expect(store.read(null, "app-conversation")?.terminals).toHaveLength(1);
 });
 
 test("rotating App Server and process-owned terminals remain explicit best effort", () => {
@@ -563,6 +572,7 @@ test("the 65th process terminal is bounded and client capacity failure cleans it
       turnId: "client-65",
       stopReason: "end_turn",
       conversationId: "client",
+      terminalConsumerIds: ["slack:agent-capacity"],
       turnFinishedStore: store,
     }),
   ).toThrow("capacity exceeded");
@@ -603,10 +613,13 @@ test("terminal replay expires at 24 hours and removes an empty scope file", () =
   expect(existsSync(recordPath)).toBe(true);
 
   setSystemTime(new Date(startedAt + TURN_FINISHED_REPLAY_TTL_MS));
-  expect(
-    createTurnFinishedStore(directory).read("agent", "conversation"),
-  ).toBeNull();
+  // Construction performs the global sweep even when this dormant/deleted
+  // runtime scope is never recreated or explicitly read.
+  createTurnFinishedStore(directory);
   expect(existsSync(recordPath)).toBe(false);
+  expect(
+    readdirSync(directory).filter((name) => name.includes(".lock")),
+  ).toEqual([]);
 });
 
 test("expired terminals free the preserved 64-record capacity", () => {
@@ -679,6 +692,7 @@ test("the explicit terminal application acknowledgement parses inbound", () => {
           type: "turn_finished_ack",
           runtime: { agent_id: null, conversation_id: "conversation" },
           idempotency_key: "turn_finished:stable",
+          consumer_id: "slack:agent",
         }),
       ),
     ),
@@ -686,6 +700,7 @@ test("the explicit terminal application acknowledgement parses inbound", () => {
     type: "turn_finished_ack",
     runtime: { agent_id: null, conversation_id: "conversation" },
     idempotency_key: "turn_finished:stable",
+    consumer_id: "slack:agent",
   });
   expect(
     parseServerMessage(
@@ -698,6 +713,72 @@ test("the explicit terminal application acknowledgement parses inbound", () => {
       ),
     ),
   ).toBeNull();
+});
+
+test("durable terminals require every expected consumer and reject foreign ACKs", () => {
+  const directory = temporaryDirectory();
+  const store = createTurnFinishedStore(directory);
+  const terminal = store.put(
+    "agent",
+    "conversation",
+    {
+      type: "turn_finished",
+      turn_id: "batched-turn",
+      stop_reason: "end_turn",
+      terminal_consumer_ids: ["slack:agent", "linear:agent"],
+    },
+    { connectionId: "owner", canRotate: false, lineageId: null },
+  );
+  expect(
+    store.claim("agent", "conversation", terminal.id, "owner"),
+  ).not.toBeNull();
+  expect(
+    acknowledgeTurnFinished({
+      agentId: "agent",
+      conversationId: "conversation",
+      connectionId: "owner",
+      idempotencyKey: terminal.id,
+      consumerId: "foreign:agent",
+      store,
+    }),
+  ).toBe(false);
+  expect(store.read("agent", "conversation")?.terminals).toHaveLength(1);
+  expect(
+    acknowledgeTurnFinished({
+      agentId: "agent",
+      conversationId: "conversation",
+      connectionId: "owner",
+      idempotencyKey: terminal.id,
+      consumerId: "slack:agent",
+      store,
+    }),
+  ).toBe(true);
+  expect(
+    store.read("agent", "conversation")?.terminals[0]?.acknowledgedConsumerIds,
+  ).toEqual(["slack:agent"]);
+  // Duplicate expected ACK is idempotent and cannot retire another consumer.
+  expect(
+    acknowledgeTurnFinished({
+      agentId: "agent",
+      conversationId: "conversation",
+      connectionId: "owner",
+      idempotencyKey: terminal.id,
+      consumerId: "slack:agent",
+      store,
+    }),
+  ).toBe(true);
+  expect(store.read("agent", "conversation")?.terminals).toHaveLength(1);
+  expect(
+    acknowledgeTurnFinished({
+      agentId: "agent",
+      conversationId: "conversation",
+      connectionId: "owner",
+      idempotencyKey: terminal.id,
+      consumerId: "linear:agent",
+      store,
+    }),
+  ).toBe(true);
+  expect(store.read("agent", "conversation")).toBeNull();
 });
 
 test("delivery claims are atomic across stores and retain one stable identity", () => {

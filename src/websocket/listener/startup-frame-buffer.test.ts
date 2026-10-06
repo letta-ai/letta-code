@@ -18,6 +18,7 @@ import {
   activateStartupIngress,
   claimRequestlessStartupFrameHandoff,
   handoffRequestlessStartupFrames,
+  poisonCurrentStartupIngressOwner,
   reserveStartupIngressOwner,
 } from "./startup-ingress";
 import type { IncomingMessage, StartListenerOptions } from "./types";
@@ -330,6 +331,75 @@ describe("startup frame buffering", () => {
         .handoff,
     ).toEqual({ kind: "frames", frames: [], byteLength: 0 });
     closeListenerConnection(runtime, connection.id);
+  });
+
+  test.each([
+    ["frame_count", () => Buffer.from("frame")],
+    ["byte_count", () => Buffer.alloc(MAX_PENDING_STARTUP_FRAME_BYTES + 1)],
+  ] as const)(
+    "local %s overflow poisons the lineage across close and reconnect",
+    async (expectedCapacity, createFrame) => {
+      const runtime = createRuntime();
+      const options: StartListenerOptions = {
+        connectionId: "connection-overflow",
+        wsUrl: "local://test",
+        deviceId: "device",
+        connectionName: "test",
+        onConnected: () => {},
+        onDisconnected: () => {},
+        onError: () => {},
+      };
+      const owner = reserveStartupIngressOwner(runtime, options);
+      const buffer = new StartupFrameBuffer((capacity) => {
+        poisonCurrentStartupIngressOwner(runtime, owner, capacity);
+      });
+
+      const pushes =
+        expectedCapacity === "frame_count" ? MAX_PENDING_STARTUP_FRAMES + 1 : 1;
+      for (let index = 0; index < pushes; index += 1) {
+        buffer.accept(createFrame(), async () => {});
+      }
+      expect(buffer.phase).toBe("terminated");
+      expect(
+        runtime.pendingStartupFramesByLineage.get(owner.lineageId),
+      ).toEqual({ kind: "overflow", capacity: expectedCapacity });
+
+      // The close path runs after overflow cleared local data. It must not
+      // replace durable poison with an apparently healthy empty handoff.
+      expect(handoffRequestlessStartupFrames(runtime, owner, buffer)).toBe(
+        false,
+      );
+      buffer.abort();
+      const successor = reserveStartupIngressOwner(runtime, options);
+      const successorBuffer = new StartupFrameBuffer();
+      await expect(
+        activateStartupIngress(
+          successorBuffer,
+          async () => {},
+          () => true,
+          () => claimRequestlessStartupFrameHandoff(runtime, successor),
+        )(),
+      ).resolves.toBe(false);
+      expect(successorBuffer.phase).toBe("terminated");
+    },
+  );
+
+  test("a stale local overflow cannot poison its successor generation", () => {
+    const runtime = createRuntime();
+    const options = {
+      connectionId: "connection-overflow",
+      replacement: undefined,
+      connectionIdCanResume: true,
+    };
+    const stale = reserveStartupIngressOwner(runtime, options);
+    const current = reserveStartupIngressOwner(runtime, options);
+
+    expect(
+      poisonCurrentStartupIngressOwner(runtime, stale, "frame_count"),
+    ).toBe(false);
+    expect(
+      claimRequestlessStartupFrameHandoff(runtime, current).handoff,
+    ).toEqual({ kind: "frames", frames: [], byteLength: 0 });
   });
 
   test("terminates when one frame exceeds the byte limit", () => {

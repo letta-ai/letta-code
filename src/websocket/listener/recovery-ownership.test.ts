@@ -5,7 +5,10 @@ import type {
 } from "@/backend/api/agents";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { createRuntime } from "./lifecycle";
-import { canRecoverConversation } from "./recovery-ownership";
+import {
+  acquireRecoveryClaim,
+  canRecoverConversation,
+} from "./recovery-ownership";
 import { evictConversationRuntimeIfIdle } from "./runtime";
 import {
   clearExpectedInboundTeleport,
@@ -112,5 +115,89 @@ describe("recovery ownership", () => {
         return snapshot({});
       }),
     ).toBe(false);
+  });
+
+  test("two processes cannot concurrently acquire the same recovery claim", async () => {
+    let owner: { connectionId: string; token: string; fence: number } | null =
+      null;
+    let nextFence = 1;
+    const request = async (_agentId: string, body: Record<string, unknown>) => {
+      const action = body.action;
+      const connectionId = body.connection_id as string;
+      if (action === "acquire") {
+        if (owner) throw new Error("already claimed");
+        owner = {
+          connectionId,
+          token: `token-${connectionId}`,
+          fence: nextFence++,
+        };
+        return { token: owner.token, fence: owner.fence };
+      }
+      if (
+        action === "release" &&
+        owner?.connectionId === connectionId &&
+        owner.token === body.token
+      ) {
+        owner = null;
+      }
+      return { released: owner === null };
+    };
+    const first = runtime();
+    const second = runtime();
+    second.listener.connectionId = "conn-second";
+    const dependencies = {
+      request: request as never,
+      schedule: () => 1,
+      cancel: () => {},
+    };
+
+    const firstClaim = await acquireRecoveryClaim(
+      first,
+      () => {},
+      dependencies,
+    );
+    expect(firstClaim?.owned).toBe(true);
+    expect(
+      await acquireRecoveryClaim(second, () => {}, dependencies),
+    ).toBeNull();
+    await firstClaim?.release();
+    expect(
+      (await acquireRecoveryClaim(second, () => {}, dependencies))?.owned,
+    ).toBe(true);
+  });
+
+  test("renewal loss fences the old process before its next side effect", async () => {
+    const scheduled: Array<() => void> = [];
+    let lost = false;
+    let renews = 0;
+    const value = runtime();
+    const claim = await acquireRecoveryClaim(
+      value,
+      () => {
+        lost = true;
+      },
+      {
+        request: (async (_agentId: string, body: { action: string }) => {
+          if (body.action === "acquire") {
+            return { token: "token-1", fence: 7 };
+          }
+          renews += 1;
+          return { token: "token-2", fence: 8 };
+        }) as never,
+        schedule: (callback) => {
+          scheduled.push(callback);
+          return callback;
+        },
+        cancel: () => {},
+      },
+    );
+    expect(claim?.owned).toBe(true);
+    scheduled.shift()?.();
+    for (let attempt = 0; attempt < 20 && !lost; attempt += 1) {
+      await Promise.resolve();
+    }
+    expect(renews).toBe(1);
+    expect(lost).toBe(true);
+    expect(claim?.owned).toBe(false);
   });
 });

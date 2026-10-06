@@ -10,7 +10,11 @@ import {
   createInterruptedTurnStore,
   recordedToolResults,
 } from "./interrupted-turn-record";
-import { canRecoverConversation } from "./recovery-ownership";
+import {
+  acquireRecoveryClaim,
+  canRecoverConversation,
+  type RecoveryClaim,
+} from "./recovery-ownership";
 import { getActiveRuntime } from "./runtime";
 import { handleIncomingMessage } from "./turn";
 import type { ListenerRuntime } from "./types";
@@ -41,6 +45,7 @@ export async function recoverRecordedTurns(
     backend: ReturnType<typeof getBackend>;
     resume: typeof getResumeDataFromBackend;
     canRecover: typeof canRecoverConversation;
+    acquireClaim: typeof acquireRecoveryClaim;
     processTurn: typeof handleIncomingMessage;
     setCwd: typeof setConversationWorkingDirectory;
     teleportStatus: typeof getTeleportStatus;
@@ -76,6 +81,8 @@ export async function recoverRecordedTurns(
         deferred = true;
         continue;
       }
+      let recoveryClaim: RecoveryClaim | null | undefined;
+      let continuationStarted = false;
       try {
         if (record.teleportId) {
           const teleport = await (deps.teleportStatus ?? getTeleportStatus)(
@@ -174,6 +181,23 @@ export async function recoverRecordedTurns(
         if (owned.length !== pending.length) continue;
         if (!(await canRecover(runtime))) continue;
         if (!unchanged()) continue;
+        recoveryClaim = await (deps.acquireClaim ?? acquireRecoveryClaim)(
+          runtime,
+          () => {
+            if (runtime.turnLifecycle.kind !== "idle") {
+              runtime.turnLifecycle.requestCancellation({ cause: "transport" });
+            }
+          },
+        );
+        if (listener.connectionId?.startsWith("conn-") && !recoveryClaim) {
+          deferred = true;
+          continue;
+        }
+        if (!unchanged()) {
+          await recoveryClaim?.release();
+          recoveryClaim = undefined;
+          continue;
+        }
         const approvals = recordedToolResults(
           record,
           owned.map((approval) => approval.toolCallId),
@@ -200,6 +224,7 @@ export async function recoverRecordedTurns(
           record.conversationId,
           record.workingDirectory,
         );
+        continuationStarted = true;
         void (deps.processTurn ?? handleIncomingMessage)(
           {
             type: "message",
@@ -212,14 +237,22 @@ export async function recoverRecordedTurns(
           },
           getOrCreateProcessTransport(listener),
           runtime,
-        ).catch((error) => {
-          debugWarn(
-            "recovery",
-            "Recorded continuation failed; retaining local work",
-            error,
-          );
-        });
+        )
+          .then(async () => {
+            if (recoveryClaim) await recoveryClaim.complete();
+          })
+          .catch((error) => {
+            recoveryClaim?.abandon();
+            debugWarn(
+              "recovery",
+              "Recorded continuation failed; retaining local work",
+              error,
+            );
+          });
       } catch (error) {
+        if (recoveryClaim && !continuationStarted) {
+          await recoveryClaim.release();
+        }
         deferred = true;
         debugWarn(
           "recovery",

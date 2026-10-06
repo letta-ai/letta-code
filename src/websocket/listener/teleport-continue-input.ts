@@ -96,7 +96,7 @@ export function admitTeleportContinueInput(params: {
         teleportId,
         approvals: payload.continuation?.approvals,
       }),
-      durableInputIdentity: identity,
+      durableInputIdentities: [identity],
     };
     if (
       !commitInputDisposition(scopedRuntime, reservation, "started", {

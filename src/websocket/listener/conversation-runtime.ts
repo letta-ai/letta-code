@@ -27,10 +27,12 @@ function itemIdentities(
   items: readonly QueueItem[],
 ) {
   return items.flatMap((item) => {
-    const identity =
-      runtime.queuedMessagesByItemId.get(item.id)?.durableInputIdentity ??
-      ordinaryInputIdentity(item.clientMessageId);
-    return identity ? [identity] : [];
+    const identities = runtime.queuedMessagesByItemId.get(
+      item.id,
+    )?.durableInputIdentities;
+    if (identities?.length) return [...identities];
+    const fallback = ordinaryInputIdentity(item.clientMessageId);
+    return fallback ? [fallback] : [];
   });
 }
 
@@ -155,8 +157,11 @@ export function restoreDurableQueuedInputs(listener: ListenerRuntime): number {
     );
     const alreadyRestored = [...runtime.queuedMessagesByItemId.values()].some(
       (incoming) =>
-        (incoming.durableInputIdentity?.domain === payload.identity.domain &&
-          incoming.durableInputIdentity.id === payload.identity.id) ||
+        incoming.durableInputIdentities?.some(
+          (identity) =>
+            identity.domain === payload.identity.domain &&
+            identity.id === payload.identity.id,
+        ) ||
         (payload.identity.domain === "input" &&
           ordinaryInputIdentity(
             incoming.messages.flatMap((message) => {
@@ -174,7 +179,7 @@ export function restoreDurableQueuedInputs(listener: ListenerRuntime): number {
     const incoming = {
       ...payload.incoming,
       connectionId: undefined,
-      durableInputIdentity: payload.identity,
+      durableInputIdentities: [payload.identity],
     };
     if (!enqueueInboundUserMessage(runtime, incoming, payload.actingUserId)) {
       throw new Error("Durable queued input exceeded runtime queue capacity");

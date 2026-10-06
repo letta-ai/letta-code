@@ -281,6 +281,7 @@ export function createListenerMessageHandler(
           conversationId: parsed.runtime.conversation_id,
           connectionId,
           idempotencyKey: parsed.idempotency_key,
+          consumerId: parsed.consumer_id,
         });
         return;
       }
@@ -527,6 +528,7 @@ export function createListenerMessageHandler(
           parsed.runtime,
           inputPayload,
           connectionId,
+          parsed.terminal_consumer_id,
         );
         const hasApprovalPayload = incoming.messages.some(
           (payload): payload is ApprovalCreate =>
@@ -617,13 +619,16 @@ export function createListenerMessageHandler(
           }
           const reservation =
             admission.kind === "reserved" ? admission.reservation : undefined;
+          const durableIncoming = identity
+            ? { ...stampedIncoming, durableInputIdentities: [identity] }
+            : stampedIncoming;
           try {
             const committed = commitInputDisposition(
               scopedRuntime,
               reservation,
               "queued",
               {
-                incoming: stampedIncoming,
+                incoming: durableIncoming,
                 actingUserId: parsed.runtime.acting_user_id,
               },
             );
@@ -633,7 +638,7 @@ export function createListenerMessageHandler(
                 committed &&
                 enqueueInboundUserMessage(
                   scopedRuntime,
-                  stampedIncoming,
+                  durableIncoming,
                   parsed.runtime.acting_user_id,
                 );
             } catch (error) {

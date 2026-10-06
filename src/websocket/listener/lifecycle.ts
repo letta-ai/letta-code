@@ -103,6 +103,7 @@ import {
   claimRequestlessStartupFrameHandoff,
   createReportedIngressHandler,
   handoffRequestlessStartupFrames,
+  poisonCurrentStartupIngressOwner,
   reserveStartupIngressOwner,
   waitForStartupOrAbort,
 } from "./startup-ingress";
@@ -432,6 +433,12 @@ export async function attachOpenListenerSocket(
     socket,
     () => streamSocket,
     trackListenerError,
+    (capacity) =>
+      poisonCurrentStartupIngressOwner(
+        runtime,
+        connection.startupOwner,
+        capacity,
+      ),
   );
   const abortStartupIngress = (): void => {
     handoffRequestlessStartupFrames(
@@ -730,17 +737,19 @@ async function connectWithRetry(
     runDetachedListenerTask,
     trackListenerError,
   });
-  const pendingStartupFrames = StartupFrameBuffer.forSockets(
-    socket,
-    () => streamSocket,
-    trackListenerError,
-  );
   // Ingress is buffered from the moment the control socket opens, which is
   // before the stream channel is prepared and therefore before a connection
   // can be opened. Claim the lineage up front so requestless frames buffered
   // in that window are handed to the successor exactly once instead of being
   // dropped when the attempt dies with no connection to attribute them to.
   const startupOwner = reserveStartupIngressOwner(runtime, opts);
+  const pendingStartupFrames = StartupFrameBuffer.forSockets(
+    socket,
+    () => streamSocket,
+    trackListenerError,
+    (capacity) =>
+      poisonCurrentStartupIngressOwner(runtime, startupOwner, capacity),
+  );
   const abortStartupIngress = (): void => {
     handoffRequestlessStartupFrames(
       runtime,

@@ -1,10 +1,14 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
+  closeSync,
+  fsyncSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
   renameSync,
   rmSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -35,6 +39,21 @@ export interface InterruptedTurnRecord {
   workingDirectory: string;
 }
 
+function fsyncDirectory(
+  directory: string,
+  platform: NodeJS.Platform = process.platform,
+): void {
+  // Windows cannot open directories. The temp file itself is still flushed by
+  // writeFileSync, while POSIX additionally commits directory entry changes.
+  if (platform === "win32") return;
+  const fd = openSync(directory, "r");
+  try {
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
 export function createInterruptedTurnStore(
   directory = join(
     homedir(),
@@ -42,7 +61,9 @@ export function createInterruptedTurnStore(
     "listener-state",
     createHash("sha256").update(getServerUrl()).digest("hex").slice(0, 24),
   ),
+  dependencies: { fsyncDirectory?: (directory: string) => void } = {},
 ) {
+  const syncDirectory = dependencies.fsyncDirectory ?? fsyncDirectory;
   function path(agentId: string, conversationId: string) {
     return join(
       directory,
@@ -114,12 +135,33 @@ export function createInterruptedTurnStore(
           },
         );
         renameSync(temporary, destination);
+        syncDirectory(directory);
       } finally {
         rmSync(temporary, { force: true });
       }
     },
     remove(agentId: string, conversationId: string): void {
-      rmSync(path(agentId, conversationId), { force: true });
+      const destination = path(agentId, conversationId);
+      let evidence: string;
+      try {
+        evidence = readFileSync(destination, "utf8");
+        unlinkSync(destination);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+        throw error;
+      }
+      try {
+        syncDirectory(directory);
+      } catch (error) {
+        // A removal whose directory entry could not be committed is not safe to
+        // acknowledge. Restore the evidence best-effort so this live process
+        // also remains fail-closed; the original fsync failure still propagates.
+        try {
+          writeFileSync(destination, evidence, { mode: 0o600, flush: true });
+          syncDirectory(directory);
+        } catch {}
+        throw error;
+      }
     },
   };
 }

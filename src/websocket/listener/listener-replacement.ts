@@ -4,7 +4,10 @@ import {
   getRuntimeAuthorityEpoch,
 } from "./runtime";
 import { resolveStartupLineageId } from "./startup-ingress";
-import { cloneTurnCorrelationIndex } from "./turn-correlation";
+import {
+  cloneTurnCorrelationIndex,
+  mergeTurnCorrelationIndexes,
+} from "./turn-correlation";
 import type {
   AcceptedInputDispositionLedger,
   ListenerClientReplacement,
@@ -203,8 +206,15 @@ export function adoptListenerClientReplacement(
   runtime.acceptedInputDispositionLedger = cloneDispositionLedger(
     provenance.ledger,
   );
-  runtime.clientMessageIdsByRunIdByConversation = cloneTurnCorrelationIndex(
+  // The retry-exhausted path can leave the issuer serving while async
+  // registration is in flight. Merge its exact-authority live correlations at
+  // the synchronous handoff boundary so observations made after token issuance
+  // are not replaced by the older private snapshot. Successor-local mappings
+  // are newest because they may have been recorded before explicit adoption.
+  runtime.clientMessageIdsByRunIdByConversation = mergeTurnCorrelationIndexes(
     provenance.clientMessageIdsByRunIdByConversation,
+    provenance.issuer.clientMessageIdsByRunIdByConversation,
+    runtime.clientMessageIdsByRunIdByConversation,
   );
   runtime.startupGenerationByLineage.set(
     provenance.lineageId,

@@ -39,6 +39,7 @@ import { isListenerTransportOpen, type ListenerTransport } from "./transport";
 import type {
   ConversationRuntime,
   IncomingMessage,
+  InputIdentity,
   StartListenerOptions,
 } from "./types";
 
@@ -95,6 +96,8 @@ function buildQueuedTurnMessage(
 ): IncomingMessage | null {
   let template: IncomingMessage | undefined;
   const messages: IncomingMessage["messages"] = [];
+  const durableInputIdentities: InputIdentity[] = [];
+  const terminalConsumerIds = new Set<string>();
   for (const item of batch.items) {
     const incoming = runtime.queuedMessagesByItemId.get(item.id);
     if (item.kind === "message" && incoming) {
@@ -102,6 +105,10 @@ function buildQueuedTurnMessage(
         ...incoming,
         actingUserId: incoming.actingUserId ?? item.actingUserId,
       };
+      durableInputIdentities.push(...(incoming.durableInputIdentities ?? []));
+      for (const consumerId of incoming.terminalConsumerIds ?? []) {
+        terminalConsumerIds.add(consumerId);
+      }
       messages.push(
         ...incoming.messages.map((message) =>
           "content" in message
@@ -140,6 +147,12 @@ function buildQueuedTurnMessage(
     conversationId: scopeItem?.conversationId ?? runtime.conversationId,
     ...template,
     actingUserId: template?.actingUserId ?? getBatchActingUserId(batch.items),
+    ...(durableInputIdentities.length > 0
+      ? { durableInputIdentities: [...new Set(durableInputIdentities)] }
+      : {}),
+    ...(terminalConsumerIds.size > 0
+      ? { terminalConsumerIds: [...terminalConsumerIds] }
+      : {}),
     messages,
   };
 }

@@ -27,10 +27,7 @@ import { isCloudApiDeploymentInterrupted } from "@/utils/cloud-api-shutdown";
 import { isDebugEnabled } from "@/utils/debug";
 import { EMPTY_RESPONSE_MAX_RETRIES } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
-import {
-  completeInputReplay,
-  ordinaryInputIdentity,
-} from "./input-disposition";
+import { completeInputReplay } from "./input-disposition";
 import {
   emitInterruptToolReturnMessage,
   emitToolExecutionFinishedEvents,
@@ -191,6 +188,7 @@ async function handleIncomingMessageInner(
         ...options,
         socket: options.socket ?? socket,
         turnId: activeDequeuedBatchId,
+        terminalConsumerIds: msg.terminalConsumerIds,
         ...(options.errorNotice
           ? {
               errorNotice: {
@@ -205,13 +203,7 @@ async function handleIncomingMessageInner(
       }),
     );
     if (transition.finished) {
-      const identities = [
-        ...turnCorrelation.clientMessageIds.flatMap((id) => {
-          const identity = ordinaryInputIdentity(id);
-          return identity ? [identity] : [];
-        }),
-        ...(msg.durableInputIdentity ? [msg.durableInputIdentity] : []),
-      ];
+      const identities = msg.durableInputIdentities ?? [];
       if (!completeInputReplay(runtime, identities)) {
         replayRetirementError = new Error(
           "Failed to durably retire accepted-input replay payload",

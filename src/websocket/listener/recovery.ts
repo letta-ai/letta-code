@@ -58,7 +58,11 @@ import {
   emitLoopErrorNotice,
   getTranscriptLoopErrorMessage,
 } from "./recoverable-notices";
-import { canRecoverConversation } from "./recovery-ownership";
+import {
+  acquireRecoveryClaim,
+  canRecoverConversation,
+  type RecoveryClaim,
+} from "./recovery-ownership";
 import {
   clearRecoveredApprovalState,
   hasInterruptedCacheForScope,
@@ -399,6 +403,7 @@ export type RecoveredContinuationDependencies = {
   prepareToolExecutionContext?: typeof prepareToolExecutionContextForScope;
   executeApprovalBatch?: typeof executeApprovalBatch;
   recordListenerWork?: typeof recordListenerWork;
+  acquireRecoveryClaim?: typeof acquireRecoveryClaim;
 };
 
 type RecoveryDeliveryOrigin = {
@@ -485,12 +490,31 @@ export async function startRecoveredApprovalContinuation(
     recovered.agentId,
     recovered.conversationId,
   );
-  const recoveryLease = runtime.turnLifecycle.begin({
+  let recoveryLease: TurnLease | undefined;
+  const acquireClaim =
+    opts?.dependencies?.acquireRecoveryClaim ?? acquireRecoveryClaim;
+  const recoveryClaim = await acquireClaim(runtime, () => {
+    if (recoveryLease && runtime.turnLifecycle.isCurrent(recoveryLease)) {
+      runtime.turnLifecycle.requestCancellation({ cause: "transport" });
+    }
+  });
+  if (runtime.listener.connectionId?.startsWith("conn-") && !recoveryClaim) {
+    return false;
+  }
+  if (
+    runtime.turnLifecycle.kind !== "idle" ||
+    runtime.recoveredApprovalState !== recovered
+  ) {
+    await recoveryClaim?.release();
+    return false;
+  }
+  recoveryLease = runtime.turnLifecycle.begin({
     origin: "approval_recovery",
     workingDirectory,
     initialStatus: "EXECUTING_CLIENT_SIDE_TOOL",
   });
   await executeRecoveredApprovalContinuation({
+    recoveryClaim,
     runtime,
     socket,
     recovered,
@@ -506,6 +530,7 @@ export async function startRecoveredApprovalContinuation(
 }
 
 async function executeRecoveredApprovalContinuation(params: {
+  recoveryClaim: RecoveryClaim | null;
   runtime: ConversationRuntime;
   socket: ListenerTransport;
   recovered: NonNullable<ConversationRuntime["recoveredApprovalState"]>;
@@ -518,6 +543,7 @@ async function executeRecoveredApprovalContinuation(params: {
   deliveryOrigin: RecoveryDeliveryOrigin | null;
 }): Promise<void> {
   const {
+    recoveryClaim,
     runtime,
     socket,
     recovered,
@@ -548,9 +574,11 @@ async function executeRecoveredApprovalContinuation(params: {
   const originConnectionCanResume =
     deliveryOrigin?.connectionIdCanResume ?? true;
   let selectedDeliveryOwnerId = originConnectionId;
+  const hasRecoveryOwnership = () =>
+    runtime.turnLifecycle.isCurrent(recoveryLease) &&
+    (!recoveryClaim || recoveryClaim.owned);
   const shouldInterruptDelivery = () =>
-    recoveryLease.signal.aborted ||
-    !runtime.turnLifecycle.isCurrent(recoveryLease);
+    recoveryLease.signal.aborted || !hasRecoveryOwnership();
   const getDeliveryOwnerId = (): string | null => {
     if (
       originConnectionId &&
@@ -623,6 +651,8 @@ async function executeRecoveredApprovalContinuation(params: {
     });
   };
   let continuationFinalized = false;
+  let sideEffectStarted = false;
+  let claimSettled = false;
 
   try {
     const approvedDecisions = decisions.filter(
@@ -656,7 +686,7 @@ async function executeRecoveredApprovalContinuation(params: {
         runId: executionRunId,
         agentId: recovered.agentId,
         conversationId: recovered.conversationId,
-        shouldEmit: () => runtime.turnLifecycle.isCurrent(recoveryLease),
+        shouldEmit: hasRecoveryOwnership,
       },
     );
     let approvalResults: Awaited<ReturnType<typeof executeApprovalBatch>>;
@@ -665,14 +695,14 @@ async function executeRecoveredApprovalContinuation(params: {
       // after the client_tool_start events above, so a throw here would
       // otherwise leave those lifecycle events orphaned.
       await ensureSecretsHydrated(runtime.listener, recovered.agentId);
-      if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
+      if (!hasRecoveryOwnership()) {
         return;
       }
       const modAdapters = await ensureModAdapters(
         runtime.listener,
         recovered.agentId,
       );
-      if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
+      if (!hasRecoveryOwnership()) {
         return;
       }
       const preparedToolContext = await prepareToolExecutionContext({
@@ -688,13 +718,15 @@ async function executeRecoveredApprovalContinuation(params: {
         modAdapters,
         modEvents: createListenerModEvents(modAdapters),
       });
-      if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
+      if (!hasRecoveryOwnership()) {
         return;
       }
       runtime.currentToolset = preparedToolContext.toolset;
       runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;
       runtime.currentLoadedTools =
         preparedToolContext.preparedToolContext.loadedToolNames;
+      if (!hasRecoveryOwnership()) return;
+      sideEffectStarted = true;
       approvalResults = await executeApprovals(decisions, undefined, {
         abortSignal: recoveryLease.signal,
         onStreamingOutput: emitToolExecutionOutput,
@@ -738,7 +770,7 @@ async function executeRecoveredApprovalContinuation(params: {
     } finally {
       emitToolExecutionOutput.flush();
     }
-    if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
+    if (!hasRecoveryOwnership()) {
       return;
     }
 
@@ -800,7 +832,7 @@ async function executeRecoveredApprovalContinuation(params: {
 
     runtime.turnLifecycle.setExecutingToolCallIds(recoveryLease, []);
     setTurnLoopStatus(runtime, recoveryLease, "SENDING_API_REQUEST", scope);
-    if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
+    if (!hasRecoveryOwnership()) {
       return;
     }
     emitRuntimeStateUpdates(runtime, scope);
@@ -835,7 +867,7 @@ async function executeRecoveredApprovalContinuation(params: {
       emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
     }
 
-    if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
+    if (!hasRecoveryOwnership()) {
       runtime.dequeuedClientMessageIdsByBatchId.delete(continuationBatchId);
       return;
     }
@@ -866,6 +898,12 @@ async function executeRecoveredApprovalContinuation(params: {
       return;
     }
     continuationFinalized = true;
+    if (recoveryClaim) {
+      claimSettled = await recoveryClaim.complete();
+      if (!claimSettled) return;
+    } else {
+      claimSettled = true;
+    }
 
     if (runtime.recoveredApprovalState === recovered) {
       clearRecoveredApprovalState(runtime);
@@ -875,7 +913,7 @@ async function executeRecoveredApprovalContinuation(params: {
     if (continuationFinalized) {
       throw error;
     }
-    if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
+    if (!hasRecoveryOwnership()) {
       return;
     }
     const stopReason = recoveryLease.signal.aborted ? "cancelled" : "error";
@@ -894,5 +932,17 @@ async function executeRecoveredApprovalContinuation(params: {
           : undefined,
     });
     throw error;
+  } finally {
+    if (recoveryClaim && !claimSettled) {
+      if (sideEffectStarted) recoveryClaim.abandon();
+      else await recoveryClaim.release();
+    }
+    if (
+      recoveryClaim &&
+      !recoveryClaim.owned &&
+      runtime.turnLifecycle.isCurrent(recoveryLease)
+    ) {
+      runtime.turnLifecycle.finish(recoveryLease, "cancelled");
+    }
   }
 }

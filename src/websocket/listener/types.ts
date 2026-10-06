@@ -131,8 +131,10 @@ export interface IncomingMessage {
    * self-hosted, single-user, or pre-channel-split flows.
    */
   actingUserId?: string;
-  /** Stable durable-ledger identity carried only by locally replayed/admitted work. */
-  durableInputIdentity?: InputIdentity;
+  /** Exact durable-ledger identities owned by this admitted/dequeued turn. */
+  durableInputIdentities?: readonly InputIdentity[];
+  /** External applications which must acknowledge this turn's terminal. */
+  terminalConsumerIds?: readonly string[];
 }
 
 export type ProcessQueuedTurn = (

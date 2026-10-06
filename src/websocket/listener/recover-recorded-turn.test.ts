@@ -30,6 +30,7 @@ test("one recovered long-running turn does not block another conversation", asyn
         ],
       })) as never,
       canRecover: async () => true,
+      acquireClaim: acquireTestClaim,
       setCwd: () => {},
       processTurn: async (message) => {
         sent.push(message.conversationId ?? "missing");
@@ -61,6 +62,7 @@ test("a successful teleport receipt retires saved work without sending results",
     await recoverRecordedTurns(listener, {
       store,
       canRecover: async () => true,
+      acquireClaim: acquireTestClaim,
       teleportStatus: (async () => ({ status: "completed" })) as never,
       processTurn: async () => {
         throw new Error("must not resume transferred work");
@@ -76,6 +78,14 @@ import { createInterruptedTurnStore } from "./interrupted-turn-record";
 import { createRuntime } from "./lifecycle";
 import { recoverRecordedTurns } from "./recover-recorded-turn";
 import type { IncomingMessage } from "./types";
+
+const acquireTestClaim = async () =>
+  ({
+    owned: true,
+    complete: async () => true,
+    release: async () => {},
+    abandon: () => {},
+  }) as never;
 
 test("an accepted continuation still generating output is retained even with no pending tools", async () => {
   const directory = mkdtempSync(join(tmpdir(), "recorded-generating-"));
@@ -111,6 +121,7 @@ test("an accepted continuation still generating output is retained even with no 
       } as never,
       resume: (async () => ({ pendingApprovals: [] })) as never,
       canRecover: async () => true,
+      acquireClaim: acquireTestClaim,
       processTurn: async () => {
         throw new Error("cannot send while the accepted run is generating");
       },
@@ -171,6 +182,7 @@ test("accepted result request is found by OTID if the listener died before seein
         ],
       })) as never,
       canRecover: async () => true,
+      acquireClaim: acquireTestClaim,
       setCwd: () => {},
       processTurn: async (message) => {
         sent.push(message);
@@ -220,6 +232,7 @@ test("denial-only saved results restart with their exact request identity", asyn
         ],
       })) as never,
       canRecover: async () => true,
+      acquireClaim: acquireTestClaim,
       setCwd: () => {},
       processTurn: async (message) => {
         sent.push(message);
@@ -327,6 +340,7 @@ test("a tool generated while the listener was down is recovered only from its re
       ],
     })) as never,
     canRecover: async () => true,
+    acquireClaim: acquireTestClaim,
     processTurn: async (message: IncomingMessage) => {
       sent.push(message);
     },
@@ -393,6 +407,7 @@ test("restart sends saved results with the same request identity, never an unrel
       ],
     })) as never,
     canRecover: async () => true,
+    acquireClaim: acquireTestClaim,
     processTurn: async (message: IncomingMessage) => {
       sent.push(message);
     },

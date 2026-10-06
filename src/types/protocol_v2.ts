@@ -206,8 +206,6 @@ export type ChannelId = string;
 
 export type ChannelPluginConfig = Record<string, unknown>;
 
-// ── Channel config schema (declarative plugin UI) ──
-
 export interface ChannelConfigFieldBase {
   key: string;
   label: string;
@@ -539,6 +537,7 @@ export interface TurnFinishedMessage extends RuntimeEnvelope {
   type: "turn_finished";
   turn_id: string;
   stop_reason: StopReasonType;
+  terminal_consumer_ids?: string[];
   run_id?: string;
   error?: string;
   /** Final CLI counters, independent of control/stream socket delivery order. */
@@ -650,6 +649,7 @@ export interface InputCommand {
   type: "input";
   /** Correlates acknowledgement without waiting for the turn to finish. */
   request_id?: string;
+  terminal_consumer_id?: string;
   runtime: ConversationRuntimeScope;
   payload: InputPayload;
 }

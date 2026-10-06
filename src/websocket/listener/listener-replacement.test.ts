@@ -27,6 +27,7 @@ import {
   handoffRequestlessStartupFrames,
   reserveStartupIngressOwner,
 } from "./startup-ingress";
+import { createTurnCorrelation } from "./turn-correlation";
 import type {
   ListenerClientReplacement,
   ListenerRuntime,
@@ -554,53 +555,85 @@ test("replacement privately snapshots frame bytes across token consumption", () 
   ).toEqual(["original"]);
 });
 
-test("replacement privately transfers a deep correlation snapshot", () => {
+test("adoption merges correlations observed after private token issuance", () => {
   const predecessor = createRuntime();
   setActiveRuntime(predecessor);
-  predecessor.clientMessageIdsByRunIdByConversation = new Map([
-    [
-      "agent:agent-1::conversation:conversation-1",
-      new Map([["run-1", ["cm-1"]]]),
-    ],
-  ]);
+  const predecessorScope = getOrCreateScopedRuntime(
+    predecessor,
+    "agent-1",
+    "conversation-1",
+  );
+  createTurnCorrelation(
+    predecessorScope,
+    {
+      type: "message",
+      agentId: "agent-1",
+      conversationId: "conversation-1",
+      messages: [
+        { role: "user", content: "original", client_message_id: "cm-1" },
+      ],
+    },
+    "batch-1",
+  ).observeRun("run-1");
   const replacement = createListenerClientReplacement(
     predecessor,
     optionsFor("conn-correlation"),
   );
 
-  // No mutable payload is exposed, and later predecessor mutation cannot alter
-  // the private issuance snapshot.
+  // Retry-exhausted registration is asynchronous, so the authoritative issuer
+  // can observe another run after token creation but before atomic adoption.
+  createTurnCorrelation(
+    predecessorScope,
+    {
+      type: "message",
+      agentId: "agent-1",
+      conversationId: "conversation-1",
+      messages: [{ role: "user", content: "late", client_message_id: "cm-2" }],
+    },
+    "batch-2",
+  ).observeRun("run-2");
+
+  // No correlation state is public, and attempts to mutate routing metadata do
+  // not influence the private one-shot provenance used for adoption.
   expect(Object.isFrozen(replacement)).toBe(true);
-  expect("ledger" in replacement).toBe(false);
-  expect("startupFrameHandoff" in replacement).toBe(false);
   expect("clientMessageIdsByRunIdByConversation" in replacement).toBe(false);
-  predecessor.clientMessageIdsByRunIdByConversation
-    .get("agent:agent-1::conversation:conversation-1")
-    ?.get("run-1")
-    ?.push("cm-predecessor-late");
-  setActiveRuntime(null);
-  stopRuntime(predecessor, true);
+  expect(Reflect.set(replacement, "lineageId", "forged-lineage")).toBe(false);
+  expect(replacement.lineageId).toBe("conn-correlation");
 
   const successor = createRuntime();
+  const successorLocalCorrelations = new Map([
+    [
+      "agent:agent-1::conversation:conversation-1",
+      new Map([["run-3", ["cm-3"]]]),
+    ],
+  ]);
+  successor.clientMessageIdsByRunIdByConversation = successorLocalCorrelations;
   adoptListenerClientReplacement(
     successor,
     optionsFor("conn-correlation-next", replacement),
   );
-  expect(
-    successor.clientMessageIdsByRunIdByConversation
-      ?.get("agent:agent-1::conversation:conversation-1")
-      ?.get("run-1"),
-  ).toEqual(["cm-1"]);
+  const correlations = successor.clientMessageIdsByRunIdByConversation?.get(
+    "agent:agent-1::conversation:conversation-1",
+  );
+  expect(correlations).toEqual(
+    new Map([
+      ["run-1", ["cm-1"]],
+      ["run-2", ["cm-2"]],
+      ["run-3", ["cm-3"]],
+    ]),
+  );
 
-  successor.clientMessageIdsByRunIdByConversation
-    ?.get("agent:agent-1::conversation:conversation-1")
-    ?.get("run-1")
-    ?.push("cm-successor");
+  successorLocalCorrelations
+    .get("agent:agent-1::conversation:conversation-1")
+    ?.get("run-3")
+    ?.push("cm-successor-late");
+  expect(correlations?.get("run-3")).toEqual(["cm-3"]);
+  correlations?.get("run-2")?.push("cm-successor");
   expect(
     predecessor.clientMessageIdsByRunIdByConversation
-      .get("agent:agent-1::conversation:conversation-1")
-      ?.get("run-1"),
-  ).toEqual(["cm-1", "cm-predecessor-late"]);
+      ?.get("agent:agent-1::conversation:conversation-1")
+      ?.get("run-2"),
+  ).toEqual(["cm-2"]);
 });
 
 test("replacement correlation snapshots enforce conversation and run bounds", () => {
@@ -612,7 +645,11 @@ test("replacement correlation snapshots enforce conversation and run bounds", ()
       new Map(
         Array.from({ length: 35 }, (_unused, runIndex) => [
           `run-${runIndex}`,
-          [`cm-${conversationIndex}-${runIndex}`],
+          Array.from(
+            { length: 35 },
+            (_unusedId, idIndex) =>
+              `cm-${conversationIndex}-${runIndex}-${idIndex}`,
+          ),
         ]),
       ),
     ]),
@@ -635,6 +672,8 @@ test("replacement correlation snapshots enforce conversation and run bounds", ()
     successor.clientMessageIdsByRunIdByConversation?.get("conversation-259");
   expect(newestRuns?.size).toBe(32);
   expect([...(newestRuns?.keys() ?? [])].at(0)).toBe("run-3");
+  expect(newestRuns?.get("run-34")).toHaveLength(32);
+  expect(newestRuns?.get("run-34")?.at(0)).toBe("cm-259-34-3");
 });
 
 test("a delayed stopped-predecessor token cannot replace a newer healthy runtime", async () => {

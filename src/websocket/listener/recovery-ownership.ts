@@ -1,10 +1,243 @@
 import { getAgentRuntimeStatus } from "@/backend/api/agents";
+import { apiRequest } from "@/backend/api/request";
 import { debugWarn } from "@/utils/debug";
 import {
   isInboundTeleportExpected,
   isRuntimeTeleportPending,
 } from "./teleport";
 import type { ConversationRuntime } from "./types";
+
+const RECOVERY_CLAIM_TTL_MS = 15_000;
+const RECOVERY_CLAIM_RENEW_MS = 5_000;
+
+type RecoveryClaimResponse = {
+  token?: string;
+  fence?: number;
+  expires_at?: string | number;
+  released?: boolean;
+  completed?: boolean;
+};
+
+type RecoveryClaimAction = "acquire" | "renew" | "release" | "complete";
+
+type RecoveryClaimRequest = (
+  agentId: string,
+  body: {
+    action: RecoveryClaimAction;
+    conversation_id: string;
+    connection_id: string;
+    token?: string;
+    ttl_seconds?: number;
+  },
+) => Promise<RecoveryClaimResponse>;
+
+export type RecoveryClaimDependencies = {
+  request?: RecoveryClaimRequest;
+  schedule?: (callback: () => void, delayMs: number) => unknown;
+  cancel?: (timer: unknown) => void;
+};
+
+const defaultRecoveryClaimRequest: RecoveryClaimRequest = (agentId, body) =>
+  apiRequest(
+    "POST",
+    `/v1/agents/${encodeURIComponent(agentId)}/recovery-claims`,
+    body,
+    { signal: AbortSignal.timeout(5_000) },
+  );
+
+/** A token-exact, connection-bound Cloud recovery claim. */
+export class RecoveryClaim {
+  private timer: unknown;
+  private renewalInFlight = false;
+  private stopped = false;
+  private ownershipLost = false;
+
+  constructor(
+    readonly runtime: ConversationRuntime,
+    readonly agentId: string,
+    readonly conversationId: string,
+    readonly connectionId: string,
+    readonly token: string,
+    readonly fence: number,
+    private readonly request: RecoveryClaimRequest,
+    private readonly schedule: (
+      callback: () => void,
+      delayMs: number,
+    ) => unknown,
+    private readonly cancel: (timer: unknown) => void,
+    private readonly onLost: () => void,
+  ) {
+    this.scheduleRenewal();
+  }
+
+  get owned(): boolean {
+    return (
+      !this.ownershipLost &&
+      !this.stopped &&
+      this.runtime.listener.connectionId === this.connectionId
+    );
+  }
+
+  private lose(): void {
+    if (this.ownershipLost) return;
+    this.ownershipLost = true;
+    this.stopTimer();
+    this.onLost();
+  }
+
+  private stopTimer(): void {
+    if (this.timer !== undefined) {
+      this.cancel(this.timer);
+      this.timer = undefined;
+    }
+  }
+
+  private scheduleRenewal(): void {
+    if (this.stopped || this.ownershipLost) return;
+    this.timer = this.schedule(() => {
+      void this.renew();
+    }, RECOVERY_CLAIM_RENEW_MS);
+  }
+
+  async renew(): Promise<boolean> {
+    if (!this.owned || this.renewalInFlight) {
+      if (!this.owned) this.lose();
+      return false;
+    }
+    this.stopTimer();
+    this.renewalInFlight = true;
+    try {
+      const response = await this.request(this.agentId, {
+        action: "renew",
+        conversation_id: this.conversationId,
+        connection_id: this.connectionId,
+        token: this.token,
+        ttl_seconds: RECOVERY_CLAIM_TTL_MS / 1_000,
+      });
+      if (
+        response.token !== this.token ||
+        response.fence !== this.fence ||
+        this.runtime.listener.connectionId !== this.connectionId
+      ) {
+        this.lose();
+        return false;
+      }
+      return true;
+    } catch (error) {
+      debugWarn("recovery", "Recovery claim renewal failed", error);
+      this.lose();
+      return false;
+    } finally {
+      this.renewalInFlight = false;
+      this.scheduleRenewal();
+    }
+  }
+
+  async complete(): Promise<boolean> {
+    if (!this.owned) {
+      this.lose();
+      return false;
+    }
+    this.stopped = true;
+    this.stopTimer();
+    try {
+      const response = await this.request(this.agentId, {
+        action: "complete",
+        conversation_id: this.conversationId,
+        connection_id: this.connectionId,
+        token: this.token,
+      });
+      return response.completed === true;
+    } catch (error) {
+      debugWarn("recovery", "Recovery claim completion failed", error);
+      this.lose();
+      return false;
+    }
+  }
+
+  async release(): Promise<void> {
+    if (!this.owned) {
+      this.abandon();
+      return;
+    }
+    this.stopped = true;
+    this.stopTimer();
+    try {
+      await this.request(this.agentId, {
+        action: "release",
+        conversation_id: this.conversationId,
+        connection_id: this.connectionId,
+        token: this.token,
+      });
+    } catch (error) {
+      debugWarn("recovery", "Recovery claim release failed", error);
+    }
+  }
+
+  abandon(): void {
+    this.stopped = true;
+    this.stopTimer();
+  }
+}
+
+export async function acquireRecoveryClaim(
+  runtime: ConversationRuntime,
+  onLost: () => void = () => {},
+  dependencies: RecoveryClaimDependencies = {},
+): Promise<RecoveryClaim | null> {
+  const connectionId = runtime.listener.connectionId;
+  // Embedded/local listeners do not have Cloud claim identities.
+  if (!connectionId?.startsWith("conn-")) return null;
+  if (!runtime.agentId) return null;
+  const request = dependencies.request ?? defaultRecoveryClaimRequest;
+  try {
+    const response = await request(runtime.agentId, {
+      action: "acquire",
+      conversation_id: runtime.conversationId,
+      connection_id: connectionId,
+      ttl_seconds: RECOVERY_CLAIM_TTL_MS / 1_000,
+    });
+    if (
+      typeof response.token !== "string" ||
+      typeof response.fence !== "number"
+    ) {
+      return null;
+    }
+    if (
+      runtime.listener.connectionId !== connectionId ||
+      hasRecoveryHandoff(runtime)
+    ) {
+      try {
+        await request(runtime.agentId, {
+          action: "release",
+          conversation_id: runtime.conversationId,
+          connection_id: connectionId,
+          token: response.token,
+        });
+      } catch (error) {
+        debugWarn("recovery", "Stale recovery claim release failed", error);
+      }
+      return null;
+    }
+    return new RecoveryClaim(
+      runtime,
+      runtime.agentId,
+      runtime.conversationId,
+      connectionId,
+      response.token,
+      response.fence,
+      request,
+      dependencies.schedule ??
+        ((callback, delay) => setTimeout(callback, delay)),
+      dependencies.cancel ??
+        ((timer) => clearTimeout(timer as ReturnType<typeof setTimeout>)),
+      onLost,
+    );
+  } catch (error) {
+    debugWarn("recovery", "Recovery claim acquisition failed", error);
+    return null;
+  }
+}
 
 function hasRecoveryHandoff(runtime: ConversationRuntime): boolean {
   return (
