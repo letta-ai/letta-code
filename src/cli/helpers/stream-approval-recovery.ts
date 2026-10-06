@@ -1,13 +1,44 @@
+import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
 import type { StreamRequestContext } from "@/agent/message";
 import { getBackend } from "@/backend";
 import { debugWarn } from "@/utils/debug";
+import { type createBuffers, onChunk } from "./accumulator";
 import type { ApprovalRequest } from "./stream-processor";
 
 export type CurrentPendingApprovalLoader = (
   context: StreamRequestContext | undefined,
   recoveredApprovals: ApprovalRequest[],
 ) => Promise<ApprovalRequest[]>;
+
+export function retainIncompleteApprovalRequests(
+  buffers: ReturnType<typeof createBuffers>,
+  approvals: ApprovalRequest[] | undefined,
+): ApprovalRequest[] {
+  const pending = (approvals ?? []).filter((approval) => {
+    const lineId =
+      buffers.toolCallIdToLineId.get(approval.toolCallId) ??
+      approval.toolCallId;
+    const line = buffers.byId.get(lineId);
+    return !line || line.kind !== "tool_call" || line.phase !== "finished";
+  });
+  for (const approval of pending) {
+    const lineId =
+      buffers.toolCallIdToLineId.get(approval.toolCallId) ??
+      approval.toolCallId;
+    if (buffers.byId.has(lineId)) continue;
+    onChunk(buffers, {
+      message_type: "approval_request_message",
+      id: approval.messageId,
+      tool_call: {
+        tool_call_id: approval.toolCallId,
+        name: approval.toolName,
+        arguments: approval.toolArgs,
+      },
+    } as unknown as LettaStreamingResponse);
+  }
+  return pending;
+}
 
 async function loadCurrentPendingApprovals(
   context: StreamRequestContext,

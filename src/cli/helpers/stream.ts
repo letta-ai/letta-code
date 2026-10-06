@@ -38,6 +38,7 @@ import { chunkLog } from "./chunk-log";
 import type { ContextTracker } from "./context-tracker";
 import {
   type CurrentPendingApprovalLoader,
+  retainIncompleteApprovalRequests,
   revalidateRecoveredApprovalBoundary,
 } from "./stream-approval-recovery";
 import {
@@ -852,18 +853,22 @@ export async function drainStreamWithResume(
       //
       // Preserve every approval ID seen on either side of the disconnect. The
       // merge also concatenates same-ID argument fragments in stream order.
+      const pendingOriginalApprovals = retainIncompleteApprovalRequests(
+        buffers,
+        originalApprovals,
+      );
       if (
         result.stopReason === "requires_approval" &&
-        (originalApprovals?.length ?? 0) > 0
+        pendingOriginalApprovals.length > 0
       ) {
-        result.approvals = mergeApprovalRequests(
-          originalApprovals,
-          result.approvals,
+        result.approvals = retainIncompleteApprovalRequests(
+          buffers,
+          mergeApprovalRequests(pendingOriginalApprovals, result.approvals),
         );
         result.approval = result.approvals[0] ?? originalApproval;
       } else if (
         result.stopReason === "end_turn" &&
-        (originalApprovals?.length ?? 0) > 0
+        pendingOriginalApprovals.length > 0
       ) {
         debugWarn(
           "stream",
@@ -878,8 +883,8 @@ export async function drainStreamWithResume(
           },
         );
         result.stopReason = "requires_approval";
-        result.approvals = originalApprovals;
-        result.approval = originalApproval;
+        result.approvals = pendingOriginalApprovals;
+        result.approval = pendingOriginalApprovals[0] ?? originalApproval;
       }
       if (result.stopReason === "requires_approval") {
         authoritativeApprovalBoundary = true;

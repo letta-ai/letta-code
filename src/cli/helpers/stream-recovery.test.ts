@@ -76,6 +76,21 @@ function approvalRequest(toolCallId: string) {
   };
 }
 
+function toolReturn(
+  runId: string,
+  seqId: number,
+  toolCallId = "tool-approval-1",
+): LettaStreamingResponse {
+  return {
+    message_type: "tool_return_message",
+    run_id: runId,
+    seq_id: seqId,
+    tool_call_id: toolCallId,
+    status: "success",
+    tool_return: "done",
+  } as unknown as LettaStreamingResponse;
+}
+
 function stop(
   runId: string,
   seqId: number,
@@ -364,6 +379,75 @@ describe("stream recovery", () => {
       });
     },
   );
+
+  test("preserves end_turn when replay resolves the original approval", async () => {
+    const streamRunMessages = mock(async () =>
+      stream([toolReturn("run-1", 3), stop("run-1", 4, "end_turn")]),
+    );
+    __testSetBackend({ capabilities, streamRunMessages } as unknown as Backend);
+    const buffers = createBuffers("agent-1");
+    const loadCurrentPendingApprovals = mock(async () => []);
+
+    const result = await drain(
+      stream(
+        [ping("run-1", 1), approval("run-1", 2)],
+        new Error("initial stream disconnected"),
+      ),
+      immediateRetries,
+      buffers,
+      loadCurrentPendingApprovals,
+    );
+
+    expect(loadCurrentPendingApprovals).not.toHaveBeenCalled();
+    expect(result.stopReason).toBe("end_turn");
+    expect(result.approvals).toEqual([]);
+    expect(result.approval).toBeNull();
+    expect(result.fallbackError).toBeNull();
+    expect(buffers.byId.get("tool-approval-1")).toMatchObject({
+      phase: "finished",
+      resultOk: true,
+      resultText: "done",
+    });
+  });
+
+  test("revalidates only unresolved approvals after a partial replay resolution", async () => {
+    const streamRunMessages = mock(async () =>
+      stream([toolReturn("run-1", 4), stop("run-1", 5, "end_turn")]),
+    );
+    __testSetBackend({ capabilities, streamRunMessages } as unknown as Backend);
+    const buffers = createBuffers("agent-1");
+    const loadCurrentPendingApprovals = mock(async () => [
+      approvalRequest("tool-approval-2"),
+    ]);
+
+    const result = await drain(
+      stream(
+        [
+          ping("run-1", 1),
+          approval("run-1", 2),
+          approval("run-1", 3, '{"cmd":"pwd"}', "tool-approval-2"),
+        ],
+        new Error("initial stream disconnected"),
+      ),
+      immediateRetries,
+      buffers,
+      loadCurrentPendingApprovals,
+    );
+
+    expect(loadCurrentPendingApprovals).toHaveBeenCalledTimes(1);
+    expect(result.stopReason).toBe("requires_approval");
+    expect(result.approvals?.map((item) => item.toolCallId)).toEqual([
+      "tool-approval-2",
+    ]);
+    expect(buffers.byId.get("tool-approval-1")).toMatchObject({
+      phase: "finished",
+      resultOk: true,
+      resultText: "done",
+    });
+    expect(buffers.byId.get("tool-approval-2")).toMatchObject({
+      phase: "ready",
+    });
+  });
 
   test("stops retrying when polling shows the run failed", async () => {
     const streamRunMessages = mock(async () => {
