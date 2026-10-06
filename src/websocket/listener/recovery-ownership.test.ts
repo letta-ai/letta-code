@@ -18,6 +18,7 @@ import {
 function runtime() {
   const value = getOrCreateScopedRuntime(createRuntime(), "agent-1", "conv-1");
   value.listener.connectionId = "conn-self";
+  value.listener.connectionGeneration = "generation-self";
   return value;
 }
 
@@ -131,7 +132,7 @@ describe("recovery ownership", () => {
           token: `token-${connectionId}`,
           fence: nextFence++,
         };
-        return { token: owner.token, fence: owner.fence };
+        return { token: owner.token, fence: owner.fence, expires_at: 30_000 };
       }
       if (
         action === "release" &&
@@ -145,6 +146,7 @@ describe("recovery ownership", () => {
     const first = runtime();
     const second = runtime();
     second.listener.connectionId = "conn-second";
+    second.listener.connectionGeneration = "generation-second";
     const dependencies = {
       request: request as never,
       schedule: () => 1,
@@ -179,10 +181,10 @@ describe("recovery ownership", () => {
       {
         request: (async (_agentId: string, body: { action: string }) => {
           if (body.action === "acquire") {
-            return { token: "token-1", fence: 7 };
+            return { token: "token-1", fence: 7, expires_at: 30_000 };
           }
           renews += 1;
-          return { token: "token-2", fence: 8 };
+          return { token: "token-2", fence: 8, expires_at: 30_000 };
         }) as never,
         schedule: (callback) => {
           scheduled.push(callback);
@@ -199,5 +201,32 @@ describe("recovery ownership", () => {
     expect(renews).toBe(1);
     expect(lost).toBe(true);
     expect(claim?.owned).toBe(false);
+  });
+
+  test("local expiry fences a paused process before a delayed renewal", async () => {
+    let now = 1_000;
+    let lost = false;
+    const value = runtime();
+    const claim = await acquireRecoveryClaim(
+      value,
+      () => {
+        lost = true;
+      },
+      {
+        request: (async () => ({
+          token: "token-1",
+          fence: 7,
+          expires_at: 16_000,
+        })) as never,
+        schedule: () => 1,
+        cancel: () => {},
+        now: () => now,
+      },
+    );
+    expect(claim?.owned).toBe(true);
+    now = 15_500;
+    expect(claim?.owned).toBe(false);
+    expect(await claim?.renew()).toBe(false);
+    expect(lost).toBe(true);
   });
 });

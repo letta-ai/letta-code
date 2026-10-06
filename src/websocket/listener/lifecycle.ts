@@ -190,6 +190,7 @@ export function createRuntime(): ListenerRuntime {
     systemPromptRecompileByConversation: new Map(),
     queuedSystemPromptRecompileByConversation: new Set(),
     connectionId: null,
+    connectionGeneration: null,
     connectionName: null,
     conversationRuntimes: new Map(),
     acceptedInputDispositionLedger: createAcceptedInputDispositionLedger(),
@@ -796,6 +797,7 @@ async function connectWithRetry(
         });
       }
       if (!isCurrentSocketPair(runtime, socket, streamSocket)) return;
+      runtime.connectionGeneration = pairIdentity?.connectionGeneration ?? null;
       const connection = openListenerConnection({
         runtime,
         connectionId: opts.connectionId,

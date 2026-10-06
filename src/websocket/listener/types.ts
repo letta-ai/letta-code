@@ -215,6 +215,8 @@ export type RecoveredApprovalState = {
   conversationId: string;
   autoDecisions?: ApprovalDecision[];
   allApprovals?: ApprovalRequest[];
+  durableInputIdentities?: readonly InputIdentity[];
+  terminalConsumerIds?: readonly string[];
 };
 
 export type AcceptedInputDisposition = "started" | "queued";
@@ -522,6 +524,8 @@ export type ListenerRuntime = {
   systemPromptRecompileByConversation: Map<string, Promise<void>>;
   queuedSystemPromptRecompileByConversation: Set<string>;
   connectionId: string | null;
+  /** Physical Cloud listener generation currently paired to connectionId. */
+  connectionGeneration?: string | null;
   connectionName: string | null;
   conversationRuntimes: Map<string, ConversationRuntime>;
   /**

@@ -1,7 +1,6 @@
 import { afterEach, expect, setSystemTime, test } from "bun:test";
 import {
   existsSync,
-  linkSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -827,14 +826,12 @@ test("record locks never evict a live paused owner and recover a dead owner", ()
     `${encodeTurnFinishedScope("agent", "conversation")}.json`,
   );
   const lockPath = `${recordPath}.lock`;
-  const ownersPath = `${lockPath}-owners`;
-  mkdirSync(ownersPath, { recursive: true });
-  const liveOwner = join(ownersPath, `${process.pid}-live.json`);
+  mkdirSync(lockPath, { recursive: true });
+  const liveOwner = join(lockPath, `${process.pid}-live.json`);
   writeFileSync(
     liveOwner,
     JSON.stringify({ token: "live", pid: process.pid, processStart: null }),
   );
-  linkSync(liveOwner, lockPath);
   const store = createTurnFinishedStore(directory, { lockAttempts: 1 });
   expect(() =>
     store.put("agent", "conversation", {
@@ -845,9 +842,9 @@ test("record locks never evict a live paused owner and recover a dead owner", ()
   ).toThrow("Timed out acquiring");
   expect(existsSync(lockPath)).toBe(true);
 
-  rmSync(lockPath);
-  rmSync(liveOwner);
-  const deadOwner = join(ownersPath, "2147483647-dead.json");
+  rmSync(lockPath, { recursive: true });
+  mkdirSync(lockPath);
+  const deadOwner = join(lockPath, "2147483647-dead.json");
   writeFileSync(
     deadOwner,
     JSON.stringify({
@@ -856,7 +853,6 @@ test("record locks never evict a live paused owner and recover a dead owner", ()
       processStart: "dead",
     }),
   );
-  linkSync(deadOwner, lockPath);
   const recovered = createTurnFinishedStore(directory, { lockAttempts: 2 }).put(
     "agent",
     "conversation",

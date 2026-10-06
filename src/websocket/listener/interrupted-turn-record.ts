@@ -17,8 +17,9 @@ import type { ApprovalResult } from "@/agent/approval-execution";
 import { STALE_APPROVAL_RECOVERY_DENIAL_REASON } from "@/agent/turn-recovery-policy";
 import { getServerUrl } from "@/backend/api/server-url";
 import { reportListenerStateWriteFailure } from "@/telemetry/error-reporting";
+import { isTerminalConsumerId } from "@/types/turn-finished-protocol";
 import { debugWarn } from "@/utils/debug";
-import type { ConversationRuntime } from "./types";
+import type { ConversationRuntime, InputIdentity } from "./types";
 
 export type ListenerStateWritePhase =
   | "run_observed"
@@ -37,6 +38,8 @@ export interface InterruptedTurnRecord {
   results: ApprovalResult[];
   requestOtid: string;
   workingDirectory: string;
+  durableInputIdentities?: InputIdentity[];
+  terminalConsumerIds?: string[];
 }
 
 function fsyncDirectory(
@@ -86,6 +89,19 @@ export function createInterruptedTurnStore(
         !value.results.every(
           (result) => result && typeof result.tool_call_id === "string",
         ) ||
+        (value.durableInputIdentities !== undefined &&
+          (!Array.isArray(value.durableInputIdentities) ||
+            !value.durableInputIdentities.every(
+              (identity) =>
+                identity &&
+                (identity.domain === "input" ||
+                  identity.domain === "teleport") &&
+                typeof identity.id === "string" &&
+                identity.id.length > 0,
+            ))) ||
+        (value.terminalConsumerIds !== undefined &&
+          (!Array.isArray(value.terminalConsumerIds) ||
+            !value.terminalConsumerIds.every(isTerminalConsumerId))) ||
         typeof value.requestOtid !== "string" ||
         typeof value.workingDirectory !== "string"
       ) {
@@ -180,7 +196,13 @@ export function recordListenerWork(
   update: Partial<
     Pick<
       InterruptedTurnRecord,
-      "runId" | "toolCallIds" | "results" | "requestOtid" | "actingUserId"
+      | "runId"
+      | "toolCallIds"
+      | "results"
+      | "requestOtid"
+      | "actingUserId"
+      | "durableInputIdentities"
+      | "terminalConsumerIds"
     >
   >,
   phase: ListenerStateWritePhase,
@@ -196,6 +218,8 @@ export function recordListenerWork(
     results: previous?.results ?? [],
     requestOtid: previous?.requestOtid ?? randomUUID(),
     actingUserId: previous?.actingUserId,
+    durableInputIdentities: previous?.durableInputIdentities,
+    terminalConsumerIds: previous?.terminalConsumerIds,
     workingDirectory:
       runtime.activeWorkingDirectory ??
       previous?.workingDirectory ??

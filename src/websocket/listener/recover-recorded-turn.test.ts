@@ -388,6 +388,8 @@ test("restart sends saved results with the same request identity, never an unrel
     requestOtid: "same-request",
     actingUserId: "user-original",
     workingDirectory: "/project",
+    durableInputIdentities: [{ domain: "input" as const, id: "scheduled-1" }],
+    terminalConsumerIds: ["slack:agent-1"],
   };
   let pendingId = "call-1";
   const deps = {
@@ -424,6 +426,10 @@ test("restart sends saved results with the same request identity, never an unrel
       { type: "approval", approvals: record.results, otid: "same-request" },
     ]);
     expect(sent[0]?.actingUserId).toBe("user-original");
+    expect(sent[0]?.durableInputIdentities).toEqual(
+      record.durableInputIdentities,
+    );
+    expect(sent[0]?.terminalConsumerIds).toEqual(record.terminalConsumerIds);
     expect(store.read("agent-1", "conv-1")).not.toBeNull();
     pendingId = "call-elsewhere";
     await recoverRecordedTurns(runtime, deps);

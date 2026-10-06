@@ -1,13 +1,13 @@
 import { expect, test } from "bun:test";
 import {
   existsSync,
-  linkSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
+  renameSync,
+  rmdirSync,
   rmSync,
-  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -24,18 +24,31 @@ function fixture() {
   const root = mkdtempSync(join(tmpdir(), "letta-durable-lock-"));
   const path = join(root, "state.json");
   const lock = `${path}.lock`;
-  const marker = `${lock}.recovery`;
-  const owners = `${lock}-owners`;
-  mkdirSync(owners, { recursive: true });
-  const install = (owner: DurableLockOwner, destination: string) => {
-    const ownerPath = join(owners, `${owner.pid}-${owner.token}.json`);
-    if (!existsSync(ownerPath)) {
-      writeFileSync(ownerPath, JSON.stringify(owner), { mode: 0o600 });
-    }
-    linkSync(ownerPath, destination);
+  const ownerName = (owner: DurableLockOwner) =>
+    `${owner.pid}-${owner.token}.json`;
+  const populate = (directory: string, owner: DurableLockOwner) => {
+    mkdirSync(directory, { mode: 0o700 });
+    const ownerPath = join(directory, ownerName(owner));
+    writeFileSync(ownerPath, JSON.stringify(owner), { mode: 0o600 });
     return ownerPath;
   };
-  return { root, path, lock, marker, owners, install };
+  const install = (owner: DurableLockOwner) => populate(lock, owner);
+  const replaceEmpty = (replacement: string) => {
+    try {
+      // POSIX atomically replaces the now-empty M0 directory.
+      renameSync(replacement, lock);
+    } catch (error) {
+      // Windows does not replace an existing directory. Model the only possible
+      // ordering there: M0 is removed, then M1 is installed.
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "EEXIST" && code !== "EPERM" && code !== "EACCES") {
+        throw error;
+      }
+      rmdirSync(lock);
+      renameSync(replacement, lock);
+    }
+  };
+  return { root, path, lock, ownerName, populate, install, replaceEmpty };
 }
 
 const deadOwner: DurableLockOwner = {
@@ -50,14 +63,14 @@ const liveOwner: DurableLockOwner = {
   processStart: getProcessStart(process.pid),
 };
 
-test("a crashed recoverer marker is completed from the exact dead inode", () => {
+test("a dead lock directory is recovered", () => {
   const f = fixture();
   try {
-    const deadPath = f.install(deadOwner, f.lock);
-    linkSync(deadPath, f.marker);
+    f.install(deadOwner);
     const release = acquireDurableFileLock(f.path, { waitMs: 50 });
-    expect(existsSync(f.marker)).toBe(false);
-    expect(existsSync(deadPath)).toBe(false);
+    const names = readdirSync(f.lock);
+    expect(names).toHaveLength(1);
+    expect(names[0]).not.toBe(f.ownerName(deadOwner));
     release();
     expect(existsSync(f.lock)).toBe(false);
   } finally {
@@ -65,29 +78,106 @@ test("a crashed recoverer marker is completed from the exact dead inode", () => 
   }
 });
 
-test("dead recovery marker never removes an interleaved live replacement", () => {
+test("stale M0 cleanup cannot remove atomically installed live M1", () => {
   const f = fixture();
   try {
-    const deadPath = f.install(deadOwner, f.marker);
-    const livePath = f.install(liveOwner, f.lock);
-    expect(() => acquireDurableFileLock(f.path, { waitMs: 10 })).toThrow();
-    expect(readFileSync(f.lock, "utf8")).toBe(readFileSync(livePath, "utf8"));
-    expect(existsSync(f.marker)).toBe(false);
-    expect(existsSync(deadPath)).toBe(false);
+    f.install(deadOwner);
+    const replacement = `${f.lock}.replacement`;
+    f.populate(replacement, liveOwner);
+    let interleaved = false;
+    expect(() =>
+      acquireDurableFileLock(f.path, {
+        waitMs: 10,
+        afterOwnerUnlink: (target) => {
+          if (target !== f.lock || interleaved) return;
+          interleaved = true;
+          f.replaceEmpty(replacement);
+        },
+      }),
+    ).toThrow("Timed out acquiring");
+    expect(readdirSync(f.lock)).toEqual([f.ownerName(liveOwner)]);
+    expect(readFileSync(join(f.lock, f.ownerName(liveOwner)), "utf8")).toBe(
+      JSON.stringify(liveOwner),
+    );
   } finally {
     rmSync(f.root, { recursive: true, force: true });
   }
 });
 
-test("a corrupt recovery marker fails closed", () => {
+test("a release cannot rmdir an atomically installed replacement", () => {
   const f = fixture();
   try {
-    writeFileSync(f.marker, "not-json", { mode: 0o600 });
-    expect(() => acquireDurableFileLock(f.path, { waitMs: 10 })).toThrow();
-    expect(readFileSync(f.marker, "utf8")).toBe("not-json");
-    expect(existsSync(f.lock)).toBe(false);
+    const replacement = `${f.lock}.replacement`;
+    f.populate(replacement, liveOwner);
+    let interleaved = false;
+    const release = acquireDurableFileLock(f.path, {
+      waitMs: 50,
+      afterOwnerUnlink: (target) => {
+        if (target !== f.lock || interleaved) return;
+        interleaved = true;
+        f.replaceEmpty(replacement);
+      },
+    });
+    release();
+    expect(readdirSync(f.lock)).toEqual([f.ownerName(liveOwner)]);
   } finally {
     rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test("a paused live owner is never evicted and contender candidates are cleaned", () => {
+  const f = fixture();
+  try {
+    f.install(liveOwner);
+    expect(() => acquireDurableFileLock(f.path, { waitMs: 10 })).toThrow(
+      "Timed out acquiring",
+    );
+    expect(readdirSync(f.lock)).toEqual([f.ownerName(liveOwner)]);
+    expect(
+      readdirSync(f.root).filter((name) => name.includes(".lock.candidate-")),
+    ).toEqual([]);
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test("candidate setup failure cleans its private directory", () => {
+  const f = fixture();
+  try {
+    const owner = {
+      ...deadOwner,
+      token: "setup-failure",
+      toJSON: () => {
+        throw new Error("injected setup failure");
+      },
+    };
+    expect(() => acquireDurableFileLock(f.path, { owner, waitMs: 10 })).toThrow(
+      "injected setup failure",
+    );
+    expect(readdirSync(f.root)).toEqual([]);
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test("corrupt and multiple-owner directories fail closed", () => {
+  for (const contents of ["corrupt", "multiple"] as const) {
+    const f = fixture();
+    try {
+      mkdirSync(f.lock);
+      writeFileSync(join(f.lock, "unknown.json"), "not-json");
+      if (contents === "multiple") {
+        writeFileSync(join(f.lock, "another.json"), JSON.stringify(deadOwner));
+      }
+      expect(() => acquireDurableFileLock(f.path, { waitMs: 10 })).toThrow();
+      expect(existsSync(f.lock)).toBe(true);
+      expect(readdirSync(f.lock)).toHaveLength(contents === "multiple" ? 2 : 1);
+      expect(
+        readdirSync(f.root).filter((name) => name.includes(".lock.candidate-")),
+      ).toEqual([]);
+    } finally {
+      rmSync(f.root, { recursive: true, force: true });
+    }
   }
 });
 
@@ -99,80 +189,35 @@ test("PID reuse is detected by process-start identity", () => {
       pid: process.pid,
       processStart: `${getProcessStart(process.pid)}-previous`,
     };
-    const reusedPath = f.install(reused, f.lock);
+    f.install(reused);
     const release = acquireDurableFileLock(f.path, { waitMs: 50 });
-    expect(existsSync(reusedPath)).toBe(false);
+    expect(readdirSync(f.lock)).not.toContain(f.ownerName(reused));
     release();
   } finally {
     rmSync(f.root, { recursive: true, force: true });
   }
 });
 
-test("a paused live owner is never evicted and failed contenders clean candidates", () => {
-  const f = fixture();
-  try {
-    f.install(liveOwner, f.lock);
-    expect(() => acquireDurableFileLock(f.path, { waitMs: 10 })).toThrow();
-    expect(existsSync(f.lock)).toBe(true);
-    expect(readdirSync(f.owners)).toEqual([
-      `${liveOwner.pid}-${liveOwner.token}.json`,
-    ]);
-  } finally {
-    rmSync(f.root, { recursive: true, force: true });
-  }
-});
-
-test("a stale M0 recoverer never unlinks an interleaved live M1 marker", () => {
-  const f = fixture();
-  try {
-    const deadPath = f.install(deadOwner, f.marker);
-    let interleaved = false;
-    expect(() =>
-      acquireDurableFileLock(f.path, {
-        waitMs: 10,
-        beforeExactUnlink: (target) => {
-          if (target !== f.marker || interleaved) return;
-          interleaved = true;
-          unlinkSync(f.marker);
-          if (existsSync(deadPath)) unlinkSync(deadPath);
-          const livePath = f.install(liveOwner, f.lock);
-          linkSync(livePath, f.marker);
-        },
-      }),
-    ).toThrow("Timed out acquiring");
-    expect(readFileSync(f.marker, "utf8")).toBe(JSON.stringify(liveOwner));
-    expect(readFileSync(f.lock, "utf8")).toBe(JSON.stringify(liveOwner));
-  } finally {
-    rmSync(f.root, { recursive: true, force: true });
-  }
-});
-
-test("a failed release marker race remains retryable", () => {
-  const f = fixture();
-  try {
-    let interleaved = false;
-    const release = acquireDurableFileLock(f.path, {
-      waitMs: 50,
-      beforeExactUnlink: (target) => {
-        if (target !== f.marker || interleaved) return;
-        interleaved = true;
-        unlinkSync(f.marker);
-        const livePath = f.install(liveOwner, f.lock);
-        linkSync(livePath, f.marker);
-      },
-    });
-    expect(release).toThrow("changed recovery marker");
-    expect(readFileSync(f.marker, "utf8")).toBe(JSON.stringify(liveOwner));
-
-    const livePath = join(f.owners, `${liveOwner.pid}-${liveOwner.token}.json`);
-    unlinkSync(f.marker);
-    unlinkSync(f.lock);
-    unlinkSync(livePath);
-    expect(release).not.toThrow();
-    expect(existsSync(f.owners)).toBe(false);
-  } finally {
-    rmSync(f.root, { recursive: true, force: true });
-  }
+test("EPERM still checks PID reuse while unknown identity fails closed", () => {
+  const inaccessible = () => {
+    const error = new Error("inaccessible") as NodeJS.ErrnoException;
+    error.code = "EPERM";
+    throw error;
+  };
+  const recorded = { ...liveOwner, processStart: "recorded" };
+  expect(
+    durableLockOwnerIsAlive(recorded, () => "replacement", inaccessible),
+  ).toBe(false);
+  expect(durableLockOwnerIsAlive(recorded, () => null, inaccessible)).toBe(
+    true,
+  );
+  expect(
+    durableLockOwnerIsAlive(
+      { ...recorded, processStart: null },
+      () => "replacement",
+      inaccessible,
+    ),
+  ).toBe(true);
 });
 
 test("process creation identity uses safe macOS and Windows argv", () => {
@@ -190,36 +235,31 @@ test("process creation identity uses safe macOS and Windows argv", () => {
   expect(calls[1]?.[1]).toContain("-NonInteractive");
 });
 
-test("unknown process identity fails closed while a mismatch detects reuse", () => {
-  expect(
-    durableLockOwnerIsAlive(
-      { ...liveOwner, processStart: "recorded" },
-      () => null,
-    ),
-  ).toBe(true);
-  expect(
-    durableLockOwnerIsAlive(
-      { ...liveOwner, processStart: "recorded" },
-      () => "replacement",
-    ),
-  ).toBe(false);
-});
-
 test("Windows skips unsupported directory fsync", () => {
   expect(() => fsyncDirectory("Z:\\definitely-missing", "win32")).not.toThrow();
 });
 
-test("released locks remove empty per-record owner directories", () => {
+test("an empty recovery artifact is cleaned", () => {
   const f = fixture();
   try {
-    rmSync(f.owners, { recursive: true });
+    mkdirSync(f.lock);
+    const release = acquireDurableFileLock(f.path, { waitMs: 50 });
+    expect(readdirSync(f.lock)).toHaveLength(1);
+    release();
+    expect(readdirSync(f.root)).toEqual([]);
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test("release removes empty lock artifacts", () => {
+  const f = fixture();
+  try {
     for (let index = 0; index < 20; index += 1) {
       acquireDurableFileLock(f.path, { waitMs: 50 })();
-      expect(existsSync(f.owners)).toBe(false);
+      expect(existsSync(f.lock)).toBe(false);
+      expect(readdirSync(f.root)).toEqual([]);
     }
-    expect(
-      readdirSync(f.root).filter((name) => name.endsWith(".lock-owners")),
-    ).toEqual([]);
   } finally {
     rmSync(f.root, { recursive: true, force: true });
   }

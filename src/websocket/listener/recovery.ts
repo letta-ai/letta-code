@@ -29,6 +29,7 @@ import {
 } from "./constants";
 import { appendQueuedTurnToInput } from "./continuation-input";
 import { getConversationWorkingDirectory } from "./cwd";
+import { completeInputReplay } from "./input-disposition";
 import { recordListenerWork } from "./interrupted-turn-record";
 import {
   createToolExecutionOutputEmitter,
@@ -58,6 +59,7 @@ import {
   emitLoopErrorNotice,
   getTranscriptLoopErrorMessage,
 } from "./recoverable-notices";
+import { recoveredApprovalFailureResults } from "./recovered-approval-checkpoint";
 import {
   acquireRecoveryClaim,
   canRecoverConversation,
@@ -566,6 +568,21 @@ async function executeRecoveredApprovalContinuation(params: {
   const executeApprovals =
     dependencies?.executeApprovalBatch ?? executeApprovalBatch;
   const recordWork = dependencies?.recordListenerWork ?? recordListenerWork;
+  const finishRecoveredTurn = (
+    options: Parameters<typeof finishListenerTurn>[2],
+  ) => {
+    const transition = finishListenerTurn(runtime, recoveryLease, {
+      ...options,
+      terminalConsumerIds: recovered.terminalConsumerIds,
+    });
+    if (
+      transition.finished &&
+      !completeInputReplay(runtime, recovered.durableInputIdentities ?? [])
+    ) {
+      throw new Error("Failed to retire recovered accepted-input identities");
+    }
+    return transition;
+  };
   const scope = {
     agent_id: recovered.agentId,
     conversation_id: recovered.conversationId,
@@ -652,6 +669,7 @@ async function executeRecoveredApprovalContinuation(params: {
   };
   let continuationFinalized = false;
   let sideEffectStarted = false;
+  let recoveredContinuationOtid: string | null = null;
   let claimSettled = false;
 
   try {
@@ -726,34 +744,55 @@ async function executeRecoveredApprovalContinuation(params: {
       runtime.currentLoadedTools =
         preparedToolContext.preparedToolContext.loadedToolNames;
       if (!hasRecoveryOwnership()) return;
+      const continuationOtid = crypto.randomUUID();
+      recordWork(
+        runtime,
+        {
+          toolCallIds: decisions.map(
+            (decision) => decision.approval.toolCallId,
+          ),
+          results: [],
+          requestOtid: continuationOtid,
+        },
+        "before_tool_execution",
+      );
       sideEffectStarted = true;
-      approvalResults = await executeApprovals(decisions, undefined, {
-        abortSignal: recoveryLease.signal,
-        onStreamingOutput: emitToolExecutionOutput,
-        toolContextId: preparedToolContext.preparedToolContext.contextId,
-        workingDirectory,
-        parentScope:
-          recovered.agentId && recovered.conversationId
-            ? {
-                agentId: recovered.agentId,
-                conversationId: recovered.conversationId,
-              }
-            : undefined,
-      });
+      try {
+        approvalResults = await executeApprovals(decisions, undefined, {
+          abortSignal: recoveryLease.signal,
+          onStreamingOutput: emitToolExecutionOutput,
+          toolContextId: preparedToolContext.preparedToolContext.contextId,
+          workingDirectory,
+          parentScope:
+            recovered.agentId && recovered.conversationId
+              ? {
+                  agentId: recovered.agentId,
+                  conversationId: recovered.conversationId,
+                }
+              : undefined,
+        });
+      } catch (error) {
+        recordWork(
+          runtime,
+          { results: recoveredApprovalFailureResults(decisions, error) },
+          "after_tool_execution",
+        );
+        throw error;
+      }
+      // Side effects have returned. Checkpoint exact outcomes before ownership
+      // or transport checks; a stale process may stop delivery, not evidence.
+      recordWork(runtime, { results: approvalResults }, "after_tool_execution");
+      recoveredContinuationOtid = continuationOtid;
     } catch (error) {
       // Execution threw before results exist, so the finished-events
       // emission below never runs. Close the client_tool_start lifecycle
       // events explicitly or observer UIs shimmer these tool calls forever.
       // Flush buffered tool output first so no progress frame lands after
-      // the terminal end events. Gate only on lease ownership: unlike the
-      // normal turn path, recovered approvals do not unwind through the
-      // turn.ts interrupt emission, so an aborted recovery that throws has
-      // no other owner for these terminal events (the outer catch below
-      // finalizes the lease without emitting ends). isCurrent stays true
-      // while the lease is cancelling, so abort+throw still emits exactly
-      // once; only a replacement owner suppresses emission.
+      // the terminal end events. Emit only while both local and Cloud recovery
+      // ownership remain current; a fenced process retains evidence but is no
+      // longer authoritative for transport events.
       emitToolExecutionOutput.flush();
-      if (runtime.turnLifecycle.isCurrent(recoveryLease)) {
+      if (hasRecoveryOwnership()) {
         const abortedDeliveries = emitToolExecutionAbortedEvents(
           socket,
           runtime,
@@ -774,16 +813,7 @@ async function executeRecoveredApprovalContinuation(params: {
       return;
     }
 
-    const continuationOtid = crypto.randomUUID();
-    recordWork(
-      runtime,
-      {
-        toolCallIds: approvalResults.map((result) => result.tool_call_id),
-        results: approvalResults,
-        requestOtid: continuationOtid,
-      },
-      "after_tool_execution",
-    );
+    const continuationOtid = recoveredContinuationOtid ?? crypto.randomUUID();
 
     const terminalDeliveries = emitToolExecutionFinishedEvents(
       socket,
@@ -819,7 +849,7 @@ async function executeRecoveredApprovalContinuation(params: {
         if (runtime.recoveredApprovalState === recovered) {
           clearRecoveredApprovalState(runtime);
         }
-        finishListenerTurn(runtime, recoveryLease, {
+        finishRecoveredTurn({
           stopReason: recoveryLease.signal.aborted ? "cancelled" : "error",
           socket,
           agentId: recovered.agentId,
@@ -880,6 +910,8 @@ async function executeRecoveredApprovalContinuation(params: {
         agentId: recovered.agentId,
         conversationId: recovered.conversationId,
         connectionId: continuationConnectionId,
+        durableInputIdentities: recovered.durableInputIdentities,
+        terminalConsumerIds: recovered.terminalConsumerIds,
         messages: continuationInput.messages,
       },
       socket,
@@ -917,7 +949,7 @@ async function executeRecoveredApprovalContinuation(params: {
       return;
     }
     const stopReason = recoveryLease.signal.aborted ? "cancelled" : "error";
-    finishListenerTurn(runtime, recoveryLease, {
+    finishRecoveredTurn({
       stopReason,
       socket,
       agentId: recovered.agentId,

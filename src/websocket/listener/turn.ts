@@ -342,6 +342,8 @@ async function handleIncomingMessageInner(
           turnCorrelation,
           msgRunIds,
           runId,
+          durableInputIdentities: msg.durableInputIdentities,
+          terminalConsumerIds: msg.terminalConsumerIds,
         },
       );
       const result = drained.result;

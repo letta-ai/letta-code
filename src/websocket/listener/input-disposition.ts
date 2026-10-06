@@ -335,7 +335,8 @@ function writeDurableStore(path: string, store: DurableStore): void {
   const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
   try {
     writeFileSync(temporaryPath, serialized, { mode: 0o600, flag: "wx" });
-    const fd = openSync(temporaryPath, "r");
+    // FlushFileBuffers rejects read-only handles on Windows.
+    const fd = openSync(temporaryPath, "r+");
     try {
       fsyncSync(fd);
     } finally {

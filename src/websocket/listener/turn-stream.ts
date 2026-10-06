@@ -20,7 +20,7 @@ import { getApprovalToolCallDesyncErrorText } from "./recovery";
 import type { ListenerTransport } from "./transport";
 import type { TurnCorrelation } from "./turn-correlation";
 import type { TurnLease } from "./turn-lifecycle";
-import type { ConversationRuntime } from "./types";
+import type { ConversationRuntime, InputIdentity } from "./types";
 
 export type TurnStreamDrainParams = {
   agentId: string | null;
@@ -31,6 +31,8 @@ export type TurnStreamDrainParams = {
   msgRunIds: string[];
   /** Last run ID observed by the turn before this stream started, if any. */
   runId: string | undefined;
+  durableInputIdentities?: readonly InputIdentity[];
+  terminalConsumerIds?: readonly string[];
 };
 
 export type TurnStreamDrainResult = {
@@ -81,6 +83,12 @@ export async function drainTurnStreamWithEmission(
             {
               runId: maybeRunId,
               actingUserId: getStreamRequestContext(stream)?.actingUserId,
+              durableInputIdentities: params.durableInputIdentities
+                ? [...params.durableInputIdentities]
+                : undefined,
+              terminalConsumerIds: params.terminalConsumerIds
+                ? [...params.terminalConsumerIds]
+                : undefined,
             },
             "run_observed",
           );

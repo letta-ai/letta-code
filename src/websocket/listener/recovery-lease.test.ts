@@ -65,6 +65,8 @@ function createRecoveredState(): RecoveredApprovalState {
   return {
     agentId: "agent-1",
     conversationId: "conv-1",
+    durableInputIdentities: [{ domain: "input", id: "scheduled-1" }],
+    terminalConsumerIds: ["slack:agent-1"],
     autoDecisions: [
       { type: "deny", approval, reason: STALE_APPROVAL_RECOVERY_DENIAL_REASON },
     ],
@@ -81,6 +83,8 @@ function createApprovedRecoveredState(): RecoveredApprovalState {
   return {
     agentId: "agent-1",
     conversationId: "conv-1",
+    durableInputIdentities: [{ domain: "input", id: "scheduled-1" }],
+    terminalConsumerIds: ["slack:agent-1"],
     autoDecisions: [{ type: "approve", approval }],
     allApprovals: [approval],
   };
@@ -158,6 +162,10 @@ describe("recovered approval lease boundaries", () => {
     const continuedConnectionIds: Array<string | undefined> = [];
     const continuedMessageConnectionIds: Array<string | undefined> = [];
     const submittedOtids: string[] = [];
+    const continuedConsumers: Array<readonly string[] | undefined> = [];
+    const continuedIdentities: Array<
+      RecoveredApprovalState["durableInputIdentities"]
+    > = [];
     const recordedOtids: string[] = [];
     const processTurn = mock(
       async (
@@ -171,6 +179,8 @@ describe("recovered approval lease boundaries", () => {
       ) => {
         continuedConnectionIds.push(connectionId);
         continuedMessageConnectionIds.push(message.connectionId);
+        continuedConsumers.push(message.terminalConsumerIds);
+        continuedIdentities.push(message.durableInputIdentities);
         const approvalMessage = message.messages[0] as { otid?: string };
         if (approvalMessage.otid) submittedOtids.push(approvalMessage.otid);
         if (turnLease) ownerRuntime.turnLifecycle.finish(turnLease, "end_turn");
@@ -209,6 +219,10 @@ describe("recovered approval lease boundaries", () => {
 
     expect(await handled).toBe(true);
     expect(processTurn).toHaveBeenCalledTimes(1);
+    expect(continuedConsumers).toEqual([["slack:agent-1"]]);
+    expect(continuedIdentities).toEqual([
+      [{ domain: "input", id: "scheduled-1" }],
+    ]);
     expect(runtime.turnLifecycle.kind).toBe("idle");
     const terminalTypes = socketB.sent
       .filter(
@@ -335,6 +349,10 @@ describe("recovered approval lease boundaries", () => {
     markListenerConnectionInitialized(listener, "client-a");
     subscribeListenerConnection(listener, "client-a", scope);
     const processTurn = mock(async () => {});
+    const checkpoints: Array<{
+      phase: string;
+      update: { results?: unknown[] };
+    }> = [];
     const handled = startRecoveredApprovalContinuation(
       runtime,
       getOrCreateProcessTransport(listener),
@@ -347,6 +365,9 @@ describe("recovered approval lease boundaries", () => {
           prepareToolExecutionContext: async () => createPreparedToolContext(),
           executeApprovalBatch: async () => {
             throw new Error("recovery crashed");
+          },
+          recordListenerWork: (_runtime, update, phase) => {
+            checkpoints.push({ phase, update });
           },
         },
       },
@@ -372,6 +393,13 @@ describe("recovered approval lease boundaries", () => {
     const outcome = await handledOutcome;
     expect(outcome).toHaveProperty("error");
     expect(processTurn).not.toHaveBeenCalled();
+    expect(checkpoints.map(({ phase }) => phase)).toEqual([
+      "before_tool_execution",
+      "after_tool_execution",
+    ]);
+    expect(checkpoints[1]?.update.results).toEqual([
+      expect.objectContaining({ status: "error" }),
+    ]);
     expect(
       socketB.sent.some(
         (message) =>
@@ -512,6 +540,7 @@ describe("recovered approval lease boundaries", () => {
         resolveExecution = resolve;
       },
     );
+    const recordedResults: unknown[] = [];
     const processTurn = mock(async () => {});
     const handled = startRecoveredApprovalContinuation(
       runtime,
@@ -528,6 +557,9 @@ describe("recovered approval lease boundaries", () => {
             );
             executionStarted = true;
             return execution;
+          },
+          recordListenerWork: (_runtime, update) => {
+            if (update.results) recordedResults.push(update.results);
           },
         },
       },
@@ -547,6 +579,7 @@ describe("recovered approval lease boundaries", () => {
     expect(processTurn).not.toHaveBeenCalled();
     expect(runtime.turnLifecycle.isCurrent(replacementLease)).toBe(true);
     expect(sentPayloads).toEqual([]);
+    expect(recordedResults.at(-1)).toEqual(createDenialResults());
   });
 
   test("aborted recovered denial processing that throws finalizes exactly once without tool starts", async () => {

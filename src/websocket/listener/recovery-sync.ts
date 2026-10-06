@@ -13,6 +13,7 @@ import {
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
 } from "@/agent/turn-recovery-policy";
 import { getBackend } from "@/backend";
+import { readInterruptedTurn } from "./interrupted-turn-record";
 import { canRecoverConversation } from "./recovery-ownership";
 import {
   clearRecoveredApprovalState,
@@ -153,11 +154,14 @@ export async function recoverApprovalStateForSync(
   runtime.pendingInterruptedResults = null;
   runtime.pendingInterruptedContext = null;
   runtime.pendingInterruptedToolCallIds = null;
+  const recorded = readInterruptedTurn(runtime);
   runtime.recoveredApprovalState = {
     agentId: scope.agent_id,
     conversationId: scope.conversation_id,
     autoDecisions: staleDenialDecisions,
     allApprovals: pendingApprovals,
+    durableInputIdentities: recorded?.durableInputIdentities,
+    terminalConsumerIds: recorded?.terminalConsumerIds,
   };
   return undefined;
 }

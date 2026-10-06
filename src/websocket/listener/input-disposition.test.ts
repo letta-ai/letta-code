@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   utimesSync,
@@ -652,8 +653,10 @@ test("dead lock recovery quarantines only the observed owner", () => {
   const root = mkdtempSync(join(tmpdir(), "letta-disposition-dead-lock-"));
   try {
     const path = join(root, "state.json");
+    const lockPath = `${path}.lock`;
+    mkdirSync(lockPath);
     writeFileSync(
-      `${path}.lock`,
+      join(lockPath, "2147483647-dead-owner.json"),
       JSON.stringify({
         token: "dead-owner",
         pid: 2_147_483_647,
@@ -662,9 +665,11 @@ test("dead lock recovery quarantines only the observed owner", () => {
       { mode: 0o600 },
     );
     const release = __inputDispositionTestUtils.acquireLock(path, 20);
-    expect(JSON.parse(readFileSync(`${path}.lock`, "utf8")).token).not.toBe(
-      "dead-owner",
-    );
+    const ownerFile = readdirSync(lockPath)[0];
+    expect(
+      ownerFile &&
+        JSON.parse(readFileSync(join(lockPath, ownerFile), "utf8")).token,
+    ).not.toBe("dead-owner");
     release();
   } finally {
     rmSync(root, { recursive: true, force: true });
