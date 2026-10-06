@@ -806,7 +806,7 @@ export async function drainStreamWithResume(
           );
           originalApproval = originalApprovals[0] ?? null;
 
-          if (candidate.sawStopReasonChunk && runIdToResume) {
+          if (runIdToResume) {
             const run = await backend.retrieveRun(
               runIdToResume,
               recoveryRequestOptions,

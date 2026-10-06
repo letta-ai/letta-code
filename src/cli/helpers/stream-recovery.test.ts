@@ -86,7 +86,10 @@ function runningRun(): Run {
   };
 }
 
-async function drain(initialStream: Stream<LettaStreamingResponse>) {
+async function drain(
+  initialStream: Stream<LettaStreamingResponse>,
+  policy = immediateRetries,
+) {
   return drainStreamWithResume(
     initialStream,
     createBuffers("agent-1"),
@@ -96,7 +99,7 @@ async function drain(initialStream: Stream<LettaStreamingResponse>) {
     undefined,
     undefined,
     undefined,
-    immediateRetries,
+    policy,
   );
 }
 
@@ -348,5 +351,32 @@ describe("stream recovery", () => {
         messageId: "message-approval-1",
       },
     ]);
+  });
+
+  test("recovers an approval when the only replay disconnects during iteration", async () => {
+    const streamRunMessages = mock(async () =>
+      stream([], new Error("resumed stream disconnected")),
+    );
+    const retrieveRun = mock(async () => ({
+      ...runningRun(),
+      status: "completed" as const,
+      stop_reason: "requires_approval" as const,
+    }));
+    __testSetBackend({
+      capabilities,
+      streamRunMessages,
+      retrieveRun,
+    } as unknown as Backend);
+
+    const result = await drain(
+      stream(
+        [ping("run-1", 1), approval("run-1", 2)],
+        new Error("initial stream disconnected"),
+      ),
+      { ...immediateRetries, maxAttempts: 1 },
+    );
+
+    expect(result.stopReason).toBe("requires_approval");
+    expect(retrieveRun).toHaveBeenCalledTimes(1);
   });
 });

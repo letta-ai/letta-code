@@ -115,6 +115,18 @@ function getStructuredApiErrorFromError(
   );
 }
 
+function getStructuredStatusFromError(error: unknown): number | undefined {
+  if (!(error instanceof Error)) return undefined;
+  const structuredError = error as Error & {
+    errorInfo?: ErrorInfo;
+    runErrorInfo?: RunErrorInfo;
+  };
+  return (
+    structuredError.errorInfo?.status_code ??
+    structuredError.runErrorInfo?.status_code
+  );
+}
+
 function buildStructuredFormatInput(
   apiError: LettaStreamingResponse.LettaErrorMessage,
 ): {
@@ -240,7 +252,9 @@ export function getLoopErrorNoticeDecision(params: {
       detail,
       params.error,
       params.message,
-      params.errorInfo?.status_code ?? params.runErrorInfo?.status_code,
+      params.errorInfo?.status_code ??
+        params.runErrorInfo?.status_code ??
+        getStructuredStatusFromError(params.error),
     )
   ) {
     return {
