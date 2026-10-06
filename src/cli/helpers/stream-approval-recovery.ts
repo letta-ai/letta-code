@@ -9,12 +9,13 @@ import type { ApprovalRequest } from "./stream-processor";
 export type CurrentPendingApprovalLoader = (
   context: StreamRequestContext | undefined,
   recoveredApprovals: ApprovalRequest[],
+  options?: { signal?: AbortSignal },
 ) => Promise<ApprovalRequest[]>;
 
 const APPROVAL_REVALIDATION_TIMEOUT_MS = 10_000;
 
 async function runBoundedApprovalRead<T>(
-  read: () => Promise<T>,
+  read: (signal: AbortSignal) => Promise<T>,
   abortSignal?: AbortSignal,
   timeoutMs = APPROVAL_REVALIDATION_TIMEOUT_MS,
 ): Promise<T> {
@@ -24,26 +25,32 @@ async function runBoundedApprovalRead<T>(
     });
   }
 
+  const requestAbort = new AbortController();
   let timeout: ReturnType<typeof setTimeout> | undefined;
   let onAbort: (() => void) | undefined;
   const bounded = new Promise<never>((_, reject) => {
-    timeout = setTimeout(
-      () => reject(new Error("Approval revalidation timed out")),
-      timeoutMs,
-    );
+    timeout = setTimeout(() => {
+      const error = new Error("Approval revalidation timed out");
+      requestAbort.abort(error);
+      reject(error);
+    }, timeoutMs);
     if (abortSignal) {
-      onAbort = () =>
-        reject(
-          Object.assign(new Error("Approval revalidation aborted"), {
+      onAbort = () => {
+        const error = Object.assign(
+          new Error("Approval revalidation aborted"),
+          {
             name: "AbortError",
-          }),
+          },
         );
+        requestAbort.abort(error);
+        reject(error);
+      };
       abortSignal.addEventListener("abort", onAbort, { once: true });
     }
   });
 
   try {
-    return await Promise.race([read(), bounded]);
+    return await Promise.race([read(requestAbort.signal), bounded]);
   } finally {
     if (timeout) clearTimeout(timeout);
     if (onAbort) abortSignal?.removeEventListener("abort", onAbort);
@@ -81,22 +88,30 @@ export function retainIncompleteApprovalRequests(
 
 async function loadCurrentPendingApprovals(
   context: StreamRequestContext,
+  _recoveredApprovals: ApprovalRequest[],
+  options?: { signal?: AbortSignal },
 ): Promise<ApprovalRequest[]> {
   const backend = getBackend();
-  let agentId = context.agentId;
-  if (!agentId && context.conversationId !== "default") {
-    const conversation = await backend.retrieveConversation(
+  if (context.conversationId !== "default") {
+    const resumeData = await getResumeDataFromBackend(
+      undefined,
       context.resolvedConversationId,
+      { includeMessageHistory: false, signal: options?.signal },
     );
-    agentId = conversation.agent_id;
+    return resumeData.pendingApprovals;
   }
+  const agentId = context.agentId;
   if (!agentId) return [];
 
-  const agent = await backend.retrieveAgent(agentId);
+  options?.signal?.throwIfAborted();
+  const agent = await backend.retrieveAgent(agentId, undefined, {
+    signal: options?.signal,
+  });
+  options?.signal?.throwIfAborted();
   const resumeData = await getResumeDataFromBackend(
     agent,
     context.conversationId,
-    { includeMessageHistory: false },
+    { includeMessageHistory: false, signal: options?.signal },
   );
   return resumeData.pendingApprovals;
 }
@@ -119,10 +134,11 @@ export async function revalidateRecoveredApprovals(params: {
 
   try {
     const currentApprovals = await runBoundedApprovalRead(
-      () =>
+      (signal) =>
         (params.loadCurrentPendingApprovals ?? loadCurrentPendingApprovals)(
           params.context as StreamRequestContext,
           params.recoveredApprovals,
+          { signal },
         ),
       params.abortSignal,
       params.timeoutMs,

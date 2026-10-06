@@ -1,5 +1,6 @@
 import type { Run } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StreamRequestContext } from "@/agent/message";
+import type { Backend, RunRetrieveOptions } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import type { ApprovalRequest } from "@/cli/helpers/stream-processor";
 
@@ -28,6 +29,50 @@ export type RunsListClient = {
 };
 
 const FALLBACK_RUN_DISCOVERY_TIMEOUT_MS = 5000;
+const RUN_STATUS_RECONCILIATION_TIMEOUT_MS = 10_000;
+
+export async function retrieveRunForResume(
+  backend: Pick<Backend, "retrieveRun">,
+  runId: string,
+  options: RunRetrieveOptions | undefined,
+  parentSignal: AbortSignal,
+  timeoutMs = RUN_STATUS_RECONCILIATION_TIMEOUT_MS,
+): Promise<Run> {
+  if (parentSignal.aborted) {
+    throw parentSignal.reason ?? new Error("Run status reconciliation aborted");
+  }
+
+  const requestAbort = new AbortController();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  const bounded = new Promise<never>((_, reject) => {
+    onAbort = () => {
+      const error =
+        parentSignal.reason ?? new Error("Run status reconciliation aborted");
+      requestAbort.abort(error);
+      reject(error);
+    };
+    parentSignal.addEventListener("abort", onAbort, { once: true });
+    timeout = setTimeout(() => {
+      const error = new Error("Run status reconciliation timed out");
+      requestAbort.abort(error);
+      reject(error);
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([
+      backend.retrieveRun(runId, {
+        ...(options ?? {}),
+        signal: requestAbort.signal,
+      } as RunRetrieveOptions),
+      bounded,
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+    if (onAbort) parentSignal.removeEventListener("abort", onAbort);
+  }
+}
 
 function hasPaginatedItems(
   response: RunsListResponse,

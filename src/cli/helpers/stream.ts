@@ -61,6 +61,7 @@ import {
   isReplayableRun,
   mergeApprovalRequests,
   recoverApprovalBoundaryAfterResumeFailure,
+  retrieveRunForResume,
   type StreamResumePolicy,
   waitForResumeRetry,
 } from "./stream-resume";
@@ -669,9 +670,11 @@ export async function drainStreamWithResume(
     !abortSignal.aborted
   ) {
     try {
-      const run = await getBackend().retrieveRun(
+      const run = await retrieveRunForResume(
+        getBackend(),
         runIdToResume,
         recoveryRequestOptions,
+        abortSignal,
       );
       authoritativeApprovalBoundary = isCompletedApprovalBoundary(run);
       replayGenericError = isReplayableRun(run);
@@ -802,9 +805,11 @@ export async function drainStreamWithResume(
           );
 
           if (runIdToResume) {
-            const run = await backend.retrieveRun(
+            const run = await retrieveRunForResume(
+              backend,
               runIdToResume,
               recoveryRequestOptions,
+              abortSignal,
             );
             authoritativeApprovalBoundary = isCompletedApprovalBoundary(run);
             if (!isReplayableRun(run)) break;
@@ -813,9 +818,11 @@ export async function drainStreamWithResume(
           lastResumeError = resumeError;
           if (runIdToResume) {
             try {
-              const run = await backend.retrieveRun(
+              const run = await retrieveRunForResume(
+                backend,
                 runIdToResume,
                 recoveryRequestOptions,
+                abortSignal,
               );
               authoritativeApprovalBoundary = isCompletedApprovalBoundary(run);
               if (!isReplayableRun(run)) break;

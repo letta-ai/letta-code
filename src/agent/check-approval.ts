@@ -68,6 +68,13 @@ export interface GetResumeDataOptions {
    * Defaults to true to preserve existing /resume behavior.
    */
   includeMessageHistory?: boolean;
+  signal?: AbortSignal;
+}
+
+function throwIfResumeAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw signal.reason ?? new Error("Resume data retrieval aborted");
+  }
 }
 
 type ApprovalMessage = Message & {
@@ -290,9 +297,11 @@ function isNotFoundError(error: unknown): boolean {
 
 async function retrieveMessageVariantsForPendingApproval(
   messageId: string,
+  signal?: AbortSignal,
 ): Promise<Message[]> {
   try {
-    return await getBackend().retrieveMessage(messageId);
+    throwIfResumeAborted(signal);
+    return await getBackend().retrieveMessage(messageId, { signal });
   } catch (error) {
     if (isNotFoundError(error)) {
       debugWarn(
@@ -455,16 +464,19 @@ async function fetchResumeTail(
   agentId: string,
   conversationId: string,
   limit = BACKFILL_PAGE_LIMIT,
+  signal?: AbortSignal,
 ): Promise<{
   conversation?: Conversation;
   messages: Message[];
 }> {
+  throwIfResumeAborted(signal);
   const tail = await getBackend().getConversationResumeTail(
     agentId,
     conversationId,
     {
       limit,
       includeReturnMessageTypes: RESUME_BACKFILL_MESSAGE_TYPES,
+      signal,
     },
   );
   const warnIfMissingAssistant =
@@ -481,6 +493,7 @@ async function fetchResumeTail(
 async function pendingApprovalsFromTailOrRetrieve(
   messages: Message[],
   lastInContextId?: string | null,
+  signal?: AbortSignal,
 ): Promise<ReturnType<typeof pendingApprovalsFromMessageVariants>> {
   const tailCheck = pendingApprovalsFromTail(messages, lastInContextId);
   if (
@@ -488,14 +501,18 @@ async function pendingApprovalsFromTailOrRetrieve(
     tailCheck.pendingApprovals.length > 0 &&
     tailStartsInsideSourceMessage(messages, lastInContextId)
   ) {
-    const retrievedMessages =
-      await retrieveMessageVariantsForPendingApproval(lastInContextId);
+    const retrievedMessages = await retrieveMessageVariantsForPendingApproval(
+      lastInContextId,
+      signal,
+    );
     return pendingApprovalsFromMessageVariants(retrievedMessages);
   }
   if (tailCheck.messageToCheck || !lastInContextId) return tailCheck;
 
-  const retrievedMessages =
-    await retrieveMessageVariantsForPendingApproval(lastInContextId);
+  const retrievedMessages = await retrieveMessageVariantsForPendingApproval(
+    lastInContextId,
+    signal,
+  );
   return pendingApprovalsFromMessageVariants(retrievedMessages);
 }
 
@@ -511,13 +528,15 @@ async function pendingApprovalsFromTailOrRetrieve(
  * @returns Pending approval (if any) and recent message history
  */
 export async function getResumeDataFromBackend(
-  agent: AgentState,
+  agent: AgentState | undefined,
   conversationId?: string,
   options: GetResumeDataOptions = {},
 ): Promise<ResumeData> {
   try {
     const includeMessageHistory = options.includeMessageHistory ?? true;
     const shouldFetchTail = includeMessageHistory && isBackfillEnabled();
+    const signal = options.signal;
+    throwIfResumeAborted(signal);
     const agentWithInContext = agent as AgentState & {
       in_context_message_ids?: string[] | null;
     };
@@ -530,9 +549,14 @@ export async function getResumeDataFromBackend(
 
     if (useConversationsApi) {
       let conversation: Conversation | undefined;
-      if (shouldFetchTail) {
+      if (shouldFetchTail && agent) {
         try {
-          const tail = await fetchResumeTail(agent.id, activeConversationId);
+          const tail = await fetchResumeTail(
+            agent.id,
+            activeConversationId,
+            BACKFILL_PAGE_LIMIT,
+            signal,
+          );
           messages = tail.messages;
           conversation = tail.conversation;
           inContextMessageIds = conversation?.in_context_message_ids;
@@ -545,8 +569,13 @@ export async function getResumeDataFromBackend(
       }
 
       if (!conversation) {
-        conversation =
-          await getBackend().retrieveConversation(activeConversationId);
+        throwIfResumeAborted(signal);
+        conversation = await getBackend().retrieveConversation(
+          activeConversationId,
+          {
+            signal,
+          },
+        );
         inContextMessageIds = conversation.in_context_message_ids;
       }
 
@@ -565,13 +594,21 @@ export async function getResumeDataFromBackend(
       }
 
       const { pendingApproval, pendingApprovals } =
-        await pendingApprovalsFromTailOrRetrieve(messages, lastInContextId);
+        await pendingApprovalsFromTailOrRetrieve(
+          messages,
+          lastInContextId,
+          signal,
+        );
       return {
         pendingApproval,
         pendingApprovals,
         messageHistory: prepareMessageHistory(messages),
         conversation,
       };
+    }
+
+    if (!agent) {
+      throw new Error("Agent is required for default conversation resume data");
     }
 
     inContextMessageIds =
@@ -581,8 +618,9 @@ export async function getResumeDataFromBackend(
     if (shouldFetchTail || !lastInContextId) {
       try {
         const tailLimit = shouldFetchTail ? BACKFILL_PAGE_LIMIT : 1;
-        messages = (await fetchResumeTail(agent.id, "default", tailLimit))
-          .messages;
+        messages = (
+          await fetchResumeTail(agent.id, "default", tailLimit, signal)
+        ).messages;
         if (isDebugEnabled()) {
           debugLog(
             "check-approval",
@@ -601,7 +639,11 @@ export async function getResumeDataFromBackend(
 
     if (lastInContextId) {
       const { pendingApproval, pendingApprovals } =
-        await pendingApprovalsFromTailOrRetrieve(messages, lastInContextId);
+        await pendingApprovalsFromTailOrRetrieve(
+          messages,
+          lastInContextId,
+          signal,
+        );
       return {
         pendingApproval,
         pendingApprovals,

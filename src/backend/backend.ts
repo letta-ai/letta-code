@@ -66,6 +66,7 @@ export type RunRetrieveOptions = RunRetrieveParams[1];
 
 export type AgentRetrieveParams = Parameters<APIClient["agents"]["retrieve"]>;
 export type AgentRetrieveOptions = AgentRetrieveParams[1];
+export type AgentRetrieveRequestOptions = AgentRetrieveParams[2];
 
 export type AgentListParams = Parameters<APIClient["agents"]["list"]>;
 export type AgentListBody = AgentListParams[0];
@@ -159,6 +160,7 @@ export type ModelsListOptions = ModelsListParams[0];
 export interface ConversationResumeTailOptions {
   limit: number;
   includeReturnMessageTypes?: string[];
+  signal?: AbortSignal;
 }
 
 export interface ConversationResumeTail {
@@ -193,6 +195,7 @@ export interface Backend {
   retrieveAgent(
     agentId: string,
     options?: AgentRetrieveOptions,
+    requestOptions?: AgentRetrieveRequestOptions,
   ): Promise<Awaited<ReturnType<APIClient["agents"]["retrieve"]>>>;
 
   listAgents(
@@ -409,10 +412,14 @@ export class APIBackend implements Backend {
     return resolveClient();
   }
 
-  async retrieveAgent(agentId: string, options?: AgentRetrieveOptions) {
+  async retrieveAgent(
+    agentId: string,
+    options?: AgentRetrieveOptions,
+    requestOptions?: AgentRetrieveRequestOptions,
+  ) {
     const client = await this.getClient();
-    if (options !== undefined) {
-      return client.agents.retrieve(agentId, options);
+    if (options !== undefined || requestOptions !== undefined) {
+      return client.agents.retrieve(agentId, options, requestOptions);
     }
 
     const inflight = this.retrieveAgentInflightByKey.get(agentId);
@@ -590,19 +597,24 @@ export class APIBackend implements Backend {
 
     if (conversationId && conversationId !== "default") {
       const [conversation, page] = await Promise.all([
-        this.retrieveConversation(conversationId),
+        this.retrieveConversation(conversationId, { signal: options.signal }),
         this.listConversationMessages(
           conversationId,
           body as ConversationMessageListBody,
+          { signal: options.signal },
         ),
       ]);
       return { conversation, messages: page.getPaginatedItems() };
     }
 
-    const page = await this.listAgentMessages(agentId, {
-      ...body,
-      conversation_id: "default",
-    } as AgentMessageListBody);
+    const page = await this.listAgentMessages(
+      agentId,
+      {
+        ...body,
+        conversation_id: "default",
+      } as AgentMessageListBody,
+      { signal: options.signal },
+    );
     return { messages: page.getPaginatedItems() };
   }
 

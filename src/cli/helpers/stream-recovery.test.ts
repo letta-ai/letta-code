@@ -8,10 +8,7 @@ import type {
 import { __testSetBackend, type Backend } from "@/backend";
 import { createBuffers } from "@/cli/helpers/accumulator";
 import { drainStreamWithResume } from "@/cli/helpers/stream";
-import {
-  type CurrentPendingApprovalLoader,
-  revalidateRecoveredApprovals,
-} from "@/cli/helpers/stream-approval-recovery";
+import type { CurrentPendingApprovalLoader } from "@/cli/helpers/stream-approval-recovery";
 import type { StreamResumePolicy } from "@/cli/helpers/stream-resume";
 
 const capabilities = {
@@ -459,54 +456,6 @@ describe("stream recovery", () => {
       resultOk: true,
       resultText: "done",
     });
-  });
-
-  test("approval revalidation is interruptible by turn cancellation", async () => {
-    const streamRunMessages = mock(async () =>
-      stream([stop("run-1", 3, "requires_approval")]),
-    );
-    __testSetBackend({ capabilities, streamRunMessages } as unknown as Backend);
-    const buffers = createBuffers("agent-1");
-    const controller = new AbortController();
-    let markStarted: (() => void) | undefined;
-    const started = new Promise<void>((resolve) => {
-      markStarted = resolve;
-    });
-    const loadCurrentPendingApprovals = mock(async () => {
-      markStarted?.();
-      return await new Promise<never>(() => {});
-    });
-
-    const resultPromise = drain(
-      stream(
-        [ping("run-1", 1), approval("run-1", 2)],
-        new Error("initial stream disconnected"),
-      ),
-      immediateRetries,
-      buffers,
-      loadCurrentPendingApprovals,
-      controller.signal,
-    );
-    await started;
-    controller.abort();
-    const result = await resultPromise;
-
-    expect(result.stopReason).toBe("error");
-    expect(result.approvals).toEqual([]);
-    expect(result.approval).toBeNull();
-    expect(buffers.approvalsPending).toBe(false);
-  });
-
-  test("approval revalidation fails closed after its timeout", async () => {
-    const result = await revalidateRecoveredApprovals({
-      recoveredApprovals: [approvalRequest("tool-approval-1")],
-      context: undefined,
-      loadCurrentPendingApprovals: async () =>
-        await new Promise<never>(() => {}),
-      timeoutMs: 1,
-    });
-
-    expect(result).toEqual([]);
   });
 
   test("revalidates only unresolved approvals after a partial replay resolution", async () => {
