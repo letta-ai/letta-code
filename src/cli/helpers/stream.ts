@@ -847,12 +847,8 @@ export async function drainStreamWithResume(
       );
       result = resumeResult;
 
-      // The resumed stream uses a fresh streamProcessor that won't have
-      // approval_request_message chunks from before the disconnect (they
-      // had seq_id <= lastSeqId).
-      //
-      // Preserve every approval ID seen on either side of the disconnect. The
-      // merge also concatenates same-ID argument fragments in stream order.
+      // Preserve approval IDs and same-ID argument fragments from both sides
+      // of the disconnect; the fresh resume processor lacks earlier chunks.
       const pendingOriginalApprovals = retainIncompleteApprovalRequests(
         buffers,
         originalApprovals,
@@ -898,8 +894,11 @@ export async function drainStreamWithResume(
           ? resumeError.message
           : String(resumeError);
       result.fallbackError = originalFallbackError ?? resumeErrorMsg;
-      result.approvals = originalApprovals;
-      result.approval = originalApproval;
+      result.approvals = retainIncompleteApprovalRequests(
+        buffers,
+        originalApprovals,
+      );
+      result.approval = result.approvals[0] ?? null;
       debugWarn(
         "stream",
         "[MID-STREAM RESUME] ❌ Failed (runId=%s): %s",

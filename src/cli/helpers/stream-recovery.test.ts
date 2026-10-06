@@ -449,6 +449,56 @@ describe("stream recovery", () => {
     });
   });
 
+  test("failed replay recovers only approvals not resolved by tool returns", async () => {
+    const streamRunMessages = mock(async () =>
+      stream(
+        [toolReturn("run-1", 4)],
+        new Error("resumed stream disconnected"),
+      ),
+    );
+    __testSetBackend({
+      capabilities,
+      streamRunMessages,
+      retrieveRun: mock(async () => ({
+        ...runningRun(),
+        status: "completed" as const,
+        stop_reason: "requires_approval" as const,
+      })),
+    } as unknown as Backend);
+    const buffers = createBuffers("agent-1");
+    const loadCurrentPendingApprovals = mock(async () => [
+      approvalRequest("tool-approval-2"),
+    ]);
+
+    const result = await drain(
+      stream(
+        [
+          ping("run-1", 1),
+          approval("run-1", 2),
+          approval("run-1", 3, '{"cmd":"pwd"}', "tool-approval-2"),
+        ],
+        new Error("initial stream disconnected"),
+      ),
+      { ...immediateRetries, maxAttempts: 1 },
+      buffers,
+      loadCurrentPendingApprovals,
+    );
+
+    expect(loadCurrentPendingApprovals).toHaveBeenCalledTimes(1);
+    expect(result.stopReason).toBe("requires_approval");
+    expect(result.approvals?.map((item) => item.toolCallId)).toEqual([
+      "tool-approval-2",
+    ]);
+    expect(buffers.byId.get("tool-approval-1")).toMatchObject({
+      phase: "finished",
+      resultOk: true,
+      resultText: "done",
+    });
+    expect(buffers.byId.get("tool-approval-2")).toMatchObject({
+      phase: "ready",
+    });
+  });
+
   test("stops retrying when polling shows the run failed", async () => {
     const streamRunMessages = mock(async () => {
       throw new Error("resume endpoint unavailable");
