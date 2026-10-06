@@ -418,9 +418,10 @@ export class APIBackend implements Backend {
     requestOptions?: AgentRetrieveRequestOptions,
   ) {
     const client = await this.getClient();
-    if (options !== undefined || requestOptions !== undefined) {
+    if (requestOptions !== undefined) {
       return client.agents.retrieve(agentId, options, requestOptions);
     }
+    if (options !== undefined) return client.agents.retrieve(agentId, options);
 
     const inflight = this.retrieveAgentInflightByKey.get(agentId);
     if (inflight) return inflight;
@@ -596,25 +597,36 @@ export class APIBackend implements Backend {
     };
 
     if (conversationId && conversationId !== "default") {
+      const requestOptions = options.signal
+        ? { signal: options.signal }
+        : undefined;
       const [conversation, page] = await Promise.all([
-        this.retrieveConversation(conversationId, { signal: options.signal }),
-        this.listConversationMessages(
-          conversationId,
-          body as ConversationMessageListBody,
-          { signal: options.signal },
-        ),
+        requestOptions
+          ? this.retrieveConversation(conversationId, requestOptions)
+          : this.retrieveConversation(conversationId),
+        requestOptions
+          ? this.listConversationMessages(
+              conversationId,
+              body as ConversationMessageListBody,
+              requestOptions,
+            )
+          : this.listConversationMessages(
+              conversationId,
+              body as ConversationMessageListBody,
+            ),
       ]);
       return { conversation, messages: page.getPaginatedItems() };
     }
 
-    const page = await this.listAgentMessages(
-      agentId,
-      {
-        ...body,
-        conversation_id: "default",
-      } as AgentMessageListBody,
-      { signal: options.signal },
-    );
+    const agentBody = {
+      ...body,
+      conversation_id: "default",
+    } as AgentMessageListBody;
+    const page = options.signal
+      ? await this.listAgentMessages(agentId, agentBody, {
+          signal: options.signal,
+        })
+      : await this.listAgentMessages(agentId, agentBody);
     return { messages: page.getPaginatedItems() };
   }
 

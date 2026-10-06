@@ -301,7 +301,9 @@ async function retrieveMessageVariantsForPendingApproval(
 ): Promise<Message[]> {
   try {
     throwIfResumeAborted(signal);
-    return await getBackend().retrieveMessage(messageId, { signal });
+    return signal
+      ? await getBackend().retrieveMessage(messageId, { signal })
+      : await getBackend().retrieveMessage(messageId);
   } catch (error) {
     if (isNotFoundError(error)) {
       debugWarn(
@@ -476,7 +478,7 @@ async function fetchResumeTail(
     {
       limit,
       includeReturnMessageTypes: RESUME_BACKFILL_MESSAGE_TYPES,
-      signal,
+      ...(signal ? { signal } : {}),
     },
   );
   const warnIfMissingAssistant =
@@ -570,12 +572,11 @@ export async function getResumeDataFromBackend(
 
       if (!conversation) {
         throwIfResumeAborted(signal);
-        conversation = await getBackend().retrieveConversation(
-          activeConversationId,
-          {
-            signal,
-          },
-        );
+        conversation = signal
+          ? await getBackend().retrieveConversation(activeConversationId, {
+              signal,
+            })
+          : await getBackend().retrieveConversation(activeConversationId);
         inContextMessageIds = conversation.in_context_message_ids;
       }
 
