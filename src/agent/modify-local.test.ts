@@ -48,6 +48,14 @@ describe("local model updates", () => {
     });
   });
 
+  test("labels chatgpt-plus-pro handles as ChatGPT OAuth without an explicit provider type", () => {
+    expect(
+      __modifyTestUtils.buildModelSettings("chatgpt-plus-pro/gpt-6.1-sol", {
+        reasoning_effort: "high",
+      }),
+    ).toMatchObject({ provider_type: "chatgpt_oauth" });
+  });
+
   test("builds direct Moonshot K3 settings without client reasoning controls", () => {
     expect(
       __modifyTestUtils.buildModelSettings("moonshot/kimi-k3", {
