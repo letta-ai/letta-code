@@ -166,18 +166,15 @@ function isProxyTransportError(
   error: unknown,
   message: string,
 ): boolean {
-  if (
-    error instanceof APIError &&
-    error.status >= 500 &&
-    detail.toLowerCase().includes("trying to proxy")
-  ) {
-    return true;
+  const hasProxyFailureText =
+    detail.toLowerCase().includes("error occurred while trying to proxy") ||
+    message.toLowerCase().includes("error occurred while trying to proxy");
+
+  if (error instanceof APIError) {
+    return error.status >= 500 && hasProxyFailureText;
   }
 
-  return (
-    detail.toLowerCase().includes("error occurred while trying to proxy") ||
-    message.toLowerCase().includes("error occurred while trying to proxy")
-  );
+  return hasProxyFailureText;
 }
 
 export function getLoopErrorNoticeDecision(params: {

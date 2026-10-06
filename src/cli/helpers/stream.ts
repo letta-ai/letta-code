@@ -927,6 +927,20 @@ export async function drainStreamWithResume(
     }
   }
 
+  if (
+    result.stopReason === "error" &&
+    !result.sawStopReasonChunk &&
+    (result.approvals?.length ?? 0) > 0
+  ) {
+    debugWarn(
+      "stream",
+      "Recovering approval boundary after stream ended without stop_reason (runId=%s)",
+      result.lastRunId ?? "unknown",
+    );
+    result.stopReason = "requires_approval";
+    result.fallbackError = null;
+  }
+
   // Log when stream errored but resume was NOT attempted, with reasons why
   if (result.stopReason === "error") {
     const skipReasons: string[] = [];

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { APIError } from "@letta-ai/letta-client/core/error";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type {
   LettaStreamingResponse,
@@ -43,6 +44,20 @@ function ping(runId: string, seqId: number): LettaStreamingResponse {
     message_type: "ping",
     run_id: runId,
     seq_id: seqId,
+  } as unknown as LettaStreamingResponse;
+}
+
+function approval(runId: string, seqId: number): LettaStreamingResponse {
+  return {
+    message_type: "approval_request_message",
+    id: "message-approval-1",
+    run_id: runId,
+    seq_id: seqId,
+    tool_call: {
+      tool_call_id: "tool-approval-1",
+      name: "exec_command",
+      arguments: '{"cmd":"git status"}',
+    },
   } as unknown as LettaStreamingResponse;
 }
 
@@ -223,6 +238,48 @@ describe("stream recovery", () => {
 
     expect(result.stopReason).toBe("error");
     expect(result.fallbackError).toBe("initial stream disconnected");
+    expect(streamRunMessages).toHaveBeenCalledTimes(3);
+  });
+
+  test("preserves an approval boundary when replay misses the settled run", async () => {
+    const streamRunMessages = mock(async () => {
+      throw new APIError(
+        400,
+        {
+          detail:
+            "Error occurred while trying to proxy: No active runs found for this conversation.",
+        },
+        undefined,
+        new Headers(),
+      );
+    });
+    __testSetBackend({
+      capabilities,
+      streamRunMessages,
+      retrieveRun: mock(async () => ({
+        ...runningRun(),
+        status: "completed" as const,
+        stop_reason: "requires_approval" as const,
+      })),
+    } as unknown as Backend);
+
+    const result = await drain(
+      stream(
+        [ping("run-1", 1), approval("run-1", 2)],
+        new Error("initial stream disconnected"),
+      ),
+    );
+
+    expect(result.stopReason).toBe("requires_approval");
+    expect(result.fallbackError).toBeNull();
+    expect(result.approvals).toEqual([
+      {
+        toolCallId: "tool-approval-1",
+        toolName: "exec_command",
+        toolArgs: '{"cmd":"git status"}',
+        messageId: "message-approval-1",
+      },
+    ]);
     expect(streamRunMessages).toHaveBeenCalledTimes(3);
   });
 });

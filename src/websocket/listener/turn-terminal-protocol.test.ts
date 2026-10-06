@@ -215,3 +215,40 @@ test("consumer terminal errors hide Cloud API shutdown metadata", () => {
   );
   expect(message).not.toContain("cloud_api_shutting_down");
 });
+
+test("semantic proxy-wrapped 400 errors are not reported as service outages", () => {
+  const error = new APIError(
+    400,
+    {
+      detail:
+        "Error occurred while trying to proxy: No active runs found for this conversation.",
+    },
+    undefined,
+    new Headers(),
+  );
+
+  const message = getConsumerLoopErrorMessage({
+    message: error.message,
+    error,
+  });
+
+  expect(message).not.toBe("Connection to Letta service failed. Please retry.");
+});
+
+test("proxy transport 5xx errors retain the service outage message", () => {
+  const error = new APIError(
+    504,
+    {
+      detail: "Error occurred while trying to proxy to: https://api.letta.com",
+    },
+    undefined,
+    new Headers(),
+  );
+
+  expect(
+    getConsumerLoopErrorMessage({
+      message: error.message,
+      error,
+    }),
+  ).toBe("Connection to Letta service failed. Please retry.");
+});
