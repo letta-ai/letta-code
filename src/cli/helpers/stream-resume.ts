@@ -176,7 +176,6 @@ export function recoverApprovalBoundaryAfterResumeFailure(
   if (
     !authoritativeApprovalBoundary ||
     result.stopReason !== "error" ||
-    result.sawStopReasonChunk ||
     (result.approvals?.length ?? 0) === 0
   )
     return false;

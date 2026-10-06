@@ -127,6 +127,20 @@ function getStructuredStatusFromError(error: unknown): number | undefined {
   );
 }
 
+function getStructuredDetailFromError(error: unknown): string | undefined {
+  if (!(error instanceof Error)) return undefined;
+  const structuredError = error as Error & {
+    errorInfo?: ErrorInfo;
+    runErrorInfo?: RunErrorInfo;
+  };
+  return (
+    structuredError.errorInfo?.detail ??
+    structuredError.errorInfo?.message ??
+    structuredError.runErrorInfo?.detail ??
+    structuredError.runErrorInfo?.message
+  );
+}
+
 function buildStructuredFormatInput(
   apiError: LettaStreamingResponse.LettaErrorMessage,
 ): {
@@ -186,7 +200,8 @@ function isProxyTransportError(
     detail.toLowerCase().includes("trying to proxy") ||
     message.toLowerCase().includes("trying to proxy");
 
-  const status = error instanceof APIError ? error.status : structuredStatus;
+  const status =
+    (error instanceof APIError ? error.status : undefined) ?? structuredStatus;
   if (status !== undefined) return status >= 500 && hasProxyMarker;
 
   return hasCanonicalProxyFailureText;
@@ -214,6 +229,7 @@ export function getLoopErrorNoticeDecision(params: {
     apiError?.detail ??
     params.errorInfo?.detail ??
     params.runErrorInfo?.detail ??
+    getStructuredDetailFromError(params.error) ??
     extractConflictDetail(params.error) ??
     "";
 

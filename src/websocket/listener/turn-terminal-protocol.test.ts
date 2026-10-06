@@ -308,3 +308,68 @@ test("noncanonical proxy 5xx errors retain the service outage message", () => {
     }),
   ).toBe("Connection to Letta service failed. Please retry.");
 });
+
+test("structured 5xx status is used when APIError status is undefined", () => {
+  const detail = "Upstream timed out while trying to proxy to api.letta.com";
+  const error = new APIError(
+    undefined as unknown as number,
+    { detail },
+    undefined,
+    new Headers(),
+  );
+
+  expect(
+    getConsumerLoopErrorMessage({
+      message: error.message,
+      error,
+      errorInfo: { message: detail, detail, status_code: 502 },
+    }),
+  ).toBe("Connection to Letta service failed. Please retry.");
+});
+
+test("structured 4xx status is used when APIError status is undefined", () => {
+  const detail =
+    "Error occurred while trying to proxy: No active runs found for this conversation.";
+  const error = new APIError(
+    undefined as unknown as number,
+    { detail },
+    undefined,
+    new Headers(),
+  );
+
+  expect(
+    getConsumerLoopErrorMessage({
+      message: error.message,
+      error,
+      errorInfo: { message: detail, detail, status_code: 400 },
+    }),
+  ).not.toBe("Connection to Letta service failed. Please retry.");
+});
+
+test("nested structured detail participates in known 5xx proxy detection", () => {
+  const detail = "Upstream timed out while trying to proxy to api.letta.com";
+  const error = Object.assign(new Error("request failed"), {
+    runErrorInfo: { message: "request failed", detail, status_code: 502 },
+  });
+
+  expect(
+    getConsumerLoopErrorMessage({
+      message: error.message,
+      error,
+    }),
+  ).toBe("Connection to Letta service failed. Please retry.");
+});
+
+test("nested canonical detail retains the no-status proxy fallback", () => {
+  const detail = "Error occurred while trying to proxy to api.letta.com";
+  const error = Object.assign(new Error("request failed"), {
+    errorInfo: { message: "request failed", detail },
+  });
+
+  expect(
+    getConsumerLoopErrorMessage({
+      message: error.message,
+      error,
+    }),
+  ).toBe("Connection to Letta service failed. Please retry.");
+});

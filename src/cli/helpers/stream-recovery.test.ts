@@ -222,6 +222,37 @@ describe("stream recovery", () => {
     expect(streamRunMessages).not.toHaveBeenCalled();
   });
 
+  test("recovers a generic error stop when current state confirms the approval", async () => {
+    const streamRunMessages = mock(async () => {
+      throw new Error("resume endpoint unavailable");
+    });
+    __testSetBackend({
+      capabilities,
+      streamRunMessages,
+      retrieveRun: mock(async () => ({
+        ...runningRun(),
+        status: "completed" as const,
+        stop_reason: "requires_approval" as const,
+      })),
+    } as unknown as Backend);
+    const buffers = createBuffers("agent-1");
+
+    const result = await drain(
+      stream([
+        ping("run-1", 1),
+        approval("run-1", 2),
+        stop("run-1", 3, "error"),
+      ]),
+      immediateRetries,
+      buffers,
+    );
+
+    expect(result.stopReason).toBe("requires_approval");
+    expect(buffers.byId.get("tool-approval-1")).toMatchObject({
+      phase: "ready",
+    });
+  });
+
   test("stops retrying when polling shows the run failed", async () => {
     const streamRunMessages = mock(async () => {
       throw new Error("resume endpoint unavailable");
