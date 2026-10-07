@@ -1,5 +1,11 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -21,6 +27,7 @@ import {
   clearPreparedInputTerminal,
   completePreparedInputTerminal,
   discardPreparedInputTerminal,
+  loadCompletedTerminalAuthorities,
   loadPreparedInputTerminals,
   prepareInputTerminal,
 } from "./input-terminal-journal";
@@ -670,9 +677,30 @@ test("terminal evidence is bound to the exact sidecar authority token", () => {
   }
 });
 
-test.each([true, false])(
-  "retired authority converges stale and winning journals (persisted=%s)",
-  (persistedWinner) => {
+test.each([
+  {
+    persistedWinner: true,
+    completedJournal: "winner" as const,
+    extraCompletedAuthority: false,
+  },
+  {
+    persistedWinner: false,
+    completedJournal: "winner" as const,
+    extraCompletedAuthority: false,
+  },
+  {
+    persistedWinner: false,
+    completedJournal: "stale" as const,
+    extraCompletedAuthority: false,
+  },
+  {
+    persistedWinner: false,
+    completedJournal: "winner" as const,
+    extraCompletedAuthority: true,
+  },
+])(
+  "retired authority reconciles journal evidence ($completedJournal, persisted=$persistedWinner, extra=$extraCompletedAuthority)",
+  ({ persistedWinner, completedJournal, extraCompletedAuthority }) => {
     const directory = mkdtempSync(
       join(tmpdir(), "retired-terminal-authority-"),
     );
@@ -804,11 +832,26 @@ test.each([true, false])(
       ).toBeNull();
 
       if (!persistedWinner) {
-        const winner = loadPreparedInputTerminals(listener).find(
-          (candidate) =>
-            candidate.owner.terminalIdentity === "terminal-retired-authority",
+        const interruptedDirectory = join(directory, "interrupted");
+        const sidecarFile = readdirSync(interruptedDirectory).find((file) =>
+          file.includes(".json.recovery-"),
         );
-        if (!winner) throw new Error("missing winning journal");
+        if (!sidecarFile) throw new Error("missing retired sidecar fixture");
+        const sidecarPath = join(interruptedDirectory, sidecarFile);
+        const legacySidecar = JSON.parse(readFileSync(sidecarPath, "utf8"));
+        delete legacySidecar.retiredInterruptedRevision;
+        delete legacySidecar.retiredAuthorityRevision;
+        delete legacySidecar.retiredAt;
+        writeFileSync(sidecarPath, JSON.stringify(legacySidecar), "utf8");
+        const completedCandidate = loadPreparedInputTerminals(listener).find(
+          (candidate) =>
+            candidate.owner.terminalIdentity ===
+            (completedJournal === "winner"
+              ? "terminal-retired-authority"
+              : "terminal-retired-stale"),
+        );
+        if (!completedCandidate)
+          throw new Error("missing completed journal fixture");
         expect(
           promotePreparedInputTerminals(
             listener,
@@ -817,7 +860,7 @@ test.each([true, false])(
             interruptedStore,
             discardPreparedInputTerminal,
             clearPreparedInputTerminal,
-            () => [winner],
+            () => [completedCandidate],
           ),
         ).toBe(1);
         expect(loadPreparedInputTerminals(listener)).toHaveLength(1);
@@ -839,6 +882,7 @@ test.each([true, false])(
           entries: Record<
             string,
             {
+              expiresAt: number;
               completedTerminalAuthority?: {
                 authorityRevision: string;
                 terminalIdentity?: string;
@@ -851,13 +895,25 @@ test.each([true, false])(
         const completed = Object.values(oldStore.entries).find(
           (entry) =>
             entry.completedTerminalAuthority?.authorityRevision ===
-            snapshot.revisionToken,
+            completedCandidate.owner.interruptedAuthorityRevision,
         );
         const completedAuthority = completed?.completedTerminalAuthority;
         if (!completedAuthority)
           throw new Error("missing completed authority fixture");
         delete completedAuthority.terminalIdentity;
         delete completedAuthority.preparationSequence;
+        if (!completed) throw new Error("missing completed entry fixture");
+        completed.expiresAt = Date.now() - 1;
+        if (extraCompletedAuthority) {
+          const extra = structuredClone(completed);
+          if (!extra.completedTerminalAuthority)
+            throw new Error("missing extra completed authority fixture");
+          extra.completedTerminalAuthority.authorityRevision =
+            "authority-ambiguous-extra";
+          oldStore.entries[
+            JSON.stringify([runtime.key, "input", "cm-retired-extra"])
+          ] = extra;
+        }
         writeFileSync(ledgerPath, JSON.stringify(oldStore), "utf8");
         listener.acceptedInputDispositionLedger =
           createAcceptedInputDispositionLedger({
@@ -871,6 +927,9 @@ test.each([true, false])(
             interruptedStore,
           ),
         ).toBe(0);
+        expect(loadCompletedTerminalAuthorities(listener)).toHaveLength(
+          extraCompletedAuthority ? 2 : 1,
+        );
       } else {
         expect(
           promotePreparedInputTerminals(
@@ -881,7 +940,9 @@ test.each([true, false])(
           ),
         ).toBe(1);
       }
-      expect(loadPreparedInputTerminals(listener)).toEqual([]);
+      expect(loadPreparedInputTerminals(listener)).toHaveLength(
+        persistedWinner ? 0 : 1,
+      );
       expect(
         terminalStore.read("agent-1", "conv-1")?.terminals ?? [],
       ).toHaveLength(persistedWinner ? 1 : 0);

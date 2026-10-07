@@ -1,5 +1,5 @@
 import { createHash, type Hash, randomUUID } from "node:crypto";
-import { type Dirent, readdirSync, rmSync } from "node:fs";
+import { type Dirent, readdirSync, rmSync, type Stats } from "node:fs";
 import {
   type FileHandle,
   mkdtemp,
@@ -43,6 +43,11 @@ interface CaptureState {
   retryDelayMs: number;
   segments: Segment[];
   prefixHash: Hash;
+  pendingGrowthProof?: {
+    identity: string;
+    size: number;
+    digest: Buffer;
+  };
   requiresBoundaryReset?: boolean;
 }
 interface NativeCaptureAdmission {
@@ -85,6 +90,59 @@ async function hashNativeSessionPrefix(
   return hash;
 }
 
+async function hashStableNativeSessionPrefix(
+  input: FileHandle,
+  size: number,
+): Promise<{ hash: Hash; snapshot: Stats }> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const before = await input.stat();
+    if (before.size < size)
+      throw new Error("Native session changed during prefix verification");
+    const first = await hashNativeSessionPrefix(input, size);
+    await prefixVerificationHookForTests?.();
+    const middle = await input.stat();
+    const second = await hashNativeSessionPrefix(input, size);
+    const after = await input.stat();
+    const unchanged =
+      before.dev === middle.dev &&
+      before.ino === middle.ino &&
+      before.size === middle.size &&
+      before.ctimeMs === middle.ctimeMs &&
+      before.mtimeMs === middle.mtimeMs &&
+      middle.dev === after.dev &&
+      middle.ino === after.ino &&
+      middle.size === after.size &&
+      middle.ctimeMs === after.ctimeMs &&
+      middle.mtimeMs === after.mtimeMs;
+    if (unchanged && first.copy().digest().equals(second.copy().digest())) {
+      return { hash: second, snapshot: after };
+    }
+  }
+  throw new NativeSessionSourceGrowthError();
+}
+
+async function snapshotStableNativeSession(input: FileHandle): Promise<{
+  hash: Hash;
+  snapshot: Stats;
+}> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const before = await input.stat();
+    if (!before.isFile())
+      throw new Error("Native session source is not a file");
+    const verified = await hashStableNativeSessionPrefix(input, before.size);
+    if (
+      before.dev === verified.snapshot.dev &&
+      before.ino === verified.snapshot.ino &&
+      before.size === verified.snapshot.size &&
+      before.ctimeMs === verified.snapshot.ctimeMs &&
+      before.mtimeMs === verified.snapshot.mtimeMs
+    ) {
+      return verified;
+    }
+  }
+  throw new NativeSessionSourceGrowthError();
+}
+
 export interface NativeSessionCaptureReservation {
   capture(): Promise<void>;
 }
@@ -106,6 +164,7 @@ activeCaptureInstances.add(captureProcessInstanceId);
 const spoolDirectoryName = /^letta-native-session-(\d+)-([0-9a-f-]{36})-/;
 let staleSpoolsScavenged = false;
 let sealHookForTests: (() => Promise<void>) | undefined;
+let prefixVerificationHookForTests: (() => Promise<void>) | undefined;
 let drainHookForTests: (() => Promise<void>) | undefined;
 export const NATIVE_SESSION_CAPTURE_CHUNK_BYTES = 256 * 1024;
 const INITIAL_DRAIN_RETRY_MS = 250;
@@ -247,13 +306,8 @@ async function resetCaptureBoundary(
   }
   const { snapshot, prefixHash } = await (async () => {
     try {
-      const value = await input.stat();
-      if (!value.isFile())
-        throw new Error("Native session source is not a file");
-      return {
-        snapshot: value,
-        prefixHash: await hashNativeSessionPrefix(input, value.size),
-      };
+      const verified = await snapshotStableNativeSession(input);
+      return { snapshot: verified.snapshot, prefixHash: verified.hash };
     } finally {
       await input.close();
     }
@@ -422,7 +476,7 @@ async function seal(
   let output: FileHandle | undefined;
   let retained = false;
   try {
-    const before = await input.stat();
+    let before = await input.stat();
     if (!before.isFile())
       throw new Error("Native session capture source is not a file");
     if (before.size < state.sealedOffset)
@@ -430,6 +484,26 @@ async function seal(
     const identity = `${before.dev}:${before.ino}`;
     if (state.fileIdentity && state.fileIdentity !== identity)
       throw new Error("Native session capture changed file identity");
+    if (state.pendingGrowthProof) {
+      if (
+        state.pendingGrowthProof.identity !== identity ||
+        before.size < state.pendingGrowthProof.size
+      ) {
+        throw new Error("Native session changed after verified growth");
+      }
+      const verified = await hashStableNativeSessionPrefix(
+        input,
+        state.pendingGrowthProof.size,
+      );
+      if (
+        `${verified.snapshot.dev}:${verified.snapshot.ino}` !==
+          state.pendingGrowthProof.identity ||
+        !verified.hash.copy().digest().equals(state.pendingGrowthProof.digest)
+      ) {
+        throw new Error("Native session prefix changed after verified growth");
+      }
+      before = verified.snapshot;
+    }
     const start = state.sealedOffset;
     const end = before.size;
     const candidatePrefixHash = state.prefixHash.copy();
@@ -453,15 +527,23 @@ async function seal(
     const after = await input.stat();
     const afterIdentity = `${after.dev}:${after.ino}`;
     if (afterIdentity === identity && after.size > before.size) {
-      const verifiedPrefixHash = await hashNativeSessionPrefix(
+      const verifiedPrefix = await hashStableNativeSessionPrefix(
         input,
         before.size,
       );
+      const candidateDigest = candidatePrefixHash.copy().digest();
       if (
-        !verifiedPrefixHash.digest().equals(candidatePrefixHash.copy().digest())
+        `${verifiedPrefix.snapshot.dev}:${verifiedPrefix.snapshot.ino}` !==
+          identity ||
+        !verifiedPrefix.hash.copy().digest().equals(candidateDigest)
       ) {
         throw new Error("Native session prefix changed before growth");
       }
+      state.pendingGrowthProof = {
+        identity,
+        size: before.size,
+        digest: candidateDigest,
+      };
       throw new NativeSessionSourceGrowthError();
     }
     if (
@@ -474,6 +556,7 @@ async function seal(
     state.path = path;
     state.fileIdentity = identity;
     state.prefixHash = candidatePrefixHash;
+    state.pendingGrowthProof = undefined;
     if (end > state.sealedOffset) {
       state.segments.push({
         scope: { ...scope },
@@ -752,6 +835,7 @@ export function rememberNativeSession(
 
 export async function clearNativeSessionCaptureForTests(): Promise<void> {
   sealHookForTests = undefined;
+  prefixVerificationHookForTests = undefined;
   drainHookForTests = undefined;
   const captured = [...states.values()];
   states.clear();
@@ -773,6 +857,12 @@ export function setNativeSessionCaptureSealHookForTests(
   hook: (() => Promise<void>) | undefined,
 ): void {
   sealHookForTests = hook;
+}
+
+export function setNativeSessionPrefixVerificationHookForTests(
+  hook: (() => Promise<void>) | undefined,
+): void {
+  prefixVerificationHookForTests = hook;
 }
 
 export function setNativeSessionCaptureDrainHookForTests(

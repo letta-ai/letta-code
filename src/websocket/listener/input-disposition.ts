@@ -22,6 +22,7 @@ import {
   fsyncDirectory,
 } from "./durable-file-lock";
 import { inputDispositionPersistentPath } from "./input-disposition-path";
+import { shouldRetainDisposition } from "./input-disposition-retention";
 import { getConversationRuntimeKey } from "./runtime";
 import type {
   AcceptedInputDisposition,
@@ -162,7 +163,7 @@ function expireAcceptedInputDispositions(
     const entry = ledger.entries.get(expiry.key);
     if (
       entry?.generation === expiry.generation &&
-      (entry.queuedInput || entry.preparedTerminal)
+      shouldRetainDisposition(entry)
     ) {
       // Once accepted, replay responsibility lasts until a terminal transition
       // retires the payload. The sender retry horizon only bounds tombstones;
@@ -461,7 +462,7 @@ function pruneDurableStore(store: DurableStore, now: number): boolean {
   let changed = false;
   for (const [key, entry] of Object.entries(store.entries)) {
     if (entry.expiresAt <= now) {
-      if (entry.queuedInput || entry.preparedTerminal) {
+      if (shouldRetainDisposition(entry)) {
         entry.expiresAt = now + ACCEPTED_INPUT_DISPOSITION_TTL_MS;
       } else {
         delete store.entries[key];

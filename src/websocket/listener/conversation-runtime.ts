@@ -600,6 +600,7 @@ export function promotePreparedInputTerminals(
             prepared.scope.agentId,
             prepared.scope.conversationId,
           );
+          let ambiguousCompletedAuthority = false;
           for (const completed of completedAuthorities) {
             if (
               completed.runtimeKey !== runtimeKey ||
@@ -609,12 +610,71 @@ export function promotePreparedInputTerminals(
                 prepared.owner.interruptedRevision
             )
               continue;
-            const completedIdentity =
-              completed.authority.terminalIdentity ??
-              `completed-authority:${completed.authority.authorityRevision}`;
-            const completedSequence =
-              completed.authority.preparationSequence ??
-              Number.MAX_SAFE_INTEGER;
+            let completedIdentity = completed.authority.terminalIdentity;
+            let completedSequence = completed.authority.preparationSequence;
+            if (!completedIdentity || completedSequence === undefined) {
+              const inferred = new Map<string, number>();
+              let conflictingInference = false;
+              const recordInference = (identity: string, sequence: number) => {
+                const previous = inferred.get(identity);
+                if (previous !== undefined && previous !== sequence) {
+                  conflictingInference = true;
+                }
+                inferred.set(identity, sequence);
+              };
+              for (const candidate of preparedTerminals) {
+                if (
+                  candidate.scope.agentId !== prepared.scope.agentId ||
+                  candidate.scope.conversationId !==
+                    prepared.scope.conversationId ||
+                  candidate.owner.recoveryLineageId !==
+                    prepared.owner.recoveryLineageId ||
+                  candidate.owner.interruptedRevision !==
+                    prepared.owner.interruptedRevision ||
+                  candidate.owner.interruptedAuthorityRevision !==
+                    completed.authority.authorityRevision
+                )
+                  continue;
+                recordInference(
+                  candidate.owner.terminalIdentity ?? candidate.message.turn_id,
+                  candidate.preparationSequence ?? -1,
+                );
+              }
+              for (const terminal of terminalRecord?.terminals ?? []) {
+                if (
+                  terminal.owner.recoveryLineageId !==
+                    prepared.owner.recoveryLineageId ||
+                  terminal.owner.interruptedRevision !==
+                    prepared.owner.interruptedRevision ||
+                  terminal.owner.interruptedAuthorityRevision !==
+                    completed.authority.authorityRevision
+                )
+                  continue;
+                recordInference(
+                  terminal.owner.terminalIdentity ?? terminal.message.turn_id,
+                  terminal.owner.preparationSequence ?? -1,
+                );
+              }
+              const inferredEntry = [...inferred.entries()][0];
+              if (
+                conflictingInference ||
+                inferred.size !== 1 ||
+                !inferredEntry
+              ) {
+                ambiguousCompletedAuthority = true;
+                break;
+              }
+              [completedIdentity, completedSequence] = inferredEntry;
+            }
+            if (
+              !completedIdentity ||
+              typeof completedSequence !== "number" ||
+              !Number.isSafeInteger(completedSequence) ||
+              completedSequence < 0
+            ) {
+              ambiguousCompletedAuthority = true;
+              break;
+            }
             evidence.set(
               completedIdentity,
               Math.max(
@@ -622,6 +682,10 @@ export function promotePreparedInputTerminals(
                 completedSequence,
               ),
             );
+          }
+          if (ambiguousCompletedAuthority) {
+            deferred = true;
+            continue;
           }
           const newestSequence = Math.max(...evidence.values());
           const newest = [...evidence.entries()].filter(

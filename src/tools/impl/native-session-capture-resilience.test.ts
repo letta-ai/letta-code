@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { appendFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import {
+  appendFile,
+  mkdir,
+  mkdtemp,
+  open,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +16,7 @@ import {
   rememberNativeSession,
   reserveNativeSessionCapture,
   setNativeSessionCaptureSealHookForTests,
+  setNativeSessionPrefixVerificationHookForTests,
 } from "./native-session-capture";
 
 const ID = "11111111-1111-4111-8111-111111111111";
@@ -112,6 +120,44 @@ describe("native CLI JSONL capture resilience", () => {
     expect(
       Buffer.from(String(calls[0]?.body.data_base64), "base64").toString(),
     ).toBe("actor-a\nlate-flush\n");
+  });
+
+  test("fails closed when the captured prefix changes during growth verification", async () => {
+    const { path, env } = await fixture(Buffer.from("first\n"));
+    const calls: Array<{
+      url: string;
+      body: Record<string, unknown>;
+      actingUser: string | undefined;
+    }> = [];
+    const url = await endpoint(calls);
+    let appended = false;
+    setNativeSessionCaptureSealHookForTests(async () => {
+      if (appended) return;
+      appended = true;
+      await appendFile(path, "tail\n");
+    });
+    let rewritten = false;
+    setNativeSessionPrefixVerificationHookForTests(async () => {
+      if (rewritten) return;
+      rewritten = true;
+      const source = await open(path, "r+");
+      try {
+        await source.write(Buffer.from("other\n"), 0, 6, 0);
+      } finally {
+        await source.close();
+      }
+    });
+    rememberNativeSession("codex", ID, scope, "https://api.letta.com");
+    const actorA = await reserveNativeSessionCapture(
+      "codex",
+      ID,
+      { ...scope, actingUserId: "actor-a" },
+      env,
+      { baseUrl: url, apiKey: "test", cloudUrl: "https://api.letta.com" },
+    );
+
+    await expect(actorA.capture()).rejects.toThrow(/prefix changed/);
+    expect(calls).toHaveLength(0);
   });
 
   test("terminal seal failure resets at EOF before capturing the next actor", async () => {
