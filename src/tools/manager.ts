@@ -286,7 +286,7 @@ function filterModToolsByClientAllowlist(
   );
 }
 
-import { TOOLSET_CATALOG, WORKTREE_TOOL_NAMES } from "./toolset-catalog";
+import { getPresetToolNames, WORKTREE_TOOL_NAMES } from "./toolset-catalog";
 import type { ToolsetName } from "./toolset-types";
 
 type ToolArgs = Record<string, unknown>;
@@ -448,6 +448,173 @@ export function getExecutionContextById(
   contextId: string,
 ): ToolExecutionContextSnapshot | undefined {
   return getExecutionContexts().get(contextId);
+}
+
+/** Run an approved MCP call under the captured turn's hooks and redaction. */
+export async function executeCodeModeRemoteTool(options: {
+  toolContextId: string;
+  toolName: string;
+  args: Record<string, unknown>;
+  toolCallId: string;
+  signal?: AbortSignal;
+  run: (args: Record<string, unknown>) => Promise<ToolExecutionResult>;
+}): Promise<ToolExecutionResult> {
+  const context = getExecutionContextById(options.toolContextId);
+  if (!context)
+    return { status: "error", toolReturn: "CodeMode turn context unavailable" };
+  const scope = context.runtimeContext;
+  return runWithRuntimeContext(scope, async () => {
+    const modContext =
+      context.modContext ??
+      toolExecutionModContext(scope, {
+        workingDirectory: context.workingDirectory,
+      });
+    const start = await emitToolStartEvent({
+      args: options.args,
+      events: context.modEvents,
+      executionScope: scope,
+      modContext,
+      toolCallId: options.toolCallId,
+      toolName: options.toolName,
+    });
+    let result: ToolExecutionResult;
+    if (start.result) {
+      result = { status: start.result.status, toolReturn: start.result.output };
+    } else {
+      const permission = await checkToolPermission(
+        options.toolName,
+        start.args,
+        context.workingDirectory,
+        context.permissionModeState,
+        scope.agentId ?? undefined,
+        options.toolContextId,
+        options.toolCallId,
+      );
+      // A changed input is not covered by the host's approval; fail closed.
+      if (
+        JSON.stringify(start.args) !== JSON.stringify(options.args) ||
+        permission.decision === "deny"
+      ) {
+        result = {
+          status: "error",
+          toolReturn: "Nested tool input changed or requires approval; denied",
+        };
+      } else {
+        const pre = await runPreToolUseHooks(
+          options.toolName,
+          start.args,
+          options.toolCallId,
+          context.workingDirectory,
+          scope.agentId ?? undefined,
+        );
+        if (pre.blocked) {
+          result = {
+            status: "error",
+            toolReturn: "Nested tool blocked by pre-tool hook",
+          };
+        } else {
+          const updated = { ...start.args, ...pre.updatedInput };
+          const updatedPermission = await checkToolPermission(
+            options.toolName,
+            updated,
+            context.workingDirectory,
+            context.permissionModeState,
+            scope.agentId ?? undefined,
+            options.toolContextId,
+            options.toolCallId,
+          );
+          if (
+            JSON.stringify(updated) !== JSON.stringify(options.args) ||
+            updatedPermission.decision === "deny"
+          ) {
+            result = {
+              status: "error",
+              toolReturn:
+                "Nested tool input changed or requires approval; denied",
+            };
+          } else if (options.signal?.aborted) {
+            result = { status: "error", toolReturn: "Aborted" };
+          } else {
+            try {
+              result = await options.run(updated);
+            } catch (error) {
+              result = {
+                status: "error",
+                toolReturn: scrubAmbientSecrets(
+                  error instanceof Error ? error.message : String(error),
+                ).slice(0, 1_000),
+              };
+            }
+          }
+        }
+      }
+    }
+    const redactions = captureSecretRedactions();
+    let output = scrubSecretsFromString(
+      typeof result.toolReturn === "string"
+        ? result.toolReturn
+        : JSON.stringify(result.toolReturn),
+      redactions,
+    );
+    if (output.length > 2_000_000) {
+      result = {
+        status: "error",
+        toolReturn: "Nested remote tool result exceeds 2 MiB",
+      };
+      output = "Nested remote tool result exceeds 2 MiB";
+    }
+    const feedback = await collectPostToolHookFeedback(
+      {
+        args: start.args,
+        debugLabel: "CodeMode remote tool",
+        scopedAgentId: scope.agentId ?? undefined,
+        toolCallId: options.toolCallId,
+        toolName: options.toolName,
+        workingDirectory: context.workingDirectory,
+      },
+      {
+        status: result.status,
+        output,
+        failureOutput: output,
+        errorType: "tool_error",
+      },
+    );
+    const finalOutput = appendHookFeedbackToText(output, feedback);
+    const override = await emitToolEndEvent({
+      args: start.args,
+      events: context.modEvents,
+      executionScope: scope,
+      modContext,
+      toolCallId: options.toolCallId,
+      toolName: options.toolName,
+      status: result.status,
+      output: finalOutput,
+    });
+    const final = scrubSecretsFromString(
+      override?.output ?? finalOutput,
+      redactions,
+    );
+    return final.length > 2_000_000
+      ? {
+          status: "error",
+          toolReturn: "Nested remote tool result exceeds 2 MiB",
+        }
+      : { status: override?.status ?? result.status, toolReturn: final };
+  });
+}
+
+export function getCodeModeCapabilities(contextId: string):
+  | {
+      agentId?: string;
+      workingDirectory: string;
+    }
+  | undefined {
+  const context = getExecutionContextById(contextId);
+  if (!context || !context.toolRegistry.has("CodeMode")) return undefined;
+  return {
+    agentId: context.runtimeContext.agentId ?? undefined,
+    workingDirectory: context.workingDirectory,
+  };
 }
 
 export function updateToolExecutionContextWorkingDirectory(
@@ -1224,7 +1391,7 @@ function resolveBaseToolNamesForModel(
     .filter((name): name is ToolName => Object.hasOwn(TOOL_DEFINITIONS, name));
   let toolNames = resolveArtifactToolNames([
     ...new Set([
-      ...TOOLSET_CATALOG[toolset].tools,
+      ...getPresetToolNames(toolset),
       ...(options?.include ?? []),
       ...allowlistedTools,
     ]),
@@ -1976,6 +2143,15 @@ async function executeToolInner(
      *  The listener layer uses this to broadcast the new content via WebSocket. */
     onFileWrite?: (filePath: string, content: string) => void;
     toolEndArgsRef?: { current: ToolArgs };
+    /** Trusted host approval callback; never accepted from model-supplied arguments. */
+    onNestedToolApproval?: (request: {
+      toolName: string;
+      args: Record<string, unknown>;
+      toolCallId: string;
+      reason?: string;
+      allowPersistence?: boolean;
+      signal?: AbortSignal;
+    }) => Promise<{ approved: boolean; args?: Record<string, unknown> }>;
   },
 ): Promise<ToolExecutionResult> {
   const context = options?.toolContextId
@@ -2265,6 +2441,25 @@ async function executeToolInner(
           ...(options?.toolContextId && {
             _executionContextId: options.toolContextId,
           }),
+        };
+      }
+
+      // The bridge is host-owned, never copied from the model's arguments.
+      if (internalName === "CodeMode") {
+        if (!options?.toolContextId || !context) {
+          return {
+            toolReturn: "CodeMode requires a prepared turn context",
+            status: "error",
+          };
+        }
+        enhancedArgs = {
+          ...enhancedArgs,
+          _codeModeInvocation: {
+            toolContextId: options.toolContextId,
+            signal: options.signal,
+            onNestedToolApproval: options.onNestedToolApproval,
+            onFileWrite: options.onFileWrite,
+          },
         };
       }
 

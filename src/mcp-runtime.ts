@@ -133,6 +133,28 @@ export function getClientMcpServerStates(
   return runtime.agentId === agentId ? [...runtime.states] : [];
 }
 
+/** Call only a live MCP connection belonging to the currently selected agent. */
+export async function callConnectedClientMcpTool(
+  agentId: string,
+  serverName: string,
+  toolName: string,
+  args: Record<string, unknown>,
+  signal?: AbortSignal,
+) {
+  const runtime = getRuntime();
+  if (runtime.agentId !== agentId) throw new Error("MCP agent scope changed");
+  const state = runtime.states.find(
+    (item) =>
+      item.config.name === serverName &&
+      item.status === "connected" &&
+      item.tools.some((tool) => tool.name === toolName),
+  );
+  const connection = runtime.active.get(serverName)?.connection;
+  if (!state || !connection) throw new Error("MCP tool is disconnected");
+  if (signal?.aborted) throw new Error("Aborted");
+  return connection.callTool(toolName, args, { signal });
+}
+
 /** Close every local MCP manager connection. */
 export async function closeClientMcpServers(): Promise<void> {
   const runtime = getRuntime();

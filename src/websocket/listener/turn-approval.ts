@@ -69,6 +69,72 @@ import type { TurnLease } from "./turn-lifecycle";
 import { setTurnLoopStatus } from "./turn-status";
 import type { ConversationRuntime, PendingTeleport } from "./types";
 
+type NestedToolApprovalRequest = {
+  toolName: string;
+  args: Record<string, unknown>;
+  toolCallId: string;
+  reason?: string;
+  allowPersistence?: boolean;
+  signal?: AbortSignal;
+};
+
+/** Ask the listener's clients before executing a tool nested in CodeMode. */
+export async function requestNestedToolApproval(params: {
+  runtime: ConversationRuntime;
+  socket: ListenerTransport;
+  turnLease: TurnLease;
+  agentId?: string;
+  conversationId: string;
+  request: NestedToolApprovalRequest;
+}): Promise<{ approved: boolean; args?: Record<string, unknown> }> {
+  const { runtime, socket, turnLease, agentId, conversationId, request } =
+    params;
+  const interrupted = () =>
+    !runtime.turnLifecycle.isCurrent(turnLease) ||
+    turnLease.signal.aborted ||
+    request.signal?.aborted === true;
+  if (interrupted()) return { approved: false };
+
+  // The request ID identifies this approval attempt rather than the enclosing
+  // CodeMode call: one turn can issue multiple nested calls with the same name.
+  const requestId = `perm-nested-${crypto.randomUUID()}`;
+  const controlRequest: ControlRequest = {
+    type: "control_request",
+    request_id: requestId,
+    request: {
+      subtype: "can_use_tool",
+      tool_name: request.toolName,
+      input: request.args,
+      tool_call_id: request.toolCallId,
+      permission_suggestions: [],
+      blocked_path: null,
+    },
+    agent_id: agentId,
+    conversation_id: conversationId,
+  };
+  try {
+    const response = await requestApprovalOverWS(
+      runtime,
+      socket,
+      turnLease,
+      requestId,
+      controlRequest,
+    );
+    if (interrupted() || !("decision" in response)) {
+      return { approved: false };
+    }
+    return response.decision.behavior === "allow"
+      ? {
+          approved: true,
+          args: response.decision.updated_input ?? request.args,
+        }
+      : { approved: false };
+  } catch (error) {
+    if (interrupted()) return { approved: false };
+    throw error;
+  }
+}
+
 type ApprovalTransportOpenResult = "open" | "interrupted";
 
 type WaitForApprovalTransportOpen = (
@@ -555,6 +621,15 @@ export async function handleApprovalStop(params: {
       parentScope:
         agentId && conversationId ? { agentId, conversationId } : undefined,
       onFileWrite,
+      onNestedToolApproval: (request) =>
+        requestNestedToolApproval({
+          runtime,
+          socket,
+          turnLease,
+          agentId,
+          conversationId,
+          request,
+        }),
     });
   } catch (error) {
     // Execution threw before results exist, so the normal finished-events

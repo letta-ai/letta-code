@@ -13,6 +13,7 @@ import {
   prepareToolExecutionContextForSpecificTools,
   releaseToolExecutionContext,
 } from "@/tools/manager";
+import { resolvePendingApprovalResolver } from "./approval";
 import { openListenerConnection } from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { enqueueInboundUserMessage } from "./inbound-queue";
@@ -271,6 +272,80 @@ describe("listener turn lifecycle integration", () => {
     expect(result.kind).toBe("terminal");
     expect(waitForApprovalTransportOpen).toHaveBeenCalledTimes(0);
     expect(executeApprovalBatch).toHaveBeenCalledTimes(1);
+  });
+
+  test("ordinary-turn execution forwards nested approval through the active lease", async () => {
+    const runtime = getOrCreateScopedRuntime(
+      createRuntime(),
+      "agent-1",
+      "conv-1",
+    );
+    const lease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+      initialStatus: "PROCESSING_API_RESPONSE",
+    });
+    const socket = createOpenTransport();
+    const approval = {
+      toolCallId: "outer-call",
+      toolName: "CodeMode",
+      toolArgs: "{}",
+    };
+    let nestedDecision:
+      | { approved: boolean; args?: Record<string, unknown> }
+      | undefined;
+    const execution = startToolApproval(runtime, lease, {
+      approvals: [approval],
+      socket,
+      dependencies: {
+        classifyApprovals: async () => ({
+          autoAllowed: [
+            {
+              approval,
+              parsedArgs: {},
+              context: null,
+              permission: { decision: "allow" },
+            },
+          ],
+          autoDenied: [],
+          needsUserInput: [],
+        }),
+        ensureSecretsHydrated: async () => {},
+        executeApprovalBatch: async (_decisions, _onChunk, options) => {
+          const nested = options?.onNestedToolApproval?.({
+            toolName: "Write",
+            args: { file_path: "/tmp/nested" },
+            toolCallId: "nested-call",
+          });
+          if (!nested) throw new Error("Missing nested approval callback");
+          await waitForPendingApproval(runtime);
+          const pending = [...runtime.pendingApprovalResolvers.values()][0];
+          if (!pending) throw new Error("Missing nested approval");
+          expect(pending?.controlRequest?.request.tool_call_id).toBe(
+            "nested-call",
+          );
+          resolvePendingApprovalResolver(runtime, {
+            request_id: pending.requestId,
+            decision: { behavior: "deny", message: "not permitted" },
+          });
+          nestedDecision = await nested;
+          return [
+            {
+              type: "tool" as const,
+              tool_call_id: approval.toolCallId,
+              status: "success" as const,
+              tool_return: "denied nested call",
+            },
+          ];
+        },
+        sendApprovalContinuation: async () => ({
+          kind: "terminal" as const,
+          drainResult: { stopReason: "end_turn" as const, apiDurationMs: 0 },
+        }),
+      },
+    });
+    expect((await execution).kind).toBe("terminal");
+    expect(nestedDecision).toEqual({ approved: false });
   });
 
   test.each([

@@ -9,10 +9,7 @@ export interface McpServerNamingTarget {
 export function uniqueMcpName(base: string, used: Set<string>): string {
   let name = base;
   let suffix = 2;
-  while (used.has(name)) {
-    name = `${base}_${suffix}`;
-    suffix++;
-  }
+  while (used.has(name)) name = `${base}_${suffix++}`;
   used.add(name);
   return name;
 }
@@ -22,10 +19,8 @@ export function assignMcpServerAliases(
 ): Map<string, string> {
   const aliases = new Map<string, string>();
   const used = new Set<string>();
-  const byStableKey = (
-    left: McpServerNamingTarget,
-    right: McpServerNamingTarget,
-  ) => left.key.localeCompare(right.key);
+  const byStableKey = (a: McpServerNamingTarget, b: McpServerNamingTarget) =>
+    a.key.localeCompare(b.key);
   const ordered = [
     ...targets.filter((target) => target.kind === "server").sort(byStableKey),
     ...targets.filter((target) => target.kind === "client").sort(byStableKey),

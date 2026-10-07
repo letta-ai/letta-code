@@ -328,7 +328,16 @@ function buildRequestBodyFromPreparedMessages(
     include_pings: true,
     background: opts.background ?? true,
     client_skills: clientSkills,
-    client_tools: clientTools,
+    // The object form is deliberately rejected by older Cloud servers rather
+    // than silently exposing attached MCP tools when CodeMode is active.
+    // The published SDK still types only the legacy array until the Cloud
+    // contract is released; JSON serialization preserves the object form.
+    client_tools: clientTools.some((tool) => tool.name === "CodeMode")
+      ? ({
+          mode: "mcp_code",
+          definitions: clientTools,
+        } as unknown as ConversationMessageCreateParams["client_tools"])
+      : clientTools,
     include_compaction_messages: true,
     ...(opts.overrideModel ? { override_model: opts.overrideModel } : {}),
     ...(opts.responseFormat ? { response_format: opts.responseFormat } : {}),

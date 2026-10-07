@@ -23,6 +23,7 @@ import {
 import { TOOLSET_OPTIONS } from "./toolset-catalog";
 
 const originalArtifacts = process.env.LETTA_ARTIFACTS;
+const originalMcpCodeMode = process.env.LETTA_MCP_CODE_MODE;
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
@@ -32,12 +33,31 @@ afterEach(async () => {
   __testSetBackend(null);
   if (originalArtifacts === undefined) delete process.env.LETTA_ARTIFACTS;
   else process.env.LETTA_ARTIFACTS = originalArtifacts;
+  if (originalMcpCodeMode === undefined) delete process.env.LETTA_MCP_CODE_MODE;
+  else process.env.LETTA_MCP_CODE_MODE = originalMcpCodeMode;
   for (const path of temporaryDirectories.splice(0)) {
     await rm(path, { recursive: true, force: true });
   }
 });
 
 describe("shared toolset construction", () => {
+  test("MCP CodeMode is opt-in without hiding direct core tools", async () => {
+    __testSetBackend(new FakeHeadlessBackend());
+    delete process.env.LETTA_MCP_CODE_MODE;
+    await loadStartupTools({ toolset: "default" });
+    const legacy = getClientToolsFromRegistry().map((tool) => tool.name);
+    expect(legacy).not.toContain("CodeMode");
+    expect(legacy).toContain("Read");
+    expect(legacy).toContain("Bash");
+
+    process.env.LETTA_MCP_CODE_MODE = "1";
+    await loadStartupTools({ toolset: "default" });
+    const optedIn = getClientToolsFromRegistry().map((tool) => tool.name);
+    expect(optedIn).toContain("CodeMode");
+    expect(optedIn).toContain("Read");
+    expect(optedIn).toContain("Bash");
+  });
+
   for (const { id } of TOOLSET_OPTIONS) {
     if (id === "auto") continue;
     test(`${id}: startup, switching, and turn preparation produce identical payloads`, async () => {
