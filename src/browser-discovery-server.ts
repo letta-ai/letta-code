@@ -55,6 +55,7 @@ export function startBrowserDiscoveryServer(
       rejectReady = reject;
     },
   );
+  void ready.catch(() => undefined);
 
   const scheduleRetry = (): void => {
     if (stopped || retryTimer) return;
@@ -150,6 +151,7 @@ function createBrowserDiscoveryHttpServer(): Server {
   server = createServer((request, response) => {
     handleBrowserDiscoveryRequest(server, request, response);
   });
+  server.on("connection", (socket) => socket.unref());
   server.on("clientError", (_error, socket) => {
     if (!socket.writable) return;
     socket.end(

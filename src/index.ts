@@ -571,7 +571,6 @@ async function getLocalBackendStartupFallbackSession(
 
 async function main(): Promise<void> {
   markMilestone("CLI_START");
-  void startBrowserDiscoveryServer().ready.catch(() => undefined);
   await initializeDesktopCredentials();
   // Exit when the owning Desktop or terminal process dies.
   startOrphanDetection();
@@ -2574,4 +2573,5 @@ async function main(): Promise<void> {
   );
 }
 assertSupportedBunRuntime();
+void startBrowserDiscoveryServer().ready.catch(() => undefined);
 main();
