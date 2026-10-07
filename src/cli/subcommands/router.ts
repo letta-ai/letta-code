@@ -5,7 +5,6 @@ import { runConnectSubcommand } from "./connect";
 import { runCronSubcommand } from "./cron";
 import { runEnvironmentsSubcommand } from "./environments";
 import { runFeedbackSubcommand } from "./feedback";
-import { runListenSubcommand } from "./listen.tsx";
 import { runLocalBackendSubcommand } from "./local-backend";
 import { runMcpSubcommand } from "./mcp";
 import { runMemorySubcommand } from "./memory";
@@ -126,7 +125,7 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
     case "feedback":
       return runFeedbackSubcommand(rest);
     case "remote": // alias
-      return runListenSubcommand(rest);
+      return runServerSubcommand(rest);
     case "connect":
       return runConnectSubcommand(rest);
     case "backend":
