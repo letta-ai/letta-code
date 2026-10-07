@@ -33,7 +33,7 @@ test("custom recovery authority tokens require a matching store", async () => {
   );
 });
 
-test("store-bound recovery checkpoints retry a live lock holder", async () => {
+test("post-effect recovery checkpoints survive lock contention and authority loss", async () => {
   const directory = mkdtempSync(join(tmpdir(), "listener-evidence-lock-"));
   try {
     const store = createInterruptedTurnStore(directory, { lockWaitMs: 10 });
@@ -58,8 +58,15 @@ test("store-bound recovery checkpoints retry a live lock holder", async () => {
       join(directory, "agent-test_conv-test.json"),
       { waitMs: 10 },
     );
-    const timer = setTimeout(release, 100);
-    const writer = createStoreBoundRecoveryEvidenceWriter(store, () => true);
+    let authoritative = true;
+    const timer = setTimeout(() => {
+      authoritative = false;
+      release();
+    }, 100);
+    const writer = createStoreBoundRecoveryEvidenceWriter(
+      store,
+      () => authoritative,
+    );
     const revision = await writer(
       runtime,
       { results: [] },
@@ -69,6 +76,44 @@ test("store-bound recovery checkpoints retry a live lock holder", async () => {
     clearTimeout(timer);
     expect(revision).toBeString();
     expect(revision).not.toBe(initial.revision);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("pre-effect recovery checkpoints stop after authority loss", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "listener-evidence-fence-"));
+  try {
+    const store = createInterruptedTurnStore(directory);
+    const listener = createRuntime();
+    listener.connectionId = "conn-test";
+    const runtime = getOrCreateScopedRuntime(
+      listener,
+      "agent-test",
+      "conv-test",
+    );
+    const initial = store.write({
+      agentId: "agent-test",
+      conversationId: "conv-test",
+      runId: "run-test",
+      toolCallIds: ["call-test"],
+      unstartedToolCallIds: ["call-test"],
+      results: [],
+      requestOtid: "request-test",
+      workingDirectory: "/project",
+    });
+    const writer = createStoreBoundRecoveryEvidenceWriter(store, () => false);
+    await expect(
+      writer(
+        runtime,
+        { unstartedToolCallIds: ["call-test"] },
+        "before_tool_execution",
+        initial.revision,
+      ),
+    ).rejects.toThrow("lost authority before commit");
+    expect(store.read("agent-test", "conv-test")?.revision).toBe(
+      initial.revision,
+    );
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

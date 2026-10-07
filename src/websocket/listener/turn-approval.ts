@@ -230,6 +230,7 @@ export async function handleApprovalStop(params: {
             phase,
             interruptedRevisionRef?.current,
             recoveryLineageId,
+            { shouldContinue },
           )
         : recordListenerWorkRetriably(
             runtime,

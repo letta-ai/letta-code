@@ -42,6 +42,7 @@ test("a thrown approval batch checkpoints failure before reconnect delivery", as
       workingDirectory: process.cwd(),
     };
     let preEffectResults: InterruptedTurnRecord["results"] = [];
+    let preEffectShouldContinue: (() => boolean) | undefined;
     let enterTransportWait!: () => void;
     const transportWaitEntered = new Promise<void>((resolve) => {
       enterTransportWait = resolve;
@@ -101,7 +102,14 @@ test("a thrown approval batch checkpoints failure before reconnect delivery", as
         recordListenerWork: (
           _runtime: typeof runtime,
           update: Partial<InterruptedTurnRecord>,
+          phase: string,
+          _expectedRevision: string | null | undefined,
+          _recoveryLineageId: string | undefined,
+          options?: { shouldContinue?: () => boolean },
         ) => {
+          if (phase === "before_tool_execution") {
+            preEffectShouldContinue = options?.shouldContinue;
+          }
           durableRecord = { ...durableRecord, ...update };
           store.write(durableRecord);
         },
@@ -136,8 +144,10 @@ test("a thrown approval batch checkpoints failure before reconnect delivery", as
     expect(
       recovered && recordedToolResults(recovered, [approval.toolCallId]),
     ).toEqual(recovered?.results ?? null);
+    expect(preEffectShouldContinue?.()).toBe(true);
 
     runtime.turnLifecycle.requestCancellation({ cause: "transport" });
+    expect(preEffectShouldContinue?.()).toBe(false);
     releaseTransportWait();
     await expect(approvalPromise).rejects.toThrow(
       "batch exploded after execution boundary",

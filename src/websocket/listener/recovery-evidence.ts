@@ -34,7 +34,14 @@ export type RecoveredContinuationProcessTurn = (
 ) => Promise<void>;
 
 export type RecoveryEvidenceWriter = (
-  ...args: Parameters<typeof recordListenerWork>
+  runtime: ConversationRuntime,
+  update: Parameters<typeof recordListenerWork>[1],
+  phase: ListenerStateWritePhase,
+  expectedRevision?: string | null,
+  recoveryLineageId?: string,
+  options?:
+    | Parameters<typeof recordListenerWork>[5]
+    | { shouldContinue?: () => boolean },
 ) => unknown;
 
 export type SettledRecoveryResultWriter = (
@@ -54,10 +61,23 @@ export type RecoveryAuthorityStore = Pick<
 
 export function createStoreBoundRecoveryEvidenceWriter(
   store: ReturnType<typeof createInterruptedTurnStore>,
-  shouldContinue: () => boolean,
+  hasAuthority: () => boolean,
 ): RecoveryEvidenceWriter {
-  return (runtime, update, phase, expectedRevision, recoveryLineageId) =>
-    recordListenerWorkRetriably(
+  return (
+    runtime,
+    update,
+    phase,
+    expectedRevision,
+    recoveryLineageId,
+    options = {},
+  ) => {
+    const siteShouldContinue =
+      "shouldContinue" in options ? options.shouldContinue : undefined;
+    const shouldContinue =
+      phase === "after_tool_execution"
+        ? siteShouldContinue
+        : () => hasAuthority() && siteShouldContinue?.() !== false;
+    return recordListenerWorkRetriably(
       runtime,
       update,
       phase,
@@ -65,6 +85,7 @@ export function createStoreBoundRecoveryEvidenceWriter(
       recoveryLineageId,
       { store, shouldContinue },
     );
+  };
 }
 
 export async function mergeSettledRecoveryResultRetriably(
@@ -106,7 +127,14 @@ export function createRecoveryEvidenceCheckpoint(
     const operation = writeChain.then(async () => {
       const expectedRevision = hasWritten ? (revision ?? null) : undefined;
       const next = await (writer
-        ? writer(runtime, update, phase, expectedRevision, recoveryLineageId)
+        ? writer(
+            runtime,
+            update,
+            phase,
+            expectedRevision,
+            recoveryLineageId,
+            options,
+          )
         : recordListenerWorkRetriably(
             runtime,
             update,
