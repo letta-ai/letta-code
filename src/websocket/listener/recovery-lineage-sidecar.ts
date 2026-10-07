@@ -43,33 +43,6 @@ export interface RecoveryLineageSidecar {
   retiredAt?: number;
 }
 
-export function clearRetiredLineageFromMain(
-  current: InterruptedTurnRecord,
-  retired: RecoveryLineageSidecar,
-): InterruptedTurnRecord {
-  const retiredToolCallIds = new Set(retired.toolCallIds);
-  return {
-    ...current,
-    toolCallIds: current.toolCallIds.filter(
-      (toolCallId) => !retiredToolCallIds.has(toolCallId),
-    ),
-    results: current.results.filter(
-      (result) => !retiredToolCallIds.has(result.tool_call_id),
-    ),
-    unstartedToolCallIds: current.unstartedToolCallIds?.filter(
-      (toolCallId) => !retiredToolCallIds.has(toolCallId),
-    ),
-    teleport:
-      retired.teleport &&
-      current.teleport?.teleportId === retired.teleport.teleportId
-        ? undefined
-        : current.teleport,
-    settledRecoveryEffects: current.settledRecoveryEffects?.filter(
-      (effect) => effect.lineageId !== retired.lineageId,
-    ),
-  };
-}
-
 const sidecarWriterInstanceId = randomUUID();
 
 export const __recoveryLineageSidecarTestUtils = {
@@ -230,18 +203,9 @@ export function createRecoveryLineageSidecarAccess(params: {
             teleport: current.teleport,
           });
     const retired: RecoveryLineageSidecar = {
+      ...previous,
       revision: randomUUID(),
-      agentId: previous.agentId,
-      conversationId: previous.conversationId,
-      lineageId: previous.lineageId,
-      sourceMainRevision: previous.sourceMainRevision,
       state: "retired",
-      runId: null,
-      toolCallIds: [...previous.toolCallIds],
-      results: [],
-      requestOtid: "",
-      workingDirectory: "",
-      teleport: previous.teleport,
       retiredInterruptedRevision: previous.sourceMainRevision,
       retiredAuthorityRevision:
         previous.pendingAuthorityRevision ?? previous.revision,
@@ -411,17 +375,31 @@ export function createRecoveryLineageSidecarAccess(params: {
     }
     if (sidecar.state !== "retired") return current;
     const retiredToolCallIds = new Set(sidecar.toolCallIds);
+    const retainedResults = new Map(
+      current.results
+        .filter((result) => !retiredToolCallIds.has(result.tool_call_id))
+        .map((result) => [result.tool_call_id, result]),
+    );
+    for (const result of sidecar.exactResults ?? []) {
+      retainedResults.set(result.tool_call_id, result);
+    }
+    const retainedToolCallIds = new Set(retainedResults.keys());
     return {
       ...current,
       recoveryClaimCompletion: undefined,
-      toolCallIds: current.toolCallIds.filter(
-        (toolCallId) => !retiredToolCallIds.has(toolCallId),
-      ),
-      results: current.results.filter(
-        (result) => !retiredToolCallIds.has(result.tool_call_id),
-      ),
+      toolCallIds: [
+        ...new Set([
+          ...current.toolCallIds.filter(
+            (toolCallId) => !retiredToolCallIds.has(toolCallId),
+          ),
+          ...retainedToolCallIds,
+        ]),
+      ],
+      results: [...retainedResults.values()],
       unstartedToolCallIds: current.unstartedToolCallIds?.filter(
-        (toolCallId) => !retiredToolCallIds.has(toolCallId),
+        (toolCallId) =>
+          !retiredToolCallIds.has(toolCallId) &&
+          !retainedToolCallIds.has(toolCallId),
       ),
       teleport:
         sidecar.teleport &&

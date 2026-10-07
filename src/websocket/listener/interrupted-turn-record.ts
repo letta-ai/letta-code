@@ -25,7 +25,6 @@ import {
 import type { InterruptedTurnRecord } from "./interrupted-turn-types";
 import { allRecordedResults } from "./recorded-tool-results";
 import {
-  clearRetiredLineageFromMain,
   createRecoveryLineageSidecarAccess,
   type RecoveryLineageSidecar,
 } from "./recovery-lineage-sidecar";
@@ -121,32 +120,6 @@ export function createInterruptedTurnStore(
         );
         for (const sidecar of listSidecars()) {
           if (sidecar.state === "retired") {
-            if (sidecar.toolCallIds.length > 0) {
-              const destination = path(sidecar.agentId, sidecar.conversationId);
-              const release = acquireDurableFileLock(destination, {
-                waitMs: dependencies.lockWaitMs,
-              });
-              try {
-                const current = readRecord(destination);
-                if (
-                  current?.recoveryClaimCompletion?.lineageId ===
-                  sidecar.lineageId
-                ) {
-                  const preserved = clearRetiredLineageFromMain(
-                    current,
-                    sidecar,
-                  );
-                  persist(destination, preserved);
-                  const index = rawRecords.findIndex(
-                    (record) => record.revision === current.revision,
-                  );
-                  if (index >= 0) rawRecords[index] = preserved;
-                }
-                compactRetiredSidecar(sidecar);
-              } finally {
-                release();
-              }
-            }
             continue;
           }
           const key = `${sidecar.agentId}\0${sidecar.conversationId}\0${sidecar.lineageId}`;
@@ -252,12 +225,10 @@ export function createInterruptedTurnStore(
       return removeRetiredSidecar(sidecar, () => {
         const destination = path(sidecar.agentId, sidecar.conversationId);
         const current = readRecord(destination);
-        if (current?.recoveryClaimCompletion?.lineageId !== sidecar.lineageId)
-          return true;
-        persist(destination, {
-          ...clearRetiredLineageFromMain(current, sidecar),
-          recoveryClaimCompletion: undefined,
-        });
+        if (current?.recoveryClaimCompletion?.lineageId === sidecar.lineageId) {
+          return false;
+        }
+        compactRetiredSidecar(sidecar);
         return true;
       });
     },
@@ -607,10 +578,7 @@ export function createInterruptedTurnStore(
             if (previous.state === "retired") return "stale";
             throw new Error("Recovery lineage pending revision changed");
           }
-          const retired = retireSidecar(current, previous);
-          const preserved = clearRetiredLineageFromMain(current, previous);
-          persist(destination, preserved);
-          compactRetiredSidecar(retired);
+          retireSidecar(current, previous);
           return "preserved";
         }
         if (
@@ -635,7 +603,6 @@ export function createInterruptedTurnStore(
             } catch {}
             throw error;
           }
-          compactRetiredSidecar(retiredAuthority);
           return "removed";
         }
         if (!current.revision || !marker.independentSuccessor) return "stale";

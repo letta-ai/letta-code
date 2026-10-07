@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -677,6 +677,7 @@ test.each([true, false])(
       join(tmpdir(), "retired-terminal-authority-"),
     );
     const listener = createRuntime();
+    const ledgerPath = join(directory, "input-dispositions.json");
     listener.acceptedInputDispositionLedger =
       createAcceptedInputDispositionLedger({ persistentPath: null });
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
@@ -824,6 +825,44 @@ test.each([true, false])(
           ?.terminals[0];
         if (!promotedWinner) throw new Error("missing promoted winner");
         terminalStore.remove("agent-1", "conv-1", promotedWinner.id);
+        const oldStore = {
+          version: 4,
+          nextGeneration:
+            listener.acceptedInputDispositionLedger.nextGeneration,
+          entries: Object.fromEntries(
+            listener.acceptedInputDispositionLedger.entries,
+          ),
+          reservations: {},
+        } as {
+          version: number;
+          nextGeneration: number;
+          entries: Record<
+            string,
+            {
+              completedTerminalAuthority?: {
+                authorityRevision: string;
+                terminalIdentity?: string;
+                preparationSequence?: number;
+              };
+            }
+          >;
+          reservations: Record<string, never>;
+        };
+        const completed = Object.values(oldStore.entries).find(
+          (entry) =>
+            entry.completedTerminalAuthority?.authorityRevision ===
+            snapshot.revisionToken,
+        );
+        const completedAuthority = completed?.completedTerminalAuthority;
+        if (!completedAuthority)
+          throw new Error("missing completed authority fixture");
+        delete completedAuthority.terminalIdentity;
+        delete completedAuthority.preparationSequence;
+        writeFileSync(ledgerPath, JSON.stringify(oldStore), "utf8");
+        listener.acceptedInputDispositionLedger =
+          createAcceptedInputDispositionLedger({
+            persistentPath: ledgerPath,
+          });
         expect(
           promotePreparedInputTerminals(
             listener,

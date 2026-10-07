@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, type Hash, randomUUID } from "node:crypto";
 import { type Dirent, readdirSync, rmSync } from "node:fs";
 import {
   type FileHandle,
@@ -42,6 +42,7 @@ interface CaptureState {
   retryTimer?: ReturnType<typeof setTimeout>;
   retryDelayMs: number;
   segments: Segment[];
+  prefixHash: Hash;
   requiresBoundaryReset?: boolean;
 }
 interface NativeCaptureAdmission {
@@ -64,6 +65,24 @@ class NativeSessionSourceGrowthError extends Error {
   constructor() {
     super("Native session grew during EOF capture");
   }
+}
+
+async function hashNativeSessionPrefix(
+  input: FileHandle,
+  size: number,
+): Promise<Hash> {
+  const hash = createHash("sha256");
+  const buffer = Buffer.allocUnsafe(NATIVE_SESSION_CAPTURE_CHUNK_BYTES);
+  let position = 0;
+  while (position < size) {
+    const length = Math.min(buffer.length, size - position);
+    const { bytesRead } = await input.read(buffer, 0, length, position);
+    if (bytesRead !== length)
+      throw new Error("Native session changed during prefix verification");
+    hash.update(buffer.subarray(0, bytesRead));
+    position += bytesRead;
+  }
+  return hash;
 }
 
 export interface NativeSessionCaptureReservation {
@@ -226,12 +245,15 @@ async function resetCaptureBoundary(
     path = discovered;
     input = await open(path, "r");
   }
-  const snapshot = await (async () => {
+  const { snapshot, prefixHash } = await (async () => {
     try {
       const value = await input.stat();
       if (!value.isFile())
         throw new Error("Native session source is not a file");
-      return value;
+      return {
+        snapshot: value,
+        prefixHash: await hashNativeSessionPrefix(input, value.size),
+      };
     } finally {
       await input.close();
     }
@@ -240,6 +262,7 @@ async function resetCaptureBoundary(
   if (state.segments.length === 0) state.ackedOffset = snapshot.size;
   state.sealedOffset = snapshot.size;
   state.fileIdentity = `${snapshot.dev}:${snapshot.ino}`;
+  state.prefixHash = prefixHash;
   state.drainError = undefined;
   state.retryDelayMs = INITIAL_DRAIN_RETRY_MS;
   state.requiresBoundaryReset = false;
@@ -409,7 +432,7 @@ async function seal(
       throw new Error("Native session capture changed file identity");
     const start = state.sealedOffset;
     const end = before.size;
-    await sealHookForTests?.();
+    const candidatePrefixHash = state.prefixHash.copy();
     output = await open(spoolPath, "wx", 0o600);
     const buffer = Buffer.allocUnsafe(NATIVE_SESSION_CAPTURE_CHUNK_BYTES);
     let position = start;
@@ -418,6 +441,7 @@ async function seal(
       const { bytesRead } = await input.read(buffer, 0, length, position);
       if (bytesRead !== length)
         throw new Error("Native session changed during EOF capture");
+      candidatePrefixHash.update(buffer.subarray(0, bytesRead));
       let written = 0;
       while (written < bytesRead)
         written += (
@@ -425,9 +449,19 @@ async function seal(
         ).bytesWritten;
       position += bytesRead;
     }
+    await sealHookForTests?.();
     const after = await input.stat();
     const afterIdentity = `${after.dev}:${after.ino}`;
     if (afterIdentity === identity && after.size > before.size) {
+      const verifiedPrefixHash = await hashNativeSessionPrefix(
+        input,
+        before.size,
+      );
+      if (
+        !verifiedPrefixHash.digest().equals(candidatePrefixHash.copy().digest())
+      ) {
+        throw new Error("Native session prefix changed before growth");
+      }
       throw new NativeSessionSourceGrowthError();
     }
     if (
@@ -439,6 +473,7 @@ async function seal(
       throw new Error("Native session changed during EOF capture");
     state.path = path;
     state.fileIdentity = identity;
+    state.prefixHash = candidatePrefixHash;
     if (end > state.sealedOffset) {
       state.segments.push({
         scope: { ...scope },
@@ -711,6 +746,7 @@ export function rememberNativeSession(
       sealing: Promise.resolve(),
       retryDelayMs: INITIAL_DRAIN_RETRY_MS,
       segments: [],
+      prefixHash: createHash("sha256"),
     });
 }
 

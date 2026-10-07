@@ -819,14 +819,12 @@ test("a settled recovery result survives an independent successor snapshot", () 
       runId: "run-successor-checkpoint",
       requestOtid: "request-successor",
       durableInputIdentities: [{ domain: "input", id: "cm-successor" }],
-      toolCallIds: ["call-successor"],
-      results: [successorResult],
+      toolCallIds: ["call-successor", "call-effect"],
+      results: [successorResult, exactResult],
       unstartedToolCallIds: [],
     });
     expect(retired?.revision).toBe(successorCheckpoint.revision);
-    expect(retired && allRecordedResults(retired)).not.toContainEqual(
-      exactResult,
-    );
+    expect(retired && allRecordedResults(retired)).toContainEqual(exactResult);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

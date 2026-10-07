@@ -276,9 +276,7 @@ export function loadCompletedTerminalAuthorities(
       .filter(
         (entry) =>
           entry.expiresAt > Date.now() &&
-          entry.completedTerminalAuthority?.recoveryLineageId &&
-          entry.completedTerminalAuthority.terminalIdentity &&
-          entry.completedTerminalAuthority.preparationSequence !== undefined,
+          entry.completedTerminalAuthority?.recoveryLineageId,
       )
       .map((entry) => ({
         runtimeKey: entry.runtimeKey,

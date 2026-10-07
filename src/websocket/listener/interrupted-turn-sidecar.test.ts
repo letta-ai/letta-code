@@ -298,13 +298,19 @@ test("retired predecessor sidecar clears its inherited teleport without deleting
   const directory = mkdtempSync(join(tmpdir(), "listener-sidecar-teleport-"));
   const store = createInterruptedTurnStore(directory);
   const lineageId = "lineage-teleport";
+  const completedResult = {
+    tool_call_id: "call-predecessor",
+    status: "success" as const,
+    tool_return: "completed-before-terminal-delivery",
+  };
   try {
     const predecessor = store.write({
       agentId: "agent-test",
       conversationId: "conv-test",
       runId: "run-predecessor",
       toolCallIds: ["call-predecessor"],
-      results: [],
+      results: [completedResult],
+      settledRecoveryEffects: [{ lineageId, result: completedResult }],
       requestOtid: "request-predecessor",
       workingDirectory: "/predecessor",
       teleport: {
@@ -367,8 +373,12 @@ test("retired predecessor sidecar clears its inherited teleport without deleting
     const preserved = store.read("agent-test", "conv-test");
     expect(preserved).toMatchObject({
       runId: "run-successor",
-      toolCallIds: ["call-successor"],
     });
+    expect(preserved?.toolCallIds).toEqual([
+      "call-successor",
+      "call-predecessor",
+    ]);
+    expect(preserved?.results).toContainEqual(completedResult);
     expect(preserved?.teleport).toBeUndefined();
     expect(preserved?.recoveryClaimCompletion).toBeUndefined();
     const sidecarFile = readdirSync(directory).find((file) =>
@@ -381,14 +391,19 @@ test("retired predecessor sidecar clears its inherited teleport without deleting
     writeFileSync(join(directory, sidecarFile), JSON.stringify(legacy), "utf8");
     writeFileSync(join(directory, mainFile), crashedMain, "utf8");
     const repaired = createInterruptedTurnStore(directory);
-    expect(repaired.list()[0]?.teleport).toBeUndefined();
+    const restartedView = repaired.list()[0];
+    expect(restartedView?.teleport).toBeUndefined();
+    expect(restartedView?.toolCallIds).toContain("call-predecessor");
+    expect(restartedView?.results).toContainEqual(completedResult);
     expect(
       JSON.parse(readFileSync(join(directory, mainFile), "utf8"))
         .recoveryClaimCompletion,
     ).toMatchObject({ lineageId });
     legacy = JSON.parse(readFileSync(join(directory, sidecarFile), "utf8"));
-    expect(legacy.toolCallIds).toEqual([]);
-    expect(legacy.teleport).toBeUndefined();
+    expect(legacy.toolCallIds).toEqual(["call-predecessor"]);
+    expect(legacy.teleport).toEqual(predecessor.teleport);
+    expect(legacy.results).toContainEqual(completedResult);
+    expect(legacy.exactResults).toContainEqual(completedResult);
     delete legacy.retiredInterruptedRevision;
     delete legacy.retiredAuthorityRevision;
     delete legacy.retiredAt;

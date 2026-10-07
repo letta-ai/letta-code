@@ -301,8 +301,10 @@ test.each(["exact", "legacy"] as const)(
       const sidecarPath = join(directory, "interrupted", sidecar);
       const retired = JSON.parse(readFileSync(sidecarPath, "utf8"));
       expect(retired.results).toEqual([]);
-      expect(retired.exactResults).toBeUndefined();
-      expect(retired.durableInputIdentities).toBeUndefined();
+      expect(retired.exactResults).toEqual([]);
+      expect(retired.durableInputIdentities).toEqual([
+        { domain: "input", id: "cm-winning" },
+      ]);
       expect(retired.actingUserId).toBeUndefined();
       expect(retired.teleport).toBeUndefined();
       if (format === "legacy") {
@@ -415,6 +417,9 @@ test.each(["exact", "legacy"] as const)(
         ),
       ).not.toBeNull();
       completedEntry.expiresAt = Date.now() - 1;
+      const consumed = interruptedStore.read("agent-1", "conversation-1");
+      if (!consumed?.revision) throw new Error("missing consumed successor");
+      interruptedStore.write(consumed, consumed.revision);
       expect(
         promotePreparedInputTerminals(
           listener,

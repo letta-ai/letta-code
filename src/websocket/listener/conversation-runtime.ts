@@ -606,16 +606,20 @@ export function promotePreparedInputTerminals(
               completed.authority.recoveryLineageId !==
                 prepared.owner.recoveryLineageId ||
               completed.authority.interruptedRevision !==
-                prepared.owner.interruptedRevision ||
-              !completed.authority.terminalIdentity ||
-              completed.authority.preparationSequence === undefined
+                prepared.owner.interruptedRevision
             )
               continue;
+            const completedIdentity =
+              completed.authority.terminalIdentity ??
+              `completed-authority:${completed.authority.authorityRevision}`;
+            const completedSequence =
+              completed.authority.preparationSequence ??
+              Number.MAX_SAFE_INTEGER;
             evidence.set(
-              completed.authority.terminalIdentity,
+              completedIdentity,
               Math.max(
-                evidence.get(completed.authority.terminalIdentity) ?? -1,
-                completed.authority.preparationSequence,
+                evidence.get(completedIdentity) ?? -1,
+                completedSequence,
               ),
             );
           }
