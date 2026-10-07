@@ -4,6 +4,7 @@ import {
   getLedger,
   syncMemoryFromDurable,
 } from "./input-disposition";
+import { rebuildDispositionCapacityCounts } from "./input-disposition-capacity";
 import type {
   AcceptedInputDispositionEntry,
   ConversationRuntime,
@@ -21,6 +22,29 @@ function identityKeys(
       identities.map((identity) => dispositionKey(runtime.key, identity)),
     ),
   ];
+}
+
+function hasLegacyAuthorityQuarantine(
+  entries: Iterable<AcceptedInputDispositionEntry>,
+  terminal: DurablePreparedInputTerminal,
+): boolean {
+  const recoveryLineageId = terminal.owner.recoveryLineageId;
+  const interruptedRevision = terminal.owner.interruptedRevision;
+  if (!recoveryLineageId || !interruptedRevision) return false;
+  for (const entry of entries) {
+    const quarantined = entry.legacyAuthorityQuarantined
+      ? entry.preparedTerminal
+      : undefined;
+    if (
+      quarantined?.scope.agentId === terminal.scope.agentId &&
+      quarantined.scope.conversationId === terminal.scope.conversationId &&
+      quarantined.owner.recoveryLineageId === recoveryLineageId &&
+      quarantined.owner.interruptedRevision === interruptedRevision
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function recordCompletedTerminalAuthority(
@@ -62,13 +86,19 @@ export function prepareInputTerminal(
   if (ledger.persistentPath) {
     try {
       return durableTransaction(ledger.persistentPath, (store) => {
+        if (
+          hasLegacyAuthorityQuarantine(Object.values(store.entries), terminal)
+        ) {
+          syncMemoryFromDurable(ledger, store);
+          return { result: false, changed: false };
+        }
         for (const key of keys) {
           const entry = store.entries[key];
           if (
             entry &&
             (!entry.disposition ||
               entry.disposition === "queued" ||
-              entry.preparedTerminal?.legacyAuthorityAmbiguous)
+              entry.legacyAuthorityQuarantined)
           ) {
             syncMemoryFromDurable(ledger, store);
             return { result: false, changed: false };
@@ -98,13 +128,16 @@ export function prepareInputTerminal(
       return false;
     }
   }
+  if (hasLegacyAuthorityQuarantine(ledger.entries.values(), terminal)) {
+    return false;
+  }
   for (const key of keys) {
     const entry = ledger.entries.get(key);
     if (
       entry &&
       (!entry.disposition ||
         entry.disposition === "queued" ||
-        entry.preparedTerminal?.legacyAuthorityAmbiguous)
+        entry.legacyAuthorityQuarantined)
     ) {
       return false;
     }
@@ -171,6 +204,7 @@ export function completePreparedInputTerminal(
 /** Read deduplicated terminal journals under the same lock as input replay. */
 export function loadPreparedInputTerminals(
   listener: ListenerRuntime,
+  includeQuarantined = false,
 ): DurablePreparedInputTerminal[] {
   const ledger = getLedger(listener);
   const backfillPreparationSequence = (
@@ -196,7 +230,10 @@ export function loadPreparedInputTerminals(
     const byTurnId = new Map<string, DurablePreparedInputTerminal>();
     for (const entry of entries) {
       const prepared = entry.preparedTerminal;
-      if (prepared) {
+      if (
+        prepared &&
+        (includeQuarantined || !entry.legacyAuthorityQuarantined)
+      ) {
         const ordered = {
           ...prepared,
           // Pre-sequence journals can only use their durable reservation
@@ -271,12 +308,26 @@ export function loadPreparedInputTerminals(
   });
 }
 
-export function markPreparedTerminalAuthorityAmbiguous(
+/**
+ * Convert unresolved predecessor journals into a stable migration fence.
+ * Only pre-sequence/pre-identity authorities can reach this path, so its
+ * cardinality is bounded by the already-capped pre-upgrade ledger.
+ */
+export function quarantinePreparedTerminalAuthority(
   listener: ListenerRuntime,
   scope: { agentId: string | null; conversationId: string },
-  recoveryLineageId: string,
-  interruptedRevision: string,
+  authority: NonNullable<
+    AcceptedInputDispositionEntry["completedTerminalAuthority"]
+  >,
 ): boolean {
+  const recoveryLineageId = authority.recoveryLineageId;
+  const interruptedRevision = authority.interruptedRevision;
+  if (
+    !recoveryLineageId ||
+    (authority.terminalIdentity && authority.preparationSequence !== undefined)
+  ) {
+    return false;
+  }
   const ledger = getLedger(listener);
   const mark = (entries: Iterable<AcceptedInputDispositionEntry>) => {
     let matched = false;
@@ -291,14 +342,18 @@ export function markPreparedTerminalAuthorityAmbiguous(
       )
         continue;
       matched = true;
-      if (prepared.legacyAuthorityAmbiguous !== true) {
-        prepared.legacyAuthorityAmbiguous = true;
+      if (entry.legacyAuthorityQuarantined !== true) {
+        entry.legacyAuthorityQuarantined = true;
         changed = true;
       }
     }
     return { matched, changed };
   };
-  if (!ledger.persistentPath) return mark(ledger.entries.values()).matched;
+  if (!ledger.persistentPath) {
+    const result = mark(ledger.entries.values());
+    if (result.changed) rebuildDispositionCapacityCounts(ledger);
+    return result.matched;
+  }
   return durableTransaction(ledger.persistentPath, (store) => {
     const result = mark(Object.values(store.entries));
     syncMemoryFromDurable(ledger, store);

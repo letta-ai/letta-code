@@ -21,7 +21,18 @@ import {
   durableLockOwnerIsAlive,
   fsyncDirectory,
 } from "./durable-file-lock";
+import {
+  activeDispositionCount,
+  compactDispositionExpiryQueue,
+  countCapacityEntries,
+  rebuildDispositionCapacityCounts,
+  removeDispositionCapacityEntry,
+} from "./input-disposition-capacity";
 import { inputDispositionPersistentPath } from "./input-disposition-path";
+import {
+  buildLegacyAuthorityReferenceIndex,
+  shouldRetainDisposition,
+} from "./input-disposition-retention";
 import { getConversationRuntimeKey } from "./runtime";
 import type {
   AcceptedInputDisposition,
@@ -94,6 +105,7 @@ export function createAcceptedInputDispositionLedger(options?: {
   return {
     entries: new Map(),
     scopeCounts: new Map(),
+    quarantinedCount: 0,
     expiryQueue: [],
     expiryQueueHead: 0,
     nextGeneration: 0,
@@ -113,29 +125,6 @@ export function getLedger(
   return listener.acceptedInputDispositionLedger;
 }
 
-function decrementScopeCount(
-  ledger: AcceptedInputDispositionLedger,
-  runtimeKey: string,
-): void {
-  const next = (ledger.scopeCounts.get(runtimeKey) ?? 1) - 1;
-  if (next === 0) ledger.scopeCounts.delete(runtimeKey);
-  else ledger.scopeCounts.set(runtimeKey, next);
-}
-
-function compactExpiryQueueIfSparse(
-  ledger: AcceptedInputDispositionLedger,
-): void {
-  const remaining = ledger.expiryQueue.length - ledger.expiryQueueHead;
-  if (remaining < 1024 || remaining <= ledger.entries.size * 2 + 1024) return;
-  ledger.expiryQueue = ledger.expiryQueue
-    .slice(ledger.expiryQueueHead)
-    .filter((expiry) => {
-      const entry = ledger.entries.get(expiry.key);
-      return entry?.generation === expiry.generation;
-    });
-  ledger.expiryQueueHead = 0;
-}
-
 export function deleteCurrentEntry(
   ledger: AcceptedInputDispositionLedger,
   key: string,
@@ -146,8 +135,8 @@ export function deleteCurrentEntry(
     return false;
   }
   ledger.entries.delete(key);
-  decrementScopeCount(ledger, entry.runtimeKey);
-  compactExpiryQueueIfSparse(ledger);
+  removeDispositionCapacityEntry(ledger, entry);
+  compactDispositionExpiryQueue(ledger);
   return true;
 }
 
@@ -155,6 +144,7 @@ function expireAcceptedInputDispositions(
   ledger: AcceptedInputDispositionLedger,
   now: number,
 ): void {
+  let references: ReadonlySet<string> | undefined;
   while (ledger.expiryQueueHead < ledger.expiryQueue.length) {
     const expiry = ledger.expiryQueue[ledger.expiryQueueHead];
     if (!expiry || expiry.expiresAt > now) break;
@@ -162,7 +152,12 @@ function expireAcceptedInputDispositions(
     const entry = ledger.entries.get(expiry.key);
     if (
       entry?.generation === expiry.generation &&
-      (entry.queuedInput || entry.preparedTerminal)
+      shouldRetainDisposition(entry, () => {
+        references ??= buildLegacyAuthorityReferenceIndex(
+          ledger.entries.values(),
+        );
+        return references;
+      })
     ) {
       // Once accepted, replay responsibility lasts until a terminal transition
       // retires the payload. The sender retry horizon only bounds tombstones;
@@ -315,8 +310,6 @@ function validateDurableStore(value: unknown): DurableStore {
         (prepared.preparationSequence !== undefined &&
           (!Number.isSafeInteger(prepared.preparationSequence) ||
             (prepared.preparationSequence as number) < 0)) ||
-        (prepared.legacyAuthorityAmbiguous !== undefined &&
-          typeof prepared.legacyAuthorityAmbiguous !== "boolean") ||
         !isRecord(prepared.scope) ||
         (prepared.scope.agentId !== null &&
           typeof prepared.scope.agentId !== "string") ||
@@ -360,6 +353,13 @@ function validateDurableStore(value: unknown): DurableStore {
       ) {
         throw new Error("Prepared input terminal is invalid");
       }
+    }
+    if (
+      rawEntry.legacyAuthorityQuarantined !== undefined &&
+      (rawEntry.legacyAuthorityQuarantined !== true ||
+        rawEntry.preparedTerminal === undefined)
+    ) {
+      throw new Error("Legacy terminal quarantine is invalid");
     }
     if (
       rawEntry.completedTerminalRevision !== undefined &&
@@ -460,9 +460,11 @@ function acquireLock(path: string, waitMs = LOCK_WAIT_MS): () => void {
 
 function pruneDurableStore(store: DurableStore, now: number): boolean {
   let changed = false;
+  const entries = Object.values(store.entries);
+  const references = buildLegacyAuthorityReferenceIndex(entries);
   for (const [key, entry] of Object.entries(store.entries)) {
     if (entry.expiresAt <= now) {
-      if (entry.queuedInput || entry.preparedTerminal) {
+      if (shouldRetainDisposition(entry, () => references)) {
         entry.expiresAt = now + ACCEPTED_INPUT_DISPOSITION_TTL_MS;
       } else {
         delete store.entries[key];
@@ -500,7 +502,6 @@ export function syncMemoryFromDurable(
   store: DurableStore,
 ): void {
   ledger.entries.clear();
-  ledger.scopeCounts.clear();
   ledger.expiryQueue = [];
   ledger.expiryQueueHead = 0;
   ledger.nextGeneration = store.nextGeneration;
@@ -516,16 +517,13 @@ export function syncMemoryFromDurable(
   }
   for (const [key, entry] of Object.entries(store.entries)) {
     ledger.entries.set(key, { ...entry });
-    ledger.scopeCounts.set(
-      entry.runtimeKey,
-      (ledger.scopeCounts.get(entry.runtimeKey) ?? 0) + 1,
-    );
     ledger.expiryQueue.push({
       key,
       expiresAt: entry.expiresAt,
       generation: entry.generation,
     });
   }
+  rebuildDispositionCapacityCounts(ledger);
   ledger.expiryQueue.sort((left, right) => left.expiresAt - right.expiresAt);
 }
 
@@ -569,14 +567,15 @@ function reserveDurably(
         } else if (heldReservation) {
           return { result: { kind: "full" }, changed: false };
         }
-        const scopeCount = Object.values(store.entries).filter(
-          (entry) => entry.runtimeKey === runtimeKey,
-        ).length;
+        const entries = Object.values(store.entries);
+        const scopeCount = entries
+          .filter((entry) => entry.runtimeKey === runtimeKey)
+          .filter((entry) => !entry.legacyAuthorityQuarantined).length;
         const reservedScopeCount = Object.values(store.reservations).filter(
           (entry) => entry.runtimeKey === runtimeKey,
         ).length;
         if (
-          Object.keys(store.entries).length +
+          countCapacityEntries(entries) +
             Object.keys(store.reservations).length >=
             MAX_ACCEPTED_INPUT_DISPOSITIONS ||
           scopeCount + reservedScopeCount >=
@@ -630,7 +629,7 @@ export function reserveInputDisposition(
     return { kind: "full" };
   }
   if (
-    ledger.entries.size >= MAX_ACCEPTED_INPUT_DISPOSITIONS ||
+    activeDispositionCount(ledger) >= MAX_ACCEPTED_INPUT_DISPOSITIONS ||
     (ledger.scopeCounts.get(runtime.key) ?? 0) >=
       MAX_ACCEPTED_INPUT_DISPOSITIONS_PER_SCOPE
   ) {

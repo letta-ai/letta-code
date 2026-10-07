@@ -13,7 +13,7 @@ import {
   discardPreparedInputTerminal,
   loadCompletedTerminalAuthorities,
   loadPreparedInputTerminals,
-  markPreparedTerminalAuthorityAmbiguous,
+  quarantinePreparedTerminalAuthority,
 } from "./input-terminal-journal";
 import {
   createInterruptedTurnStore,
@@ -34,7 +34,11 @@ import {
   replayPendingTurnFinishedToConnection,
   TurnFinishedCapacityError,
 } from "./turn-finished-replay";
-import type { ConversationRuntime, ListenerRuntime } from "./types";
+import type {
+  ConversationRuntime,
+  InterruptedTerminalAuthority,
+  ListenerRuntime,
+} from "./types";
 
 function discardQueuedItem(
   runtime: ConversationRuntime,
@@ -489,10 +493,6 @@ export function promotePreparedInputTerminals(
       deferred = true;
       continue;
     }
-    if (prepared.legacyAuthorityAmbiguous) {
-      deferred = true;
-      continue;
-    }
     if (
       prepared.owner.recoveryLineageId &&
       prepared.owner.interruptedRevision &&
@@ -605,7 +605,9 @@ export function promotePreparedInputTerminals(
             prepared.scope.agentId,
             prepared.scope.conversationId,
           );
-          let ambiguousCompletedAuthority = false;
+          let ambiguousCompletedAuthority:
+            | InterruptedTerminalAuthority
+            | undefined;
           for (const completed of completedAuthorities) {
             if (
               completed.runtimeKey !== runtimeKey ||
@@ -666,7 +668,7 @@ export function promotePreparedInputTerminals(
                 inferred.size !== 1 ||
                 !inferredEntry
               ) {
-                ambiguousCompletedAuthority = true;
+                ambiguousCompletedAuthority = completed.authority;
                 break;
               }
               [completedIdentity, completedSequence] = inferredEntry;
@@ -677,7 +679,7 @@ export function promotePreparedInputTerminals(
               !Number.isSafeInteger(completedSequence) ||
               completedSequence < 0
             ) {
-              ambiguousCompletedAuthority = true;
+              ambiguousCompletedAuthority = completed.authority;
               break;
             }
             evidence.set(
@@ -691,24 +693,22 @@ export function promotePreparedInputTerminals(
           if (ambiguousCompletedAuthority) {
             try {
               if (
-                !markPreparedTerminalAuthorityAmbiguous(
+                !quarantinePreparedTerminalAuthority(
                   listener,
                   prepared.scope,
-                  prepared.owner.recoveryLineageId,
-                  prepared.owner.interruptedRevision,
+                  ambiguousCompletedAuthority,
                 )
               ) {
                 deferred = true;
-                continue;
               }
             } catch (error) {
+              deferred = true;
               debugWarn(
                 "recovery",
-                "Failed to persist legacy terminal ambiguity; deferring promotion",
+                "Failed to persist legacy terminal quarantine; deferring promotion",
                 error,
               );
             }
-            deferred = true;
             continue;
           }
           const newestSequence = Math.max(...evidence.values());
@@ -887,7 +887,7 @@ export function promotePreparedInputTerminals(
     interruptedStore.removeRetiredRecoverySidecar
   ) {
     try {
-      const remainingJournals = loadPreparedTerminals(listener);
+      const remainingJournals = loadPreparedInputTerminals(listener, true);
       for (const retired of interruptedStore
         .listRecoverySidecars()
         .filter((sidecar) => sidecar.state === "retired")) {

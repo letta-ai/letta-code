@@ -697,7 +697,7 @@ test.each([
   },
 ])(
   "retired authority reconciles journal evidence ($completedJournal, persisted=$persistedWinner, extra=$extraCompletedAuthority)",
-  ({ persistedWinner, completedJournal, extraCompletedAuthority }) => {
+  async ({ persistedWinner, completedJournal, extraCompletedAuthority }) => {
     const directory = mkdtempSync(
       join(tmpdir(), "retired-terminal-authority-"),
     );
@@ -899,6 +899,7 @@ test.each([
         delete completedAuthority.terminalIdentity;
         delete completedAuthority.preparationSequence;
         if (!completed) throw new Error("missing completed entry fixture");
+        completed.expiresAt = Date.now() - 1;
         if (extraCompletedAuthority) {
           const extra = structuredClone(completed);
           if (!extra.completedTerminalAuthority)
@@ -911,6 +912,11 @@ test.each([
         }
         writeFileSync(ledgerPath, JSON.stringify(oldStore), "utf8");
         setDispositionLedger(listener, ledgerPath);
+        let scheduledPromotions = 0;
+        listener.promotePreparedInputTerminals = () => {
+          scheduledPromotions += 1;
+          return 0;
+        };
         expect(
           promotePreparedInputTerminals(
             listener,
@@ -922,9 +928,13 @@ test.each([
         expect(loadCompletedTerminalAuthorities(listener)).toHaveLength(
           extraCompletedAuthority ? 2 : 1,
         );
-        expect(loadPreparedInputTerminals(listener)).toEqual([
-          expect.objectContaining({ legacyAuthorityAmbiguous: true }),
-        ]);
+        expect(loadPreparedInputTerminals(listener)).toHaveLength(0);
+        expect(loadPreparedInputTerminals(listener, true)).toHaveLength(1);
+        expect(
+          [...listener.acceptedInputDispositionLedger.entries.values()].filter(
+            (entry) => entry.legacyAuthorityQuarantined,
+          ),
+        ).toHaveLength(1);
         expect(
           prepareInputTerminal(
             runtime,
@@ -951,24 +961,13 @@ test.each([
           ),
         ).toBe(0);
         expect(loadCompletedTerminalAuthorities(listener)).toHaveLength(0);
-        expect(loadPreparedInputTerminals(listener)).toEqual([
-          expect.objectContaining({ legacyAuthorityAmbiguous: true }),
-        ]);
-        if (extraCompletedAuthority) {
-          const quarantined = loadPreparedInputTerminals(listener)[0];
-          if (!quarantined) throw new Error("missing quarantined journal");
-          expect(
-            completePreparedInputTerminal(
-              runtime,
-              [completedJournal === "winner" ? staleIdentity : identity],
-              quarantined.message.turn_id,
-            ),
-          ).toBe(true);
-          expireDispositionLedgerEntries(ledgerPath);
-          setDispositionLedger(listener, ledgerPath);
-          expect(loadPreparedInputTerminals(listener)).toHaveLength(0);
-          expect(loadCompletedTerminalAuthorities(listener)).toHaveLength(0);
-        }
+        expect(loadPreparedInputTerminals(listener)).toHaveLength(0);
+        expect(loadPreparedInputTerminals(listener, true)).toHaveLength(1);
+        expect(listener.acceptedInputDispositionLedger.quarantinedCount).toBe(
+          1,
+        );
+        await Bun.sleep(60);
+        expect(scheduledPromotions).toBe(0);
       } else {
         expect(
           promotePreparedInputTerminals(
@@ -979,9 +978,7 @@ test.each([
           ),
         ).toBe(1);
       }
-      expect(loadPreparedInputTerminals(listener)).toHaveLength(
-        persistedWinner || extraCompletedAuthority ? 0 : 1,
-      );
+      expect(loadPreparedInputTerminals(listener)).toHaveLength(0);
       expect(
         terminalStore.read("agent-1", "conv-1")?.terminals ?? [],
       ).toHaveLength(persistedWinner ? 1 : 0);

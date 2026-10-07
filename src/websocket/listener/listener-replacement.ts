@@ -80,6 +80,7 @@ function cloneDispositionLedger(
       [...ledger.entries].map(([key, entry]) => [key, structuredClone(entry)]),
     ),
     scopeCounts: new Map(ledger.scopeCounts),
+    quarantinedCount: ledger.quarantinedCount,
     abandonedReservations: new Map(
       [...ledger.abandonedReservations].map(([key, reservation]) => [
         key,

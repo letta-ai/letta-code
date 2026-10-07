@@ -273,8 +273,6 @@ export type DurablePreparedInputTerminal = {
   preparedAt?: number;
   /** Durable monotonic order used to reconcile legacy retired authority. */
   preparationSequence?: number;
-  /** Fail-closed upgrade fence when predecessor authority has no durable order. */
-  legacyAuthorityAmbiguous?: boolean;
   scope: { agentId: string | null; conversationId: string };
   message: {
     type: "turn_finished";
@@ -321,6 +319,8 @@ export type AcceptedInputDispositionEntry = {
   replayCompleted?: true;
   /** Pending promotion into the terminal replay store after an atomic effect commit. */
   preparedTerminal?: DurablePreparedInputTerminal;
+  /** Bounded predecessor migration fence; excluded from promotion and admission capacity. */
+  legacyAuthorityQuarantined?: true;
   /** Interrupted-work revision already superseded by a durable terminal. */
   completedTerminalRevision?: string;
   /** Exact main/sidecar generation superseded by the durable terminal. */
@@ -340,6 +340,8 @@ export type ActiveRecoveryClaim = {
 export type AcceptedInputDispositionLedger = {
   entries: Map<string, AcceptedInputDispositionEntry>;
   scopeCounts: Map<string, number>;
+  /** Bounded predecessor migration fences excluded from admission capacity. */
+  quarantinedCount: number;
   expiryQueue: Array<{ key: string; expiresAt: number; generation: number }>;
   expiryQueueHead: number;
   nextGeneration: number;

@@ -32,6 +32,7 @@ import {
   reserveInputDisposition,
   teleportInputIdentity,
 } from "./input-disposition";
+import { seedLegacyAuthorityQuarantine } from "./input-disposition.test-helpers";
 import { rollbackInputDisposition } from "./input-disposition-rollback";
 import { completeInputReplay } from "./input-terminal-journal";
 import { createRuntime } from "./lifecycle";
@@ -298,6 +299,9 @@ test("per-scope capacity rejects before execution without dropping a tombstone",
 
 test("global capacity rejects excess work without evicting prior scopes", async () => {
   const listener = createRuntime();
+  const first = getOrCreateScopedRuntime(listener, "agent-0", "conversation-0");
+  seedLegacyAuthorityQuarantine(listener, first);
+  expect(listener.acceptedInputDispositionLedger.quarantinedCount).toBe(1);
   const scopeCount =
     MAX_ACCEPTED_INPUT_DISPOSITIONS / MAX_ACCEPTED_INPUT_DISPOSITIONS_PER_SCOPE;
   for (let scope = 0; scope < scopeCount; scope += 1) {
@@ -320,7 +324,6 @@ test("global capacity rejects excess work without evicting prior scopes", async 
       ).toBe(true);
     }
   }
-  const first = getOrCreateScopedRuntime(listener, "agent-0", "conversation-0");
   const excess = getOrCreateScopedRuntime(
     listener,
     "agent-excess",
@@ -355,7 +358,7 @@ test("global capacity rejects excess work without evicting prior scopes", async 
     "started",
   );
   expect(listener.acceptedInputDispositionLedger.entries.size).toBe(
-    MAX_ACCEPTED_INPUT_DISPOSITIONS,
+    MAX_ACCEPTED_INPUT_DISPOSITIONS + 1,
   );
 });
 
