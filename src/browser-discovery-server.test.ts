@@ -15,6 +15,7 @@ import {
 const handles: BrowserDiscoveryServerHandle[] = [];
 const blockers: Server[] = [];
 const tempDirs: string[] = [];
+const HANDOFF_KEY = "h".repeat(43);
 
 afterEach(async () => {
   await Promise.all(handles.splice(0).map((handle) => handle.close()));
@@ -94,7 +95,7 @@ describe("browser discovery server", () => {
       `http://${address.host}:${address.port}${BROWSER_DEVICE_MCP_OAUTH_PATH}`,
       {
         body: JSON.stringify({
-          agentId: "agent-123",
+          handoffKey: HANDOFF_KEY,
           service: "datadog",
           serverUrl: "https://mcp.datadoghq.com/v1/mcp",
         }),
@@ -114,7 +115,7 @@ describe("browser discovery server", () => {
     );
     expect(requests).toEqual([
       {
-        agentId: "agent-123",
+        handoffKey: HANDOFF_KEY,
         service: "datadog",
         serverUrl: "https://mcp.datadoghq.com/v1/mcp",
       },
@@ -126,7 +127,7 @@ describe("browser discovery server", () => {
     const url = `http://${address.host}:${address.port}${BROWSER_DEVICE_MCP_OAUTH_PATH}`;
     const untrusted = await fetch(url, {
       body: JSON.stringify({
-        agentId: "agent-123",
+        handoffKey: HANDOFF_KEY,
         service: "datadog",
         serverUrl: "https://mcp.datadoghq.com/v1/mcp",
       }),
@@ -141,7 +142,7 @@ describe("browser discovery server", () => {
     expect(untrusted.headers.get("access-control-allow-origin")).toBeNull();
 
     const malformed = await fetch(url, {
-      body: JSON.stringify({ agentId: "agent-123" }),
+      body: JSON.stringify({ handoffKey: HANDOFF_KEY }),
       headers: {
         "Content-Type": "application/json",
         Origin: "https://chat.letta.com",
@@ -156,7 +157,7 @@ describe("browser discovery server", () => {
   test("requires an explicit opt-in for local development origins", async () => {
     const request = {
       body: JSON.stringify({
-        agentId: "agent-123",
+        handoffKey: HANDOFF_KEY,
         service: "datadog",
         serverUrl: "https://mcp.datadoghq.com/v1/mcp",
       }),
@@ -198,9 +199,9 @@ describe("browser discovery server", () => {
     const url = `http://${address.host}:${address.port}${BROWSER_DEVICE_MCP_OAUTH_PATH}`;
     const request = {
       body: JSON.stringify({
-        agentId: "agent-123",
+        handoffKey: HANDOFF_KEY,
         service: "datadog",
-        serverUrl: "https://mcp.datadoghq.com/v1/mcp",
+        serverUrl: "https://mcp.datadoghq.com/v1/mcp/",
       }),
       headers: {
         "Content-Type": "application/json",
@@ -212,7 +213,14 @@ describe("browser discovery server", () => {
 
     const first = fetch(url, request);
     await operationStarted;
-    const duplicate = await fetch(url, request);
+    const duplicate = await fetch(url, {
+      ...request,
+      body: JSON.stringify({
+        handoffKey: "d".repeat(43),
+        service: "datadog",
+        serverUrl: "https://mcp.datadoghq.com/v1/mcp",
+      }),
+    });
     expect(duplicate.status).toBe(409);
     expect(await duplicate.json()).toEqual({ status: "already_connecting" });
     release?.();
@@ -344,9 +352,23 @@ setTimeout(() => undefined, 500);
 
   test("early close does not leave an unhandled ready rejection in Node", async () => {
     const fixture = await buildNodeFixture(`
-const handle = startBrowserDiscoveryServer({ port: 0 });
+import { createServer } from "node:http";
+const reservation = createServer();
+await new Promise((resolve, reject) => {
+  reservation.once("error", reject);
+  reservation.listen(0, "127.0.0.1", resolve);
+});
+const port = reservation.address().port;
+await new Promise((resolve) => reservation.close(resolve));
+const handle = startBrowserDiscoveryServer({ port });
 await handle.close();
-console.log("closed");
+const replacement = createServer();
+await new Promise((resolve, reject) => {
+  replacement.once("error", reject);
+  replacement.listen(port, "127.0.0.1", resolve);
+});
+await new Promise((resolve) => replacement.close(resolve));
+console.log("closed-and-rebound");
 `);
     const result = spawnSync("node", [fixture], {
       encoding: "utf8",
@@ -354,7 +376,7 @@ console.log("closed");
     });
 
     expect(result.status).toBe(0);
-    expect(result.stdout.trim()).toBe("closed");
+    expect(result.stdout.trim()).toBe("closed-and-rebound");
     expect(result.stderr).toBe("");
   });
 });

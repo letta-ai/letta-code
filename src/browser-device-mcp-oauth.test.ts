@@ -7,10 +7,11 @@ import {
   type BrowserDeviceMcpOAuthRequest,
   BrowserDeviceMcpOAuthRequestError,
   connectBrowserDeviceMcpOAuth,
+  submitBrowserDeviceMcpOAuthHandoff,
 } from "./browser-device-mcp-oauth";
 
 const REQUEST: BrowserDeviceMcpOAuthRequest = {
-  agentId: "agent-123",
+  handoffKey: "h".repeat(43),
   service: "datadog",
   serverUrl: "https://mcp.datadoghq.com/v1/mcp",
 };
@@ -48,7 +49,7 @@ describe("browser device MCP OAuth", () => {
       },
     });
 
-    expect(authorization?.agentId).toBe("agent-123");
+    expect(authorization?.agentId).toMatch(/^browser-device-[a-f0-9]{32}$/);
     expect(authorization?.serverName).toBe("Datadog");
     expect(authorization?.serverUrl).toBe("https://mcp.datadoghq.com/v1/mcp");
     expect(authorization?.storageNamespace).toMatch(
@@ -85,7 +86,7 @@ describe("browser device MCP OAuth", () => {
     ).toBeNull();
   });
 
-  test("rejects unsupported agents, services, server URLs, and authorization origins", async () => {
+  test("rejects invalid handoffs, services, server URLs, and authorization origins", async () => {
     const dependencies = {
       authorize: async (options: AuthorizeMcpServerWithStorageOptions) => {
         await options.openBrowser?.("https://attacker.invalid/authorize");
@@ -97,7 +98,7 @@ describe("browser device MCP OAuth", () => {
 
     await expect(
       connectBrowserDeviceMcpOAuth(
-        { ...REQUEST, agentId: "../../agent-123" },
+        { ...REQUEST, handoffKey: "too-short" },
         dependencies,
       ),
     ).rejects.toBeInstanceOf(BrowserDeviceMcpOAuthRequestError);
@@ -170,7 +171,7 @@ describe("browser device MCP OAuth", () => {
     await expect(
       connectBrowserDeviceMcpOAuth(
         {
-          agentId: "agent-123",
+          handoffKey: "c".repeat(43),
           service: "comfy",
           serverUrl: "https://cloud.comfy.org/mcp",
         },
@@ -199,5 +200,87 @@ describe("browser device MCP OAuth", () => {
       "https://mcp.datadoghq.com/v1/mcp",
       "https://mcp.datadoghq.com/v1/mcp",
     ]);
+  });
+
+  test("pairs each Datadog MCP region with only its matching app origin", async () => {
+    const regions = [
+      ["https://mcp.datadoghq.com/v1/mcp", "https://app.datadoghq.com"],
+      ["https://mcp.us3.datadoghq.com/v1/mcp", "https://us3.datadoghq.com"],
+      ["https://mcp.us5.datadoghq.com/v1/mcp", "https://us5.datadoghq.com"],
+      ["https://mcp.datadoghq.eu/v1/mcp", "https://app.datadoghq.eu"],
+      ["https://mcp.ap1.datadoghq.com/v1/mcp", "https://ap1.datadoghq.com"],
+      ["https://mcp.ap2.datadoghq.com/v1/mcp", "https://ap2.datadoghq.com"],
+      ["https://mcp.uk1.datadoghq.com/v1/mcp", "https://uk1.datadoghq.com"],
+    ] as const;
+
+    for (const [serverUrl, appOrigin] of regions) {
+      await expect(
+        connectBrowserDeviceMcpOAuth(
+          { ...REQUEST, serverUrl },
+          {
+            authorize: async (options) => {
+              await options.openBrowser?.(`${appOrigin}/oauth2/authorize`);
+              return CREDENTIALS;
+            },
+            importCredentials: async () => undefined,
+            openBrowser: async () => undefined,
+          },
+        ),
+      ).resolves.toBeUndefined();
+    }
+
+    await expect(
+      connectBrowserDeviceMcpOAuth(
+        { ...REQUEST, serverUrl: "https://mcp.us3.datadoghq.com/v1/mcp" },
+        {
+          authorize: async (options) => {
+            await options.openBrowser?.(
+              "https://app.datadoghq.com/oauth2/authorize",
+            );
+            return CREDENTIALS;
+          },
+          importCredentials: async () => undefined,
+          openBrowser: async () => undefined,
+        },
+      ),
+    ).rejects.toThrow("OAuth authorization origin is not allowed");
+  });
+
+  test("submits with the handoff key and no ambient authorization", async () => {
+    const originalFetch = globalThis.fetch;
+    let submitted: Request | undefined;
+    const fetchStub = async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      submitted =
+        typeof input === "string"
+          ? new Request(input, init)
+          : input instanceof URL
+            ? new Request(input.href, init)
+            : new Request(input, init);
+      return new Response(
+        JSON.stringify({ authorized: true, connected: true }),
+        { status: 200 },
+      );
+    };
+    globalThis.fetch = Object.assign(fetchStub, {
+      preconnect: originalFetch.preconnect,
+    });
+
+    try {
+      await submitBrowserDeviceMcpOAuthHandoff(REQUEST, CREDENTIALS);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(submitted?.url).toBe(
+      "https://api.letta.com/v1/tools/mcp/browser-device-oauth/handoffs",
+    );
+    expect(submitted?.headers.get("authorization")).toBeNull();
+    expect(await submitted?.json()).toEqual({
+      ...CREDENTIALS,
+      handoff_key: REQUEST.handoffKey,
+    });
   });
 });

@@ -1300,6 +1300,7 @@ async function main(): Promise<void> {
     return;
   }
 
+  void startBrowserDiscoveryServer().ready.catch(() => undefined);
   markMilestone("TUI_MODE_START");
 
   // Interactive: lazy-load React/Ink + App
@@ -2573,5 +2574,4 @@ async function main(): Promise<void> {
   );
 }
 assertSupportedBunRuntime();
-void startBrowserDiscoveryServer().ready.catch(() => undefined);
 main();

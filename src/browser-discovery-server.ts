@@ -7,6 +7,7 @@ import {
 import type { AddressInfo } from "node:net";
 import {
   type BrowserDeviceMcpOAuthRequest,
+  canonicalizeBrowserDeviceMcpOAuthRequest,
   connectBrowserDeviceMcpOAuth,
 } from "@/browser-device-mcp-oauth";
 
@@ -295,17 +296,21 @@ async function handleMcpOAuthConnectRequest(
     return;
   }
   try {
-    const parsed = parseMcpOAuthRequest(await readRequestBody(request));
-    const connectionKey = `${parsed.agentId}\0${parsed.service}\0${parsed.serverUrl}`;
+    const parsed = canonicalizeBrowserDeviceMcpOAuthRequest(
+      parseMcpOAuthRequest(await readRequestBody(request)),
+    );
+    const connectionKey = `${parsed.service}\0${parsed.serverUrl}`;
     if (activeConnections.has(connectionKey)) {
       respondJson(response, 409, { status: "already_connecting" }, origin);
       return;
     }
     activeConnections.add(connectionKey);
+    request.socket.ref();
     try {
       await connectMcpOAuth(parsed);
       respondJson(response, 200, { status: "connected" }, origin);
     } finally {
+      request.socket.unref();
       activeConnections.delete(connectionKey);
     }
   } catch (error) {
@@ -398,14 +403,14 @@ function parseMcpOAuthRequest(value: string): BrowserDeviceMcpOAuthRequest {
   const record = parsed as Record<string, unknown>;
   if (
     Object.keys(record).length !== 3 ||
-    typeof record.agentId !== "string" ||
+    typeof record.handoffKey !== "string" ||
     typeof record.service !== "string" ||
     typeof record.serverUrl !== "string"
   ) {
     throw new BrowserRequestError(400);
   }
   return {
-    agentId: record.agentId,
+    handoffKey: record.handoffKey,
     service: record.service,
     serverUrl: record.serverUrl,
   };
@@ -450,7 +455,25 @@ function formatDiscoveryAddress(
 
 async function closeServer(server: Server): Promise<void> {
   server.closeAllConnections();
-  if (!server.listening) return;
+  if (!server.listening) {
+    await new Promise<void>((resolve) => {
+      const settle = (): void => {
+        server.off("listening", onListening);
+        server.off("close", settle);
+        server.off("error", settle);
+        resolve();
+      };
+      const onListening = (): void => {
+        server.off("close", settle);
+        server.off("error", settle);
+        server.close(() => settle());
+      };
+      server.once("listening", onListening);
+      server.once("close", settle);
+      server.once("error", settle);
+    });
+    return;
+  }
   await new Promise<void>((resolve) => {
     server.close(() => resolve());
   });
