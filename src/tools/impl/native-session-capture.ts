@@ -30,6 +30,7 @@ interface CaptureSnapshot {
   end: number;
   fileIdentity: string;
   bytes: Buffer;
+  requestOptions: { baseUrl?: string; apiKey?: string };
 }
 
 const states = new Map<string, CaptureState>();
@@ -148,8 +149,10 @@ function safeReadDirectories(path: string): string[] {
     return readdirSync(path, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
       .map((entry) => entry.name);
-  } catch {
-    return [];
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return [];
+    throw error;
   }
 }
 
@@ -158,8 +161,10 @@ function safeReadFiles(path: string): string[] {
     return readdirSync(path, { withFileTypes: true })
       .filter((entry) => entry.isFile())
       .map((entry) => entry.name);
-  } catch {
-    return [];
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return [];
+    throw error;
   }
 }
 
@@ -217,7 +222,6 @@ async function drain(
   snapshot: CaptureSnapshot,
   source: NativeSessionSource,
   sessionId: string,
-  requestOptions: { baseUrl?: string; apiKey?: string },
 ): Promise<void> {
   if (state.fileIdentity && state.fileIdentity !== snapshot.fileIdentity) {
     throw new Error("Native session capture changed file identity");
@@ -251,7 +255,7 @@ async function drain(
       {
         signal: AbortSignal.timeout(5_000),
         actingUserId: snapshot.scope.actingUserId,
-        ...requestOptions,
+        ...snapshot.requestOptions,
       },
     );
     if (
@@ -269,12 +273,11 @@ async function drainSnapshots(
   state: CaptureState,
   source: NativeSessionSource,
   sessionId: string,
-  requestOptions: { baseUrl?: string; apiKey?: string },
 ): Promise<void> {
   while (state.snapshots.length > 0) {
     const snapshot = state.snapshots[0];
     if (!snapshot) return;
-    await drain(state, snapshot, source, sessionId, requestOptions);
+    await drain(state, snapshot, source, sessionId);
     if (state.snapshots[0] === snapshot) state.snapshots.shift();
   }
 }
@@ -309,14 +312,25 @@ export async function captureNativeSession(
   } catch (error) {
     return Promise.reject(error);
   }
-  if (!boundary) return Promise.resolve();
+  if (!boundary) {
+    return Promise.reject(
+      new Error("Native session file disappeared before EOF capture"),
+    );
+  }
   existing.path = path;
-  const snapshot: CaptureSnapshot = { scope, ...boundary };
+  const snapshot: CaptureSnapshot = {
+    scope: { ...scope },
+    requestOptions: {
+      baseUrl: requestOptions.baseUrl,
+      apiKey: requestOptions.apiKey,
+    },
+    ...boundary,
+  };
   existing.snapshots.push(snapshot);
   const prior = existing.pending;
   const pending = (
     prior ? prior.catch(() => undefined) : Promise.resolve()
-  ).then(() => drainSnapshots(existing, source, sessionId, requestOptions));
+  ).then(() => drainSnapshots(existing, source, sessionId));
   let tracked: Promise<void>;
   tracked = pending.finally(() => {
     if (existing.pending === tracked) existing.pending = undefined;
@@ -334,7 +348,7 @@ export function rememberNativeSession(
   const id = key(source, sessionId);
   if (!states.has(id) && UUID.test(sessionId) && isCloudServerUrl(cloudUrl)) {
     states.set(id, {
-      scope,
+      scope: { ...scope },
       path: "",
       offset: 0,
       chunkIndex: 0,

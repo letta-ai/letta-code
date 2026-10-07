@@ -58,7 +58,7 @@ async function endpoint(
     body: Record<string, unknown>;
     actingUser: string | undefined;
   }>,
-  fail = false,
+  fail: boolean | ((requestNumber: number) => boolean) = false,
   beforeResponse?: (requestNumber: number) => Promise<void>,
 ) {
   server = createServer(async (request, response) => {
@@ -76,7 +76,7 @@ async function endpoint(
         | undefined,
     });
     await beforeResponse?.(calls.length);
-    if (fail) {
+    if (typeof fail === "function" ? fail(calls.length) : fail) {
       response.writeHead(503).end('{"error":"unavailable"}');
       return;
     }
@@ -203,6 +203,63 @@ describe("native CLI JSONL capture", () => {
         ),
       ),
     ).toEqual(native);
+  });
+
+  test("queued uploads own an immutable copy of caller scope", async () => {
+    const { env } = await fixture("codex", Buffer.from("owned\n"));
+    const calls: Array<{
+      url: string;
+      body: Record<string, unknown>;
+      actingUser: string | undefined;
+    }> = [];
+    const url = await endpoint(calls);
+    const mutableScope = { ...scope };
+    rememberNativeSession("codex", ID, mutableScope, "https://api.letta.com");
+    const mutableOptions = {
+      baseUrl: url,
+      apiKey: "test",
+      cloudUrl: "https://api.letta.com",
+    };
+    const capture = captureNativeSession(
+      "codex",
+      ID,
+      mutableScope,
+      env,
+      mutableOptions,
+    );
+    mutableScope.agentId = "agent-mutated";
+    mutableScope.conversationId = "conv-mutated";
+    mutableScope.actingUserId = "user-mutated";
+    mutableOptions.baseUrl = "http://127.0.0.1:1";
+    mutableOptions.apiKey = "mutated";
+    await capture;
+    expect(calls[0]?.body.agent_id).toBe(scope.agentId);
+    expect(calls[0]?.url).toContain(scope.conversationId);
+    expect(calls[0]?.actingUser).toBe(scope.actingUserId);
+  });
+
+  test("a known native file disappearing rejects capture", async () => {
+    const { path, env } = await fixture("codex", Buffer.from("first\n"));
+    const calls: Array<{
+      url: string;
+      body: Record<string, unknown>;
+      actingUser: string | undefined;
+    }> = [];
+    const url = await endpoint(calls);
+    rememberNativeSession("codex", ID, scope, "https://api.letta.com");
+    await captureNativeSession("codex", ID, scope, env, {
+      baseUrl: url,
+      apiKey: "test",
+      cloudUrl: "https://api.letta.com",
+    });
+    await rm(path);
+    await expect(
+      captureNativeSession("codex", ID, scope, env, {
+        baseUrl: url,
+        apiKey: "test",
+        cloudUrl: "https://api.letta.com",
+      }),
+    ).rejects.toThrow("disappeared before EOF capture");
   });
 
   test.each(["claude_code", "codex"] as const)(
@@ -359,7 +416,7 @@ describe("native CLI JSONL capture", () => {
       body: Record<string, unknown>;
       actingUser: string | undefined;
     }> = [];
-    let url = await endpoint(calls, true);
+    const url = await endpoint(calls, (requestNumber) => requestNumber === 1);
     rememberNativeSession("codex", ID, scope, "https://api.letta.com");
     await captureNativeSession(
       "codex",
@@ -379,9 +436,6 @@ describe("native CLI JSONL capture", () => {
       }),
     ).rejects.toThrow("503");
     expect(await readFile(path)).toEqual(native);
-    await new Promise<void>((resolve) => server?.close(() => resolve()));
-    server = undefined;
-    url = await endpoint(calls);
     const later = Buffer.from('{"later":"actor"}\n');
     await appendFile(path, later);
     const laterScope = { ...scope, actingUserId: "user-later" };
