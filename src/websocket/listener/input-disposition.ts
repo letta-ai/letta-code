@@ -33,6 +33,7 @@ import {
   buildLegacyAuthorityReferenceIndex,
   shouldRetainDisposition,
 } from "./input-disposition-retention";
+import { legacyAuthorityQuarantineEntryIsValid } from "./input-disposition-validation";
 import { getConversationRuntimeKey } from "./runtime";
 import type {
   AcceptedInputDisposition,
@@ -140,7 +141,7 @@ export function deleteCurrentEntry(
   return true;
 }
 
-function expireAcceptedInputDispositions(
+export function expireAcceptedInputDispositions(
   ledger: AcceptedInputDispositionLedger,
   now: number,
 ): void {
@@ -152,6 +153,12 @@ function expireAcceptedInputDispositions(
     const entry = ledger.entries.get(expiry.key);
     if (
       entry?.generation === expiry.generation &&
+      entry.expiresAt !== expiry.expiresAt
+    ) {
+      continue;
+    }
+    if (
+      entry?.generation === expiry.generation &&
       shouldRetainDisposition(entry, () => {
         references ??= buildLegacyAuthorityReferenceIndex(
           ledger.entries.values(),
@@ -159,9 +166,8 @@ function expireAcceptedInputDispositions(
         return references;
       })
     ) {
-      // Once accepted, replay responsibility lasts until a terminal transition
-      // retires the payload. The sender retry horizon only bounds tombstones;
-      // it must not erase in-flight work during a long turn or offline restart.
+      // Accepted replay lasts until terminal; the sender horizon bounds only
+      // tombstones and must not erase in-flight work during an offline restart.
       entry.expiresAt = now + ACCEPTED_INPUT_DISPOSITION_TTL_MS;
       ledger.expiryQueue.push({
         key: expiry.key,
@@ -245,8 +251,7 @@ function validateDurableStore(value: unknown): DurableStore {
     ) {
       throw new Error("Invalid accepted-input disposition entry");
     }
-    // v2 lacked namespaces and wrote payload-free started tombstones. Upgrade in
-    // memory; v4 writes must carry replay data or a completion marker.
+    // Upgrade v2 namespace-free tombstones; v4 requires replay or completion.
     if (value.version === 2) {
       if (
         rawEntry.queuedInput !== undefined &&
@@ -354,11 +359,7 @@ function validateDurableStore(value: unknown): DurableStore {
         throw new Error("Prepared input terminal is invalid");
       }
     }
-    if (
-      rawEntry.legacyAuthorityQuarantined !== undefined &&
-      (rawEntry.legacyAuthorityQuarantined !== true ||
-        rawEntry.preparedTerminal === undefined)
-    ) {
+    if (!legacyAuthorityQuarantineEntryIsValid(rawEntry, runtimeKey)) {
       throw new Error("Legacy terminal quarantine is invalid");
     }
     if (
@@ -570,7 +571,7 @@ function reserveDurably(
         const entries = Object.values(store.entries);
         const scopeCount = entries
           .filter((entry) => entry.runtimeKey === runtimeKey)
-          .filter((entry) => !entry.legacyAuthorityQuarantined).length;
+          .filter((entry) => !entry.legacyAuthorityQuarantine).length;
         const reservedScopeCount = Object.values(store.reservations).filter(
           (entry) => entry.runtimeKey === runtimeKey,
         ).length;

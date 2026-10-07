@@ -221,6 +221,22 @@ export function createInterruptedTurnStore(
     },
     readRetiredRecoveryAuthority,
     listRecoverySidecars: listSidecars,
+    compactRetiredRecoverySidecar(sidecar: RecoveryLineageSidecar) {
+      let compacted = false;
+      removeRetiredSidecar(sidecar, () => {
+        if (
+          sidecar.runId !== null ||
+          sidecar.results.length !== 0 ||
+          sidecar.requestOtid !== "" ||
+          sidecar.workingDirectory !== ""
+        ) {
+          compactRetiredSidecar(sidecar);
+        }
+        compacted = true;
+        return false;
+      });
+      return compacted;
+    },
     removeRetiredRecoverySidecar(sidecar: RecoveryLineageSidecar) {
       return removeRetiredSidecar(sidecar, () => {
         const destination = path(sidecar.agentId, sidecar.conversationId);

@@ -57,3 +57,15 @@ export function compactDispositionExpiryQueue(
     });
   ledger.expiryQueueHead = 0;
 }
+
+export function rebuildDispositionExpiryQueue(
+  ledger: AcceptedInputDispositionLedger,
+): void {
+  ledger.expiryQueue = [...ledger.entries].map(([key, entry]) => ({
+    key,
+    expiresAt: entry.expiresAt,
+    generation: entry.generation,
+  }));
+  ledger.expiryQueue.sort((left, right) => left.expiresAt - right.expiresAt);
+  ledger.expiryQueueHead = 0;
+}

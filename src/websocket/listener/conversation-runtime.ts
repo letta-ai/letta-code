@@ -12,6 +12,7 @@ import {
   clearPreparedInputTerminal,
   discardPreparedInputTerminal,
   loadCompletedTerminalAuthorities,
+  loadLegacyAuthorityQuarantines,
   loadPreparedInputTerminals,
   quarantinePreparedTerminalAuthority,
 } from "./input-terminal-journal";
@@ -19,6 +20,7 @@ import {
   createInterruptedTurnStore,
   type InterruptedTurnRecord,
 } from "./interrupted-turn-record";
+import { findRetiredSidecarQuarantine } from "./legacy-authority-quarantine";
 import { getQueueItemScope, getQueueItemsScope } from "./queue";
 import { scheduleQueueEmit } from "./queue-update-outbound";
 import {
@@ -115,6 +117,15 @@ function resetPreparedTerminalPromotionRetry(listener: ListenerRuntime): void {
   preparedTerminalPromotionRetries.delete(listener);
 }
 
+export function clearPreparedTerminalPromotionTimers(
+  listener: ListenerRuntime,
+): void {
+  resetPreparedTerminalPromotionRetry(listener);
+  const cleanup = retiredAuthorityCleanupTimers.get(listener);
+  if (cleanup) clearTimeout(cleanup.timer);
+  retiredAuthorityCleanupTimers.delete(listener);
+}
+
 function durableQueueRestoreIsActive(listener: ListenerRuntime): boolean {
   return listener === getActiveRuntime() && !listener.intentionallyClosed;
 }
@@ -160,9 +171,8 @@ export function scheduleDurableQueueRestore(
           try {
             listener.scheduleRestoredQueuePumps?.();
           } catch (error) {
-            // Durable entries are already enqueued. A wake failure must not be
-            // treated as a restore failure whose retry can return zero and
-            // strand the queue again.
+            // A wake failure cannot roll back already-enqueued durable work or
+            // a zero-result retry could strand it.
             debugWarn(
               "queue",
               "Failed to wake queue pumps after durable refill",
@@ -178,10 +188,8 @@ export function scheduleDurableQueueRestore(
           clearDurableQueueRestoreRetry(listener);
           return;
         }
-        // Accepted durable work must not depend on a future capacity callback.
-        // Keep one coalesced wake alive for the lifetime of this runtime, with a
-        // capped delay and exponent so a prolonged outage neither hot-loops nor
-        // grows timers/state without bound.
+        // Keep one capped, coalesced wake alive so accepted durable work never
+        // depends on a future capacity callback or grows timers during outage.
         const delay = Math.min(
           DURABLE_QUEUE_RESTORE_MAX_RETRY_DELAY_MS,
           DURABLE_QUEUE_RESTORE_RETRY_DELAY_MS *
@@ -362,9 +370,8 @@ export function restoreDurableQueuedInputs(
         : [],
     ),
   );
-  // Dequeue marks an input started before the turn has written its first
-  // interrupted record. Keep that narrow in-process handoff from looking like an
-  // orphaned started payload during the capacity-release refill microtask.
+  // Dequeue precedes the first interrupted record; do not misclassify that
+  // narrow handoff as an orphan during the capacity-refill microtask.
   const volatileStartedIdentityKeys = new Set(
     [...listener.conversationRuntimes.values()].flatMap((runtime) =>
       [...runtime.dequeuedInputIdentitiesByBatchId.values()].flatMap(
@@ -461,7 +468,9 @@ export function promotePreparedInputTerminals(
     Partial<
       Pick<
         ReturnType<typeof createInterruptedTurnStore>,
-        "listRecoverySidecars" | "removeRetiredRecoverySidecar"
+        | "compactRetiredRecoverySidecar"
+        | "listRecoverySidecars"
+        | "removeRetiredRecoverySidecar"
       >
     > = createInterruptedTurnStore(),
   discardPreparedTerminal = discardPreparedInputTerminal,
@@ -882,12 +891,19 @@ export function promotePreparedInputTerminals(
       }
     }
   }
+  let quarantines: ReturnType<typeof loadLegacyAuthorityQuarantines> = [];
+  try {
+    quarantines = loadLegacyAuthorityQuarantines(listener);
+  } catch (error) {
+    deferred = true;
+    debugWarn("recovery", "Failed to load legacy authority quarantines", error);
+  }
   if (
     interruptedStore.listRecoverySidecars &&
     interruptedStore.removeRetiredRecoverySidecar
   ) {
     try {
-      const remainingJournals = loadPreparedInputTerminals(listener, true);
+      const remainingJournals = loadPreparedTerminals(listener);
       for (const retired of interruptedStore
         .listRecoverySidecars()
         .filter((sidecar) => sidecar.state === "retired")) {
@@ -901,6 +917,21 @@ export function promotePreparedInputTerminals(
             candidate.owner.interruptedRevision === interruptedRevision,
         );
         if (hasJournalReference) continue;
+        const quarantineReference = findRetiredSidecarQuarantine(
+          quarantines,
+          retired,
+          interruptedRevision,
+        );
+        if (quarantineReference) {
+          scheduleRetiredAuthorityCleanup(
+            listener,
+            quarantineReference.expiresAt,
+          );
+          if (!interruptedStore.compactRetiredRecoverySidecar?.(retired)) {
+            deferred = true;
+          }
+          continue;
+        }
         const retiredRuntimeKey = getConversationRuntimeKey(
           retired.agentId,
           retired.conversationId,
@@ -928,7 +959,10 @@ export function promotePreparedInputTerminals(
             ),
         );
         if (hasTerminalReference) continue;
-        if (!interruptedStore.removeRetiredRecoverySidecar(retired)) {
+        if (
+          !interruptedStore.removeRetiredRecoverySidecar(retired) &&
+          !interruptedStore.compactRetiredRecoverySidecar?.(retired)
+        ) {
           deferred = true;
         }
       }
@@ -940,6 +974,9 @@ export function promotePreparedInputTerminals(
         error,
       );
     }
+  }
+  for (const quarantine of quarantines) {
+    scheduleRetiredAuthorityCleanup(listener, quarantine.expiresAt);
   }
   if (deferred) schedulePreparedTerminalPromotion(listener);
   else resetPreparedTerminalPromotionRetry(listener);

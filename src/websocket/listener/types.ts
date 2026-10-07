@@ -319,8 +319,13 @@ export type AcceptedInputDispositionEntry = {
   replayCompleted?: true;
   /** Pending promotion into the terminal replay store after an atomic effect commit. */
   preparedTerminal?: DurablePreparedInputTerminal;
-  /** Bounded predecessor migration fence; excluded from promotion and admission capacity. */
-  legacyAuthorityQuarantined?: true;
+  /** Compact predecessor migration fence; bounded to the terminal replay horizon. */
+  legacyAuthorityQuarantine?: {
+    scope: { agentId: string | null; conversationId: string };
+    recoveryLineageId: string;
+    interruptedRevision: string;
+    expiresAt: number;
+  };
   /** Interrupted-work revision already superseded by a durable terminal. */
   completedTerminalRevision?: string;
   /** Exact main/sidecar generation superseded by the durable terminal. */

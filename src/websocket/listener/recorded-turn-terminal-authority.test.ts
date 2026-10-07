@@ -37,6 +37,7 @@ import {
   prepareRecordedInputTerminal,
 } from "./recorded-turn-terminal";
 import {
+  downgradeCompletedAuthority,
   expireDispositionLedgerEntries,
   setDispositionLedger,
 } from "./recorded-turn-terminal-authority.test-helpers";
@@ -697,7 +698,7 @@ test.each([
   },
 ])(
   "retired authority reconciles journal evidence ($completedJournal, persisted=$persistedWinner, extra=$extraCompletedAuthority)",
-  async ({ persistedWinner, completedJournal, extraCompletedAuthority }) => {
+  ({ persistedWinner, completedJournal, extraCompletedAuthority }) => {
     const directory = mkdtempSync(
       join(tmpdir(), "retired-terminal-authority-"),
     );
@@ -893,13 +894,8 @@ test.each([
             entry.completedTerminalAuthority?.authorityRevision ===
             completedCandidate.owner.interruptedAuthorityRevision,
         );
-        const completedAuthority = completed?.completedTerminalAuthority;
-        if (!completedAuthority)
-          throw new Error("missing completed authority fixture");
-        delete completedAuthority.terminalIdentity;
-        delete completedAuthority.preparationSequence;
         if (!completed) throw new Error("missing completed entry fixture");
-        completed.expiresAt = Date.now() - 1;
+        downgradeCompletedAuthority(completed);
         if (extraCompletedAuthority) {
           const extra = structuredClone(completed);
           if (!extra.completedTerminalAuthority)
@@ -912,11 +908,6 @@ test.each([
         }
         writeFileSync(ledgerPath, JSON.stringify(oldStore), "utf8");
         setDispositionLedger(listener, ledgerPath);
-        let scheduledPromotions = 0;
-        listener.promotePreparedInputTerminals = () => {
-          scheduledPromotions += 1;
-          return 0;
-        };
         expect(
           promotePreparedInputTerminals(
             listener,
@@ -929,12 +920,11 @@ test.each([
           extraCompletedAuthority ? 2 : 1,
         );
         expect(loadPreparedInputTerminals(listener)).toHaveLength(0);
-        expect(loadPreparedInputTerminals(listener, true)).toHaveLength(1);
-        expect(
-          [...listener.acceptedInputDispositionLedger.entries.values()].filter(
-            (entry) => entry.legacyAuthorityQuarantined,
-          ),
-        ).toHaveLength(1);
+        const quarantinedEntry = [
+          ...listener.acceptedInputDispositionLedger.entries.values(),
+        ].find((entry) => entry.legacyAuthorityQuarantine);
+        expect(quarantinedEntry?.preparedTerminal).toBeUndefined();
+        expect(JSON.stringify(quarantinedEntry).length).toBeLessThan(512);
         expect(
           prepareInputTerminal(
             runtime,
@@ -962,12 +952,30 @@ test.each([
         ).toBe(0);
         expect(loadCompletedTerminalAuthorities(listener)).toHaveLength(0);
         expect(loadPreparedInputTerminals(listener)).toHaveLength(0);
-        expect(loadPreparedInputTerminals(listener, true)).toHaveLength(1);
         expect(listener.acceptedInputDispositionLedger.quarantinedCount).toBe(
           1,
         );
-        await Bun.sleep(60);
-        expect(scheduledPromotions).toBe(0);
+        expireDispositionLedgerEntries(ledgerPath);
+        setDispositionLedger(listener, ledgerPath);
+        expect(
+          promotePreparedInputTerminals(
+            listener,
+            terminalStore,
+            undefined,
+            interruptedStore,
+          ),
+        ).toBe(0);
+        expect(listener.acceptedInputDispositionLedger.quarantinedCount).toBe(
+          0,
+        );
+        expect(interruptedStore.listRecoverySidecars?.() ?? []).toEqual([
+          expect.objectContaining({
+            runId: null,
+            results: [],
+            requestOtid: "",
+            workingDirectory: "",
+          }),
+        ]);
       } else {
         expect(
           promotePreparedInputTerminals(

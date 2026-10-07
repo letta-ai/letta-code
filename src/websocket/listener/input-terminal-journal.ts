@@ -1,10 +1,15 @@
 import {
   dispositionKey,
   durableTransaction,
+  expireAcceptedInputDispositions,
   getLedger,
   syncMemoryFromDurable,
 } from "./input-disposition";
-import { rebuildDispositionCapacityCounts } from "./input-disposition-capacity";
+import {
+  rebuildDispositionCapacityCounts,
+  rebuildDispositionExpiryQueue,
+} from "./input-disposition-capacity";
+import { TURN_FINISHED_REPLAY_TTL_MS } from "./turn-finished-replay";
 import type {
   AcceptedInputDispositionEntry,
   ConversationRuntime,
@@ -32,14 +37,13 @@ function hasLegacyAuthorityQuarantine(
   const interruptedRevision = terminal.owner.interruptedRevision;
   if (!recoveryLineageId || !interruptedRevision) return false;
   for (const entry of entries) {
-    const quarantined = entry.legacyAuthorityQuarantined
-      ? entry.preparedTerminal
-      : undefined;
+    const quarantined = entry.legacyAuthorityQuarantine;
     if (
       quarantined?.scope.agentId === terminal.scope.agentId &&
       quarantined.scope.conversationId === terminal.scope.conversationId &&
-      quarantined.owner.recoveryLineageId === recoveryLineageId &&
-      quarantined.owner.interruptedRevision === interruptedRevision
+      quarantined.recoveryLineageId === recoveryLineageId &&
+      quarantined.interruptedRevision === interruptedRevision &&
+      quarantined.expiresAt > Date.now()
     ) {
       return true;
     }
@@ -98,7 +102,7 @@ export function prepareInputTerminal(
             entry &&
             (!entry.disposition ||
               entry.disposition === "queued" ||
-              entry.legacyAuthorityQuarantined)
+              entry.legacyAuthorityQuarantine)
           ) {
             syncMemoryFromDurable(ledger, store);
             return { result: false, changed: false };
@@ -137,7 +141,7 @@ export function prepareInputTerminal(
       entry &&
       (!entry.disposition ||
         entry.disposition === "queued" ||
-        entry.legacyAuthorityQuarantined)
+        entry.legacyAuthorityQuarantine)
     ) {
       return false;
     }
@@ -204,7 +208,6 @@ export function completePreparedInputTerminal(
 /** Read deduplicated terminal journals under the same lock as input replay. */
 export function loadPreparedInputTerminals(
   listener: ListenerRuntime,
-  includeQuarantined = false,
 ): DurablePreparedInputTerminal[] {
   const ledger = getLedger(listener);
   const backfillPreparationSequence = (
@@ -230,10 +233,7 @@ export function loadPreparedInputTerminals(
     const byTurnId = new Map<string, DurablePreparedInputTerminal>();
     for (const entry of entries) {
       const prepared = entry.preparedTerminal;
-      if (
-        prepared &&
-        (includeQuarantined || !entry.legacyAuthorityQuarantined)
-      ) {
+      if (prepared) {
         const ordered = {
           ...prepared,
           // Pre-sequence journals can only use their durable reservation
@@ -342,8 +342,16 @@ export function quarantinePreparedTerminalAuthority(
       )
         continue;
       matched = true;
-      if (entry.legacyAuthorityQuarantined !== true) {
-        entry.legacyAuthorityQuarantined = true;
+      if (!entry.legacyAuthorityQuarantine) {
+        const expiresAt = Date.now() + TURN_FINISHED_REPLAY_TTL_MS;
+        entry.legacyAuthorityQuarantine = {
+          scope: structuredClone(prepared.scope),
+          recoveryLineageId,
+          interruptedRevision,
+          expiresAt,
+        };
+        delete entry.preparedTerminal;
+        entry.expiresAt = expiresAt;
         changed = true;
       }
     }
@@ -351,7 +359,10 @@ export function quarantinePreparedTerminalAuthority(
   };
   if (!ledger.persistentPath) {
     const result = mark(ledger.entries.values());
-    if (result.changed) rebuildDispositionCapacityCounts(ledger);
+    if (result.changed) {
+      rebuildDispositionCapacityCounts(ledger);
+      rebuildDispositionExpiryQueue(ledger);
+    }
     return result.matched;
   }
   return durableTransaction(ledger.persistentPath, (store) => {
@@ -387,7 +398,47 @@ export function loadCompletedTerminalAuthorities(
           >,
         ),
       }));
-  if (!ledger.persistentPath) return collect(ledger.entries.values());
+  if (!ledger.persistentPath) {
+    expireAcceptedInputDispositions(ledger, Date.now());
+    return collect(ledger.entries.values());
+  }
+  return durableTransaction(ledger.persistentPath, (store) => {
+    syncMemoryFromDurable(ledger, store);
+    return {
+      result: collect(Object.values(store.entries)),
+      changed: false,
+    };
+  });
+}
+
+export function loadLegacyAuthorityQuarantines(
+  listener: ListenerRuntime,
+): NonNullable<AcceptedInputDispositionEntry["legacyAuthorityQuarantine"]>[] {
+  const ledger = getLedger(listener);
+  const collect = (entries: Iterable<AcceptedInputDispositionEntry>) => {
+    const quarantines = new Map<
+      string,
+      NonNullable<AcceptedInputDispositionEntry["legacyAuthorityQuarantine"]>
+    >();
+    for (const entry of entries) {
+      const quarantine = entry.legacyAuthorityQuarantine;
+      if (!quarantine) continue;
+      quarantines.set(
+        JSON.stringify([
+          quarantine.scope.agentId,
+          quarantine.scope.conversationId,
+          quarantine.recoveryLineageId,
+          quarantine.interruptedRevision,
+        ]),
+        structuredClone(quarantine),
+      );
+    }
+    return [...quarantines.values()];
+  };
+  if (!ledger.persistentPath) {
+    expireAcceptedInputDispositions(ledger, Date.now());
+    return collect(ledger.entries.values());
+  }
   return durableTransaction(ledger.persistentPath, (store) => {
     syncMemoryFromDurable(ledger, store);
     return {

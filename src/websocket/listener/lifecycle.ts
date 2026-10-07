@@ -41,6 +41,7 @@ import {
   handleChangeDeviceStateInput,
 } from "./control-inputs";
 import {
+  clearPreparedTerminalPromotionTimers,
   getOrCreateScopedRuntime,
   promotePreparedInputTerminalsSafely,
   restoreDurableQueuedInputs,
@@ -214,6 +215,7 @@ export function stopRuntime(
   suppressCallbacks: boolean,
 ): void {
   runtime.intentionallyClosed = true;
+  clearPreparedTerminalPromotionTimers(runtime);
   revokeRecoveryClaims(runtime);
   notifyStreamObserversRuntimeStopped(runtime);
   disposeListenerModAdapter(runtime);

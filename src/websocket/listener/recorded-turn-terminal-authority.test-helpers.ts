@@ -10,6 +10,14 @@ type ExpirableEntry = {
   };
 };
 
+export function downgradeCompletedAuthority(entry: ExpirableEntry): void {
+  const authority = entry.completedTerminalAuthority;
+  if (!authority) throw new Error("missing completed authority fixture");
+  delete authority.terminalIdentity;
+  delete authority.preparationSequence;
+  entry.expiresAt = Date.now() - 1;
+}
+
 export function expireDispositionLedgerEntries(
   ledgerPath: string,
   legacyAuthoritiesOnly = false,

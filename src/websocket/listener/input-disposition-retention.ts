@@ -18,7 +18,7 @@ export function buildLegacyAuthorityReferenceIndex(
   const references = new Set<string>();
   for (const entry of entries) {
     const prepared = entry.preparedTerminal;
-    if (!prepared || entry.legacyAuthorityQuarantined) continue;
+    if (!prepared || entry.legacyAuthorityQuarantine) continue;
     const revision = prepared.owner.interruptedRevision;
     if (!revision) continue;
     references.add(
@@ -35,19 +35,14 @@ export function buildLegacyAuthorityReferenceIndex(
 export function isLegacyAuthorityQuarantine(
   entry: AcceptedInputDispositionEntry,
 ): boolean {
-  return entry.legacyAuthorityQuarantined === true;
+  return entry.legacyAuthorityQuarantine !== undefined;
 }
 
 export function shouldRetainDisposition(
   entry: AcceptedInputDispositionEntry,
   references: () => ReadonlySet<string>,
 ): boolean {
-  if (
-    entry.queuedInput ||
-    entry.preparedTerminal ||
-    entry.legacyAuthorityQuarantined
-  )
-    return true;
+  if (entry.queuedInput || entry.preparedTerminal) return true;
   const authority = entry.completedTerminalAuthority;
   if (
     !authority ||
