@@ -260,31 +260,35 @@ test("lifecycle refill contains async failures and retries one coalesced bounded
   }
 });
 
-test("lifecycle refill permanently failing cycles stop exactly and later releases restart", async () => {
+test("lifecycle refill persists beyond a transient failure burst without another callback", async () => {
   const runtime = createDurableRuntime();
   await installLifecycleRefill(runtime);
   let calls = 0;
   runtime.listener.restoreDurableQueuedInputs = (() => {
     calls += 1;
-    throw new Error("permanent refill");
+    if (calls <= 7) throw new Error("prolonged transient refill");
+    return 0;
   }) as never;
   try {
-    const release = (suffix: string) => {
-      runtime.queueRuntime.enqueue(approvalBarrier(suffix));
-      runtime.queueRuntime.tryDequeue(null);
-    };
-    release("first");
-    await waitFor(() => expect(calls).toBe(5));
+    runtime.queueRuntime.enqueue(approvalBarrier("single-capacity-release"));
+    runtime.queueRuntime.tryDequeue(null);
+    await waitFor(() => expect(calls).toBe(8), 4_000);
     await Bun.sleep(300);
-    expect(calls).toBe(5);
+    expect(calls).toBe(8);
     expect(runtime.listener.durableQueueRestoreTimer).toBeUndefined();
     expect(runtime.listener.durableQueueRestoreScheduled).toBe(false);
+    expect(runtime.listener.durableQueueRestoreFailures).toBe(0);
 
-    release("later-capacity-release");
-    await waitFor(() => expect(calls).toBe(10));
+    runtime.listener.restoreDurableQueuedInputs = (() => {
+      calls += 1;
+      throw new Error("shutdown failure");
+    }) as never;
+    runtime.queueRuntime.enqueue(approvalBarrier("shutdown-cancel"));
+    runtime.queueRuntime.tryDequeue(null);
+    await waitFor(() => expect(calls).toBe(9));
     stopRuntime(runtime.listener, true);
-    await Bun.sleep(20);
-    expect(calls).toBe(10);
+    await Bun.sleep(300);
+    expect(calls).toBe(9);
     expect(runtime.listener.durableQueueRestoreTimer).toBeUndefined();
   } finally {
     stopRuntime(runtime.listener, true);

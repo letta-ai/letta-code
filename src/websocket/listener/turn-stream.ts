@@ -9,7 +9,10 @@ import { isCloudApiDeploymentInterrupted } from "@/utils/cloud-api-shutdown";
 import { debugLog } from "@/utils/debug";
 import { normalizeCloudRetryWireMessage } from "./cloud-retry-message";
 import { LISTENER_STREAM_RESUME_POLICY } from "./constants";
-import { recordListenerWork } from "./interrupted-turn-record";
+import {
+  recordListenerWork,
+  recordListenerWorkRetriably,
+} from "./interrupted-turn-record";
 import { normalizeToolReturnWireMessage } from "./interrupts";
 import {
   emitCanonicalMessageDelta,
@@ -82,24 +85,52 @@ export async function drainTurnStreamWithEmission(
         runtime.turnLifecycle.setRunId(turnLease, maybeRunId);
         turnCorrelation.observeRun(maybeRunId);
         if (!runIdSent) {
-          const revision = recordListenerWork(
-            runtime,
-            {
-              runId: maybeRunId,
-              actingUserId: getStreamRequestContext(stream)?.actingUserId,
-              durableInputIdentities: params.durableInputIdentities
-                ? [...params.durableInputIdentities]
-                : undefined,
-              terminalConsumerIds: params.terminalConsumerIds
-                ? [...params.terminalConsumerIds]
-                : undefined,
-            },
-            "run_observed",
-            params.interruptedRevisionRef?.current,
-            params.recoveryLineageId,
-          );
-          if (revision && params.interruptedRevisionRef) {
-            params.interruptedRevisionRef.current = revision;
+          const update = {
+            runId: maybeRunId,
+            actingUserId: getStreamRequestContext(stream)?.actingUserId,
+            durableInputIdentities: params.durableInputIdentities
+              ? [...params.durableInputIdentities]
+              : undefined,
+            terminalConsumerIds: params.terminalConsumerIds
+              ? [...params.terminalConsumerIds]
+              : undefined,
+          };
+          const expectedRevision = params.interruptedRevisionRef?.current;
+          try {
+            const revision = recordListenerWork(
+              runtime,
+              update,
+              "run_observed",
+              expectedRevision,
+              params.recoveryLineageId,
+            );
+            if (revision && params.interruptedRevisionRef) {
+              params.interruptedRevisionRef.current = revision;
+            }
+          } catch (error) {
+            if (
+              !(error instanceof Error) ||
+              error.message !== "Timed out acquiring durable filesystem lock"
+            ) {
+              throw error;
+            }
+            void recordListenerWorkRetriably(
+              runtime,
+              update,
+              "run_observed",
+              expectedRevision,
+              params.recoveryLineageId,
+              {
+                shouldContinue: () =>
+                  runtime.turnLifecycle.isCurrent(turnLease) && hasAuthority(),
+              },
+            )
+              .then((revision) => {
+                if (revision && params.interruptedRevisionRef) {
+                  params.interruptedRevisionRef.current = revision;
+                }
+              })
+              .catch(() => runtime.listener.scheduleRecordedRecovery?.());
           }
           runIdSent = true;
           msgRunIds.push(maybeRunId);

@@ -80,6 +80,26 @@ test("a dead lock directory is recovered", () => {
   }
 });
 
+test("exact dead-owner cleanup retries acquisition without contention backoff", () => {
+  const f = fixture();
+  try {
+    f.install(deadOwner);
+    let slept = false;
+    const release = acquireDurableFileLock(f.path, {
+      waitMs: 1,
+      now: () => 0,
+      sleep: () => {
+        slept = true;
+        throw new Error("cleanup must retry immediately");
+      },
+    });
+    expect(slept).toBe(false);
+    release();
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
 test("a dead legacy file lock is reclaimed without replacing a live file", () => {
   const f = fixture();
   try {
@@ -122,6 +142,34 @@ test("stale M0 cleanup cannot remove atomically installed live M1", () => {
     expect(readFileSync(join(f.lock, f.ownerName(liveOwner)), "utf8")).toBe(
       JSON.stringify(liveOwner),
     );
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test.each([
+  "afterCanonicalOwnerLink",
+  "afterCanonicalDirectorySync",
+  "afterInstallingOwnerUnlink",
+] as const)("post-publication %s failure cleans only its owner", (hook) => {
+  const f = fixture();
+  try {
+    expect(() =>
+      acquireDurableFileLock(f.path, {
+        waitMs: 50,
+        [hook]: () => {
+          throw new Error(`injected ${hook}`);
+        },
+      }),
+    ).toThrow(`injected ${hook}`);
+    expect(existsSync(f.lock)).toBe(false);
+    expect(
+      readdirSync(f.root).filter((name) => name.includes(".candidate-")),
+    ).toEqual([]);
+
+    const replacementRelease = acquireDurableFileLock(f.path, { waitMs: 50 });
+    replacementRelease();
+    expect(existsSync(f.lock)).toBe(false);
   } finally {
     rmSync(f.root, { recursive: true, force: true });
   }
@@ -393,19 +441,34 @@ test("EPERM still checks PID reuse while unknown identity fails closed", () => {
   ).toBe(true);
 });
 
-test("process creation identity uses safe macOS and Windows argv", () => {
-  const calls: Array<[string, string[]]> = [];
-  const run = (executable: string, args: string[]) => {
-    calls.push([executable, args]);
+test("process creation identity uses safe argv and a bounded probe", () => {
+  const calls: Array<
+    [
+      string,
+      string[],
+      { env?: NodeJS.ProcessEnv; timeout?: number } | undefined,
+    ]
+  > = [];
+  const run = (
+    executable: string,
+    args: string[],
+    options?: { env?: NodeJS.ProcessEnv; timeout?: number },
+  ) => {
+    calls.push([executable, args, options]);
     return executable === "powershell"
       ? "1337\n"
       : "Mon Jan  1 00:00:00 2024\n";
   };
-  expect(getProcessStart(42, "darwin", run)).toBe("Mon Jan  1 00:00:00 2024");
-  expect(getProcessStart(42, "win32", run)).toBe("1337");
-  expect(calls[0]).toEqual(["ps", ["-o", "lstart=", "-p", "42"]]);
+  expect(getProcessStart(42, "darwin", run, 37)).toBe(
+    "Mon Jan  1 00:00:00 2024",
+  );
+  expect(getProcessStart(42, "win32", run, 37)).toBe("1337");
+  expect(calls[0]?.[0]).toBe("ps");
+  expect(calls[0]?.[1]).toEqual(["-o", "lstart=", "-p", "42"]);
+  expect(calls[0]?.[2]?.timeout).toBe(37);
   expect(calls[1]?.[0]).toBe("powershell");
   expect(calls[1]?.[1]).toContain("-NonInteractive");
+  expect(calls[1]?.[2]?.timeout).toBe(37);
 });
 
 test("Windows skips unsupported directory fsync", () => {

@@ -493,19 +493,18 @@ describe("recoverApprovalStateForSync restart recovery", () => {
     expect(getPendingControlRequests(runtime.listener, scope)).toHaveLength(0);
   });
 
-  test("sync wiring denies recovered stale approvals and never auto-runs them", () => {
+  test("sync wiring replays only explicitly unstarted approvals", () => {
     const recoveryPath = fileURLToPath(
       new URL("./recovery-sync.ts", import.meta.url),
     );
     const source = readFileSync(recoveryPath, "utf-8");
 
-    // Interrupted tools become stale denials, never live control requests.
-    // Recovery may not classify or auto-execute restored approvals. The denials
-    // ride on recovered state as deny decisions; the sync caller sends them
-    // as the next turn, and nothing here approves or runs a restored tool.
+    // Legacy/unrelated tools remain stale denials, while an explicit durable
+    // unstarted marker is the only path which reconstructs an approval.
     expect(source).toContain('type: "deny" as const,');
     expect(source).toContain("STALE_APPROVAL_RECOVERY_DENIAL_REASON");
-    expect(source).not.toContain('type: "approve"');
+    expect(source).toContain("recorded.unstartedToolCallIds?.includes");
+    expect(source).toContain('type: "approve" as const');
     expect(source).toContain("clearRecoveredApprovalState(runtime);");
     expect(source).not.toContain("isInteractiveApprovalTool");
     expect(source).not.toContain("classifyApprovalsWithSuggestions(");

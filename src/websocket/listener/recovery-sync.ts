@@ -126,15 +126,53 @@ export async function recoverApprovalStateForSync(
     return;
   }
 
-  // Interrupted calls become stale denials. An execution-owner sync resumes
-  // them now; observer sync parks them for the next input without closing
-  // calls that another process may still be executing.
+  const recorded = readInterruptedTurn(runtime);
+  const recordedResults = new Map(
+    (recorded?.results ?? []).map((result) => [result.tool_call_id, result]),
+  );
+  // Local evidence distinguishes exact completed results, provably unstarted
+  // approvals, and unrelated stale calls. Only the unstarted set executes again.
   const staleDenialDecisions: ApprovalDecision[] = pendingApprovals.map(
-    (approval) => ({
-      type: "deny" as const,
-      approval,
-      reason: STALE_APPROVAL_RECOVERY_DENIAL_REASON,
-    }),
+    (approval) => {
+      const saved = recordedResults.get(approval.toolCallId);
+      if (recorded?.toolCallIds.includes(approval.toolCallId)) {
+        if (
+          !saved &&
+          recorded.unstartedToolCallIds?.includes(approval.toolCallId)
+        ) {
+          return { type: "approve" as const, approval };
+        }
+        if (!saved) {
+          return {
+            type: "deny" as const,
+            approval,
+            reason: STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+          };
+        }
+        if (!("tool_return" in saved)) {
+          return {
+            type: "deny" as const,
+            approval,
+            reason: saved.reason ?? STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+          };
+        }
+        return {
+          type: "approve" as const,
+          approval,
+          precomputedResult: {
+            toolReturn: saved.tool_return,
+            status: saved.status,
+            stdout: saved.stdout ?? undefined,
+            stderr: saved.stderr ?? undefined,
+          },
+        };
+      }
+      return {
+        type: "deny" as const,
+        approval,
+        reason: STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+      };
+    },
   );
 
   if (!opts.resumeInterruptedTurn) {
@@ -155,10 +193,10 @@ export async function recoverApprovalStateForSync(
   runtime.pendingInterruptedResults = null;
   runtime.pendingInterruptedContext = null;
   runtime.pendingInterruptedToolCallIds = null;
-  const recorded = readInterruptedTurn(runtime);
   runtime.recoveredApprovalState = {
     agentId: scope.agent_id,
     conversationId: scope.conversation_id,
+    actingUserId: recorded?.actingUserId,
     autoDecisions: staleDenialDecisions,
     allApprovals: pendingApprovals,
     durableInputIdentities: recorded?.durableInputIdentities,

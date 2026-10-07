@@ -40,6 +40,8 @@ export interface InterruptedTurnRecord {
     activeTurn: boolean;
     continuation?: TeleportContinuation;
     ready: boolean;
+    /** Revision created when this exact intent was first journaled. */
+    intentRevision?: string;
     /** Interrupted-record revision captured by the durable terminal owner. */
     committedRevision?: string;
   };
@@ -49,6 +51,8 @@ export interface InterruptedTurnRecord {
     state: "running" | "pending";
     /** Exact predecessor revision whose completed effects this marker covers. */
     effectRevision?: string;
+    /** Input identities owned by that predecessor, retained across a successor write. */
+    effectInputIdentities?: InputIdentity[];
     /** A write outside this recovery lineage has added genuine successor work. */
     independentSuccessor?: boolean;
   };
@@ -56,6 +60,8 @@ export interface InterruptedTurnRecord {
   conversationId: string;
   runId: string | null;
   toolCallIds: string[];
+  /** Approved tools which have not crossed their own execution boundary. */
+  unstartedToolCallIds?: string[];
   results: ApprovalResult[];
   requestOtid: string;
   workingDirectory: string;
@@ -95,7 +101,10 @@ function defaultInterruptedTurnDirectory(): string {
 
 export function createInterruptedTurnStore(
   directory = defaultInterruptedTurnDirectory(),
-  dependencies: { fsyncDirectory?: (directory: string) => void } = {},
+  dependencies: {
+    fsyncDirectory?: (directory: string) => void;
+    lockWaitMs?: number;
+  } = {},
 ) {
   const syncDirectory = dependencies.fsyncDirectory ?? fsyncDirectory;
   function path(agentId: string, conversationId: string) {
@@ -116,6 +125,11 @@ export function createInterruptedTurnStore(
         path(value.agentId, value.conversationId) !== file ||
         !Array.isArray(value.toolCallIds) ||
         !value.toolCallIds.every((id) => typeof id === "string") ||
+        (value.unstartedToolCallIds !== undefined &&
+          (!Array.isArray(value.unstartedToolCallIds) ||
+            !value.unstartedToolCallIds.every(
+              (id) => typeof id === "string",
+            ))) ||
         !Array.isArray(value.results) ||
         !value.results.every(
           (result) => result && typeof result.tool_call_id === "string",
@@ -144,6 +158,19 @@ export function createInterruptedTurnStore(
             (value.recoveryClaimCompletion.effectRevision !== undefined &&
               typeof value.recoveryClaimCompletion.effectRevision !==
                 "string") ||
+            (value.recoveryClaimCompletion.effectInputIdentities !==
+              undefined &&
+              (!Array.isArray(
+                value.recoveryClaimCompletion.effectInputIdentities,
+              ) ||
+                !value.recoveryClaimCompletion.effectInputIdentities.every(
+                  (identity) =>
+                    identity &&
+                    (identity.domain === "input" ||
+                      identity.domain === "teleport") &&
+                    typeof identity.id === "string" &&
+                    identity.id.length > 0,
+                ))) ||
             (value.recoveryClaimCompletion.independentSuccessor !== undefined &&
               typeof value.recoveryClaimCompletion.independentSuccessor !==
                 "boolean") ||
@@ -157,6 +184,8 @@ export function createInterruptedTurnStore(
               typeof value.teleport.connectionGeneration !== "string") ||
             typeof value.teleport.activeTurn !== "boolean" ||
             typeof value.teleport.ready !== "boolean" ||
+            (value.teleport.intentRevision !== undefined &&
+              typeof value.teleport.intentRevision !== "string") ||
             (value.teleport.committedRevision !== undefined &&
               typeof value.teleport.committedRevision !== "string") ||
             (value.teleport.continuation !== undefined &&
@@ -202,7 +231,9 @@ export function createInterruptedTurnStore(
     ): InterruptedTurnRecord {
       mkdirSync(directory, { recursive: true, mode: 0o700 });
       const destination = path(record.agentId, record.conversationId);
-      const release = acquireDurableFileLock(destination);
+      const release = acquireDurableFileLock(destination, {
+        waitMs: dependencies.lockWaitMs,
+      });
       const temporary = `${destination}.${randomUUID()}.tmp`;
       try {
         const current = readRecord(destination);
@@ -218,7 +249,14 @@ export function createInterruptedTurnStore(
         ) {
           throw new Error("Interrupted-turn revision changed");
         }
-        const written = { ...record, revision: randomUUID() };
+        const revision = randomUUID();
+        const written = {
+          ...record,
+          revision,
+          ...(record.teleport && !record.teleport.intentRevision
+            ? { teleport: { ...record.teleport, intentRevision: revision } }
+            : {}),
+        };
         writeFileSync(temporary, JSON.stringify(written), {
           mode: 0o600,
           flush: true,
@@ -237,7 +275,9 @@ export function createInterruptedTurnStore(
       lineageId: string;
     }): InterruptedTurnRecord | null {
       const destination = path(params.agentId, params.conversationId);
-      const release = acquireDurableFileLock(destination);
+      const release = acquireDurableFileLock(destination, {
+        waitMs: dependencies.lockWaitMs,
+      });
       const temporary = `${destination}.${randomUUID()}.tmp`;
       try {
         const current = readRecord(destination);
@@ -278,7 +318,9 @@ export function createInterruptedTurnStore(
       pendingRevision: string;
     }): "removed" | "preserved" | "stale" {
       const destination = path(params.agentId, params.conversationId);
-      const release = acquireDurableFileLock(destination);
+      const release = acquireDurableFileLock(destination, {
+        waitMs: dependencies.lockWaitMs,
+      });
       const temporary = `${destination}.${randomUUID()}.tmp`;
       try {
         const current = readRecord(destination);
@@ -330,7 +372,9 @@ export function createInterruptedTurnStore(
       expectedRevision?: string | null,
     ): boolean {
       const destination = path(agentId, conversationId);
-      const release = acquireDurableFileLock(destination);
+      const release = acquireDurableFileLock(destination, {
+        waitMs: dependencies.lockWaitMs,
+      });
       try {
         let evidence: string;
         try {
@@ -384,6 +428,7 @@ export function recordListenerWork(
       InterruptedTurnRecord,
       | "runId"
       | "toolCallIds"
+      | "unstartedToolCallIds"
       | "results"
       | "requestOtid"
       | "actingUserId"
@@ -410,6 +455,9 @@ export function recordListenerWork(
           effectRevision:
             previous.recoveryClaimCompletion.effectRevision ??
             previous.revision,
+          effectInputIdentities:
+            previous.recoveryClaimCompletion.effectInputIdentities ??
+            previous.durableInputIdentities,
         }
     : undefined;
   const consumesInheritedTeleport =
@@ -424,6 +472,7 @@ export function recordListenerWork(
     conversationId: runtime.conversationId,
     runId: previous?.runId ?? null,
     toolCallIds: previous?.toolCallIds ?? [],
+    unstartedToolCallIds: previous?.unstartedToolCallIds,
     results: previous?.results ?? [],
     requestOtid: previous?.requestOtid ?? randomUUID(),
     actingUserId: previous?.actingUserId,
@@ -458,6 +507,50 @@ export function recordListenerWork(
     });
     throw error;
   }
+}
+
+export async function recordListenerWorkRetriably(
+  runtime: ConversationRuntime,
+  update: Parameters<typeof recordListenerWork>[1],
+  phase: ListenerStateWritePhase,
+  expectedRevision?: string | null,
+  recoveryLineageId?: string,
+  options: {
+    shouldContinue?: () => boolean;
+    retryDelayMs?: number;
+    lockWaitMs?: number;
+    store?: ReturnType<typeof createInterruptedTurnStore>;
+  } = {},
+): Promise<string | undefined> {
+  const store =
+    options.store ??
+    createInterruptedTurnStore(defaultInterruptedTurnDirectory(), {
+      lockWaitMs: options.lockWaitMs ?? 25,
+    });
+  while (options.shouldContinue?.() !== false) {
+    try {
+      return recordListenerWork(
+        runtime,
+        update,
+        phase,
+        expectedRevision,
+        recoveryLineageId,
+        store,
+      );
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        error.message !== "Timed out acquiring durable filesystem lock"
+      ) {
+        throw error;
+      }
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, options.retryDelayMs ?? 10);
+        timer.unref?.();
+      });
+    }
+  }
+  throw new Error("Interrupted durable write lost authority before commit");
 }
 
 export function forgetListenerWork(

@@ -85,7 +85,14 @@ test("a thrown approval batch checkpoints failure before reconnect delivery", as
           autoDenied: [],
           needsUserInput: [],
         }),
-        executeApprovalBatch: async () => {
+        executeApprovalBatch: async (
+          _decisions: unknown,
+          _onChunk: unknown,
+          options?: {
+            beforeToolExecution?: (toolCallId: string) => void | Promise<void>;
+          },
+        ) => {
+          await options?.beforeToolExecution?.(approval.toolCallId);
           preEffectResults = structuredClone(durableRecord.results);
           transportOpen = false;
           throw new Error("batch exploded after execution boundary");
@@ -123,8 +130,7 @@ test("a thrown approval batch checkpoints failure before reconnect delivery", as
         type: "tool",
         tool_call_id: approval.toolCallId,
         status: "error",
-        tool_return:
-          "Approval batch failed: Error: batch exploded after execution boundary",
+        tool_return: RECOVERED_APPROVAL_OUTCOME_UNKNOWN,
       }),
     ]);
     expect(

@@ -973,6 +973,15 @@ test("restart sends saved results with the same request identity, never an unrel
     await recoverRecordedTurns(runtime, deps);
     expect(sent).toHaveLength(1);
     expect(store.read("agent-1", "conv-1")).toBeNull();
+    pendingId = "call-1";
+    store.write({
+      ...record,
+      conversationId: "conv-unattributed",
+      actingUserId: undefined,
+    });
+    await recoverRecordedTurns(runtime, deps);
+    expect(sent[1]?.actingUserId).toBeUndefined();
+    expect(sent[1]?.suppressActingUserFallback).toBe(true);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

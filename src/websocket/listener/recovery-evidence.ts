@@ -1,6 +1,7 @@
 import {
   type ListenerStateWritePhase,
-  recordListenerWork,
+  type recordListenerWork,
+  recordListenerWorkRetriably,
 } from "./interrupted-turn-record";
 import type { ListenerTransport } from "./transport";
 import type { TurnCorrelation } from "./turn-correlation";
@@ -33,21 +34,35 @@ export type RecoveryEvidenceWriter = (
 
 export function createRecoveryEvidenceCheckpoint(
   runtime: ConversationRuntime,
-  writer: RecoveryEvidenceWriter = recordListenerWork,
+  writer?: RecoveryEvidenceWriter,
   initialRevision?: string,
   recoveryLineageId?: string,
 ) {
   let revision = initialRevision;
   let hasWritten = initialRevision !== undefined;
+  let writeChain = Promise.resolve();
   const write = (
     update: Parameters<typeof recordListenerWork>[1],
     phase: ListenerStateWritePhase,
+    options: { shouldContinue?: () => boolean } = {},
   ) => {
-    const next = hasWritten
-      ? writer(runtime, update, phase, revision ?? null, recoveryLineageId)
-      : writer(runtime, update, phase, undefined, recoveryLineageId);
-    hasWritten = true;
-    if (typeof next === "string") revision = next;
+    const operation = writeChain.then(async () => {
+      const expectedRevision = hasWritten ? (revision ?? null) : undefined;
+      const next = await (writer
+        ? writer(runtime, update, phase, expectedRevision, recoveryLineageId)
+        : recordListenerWorkRetriably(
+            runtime,
+            update,
+            phase,
+            expectedRevision,
+            recoveryLineageId,
+            options,
+          ));
+      hasWritten = true;
+      if (typeof next === "string") revision = next;
+    });
+    writeChain = operation.catch(() => {});
+    return operation;
   };
   return {
     write,
@@ -55,7 +70,7 @@ export function createRecoveryEvidenceCheckpoint(
       ownership: ReturnType<typeof createTurnDurabilityOwnership>,
       actingUserId?: string,
     ) {
-      write(
+      return write(
         {
           durableInputIdentities: [...ownership.durableInputIdentities],
           terminalConsumerIds: [...ownership.terminalConsumerIds],

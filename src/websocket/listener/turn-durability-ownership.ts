@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { ApprovalResult } from "@/agent/approval-execution";
-import { recordListenerWork } from "./interrupted-turn-record";
+import { recordListenerWorkRetriably } from "./interrupted-turn-record";
 import type {
   ConversationRuntime,
   IncomingMessage,
@@ -13,14 +13,14 @@ export type TurnContinuationMetadata = {
   lastNeedsUserInputToolCallIds: string[];
 };
 
-export function checkpointTurnInputOwnership(
+export async function checkpointTurnInputOwnership(
   runtime: ConversationRuntime,
   ownership: ReturnType<typeof createTurnDurabilityOwnership>,
   expectedRevision?: string,
   actingUserId?: string,
   recoveryLineageId?: string,
-): string | undefined {
-  return recordListenerWork(
+): Promise<string | undefined> {
+  return recordListenerWorkRetriably(
     runtime,
     {
       durableInputIdentities: [...ownership.durableInputIdentities],

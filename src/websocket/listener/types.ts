@@ -132,6 +132,11 @@ export interface IncomingMessage {
    * self-hosted, single-user, or pre-channel-split flows.
    */
   actingUserId?: string;
+  /**
+   * Internal recovery sentinel: this input is explicitly unattributed, so the
+   * outbound request must not inherit an actor from runtime context or env.
+   */
+  suppressActingUserFallback?: boolean;
   /** Exact durable-ledger identities owned by this admitted/dequeued turn. */
   durableInputIdentities?: readonly InputIdentity[];
   /** External applications which must acknowledge this turn's terminal. */
@@ -216,6 +221,8 @@ export type PendingApprovalResolver = {
 export type RecoveredApprovalState = {
   agentId: string;
   conversationId: string;
+  /** Durable actor associated with the interrupted request, when attributed. */
+  actingUserId?: string;
   autoDecisions?: ApprovalDecision[];
   allApprovals?: ApprovalRequest[];
   durableInputIdentities?: readonly InputIdentity[];

@@ -21,6 +21,7 @@ import { basename, dirname, join } from "node:path";
 
 const MAX_OWNER_BYTES = 4096;
 const WAIT_SLICE_MS = 5;
+const PROCESS_START_PROBE_TIMEOUT_MS = 250;
 const MAX_CANDIDATE_SWEEP = 128;
 const INSTALLING_OWNER_NAME = ".installing";
 let cachedCurrentProcessStart: string | null | undefined;
@@ -41,6 +42,10 @@ export type DurableFileLockOptions = {
   afterOwnerUnlink?: (lockPath: string) => void;
   /** Deterministic injection after mkdir, before the candidate owner is linked. */
   afterInstallMkdir?: (lockPath: string) => void;
+  /** Failure seams after canonical publication, used to prove orphan cleanup. */
+  afterCanonicalOwnerLink?: (lockPath: string) => void;
+  afterCanonicalDirectorySync?: (lockPath: string) => void;
+  afterInstallingOwnerUnlink?: (lockPath: string) => void;
   /** Deterministic injection after observing an empty incumbent directory. */
   beforeEmptyCleanup?: (lockPath: string) => void;
   /** Deterministic clock and backoff seams used by bounded-retry tests. */
@@ -51,14 +56,20 @@ export type DurableFileLockOptions = {
 type ProcessStartCommand = (
   executable: string,
   args: string[],
-  options?: { env?: NodeJS.ProcessEnv },
+  options?: { env?: NodeJS.ProcessEnv; timeout?: number },
 ) => string;
 type ProcessProbe = (pid: number) => void;
 
 function installCandidateDirectory(
   candidatePath: string,
   lockPath: string,
-  afterMkdir?: (lockPath: string) => void,
+  hooks: Pick<
+    DurableFileLockOptions,
+    | "afterInstallMkdir"
+    | "afterCanonicalOwnerLink"
+    | "afterCanonicalDirectorySync"
+    | "afterInstallingOwnerUnlink"
+  >,
 ): boolean {
   // mkdir is the one portable no-replacement primitive available on every
   // supported platform. A stale empty-directory cleanup can still pass its
@@ -74,7 +85,7 @@ function installCandidateDirectory(
   const candidateOwnerPath = join(candidatePath, names[0] as string);
   const installingOwnerPath = join(lockPath, INSTALLING_OWNER_NAME);
   const installedOwnerPath = join(lockPath, names[0] as string);
-  afterMkdir?.(lockPath);
+  hooks.afterInstallMkdir?.(lockPath);
   try {
     // The fixed installation name elects at most one installer in a directory.
     // In particular, a delayed installer cannot add its unique owner alongside
@@ -103,8 +114,11 @@ function installCandidateDirectory(
   }
 
   linkSync(candidateOwnerPath, installedOwnerPath);
+  hooks.afterCanonicalOwnerLink?.(lockPath);
   fsyncDirectory(lockPath);
+  hooks.afterCanonicalDirectorySync?.(lockPath);
   unlinkSync(installingOwnerPath);
+  hooks.afterInstallingOwnerUnlink?.(lockPath);
   fsyncDirectory(lockPath);
   unlinkSync(candidateOwnerPath);
   rmdirSync(candidatePath);
@@ -135,6 +149,7 @@ export function getProcessStart(
       encoding: "utf8",
       windowsHide: true,
     }),
+  timeoutMs: number = PROCESS_START_PROBE_TIMEOUT_MS,
 ): string | null {
   if (!Number.isSafeInteger(pid) || pid <= 0) return null;
   try {
@@ -146,14 +161,19 @@ export function getProcessStart(
     }
     const started =
       platform === "win32"
-        ? run("powershell", [
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToFileTimeUtc()`,
-          ])
+        ? run(
+            "powershell",
+            [
+              "-NoProfile",
+              "-NonInteractive",
+              "-Command",
+              `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToFileTimeUtc()`,
+            ],
+            { timeout: timeoutMs },
+          )
         : run("ps", ["-o", "lstart=", "-p", String(pid)], {
             env: { ...process.env, TZ: "UTC", LC_ALL: "C" },
+            timeout: timeoutMs,
           });
     return started.trim() || null;
   } catch {
@@ -161,9 +181,16 @@ export function getProcessStart(
   }
 }
 
-export function currentDurableLockOwner(): DurableLockOwner {
+export function currentDurableLockOwner(
+  processStartTimeoutMs: number = PROCESS_START_PROBE_TIMEOUT_MS,
+): DurableLockOwner {
   if (cachedCurrentProcessStart === undefined) {
-    cachedCurrentProcessStart = getProcessStart(process.pid);
+    cachedCurrentProcessStart = getProcessStart(
+      process.pid,
+      process.platform,
+      undefined,
+      processStartTimeoutMs,
+    );
   }
   return {
     token: randomUUID(),
@@ -333,19 +360,23 @@ function removeDeadOwner(
   parent: string,
   ownerPath: string,
   afterOwnerUnlink?: (lockPath: string) => void,
-): void {
+): boolean {
   const directoryIdentity = pathIdentity(lockPath);
-  if (!directoryIdentity) return;
+  if (!directoryIdentity) return false;
+  let removed = false;
   try {
     unlinkSync(ownerPath);
+    removed = true;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
   // The unique filename is the identity check. If another contender atomically
   // installs M1 over this now-empty M0 directory, it has a different populated
   // filename: this stale rmdir cannot remove it.
+  if (!removed) return false;
   afterOwnerUnlink?.(lockPath);
   removeDirectoryIfEmpty(lockPath, parent, directoryIdentity);
+  return true;
 }
 
 function sweepDeadCandidates(
@@ -479,20 +510,39 @@ export function acquireDurableFileLock(
   path: string,
   options: DurableFileLockOptions = {},
 ): () => void {
+  const waitMs = options.waitMs ?? 2_000;
+  const now = options.now ?? Date.now;
+  const startedAt = now();
+  const remainingProbeTimeoutMs = (): number => {
+    const remaining = waitMs - (now() - startedAt);
+    if (remaining <= 0) {
+      throw new Error("Timed out acquiring durable filesystem lock");
+    }
+    return Math.max(1, Math.ceil(remaining));
+  };
   const parent = dirname(path);
   mkdirSync(parent, { recursive: true, mode: 0o700 });
   chmodSync(parent, 0o700);
   const lockPath = `${path}.lock`;
   const legacyMarkerPath = `${lockPath}.recovery`;
   const legacyOwnersPath = `${lockPath}-owners`;
-  const owner = options.owner ?? currentDurableLockOwner();
+  const owner =
+    options.owner ?? currentDurableLockOwner(remainingProbeTimeoutMs());
   // Validate injected owners before constructing any path from their fields.
   parseOwner(owner);
-  const isAlive = options.isOwnerAlive ?? durableLockOwnerIsAlive;
+  const isAlive =
+    options.isOwnerAlive ??
+    ((candidate: DurableLockOwner) =>
+      durableLockOwnerIsAlive(candidate, (pid) =>
+        getProcessStart(
+          pid,
+          process.platform,
+          undefined,
+          remainingProbeTimeoutMs(),
+        ),
+      ));
   sweepDeadCandidates(lockPath, parent, isAlive);
   const candidatePath = prepareCandidate(lockPath, parent, owner);
-  const waitMs = options.waitMs ?? 2_000;
-  const now = options.now ?? Date.now;
   const sleep =
     options.sleep ??
     ((milliseconds: number) =>
@@ -502,7 +552,6 @@ export function acquireDurableFileLock(
         0,
         milliseconds,
       ));
-  const startedAt = now();
   const waitOrThrow = (): void => {
     const remaining = waitMs - (now() - startedAt);
     if (remaining <= 0) {
@@ -514,15 +563,15 @@ export function acquireDurableFileLock(
     }
   };
 
-  const finishLegacyRecovery = (): boolean => {
+  const finishLegacyRecovery = (): "absent" | "blocked" | "cleaned" => {
     let marked: DurableLockOwner;
     try {
       marked = readOwnerFile(legacyMarkerPath);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return "absent";
       throw error;
     }
-    if (isAlive(marked)) return true;
+    if (isAlive(marked)) return "blocked";
     if (sameFile(lockPath, legacyMarkerPath)) {
       unlinkSync(lockPath);
       fsyncDirectory(parent);
@@ -537,28 +586,33 @@ export function acquireDurableFileLock(
     }
     unlinkSync(legacyMarkerPath);
     fsyncDirectory(parent);
-    return true;
+    return "cleaned";
   };
 
-  let installed = false;
+  let consecutiveProgress = 0;
+  const retryAfterProgress = (): void => {
+    consecutiveProgress += 1;
+    // One immediate retry makes cleanup useful even with a tiny portable
+    // deadline. Repeated replacement churn still yields and consumes the same
+    // total deadline instead of spinning synchronously.
+    if (consecutiveProgress > 1) {
+      consecutiveProgress = 0;
+      waitOrThrow();
+    }
+  };
   try {
     while (true) {
-      if (finishLegacyRecovery()) {
-        waitOrThrow();
+      const legacyRecovery = finishLegacyRecovery();
+      if (legacyRecovery !== "absent") {
+        if (legacyRecovery === "cleaned") retryAfterProgress();
+        else waitOrThrow();
         continue;
       }
       try {
-        if (
-          !installCandidateDirectory(
-            candidatePath,
-            lockPath,
-            options.afterInstallMkdir,
-          )
-        ) {
+        if (!installCandidateDirectory(candidatePath, lockPath, options)) {
           waitOrThrow();
           continue;
         }
-        installed = true;
         fsyncDirectory(parent);
         break;
       } catch (error) {
@@ -610,35 +664,54 @@ export function acquireDurableFileLock(
       }
       if (incumbent === null) {
         const emptyDirectoryIdentity = pathIdentity(lockPath);
+        let cleaned = false;
         if (emptyDirectoryIdentity) {
           if (!sweepDeadCandidates(lockPath, parent, isAlive, candidatePath)) {
             options.beforeEmptyCleanup?.(lockPath);
-            removeDirectoryIfEmpty(lockPath, parent, emptyDirectoryIdentity);
+            cleaned = removeDirectoryIfEmpty(
+              lockPath,
+              parent,
+              emptyDirectoryIdentity,
+            );
           }
         }
-        waitOrThrow();
+        if (cleaned) retryAfterProgress();
+        else waitOrThrow();
         continue;
       }
       if (isAlive(incumbent.owner)) {
         waitOrThrow();
         continue;
       }
-      removeDeadOwner(
-        lockPath,
-        parent,
-        incumbent.ownerPath,
-        options.afterOwnerUnlink,
-      );
-      waitOrThrow();
+      if (
+        removeDeadOwner(
+          lockPath,
+          parent,
+          incumbent.ownerPath,
+          options.afterOwnerUnlink,
+        )
+      ) {
+        retryAfterProgress();
+      } else {
+        waitOrThrow();
+      }
     }
   } catch (error) {
     try {
-      if (installed) {
-        removeDeadOwner(lockPath, parent, join(lockPath, ownerFileName(owner)));
-      } else {
-        rmSync(candidatePath, { recursive: true, force: true });
-        fsyncDirectory(parent);
+      // Installation can throw after either canonical hardlink is published.
+      // Both links must still match this private candidate before cleanup, so a
+      // replacement directory is never mistaken for our partial publication.
+      const candidateOwner = join(candidatePath, ownerFileName(owner));
+      const installingOwner = join(lockPath, INSTALLING_OWNER_NAME);
+      if (sameFile(candidateOwner, installingOwner)) {
+        unlinkSync(installingOwner);
+        fsyncDirectory(lockPath);
       }
+      removeDeadOwner(lockPath, parent, join(lockPath, ownerFileName(owner)));
+    } catch {}
+    try {
+      rmSync(candidatePath, { recursive: true, force: true });
+      fsyncDirectory(parent);
     } catch {}
     throw error;
   }

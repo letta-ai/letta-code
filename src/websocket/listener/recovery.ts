@@ -10,7 +10,7 @@ import { getBackend } from "@/backend";
 import { createBuffers } from "@/cli/helpers/accumulator";
 import { drainStreamWithResume } from "@/cli/helpers/stream";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
-import type { StopReasonType, StreamDelta } from "@/types/protocol_v2";
+import type { StreamDelta } from "@/types/protocol_v2";
 import { debugWarn, isDebugEnabled } from "@/utils/debug";
 import { normalizeCloudRetryWireMessage } from "./cloud-retry-message";
 import {
@@ -56,7 +56,6 @@ import {
 import {
   createRecoveredApprovalEffectBoundary,
   recoveredApprovalFailureResults,
-  recoveredApprovalInFlightResults,
 } from "./recovered-approval-checkpoint";
 
 export {
@@ -71,6 +70,10 @@ import {
   scheduleRecoveredApprovalRetry,
 } from "./recovered-approval-retry";
 import { rehydrateClaimLostQueuedTurn } from "./recovered-queue-rehydration";
+import {
+  createRecoveredTurnFinalizer,
+  finalizeHandledRecoveryTurn,
+} from "./recovered-turn-finalizer";
 import { retireAcknowledgedRecoveryClaim } from "./recovery-claim-completion";
 import {
   createRecoveryEvidenceCheckpoint,
@@ -102,7 +105,9 @@ import { replayPendingTurnFinishedToConnection } from "./turn-finished-replay";
 import { createTurnInputState } from "./turn-input-state";
 import type { TurnLease } from "./turn-lifecycle";
 import { setTurnLoopStatus } from "./turn-status";
-import { finishListenerTurn } from "./turn-terminal";
+
+export { finalizeHandledRecoveryTurn };
+
 import type { ConversationRuntime } from "./types";
 export async function drainRecoveryStreamWithEmission(
   recoveryStream: Stream<LettaStreamingResponse>,
@@ -187,68 +192,6 @@ export async function drainRecoveryStreamWithEmission(
     undefined,
     LISTENER_STREAM_RESUME_POLICY,
   );
-}
-
-export function finalizeHandledRecoveryTurn(
-  runtime: ConversationRuntime,
-  socket: ListenerTransport,
-  params: {
-    drainResult: Awaited<ReturnType<typeof drainStreamWithResume>>;
-    agentId?: string | null;
-    conversationId: string;
-    turnId: string;
-  },
-  finalize: (
-    options: Parameters<typeof finishListenerTurn>[2],
-  ) => ReturnType<typeof finishListenerTurn>,
-): ReturnType<typeof finishListenerTurn> {
-  if (params.drainResult.stopReason === "end_turn") {
-    return finalize({
-      stopReason: "end_turn",
-      socket,
-      agentId: params.agentId,
-      conversationId: params.conversationId,
-      turnId: params.turnId,
-    });
-  }
-
-  if (params.drainResult.stopReason === "cancelled") {
-    return finalize({
-      stopReason: "cancelled",
-      socket,
-      runId: runtime.activeRunId,
-      agentId: params.agentId ?? undefined,
-      conversationId: params.conversationId,
-      turnId: params.turnId,
-    });
-  }
-
-  const terminalStopReason =
-    (params.drainResult.stopReason as StopReasonType) || "error";
-  const runId = runtime.activeRunId;
-  const noticeParams = {
-    message: `Recovery continuation ended unexpectedly: ${terminalStopReason}`,
-    agentId: params.agentId,
-    conversationId: params.conversationId,
-  };
-  const transition = finalize({
-    stopReason: terminalStopReason,
-    socket,
-    agentId: params.agentId,
-    conversationId: params.conversationId,
-    turnId: params.turnId,
-    error: getTranscriptLoopErrorMessage(noticeParams),
-  });
-  if (!transition.finished) {
-    return transition;
-  }
-  emitLoopErrorNotice(socket, runtime, {
-    ...noticeParams,
-    stopReason: terminalStopReason,
-    isTerminal: true,
-    runId: runId || undefined,
-  });
-  return transition;
 }
 
 export async function debugLogApprovalResumeState(
@@ -507,17 +450,6 @@ async function executeRecoveredApprovalContinuation(params: {
   const executeApprovals =
     dependencies?.executeApprovalBatch ?? executeApprovalBatch;
   const recordWork = dependencies?.recordListenerWork;
-  const finishRecoveredTurn = (
-    options: Parameters<typeof finishListenerTurn>[2],
-  ) => {
-    const transition = finishListenerTurn(runtime, recoveryLease, {
-      ...options,
-      terminalConsumerIds: recovered.terminalConsumerIds,
-      durableInputIdentities: recovered.durableInputIdentities,
-      canCommit: hasRecoveryOwnership,
-    });
-    return transition;
-  };
   const scope = {
     agent_id: recovered.agentId,
     conversation_id: recovered.conversationId,
@@ -529,6 +461,20 @@ async function executeRecoveredApprovalContinuation(params: {
   const hasRecoveryOwnership = () =>
     runtime.turnLifecycle.isCurrent(recoveryLease) &&
     (!recoveryClaim || recoveryClaim.owned);
+  const recoveryLineageId = crypto.randomUUID();
+  const evidence = createRecoveryEvidenceCheckpoint(
+    runtime,
+    recordWork,
+    recovered.interruptedRevision,
+    recoveryLineageId,
+  );
+  const finishRecoveredTurn = createRecoveredTurnFinalizer({
+    runtime,
+    recoveryLease,
+    recovered,
+    getInterruptedRevision: () => evidence.revision,
+    canCommit: hasRecoveryOwnership,
+  });
   const shouldInterruptDelivery = () =>
     recoveryLease.signal.aborted || !hasRecoveryOwnership();
   const getDeliveryOwnerId = (): string | null => {
@@ -605,13 +551,6 @@ async function executeRecoveredApprovalContinuation(params: {
   let continuationFinalized = false;
   let sideEffectStarted = false;
   let recoveredContinuationOtid: string | null = null;
-  const recoveryLineageId = crypto.randomUUID();
-  const evidence = createRecoveryEvidenceCheckpoint(
-    runtime,
-    recordWork,
-    recovered.interruptedRevision,
-    recoveryLineageId,
-  );
   let claimSettled = false;
 
   try {
@@ -667,6 +606,7 @@ async function executeRecoveredApprovalContinuation(params: {
       const preparedToolContext = await prepareToolExecutionContext({
         agentId: recovered.agentId,
         conversationId: recovered.conversationId,
+        actingUserId: recovered.actingUserId,
         workingDirectory,
         permissionModeState: getOrCreateConversationPermissionModeStateRef(
           runtime.listener,
@@ -686,14 +626,31 @@ async function executeRecoveredApprovalContinuation(params: {
         preparedToolContext.preparedToolContext.loadedToolNames;
       if (!hasRecoveryOwnership()) return;
       const continuationOtid = crypto.randomUUID();
-      evidence.write(
+      const effectBoundary = createRecoveredApprovalEffectBoundary({
+        decisions,
+        ownsClaim: hasRecoveryOwnership,
+        checkpoint: (results, unstartedToolCallIds, phase) =>
+          evidence.write(
+            { results, unstartedToolCallIds },
+            phase === "before"
+              ? "before_tool_execution"
+              : "after_tool_execution",
+            phase === "before"
+              ? { shouldContinue: hasRecoveryOwnership }
+              : undefined,
+          ),
+        onCrossed: () => {
+          sideEffectStarted = true;
+          onSideEffectStarted();
+        },
+      });
+      await evidence.write(
         {
           toolCallIds: decisions.map(
             (decision) => decision.approval.toolCallId,
           ),
-          results: recoveredApprovalInFlightResults(decisions).filter(
-            (result) => result.type === "approval",
-          ),
+          results: effectBoundary.initialResults,
+          unstartedToolCallIds: effectBoundary.initialUnstartedToolCallIds,
           requestOtid: continuationOtid,
           recoveryClaimCompletion: {
             lineageId: recoveryLineageId,
@@ -701,20 +658,9 @@ async function executeRecoveredApprovalContinuation(params: {
           },
         },
         "before_tool_execution",
+        { shouldContinue: hasRecoveryOwnership },
       );
       if (!hasRecoveryOwnership()) return;
-      const effectBoundary = createRecoveredApprovalEffectBoundary({
-        ownsClaim: hasRecoveryOwnership,
-        checkpointUnknown: () =>
-          evidence.write(
-            { results: recoveredApprovalInFlightResults(decisions) },
-            "before_tool_execution",
-          ),
-        onCrossed: () => {
-          sideEffectStarted = true;
-          onSideEffectStarted();
-        },
-      });
       try {
         approvalResults = await executeApprovals(decisions, undefined, {
           abortSignal: recoveryLease.signal,
@@ -729,17 +675,32 @@ async function executeRecoveredApprovalContinuation(params: {
                 }
               : undefined,
           beforeToolExecution: effectBoundary.beforeToolExecution,
+          afterToolExecution: effectBoundary.afterToolExecution,
           executeTool: dependencies?.executeTool,
         });
       } catch (error) {
-        evidence.write(
-          { results: recoveredApprovalFailureResults(decisions, error) },
+        if (effectBoundary.claimLost) return;
+        await evidence.write(
+          {
+            unstartedToolCallIds: effectBoundary.unstartedToolCallIds,
+            results: [
+              ...effectBoundary.results,
+              ...recoveredApprovalFailureResults(decisions, error).filter(
+                (result) =>
+                  !effectBoundary.results.some(
+                    (saved) => saved.tool_call_id === result.tool_call_id,
+                  ),
+              ),
+            ],
+          },
           "after_tool_execution",
         );
-        if (effectBoundary.claimLost) return;
         throw error;
       }
-      evidence.write({ results: approvalResults }, "after_tool_execution");
+      await evidence.write(
+        { results: approvalResults, unstartedToolCallIds: [] },
+        "after_tool_execution",
+      );
       recoveredContinuationOtid = continuationOtid;
     } catch (error) {
       emitToolExecutionOutput.flush();
@@ -807,6 +768,9 @@ async function executeRecoveredApprovalContinuation(params: {
           conversationId: recovered.conversationId,
           turnId,
         });
+        // Delivery interruption is not a process restart. Retained evidence needs
+        // an explicit same-daemon wake once a replacement transport can consume it.
+        runtime.listener.scheduleRecordedRecovery?.();
       }
       return;
     }
@@ -833,7 +797,7 @@ async function executeRecoveredApprovalContinuation(params: {
     if (consumedQueuedTurn) {
       const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
       continuationOwnership.recordInput(queuedTurn);
-      evidence.checkpointOwnership(
+      await evidence.checkpointOwnership(
         continuationOwnership,
         queuedTurn.actingUserId,
       );
@@ -874,12 +838,16 @@ async function executeRecoveredApprovalContinuation(params: {
 
     const continuationConnectionId =
       selectedDeliveryOwnerId ?? opts?.connectionId;
+    const continuationActingUserId = consumedQueuedTurn
+      ? consumedQueuedTurn.queuedTurn.actingUserId
+      : recovered.actingUserId;
     await processTurn(
       {
         type: "message",
         agentId: recovered.agentId,
         conversationId: recovered.conversationId,
-        actingUserId: consumedQueuedTurn?.queuedTurn.actingUserId,
+        actingUserId: continuationActingUserId,
+        suppressActingUserFallback: continuationActingUserId === undefined,
         connectionId: continuationConnectionId,
         durableInputIdentities: continuationOwnership.durableInputIdentities,
         terminalConsumerIds: continuationOwnership.terminalConsumerIds,

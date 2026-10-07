@@ -326,7 +326,9 @@ export async function recoverRecordedTurns(
           (hasCompletedInputTerminalRevision(
             listener,
             runtime.key,
-            record.durableInputIdentities ?? [],
+            runningCompletion.effectInputIdentities ??
+              record.durableInputIdentities ??
+              [],
             runningCompletion.effectRevision,
           ) ||
             terminalStore
@@ -427,20 +429,32 @@ export async function recoverRecordedTurns(
                 ),
                 teleportId,
               );
-            if (
-              !failureWasAdmitted ||
-              !record.teleport ||
-              !store.remove(
-                record.agentId,
-                record.conversationId,
-                record.revision ?? null,
-              )
-            ) {
-              // Admission/completion proof durably owns continuation of this
-              // failed teleport, so the exact predecessor has no remaining
-              // purpose. CAS loss means a successor now owns the record; leave
-              // it intact and revisit it through the coalesced recovery pass.
+            if (!failureWasAdmitted || !record.teleport || !record.revision) {
               deferred = true;
+            } else if (record.teleport.intentRevision === record.revision) {
+              // Only the revision which first published this exact intent may be
+              // deleted wholesale. A successor can inherit the metadata while
+              // carrying unrelated run/result/effect evidence.
+              if (
+                !store.remove(
+                  record.agentId,
+                  record.conversationId,
+                  record.revision,
+                )
+              ) {
+                deferred = true;
+              }
+            } else {
+              try {
+                // Legacy or inherited metadata is retired by CAS while every
+                // other successor field is preserved. CAS loss rearms recovery.
+                store.write(
+                  { ...record, teleportId: undefined, teleport: undefined },
+                  record.revision,
+                );
+              } catch {
+                deferred = true;
+              }
             }
           } else if (
             record.teleport &&
@@ -749,6 +763,18 @@ export async function recoverRecordedTurns(
           deferred = true;
           continue;
         }
+        const hasProvablyUnstartedApproval = owned.some((approval) =>
+          record.unstartedToolCallIds?.includes(approval.toolCallId),
+        );
+        if (hasProvablyUnstartedApproval) {
+          // Connection sync reconstructs these as executable approvals. Never
+          // turn missing local evidence into a stale denial in the generic
+          // completion path while that exact replay remains available.
+          await recoveryClaim?.release();
+          recoveryClaim = undefined;
+          deferred = true;
+          continue;
+        }
         const approvals = recordedToolResults(
           record,
           owned.map((approval) => approval.toolCallId),
@@ -797,6 +823,7 @@ export async function recoverRecordedTurns(
             agentId: record.agentId,
             conversationId: record.conversationId,
             actingUserId: record.actingUserId,
+            suppressActingUserFallback: record.actingUserId === undefined,
             connectionId: [...listener.connections.values()].find(
               (connection) =>
                 connection.initialized &&

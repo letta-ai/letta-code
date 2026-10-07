@@ -272,8 +272,7 @@ export async function startConnectedListenerRuntime(
   if (!startupConnection || startupConnection.writer !== transport) return;
   sealStartupLogs();
   installExternalToolBridge(runtime);
-  // Opt out when another process already holds the cron scheduler lease.
-  // LETTA_DISABLE_CRON_SCHEDULER=1 suppresses recurring lease-held messages.
+  // Avoid recurring lease-held messages when another process owns cron.
   const shouldStartCronScheduler =
     options.startCronScheduler !== false &&
     process.env.LETTA_DISABLE_CRON_SCHEDULER !== "1";
@@ -290,7 +289,7 @@ export async function startConnectedListenerRuntime(
     options.restoreDurableQueuedInputs ?? restoreDurableQueuedInputs;
   runtime.restoreDurableQueuedInputs = () =>
     runtime === getActiveRuntime() && !runtime.intentionallyClosed
-      ? restoreQueuedInputs(runtime, undefined, undefined, { queuedOnly: true })
+      ? restoreQueuedInputs(runtime)
       : 0;
   promotePreparedInputTerminals(runtime);
   if (
@@ -308,6 +307,14 @@ export async function startConnectedListenerRuntime(
     runtime.connections.get(startupConnection.id) === startupConnection &&
     !startupConnection.cancellation.signal.aborted &&
     isListenerTransportOpen(startupConnection.writer);
+  // Establish durable authority before startup ingress can teleport work.
+  if (options.startProcessServices !== false) {
+    runtime.scheduleRecordedRecovery = () =>
+      scheduleRecordedTurnRecovery(runtime, options.recoverRecordedWork);
+    await (options.recoverRecordedWork ?? recoverRecordedTurns)(runtime);
+    restoreQueuedInputs(runtime);
+    if (!isExactOpenConnection()) return;
+  }
   if (options.activateIngress && !(await options.activateIngress())) return;
   if (!isExactOpenConnection()) return;
   startupConnection.ingressReady = true;
@@ -317,10 +324,6 @@ export async function startConnectedListenerRuntime(
     startListenerPongHeartbeat(runtime, transport, trackListenerError);
   }
   if (options.startProcessServices === false) return;
-  runtime.scheduleRecordedRecovery = () =>
-    scheduleRecordedTurnRecovery(runtime, options.recoverRecordedWork);
-  await (options.recoverRecordedWork ?? recoverRecordedTurns)(runtime);
-  restoreQueuedInputs(runtime);
   const processTransport = getOrCreateProcessTransport(runtime);
   for (const conversationRuntime of runtime.conversationRuntimes.values()) {
     if (conversationRuntime.queueRuntime?.isEmpty === false) {
@@ -556,9 +559,7 @@ export async function attachOpenListenerSocket(
 export async function startListenerClient(
   opts: StartListenerOptions,
 ): Promise<void> {
-  // Prove the replacement token belongs to the exact authoritative predecessor
-  // before anything is torn down. A stale or replayed token must fail here,
-  // while the runtime it claims to replace is still intact.
+  // Fence replacement provenance before tearing down its predecessor.
   assertAdoptableListenerClientReplacement(opts);
 
   // Replace any existing runtime without stale callback leakage.
@@ -749,11 +750,7 @@ async function connectWithRetry(
     runDetachedListenerTask,
     trackListenerError,
   });
-  // Ingress is buffered from the moment the control socket opens, which is
-  // before the stream channel is prepared and therefore before a connection
-  // can be opened. Claim the lineage up front so requestless frames buffered
-  // in that window are handed to the successor exactly once instead of being
-  // dropped when the attempt dies with no connection to attribute them to.
+  // Buffer pre-ready ingress under explicit replacement lineage ownership.
   const startupOwner = reserveStartupIngressOwner(runtime, opts);
   const pendingStartupFrames = StartupFrameBuffer.forSockets(
     socket,

@@ -13,6 +13,7 @@ import {
   recordListenerWork,
 } from "./interrupted-turn-record";
 import { createRuntime } from "./lifecycle";
+import { createRecoveredTurnFinalizer } from "./recovered-turn-finalizer";
 import { handleTeleportFailure, handleTeleportRequest } from "./teleport";
 import { createTurnCorrelation } from "./turn-correlation";
 import { createTurnDurabilityOwnership } from "./turn-durability-ownership";
@@ -46,121 +47,186 @@ function makeOptions(): StartListenerOptions {
   };
 }
 
-test("drained production finalizer commits against its journaled teleport revision", () => {
+test("recovered finalization fences against the latest evidence revision", () => {
   const oldHome = process.env.HOME;
   const directory = new TestDirectory();
   process.env.HOME = directory.path;
   try {
     const listener = createRuntime();
-    listener.connectionId = "conn-drained-finalizer";
+    listener.connectionId = "conn-recovered-finalizer";
     const runtime = getOrCreateScopedRuntime(
       listener,
       "agent-1",
       "conversation-1",
     );
-    const socket = new MockSocket();
-    openListenerConnection({
-      runtime: listener,
-      connectionId: "source",
-      writer: socket as never,
-      options: makeOptions(),
-    });
-    subscribeListenerConnection(listener, "source", {
-      agent_id: "agent-1",
-      conversation_id: "conversation-1",
-    });
-    markListenerConnectionInitialized(listener, "source");
     const lease = runtime.turnLifecycle.begin({
-      origin: "message",
+      origin: "approval_recovery",
       workingDirectory: process.cwd(),
     });
-    const predecessorRevision = recordListenerWork(
+    const initialRevision = recordListenerWork(
       runtime,
-      { runId: "run-predecessor" },
+      { runId: "run-recovered" },
       "run_observed",
     );
-    expect(predecessorRevision).toBeString();
-    runtime.pendingTurns = 1;
-    handleTeleportRequest({
-      listener,
-      connectionId: "source",
-      command: {
-        type: "teleport_request",
-        request_id: "teleport-drained-request",
-        teleport_id: "teleport-drained",
-        runtime: { agent_id: "agent-1", conversation_id: "conversation-1" },
-        target: {
-          connection_id: "target",
-          device_id: "target-device",
-          connection_name: "Target",
-        },
-      },
-    });
-    runtime.pendingTurns = 0;
-    const incoming: IncomingMessage = {
-      type: "message",
-      agentId: "agent-1",
-      conversationId: "conversation-1",
-      messages: [{ role: "user", content: "finish predecessor" }],
-    };
-    const ownership = createTurnDurabilityOwnership();
-    ownership.recordInput(incoming);
-    const finalizer = createTurnFinalizer({
+    const latestRevision = recordListenerWork(
       runtime,
-      turnLease: lease,
-      socket: socket as never,
-      ownership,
-      turnCorrelation: createTurnCorrelation(
-        runtime,
-        incoming,
-        "batch-drained",
-      ),
-      buffers: createBuffers("agent-1"),
-      agentId: "agent-1",
-      conversationId: "conversation-1",
-      interruptedRevisionRef: { current: predecessorRevision },
+      { results: [] },
+      "after_tool_execution",
+      initialRevision,
+    );
+    expect(initialRevision).toBeString();
+    expect(latestRevision).toBeString();
+    expect(latestRevision).not.toBe(initialRevision);
+    const finalizer = createRecoveredTurnFinalizer({
+      runtime,
+      recoveryLease: lease,
+      recovered: {
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        interruptedRevision: initialRevision,
+      },
+      getInterruptedRevision: () => latestRevision,
+      canCommit: () => true,
     });
 
-    const transition = finalizer.finishTurn({
+    const transition = finalizer({
       stopReason: "end_turn",
+      socket: new MockSocket() as never,
+      agentId: "agent-1",
       conversationId: "conversation-1",
+      turnId: "recovered-finalizer",
     });
+
     expect(transition.finished).toBe(true);
     expect(runtime.turnLifecycle.kind).toBe("idle");
-    const ready = createInterruptedTurnStore().read(
-      "agent-1",
-      "conversation-1",
-    );
-    expect(ready?.teleport).toMatchObject({
-      teleportId: "teleport-drained",
-      ready: true,
-    });
-    expect(ready?.teleport?.committedRevision).toBeString();
-    expect(ready?.teleport?.committedRevision).not.toBe(predecessorRevision);
-
-    const staleLease = runtime.turnLifecycle.begin({
-      origin: "message",
-      workingDirectory: process.cwd(),
-    });
     expect(
-      finishListenerTurn(runtime, staleLease, {
-        stopReason: "end_turn",
-        conversationId: "conversation-1",
-        expectedInterruptedRevision: predecessorRevision,
-      }).finished,
-    ).toBe(false);
-    expect(runtime.turnLifecycle.kind).toBe("active");
-    runtime.turnLifecycle.finish(staleLease, "cancelled");
-    expect(
-      createInterruptedTurnStore().read("agent-1", "conversation-1")?.teleport,
-    ).toMatchObject({ teleportId: "teleport-drained", ready: true });
+      createInterruptedTurnStore().read("agent-1", "conversation-1"),
+    ).toBeNull();
   } finally {
-    createInterruptedTurnStore().remove("agent-1", "conversation-1");
+    process.env.HOME = oldHome;
     directory.cleanup();
-    if (oldHome === undefined) delete process.env.HOME;
-    else process.env.HOME = oldHome;
   }
 });
+
+test.each(["end_turn", "max_steps", "cancelled", "error"] as const)(
+  "production finalizer commits %s against its journaled teleport revision",
+  (stopReason) => {
+    const oldHome = process.env.HOME;
+    const directory = new TestDirectory();
+    process.env.HOME = directory.path;
+    try {
+      const listener = createRuntime();
+      listener.connectionId = "conn-drained-finalizer";
+      const runtime = getOrCreateScopedRuntime(
+        listener,
+        "agent-1",
+        "conversation-1",
+      );
+      const socket = new MockSocket();
+      openListenerConnection({
+        runtime: listener,
+        connectionId: "source",
+        writer: socket as never,
+        options: makeOptions(),
+      });
+      subscribeListenerConnection(listener, "source", {
+        agent_id: "agent-1",
+        conversation_id: "conversation-1",
+      });
+      markListenerConnectionInitialized(listener, "source");
+      const lease = runtime.turnLifecycle.begin({
+        origin: "message",
+        workingDirectory: process.cwd(),
+      });
+      const predecessorRevision = recordListenerWork(
+        runtime,
+        { runId: "run-predecessor" },
+        "run_observed",
+      );
+      expect(predecessorRevision).toBeString();
+      runtime.pendingTurns = 1;
+      handleTeleportRequest({
+        listener,
+        connectionId: "source",
+        command: {
+          type: "teleport_request",
+          request_id: "teleport-drained-request",
+          teleport_id: "teleport-drained",
+          runtime: { agent_id: "agent-1", conversation_id: "conversation-1" },
+          target: {
+            connection_id: "target",
+            device_id: "target-device",
+            connection_name: "Target",
+          },
+        },
+      });
+      runtime.pendingTurns = 0;
+      const incoming: IncomingMessage = {
+        type: "message",
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        messages: [{ role: "user", content: "finish predecessor" }],
+      };
+      const ownership = createTurnDurabilityOwnership();
+      ownership.recordInput(incoming);
+      const finalizer = createTurnFinalizer({
+        runtime,
+        turnLease: lease,
+        socket: socket as never,
+        ownership,
+        turnCorrelation: createTurnCorrelation(
+          runtime,
+          incoming,
+          "batch-drained",
+        ),
+        buffers: createBuffers("agent-1"),
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        interruptedRevisionRef: { current: predecessorRevision },
+      });
+
+      const transition = finalizer.finishTurn({
+        stopReason,
+        conversationId: "conversation-1",
+      });
+      expect(transition.finished).toBe(true);
+      expect(runtime.turnLifecycle.kind).toBe("idle");
+      const ready = createInterruptedTurnStore().read(
+        "agent-1",
+        "conversation-1",
+      );
+      expect(ready?.teleport).toMatchObject({
+        teleportId: "teleport-drained",
+        ready: true,
+      });
+      expect(ready?.teleport?.committedRevision).toBeString();
+      expect(ready?.teleport?.committedRevision).not.toBe(predecessorRevision);
+
+      const staleLease = runtime.turnLifecycle.begin({
+        origin: "message",
+        workingDirectory: process.cwd(),
+      });
+      expect(
+        finishListenerTurn(runtime, staleLease, {
+          stopReason: "end_turn",
+          conversationId: "conversation-1",
+          expectedInterruptedRevision: predecessorRevision,
+        }).finished,
+      ).toBe(false);
+      expect(runtime.turnLifecycle.kind).toBe("active");
+      runtime.turnLifecycle.finish(staleLease, "cancelled");
+      expect(
+        createInterruptedTurnStore().read("agent-1", "conversation-1")
+          ?.teleport,
+      ).toMatchObject({ teleportId: "teleport-drained", ready: true });
+    } finally {
+      createInterruptedTurnStore().remove("agent-1", "conversation-1");
+      directory.cleanup();
+      if (oldHome === undefined) delete process.env.HOME;
+      else process.env.HOME = oldHome;
+    }
+  },
+);
 
 test("failure admission cleanup never retargets an inherited successor revision", async () => {
   const oldHome = process.env.HOME;

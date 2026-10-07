@@ -22,17 +22,21 @@ import {
   requestApprovalOverWS,
   validateApprovalResultIds,
 } from "./approval";
-import { approvalExecutionFailureResults } from "./approval-failure-results";
 import {
   applySuggestedPermissionsForApproval,
   buildApprovalSuggestionPayload,
   classifyApprovalsWithSuggestions,
 } from "./approval-suggestions";
+import {
+  type WaitForApprovalTransportOpen,
+  waitForApprovalTransportOpen,
+} from "./approval-transport-wait";
 import { getSubscribedListenerConnections, TO_SUBSCRIBERS } from "./connection";
 import { appendQueuedTurnToInput } from "./continuation-input";
 import {
   readInterruptedTurn,
-  recordListenerWork,
+  type recordListenerWork,
+  recordListenerWorkRetriably,
 } from "./interrupted-turn-record";
 import {
   createToolExecutionOutputEmitter,
@@ -53,7 +57,10 @@ import {
   type OutboundMessageDelivery,
 } from "./protocol-outbound";
 import { consumeQueuedTurn } from "./queue";
-import { recoveredApprovalInFlightResults } from "./recovered-approval-checkpoint";
+import {
+  createRecoveredApprovalEffectBoundary,
+  recoveredApprovalFailureResults,
+} from "./recovered-approval-checkpoint";
 import { debugLogApprovalResumeState } from "./recovery";
 import { ensureSecretsHydratedForAgent } from "./secrets-sync";
 import {
@@ -77,13 +84,6 @@ import type {
   IncomingMessage,
   PendingTeleport,
 } from "./types";
-
-type ApprovalTransportOpenResult = "open" | "interrupted";
-
-type WaitForApprovalTransportOpen = (
-  isDeliveryReady: () => boolean,
-  shouldInterrupt: () => boolean,
-) => Promise<ApprovalTransportOpenResult>;
 
 type Decision =
   | {
@@ -135,29 +135,6 @@ export type ApprovalBranchResult =
     } & ApprovalBranchProgress)
   | { kind: "error"; message: string };
 
-const APPROVAL_TRANSPORT_REOPEN_POLL_MS = 50;
-
-async function waitForApprovalTransportOpen(
-  isDeliveryReady: () => boolean,
-  shouldInterrupt: () => boolean,
-): Promise<ApprovalTransportOpenResult> {
-  if (isDeliveryReady()) {
-    return "open";
-  }
-
-  while (!shouldInterrupt()) {
-    await new Promise((resolve) =>
-      setTimeout(resolve, APPROVAL_TRANSPORT_REOPEN_POLL_MS),
-    );
-
-    if (isDeliveryReady()) {
-      return "open";
-    }
-  }
-
-  return "interrupted";
-}
-
 export async function handleApprovalStop(params: {
   approvals: Array<{
     toolCallId: string;
@@ -178,8 +155,7 @@ export async function handleApprovalStop(params: {
   turnToolContextId: string | null;
   turnLease: TurnLease;
   turnCorrelation?: TurnCorrelation;
-  /** Transfer durability ownership when steering is consumed into this turn. */
-  onConsumeQueuedTurn?: (queuedTurn: IncomingMessage) => void;
+  onConsumeQueuedTurn?: (queuedTurn: IncomingMessage) => void | Promise<void>;
   /** This turn's output is owned by an in-process caller, not a relay client. */
   processOwnedTurn?: boolean;
   /** Relay connection that originated this turn; replacements retain this id. */
@@ -238,22 +214,35 @@ export async function handleApprovalStop(params: {
     dependencies?.sendApprovalContinuation ?? sendApprovalContinuationWithRetry;
   const waitForTransportOpen =
     dependencies?.waitForApprovalTransportOpen ?? waitForApprovalTransportOpen;
-  const checkpointListenerWork =
-    dependencies?.recordListenerWork ?? recordListenerWork;
+  let checkpointChain = Promise.resolve();
   const checkpoint = (
     update: Parameters<typeof recordListenerWork>[1],
     phase: Parameters<typeof recordListenerWork>[2],
+    shouldContinue?: () => boolean,
   ) => {
-    const revision = checkpointListenerWork(
-      runtime,
-      update,
-      phase,
-      interruptedRevisionRef?.current,
-      recoveryLineageId,
-    );
-    if (revision && interruptedRevisionRef) {
-      interruptedRevisionRef.current = revision;
-    }
+    const operation = checkpointChain.then(async () => {
+      const revision = await (dependencies?.recordListenerWork
+        ? dependencies.recordListenerWork(
+            runtime,
+            update,
+            phase,
+            interruptedRevisionRef?.current,
+            recoveryLineageId,
+          )
+        : recordListenerWorkRetriably(
+            runtime,
+            update,
+            phase,
+            interruptedRevisionRef?.current,
+            recoveryLineageId,
+            { shouldContinue },
+          ));
+      if (revision && interruptedRevisionRef) {
+        interruptedRevisionRef.current = revision;
+      }
+    });
+    checkpointChain = operation.catch(() => {});
+    return operation;
   };
 
   if (approvals.length === 0) {
@@ -624,13 +613,26 @@ export async function handleApprovalStop(params: {
   lastExecutingToolCallIds = approvedDecisions.map(
     (decision) => decision.approval.toolCallId,
   );
-  checkpoint(
+  const effectBoundary = createRecoveredApprovalEffectBoundary({
+    decisions,
+    ownsClaim: () => !shouldInterrupt(),
+    checkpoint: (results, unstartedToolCallIds, phase) =>
+      checkpoint(
+        { results, unstartedToolCallIds },
+        phase === "before" ? "before_tool_execution" : "after_tool_execution",
+        phase === "before" ? () => !shouldInterrupt() : undefined,
+      ),
+    onCrossed: () => {},
+  });
+  await checkpoint(
     {
       toolCallIds: decisions.map((decision) => decision.approval.toolCallId),
-      results: recoveredApprovalInFlightResults(decisions),
+      results: effectBoundary.initialResults,
+      unstartedToolCallIds: effectBoundary.initialUnstartedToolCallIds,
       requestOtid: crypto.randomUUID(),
     },
     "before_tool_execution",
+    () => !shouldInterrupt(),
   );
   if (shouldInterrupt()) return interruptTermination();
   runtime.turnLifecycle.setExecutingToolCallIds(
@@ -711,21 +713,32 @@ export async function handleApprovalStop(params: {
       parentScope:
         agentId && conversationId ? { agentId, conversationId } : undefined,
       onFileWrite,
+      beforeToolExecution: effectBoundary.beforeToolExecution,
+      afterToolExecution: effectBoundary.afterToolExecution,
     });
   } catch (error) {
     // The batch boundary may throw after one or more tools committed side
     // effects. Persist every reported partial result and conservatively mark
     // every unknown outcome failed before transport readiness or delivery can
     // block. Recovery must never execute this batch again after a crash.
-    const failureResults = approvalExecutionFailureResults(decisions, error);
-    validateApprovalResultIds(
-      decisions.map((decision) => ({
-        approval: { toolCallId: decision.approval.toolCallId },
-      })),
-      failureResults,
-    );
+    const boundaryResults = effectBoundary.results;
+    const failureResults = [
+      ...boundaryResults,
+      ...recoveredApprovalFailureResults(decisions, error).filter(
+        (result) =>
+          !boundaryResults.some(
+            (saved) => saved.tool_call_id === result.tool_call_id,
+          ),
+      ),
+    ];
     lastExecutionResults = failureResults;
-    checkpoint({ results: failureResults }, "after_tool_execution");
+    await checkpoint(
+      {
+        results: failureResults,
+        unstartedToolCallIds: effectBoundary.unstartedToolCallIds,
+      },
+      "after_tool_execution",
+    );
 
     // Execution threw before normal finished-event emission. Close the
     // client_tool_start lifecycle explicitly or observer UIs shimmer forever.
@@ -775,7 +788,10 @@ export async function handleApprovalStop(params: {
   // Tool side effects are already committed. Durably replace the pre-execution
   // empty checkpoint before any transport readiness or delivery await so a
   // crash/re-registration recovers the exact outcomes rather than stale denials.
-  checkpoint({ results: persistedExecutionResults }, "after_tool_execution");
+  await checkpoint(
+    { results: persistedExecutionResults, unstartedToolCallIds: [] },
+    "after_tool_execution",
+  );
   if (shouldInterrupt()) return interruptTermination();
 
   // A relay can disconnect after client-side execution begins. Do not drop the
@@ -859,10 +875,10 @@ export async function handleApprovalStop(params: {
   const consumedQueuedTurn = consumeQueuedTurn(runtime);
   if (consumedQueuedTurn) {
     const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
-    params.onConsumeQueuedTurn?.(queuedTurn);
+    await params.onConsumeQueuedTurn?.(queuedTurn);
     // The queued user owns this continuation request. Assignment (rather than a
     // conditional spread) also clears an actor inherited from the prior input.
-    sendOptions.actingUserId = queuedTurn.actingUserId;
+    sendOptions.actingUserId = queuedTurn.actingUserId ?? null;
     turnCorrelation?.appendDequeuedBatch(dequeuedBatch.batchId);
     continuationBatchId = dequeuedBatch.batchId;
     nextTurnInput = appendQueuedTurnToInput(nextTurnInput, queuedTurn);

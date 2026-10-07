@@ -1,6 +1,7 @@
 import { expect, mock, test } from "bun:test";
 import type { executeTool } from "@/tools/manager";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
+import { enqueueInboundUserMessage } from "./inbound-queue";
 import { createRuntime } from "./lifecycle";
 import { startRecoveredApprovalContinuation } from "./recovery";
 import type { ListenerTransport } from "./transport";
@@ -42,18 +43,19 @@ test("production batch waits for crossed effects before scheduling claim-loss re
   const approvals = [
     {
       toolCallId: "call-a",
-      toolName: "Read",
-      toolArgs: '{"file_path":"/tmp/a"}',
+      toolName: "Write",
+      toolArgs: '{"file_path":"/tmp/shared","content":"a"}',
     },
     {
       toolCallId: "call-b",
-      toolName: "Read",
-      toolArgs: '{"file_path":"/tmp/b"}',
+      toolName: "Write",
+      toolArgs: '{"file_path":"/tmp/shared","content":"b"}',
     },
   ];
   runtime.recoveredApprovalState = {
     agentId: "agent-1",
     conversationId: "conv-1",
+    actingUserId: "actor-original",
     durableInputIdentities: [{ domain: "input", id: "scheduled-parallel" }],
     terminalConsumerIds: ["slack:agent-1"],
     autoDecisions: approvals.map((approval) => ({
@@ -93,7 +95,10 @@ test("production batch waits for crossed effects before scheduling claim-loss re
       dependencies: {
         ensureSecretsHydrated: async () => {},
         ensureModAdapters: async () => [],
-        prepareToolExecutionContext: async () => createPreparedToolContext(),
+        prepareToolExecutionContext: async (params) => {
+          expect(params.actingUserId).toBe("actor-original");
+          return createPreparedToolContext();
+        },
         executeTool: execute,
         recordListenerWork: (_runtime, update) => {
           evidence.push(update);
@@ -138,13 +143,57 @@ test("production batch waits for crossed effects before scheduling claim-loss re
       status: "success",
       tool_return: "effect-a-completed",
     }),
-    expect.objectContaining({
-      tool_call_id: "call-b",
-      status: "error",
-      tool_return: expect.stringContaining(
-        "Recovery claim lost before tool execution",
-      ),
-    }),
   ]);
   listener.intentionallyClosed = true;
+});
+
+test("unattributed recovered queued continuation suppresses ambient attribution", async () => {
+  const runtime = getOrCreateScopedRuntime(
+    createRuntime(),
+    "agent-1",
+    "conv-1",
+  );
+  const approval = {
+    toolCallId: "call-unattributed",
+    toolName: "Read",
+    toolArgs: '{"file_path":"/tmp/example"}',
+  };
+  runtime.recoveredApprovalState = {
+    agentId: "agent-1",
+    conversationId: "conv-1",
+    autoDecisions: [{ type: "deny", approval, reason: "interrupted" }],
+    allApprovals: [approval],
+  };
+  enqueueInboundUserMessage(runtime, {
+    type: "message",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+    messages: [{ role: "user", content: "system continuation" }],
+  });
+  let received:
+    | { actingUserId?: string; suppressActingUserFallback?: boolean }
+    | undefined;
+
+  const handled = await startRecoveredApprovalContinuation(
+    runtime,
+    createTransport(),
+    async (message, _socket, ownerRuntime, ...args) => {
+      received = message;
+      const turnLease = args[3];
+      if (turnLease) ownerRuntime.turnLifecycle.finish(turnLease, "end_turn");
+    },
+    {
+      dependencies: {
+        ensureSecretsHydrated: async () => {},
+        ensureModAdapters: async () => [],
+        prepareToolExecutionContext: async () => createPreparedToolContext(),
+        executeApprovalBatch: async () => [],
+        recordListenerWork: () => {},
+      },
+    },
+  );
+
+  expect(handled).toBe(true);
+  expect(received?.actingUserId).toBeUndefined();
+  expect(received?.suppressActingUserFallback).toBe(true);
 });

@@ -33,6 +33,7 @@ import {
 } from "./constants";
 import { appendQueuedTurnToInput } from "./continuation-input";
 import { getConversationWorkingDirectory } from "./cwd";
+import { readInterruptedTurn } from "./interrupted-turn-record";
 import {
   createListenerAgentModContext,
   createListenerModEvents,
@@ -383,6 +384,7 @@ export async function resolveStaleApprovals(
   runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;
   runtime.currentLoadedTools =
     preparedToolContext.preparedToolContext.loadedToolNames;
+  let recoveryActingUserId = readInterruptedTurn(runtime)?.actingUserId;
 
   while (pendingApprovals.length > 0) {
     assertCurrentTurnLease();
@@ -414,6 +416,7 @@ export async function resolveStaleApprovals(
       const consumedQueuedTurn = consumeQueuedTurn(runtime);
       if (consumedQueuedTurn) {
         const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
+        recoveryActingUserId = queuedTurn.actingUserId;
         recoveryTurnCorrelation = createTurnCorrelation(
           runtime,
           queuedTurn,
@@ -444,7 +447,7 @@ export async function resolveStaleApprovals(
           background: true,
           workingDirectory: recoveryWorkingDirectory,
           preparedToolContext: preparedToolContext.preparedToolContext,
-          actingUserId: consumedQueuedTurn?.queuedTurn.actingUserId,
+          actingUserId: recoveryActingUserId ?? null,
           ...(continuationInput.imageFailureModesByMessageOtid
             ? {
                 imageFailureModesByMessageOtid:

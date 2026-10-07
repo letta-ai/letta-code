@@ -561,9 +561,7 @@ describe("recovered approval lease boundaries", () => {
       "after_tool_execution",
     ]);
     expect(checkpoints[0]?.update.results).toEqual([]);
-    expect(checkpoints[1]?.update.results).toEqual([
-      expect.objectContaining({ status: "error" }),
-    ]);
+    expect(checkpoints[1]?.update.results).toEqual([]);
     expect(
       socketB.sent.some(
         (message) =>
@@ -834,7 +832,7 @@ describe("recovered approval lease boundaries", () => {
     expect(recordedResults.at(-1)).toEqual(createDenialResults());
   });
 
-  test("recovered evidence starts from the observed interrupted revision", () => {
+  test("recovered evidence starts from the observed interrupted revision", async () => {
     const runtime = getOrCreateScopedRuntime(
       createRuntime(),
       "agent-1",
@@ -851,8 +849,8 @@ describe("recovered approval lease boundaries", () => {
       },
       "revision-observed",
     );
-    evidence.write({ results: [] }, "before_tool_execution");
-    evidence.write({ results: [] }, "after_tool_execution");
+    await evidence.write({ results: [] }, "before_tool_execution");
+    await evidence.write({ results: [] }, "after_tool_execution");
     expect(expectedRevisions).toEqual(["revision-observed", "revision-1"]);
   });
   test("claim expiry during the pre-effect checkpoint skips execution", async () => {

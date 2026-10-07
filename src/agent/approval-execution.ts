@@ -158,7 +158,12 @@ async function executeSingleDecision(
     parentScope?: { agentId: string; conversationId: string };
     onFileWrite?: (filePath: string, content: string) => void;
     /** Synchronous durability fence immediately before an approved tool runs. */
-    beforeToolExecution?: (toolCallId: string) => void;
+    beforeToolExecution?: (toolCallId: string) => void | Promise<void>;
+    /** Durable result checkpoint immediately after approved tool code settles. */
+    afterToolExecution?: (
+      toolCallId: string,
+      result: ApprovalResult,
+    ) => void | Promise<void>;
     /** Injectable executor for production-path concurrency tests. */
     executeTool?: typeof executeTool;
   },
@@ -198,7 +203,7 @@ async function executeSingleDecision(
     }
 
     // Cross the caller's durable effect fence immediately before tool code can run.
-    options?.beforeToolExecution?.(decision.approval.toolCallId);
+    await options?.beforeToolExecution?.(decision.approval.toolCallId);
 
     // Execute the approved tool
     try {
@@ -342,7 +347,11 @@ export async function executeApprovalBatch(
     workingDirectory?: string;
     parentScope?: { agentId: string; conversationId: string };
     onFileWrite?: (filePath: string, content: string) => void;
-    beforeToolExecution?: (toolCallId: string) => void;
+    beforeToolExecution?: (toolCallId: string) => void | Promise<void>;
+    afterToolExecution?: (
+      toolCallId: string,
+      result: ApprovalResult,
+    ) => void | Promise<void>;
     executeTool?: typeof executeTool;
   },
 ): Promise<ApprovalResult[]> {
@@ -438,10 +447,17 @@ async function executeApprovalBatchUnwatched(
   const execute = async (i: number) => {
     const decision = decisions[i];
     if (decision) {
-      results[i] = await executeSingleDecision(decision, onChunk, {
+      const result = await executeSingleDecision(decision, onChunk, {
         ...options,
         toolContextId,
       });
+      results[i] = result;
+      if (decision.type === "approve") {
+        await options?.afterToolExecution?.(
+          decision.approval.toolCallId,
+          result,
+        );
+      }
     }
   };
 

@@ -51,7 +51,6 @@ function itemIdentities(
   });
 }
 
-const DURABLE_QUEUE_RESTORE_MAX_ATTEMPTS = 5;
 const DURABLE_QUEUE_RESTORE_RETRY_DELAY_MS = 10;
 const DURABLE_QUEUE_RESTORE_MAX_RETRY_DELAY_MS = 250;
 
@@ -100,16 +99,18 @@ function scheduleDurableQueueRestore(
       } catch {
         const failures = (listener.durableQueueRestoreFailures ?? 0) + 1;
         listener.durableQueueRestoreFailures = failures;
-        if (
-          failures >= DURABLE_QUEUE_RESTORE_MAX_ATTEMPTS ||
-          !durableQueueRestoreIsActive(listener)
-        ) {
+        if (!durableQueueRestoreIsActive(listener)) {
           clearDurableQueueRestoreRetry(listener);
           return;
         }
+        // Accepted durable work must not depend on a future capacity callback.
+        // Keep one coalesced wake alive for the lifetime of this runtime, with a
+        // capped delay and exponent so a prolonged outage neither hot-loops nor
+        // grows timers/state without bound.
         const delay = Math.min(
           DURABLE_QUEUE_RESTORE_MAX_RETRY_DELAY_MS,
-          DURABLE_QUEUE_RESTORE_RETRY_DELAY_MS * 2 ** (failures - 1),
+          DURABLE_QUEUE_RESTORE_RETRY_DELAY_MS *
+            2 ** Math.min(failures - 1, 16),
         );
         listener.durableQueueRestoreTimer = setTimeout(() => {
           listener.durableQueueRestoreTimer = undefined;
@@ -259,20 +260,37 @@ export function restoreDurableQueuedInputs(
       ),
     ),
   );
+  // Dequeue marks an input started before the turn has written its first
+  // interrupted record. Keep that narrow in-process handoff from looking like an
+  // orphaned started payload during the capacity-release refill microtask.
+  const volatileStartedIdentityKeys = new Set(
+    [...listener.conversationRuntimes.values()].flatMap((runtime) =>
+      [...runtime.dequeuedClientMessageIdsByBatchId.values()].flatMap((ids) =>
+        ids.map((id) =>
+          JSON.stringify([
+            runtime.agentId,
+            runtime.conversationId,
+            "input",
+            id,
+          ]),
+        ),
+      ),
+    ),
+  );
   for (const { disposition, payload } of loadDurableQueuedInputEntries(
     listener,
   )) {
     if (options.queuedOnly && disposition !== "queued") continue;
+    const identityKey = JSON.stringify([
+      payload.scope.agentId,
+      payload.scope.conversationId,
+      payload.identity.domain,
+      payload.identity.id,
+    ]);
     if (
       disposition === "started" &&
-      interruptedIdentityKeys.has(
-        JSON.stringify([
-          payload.scope.agentId,
-          payload.scope.conversationId,
-          payload.identity.domain,
-          payload.identity.id,
-        ]),
-      )
+      (interruptedIdentityKeys.has(identityKey) ||
+        volatileStartedIdentityKeys.has(identityKey))
     ) {
       continue;
     }

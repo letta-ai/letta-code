@@ -3,14 +3,54 @@ import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
+import { acquireDurableFileLock } from "./durable-file-lock";
 import {
   createInterruptedTurnStore,
   type InterruptedTurnRecord,
   recordedToolResults,
   recordListenerWork,
+  recordListenerWorkRetriably,
 } from "./interrupted-turn-record";
 import { createRuntime } from "./lifecycle";
 import { retireAcknowledgedRecoveryClaim } from "./recovery-claim-completion";
+
+test("retryable listener checkpoint outlives a live holder beyond two seconds", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "listener-live-holder-"));
+  const store = createInterruptedTurnStore(directory, { lockWaitMs: 25 });
+  const listener = createRuntime();
+  listener.connectionId = "conn-live-holder";
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    "agent-live-holder",
+    "conv-live-holder",
+  );
+  const destination = join(
+    directory,
+    `${encodeURIComponent("agent-live-holder")}_${encodeURIComponent("conv-live-holder")}.json`,
+  );
+  const release = acquireDurableFileLock(destination);
+  const started = performance.now();
+  const releaseTimer = setTimeout(release, 2_100);
+  try {
+    const revision = await recordListenerWorkRetriably(
+      runtime,
+      { runId: "run-after-holder" },
+      "run_observed",
+      undefined,
+      undefined,
+      { store, retryDelayMs: 5 },
+    );
+    expect(performance.now() - started).toBeGreaterThanOrEqual(2_000);
+    expect(revision).toBeString();
+    expect(store.read("agent-live-holder", "conv-live-holder")?.runId).toBe(
+      "run-after-holder",
+    );
+  } finally {
+    clearTimeout(releaseTimer);
+    release();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test.each([
   { name: "missing approvals", continuation: {} },
@@ -83,6 +123,7 @@ test.each(["direct", "detached"])(
         results: [],
         requestOtid: "request-predecessor",
         workingDirectory: "/predecessor",
+        durableInputIdentities: [{ domain: "input", id: "input-predecessor" }],
         recoveryClaimCompletion: { lineageId, state: "running" },
       });
       const pendingRevision =
@@ -139,7 +180,11 @@ test.each(["direct", "detached"])(
       expect(successorRevision).toBeString();
       expect(
         store.read("agent-test", "conv-test")?.recoveryClaimCompletion,
-      ).toMatchObject({ lineageId, independentSuccessor: true });
+      ).toMatchObject({
+        lineageId,
+        independentSuccessor: true,
+        effectInputIdentities: [{ domain: "input", id: "input-predecessor" }],
+      });
 
       expect(
         retireAcknowledgedRecoveryClaim(store, {

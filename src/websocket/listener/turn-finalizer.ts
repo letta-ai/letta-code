@@ -63,13 +63,19 @@ export function createTurnFinalizer(params: {
     );
   const finishTurn = (options: Parameters<typeof finishListenerTurn>[2]) => {
     const pending = params.agentId
-      ? claimPendingTeleportAtBoundary({
+      ? (claimPendingTeleportAtBoundary({
+          listener: params.runtime.listener,
+          agentId: params.agentId,
+          conversationId: params.conversationId,
+          activeTurn: true,
+        }) ??
+        claimPendingTeleportAtBoundary({
           listener: params.runtime.listener,
           agentId: params.agentId,
           conversationId: params.conversationId,
           activeTurn: false,
           drainedOnly: true,
-        })
+        }))
       : null;
     return pending
       ? finishClaimedTeleport(

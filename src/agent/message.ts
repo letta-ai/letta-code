@@ -279,8 +279,10 @@ export type SendMessageStreamOptions = {
    * Set by the listener after reading
    * `runtime.acting_user_id` from cloud's status WS frame; absent
    * for self-hosted / single-user / pre-channel-split flows.
+   * Pass `null` when a queued system/unattributed input must explicitly suppress
+   * an actor inherited from the execution context or process environment.
    */
-  actingUserId?: string;
+  actingUserId?: string | null;
 };
 
 export type SendMessageStreamRequestOptions = {
@@ -526,10 +528,12 @@ export async function sendMessageStreamWithBackend(
   }
 
   const actingUserId =
-    opts.actingUserId ??
-    executionRuntimeContext?.actingUserId ??
-    getRuntimeContext()?.actingUserId ??
-    process.env[ACTING_USER_ID_ENV];
+    opts.actingUserId === null
+      ? undefined
+      : (opts.actingUserId ??
+        executionRuntimeContext?.actingUserId ??
+        getRuntimeContext()?.actingUserId ??
+        process.env[ACTING_USER_ID_ENV]);
   const extraHeaders: Record<string, string> = {};
   if (previousResponseId) {
     extraHeaders[RESPONSE_STATE_HEADER] = encodeResponseStateHeader({

@@ -47,7 +47,7 @@ export async function startTurnInput(
     preparedToolContext: SendOptions["preparedToolContext"];
     overrideModel: SendOptions["overrideModel"];
     responseFormat?: SendOptions["responseFormat"];
-    actingUserId?: string;
+    actingUserId?: SendOptions["actingUserId"];
     getInput: () => TurnInputState;
     getInterruptedToolCallIds: () => string[];
   },
@@ -74,7 +74,9 @@ export async function startTurnInput(
       ...(params.responseFormat
         ? { responseFormat: params.responseFormat }
         : {}),
-      ...(params.actingUserId ? { actingUserId: params.actingUserId } : {}),
+      ...(params.actingUserId !== undefined
+        ? { actingUserId: params.actingUserId }
+        : {}),
       ...(params.getInterruptedToolCallIds().length > 0
         ? {
             approvalNormalization: {

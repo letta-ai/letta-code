@@ -267,7 +267,7 @@ async function handleIncomingMessageInner(
       preparedToolContext: setup.preparedToolContext.preparedToolContext,
       overrideModel,
       responseFormat: msg.responseFormat,
-      actingUserId: msg.actingUserId,
+      actingUserId: msg.suppressActingUserFallback ? null : msg.actingUserId,
       getInput: () => turnInput,
       getInterruptedToolCallIds: () =>
         pendingNormalizationInterruptedToolCallIds,
@@ -782,9 +782,9 @@ async function handleIncomingMessageInner(
         turnToolContextId,
         turnLease,
         turnCorrelation,
-        onConsumeQueuedTurn: (queuedTurn) => {
+        onConsumeQueuedTurn: async (queuedTurn) => {
           durabilityOwnership.recordInput(queuedTurn);
-          interruptedRevisionRef.current = checkpointTurnInputOwnership(
+          interruptedRevisionRef.current = await checkpointTurnInputOwnership(
             runtime,
             durabilityOwnership,
             interruptedRevisionRef.current,
