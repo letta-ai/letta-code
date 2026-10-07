@@ -26,6 +26,8 @@ interface Segment {
   end: number;
   path: string;
   requestOptions: { baseUrl?: string; apiKey?: string };
+  localRetryCount?: number;
+  uploadedOffset?: number;
 }
 interface CaptureState {
   scope: NativeSessionScope;
@@ -40,6 +42,7 @@ interface CaptureState {
   retryTimer?: ReturnType<typeof setTimeout>;
   retryDelayMs: number;
   segments: Segment[];
+  requiresBoundaryReset?: boolean;
 }
 interface NativeCaptureAdmission {
   source: NativeSessionSource;
@@ -49,6 +52,12 @@ interface NativeCaptureAdmission {
   requestOptions: { baseUrl?: string; apiKey?: string; cloudUrl?: string };
   done: Promise<void>;
   release: () => void;
+}
+
+class NativeChunkAcknowledgmentError extends Error {
+  constructor(readonly attemptedChunkIndex: number) {
+    super("Native session chunk acknowledgment mismatch");
+  }
 }
 
 export interface NativeSessionCaptureReservation {
@@ -72,10 +81,11 @@ activeCaptureInstances.add(captureProcessInstanceId);
 const spoolDirectoryName = /^letta-native-session-(\d+)-([0-9a-f-]{36})-/;
 let staleSpoolsScavenged = false;
 let sealHookForTests: (() => Promise<void>) | undefined;
+let drainHookForTests: (() => Promise<void>) | undefined;
 export const NATIVE_SESSION_CAPTURE_CHUNK_BYTES = 256 * 1024;
 const INITIAL_DRAIN_RETRY_MS = 250;
 const MAX_DRAIN_RETRY_MS = 30_000;
-const SEAL_RETRY_DELAYS_MS = [0, 10, 50] as const;
+const SEAL_RETRY_DELAYS_MS = [0, 10, 50, 250, 1_000] as const;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function cleanupSpoolDirectorySync(directory: string): void {
@@ -153,6 +163,7 @@ async function captureAdmission(
       return;
     } catch (error) {
       failure = error;
+      if (!retryableSealFailure(error)) break;
     }
   }
   try {
@@ -172,8 +183,60 @@ async function retireFailedCaptureSession(
   if (state.retryTimer) clearTimeout(state.retryTimer);
   await state.draining?.catch(() => undefined);
   if (state.retryTimer) clearTimeout(state.retryTimer);
-  await discardAllSegments(state);
-  if (states.get(id) === state) states.delete(id);
+  state.requiresBoundaryReset = true;
+  try {
+    await resetCaptureBoundary(
+      state,
+      admission.source,
+      admission.sessionId,
+      admission.env,
+    );
+  } catch {
+    // Keep the remembered state fenced. A later reservation must establish a
+    // verified EOF drop boundary before another actor may start.
+  }
+}
+
+async function resetCaptureBoundary(
+  state: CaptureState,
+  source: NativeSessionSource,
+  sessionId: string,
+  env: NodeJS.ProcessEnv,
+): Promise<void> {
+  let path = state.path;
+  let input: FileHandle;
+  try {
+    if (!path) {
+      const discovered = await findNativeSessionPath(source, sessionId, env);
+      if (!discovered)
+        throw new Error("Native session file was not found for boundary reset");
+      path = discovered;
+    }
+    input = await open(path, "r");
+  } catch (error) {
+    if (!state.path) throw error;
+    const discovered = await findNativeSessionPath(source, sessionId, env);
+    if (!discovered || discovered === state.path) throw error;
+    path = discovered;
+    input = await open(path, "r");
+  }
+  const snapshot = await (async () => {
+    try {
+      const value = await input.stat();
+      if (!value.isFile())
+        throw new Error("Native session source is not a file");
+      return value;
+    } finally {
+      await input.close();
+    }
+  })();
+  state.path = path;
+  if (state.segments.length === 0) state.ackedOffset = snapshot.size;
+  state.sealedOffset = snapshot.size;
+  state.fileIdentity = `${snapshot.dev}:${snapshot.ino}`;
+  state.drainError = undefined;
+  state.retryDelayMs = INITIAL_DRAIN_RETRY_MS;
+  state.requiresBoundaryReset = false;
 }
 
 export async function reserveNativeSessionCapture(
@@ -207,6 +270,15 @@ export async function reserveNativeSessionCapture(
       },
     };
     admissions.set(id, admission);
+    const state = states.get(id);
+    if (state?.requiresBoundaryReset) {
+      try {
+        await resetCaptureBoundary(state, source, sessionId, env);
+      } catch (error) {
+        admission.release();
+        throw error;
+      }
+    }
     let settled = false;
     return {
       async capture() {
@@ -217,6 +289,16 @@ export async function reserveNativeSessionCapture(
     };
   }
 }
+
+function retryableSealFailure(error: unknown): boolean {
+  const code =
+    (error as NodeJS.ErrnoException)?.code ??
+    (error as { cause?: NodeJS.ErrnoException })?.cause?.code;
+  return Boolean(
+    code && ["EBUSY", "EINTR", "EIO", "EMFILE", "ENFILE"].includes(code),
+  );
+}
+
 function sameScope(a: NativeSessionScope, b: NativeSessionScope) {
   return a.agentId === b.agentId && a.conversationId === b.conversationId;
 }
@@ -372,21 +454,21 @@ async function drain(
   while (state.segments.length) {
     const segment = state.segments[0];
     if (!segment) return;
+    await drainHookForTests?.();
     const spool = await open(segment.path, "r");
     try {
-      while (state.ackedOffset < segment.end) {
-        if (state.ackedOffset < segment.start)
-          throw new Error("Native session segment has an unrecorded byte gap");
+      let uploadedOffset = segment.uploadedOffset ?? segment.start;
+      while (uploadedOffset < segment.end) {
         const length = Math.min(
           NATIVE_SESSION_CAPTURE_CHUNK_BYTES,
-          segment.end - state.ackedOffset,
+          segment.end - uploadedOffset,
         );
         const buffer = Buffer.allocUnsafe(length);
         const { bytesRead } = await spool.read(
           buffer,
           0,
           length,
-          state.ackedOffset - segment.start,
+          uploadedOffset - segment.start,
         );
         if (bytesRead !== length)
           throw new Error("Native session spool ended before its sealed EOF");
@@ -413,8 +495,10 @@ async function drain(
           response.chunk_index !== state.chunkIndex ||
           response.accepted_bytes !== length
         )
-          throw new Error("Native session chunk acknowledgment mismatch");
-        state.ackedOffset += length;
+          throw new NativeChunkAcknowledgmentError(state.chunkIndex);
+        uploadedOffset += length;
+        segment.uploadedOffset = uploadedOffset;
+        state.ackedOffset = uploadedOffset;
         state.chunkIndex++;
       }
     } finally {
@@ -459,17 +543,13 @@ function retryableDrainFailure(error: unknown): boolean {
   );
 }
 
-async function discardAllSegments(state: CaptureState): Promise<void> {
-  const segments = state.segments.splice(0);
-  for (const segment of segments) {
-    const directory = join(segment.path, "..");
-    await cleanupSpoolDirectory(directory);
-  }
-  // The server permanently rejected this conversation/session scope. Mark the
-  // sealed bytes intentionally dropped so later local appends cannot reopen a
-  // gap or retain the rejected spool forever.
-  state.ackedOffset = state.sealedOffset;
-  state.retryDelayMs = INITIAL_DRAIN_RETRY_MS;
+function retryableLocalSpoolFailure(error: unknown): boolean {
+  const code =
+    (error as NodeJS.ErrnoException)?.code ??
+    (error as { cause?: NodeJS.ErrnoException })?.cause?.code;
+  return Boolean(
+    code && ["EBUSY", "EINTR", "EIO", "EMFILE", "ENFILE"].includes(code),
+  );
 }
 
 async function discardRejectedSegment(state: CaptureState): Promise<void> {
@@ -503,7 +583,24 @@ function startDrain(
       failed = true;
       state.drainError = error;
       reportNativeSessionCaptureFailure(source, sessionId, error);
-      if (!retryableDrainFailure(error)) {
+      const segment = state.segments[0];
+      if (error instanceof NativeChunkAcknowledgmentError) {
+        // The server may have committed the attempted index before returning a
+        // malformed response. Never reuse that ambiguous idempotency slot for
+        // another actor's bytes.
+        state.chunkIndex = Math.max(
+          state.chunkIndex,
+          error.attemptedChunkIndex + 1,
+        );
+      }
+      const retryableLocal = retryableLocalSpoolFailure(error);
+      if (retryableLocal && segment) {
+        segment.localRetryCount = (segment.localRetryCount ?? 0) + 1;
+      }
+      if (
+        (!retryableLocal && !retryableDrainFailure(error)) ||
+        (retryableLocal && (segment?.localRetryCount ?? 0) > 5)
+      ) {
         await discardRejectedSegment(state);
         continueAfterFailure = state.segments.length > 0;
         return;
@@ -606,6 +703,7 @@ export function rememberNativeSession(
 
 export async function clearNativeSessionCaptureForTests(): Promise<void> {
   sealHookForTests = undefined;
+  drainHookForTests = undefined;
   const captured = [...states.values()];
   states.clear();
   for (const admission of admissions.values()) admission.release();
@@ -626,6 +724,12 @@ export function setNativeSessionCaptureSealHookForTests(
   hook: (() => Promise<void>) | undefined,
 ): void {
   sealHookForTests = hook;
+}
+
+export function setNativeSessionCaptureDrainHookForTests(
+  hook: (() => Promise<void>) | undefined,
+): void {
+  drainHookForTests = hook;
 }
 
 /** Report delivery failure without logging raw transcripts or response bodies. */

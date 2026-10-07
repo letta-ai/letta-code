@@ -269,6 +269,10 @@ export type DurableQueuedInput = {
 
 /** Terminal intent committed in the same durable transaction that retires input replay. */
 export type DurablePreparedInputTerminal = {
+  /** Wall-clock diagnostic; authority ordering uses preparationSequence. */
+  preparedAt?: number;
+  /** Durable monotonic order used to reconcile legacy retired authority. */
+  preparationSequence?: number;
   scope: { agentId: string | null; conversationId: string };
   message: {
     type: "turn_finished";

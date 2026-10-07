@@ -37,6 +37,7 @@ export interface RecoveryLineageSidecar {
   durableInputIdentities?: InputIdentity[];
   terminalConsumerIds?: string[];
   teleport?: InterruptedTurnRecord["teleport"];
+  pendingAuthorityRevision?: string;
   retiredInterruptedRevision?: string;
   retiredAuthorityRevision?: string;
   retiredAt?: number;
@@ -114,6 +115,8 @@ export function createRecoveryLineageSidecarAccess(params: {
           candidate.terminalConsumerIds.every(isTerminalConsumerId))) &&
       (candidate.teleport === undefined ||
         isTeleportIntent(candidate.teleport)) &&
+      (candidate.pendingAuthorityRevision === undefined ||
+        typeof candidate.pendingAuthorityRevision === "string") &&
       (candidate.state !== "retired" ||
         (candidate.retiredInterruptedRevision === undefined &&
           candidate.retiredAuthorityRevision === undefined &&
@@ -204,7 +207,8 @@ export function createRecoveryLineageSidecarAccess(params: {
       revision: randomUUID(),
       state: "retired",
       retiredInterruptedRevision: previous.sourceMainRevision,
-      retiredAuthorityRevision: previous.revision,
+      retiredAuthorityRevision:
+        previous.pendingAuthorityRevision ?? previous.revision,
       retiredAt: Date.now(),
     };
     write(retired);
@@ -220,13 +224,6 @@ export function createRecoveryLineageSidecarAccess(params: {
     authorityRevision?: string;
   } | null => {
     const sidecar = read(agentId, conversationId, lineageId);
-    if (
-      sidecar?.state === "retired" &&
-      typeof sidecar.retiredAt === "number" &&
-      Date.now() - sidecar.retiredAt >= 24 * 60 * 60 * 1_000
-    ) {
-      return null;
-    }
     if (sidecar?.state !== "retired") return null;
     if (
       sidecar.retiredInterruptedRevision &&
@@ -396,36 +393,6 @@ export function createRecoveryLineageSidecarAccess(params: {
     params.syncDirectory(params.directory);
   };
 
-  const removeRetired = (sidecar: RecoveryLineageSidecar): void => {
-    const sidecarPath = path(
-      sidecar.agentId,
-      sidecar.conversationId,
-      sidecar.lineageId,
-    );
-    const suffixIndex = sidecarPath.lastIndexOf(".recovery-");
-    if (suffixIndex < 0) return;
-    const release = acquireDurableFileLock(sidecarPath.slice(0, suffixIndex), {
-      waitMs: params.lockWaitMs,
-    });
-    try {
-      const current = read(
-        sidecar.agentId,
-        sidecar.conversationId,
-        sidecar.lineageId,
-      );
-      if (
-        current?.state === "retired" &&
-        current.revision === sidecar.revision &&
-        (current.retiredAt === undefined ||
-          Date.now() - current.retiredAt >= 24 * 60 * 60 * 1_000)
-      ) {
-        remove(current);
-      }
-    } finally {
-      release();
-    }
-  };
-
   const list = (): RecoveryLineageSidecar[] => {
     const removeMalformedOrphan = (file: string) => {
       const separator = file.indexOf(".recovery-");
@@ -529,7 +496,6 @@ export function createRecoveryLineageSidecarAccess(params: {
     retiredAuthority,
     recoveryView,
     remove,
-    removeRetired,
     snapshot,
     write,
   };

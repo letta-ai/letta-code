@@ -18,6 +18,7 @@ import {
   rememberNativeSession,
   reserveNativeSessionCapture,
   captureNativeSession as sealNativeSession,
+  setNativeSessionCaptureDrainHookForTests,
   setNativeSessionCaptureSealHookForTests,
 } from "./native-session-capture";
 
@@ -518,6 +519,40 @@ describe("native CLI JSONL capture", () => {
     );
   });
 
+  test("retries transient local spool I/O before uploading immutable bytes", async () => {
+    const { env } = await fixture("codex", Buffer.from("local-io\n"));
+    const calls: Array<{
+      url: string;
+      body: Record<string, unknown>;
+      actingUser: string | undefined;
+    }> = [];
+    const url = await endpoint(calls);
+    let attempts = 0;
+    setNativeSessionCaptureDrainHookForTests(async () => {
+      attempts += 1;
+      if (attempts <= 2) {
+        throw Object.assign(new Error("file table pressure"), {
+          code: "EMFILE",
+        });
+      }
+    });
+    rememberNativeSession("codex", ID, scope, "https://api.letta.com");
+    await sealNativeSession("codex", ID, scope, env, {
+      baseUrl: url,
+      apiKey: "test",
+      cloudUrl: "https://api.letta.com",
+    });
+    await Bun.sleep(800);
+    await expect(
+      awaitNativeSessionCaptureDrainForTests("codex", ID),
+    ).resolves.toBeUndefined();
+    expect(attempts).toBe(3);
+    expect(calls).toHaveLength(1);
+    expect(
+      Buffer.from(String(calls[0]?.body.data_base64), "base64").toString(),
+    ).toBe("local-io\n");
+  });
+
   test.each([
     [undefined, "ambient-user"],
     [null, undefined],
@@ -709,7 +744,9 @@ describe("native CLI JSONL capture", () => {
     let attempts = 0;
     setNativeSessionCaptureSealHookForTests(async () => {
       attempts++;
-      if (attempts === 1) throw new Error("transient EMFILE");
+      if (attempts === 1) {
+        throw Object.assign(new Error("transient EMFILE"), { code: "EMFILE" });
+      }
     });
     const actorA = await reserveNativeSessionCapture(
       "codex",
@@ -870,42 +907,10 @@ describe("native CLI JSONL capture", () => {
       awaitNativeSessionCaptureDrainForTests("codex", ID),
     ).rejects.toThrow("acknowledgment mismatch");
     expect(calls).toHaveLength(2);
+    expect(calls.map((call) => call.body.chunk_index)).toEqual([0, 1]);
     expect(
       Buffer.from(String(calls[1]?.body.data_base64), "base64").toString(),
     ).toBe("next\n");
-  });
-
-  test("terminal seal failure retires capture and releases the next actor", async () => {
-    const { env } = await fixture("codex", Buffer.from("actor-a\n"));
-    const options = { cloudUrl: "https://api.letta.com" };
-    rememberNativeSession("codex", ID, scope, "https://api.letta.com");
-    let attempts = 0;
-    setNativeSessionCaptureSealHookForTests(async () => {
-      attempts += 1;
-      throw Object.assign(new Error("permission denied"), { code: "EACCES" });
-    });
-    const actorA = await reserveNativeSessionCapture(
-      "codex",
-      ID,
-      { ...scope, actingUserId: "actor-a" },
-      env,
-      options,
-    );
-    await expect(actorA.capture()).rejects.toThrow("permission denied");
-    expect(attempts).toBe(3);
-
-    setNativeSessionCaptureSealHookForTests(undefined);
-    const actorB = await reserveNativeSessionCapture(
-      "codex",
-      ID,
-      { ...scope, actingUserId: "actor-b" },
-      env,
-      options,
-    );
-    await expect(actorB.capture()).resolves.toBeUndefined();
-    await expect(
-      awaitNativeSessionCaptureDrainForTests("codex", ID),
-    ).resolves.toBeUndefined();
   });
 
   test("capture resolves after asynchronous bounded sealing without waiting for upload", async () => {

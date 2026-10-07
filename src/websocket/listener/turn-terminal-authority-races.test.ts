@@ -198,28 +198,50 @@ test.each(["exact", "legacy"] as const)(
       const terminalStore = createTurnFinishedStore(
         join(directory, "terminals"),
       );
-      const running = interruptedStore.write({
+      const predecessor = interruptedStore.write({
         agentId: "agent-1",
         conversationId: "conversation-1",
-        runId: "run-winning",
-        toolCallIds: [],
+        runId: "run-predecessor",
+        toolCallIds: ["call-predecessor"],
         results: [],
-        requestOtid: "request-winning",
+        requestOtid: "request-predecessor",
         workingDirectory: "/winning",
+        durableInputIdentities: [{ domain: "input", id: "cm-winning" }],
         recoveryClaimCompletion: {
           lineageId: "lineage-shared",
           state: "running",
-          effectToolCallIds: [],
+          effectToolCallIds: ["call-predecessor"],
         },
       });
-      if (!running.revision) throw new Error("missing running revision");
-      const pending = interruptedStore.markRecoveryClaimCompletionPending({
-        agentId: "agent-1",
-        conversationId: "conversation-1",
-        lineageId: "lineage-shared",
-        expectedRevision: running.revision,
-      });
-      if (!pending?.revision) throw new Error("missing pending revision");
+      if (!predecessor.revision)
+        throw new Error("missing predecessor revision");
+      interruptedStore.write(
+        {
+          ...predecessor,
+          runId: "run-successor",
+          toolCallIds: ["call-successor"],
+          requestOtid: "request-successor",
+          recoveryClaimCompletion: {
+            lineageId: "lineage-shared",
+            state: "running",
+            independentSuccessor: true,
+            effectRevision: predecessor.revision,
+            effectRunId: predecessor.runId,
+            effectToolCallIds: predecessor.toolCallIds,
+            effectRequestOtid: predecessor.requestOtid,
+            effectWorkingDirectory: predecessor.workingDirectory,
+            effectResults: predecessor.results,
+            effectInputIdentities: predecessor.durableInputIdentities,
+          },
+        },
+        predecessor.revision,
+      );
+      const running = interruptedStore.readRecoverySnapshot(
+        "agent-1",
+        "conversation-1",
+        "lineage-shared",
+      );
+      if (!running) throw new Error("missing running sidecar authority");
       const owner = (
         authorityRevision: string,
         interruptedRevision: string,
@@ -252,8 +274,15 @@ test.each(["exact", "legacy"] as const)(
           stop_reason: "end_turn",
           terminal_consumer_ids: ["slack:agent-1"],
         },
-        owner(pending.revision, pending.revision),
+        owner(running.revisionToken, predecessor.revision),
       );
+      const pending = interruptedStore.markRecoveryClaimCompletionPending({
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        lineageId: "lineage-shared",
+        expectedRevision: running.revisionToken,
+      });
+      if (!pending?.revision) throw new Error("missing pending revision");
       expect(
         interruptedStore.retireRecoveryClaimCompletion({
           agentId: "agent-1",
@@ -261,19 +290,30 @@ test.each(["exact", "legacy"] as const)(
           lineageId: "lineage-shared",
           pendingRevision: pending.revision,
         }),
-      ).toBe("removed");
+      ).toBe("preserved");
+      const sidecar = readdirSync(join(directory, "interrupted")).find((file) =>
+        file.includes(".json.recovery-"),
+      );
+      if (!sidecar) throw new Error("missing retired authority sidecar");
+      const sidecarPath = join(directory, "interrupted", sidecar);
+      const retired = JSON.parse(readFileSync(sidecarPath, "utf8"));
       if (format === "legacy") {
-        const sidecar = readdirSync(join(directory, "interrupted")).find(
-          (file) => file.includes(".json.recovery-"),
-        );
-        if (!sidecar) throw new Error("missing retired authority sidecar");
-        const sidecarPath = join(directory, "interrupted", sidecar);
-        const legacy = JSON.parse(readFileSync(sidecarPath, "utf8"));
+        const legacy = retired;
         delete legacy.retiredInterruptedRevision;
         delete legacy.retiredAuthorityRevision;
         delete legacy.retiredAt;
-        writeFileSync(sidecarPath, JSON.stringify(legacy), "utf8");
+      } else {
+        retired.retiredAt = Date.now() - 25 * 60 * 60 * 1_000;
       }
+      writeFileSync(sidecarPath, JSON.stringify(retired), "utf8");
+      interruptedStore.list();
+      expect(
+        interruptedStore.readRetiredRecoveryAuthority(
+          "agent-1",
+          "conversation-1",
+          "lineage-shared",
+        ),
+      ).not.toBeNull();
 
       const listener = createRuntime();
       const runtime = getOrCreateScopedRuntime(

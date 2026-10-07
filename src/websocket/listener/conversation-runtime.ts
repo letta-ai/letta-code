@@ -425,7 +425,7 @@ export function promotePreparedInputTerminals(
   onlyScope?: { agentId: string | null; conversationId: string },
   interruptedStore: Pick<
     ReturnType<typeof createInterruptedTurnStore>,
-    "readRecoverySnapshot"
+    "readRecoverySnapshot" | "readRetiredRecoveryAuthority"
   > = createInterruptedTurnStore(),
   discardPreparedTerminal = discardPreparedInputTerminal,
   clearPreparedTerminal = clearPreparedInputTerminal,
@@ -474,29 +474,105 @@ export function promotePreparedInputTerminals(
         deferred = true;
         continue;
       }
+      let terminalRecord: ReturnType<typeof terminalStore.readOrThrow>;
       let persisted: PersistedTurnFinished | undefined;
       try {
-        persisted = terminalStore
-          .readOrThrow(prepared.scope.agentId, prepared.scope.conversationId)
-          ?.terminals.find((terminal) =>
-            prepared.owner.terminalIdentity
-              ? terminal.owner.terminalIdentity ===
-                prepared.owner.terminalIdentity
-              : terminal.message.turn_id === prepared.message.turn_id,
-          );
+        terminalRecord = terminalStore.readOrThrow(
+          prepared.scope.agentId,
+          prepared.scope.conversationId,
+        );
+        persisted = terminalRecord?.terminals.find((terminal) =>
+          prepared.owner.terminalIdentity
+            ? terminal.owner.terminalIdentity ===
+              prepared.owner.terminalIdentity
+            : terminal.message.turn_id === prepared.message.turn_id,
+        );
       } catch {
         // Unavailable/corrupt terminal state is not absence. Preserve both
         // durable artifacts until an exact later pass can reconcile them.
         deferred = true;
         continue;
       }
+      let staleAuthority = false;
       if (!snapshot) {
-        // A completed recovery removes its sidecar after remote ACK. Preserve
-        // and promote the matching unacknowledged terminal that outlived it;
-        // without terminal proof, retain the journal for later repair.
-        if (!persisted) {
+        let retired: ReturnType<
+          typeof interruptedStore.readRetiredRecoveryAuthority
+        >;
+        try {
+          retired = interruptedStore.readRetiredRecoveryAuthority(
+            prepared.scope.agentId ?? "",
+            prepared.scope.conversationId,
+            prepared.owner.recoveryLineageId,
+          );
+        } catch {
           deferred = true;
           continue;
+        }
+        if (!retired) {
+          if (!persisted) {
+            deferred = true;
+            continue;
+          }
+        } else if (
+          retired.interruptedRevision !== prepared.owner.interruptedRevision
+        ) {
+          staleAuthority = true;
+        } else if (retired.authorityRevision) {
+          staleAuthority =
+            retired.authorityRevision !==
+            prepared.owner.interruptedAuthorityRevision;
+        } else {
+          const evidence = new Map<string, number>();
+          for (const candidate of preparedTerminals) {
+            if (
+              candidate.scope.agentId !== prepared.scope.agentId ||
+              candidate.scope.conversationId !==
+                prepared.scope.conversationId ||
+              candidate.owner.recoveryLineageId !==
+                prepared.owner.recoveryLineageId ||
+              candidate.owner.interruptedRevision !==
+                prepared.owner.interruptedRevision
+            )
+              continue;
+            const identity =
+              candidate.owner.terminalIdentity ?? candidate.message.turn_id;
+            evidence.set(
+              identity,
+              Math.max(
+                evidence.get(identity) ?? -1,
+                candidate.preparationSequence ?? -1,
+              ),
+            );
+          }
+          for (const terminal of terminalRecord?.terminals ?? []) {
+            if (
+              terminal.owner.recoveryLineageId !==
+                prepared.owner.recoveryLineageId ||
+              terminal.owner.interruptedRevision !==
+                prepared.owner.interruptedRevision
+            )
+              continue;
+            const identity =
+              terminal.owner.terminalIdentity ?? terminal.message.turn_id;
+            evidence.set(
+              identity,
+              Math.max(
+                evidence.get(identity) ?? -1,
+                terminal.owner.preparationSequence ?? -1,
+              ),
+            );
+          }
+          const newestSequence = Math.max(...evidence.values());
+          const newest = [...evidence.entries()].filter(
+            ([, sequence]) => sequence === newestSequence,
+          );
+          if (!Number.isSafeInteger(newestSequence) || newest.length !== 1) {
+            deferred = true;
+            continue;
+          }
+          const preparedIdentity =
+            prepared.owner.terminalIdentity ?? prepared.message.turn_id;
+          staleAuthority = newest[0]?.[0] !== preparedIdentity;
         }
       } else if (
         snapshot.record.revision !== prepared.owner.interruptedRevision ||
@@ -506,6 +582,9 @@ export function promotePreparedInputTerminals(
           deferred = true;
           continue;
         }
+        staleAuthority = true;
+      }
+      if (staleAuthority) {
         try {
           if (persisted) {
             terminalStore.remove(
@@ -597,7 +676,10 @@ export function promotePreparedInputTerminals(
           prepared.scope.agentId,
           prepared.scope.conversationId,
           prepared.message,
-          owner,
+          {
+            ...owner,
+            preparationSequence: prepared.preparationSequence,
+          },
         );
       }
     } catch (error) {

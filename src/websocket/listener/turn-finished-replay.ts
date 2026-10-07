@@ -46,6 +46,8 @@ export type TurnFinishedOwner = {
   recoveryLineageId?: string;
   /** Exact mutable main/sidecar generation validated by this terminal. */
   interruptedAuthorityRevision?: string;
+  /** Durable journal generation retained across promotion and crash recovery. */
+  preparationSequence?: number;
 };
 
 export class TurnFinishedCapacityError extends Error {
@@ -101,7 +103,16 @@ function terminalAuthorityStatus(
           candidate.owner.recoveryLineageId === owner.recoveryLineageId &&
           candidate.owner.interruptedRevision === owner.interruptedRevision,
       );
-      return legacyCandidates.at(-1)?.id === terminal.id ? "current" : "stale";
+      const winner = legacyCandidates
+        .toSorted(
+          (left, right) =>
+            (left.owner.preparationSequence ?? -1) -
+              (right.owner.preparationSequence ?? -1) ||
+            left.createdAt - right.createdAt ||
+            left.id.localeCompare(right.id),
+        )
+        .at(-1);
+      return winner?.id === terminal.id ? "current" : "stale";
     }
     if (
       snapshot.record.revision === owner.interruptedRevision &&
@@ -255,7 +266,11 @@ export function createTurnFinishedStore(
             (terminal.owner.recoveryLineageId === undefined ||
               typeof terminal.owner.recoveryLineageId === "string") &&
             (terminal.owner.interruptedAuthorityRevision === undefined ||
-              typeof terminal.owner.interruptedAuthorityRevision === "string"),
+              typeof terminal.owner.interruptedAuthorityRevision ===
+                "string") &&
+            (terminal.owner.preparationSequence === undefined ||
+              (Number.isSafeInteger(terminal.owner.preparationSequence) &&
+                terminal.owner.preparationSequence >= 0)),
         )
       ) {
         throw new Error("Invalid turn-finished record");
@@ -393,11 +408,23 @@ export function createTurnFinishedStore(
               terminal.message.turn_id === message.turn_id,
         );
         if (existing) {
+          const { preparationSequence: existingSequence, ...existingOwner } =
+            existing.owner;
+          const { preparationSequence, ...candidateOwner } = owner;
           if (
             JSON.stringify(existing.message) !== JSON.stringify(message) ||
-            JSON.stringify(existing.owner) !== JSON.stringify(owner)
+            JSON.stringify(existingOwner) !== JSON.stringify(candidateOwner) ||
+            (existingSequence !== undefined &&
+              existingSequence !== preparationSequence)
           ) {
             throw new Error("Turn-finished identity collision");
+          }
+          if (
+            existingSequence === undefined &&
+            preparationSequence !== undefined
+          ) {
+            existing.owner = { ...existing.owner, preparationSequence };
+            write(record);
           }
           return existing;
         }

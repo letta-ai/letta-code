@@ -305,7 +305,7 @@ describe("external coding agent output and preflight", () => {
         throw new Error("second Codex start blocked on leaked admission");
       }),
     ]);
-    expect(second.error).toContain("turn/start rejected");
+    expect(second.error).toContain("boundary reset");
     expect(starts).toBe(2);
   });
 

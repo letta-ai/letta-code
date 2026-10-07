@@ -52,7 +52,7 @@ export function prepareInputTerminal(
   if (identities.length === 0) return true;
   const ledger = getLedger(runtime.listener);
   const keys = identityKeys(runtime, identities);
-  const prepared = structuredClone(terminal);
+  const preparedBase = structuredClone(terminal);
   if (ledger.persistentPath) {
     try {
       return durableTransaction(ledger.persistentPath, (store) => {
@@ -63,6 +63,12 @@ export function prepareInputTerminal(
             return { result: false, changed: false };
           }
         }
+        const prepared = {
+          ...preparedBase,
+          preparedAt: terminal.preparedAt ?? Date.now(),
+          preparationSequence:
+            terminal.preparationSequence ?? ++store.nextGeneration,
+        };
         let changed = false;
         for (const key of keys) {
           const entry = store.entries[key];
@@ -85,6 +91,12 @@ export function prepareInputTerminal(
       return false;
     }
   }
+  const prepared = {
+    ...preparedBase,
+    preparedAt: terminal.preparedAt ?? Date.now(),
+    preparationSequence:
+      terminal.preparationSequence ?? ++ledger.nextGeneration,
+  };
   for (const key of keys) {
     const entry = ledger.entries.get(key);
     if (!entry) continue;
@@ -146,18 +158,37 @@ export function loadPreparedInputTerminals(
     for (const entry of entries) {
       const prepared = entry.preparedTerminal;
       if (prepared) {
+        const ordered = {
+          ...prepared,
+          // Pre-sequence journals can only use their durable reservation
+          // generation as a stable upgrade order. New writes always carry the
+          // exact monotonic preparation sequence.
+          preparationSequence: prepared.preparationSequence ?? entry.generation,
+        };
         const key =
-          prepared.owner.terminalIdentity ??
+          ordered.owner.terminalIdentity ??
           JSON.stringify([
-            prepared.scope.agentId,
-            prepared.scope.conversationId,
-            prepared.message.turn_id,
+            ordered.scope.agentId,
+            ordered.scope.conversationId,
+            ordered.message.turn_id,
           ]);
         const existing = byTurnId.get(key);
-        if (existing && JSON.stringify(existing) !== JSON.stringify(prepared)) {
-          throw new Error("Prepared terminal identity collision");
+        if (existing) {
+          const { preparationSequence: existingSequence, ...existingPayload } =
+            existing;
+          const { preparationSequence: orderedSequence, ...orderedPayload } =
+            ordered;
+          if (
+            JSON.stringify(existingPayload) !== JSON.stringify(orderedPayload)
+          ) {
+            throw new Error("Prepared terminal identity collision");
+          }
+          if ((orderedSequence ?? -1) > (existingSequence ?? -1)) {
+            byTurnId.set(key, structuredClone(ordered));
+          }
+          continue;
         }
-        byTurnId.set(key, structuredClone(prepared));
+        byTurnId.set(key, structuredClone(ordered));
       }
     }
     return [...byTurnId.values()];

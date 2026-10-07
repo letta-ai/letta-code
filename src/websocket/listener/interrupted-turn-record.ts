@@ -79,7 +79,6 @@ export function createInterruptedTurnStore(
     list: listSidecars,
     mainView: readMainView,
     read: readSidecar,
-    removeRetired: removeRetiredSidecar,
     retire: retireSidecar,
     retiredAuthority: readRetiredRecoveryAuthority,
     recoveryView: readRecoveryView,
@@ -107,21 +106,13 @@ export function createInterruptedTurnStore(
           }),
         );
         for (const sidecar of listSidecars()) {
-          const key = `${sidecar.agentId}\0${sidecar.conversationId}\0${sidecar.lineageId}`;
           if (sidecar.state === "retired") {
-            // Legacy tombstones predate retiredAt and the exact authority
-            // token. Preserve them: removing one before its persisted terminal
-            // replays would make that terminal permanently unverifiable.
-            if (sidecar.retiredAt === undefined) continue;
-            if (
-              typeof sidecar.retiredAt === "number" &&
-              Date.now() - sidecar.retiredAt < 24 * 60 * 60 * 1_000
-            ) {
-              continue;
-            }
-            removeRetiredSidecar(sidecar);
+            // Authority is evidence-linked, not age-linked. Retain tombstones
+            // until reference-aware GC can prove no terminal or prepared
+            // journal still depends on this generation.
             continue;
           }
+          const key = `${sidecar.agentId}\0${sidecar.conversationId}\0${sidecar.lineageId}`;
           if (liveLineages.has(key)) continue;
           const destination = path(sidecar.agentId, sidecar.conversationId);
           const release = acquireDurableFileLock(destination, {
@@ -529,6 +520,7 @@ export function createInterruptedTurnStore(
               ? previous
               : {
                   ...previous,
+                  pendingAuthorityRevision: previous.revision,
                   revision: randomUUID(),
                   state: "pending" as const,
                 };

@@ -313,6 +313,12 @@ function validateDurableStore(value: unknown): DurableStore {
       const prepared = rawEntry.preparedTerminal;
       if (
         !isRecord(prepared) ||
+        (prepared.preparedAt !== undefined &&
+          (typeof prepared.preparedAt !== "number" ||
+            !Number.isFinite(prepared.preparedAt))) ||
+        (prepared.preparationSequence !== undefined &&
+          (!Number.isSafeInteger(prepared.preparationSequence) ||
+            (prepared.preparationSequence as number) < 0)) ||
         !isRecord(prepared.scope) ||
         (prepared.scope.agentId !== null &&
           typeof prepared.scope.agentId !== "string") ||

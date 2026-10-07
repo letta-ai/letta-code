@@ -864,7 +864,10 @@ test.each([
       expect(
         terminalStore.read(restarted.agentId, restarted.conversationId)
           ?.terminals[0]?.owner,
-      ).toEqual(persistedOwner);
+      ).toEqual({
+        ...persistedOwner,
+        preparationSequence: expect.any(Number),
+      });
       expect(sent).toEqual([
         expect.objectContaining({
           type: "turn_finished",

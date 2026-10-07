@@ -18,6 +18,7 @@ import {
   reserveInputDisposition,
 } from "./input-disposition";
 import {
+  clearPreparedInputTerminal,
   completePreparedInputTerminal,
   discardPreparedInputTerminal,
   loadPreparedInputTerminals,
@@ -233,6 +234,7 @@ test("stale terminal cleanup failures defer startup and converge on later promot
     ).toBe(true);
     terminalStore.put("agent-1", "conv-1", message, owner);
     const interruptedStore = {
+      readRetiredRecoveryAuthority: () => null,
       readRecoverySnapshot: () => ({
         record: {
           agentId: "agent-1",
@@ -469,6 +471,7 @@ test("retained recovery journals schedule bounded promotion retries without an e
     ).toBe(true);
     let attempts = 0;
     const absentAuthority = {
+      readRetiredRecoveryAuthority: () => null,
       readRecoverySnapshot: () => {
         attempts += 1;
         return null;
@@ -579,7 +582,10 @@ test("recorded recovery reuses a put-committed prepared identity on retry", () =
     const terminals = terminalStore.read("agent-1", "conv-1")?.terminals;
     expect(terminals).toHaveLength(1);
     expect(terminals?.[0]?.message).toEqual(message);
-    expect(terminals?.[0]?.owner).toEqual(owner);
+    expect(terminals?.[0]?.owner).toEqual({
+      ...owner,
+      preparationSequence: expect.any(Number),
+    });
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -664,122 +670,180 @@ test("terminal evidence is bound to the exact sidecar authority token", () => {
   }
 });
 
-test("retired sidecar preserves a persisted unacknowledged prepared terminal", () => {
-  const directory = mkdtempSync(join(tmpdir(), "retired-terminal-authority-"));
-  const listener = createRuntime();
-  listener.acceptedInputDispositionLedger =
-    createAcceptedInputDispositionLedger({ persistentPath: null });
-  const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
-  const terminalStore = createTurnFinishedStore(join(directory, "terminals"));
-  const interruptedStore = createInterruptedTurnStore(
-    join(directory, "interrupted"),
-  );
-  const identity = ordinaryInputIdentity("cm-retired-authority");
-  if (!identity) throw new Error("missing input identity");
-  try {
-    const reservation = reserveInputDisposition(runtime, identity);
-    if (reservation.kind !== "reserved")
-      throw new Error("expected reservation");
-    expect(
-      commitInputDisposition(runtime, reservation.reservation, "started"),
-    ).toBe(true);
-    const predecessor = interruptedStore.write({
-      agentId: "agent-1",
-      conversationId: "conv-1",
-      runId: "run-predecessor",
-      toolCallIds: ["call-predecessor"],
-      results: [],
-      requestOtid: "request-predecessor",
-      workingDirectory: directory,
-      durableInputIdentities: [identity],
-      recoveryClaimCompletion: {
-        lineageId: "lineage-predecessor",
-        state: "running",
-        effectToolCallIds: ["call-predecessor"],
-      },
-    });
-    interruptedStore.write(
-      {
-        ...predecessor,
-        runId: "run-successor",
-        toolCallIds: ["call-successor"],
-        requestOtid: "request-successor",
+test.each([true, false])(
+  "retired authority converges stale and winning journals (persisted=%s)",
+  (persistedWinner) => {
+    const directory = mkdtempSync(
+      join(tmpdir(), "retired-terminal-authority-"),
+    );
+    const listener = createRuntime();
+    listener.acceptedInputDispositionLedger =
+      createAcceptedInputDispositionLedger({ persistentPath: null });
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const terminalStore = createTurnFinishedStore(join(directory, "terminals"));
+    const interruptedStore = createInterruptedTurnStore(
+      join(directory, "interrupted"),
+    );
+    const identity = ordinaryInputIdentity("cm-retired-authority");
+    const staleIdentity = ordinaryInputIdentity("cm-retired-stale");
+    if (!identity) throw new Error("missing input identity");
+    if (!staleIdentity) throw new Error("missing stale input identity");
+    try {
+      for (const inputIdentity of [identity, staleIdentity]) {
+        const reservation = reserveInputDisposition(runtime, inputIdentity);
+        if (reservation.kind !== "reserved")
+          throw new Error("expected reservation");
+        expect(
+          commitInputDisposition(runtime, reservation.reservation, "started"),
+        ).toBe(true);
+      }
+      const predecessor = interruptedStore.write({
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        runId: "run-predecessor",
+        toolCallIds: ["call-predecessor"],
+        results: [],
+        requestOtid: "request-predecessor",
+        workingDirectory: directory,
+        durableInputIdentities: [identity],
         recoveryClaimCompletion: {
           lineageId: "lineage-predecessor",
           state: "running",
-          independentSuccessor: true,
-          effectRevision: predecessor.revision,
-          effectRunId: predecessor.runId,
-          effectToolCallIds: predecessor.toolCallIds,
-          effectRequestOtid: predecessor.requestOtid,
-          effectWorkingDirectory: predecessor.workingDirectory,
-          effectResults: predecessor.results,
-          effectInputIdentities: [identity],
+          effectToolCallIds: ["call-predecessor"],
         },
-      },
-      predecessor.revision,
-    );
-    const snapshot = interruptedStore.readRecoverySnapshot(
-      "agent-1",
-      "conv-1",
-      "lineage-predecessor",
-    );
-    if (!snapshot) throw new Error("missing sidecar authority");
-    const owner = {
-      connectionId: null,
-      canRotate: false,
-      lineageId: null,
-      terminalIdentity: "terminal-retired-authority",
-      interruptedRevision: predecessor.revision,
-      recoveryLineageId: "lineage-predecessor",
-      interruptedAuthorityRevision: snapshot.revisionToken,
-    };
-    const message = {
-      type: "turn_finished" as const,
-      turn_id: "turn-retired-authority",
-      stop_reason: "end_turn" as const,
-    };
-    expect(
-      prepareInputTerminal(runtime, [identity], {
-        scope: { agentId: "agent-1", conversationId: "conv-1" },
-        message,
-        owner,
-      }),
-    ).toBe(true);
-    terminalStore.put("agent-1", "conv-1", message, owner);
-    const pending = markRecoveryClaimCompletionPending(
-      interruptedStore,
-      snapshot.record,
-      snapshot.revisionToken,
-    );
-    if (!pending?.revision) throw new Error("missing pending revision");
-    expect(
-      retireAcknowledgedRecoveryClaim(interruptedStore, {
-        agentId: "agent-1",
-        conversationId: "conv-1",
-        lineageId: "lineage-predecessor",
-        pendingRevision: pending.revision,
-      }),
-    ).toBe("preserved");
-    expect(
-      interruptedStore.readRecoverySnapshot(
+      });
+      interruptedStore.write(
+        {
+          ...predecessor,
+          runId: "run-successor",
+          toolCallIds: ["call-successor"],
+          requestOtid: "request-successor",
+          recoveryClaimCompletion: {
+            lineageId: "lineage-predecessor",
+            state: "running",
+            independentSuccessor: true,
+            effectRevision: predecessor.revision,
+            effectRunId: predecessor.runId,
+            effectToolCallIds: predecessor.toolCallIds,
+            effectRequestOtid: predecessor.requestOtid,
+            effectWorkingDirectory: predecessor.workingDirectory,
+            effectResults: predecessor.results,
+            effectInputIdentities: [identity],
+          },
+        },
+        predecessor.revision,
+      );
+      const snapshot = interruptedStore.readRecoverySnapshot(
         "agent-1",
         "conv-1",
         "lineage-predecessor",
-      ),
-    ).toBeNull();
-
-    expect(
-      promotePreparedInputTerminals(
-        listener,
-        terminalStore,
-        undefined,
+      );
+      if (!snapshot) throw new Error("missing sidecar authority");
+      const owner = {
+        connectionId: "connection-retired",
+        canRotate: false,
+        lineageId: null,
+        terminalIdentity: "terminal-retired-authority",
+        interruptedRevision: predecessor.revision,
+        recoveryLineageId: "lineage-predecessor",
+        interruptedAuthorityRevision: snapshot.revisionToken,
+      };
+      const message = {
+        type: "turn_finished" as const,
+        turn_id: "turn-retired-authority",
+        stop_reason: "end_turn" as const,
+        terminal_consumer_ids: ["slack:agent-1"],
+      };
+      expect(
+        prepareInputTerminal(runtime, [staleIdentity], {
+          preparationSequence: 1,
+          scope: { agentId: "agent-1", conversationId: "conv-1" },
+          message: {
+            ...message,
+            turn_id: "turn-retired-stale",
+          },
+          owner: {
+            ...owner,
+            terminalIdentity: "terminal-retired-stale",
+            interruptedAuthorityRevision: "authority-stale",
+          },
+        }),
+      ).toBe(true);
+      expect(
+        prepareInputTerminal(runtime, [identity], {
+          preparationSequence: 2,
+          scope: { agentId: "agent-1", conversationId: "conv-1" },
+          message,
+          owner,
+        }),
+      ).toBe(true);
+      if (persistedWinner) {
+        terminalStore.put("agent-1", "conv-1", message, owner);
+      }
+      const pending = markRecoveryClaimCompletionPending(
         interruptedStore,
-      ),
-    ).toBe(1);
-    expect(loadPreparedInputTerminals(listener)).toEqual([]);
-    expect(terminalStore.read("agent-1", "conv-1")?.terminals).toHaveLength(1);
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
+        snapshot.record,
+        snapshot.revisionToken,
+      );
+      if (!pending?.revision) throw new Error("missing pending revision");
+      expect(
+        retireAcknowledgedRecoveryClaim(interruptedStore, {
+          agentId: "agent-1",
+          conversationId: "conv-1",
+          lineageId: "lineage-predecessor",
+          pendingRevision: pending.revision,
+        }),
+      ).toBe("preserved");
+      expect(
+        interruptedStore.readRecoverySnapshot(
+          "agent-1",
+          "conv-1",
+          "lineage-predecessor",
+        ),
+      ).toBeNull();
+
+      if (!persistedWinner) {
+        const winner = loadPreparedInputTerminals(listener).find(
+          (candidate) =>
+            candidate.owner.terminalIdentity === "terminal-retired-authority",
+        );
+        if (!winner) throw new Error("missing winning journal");
+        expect(
+          promotePreparedInputTerminals(
+            listener,
+            terminalStore,
+            undefined,
+            interruptedStore,
+            discardPreparedInputTerminal,
+            clearPreparedInputTerminal,
+            () => [winner],
+          ),
+        ).toBe(1);
+        expect(loadPreparedInputTerminals(listener)).toHaveLength(1);
+        expect(
+          promotePreparedInputTerminals(
+            listener,
+            terminalStore,
+            undefined,
+            interruptedStore,
+          ),
+        ).toBe(0);
+      } else {
+        expect(
+          promotePreparedInputTerminals(
+            listener,
+            terminalStore,
+            undefined,
+            interruptedStore,
+          ),
+        ).toBe(1);
+      }
+      expect(loadPreparedInputTerminals(listener)).toEqual([]);
+      expect(terminalStore.read("agent-1", "conv-1")?.terminals).toHaveLength(
+        1,
+      );
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  },
+);
