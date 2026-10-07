@@ -2,6 +2,7 @@ import { createContextTracker } from "@/cli/helpers/context-tracker";
 import { createSharedReminderState } from "@/reminders/state";
 import type { PendingControlRequest } from "@/types/protocol_v2";
 import { getWorkingDirectoryScopeKey } from "./cwd";
+import { cancelFailedTeleportCleanup } from "./failed-teleport-cleanup";
 import {
   normalizeConversationId,
   normalizeCwdAgentId,
@@ -42,6 +43,7 @@ export function getRuntimeAuthorityEpoch(
 
 export function setActiveRuntime(runtime: ListenerRuntime | null): void {
   if (runtime !== null && runtime !== activeRuntime) {
+    if (activeRuntime) clearListenerRetryTimers(activeRuntime);
     activeRuntimeAuthorityEpoch += 1;
     authorityEpochByRuntime.set(runtime, activeRuntimeAuthorityEpoch);
   }
@@ -68,7 +70,18 @@ export function nextEventSeq(runtime: ListenerRuntime | null): number | null {
   return runtime.eventSeqCounter;
 }
 
+function clearListenerRetryTimers(runtime: ListenerRuntime): void {
+  if (runtime.durableQueueRestoreTimer) {
+    clearTimeout(runtime.durableQueueRestoreTimer);
+    runtime.durableQueueRestoreTimer = undefined;
+  }
+  runtime.durableQueueRestoreScheduled = false;
+  runtime.durableQueueRestoreFailures = 0;
+  cancelFailedTeleportCleanup(runtime);
+}
+
 export function clearRuntimeTimers(runtime: ListenerRuntime): void {
+  clearListenerRetryTimers(runtime);
   if (runtime.reconnectTimeout) {
     clearTimeout(runtime.reconnectTimeout);
     runtime.reconnectTimeout = null;

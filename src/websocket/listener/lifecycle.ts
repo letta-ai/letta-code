@@ -263,6 +263,7 @@ export async function startConnectedListenerRuntime(
     emitInitialState?: boolean;
     updateReconnectState?: boolean;
     recoverRecordedWork?: typeof recoverRecordedTurns;
+    restoreDurableQueuedInputs?: typeof restoreDurableQueuedInputs;
     activateIngress?: () => Promise<boolean>;
   } = {},
 ): Promise<void> {
@@ -285,8 +286,12 @@ export async function startConnectedListenerRuntime(
   });
   runtime.promotePreparedInputTerminals = () =>
     promotePreparedInputTerminals(runtime);
+  const restoreQueuedInputs =
+    options.restoreDurableQueuedInputs ?? restoreDurableQueuedInputs;
   runtime.restoreDurableQueuedInputs = () =>
-    restoreDurableQueuedInputs(runtime);
+    runtime === getActiveRuntime() && !runtime.intentionallyClosed
+      ? restoreQueuedInputs(runtime, undefined, undefined, { queuedOnly: true })
+      : 0;
   promotePreparedInputTerminals(runtime);
   if (
     !(await completeInitialConnectionStartup(
@@ -311,16 +316,11 @@ export async function startConnectedListenerRuntime(
   if (options.startHeartbeat !== false) {
     startListenerPongHeartbeat(runtime, transport, trackListenerError);
   }
-
   if (options.startProcessServices === false) return;
-  // Managed remote listeners adopt an open gateway and resume local records.
   runtime.scheduleRecordedRecovery = () =>
     scheduleRecordedTurnRecovery(runtime, options.recoverRecordedWork);
   await (options.recoverRecordedWork ?? recoverRecordedTurns)(runtime);
-
-  // This must precede the existing startup pump loop: a queued acknowledgement
-  // is final to Cloud, so only the durable local payload can recreate the work.
-  restoreDurableQueuedInputs(runtime);
+  restoreQueuedInputs(runtime);
   const processTransport = getOrCreateProcessTransport(runtime);
   for (const conversationRuntime of runtime.conversationRuntimes.values()) {
     if (conversationRuntime.queueRuntime?.isEmpty === false) {

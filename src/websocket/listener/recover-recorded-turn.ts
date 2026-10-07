@@ -9,7 +9,15 @@ import {
   promotePreparedInputTerminals,
 } from "./conversation-runtime";
 import { setConversationWorkingDirectory } from "./cwd";
-import { hasCompletedInputTerminalRevision } from "./input-disposition";
+import {
+  dispositionKey,
+  durableTransaction,
+  getLedger,
+  hasCompletedInputTerminalRevision,
+  loadDurableQueuedInputEntries,
+  syncMemoryFromDurable,
+  teleportInputIdentity,
+} from "./input-disposition";
 import {
   hasPreparedInputTerminalRevision,
   prepareInputTerminal,
@@ -38,6 +46,24 @@ import {
 import type { TurnLease } from "./turn-lifecycle";
 import type { ConversationRuntime, ListenerRuntime } from "./types";
 
+function hasCompletedTeleportInput(
+  listener: ListenerRuntime,
+  runtimeKey: string,
+  teleportId: string,
+): boolean {
+  const ledger = getLedger(listener);
+  const key = dispositionKey(runtimeKey, teleportInputIdentity(teleportId));
+  const matches = () => {
+    const entry = ledger.entries.get(key);
+    return entry?.replayCompleted === true && entry.queuedInput === undefined;
+  };
+  if (!ledger.persistentPath) return matches();
+  return durableTransaction(ledger.persistentPath, (store) => {
+    syncMemoryFromDurable(ledger, store);
+    return { result: matches(), changed: false };
+  });
+}
+
 function prepareRecordedInputTerminal(
   listener: ListenerRuntime,
   terminalStore: ReturnType<typeof createTurnFinishedStore>,
@@ -61,11 +87,26 @@ function prepareRecordedInputTerminal(
   ) {
     return true;
   }
-  const ownerConnection = [...listener.connections.values()].find(
-    (connection) =>
-      connection.initialized && connection.subscriptions.has(runtime.key),
-  );
-  runtime.activeConnectionId = ownerConnection?.id ?? null;
+  const eligibleConnections = [...listener.connections.values()]
+    .filter(
+      (connection) =>
+        connection.initialized && connection.subscriptions.has(runtime.key),
+    )
+    .sort((left, right) => left.id.localeCompare(right.id));
+  const activeConnection = runtime.activeConnectionId
+    ? listener.connections.get(runtime.activeConnectionId)
+    : undefined;
+  const ownerConnection =
+    activeConnection?.initialized &&
+    activeConnection.subscriptions.has(runtime.key)
+      ? activeConnection
+      : eligibleConnections.find(
+          (connection) => connection.options.connectionIdCanResume !== false,
+        );
+  const owner = getTurnFinishedOwner(runtime, record.revision);
+  owner.connectionId = ownerConnection?.id ?? null;
+  owner.canRotate = ownerConnection?.options.connectionIdCanResume === false;
+  owner.lineageId = ownerConnection?.startupOwner.lineageId ?? null;
   if (
     !prepareInputTerminal(runtime, identities, {
       scope,
@@ -78,7 +119,7 @@ function prepareRecordedInputTerminal(
           : {}),
         ...(runId ? { run_id: runId } : {}),
       },
-      owner: getTurnFinishedOwner(runtime, record.revision),
+      owner,
     })
   ) {
     return false;
@@ -193,7 +234,15 @@ export async function recoverRecordedTurns(
                   terminal.owner.interruptedRevision === record.revision,
               ))
         ) {
-          store.remove(record.agentId, record.conversationId, record.revision);
+          if (
+            !store.remove(
+              record.agentId,
+              record.conversationId,
+              record.revision,
+            )
+          ) {
+            deferred = true;
+          }
           continue;
         }
       }
@@ -269,6 +318,72 @@ export async function recoverRecordedTurns(
           }
           continue;
         }
+        const runningCompletion = record.recoveryClaimCompletion;
+        if (
+          runningCompletion?.state === "running" &&
+          runningCompletion.independentSuccessor &&
+          runningCompletion.effectRevision &&
+          (hasCompletedInputTerminalRevision(
+            listener,
+            runtime.key,
+            record.durableInputIdentities ?? [],
+            runningCompletion.effectRevision,
+          ) ||
+            terminalStore
+              .read(record.agentId, record.conversationId)
+              ?.terminals.some(
+                (terminal) =>
+                  terminal.owner.interruptedRevision ===
+                  runningCompletion.effectRevision,
+              ))
+        ) {
+          const eligibility = await resolveRecoveryEligibility(
+            runtime,
+            deps.canRecover,
+          );
+          if (eligibility !== "owned" || !unchanged()) {
+            deferred = true;
+            continue;
+          }
+          recoveryClaim = await (deps.acquireClaim ?? acquireRecoveryClaim)(
+            runtime,
+            () =>
+              scheduleRecordedTurnRecovery(listener, () =>
+                recoverRecordedTurns(listener, deps),
+              ),
+          );
+          if (!recoveryClaim?.owned || !unchanged()) {
+            await recoveryClaim?.release();
+            recoveryClaim = undefined;
+            deferred = true;
+            continue;
+          }
+          const pendingCompletion = markRecoveryClaimCompletionPending(
+            store,
+            record,
+          );
+          if (
+            !pendingCompletion?.revision ||
+            !recoveryClaim.owned ||
+            !(await recoveryClaim.complete())
+          ) {
+            recoveryClaim.abandon();
+            recoveryClaim = undefined;
+            deferred = true;
+            continue;
+          }
+          recoveryClaim = undefined;
+          const retirement = retireAcknowledgedRecoveryClaim(store, {
+            agentId: record.agentId,
+            conversationId: record.conversationId,
+            lineageId: runningCompletion.lineageId,
+            pendingRevision: pendingCompletion.revision,
+          });
+          if (retirement !== "removed" && retirement !== "stale") {
+            deferred = true;
+          }
+          continue;
+        }
         const teleportId = record.teleport?.teleportId ?? record.teleportId;
         if (teleportId) {
           const teleport = await (deps.teleportStatus ?? getTeleportStatus)(
@@ -281,17 +396,111 @@ export async function recoverRecordedTurns(
             continue;
           }
           if (teleport.status === "completed") {
-            store.remove(
-              record.agentId,
-              record.conversationId,
-              record.revision ?? null,
-            );
+            if (
+              !store.remove(
+                record.agentId,
+                record.conversationId,
+                record.revision ?? null,
+              )
+            ) {
+              deferred = true;
+            }
           } else if (teleport.status === "failed") {
-            // The cloud's teleport_failed event carries the error text needed by
-            // the source continuation. Keep the durable intent until that
-            // continuation has itself been durably admitted; event redelivery
-            // then remains safe across restart and CAS races.
-            deferred = true;
+            // Once teleport_failed durably admits its continuation, that payload
+            // contains the original Cloud error text and is the idempotent proof
+            // that this stale intent was consumed. Restart may clear it without
+            // waiting for event redelivery; otherwise retain it fail-closed.
+            const failureWasAdmitted =
+              loadDurableQueuedInputEntries(listener).some(
+                ({ disposition, payload }) =>
+                  (disposition === "queued" || disposition === "started") &&
+                  payload.scope.agentId === record.agentId &&
+                  payload.scope.conversationId === record.conversationId &&
+                  payload.identity.domain === "teleport" &&
+                  payload.identity.id === teleportId,
+              ) ||
+              hasCompletedTeleportInput(
+                listener,
+                getConversationRuntimeKey(
+                  record.agentId,
+                  record.conversationId,
+                ),
+                teleportId,
+              );
+            if (
+              !failureWasAdmitted ||
+              !record.teleport ||
+              !store.remove(
+                record.agentId,
+                record.conversationId,
+                record.revision ?? null,
+              )
+            ) {
+              // Admission/completion proof durably owns continuation of this
+              // failed teleport, so the exact predecessor has no remaining
+              // purpose. CAS loss means a successor now owns the record; leave
+              // it intact and revisit it through the coalesced recovery pass.
+              deferred = true;
+            }
+          } else if (
+            record.teleport &&
+            !record.teleport.ready &&
+            record.revision
+          ) {
+            const teleportIntent = record.teleport;
+            const eligibility = await resolveRecoveryEligibility(
+              runtime,
+              deps.canRecover,
+            );
+            if (eligibility !== "owned" || !unchanged()) {
+              deferred = true;
+              continue;
+            }
+            recoveryClaim = await (deps.acquireClaim ?? acquireRecoveryClaim)(
+              runtime,
+              () =>
+                scheduleRecordedTurnRecovery(listener, () =>
+                  recoverRecordedTurns(listener, deps),
+                ),
+            );
+            if (!recoveryClaim?.owned || !unchanged()) {
+              await recoveryClaim?.release();
+              recoveryClaim = undefined;
+              deferred = true;
+              continue;
+            }
+            const terminalReady =
+              !teleportIntent.activeTurn ||
+              prepareRecordedInputTerminal(
+                listener,
+                terminalStore,
+                runtime,
+                record,
+                record.runId,
+              );
+            if (!terminalReady || !recoveryClaim.owned || !unchanged()) {
+              await recoveryClaim.release();
+              recoveryClaim = undefined;
+              deferred = true;
+              continue;
+            }
+            try {
+              store.write(
+                {
+                  ...record,
+                  teleport: {
+                    ...teleportIntent,
+                    ready: true,
+                    committedRevision: record.revision,
+                  },
+                },
+                record.revision,
+              );
+            } catch {
+              deferred = true;
+            }
+            await recoveryClaim.release();
+            recoveryClaim = undefined;
           } else {
             deferred = true;
           }
@@ -424,6 +633,27 @@ export async function recoverRecordedTurns(
             }
             continue;
           }
+          const completionEligibility = await resolveRecoveryEligibility(
+            runtime,
+            deps.canRecover,
+          );
+          if (completionEligibility !== "owned" || !unchanged()) {
+            deferred = true;
+            continue;
+          }
+          recoveryClaim = await (deps.acquireClaim ?? acquireRecoveryClaim)(
+            runtime,
+            () =>
+              scheduleRecordedTurnRecovery(listener, () =>
+                recoverRecordedTurns(listener, deps),
+              ),
+          );
+          if (!recoveryClaim?.owned || !unchanged()) {
+            await recoveryClaim?.release();
+            recoveryClaim = undefined;
+            deferred = true;
+            continue;
+          }
           if (
             !prepareRecordedInputTerminal(
               listener,
@@ -431,16 +661,23 @@ export async function recoverRecordedTurns(
               runtime,
               record,
               recordedRunId,
-            )
+            ) ||
+            !recoveryClaim.owned ||
+            !unchanged()
           ) {
+            await recoveryClaim.release();
+            recoveryClaim = undefined;
             deferred = true;
             continue;
           }
-          store.remove(
+          const removed = store.remove(
             record.agentId,
             record.conversationId,
             record.revision ?? null,
           );
+          await recoveryClaim.release();
+          recoveryClaim = undefined;
+          if (!removed) deferred = true;
           continue;
         }
         const owned = [];
@@ -464,11 +701,15 @@ export async function recoverRecordedTurns(
           continue;
         }
         if (!owned.length) {
-          store.remove(
-            record.agentId,
-            record.conversationId,
-            record.revision ?? null,
-          );
+          if (
+            !store.remove(
+              record.agentId,
+              record.conversationId,
+              record.revision ?? null,
+            )
+          ) {
+            deferred = true;
+          }
           continue;
         }
         if (owned.length !== pending.length) {
@@ -596,21 +837,11 @@ export async function recoverRecordedTurns(
               );
               return;
             }
-            let pendingCompletion: typeof completed;
-            try {
-              pendingCompletion = store.write(
-                {
-                  ...completed,
-                  recoveryClaimCompletion: {
-                    ...completed.recoveryClaimCompletion,
-                    lineageId: recoveryLineageId,
-                    state: "pending",
-                    effectRevision: completed.revision,
-                  },
-                },
-                completed.revision,
-              );
-            } catch {
+            const pendingCompletion = markRecoveryClaimCompletionPending(
+              store,
+              completed,
+            );
+            if (!pendingCompletion) {
               scheduleRecordedTurnRecovery(listener, () =>
                 recoverRecordedTurns(listener, deps),
               );

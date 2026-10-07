@@ -41,17 +41,11 @@ export function markRecoveryClaimCompletionPending(
   const marker = record.recoveryClaimCompletion;
   if (!record.revision || !marker || marker.state !== "running") return null;
   try {
-    return store.write(
-      {
-        ...record,
-        recoveryClaimCompletion: {
-          ...marker,
-          state: "pending",
-          effectRevision: record.revision,
-        },
-      },
-      record.revision,
-    );
+    return store.markRecoveryClaimCompletionPending({
+      agentId: record.agentId,
+      conversationId: record.conversationId,
+      lineageId: marker.lineageId,
+    });
   } catch {
     return null;
   }

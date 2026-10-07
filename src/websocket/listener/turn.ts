@@ -196,6 +196,7 @@ async function handleIncomingMessageInner(
     agentId,
     conversationId,
     terminalCommitGuard,
+    interruptedRevisionRef,
     deferInterruptedCleanup,
   });
   const { finishIfInterrupted, finishTurn, noteFinalization } = finalizer;
@@ -399,20 +400,11 @@ async function handleIncomingMessageInner(
         ) {
           break;
         }
-        if (agentId) {
-          tp.finishDrainedTeleport(
-            runtime,
-            finishTurn,
-            terminalCommitGuard,
-            interruptedRevisionRef.current,
-          );
-        } else {
-          finishTurn({
-            stopReason: "end_turn",
-            agentId,
-            conversationId,
-          });
-        }
+        finishTurn({
+          stopReason: "end_turn",
+          agentId,
+          conversationId,
+        });
         break;
       }
       if (stopReason === "cancelled") {

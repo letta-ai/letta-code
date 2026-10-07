@@ -13,7 +13,6 @@ import { enqueueInboundUserMessage } from "./inbound-queue";
 import { consumeInterruptQueue } from "./interrupts";
 import { createRuntime } from "./lifecycle";
 import { getOutboundQueueStats, OUTBOUND_QUEUE_LIMITS } from "./outbound-wire";
-import { RECOVERED_APPROVAL_OUTCOME_UNKNOWN } from "./recovered-approval-checkpoint";
 import { startRecoveredApprovalContinuation } from "./recovery";
 import { createRecoveryEvidenceCheckpoint } from "./recovery-evidence";
 import { clearConversationRuntimeState } from "./runtime";
@@ -561,12 +560,7 @@ describe("recovered approval lease boundaries", () => {
       "before_tool_execution",
       "after_tool_execution",
     ]);
-    expect(checkpoints[0]?.update.results).toEqual([
-      expect.objectContaining({
-        status: "error",
-        tool_return: RECOVERED_APPROVAL_OUTCOME_UNKNOWN,
-      }),
-    ]);
+    expect(checkpoints[0]?.update.results).toEqual([]);
     expect(checkpoints[1]?.update.results).toEqual([
       expect.objectContaining({ status: "error" }),
     ]);
@@ -909,7 +903,7 @@ describe("recovered approval lease boundaries", () => {
     ).toBe(true);
     expect(executeApprovalBatch).not.toHaveBeenCalled();
     expect(lost).toBe(true);
-    expect(scheduleRecordedRecovery).not.toHaveBeenCalled();
+    expect(scheduleRecordedRecovery).toHaveBeenCalledTimes(1);
     expect(runtime.turnLifecycle.kind).toBe("idle");
     listener.intentionallyClosed = true;
   });

@@ -19,6 +19,7 @@ import { getQueueItemScope, getQueueItemsScope } from "./queue";
 import { scheduleQueueEmit } from "./queue-update-outbound";
 import {
   evictConversationRuntimeIfIdle,
+  getActiveRuntime,
   getOrCreateConversationRuntime,
 } from "./runtime";
 import { isListenerTransportOpen } from "./transport";
@@ -47,6 +48,78 @@ function itemIdentities(
     if (identities?.length) return [...identities];
     const fallback = ordinaryInputIdentity(item.clientMessageId);
     return fallback ? [fallback] : [];
+  });
+}
+
+const DURABLE_QUEUE_RESTORE_MAX_ATTEMPTS = 5;
+const DURABLE_QUEUE_RESTORE_RETRY_DELAY_MS = 10;
+const DURABLE_QUEUE_RESTORE_MAX_RETRY_DELAY_MS = 250;
+
+function durableQueueRestoreIsActive(listener: ListenerRuntime): boolean {
+  return listener === getActiveRuntime() && !listener.intentionallyClosed;
+}
+
+function clearDurableQueueRestoreRetry(listener: ListenerRuntime): void {
+  if (listener.durableQueueRestoreTimer) {
+    clearTimeout(listener.durableQueueRestoreTimer);
+    listener.durableQueueRestoreTimer = undefined;
+  }
+  listener.durableQueueRestoreFailures = 0;
+}
+
+function scheduleDurableQueueRestore(
+  listener: ListenerRuntime,
+  capacityReleased = true,
+): void {
+  if (
+    !durableQueueRestoreIsActive(listener) ||
+    !listener.restoreDurableQueuedInputs
+  ) {
+    clearDurableQueueRestoreRetry(listener);
+    listener.durableQueueRestoreScheduled = false;
+    return;
+  }
+  if (capacityReleased) clearDurableQueueRestoreRetry(listener);
+  if (listener.durableQueueRestoreScheduled) return;
+  listener.durableQueueRestoreScheduled = true;
+  queueMicrotask(() => {
+    void (async () => {
+      try {
+        if (!durableQueueRestoreIsActive(listener)) {
+          clearDurableQueueRestoreRetry(listener);
+          return;
+        }
+        const result = listener.restoreDurableQueuedInputs?.();
+        if (
+          result &&
+          typeof (result as unknown as PromiseLike<number>).then === "function"
+        ) {
+          await result;
+        }
+        clearDurableQueueRestoreRetry(listener);
+      } catch {
+        const failures = (listener.durableQueueRestoreFailures ?? 0) + 1;
+        listener.durableQueueRestoreFailures = failures;
+        if (
+          failures >= DURABLE_QUEUE_RESTORE_MAX_ATTEMPTS ||
+          !durableQueueRestoreIsActive(listener)
+        ) {
+          clearDurableQueueRestoreRetry(listener);
+          return;
+        }
+        const delay = Math.min(
+          DURABLE_QUEUE_RESTORE_MAX_RETRY_DELAY_MS,
+          DURABLE_QUEUE_RESTORE_RETRY_DELAY_MS * 2 ** (failures - 1),
+        );
+        listener.durableQueueRestoreTimer = setTimeout(() => {
+          listener.durableQueueRestoreTimer = undefined;
+          scheduleDurableQueueRestore(listener, false);
+        }, delay);
+        listener.durableQueueRestoreTimer.unref?.();
+      } finally {
+        listener.durableQueueRestoreScheduled = false;
+      }
+    })();
   });
 }
 
@@ -92,6 +165,7 @@ export function ensureConversationQueueRuntime(
           getQueueItemsScope(batch.items),
           batch.items.map((item) => queueRemovalTransition(item, "dequeued")),
         );
+        scheduleDurableQueueRestore(listener);
       },
       onBlocked: () => {
         scheduleQueueEmit(listener, {
@@ -123,6 +197,7 @@ export function ensureConversationQueueRuntime(
           items.map((item) => queueRemovalTransition(item, "cancelled")),
         );
         evictConversationRuntimeIfIdle(runtime);
+        if (reason !== "shutdown") scheduleDurableQueueRestore(listener);
       },
       onDropped: (item, _reason, queueLen) => {
         runtime.pendingTurns = queueLen;
@@ -139,6 +214,7 @@ export function ensureConversationQueueRuntime(
           queueRemovalTransition(item, "cancelled"),
         ]);
         evictConversationRuntimeIfIdle(runtime);
+        scheduleDurableQueueRestore(listener);
       },
     },
   });
@@ -165,6 +241,7 @@ export function restoreDurableQueuedInputs(
   listener: ListenerRuntime,
   terminalStore = createTurnFinishedStore(),
   providedInterruptedRecords?: InterruptedTurnRecord[],
+  options: { queuedOnly?: boolean } = {},
 ): number {
   promotePreparedInputTerminals(listener, terminalStore);
   let restored = 0;
@@ -185,6 +262,7 @@ export function restoreDurableQueuedInputs(
   for (const { disposition, payload } of loadDurableQueuedInputEntries(
     listener,
   )) {
+    if (options.queuedOnly && disposition !== "queued") continue;
     if (
       disposition === "started" &&
       interruptedIdentityKeys.has(
@@ -233,8 +311,14 @@ export function restoreDurableQueuedInputs(
       connectionId: replayOwner?.id,
       durableInputIdentities: [payload.identity],
     };
-    if (!enqueueInboundUserMessage(runtime, incoming, payload.actingUserId)) {
-      throw new Error("Durable queued input exceeded runtime queue capacity");
+    if (
+      !enqueueInboundUserMessage(runtime, incoming, payload.actingUserId, {
+        preserveExisting: true,
+      })
+    ) {
+      // The durable disposition remains authoritative and will be retried on a
+      // later restart; rehydration never evicts or retires already accepted work.
+      continue;
     }
     restored += 1;
   }
@@ -270,6 +354,11 @@ export function promotePreparedInputTerminals(
                 terminal.message.turn_id === prepared.message.turn_id,
           );
         if (existing) {
+          // The terminal put may have committed just before the process crashed,
+          // and ownership may since have rotated in the durable replay store.
+          // Re-submit the prepared payload with that persisted owner so put still
+          // performs its complete identity/message validation idempotently.
+          owner = existing.owner;
           replayConnectionId = existing.owner.connectionId;
         } else if (owner.connectionId === null) {
           const runtime = getOrCreateScopedRuntime(
@@ -302,14 +391,14 @@ export function promotePreparedInputTerminals(
         } else {
           replayConnectionId = owner.connectionId;
         }
-        if (!existing) {
-          terminalStore.put(
-            prepared.scope.agentId,
-            prepared.scope.conversationId,
-            prepared.message,
-            owner,
-          );
-        }
+        // Always pass through the store's full identity-collision validation.
+        // An existing identity is idempotent only when both payload and owner match.
+        terminalStore.put(
+          prepared.scope.agentId,
+          prepared.scope.conversationId,
+          prepared.message,
+          owner,
+        );
       }
     } catch (error) {
       if (error instanceof TurnFinishedCapacityError) continue;
@@ -328,12 +417,15 @@ export function promotePreparedInputTerminals(
     promoted += 1;
     if (replayConnectionId) {
       const connection = listener.connections.get(replayConnectionId);
-      const transport = connection?.streamWriter ?? connection?.writer;
-      if (
-        connection?.initialized &&
-        transport &&
-        isListenerTransportOpen(transport)
-      ) {
+      const streamWriter = connection?.streamWriter;
+      const controlWriter = connection?.writer;
+      const transport =
+        streamWriter && isListenerTransportOpen(streamWriter)
+          ? streamWriter
+          : controlWriter && isListenerTransportOpen(controlWriter)
+            ? controlWriter
+            : undefined;
+      if (connection?.initialized && transport) {
         replayPendingTurnFinishedToConnection(
           transport,
           getOrCreateScopedRuntime(

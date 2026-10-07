@@ -41,6 +41,11 @@ export type DurableFileLockOptions = {
   afterOwnerUnlink?: (lockPath: string) => void;
   /** Deterministic injection after mkdir, before the candidate owner is linked. */
   afterInstallMkdir?: (lockPath: string) => void;
+  /** Deterministic injection after observing an empty incumbent directory. */
+  beforeEmptyCleanup?: (lockPath: string) => void;
+  /** Deterministic clock and backoff seams used by bounded-retry tests. */
+  now?: () => number;
+  sleep?: (milliseconds: number) => void;
 };
 
 type ProcessStartCommand = (
@@ -487,12 +492,26 @@ export function acquireDurableFileLock(
   sweepDeadCandidates(lockPath, parent, isAlive);
   const candidatePath = prepareCandidate(lockPath, parent, owner);
   const waitMs = options.waitMs ?? 2_000;
-  const startedAt = Date.now();
+  const now = options.now ?? Date.now;
+  const sleep =
+    options.sleep ??
+    ((milliseconds: number) =>
+      Atomics.wait(
+        new Int32Array(new SharedArrayBuffer(4)),
+        0,
+        0,
+        milliseconds,
+      ));
+  const startedAt = now();
   const waitOrThrow = (): void => {
-    if (Date.now() - startedAt >= waitMs) {
+    const remaining = waitMs - (now() - startedAt);
+    if (remaining <= 0) {
       throw new Error("Timed out acquiring durable filesystem lock");
     }
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, WAIT_SLICE_MS);
+    sleep(Math.min(WAIT_SLICE_MS, remaining));
+    if (now() - startedAt >= waitMs) {
+      throw new Error("Timed out acquiring durable filesystem lock");
+    }
   };
 
   const finishLegacyRecovery = (): boolean => {
@@ -503,10 +522,7 @@ export function acquireDurableFileLock(
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
       throw error;
     }
-    if (isAlive(marked)) {
-      waitOrThrow();
-      return true;
-    }
+    if (isAlive(marked)) return true;
     if (sameFile(lockPath, legacyMarkerPath)) {
       unlinkSync(lockPath);
       fsyncDirectory(parent);
@@ -527,7 +543,10 @@ export function acquireDurableFileLock(
   let installed = false;
   try {
     while (true) {
-      if (finishLegacyRecovery()) continue;
+      if (finishLegacyRecovery()) {
+        waitOrThrow();
+        continue;
+      }
       try {
         if (
           !installCandidateDirectory(
@@ -536,6 +555,7 @@ export function acquireDurableFileLock(
             options.afterInstallMkdir,
           )
         ) {
+          waitOrThrow();
           continue;
         }
         installed = true;
@@ -550,6 +570,12 @@ export function acquireDurableFileLock(
           code !== "EACCES"
         ) {
           throw error;
+        }
+        // Permanent policy denials must consume the same bounded wait budget as
+        // an occupied lock; otherwise mkdir/link/rmdir can spin synchronously.
+        if (code === "EPERM" || code === "EACCES") {
+          waitOrThrow();
+          continue;
         }
       }
 
@@ -577,18 +603,20 @@ export function acquireDurableFileLock(
               throw linkError;
             }
           }
+          waitOrThrow();
           continue;
         }
         throw error; // Corrupt or multiple-owner directories fail closed.
       }
       if (incumbent === null) {
         const emptyDirectoryIdentity = pathIdentity(lockPath);
-        if (!emptyDirectoryIdentity) continue;
-        if (sweepDeadCandidates(lockPath, parent, isAlive, candidatePath)) {
-          waitOrThrow();
-        } else {
-          removeDirectoryIfEmpty(lockPath, parent, emptyDirectoryIdentity);
+        if (emptyDirectoryIdentity) {
+          if (!sweepDeadCandidates(lockPath, parent, isAlive, candidatePath)) {
+            options.beforeEmptyCleanup?.(lockPath);
+            removeDirectoryIfEmpty(lockPath, parent, emptyDirectoryIdentity);
+          }
         }
+        waitOrThrow();
         continue;
       }
       if (isAlive(incumbent.owner)) {
@@ -601,6 +629,7 @@ export function acquireDurableFileLock(
         incumbent.ownerPath,
         options.afterOwnerUnlink,
       );
+      waitOrThrow();
     }
   } catch (error) {
     try {

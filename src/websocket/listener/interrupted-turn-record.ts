@@ -206,6 +206,12 @@ export function createInterruptedTurnStore(
       const temporary = `${destination}.${randomUUID()}.tmp`;
       try {
         const current = readRecord(destination);
+        // A revision-bearing record is a full snapshot of existing durable
+        // state, never a creation intent. Once the current file is absent, no
+        // stale owner may recreate it, regardless of its expected revision.
+        if (!current && record.revision) {
+          throw new Error("Interrupted-turn revision cannot recreate a record");
+        }
         if (
           expectedRevision !== undefined &&
           (current?.revision ?? null) !== expectedRevision
@@ -213,6 +219,46 @@ export function createInterruptedTurnStore(
           throw new Error("Interrupted-turn revision changed");
         }
         const written = { ...record, revision: randomUUID() };
+        writeFileSync(temporary, JSON.stringify(written), {
+          mode: 0o600,
+          flush: true,
+        });
+        renameSync(temporary, destination);
+        syncDirectory(directory);
+        return written;
+      } finally {
+        rmSync(temporary, { force: true });
+        release();
+      }
+    },
+    markRecoveryClaimCompletionPending(params: {
+      agentId: string;
+      conversationId: string;
+      lineageId: string;
+    }): InterruptedTurnRecord | null {
+      const destination = path(params.agentId, params.conversationId);
+      const release = acquireDurableFileLock(destination);
+      const temporary = `${destination}.${randomUUID()}.tmp`;
+      try {
+        const current = readRecord(destination);
+        const marker = current?.recoveryClaimCompletion;
+        if (
+          !current?.revision ||
+          !marker ||
+          marker.lineageId !== params.lineageId
+        ) {
+          return null;
+        }
+        if (marker.state === "pending") return current;
+        const written: InterruptedTurnRecord = {
+          ...current,
+          revision: randomUUID(),
+          recoveryClaimCompletion: {
+            ...marker,
+            state: "pending",
+            effectRevision: current.revision,
+          },
+        };
         writeFileSync(temporary, JSON.stringify(written), {
           mode: 0o600,
           flush: true,
@@ -263,6 +309,7 @@ export function createInterruptedTurnStore(
         if (!current.revision || !marker.independentSuccessor) return "stale";
         const preserved: InterruptedTurnRecord = {
           ...current,
+          revision: randomUUID(),
           recoveryClaimCompletion: undefined,
         };
         writeFileSync(temporary, JSON.stringify(preserved), {
@@ -360,8 +407,18 @@ export function recordListenerWork(
       : {
           ...previous.recoveryClaimCompletion,
           independentSuccessor: true,
+          effectRevision:
+            previous.recoveryClaimCompletion.effectRevision ??
+            previous.revision,
         }
     : undefined;
+  const consumesInheritedTeleport =
+    previous?.teleport !== undefined &&
+    update.durableInputIdentities?.some(
+      (identity) =>
+        identity.domain === "teleport" &&
+        identity.id === previous.teleport?.teleportId,
+    );
   const record: InterruptedTurnRecord = {
     agentId: runtime.agentId,
     conversationId: runtime.conversationId,
@@ -373,7 +430,10 @@ export function recordListenerWork(
     recoveryClaimCompletion: inheritedCompletion,
     durableInputIdentities: previous?.durableInputIdentities,
     terminalConsumerIds: previous?.terminalConsumerIds,
-    teleport: previous?.teleport,
+    // A continuation input atomically takes ownership from its exact teleport
+    // intent. Different input identities and unrelated checkpoint writes must
+    // continue carrying the live intent until its own continuation is admitted.
+    teleport: consumesInheritedTeleport ? undefined : previous?.teleport,
     workingDirectory:
       runtime.activeWorkingDirectory ??
       previous?.workingDirectory ??

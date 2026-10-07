@@ -225,7 +225,19 @@ export class QueueRuntime {
    *   applies to coalescable items).
    * - If at hard ceiling: rejects all item kinds, fires onDropped("buffer_limit").
    */
-  enqueue(input: Omit<QueueItem, "id" | "enqueuedAt">): QueueItem | null {
+  enqueue(
+    input: Omit<QueueItem, "id" | "enqueuedAt">,
+    options: { preserveExisting?: boolean } = {},
+  ): QueueItem | null {
+    // Durable rehydration must be observational on rejection: its payload remains
+    // in the disposition store and no queued item may be evicted to make room.
+    if (
+      options.preserveExisting &&
+      (this.store.length >= this.hardMaxItems ||
+        (this.store.length >= this.maxItems && isCoalescable(input.kind)))
+    ) {
+      return null;
+    }
     // Hard ceiling check
     if (this.store.length >= this.hardMaxItems) {
       const phantom = this.makeItem(input);

@@ -69,6 +69,8 @@ export function finishListenerTurn(
     completePreparedInputTerminal?: typeof completePreparedInputTerminal;
     /** Persist a crash proof even when no external terminal consumer exists. */
     persistTerminalWithoutConsumers?: boolean;
+    /** Exact interrupted revision owned by this finalizer. */
+    expectedInterruptedRevision?: string;
   },
 ): TurnFinishTransition {
   const rejectedCommit = (): TurnFinishTransition => ({
@@ -104,6 +106,20 @@ export function finishListenerTurn(
         }
       : null;
   const interruptedRevision = readInterruptedTurn(runtime)?.revision;
+  if (
+    options.expectedInterruptedRevision !== undefined &&
+    interruptedRevision !== options.expectedInterruptedRevision
+  ) {
+    return rejectedCommit();
+  }
+  const ownsInterruptedRevision = () => {
+    if (options.canCommit && !options.canCommit()) return false;
+    return (
+      options.expectedInterruptedRevision === undefined ||
+      readInterruptedTurn(runtime)?.revision ===
+        options.expectedInterruptedRevision
+    );
+  };
   const terminalOwner = getTurnFinishedOwner(runtime, interruptedRevision);
   let preparedTurnFinished: ReturnType<typeof prepareTurnFinished> | null =
     null;
@@ -128,7 +144,7 @@ export function finishListenerTurn(
   }
   // The input journal fsync above can cross a claim's local expiry. Leave the
   // prepared journal for the successor rather than persisting as a stale owner.
-  if (options.canCommit && !options.canCommit()) {
+  if (!ownsInterruptedRevision()) {
     return rejectedCommit();
   }
   const deferUntilReplayOwner =
@@ -147,6 +163,7 @@ export function finishListenerTurn(
             options.persistTerminalWithoutConsumers,
           )
         : null;
+    if (!ownsInterruptedRevision()) return rejectedCommit();
     if (
       turnFinishedMessage &&
       !deferUntilReplayOwner &&
@@ -167,7 +184,7 @@ export function finishListenerTurn(
   // Terminal-store locking and fsync can also cross expiry. At this point the
   // terminal has a durable home, so a successor can replay it without rerunning
   // the input; only the stale owner's lifecycle transition is fenced.
-  const mayEmit = !options.canCommit || options.canCommit();
+  const mayEmit = ownsInterruptedRevision();
   if (!mayEmit) {
     return rejectedCommit();
   }

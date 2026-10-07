@@ -693,6 +693,32 @@ describe("removeItem", () => {
     );
   });
 
+  test("rehydration rejection preserves accepted items without drop callbacks", () => {
+    const dropped: string[] = [];
+    const q = new QueueRuntime({
+      maxItems: 2,
+      hardMaxItems: 3,
+      callbacks: { onDropped: (item) => dropped.push(item.id) },
+    });
+    q.enqueue(makeMsg("first"));
+    q.enqueue(makeMsg("second"));
+
+    expect(
+      q.enqueue(makeMsg("rehydrated"), { preserveExisting: true }),
+    ).toBeNull();
+    expect(q.length).toBe(2);
+    expect(dropped).toEqual([]);
+    q.enqueue(makeApproval());
+    expect(q.enqueue(makeApproval(), { preserveExisting: true })).toBeNull();
+    expect(q.length).toBe(3);
+    expect(dropped).toEqual([]);
+    expect(
+      q
+        .consumeItems(3)
+        ?.items.map((item) => ("content" in item ? item.content : undefined)),
+    ).toEqual(["first", "second", undefined]);
+  });
+
   test("resets blockedEmittedForNonEmpty when queue becomes empty", () => {
     const blocked: string[] = [];
     const q = new QueueRuntime({

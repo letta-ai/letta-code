@@ -164,6 +164,66 @@ test("installation retries when stale cleanup removes its empty directory", () =
   }
 });
 
+test("repeated installation races consume one total timeout budget", () => {
+  const f = fixture();
+  try {
+    let now = 0;
+    let installs = 0;
+    expect(() =>
+      acquireDurableFileLock(f.path, {
+        waitMs: 15,
+        now: () => now,
+        sleep: (milliseconds) => {
+          now += milliseconds;
+        },
+        afterInstallMkdir: (target) => {
+          installs += 1;
+          rmdirSync(target);
+        },
+      }),
+    ).toThrow("Timed out acquiring");
+    expect(installs).toBe(3);
+    expect(now).toBe(15);
+    expect(
+      readdirSync(f.root).filter((name) => name.includes(".lock.candidate-")),
+    ).toEqual([]);
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test("repeated empty cleanup races consume one total timeout budget", () => {
+  const f = fixture();
+  try {
+    mkdirSync(f.lock);
+    let now = 0;
+    let cleanups = 0;
+    expect(() =>
+      acquireDurableFileLock(f.path, {
+        waitMs: 15,
+        now: () => now,
+        sleep: (milliseconds) => {
+          now += milliseconds;
+        },
+        beforeEmptyCleanup: () => {
+          cleanups += 1;
+          const replacement = `${f.lock}.empty-replacement-${cleanups}`;
+          mkdirSync(replacement);
+          f.replaceEmpty(replacement);
+        },
+      }),
+    ).toThrow("Timed out acquiring");
+    expect(cleanups).toBe(3);
+    expect(now).toBe(15);
+    expect(readdirSync(f.lock)).toEqual([]);
+    expect(
+      readdirSync(f.root).filter((name) => name.includes(".lock.candidate-")),
+    ).toEqual([]);
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
 test("installation does not claim a replacement created after its mkdir", () => {
   const f = fixture();
   try {

@@ -1,5 +1,5 @@
 import { expect, mock, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
@@ -149,14 +149,36 @@ test.each(["direct", "detached"])(
           pendingRevision: pendingRevision ?? "missing",
         }),
       ).toBe("preserved");
-      expect(store.read("agent-test", "conv-test")?.revision).toBe(
-        successorRevision,
+      const retiredSuccessor = store.read("agent-test", "conv-test");
+      expect(retiredSuccessor?.revision).toBeString();
+      expect(retiredSuccessor?.revision).not.toBe(successorRevision);
+      if (!retiredSuccessor) throw new Error("expected retired successor");
+      expect(() =>
+        store.write(
+          {
+            ...retiredSuccessor,
+            recoveryClaimCompletion: {
+              lineageId,
+              state: "pending",
+              effectRevision: running.revision,
+              independentSuccessor: true,
+            },
+            requestOtid: "stale-overwrite",
+          },
+          successorRevision,
+        ),
+      ).toThrow("Interrupted-turn revision changed");
+      expect(store.read("agent-test", "conv-test")?.requestOtid).toBe(
+        "request-successor",
       );
+      expect(
+        store.read("agent-test", "conv-test")?.recoveryClaimCompletion,
+      ).toBeUndefined();
       const successorCheckpoint = recordListenerWork(
         runtime,
         { terminalConsumerIds: ["slack:agent-test"] },
         "after_tool_execution",
-        successorRevision,
+        retiredSuccessor?.revision,
         undefined,
         store,
       );
@@ -178,6 +200,87 @@ test.each(["direct", "detached"])(
     }
   },
 );
+
+test("matching continuation identity consumes only its inherited teleport intent", () => {
+  const directory = mkdtempSync(join(tmpdir(), "listener-teleport-owner-"));
+  const store = createInterruptedTurnStore(directory);
+  const listener = createRuntime();
+  listener.connectionId = "conn-successor";
+  const runtime = getOrCreateScopedRuntime(listener, "agent-test", "conv-test");
+  try {
+    const predecessor = store.write({
+      agentId: "agent-test",
+      conversationId: "conv-test",
+      runId: "run-predecessor",
+      toolCallIds: ["call-predecessor"],
+      results: [],
+      requestOtid: "request-predecessor",
+      workingDirectory: "/predecessor",
+      teleport: {
+        teleportId: "teleport-exact",
+        connectionId: "source",
+        activeTurn: false,
+        ready: true,
+      },
+    });
+    const unrelatedRevision = recordListenerWork(
+      runtime,
+      { runId: "run-unrelated" },
+      "run_observed",
+      predecessor.revision,
+      undefined,
+      store,
+    );
+    expect(store.read("agent-test", "conv-test")?.teleport?.teleportId).toBe(
+      "teleport-exact",
+    );
+    const differentRevision = recordListenerWork(
+      runtime,
+      {
+        durableInputIdentities: [
+          { domain: "teleport", id: "teleport-different" },
+        ],
+      },
+      "run_observed",
+      unrelatedRevision,
+      undefined,
+      store,
+    );
+    expect(store.read("agent-test", "conv-test")?.teleport?.teleportId).toBe(
+      "teleport-exact",
+    );
+    recordListenerWork(
+      runtime,
+      {
+        runId: "run-successor",
+        toolCallIds: ["call-successor"],
+        results: [
+          {
+            tool_call_id: "call-successor",
+            status: "success",
+            tool_return: "successor-result",
+          },
+        ],
+        requestOtid: "request-successor",
+        durableInputIdentities: [{ domain: "teleport", id: "teleport-exact" }],
+      },
+      "after_tool_execution",
+      differentRevision,
+      undefined,
+      store,
+    );
+    expect(store.read("agent-test", "conv-test")).toMatchObject({
+      runId: "run-successor",
+      toolCallIds: ["call-successor"],
+      results: [{ tool_call_id: "call-successor" }],
+      requestOtid: "request-successor",
+      durableInputIdentities: [{ domain: "teleport", id: "teleport-exact" }],
+    });
+    expect(store.read("agent-test", "conv-test")?.teleport).toBeUndefined();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test("round-trips persisted teleport text and image ToolReturn parts", () => {
   const directory = mkdtempSync(join(tmpdir(), "listener-teleport-parts-"));
@@ -396,6 +499,72 @@ test("does not fsync when removing a checkpoint that does not exist", () => {
       fsyncDirectory: syncDirectory,
     }).remove("agent-test", "conv-test");
     expect(syncDirectory).not.toHaveBeenCalled();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("revision snapshots cannot recreate any retired generation", () => {
+  const directory = mkdtempSync(join(tmpdir(), "listener-retired-revision-"));
+  try {
+    const store = createInterruptedTurnStore(directory);
+    const first = store.write({
+      agentId: "agent-test",
+      conversationId: "conv-test",
+      runId: "run-first",
+      toolCallIds: [],
+      results: [],
+      requestOtid: "request-first",
+      workingDirectory: "/project",
+    });
+    expect(store.remove("agent-test", "conv-test", first.revision)).toBe(true);
+
+    const second = store.write({
+      ...first,
+      revision: undefined,
+      runId: "run-second",
+      requestOtid: "request-second",
+    });
+    expect(store.remove("agent-test", "conv-test", second.revision)).toBe(true);
+
+    expect(() => store.write(first)).toThrow("cannot recreate a record");
+    expect(() => store.write(first, first.revision)).toThrow(
+      "cannot recreate a record",
+    );
+    expect(() => store.write(second)).toThrow("cannot recreate a record");
+    expect(() => store.write(second, null)).toThrow("cannot recreate a record");
+
+    const fresh = store.write({
+      ...second,
+      revision: undefined,
+      runId: "run-fresh",
+      requestOtid: "request-fresh",
+    });
+    expect(fresh.runId).toBe("run-fresh");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("retirements leave no per-scope tombstones or inode growth", () => {
+  const directory = mkdtempSync(join(tmpdir(), "listener-retirement-bounded-"));
+  try {
+    const store = createInterruptedTurnStore(directory);
+    for (let index = 0; index < 50; index += 1) {
+      const agentId = `agent-${index}`;
+      const conversationId = `conversation-${index}`;
+      const record = store.write({
+        agentId,
+        conversationId,
+        runId: `run-${index}`,
+        toolCallIds: [],
+        results: [],
+        requestOtid: `request-${index}`,
+        workingDirectory: "/project",
+      });
+      expect(store.remove(agentId, conversationId, record.revision)).toBe(true);
+    }
+    expect(readdirSync(directory)).toEqual([]);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

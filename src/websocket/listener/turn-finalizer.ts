@@ -1,4 +1,8 @@
 import type { createBuffers } from "@/cli/helpers/accumulator";
+import {
+  claimPendingTeleportAtBoundary,
+  finishClaimedTeleport,
+} from "./teleport";
 import type { ListenerTransport } from "./transport";
 import type { TurnCorrelation } from "./turn-correlation";
 import type { createTurnDurabilityOwnership } from "./turn-durability-ownership";
@@ -16,6 +20,7 @@ export function createTurnFinalizer(params: {
   agentId: string | null;
   conversationId: string;
   terminalCommitGuard?: () => boolean;
+  interruptedRevisionRef?: { current: string | undefined };
   /** Recovery keeps execution evidence until its remote claim completion is ACKed. */
   deferInterruptedCleanup?: boolean;
 }) {
@@ -26,7 +31,7 @@ export function createTurnFinalizer(params: {
     finalized ||= transition.finished;
     return transition;
   };
-  const finishTurn = (options: Parameters<typeof finishListenerTurn>[2]) =>
+  const commitTurn = (options: Parameters<typeof finishListenerTurn>[2]) =>
     noteFinalization(
       finishListenerTurn(params.runtime, params.turnLease, {
         ...options,
@@ -34,6 +39,9 @@ export function createTurnFinalizer(params: {
         turnId: params.ownership.terminalTurnId,
         terminalConsumerIds: params.ownership.terminalConsumerIds,
         durableInputIdentities: params.ownership.durableInputIdentities,
+        expectedInterruptedRevision:
+          options.expectedInterruptedRevision ??
+          params.interruptedRevisionRef?.current,
         ...(params.terminalCommitGuard
           ? { canCommit: params.terminalCommitGuard }
           : {}),
@@ -53,6 +61,29 @@ export function createTurnFinalizer(params: {
           : {}),
       }),
     );
+  const finishTurn = (options: Parameters<typeof finishListenerTurn>[2]) => {
+    const pending = params.agentId
+      ? claimPendingTeleportAtBoundary({
+          listener: params.runtime.listener,
+          agentId: params.agentId,
+          conversationId: params.conversationId,
+          activeTurn: false,
+          drainedOnly: true,
+        })
+      : null;
+    return pending
+      ? finishClaimedTeleport(
+          params.runtime,
+          pending,
+          (boundaryOptions) => commitTurn({ ...options, ...boundaryOptions }),
+          {
+            stopReason: options.stopReason,
+            canCommit: params.terminalCommitGuard,
+            expectedInterruptedRevision: params.interruptedRevisionRef?.current,
+          },
+        )
+      : commitTurn(options);
+  };
   const finishIfInterrupted = (runId?: string | null): boolean => {
     if (
       !params.turnLease.signal.aborted &&

@@ -764,50 +764,162 @@ test("promotion never overwrites an unrelated active connection", () => {
   }
 });
 
-test("promotion reconciles an already-persisted terminal without owner collision", () => {
-  const root = mkdtempSync(join(tmpdir(), "letta-promoted-existing-"));
+test.each([
+  {
+    name: "null prepared owner",
+    preparedOwner: {
+      connectionId: null,
+      canRotate: true,
+      lineageId: null,
+      terminalIdentity: "terminal-existing",
+    },
+  },
+  {
+    name: "stale prepared owner",
+    preparedOwner: {
+      connectionId: "conn-stale",
+      canRotate: false,
+      lineageId: "lineage-stale",
+      terminalIdentity: "terminal-existing",
+    },
+  },
+])(
+  "restart reconciles a persisted reassigned owner after $name crash window",
+  ({ preparedOwner }) => {
+    const root = mkdtempSync(join(tmpdir(), "letta-promoted-existing-"));
+    try {
+      const path = join(root, "state.json");
+      const runtime = persistentRuntime(path);
+      const identity = admitStartedInput(runtime, "cm-existing-terminal");
+      const terminalStore = createTurnFinishedStore(join(root, "terminals"));
+      const message = {
+        type: "turn_finished" as const,
+        turn_id: "turn-existing-terminal",
+        stop_reason: "end_turn" as const,
+        terminal_consumer_ids: ["slack:agent-durable"],
+      };
+      expect(
+        prepareInputTerminal(runtime, [identity], {
+          scope: {
+            agentId: runtime.agentId,
+            conversationId: runtime.conversationId,
+          },
+          message,
+          owner: preparedOwner,
+        }),
+      ).toBe(true);
+      const persistedOwner = {
+        connectionId: "conn-reassigned",
+        canRotate: true,
+        lineageId: "lineage-reassigned",
+        terminalIdentity: "terminal-existing",
+      };
+      // Simulate a crash after terminalStore.put committed but before the
+      // prepared journal could be cleared.
+      terminalStore.put(
+        runtime.agentId,
+        runtime.conversationId,
+        message,
+        persistedOwner,
+      );
+
+      const restarted = persistentRuntime(path);
+      const sent: unknown[] = [];
+      openListenerConnection({
+        runtime: restarted.listener,
+        connectionId: "conn-reassigned",
+        writer: {
+          kind: "runtime",
+          bufferedAmount: 0,
+          isOpen: () => true,
+          send: (payload: string) => sent.push(JSON.parse(payload)),
+        },
+        options: {
+          connectionId: "conn-reassigned",
+          wsUrl: "local://test",
+          deviceId: "device-reassigned",
+          connectionName: "Reassigned",
+          onConnected: () => {},
+          onDisconnected: () => {},
+          onError: () => {},
+        },
+      });
+      subscribeListenerConnection(restarted.listener, "conn-reassigned", {
+        agent_id: restarted.agentId,
+        conversation_id: restarted.conversationId,
+      });
+      markListenerConnectionInitialized(restarted.listener, "conn-reassigned");
+
+      expect(
+        promotePreparedInputTerminals(restarted.listener, terminalStore),
+      ).toBe(1);
+      expect(
+        promotePreparedInputTerminals(restarted.listener, terminalStore),
+      ).toBe(0);
+      expect(loadPreparedInputTerminals(restarted.listener)).toEqual([]);
+      expect(
+        terminalStore.read(restarted.agentId, restarted.conversationId)
+          ?.terminals,
+      ).toHaveLength(1);
+      expect(
+        terminalStore.read(restarted.agentId, restarted.conversationId)
+          ?.terminals[0]?.owner,
+      ).toEqual(persistedOwner);
+      expect(sent).toEqual([
+        expect.objectContaining({
+          type: "turn_finished",
+          turn_id: "turn-existing-terminal",
+        }),
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test("persisted terminal message collision retains its prepared journal", () => {
+  const root = mkdtempSync(join(tmpdir(), "letta-promoted-collision-"));
   try {
     const runtime = persistentRuntime(join(root, "state.json"));
-    const identity = admitStartedInput(runtime, "cm-existing-terminal");
+    const identity = admitStartedInput(runtime, "cm-colliding-terminal");
     const terminalStore = createTurnFinishedStore(join(root, "terminals"));
-    const message = {
-      type: "turn_finished" as const,
-      turn_id: "turn-existing-terminal",
-      stop_reason: "end_turn" as const,
-      terminal_consumer_ids: ["slack:agent-durable"],
+    const owner = {
+      connectionId: "conn-reassigned",
+      canRotate: true,
+      lineageId: "lineage-reassigned",
+      terminalIdentity: "terminal-collision",
     };
-    terminalStore.put(runtime.agentId, runtime.conversationId, message, {
-      connectionId: "conn-original",
-      canRotate: false,
-      lineageId: "lineage-original",
-      terminalIdentity: "terminal-existing",
-    });
     expect(
       prepareInputTerminal(runtime, [identity], {
         scope: {
           agentId: runtime.agentId,
           conversationId: runtime.conversationId,
         },
-        message,
-        owner: {
-          connectionId: "conn-reassigned-before-crash",
-          canRotate: false,
-          lineageId: "lineage-reassigned",
-          terminalIdentity: "terminal-existing",
+        message: {
+          type: "turn_finished",
+          turn_id: "turn-collision",
+          stop_reason: "end_turn",
+          terminal_consumer_ids: ["slack:agent-durable"],
         },
+        owner: { ...owner, connectionId: null, lineageId: null },
       }),
     ).toBe(true);
-
-    expect(promotePreparedInputTerminals(runtime.listener, terminalStore)).toBe(
-      1,
-    );
-    expect(loadPreparedInputTerminals(runtime.listener)).toEqual([]);
-    const terminals = terminalStore.read(
+    terminalStore.put(
       runtime.agentId,
       runtime.conversationId,
-    )?.terminals;
-    expect(terminals).toHaveLength(1);
-    expect(terminals?.[0]?.owner.connectionId).toBe("conn-original");
+      {
+        type: "turn_finished",
+        turn_id: "turn-collision",
+        stop_reason: "error",
+        terminal_consumer_ids: ["slack:agent-durable"],
+      },
+      owner,
+    );
+
+    expect(() =>
+      promotePreparedInputTerminals(runtime.listener, terminalStore),
+    ).toThrow("Turn-finished identity collision");
+    expect(loadPreparedInputTerminals(runtime.listener)).toHaveLength(1);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

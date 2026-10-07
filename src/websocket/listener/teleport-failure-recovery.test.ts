@@ -580,7 +580,7 @@ test("idle teleport survives restart, rejects a different id, and admits failure
     expect(received[0]?.durableInputIdentities).toEqual([
       { domain: "teleport", id: "teleport-1" },
     ]);
-    expect(store.read("agent-1", "conversation-1")?.teleport).toBeUndefined();
+    expect(store.read("agent-1", "conversation-1")).toBeNull();
   } finally {
     setActiveRuntime(null);
     store.remove("agent-1", "conversation-1");
@@ -590,7 +590,7 @@ test("idle teleport survives restart, rejects a different id, and admits failure
   }
 });
 
-test("failed teleport cleanup retries beyond three conflicts without overwriting a successor", async () => {
+test("failed teleport cleanup stops when its exact predecessor is replaced", async () => {
   const listener = createRuntime();
   const pending = {
     teleportId: "teleport-a",
@@ -600,8 +600,9 @@ test("failed teleport cleanup retries beyond three conflicts without overwriting
     requestedAt: Date.now(),
     drainAcceptedInputs: false,
     activeTurn: false,
+    interruptedRevision: "revision-a",
   };
-  let writes = 0;
+  let removals = 0;
   const record = {
     revision: "revision-a",
     agentId: pending.agentId,
@@ -620,34 +621,37 @@ test("failed teleport cleanup retries beyond three conflicts without overwriting
   };
   const store = {
     read: () => record,
-    write: () => {
-      writes += 1;
-      if (writes <= 4) throw new Error("injected CAS conflict");
-      return { ...record, revision: "revision-cleared", teleport: undefined };
+    remove: () => {
+      removals += 1;
+      return removals > 4;
     },
   } as never;
   clearAcceptedFailedTeleport(listener, pending, { store, retryDelayMs: 1 });
-  const deadline = performance.now() + 2_000;
-  while (writes < 5 && performance.now() < deadline) await Bun.sleep(5);
-  expect(writes).toBe(5);
+  expect(removals).toBe(1);
+  await Bun.sleep(25);
+  expect(removals).toBe(1);
 
-  let successorWrites = 0;
+  const removedRevisions: Array<string | null> = [];
   const successorStore = {
     read: () => ({
       ...record,
       revision: "revision-b",
       teleport: { ...record.teleport, teleportId: "teleport-b" },
     }),
-    write: () => {
-      successorWrites += 1;
-      return record;
+    remove: (
+      _agentId: string,
+      _conversationId: string,
+      revision: string | null,
+    ) => {
+      removedRevisions.push(revision);
+      return false;
     },
   } as never;
   clearAcceptedFailedTeleport(listener, pending, {
     store: successorStore,
     retryDelayMs: 1,
   });
-  expect(successorWrites).toBe(0);
+  expect(removedRevisions).toEqual(["revision-a"]);
   listener.intentionallyClosed = true;
 });
 

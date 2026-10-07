@@ -54,6 +54,7 @@ import {
   getTranscriptLoopErrorMessage,
 } from "./recoverable-notices";
 import {
+  createRecoveredApprovalEffectBoundary,
   recoveredApprovalFailureResults,
   recoveredApprovalInFlightResults,
 } from "./recovered-approval-checkpoint";
@@ -317,6 +318,9 @@ export type RecoveredContinuationDependencies = {
   ensureModAdapters?: typeof ensureListenerModAdaptersForAgent;
   prepareToolExecutionContext?: typeof prepareToolExecutionContextForScope;
   executeApprovalBatch?: typeof executeApprovalBatch;
+  executeTool?: NonNullable<
+    Parameters<typeof executeApprovalBatch>[2]
+  >["executeTool"];
   recordListenerWork?: RecoveryEvidenceWriter;
   acquireRecoveryClaim?: typeof acquireRecoveryClaim;
   canRecover?: typeof canRecoverConversation;
@@ -453,10 +457,7 @@ export async function startRecoveredApprovalContinuation(
         clearRecoveredApprovalState(runtime);
       }
     }
-    if (
-      runtime.listener.scheduleRecordedRecovery &&
-      (sideEffectMayHaveRun || readInterruptedTurn(runtime) !== null)
-    ) {
+    if (runtime.listener.scheduleRecordedRecovery) {
       runtime.listener.scheduleRecordedRecovery();
     } else {
       scheduleRecoveredApprovalRetry(runtime, () =>
@@ -614,8 +615,7 @@ async function executeRecoveredApprovalContinuation(params: {
   let claimSettled = false;
 
   try {
-    // onLeaseAcquired is an async test/extension boundary. Claim authority can
-    // disappear while it runs, before any observer-visible runtime or tool frame.
+    // Claim authority can disappear at this async extension boundary.
     if (!hasRecoveryOwnership()) return;
     const approvedDecisions = decisions.filter(
       (decision): decision is Extract<ApprovalDecision, { type: "approve" }> =>
@@ -653,9 +653,6 @@ async function executeRecoveredApprovalContinuation(params: {
     );
     let approvalResults: Awaited<ReturnType<typeof executeApprovalBatch>>;
     try {
-      // Hydration and tool-context preparation sit inside the try: they run
-      // after the client_tool_start events above, so a throw here would
-      // otherwise leave those lifecycle events orphaned.
       await ensureSecretsHydrated(runtime.listener, recovered.agentId);
       if (!hasRecoveryOwnership()) {
         return;
@@ -694,7 +691,9 @@ async function executeRecoveredApprovalContinuation(params: {
           toolCallIds: decisions.map(
             (decision) => decision.approval.toolCallId,
           ),
-          results: recoveredApprovalInFlightResults(decisions),
+          results: recoveredApprovalInFlightResults(decisions).filter(
+            (result) => result.type === "approval",
+          ),
           requestOtid: continuationOtid,
           recoveryClaimCompletion: {
             lineageId: recoveryLineageId,
@@ -703,12 +702,19 @@ async function executeRecoveredApprovalContinuation(params: {
         },
         "before_tool_execution",
       );
-      // recordWork fsyncs synchronously and can cross the local claim expiry.
-      // Recheck after that durable boundary and immediately before any tool can
-      // perform an irreversible side effect.
       if (!hasRecoveryOwnership()) return;
-      sideEffectStarted = true;
-      onSideEffectStarted();
+      const effectBoundary = createRecoveredApprovalEffectBoundary({
+        ownsClaim: hasRecoveryOwnership,
+        checkpointUnknown: () =>
+          evidence.write(
+            { results: recoveredApprovalInFlightResults(decisions) },
+            "before_tool_execution",
+          ),
+        onCrossed: () => {
+          sideEffectStarted = true;
+          onSideEffectStarted();
+        },
+      });
       try {
         approvalResults = await executeApprovals(decisions, undefined, {
           abortSignal: recoveryLease.signal,
@@ -722,26 +728,20 @@ async function executeRecoveredApprovalContinuation(params: {
                   conversationId: recovered.conversationId,
                 }
               : undefined,
+          beforeToolExecution: effectBoundary.beforeToolExecution,
+          executeTool: dependencies?.executeTool,
         });
       } catch (error) {
         evidence.write(
           { results: recoveredApprovalFailureResults(decisions, error) },
           "after_tool_execution",
         );
+        if (effectBoundary.claimLost) return;
         throw error;
       }
-      // Side effects have returned. Checkpoint exact outcomes before ownership
-      // or transport checks; a stale process may stop delivery, not evidence.
       evidence.write({ results: approvalResults }, "after_tool_execution");
       recoveredContinuationOtid = continuationOtid;
     } catch (error) {
-      // Execution threw before results exist, so the finished-events
-      // emission below never runs. Close the client_tool_start lifecycle
-      // events explicitly or observer UIs shimmer these tool calls forever.
-      // Flush buffered tool output first so no progress frame lands after
-      // the terminal end events. Emit only while both local and Cloud recovery
-      // ownership remain current; a fenced process retains evidence but is no
-      // longer authoritative for transport events.
       emitToolExecutionOutput.flush();
       if (hasRecoveryOwnership()) {
         const abortedDeliveries = emitToolExecutionAbortedEvents(

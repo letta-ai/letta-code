@@ -177,6 +177,8 @@ export type PendingTeleport = {
   readyAt?: number;
   error?: string;
   continuation?: TeleportContinuation;
+  /** Exact interrupted-turn predecessor admitted by a failed teleport payload. */
+  interruptedRevision?: string;
 };
 
 export interface ModeChangePayload {
@@ -544,6 +546,12 @@ export type ListenerRuntime = {
   promotePreparedInputTerminals?: () => number;
   /** Rehydrate a committed queued input after volatile enqueue failure. */
   restoreDurableQueuedInputs?: () => number;
+  /** Coalesces capacity-release callbacks into one durable queue refill scan. */
+  durableQueueRestoreScheduled?: boolean;
+  /** The single bounded backoff timer for a failed durable queue refill. */
+  durableQueueRestoreTimer?: ReturnType<typeof setTimeout>;
+  /** Consecutive refill failures in the current bounded retry cycle. */
+  durableQueueRestoreFailures?: number;
   serviceCommandHandler:
     | ((command: ServiceCommandRequest) => Promise<ServiceCommandResponse>)
     | null;

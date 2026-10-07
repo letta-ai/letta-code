@@ -6,6 +6,37 @@ import type {
 export const RECOVERED_APPROVAL_OUTCOME_UNKNOWN =
   "Tool execution may have completed, but the listener stopped before recording its result";
 
+export function createRecoveredApprovalEffectBoundary(params: {
+  ownsClaim: () => boolean;
+  checkpointUnknown: () => void;
+  onCrossed: () => void;
+}) {
+  let crossed = false;
+  let claimLost = false;
+  return {
+    beforeToolExecution: () => {
+      if (!params.ownsClaim()) {
+        claimLost = true;
+        throw new Error("Recovery claim lost before tool execution");
+      }
+      if (crossed) return;
+      params.checkpointUnknown();
+      if (!params.ownsClaim()) {
+        claimLost = true;
+        throw new Error("Recovery claim lost before tool execution");
+      }
+      crossed = true;
+      params.onCrossed();
+    },
+    get crossed() {
+      return crossed;
+    },
+    get claimLost() {
+      return claimLost;
+    },
+  };
+}
+
 /** Evidence written before execution so a hard death never masquerades as denial. */
 export function recoveredApprovalInFlightResults(
   decisions: ApprovalDecision[],
