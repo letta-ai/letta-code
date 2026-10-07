@@ -34,6 +34,13 @@ interface BrowserDeviceMcpOAuthDependencies {
   openBrowser: (url: string) => Promise<void>;
 }
 
+type BrowserDeviceMcpOAuthSubmission = Omit<
+  McpOAuthCredentialSnapshot,
+  "expires_in"
+> & {
+  expires_at?: number;
+};
+
 const HANDOFF_KEY_PATTERN = /^[A-Za-z0-9_-]{43,128}$/;
 export const BROWSER_DEVICE_HANDOFF_SUBMIT_TIMEOUT_MS = 90_000;
 const HANDOFF_ATTEMPT_TIMEOUT_MS = 10_000;
@@ -293,13 +300,15 @@ export async function submitBrowserDeviceMcpOAuthHandoff(
   signal?: AbortSignal,
   retryOptions: {
     attemptTimeoutMs?: number;
-    monotonicNow?: () => number;
+    wallNow?: () => number;
     retryDelayMs?: number;
     timeoutMs?: number;
   } = {},
 ): Promise<void> {
-  const monotonicNow = retryOptions.monotonicNow ?? (() => performance.now());
-  const credentialsReceivedAt = monotonicNow();
+  const submittedCredentials = credentialsForSubmission(
+    credentials,
+    (retryOptions.wallNow ?? Date.now)(),
+  );
   const timeoutSignal = AbortSignal.timeout(
     retryOptions.timeoutMs ?? BROWSER_DEVICE_HANDOFF_SUBMIT_TIMEOUT_MS,
   );
@@ -315,10 +324,6 @@ export async function submitBrowserDeviceMcpOAuthHandoff(
         retryOptions.attemptTimeoutMs ?? HANDOFF_ATTEMPT_TIMEOUT_MS,
       ),
     ]);
-    const submittedCredentials = credentialsForSubmission(
-      credentials,
-      Math.max(0, monotonicNow() - credentialsReceivedAt),
-    );
     try {
       const response = await apiRequest<{
         authorized?: unknown;
@@ -352,17 +357,19 @@ export async function submitBrowserDeviceMcpOAuthHandoff(
 
 function credentialsForSubmission(
   credentials: McpOAuthCredentialSnapshot,
-  elapsedMs: number,
-): McpOAuthCredentialSnapshot {
+  nowMs: number,
+): BrowserDeviceMcpOAuthSubmission {
   if (credentials.expires_in === undefined) return credentials;
-  const expiresIn =
-    credentials.expires_in - Math.ceil(Math.max(0, elapsedMs) / 1_000);
-  if (expiresIn <= 0) {
+  if (credentials.expires_in <= 0) {
     throw new BrowserDeviceMcpOAuthRequestError(
       "MCP OAuth credentials expired before Cloud import completed",
     );
   }
-  return { ...credentials, expires_in: expiresIn };
+  const { expires_in: expiresIn, ...stableCredentials } = credentials;
+  return {
+    ...stableCredentials,
+    expires_at: nowMs + expiresIn * 1_000,
+  };
 }
 
 function isRetryableHandoffSubmissionError(error: unknown): boolean {

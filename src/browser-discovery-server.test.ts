@@ -124,6 +124,17 @@ describe("browser discovery server", () => {
     ]);
     expect(authorizationBudgets[0]).toBeGreaterThan(180_000);
     expect(authorizationBudgets[0]).toBeLessThanOrEqual(185_000);
+    expect(Number.isInteger(authorizationBudgets[0])).toBe(true);
+    const nodeTimeoutProbe = spawnSync(
+      "node",
+      [
+        "-e",
+        "AbortSignal.timeout(Number(process.argv[1]));",
+        String(authorizationBudgets[0]),
+      ],
+      { encoding: "utf8" },
+    );
+    expect(nodeTimeoutProbe.status).toBe(0);
   });
 
   test("rejects untrusted origins and malformed command bodies", async () => {

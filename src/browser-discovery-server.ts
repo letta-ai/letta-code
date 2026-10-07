@@ -371,11 +371,12 @@ async function handleMcpOAuthConnectRequest(
     }
     activeConnections.add(connectionKey);
     try {
-      const authorizationTimeoutMs =
+      const authorizationTimeoutMs = Math.floor(
         operationDeadlineAt -
-        performance.now() -
-        BROWSER_DEVICE_HANDOFF_SUBMIT_TIMEOUT_MS -
-        HANDOFF_SUBMISSION_MARGIN_MS;
+          performance.now() -
+          BROWSER_DEVICE_HANDOFF_SUBMIT_TIMEOUT_MS -
+          HANDOFF_SUBMISSION_MARGIN_MS,
+      );
       if (authorizationTimeoutMs <= 0) {
         throw new DOMException(
           "Browser-device OAuth submission reserve was exhausted",

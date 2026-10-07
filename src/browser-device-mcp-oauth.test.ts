@@ -352,7 +352,7 @@ describe("browser device MCP OAuth", () => {
     expect(attempts).toBe(2);
   });
 
-  test("decrements token lifetime across handoff submission retries", async () => {
+  test("keeps one absolute token expiry across handoff submission retries", async () => {
     const originalFetch = globalThis.fetch;
     const submitted: Array<Record<string, unknown>> = [];
     const fetchStub = async (
@@ -375,23 +375,27 @@ describe("browser device MCP OAuth", () => {
     globalThis.fetch = Object.assign(fetchStub, {
       preconnect: originalFetch.preconnect,
     });
-    const readings = [0, 0, 30_500];
-
     try {
       await submitBrowserDeviceMcpOAuthHandoff(
         REQUEST,
         { ...CREDENTIALS, expires_in: 120 },
         undefined,
         {
-          monotonicNow: () => readings.shift() ?? 30_500,
           retryDelayMs: 0,
+          wallNow: () => 1_700_000_000_000,
         },
       );
     } finally {
       globalThis.fetch = originalFetch;
     }
 
-    expect(submitted.map((body) => body.expires_in)).toEqual([120, 89]);
+    expect(submitted).toHaveLength(2);
+    expect(submitted[0]).toEqual(submitted[1]);
+    expect(submitted[0]).toMatchObject({
+      expires_at: 1_700_000_120_000,
+      handoff_key: REQUEST.handoffKey,
+    });
+    expect(submitted[0]).not.toHaveProperty("expires_in");
   });
 
   test("retries the same handoff after an admission-ambiguous gateway response", async () => {
