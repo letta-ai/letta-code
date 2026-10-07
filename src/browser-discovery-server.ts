@@ -6,6 +6,7 @@ import {
 } from "node:http";
 import type { AddressInfo } from "node:net";
 import {
+  BROWSER_DEVICE_HANDOFF_SUBMIT_TIMEOUT_MS,
   type BrowserDeviceMcpOAuthRequest,
   canonicalizeBrowserDeviceMcpOAuthRequest,
   connectBrowserDeviceMcpOAuth,
@@ -18,6 +19,7 @@ export const BROWSER_DEVICE_MCP_OAUTH_PATH = "/mcp-oauth/connect";
 
 const DEFAULT_RETRY_DELAY_MS = 1_000;
 const DEFAULT_OAUTH_TIMEOUT_MS = 280_000;
+const HANDOFF_SUBMISSION_MARGIN_MS = 5_000;
 const MAX_REQUEST_BODY_BYTES = 4_096;
 const LOCAL_CONNECT_HEADER = "x-letta-local-connect";
 const STATUS_BODY = JSON.stringify({ status: "ok" });
@@ -40,6 +42,7 @@ interface BrowserDiscoveryServerOptions {
   connectMcpOAuth?: (
     request: BrowserDeviceMcpOAuthRequest,
     signal: AbortSignal,
+    authorizationTimeoutMs: number,
   ) => Promise<void>;
   oauthTimeoutMs?: number;
   port?: number;
@@ -65,8 +68,17 @@ export function startBrowserDiscoveryServer(
     process.env.LETTA_BROWSER_DEVICE_ALLOW_LOCAL_ORIGINS === "1";
   const connectMcpOAuth =
     options.connectMcpOAuth ??
-    ((request: BrowserDeviceMcpOAuthRequest, signal: AbortSignal) =>
-      connectBrowserDeviceMcpOAuth(request, undefined, signal));
+    ((
+      request: BrowserDeviceMcpOAuthRequest,
+      signal: AbortSignal,
+      authorizationTimeoutMs: number,
+    ) =>
+      connectBrowserDeviceMcpOAuth(
+        request,
+        undefined,
+        signal,
+        authorizationTimeoutMs,
+      ));
   let activeServer: Server | null = null;
   let pendingServer: Server | null = null;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -179,6 +191,7 @@ function createBrowserDiscoveryHttpServer(
   connectMcpOAuth: (
     request: BrowserDeviceMcpOAuthRequest,
     signal: AbortSignal,
+    authorizationTimeoutMs: number,
   ) => Promise<void>,
   allowLocalBrowserOrigins: boolean,
   oauthTimeoutMs: number,
@@ -213,6 +226,7 @@ async function handleBrowserDiscoveryRequest(
   connectMcpOAuth: (
     request: BrowserDeviceMcpOAuthRequest,
     signal: AbortSignal,
+    authorizationTimeoutMs: number,
   ) => Promise<void>,
   allowLocalBrowserOrigins: boolean,
   activeConnections: Set<string>,
@@ -302,6 +316,7 @@ async function handleMcpOAuthConnectRequest(
   connectMcpOAuth: (
     request: BrowserDeviceMcpOAuthRequest,
     signal: AbortSignal,
+    authorizationTimeoutMs: number,
   ) => Promise<void>,
   activeConnections: Set<string>,
   oauthTimeoutMs: number,
@@ -329,6 +344,7 @@ async function handleMcpOAuthConnectRequest(
   request.once("aborted", abortForDisconnect);
   request.socket.once("close", abortForDisconnect);
   response.once("close", abortForDisconnect);
+  const operationDeadlineAt = Date.now() + oauthTimeoutMs;
   const signal = AbortSignal.any([
     disconnectController.signal,
     AbortSignal.timeout(oauthTimeoutMs),
@@ -355,7 +371,14 @@ async function handleMcpOAuthConnectRequest(
     }
     activeConnections.add(connectionKey);
     try {
-      await connectMcpOAuth(parsed, signal);
+      const authorizationTimeoutMs = Math.max(
+        1,
+        operationDeadlineAt -
+          Date.now() -
+          BROWSER_DEVICE_HANDOFF_SUBMIT_TIMEOUT_MS -
+          HANDOFF_SUBMISSION_MARGIN_MS,
+      );
+      await connectMcpOAuth(parsed, signal, authorizationTimeoutMs);
       respondJson(response, 200, { status: "connected" }, origin);
     } finally {
       activeConnections.delete(connectionKey);

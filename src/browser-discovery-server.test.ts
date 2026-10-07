@@ -88,8 +88,10 @@ describe("browser discovery server", () => {
 
   test("starts MCP OAuth from an allowed browser origin", async () => {
     const requests: BrowserDeviceMcpOAuthRequest[] = [];
-    const { address } = await startServer(async (request) => {
+    const authorizationBudgets: number[] = [];
+    const { address } = await startServer(async (request, _signal, budget) => {
       requests.push(request);
+      authorizationBudgets.push(budget);
     });
     const response = await fetch(
       `http://${address.host}:${address.port}${BROWSER_DEVICE_MCP_OAUTH_PATH}`,
@@ -120,6 +122,8 @@ describe("browser discovery server", () => {
         serverUrl: "https://mcp.datadoghq.com/v1/mcp",
       },
     ]);
+    expect(authorizationBudgets[0]).toBeGreaterThan(180_000);
+    expect(authorizationBudgets[0]).toBeLessThanOrEqual(185_000);
   });
 
   test("rejects untrusted origins and malformed command bodies", async () => {
@@ -615,6 +619,7 @@ async function startServer(
   connectMcpOAuth: (
     request: BrowserDeviceMcpOAuthRequest,
     signal: AbortSignal,
+    authorizationTimeoutMs: number,
   ) => Promise<void>,
 ): Promise<{
   handle: BrowserDiscoveryServerHandle;
@@ -624,6 +629,7 @@ async function startServer(
   connectMcpOAuth?: (
     request: BrowserDeviceMcpOAuthRequest,
     signal: AbortSignal,
+    authorizationTimeoutMs: number,
   ) => Promise<void>,
 ): Promise<{
   handle: BrowserDiscoveryServerHandle;

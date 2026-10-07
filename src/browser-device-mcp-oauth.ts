@@ -35,7 +35,7 @@ interface BrowserDeviceMcpOAuthDependencies {
 }
 
 const HANDOFF_KEY_PATTERN = /^[A-Za-z0-9_-]{43,128}$/;
-const HANDOFF_SUBMIT_TIMEOUT_MS = 90_000;
+export const BROWSER_DEVICE_HANDOFF_SUBMIT_TIMEOUT_MS = 90_000;
 const HANDOFF_ATTEMPT_TIMEOUT_MS = 10_000;
 const PROVIDER_AUTHORIZATION_TIMEOUT_MS = 190_000;
 const HANDOFF_RETRY_BASE_DELAY_MS = 1_000;
@@ -84,13 +84,14 @@ export async function connectBrowserDeviceMcpOAuth(
     openBrowser: openSystemBrowser,
   },
   signal?: AbortSignal,
+  authorizationTimeoutMs = PROVIDER_AUTHORIZATION_TIMEOUT_MS,
 ): Promise<void> {
   signal?.throwIfAborted();
   const definition = resolveDefinition(request);
   const canonicalRequest = { ...request, serverUrl: definition.serverUrl };
   const ephemeralStorage = createEphemeralStorage();
   const providerTimeoutSignal = AbortSignal.timeout(
-    PROVIDER_AUTHORIZATION_TIMEOUT_MS,
+    Math.max(1, authorizationTimeoutMs),
   );
   const authorizationSignal = signal
     ? AbortSignal.any([signal, providerTimeoutSignal])
@@ -297,7 +298,7 @@ export async function submitBrowserDeviceMcpOAuthHandoff(
   } = {},
 ): Promise<void> {
   const timeoutSignal = AbortSignal.timeout(
-    retryOptions.timeoutMs ?? HANDOFF_SUBMIT_TIMEOUT_MS,
+    retryOptions.timeoutMs ?? BROWSER_DEVICE_HANDOFF_SUBMIT_TIMEOUT_MS,
   );
   const operationSignal = signal
     ? AbortSignal.any([signal, timeoutSignal])
