@@ -375,6 +375,8 @@ describe("browser device MCP OAuth", () => {
     globalThis.fetch = Object.assign(fetchStub, {
       preconnect: originalFetch.preconnect,
     });
+    const wallReadings = [1_700_000_000_000, 1_700_000_030_500];
+    let wallNowCalls = 0;
     try {
       await submitBrowserDeviceMcpOAuthHandoff(
         REQUEST,
@@ -382,7 +384,7 @@ describe("browser device MCP OAuth", () => {
         undefined,
         {
           retryDelayMs: 0,
-          wallNow: () => 1_700_000_000_000,
+          wallNow: () => wallReadings[wallNowCalls++] ?? 1_700_000_060_000,
         },
       );
     } finally {
@@ -390,6 +392,7 @@ describe("browser device MCP OAuth", () => {
     }
 
     expect(submitted).toHaveLength(2);
+    expect(wallNowCalls).toBe(1);
     expect(submitted[0]).toEqual(submitted[1]);
     expect(submitted[0]).toMatchObject({
       expires_at: 1_700_000_120_000,
