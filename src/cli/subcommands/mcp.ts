@@ -22,6 +22,7 @@ import {
 } from "@/mcp-client";
 import { createMcpOAuthSession } from "@/mcp-oauth";
 import { formatClientMcpToolName } from "@/mcp-runtime";
+import { getMcpScopeAgentId, type ParentAgentLookup } from "@/mcp-scope";
 import { settingsManager } from "@/settings-manager";
 import { isRecord } from "@/utils/type-guards";
 import {
@@ -109,6 +110,7 @@ function defaultIsHostedLettaCloud(): boolean {
 
 export interface McpSubcommandDependencies {
   initializeSettings?: () => Promise<void>;
+  lookupParentAgent?: ParentAgentLookup;
   getLocalServers?: (agentId: string) => McpServerConfig[];
   connectLocalServer?: typeof connectMcpServer;
   createOAuthSession?: typeof createMcpOAuthSession;
@@ -829,7 +831,7 @@ export async function runMcpSubcommand(
     return 0;
   }
 
-  const agentId = resolveMcpAgentId(
+  let agentId = resolveMcpAgentId(
     stringValue(parsed.values.agent),
     stringValue(parsed.values["agent-id"]),
     deps.env ?? process.env,
@@ -848,6 +850,13 @@ export async function runMcpSubcommand(
 
   try {
     await (deps.initializeSettings ?? (() => settingsManager.initialize()))();
+    if (!parsed.values.agent && !parsed.values["agent-id"]) {
+      agentId = await getMcpScopeAgentId(
+        agentId,
+        deps.env ?? process.env,
+        deps.lookupParentAgent,
+      );
+    }
     switch (parsed.action) {
       case "list":
         return await runList(deps, agentId, stdout);

@@ -12,12 +12,24 @@ deployment: on-device channels run it through `gateway-local.ts`, and remote
 hosts (for example Letta Cloud) run the same gateway through the
 `@letta-ai/letta-code/gateway-core` package export.
 
-Cross-cutting behavior belongs in the gateway, not adapters or route handlers.
-Publish immutable `scope_id` groups; select them per input using
-`external_tool_scope_ids`. Retain active, queued, and handed-off references.
-Do not freeze different queued destinations to one runtime-global schema.
-Relay inputs need unique selectors without tools; unscoped proactive tools
-return only at idle. Check this owner before editing `registry-routes.ts`.
+Cross-cutting channel behavior — anything phrased as "all channels" or that must
+apply to both on-device and Cloud delivery — belongs in the gateway, not
+duplicated in adapter-specific routing or conversation-creation code. Before
+editing `registry-routes.ts` (or a Cloud-side route handler) for behavior like
+source tagging or conversation metadata, check whether the gateway can apply it
+where it registers or submits the runtime.
+
+## Keep niche behavior out of the shared core
+
+Every host, including Cloud's Slack, iMessage, and Teams gateways, inherits
+`ChannelGateway`, gateway-core, and the `MessageChannel` contract, so put niche
+or opt-in behavior (reply policies, delivery modes, custom routing) in a mod or
+custom channel instead. Any opt-in feature must leave the default path unchanged
+when it is off, and new channel protocol concepts need the channels owner's
+review ([#4043](https://github.com/letta-ai/letta-code/pull/4043) is the
+cautionary example). Bundled platform integrations (Slack, Telegram, WhatsApp,
+etc.) live here for historical reasons and are expected to move out of
+letta-code, so do not add new channel-specific logic to core.
 
 ## Pure logic is shared through package subpaths, transport is not
 

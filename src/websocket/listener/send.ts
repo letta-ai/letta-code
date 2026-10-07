@@ -524,7 +524,7 @@ export async function sendMessageStreamWithRetry(
       return await sendMessageStream(
         conversationId,
         messages,
-        opts,
+        { ...opts, agentId: opts?.agentId ?? runtime.agentId ?? undefined },
         abortSignal
           ? { maxRetries: 0, signal: abortSignal }
           : { maxRetries: 0 },
@@ -721,7 +721,7 @@ export async function sendApprovalContinuationWithRetry(
       const stream = await sendMessageStream(
         conversationId,
         messages,
-        opts,
+        { ...opts, agentId: opts?.agentId ?? runtime.agentId ?? undefined },
         abortSignal
           ? { maxRetries: 0, signal: abortSignal }
           : { maxRetries: 0 },

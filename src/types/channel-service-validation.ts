@@ -10,10 +10,6 @@ export function hasValidChannelPolicyFields(
     config.dm_policy === "pairing" ||
     config.dm_policy === "allowlist" ||
     config.dm_policy === "open";
-  const hasValidReplyMode =
-    config.reply_mode === undefined ||
-    config.reply_mode === "tool" ||
-    config.reply_mode === "relay";
   const hasValidAllowedUsers =
     config.allowed_users === undefined ||
     (Array.isArray(config.allowed_users) &&
@@ -25,7 +21,6 @@ export function hasValidChannelPolicyFields(
     config.enabled === undefined || typeof config.enabled === "boolean";
   return (
     hasValidDmPolicy &&
-    hasValidReplyMode &&
     hasValidAllowedUsers &&
     hasValidDisplayName &&
     hasValidEnabled
@@ -44,7 +39,6 @@ export const CHANNEL_ACCOUNT_CREATE_FIELDS = new Set([
   "display_name",
   "enabled",
   "dm_policy",
-  "reply_mode",
   "allowed_users",
   "config",
 ]);
@@ -53,14 +47,12 @@ export const CHANNEL_ACCOUNT_UPDATE_FIELDS = new Set([
   "display_name",
   "enabled",
   "dm_policy",
-  "reply_mode",
   "allowed_users",
   "config",
 ]);
 
 export const CHANNEL_SET_CONFIG_FIELDS = new Set([
   "dm_policy",
-  "reply_mode",
   "allowed_users",
   "plugin_config",
 ]);

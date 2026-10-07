@@ -252,9 +252,12 @@ export function MessageSearch({
   onOpenConversation,
 }: MessageSearchProps) {
   const terminalWidth = useTerminalWidth();
+  const textOnlyModes = getBackend().capabilities.localModelCatalog;
   const [searchInput, setSearchInput] = useState(initialQuery ?? "");
   const [activeQuery, setActiveQuery] = useState(initialQuery ?? "");
-  const [searchMode, setSearchMode] = useState<SearchMode>("hybrid");
+  const [searchMode, setSearchMode] = useState<SearchMode>(
+    textOnlyModes ? "fts" : "hybrid",
+  );
   const [searchRange, setSearchRange] = useState<SearchRange>("agent");
   const [results, setResults] = useState<MessageSearchResponse>([]);
   const [loading, setLoading] = useState(false);
@@ -263,7 +266,6 @@ export function MessageSearch({
   const [expandedMessage, setExpandedMessage] = useState<
     MessageSearchResponse[number] | null
   >(null);
-  const textOnlyModes = getBackend().capabilities.localModelCatalog;
   const searchRequestIdRef = useRef(0);
   // Cache results per query+mode+range combination to avoid re-fetching
   const resultsCache = useRef<Map<string, MessageSearchResponse>>(new Map());
@@ -281,16 +283,15 @@ export function MessageSearch({
   // Get cache key for a specific query+mode+range combination
   const getCacheKey = useCallback(
     (query: string, mode: SearchMode, range: SearchRange) => {
-      const modeKey = textOnlyModes ? "text" : mode;
       const rangeKey =
         range === "agent"
           ? agentId || "no-agent"
           : range === "conv"
             ? conversationId || "no-conv"
             : "all";
-      return `${query.trim()}-${modeKey}-${rangeKey}`;
+      return `${query.trim()}-${mode}-${rangeKey}`;
     },
-    [agentId, conversationId, textOnlyModes],
+    [agentId, conversationId],
   );
 
   // Execute search for a single mode (returns results, doesn't set state)

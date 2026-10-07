@@ -16,7 +16,8 @@ conversations, each with its own message history.
 
 - Supply `conversation_id` to message an existing thread, or `agent_id` alone to
   start a new hidden thread with that agent. To use an agent's default conversation,
-  supply its `agent_id` and `conversation_id: "default"`.
+  supply its `agent_id` and `conversation_id: "default"`. Pass the full
+  conversation ID; truncated IDs are rejected.
 - Your agent and conversation IDs are attached automatically as the return address.
   To reply, the recipient must explicitly send to that address. Ordinary assistant
   output is not forwarded back to you.
@@ -32,6 +33,14 @@ conversations, each with its own message history.
 - For work already underway, treat the agent doing it as its owner. Send what it
   needs, then let it decide. Do not take over or redo its work. If you think
   ownership should change, ask the human instead of declaring it in a message.
+
+If you are a subagent, omitting both `agent_id` and `conversation_id` sends to
+your parent (the agent and conversation that launched you). Message your parent
+rarely: each message stays in both contexts, and your final report already
+reaches it. Send one only when a parent decision would otherwise force you to
+redo work, stating the default you will take, then keep working. Steering your
+own children (Agent, Claude Code, or Codex) is normal; message them as often as
+the work needs.
 
 Use Agent to launch or resume a managed Letta child task and receive its
 completion notification. Letta-to-Letta sends create no local task ID. External

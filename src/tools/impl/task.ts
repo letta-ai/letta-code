@@ -22,7 +22,6 @@ import {
   getAllSubagentConfigs,
   type SubagentConfig,
   type SubagentMemoryScope,
-  type SubagentResult,
 } from "@/agent/subagents";
 import {
   waitForBackgroundSubagentAgentId,
@@ -30,6 +29,7 @@ import {
 } from "@/agent/subagents/background-link";
 import { forkParentConversation } from "@/agent/subagents/fork-conversation";
 import { spawnSubagent } from "@/agent/subagents/manager";
+import { getCurrentSubagentDepth } from "@/agent/subagents/subagent-depth";
 import { getBackend } from "@/backend";
 import { runSubagentStopHooks } from "@/hooks";
 import {
@@ -66,6 +66,12 @@ import {
   getNextTaskId,
   scheduleBackgroundTaskCleanup,
 } from "./process_manager.js";
+import { runForegroundTask } from "./task-foreground";
+import {
+  buildTaskResultHeader,
+  writeTaskTranscriptResult,
+  writeTaskTranscriptStart,
+} from "./task-transcript";
 import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation";
 
@@ -207,60 +213,6 @@ async function resolveCompletionSummary(
   return trimmed.length > 0 ? trimmed : defaultSummary;
 }
 
-function buildTaskResultHeader(
-  subagentType: string,
-  subagentId: string,
-  result?: Pick<
-    SubagentResult,
-    "agentId" | "conversationId" | "runtimeSessionId"
-  >,
-  status?: "success" | "error",
-): string {
-  return [
-    `subagent_type=${subagentType}`,
-    `subagent_id=${subagentId}`,
-    status ? `subagent_status=${status}` : undefined,
-    result?.agentId ? `agent_id=${result.agentId}` : undefined,
-    result?.conversationId
-      ? `conversation_id=${result.conversationId}`
-      : undefined,
-    result?.runtimeSessionId
-      ? `runtime_session_id=${result.runtimeSessionId}`
-      : undefined,
-  ]
-    .filter(Boolean)
-    .join(" ");
-}
-
-function writeTaskTranscriptStart(
-  outputFile: string,
-  description: string,
-  subagentType: string,
-): void {
-  appendToOutputFile(
-    outputFile,
-    `[Task started: ${description}]\n[subagent_type: ${subagentType}]\n\n`,
-  );
-}
-
-function writeTaskTranscriptResult(
-  outputFile: string,
-  result: SubagentResult,
-  header: string,
-  reportAlreadyWritten = false,
-): void {
-  if (result.success) {
-    const report = reportAlreadyWritten ? "" : `${result.report}\n\n`;
-    appendToOutputFile(outputFile, `${header}\n\n${report}[Task completed]\n`);
-    return;
-  }
-
-  appendToOutputFile(
-    outputFile,
-    `${header ? `${header}\n\n` : ""}[error] ${result.error || "Subagent execution failed"}\n\n[Task failed]\n`,
-  );
-}
-
 /**
  * Spawn a background subagent task and return task metadata immediately.
  * Notification/hook behavior is identical to Task's background path.
@@ -350,6 +302,7 @@ export function spawnBackgroundSubagentTask(
     startTime: new Date(),
     outputFile,
     abortController,
+    remote: Boolean(environment),
     runtimeScope: resolvedParentScope,
     actingUserId,
   };
@@ -636,7 +589,12 @@ export function spawnBackgroundSubagentTask(
 /** Launch through the same task lifecycle for tools and App Server commands. */
 export async function launchSubagent(
   args: TaskArgs,
+  options: Pick<SpawnBackgroundSubagentTaskArgs, "onComplete"> = {},
 ): Promise<SubagentLaunchResult> {
+  // A foreground caller receives the result directly instead of a notification.
+  const completion = options.onComplete
+    ? { onComplete: options.onComplete, emitCompletionNotification: false }
+    : {};
   const { model, toolCallId, signal } = args;
   if (
     args.client_message_id !== undefined &&
@@ -809,6 +767,7 @@ export async function launchSubagent(
       model,
       toolCallId,
       parentScope: resolvedParentScope,
+      ...completion,
       deps: {
         spawnSubagentImpl: async (
           _type,
@@ -926,6 +885,7 @@ export async function launchSubagent(
     clientMessageId: args.client_message_id,
     forkedContext: subagent_type !== "memory" && config.fork,
     parentScope: resolvedParentScope,
+    ...completion,
     environment:
       typeof args.computer === "string" && args.computer.trim()
         ? args.computer.trim()
@@ -985,6 +945,8 @@ export async function task(args: TaskArgs): Promise<string> {
     const errorSuffix = errors.length > 0 ? `, ${errors.length} error(s)` : "";
     return `Refreshed subagents list: found ${Object.keys(allConfigs).length} total (${subagents.length} custom)${errorSuffix}`;
   }
+  if (args.subagent_type !== "memory" && getCurrentSubagentDepth() > 0)
+    return runForegroundTask(args, launchSubagent);
   const result = await launchSubagent(args);
   if (!result.success) return `Error: ${result.error}`;
   if (args.subagent_type === "memory") {

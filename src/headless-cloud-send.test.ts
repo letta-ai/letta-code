@@ -159,7 +159,7 @@ test.each(["text", "json", "stream-json"])(
       { type: "text", text: "hello" },
     ]);
     expect(JSON.stringify(f.submissions[0]?.content)).toContain(
-      "use SendAgentMessage if available",
+      "call SendAgentMessage with conversation_id conv-parent",
     );
     expect(JSON.stringify(f.submissions[0]?.content)).toContain(
       "Ordinary assistant output is not forwarded",
@@ -554,3 +554,20 @@ test.each(["text", "json", "stream-json"])(
     ]);
   },
 );
+
+test("the CLI reply fallback uses a command the CLI accepts", () => {
+  const conv = buildAgentSendReminder(
+    { agentId: "agent-a", conversationId: "conv-a" },
+    true,
+  );
+  expect(conv).toContain("letta -p --conversation conv-a --no-wait");
+  expect(conv).not.toContain("--agent agent-a --conversation conv-a");
+  expect(
+    buildAgentSendReminder(
+      { agentId: "agent-a", conversationId: "default" },
+      true,
+    ),
+  ).toContain(
+    "SendAgentMessage with agent_id agent-a and conversation_id default. Only if that tool is unavailable, run letta -p --agent agent-a --conversation default --no-wait",
+  );
+});

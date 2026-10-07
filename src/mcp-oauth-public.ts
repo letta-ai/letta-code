@@ -1,8 +1,6 @@
 import { connectMcpServer } from "@/mcp-client";
-import {
-  createMcpOAuthSessionWithStorage,
-  mcpOAuthCredentialKey,
-} from "@/mcp-oauth";
+import { createMcpOAuthSessionWithStorage } from "@/mcp-oauth";
+import { mcpOAuthCredentialKey } from "@/mcp-oauth-identity";
 
 /** Credentials produced by a completed MCP OAuth flow. */
 export interface McpOAuthCredentialSnapshot {

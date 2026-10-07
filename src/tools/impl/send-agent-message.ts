@@ -19,7 +19,12 @@ import {
   getCurrentWorkingDirectory,
   getRuntimeContext,
 } from "@/runtime-context";
+import {
+  getRuntimeExecutionEnv,
+  type RuntimeExecutionSettings,
+} from "@/runtime-execution-settings";
 import { debugLog } from "@/utils/debug";
+import { readSubagentDepth } from "@/utils/subagent-depth-env";
 import { sendClaudeMessage } from "./claude-stream-session";
 import { sendCodexMessage } from "./codex-app-server";
 import { parseExternalCodingAgentId } from "./external-coding-agent";
@@ -46,6 +51,36 @@ interface SendAgentMessageDeps {
   sendClaudeMessage?: typeof sendClaudeMessage;
   sendCodexMessage?: typeof sendCodexMessage;
   trackExternalFollowup?: typeof trackExternalFollowupCompletion;
+}
+
+const FULL_CONVERSATION_ID =
+  /^conv-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Truncated or agent IDs would otherwise fail as an opaque 404. */
+function checkConversationId(id: string | undefined): void {
+  if (!id || id === "default" || FULL_CONVERSATION_ID.test(id)) return;
+  const shown = JSON.stringify(id);
+  if (id.startsWith("agent-")) {
+    throw new Error(
+      `conversation_id ${shown} is an agent ID; pass it as agent_id instead.`,
+    );
+  }
+  if (id.startsWith("conv-")) {
+    throw new Error(
+      `conversation_id ${shown} is not a full conversation ID (conv-<uuid>); truncated IDs are rejected. Pass the full conversation ID.`,
+    );
+  }
+}
+
+/** A subagent's omitted destination is the conversation that launched it. */
+function resolveParentAddress(
+  settings: RuntimeExecutionSettings | undefined,
+): { agentId: string; conversationId: string } | undefined {
+  const env = getRuntimeExecutionEnv(process.env, settings);
+  const agentId = env.LETTA_PARENT_AGENT_ID;
+  const conversationId = env.LETTA_PARENT_CONVERSATION_ID;
+  if (readSubagentDepth(env) === 0 || !agentId || !conversationId) return;
+  return { agentId, conversationId };
 }
 
 export async function send_agent_message(
@@ -194,6 +229,7 @@ export async function send_agent_message(
       };
     }
 
+    checkConversationId(args.conversation_id);
     const backend = deps.backend ?? getBackend();
     if (!backend.capabilities.environmentRouting) {
       throw new Error("SendAgentMessage requires a Cloud backend.");
@@ -213,10 +249,14 @@ export async function send_agent_message(
       ...(args.signal ? [args.signal] : []),
     ]);
     signal.throwIfAborted();
+    const parent =
+      args.agent_id || args.conversation_id
+        ? undefined
+        : resolveParentAddress(context?.executionSettings);
     destination = await resolveAgentMessageDestination(
       {
-        agentId: args.agent_id,
-        conversationId: args.conversation_id,
+        agentId: parent?.agentId ?? args.agent_id,
+        conversationId: parent?.conversationId ?? args.conversation_id,
         senderAgentId: sender.agentId,
         actingUserId,
         currentConversation: sender,

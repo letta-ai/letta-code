@@ -8,8 +8,8 @@ import {
   createMcpOAuthSession,
   createMcpOAuthSessionWithStorage,
   type McpOAuthStorage,
-  mcpOAuthCredentialKey,
 } from "@/mcp-oauth";
+import { mcpOAuthCredentialKey } from "@/mcp-oauth-identity";
 import { authorizeMcpServerWithStorage } from "@/mcp-oauth-public";
 import { setServiceName } from "@/utils/secrets";
 

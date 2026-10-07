@@ -85,13 +85,27 @@ jobs:
             2. Run `gh pr view $PR_NUMBER --repo "$GITHUB_REPOSITORY" --json title,body,comments` to get the PR title, description, and comments
             3. Resolve any previously addressed comments — see "Resolving addressed comments" below
             4. Run `gh pr diff $PR_NUMBER --repo "$GITHUB_REPOSITORY"` to read the full diff
-            5. Assess whether the PR introduces real risk
+            5. Judge scope first (see "Scope check"), then assess whether the PR introduces real risk
             6. If nothing to flag, respond with exactly: `LGTM`
             7. If something to flag, leave inline review comments, then respond with exactly: `Left comments`
 
             **Default posture: signal-only.** Most PRs are fine. Only speak when there's something worth saying.
 
             **Focus on the diff.** Only read additional files if the changed code is ambiguous without surrounding context. Don't re-read entire files you already know.
+
+            ## Scope check
+
+            **Past roughly 1k changed lines**, step back before any line-level review and ask two things: should this be split, and does it belong in core at all? Opt-in or niche behavior wired into shared core paths (channel gateway, turn/tool/approval orchestration) could probably live in a mod, plugin, or custom channel instead — and with the opt-in off, does default behavior for every host stay exactly identical, and is it actually gated? If the answer looks wrong, say so as a short note at the top of the review body. That's it — not an auto-reject, not blocking on its own.
+
+            **Escalate to the full danger-zone flag** when it's thousands of lines, or when it touches dangerous ground with no clear code owner driving it:
+
+            - New or changed listener/app-server protocol commands or fields — that's modifying our API, not just adding code.
+            - Queueing or turn-batching behavior — extremely bug-prone when the author doesn't fully understand it.
+            - New core concepts slipped in through prose. If a PR description or comment casually asserts something like "each input selects its own immutable `scope_id` registration through the existing `external_tool_scope_ids` field", stop and say so: `@cpacker this doesn't seem right, can you confirm we want changes like this?`
+
+            There, lead the review body with the verdict: danger zone / scope creep, don't merge as-is, split it or move it out of core where that applies. Tag @cpacker — he owns channels, the listener, queueing, and the protocol — for explicit confirmation, and treat it as unresolved until he confirms. Post it with `event="REQUEST_CHANGES"` — never approve — then respond `Left comments`. Skip the detailed inline review unless there's a severe bug worth calling out.
+
+            Small, well-scoped PRs, or ones clearly driven by the owner, get neither. Default posture stays signal-only.
 
             ## What to flag
 
@@ -266,3 +280,98 @@ jobs:
           RESULT=$(cat "${{ steps.expert_review.outputs.execution_file }}" \
             | jq -r '[.[] | select(.type == "result") | .result] | last // ""')
           echo "Expert review result: $RESULT"
+
+  # Charles asked for a loud flag when a letta-code PR edits the system prompt:
+  # agents default to the backend prompt now, so the letta-cloud copy must be
+  # kept in sync. The review job runs on the CI runner, which has no Slack
+  # channel, so this asks Amelia's Cloud harness to post through its existing
+  # Slack connection, once per PR.
+  system-prompt-drift-flag:
+    if: >
+      (github.event_name == 'workflow_dispatch') ||
+      (github.event.pull_request.draft == false &&
+       github.actor != 'dependabot[bot]' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: system-prompt-drift-flag-${{ github.event.inputs.pr_number || github.event.pull_request.number }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pull-requests: read
+    env:
+      PR_NUMBER: ${{ github.event.inputs.pr_number || github.event.pull_request.number }}
+      PROMPT_PATHS: '^src/agent/prompts/letta[^/]*\.md$'
+      CLOUD_PROMPT_DIR: libs/service-core-runtime/src/lib/core-runtime/systemPrompt/prompts/
+      MARKER: "<!-- system-prompt-drift-flag -->"
+    steps:
+      - name: Check for system prompt edits
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.AMELIA_GITHUB_TOKEN }}
+          AUTHOR_SLACK_IDS: ${{ vars.SYNC_TOOLS_SOURCE_AUTHOR_SLACK_IDS }}
+        run: |
+          set -euo pipefail
+          files=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" --paginate \
+            --jq '.[].filename' | grep -E "$PROMPT_PATHS" || true)
+          if [ -z "$files" ]; then
+            echo "No system prompt edits"
+            exit 0
+          fi
+          flagged=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate \
+            --jq "[.[] | select(.user.login == \"amelia-letta\" and (.body | contains(\"$MARKER\")))] | length" \
+            | awk '{ n += $1 } END { print n + 0 }')
+          if [ "$flagged" -gt 0 ]; then
+            echo "Already flagged"
+            exit 0
+          fi
+          names=$(awk -F/ '{ printf "%s%s", sep, $NF; sep = ", " }' <<< "$files")
+          pr_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/pull/$PR_NUMBER"
+          author=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.user.login')
+          slack_ids=${AUTHOR_SLACK_IDS:-}
+          [ -n "$slack_ids" ] || slack_ids='{}'
+          mention=$(jq -r --arg a "$author" '.[$a] // empty' <<< "$slack_ids" 2>/dev/null || true)
+          message="${mention:+<@$mention> }:rotating_light: $pr_url edits the letta-code system prompt ($names). Agents default to the backend prompt now, so letta-cloud's copy in $CLOUD_PROMPT_DIR needs the same change or they drift."
+          {
+            echo "needed=true"
+            echo "names=$names"
+            echo "prompt<<DRIFT_FLAG_PROMPT"
+            echo "Call the native \`MessageChannel\` tool once with \`action=\"send\"\`, \`channel=\"slack\"\`, \`target=\"C0871ER46KT\"\`, and exactly this text:"
+            echo
+            echo "$message"
+            echo
+            echo "Do not use curl or another Slack client, read anything, or change GitHub. After the send succeeds, respond with exactly \`SENT\`. If it fails, respond with the error."
+            echo "DRIFT_FLAG_PROMPT"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Ask Amelia to post the flag
+        id: amelia
+        if: steps.check.outputs.needed == 'true'
+        uses: letta-ai/letta-code-action@b7e51edb0643e67ae74327a1cdf0c332e549f8fc
+        with:
+          letta_api_key: ${{ secrets.AMELIA_LETTA_API_KEY }}
+          github_token: ${{ secrets.AMELIA_GITHUB_TOKEN }}
+          agent_id: agent-cd664b86-4d28-49b7-8ad6-60677eaff9be
+          environment: cloud
+          letta_args: --new
+          track_progress: ""
+          tracking_comment: "false"
+          model: letta/auto
+          prompt: ${{ steps.check.outputs.prompt }}
+
+      - name: Record the flag on the PR
+        if: steps.check.outputs.needed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.AMELIA_GITHUB_TOKEN }}
+          EXECUTION_FILE: ${{ steps.amelia.outputs.execution_file }}
+          NAMES: ${{ steps.check.outputs.names }}
+        run: |
+          set -euo pipefail
+          result=$(jq -r '[.[] | select(.type == "result" and (.result | type) == "string")] | last | (.result // "" | split("\n") | map(gsub("^\\s+|\\s+$"; "") | select(length > 0)) | last // "")' "$EXECUTION_FILE")
+          if [ "$result" != "SENT" ]; then
+            echo "Slack flag not sent: $result" >&2
+            exit 1
+          fi
+          gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$MARKER
+          Heads up: this PR edits the letta-code system prompt ($NAMES). Agents default to the backend prompt now, so the letta-cloud copy in \`$CLOUD_PROMPT_DIR\` needs the same change. Flagged in Slack."

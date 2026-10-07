@@ -65,6 +65,12 @@ export interface WrapSubagentLauncherInput {
    * null/omitted falls back to the default storage dir.
    */
   localBackendStorageDir?: string | null;
+  /**
+   * The child's resolved scratchpad dir (`LETTA_SCRATCHPAD`). Shell output
+   * files land here, so it must stay writable even when an inherited value
+   * points outside `~/.letta`.
+   */
+  scratchpadDir?: string | null;
   env?: NodeJS.ProcessEnv;
   /** Injectable for tests; defaults to a real host probe. */
   availability?: SandboxAvailability;
@@ -112,13 +118,21 @@ export function wrapSubagentLauncher(
   // Writes are scoped to the harness state dir (~/.letta) by the policy: the
   // child can persist memory + harness metadata (settings, logs, conversations,
   // transcripts) but not the repo/home/temp. Pass any harness root configured
-  // OUTSIDE ~/.letta — a custom transcript root, or a relocated local storage
-  // dir — so those stay writable too (defaults already live under ~/.letta).
+  // OUTSIDE ~/.letta — a custom transcript root, a relocated local storage
+  // dir, or an inherited scratchpad — so those stay writable too (defaults
+  // already live under ~/.letta).
   const isLocal = input.backendMode === "local";
   const storageDir = input.localBackendStorageDir ?? undefined;
+  const scratchpadDir = input.scratchpadDir || undefined;
+  if (scratchpadDir) {
+    // bwrap binds with --bind-try, which silently skips missing paths; create
+    // the scratchpad up front so the carve-out actually takes effect.
+    mkdirSync(scratchpadDir, { recursive: true });
+  }
   const harnessWritableRoots = [
     getTranscriptRoot(),
     ...(isLocal && storageDir ? [storageDir] : []),
+    ...(scratchpadDir ? [scratchpadDir] : []),
   ];
   const policy = buildMemorySubagentSandboxPolicy({
     memoryRoots: writableMemoryRoots,

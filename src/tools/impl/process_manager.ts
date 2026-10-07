@@ -65,6 +65,8 @@ export interface BackgroundTask {
   abortController?: AbortController;
   /** Resolves once the local subagent launcher and its process tree have stopped. */
   completion?: Promise<void>;
+  /** Runs on another computer or in Cloud; stopping it must cancel Cloud. */
+  remote?: boolean;
   cleanupTimer?: TimerHandle;
   runtimeScope?: BackgroundRuntimeScope;
   /** Authenticated Cloud user responsible for launching this task. */

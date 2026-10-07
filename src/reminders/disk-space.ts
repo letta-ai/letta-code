@@ -1,6 +1,11 @@
 import { statfs } from "node:fs/promises";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { isManagedCloudRuntime } from "@/managed-cloud-runtime";
+import {
+  addToMessageQueue,
+  isQueueBridgeConnected,
+} from "@/utils/message-queue-bridge";
+import { resolveNotificationScope } from "@/utils/task-notifications";
 
 /** Warn when at least this fraction of the volume is used... */
 export const LOW_DISK_USED_FRACTION = 0.9;
@@ -103,6 +108,121 @@ LOW DISK SPACE: The sandbox volume holding ${sample.path} is ${usedPercent}% ful
 
 Before continuing with disk-heavy work, free space: use \`du -xh --max-depth=2 <dir> | sort -h\` to find large directories, then delete regenerable data such as package manager caches, build outputs, old worktrees you created, and temporary files. Do not delete the user's source files, uncommitted work, or memory without asking.
 ${SYSTEM_REMINDER_CLOSE}`;
+}
+
+/** Escalate a second time once the volume is this full. */
+export const CRITICAL_DISK_USED_FRACTION = 0.95;
+/** How often to re-check the disk while a tool batch is running. */
+export const DISK_SPACE_POLL_INTERVAL_MS = 30_000;
+
+type AlertLevel = 0 | 1 | 2;
+
+function alertLevel(sample: DiskSpaceSample): AlertLevel {
+  if (!isDiskSpaceLow(sample)) return 0;
+  const usedFraction = 1 - sample.availableBytes / sample.totalBytes;
+  return usedFraction >= CRITICAL_DISK_USED_FRACTION ? 2 : 1;
+}
+
+// Highest level already pushed as a notification in this process. Shared by
+// every loop here because they share the disk; resets when space recovers.
+let pushedLevel: AlertLevel = 0;
+
+/**
+ * Measure now and return a reminder only when the level rises (low, then
+ * critical). Used on a timer while tools run, so a long install or a running
+ * subagent can't fill the disk between turns unnoticed.
+ */
+export async function checkDiskSpaceNow(
+  path: string,
+  options: { env?: NodeJS.ProcessEnv; statfsFn?: StatfsFn } = {},
+): Promise<string | null> {
+  try {
+    if (!isManagedCloudRuntime(options.env)) return null;
+    const stats = await (options.statfsFn ?? statfs)(path);
+    const sample = {
+      path,
+      totalBytes: stats.blocks * stats.bsize,
+      availableBytes: stats.bavail * stats.bsize,
+    };
+    cache.sample = sample;
+    const level = alertLevel(sample);
+    if (level <= pushedLevel) {
+      if (level === 0) pushedLevel = 0;
+      return null;
+    }
+    pushedLevel = level;
+    return formatLowDiskSpaceReminder(sample);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Poll the disk while `work` runs and hand any new alert to `deliver`
+ * (a queued task notification), so it reaches the agent without waiting
+ * for the next user turn.
+ */
+export async function watchDiskSpaceDuring<T>(
+  path: string,
+  deliver: (reminder: string) => void,
+  work: () => Promise<T>,
+  options: {
+    env?: NodeJS.ProcessEnv;
+    statfsFn?: StatfsFn;
+    intervalMs?: number;
+  } = {},
+): Promise<T> {
+  if (!isManagedCloudRuntime(options.env)) return work();
+  const check = () =>
+    void checkDiskSpaceNow(path, options).then((text) => {
+      if (text) deliver(text);
+    });
+  const timer = setInterval(
+    check,
+    options.intervalMs ?? DISK_SPACE_POLL_INTERVAL_MS,
+  );
+  timer.unref?.();
+  try {
+    return await work();
+  } finally {
+    clearInterval(timer);
+    check();
+  }
+}
+
+// Alert waiting for the next model request in loops with no queue consumer
+// (headless one-shot, which includes every subagent).
+let pendingRequestReminder: string | null = null;
+
+/**
+ * Queue the alert like a task notification so an idle agent wakes for it.
+ * Subagents have no queue, so it rides their next model request instead.
+ */
+export function deliverDiskSpaceReminder(
+  text: string,
+  parentScope?: { agentId: string; conversationId: string },
+): void {
+  if (!isQueueBridgeConnected()) {
+    pendingRequestReminder = text;
+    return;
+  }
+  addToMessageQueue({
+    kind: "task_notification",
+    text,
+    ...resolveNotificationScope(parentScope),
+  });
+}
+
+/** Take (and clear) an alert held for the next model request. */
+export function takePendingDiskSpaceReminder(): string | null {
+  const text = pendingRequestReminder;
+  pendingRequestReminder = null;
+  return text;
+}
+
+export function resetDiskSpaceAlertForTests(): void {
+  pushedLevel = 0;
+  pendingRequestReminder = null;
 }
 
 export interface DiskSpaceReminderInput {

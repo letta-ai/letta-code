@@ -9,6 +9,10 @@ import type {
 import type { ToolReturnMessage } from "@letta-ai/letta-client/resources/tools";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import { INTERRUPTED_BY_USER } from "@/constants";
+import {
+  deliverDiskSpaceReminder,
+  watchDiskSpaceDuring,
+} from "@/reminders/disk-space";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import {
   executeTool,
@@ -333,6 +337,19 @@ export async function executeApprovalBatch(
     parentScope?: { agentId: string; conversationId: string };
     onFileWrite?: (filePath: string, content: string) => void;
   },
+): Promise<ApprovalResult[]> {
+  // Tools are what fill the disk, so watch it while they run.
+  return watchDiskSpaceDuring(
+    options?.workingDirectory ?? getCurrentWorkingDirectory(),
+    (text) => deliverDiskSpaceReminder(text, options?.parentScope),
+    () => executeApprovalBatchUnwatched(decisions, onChunk, options),
+  );
+}
+
+async function executeApprovalBatchUnwatched(
+  decisions: ApprovalDecision[],
+  onChunk: ((chunk: ToolReturnMessage) => void) | undefined,
+  options: Parameters<typeof executeApprovalBatch>[2],
 ): Promise<ApprovalResult[]> {
   const toolContextId =
     options?.toolContextId ??

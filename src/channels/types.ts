@@ -10,10 +10,6 @@ import type { ChannelUserMention } from "@/channels/message-references";
 import type { WhatsAppMessagePrefixConfig } from "@/channels/whatsapp/message-prefix-config-types";
 import type { PermissionMode } from "@/permissions/mode";
 import type {
-  ChannelReplyMode,
-  DmPolicy,
-} from "@/types/channel-account-protocol";
-import type {
   ApprovalResponseBody,
   ListModelsResponseModelEntry,
   StopReasonType,
@@ -481,10 +477,7 @@ export interface ChannelRoute {
 
 // ── Config ────────────────────────────────────────────────────────
 
-export type {
-  ChannelReplyMode,
-  DmPolicy,
-} from "@/types/channel-account-protocol";
+export type DmPolicy = "pairing" | "allowlist" | "open";
 /**
  * Group/channel-scope sender policy. "open" preserves the historical
  * behavior (any participant of an allowed group/channel can talk to the
@@ -510,7 +503,6 @@ interface ChannelAccountBase {
   displayName?: string;
   enabled: boolean;
   dmPolicy: DmPolicy;
-  replyMode?: ChannelReplyMode;
   allowedUsers: string[];
   /**
    * Sender policy for group/channel-scope messages. Default "open"

@@ -96,9 +96,7 @@ export function buildUnboundRouteInstructions(
   return (
     `This chat isn't connected to a Letta agent yet.\n\n` +
     `Open Channels > ${displayName} in Letta Code and connect this chat there.\n\n` +
-    `CLI on the listener machine:\n\n` +
-    `letta channels route add --channel ${channelId} --chat-id ${chatId} --agent <agent-id>\n\n` +
-    `Find your agent id with letta agents list.`
+    `Chat ID: ${chatId}`
   );
 }
 

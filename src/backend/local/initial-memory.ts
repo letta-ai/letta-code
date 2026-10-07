@@ -14,14 +14,6 @@ function sanitizeFrontmatterValue(value: string): string {
   return value.replace(/\r?\n/g, " ").trim();
 }
 
-function legacyMemoryBlockPath(label: string): string {
-  const normalized = normalizeLabel(label);
-  if (normalized === "system" || normalized.startsWith("system/")) {
-    return `${normalized}.md`;
-  }
-  return `system/${normalized}.md`;
-}
-
 function rootMemoryBlockPath(label: string): string {
   const normalized = normalizeLabel(label).replace(/^system\//, "");
   return `${normalized.replaceAll("/", "_")}.md`;
@@ -50,28 +42,23 @@ function renderInitialMemoryFile(input: {
   label: string;
   value: string;
   description?: string | null;
-  rootLayout: boolean;
 }): InitialLocalMemoryFile | null {
-  if (input.rootLayout && input.label === DEFAULT_ROOT_MEMORY_BLOCK.label) {
+  if (input.label === DEFAULT_ROOT_MEMORY_BLOCK.label) {
     return { relativePath: "MEMORY.md", content: input.value };
   }
 
-  const relativePath = input.rootLayout
-    ? rootMemoryBlockPath(input.label)
-    : legacyMemoryBlockPath(input.label);
+  const relativePath = rootMemoryBlockPath(input.label);
   if (!validRelativePath(relativePath)) return null;
   const description =
     typeof input.description === "string" && input.description.trim()
       ? sanitizeFrontmatterValue(input.description)
       : `Memory block ${input.label}`;
-  const frontmatter = input.rootLayout
-    ? [
-        "---",
-        `name: ${memoryNameFromPath(relativePath)}`,
-        `description: ${description}`,
-        "---",
-      ]
-    : ["---", `description: ${description}`, "---"];
+  const frontmatter = [
+    "---",
+    `name: ${memoryNameFromPath(relativePath)}`,
+    `description: ${description}`,
+    "---",
+  ];
   return {
     relativePath,
     content: [...frontmatter, input.value].join("\n"),
@@ -88,13 +75,19 @@ function memoryBlocks(body: AgentCreateBody): Array<Record<string, unknown>> {
     : [];
 }
 
+/**
+ * Local agents are always born on the MemFS v2 root layout, whether or not
+ * the create body carries the root `MEMORY` block.
+ */
 export function initialMemoryFilesFromCreateBody(
   body: AgentCreateBody,
 ): InitialLocalMemoryFile[] {
-  const blocks = memoryBlocks(body);
-  const rootLayout = blocks.some(
+  const suppliedBlocks = memoryBlocks(body);
+  const blocks = suppliedBlocks.some(
     (block) => block.label === DEFAULT_ROOT_MEMORY_BLOCK.label,
-  );
+  )
+    ? suppliedBlocks
+    : [{ ...DEFAULT_ROOT_MEMORY_BLOCK }, ...suppliedBlocks];
   const files = new Map<string, InitialLocalMemoryFile>();
 
   for (const block of blocks) {
@@ -104,7 +97,6 @@ export function initialMemoryFilesFromCreateBody(
       value: typeof block.value === "string" ? block.value : "",
       description:
         typeof block.description === "string" ? block.description : null,
-      rootLayout,
     });
     if (!file) continue;
     const collision = [...files.keys()].find(

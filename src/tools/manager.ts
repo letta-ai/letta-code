@@ -49,6 +49,7 @@ import {
   type RuntimeContextSnapshot,
   runWithRuntimeContext,
 } from "@/runtime-context";
+import { getRuntimeExecutionEnv } from "@/runtime-execution-settings";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { messageChannelTelemetry } from "@/telemetry/channel";
@@ -69,6 +70,7 @@ export type {
 import { waitForToolCheckouts } from "@/utils/checkout-readiness";
 import { debugLog } from "@/utils/debug";
 import { refreshAndListSecrets } from "@/utils/secrets-store";
+import { readSubagentDepth } from "@/utils/subagent-depth-env";
 import { isRecord } from "@/utils/type-guards";
 import {
   selectModelFacingExternalTools,
@@ -82,11 +84,7 @@ import {
   collectPostToolHookFeedback,
 } from "./hook-feedback";
 import { clampToolReturnContent } from "./impl/tool-return-clamp";
-import {
-  functionToolForm,
-  type JsonSchema,
-  type ModelFacingToolForm,
-} from "./model-facing-tool";
+import type { JsonSchema, ModelFacingToolForm } from "./model-facing-tool";
 import {
   getEffectivePermissionModeState,
   type PermissionModeState,
@@ -94,14 +92,22 @@ import {
 import {
   captureSecretRedactions,
   createScrubbedOutputStreamer,
-  extractSecretEnvFromCommand,
   getAmbientRedactionSecrets,
+  type InvocationSecretRedactions,
+  resolveSecretEnvFromCommand,
   type ScrubbedOutputStreamer,
   sanitizeOutputLines,
   sanitizeToolReturnContent,
   scrubAmbientSecrets,
+  scrubModToolLines,
+  scrubModToolReturnContent,
+  scrubModToolString,
   scrubSecretsFromString,
 } from "./secret-substitution";
+import {
+  applySubagentToolPolicy,
+  resolvedModelForm,
+} from "./subagent-tool-policy";
 import { resolveBackendSpecificToolAssets } from "./task-tool-assets";
 import { TOOL_DEFINITIONS, type ToolName } from "./tool-definitions";
 import { getInternalToolName, getServerToolName } from "./tool-name-mapping";
@@ -109,28 +115,6 @@ import { getInternalToolName, getServerToolName } from "./tool-name-mapping";
 export { getInternalToolName, getServerToolName };
 
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
-
-function resolvedModelForm(
-  base: ModelFacingToolForm,
-  description: string,
-  inputSchema: JsonSchema,
-): ModelFacingToolForm {
-  if (base.type === "custom") {
-    return {
-      ...base,
-      functionFallback: {
-        ...base.functionFallback,
-        description,
-        parameters: inputSchema,
-      },
-    };
-  }
-
-  return functionToolForm({
-    description,
-    parameters: inputSchema,
-  });
-}
 
 const STREAMING_SHELL_TOOLS = new Set([
   "Bash",
@@ -786,9 +770,14 @@ function capturePreparedToolExecutionContext(
   const clientToolAllowlist =
     options?.clientToolAllowlist ?? toolFilter.getEnabledTools() ?? undefined;
   const toolRegistrySnapshot = filterMemoryToolByMemoryFormat(
-    filterToolRegistryByClientAllowlist(
-      snapshot.toolRegistry,
-      clientToolAllowlist,
+    applySubagentToolPolicy(
+      filterToolRegistryByClientAllowlist(
+        snapshot.toolRegistry,
+        clientToolAllowlist,
+      ),
+      readSubagentDepth(
+        getRuntimeExecutionEnv(process.env, runtimeContext.executionSettings),
+      ),
     ),
     runtimeContext.agentId,
   );
@@ -1456,8 +1445,6 @@ function isMultimodalContent(
 
 const MOD_SECRET_NAME_PATTERN = /^[A-Z_][A-Z0-9_]*$/;
 
-type InvocationSecretRedactions = Map<string, string>;
-
 function normalizeModSecretName(name: string): string {
   const normalized = name.toUpperCase();
   if (!MOD_SECRET_NAME_PATTERN.test(normalized)) {
@@ -1466,50 +1453,6 @@ function normalizeModSecretName(name: string): string {
     );
   }
   return normalized;
-}
-
-function scrubInvocationSecretRedactions(
-  input: string,
-  redactions: InvocationSecretRedactions,
-): string {
-  let result = input;
-  const entries = Array.from(redactions.entries()).sort(
-    ([, a], [, b]) => b.length - a.length,
-  );
-  for (const [name, value] of entries) {
-    if (value.length > 0) {
-      result = result.replaceAll(value, `${name}=<REDACTED>`);
-    }
-  }
-  return result;
-}
-
-function scrubModToolString(
-  input: string,
-  redactions: InvocationSecretRedactions,
-): string {
-  return scrubInvocationSecretRedactions(input, redactions);
-}
-
-function scrubModToolReturnContent(
-  content: ToolReturnContent,
-  redactions: InvocationSecretRedactions,
-): ToolReturnContent {
-  if (typeof content === "string") {
-    return scrubModToolString(content, redactions);
-  }
-  return content.map((block) =>
-    block.type === "text"
-      ? { ...block, text: scrubModToolString(block.text, redactions) }
-      : block,
-  );
-}
-
-function scrubModToolLines(
-  lines: string[] | undefined,
-  redactions: InvocationSecretRedactions,
-): string[] | undefined {
-  return lines?.map((line) => scrubModToolString(line, redactions));
 }
 
 function createScrubbedError(error: unknown, message: string): Error {
@@ -1805,16 +1748,16 @@ async function executeModTool(
     tool.activationSignal,
   ]);
   const { signal } = linkedSignal;
-  const redactions: InvocationSecretRedactions = new Map();
+  // Mod-spawned subprocesses inherit the runtime env; redact its auth values
+  // and the scoped agent's vault secrets.
+  const redactions: InvocationSecretRedactions = new Map(
+    Object.entries(getAmbientRedactionSecrets(options.scopedAgentId)),
+  );
   const addRedaction = (name: string, value: string): void => {
     if (value.length > 0) {
       redactions.set(name, value);
     }
   };
-  // Mod-spawned subprocesses inherit the runtime env; redact its auth values.
-  for (const [name, value] of Object.entries(getAmbientRedactionSecrets())) {
-    addRedaction(name, value);
-  }
 
   const run = async (): Promise<ToolExecutionResult> => {
     const preHookResult = await runPreToolUseHooks(
@@ -1862,7 +1805,17 @@ async function executeModTool(
             const { sendMessageStreamWithBackend } = await import(
               "@/agent/message"
             );
-            return sendMessageStreamWithBackend(...sendArgs);
+            const [backend, conversationId, messages, opts, requestOptions] =
+              sendArgs;
+            const agentId =
+              opts?.agentId ?? executionScope.agentId ?? undefined;
+            return sendMessageStreamWithBackend(
+              backend,
+              conversationId,
+              messages,
+              { ...opts, agentId },
+              requestOptions,
+            );
           },
           workingDirectory: options.workingDirectory,
         }),
@@ -2259,7 +2212,7 @@ async function executeToolInner(
     if (options?.toolEndArgsRef) options.toolEndArgsRef.current = args;
 
     let invocationSecrets: Record<string, string> = {};
-    let invocationRedactions = captureSecretRedactions();
+    let invocationRedactions = captureSecretRedactions(scopedAgentId);
     let outputStreamer: ScrubbedOutputStreamer | null = null;
 
     try {
@@ -2277,9 +2230,14 @@ async function executeToolInner(
           typeof command === "string" ||
           (Array.isArray(command) &&
             command.every((part) => typeof part === "string"))
-            ? extractSecretEnvFromCommand(command, scopedAgentId)
+            ? await resolveSecretEnvFromCommand(command, scopedAgentId)
             : {};
-        invocationRedactions = captureSecretRedactions(invocationSecrets);
+        // Referenced secrets redact regardless of length; merge them over
+        // the always-on vault + ambient set.
+        invocationRedactions = captureSecretRedactions(
+          scopedAgentId,
+          invocationSecrets,
+        );
         if (options?.onOutput) {
           outputStreamer = createScrubbedOutputStreamer(
             invocationRedactions,
@@ -2506,9 +2464,15 @@ async function executeToolInner(
 export async function executeTool(
   ...params: Parameters<typeof executeToolInner>
 ): Promise<ToolExecutionResult> {
-  const toolRedactions = captureSecretRedactions();
   const [name, args, options] = params;
   const toolEndArgsRef = { current: args };
+  // Snapshot ambient + vault secrets before the tool runs: a runtime
+  // credential can rotate mid-tool, and the post-run capture alone would
+  // miss the pre-rotation value coming back through a mod override.
+  const preRunAgentId = options?.toolContextId
+    ? getExecutionContextById(options.toolContextId)?.runtimeContext?.agentId
+    : undefined;
+  const preRunRedactions = captureSecretRedactions(preRunAgentId);
   const res = await executeToolInner(name, args, {
     ...options,
     toolEndArgsRef,
@@ -2539,7 +2503,10 @@ export async function executeTool(
         executionScope.workingDirectory ?? getCurrentWorkingDirectory(),
     });
 
-  const overrideRedactions = captureSecretRedactions(toolRedactions);
+  const overrideRedactions = captureSecretRedactions(
+    executionScope.agentId ?? undefined,
+    preRunRedactions,
+  );
   const override = await emitToolEndEvent({
     args: toolEndArgsRef.current,
     events: modEvents,

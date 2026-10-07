@@ -33,4 +33,19 @@ describe("shell context detection", () => {
     expect(shell.family).toBe("bash");
     expect(shell.displayName).toBe("/bin/zsh");
   });
+
+  test("names zsh on macOS regardless of SHELL, matching the launcher", () => {
+    const shell = detectShellContext(
+      { SHELL: "/bin/bash" } as NodeJS.ProcessEnv,
+      "darwin",
+    );
+
+    expect(shell.displayName).toBe("/bin/zsh");
+  });
+
+  test("falls back to /bin/bash on linux without SHELL", () => {
+    const shell = detectShellContext({} as NodeJS.ProcessEnv, "linux");
+
+    expect(shell.displayName).toBe("/bin/bash");
+  });
 });

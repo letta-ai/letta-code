@@ -65,7 +65,6 @@ export interface ExecuteMessageChannelOptions {
   resolver: MessageChannelExecutionResolver;
   channelTurnSources?: ChannelTurnSource[];
   idempotencyScope?: MessageChannelIdempotencyScope | null;
-  idempotencyMode?: "explicit" | "relay";
   /** Available only when this host implements persisted binding operations. */
   bindings?: MessageChannelBindingOperations;
 }
@@ -367,27 +366,6 @@ function messageIdempotencyKey(
   });
 }
 
-function textDeliveryFingerprint(
-  request: ChannelMessageActionRequest,
-  route: ChannelMessageActionRoute,
-): string | null {
-  if (
-    (request.action !== "send" && request.action !== "send-rich") ||
-    request.mediaPath
-  ) {
-    return null;
-  }
-  return JSON.stringify({
-    channel: request.channel,
-    chatId: route.chatId,
-    accountId: route.accountId ?? null,
-    chatType: route.chatType ?? null,
-    threadId: effectiveTextThreadId(request, route),
-    message: request.message?.trim() ?? null,
-    replyToMessageId: effectiveTextReplyId(request, route),
-  });
-}
-
 /**
  * Execute the canonical MessageChannel contract against host-owned routing and
  * transport adapters. This owns normalization, scope checks, thread/account
@@ -507,7 +485,6 @@ export async function executeMessageChannel(
         request,
         context,
         options.idempotencyScope,
-        options.idempotencyMode,
       );
     }
 
@@ -560,13 +537,8 @@ function dispatchWithIdempotency(
   request: ChannelMessageActionRequest,
   context: ResolvedMessageChannelContext,
   scope: MessageChannelIdempotencyScope | null | undefined,
-  mode: "explicit" | "relay" = "explicit",
 ): Promise<string> {
   const dispatch = () => dispatchMessageChannelAction({ request, context });
-  const actionKey = messageIdempotencyKey(request, context.route);
-  const deliveryKey = textDeliveryFingerprint(request, context.route);
-  if (!scope) return dispatch();
-  return mode === "relay"
-    ? scope.executeRelay(actionKey, deliveryKey, dispatch)
-    : scope.execute(actionKey, deliveryKey, dispatch);
+  const key = messageIdempotencyKey(request, context.route);
+  return scope ? scope.execute(key, dispatch) : dispatch();
 }
