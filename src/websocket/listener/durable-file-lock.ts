@@ -184,18 +184,23 @@ export function getProcessStart(
 export function currentDurableLockOwner(
   processStartTimeoutMs: number = PROCESS_START_PROBE_TIMEOUT_MS,
 ): DurableLockOwner {
-  if (cachedCurrentProcessStart === undefined) {
-    cachedCurrentProcessStart = getProcessStart(
+  let processStart = cachedCurrentProcessStart;
+  if (processStart === undefined) {
+    processStart = getProcessStart(
       process.pid,
       process.platform,
       undefined,
       processStartTimeoutMs,
     );
+    // A short lock-acquisition deadline may not leave enough time for the first
+    // platform process probe. Cache only a proven identity so a transient null
+    // cannot poison every later owner token in this long-lived daemon.
+    if (processStart !== null) cachedCurrentProcessStart = processStart;
   }
   return {
     token: randomUUID(),
     pid: process.pid,
-    processStart: cachedCurrentProcessStart,
+    processStart: processStart ?? null,
   };
 }
 
@@ -697,16 +702,18 @@ export function acquireDurableFileLock(
       }
     }
   } catch (error) {
+    // Installation can throw after either canonical hardlink is published.
+    // Each cleanup is independent so a failed unlink/fsync of `.installing`
+    // cannot strand the stable owner filename for this live process.
+    const candidateOwner = join(candidatePath, ownerFileName(owner));
+    const installingOwner = join(lockPath, INSTALLING_OWNER_NAME);
     try {
-      // Installation can throw after either canonical hardlink is published.
-      // Both links must still match this private candidate before cleanup, so a
-      // replacement directory is never mistaken for our partial publication.
-      const candidateOwner = join(candidatePath, ownerFileName(owner));
-      const installingOwner = join(lockPath, INSTALLING_OWNER_NAME);
       if (sameFile(candidateOwner, installingOwner)) {
         unlinkSync(installingOwner);
         fsyncDirectory(lockPath);
       }
+    } catch {}
+    try {
       removeDeadOwner(lockPath, parent, join(lockPath, ownerFileName(owner)));
     } catch {}
     try {

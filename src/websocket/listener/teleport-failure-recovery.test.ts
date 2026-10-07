@@ -237,10 +237,12 @@ test("active and drained teleport intent is journaled before terminal commit", (
           },
           { stopReason: activeTurn ? "cancelled" : "end_turn" },
         );
-        expect(
-          createInterruptedTurnStore().read("agent-1", "conversation-1")
-            ?.teleport,
-        ).toMatchObject({ ready: true });
+        const readyRecord = createInterruptedTurnStore().read(
+          "agent-1",
+          "conversation-1",
+        );
+        expect(readyRecord?.teleport).toMatchObject({ ready: true });
+        expect(pending.interruptedRevision).toBe(readyRecord?.revision);
 
         const restarted = createRuntime();
         restarted.connectionId = "conn-restarted";
@@ -580,7 +582,10 @@ test("idle teleport survives restart, rejects a different id, and admits failure
     expect(received[0]?.durableInputIdentities).toEqual([
       { domain: "teleport", id: "teleport-1" },
     ]);
-    expect(store.read("agent-1", "conversation-1")).toBeNull();
+    expect(store.read("agent-1", "conversation-1")?.teleport).toMatchObject({
+      teleportId: "teleport-1",
+      ready: true,
+    });
   } finally {
     setActiveRuntime(null);
     store.remove("agent-1", "conversation-1");

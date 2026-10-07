@@ -5,7 +5,6 @@
  * Supports both built-in subagent types and custom subagents defined in .letta/agents/.
  */
 
-import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
@@ -34,7 +33,7 @@ import { getBackend } from "@/backend";
 import { runSubagentStopHooks } from "@/hooks";
 import {
   getCurrentWorkingDirectory,
-  getRuntimeContext,
+  getRuntimeActingUserId,
 } from "@/runtime-context";
 import type {
   SubagentLaunchArgs,
@@ -257,10 +256,7 @@ export function spawnBackgroundSubagentTask(
     (emitCompletionNotification ?? !silentCompletion);
 
   const resolvedParentScope = resolveNotificationScope(parentScope);
-  const actingUserId =
-    explicitActingUserId ??
-    getRuntimeContext()?.actingUserId ??
-    process.env[ACTING_USER_ID_ENV];
+  const actingUserId = explicitActingUserId ?? getRuntimeActingUserId();
 
   const spawnSubagentFn = deps?.spawnSubagentImpl ?? spawnSubagent;
   const copyGitHubPullRequestTagsFn =

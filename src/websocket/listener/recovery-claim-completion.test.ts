@@ -12,6 +12,7 @@ import {
 import { createInterruptedTurnStore } from "./interrupted-turn-record";
 import { createRuntime } from "./lifecycle";
 import { recoverRecordedTurns } from "./recover-recorded-turn";
+import { markRecoveryClaimCompletionPending } from "./recovery-claim-completion";
 import { setActiveRuntime } from "./runtime";
 import { createTurnFinishedStore } from "./turn-finished-replay";
 
@@ -28,6 +29,47 @@ async function eventually(assertion: () => void): Promise<void> {
   }
   throw lastError;
 }
+
+test("completion-pending transition rejects a newer same-lineage revision", () => {
+  const directory = mkdtempSync(join(tmpdir(), "recovery-pending-cas-"));
+  try {
+    const store = createInterruptedTurnStore(directory);
+    const prepared = store.write({
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      runId: "run-prepared",
+      toolCallIds: [],
+      results: [],
+      requestOtid: "request-prepared",
+      workingDirectory: "/project",
+      recoveryClaimCompletion: {
+        lineageId: "lineage-running",
+        state: "running",
+      },
+    });
+    const successor = store.write(
+      {
+        ...prepared,
+        runId: "run-successor",
+        recoveryClaimCompletion: {
+          lineageId: "lineage-running",
+          state: "running",
+          independentSuccessor: true,
+        },
+      },
+      prepared.revision,
+    );
+
+    expect(markRecoveryClaimCompletionPending(store, prepared)).toBeNull();
+    expect(store.read("agent-1", "conv-1")).toMatchObject({
+      revision: successor.revision,
+      runId: "run-successor",
+      recoveryClaimCompletion: { state: "running" },
+    });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test.each([
   {

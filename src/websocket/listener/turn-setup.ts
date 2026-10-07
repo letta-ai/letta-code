@@ -318,6 +318,7 @@ export async function prepareListenerTurn(params: {
     agentId,
     conversationId,
     actingUserId: msg.actingUserId,
+    suppressActingUserFallback: msg.suppressActingUserFallback,
     clientToolset: msg.clientToolset,
     clientToolAllowlist: msg.clientToolAllowlist,
     // Honor explicit client exclusions; headless execution does not block questions.

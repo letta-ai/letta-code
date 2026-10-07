@@ -79,6 +79,7 @@ import {
   createRecoveryEvidenceCheckpoint,
   type RecoveredContinuationProcessTurn,
   type RecoveryEvidenceWriter,
+  type SettledRecoveryResultWriter,
 } from "./recovery-evidence";
 import {
   acquireRecoveryClaim,
@@ -265,6 +266,7 @@ export type RecoveredContinuationDependencies = {
     Parameters<typeof executeApprovalBatch>[2]
   >["executeTool"];
   recordListenerWork?: RecoveryEvidenceWriter;
+  mergeSettledRecoveryResult?: SettledRecoveryResultWriter;
   acquireRecoveryClaim?: typeof acquireRecoveryClaim;
   canRecover?: typeof canRecoverConversation;
 };
@@ -450,6 +452,18 @@ async function executeRecoveredApprovalContinuation(params: {
   const executeApprovals =
     dependencies?.executeApprovalBatch ?? executeApprovalBatch;
   const recordWork = dependencies?.recordListenerWork;
+  if (
+    recordWork &&
+    !dependencies?.mergeSettledRecoveryResult &&
+    !dependencies?.executeApprovalBatch &&
+    decisions.some(
+      (decision) => decision.type === "approve" && !decision.precomputedResult,
+    )
+  ) {
+    throw new Error(
+      "Custom recovery evidence writer requires exact-result merge capability",
+    );
+  }
   const scope = {
     agent_id: recovered.agentId,
     conversation_id: recovered.conversationId,
@@ -467,6 +481,7 @@ async function executeRecoveredApprovalContinuation(params: {
     recordWork,
     recovered.interruptedRevision,
     recoveryLineageId,
+    dependencies?.mergeSettledRecoveryResult,
   );
   const finishRecoveredTurn = createRecoveredTurnFinalizer({
     runtime,
@@ -552,7 +567,6 @@ async function executeRecoveredApprovalContinuation(params: {
   let sideEffectStarted = false;
   let recoveredContinuationOtid: string | null = null;
   let claimSettled = false;
-
   try {
     // Claim authority can disappear at this async extension boundary.
     if (!hasRecoveryOwnership()) return;
@@ -607,6 +621,7 @@ async function executeRecoveredApprovalContinuation(params: {
         agentId: recovered.agentId,
         conversationId: recovered.conversationId,
         actingUserId: recovered.actingUserId,
+        suppressActingUserFallback: recovered.actingUserId === undefined,
         workingDirectory,
         permissionModeState: getOrCreateConversationPermissionModeStateRef(
           runtime.listener,
@@ -643,18 +658,21 @@ async function executeRecoveredApprovalContinuation(params: {
           sideEffectStarted = true;
           onSideEffectStarted();
         },
+        checkpointExactResult: (result) =>
+          evidence.checkpointSettledResult(result),
       });
       await evidence.write(
         {
-          toolCallIds: decisions.map(
-            (decision) => decision.approval.toolCallId,
-          ),
+          toolCallIds: decisions.map(({ approval }) => approval.toolCallId),
           results: effectBoundary.initialResults,
           unstartedToolCallIds: effectBoundary.initialUnstartedToolCallIds,
           requestOtid: continuationOtid,
           recoveryClaimCompletion: {
             lineageId: recoveryLineageId,
             state: "running",
+            effectToolCallIds: decisions.map(
+              ({ approval }) => approval.toolCallId,
+            ),
           },
         },
         "before_tool_execution",
@@ -797,10 +815,23 @@ async function executeRecoveredApprovalContinuation(params: {
     if (consumedQueuedTurn) {
       const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
       continuationOwnership.recordInput(queuedTurn);
-      await evidence.checkpointOwnership(
-        continuationOwnership,
-        queuedTurn.actingUserId,
-      );
+      try {
+        await evidence.checkpointOwnership(
+          continuationOwnership,
+          queuedTurn.actingUserId,
+        );
+      } catch (error) {
+        runtime.dequeuedClientMessageIdsByBatchId.delete(dequeuedBatch.batchId);
+        runtime.dequeuedInputIdentitiesByBatchId.delete(dequeuedBatch.batchId);
+        rehydrateClaimLostQueuedTurn(
+          runtime,
+          socket,
+          queuedTurn,
+          opts,
+          processTurn,
+        );
+        throw error;
+      }
       continuationBatchId = dequeuedBatch.batchId;
       continuationInput = appendQueuedTurnToInput(
         continuationInput,
@@ -823,6 +854,7 @@ async function executeRecoveredApprovalContinuation(params: {
 
     if (!hasRecoveryOwnership()) {
       runtime.dequeuedClientMessageIdsByBatchId.delete(continuationBatchId);
+      runtime.dequeuedInputIdentitiesByBatchId.delete(continuationBatchId);
       if (consumedQueuedTurn) {
         const { queuedTurn } = consumedQueuedTurn;
         rehydrateClaimLostQueuedTurn(

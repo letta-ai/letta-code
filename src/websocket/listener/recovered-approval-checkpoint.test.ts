@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   type ApprovalResult,
+  executeApprovalBatch,
   settleApprovalExecutionTasks,
 } from "@/agent/approval-execution";
 import {
@@ -20,6 +21,44 @@ const decisions = [
     approval: { toolCallId: "call-b", toolName: "Read", toolArgs: "{}" },
   },
 ];
+
+test("an already-aborted approved tool remains durably unstarted", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  let checkpoints = 0;
+  let executions = 0;
+  const decision = decisions[0] as (typeof decisions)[number];
+  const boundary = createRecoveredApprovalEffectBoundary({
+    decisions: [decision],
+    ownsClaim: () => true,
+    checkpoint: () => {
+      checkpoints += 1;
+    },
+    onCrossed: () => {},
+  });
+
+  const results = await executeApprovalBatch([decision], undefined, {
+    abortSignal: controller.signal,
+    toolContextId: "context-aborted-before-boundary",
+    beforeToolExecution: boundary.beforeToolExecution,
+    afterToolExecution: boundary.afterToolExecution,
+    executeTool: (async () => {
+      executions += 1;
+      throw new Error("executor must not run");
+    }) as never,
+  });
+
+  expect(results[0]).toMatchObject({
+    type: "tool",
+    tool_call_id: "call-a",
+    status: "error",
+  });
+  expect(executions).toBe(0);
+  expect(checkpoints).toBe(0);
+  expect(boundary.results).toEqual([]);
+  expect(boundary.unstartedToolCallIds).toEqual(["call-a"]);
+  expect(boundary.crossed).toBe(false);
+});
 
 test("pre-effect claim loss leaves an approved tool replayable", async () => {
   let checkpoints = 0;
@@ -54,6 +93,44 @@ test("authority loss during a failed pre-effect checkpoint restores unstarted st
   await expect(boundary.beforeToolExecution("call-a")).rejects.toThrow(
     "lost authority",
   );
+  expect(boundary.claimLost).toBe(true);
+  expect(boundary.crossed).toBe(false);
+  expect(boundary.results).toEqual([]);
+  expect(boundary.unstartedToolCallIds).toEqual(["call-a"]);
+});
+
+test("claim loss after a pre-effect commit durably restores unstarted state", async () => {
+  let owned = true;
+  const checkpoints: Array<{
+    results: ApprovalResult[];
+    unstarted: string[];
+    phase: "before" | "after" | "rollback";
+  }> = [];
+  const boundary = createRecoveredApprovalEffectBoundary({
+    decisions: [decisions[0] as (typeof decisions)[number]],
+    ownsClaim: () => owned,
+    checkpoint: (results, unstarted, phase) => {
+      checkpoints.push({
+        results: structuredClone(results),
+        unstarted: [...unstarted],
+        phase,
+      });
+      if (phase === "before") owned = false;
+    },
+    onCrossed: () => {},
+  });
+
+  await expect(boundary.beforeToolExecution("call-a")).rejects.toThrow(
+    "Recovery claim lost before tool execution",
+  );
+  expect(checkpoints).toEqual([
+    {
+      results: [expect.objectContaining({ tool_call_id: "call-a" })],
+      unstarted: [],
+      phase: "before",
+    },
+    { results: [], unstarted: ["call-a"], phase: "rollback" },
+  ]);
   expect(boundary.claimLost).toBe(true);
   expect(boundary.crossed).toBe(false);
   expect(boundary.results).toEqual([]);
@@ -111,7 +188,7 @@ test("exact sibling result waits for a rejecting pre-effect rollback", async () 
   const snapshots: Array<{
     results: ApprovalResult[];
     unstarted: string[];
-    phase: "before" | "after";
+    phase: "before" | "after" | "rollback";
   }> = [];
   const boundary = createRecoveredApprovalEffectBoundary({
     decisions,
@@ -148,7 +225,9 @@ test("exact sibling result waits for a rejecting pre-effect rollback", async () 
       message: "claim lost while checkpointing call-b",
     }),
   );
-  await afterFirst;
+  await expect(afterFirst).rejects.toThrow(
+    "Recovery claim lost after tool execution",
+  );
 
   expect(boundary.claimLost).toBe(true);
   expect(snapshots[2]).toEqual({
@@ -290,7 +369,7 @@ test("parallel boundary failure waits for an already-started effect", async () =
 
   releaseFirst();
   await expect(settled).rejects.toThrow(
-    "Recovery claim lost before tool execution",
+    "Recovery claim lost after tool execution",
   );
   expect(batchSettled).toBe(true);
   expect(boundary.results).toEqual([

@@ -236,6 +236,37 @@ describe("recoverApprovalStateForSync restart recovery", () => {
     expect(getPendingControlRequests(runtime.listener, scope)).toHaveLength(0);
   });
 
+  test("observer sync leaves explicitly unstarted work for the owner", async () => {
+    const runtime = createScopedRuntime();
+    const recorded = {
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      runId: "run-unstarted",
+      toolCallIds: [bashApproval.toolCallId],
+      unstartedToolCallIds: [bashApproval.toolCallId],
+      results: [],
+      requestOtid: "request-unstarted",
+      workingDirectory: "/project",
+    };
+    const deps = {
+      ...createDeps([bashApproval]),
+      readInterruptedTurn: () => recorded,
+    };
+
+    expect(await recoverApprovalStateForSync(runtime, scope, deps)).toBe(
+      "deferred",
+    );
+    expect(runtime.pendingInterruptedResults).toBeNull();
+    expect(runtime.recoveredApprovalState).toBeNull();
+
+    await recoverApprovalStateForSync(runtime, scope, deps, {
+      resumeInterruptedTurn: true,
+    });
+    expect(runtime.recoveredApprovalState?.autoDecisions).toEqual([
+      { type: "approve", approval: bashApproval },
+    ]);
+  });
+
   test("an owner sync that recovers only stale denials sends them as a turn immediately", async () => {
     const runtime = createScopedRuntime();
     const transport = connectRuntime(runtime);

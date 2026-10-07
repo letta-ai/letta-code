@@ -342,6 +342,11 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
       clientMessageIds,
     );
   }
+  if (queuedTurn.durableInputIdentities?.length) {
+    runtime.dequeuedInputIdentitiesByBatchId.set(dequeuedBatch.batchId, [
+      ...queuedTurn.durableInputIdentities,
+    ]);
+  }
 
   return {
     dequeuedBatch,

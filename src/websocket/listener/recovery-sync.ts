@@ -13,7 +13,10 @@ import {
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
 } from "@/agent/turn-recovery-policy";
 import { getBackend } from "@/backend";
-import { readInterruptedTurn } from "./interrupted-turn-record";
+import {
+  allRecordedResults,
+  readInterruptedTurn,
+} from "./interrupted-turn-record";
 import { getRecoveryEligibility } from "./recovery-ownership";
 import {
   clearRecoveredApprovalState,
@@ -35,6 +38,7 @@ export async function recoverApprovalStateForSync(
   deps: Partial<{
     getBackend: typeof getBackend;
     getResumeDataFromBackend: typeof getResumeDataFromBackend;
+    readInterruptedTurn: typeof readInterruptedTurn;
   }> = {},
   opts: {
     /**
@@ -48,6 +52,7 @@ export async function recoverApprovalStateForSync(
   const resolvedDeps = {
     getBackend,
     getResumeDataFromBackend,
+    readInterruptedTurn,
     ...deps,
   };
   if (!scope.agent_id) {
@@ -126,9 +131,12 @@ export async function recoverApprovalStateForSync(
     return;
   }
 
-  const recorded = readInterruptedTurn(runtime);
+  const recorded = resolvedDeps.readInterruptedTurn(runtime);
   const recordedResults = new Map(
-    (recorded?.results ?? []).map((result) => [result.tool_call_id, result]),
+    (recorded ? allRecordedResults(recorded) : []).map((result) => [
+      result.tool_call_id,
+      result,
+    ]),
   );
   // Local evidence distinguishes exact completed results, provably unstarted
   // approvals, and unrelated stale calls. Only the unstarted set executes again.
@@ -176,6 +184,13 @@ export async function recoverApprovalStateForSync(
   );
 
   if (!opts.resumeInterruptedTurn) {
+    // An observer must not turn replayable or exactly completed work into stale
+    // denials. Leave the durable record untouched so the execution owner can
+    // perform the recovered continuation on its subsequent owner sync.
+    if (staleDenialDecisions.some((decision) => decision.type === "approve")) {
+      clearRecoveredApprovalState(runtime);
+      return "deferred";
+    }
     runtime.pendingInterruptedResults = buildFreshDenialApprovals(
       pendingApprovals,
       STALE_APPROVAL_RECOVERY_DENIAL_REASON,

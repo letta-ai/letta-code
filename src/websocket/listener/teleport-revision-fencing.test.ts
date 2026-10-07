@@ -14,7 +14,12 @@ import {
 } from "./interrupted-turn-record";
 import { createRuntime } from "./lifecycle";
 import { createRecoveredTurnFinalizer } from "./recovered-turn-finalizer";
-import { handleTeleportFailure, handleTeleportRequest } from "./teleport";
+import {
+  claimPendingTeleportAtBoundary,
+  finishClaimedTeleport,
+  handleTeleportFailure,
+  handleTeleportRequest,
+} from "./teleport";
 import { createTurnCorrelation } from "./turn-correlation";
 import { createTurnDurabilityOwnership } from "./turn-durability-ownership";
 import { createTurnFinalizer } from "./turn-finalizer";
@@ -185,10 +190,30 @@ test.each(["end_turn", "max_steps", "cancelled", "error"] as const)(
         interruptedRevisionRef: { current: predecessorRevision },
       });
 
-      const transition = finalizer.finishTurn({
-        stopReason,
-        conversationId: "conversation-1",
-      });
+      const transition =
+        stopReason === "end_turn"
+          ? (() => {
+              const pending = claimPendingTeleportAtBoundary({
+                listener,
+                agentId: "agent-1",
+                conversationId: "conversation-1",
+                activeTurn: false,
+              });
+              if (!pending) throw new Error("expected claimed teleport");
+              return finishClaimedTeleport(
+                runtime,
+                pending,
+                finalizer.finishClaimedTurn,
+                {
+                  stopReason,
+                  expectedInterruptedRevision: predecessorRevision,
+                },
+              );
+            })()
+          : finalizer.finishTurn({
+              stopReason,
+              conversationId: "conversation-1",
+            });
       expect(transition.finished).toBe(true);
       expect(runtime.turnLifecycle.kind).toBe("idle");
       const ready = createInterruptedTurnStore().read(
@@ -298,7 +323,7 @@ test("failure admission cleanup never retargets an inherited successor revision"
         maxAttempts: 4,
       },
     });
-    expect(attemptedRevisions).toEqual([predecessorRevision]);
+    expect(attemptedRevisions).toEqual([]);
 
     const successorRevision = recordListenerWork(
       runtime,
@@ -312,15 +337,8 @@ test("failure admission cleanup never retargets an inherited successor revision"
       realStore.read("agent-cleanup", "conversation-cleanup")?.teleport,
     ).toMatchObject({ teleportId: "teleport-cleanup-race" });
 
-    const deadline = performance.now() + 2_000;
-    while (attemptedRevisions.length < 2 && performance.now() < deadline) {
-      await Bun.sleep(5);
-    }
     await continuation;
-    expect(attemptedRevisions).toEqual([
-      predecessorRevision,
-      predecessorRevision,
-    ]);
+    expect(attemptedRevisions).toEqual([]);
     expect(
       realStore.read("agent-cleanup", "conversation-cleanup"),
     ).toMatchObject({

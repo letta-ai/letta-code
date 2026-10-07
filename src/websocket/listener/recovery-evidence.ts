@@ -1,4 +1,6 @@
+import type { ApprovalResult } from "@/agent/approval-execution";
 import {
+  createInterruptedTurnStore,
   type ListenerStateWritePhase,
   type recordListenerWork,
   recordListenerWorkRetriably,
@@ -32,11 +34,20 @@ export type RecoveryEvidenceWriter = (
   ...args: Parameters<typeof recordListenerWork>
 ) => unknown;
 
+export type SettledRecoveryResultWriter = (
+  runtime: ConversationRuntime,
+  recoveryLineageId: string,
+  result: ApprovalResult,
+) =>
+  | { revision: string; independentSuccessor: boolean }
+  | Promise<{ revision: string; independentSuccessor: boolean }>;
+
 export function createRecoveryEvidenceCheckpoint(
   runtime: ConversationRuntime,
   writer?: RecoveryEvidenceWriter,
   initialRevision?: string,
   recoveryLineageId?: string,
+  settledResultWriter?: SettledRecoveryResultWriter,
 ) {
   let revision = initialRevision;
   let hasWritten = initialRevision !== undefined;
@@ -66,6 +77,42 @@ export function createRecoveryEvidenceCheckpoint(
   };
   return {
     write,
+    checkpointSettledResult(result: ApprovalResult) {
+      const operation = writeChain.then(async () => {
+        if (!recoveryLineageId) {
+          throw new Error("Missing recovery lineage for exact result commit");
+        }
+        if (settledResultWriter) {
+          const next = await settledResultWriter(
+            runtime,
+            recoveryLineageId,
+            result,
+          );
+          hasWritten = true;
+          revision = next.revision;
+          return next.independentSuccessor;
+        }
+        if (writer) {
+          throw new Error(
+            "Custom recovery evidence writer requires exact-result merge capability",
+          );
+        }
+        const next = createInterruptedTurnStore().mergeSettledRecoveryResult({
+          agentId: runtime.agentId ?? "",
+          conversationId: runtime.conversationId,
+          lineageId: recoveryLineageId,
+          result,
+        });
+        hasWritten = true;
+        revision = next.revision;
+        return next.independentSuccessor;
+      });
+      writeChain = operation.then(
+        () => {},
+        () => {},
+      );
+      return operation;
+    },
     checkpointOwnership(
       ownership: ReturnType<typeof createTurnDurabilityOwnership>,
       actingUserId?: string,

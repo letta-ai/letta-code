@@ -233,14 +233,25 @@ export function dispatchInboundMessageWhenReady(params: {
           acknowledgeInput({ accepted: false });
           return;
         }
+        const directBatchId = `batch-direct-${crypto.randomUUID()}`;
+        if (identity) {
+          runtime.dequeuedInputIdentitiesByBatchId.set(directBatchId, [
+            identity,
+          ]);
+        }
         acknowledgeInput({ accepted: true, disposition: "started" });
-        await processIncomingMessage(
-          attributedIncoming,
-          getOrCreateProcessTransport(listener),
-          runtime,
-          options.onStatusChange,
-          options.connectionId,
-        );
+        try {
+          await processIncomingMessage(
+            attributedIncoming,
+            getOrCreateProcessTransport(listener),
+            runtime,
+            options.onStatusChange,
+            options.connectionId,
+            directBatchId,
+          );
+        } finally {
+          runtime.dequeuedInputIdentitiesByBatchId.delete(directBatchId);
+        }
         emitListenerStatus(
           listener,
           options.onStatusChange,

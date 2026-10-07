@@ -12,6 +12,7 @@ import {
   loadDurableQueuedInputEntries,
   ordinaryInputIdentity,
   reserveInputDisposition,
+  teleportInputIdentity,
 } from "./input-disposition";
 import {
   createRuntime,
@@ -21,6 +22,7 @@ import {
 import { consumeQueuedTurn } from "./queue";
 import { setActiveRuntime } from "./runtime";
 import type { ListenerTransport } from "./transport";
+import { createTurnCorrelation } from "./turn-correlation";
 import type { IncomingMessage, StartListenerOptions } from "./types";
 
 function createDurableRuntime() {
@@ -154,6 +156,40 @@ test("lifecycle refill coalesces soft overflow and guards inactive runtimes", as
     stopRuntime(runtime.listener, true);
     setActiveRuntime(null);
   }
+});
+
+test("a started teleport payload is not restored during its dequeue handoff", () => {
+  const runtime = createDurableRuntime();
+  const identity = teleportInputIdentity("teleport-started");
+  const incoming: IncomingMessage = {
+    ...durableIncoming("cm-submit-teleport"),
+    durableInputIdentities: [identity],
+  };
+  const admission = reserveInputDisposition(runtime, identity);
+  if (admission.kind !== "reserved") throw new Error("expected reservation");
+  expect(
+    commitInputDisposition(runtime, admission.reservation, "queued", {
+      incoming,
+    }),
+  ).toBe(true);
+  expect(restoreDurableQueuedInputs(runtime.listener, undefined, [])).toBe(1);
+
+  const dequeued = consumeQueuedTurn(runtime);
+  expect(dequeued?.queuedTurn.durableInputIdentities).toEqual([identity]);
+  if (!dequeued) throw new Error("expected dequeued turn");
+  createTurnCorrelation(
+    runtime,
+    dequeued.queuedTurn,
+    dequeued.dequeuedBatch.batchId,
+  );
+  expect(
+    runtime.dequeuedInputIdentitiesByBatchId.get(
+      dequeued.dequeuedBatch.batchId,
+    ),
+  ).toEqual([identity]);
+  expect(runtime.queueRuntime.length).toBe(0);
+  expect(restoreDurableQueuedInputs(runtime.listener, undefined, [])).toBe(0);
+  expect(runtime.queueRuntime.length).toBe(0);
 });
 
 test("durable rehydration preserves paused work when admitted and ordinary ingress resumes", () => {

@@ -28,6 +28,8 @@ export interface RuntimeContextSnapshot {
   conversationId?: string | null;
   /** Authenticated Cloud user responsible for the current turn. */
   actingUserId?: string;
+  /** Explicitly disable inherited process/runtime acting-user attribution. */
+  suppressActingUserFallback?: boolean;
   skillsDirectory?: string | null;
   skillSources?: SkillSource[];
   workingDirectory?: string | null;
@@ -51,7 +53,9 @@ export function getRuntimeContext(): RuntimeContextSnapshot | undefined {
 
 /** Resolve the current turn's customer, including inherited headless env scope. */
 export function getRuntimeActingUserId(): string | undefined {
-  return resolveActingUserId(undefined, getRuntimeContext()?.actingUserId);
+  const context = getRuntimeContext();
+  if (context?.suppressActingUserFallback) return undefined;
+  return resolveActingUserId(undefined, context?.actingUserId);
 }
 
 export function runWithRuntimeContext<T>(

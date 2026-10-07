@@ -90,6 +90,9 @@ export function createTurnCorrelation(
 ): TurnCorrelation {
   const clientMessageIds = new Set([
     ...getInboundClientMessageIds(message),
+    ...(message.durableInputIdentities ?? []).flatMap((identity) =>
+      identity.domain === "input" ? [identity.id] : [],
+    ),
     ...takeDequeuedClientMessageIds(runtime, batchId),
   ]);
   let correlationsByConversation =

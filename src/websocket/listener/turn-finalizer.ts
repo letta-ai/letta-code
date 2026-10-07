@@ -110,6 +110,8 @@ export function createTurnFinalizer(params: {
   return {
     finishIfInterrupted,
     finishTurn,
+    /** Commit a teleport already claimed by the caller without claiming it twice. */
+    finishClaimedTurn: commitTurn,
     noteFinalization,
     get finalized() {
       return finalized;

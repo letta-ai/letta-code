@@ -53,6 +53,8 @@ export interface InterruptedTurnRecord {
     effectRevision?: string;
     /** Input identities owned by that predecessor, retained across a successor write. */
     effectInputIdentities?: InputIdentity[];
+    /** Complete tool namespace owned by that predecessor recovery lineage. */
+    effectToolCallIds?: string[];
     /** A write outside this recovery lineage has added genuine successor work. */
     independentSuccessor?: boolean;
   };
@@ -63,6 +65,11 @@ export interface InterruptedTurnRecord {
   /** Approved tools which have not crossed their own execution boundary. */
   unstartedToolCallIds?: string[];
   results: ApprovalResult[];
+  /** Exact settled effects that survive an independent successor snapshot. */
+  settledRecoveryEffects?: Array<{
+    lineageId: string;
+    result: ApprovalResult;
+  }>;
   requestOtid: string;
   workingDirectory: string;
   durableInputIdentities?: InputIdentity[];
@@ -134,6 +141,16 @@ export function createInterruptedTurnStore(
         !value.results.every(
           (result) => result && typeof result.tool_call_id === "string",
         ) ||
+        (value.settledRecoveryEffects !== undefined &&
+          (!Array.isArray(value.settledRecoveryEffects) ||
+            !value.settledRecoveryEffects.every(
+              (effect) =>
+                effect &&
+                typeof effect.lineageId === "string" &&
+                effect.lineageId.length > 0 &&
+                effect.result &&
+                typeof effect.result.tool_call_id === "string",
+            ))) ||
         (value.durableInputIdentities !== undefined &&
           (!Array.isArray(value.durableInputIdentities) ||
             !value.durableInputIdentities.every(
@@ -170,6 +187,14 @@ export function createInterruptedTurnStore(
                       identity.domain === "teleport") &&
                     typeof identity.id === "string" &&
                     identity.id.length > 0,
+                ))) ||
+            (value.recoveryClaimCompletion.effectToolCallIds !== undefined &&
+              (!Array.isArray(
+                value.recoveryClaimCompletion.effectToolCallIds,
+              ) ||
+                !value.recoveryClaimCompletion.effectToolCallIds.every(
+                  (toolCallId) =>
+                    typeof toolCallId === "string" && toolCallId.length > 0,
                 ))) ||
             (value.recoveryClaimCompletion.independentSuccessor !== undefined &&
               typeof value.recoveryClaimCompletion.independentSuccessor !==
@@ -269,10 +294,73 @@ export function createInterruptedTurnStore(
         release();
       }
     },
+    mergeSettledRecoveryResult(params: {
+      agentId: string;
+      conversationId: string;
+      lineageId: string;
+      result: ApprovalResult;
+    }): { revision: string; independentSuccessor: boolean } {
+      mkdirSync(directory, { recursive: true, mode: 0o700 });
+      const destination = path(params.agentId, params.conversationId);
+      const release = acquireDurableFileLock(destination, {
+        waitMs: dependencies.lockWaitMs,
+      });
+      const temporary = `${destination}.${randomUUID()}.tmp`;
+      try {
+        const current = readRecord(destination);
+        const marker = current?.recoveryClaimCompletion;
+        if (!current || marker?.lineageId !== params.lineageId) {
+          throw new Error(
+            "Recovery lineage changed before exact result commit",
+          );
+        }
+        const revision = randomUUID();
+        const written: InterruptedTurnRecord = {
+          ...current,
+          revision,
+          results: marker.independentSuccessor
+            ? current.results
+            : [
+                ...current.results.filter(
+                  (result) =>
+                    result.tool_call_id !== params.result.tool_call_id,
+                ),
+                params.result,
+              ],
+          settledRecoveryEffects: [
+            ...(current.settledRecoveryEffects ?? []).filter(
+              (effect) =>
+                effect.lineageId !== params.lineageId ||
+                effect.result.tool_call_id !== params.result.tool_call_id,
+            ),
+            { lineageId: params.lineageId, result: params.result },
+          ],
+          unstartedToolCallIds: marker.independentSuccessor
+            ? current.unstartedToolCallIds
+            : current.unstartedToolCallIds?.filter(
+                (toolCallId) => toolCallId !== params.result.tool_call_id,
+              ),
+        };
+        writeFileSync(temporary, JSON.stringify(written), {
+          mode: 0o600,
+          flush: true,
+        });
+        renameSync(temporary, destination);
+        syncDirectory(directory);
+        return {
+          revision,
+          independentSuccessor: marker.independentSuccessor === true,
+        };
+      } finally {
+        rmSync(temporary, { force: true });
+        release();
+      }
+    },
     markRecoveryClaimCompletionPending(params: {
       agentId: string;
       conversationId: string;
       lineageId: string;
+      expectedRevision: string;
     }): InterruptedTurnRecord | null {
       const destination = path(params.agentId, params.conversationId);
       const release = acquireDurableFileLock(destination, {
@@ -284,6 +372,7 @@ export function createInterruptedTurnStore(
         const marker = current?.recoveryClaimCompletion;
         if (
           !current?.revision ||
+          current.revision !== params.expectedRevision ||
           !marker ||
           marker.lineageId !== params.lineageId
         ) {
@@ -349,10 +438,29 @@ export function createInterruptedTurnStore(
           return "removed";
         }
         if (!current.revision || !marker.independentSuccessor) return "stale";
+        const retiredEffects = (current.settledRecoveryEffects ?? []).filter(
+          (effect) => effect.lineageId === params.lineageId,
+        );
+        const retiredToolCallIds = new Set([
+          ...(marker.effectToolCallIds ?? []),
+          ...retiredEffects.map((effect) => effect.result.tool_call_id),
+        ]);
         const preserved: InterruptedTurnRecord = {
           ...current,
           revision: randomUUID(),
           recoveryClaimCompletion: undefined,
+          toolCallIds: current.toolCallIds.filter(
+            (toolCallId) => !retiredToolCallIds.has(toolCallId),
+          ),
+          results: current.results.filter(
+            (result) => !retiredToolCallIds.has(result.tool_call_id),
+          ),
+          unstartedToolCallIds: current.unstartedToolCallIds?.filter(
+            (toolCallId) => !retiredToolCallIds.has(toolCallId),
+          ),
+          settledRecoveryEffects: current.settledRecoveryEffects?.filter(
+            (effect) => effect.lineageId !== params.lineageId,
+          ),
         };
         writeFileSync(temporary, JSON.stringify(preserved), {
           mode: 0o600,
@@ -474,6 +582,7 @@ export function recordListenerWork(
     toolCallIds: previous?.toolCallIds ?? [],
     unstartedToolCallIds: previous?.unstartedToolCallIds,
     results: previous?.results ?? [],
+    settledRecoveryEffects: previous?.settledRecoveryEffects,
     requestOtid: previous?.requestOtid ?? randomUUID(),
     actingUserId: previous?.actingUserId,
     recoveryClaimCompletion: inheritedCompletion,
@@ -490,12 +599,31 @@ export function recordListenerWork(
     ...update,
   };
   try {
-    return store.write(
+    const written = store.write(
       record,
       expectedRevision === undefined
         ? (previous?.revision ?? null)
         : expectedRevision,
-    ).revision;
+    );
+    const durableIdentityKeys = new Set(
+      (written.durableInputIdentities ?? []).map(
+        (identity) => `${identity.domain}:${identity.id}`,
+      ),
+    );
+    for (const [
+      batchId,
+      identities,
+    ] of runtime.dequeuedInputIdentitiesByBatchId) {
+      if (
+        identities.length > 0 &&
+        identities.every((identity) =>
+          durableIdentityKeys.has(`${identity.domain}:${identity.id}`),
+        )
+      ) {
+        runtime.dequeuedInputIdentitiesByBatchId.delete(batchId);
+      }
+    }
+    return written.revision;
   } catch (error) {
     reportListenerStateWriteFailure({
       phase,
@@ -577,13 +705,26 @@ export function recordedToolResults(
   record: InterruptedTurnRecord,
   pendingToolCallIds: string[],
 ): ApprovalResult[] {
+  const durableResults = allRecordedResults(record);
   return pendingToolCallIds.map(
     (id) =>
-      record.results.find((result) => result.tool_call_id === id) ?? {
+      durableResults.find((result) => result.tool_call_id === id) ?? {
         type: "approval",
         tool_call_id: id,
         approve: false,
         reason: STALE_APPROVAL_RECOVERY_DENIAL_REASON,
       },
   );
+}
+
+export function allRecordedResults(
+  record: InterruptedTurnRecord,
+): ApprovalResult[] {
+  const merged = new Map(
+    record.results.map((result) => [result.tool_call_id, result]),
+  );
+  for (const effect of record.settledRecoveryEffects ?? []) {
+    merged.set(effect.result.tool_call_id, effect.result);
+  }
+  return [...merged.values()];
 }

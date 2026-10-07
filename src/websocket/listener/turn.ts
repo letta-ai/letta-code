@@ -199,7 +199,12 @@ async function handleIncomingMessageInner(
     interruptedRevisionRef,
     deferInterruptedCleanup,
   });
-  const { finishIfInterrupted, finishTurn, noteFinalization } = finalizer;
+  const {
+    finishClaimedTurn,
+    finishIfInterrupted,
+    finishTurn,
+    noteFinalization,
+  } = finalizer;
   try {
     runtime.lastTerminalLoopErrorMessage = null;
     runtime.lastTerminalLoopErrorRunId = null;
@@ -296,7 +301,6 @@ async function handleIncomingMessageInner(
       agent_id: agentId,
       conversation_id: conversationId,
     });
-
     turnToolContextId = getStreamToolContextId(
       stream as Stream<LettaStreamingResponse>,
     );
@@ -371,10 +375,15 @@ async function handleIncomingMessageInner(
           : null;
         if (pendingTeleport) {
           noteFinalization(
-            tp.finishClaimedTeleport(runtime, pendingTeleport, finishTurn, {
-              canCommit: terminalCommitGuard,
-              expectedInterruptedRevision: interruptedRevisionRef.current,
-            }),
+            tp.finishClaimedTeleport(
+              runtime,
+              pendingTeleport,
+              finishClaimedTurn,
+              {
+                canCommit: terminalCommitGuard,
+                expectedInterruptedRevision: interruptedRevisionRef.current,
+              },
+            ),
           );
           return;
         }
@@ -831,7 +840,7 @@ async function handleIncomingMessageInner(
       if (approvalResult.kind === "teleport") {
         const pending = approvalResult.pendingTeleport;
         noteFinalization(
-          tp.finishClaimedTeleport(runtime, pending, finishTurn, {
+          tp.finishClaimedTeleport(runtime, pending, finishClaimedTurn, {
             canCommit: terminalCommitGuard,
             expectedInterruptedRevision: interruptedRevisionRef.current,
           }),

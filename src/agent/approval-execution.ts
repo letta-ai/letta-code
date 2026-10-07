@@ -447,12 +447,17 @@ async function executeApprovalBatchUnwatched(
   const execute = async (i: number) => {
     const decision = decisions[i];
     if (decision) {
+      let crossedEffectBoundary = false;
       const result = await executeSingleDecision(decision, onChunk, {
         ...options,
         toolContextId,
+        beforeToolExecution: async (toolCallId) => {
+          await options?.beforeToolExecution?.(toolCallId);
+          crossedEffectBoundary = true;
+        },
       });
       results[i] = result;
-      if (decision.type === "approve") {
+      if (decision.type === "approve" && crossedEffectBoundary) {
         await options?.afterToolExecution?.(
           decision.approval.toolCallId,
           result,

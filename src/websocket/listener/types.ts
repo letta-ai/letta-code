@@ -417,6 +417,8 @@ export type ConversationRuntime = {
   queuedMessagesByItemId: Map<string, IncomingMessage>;
   /** Exact send identities carried by each batch removed from the queue. */
   dequeuedClientMessageIdsByBatchId: Map<string, string[]>;
+  /** Durable ledger identities carried by each batch removed from the queue. */
+  dequeuedInputIdentitiesByBatchId: Map<string, InputIdentity[]>;
   queuePumpActive: boolean;
   queuePumpScheduled: boolean;
   /**

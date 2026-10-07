@@ -105,6 +105,14 @@ test("production batch waits for crossed effects before scheduling claim-loss re
           revision += 1;
           return `revision-${revision}`;
         },
+        mergeSettledRecoveryResult: async (_runtime, _lineageId, result) => {
+          evidence.push({ results: [result] });
+          revision += 1;
+          return {
+            revision: `revision-${revision}`,
+            independentSuccessor: false,
+          };
+        },
         acquireRecoveryClaim: (async (
           _runtime: unknown,
           onLost: () => void,
@@ -173,6 +181,9 @@ test("unattributed recovered queued continuation suppresses ambient attribution"
   let received:
     | { actingUserId?: string; suppressActingUserFallback?: boolean }
     | undefined;
+  let preparedActor:
+    | { actingUserId?: string; suppressActingUserFallback?: boolean }
+    | undefined;
 
   const handled = await startRecoveredApprovalContinuation(
     runtime,
@@ -186,7 +197,10 @@ test("unattributed recovered queued continuation suppresses ambient attribution"
       dependencies: {
         ensureSecretsHydrated: async () => {},
         ensureModAdapters: async () => [],
-        prepareToolExecutionContext: async () => createPreparedToolContext(),
+        prepareToolExecutionContext: async (params) => {
+          preparedActor = params;
+          return createPreparedToolContext();
+        },
         executeApprovalBatch: async () => [],
         recordListenerWork: () => {},
       },
@@ -196,4 +210,6 @@ test("unattributed recovered queued continuation suppresses ambient attribution"
   expect(handled).toBe(true);
   expect(received?.actingUserId).toBeUndefined();
   expect(received?.suppressActingUserFallback).toBe(true);
+  expect(preparedActor?.actingUserId).toBeUndefined();
+  expect(preparedActor?.suppressActingUserFallback).toBe(true);
 });

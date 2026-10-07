@@ -9,7 +9,7 @@ import {
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { rejectPendingExternalToolCallsForConnection } from "./external-tools";
 import {
-  forgetQueuedInputDisposition,
+  forgetQueuedInputDispositions,
   ordinaryInputIdentity,
 } from "./input-disposition";
 import { revokeRecoveryClaims } from "./recovery-ownership";
@@ -48,13 +48,19 @@ export function createConnectionTurnProcessor(
         scopedRuntime.dequeuedClientMessageIdsByBatchId.get(
           dequeuedBatch.batchId,
         ) ?? [];
-      for (const clientMessageId of discardedClientMessageIds) {
-        forgetQueuedInputDisposition(
-          scopedRuntime,
-          ordinaryInputIdentity(clientMessageId),
-        );
-      }
+      const discardedIdentities =
+        scopedRuntime.dequeuedInputIdentitiesByBatchId.get(
+          dequeuedBatch.batchId,
+        ) ??
+        discardedClientMessageIds.flatMap((clientMessageId) => {
+          const identity = ordinaryInputIdentity(clientMessageId);
+          return identity ? [identity] : [];
+        });
+      forgetQueuedInputDispositions(scopedRuntime, discardedIdentities);
       scopedRuntime.dequeuedClientMessageIdsByBatchId.delete(
+        dequeuedBatch.batchId,
+      );
+      scopedRuntime.dequeuedInputIdentitiesByBatchId.delete(
         dequeuedBatch.batchId,
       );
       return;

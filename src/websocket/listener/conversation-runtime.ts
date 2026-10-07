@@ -265,15 +265,16 @@ export function restoreDurableQueuedInputs(
   // orphaned started payload during the capacity-release refill microtask.
   const volatileStartedIdentityKeys = new Set(
     [...listener.conversationRuntimes.values()].flatMap((runtime) =>
-      [...runtime.dequeuedClientMessageIdsByBatchId.values()].flatMap((ids) =>
-        ids.map((id) =>
-          JSON.stringify([
-            runtime.agentId,
-            runtime.conversationId,
-            "input",
-            id,
-          ]),
-        ),
+      [...runtime.dequeuedInputIdentitiesByBatchId.values()].flatMap(
+        (identities) =>
+          identities.map((identity) =>
+            JSON.stringify([
+              runtime.agentId,
+              runtime.conversationId,
+              identity.domain,
+              identity.id,
+            ]),
+          ),
       ),
     ),
   );

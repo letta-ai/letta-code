@@ -45,6 +45,7 @@ export function markRecoveryClaimCompletionPending(
       agentId: record.agentId,
       conversationId: record.conversationId,
       lineageId: marker.lineageId,
+      expectedRevision: record.revision,
     });
   } catch {
     return null;

@@ -4,7 +4,10 @@ import {
   markListenerConnectionInitialized,
   openListenerConnection,
 } from "./connection";
-import { getOrCreateScopedRuntime } from "./conversation-runtime";
+import {
+  getOrCreateScopedRuntime,
+  restoreDurableQueuedInputs,
+} from "./conversation-runtime";
 import { dispatchInboundMessageWhenReady } from "./inbound-dispatch";
 import {
   getInputDisposition,
@@ -190,6 +193,58 @@ function teleportContinueFrame(requestId: string, teleportId: string): Buffer {
 }
 
 afterEach(() => setActiveRuntime(null));
+
+test("direct started input remains refill-suppressed until turn ownership", async () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    "agent-1",
+    "conversation-1",
+  );
+  const sent: unknown[] = [];
+  const tasks: Promise<void>[] = [];
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let started = false;
+  let directBatchId: string | undefined;
+  const handleMessage = setupRouter({
+    listener,
+    runtime,
+    sent,
+    tasks,
+    trackListenerError: () => {},
+    processIncomingMessage: (async (...args: unknown[]) => {
+      directBatchId = args[5] as string | undefined;
+      started = true;
+      await held;
+    }) as never,
+  });
+
+  await handleMessage(createMessageFrame("direct", "cm-direct-started"));
+  for (let attempt = 0; !started && attempt < 100; attempt += 1) {
+    await Bun.sleep(1);
+  }
+  expect(started).toBe(true);
+  expect(directBatchId).toStartWith("batch-direct-");
+  expect(
+    runtime.dequeuedInputIdentitiesByBatchId.get(directBatchId ?? ""),
+  ).toEqual([{ domain: "input", id: "cm-direct-started" }]);
+  expect(restoreDurableQueuedInputs(listener, undefined, [])).toBe(0);
+  expect(runtime.queueRuntime.length).toBe(0);
+
+  release();
+  await Promise.all(tasks);
+  for (
+    let attempt = 0;
+    runtime.dequeuedInputIdentitiesByBatchId.size > 0 && attempt < 100;
+    attempt += 1
+  ) {
+    await Bun.sleep(1);
+  }
+  expect(runtime.dequeuedInputIdentitiesByBatchId.size).toBe(0);
+});
 
 test("ordinary and teleport identities never share a ledger key", () => {
   const listener = createRuntime();

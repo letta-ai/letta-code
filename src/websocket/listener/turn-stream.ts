@@ -74,7 +74,7 @@ export async function drainTurnStreamWithEmission(
     () => {},
     turnAbortSignal,
     undefined,
-    ({ chunk, shouldOutput, errorInfo }) => {
+    async ({ chunk, shouldOutput, errorInfo }) => {
       if (turnAbortSignal.aborted) {
         return undefined;
       }
@@ -114,7 +114,7 @@ export async function drainTurnStreamWithEmission(
             ) {
               throw error;
             }
-            void recordListenerWorkRetriably(
+            const revision = await recordListenerWorkRetriably(
               runtime,
               update,
               "run_observed",
@@ -124,13 +124,10 @@ export async function drainTurnStreamWithEmission(
                 shouldContinue: () =>
                   runtime.turnLifecycle.isCurrent(turnLease) && hasAuthority(),
               },
-            )
-              .then((revision) => {
-                if (revision && params.interruptedRevisionRef) {
-                  params.interruptedRevisionRef.current = revision;
-                }
-              })
-              .catch(() => runtime.listener.scheduleRecordedRecovery?.());
+            );
+            if (revision && params.interruptedRevisionRef) {
+              params.interruptedRevisionRef.current = revision;
+            }
           }
           runIdSent = true;
           msgRunIds.push(maybeRunId);

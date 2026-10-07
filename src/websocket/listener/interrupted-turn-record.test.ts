@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { acquireDurableFileLock } from "./durable-file-lock";
 import {
+  allRecordedResults,
   createInterruptedTurnStore,
   type InterruptedTurnRecord,
   recordedToolResults,
@@ -692,6 +693,118 @@ test("a replacement reads completed results; another sandbox has nothing to reco
     expect(replacement.read("agent-test", "conv-other")).toBeNull();
     replacement.remove("agent-test", "conv-test");
     expect(store.read("agent-test", "conv-test")).toBeNull();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("a settled recovery result survives an independent successor snapshot", () => {
+  const directory = mkdtempSync(join(tmpdir(), "listener-settled-effect-"));
+  try {
+    const store = createInterruptedTurnStore(directory);
+    const predecessor = store.write({
+      agentId: "agent-test",
+      conversationId: "conv-test",
+      runId: "run-predecessor",
+      toolCallIds: ["call-effect", "call-denied", "call-unstarted"],
+      unstartedToolCallIds: ["call-unstarted"],
+      results: [
+        {
+          type: "tool",
+          tool_call_id: "call-denied",
+          tool_return: "denied before successor",
+          status: "error",
+        },
+      ],
+      requestOtid: "request-predecessor",
+      workingDirectory: "/project",
+      recoveryClaimCompletion: {
+        lineageId: "lineage-effect",
+        state: "running",
+        effectToolCallIds: ["call-effect", "call-denied", "call-unstarted"],
+      },
+    });
+    const successorResult = {
+      type: "tool" as const,
+      tool_call_id: "call-successor",
+      tool_return: "successor output",
+      status: "success" as const,
+    };
+    const successor = store.write(
+      {
+        ...predecessor,
+        runId: "run-successor",
+        requestOtid: "request-successor",
+        toolCallIds: [...predecessor.toolCallIds, "call-successor"],
+        results: [...predecessor.results, successorResult],
+        durableInputIdentities: [{ domain: "input", id: "cm-successor" }],
+        recoveryClaimCompletion: {
+          ...predecessor.recoveryClaimCompletion,
+          lineageId: "lineage-effect",
+          state: "running",
+          independentSuccessor: true,
+        },
+      },
+      predecessor.revision,
+    );
+    const exactResult = {
+      type: "tool" as const,
+      tool_call_id: "call-effect",
+      tool_return: "completed once",
+      status: "success" as const,
+    };
+
+    const merged = store.mergeSettledRecoveryResult({
+      agentId: "agent-test",
+      conversationId: "conv-test",
+      lineageId: "lineage-effect",
+      result: exactResult,
+    });
+    expect(merged.independentSuccessor).toBe(true);
+    const afterMerge = store.read("agent-test", "conv-test");
+    expect(afterMerge).toMatchObject({
+      runId: "run-successor",
+      requestOtid: "request-successor",
+      durableInputIdentities: [{ domain: "input", id: "cm-successor" }],
+      results: [
+        expect.objectContaining({ tool_call_id: "call-denied" }),
+        successorResult,
+      ],
+    });
+    expect(afterMerge && allRecordedResults(afterMerge)).toContainEqual(
+      exactResult,
+    );
+
+    if (!afterMerge?.revision) throw new Error("expected merged record");
+    expect(afterMerge.revision).not.toBe(successor.revision);
+
+    const pending = store.markRecoveryClaimCompletionPending({
+      agentId: "agent-test",
+      conversationId: "conv-test",
+      lineageId: "lineage-effect",
+      expectedRevision: afterMerge.revision,
+    });
+    if (!pending?.revision) throw new Error("expected pending record");
+    expect(
+      store.retireRecoveryClaimCompletion({
+        agentId: "agent-test",
+        conversationId: "conv-test",
+        lineageId: "lineage-effect",
+        pendingRevision: pending.revision,
+      }),
+    ).toBe("preserved");
+    const retired = store.read("agent-test", "conv-test");
+    expect(retired).toMatchObject({
+      runId: "run-successor",
+      requestOtid: "request-successor",
+      durableInputIdentities: [{ domain: "input", id: "cm-successor" }],
+      toolCallIds: ["call-successor"],
+      results: [successorResult],
+      unstartedToolCallIds: [],
+    });
+    expect(retired && allRecordedResults(retired)).not.toContainEqual(
+      exactResult,
+    );
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

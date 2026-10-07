@@ -105,6 +105,7 @@ export function finalizeHandledRecoveryTurn(
     agentId: params.agentId,
     conversationId: params.conversationId,
   };
+  const terminalRunId = runtime.activeRunId || undefined;
   const transition = finalize({
     stopReason: terminalStopReason,
     socket,
@@ -118,7 +119,7 @@ export function finalizeHandledRecoveryTurn(
     ...noticeParams,
     stopReason: terminalStopReason,
     isTerminal: true,
-    runId: runtime.activeRunId || undefined,
+    runId: terminalRunId,
   });
   return transition;
 }

@@ -9,7 +9,6 @@
 
 import { rmSync } from "node:fs";
 import { platform } from "node:os";
-import { resolveActingUserId } from "@/agent/acting-user";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { detectMemoryFormat } from "@/agent/memory-format";
@@ -34,6 +33,7 @@ import { resolveAllowedMemoryRoots } from "@/permissions/memory-paths";
 import { sessionPermissions } from "@/permissions/session";
 import {
   getCurrentWorkingDirectory,
+  getRuntimeActingUserId,
   getRuntimeContext,
   runWithRuntimeContext,
 } from "@/runtime-context";
@@ -837,7 +837,7 @@ async function spawnSubagentInContext(
   resolvedConfig?: SubagentConfig,
   clientMessageId?: string,
 ): Promise<SubagentResult> {
-  const launchActingUserId = resolveActingUserId(actingUserId);
+  const launchActingUserId = actingUserId ?? getRuntimeActingUserId();
   let config = resolvedConfig ?? (await getAllSubagentConfigs())[type];
 
   if (!config) {

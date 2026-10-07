@@ -851,6 +851,7 @@ describe("listener turn lifecycle integration", () => {
       origin: "approval_recovery",
       workingDirectory: process.cwd(),
     });
+    runtime.turnLifecycle.setRunId(lease, "run-recovery-error");
     const sentPayloads: string[] = [];
 
     const transition = finalizeHandledRecoveryTurn(
@@ -879,6 +880,9 @@ describe("listener turn lifecycle integration", () => {
     expect(JSON.stringify(payloads[0])).not.toContain(
       "Recovery continuation ended unexpectedly",
     );
+    expect(payloads[1]).toMatchObject({
+      delta: { run_id: "run-recovery-error" },
+    });
   });
 
   test("a stale recovery owner cannot finish or report errors for its replacement", () => {

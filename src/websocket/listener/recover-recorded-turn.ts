@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
 import { getBackend } from "@/backend";
 import { getTeleportStatus } from "@/backend/api/environments";
+import type { StopReasonType } from "@/types/protocol_v2";
 import { debugWarn } from "@/utils/debug";
 import { getOrCreateProcessTransport } from "./connection";
 import {
@@ -23,6 +24,7 @@ import {
   prepareInputTerminal,
 } from "./input-terminal-journal";
 import {
+  allRecordedResults,
   createInterruptedTurnStore,
   type InterruptedTurnRecord,
   recordedToolResults,
@@ -70,6 +72,7 @@ function prepareRecordedInputTerminal(
   runtime: ConversationRuntime,
   record: InterruptedTurnRecord,
   runId: string | null,
+  stopReason: StopReasonType = "end_turn",
 ): boolean {
   const identities = record.durableInputIdentities ?? [];
   if (!identities.length || !record.revision) return true;
@@ -113,7 +116,7 @@ function prepareRecordedInputTerminal(
       message: {
         type: "turn_finished",
         turn_id: `turn-recovered-complete-${randomUUID()}`,
-        stop_reason: "end_turn",
+        stop_reason: stopReason,
         ...(record.terminalConsumerIds?.length
           ? { terminal_consumer_ids: [...new Set(record.terminalConsumerIds)] }
           : {}),
@@ -537,7 +540,7 @@ export async function recoverRecordedTurns(
         // Require the stored approval message to name the recorded run in that case.
         let recordedRunId = record.runId;
         if (
-          record.results.length &&
+          allRecordedResults(record).length &&
           (!pending.length ||
             pending.some(
               (approval) => !record.toolCallIds.includes(approval.toolCallId),
@@ -579,6 +582,12 @@ export async function recoverRecordedTurns(
             deferred = true;
             continue;
           }
+          const recoveredStopReason: StopReasonType =
+            run?.status === "failed"
+              ? "error"
+              : run?.status === "cancelled"
+                ? "cancelled"
+                : "end_turn";
           if (record.recoveryClaimCompletion?.state === "running") {
             const eligibility = await resolveRecoveryEligibility(
               runtime,
@@ -612,6 +621,7 @@ export async function recoverRecordedTurns(
                 runtime,
                 record,
                 recordedRunId,
+                recoveredStopReason,
               )
             ) {
               await recoveryClaim.release();
@@ -675,6 +685,7 @@ export async function recoverRecordedTurns(
               runtime,
               record,
               recordedRunId,
+              recoveredStopReason,
             ) ||
             !recoveryClaim.owned ||
             !unchanged()
@@ -796,6 +807,7 @@ export async function recoverRecordedTurns(
             recoveryClaimCompletion: {
               lineageId: recoveryLineageId,
               state: "running",
+              effectToolCallIds: continuation.toolCallIds,
             },
           },
           record.revision ?? null,

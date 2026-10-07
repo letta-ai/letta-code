@@ -53,8 +53,11 @@ export function createRecoveredApprovalEffectBoundary(params: {
   checkpoint: (
     results: ApprovalResult[],
     unstartedToolCallIds: string[],
-    phase: "before" | "after",
+    phase: "before" | "after" | "rollback",
   ) => void | Promise<void>;
+  checkpointExactResult?: (
+    result: ApprovalResult,
+  ) => boolean | Promise<boolean>;
   onCrossed: () => void;
 }) {
   const results = new Map<string, ApprovalResult>();
@@ -95,6 +98,11 @@ export function createRecoveredApprovalEffectBoundary(params: {
         }
         const wasUnstarted = unstarted.has(toolCallId);
         const previousResult = results.get(toolCallId);
+        const restoreUnstarted = () => {
+          if (wasUnstarted) unstarted.add(toolCallId);
+          if (previousResult) results.set(toolCallId, previousResult);
+          else results.delete(toolCallId);
+        };
         unstarted.delete(toolCallId);
         results.set(toolCallId, unknownResult(toolCallId));
         try {
@@ -103,14 +111,18 @@ export function createRecoveredApprovalEffectBoundary(params: {
           // The executor has not started until this checkpoint returns. If the
           // write failed or was cancelled, restore the exact pre-boundary state
           // so outer recovery cannot persist a false unknown-effect outcome.
-          if (wasUnstarted) unstarted.add(toolCallId);
-          if (previousResult) results.set(toolCallId, previousResult);
-          else results.delete(toolCallId);
+          restoreUnstarted();
           if (!params.ownsClaim()) claimLost = true;
           throw error;
         }
         if (!params.ownsClaim()) {
           claimLost = true;
+          // The durable unknown was committed, but this callback has not
+          // returned and the executor therefore cannot have started. Replace
+          // that conservative checkpoint with exact replayable state. This
+          // rollback is authority-independent but remains revision-CAS fenced.
+          restoreUnstarted();
+          await params.checkpoint(snapshot(), [...unstarted], "rollback");
           throw new Error("Recovery claim lost before tool execution");
         }
         if (!crossed) {
@@ -128,7 +140,16 @@ export function createRecoveredApprovalEffectBoundary(params: {
       // independent successor.
       const operation = transitionChain.then(async () => {
         results.set(toolCallId, result);
-        await params.checkpoint(snapshot(), [...unstarted], "after");
+        let independentSuccessor = false;
+        if (params.checkpointExactResult) {
+          independentSuccessor = await params.checkpointExactResult(result);
+        } else {
+          await params.checkpoint(snapshot(), [...unstarted], "after");
+        }
+        if (independentSuccessor || !params.ownsClaim()) {
+          claimLost = true;
+          throw new Error("Recovery claim lost after tool execution");
+        }
       });
       transitionChain = operation.catch(() => {});
       return operation;

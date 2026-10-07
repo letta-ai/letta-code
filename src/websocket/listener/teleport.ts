@@ -228,6 +228,7 @@ function authorizePersistedTeleportReady(
       },
       record.revision,
     );
+    pending.interruptedRevision = readyRecord.revision;
     retireTeleportTerminalProof(readyRecord, record.revision);
     return true;
   } catch {
@@ -271,7 +272,7 @@ function persistIdleTeleportReady(
     return false;
   }
   try {
-    store.write(
+    const readyRecord = store.write(
       {
         ...record,
         teleport: {
@@ -282,6 +283,7 @@ function persistIdleTeleportReady(
       },
       intentRevision,
     );
+    pending.interruptedRevision = readyRecord.revision;
     return true;
   } catch {
     return false;
@@ -774,6 +776,7 @@ export function finishClaimedTeleport(
       },
       intentRevision,
     );
+    pending.interruptedRevision = readyRecord.revision;
     retireTeleportTerminalProof(readyRecord, intentRevision);
     emitClaimedTeleportReady(runtime.listener, pending);
   } catch {
@@ -847,13 +850,19 @@ function findFailedTeleport(params: {
       activeTurn: exactPersisted.teleport.activeTurn,
       continuation: exactPersisted.teleport.continuation,
       readyAt: exactPersisted.teleport.ready ? Date.now() : undefined,
-      interruptedRevision: exactPersisted.revision,
+      interruptedRevision: exactPersisted.teleport.ready
+        ? undefined
+        : exactPersisted.revision,
     };
     getPendingTeleports(params.listener).set(key, pending);
   }
   if (!pending) return null;
   pending.connectionId = params.connectionId;
-  if (exactPersisted?.revision) {
+  if (
+    !pending.interruptedRevision &&
+    exactPersisted?.revision &&
+    !exactPersisted.teleport?.ready
+  ) {
     pending.interruptedRevision = exactPersisted.revision;
   }
   return pending;
@@ -888,6 +897,7 @@ export function handleTeleportFailure(params: {
     runtime: ConversationRuntime,
     onStatusChange?: StartListenerOptions["onStatusChange"],
     connectionId?: string,
+    dequeuedBatchId?: string,
   ) => Promise<void>;
   /** Deterministic cleanup seam for durability race tests. */
   failedTeleportCleanup?: FailedTeleportCleanupDependencies;
@@ -947,6 +957,8 @@ export function handleTeleportFailure(params: {
     rollbackInputDisposition(runtime, reservation);
     return;
   }
+  const directBatchId = `batch-teleport-failed-${crypto.randomUUID()}`;
+  runtime.dequeuedInputIdentitiesByBatchId.set(directBatchId, [identity]);
   clearAcceptedFailedTeleport(
     params.listener,
     pending,
@@ -967,12 +979,17 @@ export function handleTeleportFailure(params: {
     conversationId: pending.conversationId,
   });
   params.runDetachedListenerTask("teleport_failed", async () => {
-    await params.processIncomingMessage(
-      incoming,
-      params.socket,
-      runtime,
-      params.onStatusChange,
-      params.connectionId,
-    );
+    try {
+      await params.processIncomingMessage(
+        incoming,
+        params.socket,
+        runtime,
+        params.onStatusChange,
+        params.connectionId,
+        directBatchId,
+      );
+    } finally {
+      runtime.dequeuedInputIdentitiesByBatchId.delete(directBatchId);
+    }
   });
 }
