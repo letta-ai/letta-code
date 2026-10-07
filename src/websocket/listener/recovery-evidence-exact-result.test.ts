@@ -11,6 +11,7 @@ import {
 import { createRuntime } from "./lifecycle";
 import {
   createRecoveryEvidenceCheckpoint,
+  createStoreBoundRecoveryEvidenceWriter,
   mergeSettledRecoveryResultRetriably,
 } from "./recovery-evidence";
 
@@ -30,6 +31,47 @@ test("custom recovery authority tokens require a matching store", async () => {
   ).rejects.toThrow(
     "Custom recovery authority token requires matching authority store",
   );
+});
+
+test("store-bound recovery checkpoints retry a live lock holder", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "listener-evidence-lock-"));
+  try {
+    const store = createInterruptedTurnStore(directory, { lockWaitMs: 10 });
+    const listener = createRuntime();
+    listener.connectionId = "conn-test";
+    const runtime = getOrCreateScopedRuntime(
+      listener,
+      "agent-test",
+      "conv-test",
+    );
+    const initial = store.write({
+      agentId: "agent-test",
+      conversationId: "conv-test",
+      runId: "run-test",
+      toolCallIds: ["call-test"],
+      unstartedToolCallIds: [],
+      results: [],
+      requestOtid: "request-test",
+      workingDirectory: "/project",
+    });
+    const release = acquireDurableFileLock(
+      join(directory, "agent-test_conv-test.json"),
+      { waitMs: 10 },
+    );
+    const timer = setTimeout(release, 100);
+    const writer = createStoreBoundRecoveryEvidenceWriter(store, () => true);
+    const revision = await writer(
+      runtime,
+      { results: [] },
+      "after_tool_execution",
+      initial.revision,
+    );
+    clearTimeout(timer);
+    expect(revision).toBeString();
+    expect(revision).not.toBe(initial.revision);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("exact recovery settlement retries beyond a live lock holder", async () => {

@@ -52,6 +52,21 @@ export type RecoveryAuthorityStore = Pick<
   | "withRecoveryAuthority"
 >;
 
+export function createStoreBoundRecoveryEvidenceWriter(
+  store: ReturnType<typeof createInterruptedTurnStore>,
+  shouldContinue: () => boolean,
+): RecoveryEvidenceWriter {
+  return (runtime, update, phase, expectedRevision, recoveryLineageId) =>
+    recordListenerWorkRetriably(
+      runtime,
+      update,
+      phase,
+      expectedRevision,
+      recoveryLineageId,
+      { store, shouldContinue },
+    );
+}
+
 export async function mergeSettledRecoveryResultRetriably(
   store: ReturnType<typeof createInterruptedTurnStore>,
   params: Parameters<typeof store.mergeSettledRecoveryResult>[0],

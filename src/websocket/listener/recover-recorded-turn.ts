@@ -17,7 +17,6 @@ import {
   allRecordedResults,
   createInterruptedTurnStore,
   recordedToolResults,
-  recordListenerWork,
 } from "./interrupted-turn-record";
 import { resolveRecordedRunId } from "./recorded-run-resolution";
 import {
@@ -29,7 +28,7 @@ import {
   markRecoveryClaimCompletionPending,
   retireAcknowledgedRecoveryClaim,
 } from "./recovery-claim-completion";
-import type { RecoveryEvidenceWriter } from "./recovery-evidence";
+import { createStoreBoundRecoveryEvidenceWriter } from "./recovery-evidence";
 import {
   acquireRecoveryClaim,
   canRecoverConversation,
@@ -109,21 +108,6 @@ export async function recoverRecordedTurns(
   if (timer) clearTimeout(timer);
   retryTimers.delete(listener);
   const store = deps.store ?? createInterruptedTurnStore();
-  const recoveryEvidenceWriter: RecoveryEvidenceWriter = (
-    runtime,
-    update,
-    phase,
-    expectedRevision,
-    recoveryLineageId,
-  ) =>
-    recordListenerWork(
-      runtime,
-      update,
-      phase,
-      expectedRevision,
-      recoveryLineageId,
-      store,
-    );
   const terminalStore = deps.terminalStore ?? createTurnFinishedStore();
   const canRecover = deps.canRecover ?? canRecoverConversation;
   let deferred = false;
@@ -836,8 +820,15 @@ export async function recoverRecordedTurns(
           origin: "approval_recovery",
           workingDirectory: recoveryRecord.workingDirectory,
         });
+        const activeContinuationLease = continuationLease;
         const hasRecoveryOwnership = () =>
           !recoveryClaim || recoveryClaim.owned;
+        const recoveryEvidenceWriter = createStoreBoundRecoveryEvidenceWriter(
+          store,
+          () =>
+            runtime.turnLifecycle.isCurrent(activeContinuationLease) &&
+            hasRecoveryOwnership(),
+        );
         const continuationPromise = (deps.processTurn ?? handleIncomingMessage)(
           {
             type: "message",
