@@ -38,6 +38,12 @@ export interface RuntimeStartCommand {
   /** CLI launch options for this conversation. Omission preserves its current options. */
   execution_settings?: RuntimeExecutionSettings;
   workspace_sandbox?: { root: string; isolation_root: string };
+  /**
+   * Environment variables for this conversation's shell commands and
+   * subagents. Omission preserves the current map; `{}` clears it. Harness-owned
+   * variables such as AGENT_ID and MEMORY_DIR still take precedence.
+   */
+  env?: Record<string, string>;
   skill_sources?: readonly ("bundled" | "global" | "agent" | "project")[];
   /** Preserve the current override when skill_sources is omitted. */ preserve_skill_sources?: boolean;
   /** Optional client metadata for diagnostics/future protocol negotiation. */

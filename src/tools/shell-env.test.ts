@@ -803,3 +803,19 @@ test("getShellEnv does not inject hosted MemFS git header for other backends", (
   expect(env.GIT_CONFIG_KEY_0).toBeUndefined();
   expect(env.GIT_CONFIG_VALUE_0).toBeUndefined();
 });
+
+test("getShellEnv applies conversation env beneath harness-owned variables", () => {
+  const env = runWithRuntimeContext(
+    {
+      agentId: "agent-runtime-env",
+      env: {
+        SLACK_WORKSPACE_DATA_DIR: "/root/workspace/dream/slack",
+        AGENT_ID: "agent-spoofed",
+      },
+    },
+    () => getShellEnv(),
+  );
+
+  expect(env.SLACK_WORKSPACE_DATA_DIR).toBe("/root/workspace/dream/slack");
+  expect(env.AGENT_ID).toBe("agent-runtime-env");
+});

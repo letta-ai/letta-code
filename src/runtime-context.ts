@@ -41,6 +41,8 @@ export interface RuntimeContextSnapshot {
   permissionMode?: RuntimePermissionMode;
   workspaceSandbox?: RuntimeWorkspaceSandbox;
   executionSettings?: RuntimeExecutionSettings;
+  /** Conversation-scoped variables from runtime_start, applied to shell commands. */
+  env?: Record<string, string>;
 }
 
 const runtimeContextStorage = new AsyncLocalStorage<RuntimeContextSnapshot>();

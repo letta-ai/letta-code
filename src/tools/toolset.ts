@@ -306,6 +306,7 @@ export async function prepareToolExecutionContextForScope(params: {
   skillSources?: SkillSource[];
   workspaceSandbox?: RuntimeContextSnapshot["workspaceSandbox"];
   executionSettings?: RuntimeContextSnapshot["executionSettings"];
+  env?: RuntimeContextSnapshot["env"];
   cachedAgent?: AgentState | null;
   modContext?: ModContext;
   modEvents?: ModEvents;
@@ -330,6 +331,7 @@ export async function prepareToolExecutionContextForScope(params: {
     skillSources,
     workspaceSandbox,
     executionSettings,
+    env,
     cachedAgent,
     modContext,
     modEvents,
@@ -433,6 +435,7 @@ export async function prepareToolExecutionContextForScope(params: {
       ...(skillSources !== undefined ? { skillSources } : {}),
       ...(workspaceSandbox !== undefined ? { workspaceSandbox } : {}),
       executionSettings,
+      ...(env !== undefined ? { env } : {}),
     },
   });
   return { ...result, agent: agent as AgentState | null };

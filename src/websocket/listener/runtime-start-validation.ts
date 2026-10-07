@@ -2,7 +2,11 @@ import { isSkillSourceArray } from "@/agent/skill-sources";
 import { isRuntimeExecutionSettings } from "@/runtime-execution-settings";
 import type { RuntimeStartCommand } from "@/types/runtime-start-protocol";
 import { isRuntimeStartExternalToolsGroup } from "./external-tool-protocol";
-import { isObjectRecord, isStringArray } from "./protocol-validation";
+import {
+  isObjectRecord,
+  isStringArray,
+  isStringRecord,
+} from "./protocol-validation";
 
 function isDevicePermissionMode(value: unknown): boolean {
   return (
@@ -36,6 +40,7 @@ export function isRuntimeStartCommand(
       isRuntimeExecutionSettings(c.execution_settings)) &&
     (c.workspace_sandbox === undefined ||
       isRuntimeStartWorkspaceSandbox(c.workspace_sandbox)) &&
+    (c.env === undefined || isStringRecord(c.env)) &&
     (c.skill_sources === undefined || isSkillSourceArray(c.skill_sources)) &&
     (c.preserve_skill_sources === undefined ||
       typeof c.preserve_skill_sources === "boolean") &&

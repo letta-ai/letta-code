@@ -327,7 +327,8 @@ export function getShellEnv(): NodeJS.ProcessEnv {
     process.env,
     getRuntimeContext()?.executionSettings,
   );
-  const env = { ...executionEnv };
+  // Harness-owned variables below are assigned afterwards and win.
+  const env = { ...executionEnv, ...getRuntimeContext()?.env };
   const desktopAccessToken = getDesktopAccessToken();
   if (desktopAccessToken) env.LETTA_API_KEY = desktopAccessToken;
   const pathKey =

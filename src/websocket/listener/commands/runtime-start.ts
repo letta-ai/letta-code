@@ -389,6 +389,10 @@ async function applyRuntimeStartState(
     workspaceSandbox,
   );
   scopedRuntime.workspaceSandbox = workspaceSandbox;
+  if (parsed.env !== undefined) {
+    scopedRuntime.env =
+      Object.keys(parsed.env).length > 0 ? { ...parsed.env } : undefined;
+  }
 
   if (
     parsed.skill_sources === undefined &&

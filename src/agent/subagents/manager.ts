@@ -385,6 +385,7 @@ async function executeSubagent(
       },
     );
     const parentProcessEnv: NodeJS.ProcessEnv = {
+      ...getRuntimeContext()?.env,
       ...getRuntimeExecutionEnv(
         process.env,
         getRuntimeContext()?.executionSettings,

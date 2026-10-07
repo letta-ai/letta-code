@@ -66,6 +66,7 @@ export async function handleLaunchSubagentCommand(
             skillSources: parent.skillSources,
             workspaceSandbox: parent.workspaceSandbox,
             executionSettings: parent.executionSettings,
+            ...(parent.env !== undefined ? { env: parent.env } : {}),
           },
           () =>
             launch({

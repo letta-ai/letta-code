@@ -333,6 +333,7 @@ export async function prepareListenerTurn(params: {
     skillSources: runtime.skillSources,
     workspaceSandbox: runtime.workspaceSandbox,
     executionSettings: runtime.executionSettings,
+    env: runtime.env,
     cachedAgent,
     ...(agentId ? { modContext: createListenerAgentModContext(agentId) } : {}),
     modAdapters,

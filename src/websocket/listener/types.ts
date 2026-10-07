@@ -215,6 +215,8 @@ export type ConversationRuntime = {
   /** Explicit runtime filesystem boundary for shared app-server sessions. */
   workspaceSandbox: RuntimeWorkspaceSandbox | undefined;
   executionSettings?: RuntimeExecutionSettings;
+  /** Conversation-scoped shell variables set by runtime_start. */
+  env?: Record<string, string>;
   /** Connection currently executing this conversation's turn, if client-owned. */
   activeConnectionId: ListenerConnectionId | null;
   turnLifecycle: TurnLifecycle;

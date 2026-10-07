@@ -98,4 +98,60 @@ describe("runtime_start conversation source tags", () => {
       await rm(storageDir, { recursive: true, force: true });
     }
   });
+
+  test("env is stored per conversation, preserved when omitted, and cleared by {}", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "runtime-env-"));
+    try {
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+      });
+      __testSetBackend(backend);
+      const agent = await backend.createAgent({
+        name: "Dreamer",
+        model: "anthropic/claude-sonnet-4-6",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      });
+      const listener = createRuntime();
+      const responses: RuntimeStartResponseMessage[] = [];
+      const context = {
+        socket: {} as WebSocket,
+        connectionId: "test-connection",
+        runtime: listener,
+        safeSocketSend: (_socket: WebSocket, message: unknown) => {
+          responses.push(message as RuntimeStartResponseMessage);
+          return true;
+        },
+        runDetachedListenerTask: () => {},
+        getOrCreateScopedRuntime,
+        replaySyncStateForRuntime: async () => {},
+      };
+      const start = (requestId: string, env?: Record<string, string>) =>
+        handleRuntimeStartCommand(
+          {
+            type: "runtime_start",
+            request_id: requestId,
+            agent_id: agent.id,
+            conversation_id: conversation.id,
+            recover_approvals: false,
+            ...(env !== undefined ? { env } : {}),
+          },
+          context,
+        );
+      const scoped = () =>
+        getOrCreateScopedRuntime(listener, agent.id, conversation.id);
+
+      await start("runtime-env-1", { SLACK_WORKSPACE_DATA_DIR: "/data/t1" });
+      expect(scoped().env).toEqual({ SLACK_WORKSPACE_DATA_DIR: "/data/t1" });
+      await start("runtime-env-2");
+      expect(scoped().env).toEqual({ SLACK_WORKSPACE_DATA_DIR: "/data/t1" });
+      await start("runtime-env-3", {});
+      expect(scoped().env).toBeUndefined();
+      expect(responses.every((response) => response.success)).toBe(true);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
 });
