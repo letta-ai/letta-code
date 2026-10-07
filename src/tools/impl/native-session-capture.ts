@@ -280,7 +280,7 @@ async function drainSnapshots(
 }
 
 /** Scope is captured at launch, never derived from process globals after a turn. */
-export function captureNativeSession(
+export async function captureNativeSession(
   source: NativeSessionSource,
   sessionId: string,
   scope: NativeSessionScope | undefined,
