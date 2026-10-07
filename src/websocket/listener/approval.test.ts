@@ -4,6 +4,7 @@ import type { ApprovalResponseBody, ControlRequest } from "@/types/protocol_v2";
 import {
   rejectPendingApprovalResolvers,
   requestApprovalOverWS,
+  requestNestedToolApproval,
   resolvePendingApprovalResolver,
 } from "./approval";
 import {
@@ -17,7 +18,6 @@ import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { createRuntime, stopRuntime } from "./lifecycle";
 import { buildLoopStatus } from "./protocol-outbound";
 import { clearConversationRuntimeState } from "./runtime";
-import { requestNestedToolApproval } from "./turn-approval";
 import type { ConversationRuntime } from "./types";
 
 class MockSocket {

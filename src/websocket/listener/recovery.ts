@@ -17,6 +17,7 @@ import { createBuffers } from "@/cli/helpers/accumulator";
 import { drainStreamWithResume } from "@/cli/helpers/stream";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import type { StopReasonType, StreamDelta } from "@/types/protocol_v2";
+import { requestNestedToolApproval } from "./approval";
 import { normalizeCloudRetryWireMessage } from "./cloud-retry-message";
 import {
   LISTENER_STREAM_RESUME_POLICY,
@@ -571,8 +572,6 @@ async function executeRecoveredApprovalContinuation(params: {
       runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;
       runtime.currentLoadedTools =
         preparedToolContext.preparedToolContext.loadedToolNames;
-      // Lazy: turn-approval imports this module.
-      const { requestNestedToolApproval } = await import("./turn-approval");
       approvalResults = await executeApprovals(decisions, undefined, {
         abortSignal: recoveryLease.signal,
         onNestedToolApproval: (request) =>
