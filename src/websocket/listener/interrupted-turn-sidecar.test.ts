@@ -3,6 +3,7 @@ import {
   copyFileSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   rmSync,
   utimesSync,
   writeFileSync,
@@ -364,6 +365,29 @@ test("retired predecessor sidecar clears its inherited teleport without deleting
       teleport: undefined,
       recoveryClaimCompletion: undefined,
     });
+    const sidecarFile = readdirSync(directory).find((file) =>
+      file.includes(".json.recovery-"),
+    );
+    if (!sidecarFile) throw new Error("missing retired sidecar");
+    const legacy = JSON.parse(
+      readFileSync(join(directory, sidecarFile), "utf8"),
+    );
+    delete legacy.retiredInterruptedRevision;
+    delete legacy.retiredAuthorityRevision;
+    delete legacy.retiredAt;
+    writeFileSync(join(directory, sidecarFile), JSON.stringify(legacy), "utf8");
+    const restarted = createInterruptedTurnStore(directory);
+    expect(() => restarted.list()).not.toThrow();
+    expect(
+      restarted.readRecoverySnapshot("agent-test", "conv-test", lineageId),
+    ).toBeNull();
+    expect(
+      restarted.readRetiredRecoveryAuthority(
+        "agent-test",
+        "conv-test",
+        lineageId,
+      ),
+    ).toEqual({ interruptedRevision: legacy.sourceMainRevision });
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -571,6 +595,170 @@ test("sidecar scavenging preserves evidence beside an unreadable main", () => {
         conversationId: "conv-test",
         durableInputIdentities: [{ domain: "input", id: "input-predecessor" }],
         quarantined: true,
+      },
+    ]);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("an unreadable ordinary main quarantines its full scope without a sidecar", () => {
+  const directory = mkdtempSync(join(tmpdir(), "listener-corrupt-ordinary-"));
+  const store = createInterruptedTurnStore(directory);
+  try {
+    store.write({
+      agentId: "agent-corrupt-ordinary",
+      conversationId: "conv-test",
+      runId: "run-corrupt-ordinary",
+      toolCallIds: [],
+      results: [],
+      requestOtid: "request-corrupt-ordinary",
+      workingDirectory: "/corrupt-ordinary",
+      durableInputIdentities: [
+        { domain: "input", id: "input-corrupt-ordinary" },
+      ],
+    });
+    const main = readdirSync(directory).find(
+      (file) =>
+        file.startsWith("agent-corrupt-ordinary_") && file.endsWith(".json"),
+    );
+    if (!main) throw new Error("missing ordinary main fixture");
+    writeFileSync(join(directory, main), "{truncated", "utf8");
+
+    expect(store.listDurableInputOwnership()).toEqual([
+      {
+        agentId: "agent-corrupt-ordinary",
+        conversationId: "conv-test",
+        durableInputIdentities: [],
+        quarantined: true,
+      },
+    ]);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("dual main and sidecar corruption still quarantines the canonical scope", () => {
+  const directory = mkdtempSync(join(tmpdir(), "listener-dual-corrupt-"));
+  const store = createInterruptedTurnStore(directory);
+  try {
+    const predecessor = store.write({
+      agentId: "agent-dual-corrupt",
+      conversationId: "conv-test",
+      runId: "run-dual-corrupt",
+      toolCallIds: [],
+      results: [],
+      requestOtid: "request-dual-corrupt",
+      workingDirectory: "/dual-corrupt",
+      recoveryClaimCompletion: {
+        lineageId: "lineage-dual-corrupt",
+        state: "running",
+        effectToolCallIds: [],
+      },
+    });
+    store.write(
+      {
+        ...predecessor,
+        runId: "run-dual-successor",
+        recoveryClaimCompletion: {
+          lineageId: "lineage-dual-corrupt",
+          state: "running",
+          independentSuccessor: true,
+          effectRevision: predecessor.revision,
+          effectToolCallIds: [],
+        },
+      },
+      predecessor.revision,
+    );
+    store.writeRecoveryLineageSnapshot({
+      agentId: predecessor.agentId,
+      conversationId: predecessor.conversationId,
+      lineageId: "lineage-dual-corrupt",
+      update: {
+        durableInputIdentities: [{ domain: "input", id: "input-sidecar" }],
+      },
+    });
+    const files = readdirSync(directory);
+    const main = files.find(
+      (file) =>
+        file.startsWith("agent-dual-corrupt_") && file.endsWith(".json"),
+    );
+    const sidecar = files.find(
+      (file) =>
+        file.startsWith("agent-dual-corrupt_") &&
+        file.includes(".json.recovery-"),
+    );
+    if (!main || !sidecar) throw new Error("missing dual corruption fixture");
+    writeFileSync(join(directory, main), "{truncated", "utf8");
+    writeFileSync(join(directory, sidecar), "{truncated", "utf8");
+
+    expect(store.listDurableInputOwnership()).toEqual([
+      {
+        agentId: "agent-dual-corrupt",
+        conversationId: "conv-test",
+        durableInputIdentities: [],
+        quarantined: true,
+      },
+    ]);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("readable successor ownership includes post-fork sidecar inputs", () => {
+  const directory = mkdtempSync(join(tmpdir(), "listener-sidecar-ownership-"));
+  const store = createInterruptedTurnStore(directory);
+  try {
+    const predecessor = store.write({
+      agentId: "agent-sidecar-ownership",
+      conversationId: "conv-test",
+      runId: "run-predecessor",
+      toolCallIds: [],
+      results: [],
+      requestOtid: "request-predecessor",
+      workingDirectory: "/predecessor",
+      durableInputIdentities: [{ domain: "input", id: "input-predecessor" }],
+      recoveryClaimCompletion: {
+        lineageId: "lineage-sidecar-ownership",
+        state: "running",
+        effectToolCallIds: [],
+      },
+    });
+    store.write(
+      {
+        ...predecessor,
+        runId: "run-successor",
+        durableInputIdentities: [{ domain: "input", id: "input-successor" }],
+        recoveryClaimCompletion: {
+          lineageId: "lineage-sidecar-ownership",
+          state: "running",
+          independentSuccessor: true,
+          effectRevision: predecessor.revision,
+          effectToolCallIds: [],
+          effectInputIdentities: predecessor.durableInputIdentities,
+        },
+      },
+      predecessor.revision,
+    );
+    store.writeRecoveryLineageSnapshot({
+      agentId: predecessor.agentId,
+      conversationId: predecessor.conversationId,
+      lineageId: "lineage-sidecar-ownership",
+      update: {
+        durableInputIdentities: [{ domain: "input", id: "input-post-fork" }],
+      },
+    });
+
+    expect(store.listDurableInputOwnership()).toEqual([
+      {
+        agentId: "agent-sidecar-ownership",
+        conversationId: "conv-test",
+        durableInputIdentities: [
+          { domain: "input", id: "input-successor" },
+          { domain: "input", id: "input-predecessor" },
+          { domain: "input", id: "input-post-fork" },
+        ],
+        quarantined: false,
       },
     ]);
   } finally {

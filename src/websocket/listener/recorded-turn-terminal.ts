@@ -128,6 +128,35 @@ export function prepareRecordedInputTerminal(
             terminalAuthority.authorityRevision
         : prepared.owner.recoveryLineageId === undefined),
   );
+  const terminalDigest = createHash("sha256")
+    .update(
+      JSON.stringify([
+        "recorded-turn-terminal-v1",
+        record.agentId,
+        record.conversationId,
+        record.revision,
+        terminalAuthority?.recoveryLineageId ?? null,
+        terminalAuthority?.authorityRevision ?? null,
+      ]),
+    )
+    .digest("hex");
+  const terminalIdentity = `recorded:${terminalDigest}`;
+  let existingPersisted:
+    | NonNullable<ReturnType<typeof terminalStore.read>>["terminals"][number]
+    | undefined;
+  if (!identities.length) {
+    try {
+      existingPersisted = terminalStore
+        .readOrThrow(scope.agentId, scope.conversationId)
+        ?.terminals.find(
+          (terminal) => terminal.owner.terminalIdentity === terminalIdentity,
+        );
+    } catch {
+      // Store unavailability is not absence. Retry without minting an owner
+      // that could collide with a terminal whose committed put is unreadable.
+      return false;
+    }
+  }
   if (
     terminalAuthority
       ? hasCompletedInputTerminalAuthority(
@@ -161,10 +190,11 @@ export function prepareRecordedInputTerminal(
       : eligibleConnections.find(
           (connection) => connection.options.connectionIdCanResume !== false,
         );
-  const owner = existingPrepared
-    ? { ...existingPrepared.owner }
+  const persistedEvidence = existingPrepared ?? existingPersisted;
+  const owner = persistedEvidence
+    ? { ...persistedEvidence.owner }
     : getTurnFinishedOwner(runtime, record.revision);
-  if (!existingPrepared) {
+  if (!persistedEvidence) {
     if (terminalAuthority) {
       owner.recoveryLineageId = terminalAuthority.recoveryLineageId;
       owner.interruptedAuthorityRevision = terminalAuthority.authorityRevision;
@@ -172,21 +202,9 @@ export function prepareRecordedInputTerminal(
     owner.connectionId = ownerConnection?.id ?? null;
     owner.canRotate = ownerConnection?.options.connectionIdCanResume === false;
     owner.lineageId = ownerConnection?.startupOwner.lineageId ?? null;
-    const terminalDigest = createHash("sha256")
-      .update(
-        JSON.stringify([
-          "recorded-turn-terminal-v1",
-          record.agentId,
-          record.conversationId,
-          record.revision,
-          terminalAuthority?.recoveryLineageId ?? null,
-          terminalAuthority?.authorityRevision ?? null,
-        ]),
-      )
-      .digest("hex");
-    owner.terminalIdentity = `recorded:${terminalDigest}`;
+    owner.terminalIdentity = terminalIdentity;
   }
-  const message = existingPrepared?.message ?? {
+  const message = persistedEvidence?.message ?? {
     type: "turn_finished" as const,
     turn_id: `turn-recovered-complete-${owner.terminalIdentity?.replace(
       /^recorded:/,

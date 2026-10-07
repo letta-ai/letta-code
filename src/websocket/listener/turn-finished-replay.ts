@@ -55,9 +55,16 @@ export class TurnFinishedCapacityError extends Error {
   }
 }
 
+type TerminalAuthorityStore = Pick<
+  ReturnType<typeof createInterruptedTurnStore>,
+  "readRecoverySnapshot" | "readRetiredRecoveryAuthority"
+>;
+
 function terminalAuthorityStatus(
   runtime: ConversationRuntime,
   terminal: PersistedTurnFinished,
+  terminals?: readonly PersistedTurnFinished[],
+  interruptedStore: TerminalAuthorityStore = createInterruptedTurnStore(),
 ): "current" | "stale" | "unknown" {
   const { owner } = terminal;
   if (!owner.recoveryLineageId) return "current";
@@ -69,12 +76,33 @@ function terminalAuthorityStatus(
     return "unknown";
   }
   try {
-    const snapshot = createInterruptedTurnStore().readRecoverySnapshot(
+    const snapshot = interruptedStore.readRecoverySnapshot(
       runtime.agentId,
       runtime.conversationId,
       owner.recoveryLineageId,
     );
-    if (!snapshot) return "current";
+    if (!snapshot) {
+      const retired = interruptedStore.readRetiredRecoveryAuthority(
+        runtime.agentId,
+        runtime.conversationId,
+        owner.recoveryLineageId,
+      );
+      if (!retired) return "unknown";
+      if (retired.interruptedRevision !== owner.interruptedRevision)
+        return "stale";
+      if (retired.authorityRevision) {
+        return retired.authorityRevision === owner.interruptedAuthorityRevision
+          ? "current"
+          : "stale";
+      }
+      if (!terminals) return "unknown";
+      const legacyCandidates = terminals.filter(
+        (candidate) =>
+          candidate.owner.recoveryLineageId === owner.recoveryLineageId &&
+          candidate.owner.interruptedRevision === owner.interruptedRevision,
+      );
+      return legacyCandidates.at(-1)?.id === terminal.id ? "current" : "stale";
+    }
     if (
       snapshot.record.revision === owner.interruptedRevision &&
       snapshot.revisionToken === owner.interruptedAuthorityRevision
@@ -691,7 +719,11 @@ export function emitDurableTurnFinished(
     );
     return;
   }
-  const authorityStatus = terminalAuthorityStatus(runtime, prepared.terminal);
+  const authorityStatus = terminalAuthorityStatus(
+    runtime,
+    prepared.terminal,
+    prepared.store.read(runtime.agentId, runtime.conversationId)?.terminals,
+  );
   if (authorityStatus !== "current") {
     if (authorityStatus === "stale") {
       prepared.store.remove(
@@ -726,6 +758,7 @@ export function replayPendingTurnFinishedToConnection(
   runtime: ConversationRuntime,
   connectionId: string,
   providedStore?: ReturnType<typeof createTurnFinishedStore>,
+  interruptedStore: TerminalAuthorityStore = createInterruptedTurnStore(),
 ): void {
   const connection = runtime.listener.connections.get(connectionId);
   const runtimeKey = getConversationRuntimeKey(
@@ -741,7 +774,12 @@ export function replayPendingTurnFinishedToConnection(
   const record = store.read(runtime.agentId, runtime.conversationId);
   if (!record) return;
   for (const terminal of record.terminals) {
-    const authorityStatus = terminalAuthorityStatus(runtime, terminal);
+    const authorityStatus = terminalAuthorityStatus(
+      runtime,
+      terminal,
+      record.terminals,
+      interruptedStore,
+    );
     if (authorityStatus !== "current") {
       if (authorityStatus === "stale") {
         store.remove(runtime.agentId, runtime.conversationId, terminal.id);

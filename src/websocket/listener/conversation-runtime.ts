@@ -56,6 +56,33 @@ function itemIdentities(
 
 const DURABLE_QUEUE_RESTORE_RETRY_DELAY_MS = 10;
 const DURABLE_QUEUE_RESTORE_MAX_RETRY_DELAY_MS = 250;
+const preparedTerminalPromotionRetries = new WeakMap<
+  ListenerRuntime,
+  { timer?: ReturnType<typeof setTimeout>; delayMs: number }
+>();
+
+function schedulePreparedTerminalPromotion(listener: ListenerRuntime): void {
+  if (!listener.promotePreparedInputTerminals) return;
+  const retry = preparedTerminalPromotionRetries.get(listener) ?? {
+    delayMs: 25,
+  };
+  if (retry.timer) return;
+  retry.timer = setTimeout(() => {
+    retry.timer = undefined;
+    if (!listener.intentionallyClosed) {
+      listener.promotePreparedInputTerminals?.();
+    }
+  }, retry.delayMs);
+  retry.timer.unref?.();
+  retry.delayMs = Math.min(1_000, retry.delayMs * 2);
+  preparedTerminalPromotionRetries.set(listener, retry);
+}
+
+function resetPreparedTerminalPromotionRetry(listener: ListenerRuntime): void {
+  const retry = preparedTerminalPromotionRetries.get(listener);
+  if (retry?.timer) clearTimeout(retry.timer);
+  preparedTerminalPromotionRetries.delete(listener);
+}
 
 function durableQueueRestoreIsActive(listener: ListenerRuntime): boolean {
   return listener === getActiveRuntime() && !listener.intentionallyClosed;
@@ -401,14 +428,30 @@ export function promotePreparedInputTerminals(
     "readRecoverySnapshot"
   > = createInterruptedTurnStore(),
   discardPreparedTerminal = discardPreparedInputTerminal,
+  clearPreparedTerminal = clearPreparedInputTerminal,
+  loadPreparedTerminals = loadPreparedInputTerminals,
 ): number {
   let promoted = 0;
-  for (const prepared of loadPreparedInputTerminals(listener)) {
+  let deferred = false;
+  let preparedTerminals: ReturnType<typeof loadPreparedInputTerminals>;
+  try {
+    preparedTerminals = loadPreparedTerminals(listener);
+  } catch (error) {
+    debugWarn(
+      "recovery",
+      "Failed to load prepared input terminals; deferring startup promotion",
+      error,
+    );
+    schedulePreparedTerminalPromotion(listener);
+    return 0;
+  }
+  for (const prepared of preparedTerminals) {
     if (
       onlyScope &&
       (prepared.scope.agentId !== onlyScope.agentId ||
         prepared.scope.conversationId !== onlyScope.conversationId)
     ) {
+      deferred = true;
       continue;
     }
     if (
@@ -428,6 +471,7 @@ export function promotePreparedInputTerminals(
       } catch {
         // Corrupt authority state fails closed; preserve the journal for a
         // later repair rather than promoting or discarding unverifiable proof.
+        deferred = true;
         continue;
       }
       let persisted: PersistedTurnFinished | undefined;
@@ -443,18 +487,23 @@ export function promotePreparedInputTerminals(
       } catch {
         // Unavailable/corrupt terminal state is not absence. Preserve both
         // durable artifacts until an exact later pass can reconcile them.
+        deferred = true;
         continue;
       }
       if (!snapshot) {
         // A completed recovery removes its sidecar after remote ACK. Preserve
         // and promote the matching unacknowledged terminal that outlived it;
         // without terminal proof, retain the journal for later repair.
-        if (!persisted) continue;
+        if (!persisted) {
+          deferred = true;
+          continue;
+        }
       } else if (
         snapshot.record.revision !== prepared.owner.interruptedRevision ||
         snapshot.revisionToken !== prepared.owner.interruptedAuthorityRevision
       ) {
         if (snapshot.record.recoveryClaimCompletion?.state === "pending") {
+          deferred = true;
           continue;
         }
         try {
@@ -479,7 +528,9 @@ export function promotePreparedInputTerminals(
             "recovery",
             "Failed to discard stale prepared input terminal; deferring retry",
           );
+          deferred = true;
         } catch (error) {
+          deferred = true;
           debugWarn(
             "recovery",
             "Failed to remove stale persisted terminal; deferring cleanup",
@@ -550,18 +601,30 @@ export function promotePreparedInputTerminals(
         );
       }
     } catch (error) {
-      if (error instanceof TurnFinishedCapacityError) continue;
-      throw error;
+      deferred = true;
+      debugWarn(
+        "recovery",
+        error instanceof TurnFinishedCapacityError
+          ? "Prepared terminal capacity unavailable; deferring promotion"
+          : "Failed to persist prepared terminal; deferring promotion",
+        error,
+      );
+      continue;
     }
     if (
-      !clearPreparedInputTerminal(
+      !clearPreparedTerminal(
         listener,
         prepared.scope,
         prepared.message.turn_id,
         prepared.owner.terminalIdentity,
       )
     ) {
-      throw new Error("Failed to promote prepared input terminal");
+      deferred = true;
+      debugWarn(
+        "recovery",
+        "Failed to clear promoted input terminal; deferring retry",
+      );
+      continue;
     }
     promoted += 1;
     if (replayConnectionId) {
@@ -588,5 +651,23 @@ export function promotePreparedInputTerminals(
       }
     }
   }
+  if (deferred) schedulePreparedTerminalPromotion(listener);
+  else resetPreparedTerminalPromotionRetry(listener);
   return promoted;
+}
+
+export function promotePreparedInputTerminalsSafely(
+  listener: ListenerRuntime,
+): number {
+  try {
+    return promotePreparedInputTerminals(listener);
+  } catch (error) {
+    debugWarn(
+      "recovery",
+      "Prepared terminal promotion failed during listener startup",
+      error,
+    );
+    schedulePreparedTerminalPromotion(listener);
+    return 0;
+  }
 }

@@ -1,5 +1,11 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -8,6 +14,7 @@ import {
   subscribeListenerConnection,
 } from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
+import { createInterruptedTurnStore } from "./interrupted-turn-record";
 import { createRuntime } from "./lifecycle";
 import type { ListenerTransport } from "./transport";
 import {
@@ -177,3 +184,146 @@ test("a stale finalizer cannot delete a newer authority terminal", () => {
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test.each(["exact", "legacy"] as const)(
+  "%s retired lineage tombstone delivers only the winning authority terminal",
+  (format) => {
+    const directory = mkdtempSync(
+      join(tmpdir(), `retired-terminal-${format}-authority-`),
+    );
+    try {
+      const interruptedStore = createInterruptedTurnStore(
+        join(directory, "interrupted"),
+      );
+      const terminalStore = createTurnFinishedStore(
+        join(directory, "terminals"),
+      );
+      const running = interruptedStore.write({
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        runId: "run-winning",
+        toolCallIds: [],
+        results: [],
+        requestOtid: "request-winning",
+        workingDirectory: "/winning",
+        recoveryClaimCompletion: {
+          lineageId: "lineage-shared",
+          state: "running",
+          effectToolCallIds: [],
+        },
+      });
+      if (!running.revision) throw new Error("missing running revision");
+      const pending = interruptedStore.markRecoveryClaimCompletionPending({
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        lineageId: "lineage-shared",
+        expectedRevision: running.revision,
+      });
+      if (!pending?.revision) throw new Error("missing pending revision");
+      const owner = (
+        authorityRevision: string,
+        interruptedRevision: string,
+      ) => ({
+        connectionId: "connection-1",
+        canRotate: false,
+        lineageId: "startup-1",
+        terminalIdentity: `terminal-${authorityRevision}`,
+        interruptedRevision,
+        recoveryLineageId: "lineage-shared",
+        interruptedAuthorityRevision: authorityRevision,
+      });
+      terminalStore.put(
+        "agent-1",
+        "conversation-1",
+        {
+          type: "turn_finished",
+          turn_id: "turn-stale",
+          stop_reason: "end_turn",
+          terminal_consumer_ids: ["slack:agent-1"],
+        },
+        owner("authority-stale", "revision-stale"),
+      );
+      terminalStore.put(
+        "agent-1",
+        "conversation-1",
+        {
+          type: "turn_finished",
+          turn_id: "turn-winning",
+          stop_reason: "end_turn",
+          terminal_consumer_ids: ["slack:agent-1"],
+        },
+        owner(pending.revision, pending.revision),
+      );
+      expect(
+        interruptedStore.retireRecoveryClaimCompletion({
+          agentId: "agent-1",
+          conversationId: "conversation-1",
+          lineageId: "lineage-shared",
+          pendingRevision: pending.revision,
+        }),
+      ).toBe("removed");
+      if (format === "legacy") {
+        const sidecar = readdirSync(join(directory, "interrupted")).find(
+          (file) => file.includes(".json.recovery-"),
+        );
+        if (!sidecar) throw new Error("missing retired authority sidecar");
+        const sidecarPath = join(directory, "interrupted", sidecar);
+        const legacy = JSON.parse(readFileSync(sidecarPath, "utf8"));
+        delete legacy.retiredInterruptedRevision;
+        delete legacy.retiredAuthorityRevision;
+        delete legacy.retiredAt;
+        writeFileSync(sidecarPath, JSON.stringify(legacy), "utf8");
+      }
+
+      const listener = createRuntime();
+      const runtime = getOrCreateScopedRuntime(
+        listener,
+        "agent-1",
+        "conversation-1",
+      );
+      const sent: string[] = [];
+      const transport: ListenerTransport = {
+        kind: "local",
+        bufferedAmount: 0,
+        isOpen: () => true,
+        send: (payload: string) => sent.push(payload),
+      };
+      const connection = openListenerConnection({
+        runtime: listener,
+        connectionId: "connection-1",
+        writer: transport,
+        options: {
+          connectionId: "connection-1",
+          wsUrl: "local://test",
+          deviceId: "device-1",
+          connectionName: "authority-winner",
+          onConnected: () => {},
+          onDisconnected: () => {},
+          onError: () => {},
+        },
+      });
+      subscribeListenerConnection(listener, connection.id, {
+        agent_id: "agent-1",
+        conversation_id: "conversation-1",
+      });
+      markListenerConnectionInitialized(listener, connection.id, connection);
+
+      replayPendingTurnFinishedToConnection(
+        transport,
+        runtime,
+        connection.id,
+        terminalStore,
+        interruptedStore,
+      );
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toContain("turn-winning");
+      expect(
+        terminalStore
+          .read("agent-1", "conversation-1")
+          ?.terminals.map((terminal) => terminal.message.turn_id),
+      ).toEqual(["turn-winning"]);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  },
+);

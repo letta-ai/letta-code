@@ -24,8 +24,10 @@ import { runClaudeTurn } from "./claude-stream-session";
 import { runCodexTurn } from "./codex-app-server";
 import {
   captureNativeSession,
+  type NativeSessionCaptureReservation,
   rememberNativeSession,
   reportNativeSessionCaptureFailure,
+  reserveNativeSessionCapture,
 } from "./native-session-capture";
 
 export const EXTERNAL_CODING_AGENT_TYPES = ["claude-code", "codex"] as const;
@@ -415,14 +417,32 @@ export async function runExternalCodingAgent(
       }
     : undefined;
   const source = options.type === "claude-code" ? "claude_code" : "codex";
+  let captureReservation: Promise<NativeSessionCaptureReservation> | undefined;
+  let captureSessionId = options.resumeSessionId;
+  const reserveCapture = (sessionId: string) => {
+    captureSessionId = sessionId;
+    captureReservation ??= reserveNativeSessionCapture(
+      source,
+      sessionId,
+      scope as NonNullable<typeof scope>,
+      env,
+    );
+    return captureReservation;
+  };
   const capture = async (result: SubagentResult): Promise<SubagentResult> => {
-    const sessionId = result.runtimeSessionId ?? options.resumeSessionId;
+    const sessionId = result.runtimeSessionId ?? captureSessionId;
     if (scope && sessionId) {
       try {
-        await captureNativeSession(source, sessionId, scope, env);
+        const reservation = captureReservation
+          ? await captureReservation
+          : undefined;
+        if (reservation) {
+          await reservation.capture();
+        } else {
+          await captureNativeSession(source, sessionId, scope, env);
+        }
       } catch (error) {
         reportNativeSessionCaptureFailure(source, sessionId, error);
-        throw error;
       }
     }
     return result;
@@ -448,6 +468,9 @@ export async function runExternalCodingAgent(
         options.signal,
       );
       assertPreflightReady("codex", preflight);
+      if (scope && options.resumeSessionId) {
+        await reserveCapture(options.resumeSessionId);
+      }
       // The managed sandbox wrapper authenticates model requests with its
       // sandbox key, not native `codex login`. A real app-server turn is the
       // authority on whether the configured provider can answer.
@@ -461,9 +484,15 @@ export async function runExternalCodingAgent(
             mcpReminder: options.mcpReminder,
             signal: options.signal,
             resumeThreadId: options.resumeSessionId,
+            beforeStart: async (threadId) => {
+              if (scope && !captureReservation) {
+                if (!options.resumeSessionId) {
+                  rememberNativeSession("codex", threadId, scope);
+                }
+                await reserveCapture(threadId);
+              }
+            },
             onStarted: (threadId) => {
-              if (scope && !options.resumeSessionId)
-                rememberNativeSession("codex", threadId, scope);
               options.onStarted?.(
                 formatExternalCodingAgentId("codex", threadId),
               );
@@ -495,6 +524,7 @@ export async function runExternalCodingAgent(
       const sessionId = options.resumeSessionId ?? randomUUID();
       if (scope && !options.resumeSessionId)
         rememberNativeSession("claude_code", sessionId, scope);
+      if (scope) await reserveCapture(sessionId);
       options.onStarted?.(
         formatExternalCodingAgentId("claude-code", sessionId),
       );

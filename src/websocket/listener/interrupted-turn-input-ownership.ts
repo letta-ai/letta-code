@@ -8,17 +8,68 @@ export type InterruptedTurnInputOwnership = {
   quarantined: boolean;
 };
 
-export function listRawInterruptedTurnRecords(
+export type InterruptedTurnMainSnapshot = {
+  records: InterruptedTurnRecord[];
+  unreadableScopes: Array<{ agentId: string; conversationId: string }>;
+};
+
+function decodeMainFilenameScopes(
+  file: string,
+): Array<{ agentId: string; conversationId: string }> {
+  if (!file.endsWith(".json")) return [];
+  const stem = file.slice(0, -".json".length);
+  const scopes: Array<{ agentId: string; conversationId: string }> = [];
+  for (
+    let index = stem.indexOf("_");
+    index >= 0;
+    index = stem.indexOf("_", index + 1)
+  ) {
+    try {
+      const agentId = decodeURIComponent(stem.slice(0, index));
+      const conversationId = decodeURIComponent(stem.slice(index + 1));
+      if (
+        agentId &&
+        conversationId &&
+        `${encodeURIComponent(agentId)}_${encodeURIComponent(conversationId)}` ===
+          stem
+      ) {
+        scopes.push({ agentId, conversationId });
+      }
+    } catch {}
+  }
+  return scopes;
+}
+
+export function listInterruptedTurnMainSnapshot(
   directory: string,
   readRecord: (file: string) => InterruptedTurnRecord | null,
-): InterruptedTurnRecord[] {
+): InterruptedTurnMainSnapshot {
   try {
-    return readdirSync(directory)
-      .filter((file) => file.endsWith(".json"))
-      .map((file) => readRecord(join(directory, file)))
-      .filter((record): record is InterruptedTurnRecord => record !== null);
+    const records: InterruptedTurnRecord[] = [];
+    const unreadableScopes = new Map<
+      string,
+      { agentId: string; conversationId: string }
+    >();
+    for (const file of readdirSync(directory).filter((entry) =>
+      entry.endsWith(".json"),
+    )) {
+      const record = readRecord(join(directory, file));
+      if (record) {
+        records.push(record);
+        continue;
+      }
+      for (const scope of decodeMainFilenameScopes(file)) {
+        unreadableScopes.set(
+          JSON.stringify([scope.agentId, scope.conversationId]),
+          scope,
+        );
+      }
+    }
+    return { records, unreadableScopes: [...unreadableScopes.values()] };
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { records: [], unreadableScopes: [] };
+    }
     throw error;
   }
 }
@@ -60,23 +111,28 @@ export function collectInterruptedTurnInputOwnershipWithSidecars(
     durableInputIdentities?: InputIdentity[];
   }>,
   mainExists: (agentId: string, conversationId: string) => boolean,
+  unreadableMainScopes: Array<{ agentId: string; conversationId: string }> = [],
 ): InterruptedTurnInputOwnership[] {
   const ownership = collectInterruptedTurnInputOwnership(records, readMainView);
-  const readableScopes = new Set(
-    records.map((record) =>
-      JSON.stringify([record.agentId, record.conversationId]),
-    ),
+  const byScope = new Map(
+    ownership.map((entry) => [
+      JSON.stringify([entry.agentId, entry.conversationId]),
+      entry,
+    ]),
   );
-  const corruptScopes = new Map<string, InterruptedTurnInputOwnership>();
+  for (const scope of unreadableMainScopes) {
+    const scopeKey = JSON.stringify([scope.agentId, scope.conversationId]);
+    byScope.set(scopeKey, {
+      agentId: scope.agentId,
+      conversationId: scope.conversationId,
+      durableInputIdentities: [],
+      quarantined: true,
+    });
+  }
   for (const sidecar of sidecars) {
     const scopeKey = JSON.stringify([sidecar.agentId, sidecar.conversationId]);
-    if (
-      readableScopes.has(scopeKey) ||
-      !mainExists(sidecar.agentId, sidecar.conversationId)
-    ) {
-      continue;
-    }
-    const entry = corruptScopes.get(scopeKey) ?? {
+    if (!mainExists(sidecar.agentId, sidecar.conversationId)) continue;
+    const entry = byScope.get(scopeKey) ?? {
       agentId: sidecar.agentId,
       conversationId: sidecar.conversationId,
       durableInputIdentities: [],
@@ -92,9 +148,9 @@ export function collectInterruptedTurnInputOwnershipWithSidecars(
       identities.set(`${identity.domain}\0${identity.id}`, identity);
     }
     entry.durableInputIdentities = [...identities.values()];
-    corruptScopes.set(scopeKey, entry);
+    byScope.set(scopeKey, entry);
   }
-  return [...ownership, ...corruptScopes.values()];
+  return [...byScope.values()];
 }
 
 import { readdirSync } from "node:fs";

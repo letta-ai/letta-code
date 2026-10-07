@@ -1,5 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { runWithRuntimeContext } from "@/runtime-context";
+import { settingsManager } from "@/settings-manager";
 import {
   buildExternalCodingAgentCommand,
   buildExternalCodingAgentMcpReminder,
@@ -11,8 +12,12 @@ import {
   selectExternalCodingAgentMcpEntries,
   validateExternalCodingAgentMcpOptions,
 } from "./external-coding-agent";
+import { clearNativeSessionCaptureForTests } from "./native-session-capture";
 
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";
+
+beforeAll(() => settingsManager.initialize());
+afterEach(() => clearNativeSessionCaptureForTests());
 
 describe("external coding agent commands", () => {
   test("builds Claude Code JSON invocation with safe root-compatible permissions", () => {
@@ -267,6 +272,41 @@ describe("external coding agent output and preflight", () => {
     );
     expect(result.success).toBe(false);
     expect(result.error).toContain("No ChatGPT connection");
+  });
+
+  test("a failed new Codex start settles its thread capture admission", async () => {
+    let starts = 0;
+    const run = () =>
+      runExternalCodingAgent(
+        {
+          type: "codex",
+          prompt: "test",
+          parentAgentId: "parent",
+          parentConversationId: "conversation-parent",
+        },
+        {
+          env: { ...process.env, LETTA_BASE_URL: "https://api.letta.com" },
+          runPreflight: async () => ({
+            exitCode: 0,
+            stdout: "codex-cli 0.151.0",
+            stderr: "",
+          }),
+          runCodexTurn: async (options) => {
+            starts += 1;
+            await options.beforeStart?.(SESSION_ID);
+            throw new Error("turn/start rejected");
+          },
+        },
+      );
+    expect((await run()).error).toContain("turn/start rejected");
+    const second = await Promise.race([
+      run(),
+      Bun.sleep(500).then(() => {
+        throw new Error("second Codex start blocked on leaked admission");
+      }),
+    ]);
+    expect(second.error).toContain("turn/start rejected");
+    expect(starts).toBe(2);
   });
 
   test.each([

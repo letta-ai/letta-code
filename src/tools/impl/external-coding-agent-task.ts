@@ -7,6 +7,7 @@ import {
 } from "./external-coding-agent";
 import {
   captureNativeSession,
+  type NativeSessionCaptureReservation,
   reportNativeSessionCaptureFailure,
 } from "./native-session-capture";
 import {
@@ -25,6 +26,7 @@ export function trackExternalFollowupCompletion(args: {
   };
   completion: Promise<SubagentResult>;
   interrupt: () => Promise<void>;
+  captureReservation?: NativeSessionCaptureReservation;
 }): SpawnBackgroundSubagentTaskResult {
   return spawnBackgroundSubagentTask({
     subagentType: args.type,
@@ -61,14 +63,17 @@ export function trackExternalFollowupCompletion(args: {
           const source =
             target.type === "claude-code" ? "claude_code" : "codex";
           try {
-            await captureNativeSession(
-              source,
-              target.sessionId,
-              args.parentScope,
-            );
+            if (args.captureReservation) {
+              await args.captureReservation.capture();
+            } else {
+              await captureNativeSession(
+                source,
+                target.sessionId,
+                args.parentScope,
+              );
+            }
           } catch (error) {
             reportNativeSessionCaptureFailure(source, target.sessionId, error);
-            if (!completionFailed) throw error;
           }
         }
         if (completionFailed) throw completionError;

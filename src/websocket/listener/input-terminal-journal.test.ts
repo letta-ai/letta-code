@@ -918,7 +918,7 @@ test("persisted terminal message collision retains its prepared journal", () => 
 
     expect(() =>
       promotePreparedInputTerminals(runtime.listener, terminalStore),
-    ).toThrow("Turn-finished identity collision");
+    ).not.toThrow();
     expect(loadPreparedInputTerminals(runtime.listener)).toHaveLength(1);
   } finally {
     rmSync(root, { recursive: true, force: true });

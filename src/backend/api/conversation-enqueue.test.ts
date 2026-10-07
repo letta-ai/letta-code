@@ -230,15 +230,24 @@ test("retries only a typed pre-admission shutdown rejection with the same messag
   }
 });
 
-test("explicit actor suppression reaches the HTTP boundary despite an ambient actor", async () => {
+test("explicit actor suppression reaches enqueue and cancellation despite an ambient actor", async () => {
   const previous = process.env.LETTA_ACTING_USER_ID;
   process.env.LETTA_ACTING_USER_ID = "user-ambient";
-  let actingUser: string | null | undefined;
+  const requests: Array<{ method: string; actingUser: string | null }> = [];
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
     fetch(request) {
-      actingUser = request.headers.get("X-Letta-Acting-User-Id");
+      requests.push({
+        method: request.method,
+        actingUser: request.headers.get("X-Letta-Acting-User-Id"),
+      });
+      if (request.method === "DELETE") {
+        return Response.json({
+          client_message_id: "cm-suppressed",
+          status: "dequeued",
+        });
+      }
       return Response.json(
         {
           client_message_id: "cm-suppressed",
@@ -256,7 +265,7 @@ test("explicit actor suppression reaches the HTTP boundary despite an ambient ac
       apiKey: "test-only",
     });
   try {
-    await enqueueConversationMessage(
+    const receipt = await enqueueConversationMessage(
       {
         agentId: "agent-target",
         conversationId: "conv-target",
@@ -267,7 +276,21 @@ test("explicit actor suppression reaches the HTTP boundary despite an ambient ac
       undefined,
       request,
     );
-    expect(actingUser).toBeNull();
+    expect(receipt.acting_user_id).toBeNull();
+    await dequeueConversationMessage(
+      {
+        agentId: receipt.agent_id,
+        conversationId: receipt.conversation_id,
+        clientMessageId: receipt.client_message_id,
+        actingUserId: receipt.acting_user_id,
+      },
+      undefined,
+      request,
+    );
+    expect(requests).toEqual([
+      { method: "POST", actingUser: null },
+      { method: "DELETE", actingUser: null },
+    ]);
   } finally {
     server.stop(true);
     if (previous === undefined) delete process.env.LETTA_ACTING_USER_ID;

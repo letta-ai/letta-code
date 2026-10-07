@@ -15,7 +15,7 @@ import { debugWarn } from "@/utils/debug";
 import { acquireDurableFileLock } from "./durable-file-lock";
 import {
   collectInterruptedTurnInputOwnershipWithSidecars,
-  listRawInterruptedTurnRecords,
+  listInterruptedTurnMainSnapshot,
 } from "./interrupted-turn-input-ownership";
 import { isInterruptedTurnRecord } from "./interrupted-turn-schema";
 import {
@@ -79,6 +79,9 @@ export function createInterruptedTurnStore(
     list: listSidecars,
     mainView: readMainView,
     read: readSidecar,
+    removeRetired: removeRetiredSidecar,
+    retire: retireSidecar,
+    retiredAuthority: readRetiredRecoveryAuthority,
     recoveryView: readRecoveryView,
     remove: removeSidecar,
     snapshot: snapshotSidecar,
@@ -88,8 +91,9 @@ export function createInterruptedTurnStore(
     syncDirectory,
     lockWaitMs: dependencies.lockWaitMs,
   });
-  const listRawRecords = () =>
-    listRawInterruptedTurnRecords(directory, readRecord);
+  const listRawSnapshot = () =>
+    listInterruptedTurnMainSnapshot(directory, readRecord);
+  const listRawRecords = () => listRawSnapshot().records;
   return {
     list(): InterruptedTurnRecord[] {
       try {
@@ -104,6 +108,20 @@ export function createInterruptedTurnStore(
         );
         for (const sidecar of listSidecars()) {
           const key = `${sidecar.agentId}\0${sidecar.conversationId}\0${sidecar.lineageId}`;
+          if (sidecar.state === "retired") {
+            // Legacy tombstones predate retiredAt and the exact authority
+            // token. Preserve them: removing one before its persisted terminal
+            // replays would make that terminal permanently unverifiable.
+            if (sidecar.retiredAt === undefined) continue;
+            if (
+              typeof sidecar.retiredAt === "number" &&
+              Date.now() - sidecar.retiredAt < 24 * 60 * 60 * 1_000
+            ) {
+              continue;
+            }
+            removeRetiredSidecar(sidecar);
+            continue;
+          }
           if (liveLineages.has(key)) continue;
           const destination = path(sidecar.agentId, sidecar.conversationId);
           const release = acquireDurableFileLock(destination, {
@@ -143,12 +161,13 @@ export function createInterruptedTurnStore(
       }
     },
     listDurableInputOwnership() {
-      const rawRecords = listRawRecords();
+      const snapshot = listRawSnapshot();
       return collectInterruptedTurnInputOwnershipWithSidecars(
-        rawRecords,
+        snapshot.records,
         readMainView,
         listSidecars(),
         (agentId, conversationId) => existsSync(path(agentId, conversationId)),
+        snapshot.unreadableScopes,
       );
     },
     read(
@@ -199,6 +218,7 @@ export function createInterruptedTurnStore(
         release();
       }
     },
+    readRetiredRecoveryAuthority,
     write(
       record: InterruptedTurnRecord,
       expectedRevision?: string | null,
@@ -259,12 +279,6 @@ export function createInterruptedTurnStore(
         });
         renameSync(temporary, destination);
         syncDirectory(directory);
-        if (
-          retiredSidecar?.state === "retired" &&
-          !written.recoveryClaimCompletion
-        ) {
-          removeSidecar(retiredSidecar);
-        }
         return written;
       } finally {
         rmSync(temporary, { force: true });
@@ -578,17 +592,14 @@ export function createInterruptedTurnStore(
             if (previous.state === "retired") return "stale";
             throw new Error("Recovery lineage pending revision changed");
           }
-          writeSidecar({
-            ...previous,
-            revision: randomUUID(),
-            state: "retired",
-          });
+          retireSidecar(current, previous);
           return "preserved";
         }
         if (
           current.revision === params.pendingRevision &&
           !marker.independentSuccessor
         ) {
+          const retiredAuthority = retireSidecar(current);
           const evidence = readFileSync(destination, "utf8");
           unlinkSync(destination);
           try {
@@ -600,6 +611,9 @@ export function createInterruptedTurnStore(
                 flush: true,
               });
               syncDirectory(directory);
+            } catch {}
+            try {
+              removeSidecar(retiredAuthority);
             } catch {}
             throw error;
           }

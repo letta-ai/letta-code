@@ -37,6 +37,9 @@ export interface RecoveryLineageSidecar {
   durableInputIdentities?: InputIdentity[];
   terminalConsumerIds?: string[];
   teleport?: InterruptedTurnRecord["teleport"];
+  retiredInterruptedRevision?: string;
+  retiredAuthorityRevision?: string;
+  retiredAt?: number;
 }
 
 const sidecarWriterInstanceId = randomUUID();
@@ -111,6 +114,13 @@ export function createRecoveryLineageSidecarAccess(params: {
           candidate.terminalConsumerIds.every(isTerminalConsumerId))) &&
       (candidate.teleport === undefined ||
         isTeleportIntent(candidate.teleport)) &&
+      (candidate.state !== "retired" ||
+        (candidate.retiredInterruptedRevision === undefined &&
+          candidate.retiredAuthorityRevision === undefined &&
+          candidate.retiredAt === undefined) ||
+        (typeof candidate.retiredInterruptedRevision === "string" &&
+          typeof candidate.retiredAuthorityRevision === "string" &&
+          typeof candidate.retiredAt === "number")) &&
       typeof candidate.requestOtid === "string" &&
       typeof candidate.workingDirectory === "string"
     );
@@ -158,6 +168,79 @@ export function createRecoveryLineageSidecarAccess(params: {
     } finally {
       rmSync(temporary, { force: true });
     }
+  };
+
+  const retire = (
+    current: InterruptedTurnRecord,
+    existing?: RecoveryLineageSidecar | null,
+  ): RecoveryLineageSidecar => {
+    const marker = current.recoveryClaimCompletion;
+    if (!marker || !current.revision)
+      throw new Error("Recovery lineage authority is not durable");
+    const previous =
+      existing ??
+      (marker.independentSuccessor
+        ? initial(current)
+        : {
+            revision: current.revision,
+            agentId: current.agentId,
+            conversationId: current.conversationId,
+            lineageId: marker.lineageId,
+            sourceMainRevision: current.revision,
+            state: marker.state,
+            runId: current.runId,
+            toolCallIds: [...current.toolCallIds],
+            unstartedToolCallIds: current.unstartedToolCallIds,
+            results: [...current.results],
+            requestOtid: current.requestOtid,
+            workingDirectory: current.workingDirectory,
+            actingUserId: current.actingUserId,
+            durableInputIdentities: current.durableInputIdentities,
+            terminalConsumerIds: current.terminalConsumerIds,
+            teleport: current.teleport,
+          });
+    const retired: RecoveryLineageSidecar = {
+      ...previous,
+      revision: randomUUID(),
+      state: "retired",
+      retiredInterruptedRevision: previous.sourceMainRevision,
+      retiredAuthorityRevision: previous.revision,
+      retiredAt: Date.now(),
+    };
+    write(retired);
+    return retired;
+  };
+
+  const retiredAuthority = (
+    agentId: string,
+    conversationId: string,
+    lineageId: string,
+  ): {
+    interruptedRevision: string;
+    authorityRevision?: string;
+  } | null => {
+    const sidecar = read(agentId, conversationId, lineageId);
+    if (
+      sidecar?.state === "retired" &&
+      typeof sidecar.retiredAt === "number" &&
+      Date.now() - sidecar.retiredAt >= 24 * 60 * 60 * 1_000
+    ) {
+      return null;
+    }
+    if (sidecar?.state !== "retired") return null;
+    if (
+      sidecar.retiredInterruptedRevision &&
+      sidecar.retiredAuthorityRevision
+    ) {
+      return {
+        interruptedRevision: sidecar.retiredInterruptedRevision,
+        authorityRevision: sidecar.retiredAuthorityRevision,
+      };
+    }
+    // Pre-tombstone retired sidecars retained the interrupted revision but not
+    // the final authority token. Replay deterministically selects their newest
+    // matching persisted terminal and removes older candidates.
+    return { interruptedRevision: sidecar.sourceMainRevision };
   };
 
   const initial = (current: InterruptedTurnRecord): RecoveryLineageSidecar => {
@@ -313,6 +396,36 @@ export function createRecoveryLineageSidecarAccess(params: {
     params.syncDirectory(params.directory);
   };
 
+  const removeRetired = (sidecar: RecoveryLineageSidecar): void => {
+    const sidecarPath = path(
+      sidecar.agentId,
+      sidecar.conversationId,
+      sidecar.lineageId,
+    );
+    const suffixIndex = sidecarPath.lastIndexOf(".recovery-");
+    if (suffixIndex < 0) return;
+    const release = acquireDurableFileLock(sidecarPath.slice(0, suffixIndex), {
+      waitMs: params.lockWaitMs,
+    });
+    try {
+      const current = read(
+        sidecar.agentId,
+        sidecar.conversationId,
+        sidecar.lineageId,
+      );
+      if (
+        current?.state === "retired" &&
+        current.revision === sidecar.revision &&
+        (current.retiredAt === undefined ||
+          Date.now() - current.retiredAt >= 24 * 60 * 60 * 1_000)
+      ) {
+        remove(current);
+      }
+    } finally {
+      release();
+    }
+  };
+
   const list = (): RecoveryLineageSidecar[] => {
     const removeMalformedOrphan = (file: string) => {
       const separator = file.indexOf(".recovery-");
@@ -412,8 +525,11 @@ export function createRecoveryLineageSidecarAccess(params: {
     list,
     mainView,
     read,
+    retire,
+    retiredAuthority,
     recoveryView,
     remove,
+    removeRetired,
     snapshot,
     write,
   };

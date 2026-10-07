@@ -41,7 +41,21 @@ interface CaptureState {
   retryDelayMs: number;
   segments: Segment[];
 }
+interface NativeCaptureAdmission {
+  source: NativeSessionSource;
+  sessionId: string;
+  scope: NativeSessionScope;
+  env: NodeJS.ProcessEnv;
+  requestOptions: { baseUrl?: string; apiKey?: string; cloudUrl?: string };
+  done: Promise<void>;
+  release: () => void;
+}
+
+export interface NativeSessionCaptureReservation {
+  capture(): Promise<void>;
+}
 const states = new Map<string, CaptureState>();
+const admissions = new Map<string, NativeCaptureAdmission>();
 const spoolDirectories = new Set<string>();
 const captureProcessInstanceId = randomUUID();
 const activeInstanceRegistryKey = Symbol.for(
@@ -61,11 +75,25 @@ let sealHookForTests: (() => Promise<void>) | undefined;
 export const NATIVE_SESSION_CAPTURE_CHUNK_BYTES = 256 * 1024;
 const INITIAL_DRAIN_RETRY_MS = 250;
 const MAX_DRAIN_RETRY_MS = 30_000;
+const SEAL_RETRY_DELAYS_MS = [0, 10, 50] as const;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function cleanupSpoolDirectorySync(directory: string): void {
   rmSync(directory, { recursive: true, force: true });
   spoolDirectories.delete(directory);
+}
+
+async function cleanupSpoolDirectory(directory: string): Promise<void> {
+  try {
+    await rm(directory, { recursive: true, force: true });
+    spoolDirectories.delete(directory);
+  } catch (error) {
+    debugWarn(
+      "native-session",
+      "Failed to delete native capture spool directory",
+      error,
+    );
+  }
 }
 
 function scavengeStaleSpoolDirectories(): void {
@@ -105,6 +133,89 @@ process.once("exit", () => {
 });
 function key(source: NativeSessionSource, sessionId: string) {
   return `${source}:${sessionId}`;
+}
+
+async function captureAdmission(
+  admission: NativeCaptureAdmission,
+): Promise<void> {
+  let failure: unknown;
+  for (const delayMs of SEAL_RETRY_DELAYS_MS) {
+    if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
+    try {
+      await captureNativeSession(
+        admission.source,
+        admission.sessionId,
+        admission.scope,
+        admission.env,
+        admission.requestOptions,
+      );
+      admission.release();
+      return;
+    } catch (error) {
+      failure = error;
+    }
+  }
+  try {
+    await retireFailedCaptureSession(admission);
+  } finally {
+    admission.release();
+  }
+  throw failure;
+}
+
+async function retireFailedCaptureSession(
+  admission: NativeCaptureAdmission,
+): Promise<void> {
+  const id = key(admission.source, admission.sessionId);
+  const state = states.get(id);
+  if (!state) return;
+  if (state.retryTimer) clearTimeout(state.retryTimer);
+  await state.draining?.catch(() => undefined);
+  if (state.retryTimer) clearTimeout(state.retryTimer);
+  await discardAllSegments(state);
+  if (states.get(id) === state) states.delete(id);
+}
+
+export async function reserveNativeSessionCapture(
+  source: NativeSessionSource,
+  sessionId: string,
+  scope: NativeSessionScope,
+  env: NodeJS.ProcessEnv = process.env,
+  requestOptions: { baseUrl?: string; apiKey?: string; cloudUrl?: string } = {},
+): Promise<NativeSessionCaptureReservation> {
+  const id = key(source, sessionId);
+  while (true) {
+    const active = admissions.get(id);
+    if (active) {
+      await active.done;
+      continue;
+    }
+    let release!: () => void;
+    const done = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const admission: NativeCaptureAdmission = {
+      source,
+      sessionId,
+      scope: { ...scope },
+      env: { ...env },
+      requestOptions: { ...requestOptions },
+      done,
+      release: () => {
+        if (admissions.get(id) === admission) admissions.delete(id);
+        release();
+      },
+    };
+    admissions.set(id, admission);
+    let settled = false;
+    return {
+      async capture() {
+        if (settled) return;
+        settled = true;
+        await captureAdmission(admission);
+      },
+    };
+  }
 }
 function sameScope(a: NativeSessionScope, b: NativeSessionScope) {
   return a.agentId === b.agentId && a.conversationId === b.conversationId;
@@ -248,8 +359,7 @@ async function seal(
     await input.close();
     await output?.close();
     if (!retained) {
-      await rm(directory, { recursive: true, force: true });
-      spoolDirectories.delete(directory);
+      await cleanupSpoolDirectory(directory);
     }
   }
 }
@@ -312,9 +422,65 @@ async function drain(
     }
     state.segments.shift();
     const directory = join(segment.path, "..");
-    await rm(directory, { recursive: true, force: true });
-    spoolDirectories.delete(directory);
+    await cleanupSpoolDirectory(directory);
   }
+}
+
+function retryableDrainFailure(error: unknown): boolean {
+  if (error instanceof ApiRequestError) {
+    return error.status === 408 || error.status === 429 || error.status >= 500;
+  }
+  if (
+    error instanceof Error &&
+    (error.name === "AbortError" || error.name === "TimeoutError")
+  ) {
+    return true;
+  }
+  const code =
+    (error as NodeJS.ErrnoException)?.code ??
+    (
+      error as {
+        cause?: NodeJS.ErrnoException;
+      }
+    )?.cause?.code;
+  return Boolean(
+    code &&
+      [
+        "EAI_AGAIN",
+        "ECONNABORTED",
+        "ECONNREFUSED",
+        "ECONNRESET",
+        "EHOSTUNREACH",
+        "EINTR",
+        "ENETDOWN",
+        "ENETUNREACH",
+        "ETIMEDOUT",
+      ].includes(code),
+  );
+}
+
+async function discardAllSegments(state: CaptureState): Promise<void> {
+  const segments = state.segments.splice(0);
+  for (const segment of segments) {
+    const directory = join(segment.path, "..");
+    await cleanupSpoolDirectory(directory);
+  }
+  // The server permanently rejected this conversation/session scope. Mark the
+  // sealed bytes intentionally dropped so later local appends cannot reopen a
+  // gap or retain the rejected spool forever.
+  state.ackedOffset = state.sealedOffset;
+  state.retryDelayMs = INITIAL_DRAIN_RETRY_MS;
+}
+
+async function discardRejectedSegment(state: CaptureState): Promise<void> {
+  const segment = state.segments.shift();
+  if (!segment) return;
+  const directory = join(segment.path, "..");
+  await cleanupSpoolDirectory(directory);
+  // Only the head segment was rejected. Later segments can belong to other
+  // actors and must each receive their own upload attempt.
+  state.ackedOffset = segment.end;
+  state.retryDelayMs = INITIAL_DRAIN_RETRY_MS;
 }
 
 function startDrain(
@@ -331,11 +497,17 @@ function startDrain(
   const running = drain(state, source, sessionId);
   state.draining = running;
   let failed = false;
+  let continueAfterFailure = false;
   void running
-    .catch((error) => {
+    .catch(async (error) => {
       failed = true;
       state.drainError = error;
       reportNativeSessionCaptureFailure(source, sessionId, error);
+      if (!retryableDrainFailure(error)) {
+        await discardRejectedSegment(state);
+        continueAfterFailure = state.segments.length > 0;
+        return;
+      }
       if (!state.retryTimer) {
         const delayMs = state.retryDelayMs;
         state.retryDelayMs = Math.min(
@@ -351,7 +523,7 @@ function startDrain(
     })
     .finally(() => {
       if (state.draining === running) state.draining = undefined;
-      if (!failed && state.segments.length) {
+      if ((!failed || continueAfterFailure) && state.segments.length) {
         startDrain(state, source, sessionId);
       } else if (!failed) {
         state.retryDelayMs = INITIAL_DRAIN_RETRY_MS;
@@ -381,12 +553,15 @@ export function captureNativeSession(
     baseUrl: requestOptions.baseUrl,
     apiKey: requestOptions.apiKey,
   };
-  const sealing = state.sealing.then(() =>
-    seal(state, source, sessionId, frozenScope, env, frozenOptions),
-  );
-  // A failed seal poisons this process-owned session. Advancing to a later
-  // reservation would permanently skip bytes whose actor could not be frozen.
-  state.sealing = sealing;
+  const sealing = state.sealing
+    .catch(() => undefined)
+    .then(() =>
+      seal(state, source, sessionId, frozenScope, env, frozenOptions),
+    );
+  // Production callers hold a per-session admission until this actor's exact
+  // boundary succeeds. Keep the queue usable for that same reservation's
+  // bounded retry rather than poisoning every future attempt in the process.
+  state.sealing = sealing.catch(() => undefined);
   return sealing.then(() => startDrain(state, source, sessionId));
 }
 
@@ -433,6 +608,8 @@ export async function clearNativeSessionCaptureForTests(): Promise<void> {
   sealHookForTests = undefined;
   const captured = [...states.values()];
   states.clear();
+  for (const admission of admissions.values()) admission.release();
+  admissions.clear();
   for (const state of captured) {
     if (state.retryTimer) clearTimeout(state.retryTimer);
     await state.sealing.catch(() => undefined);
@@ -440,8 +617,7 @@ export async function clearNativeSessionCaptureForTests(): Promise<void> {
     if (state.retryTimer) clearTimeout(state.retryTimer);
     for (const segment of state.segments) {
       const directory = join(segment.path, "..");
-      await rm(directory, { recursive: true, force: true });
-      spoolDirectories.delete(directory);
+      await cleanupSpoolDirectory(directory);
     }
   }
 }

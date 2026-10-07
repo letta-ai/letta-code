@@ -3,6 +3,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  markListenerConnectionInitialized,
+  openListenerConnection,
+  subscribeListenerConnection,
+} from "./connection";
+import {
   getOrCreateScopedRuntime,
   promotePreparedInputTerminals,
 } from "./conversation-runtime";
@@ -28,7 +33,41 @@ import {
   markRecoveryClaimCompletionPending,
   retireAcknowledgedRecoveryClaim,
 } from "./recovery-claim-completion";
+import type { ListenerTransport } from "./transport";
 import { createTurnFinishedStore } from "./turn-finished-replay";
+
+function installTerminalOwner(
+  listener: ReturnType<typeof createRuntime>,
+  connectionId: string,
+): void {
+  const transport: ListenerTransport = {
+    kind: "local",
+    bufferedAmount: 0,
+    isOpen: () => true,
+    send: () => {},
+  };
+  const connection = openListenerConnection({
+    runtime: listener,
+    connectionId,
+    writer: transport,
+    options: {
+      connectionId,
+      wsUrl: "local://test",
+      deviceId: connectionId,
+      connectionName: connectionId,
+      onConnected: () => {},
+      onDisconnected: () => {},
+      onError: () => {},
+    },
+  });
+  subscribeListenerConnection(listener, connection.id, {
+    agent_id: "agent-1",
+    conversation_id: "conv-1",
+  });
+  markListenerConnectionInitialized(listener, connection.id, connection);
+  getOrCreateScopedRuntime(listener, "agent-1", "conv-1").activeConnectionId =
+    connection.id;
+}
 
 test("identity-free recorded recovery persists consumer evidence before retirement", () => {
   const directory = mkdtempSync(join(tmpdir(), "identity-free-recorded-"));
@@ -79,6 +118,63 @@ test("identity-free recorded recovery persists consumer evidence before retireme
         revision: record.revision ?? "",
       }),
     ).toBe(true);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("identity-free recorded retry reuses the put-committed owner after restart", () => {
+  const directory = mkdtempSync(join(tmpdir(), "identity-free-owner-retry-"));
+  const terminalStore = createTurnFinishedStore(join(directory, "terminals"));
+  const interruptedStore = createInterruptedTurnStore(
+    join(directory, "interrupted"),
+  );
+  try {
+    const record = interruptedStore.write({
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      runId: "run-owner-retry",
+      toolCallIds: [],
+      results: [],
+      requestOtid: "request-owner-retry",
+      workingDirectory: "/owner-retry",
+      durableInputIdentities: [],
+      terminalConsumerIds: ["slack:agent-1"],
+    });
+    const firstListener = createRuntime();
+    installTerminalOwner(firstListener, "connection-a");
+    const firstRuntime = getOrCreateScopedRuntime(
+      firstListener,
+      "agent-1",
+      "conv-1",
+    );
+    expect(
+      prepareRecordedInputTerminal(
+        firstListener,
+        terminalStore,
+        firstRuntime,
+        record,
+        record.runId,
+      ),
+    ).toBe(true);
+    const original = terminalStore.read("agent-1", "conv-1")?.terminals[0];
+    expect(original?.owner.connectionId).toBe("connection-a");
+
+    const restarted = createRuntime();
+    installTerminalOwner(restarted, "connection-b");
+    expect(
+      prepareRecordedInputTerminal(
+        restarted,
+        terminalStore,
+        getOrCreateScopedRuntime(restarted, "agent-1", "conv-1"),
+        record,
+        record.runId,
+      ),
+    ).toBe(true);
+    const terminals = terminalStore.read("agent-1", "conv-1")?.terminals;
+    expect(terminals).toHaveLength(1);
+    expect(terminals?.[0]?.message).toEqual(original?.message);
+    expect(terminals?.[0]?.owner).toEqual(original?.owner);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -220,6 +316,186 @@ test("stale terminal cleanup failures defer startup and converge on later promot
     ).toBe(0);
     expect(loadPreparedInputTerminals(listener)).toEqual([]);
   } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("startup promotion contains load put and post-put clear failures", () => {
+  const directory = mkdtempSync(join(tmpdir(), "promotion-io-failures-"));
+  const listener = createRuntime();
+  listener.acceptedInputDispositionLedger =
+    createAcceptedInputDispositionLedger({ persistentPath: null });
+  const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+  const terminalStore = createTurnFinishedStore(join(directory, "terminals"));
+  const interruptedStore = createInterruptedTurnStore(
+    join(directory, "interrupted"),
+  );
+  const identity = ordinaryInputIdentity("cm-promotion-io");
+  if (!identity) throw new Error("missing promotion identity");
+  try {
+    const admission = reserveInputDisposition(runtime, identity);
+    if (admission.kind !== "reserved") throw new Error("expected reservation");
+    expect(
+      commitInputDisposition(runtime, admission.reservation, "started", {
+        incoming: {
+          type: "message",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+          messages: [
+            {
+              role: "user",
+              content: "run",
+              client_message_id: "cm-promotion-io",
+            },
+          ],
+        },
+      }),
+    ).toBe(true);
+    const owner = {
+      connectionId: "connection-promotion",
+      canRotate: false,
+      lineageId: null,
+      terminalIdentity: "terminal-promotion-io",
+      interruptedRevision: "revision-promotion-io",
+    };
+    const message = {
+      type: "turn_finished" as const,
+      turn_id: "turn-promotion-io",
+      stop_reason: "end_turn" as const,
+      terminal_consumer_ids: ["slack:agent-1"],
+    };
+    expect(
+      prepareInputTerminal(runtime, [identity], {
+        scope: { agentId: "agent-1", conversationId: "conv-1" },
+        message,
+        owner,
+      }),
+    ).toBe(true);
+
+    expect(() =>
+      promotePreparedInputTerminals(
+        listener,
+        terminalStore,
+        undefined,
+        interruptedStore,
+        undefined,
+        undefined,
+        () => {
+          throw new Error("transient journal read");
+        },
+      ),
+    ).not.toThrow();
+    expect(loadPreparedInputTerminals(listener)).toHaveLength(1);
+
+    const failingPutStore = {
+      ...terminalStore,
+      put: () => {
+        throw new Error("transient terminal write");
+      },
+    };
+    expect(() =>
+      promotePreparedInputTerminals(listener, failingPutStore),
+    ).not.toThrow();
+    expect(loadPreparedInputTerminals(listener)).toHaveLength(1);
+
+    expect(
+      promotePreparedInputTerminals(
+        listener,
+        terminalStore,
+        undefined,
+        interruptedStore,
+        undefined,
+        () => false,
+      ),
+    ).toBe(0);
+    expect(loadPreparedInputTerminals(listener)).toHaveLength(1);
+    expect(terminalStore.read("agent-1", "conv-1")?.terminals).toHaveLength(1);
+
+    expect(promotePreparedInputTerminals(listener, terminalStore)).toBe(1);
+    expect(loadPreparedInputTerminals(listener)).toEqual([]);
+    expect(terminalStore.read("agent-1", "conv-1")?.terminals).toHaveLength(1);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("retained recovery journals schedule bounded promotion retries without an external wake", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "promotion-timer-retry-"));
+  const listener = createRuntime();
+  listener.acceptedInputDispositionLedger =
+    createAcceptedInputDispositionLedger({ persistentPath: null });
+  const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+  const terminalStore = createTurnFinishedStore(join(directory, "terminals"));
+  const identity = ordinaryInputIdentity("cm-promotion-timer");
+  if (!identity) throw new Error("missing promotion identity");
+  try {
+    const admission = reserveInputDisposition(runtime, identity);
+    if (admission.kind !== "reserved") throw new Error("expected reservation");
+    expect(
+      commitInputDisposition(runtime, admission.reservation, "started", {
+        incoming: {
+          type: "message",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+          messages: [
+            {
+              role: "user",
+              content: "run",
+              client_message_id: "cm-promotion-timer",
+            },
+          ],
+        },
+      }),
+    ).toBe(true);
+    expect(
+      prepareInputTerminal(runtime, [identity], {
+        scope: { agentId: "agent-1", conversationId: "conv-1" },
+        message: {
+          type: "turn_finished",
+          turn_id: "turn-promotion-timer",
+          stop_reason: "end_turn",
+          terminal_consumer_ids: ["slack:agent-1"],
+        },
+        owner: {
+          connectionId: null,
+          canRotate: true,
+          lineageId: null,
+          terminalIdentity: "terminal-promotion-timer",
+          interruptedRevision: "revision-promotion-timer",
+          recoveryLineageId: "lineage-promotion-timer",
+          interruptedAuthorityRevision: "authority-promotion-timer",
+        },
+      }),
+    ).toBe(true);
+    let attempts = 0;
+    const absentAuthority = {
+      readRecoverySnapshot: () => {
+        attempts += 1;
+        return null;
+      },
+    };
+    listener.promotePreparedInputTerminals = () =>
+      promotePreparedInputTerminals(
+        listener,
+        terminalStore,
+        undefined,
+        absentAuthority,
+      );
+    expect(listener.promotePreparedInputTerminals()).toBe(0);
+    expect(
+      promotePreparedInputTerminals(
+        listener,
+        terminalStore,
+        { agentId: "agent-other", conversationId: "conv-other" },
+        absentAuthority,
+      ),
+    ).toBe(0);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    listener.intentionallyClosed = true;
+    expect(attempts).toBeGreaterThan(1);
+    expect(loadPreparedInputTerminals(listener)).toHaveLength(1);
+  } finally {
+    listener.intentionallyClosed = true;
     rmSync(directory, { recursive: true, force: true });
   }
 });

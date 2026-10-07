@@ -42,7 +42,7 @@ import {
 } from "./control-inputs";
 import {
   getOrCreateScopedRuntime,
-  promotePreparedInputTerminals,
+  promotePreparedInputTerminalsSafely,
   restoreDurableQueuedInputs,
 } from "./conversation-runtime";
 import { loadPersistedCwdMap } from "./cwd";
@@ -284,14 +284,14 @@ export async function startConnectedListenerRuntime(
         : "_local_open",
   });
   runtime.promotePreparedInputTerminals = () =>
-    promotePreparedInputTerminals(runtime);
+    promotePreparedInputTerminalsSafely(runtime);
   const restoreQueuedInputs =
     options.restoreDurableQueuedInputs ?? restoreDurableQueuedInputs;
   runtime.restoreDurableQueuedInputs = () =>
     runtime === getActiveRuntime() && !runtime.intentionallyClosed
       ? restoreQueuedInputs(runtime)
       : 0;
-  promotePreparedInputTerminals(runtime);
+  runtime.promotePreparedInputTerminals();
   if (
     !(await completeInitialConnectionStartup(
       runtime,

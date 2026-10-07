@@ -89,6 +89,102 @@ test("a quarantined interrupted scope fences every started payload but not queue
   }
 });
 
+test.each(["ordinary", "dual"] as const)(
+  "%s corrupt interrupted state fences started payloads during durable restore",
+  (kind) => {
+    const root = mkdtempSync(join(tmpdir(), `letta-corrupt-${kind}-restore-`));
+    try {
+      const ledgerPath = join(root, "accepted-inputs.json");
+      const runtime = createDurableRuntime(ledgerPath);
+      for (const [clientMessageId, disposition] of [
+        ["cm-corrupt-started", "started"],
+        ["cm-corrupt-queued", "queued"],
+      ] as const) {
+        const identity = ordinaryInputIdentity(clientMessageId);
+        if (!identity) throw new Error("expected identity");
+        const admission = reserveInputDisposition(runtime, identity);
+        if (admission.kind !== "reserved")
+          throw new Error("expected reservation");
+        expect(
+          commitInputDisposition(runtime, admission.reservation, disposition, {
+            incoming: durableIncoming(clientMessageId),
+          }),
+        ).toBe(true);
+      }
+      const interruptedDirectory = join(root, "interrupted");
+      const interruptedStore = createInterruptedTurnStore(interruptedDirectory);
+      const predecessor = interruptedStore.write({
+        agentId: "agent-durable",
+        conversationId: "conversation-durable",
+        runId: "run-corrupt",
+        toolCallIds: [],
+        results: [],
+        requestOtid: "request-corrupt",
+        workingDirectory: "/corrupt",
+        durableInputIdentities: [{ domain: "input", id: "cm-corrupt-started" }],
+        ...(kind === "dual"
+          ? {
+              recoveryClaimCompletion: {
+                lineageId: "lineage-corrupt",
+                state: "running" as const,
+                effectToolCallIds: [],
+              },
+            }
+          : {}),
+      });
+      if (kind === "dual") {
+        interruptedStore.write(
+          {
+            ...predecessor,
+            runId: "run-successor",
+            recoveryClaimCompletion: {
+              lineageId: "lineage-corrupt",
+              state: "running",
+              independentSuccessor: true,
+              effectRevision: predecessor.revision,
+              effectToolCallIds: [],
+              effectInputIdentities: predecessor.durableInputIdentities,
+            },
+          },
+          predecessor.revision,
+        );
+        interruptedStore.writeRecoveryLineageSnapshot({
+          agentId: "agent-durable",
+          conversationId: "conversation-durable",
+          lineageId: "lineage-corrupt",
+          update: { results: [] },
+        });
+      }
+      const files = readdirSync(interruptedDirectory);
+      const main = files.find((file) => file.endsWith(".json"));
+      if (!main) throw new Error("missing corrupt main fixture");
+      writeFileSync(join(interruptedDirectory, main), "{truncated", "utf8");
+      if (kind === "dual") {
+        const sidecar = files.find((file) => file.includes(".json.recovery-"));
+        if (!sidecar) throw new Error("missing corrupt sidecar fixture");
+        writeFileSync(
+          join(interruptedDirectory, sidecar),
+          "{truncated",
+          "utf8",
+        );
+      }
+
+      const restarted = createDurableRuntime(ledgerPath);
+      expect(
+        restoreDurableQueuedInputs(restarted.listener, undefined, undefined, {
+          interruptedStore,
+        }),
+      ).toBe(1);
+      expect(restarted.queueRuntime.peek()).toHaveLength(1);
+      expect(restarted.queueRuntime.peek()[0]?.clientMessageId).toBe(
+        "cm-corrupt-queued",
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
 function durableIncoming(clientMessageId: string): IncomingMessage {
   return {
     type: "message",
