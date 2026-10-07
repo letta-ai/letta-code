@@ -368,6 +368,53 @@ console.log("released");
     expect(result.stderr).toBe("");
   });
 
+  test("applies the operation deadline while reading a partial request body", async () => {
+    const fixture = await buildNodeFixture(`
+import { createConnection } from "node:net";
+const handle = startBrowserDiscoveryServer({
+  connectMcpOAuth: async () => {
+    throw new Error("OAuth should not start for a partial body");
+  },
+  oauthTimeoutMs: 25,
+  port: 0,
+});
+const address = await handle.ready;
+const socket = createConnection(address.port, address.host);
+await new Promise((resolve, reject) => {
+  socket.once("connect", resolve);
+  socket.once("error", reject);
+});
+socket.write(
+  "POST /mcp-oauth/connect HTTP/1.1\\r\\n" +
+  "Host: " + address.host + ":" + address.port + "\\r\\n" +
+  "Content-Type: application/json\\r\\n" +
+  "Origin: https://chat.letta.com\\r\\n" +
+  "X-Letta-Local-Connect: 1\\r\\n" +
+  "Content-Length: 100\\r\\n" +
+  "Connection: keep-alive\\r\\n" +
+  "\\r\\n" +
+  "{",
+);
+await Promise.race([
+  new Promise((resolve) => socket.once("close", resolve)),
+  new Promise((_resolve, reject) => setTimeout(
+    () => reject(new Error("partial request body outlived the deadline")),
+    1_000,
+  )),
+]);
+await handle.close();
+console.log("timed-out");
+`);
+    const result = spawnSync("node", [fixture], {
+      encoding: "utf8",
+      timeout: 5_000,
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe("timed-out");
+    expect(result.stderr).toBe("");
+  });
+
   test("bounds the complete browser-device OAuth operation", async () => {
     let timeoutName: string | undefined;
     const handle = startBrowserDiscoveryServer({

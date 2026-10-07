@@ -345,7 +345,7 @@ async function handleMcpOAuthConnectRequest(
     }
     signal.throwIfAborted();
     const parsed = canonicalizeBrowserDeviceMcpOAuthRequest(
-      parseMcpOAuthRequest(await readRequestBody(request)),
+      parseMcpOAuthRequest(await readRequestBody(request, signal)),
     );
     signal.throwIfAborted();
     connectionKey = `${parsed.service}\0${parsed.serverUrl}`;
@@ -419,7 +419,10 @@ class BrowserRequestError extends Error {
   }
 }
 
-async function readRequestBody(request: IncomingMessage): Promise<string> {
+async function readRequestBody(
+  request: IncomingMessage,
+  signal: AbortSignal,
+): Promise<string> {
   const declaredLength = Number(request.headers["content-length"]);
   if (
     Number.isFinite(declaredLength) &&
@@ -430,17 +433,32 @@ async function readRequestBody(request: IncomingMessage): Promise<string> {
   }
   const chunks: Buffer[] = [];
   let size = 0;
-  for await (const rawChunk of request) {
-    const chunk = Buffer.isBuffer(rawChunk)
-      ? rawChunk
-      : Buffer.from(rawChunk as ArrayBuffer);
-    size += chunk.length;
-    if (size > MAX_REQUEST_BODY_BYTES) {
-      throw new BrowserRequestError(413);
+  const abortBodyRead = (): void => {
+    request.destroy(
+      signal.reason instanceof Error
+        ? signal.reason
+        : new DOMException("Browser request timed out", "TimeoutError"),
+    );
+  };
+  signal.addEventListener("abort", abortBodyRead, { once: true });
+  try {
+    signal.throwIfAborted();
+    for await (const rawChunk of request) {
+      signal.throwIfAborted();
+      const chunk = Buffer.isBuffer(rawChunk)
+        ? rawChunk
+        : Buffer.from(rawChunk as ArrayBuffer);
+      size += chunk.length;
+      if (size > MAX_REQUEST_BODY_BYTES) {
+        throw new BrowserRequestError(413);
+      }
+      chunks.push(chunk);
     }
-    chunks.push(chunk);
+    signal.throwIfAborted();
+    return Buffer.concat(chunks).toString("utf8");
+  } finally {
+    signal.removeEventListener("abort", abortBodyRead);
   }
-  return Buffer.concat(chunks).toString("utf8");
 }
 
 function parseMcpOAuthRequest(value: string): BrowserDeviceMcpOAuthRequest {
