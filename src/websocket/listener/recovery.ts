@@ -571,8 +571,19 @@ async function executeRecoveredApprovalContinuation(params: {
       runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;
       runtime.currentLoadedTools =
         preparedToolContext.preparedToolContext.loadedToolNames;
+      // Lazy: turn-approval imports this module.
+      const { requestNestedToolApproval } = await import("./turn-approval");
       approvalResults = await executeApprovals(decisions, undefined, {
         abortSignal: recoveryLease.signal,
+        onNestedToolApproval: (request) =>
+          requestNestedToolApproval({
+            runtime,
+            socket,
+            turnLease: recoveryLease,
+            agentId: recovered.agentId,
+            conversationId: recovered.conversationId,
+            request,
+          }),
         onStreamingOutput: emitToolExecutionOutput,
         toolContextId: preparedToolContext.preparedToolContext.contextId,
         workingDirectory,

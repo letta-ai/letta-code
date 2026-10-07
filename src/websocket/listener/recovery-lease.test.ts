@@ -1,5 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
 import { STALE_APPROVAL_RECOVERY_DENIAL_REASON } from "@/agent/turn-recovery-policy";
+import { resolvePendingApprovalResolver } from "./approval";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { enqueueInboundUserMessage } from "./inbound-queue";
 import { createRuntime } from "./lifecycle";
@@ -124,6 +125,55 @@ describe("recovered approval lease boundaries", () => {
     expect(JSON.stringify(receivedMessages)).toContain(
       '"attribution":{"acting_user_id":"cloud-user-charles"}',
     );
+  });
+
+  test("recovered CodeMode executions forward nested approvals", async () => {
+    const runtime = getOrCreateScopedRuntime(
+      createRuntime(),
+      "agent-1",
+      "conv-1",
+    );
+    runtime.recoveredApprovalState = createRecoveredState();
+    let nestedDecision:
+      | { approved: boolean; args?: Record<string, unknown> }
+      | undefined;
+
+    const handled = await startRecoveredApprovalContinuation(
+      runtime,
+      createTransport([]),
+      async (_message, _socket, ownerRuntime, _s, _c, _b, turnLease) => {
+        if (turnLease) ownerRuntime.turnLifecycle.finish(turnLease, "end_turn");
+      },
+      {
+        dependencies: {
+          ensureSecretsHydrated: async () => {},
+          prepareToolExecutionContext: async () => createPreparedToolContext(),
+          executeApprovalBatch: async (_decisions, _onChunk, options) => {
+            const nested = options?.onNestedToolApproval?.({
+              toolName: "Write",
+              args: { file_path: "/tmp/nested" },
+              toolCallId: "nested-call",
+            });
+            if (!nested) throw new Error("Missing nested approval callback");
+            await waitFor(() => runtime.pendingApprovalResolvers.size > 0);
+            const pending = [...runtime.pendingApprovalResolvers.values()][0];
+            if (!pending) throw new Error("Missing nested approval");
+            expect(pending.controlRequest?.request.tool_call_id).toBe(
+              "nested-call",
+            );
+            resolvePendingApprovalResolver(runtime, {
+              request_id: pending.requestId,
+              decision: { behavior: "allow" },
+            });
+            nestedDecision = await nested;
+            return createDenialResults();
+          },
+        },
+      },
+    );
+
+    expect(handled).toBe(true);
+    expect(nestedDecision?.approved).toBe(true);
   });
 
   test("stale recovered denial processing emits nothing into a replacement run", async () => {
