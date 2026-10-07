@@ -848,6 +848,9 @@ describe("recovered approval lease boundaries", () => {
         return `revision-${nextRevision}`;
       },
       "revision-observed",
+      undefined,
+      undefined,
+      true,
     );
     await evidence.write({ results: [] }, "before_tool_execution");
     await evidence.write({ results: [] }, "after_tool_execution");

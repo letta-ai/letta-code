@@ -9,7 +9,28 @@ import {
   createInterruptedTurnStore,
 } from "./interrupted-turn-record";
 import { createRuntime } from "./lifecycle";
-import { mergeSettledRecoveryResultRetriably } from "./recovery-evidence";
+import {
+  createRecoveryEvidenceCheckpoint,
+  mergeSettledRecoveryResultRetriably,
+} from "./recovery-evidence";
+
+test("custom recovery authority tokens require a matching store", async () => {
+  const runtime = getOrCreateScopedRuntime(
+    createRuntime(),
+    "agent-1",
+    "conv-1",
+  );
+  const evidence = createRecoveryEvidenceCheckpoint(
+    runtime,
+    () => "custom-authority-revision",
+    "revision-observed",
+  );
+  await expect(
+    evidence.write({ results: [] }, "before_tool_execution"),
+  ).rejects.toThrow(
+    "Custom recovery authority token requires matching authority store",
+  );
+});
 
 test("exact recovery settlement retries beyond a live lock holder", async () => {
   const directory = mkdtempSync(join(tmpdir(), "listener-exact-result-lock-"));

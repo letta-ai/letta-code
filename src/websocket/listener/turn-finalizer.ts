@@ -1,8 +1,6 @@
 import type { createBuffers } from "@/cli/helpers/accumulator";
-import {
-  readInterruptedTurn,
-  readInterruptedTurnAuthorityRevision,
-} from "./interrupted-turn-read";
+import { createInterruptedTurnStore } from "./interrupted-turn-record";
+import type { RecoveryAuthorityStore } from "./recovery-evidence";
 import {
   claimPendingTeleportAtBoundary,
   finishClaimedTeleport,
@@ -29,8 +27,11 @@ export function createTurnFinalizer(params: {
   deferInterruptedCleanup?: boolean;
   recoveryLineageId?: string;
   recoveryTerminalRevision?: string;
+  recoveryAuthorityStore?: RecoveryAuthorityStore;
 }) {
   const recoveryLineageId = params.recoveryLineageId;
+  const recoveryAuthorityStore =
+    params.recoveryAuthorityStore ?? createInterruptedTurnStore();
   let finalized = false;
   const noteFinalization = (
     transition: ReturnType<typeof finishListenerTurn>,
@@ -58,13 +59,18 @@ export function createTurnFinalizer(params: {
                 params.interruptedRevisionRef?.current,
               recoveryLineageId,
               readInterruptedAuthorityRevision: () =>
-                readInterruptedTurnAuthorityRevision(
-                  params.runtime,
+                recoveryAuthorityStore.readRecoverySnapshot(
+                  params.runtime.agentId ?? "",
+                  params.runtime.conversationId,
                   recoveryLineageId,
-                ),
+                )?.revisionToken,
               readInterruptedRevision: () =>
-                readInterruptedTurn(params.runtime, recoveryLineageId)
-                  ?.revision,
+                recoveryAuthorityStore.readRecoverySnapshot(
+                  params.runtime.agentId ?? "",
+                  params.runtime.conversationId,
+                  recoveryLineageId,
+                )?.record.revision,
+              recoveryAuthorityGuard: recoveryAuthorityStore,
             }
           : {}),
         ...(params.terminalCommitGuard

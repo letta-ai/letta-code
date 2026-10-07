@@ -820,7 +820,7 @@ test("non-consumer promotion still defers when journal clearing fails", () => {
   }
 });
 
-test("crash-proof non-consumer journal persists before atomic retirement", () => {
+test("predecessor recovery journal infers non-consumer crash proof", () => {
   const listener = createRuntime();
   const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
   const identity = ordinaryInputIdentity("non-consumer-crash-proof");
@@ -829,7 +829,6 @@ test("crash-proof non-consumer journal persists before atomic retirement", () =>
   }
   expect(
     prepareInputTerminal(runtime, [identity], {
-      persistWithoutConsumers: true,
       scope: { agentId: "agent-1", conversationId: "conv-1" },
       message: {
         type: "turn_finished",
@@ -841,6 +840,9 @@ test("crash-proof non-consumer journal persists before atomic retirement", () =>
         canRotate: true,
         lineageId: null,
         terminalIdentity: "terminal-non-consumer-crash-proof",
+        interruptedRevision: "interrupted-non-consumer-crash-proof",
+        recoveryLineageId: "lineage-non-consumer-crash-proof",
+        interruptedAuthorityRevision: "authority-non-consumer-crash-proof",
       },
     }),
   ).toBe(true);
@@ -854,19 +856,36 @@ test("crash-proof non-consumer journal persists before atomic retirement", () =>
       if (failPut) throw new Error("non-consumer put failed");
     },
   };
-  expect(promotePreparedInputTerminals(listener, terminalStore as never)).toBe(
-    0,
-  );
+  const authorityStore = {
+    readRecoverySnapshot: () => ({
+      record: { revision: "interrupted-non-consumer-crash-proof" },
+      revisionToken: "authority-non-consumer-crash-proof",
+    }),
+    readRetiredRecoveryAuthority: () => null,
+    withRecoveryAuthority: ({ action }: { action: () => boolean }) => action(),
+  };
+  expect(
+    promotePreparedInputTerminals(
+      listener,
+      terminalStore as never,
+      undefined,
+      authorityStore as never,
+    ),
+  ).toBe(0);
   expect(loadPreparedInputTerminals(listener)).toEqual([
     expect.objectContaining({
-      persistWithoutConsumers: true,
       publicationClaimed: true,
     }),
   ]);
   failPut = false;
-  expect(promotePreparedInputTerminals(listener, terminalStore as never)).toBe(
-    1,
-  );
+  expect(
+    promotePreparedInputTerminals(
+      listener,
+      terminalStore as never,
+      undefined,
+      authorityStore as never,
+    ),
+  ).toBe(1);
   expect(putCalls).toBe(2);
   expect(loadPreparedInputTerminals(listener)).toHaveLength(0);
 });

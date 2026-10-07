@@ -93,6 +93,10 @@ test("production batch waits for crossed effects before scheduling claim-loss re
     processTurn,
     {
       dependencies: {
+        recoveryAuthorityStore: {
+          readRecoverySnapshot: () => null,
+          withRecoveryAuthority: ({ action }) => action(),
+        },
         ensureSecretsHydrated: async () => {},
         ensureModAdapters: async () => [],
         prepareToolExecutionContext: async (params) => {

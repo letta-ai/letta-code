@@ -309,12 +309,6 @@ export function getOrCreateScopedRuntime(
     getOrCreateConversationRuntime(listener, agentId, conversationId),
   );
 }
-
-/**
- * Rehydrate every durable queued input before startup schedules its first queue
- * pump. Existing volatile items win during same-process graceful replacement;
- * their stable client id prevents a second queue item from being inserted.
- */
 export function restoreDurableQueuedInputs(
   listener: ListenerRuntime,
   terminalStore = createTurnFinishedStore(),
@@ -436,7 +430,6 @@ export function restoreDurableQueuedInputs(
   }
   return restored;
 }
-
 /** Promote terminal journals before connection state-sync attempts replay. */
 export function promotePreparedInputTerminals(
   listener: ListenerRuntime,
@@ -766,11 +759,18 @@ export function promotePreparedInputTerminals(
     }
     let owner = prepared.owner;
     let replayConnectionId: string | null = null;
+    const hasTerminalConsumers = Boolean(
+      prepared.message.terminal_consumer_ids?.length,
+    );
+    const persistsWithoutConsumers =
+      prepared.persistWithoutConsumers ||
+      (!hasTerminalConsumers &&
+        Boolean(
+          prepared.owner.recoveryLineageId &&
+            prepared.owner.interruptedAuthorityRevision,
+        ));
     try {
-      const hasTerminalConsumers = Boolean(
-        prepared.message.terminal_consumer_ids?.length,
-      );
-      if (hasTerminalConsumers || prepared.persistWithoutConsumers) {
+      if (hasTerminalConsumers || persistsWithoutConsumers) {
         const existing = terminalStore
           .read(prepared.scope.agentId, prepared.scope.conversationId)
           ?.terminals.find((terminal) =>
@@ -851,7 +851,7 @@ export function promotePreparedInputTerminals(
     }
     if (
       !prepared.message.terminal_consumer_ids?.length &&
-      !prepared.persistWithoutConsumers &&
+      !persistsWithoutConsumers &&
       !clearPreparedTerminal(
         listener,
         prepared.scope,
@@ -982,7 +982,6 @@ export function promotePreparedInputTerminals(
   else resetPreparedTerminalPromotionRetry(listener);
   return promoted;
 }
-
 export function promotePreparedInputTerminalsSafely(
   listener: ListenerRuntime,
 ): number {

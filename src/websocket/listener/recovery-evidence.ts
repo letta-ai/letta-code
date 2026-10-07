@@ -28,6 +28,8 @@ export type RecoveredContinuationProcessTurn = (
   initialInterruptedRevision?: string,
   deferInterruptedCleanup?: boolean,
   recoveryLineageId?: string,
+  recoveryTerminalRevision?: string,
+  recoveryAuthorityStore?: RecoveryAuthorityStore,
 ) => Promise<void>;
 
 export type RecoveryEvidenceWriter = (
@@ -41,6 +43,10 @@ export type SettledRecoveryResultWriter = (
 ) =>
   | { revision: string; independentSuccessor: boolean }
   | Promise<{ revision: string; independentSuccessor: boolean }>;
+export type RecoveryAuthorityStore = Pick<
+  ReturnType<typeof createInterruptedTurnStore>,
+  "readRecoverySnapshot" | "withRecoveryAuthority"
+>;
 
 export async function mergeSettledRecoveryResultRetriably(
   store: ReturnType<typeof createInterruptedTurnStore>,
@@ -68,6 +74,7 @@ export function createRecoveryEvidenceCheckpoint(
   initialRevision?: string,
   recoveryLineageId?: string,
   settledResultWriter?: SettledRecoveryResultWriter,
+  customAuthorityStoreProvided = false,
 ) {
   let revision = initialRevision;
   let hasWritten = initialRevision !== undefined;
@@ -90,7 +97,14 @@ export function createRecoveryEvidenceCheckpoint(
             options,
           ));
       hasWritten = true;
-      if (typeof next === "string") revision = next;
+      if (typeof next === "string") {
+        if (writer && !customAuthorityStoreProvided) {
+          throw new Error(
+            "Custom recovery authority token requires matching authority store",
+          );
+        }
+        revision = next;
+      }
     });
     writeChain = operation.catch(() => {});
     return operation;
@@ -103,6 +117,11 @@ export function createRecoveryEvidenceCheckpoint(
           throw new Error("Missing recovery lineage for exact result commit");
         }
         if (settledResultWriter) {
+          if (!customAuthorityStoreProvided) {
+            throw new Error(
+              "Custom recovery authority token requires matching authority store",
+            );
+          }
           const next = await settledResultWriter(
             runtime,
             recoveryLineageId,

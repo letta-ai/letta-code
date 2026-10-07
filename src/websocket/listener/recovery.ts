@@ -77,6 +77,7 @@ import {
 import {
   createRecoveryEvidenceCheckpoint,
   type RecoveredContinuationProcessTurn,
+  type RecoveryAuthorityStore,
   type RecoveryEvidenceWriter,
   type SettledRecoveryResultWriter,
 } from "./recovery-evidence";
@@ -205,6 +206,7 @@ export type RecoveredContinuationDependencies = {
   >["executeTool"];
   recordListenerWork?: RecoveryEvidenceWriter;
   mergeSettledRecoveryResult?: SettledRecoveryResultWriter;
+  recoveryAuthorityStore?: RecoveryAuthorityStore;
   acquireRecoveryClaim?: typeof acquireRecoveryClaim;
   canRecover?: typeof canRecoverConversation;
 };
@@ -390,6 +392,8 @@ async function executeRecoveredApprovalContinuation(params: {
   const executeApprovals =
     dependencies?.executeApprovalBatch ?? executeApprovalBatch;
   const recordWork = dependencies?.recordListenerWork;
+  const recoveryAuthorityStore =
+    dependencies?.recoveryAuthorityStore ?? createInterruptedTurnStore();
   if (
     recordWork &&
     !dependencies?.mergeSettledRecoveryResult &&
@@ -420,6 +424,7 @@ async function executeRecoveredApprovalContinuation(params: {
     recovered.recoveryRevisionToken ?? recovered.interruptedRevision,
     recoveryLineageId,
     dependencies?.mergeSettledRecoveryResult,
+    dependencies?.recoveryAuthorityStore !== undefined,
   );
   const interruptedTerminalRevision = () =>
     recovered.recoveryUsesIndependentSuccessor
@@ -431,7 +436,7 @@ async function executeRecoveredApprovalContinuation(params: {
     recovered,
     getInterruptedRevision: interruptedTerminalRevision,
     getAuthorityRevision: () => evidence.revision,
-    authorityGuard: createInterruptedTurnStore(),
+    authorityStore: recoveryAuthorityStore,
     canCommit: hasRecoveryOwnership,
   });
   const shouldInterruptDelivery = () =>
@@ -858,6 +863,8 @@ async function executeRecoveredApprovalContinuation(params: {
       interruptedTerminalRevision(),
       recoveryClaim !== null,
       recoveryLineageId,
+      undefined,
+      recoveryAuthorityStore,
     );
 
     if (runtime.turnLifecycle.isCurrent(recoveryLease)) {

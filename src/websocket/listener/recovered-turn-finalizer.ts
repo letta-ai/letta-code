@@ -1,13 +1,10 @@
 import type { StopReasonType } from "@/types/protocol_v2";
-import {
-  readInterruptedTurn,
-  readInterruptedTurnAuthorityRevision,
-} from "./interrupted-turn-read";
-import type { createInterruptedTurnStore } from "./interrupted-turn-record";
+import { createInterruptedTurnStore } from "./interrupted-turn-record";
 import {
   emitLoopErrorNotice,
   getTranscriptLoopErrorMessage,
 } from "./recoverable-notices";
+import type { RecoveryAuthorityStore } from "./recovery-evidence";
 import {
   claimPendingTeleportAtBoundary,
   finishClaimedTeleport,
@@ -31,13 +28,11 @@ export function createRecoveredTurnFinalizer(params: {
   };
   getInterruptedRevision: () => string | undefined;
   getAuthorityRevision?: () => string | undefined;
-  authorityGuard?: Pick<
-    ReturnType<typeof createInterruptedTurnStore>,
-    "withRecoveryAuthority"
-  >;
+  authorityStore?: RecoveryAuthorityStore;
   canCommit: () => boolean;
 }) {
   const recoveryLineageId = params.recovered.recoveryLineageId;
+  const authorityStore = params.authorityStore ?? createInterruptedTurnStore();
   const commit = (options: Parameters<typeof finishListenerTurn>[2]) =>
     finishListenerTurn(params.runtime, params.recoveryLease, {
       ...options,
@@ -53,13 +48,18 @@ export function createRecoveredTurnFinalizer(params: {
               params.getAuthorityRevision?.(),
             recoveryLineageId,
             readInterruptedAuthorityRevision: () =>
-              readInterruptedTurnAuthorityRevision(
-                params.runtime,
+              authorityStore.readRecoverySnapshot(
+                params.runtime.agentId ?? "",
+                params.runtime.conversationId,
                 recoveryLineageId,
-              ),
+              )?.revisionToken,
             readInterruptedRevision: () =>
-              readInterruptedTurn(params.runtime, recoveryLineageId)?.revision,
-            recoveryAuthorityGuard: params.authorityGuard,
+              authorityStore.readRecoverySnapshot(
+                params.runtime.agentId ?? "",
+                params.runtime.conversationId,
+                recoveryLineageId,
+              )?.record.revision,
+            recoveryAuthorityGuard: authorityStore,
           }
         : {}),
       canCommit: params.canCommit,

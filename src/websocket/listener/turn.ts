@@ -46,6 +46,7 @@ import {
   getApprovalToolCallDesyncErrorText,
   shouldAttemptPostStopApprovalRecovery,
 } from "./recovery";
+import type { RecoveryAuthorityStore } from "./recovery-evidence";
 import {
   clearRecoveredApprovalStateUnlessRetained,
   evictConversationRuntimeIfIdle,
@@ -113,6 +114,7 @@ async function handleIncomingMessageInner(
   deferInterruptedCleanup: boolean = false,
   recoveryLineageId?: string,
   recoveryTerminalRevision?: string,
+  recoveryAuthorityStore?: RecoveryAuthorityStore,
 ): Promise<void> {
   const agentId = normalizeCwdAgentId(msg.agentId);
   const requestedConversationId = msg.conversationId || undefined;
@@ -176,6 +178,7 @@ async function handleIncomingMessageInner(
     deferInterruptedCleanup,
     recoveryLineageId,
     recoveryTerminalRevision,
+    recoveryAuthorityStore,
   });
   const {
     finishClaimedTurn,
