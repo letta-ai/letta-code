@@ -5,11 +5,6 @@ import {
   callMcpCatalogTool,
   type McpToolCatalog,
 } from "@/mcp-tool-catalog";
-import {
-  checkToolPermission,
-  executeCodeModeRemoteTool,
-  getCodeModeCapabilities,
-} from "@/tools/manager";
 import { scrubAmbientSecrets } from "@/tools/secret-substitution";
 import { isRecord } from "@/utils/type-guards";
 
@@ -45,6 +40,12 @@ export async function code_mode(input: Record<string, unknown>) {
       output: "CodeMode requires code and a prepared turn context (max 64 KiB)",
     };
   }
+  // Lazy: manager imports tool-definitions, which imports this module.
+  const {
+    checkToolPermission,
+    executeCodeModeRemoteTool,
+    getCodeModeCapabilities,
+  } = await import("@/tools/manager");
   const capabilities = getCodeModeCapabilities(invocation.toolContextId);
   if (!capabilities)
     return { status: "error", output: "CodeMode turn context unavailable" };
