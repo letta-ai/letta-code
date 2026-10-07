@@ -96,9 +96,15 @@ describe("browser discovery server", () => {
     await Bun.sleep(30);
     expect(ready).toBe(false);
 
-    await closeServer(blocker);
-    blockers.splice(blockers.indexOf(blocker), 1);
-    const address = await handle.ready;
+    const address = await withTimeout(
+      (async () => {
+        await closeServer(blocker);
+        blockers.splice(blockers.indexOf(blocker), 1);
+        return await handle.ready;
+      })(),
+      2_000,
+      "Timed out waiting for browser discovery port takeover",
+    );
 
     expect(address.port).toBe(port);
     expect(await (await fetch(address.url)).json()).toEqual({ status: "ok" });
@@ -302,4 +308,22 @@ async function waitForChildExit(
       resolve({ code, signal });
     });
   });
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string,
+): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
