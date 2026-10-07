@@ -156,6 +156,7 @@ test("resumes an external coding-agent session without the Cloud backend", async
     parentScope: {
       agentId: "agent-caller",
       conversationId: "conv-caller",
+      actingUserId: "user-caller",
     },
     completion: expect.any(Promise),
     interrupt: expect.any(Function),
@@ -232,28 +233,30 @@ test("tracks an idle Codex new turn through background lifecycle", async () => {
     report: "done",
     success: true,
   });
-  const result = await runWithRuntimeContext(caller, () =>
-    send_agent_message(
-      { agent_id: CODEX_AGENT_ID, message: "Continue" },
-      {
-        ...f,
-        sendCodexMessage: async () => ({
-          mode: "new_turn",
-          threadId: CODEX_THREAD_ID,
-          turnId: "turn-2",
-          completion,
-          interrupt: async () => undefined,
-        }),
-        trackExternalFollowup: (input) => {
-          tracked.push(input);
-          return {
-            taskId: "task-codex",
-            outputFile: "/tmp/task-codex.log",
-            subagentId: "subagent-codex",
-          };
+  const result = await runWithRuntimeContext(
+    { ...caller, suppressActingUserFallback: true },
+    () =>
+      send_agent_message(
+        { agent_id: CODEX_AGENT_ID, message: "Continue" },
+        {
+          ...f,
+          sendCodexMessage: async () => ({
+            mode: "new_turn",
+            threadId: CODEX_THREAD_ID,
+            turnId: "turn-2",
+            completion,
+            interrupt: async () => undefined,
+          }),
+          trackExternalFollowup: (input) => {
+            tracked.push(input);
+            return {
+              taskId: "task-codex",
+              outputFile: "/tmp/task-codex.log",
+              subagentId: "subagent-codex",
+            };
+          },
         },
-      },
-    ),
+      ),
   );
   expect(JSON.parse(result.content)).toMatchObject({
     delivery: "turn/start",
@@ -263,6 +266,11 @@ test("tracks an idle Codex new turn through background lifecycle", async () => {
   expect(tracked).toHaveLength(1);
   expect(tracked[0]).toMatchObject({
     agentId: CODEX_AGENT_ID,
+    parentScope: {
+      agentId: "agent-caller",
+      conversationId: "conv-caller",
+      actingUserId: null,
+    },
     completion,
     interrupt: expect.any(Function),
   });

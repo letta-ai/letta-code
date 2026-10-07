@@ -33,7 +33,7 @@ import { getBackend } from "@/backend";
 import { runSubagentStopHooks } from "@/hooks";
 import {
   getCurrentWorkingDirectory,
-  getRuntimeActingUserId,
+  getRuntimeActingUserAttribution,
 } from "@/runtime-context";
 import type {
   SubagentLaunchArgs,
@@ -111,7 +111,8 @@ export interface SpawnBackgroundSubagentTaskArgs {
   /** Parent conversation scope for routing notifications in listener mode. */
   parentScope?: { agentId: string; conversationId: string };
   /** Authenticated Cloud user responsible for the launch-time turn. */
-  actingUserId?: string;
+  /** Null explicitly suppresses fallback to an ambient runtime actor. */
+  actingUserId?: string | null;
   /** Transcript/payload file exposed as TRANSCRIPT_PATH for reflection prompts. */
   transcriptPath?: string;
   /** Optional exact memory scope for harness-created memory worktrees. */
@@ -256,7 +257,10 @@ export function spawnBackgroundSubagentTask(
     (emitCompletionNotification ?? !silentCompletion);
 
   const resolvedParentScope = resolveNotificationScope(parentScope);
-  const actingUserId = explicitActingUserId ?? getRuntimeActingUserId();
+  const actingUserId =
+    explicitActingUserId === undefined
+      ? getRuntimeActingUserAttribution()
+      : explicitActingUserId;
 
   const spawnSubagentFn = deps?.spawnSubagentImpl ?? spawnSubagent;
   const copyGitHubPullRequestTagsFn =

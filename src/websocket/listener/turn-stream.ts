@@ -110,7 +110,12 @@ export async function drainTurnStreamWithEmission(
           } catch (error) {
             if (
               !(error instanceof Error) ||
-              error.message !== "Timed out acquiring durable filesystem lock"
+              (error.message !==
+                "Timed out acquiring durable filesystem lock" &&
+                error.message !== "Interrupted-turn revision changed" &&
+                error.message !== "Recovery lineage revision changed" &&
+                error.message !==
+                  "Interrupted-turn revision cannot recreate a record")
             ) {
               throw error;
             }

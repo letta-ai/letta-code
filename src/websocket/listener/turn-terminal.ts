@@ -7,10 +7,8 @@ import {
   completePreparedInputTerminal,
   prepareInputTerminal,
 } from "./input-terminal-journal";
-import {
-  forgetListenerWork,
-  readInterruptedTurn,
-} from "./interrupted-turn-record";
+import { readInterruptedTurn } from "./interrupted-turn-read";
+import { forgetListenerWork } from "./interrupted-turn-record";
 import {
   emitInterruptedStatusDelta,
   emitRuntimeStateUpdates,
@@ -71,6 +69,11 @@ export function finishListenerTurn(
     persistTerminalWithoutConsumers?: boolean;
     /** Exact interrupted revision owned by this finalizer. */
     expectedInterruptedRevision?: string;
+    /** Recovery lineages read their sidecar revision view, not successor main. */
+    readInterruptedRevision?: () => string | undefined;
+    /** Mutable checkpoint generation that owns this terminal transition. */
+    expectedInterruptedAuthorityRevision?: string;
+    readInterruptedAuthorityRevision?: () => string | undefined;
   },
 ): TurnFinishTransition {
   const rejectedCommit = (): TurnFinishTransition => ({
@@ -105,19 +108,26 @@ export function finishListenerTurn(
           ...(options.usage ? { usage: options.usage } : {}),
         }
       : null;
-  const interruptedRevision = readInterruptedTurn(runtime)?.revision;
+  const readRevision =
+    options.readInterruptedRevision ??
+    (() => readInterruptedTurn(runtime)?.revision);
+  const interruptedRevision = readRevision();
+  const expectedAuthorityRevision =
+    options.expectedInterruptedAuthorityRevision ??
+    options.expectedInterruptedRevision;
+  const readAuthorityRevision =
+    options.readInterruptedAuthorityRevision ?? readRevision;
   if (
-    options.expectedInterruptedRevision !== undefined &&
-    interruptedRevision !== options.expectedInterruptedRevision
+    expectedAuthorityRevision !== undefined &&
+    readAuthorityRevision() !== expectedAuthorityRevision
   ) {
     return rejectedCommit();
   }
   const ownsInterruptedRevision = () => {
     if (options.canCommit && !options.canCommit()) return false;
     return (
-      options.expectedInterruptedRevision === undefined ||
-      readInterruptedTurn(runtime)?.revision ===
-        options.expectedInterruptedRevision
+      expectedAuthorityRevision === undefined ||
+      readAuthorityRevision() === expectedAuthorityRevision
     );
   };
   const terminalOwner = getTurnFinishedOwner(runtime, interruptedRevision);

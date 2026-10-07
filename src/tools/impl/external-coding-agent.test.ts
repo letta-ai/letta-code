@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { runWithRuntimeContext } from "@/runtime-context";
 import {
   buildExternalCodingAgentCommand,
   buildExternalCodingAgentMcpReminder,
@@ -296,7 +297,66 @@ describe("external coding agent output and preflight", () => {
       expect(receivedEnv?.LETTA_AGENT_ID).toBe("parent");
       expect(receivedEnv?.LETTA_PARENT_AGENT_ID).toBe("parent");
       expect(receivedEnv?.LETTA_CODE_AGENT_ROLE).toBe("subagent");
-      expect(receivedEnv?.LETTA_ACTING_USER_ID).toBeUndefined();
+      expect(receivedEnv?.LETTA_ACTING_USER_ID).toBe("ambient-user");
     },
   );
+
+  test("explicit unattributed runtime suppresses ambient external-worker actor", async () => {
+    let receivedEnv: NodeJS.ProcessEnv | undefined;
+    await runWithRuntimeContext({ suppressActingUserFallback: true }, () =>
+      runExternalCodingAgent(
+        {
+          type: "claude-code",
+          prompt: "test",
+          parentAgentId: "parent",
+        },
+        {
+          env: { ...process.env, LETTA_ACTING_USER_ID: "ambient-user" },
+          runPreflight: async () => ({
+            exitCode: 0,
+            stdout: '{"loggedIn":true}',
+            stderr: "",
+          }),
+          runProcess: async (_command, options) => {
+            receivedEnv = options.env;
+            return {
+              exitCode: 0,
+              stdout: '{"result":"done","session_id":"c1"}',
+              stderr: "",
+            };
+          },
+        },
+      ),
+    );
+    expect(receivedEnv?.LETTA_ACTING_USER_ID).toBeUndefined();
+  });
+
+  test("explicit null clears an inherited external-worker actor", async () => {
+    let receivedEnv: NodeJS.ProcessEnv | undefined;
+    await runExternalCodingAgent(
+      {
+        type: "claude-code",
+        prompt: "test",
+        parentAgentId: "parent",
+        actingUserId: null,
+      },
+      {
+        env: { ...process.env, LETTA_ACTING_USER_ID: "ambient-user" },
+        runPreflight: async () => ({
+          exitCode: 0,
+          stdout: '{"loggedIn":true}',
+          stderr: "",
+        }),
+        runProcess: async (_command, options) => {
+          receivedEnv = options.env;
+          return {
+            exitCode: 0,
+            stdout: '{"result":"done","session_id":"c1"}',
+            stderr: "",
+          };
+        },
+      },
+    );
+    expect(receivedEnv?.LETTA_ACTING_USER_ID).toBeUndefined();
+  });
 });

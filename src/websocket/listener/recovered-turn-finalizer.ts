@@ -1,5 +1,9 @@
 import type { StopReasonType } from "@/types/protocol_v2";
 import {
+  readInterruptedTurn,
+  readInterruptedTurnAuthorityRevision,
+} from "./interrupted-turn-read";
+import {
   emitLoopErrorNotice,
   getTranscriptLoopErrorMessage,
 } from "./recoverable-notices";
@@ -22,10 +26,13 @@ export function createRecoveredTurnFinalizer(params: {
     interruptedRevision?: string;
     terminalConsumerIds?: readonly string[];
     durableInputIdentities?: readonly InputIdentity[];
+    recoveryLineageId?: string;
   };
   getInterruptedRevision: () => string | undefined;
+  getAuthorityRevision?: () => string | undefined;
   canCommit: () => boolean;
 }) {
+  const recoveryLineageId = params.recovered.recoveryLineageId;
   const commit = (options: Parameters<typeof finishListenerTurn>[2]) =>
     finishListenerTurn(params.runtime, params.recoveryLease, {
       ...options,
@@ -33,6 +40,21 @@ export function createRecoveredTurnFinalizer(params: {
       durableInputIdentities: params.recovered.durableInputIdentities,
       expectedInterruptedRevision:
         options.expectedInterruptedRevision ?? params.getInterruptedRevision(),
+      ...(recoveryLineageId
+        ? {
+            persistTerminalWithoutConsumers:
+              options.persistTerminalWithoutConsumers ?? true,
+            expectedInterruptedAuthorityRevision:
+              params.getAuthorityRevision?.(),
+            readInterruptedAuthorityRevision: () =>
+              readInterruptedTurnAuthorityRevision(
+                params.runtime,
+                recoveryLineageId,
+              ),
+            readInterruptedRevision: () =>
+              readInterruptedTurn(params.runtime, recoveryLineageId)?.revision,
+          }
+        : {}),
       canCommit: params.canCommit,
     });
 

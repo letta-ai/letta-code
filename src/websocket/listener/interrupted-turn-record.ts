@@ -14,13 +14,13 @@ import {
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ApprovalResult } from "@/agent/approval-execution";
-import { STALE_APPROVAL_RECOVERY_DENIAL_REASON } from "@/agent/turn-recovery-policy";
 import { getServerUrl } from "@/backend/api/server-url";
 import { reportListenerStateWriteFailure } from "@/telemetry/error-reporting";
 import { debugWarn } from "@/utils/debug";
 import { acquireDurableFileLock } from "./durable-file-lock";
 import { isInterruptedTurnRecord } from "./interrupted-turn-schema";
 import type { InterruptedTurnRecord } from "./interrupted-turn-types";
+import { allRecordedResults } from "./recorded-tool-results";
 import {
   createRecoveryLineageSidecarAccess,
   type RecoveryLineageSidecar,
@@ -28,6 +28,10 @@ import {
 import type { ConversationRuntime } from "./types";
 
 export type { InterruptedTurnRecord } from "./interrupted-turn-types";
+export {
+  allRecordedResults,
+  recordedToolResults,
+} from "./recorded-tool-results";
 
 export type ListenerStateWritePhase =
   | "run_observed"
@@ -103,20 +107,61 @@ export function createInterruptedTurnStore(
   });
   const {
     initial: initialSidecar,
+    list: listSidecars,
     mainView: readMainView,
     read: readSidecar,
     recoveryView: readRecoveryView,
     remove: removeSidecar,
+    snapshot: snapshotSidecar,
     write: writeSidecar,
   } = sidecars;
   return {
     list(): InterruptedTurnRecord[] {
       try {
-        return readdirSync(directory)
+        const rawRecords = readdirSync(directory)
           .filter((file) => file.endsWith(".json"))
           .map((file) => readRecord(join(directory, file)))
-          .filter((record): record is InterruptedTurnRecord => record !== null)
-          .map(readMainView);
+          .filter((record): record is InterruptedTurnRecord => record !== null);
+        const liveLineages = new Set(
+          rawRecords.flatMap((record) => {
+            const lineageId = record.recoveryClaimCompletion?.lineageId;
+            return lineageId
+              ? [`${record.agentId}\0${record.conversationId}\0${lineageId}`]
+              : [];
+          }),
+        );
+        for (const sidecar of listSidecars()) {
+          const key = `${sidecar.agentId}\0${sidecar.conversationId}\0${sidecar.lineageId}`;
+          if (liveLineages.has(key)) continue;
+          const destination = path(sidecar.agentId, sidecar.conversationId);
+          const release = acquireDurableFileLock(destination, {
+            waitMs: dependencies.lockWaitMs,
+          });
+          try {
+            const current = readRecord(destination);
+            if (
+              current?.recoveryClaimCompletion?.lineageId !== sidecar.lineageId
+            ) {
+              removeSidecar(sidecar);
+            }
+          } finally {
+            release();
+          }
+        }
+        return rawRecords.flatMap((record) => {
+          try {
+            return [readMainView(record)];
+          } catch (error) {
+            debugWarn(
+              "recovery",
+              "Ignoring interrupted-turn record with unreadable lineage sidecar",
+              record.agentId,
+              record.conversationId,
+              error,
+            );
+            return [];
+          }
+        });
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
         throw error;
@@ -138,6 +183,30 @@ export function createInterruptedTurnStore(
       if (current?.recoveryClaimCompletion?.lineageId !== lineageId)
         return null;
       return readRecoveryView(current);
+    },
+    readRecoverySnapshot(
+      agentId: string,
+      conversationId: string,
+      lineageId: string,
+    ): {
+      record: InterruptedTurnRecord;
+      revisionToken: string;
+    } | null {
+      const destination = path(agentId, conversationId);
+      const release = acquireDurableFileLock(destination, {
+        waitMs: dependencies.lockWaitMs,
+      });
+      try {
+        const current = readRecord(destination);
+        if (current?.recoveryClaimCompletion?.lineageId !== lineageId)
+          return null;
+        if (!readSidecar(agentId, conversationId, lineageId)) {
+          writeSidecar(initialSidecar(current));
+        }
+        return snapshotSidecar(current);
+      } finally {
+        release();
+      }
     },
     write(
       record: InterruptedTurnRecord,
@@ -229,6 +298,7 @@ export function createInterruptedTurnStore(
           | "teleport"
         >
       >;
+      expectedSidecarRevision?: string;
     }): { mainRevision: string; sidecarRevision: string } {
       const destination = path(params.agentId, params.conversationId);
       const release = acquireDurableFileLock(destination, {
@@ -253,6 +323,12 @@ export function createInterruptedTurnStore(
         if (previous.state !== "running") {
           throw new Error("Recovery lineage is not running");
         }
+        if (
+          params.expectedSidecarRevision !== undefined &&
+          previous.revision !== params.expectedSidecarRevision
+        ) {
+          throw new Error("Recovery lineage revision changed");
+        }
         const toolCallIds = params.update.toolCallIds
           ? [
               ...new Set([
@@ -261,14 +337,15 @@ export function createInterruptedTurnStore(
               ]),
             ]
           : previous.toolCallIds;
-        const results = [...previous.results];
-        for (const result of params.update.results ?? []) {
-          const index = results.findIndex(
-            (candidate) => candidate.tool_call_id === result.tool_call_id,
-          );
-          if (index >= 0) results[index] = result;
-          else results.push(result);
-        }
+        // Checkpoints are complete snapshots. In particular a pre-effect
+        // rollback must be able to remove an earlier unknown result. Exact
+        // post-effect settlements live separately and are never erased here.
+        const results = params.update.results
+          ? [...params.update.results]
+          : previous.results;
+        const exactResultIds = new Set(
+          (previous.exactResults ?? []).map((result) => result.tool_call_id),
+        );
         const written: RecoveryLineageSidecar = {
           ...previous,
           revision: randomUUID(),
@@ -282,7 +359,9 @@ export function createInterruptedTurnStore(
                 unstartedToolCallIds:
                   params.update.unstartedToolCallIds === undefined
                     ? undefined
-                    : [...params.update.unstartedToolCallIds],
+                    : params.update.unstartedToolCallIds.filter(
+                        (toolCallId) => !exactResultIds.has(toolCallId),
+                      ),
               }
             : {}),
           ...(params.update.requestOtid
@@ -349,16 +428,16 @@ export function createInterruptedTurnStore(
           if (previous.state !== "running") {
             throw new Error("Recovery lineage is not running");
           }
-          const resultIndex = previous.results.findIndex(
+          const exactResults = [...(previous.exactResults ?? [])];
+          const resultIndex = exactResults.findIndex(
             (result) => result.tool_call_id === params.result.tool_call_id,
           );
-          const results = [...previous.results];
-          if (resultIndex >= 0) results[resultIndex] = params.result;
-          else results.push(params.result);
+          if (resultIndex >= 0) exactResults[resultIndex] = params.result;
+          else exactResults.push(params.result);
           writeSidecar({
             ...previous,
             revision: randomUUID(),
-            results,
+            exactResults,
             unstartedToolCallIds: previous.unstartedToolCallIds?.filter(
               (toolCallId) => toolCallId !== params.result.tool_call_id,
             ),
@@ -423,7 +502,6 @@ export function createInterruptedTurnStore(
         const marker = current?.recoveryClaimCompletion;
         if (
           !current?.revision ||
-          current.revision !== params.expectedRevision ||
           !marker ||
           marker.lineageId !== params.lineageId
         ) {
@@ -436,7 +514,11 @@ export function createInterruptedTurnStore(
               params.conversationId,
               params.lineageId,
             ) ?? initialSidecar(current);
-          if (previous.state === "retired") return null;
+          if (
+            previous.state === "retired" ||
+            previous.revision !== params.expectedRevision
+          )
+            return null;
           const pending =
             previous.state === "pending"
               ? previous
@@ -449,6 +531,7 @@ export function createInterruptedTurnStore(
           const view = readRecoveryView(current);
           return view ? { ...view, revision: pending.revision } : null;
         }
+        if (current.revision !== params.expectedRevision) return null;
         if (marker.state === "pending") return current;
         const written: InterruptedTurnRecord = {
           ...current,
@@ -614,15 +697,6 @@ export function createInterruptedTurnStore(
   };
 }
 
-export function readInterruptedTurn(runtime: ConversationRuntime) {
-  if (!runtime.agentId || !runtime.listener.connectionId?.startsWith("conn-"))
-    return null;
-  return createInterruptedTurnStore().read(
-    runtime.agentId,
-    runtime.conversationId,
-  );
-}
-
 export function recordListenerWork(
   runtime: ConversationRuntime,
   update: Partial<
@@ -776,6 +850,7 @@ export function recordListenerWork(
           conversationId: record.conversationId,
           lineageId: recoveryLineageId as string,
           update,
+          expectedSidecarRevision: expectedRevision ?? undefined,
         })
       : store.write(
           record,
@@ -807,8 +882,7 @@ export function recordListenerWork(
       }
     }
     return independentRecoveryWrite
-      ? (previous?.recoveryClaimCompletion?.effectRevision ??
-          (written as { mainRevision: string }).mainRevision)
+      ? (written as { sidecarRevision: string }).sidecarRevision
       : (written as InterruptedTurnRecord).revision;
   } catch (error) {
     reportListenerStateWriteFailure({
@@ -854,13 +928,32 @@ export async function recordListenerWorkRetriably(
       );
     } catch (error) {
       if (!(error instanceof Error)) throw error;
-      if (error.message === "Interrupted-turn revision changed") {
-        if (!recoveryLineageId || !runtime.agentId) throw error;
+      if (
+        error.message === "Interrupted-turn revision changed" ||
+        error.message === "Recovery lineage revision changed" ||
+        (phase === "run_observed" &&
+          error.message ===
+            "Interrupted-turn revision cannot recreate a record")
+      ) {
+        if (!runtime.agentId) throw error;
         const current = store.read(runtime.agentId, runtime.conversationId);
-        if (current?.recoveryClaimCompletion?.lineageId !== recoveryLineageId) {
+        if (recoveryLineageId) {
+          if (
+            current?.recoveryClaimCompletion?.lineageId !== recoveryLineageId
+          ) {
+            throw error;
+          }
+          retryExpectedRevision =
+            store.readRecoverySnapshot(
+              runtime.agentId,
+              runtime.conversationId,
+              recoveryLineageId,
+            )?.revisionToken ?? null;
+        } else if (phase !== "run_observed") {
           throw error;
+        } else {
+          retryExpectedRevision = current?.revision ?? null;
         }
-        retryExpectedRevision = current.revision ?? null;
       } else if (
         error.message !== "Timed out acquiring durable filesystem lock"
       ) {
@@ -893,32 +986,4 @@ export function forgetListenerWork(
       store.remove(runtime.agentId, runtime.conversationId, expectedRevision);
     }
   }
-}
-
-export function recordedToolResults(
-  record: InterruptedTurnRecord,
-  pendingToolCallIds: string[],
-): ApprovalResult[] {
-  const durableResults = allRecordedResults(record);
-  return pendingToolCallIds.map(
-    (id) =>
-      durableResults.find((result) => result.tool_call_id === id) ?? {
-        type: "approval",
-        tool_call_id: id,
-        approve: false,
-        reason: STALE_APPROVAL_RECOVERY_DENIAL_REASON,
-      },
-  );
-}
-
-export function allRecordedResults(
-  record: InterruptedTurnRecord,
-): ApprovalResult[] {
-  const merged = new Map(
-    record.results.map((result) => [result.tool_call_id, result]),
-  );
-  for (const effect of record.settledRecoveryEffects ?? []) {
-    merged.set(effect.result.tool_call_id, effect.result);
-  }
-  return [...merged.values()];
 }

@@ -22,16 +22,27 @@ const PARENT_ID = "agent-226cd814-09bf-4436-940e-aea9d91d14cb";
 const PARENT_MEMORY_DIR = `/Users/someone/.letta/agents/${PARENT_ID}/memory`;
 
 describe("composeSubagentChildEnv", () => {
-  test("an unattributed child deletes an ambient actor", () => {
+  test("an explicitly unattributed child deletes an ambient actor", () => {
     const env = composeSubagentChildEnv({
       parentProcessEnv: { [ACTING_USER_ID_ENV]: "ambient-user" },
       parentAgentId: PARENT_ID,
       subagentType: "general-purpose",
       launchProfile: "default",
       inheritedPrimaryRoot: null,
-      actingUserId: undefined,
+      actingUserId: null,
     });
     expect(env[ACTING_USER_ID_ENV]).toBeUndefined();
+  });
+
+  test("an omitted actor override preserves the immediate parent actor", () => {
+    const env = composeSubagentChildEnv({
+      parentProcessEnv: { [ACTING_USER_ID_ENV]: "ambient-user" },
+      parentAgentId: "agent-parent",
+      subagentType: "general-purpose",
+      launchProfile: "default",
+      inheritedPrimaryRoot: null,
+    });
+    expect(env[ACTING_USER_ID_ENV]).toBe("ambient-user");
   });
   test("memory workers suppress worker-side sync without marking other children as memory workers", () => {
     const worker = composeSubagentChildEnv({

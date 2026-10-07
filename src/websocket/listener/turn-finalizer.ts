@@ -1,5 +1,9 @@
 import type { createBuffers } from "@/cli/helpers/accumulator";
 import {
+  readInterruptedTurn,
+  readInterruptedTurnAuthorityRevision,
+} from "./interrupted-turn-read";
+import {
   claimPendingTeleportAtBoundary,
   finishClaimedTeleport,
 } from "./teleport";
@@ -23,7 +27,10 @@ export function createTurnFinalizer(params: {
   interruptedRevisionRef?: { current: string | undefined };
   /** Recovery keeps execution evidence until its remote claim completion is ACKed. */
   deferInterruptedCleanup?: boolean;
+  recoveryLineageId?: string;
+  recoveryTerminalRevision?: string;
 }) {
+  const recoveryLineageId = params.recoveryLineageId;
   let finalized = false;
   const noteFinalization = (
     transition: ReturnType<typeof finishListenerTurn>,
@@ -41,7 +48,24 @@ export function createTurnFinalizer(params: {
         durableInputIdentities: params.ownership.durableInputIdentities,
         expectedInterruptedRevision:
           options.expectedInterruptedRevision ??
+          params.recoveryTerminalRevision ??
           params.interruptedRevisionRef?.current,
+        ...(recoveryLineageId
+          ? {
+              persistTerminalWithoutConsumers:
+                options.persistTerminalWithoutConsumers ?? true,
+              expectedInterruptedAuthorityRevision:
+                params.interruptedRevisionRef?.current,
+              readInterruptedAuthorityRevision: () =>
+                readInterruptedTurnAuthorityRevision(
+                  params.runtime,
+                  recoveryLineageId,
+                ),
+              readInterruptedRevision: () =>
+                readInterruptedTurn(params.runtime, recoveryLineageId)
+                  ?.revision,
+            }
+          : {}),
         ...(params.terminalCommitGuard
           ? { canCommit: params.terminalCommitGuard }
           : {}),

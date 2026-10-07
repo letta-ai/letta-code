@@ -313,6 +313,43 @@ describe("native CLI JSONL capture", () => {
     expect(calls).toHaveLength(2);
   });
 
+  test.each([
+    [undefined, "ambient-user"],
+    [null, undefined],
+  ] as const)(
+    "native upload actor %s preserves tri-state inheritance",
+    async (actingUserId, expected) => {
+      const previousActor = process.env.LETTA_ACTING_USER_ID;
+      process.env.LETTA_ACTING_USER_ID = "ambient-user";
+      try {
+        const { env } = await fixture("claude_code", Buffer.from("{}\n"));
+        const calls: Array<{
+          url: string;
+          body: Record<string, unknown>;
+          actingUser: string | undefined;
+        }> = [];
+        const url = await endpoint(calls);
+        const actorScope = { ...scope, actingUserId };
+        rememberNativeSession(
+          "claude_code",
+          ID,
+          actorScope,
+          "https://api.letta.com",
+        );
+        await captureNativeSession("claude_code", ID, actorScope, env, {
+          baseUrl: url,
+          apiKey: "test",
+          cloudUrl: "https://api.letta.com",
+        });
+        expect(calls[0]?.actingUser).toBe(expected);
+      } finally {
+        if (previousActor === undefined)
+          delete process.env.LETTA_ACTING_USER_ID;
+        else process.env.LETTA_ACTING_USER_ID = previousActor;
+      }
+    },
+  );
+
   test("does not upload for a non-Cloud backend", async () => {
     const { env } = await fixture("claude_code", Buffer.from("{}\n"));
     const calls: Array<{

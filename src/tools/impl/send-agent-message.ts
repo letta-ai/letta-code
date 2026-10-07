@@ -17,6 +17,7 @@ import {
 import { ApiRequestError } from "@/backend/api/request";
 import {
   getCurrentWorkingDirectory,
+  getRuntimeActingUserAttribution,
   getRuntimeContext,
 } from "@/runtime-context";
 import {
@@ -158,7 +159,7 @@ export async function send_agent_message(
             message: args.message,
             parentScope: {
               ...parentScope,
-              actingUserId: context?.actingUserId,
+              actingUserId: getRuntimeActingUserAttribution(),
             },
             completion: receipt.completion,
             interrupt: receipt.interrupt,
@@ -209,7 +210,10 @@ export async function send_agent_message(
           type: "claude-code",
           agentId: args.agent_id as string,
           message: args.message,
-          parentScope: { ...parentScope, actingUserId: context?.actingUserId },
+          parentScope: {
+            ...parentScope,
+            actingUserId: getRuntimeActingUserAttribution(),
+          },
           completion: receipt.completion,
           interrupt: receipt.interrupt,
         });

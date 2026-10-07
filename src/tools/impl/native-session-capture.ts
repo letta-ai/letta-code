@@ -9,7 +9,7 @@ export type NativeSessionSource = "claude_code" | "codex";
 export interface NativeSessionScope {
   agentId: string;
   conversationId: string;
-  actingUserId?: string;
+  actingUserId?: string | null;
 }
 
 interface CaptureState {
@@ -132,7 +132,7 @@ async function drain(
         },
         {
           signal: AbortSignal.timeout(5_000),
-          actingUserId: state.scope.actingUserId ?? null,
+          actingUserId: state.scope.actingUserId,
           ...requestOptions,
         },
       );

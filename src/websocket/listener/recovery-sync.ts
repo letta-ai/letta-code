@@ -13,10 +13,10 @@ import {
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
 } from "@/agent/turn-recovery-policy";
 import { getBackend } from "@/backend";
+import { readInterruptedTurn } from "./interrupted-turn-read";
 import {
   allRecordedResults,
   createInterruptedTurnStore,
-  readInterruptedTurn,
 } from "./interrupted-turn-record";
 import { getRecoveryEligibility } from "./recovery-ownership";
 import {
@@ -60,12 +60,16 @@ export async function recoverApprovalStateForSync(
     clearRecoveredApprovalState(runtime);
     return;
   }
-  if (opts.resumeInterruptedTurn) {
+  const clearObserverCache = () => {
+    if (!opts.resumeInterruptedTurn) return;
     runtime.pendingInterruptedResults = null;
     runtime.pendingInterruptedContext = null;
     runtime.pendingInterruptedToolCallIds = null;
-  }
-  if (hasInterruptedCacheForScope(runtime.listener, scope)) {
+  };
+  if (
+    hasInterruptedCacheForScope(runtime.listener, scope) &&
+    !opts.resumeInterruptedTurn
+  ) {
     clearRecoveredApprovalState(runtime);
     return;
   }
@@ -96,6 +100,7 @@ export async function recoverApprovalStateForSync(
     agent = await backend.retrieveAgent(scope.agent_id);
   } catch (error) {
     if (isBackendNotFoundError(error)) {
+      clearObserverCache();
       clearRecoveredApprovalState(runtime);
       return;
     }
@@ -113,14 +118,16 @@ export async function recoverApprovalStateForSync(
     );
   } catch (error) {
     if (isBackendNotFoundError(error)) {
+      clearObserverCache();
       clearRecoveredApprovalState(runtime);
       return;
     }
     throw error;
   }
 
-  const pendingApprovals = resumeData.pendingApprovals ?? [];
+  let pendingApprovals = resumeData.pendingApprovals ?? [];
   if (pendingApprovals.length === 0) {
+    clearObserverCache();
     clearRecoveredApprovalState(runtime);
     return;
   }
@@ -129,7 +136,8 @@ export async function recoverApprovalStateForSync(
   // started meanwhile owns this conversation's approval state.
   if ((await getRecoveryEligibility(runtime)) !== "owned") return "deferred";
   if (
-    hasInterruptedCacheForScope(runtime.listener, scope) ||
+    (hasInterruptedCacheForScope(runtime.listener, scope) &&
+      !opts.resumeInterruptedTurn) ||
     (sameActiveScope &&
       (runtime.turnLifecycle.kind !== "idle" ||
         runtime.pendingApprovalResolvers.size > 0))
@@ -138,21 +146,35 @@ export async function recoverApprovalStateForSync(
   }
 
   const rawRecorded = resolvedDeps.readInterruptedTurn(runtime);
-  const recorded =
+  const recoverySnapshot =
     rawRecorded?.recoveryClaimCompletion?.independentSuccessor &&
     deps.readInterruptedTurn === undefined
-      ? (createInterruptedTurnStore().readRecoveryView(
+      ? createInterruptedTurnStore().readRecoverySnapshot(
           rawRecorded.agentId,
           rawRecorded.conversationId,
           rawRecorded.recoveryClaimCompletion.lineageId,
-        ) ?? rawRecorded)
-      : rawRecorded;
+        )
+      : null;
+  const recorded = recoverySnapshot?.record ?? rawRecorded;
   const recordedResults = new Map(
     (recorded ? allRecordedResults(recorded) : []).map((result) => [
       result.tool_call_id,
       result,
     ]),
   );
+  if (
+    recorded?.recoveryClaimCompletion?.independentSuccessor &&
+    pendingApprovals.some(
+      (approval) => !recorded.toolCallIds.includes(approval.toolCallId),
+    )
+  ) {
+    // Advance only the predecessor lineage. Its sidecar remains authoritative
+    // until retirement exposes the independent successor for the next sync.
+    pendingApprovals = pendingApprovals.filter((approval) =>
+      recorded.toolCallIds.includes(approval.toolCallId),
+    );
+    if (pendingApprovals.length === 0) return "deferred";
+  }
   // Local evidence distinguishes exact completed results, provably unstarted
   // approvals, and unrelated stale calls. Only the unstarted set executes again.
   const staleDenialDecisions: ApprovalDecision[] = pendingApprovals.map(
@@ -220,9 +242,6 @@ export async function recoverApprovalStateForSync(
     return;
   }
 
-  runtime.pendingInterruptedResults = null;
-  runtime.pendingInterruptedContext = null;
-  runtime.pendingInterruptedToolCallIds = null;
   runtime.recoveredApprovalState = {
     agentId: scope.agent_id,
     conversationId: scope.conversation_id,
@@ -233,8 +252,12 @@ export async function recoverApprovalStateForSync(
     terminalConsumerIds: recorded?.terminalConsumerIds,
     interruptedRevision: recorded?.revision,
     recoveryLineageId: recorded?.recoveryClaimCompletion?.lineageId,
+    recoveryRevisionToken: recoverySnapshot?.revisionToken,
     recoveryUsesIndependentSuccessor:
       recorded?.recoveryClaimCompletion?.independentSuccessor === true,
   };
+  // The owner now has a complete replacement. Only this definitive handoff
+  // may erase an observer's parked denial cache.
+  clearObserverCache();
   return undefined;
 }

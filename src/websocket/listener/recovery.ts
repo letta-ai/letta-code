@@ -19,10 +19,8 @@ import { LISTENER_STREAM_RESUME_POLICY } from "./constants";
 import { appendQueuedTurnToInput } from "./continuation-input";
 import { promotePreparedInputTerminals } from "./conversation-runtime";
 import { getConversationWorkingDirectory } from "./cwd";
-import {
-  createInterruptedTurnStore,
-  readInterruptedTurn,
-} from "./interrupted-turn-record";
+import { readInterruptedTurn } from "./interrupted-turn-read";
+import { createInterruptedTurnStore } from "./interrupted-turn-record";
 import {
   createToolExecutionOutputEmitter,
   emitInterruptToolReturnMessage,
@@ -419,7 +417,7 @@ async function executeRecoveredApprovalContinuation(params: {
   const evidence = createRecoveryEvidenceCheckpoint(
     runtime,
     recordWork,
-    recovered.interruptedRevision,
+    recovered.recoveryRevisionToken ?? recovered.interruptedRevision,
     recoveryLineageId,
     dependencies?.mergeSettledRecoveryResult,
   );
@@ -432,6 +430,7 @@ async function executeRecoveredApprovalContinuation(params: {
     recoveryLease,
     recovered,
     getInterruptedRevision: interruptedTerminalRevision,
+    getAuthorityRevision: () => evidence.revision,
     canCommit: hasRecoveryOwnership,
   });
   const shouldInterruptDelivery = () =>
@@ -878,13 +877,21 @@ async function executeRecoveredApprovalContinuation(params: {
           !completed.revision ||
           completed.recoveryClaimCompletion?.lineageId !== recoveryLineageId
         ) {
+          await recoveryClaim.release();
+          claimSettled = true;
+          runtime.listener.scheduleRecordedRecovery?.();
           return;
         }
         const pendingCompletionRevision = markRecoveryClaimCompletionPending(
           createInterruptedTurnStore(),
           completed,
         )?.revision;
-        if (!pendingCompletionRevision) return;
+        if (!pendingCompletionRevision) {
+          await recoveryClaim.release();
+          claimSettled = true;
+          runtime.listener.scheduleRecordedRecovery?.();
+          return;
+        }
         claimSettled = await recoveryClaim.complete();
         if (!claimSettled) return;
         // Completion is the remote exactly-once boundary. An independent writer

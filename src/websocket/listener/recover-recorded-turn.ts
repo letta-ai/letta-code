@@ -22,6 +22,7 @@ import {
 } from "./interrupted-turn-record";
 import {
   hasCompletedTeleportInput,
+  hasRecordedTerminalEvidence,
   prepareRecordedInputTerminal,
 } from "./recorded-turn-terminal";
 import {
@@ -163,11 +164,30 @@ export async function recoverRecordedTurns(
         record.agentId,
         record.conversationId,
       );
+      const runningCompletion = record.recoveryClaimCompletion;
+      const recoverySnapshot = runningCompletion?.independentSuccessor
+        ? store.readRecoverySnapshot(
+            record.agentId,
+            record.conversationId,
+            runningCompletion.lineageId,
+          )
+        : null;
+      if (runningCompletion?.independentSuccessor && !recoverySnapshot) {
+        deferred = true;
+        continue;
+      }
+      const recoveryRecord = recoverySnapshot?.record ?? record;
       const unchanged = () =>
         runtime.turnLifecycle.kind === "idle" &&
         !listener.intentionallyClosed &&
         store.read(record.agentId, record.conversationId)?.revision ===
-          record.revision;
+          record.revision &&
+        (recoverySnapshot === null ||
+          store.readRecoverySnapshot(
+            record.agentId,
+            record.conversationId,
+            runningCompletion?.lineageId ?? "",
+          )?.revisionToken === recoverySnapshot.revisionToken);
       if (runtime.turnLifecycle.kind !== "idle") {
         deferred = true;
         continue;
@@ -230,26 +250,19 @@ export async function recoverRecordedTurns(
           }
           continue;
         }
-        const runningCompletion = record.recoveryClaimCompletion;
         if (
           runningCompletion?.state === "running" &&
           runningCompletion.independentSuccessor &&
           runningCompletion.effectRevision &&
-          (hasCompletedInputTerminalRevision(
-            listener,
-            runtime.key,
-            runningCompletion.effectInputIdentities ??
-              record.durableInputIdentities ??
-              [],
-            runningCompletion.effectRevision,
-          ) ||
-            terminalStore
-              .read(record.agentId, record.conversationId)
-              ?.terminals.some(
-                (terminal) =>
-                  terminal.owner.interruptedRevision ===
-                  runningCompletion.effectRevision,
-              ))
+          hasRecordedTerminalEvidence(listener, terminalStore, {
+            agentId: record.agentId,
+            conversationId: record.conversationId,
+            runtimeKey: runtime.key,
+            identities:
+              runningCompletion.effectInputIdentities ??
+              record.durableInputIdentities,
+            revision: runningCompletion.effectRevision,
+          })
         ) {
           const eligibility = await resolveRecoveryEligibility(
             runtime,
@@ -298,17 +311,6 @@ export async function recoverRecordedTurns(
           }
           continue;
         }
-        const recoveryRecord = runningCompletion?.independentSuccessor
-          ? store.readRecoveryView(
-              record.agentId,
-              record.conversationId,
-              runningCompletion.lineageId,
-            )
-          : record;
-        if (!recoveryRecord) {
-          deferred = true;
-          continue;
-        }
         const teleportId =
           recoveryRecord.teleport?.teleportId ?? recoveryRecord.teleportId;
         if (teleportId) {
@@ -323,12 +325,7 @@ export async function recoverRecordedTurns(
           }
           if (teleport.status === "completed") {
             if (runningCompletion?.independentSuccessor && record.revision) {
-              store.markRecoveryClaimCompletionPending({
-                agentId: record.agentId,
-                conversationId: record.conversationId,
-                lineageId: runningCompletion.lineageId,
-                expectedRevision: record.revision,
-              });
+              markRecoveryClaimCompletionPending(store, record);
               deferred = true;
               continue;
             }
@@ -368,12 +365,7 @@ export async function recoverRecordedTurns(
               runningCompletion?.independentSuccessor &&
               record.revision
             ) {
-              store.markRecoveryClaimCompletionPending({
-                agentId: record.agentId,
-                conversationId: record.conversationId,
-                lineageId: runningCompletion.lineageId,
-                expectedRevision: record.revision,
-              });
+              markRecoveryClaimCompletionPending(store, record);
               deferred = true;
               continue;
             }
@@ -506,13 +498,15 @@ export async function recoverRecordedTurns(
         // A run can finish generating its tool call while its listener is down.
         // Require the stored approval message to name the recorded run in that case.
         let recordedRunId = recoveryRecord.runId;
+        const missingRecordedRun = !recordedRunId;
         if (
-          allRecordedResults(recoveryRecord).length &&
-          (!pending.length ||
-            pending.some(
-              (approval) =>
-                !recoveryRecord.toolCallIds.includes(approval.toolCallId),
-            ))
+          !recordedRunId ||
+          (allRecordedResults(recoveryRecord).length > 0 &&
+            (!pending.length ||
+              pending.some(
+                (approval) =>
+                  !recoveryRecord.toolCallIds.includes(approval.toolCallId),
+              )))
         ) {
           // The result POST may have been accepted just before this process
           // died, before it received the new run ID. Resolve its exact OTID.
@@ -537,6 +531,10 @@ export async function recoverRecordedTurns(
           } finally {
             stream.controller.abort();
           }
+        }
+        if (missingRecordedRun && !recordedRunId && pending.length === 0) {
+          deferred = true;
+          continue;
         }
         const recordedRun =
           recordedRunId && typeof backend.retrieveRun === "function"
@@ -728,10 +726,6 @@ export async function recoverRecordedTurns(
           }
           continue;
         }
-        if (owned.length !== pending.length) {
-          deferred = true;
-          continue;
-        }
         const eligibility = await resolveRecoveryEligibility(
           runtime,
           deps.canRecover,
@@ -866,21 +860,32 @@ export async function recoverRecordedTurns(
           undefined,
           hasRecoveryOwnership,
           false,
-          persistedContinuation.revision,
+          recoverySnapshot?.revisionToken ?? persistedContinuation.revision,
           recoveryClaim !== null && recoveryClaim !== undefined,
           recoveryLineageId,
+          recoveryRecord.revision,
         );
         continuationStarted = true;
         void continuationPromise
           .then(async () => {
-            const completed = store.read(
+            const completed = store.readRecoveryView(
               continuation.agentId,
               continuation.conversationId,
+              recoveryLineageId,
             );
             if (
               !completed?.revision ||
-              completed.recoveryClaimCompletion?.lineageId !== recoveryLineageId
+              completed.recoveryClaimCompletion?.lineageId !==
+                recoveryLineageId ||
+              !hasRecordedTerminalEvidence(listener, terminalStore, {
+                agentId: continuation.agentId,
+                conversationId: continuation.conversationId,
+                runtimeKey: runtime.key,
+                identities: completed.durableInputIdentities,
+                revision: completed.revision,
+              })
             ) {
+              await recoveryClaim?.release();
               scheduleRecordedTurnRecovery(listener, () =>
                 recoverRecordedTurns(listener, deps),
               );
@@ -891,6 +896,7 @@ export async function recoverRecordedTurns(
               completed,
             );
             if (!pendingCompletion) {
+              await recoveryClaim?.release();
               scheduleRecordedTurnRecovery(listener, () =>
                 recoverRecordedTurns(listener, deps),
               );

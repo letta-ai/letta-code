@@ -58,6 +58,12 @@ export function getRuntimeActingUserId(): string | undefined {
   return resolveActingUserId(undefined, context?.actingUserId);
 }
 
+/** Capture actor inheritance as a tri-state value for delayed work. */
+export function getRuntimeActingUserAttribution(): string | null | undefined {
+  if (getRuntimeContext()?.suppressActingUserFallback) return null;
+  return getRuntimeActingUserId();
+}
+
 export function runWithRuntimeContext<T>(
   snapshot: RuntimeContextSnapshot,
   fn: () => T,

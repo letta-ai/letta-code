@@ -13,6 +13,7 @@ import {
   createConnectionTurnProcessor,
 } from "./connection-lifecycle";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
+import { enqueueInboundUserMessage } from "./inbound-queue";
 import {
   commitInputDisposition,
   createAcceptedInputDispositionLedger,
@@ -104,6 +105,63 @@ describe("listener connection lifecycle", () => {
     );
 
     expect(scopedRuntime.dequeuedClientMessageIdsByBatchId.size).toBe(0);
+    expect(loadDurableQueuedInputEntries(runtime)).toMatchObject([
+      { disposition: "queued", payload: { identity } },
+    ]);
+  });
+
+  test("disconnect detaches a queued origin without forgetting accepted input", () => {
+    const runtime = createRuntime();
+    runtime.acceptedInputDispositionLedger =
+      createAcceptedInputDispositionLedger();
+    const origin = new MockSocket();
+    openListenerConnection({
+      runtime,
+      connectionId: "origin",
+      writer: origin as never,
+      options: makeOptions("origin"),
+    });
+    markListenerConnectionInitialized(runtime, "origin");
+    const scope = { agent_id: "agent-1", conversation_id: "conversation-1" };
+    subscribeListenerConnection(runtime, "origin", scope);
+    const scopedRuntime = getOrCreateScopedRuntime(
+      runtime,
+      scope.agent_id,
+      scope.conversation_id,
+    );
+    const identity = ordinaryInputIdentity("cm-queued");
+    if (!identity) throw new Error("expected durable identity");
+    const incoming = {
+      type: "message" as const,
+      connectionId: "origin",
+      agentId: scope.agent_id,
+      conversationId: scope.conversation_id,
+      messages: [
+        {
+          role: "user" as const,
+          content: "queued",
+          client_message_id: "cm-queued",
+        },
+      ],
+      durableInputIdentities: [identity],
+    };
+    const reservation = reserveInputDisposition(scopedRuntime, identity);
+    if (reservation.kind !== "reserved")
+      throw new Error("expected reservation");
+    commitInputDisposition(scopedRuntime, reservation.reservation, "queued", {
+      incoming,
+    });
+    expect(enqueueInboundUserMessage(scopedRuntime, incoming)).toBe(true);
+
+    cleanupListenerConnection(runtime, "origin");
+
+    expect(scopedRuntime.queueRuntime.length).toBe(1);
+    expect([...scopedRuntime.queuedMessagesByItemId.values()][0]).toMatchObject(
+      {
+        connectionId: undefined,
+        durableInputIdentities: [identity],
+      },
+    );
     expect(loadDurableQueuedInputEntries(runtime)).toMatchObject([
       { disposition: "queued", payload: { identity } },
     ]);

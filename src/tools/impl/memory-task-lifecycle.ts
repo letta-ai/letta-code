@@ -128,7 +128,7 @@ export async function ensureMemoryRepair(
     agentId: string;
     conversationId?: string | null;
     result: MemoryPostTurnSyncResult;
-    actingUserId?: string;
+    actingUserId?: string | null;
   },
   spawn: (args: SpawnBackgroundSubagentTaskArgs) => unknown,
   claimRepair = claimMemoryConflictRepair,

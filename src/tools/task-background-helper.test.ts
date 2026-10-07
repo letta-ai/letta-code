@@ -210,6 +210,50 @@ describe("spawnBackgroundSubagentTask", () => {
     expect(queueMessages[0]?.actingUserId).toBe("cloud-user-a");
   });
 
+  test("runtime suppression reaches background launch and completion", async () => {
+    let launchedActor: unknown;
+    const spawnSubagentImpl = mock(async (...args: unknown[]) => {
+      launchedActor = args[15];
+      return {
+        agentId: "agent-child",
+        conversationId: "conv-child",
+        report: "done",
+        success: true,
+      };
+    });
+    const launched = runWithRuntimeContext(
+      {
+        actingUserId: "ambient-owner",
+        suppressActingUserFallback: true,
+      },
+      () =>
+        spawnBackgroundSubagentTask({
+          subagentType: "reflection",
+          prompt: "Reflect",
+          description: "Reflect safely",
+          parentScope: {
+            agentId: "agent-parent",
+            conversationId: "conv-parent",
+          },
+          deps: {
+            spawnSubagentImpl,
+            copyGitHubPullRequestTagsImpl: async () => {},
+            addToMessageQueueImpl,
+            formatTaskNotificationImpl,
+            runSubagentStopHooksImpl,
+            generateSubagentIdImpl,
+            registerSubagentImpl,
+            completeSubagentImpl,
+            getSubagentSnapshotImpl,
+          },
+        }),
+    );
+    expect(backgroundTasks.get(launched.taskId)?.actingUserId).toBeNull();
+    expect(launchedActor).toBeNull();
+    await Bun.sleep(0);
+    expect(queueMessages[0]?.actingUserId).toBeNull();
+  });
+
   test("copies PR tags from the Agent conversation to its parent", async () => {
     const spawnSubagentImpl = mock(async () => ({
       agentId: "agent-child",

@@ -33,7 +33,7 @@ import {
 } from "./constants";
 import { appendQueuedTurnToInput } from "./continuation-input";
 import { getConversationWorkingDirectory } from "./cwd";
-import { readInterruptedTurn } from "./interrupted-turn-record";
+import { readInterruptedTurn } from "./interrupted-turn-read";
 import {
   createListenerAgentModContext,
   createListenerModEvents,

@@ -252,7 +252,7 @@ export function composeSubagentChildEnv(
 
   // A nested launch must never reuse its parent's assigned creation name.
   if (actingUserId) childEnv[ACTING_USER_ID_ENV] = actingUserId;
-  else delete childEnv[ACTING_USER_ID_ENV];
+  else if (actingUserId === null) delete childEnv[ACTING_USER_ID_ENV];
   delete childEnv[SUBAGENT_NAME_ENV];
   if (options.subagentName) childEnv[SUBAGENT_NAME_ENV] = options.subagentName;
 

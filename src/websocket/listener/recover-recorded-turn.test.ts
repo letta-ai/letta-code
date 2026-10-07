@@ -265,23 +265,6 @@ import type { handleIncomingMessage } from "./turn";
 import { createTurnFinishedStore } from "./turn-finished-replay";
 import type { IncomingMessage } from "./types";
 
-async function eventually(
-  assertion: () => void,
-  attempts = 100,
-): Promise<void> {
-  let lastError: unknown;
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    try {
-      assertion();
-      return;
-    } catch (error) {
-      lastError = error;
-      await new Promise<void>((resolve) => setImmediate(resolve));
-    }
-  }
-  throw lastError;
-}
-
 test("a top-level recorded recovery rejection schedules another attempt", async () => {
   const listener = createRuntime();
   listener.connectionId = "conn-retry";
@@ -364,7 +347,7 @@ test("a failed deferred retry rearms recorded recovery", async () => {
   }
 });
 
-test("post-start claim loss schedules one coalesced recorded recovery retry", async () => {
+test("post-start claim loss never completes without a durable terminal", async () => {
   const directory = mkdtempSync(join(tmpdir(), "recorded-claim-loss-"));
   const store = createInterruptedTurnStore(directory);
   const listener = createRuntime();
@@ -432,12 +415,13 @@ test("post-start claim loss schedules one coalesced recorded recovery retry", as
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(starts).toBe(1);
     pendingTurns.shift()?.();
-    await eventually(() => expect(completions).toBeGreaterThanOrEqual(2));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(completions).toBe(0);
     expect(starts).toBe(1);
     expect(
       store.read("agent-1", "conv-1")?.recoveryClaimCompletion,
     ).toMatchObject({
-      state: "pending",
+      state: "running",
     });
   } finally {
     listener.intentionallyClosed = true;
@@ -501,7 +485,7 @@ test("a detached recovered turn rejection releases its lease and retries", async
   }
 });
 
-test("an accepted continuation still generating output is retained even with no pending tools", async () => {
+test("a request accepted before any run or result chunk is retained by OTID while generating", async () => {
   const directory = mkdtempSync(join(tmpdir(), "recorded-generating-"));
   const store = createInterruptedTurnStore(directory);
   const listener = createRuntime();
@@ -510,11 +494,9 @@ test("an accepted continuation still generating output is retained even with no 
     store.write({
       agentId: "agent-1",
       conversationId: "conv-1",
-      runId: "run-old",
-      toolCallIds: ["old-tool"],
-      results: [
-        { tool_call_id: "old-tool", status: "success", tool_return: "output" },
-      ],
+      runId: null,
+      toolCallIds: [],
+      results: [],
       requestOtid: "accepted-request",
       workingDirectory: "/project",
     });
@@ -755,8 +737,16 @@ test("a tool generated while the listener was down is recovered only from its re
     })) as never,
     canRecover: async () => true,
     acquireClaim: acquireTestClaim,
-    processTurn: async (message: IncomingMessage) => {
-      sent.push(message);
+    processTurn: async (...args: Parameters<typeof handleIncomingMessage>) => {
+      sent.push(args[0]);
+      const lease = args[6];
+      if (lease) {
+        getOrCreateScopedRuntime(
+          runtime,
+          "agent-1",
+          "conv-1",
+        ).turnLifecycle.finish(lease, "end_turn");
+      }
     },
     setCwd: () => {},
   };
@@ -781,8 +771,7 @@ test("a tool generated while the listener was down is recovered only from its re
     rmSync(directory, { recursive: true, force: true });
   }
 });
-
-test("mixed owned and unowned approvals rearm until owned work converges", async () => {
+test("mixed predecessor and successor approvals advance the sidecar owner first", async () => {
   const directory = mkdtempSync(join(tmpdir(), "recorded-mixed-owned-"));
   const store = createInterruptedTurnStore(directory);
   const listener = createRuntime();
@@ -790,8 +779,9 @@ test("mixed owned and unowned approvals rearm until owned work converges", async
   setActiveRuntime(listener);
   let scans = 0;
   let starts = 0;
+  let sentToolCallIds: string[] = [];
   try {
-    store.write({
+    const predecessor = store.write({
       agentId: "agent-1",
       conversationId: "conv-1",
       runId: "run-1",
@@ -799,7 +789,32 @@ test("mixed owned and unowned approvals rearm until owned work converges", async
       results: [],
       requestOtid: "request-1",
       workingDirectory: "/project",
+      recoveryClaimCompletion: {
+        lineageId: "lineage-1",
+        state: "running",
+        effectToolCallIds: ["call-owned"],
+      },
     });
+    store.write(
+      {
+        ...predecessor,
+        runId: "run-successor",
+        toolCallIds: ["call-unowned"],
+        requestOtid: "request-successor",
+        recoveryClaimCompletion: {
+          lineageId: "lineage-1",
+          state: "running",
+          independentSuccessor: true,
+          effectRevision: predecessor.revision,
+          effectRunId: predecessor.runId,
+          effectToolCallIds: predecessor.toolCallIds,
+          effectRequestOtid: predecessor.requestOtid,
+          effectWorkingDirectory: predecessor.workingDirectory,
+          effectResults: predecessor.results,
+        },
+      },
+      predecessor.revision,
+    );
     await recoverRecordedTurns(listener, {
       store,
       backend: { retrieveAgent: async () => ({ id: "agent-1" }) } as never,
@@ -808,30 +823,26 @@ test("mixed owned and unowned approvals rearm until owned work converges", async
         return {
           pendingApprovals: [
             { toolCallId: "call-owned", toolName: "Bash", toolArgs: "{}" },
-            ...(scans === 1
-              ? [
-                  {
-                    toolCallId: "call-unowned",
-                    toolName: "Bash",
-                    toolArgs: "{}",
-                  },
-                ]
-              : []),
+            {
+              toolCallId: "call-unowned",
+              toolName: "Bash",
+              toolArgs: "{}",
+            },
           ],
         };
       }) as never,
       canRecover: async () => true,
       acquireClaim: acquireTestClaim,
-      processTurn: async (
-        _message,
-        _transport,
-        ownerRuntime,
-        _onStatus,
-        _connectionId,
-        _batchId,
-        turnLease,
-      ) => {
+      processTurn: async (...args) => {
+        const [message, , ownerRuntime, , , , turnLease] = args;
         starts += 1;
+        const approvalMessage = message.messages[0];
+        sentToolCallIds =
+          approvalMessage?.type === "approval"
+            ? (approvalMessage.approvals ?? []).map(
+                (approval) => approval.tool_call_id,
+              )
+            : [];
         if (turnLease) ownerRuntime.turnLifecycle.finish(turnLease, "end_turn");
       },
       setCwd: () => {},
@@ -839,15 +850,16 @@ test("mixed owned and unowned approvals rearm until owned work converges", async
     });
     const deadline = performance.now() + 2_000;
     while (starts === 0 && performance.now() < deadline) await Bun.sleep(5);
-    expect(scans).toBeGreaterThanOrEqual(2);
+    expect(scans).toBe(1);
     expect(starts).toBe(1);
+    expect(sentToolCallIds).toEqual(["call-owned"]);
+    expect(store.read("agent-1", "conv-1")?.runId).toBe("run-successor");
   } finally {
     listener.intentionallyClosed = true;
     setActiveRuntime(null);
     rmSync(directory, { recursive: true, force: true });
   }
 });
-
 test("recovery eligibility conflict rearms and later owned work converges", async () => {
   const directory = mkdtempSync(join(tmpdir(), "recorded-conflict-owned-"));
   const store = createInterruptedTurnStore(directory);
@@ -972,7 +984,7 @@ test("restart sends saved results with the same request identity, never an unrel
     pendingId = "call-elsewhere";
     await recoverRecordedTurns(runtime, deps);
     expect(sent).toHaveLength(1);
-    expect(store.read("agent-1", "conv-1")).toBeNull();
+    expect(store.read("agent-1", "conv-1")).not.toBeNull();
     pendingId = "call-1";
     store.write({
       ...record,

@@ -20,6 +20,32 @@ import {
 } from "./turn-finished-replay";
 import type { ConversationRuntime, ListenerRuntime } from "./types";
 
+export function hasRecordedTerminalEvidence(
+  listener: ListenerRuntime,
+  terminalStore: ReturnType<typeof createTurnFinishedStore>,
+  params: {
+    agentId: string;
+    conversationId: string;
+    runtimeKey: string;
+    identities: InterruptedTurnRecord["durableInputIdentities"];
+    revision: string;
+  },
+): boolean {
+  return (
+    hasCompletedInputTerminalRevision(
+      listener,
+      params.runtimeKey,
+      params.identities ?? [],
+      params.revision,
+    ) ||
+    terminalStore
+      .read(params.agentId, params.conversationId)
+      ?.terminals.some(
+        (terminal) => terminal.owner.interruptedRevision === params.revision,
+      ) === true
+  );
+}
+
 export function hasCompletedTeleportInput(
   listener: ListenerRuntime,
   runtimeKey: string,

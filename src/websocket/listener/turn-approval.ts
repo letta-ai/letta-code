@@ -33,8 +33,8 @@ import {
 } from "./approval-transport-wait";
 import { getSubscribedListenerConnections, TO_SUBSCRIBERS } from "./connection";
 import { appendQueuedTurnToInput } from "./continuation-input";
+import { readInterruptedTurn } from "./interrupted-turn-read";
 import {
-  readInterruptedTurn,
   type recordListenerWork,
   recordListenerWorkRetriably,
 } from "./interrupted-turn-record";

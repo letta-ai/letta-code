@@ -14,7 +14,10 @@ import {
   type McpServersReminderDependencies,
 } from "@/reminders/engine";
 import { createSharedReminderState } from "@/reminders/state";
-import { getCurrentWorkingDirectory } from "@/runtime-context";
+import {
+  getCurrentWorkingDirectory,
+  getRuntimeContext,
+} from "@/runtime-context";
 import { SUBAGENT_DEPTH_ENV } from "@/utils/subagent-depth-env";
 import { runClaudeTurn } from "./claude-stream-session";
 import { runCodexTurn } from "./codex-app-server";
@@ -44,7 +47,7 @@ export interface ExternalCodingAgentRunOptions {
   model?: string;
   parentAgentId: string;
   parentConversationId?: string;
-  actingUserId?: string;
+  actingUserId?: string | null;
   resumeSessionId?: string;
   cwd?: string;
   mcpReminder?: string;
@@ -390,8 +393,14 @@ export async function runExternalCodingAgent(
     // A Letta CLI launched from the worker's shell stays inside the depth bound.
     [SUBAGENT_DEPTH_ENV]: String(getCurrentSubagentDepth() + 1),
   };
-  if (options.actingUserId) env[ACTING_USER_ID_ENV] = options.actingUserId;
-  else delete env[ACTING_USER_ID_ENV];
+  if (typeof options.actingUserId === "string") {
+    env[ACTING_USER_ID_ENV] = options.actingUserId;
+  } else if (
+    options.actingUserId === null ||
+    getRuntimeContext()?.suppressActingUserFallback
+  ) {
+    delete env[ACTING_USER_ID_ENV];
+  }
   const cwd = options.cwd ?? getCurrentWorkingDirectory();
   const scope = options.parentConversationId
     ? {

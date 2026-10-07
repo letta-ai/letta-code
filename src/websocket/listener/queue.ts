@@ -79,13 +79,14 @@ function hasSameQueueScope(a: QueueItem, b: QueueItem): boolean {
   );
 }
 
-function getBatchActingUserId(items: QueueItem[]): string | undefined {
+function getBatchActingUserId(items: QueueItem[]): string | null | undefined {
   // The latest ordinary user message owns a coalesced continuation request.
   // This deliberately returns undefined for an unattributed latest user so it
   // clears, rather than inherits, the actor from the turn being continued.
   const userMessages = items.filter((item) => item.kind === "message");
   if (userMessages.length > 0) return userMessages.at(-1)?.actingUserId;
 
+  if (items.some((item) => item.actingUserId === null)) return null;
   const actingUserId = items[0]?.actingUserId;
   if (
     !actingUserId ||
@@ -109,7 +110,7 @@ function buildQueuedTurnMessage(
     if (item.kind === "message" && incoming) {
       template ??= {
         ...incoming,
-        actingUserId: incoming.actingUserId ?? item.actingUserId,
+        actingUserId: incoming.actingUserId ?? item.actingUserId ?? undefined,
       };
       durableInputIdentities.push(...(incoming.durableInputIdentities ?? []));
       for (const consumerId of incoming.terminalConsumerIds ?? []) {
@@ -129,7 +130,7 @@ function buildQueuedTurnMessage(
       messages.push(
         withMessageAttribution(
           { role: "user", content: item.content },
-          item.actingUserId,
+          item.actingUserId ?? undefined,
         ),
       );
     } else if (isCoalescable(item.kind) && "text" in item) {
@@ -147,14 +148,19 @@ function buildQueuedTurnMessage(
   }
   if (messages.length === 0) return null;
   const scopeItem = batch.items[0];
+  const batchActingUserId = batch.items.some((item) => item.kind === "message")
+    ? getBatchActingUserId(batch.items)
+    : (template?.actingUserId ?? getBatchActingUserId(batch.items));
   return {
     type: "message",
     agentId: scopeItem?.agentId ?? runtime.agentId ?? undefined,
     conversationId: scopeItem?.conversationId ?? runtime.conversationId,
     ...template,
-    actingUserId: batch.items.some((item) => item.kind === "message")
-      ? getBatchActingUserId(batch.items)
-      : (template?.actingUserId ?? getBatchActingUserId(batch.items)),
+    actingUserId: batchActingUserId ?? undefined,
+    suppressActingUserFallback:
+      batchActingUserId === null ||
+      (batchActingUserId === undefined &&
+        template?.suppressActingUserFallback === true),
     ...(durableInputIdentities.length > 0
       ? { durableInputIdentities: [...new Set(durableInputIdentities)] }
       : {}),

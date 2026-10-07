@@ -4,6 +4,7 @@ import { openListenerConnection } from "./connection";
 import {
   getOrCreateScopedRuntime,
   restoreDurableQueuedInputs,
+  scheduleDurableQueueRestore,
 } from "./conversation-runtime";
 import { enqueueInboundUserMessage } from "./inbound-queue";
 import {
@@ -152,6 +153,34 @@ test("lifecycle refill coalesces soft overflow and guards inactive runtimes", as
         ...(second?.queuedTurn.durableInputIdentities ?? []),
       ]).size,
     ).toBe(105);
+  } finally {
+    stopRuntime(runtime.listener, true);
+    setActiveRuntime(null);
+  }
+});
+
+test("an async refill preserves a wake that arrives after its snapshot", async () => {
+  const runtime = createDurableRuntime();
+  setActiveRuntime(runtime.listener);
+  let calls = 0;
+  let releaseFirst: (() => void) | undefined;
+  runtime.listener.restoreDurableQueuedInputs = async () => {
+    calls += 1;
+    if (calls === 1) {
+      await new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+    }
+    return 0;
+  };
+  try {
+    scheduleDurableQueueRestore(runtime.listener);
+    await waitFor(() => expect(calls).toBe(1));
+    scheduleDurableQueueRestore(runtime.listener);
+    expect(runtime.listener.durableQueueRestoreRerunRequested).toBe(true);
+    releaseFirst?.();
+    await waitFor(() => expect(calls).toBe(2));
+    expect(runtime.listener.durableQueueRestoreRerunRequested).toBe(false);
   } finally {
     stopRuntime(runtime.listener, true);
     setActiveRuntime(null);

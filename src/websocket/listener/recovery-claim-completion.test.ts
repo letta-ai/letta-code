@@ -71,6 +71,59 @@ test("completion-pending transition rejects a newer same-lineage revision", () =
   }
 });
 
+test("completion-pending transitions an independent predecessor sidecar", () => {
+  const directory = mkdtempSync(join(tmpdir(), "recovery-sidecar-pending-"));
+  try {
+    const store = createInterruptedTurnStore(directory);
+    const predecessor = store.write({
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      runId: "run-predecessor",
+      toolCallIds: ["call-predecessor"],
+      results: [],
+      requestOtid: "request-predecessor",
+      workingDirectory: "/predecessor",
+      recoveryClaimCompletion: {
+        lineageId: "lineage-sidecar",
+        state: "running",
+        effectToolCallIds: ["call-predecessor"],
+      },
+    });
+    const successor = store.write(
+      {
+        ...predecessor,
+        runId: "run-successor",
+        toolCallIds: ["call-successor"],
+        requestOtid: "request-successor",
+        recoveryClaimCompletion: {
+          lineageId: "lineage-sidecar",
+          state: "running",
+          independentSuccessor: true,
+          effectRevision: predecessor.revision,
+          effectRunId: predecessor.runId,
+          effectToolCallIds: predecessor.toolCallIds,
+          effectRequestOtid: predecessor.requestOtid,
+          effectWorkingDirectory: predecessor.workingDirectory,
+          effectResults: predecessor.results,
+        },
+      },
+      predecessor.revision,
+    );
+    const recovery = store.readRecoveryView(
+      "agent-1",
+      "conv-1",
+      "lineage-sidecar",
+    );
+    if (!recovery) throw new Error("missing recovery sidecar view");
+
+    const pending = markRecoveryClaimCompletionPending(store, recovery);
+    expect(pending?.recoveryClaimCompletion?.state).toBe("pending");
+    expect(store.read("agent-1", "conv-1")?.revision).toBe(successor.revision);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test.each([
   {
     name: "ACK",

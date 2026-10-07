@@ -88,37 +88,12 @@ import { drainTurnStreamWithEmission } from "./turn-stream";
 import { seedInboundUserTranscriptLines } from "./turn-transcript";
 import type { ConversationRuntime, IncomingMessage } from "./types";
 export async function handleIncomingMessage(
-  msg: IncomingMessage,
-  socket: ListenerTransport,
-  runtime: ConversationRuntime,
-  onStatusChange?: import("./types").StartListenerOptions["onStatusChange"],
-  connectionId?: string,
-  dequeuedBatchId: string = `batch-direct-${crypto.randomUUID()}`,
-  existingTurnLease?: TurnLease,
-  existingTurnCorrelation?: TurnCorrelation,
-  terminalCommitGuard?: () => boolean,
-  retainRecoveredApprovalState: boolean = false,
-  initialInterruptedRevision?: string,
-  deferInterruptedCleanup: boolean = false,
-  recoveryLineageId?: string,
+  ...args: Parameters<typeof handleIncomingMessageInner>
 ): Promise<void> {
+  const [msg] = args;
   notifyTurnStarted(msg);
   try {
-    await handleIncomingMessageInner(
-      msg,
-      socket,
-      runtime,
-      onStatusChange,
-      connectionId,
-      dequeuedBatchId,
-      existingTurnLease,
-      existingTurnCorrelation,
-      terminalCommitGuard,
-      retainRecoveredApprovalState,
-      initialInterruptedRevision,
-      deferInterruptedCleanup,
-      recoveryLineageId,
-    );
+    await handleIncomingMessageInner(...args);
   } finally {
     notifyTurnFinished(msg);
   }
@@ -137,6 +112,7 @@ async function handleIncomingMessageInner(
   initialInterruptedRevision?: string,
   deferInterruptedCleanup: boolean = false,
   recoveryLineageId?: string,
+  recoveryTerminalRevision?: string,
 ): Promise<void> {
   const agentId = normalizeCwdAgentId(msg.agentId);
   const requestedConversationId = msg.conversationId || undefined;
@@ -198,6 +174,8 @@ async function handleIncomingMessageInner(
     terminalCommitGuard,
     interruptedRevisionRef,
     deferInterruptedCleanup,
+    recoveryLineageId,
+    recoveryTerminalRevision,
   });
   const {
     finishClaimedTurn,
@@ -395,7 +373,9 @@ async function handleIncomingMessageInner(
           conversationId,
           workingDirectory: turnWorkingDirectory,
           permissionMode: turnPermissionModeState.mode,
-          actingUserId: msg.actingUserId,
+          actingUserId: msg.suppressActingUserFallback
+            ? null
+            : msg.actingUserId,
           assistantMessage: findLastAssistantText(transcriptLines),
           transcriptLines,
           getCachedAgent: setup.getCachedAgent,

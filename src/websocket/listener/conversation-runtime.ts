@@ -76,10 +76,14 @@ export function scheduleDurableQueueRestore(
   ) {
     clearDurableQueueRestoreRetry(listener);
     listener.durableQueueRestoreScheduled = false;
+    listener.durableQueueRestoreRerunRequested = false;
     return;
   }
   if (capacityReleased) clearDurableQueueRestoreRetry(listener);
-  if (listener.durableQueueRestoreScheduled) return;
+  if (listener.durableQueueRestoreScheduled) {
+    listener.durableQueueRestoreRerunRequested = true;
+    return;
+  }
   listener.durableQueueRestoreScheduled = true;
   queueMicrotask(() => {
     void (async () => {
@@ -119,6 +123,12 @@ export function scheduleDurableQueueRestore(
         listener.durableQueueRestoreTimer.unref?.();
       } finally {
         listener.durableQueueRestoreScheduled = false;
+        const rerunRequested =
+          listener.durableQueueRestoreRerunRequested === true;
+        listener.durableQueueRestoreRerunRequested = false;
+        if (rerunRequested && !listener.durableQueueRestoreTimer) {
+          scheduleDurableQueueRestore(listener, false);
+        }
       }
     })();
   });

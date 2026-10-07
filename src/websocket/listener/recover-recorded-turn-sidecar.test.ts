@@ -33,6 +33,7 @@ test("restart launches a predecessor from sidecar ownership snapshots", async ()
   listener.connectionId = "conn-replacement";
   const sent: IncomingMessage[] = [];
   const workingDirectories: string[] = [];
+  let claimCompletions = 0;
   const lineageId = "lineage-predecessor";
   try {
     const predecessor = store.write({
@@ -102,7 +103,25 @@ test("restart launches a predecessor from sidecar ownership snapshots", async ()
         ],
       })) as never,
       canRecover: async () => true,
-      acquireClaim: acquireTestClaim,
+      acquireClaim: async () => {
+        let owned = true;
+        return {
+          get owned() {
+            return owned;
+          },
+          complete: async () => {
+            claimCompletions += 1;
+            owned = false;
+            return true;
+          },
+          release: async () => {
+            owned = false;
+          },
+          abandon: () => {
+            owned = false;
+          },
+        } as never;
+      },
       setCwd: (_listener, _agentId, _conversationId, cwd) => {
         workingDirectories.push(cwd);
       },
@@ -124,6 +143,105 @@ test("restart launches a predecessor from sidecar ownership snapshots", async ()
           approvals: [{ tool_call_id: "call-predecessor" }],
         },
       ],
+    });
+    await Promise.resolve();
+    expect(claimCompletions).toBe(0);
+    expect(
+      store.readRecoveryView("agent-1", "conv-1", lineageId),
+    ).not.toBeNull();
+  } finally {
+    listener.intentionallyClosed = true;
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("restart defers when the recovery sidecar changes across a backend await", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "recorded-sidecar-fence-"));
+  const store = createInterruptedTurnStore(directory);
+  const listener = createRuntime();
+  listener.connectionId = "conn-replacement";
+  const lineageId = "lineage-fence";
+  let starts = 0;
+  try {
+    const predecessor = store.write({
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      runId: "run-predecessor",
+      toolCallIds: ["call-predecessor"],
+      results: [
+        {
+          type: "approval",
+          tool_call_id: "call-predecessor",
+          approve: false,
+          reason: "unknown",
+        },
+      ],
+      requestOtid: "request-predecessor",
+      workingDirectory: "/predecessor",
+      recoveryClaimCompletion: {
+        lineageId,
+        state: "running",
+        effectToolCallIds: ["call-predecessor"],
+      },
+    });
+    store.write(
+      {
+        ...predecessor,
+        runId: "run-successor",
+        toolCallIds: ["call-successor"],
+        results: [],
+        requestOtid: "request-successor",
+        recoveryClaimCompletion: {
+          lineageId,
+          state: "running",
+          independentSuccessor: true,
+          effectRevision: predecessor.revision,
+          effectToolCallIds: predecessor.toolCallIds,
+          effectRunId: predecessor.runId,
+          effectRequestOtid: predecessor.requestOtid,
+          effectWorkingDirectory: predecessor.workingDirectory,
+          effectResults: predecessor.results,
+        },
+      },
+      predecessor.revision,
+    );
+
+    await recoverRecordedTurns(listener, {
+      store,
+      backend: { retrieveAgent: async () => ({ id: "agent-1" }) } as never,
+      resume: (async () => {
+        store.writeRecoveryLineageSnapshot({
+          agentId: "agent-1",
+          conversationId: "conv-1",
+          lineageId,
+          update: {
+            results: [],
+            unstartedToolCallIds: ["call-predecessor"],
+          },
+        });
+        return {
+          pendingApprovals: [
+            {
+              toolCallId: "call-predecessor",
+              toolName: "Bash",
+              toolArgs: "{}",
+            },
+          ],
+        };
+      }) as never,
+      canRecover: async () => true,
+      acquireClaim: acquireTestClaim,
+      processTurn: async () => {
+        starts += 1;
+      },
+    });
+
+    expect(starts).toBe(0);
+    expect(
+      store.readRecoveryView("agent-1", "conv-1", lineageId),
+    ).toMatchObject({
+      results: [],
+      unstartedToolCallIds: ["call-predecessor"],
     });
   } finally {
     listener.intentionallyClosed = true;

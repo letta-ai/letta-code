@@ -41,11 +41,19 @@ export function markRecoveryClaimCompletionPending(
   const marker = record.recoveryClaimCompletion;
   if (!record.revision || !marker || marker.state !== "running") return null;
   try {
+    const expectedRevision = marker.independentSuccessor
+      ? store.readRecoverySnapshot(
+          record.agentId,
+          record.conversationId,
+          marker.lineageId,
+        )?.revisionToken
+      : record.revision;
+    if (!expectedRevision) return null;
     return store.markRecoveryClaimCompletionPending({
       agentId: record.agentId,
       conversationId: record.conversationId,
       lineageId: marker.lineageId,
-      expectedRevision: record.revision,
+      expectedRevision,
     });
   } catch {
     return null;

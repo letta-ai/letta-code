@@ -39,6 +39,7 @@ export async function autoBackgroundExternalTool<T extends ExternalResult>(
       agentId?: string | null;
       conversationId?: string | null;
       actingUserId?: string;
+      suppressActingUserFallback?: boolean;
     };
     canBackground?: boolean | (() => boolean);
     enqueue?: (message: QueuedMessage) => void;
@@ -52,7 +53,9 @@ export async function autoBackgroundExternalTool<T extends ExternalResult>(
       ? {
           agentId: runtime.agentId,
           conversationId: runtime.conversationId,
-          actingUserId: runtime.actingUserId,
+          actingUserId: runtime.suppressActingUserFallback
+            ? null
+            : runtime.actingUserId,
         }
       : undefined);
   // Only listener tools opt in. Headless SDK tools share one stdin reader, and

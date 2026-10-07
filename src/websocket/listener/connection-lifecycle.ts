@@ -119,8 +119,13 @@ export function cleanupListenerConnection(
       queuedMessage,
     ] of conversationRuntime.queuedMessagesByItemId) {
       if (queuedMessage.connectionId === connectionId) {
-        conversationRuntime.queueRuntime.removeItem(itemId);
-        conversationRuntime.queuedMessagesByItemId.delete(itemId);
+        // The accepted payload is process-owned once queued. Detach only the
+        // vanished delivery route; the queue pump will wait for a subscribed
+        // replacement and the durable ledger remains replayable meanwhile.
+        conversationRuntime.queuedMessagesByItemId.set(itemId, {
+          ...queuedMessage,
+          connectionId: undefined,
+        });
       }
     }
     rejectPendingApprovalResolversForConnection(

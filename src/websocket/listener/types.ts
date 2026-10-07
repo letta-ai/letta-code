@@ -231,6 +231,8 @@ export type RecoveredApprovalState = {
   interruptedRevision?: string;
   /** Existing durable lineage reused when restart observes an in-flight recovery. */
   recoveryLineageId?: string;
+  /** Mutable sidecar generation fencing continuation checkpoints and terminal. */
+  recoveryRevisionToken?: string;
   /** The lineage lives beside an independent successor's main revision. */
   recoveryUsesIndependentSuccessor?: boolean;
 };
@@ -558,9 +560,11 @@ export type ListenerRuntime = {
   /** Retry capacity-deferred input-terminal promotion after an ACK frees space. */
   promotePreparedInputTerminals?: () => number;
   /** Rehydrate a committed queued input after volatile enqueue failure. */
-  restoreDurableQueuedInputs?: () => number;
+  restoreDurableQueuedInputs?: () => number | Promise<number>;
   /** Coalesces capacity-release callbacks into one durable queue refill scan. */
   durableQueueRestoreScheduled?: boolean;
+  /** A wake that arrived while an async refill snapshot was in flight. */
+  durableQueueRestoreRerunRequested?: boolean;
   /** The single bounded backoff timer for a failed durable queue refill. */
   durableQueueRestoreTimer?: ReturnType<typeof setTimeout>;
   /** Consecutive refill failures in the current bounded retry cycle. */

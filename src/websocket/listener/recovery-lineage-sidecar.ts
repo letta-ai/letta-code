@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
+  existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -23,7 +25,10 @@ export interface RecoveryLineageSidecar {
   runId: string | null;
   toolCallIds: string[];
   unstartedToolCallIds?: string[];
+  /** Authoritative checkpoint snapshot; rollback may replace this wholesale. */
   results: ApprovalResult[];
+  /** Exact post-effect settlements that must survive later rollback snapshots. */
+  exactResults?: ApprovalResult[];
   requestOtid: string;
   workingDirectory: string;
   actingUserId?: string;
@@ -70,6 +75,11 @@ export function createRecoveryLineageSidecarAccess(params: {
       candidate.results.every(
         (result) => result && typeof result.tool_call_id === "string",
       ) &&
+      (candidate.exactResults === undefined ||
+        (Array.isArray(candidate.exactResults) &&
+          candidate.exactResults.every(
+            (result) => result && typeof result.tool_call_id === "string",
+          ))) &&
       (candidate.unstartedToolCallIds === undefined ||
         (Array.isArray(candidate.unstartedToolCallIds) &&
           candidate.unstartedToolCallIds.every(
@@ -143,14 +153,14 @@ export function createRecoveryLineageSidecarAccess(params: {
     ) {
       throw new Error("Independent recovery lineage is not durable");
     }
-    const results = [...(marker.effectResults ?? [])];
+    const exactResults: ApprovalResult[] = [];
     for (const effect of current.settledRecoveryEffects ?? []) {
       if (effect.lineageId !== marker.lineageId) continue;
-      const index = results.findIndex(
+      const index = exactResults.findIndex(
         (result) => result.tool_call_id === effect.result.tool_call_id,
       );
-      if (index >= 0) results[index] = effect.result;
-      else results.push(effect.result);
+      if (index >= 0) exactResults[index] = effect.result;
+      else exactResults.push(effect.result);
     }
     return {
       revision: randomUUID(),
@@ -164,7 +174,8 @@ export function createRecoveryLineageSidecarAccess(params: {
       unstartedToolCallIds: marker.effectUnstartedToolCallIds
         ? [...marker.effectUnstartedToolCallIds]
         : undefined,
-      results,
+      results: [...(marker.effectResults ?? [])],
+      exactResults,
       requestOtid: marker.effectRequestOtid ?? current.requestOtid,
       workingDirectory:
         marker.effectWorkingDirectory ?? current.workingDirectory,
@@ -188,6 +199,12 @@ export function createRecoveryLineageSidecarAccess(params: {
     );
     if (sidecar?.state === "retired") return null;
     const effect = sidecar ?? initial(current);
+    const results = new Map(
+      effect.results.map((result) => [result.tool_call_id, result]),
+    );
+    for (const result of effect.exactResults ?? []) {
+      results.set(result.tool_call_id, result);
+    }
     return {
       ...current,
       revision: effect.sourceMainRevision,
@@ -196,7 +213,7 @@ export function createRecoveryLineageSidecarAccess(params: {
       unstartedToolCallIds: effect.unstartedToolCallIds
         ? [...effect.unstartedToolCallIds]
         : undefined,
-      results: [...effect.results],
+      results: [...results.values()],
       settledRecoveryEffects: undefined,
       requestOtid: effect.requestOtid,
       workingDirectory: effect.workingDirectory,
@@ -244,9 +261,32 @@ export function createRecoveryLineageSidecarAccess(params: {
       unstartedToolCallIds: current.unstartedToolCallIds?.filter(
         (toolCallId) => !retiredToolCallIds.has(toolCallId),
       ),
+      teleport:
+        sidecar.teleport &&
+        current.teleport?.teleportId === sidecar.teleport.teleportId
+          ? undefined
+          : current.teleport,
       settledRecoveryEffects: current.settledRecoveryEffects?.filter(
         (effect) => effect.lineageId !== marker.lineageId,
       ),
+    };
+  };
+
+  const snapshot = (
+    current: InterruptedTurnRecord,
+  ): { record: InterruptedTurnRecord; revisionToken: string } | null => {
+    const marker = current.recoveryClaimCompletion;
+    if (!marker?.independentSuccessor) return null;
+    const record = recoveryView(current);
+    if (!record) return null;
+    const sidecar = read(
+      current.agentId,
+      current.conversationId,
+      marker.lineageId,
+    );
+    return {
+      record,
+      revisionToken: sidecar?.revision ?? `main:${current.revision ?? "none"}`,
     };
   };
 
@@ -257,5 +297,46 @@ export function createRecoveryLineageSidecarAccess(params: {
     params.syncDirectory(params.directory);
   };
 
-  return { initial, mainView, read, recoveryView, remove, write };
+  const list = (): RecoveryLineageSidecar[] => {
+    const removeMalformedOrphan = (file: string) => {
+      const separator = file.indexOf(".recovery-");
+      const mainFile = separator >= 0 ? file.slice(0, separator) : "";
+      if (!mainFile || existsSync(join(params.directory, mainFile))) return;
+      try {
+        rmSync(join(params.directory, file), { force: true });
+        params.syncDirectory(params.directory);
+      } catch {}
+    };
+    try {
+      return readdirSync(params.directory)
+        .filter((file) => file.includes(".json.recovery-"))
+        .flatMap((file) => {
+          try {
+            const value: unknown = JSON.parse(
+              readFileSync(join(params.directory, file), "utf8"),
+            );
+            if (isSidecar(value)) return [value];
+            removeMalformedOrphan(file);
+            return [];
+          } catch {
+            removeMalformedOrphan(file);
+            return [];
+          }
+        });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
+    }
+  };
+
+  return {
+    initial,
+    list,
+    mainView,
+    read,
+    recoveryView,
+    remove,
+    snapshot,
+    write,
+  };
 }

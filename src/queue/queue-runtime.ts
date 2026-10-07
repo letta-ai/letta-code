@@ -32,7 +32,8 @@ type QueueItemBase = {
    * Undefined for self-hosted, single-user, or pre-channel-split
    * flows where cloud doesn't stamp the field.
    */
-  actingUserId?: string;
+  /** Null explicitly suppresses fallback to the runtime owner's identity. */
+  actingUserId?: string | null;
   source: QueueItemSource;
   enqueuedAt: number;
   /**
