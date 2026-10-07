@@ -22,6 +22,7 @@ export function legacyAuthorityQuarantineEntryIsValid(
     typeof quarantine.interruptedRevision === "string" &&
     typeof quarantine.expiresAt === "number" &&
     Number.isFinite(quarantine.expiresAt) &&
+    quarantine.expiresAt === entry.expiresAt &&
     entry.preparedTerminal === undefined &&
     entry.queuedInput === undefined &&
     entry.replayCompleted === true

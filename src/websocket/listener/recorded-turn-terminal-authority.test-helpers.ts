@@ -4,6 +4,7 @@ import type { ListenerRuntime } from "./types";
 
 type ExpirableEntry = {
   expiresAt: number;
+  legacyAuthorityQuarantine?: { expiresAt: number };
   completedTerminalAuthority?: {
     terminalIdentity?: string;
     preparationSequence?: number;
@@ -35,7 +36,11 @@ export function expireDispositionLedgerEntries(
     ) {
       continue;
     }
-    entry.expiresAt = Date.now() - 1;
+    const expiredAt = Date.now() - 1;
+    entry.expiresAt = expiredAt;
+    if (entry.legacyAuthorityQuarantine) {
+      entry.legacyAuthorityQuarantine.expiresAt = expiredAt;
+    }
   }
   writeFileSync(ledgerPath, JSON.stringify(store), "utf8");
 }

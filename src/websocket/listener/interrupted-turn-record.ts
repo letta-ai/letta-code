@@ -89,6 +89,7 @@ export function createInterruptedTurnStore(
   }
   const {
     compactRetired: compactRetiredSidecar,
+    compactRetiredReference: compactRetiredSidecarReference,
     initial: initialSidecar,
     list: listSidecars,
     mainView: readMainView,
@@ -224,14 +225,7 @@ export function createInterruptedTurnStore(
     compactRetiredRecoverySidecar(sidecar: RecoveryLineageSidecar) {
       let compacted = false;
       removeRetiredSidecar(sidecar, () => {
-        if (
-          sidecar.runId !== null ||
-          sidecar.results.length !== 0 ||
-          sidecar.requestOtid !== "" ||
-          sidecar.workingDirectory !== ""
-        ) {
-          compactRetiredSidecar(sidecar);
-        }
+        compactRetiredSidecarReference(sidecar);
         compacted = true;
         return false;
       });

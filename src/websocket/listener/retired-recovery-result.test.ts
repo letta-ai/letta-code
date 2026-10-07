@@ -98,6 +98,24 @@ test("retired exact recovery result reaches the next turn after restart", async 
       }),
     ).toBe("preserved");
 
+    const retired = store
+      .listRecoverySidecars()
+      .find((sidecar) => sidecar.lineageId === "lineage-exact");
+    if (!retired) throw new Error("missing retired result sidecar");
+    expect(store.compactRetiredRecoverySidecar(retired)).toBe(true);
+    expect(
+      store
+        .listRecoverySidecars()
+        .find((sidecar) => sidecar.lineageId === "lineage-exact"),
+    ).toMatchObject({
+      runId: null,
+      toolCallIds: [exactResult.tool_call_id],
+      results: [],
+      exactResults: [exactResult],
+      requestOtid: "",
+      workingDirectory: "",
+    });
+
     const restartedStore = createInterruptedTurnStore(directory);
     expect(restartedStore.list()[0]?.results).toContainEqual(exactResult);
     await recoverRecordedTurns(listener, {

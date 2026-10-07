@@ -9,6 +9,7 @@ import {
 } from "./input-disposition";
 import { seedLegacyAuthorityQuarantine } from "./input-disposition.test-helpers";
 import { rebuildDispositionExpiryQueue } from "./input-disposition-capacity";
+import { legacyAuthorityQuarantineEntryIsValid } from "./input-disposition-validation";
 import {
   loadLegacyAuthorityQuarantines,
   prepareInputTerminal,
@@ -75,6 +76,28 @@ test("volatile legacy quarantine expires without rescheduling", () => {
   expireQuarantine(listener);
   expect(loadLegacyAuthorityQuarantines(listener)).toHaveLength(0);
   expect(listener.acceptedInputDispositionLedger.quarantinedCount).toBe(0);
+});
+
+test("legacy quarantine rejects divergent expiry authorities", () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    "agent-0",
+    "conversation-0",
+  );
+  seedLegacyAuthorityQuarantine(listener, runtime);
+  const entry = [
+    ...listener.acceptedInputDispositionLedger.entries.values(),
+  ].find((candidate) => candidate.legacyAuthorityQuarantine);
+  if (!entry?.legacyAuthorityQuarantine)
+    throw new Error("missing quarantine expiry fixture");
+  entry.legacyAuthorityQuarantine.expiresAt += 1;
+  expect(
+    legacyAuthorityQuarantineEntryIsValid(
+      entry as unknown as Record<string, unknown>,
+      entry.runtimeKey,
+    ),
+  ).toBe(false);
 });
 
 test("listener stop clears legacy quarantine cleanup timers", async () => {

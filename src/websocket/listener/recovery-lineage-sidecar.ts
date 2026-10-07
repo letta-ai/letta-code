@@ -245,6 +245,55 @@ export function createRecoveryLineageSidecarAccess(params: {
     return compact;
   };
 
+  const compactRetiredReference = (
+    retired: RecoveryLineageSidecar,
+  ): RecoveryLineageSidecar => {
+    const current = read(
+      retired.agentId,
+      retired.conversationId,
+      retired.lineageId,
+    );
+    if (current?.state !== "retired" || current.revision !== retired.revision)
+      return current ?? retired;
+    if (
+      current.runId === null &&
+      current.unstartedToolCallIds === undefined &&
+      current.results.length === 0 &&
+      current.requestOtid === "" &&
+      current.workingDirectory === "" &&
+      current.actingUserId === undefined &&
+      current.durableInputIdentities === undefined &&
+      current.terminalConsumerIds === undefined &&
+      current.pendingAuthorityRevision === undefined
+    ) {
+      return current;
+    }
+    const compact: RecoveryLineageSidecar = {
+      revision: randomUUID(),
+      agentId: current.agentId,
+      conversationId: current.conversationId,
+      lineageId: current.lineageId,
+      sourceMainRevision: current.sourceMainRevision,
+      state: "retired",
+      runId: null,
+      toolCallIds: [...current.toolCallIds],
+      results: [],
+      exactResults: current.exactResults
+        ? structuredClone(current.exactResults)
+        : undefined,
+      requestOtid: "",
+      workingDirectory: "",
+      teleport: current.teleport
+        ? structuredClone(current.teleport)
+        : undefined,
+      retiredInterruptedRevision: current.retiredInterruptedRevision,
+      retiredAuthorityRevision: current.retiredAuthorityRevision,
+      retiredAt: current.retiredAt,
+    };
+    write(compact);
+    return compact;
+  };
+
   const retiredAuthority = (
     agentId: string,
     conversationId: string,
@@ -564,6 +613,7 @@ export function createRecoveryLineageSidecarAccess(params: {
   return {
     initial,
     compactRetired,
+    compactRetiredReference,
     list,
     mainView,
     read,
