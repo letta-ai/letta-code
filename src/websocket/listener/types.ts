@@ -273,6 +273,8 @@ export type DurablePreparedInputTerminal = {
   preparedAt?: number;
   /** Durable monotonic order used to reconcile legacy retired authority. */
   preparationSequence?: number;
+  /** Fail-closed upgrade fence when predecessor authority has no durable order. */
+  legacyAuthorityAmbiguous?: boolean;
   scope: { agentId: string | null; conversationId: string };
   message: {
     type: "turn_finished";

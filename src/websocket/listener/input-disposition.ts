@@ -22,7 +22,6 @@ import {
   fsyncDirectory,
 } from "./durable-file-lock";
 import { inputDispositionPersistentPath } from "./input-disposition-path";
-import { shouldRetainDisposition } from "./input-disposition-retention";
 import { getConversationRuntimeKey } from "./runtime";
 import type {
   AcceptedInputDisposition,
@@ -163,7 +162,7 @@ function expireAcceptedInputDispositions(
     const entry = ledger.entries.get(expiry.key);
     if (
       entry?.generation === expiry.generation &&
-      shouldRetainDisposition(entry)
+      (entry.queuedInput || entry.preparedTerminal)
     ) {
       // Once accepted, replay responsibility lasts until a terminal transition
       // retires the payload. The sender retry horizon only bounds tombstones;
@@ -251,9 +250,8 @@ function validateDurableStore(value: unknown): DurableStore {
     ) {
       throw new Error("Invalid accepted-input disposition entry");
     }
-    // v2 wrote ordinary queued payloads without an explicit namespace and
-    // payload-free started tombstones. Upgrade those records in memory; all new
-    // writes are v4 and must carry either replay data or a completion marker.
+    // v2 lacked namespaces and wrote payload-free started tombstones. Upgrade in
+    // memory; v4 writes must carry replay data or a completion marker.
     if (value.version === 2) {
       if (
         rawEntry.queuedInput !== undefined &&
@@ -317,6 +315,8 @@ function validateDurableStore(value: unknown): DurableStore {
         (prepared.preparationSequence !== undefined &&
           (!Number.isSafeInteger(prepared.preparationSequence) ||
             (prepared.preparationSequence as number) < 0)) ||
+        (prepared.legacyAuthorityAmbiguous !== undefined &&
+          typeof prepared.legacyAuthorityAmbiguous !== "boolean") ||
         !isRecord(prepared.scope) ||
         (prepared.scope.agentId !== null &&
           typeof prepared.scope.agentId !== "string") ||
@@ -462,7 +462,7 @@ function pruneDurableStore(store: DurableStore, now: number): boolean {
   let changed = false;
   for (const [key, entry] of Object.entries(store.entries)) {
     if (entry.expiresAt <= now) {
-      if (shouldRetainDisposition(entry)) {
+      if (entry.queuedInput || entry.preparedTerminal) {
         entry.expiresAt = now + ACCEPTED_INPUT_DISPOSITION_TTL_MS;
       } else {
         delete store.entries[key];

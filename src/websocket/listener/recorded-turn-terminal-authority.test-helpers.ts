@@ -1,0 +1,41 @@
+import { readFileSync, writeFileSync } from "node:fs";
+import { createAcceptedInputDispositionLedger } from "./input-disposition";
+import type { ListenerRuntime } from "./types";
+
+type ExpirableEntry = {
+  expiresAt: number;
+  completedTerminalAuthority?: {
+    terminalIdentity?: string;
+    preparationSequence?: number;
+  };
+};
+
+export function expireDispositionLedgerEntries(
+  ledgerPath: string,
+  legacyAuthoritiesOnly = false,
+): void {
+  const store = JSON.parse(readFileSync(ledgerPath, "utf8")) as {
+    entries: Record<string, ExpirableEntry>;
+  };
+  for (const entry of Object.values(store.entries)) {
+    const authority = entry.completedTerminalAuthority;
+    if (
+      legacyAuthoritiesOnly &&
+      (!authority ||
+        authority.terminalIdentity ||
+        authority.preparationSequence !== undefined)
+    ) {
+      continue;
+    }
+    entry.expiresAt = Date.now() - 1;
+  }
+  writeFileSync(ledgerPath, JSON.stringify(store), "utf8");
+}
+
+export function setDispositionLedger(
+  listener: ListenerRuntime,
+  persistentPath: string | null,
+): void {
+  listener.acceptedInputDispositionLedger =
+    createAcceptedInputDispositionLedger({ persistentPath });
+}

@@ -13,6 +13,7 @@ import {
   discardPreparedInputTerminal,
   loadCompletedTerminalAuthorities,
   loadPreparedInputTerminals,
+  markPreparedTerminalAuthorityAmbiguous,
 } from "./input-terminal-journal";
 import {
   createInterruptedTurnStore,
@@ -488,6 +489,10 @@ export function promotePreparedInputTerminals(
       deferred = true;
       continue;
     }
+    if (prepared.legacyAuthorityAmbiguous) {
+      deferred = true;
+      continue;
+    }
     if (
       prepared.owner.recoveryLineageId &&
       prepared.owner.interruptedRevision &&
@@ -684,6 +689,25 @@ export function promotePreparedInputTerminals(
             );
           }
           if (ambiguousCompletedAuthority) {
+            try {
+              if (
+                !markPreparedTerminalAuthorityAmbiguous(
+                  listener,
+                  prepared.scope,
+                  prepared.owner.recoveryLineageId,
+                  prepared.owner.interruptedRevision,
+                )
+              ) {
+                deferred = true;
+                continue;
+              }
+            } catch (error) {
+              debugWarn(
+                "recovery",
+                "Failed to persist legacy terminal ambiguity; deferring promotion",
+                error,
+              );
+            }
             deferred = true;
             continue;
           }

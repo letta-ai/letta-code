@@ -64,7 +64,12 @@ export function prepareInputTerminal(
       return durableTransaction(ledger.persistentPath, (store) => {
         for (const key of keys) {
           const entry = store.entries[key];
-          if (entry && (!entry.disposition || entry.disposition === "queued")) {
+          if (
+            entry &&
+            (!entry.disposition ||
+              entry.disposition === "queued" ||
+              entry.preparedTerminal?.legacyAuthorityAmbiguous)
+          ) {
             syncMemoryFromDurable(ledger, store);
             return { result: false, changed: false };
           }
@@ -95,7 +100,12 @@ export function prepareInputTerminal(
   }
   for (const key of keys) {
     const entry = ledger.entries.get(key);
-    if (entry && (!entry.disposition || entry.disposition === "queued")) {
+    if (
+      entry &&
+      (!entry.disposition ||
+        entry.disposition === "queued" ||
+        entry.preparedTerminal?.legacyAuthorityAmbiguous)
+    ) {
       return false;
     }
   }
@@ -258,6 +268,41 @@ export function loadPreparedInputTerminals(
       result: collect(Object.values(store.entries)),
       changed,
     };
+  });
+}
+
+export function markPreparedTerminalAuthorityAmbiguous(
+  listener: ListenerRuntime,
+  scope: { agentId: string | null; conversationId: string },
+  recoveryLineageId: string,
+  interruptedRevision: string,
+): boolean {
+  const ledger = getLedger(listener);
+  const mark = (entries: Iterable<AcceptedInputDispositionEntry>) => {
+    let matched = false;
+    let changed = false;
+    for (const entry of entries) {
+      const prepared = entry.preparedTerminal;
+      if (
+        prepared?.scope.agentId !== scope.agentId ||
+        prepared?.scope.conversationId !== scope.conversationId ||
+        prepared.owner.recoveryLineageId !== recoveryLineageId ||
+        prepared.owner.interruptedRevision !== interruptedRevision
+      )
+        continue;
+      matched = true;
+      if (prepared.legacyAuthorityAmbiguous !== true) {
+        prepared.legacyAuthorityAmbiguous = true;
+        changed = true;
+      }
+    }
+    return { matched, changed };
+  };
+  if (!ledger.persistentPath) return mark(ledger.entries.values()).matched;
+  return durableTransaction(ledger.persistentPath, (store) => {
+    const result = mark(Object.values(store.entries));
+    syncMemoryFromDurable(ledger, store);
+    return { result: result.matched, changed: result.changed };
   });
 }
 

@@ -19,7 +19,6 @@ import {
 } from "./conversation-runtime";
 import {
   commitInputDisposition,
-  createAcceptedInputDispositionLedger,
   ordinaryInputIdentity,
   reserveInputDisposition,
 } from "./input-disposition";
@@ -37,6 +36,10 @@ import {
   hasRecordedTerminalEvidence,
   prepareRecordedInputTerminal,
 } from "./recorded-turn-terminal";
+import {
+  expireDispositionLedgerEntries,
+  setDispositionLedger,
+} from "./recorded-turn-terminal-authority.test-helpers";
 import {
   markRecoveryClaimCompletionPending,
   retireAcknowledgedRecoveryClaim,
@@ -80,8 +83,7 @@ function installTerminalOwner(
 test("identity-free recorded recovery persists consumer evidence before retirement", () => {
   const directory = mkdtempSync(join(tmpdir(), "identity-free-recorded-"));
   const listener = createRuntime();
-  listener.acceptedInputDispositionLedger =
-    createAcceptedInputDispositionLedger({ persistentPath: null });
+  setDispositionLedger(listener, null);
   const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
   const terminalStore = createTurnFinishedStore(join(directory, "terminals"));
   const interruptedStore = createInterruptedTurnStore(
@@ -191,8 +193,7 @@ test("identity-free recorded retry reuses the put-committed owner after restart"
 test("stale terminal cleanup failures defer startup and converge on later promotion", () => {
   const directory = mkdtempSync(join(tmpdir(), "stale-terminal-cleanup-"));
   const listener = createRuntime();
-  listener.acceptedInputDispositionLedger =
-    createAcceptedInputDispositionLedger({ persistentPath: null });
+  setDispositionLedger(listener, null);
   const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
   const terminalStore = createTurnFinishedStore(join(directory, "terminals"));
   const identity = ordinaryInputIdentity("cm-stale-cleanup");
@@ -332,8 +333,7 @@ test("stale terminal cleanup failures defer startup and converge on later promot
 test("startup promotion contains load put and post-put clear failures", () => {
   const directory = mkdtempSync(join(tmpdir(), "promotion-io-failures-"));
   const listener = createRuntime();
-  listener.acceptedInputDispositionLedger =
-    createAcceptedInputDispositionLedger({ persistentPath: null });
+  setDispositionLedger(listener, null);
   const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
   const terminalStore = createTurnFinishedStore(join(directory, "terminals"));
   const interruptedStore = createInterruptedTurnStore(
@@ -431,8 +431,7 @@ test("startup promotion contains load put and post-put clear failures", () => {
 test("retained recovery journals schedule bounded promotion retries without an external wake", async () => {
   const directory = mkdtempSync(join(tmpdir(), "promotion-timer-retry-"));
   const listener = createRuntime();
-  listener.acceptedInputDispositionLedger =
-    createAcceptedInputDispositionLedger({ persistentPath: null });
+  setDispositionLedger(listener, null);
   const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
   const terminalStore = createTurnFinishedStore(join(directory, "terminals"));
   const identity = ordinaryInputIdentity("cm-promotion-timer");
@@ -513,8 +512,7 @@ test("retained recovery journals schedule bounded promotion retries without an e
 test("recorded recovery reuses a put-committed prepared identity on retry", () => {
   const directory = mkdtempSync(join(tmpdir(), "recorded-terminal-retry-"));
   const listener = createRuntime();
-  listener.acceptedInputDispositionLedger =
-    createAcceptedInputDispositionLedger({ persistentPath: null });
+  setDispositionLedger(listener, null);
   const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
   const terminalStore = createTurnFinishedStore(join(directory, "terminals"));
   const interruptedStore = createInterruptedTurnStore(
@@ -601,8 +599,7 @@ test("recorded recovery reuses a put-committed prepared identity on retry", () =
 test("terminal evidence is bound to the exact sidecar authority token", () => {
   const directory = mkdtempSync(join(tmpdir(), "terminal-authority-"));
   const listener = createRuntime();
-  listener.acceptedInputDispositionLedger =
-    createAcceptedInputDispositionLedger({ persistentPath: null });
+  setDispositionLedger(listener, null);
   const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
   const terminalStore = createTurnFinishedStore(directory);
   const identity = ordinaryInputIdentity("cm-authority");
@@ -706,8 +703,7 @@ test.each([
     );
     const listener = createRuntime();
     const ledgerPath = join(directory, "input-dispositions.json");
-    listener.acceptedInputDispositionLedger =
-      createAcceptedInputDispositionLedger({ persistentPath: null });
+    setDispositionLedger(listener, null);
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
     const terminalStore = createTurnFinishedStore(join(directory, "terminals"));
     const interruptedStore = createInterruptedTurnStore(
@@ -903,7 +899,6 @@ test.each([
         delete completedAuthority.terminalIdentity;
         delete completedAuthority.preparationSequence;
         if (!completed) throw new Error("missing completed entry fixture");
-        completed.expiresAt = Date.now() - 1;
         if (extraCompletedAuthority) {
           const extra = structuredClone(completed);
           if (!extra.completedTerminalAuthority)
@@ -915,10 +910,7 @@ test.each([
           ] = extra;
         }
         writeFileSync(ledgerPath, JSON.stringify(oldStore), "utf8");
-        listener.acceptedInputDispositionLedger =
-          createAcceptedInputDispositionLedger({
-            persistentPath: ledgerPath,
-          });
+        setDispositionLedger(listener, ledgerPath);
         expect(
           promotePreparedInputTerminals(
             listener,
@@ -930,6 +922,53 @@ test.each([
         expect(loadCompletedTerminalAuthorities(listener)).toHaveLength(
           extraCompletedAuthority ? 2 : 1,
         );
+        expect(loadPreparedInputTerminals(listener)).toEqual([
+          expect.objectContaining({ legacyAuthorityAmbiguous: true }),
+        ]);
+        expect(
+          prepareInputTerminal(
+            runtime,
+            [completedJournal === "winner" ? staleIdentity : identity],
+            {
+              scope: { agentId: "agent-1", conversationId: "conv-1" },
+              message: { ...message, turn_id: "turn-ambiguous-overwrite" },
+              owner: {
+                ...owner,
+                terminalIdentity: "terminal-ambiguous-overwrite",
+              },
+            },
+          ),
+        ).toBe(false);
+
+        expireDispositionLedgerEntries(ledgerPath, true);
+        setDispositionLedger(listener, ledgerPath);
+        expect(
+          promotePreparedInputTerminals(
+            listener,
+            terminalStore,
+            undefined,
+            interruptedStore,
+          ),
+        ).toBe(0);
+        expect(loadCompletedTerminalAuthorities(listener)).toHaveLength(0);
+        expect(loadPreparedInputTerminals(listener)).toEqual([
+          expect.objectContaining({ legacyAuthorityAmbiguous: true }),
+        ]);
+        if (extraCompletedAuthority) {
+          const quarantined = loadPreparedInputTerminals(listener)[0];
+          if (!quarantined) throw new Error("missing quarantined journal");
+          expect(
+            completePreparedInputTerminal(
+              runtime,
+              [completedJournal === "winner" ? staleIdentity : identity],
+              quarantined.message.turn_id,
+            ),
+          ).toBe(true);
+          expireDispositionLedgerEntries(ledgerPath);
+          setDispositionLedger(listener, ledgerPath);
+          expect(loadPreparedInputTerminals(listener)).toHaveLength(0);
+          expect(loadCompletedTerminalAuthorities(listener)).toHaveLength(0);
+        }
       } else {
         expect(
           promotePreparedInputTerminals(
@@ -941,7 +980,7 @@ test.each([
         ).toBe(1);
       }
       expect(loadPreparedInputTerminals(listener)).toHaveLength(
-        persistedWinner ? 0 : 1,
+        persistedWinner || extraCompletedAuthority ? 0 : 1,
       );
       expect(
         terminalStore.read("agent-1", "conv-1")?.terminals ?? [],
