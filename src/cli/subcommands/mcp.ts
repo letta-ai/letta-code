@@ -9,12 +9,12 @@ import {
 } from "@/backend/api/unified-mcp";
 import type { connectMcpServer, McpServerConfig } from "@/mcp-client";
 import type { createMcpOAuthSession } from "@/mcp-oauth";
+import { getMcpScopeAgentId, type ParentAgentLookup } from "@/mcp-scope";
 import {
   buildMcpToolCatalog,
   callMcpCatalogTool,
   type McpToolCatalog,
 } from "@/mcp-tool-catalog";
-import { getMcpScopeAgentId, type ParentAgentLookup } from "@/mcp-scope";
 import { settingsManager } from "@/settings-manager";
 import {
   loadMcpToolArgs,
