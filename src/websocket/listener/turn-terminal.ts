@@ -74,6 +74,8 @@ export function finishListenerTurn(
     /** Mutable checkpoint generation that owns this terminal transition. */
     expectedInterruptedAuthorityRevision?: string;
     readInterruptedAuthorityRevision?: () => string | undefined;
+    /** Independent recovery lineage bound to the mutable authority token. */
+    recoveryLineageId?: string;
   },
 ): TurnFinishTransition {
   const rejectedCommit = (): TurnFinishTransition => ({
@@ -131,6 +133,23 @@ export function finishListenerTurn(
     );
   };
   const terminalOwner = getTurnFinishedOwner(runtime, interruptedRevision);
+  if (
+    interruptedRevision &&
+    expectedAuthorityRevision &&
+    options.recoveryLineageId
+  ) {
+    terminalOwner.recoveryLineageId = options.recoveryLineageId;
+    terminalOwner.interruptedAuthorityRevision = expectedAuthorityRevision;
+  }
+  const identitylessConsumerTerminal =
+    !!turnFinishedMessage?.terminal_consumer_ids?.length &&
+    (options.durableInputIdentities?.length ?? 0) === 0;
+  if (identitylessConsumerTerminal && terminalOwner.connectionId === null) {
+    // With no accepted-input identity there is no journal entry that can wait
+    // for a future subscriber to become the replay owner. Persist a rotatable
+    // process-owned terminal directly instead of retiring all evidence.
+    terminalOwner.canRotate = true;
+  }
   let preparedTurnFinished: ReturnType<typeof prepareTurnFinished> | null =
     null;
   if (
@@ -161,6 +180,7 @@ export function finishListenerTurn(
     runtime.listener.connectionId?.startsWith("conn-") === true &&
     !!turnFinishedMessage?.terminal_consumer_ids?.length &&
     terminalOwner.connectionId === null &&
+    !identitylessConsumerTerminal &&
     !options.turnFinishedStore;
   try {
     preparedTurnFinished =
@@ -170,9 +190,34 @@ export function finishListenerTurn(
             turnFinishedMessage,
             options.turnFinishedStore,
             terminalOwner,
-            options.persistTerminalWithoutConsumers,
+            options.persistTerminalWithoutConsumers ||
+              identitylessConsumerTerminal,
           )
         : null;
+    if (
+      preparedTurnFinished?.kind === "durable" &&
+      terminalOwner.recoveryLineageId &&
+      terminalOwner.interruptedAuthorityRevision
+    ) {
+      for (const terminal of preparedTurnFinished.store.read(
+        runtime.agentId,
+        runtime.conversationId,
+      )?.terminals ?? []) {
+        if (
+          terminal.id !== preparedTurnFinished.terminal.id &&
+          terminal.owner.recoveryLineageId ===
+            terminalOwner.recoveryLineageId &&
+          terminal.owner.interruptedAuthorityRevision !==
+            terminalOwner.interruptedAuthorityRevision
+        ) {
+          preparedTurnFinished.store.remove(
+            runtime.agentId,
+            runtime.conversationId,
+            terminal.id,
+          );
+        }
+      }
+    }
     if (!ownsInterruptedRevision()) return rejectedCommit();
     if (
       turnFinishedMessage &&

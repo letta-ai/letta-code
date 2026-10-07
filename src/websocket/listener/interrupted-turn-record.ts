@@ -1,10 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
   closeSync,
+  existsSync,
   fsyncSync,
   mkdirSync,
   openSync,
-  readdirSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -18,6 +18,10 @@ import { getServerUrl } from "@/backend/api/server-url";
 import { reportListenerStateWriteFailure } from "@/telemetry/error-reporting";
 import { debugWarn } from "@/utils/debug";
 import { acquireDurableFileLock } from "./durable-file-lock";
+import {
+  collectInterruptedTurnInputOwnership,
+  listRawInterruptedTurnRecords,
+} from "./interrupted-turn-input-ownership";
 import { isInterruptedTurnRecord } from "./interrupted-turn-schema";
 import type { InterruptedTurnRecord } from "./interrupted-turn-types";
 import { allRecordedResults } from "./recorded-tool-results";
@@ -37,7 +41,6 @@ export type ListenerStateWritePhase =
   | "run_observed"
   | "before_tool_execution"
   | "after_tool_execution";
-
 function fsyncDirectory(
   directory: string,
   platform: NodeJS.Platform = process.platform,
@@ -52,7 +55,6 @@ function fsyncDirectory(
     closeSync(fd);
   }
 }
-
 function defaultInterruptedTurnDirectory(): string {
   let serverUrl: string;
   try {
@@ -67,7 +69,6 @@ function defaultInterruptedTurnDirectory(): string {
     createHash("sha256").update(serverUrl).digest("hex").slice(0, 24),
   );
 }
-
 export function createInterruptedTurnStore(
   directory = defaultInterruptedTurnDirectory(),
   dependencies: {
@@ -101,10 +102,6 @@ export function createInterruptedTurnStore(
       return null;
     }
   }
-  const sidecars = createRecoveryLineageSidecarAccess({
-    directory,
-    syncDirectory,
-  });
   const {
     initial: initialSidecar,
     list: listSidecars,
@@ -114,14 +111,13 @@ export function createInterruptedTurnStore(
     remove: removeSidecar,
     snapshot: snapshotSidecar,
     write: writeSidecar,
-  } = sidecars;
+  } = createRecoveryLineageSidecarAccess({ directory, syncDirectory });
+  const listRawRecords = () =>
+    listRawInterruptedTurnRecords(directory, readRecord);
   return {
     list(): InterruptedTurnRecord[] {
       try {
-        const rawRecords = readdirSync(directory)
-          .filter((file) => file.endsWith(".json"))
-          .map((file) => readRecord(join(directory, file)))
-          .filter((record): record is InterruptedTurnRecord => record !== null);
+        const rawRecords = listRawRecords();
         const liveLineages = new Set(
           rawRecords.flatMap((record) => {
             const lineageId = record.recoveryClaimCompletion?.lineageId;
@@ -139,8 +135,11 @@ export function createInterruptedTurnStore(
           });
           try {
             const current = readRecord(destination);
-            if (
-              current?.recoveryClaimCompletion?.lineageId !== sidecar.lineageId
+            if (!existsSync(destination)) {
+              removeSidecar(sidecar);
+            } else if (
+              current &&
+              current.recoveryClaimCompletion?.lineageId !== sidecar.lineageId
             ) {
               removeSidecar(sidecar);
             }
@@ -166,6 +165,12 @@ export function createInterruptedTurnStore(
         if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
         throw error;
       }
+    },
+    listDurableInputOwnership() {
+      return collectInterruptedTurnInputOwnership(
+        listRawRecords(),
+        readMainView,
+      );
     },
     read(
       agentId: string,
@@ -198,8 +203,15 @@ export function createInterruptedTurnStore(
       });
       try {
         const current = readRecord(destination);
+        if (!current && existsSync(destination)) {
+          throw new Error("Interrupted-turn authority is unreadable");
+        }
         if (current?.recoveryClaimCompletion?.lineageId !== lineageId)
           return null;
+        if (current.recoveryClaimCompletion.independentSuccessor !== true)
+          return current.revision
+            ? { record: current, revisionToken: current.revision }
+            : null;
         if (!readSidecar(agentId, conversationId, lineageId)) {
           writeSidecar(initialSidecar(current));
         }
@@ -696,7 +708,6 @@ export function createInterruptedTurnStore(
     },
   };
 }
-
 export function recordListenerWork(
   runtime: ConversationRuntime,
   update: Partial<

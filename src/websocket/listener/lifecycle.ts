@@ -75,12 +75,12 @@ import {
   invalidateProcessServices,
   waitForProcessServicesSlot,
 } from "./process-services";
-import { scheduleQueuePump } from "./queue";
 import {
   recoverRecordedTurns,
   scheduleRecordedTurnRecovery,
 } from "./recover-recorded-turn";
 import { revokeRecoveryClaims } from "./recovery-ownership";
+import { createRestoredQueuePumpWake } from "./restored-queue-pump";
 import {
   clearConversationRuntimeState,
   clearRuntimeTimers,
@@ -324,17 +324,13 @@ export async function startConnectedListenerRuntime(
     startListenerPongHeartbeat(runtime, transport, trackListenerError);
   }
   if (options.startProcessServices === false) return;
-  const processTransport = getOrCreateProcessTransport(runtime);
-  for (const conversationRuntime of runtime.conversationRuntimes.values()) {
-    if (conversationRuntime.queueRuntime?.isEmpty === false) {
-      scheduleQueuePump(
-        conversationRuntime,
-        processTransport,
-        opts as StartListenerOptions,
-        processQueuedTurn,
-      );
-    }
-  }
+  const scheduleNonEmptyQueuePumps = createRestoredQueuePumpWake(
+    runtime,
+    opts as StartListenerOptions,
+    processQueuedTurn,
+  );
+  runtime.scheduleRestoredQueuePumps = scheduleNonEmptyQueuePumps;
+  scheduleNonEmptyQueuePumps();
 
   if (runtime.processServicesStarted) return;
   if (!(await waitForProcessServicesSlot(runtime, opts.connectionId))) return;

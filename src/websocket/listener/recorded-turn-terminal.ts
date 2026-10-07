@@ -5,11 +5,15 @@ import {
   dispositionKey,
   durableTransaction,
   getLedger,
-  hasCompletedInputTerminalRevision,
   syncMemoryFromDurable,
   teleportInputIdentity,
 } from "./input-disposition";
 import {
+  hasCompletedInputTerminalAuthority,
+  hasCompletedInputTerminalRevision,
+} from "./input-terminal-evidence";
+import {
+  hasPreparedInputTerminalAuthority,
   hasPreparedInputTerminalRevision,
   prepareInputTerminal,
 } from "./input-terminal-journal";
@@ -29,19 +33,43 @@ export function hasRecordedTerminalEvidence(
     runtimeKey: string;
     identities: InterruptedTurnRecord["durableInputIdentities"];
     revision: string;
+    authorityRevision?: string;
+    recoveryLineageId?: string;
   },
 ): boolean {
+  const authority =
+    params.recoveryLineageId && params.authorityRevision
+      ? {
+          interruptedRevision: params.revision,
+          authorityRevision: params.authorityRevision,
+          recoveryLineageId: params.recoveryLineageId,
+        }
+      : undefined;
   return (
-    hasCompletedInputTerminalRevision(
-      listener,
-      params.runtimeKey,
-      params.identities ?? [],
-      params.revision,
-    ) ||
+    (authority
+      ? hasCompletedInputTerminalAuthority(
+          listener,
+          params.runtimeKey,
+          params.identities ?? [],
+          authority,
+        )
+      : hasCompletedInputTerminalRevision(
+          listener,
+          params.runtimeKey,
+          params.identities ?? [],
+          params.revision,
+        )) ||
     terminalStore
       .read(params.agentId, params.conversationId)
       ?.terminals.some(
-        (terminal) => terminal.owner.interruptedRevision === params.revision,
+        (terminal) =>
+          terminal.owner.interruptedRevision === params.revision &&
+          (authority
+            ? terminal.owner.recoveryLineageId ===
+                authority.recoveryLineageId &&
+              terminal.owner.interruptedAuthorityRevision ===
+                authority.authorityRevision
+            : terminal.owner.recoveryLineageId === undefined),
       ) === true
   );
 }
@@ -71,6 +99,7 @@ export function prepareRecordedInputTerminal(
   record: InterruptedTurnRecord,
   runId: string | null,
   stopReason: StopReasonType = "end_turn",
+  authority?: { revisionToken: string; lineageId: string },
 ): boolean {
   const identities = record.durableInputIdentities ?? [];
   if (!identities.length || !record.revision) return true;
@@ -78,13 +107,27 @@ export function prepareRecordedInputTerminal(
     agentId: record.agentId,
     conversationId: record.conversationId,
   };
+  const terminalAuthority = authority
+    ? {
+        interruptedRevision: record.revision,
+        authorityRevision: authority.revisionToken,
+        recoveryLineageId: authority.lineageId,
+      }
+    : undefined;
   if (
-    hasCompletedInputTerminalRevision(
-      listener,
-      runtime.key,
-      identities,
-      record.revision,
-    )
+    terminalAuthority
+      ? hasCompletedInputTerminalAuthority(
+          listener,
+          runtime.key,
+          identities,
+          terminalAuthority,
+        )
+      : hasCompletedInputTerminalRevision(
+          listener,
+          runtime.key,
+          identities,
+          record.revision,
+        )
   ) {
     return true;
   }
@@ -105,6 +148,10 @@ export function prepareRecordedInputTerminal(
           (connection) => connection.options.connectionIdCanResume !== false,
         );
   const owner = getTurnFinishedOwner(runtime, record.revision);
+  if (terminalAuthority) {
+    owner.recoveryLineageId = terminalAuthority.recoveryLineageId;
+    owner.interruptedAuthorityRevision = terminalAuthority.authorityRevision;
+  }
   owner.connectionId = ownerConnection?.id ?? null;
   owner.canRotate = ownerConnection?.options.connectionIdCanResume === false;
   owner.lineageId = ownerConnection?.startupOwner.lineageId ?? null;
@@ -126,5 +173,7 @@ export function prepareRecordedInputTerminal(
     return false;
   }
   promotePreparedInputTerminals(listener, terminalStore, scope);
-  return !hasPreparedInputTerminalRevision(listener, scope, record.revision);
+  return terminalAuthority
+    ? !hasPreparedInputTerminalAuthority(listener, scope, terminalAuthority)
+    : !hasPreparedInputTerminalRevision(listener, scope, record.revision);
 }

@@ -10,16 +10,15 @@ import {
   promotePreparedInputTerminals,
 } from "./conversation-runtime";
 import { setConversationWorkingDirectory } from "./cwd";
-import {
-  hasCompletedInputTerminalRevision,
-  loadDurableQueuedInputEntries,
-} from "./input-disposition";
+import { loadDurableQueuedInputEntries } from "./input-disposition";
+import { hasCompletedInputTerminalRevision } from "./input-terminal-evidence";
 import { hasPreparedInputTerminalRevision } from "./input-terminal-journal";
 import {
   allRecordedResults,
   createInterruptedTurnStore,
   recordedToolResults,
 } from "./interrupted-turn-record";
+import { resolveRecordedRunId } from "./recorded-run-resolution";
 import {
   hasCompletedTeleportInput,
   hasRecordedTerminalEvidence,
@@ -177,6 +176,13 @@ export async function recoverRecordedTurns(
         continue;
       }
       const recoveryRecord = recoverySnapshot?.record ?? record;
+      const terminalAuthority =
+        recoverySnapshot && runningCompletion
+          ? {
+              revisionToken: recoverySnapshot.revisionToken,
+              lineageId: runningCompletion.lineageId,
+            }
+          : undefined;
       const unchanged = () =>
         runtime.turnLifecycle.kind === "idle" &&
         !listener.intentionallyClosed &&
@@ -262,6 +268,8 @@ export async function recoverRecordedTurns(
               runningCompletion.effectInputIdentities ??
               record.durableInputIdentities,
             revision: runningCompletion.effectRevision,
+            authorityRevision: recoverySnapshot?.revisionToken,
+            recoveryLineageId: runningCompletion.lineageId,
           })
         ) {
           const eligibility = await resolveRecoveryEligibility(
@@ -288,6 +296,7 @@ export async function recoverRecordedTurns(
           const pendingCompletion = markRecoveryClaimCompletionPending(
             store,
             record,
+            recoverySnapshot?.revisionToken ?? record.revision,
           );
           if (
             !pendingCompletion?.revision ||
@@ -325,7 +334,11 @@ export async function recoverRecordedTurns(
           }
           if (teleport.status === "completed") {
             if (runningCompletion?.independentSuccessor && record.revision) {
-              markRecoveryClaimCompletionPending(store, record);
+              markRecoveryClaimCompletionPending(
+                store,
+                record,
+                recoverySnapshot?.revisionToken ?? record.revision,
+              );
               deferred = true;
               continue;
             }
@@ -365,7 +378,11 @@ export async function recoverRecordedTurns(
               runningCompletion?.independentSuccessor &&
               record.revision
             ) {
-              markRecoveryClaimCompletionPending(store, record);
+              markRecoveryClaimCompletionPending(
+                store,
+                record,
+                recoverySnapshot?.revisionToken ?? record.revision,
+              );
               deferred = true;
               continue;
             }
@@ -437,6 +454,8 @@ export async function recoverRecordedTurns(
                 runtime,
                 recoveryRecord,
                 recoveryRecord.runId,
+                "end_turn",
+                terminalAuthority,
               );
             if (!terminalReady || !recoveryClaim.owned || !unchanged()) {
               await recoveryClaim.release();
@@ -495,44 +514,12 @@ export async function recoverRecordedTurns(
           deferred = true;
           continue;
         }
-        // A run can finish generating its tool call while its listener is down.
-        // Require the stored approval message to name the recorded run in that case.
-        let recordedRunId = recoveryRecord.runId;
-        const missingRecordedRun = !recordedRunId;
-        if (
-          !recordedRunId ||
-          (allRecordedResults(recoveryRecord).length > 0 &&
-            (!pending.length ||
-              pending.some(
-                (approval) =>
-                  !recoveryRecord.toolCallIds.includes(approval.toolCallId),
-              )))
-        ) {
-          // The result POST may have been accepted just before this process
-          // died, before it received the new run ID. Resolve its exact OTID.
-          const stream = await backend.streamConversationMessages(
-            record.conversationId,
-            {
-              otid: recoveryRecord.requestOtid,
-              starting_after: 0,
-              ...(record.conversationId === "default"
-                ? { agent_id: record.agentId }
-                : {}),
-            },
-            { signal: AbortSignal.timeout(5000), maxRetries: 0 },
-          );
-          try {
-            for await (const chunk of stream) {
-              if ("run_id" in chunk && typeof chunk.run_id === "string") {
-                recordedRunId = chunk.run_id;
-                break;
-              }
-            }
-          } finally {
-            stream.controller.abort();
-          }
-        }
-        if (missingRecordedRun && !recordedRunId && pending.length === 0) {
+        const recordedRunId = await resolveRecordedRunId(
+          backend,
+          recoveryRecord,
+          pending,
+        );
+        if (!recordedRunId) {
           deferred = true;
           continue;
         }
@@ -607,6 +594,7 @@ export async function recoverRecordedTurns(
                   : recoveryRecord,
                 recordedRunId,
                 recoveredStopReason,
+                terminalAuthority,
               )
             ) {
               await recoveryClaim.release();
@@ -617,6 +605,7 @@ export async function recoverRecordedTurns(
             const pendingCompletion = markRecoveryClaimCompletionPending(
               store,
               record,
+              recoverySnapshot?.revisionToken ?? record.revision,
             );
             if (!pendingCompletion?.revision) {
               await recoveryClaim.release();
@@ -671,6 +660,7 @@ export async function recoverRecordedTurns(
               record,
               recordedRunId,
               recoveredStopReason,
+              terminalAuthority,
             ) ||
             !recoveryClaim.owned ||
             !unchanged()
@@ -868,11 +858,12 @@ export async function recoverRecordedTurns(
         continuationStarted = true;
         void continuationPromise
           .then(async () => {
-            const completed = store.readRecoveryView(
+            const completedSnapshot = store.readRecoverySnapshot(
               continuation.agentId,
               continuation.conversationId,
               recoveryLineageId,
             );
+            const completed = completedSnapshot?.record;
             if (
               !completed?.revision ||
               completed.recoveryClaimCompletion?.lineageId !==
@@ -883,6 +874,8 @@ export async function recoverRecordedTurns(
                 runtimeKey: runtime.key,
                 identities: completed.durableInputIdentities,
                 revision: completed.revision,
+                authorityRevision: completedSnapshot?.revisionToken,
+                recoveryLineageId,
               })
             ) {
               await recoveryClaim?.release();
@@ -894,6 +887,7 @@ export async function recoverRecordedTurns(
             const pendingCompletion = markRecoveryClaimCompletionPending(
               store,
               completed,
+              completedSnapshot?.revisionToken,
             );
             if (!pendingCompletion) {
               await recoveryClaim?.release();

@@ -1,5 +1,12 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
@@ -165,6 +172,7 @@ test("sidecar rollback replaces unknown snapshots without erasing exact settleme
           effectRequestOtid: predecessor.requestOtid,
           effectWorkingDirectory: predecessor.workingDirectory,
           effectResults: predecessor.results,
+          effectInputIdentities: predecessor.durableInputIdentities,
         },
       },
       predecessor.revision,
@@ -371,10 +379,16 @@ test("list isolates malformed sidecars and scavenges their orphan files", () => 
       results: [],
       requestOtid: "request-predecessor",
       workingDirectory: "/predecessor",
+      durableInputIdentities: [
+        { domain: "input", id: `${agentId}-predecessor` },
+      ],
       recoveryClaimCompletion: {
         lineageId,
         state: "running",
         effectToolCallIds: ["call-predecessor"],
+        effectInputIdentities: [
+          { domain: "input", id: `${agentId}-predecessor` },
+        ],
       },
     });
     const successor = store.write(
@@ -383,6 +397,9 @@ test("list isolates malformed sidecars and scavenges their orphan files", () => 
         runId: "run-successor",
         toolCallIds: ["call-successor"],
         requestOtid: "request-successor",
+        durableInputIdentities: [
+          { domain: "input", id: `${agentId}-successor` },
+        ],
         recoveryClaimCompletion: {
           lineageId,
           state: "running",
@@ -393,6 +410,7 @@ test("list isolates malformed sidecars and scavenges their orphan files", () => 
           effectRequestOtid: predecessor.requestOtid,
           effectWorkingDirectory: predecessor.workingDirectory,
           effectResults: predecessor.results,
+          effectInputIdentities: predecessor.durableInputIdentities,
         },
       },
       predecessor.revision,
@@ -457,6 +475,19 @@ test("list isolates malformed sidecars and scavenges their orphan files", () => 
       "agent-healthy",
     ]);
     expect(
+      store
+        .listDurableInputOwnership()
+        .find((entry) => entry.agentId === "agent-corrupt"),
+    ).toEqual({
+      agentId: "agent-corrupt",
+      conversationId: "conv-test",
+      durableInputIdentities: [
+        { domain: "input", id: "agent-corrupt-successor" },
+        { domain: "input", id: "agent-corrupt-predecessor" },
+      ],
+      quarantined: true,
+    });
+    expect(
       readdirSync(directory).filter(
         (file) =>
           (file.startsWith("agent-orphan_") ||
@@ -465,6 +496,118 @@ test("list isolates malformed sidecars and scavenges their orphan files", () => 
           file.includes(".json.recovery-"),
       ),
     ).toEqual([]);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("sidecar scavenging preserves evidence beside an unreadable main", () => {
+  const directory = mkdtempSync(join(tmpdir(), "listener-sidecar-main-"));
+  const store = createInterruptedTurnStore(directory);
+  try {
+    const predecessor = store.write({
+      agentId: "agent-corrupt-main",
+      conversationId: "conv-test",
+      runId: "run-predecessor",
+      toolCallIds: ["call-predecessor"],
+      results: [],
+      requestOtid: "request-predecessor",
+      workingDirectory: "/predecessor",
+      recoveryClaimCompletion: {
+        lineageId: "lineage-corrupt-main",
+        state: "running",
+        effectToolCallIds: ["call-predecessor"],
+      },
+    });
+    store.write(
+      {
+        ...predecessor,
+        runId: "run-successor",
+        toolCallIds: ["call-successor"],
+        recoveryClaimCompletion: {
+          lineageId: "lineage-corrupt-main",
+          state: "running",
+          independentSuccessor: true,
+          effectRevision: predecessor.revision,
+          effectToolCallIds: predecessor.toolCallIds,
+        },
+      },
+      predecessor.revision,
+    );
+    store.writeRecoveryLineageSnapshot({
+      agentId: "agent-corrupt-main",
+      conversationId: "conv-test",
+      lineageId: "lineage-corrupt-main",
+      update: { results: [] },
+    });
+    const files = readdirSync(directory);
+    const main = files.find(
+      (file) =>
+        file.startsWith("agent-corrupt-main_") && file.endsWith(".json"),
+    );
+    const sidecar = files.find(
+      (file) =>
+        file.startsWith("agent-corrupt-main_") &&
+        file.includes(".json.recovery-"),
+    );
+    if (!main || !sidecar) throw new Error("missing sidecar fixture");
+    writeFileSync(join(directory, main), "{truncated", "utf8");
+    expect(store.list()).toEqual([]);
+    expect(() =>
+      store.readRecoverySnapshot(
+        "agent-corrupt-main",
+        "conv-test",
+        "lineage-corrupt-main",
+      ),
+    ).toThrow("authority is unreadable");
+    expect(readdirSync(directory)).toContain(sidecar);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("sidecar enumeration removes stale crash-left temporary files", () => {
+  const directory = mkdtempSync(join(tmpdir(), "listener-sidecar-temp-"));
+  const store = createInterruptedTurnStore(directory);
+  try {
+    const record = store.write({
+      agentId: "agent-temp",
+      conversationId: "conv-test",
+      runId: "run-temp",
+      toolCallIds: [],
+      results: [],
+      requestOtid: "request-temp",
+      workingDirectory: "/temp",
+      recoveryClaimCompletion: {
+        lineageId: "lineage-temp",
+        state: "running",
+        independentSuccessor: true,
+        effectRevision: "revision-predecessor",
+        effectToolCallIds: [],
+      },
+    });
+    store.writeRecoveryLineageSnapshot({
+      agentId: record.agentId,
+      conversationId: record.conversationId,
+      lineageId: "lineage-temp",
+      update: { results: [] },
+    });
+    const canonical = readdirSync(directory).find((file) =>
+      file.includes(".json.recovery-"),
+    );
+    if (!canonical) throw new Error("missing canonical sidecar");
+    const temporary = `${canonical}.2147483647.00000000-0000-4000-8000-000000000000.tmp`;
+    const liveTemporary = `${canonical}.${process.pid}.00000000-0000-4000-8000-000000000001.tmp`;
+    copyFileSync(join(directory, canonical), join(directory, temporary));
+    copyFileSync(join(directory, canonical), join(directory, liveTemporary));
+    const stale = new Date(Date.now() - 120_000);
+    utimesSync(join(directory, temporary), stale, stale);
+    utimesSync(join(directory, liveTemporary), stale, stale);
+
+    store.list();
+    expect(readdirSync(directory)).toContain(canonical);
+    expect(readdirSync(directory)).not.toContain(temporary);
+    expect(readdirSync(directory)).toContain(liveTemporary);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

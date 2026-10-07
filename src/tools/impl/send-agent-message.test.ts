@@ -68,10 +68,12 @@ test.each([false, true])(
       LETTA_DEBUG: process.env.LETTA_DEBUG,
       DEBUG: process.env.DEBUG,
       LETTA_DEBUG_FILE: process.env.LETTA_DEBUG_FILE,
+      LETTA_ACTING_USER_ID: process.env.LETTA_ACTING_USER_ID,
     };
     process.env.LETTA_DEBUG = debug ? "1" : "0";
     delete process.env.DEBUG;
     delete process.env.LETTA_DEBUG_FILE;
+    delete process.env.LETTA_ACTING_USER_ID;
     const info = spyOn(console, "info").mockImplementation(() => {});
     const log = spyOn(console, "log").mockImplementation(() => {});
     const error = spyOn(console, "error").mockImplementation(() => {});
@@ -375,6 +377,35 @@ test("returns acceptance and an explicit return address, with no task or answer"
   expect(JSON.stringify(f.submissions[0]?.content)).toContain(
     "Ordinary assistant output is not forwarded",
   );
+});
+
+test("explicit actor suppression does not reuse a stale ordinary-send actor", async () => {
+  const f = fixture();
+  const result = await runWithRuntimeContext(
+    { ...caller, suppressActingUserFallback: true },
+    () => send_agent_message(message, f),
+  );
+
+  expect(result.status).toBe("success");
+  expect(f.submissions).toHaveLength(1);
+  expect(f.submissions[0]?.actingUserId).toBeUndefined();
+});
+
+test("ordinary sends inherit an ambient actor when runtime context has none", async () => {
+  const previous = process.env.LETTA_ACTING_USER_ID;
+  process.env.LETTA_ACTING_USER_ID = "user-ambient";
+  try {
+    const f = fixture();
+    const result = await runWithRuntimeContext(
+      { agentId: caller.agentId, conversationId: caller.conversationId },
+      () => send_agent_message(message, f),
+    );
+    expect(result.status).toBe("success");
+    expect(f.submissions[0]?.actingUserId).toBe("user-ambient");
+  } finally {
+    if (previous === undefined) delete process.env.LETTA_ACTING_USER_ID;
+    else process.env.LETTA_ACTING_USER_ID = previous;
+  }
 });
 
 test("does not return queued until the server accepts", async () => {

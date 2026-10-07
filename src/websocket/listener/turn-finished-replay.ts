@@ -18,6 +18,7 @@ import type { TurnFinishedMessage } from "@/types/protocol_v2";
 import { debugWarn } from "@/utils/debug";
 import { toListenerConnection } from "./connection";
 import { acquireDurableFileLock } from "./durable-file-lock";
+import { createInterruptedTurnStore } from "./interrupted-turn-record";
 import {
   emitProtocolV2Message,
   type OutboundMessageDelivery,
@@ -41,12 +42,50 @@ export type TurnFinishedOwner = {
   terminalIdentity?: string;
   /** Exact interrupted-work revision superseded by this terminal. */
   interruptedRevision?: string;
+  /** Independent recovery lineage whose mutable authority was observed. */
+  recoveryLineageId?: string;
+  /** Exact mutable main/sidecar generation validated by this terminal. */
+  interruptedAuthorityRevision?: string;
 };
 
 export class TurnFinishedCapacityError extends Error {
   constructor() {
     super("Pending turn-finished durability capacity exceeded");
     this.name = "TurnFinishedCapacityError";
+  }
+}
+
+function terminalAuthorityStatus(
+  runtime: ConversationRuntime,
+  terminal: PersistedTurnFinished,
+): "current" | "stale" | "unknown" {
+  const { owner } = terminal;
+  if (!owner.recoveryLineageId) return "current";
+  if (
+    !runtime.agentId ||
+    !owner.interruptedRevision ||
+    !owner.interruptedAuthorityRevision
+  ) {
+    return "stale";
+  }
+  try {
+    const snapshot = createInterruptedTurnStore().readRecoverySnapshot(
+      runtime.agentId,
+      runtime.conversationId,
+      owner.recoveryLineageId,
+    );
+    if (!snapshot) return "current";
+    if (
+      snapshot.record.revision === owner.interruptedRevision &&
+      snapshot.revisionToken === owner.interruptedAuthorityRevision
+    ) {
+      return "current";
+    }
+    return snapshot.record.recoveryClaimCompletion?.state === "pending"
+      ? "unknown"
+      : "stale";
+  } catch {
+    return "unknown";
   }
 }
 
@@ -184,7 +223,11 @@ export function createTurnFinishedStore(
             (terminal.owner.terminalIdentity === undefined ||
               typeof terminal.owner.terminalIdentity === "string") &&
             (terminal.owner.interruptedRevision === undefined ||
-              typeof terminal.owner.interruptedRevision === "string"),
+              typeof terminal.owner.interruptedRevision === "string") &&
+            (terminal.owner.recoveryLineageId === undefined ||
+              typeof terminal.owner.recoveryLineageId === "string") &&
+            (terminal.owner.interruptedAuthorityRevision === undefined ||
+              typeof terminal.owner.interruptedAuthorityRevision === "string"),
         )
       ) {
         throw new Error("Invalid turn-finished record");
@@ -640,6 +683,17 @@ export function emitDurableTurnFinished(
     );
     return;
   }
+  const authorityStatus = terminalAuthorityStatus(runtime, prepared.terminal);
+  if (authorityStatus !== "current") {
+    if (authorityStatus === "stale") {
+      prepared.store.remove(
+        runtime.agentId,
+        runtime.conversationId,
+        prepared.terminal.id,
+      );
+    }
+    return;
+  }
   const ownerId = prepared.terminal.owner.connectionId;
   if (!ownerId || !isEligibleOwner(runtime, prepared.terminal, ownerId)) return;
   const claimed = prepared.store.claim(
@@ -679,6 +733,13 @@ export function replayPendingTurnFinishedToConnection(
   const record = store.read(runtime.agentId, runtime.conversationId);
   if (!record) return;
   for (const terminal of record.terminals) {
+    const authorityStatus = terminalAuthorityStatus(runtime, terminal);
+    if (authorityStatus !== "current") {
+      if (authorityStatus === "stale") {
+        store.remove(runtime.agentId, runtime.conversationId, terminal.id);
+      }
+      continue;
+    }
     if (!isEligibleOwner(runtime, terminal, connectionId)) continue;
     const inFlightKey = JSON.stringify([
       runtime.agentId,

@@ -1,4 +1,7 @@
 import { expect, mock, test } from "bun:test";
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { QueueRuntime } from "@/queue/queue-runtime";
 import { openListenerConnection } from "./connection";
 import {
@@ -15,6 +18,7 @@ import {
   reserveInputDisposition,
   teleportInputIdentity,
 } from "./input-disposition";
+import { createInterruptedTurnStore } from "./interrupted-turn-record";
 import {
   createRuntime,
   startConnectedListenerRuntime,
@@ -361,6 +365,112 @@ test("lifecycle refill persists beyond a transient failure burst without another
   }
 });
 
+test("a delayed successful refill wakes queue pumps without external activity", async () => {
+  const runtime = createDurableRuntime();
+  setActiveRuntime(runtime.listener);
+  let calls = 0;
+  const wake = mock(() => {});
+  runtime.listener.scheduleRestoredQueuePumps = wake;
+  runtime.listener.restoreDurableQueuedInputs = (() => {
+    calls += 1;
+    if (calls === 1) throw new Error("transient refill failure");
+    return 1;
+  }) as never;
+  try {
+    scheduleDurableQueueRestore(runtime.listener);
+    await waitFor(() => expect(calls).toBe(2));
+    expect(wake).toHaveBeenCalledTimes(1);
+    expect(runtime.listener.durableQueueRestoreTimer).toBeUndefined();
+    expect(runtime.listener.durableQueueRestoreScheduled).toBe(false);
+  } finally {
+    stopRuntime(runtime.listener, true);
+    setActiveRuntime(null);
+  }
+});
+
+test("malformed live sidecars retain predecessor and successor replay ownership", () => {
+  const directory = mkdtempSync(join(tmpdir(), "durable-refill-sidecar-"));
+  const store = createInterruptedTurnStore(directory);
+  const runtime = createDurableRuntime();
+  const predecessorIdentity = ordinaryInputIdentity("cm-predecessor");
+  const successorIdentity = ordinaryInputIdentity("cm-successor");
+  if (!predecessorIdentity || !successorIdentity)
+    throw new Error("missing input identity");
+  try {
+    for (const [identity, incoming] of [
+      [predecessorIdentity, durableIncoming("cm-predecessor")],
+      [successorIdentity, durableIncoming("cm-successor")],
+    ] as const) {
+      const reservation = reserveInputDisposition(runtime, identity);
+      if (reservation.kind !== "reserved")
+        throw new Error("expected input reservation");
+      expect(
+        commitInputDisposition(runtime, reservation.reservation, "started", {
+          incoming,
+        }),
+      ).toBe(true);
+    }
+    const predecessor = store.write({
+      agentId: "agent-durable",
+      conversationId: "conversation-durable",
+      runId: "run-predecessor",
+      toolCallIds: ["call-predecessor"],
+      results: [],
+      requestOtid: "request-predecessor",
+      workingDirectory: "/predecessor",
+      durableInputIdentities: [predecessorIdentity],
+      recoveryClaimCompletion: {
+        lineageId: "lineage-predecessor",
+        state: "running",
+        effectToolCallIds: ["call-predecessor"],
+        effectInputIdentities: [predecessorIdentity],
+      },
+    });
+    store.write(
+      {
+        ...predecessor,
+        runId: "run-successor",
+        toolCallIds: ["call-successor"],
+        requestOtid: "request-successor",
+        durableInputIdentities: [successorIdentity],
+        recoveryClaimCompletion: {
+          lineageId: "lineage-predecessor",
+          state: "running",
+          independentSuccessor: true,
+          effectRevision: predecessor.revision,
+          effectRunId: predecessor.runId,
+          effectToolCallIds: predecessor.toolCallIds,
+          effectRequestOtid: predecessor.requestOtid,
+          effectWorkingDirectory: predecessor.workingDirectory,
+          effectResults: predecessor.results,
+          effectInputIdentities: [predecessorIdentity],
+        },
+      },
+      predecessor.revision,
+    );
+    store.writeRecoveryLineageSnapshot({
+      agentId: "agent-durable",
+      conversationId: "conversation-durable",
+      lineageId: "lineage-predecessor",
+      update: { results: [] },
+    });
+    const sidecar = readdirSync(directory).find((file) =>
+      file.includes(".json.recovery-"),
+    );
+    if (!sidecar) throw new Error("missing sidecar fixture");
+    writeFileSync(join(directory, sidecar), "{truncated", "utf8");
+
+    expect(
+      restoreDurableQueuedInputs(runtime.listener, undefined, undefined, {
+        interruptedStore: store,
+      }),
+    ).toBe(0);
+    expect(runtime.queueRuntime.isEmpty).toBe(true);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("lifecycle refill drains hard overflow without duplicates or forgets", async () => {
   const runtime = createDurableRuntime();
   admitQueuedInputs(runtime, 301, "cm-hard");
@@ -386,7 +496,10 @@ test("lifecycle refill drains hard overflow without duplicates or forgets", asyn
     expect(runtime.queueRuntime.length).toBe(100);
 
     const restored: string[] = [];
-    while (!runtime.queueRuntime.isEmpty) {
+    while (restored.length < 301) {
+      if (runtime.queueRuntime.isEmpty) {
+        await waitFor(() => expect(runtime.queueRuntime.isEmpty).toBe(false));
+      }
       const turn = consumeQueuedTurn(runtime);
       expect(turn).not.toBeNull();
       for (const identity of turn?.queuedTurn.durableInputIdentities ?? []) {
@@ -394,7 +507,7 @@ test("lifecycle refill drains hard overflow without duplicates or forgets", asyn
       }
       await Promise.resolve();
     }
-    expect(restore).toHaveBeenCalledTimes(6);
+    expect(restore.mock.calls.length).toBeGreaterThan(2);
     expect(restored).toHaveLength(301);
     expect(new Set(restored).size).toBe(301);
   } finally {

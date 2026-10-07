@@ -287,7 +287,17 @@ export type DurablePreparedInputTerminal = {
     terminalIdentity?: string;
     /** Exact interrupted-work revision this terminal supersedes. */
     interruptedRevision?: string;
+    /** Independent recovery lineage whose mutable authority was observed. */
+    recoveryLineageId?: string;
+    /** Exact mutable main/sidecar generation validated by this terminal. */
+    interruptedAuthorityRevision?: string;
   };
+};
+
+export type InterruptedTerminalAuthority = {
+  interruptedRevision: string;
+  authorityRevision: string;
+  recoveryLineageId?: string;
 };
 
 export type AcceptedInputDispositionEntry = {
@@ -304,6 +314,8 @@ export type AcceptedInputDispositionEntry = {
   preparedTerminal?: DurablePreparedInputTerminal;
   /** Interrupted-work revision already superseded by a durable terminal. */
   completedTerminalRevision?: string;
+  /** Exact main/sidecar generation superseded by the durable terminal. */
+  completedTerminalAuthority?: InterruptedTerminalAuthority;
 };
 
 export type ActiveRecoveryClaim = {
@@ -561,6 +573,8 @@ export type ListenerRuntime = {
   promotePreparedInputTerminals?: () => number;
   /** Rehydrate a committed queued input after volatile enqueue failure. */
   restoreDurableQueuedInputs?: () => number | Promise<number>;
+  /** Wake process-owned queue pumps after a delayed durable refill enqueues work. */
+  scheduleRestoredQueuePumps?: () => void;
   /** Coalesces capacity-release callbacks into one durable queue refill scan. */
   durableQueueRestoreScheduled?: boolean;
   /** A wake that arrived while an async refill snapshot was in flight. */

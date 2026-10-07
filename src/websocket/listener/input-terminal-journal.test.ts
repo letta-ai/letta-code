@@ -15,11 +15,11 @@ import {
 import {
   commitInputDisposition,
   createAcceptedInputDispositionLedger,
-  hasCompletedInputTerminalRevision,
   loadDurableQueuedInputs,
   ordinaryInputIdentity,
   reserveInputDisposition,
 } from "./input-disposition";
+import { hasCompletedInputTerminalRevision } from "./input-terminal-evidence";
 import {
   loadPreparedInputTerminals,
   prepareInputTerminal,

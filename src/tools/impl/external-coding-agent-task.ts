@@ -33,6 +33,7 @@ export function trackExternalFollowupCompletion(args: {
     description: `Continue ${args.type} session`,
     existingAgentId: args.agentId,
     parentScope: args.parentScope,
+    actingUserId: args.parentScope.actingUserId,
     deps: {
       spawnSubagentImpl: async (
         _type,
@@ -87,6 +88,7 @@ export function spawnExternalCodingAgentFollowup(args: {
     prompt: args.message,
     description: `Continue ${target.type} session`,
     parentScope: args.parentScope,
+    actingUserId: args.parentScope.actingUserId,
     deps: {
       spawnSubagentImpl: async (_type, prompt, _model, _subagentId, signal) =>
         runExternalCodingAgent({

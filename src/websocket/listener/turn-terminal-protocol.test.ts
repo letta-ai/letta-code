@@ -14,6 +14,7 @@ import {
   getTranscriptLoopErrorMessage,
 } from "./recoverable-notices";
 import type { ListenerTransport } from "./transport";
+import { createTurnFinishedStore } from "./turn-finished-replay";
 import { finishListenerTurn } from "./turn-terminal";
 
 test("recovery terminal fencing can read predecessor lineage instead of successor main", () => {
@@ -221,6 +222,56 @@ test.each(["end_turn", "error"] as const)(
     ).toHaveLength(stopReason === "error" ? 1 : 0);
   },
 );
+
+test("terminal consumers without a client identity persist a rotatable terminal", () => {
+  const oldHome = process.env.HOME;
+  const home = mkdtempSync(join(tmpdir(), "identityless-terminal-"));
+  process.env.HOME = home;
+  const listener = createRuntime();
+  listener.connectionId = "conn-identityless";
+  const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+  const socket: ListenerTransport = {
+    kind: "local",
+    bufferedAmount: 0,
+    isOpen: () => true,
+    send: () => {},
+  };
+  try {
+    const lease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+    });
+    expect(
+      finishListenerTurn(runtime, lease, {
+        turnId: "turn-identityless",
+        stopReason: "end_turn",
+        socket,
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        terminalConsumerIds: ["slack:agent-1"],
+        durableInputIdentities: [],
+        forgetWork: () => {},
+      }).finished,
+    ).toBe(true);
+    expect(
+      createTurnFinishedStore().read("agent-1", "conv-1")?.terminals,
+    ).toEqual([
+      expect.objectContaining({
+        message: expect.objectContaining({
+          turn_id: "turn-identityless",
+          terminal_consumer_ids: ["slack:agent-1"],
+        }),
+        owner: expect.objectContaining({
+          connectionId: null,
+          canRotate: true,
+        }),
+      }),
+    ]);
+  } finally {
+    process.env.HOME = oldHome;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
 
 test("terminal error formatting preserves classifications and rejects raw fallbacks", () => {
   const unknownApiError = new APIError(

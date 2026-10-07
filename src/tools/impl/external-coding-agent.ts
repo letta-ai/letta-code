@@ -16,6 +16,7 @@ import {
 import { createSharedReminderState } from "@/reminders/state";
 import {
   getCurrentWorkingDirectory,
+  getRuntimeActingUserAttribution,
   getRuntimeContext,
 } from "@/runtime-context";
 import { SUBAGENT_DEPTH_ENV } from "@/utils/subagent-depth-env";
@@ -402,11 +403,15 @@ export async function runExternalCodingAgent(
     delete env[ACTING_USER_ID_ENV];
   }
   const cwd = options.cwd ?? getCurrentWorkingDirectory();
+  const captureActingUserId =
+    options.actingUserId !== undefined
+      ? options.actingUserId
+      : getRuntimeActingUserAttribution();
   const scope = options.parentConversationId
     ? {
         agentId: options.parentAgentId,
         conversationId: options.parentConversationId,
-        actingUserId: options.actingUserId,
+        actingUserId: captureActingUserId,
       }
     : undefined;
   const source = options.type === "claude-code" ? "claude_code" : "codex";

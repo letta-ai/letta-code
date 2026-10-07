@@ -109,14 +109,41 @@ test("completion-pending transitions an independent predecessor sidecar", () => 
       },
       predecessor.revision,
     );
-    const recovery = store.readRecoveryView(
+    const snapshot = store.readRecoverySnapshot(
       "agent-1",
       "conv-1",
       "lineage-sidecar",
     );
-    if (!recovery) throw new Error("missing recovery sidecar view");
+    const recovery = snapshot?.record;
+    if (!recovery || !snapshot)
+      throw new Error("missing recovery sidecar view");
 
-    const pending = markRecoveryClaimCompletionPending(store, recovery);
+    store.writeRecoveryLineageSnapshot({
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      lineageId: "lineage-sidecar",
+      expectedSidecarRevision: snapshot.revisionToken,
+      update: { results: [] },
+    });
+    expect(
+      markRecoveryClaimCompletionPending(
+        store,
+        recovery,
+        snapshot.revisionToken,
+      ),
+    ).toBeNull();
+    const current = store.readRecoverySnapshot(
+      "agent-1",
+      "conv-1",
+      "lineage-sidecar",
+    );
+    if (!current) throw new Error("missing current recovery sidecar view");
+
+    const pending = markRecoveryClaimCompletionPending(
+      store,
+      current.record,
+      current.revisionToken,
+    );
     expect(pending?.recoveryClaimCompletion?.state).toBe("pending");
     expect(store.read("agent-1", "conv-1")?.revision).toBe(successor.revision);
   } finally {

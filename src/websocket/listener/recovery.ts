@@ -885,6 +885,7 @@ async function executeRecoveredApprovalContinuation(params: {
         const pendingCompletionRevision = markRecoveryClaimCompletionPending(
           createInterruptedTurnStore(),
           completed,
+          evidence.revision ?? undefined,
         )?.revision;
         if (!pendingCompletionRevision) {
           await recoveryClaim.release();

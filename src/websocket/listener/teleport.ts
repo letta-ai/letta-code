@@ -17,11 +17,11 @@ import {
 } from "./failed-teleport-cleanup";
 import {
   commitInputDisposition,
-  hasCompletedInputTerminalRevision,
   reserveInputDisposition,
   teleportInputIdentity,
 } from "./input-disposition";
 import { rollbackInputDisposition } from "./input-disposition-rollback";
+import { hasCompletedInputTerminalRevision } from "./input-terminal-evidence";
 import { hasPreparedInputTerminalRevision } from "./input-terminal-journal";
 import {
   createInterruptedTurnStore,

@@ -1,4 +1,5 @@
-import { open, readdir, stat } from "node:fs/promises";
+import { closeSync, fstatSync, openSync, readdirSync, readSync } from "node:fs";
+import { readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { ApiRequestError, apiRequest } from "@/backend/api/request";
@@ -20,6 +21,15 @@ interface CaptureState {
   chunkIndex: number;
   fileIdentity?: string;
   pending?: Promise<void>;
+  snapshots: CaptureSnapshot[];
+}
+
+interface CaptureSnapshot {
+  scope: NativeSessionScope;
+  start: number;
+  end: number;
+  fileIdentity: string;
+  bytes: Buffer;
 }
 
 const states = new Map<string, CaptureState>();
@@ -91,67 +101,186 @@ export async function findNativeSessionPath(
   return undefined;
 }
 
+function findNativeSessionPathSync(
+  source: NativeSessionSource,
+  sessionId: string,
+  env: NodeJS.ProcessEnv,
+): string | undefined {
+  if (!UUID.test(sessionId)) return undefined;
+  const home = env.HOME || homedir();
+  if (source === "claude_code") {
+    const projects = join(
+      env.CLAUDE_CONFIG_DIR || join(home, ".claude"),
+      "projects",
+    );
+    for (const project of safeReadDirectories(projects)) {
+      const path = join(projects, project, `${sessionId}.jsonl`);
+      if (snapshotFile(path)) return path;
+    }
+    return undefined;
+  }
+  const root = join(env.CODEX_HOME || join(home, ".codex"), "sessions");
+  for (const year of safeReadDirectories(root).filter((name) =>
+    /^\d{4}$/.test(name),
+  )) {
+    for (const month of safeReadDirectories(join(root, year)).filter((name) =>
+      /^\d{2}$/.test(name),
+    )) {
+      for (const day of safeReadDirectories(join(root, year, month)).filter(
+        (name) => /^\d{2}$/.test(name),
+      )) {
+        const directory = join(root, year, month, day);
+        for (const file of safeReadFiles(directory)) {
+          if (
+            file.startsWith("rollout-") &&
+            file.endsWith(`-${sessionId}.jsonl`)
+          )
+            return join(directory, file);
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
+function safeReadDirectories(path: string): string[] {
+  try {
+    return readdirSync(path, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
+  } catch {
+    return [];
+  }
+}
+
+function safeReadFiles(path: string): string[] {
+  try {
+    return readdirSync(path, { withFileTypes: true })
+      .filter((entry) => entry.isFile())
+      .map((entry) => entry.name);
+  } catch {
+    return [];
+  }
+}
+
+function snapshotFile(path: string, start = 0, captureBytes = false) {
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(path, "r");
+    const file = fstatSync(descriptor);
+    if (!file.isFile()) return undefined;
+    if (file.size < start) {
+      throw new Error("Native session file was truncated before capture");
+    }
+    const end = file.size;
+    const bytes = Buffer.alloc(captureBytes ? end - start : 0);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const read = readSync(
+        descriptor,
+        bytes,
+        offset,
+        bytes.length - offset,
+        start + offset,
+      );
+      if (!read) {
+        throw new Error("Native session changed during EOF capture");
+      }
+      offset += read;
+    }
+    const completed = fstatSync(descriptor);
+    if (
+      completed.dev !== file.dev ||
+      completed.ino !== file.ino ||
+      completed.size < end ||
+      completed.ctimeMs !== file.ctimeMs ||
+      completed.mtimeMs !== file.mtimeMs
+    ) {
+      throw new Error("Native session changed during EOF capture");
+    }
+    return {
+      start,
+      end,
+      fileIdentity: `${file.dev}:${file.ino}`,
+      bytes,
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
 async function drain(
+  state: CaptureState,
+  snapshot: CaptureSnapshot,
+  source: NativeSessionSource,
+  sessionId: string,
+  requestOptions: { baseUrl?: string; apiKey?: string },
+): Promise<void> {
+  if (state.fileIdentity && state.fileIdentity !== snapshot.fileIdentity) {
+    throw new Error("Native session capture changed file identity");
+  }
+  state.fileIdentity = snapshot.fileIdentity;
+  if (state.offset < snapshot.start) {
+    throw new Error("Native session snapshot has an unrecorded byte gap");
+  }
+  while (state.offset < snapshot.end) {
+    const relativeOffset = state.offset - snapshot.start;
+    const buffer = snapshot.bytes.subarray(
+      relativeOffset,
+      Math.min(snapshot.bytes.length, relativeOffset + CHUNK_BYTES),
+    );
+    if (buffer.length === 0) {
+      throw new Error("Native session snapshot ended before its captured EOF");
+    }
+    const response = await apiRequest<{
+      accepted_bytes: number;
+      chunk_index: number;
+    }>(
+      "POST",
+      `/v1/conversations/${encodeURIComponent(snapshot.scope.conversationId)}/native-session/chunks`,
+      {
+        agent_id: snapshot.scope.agentId,
+        source,
+        session_id: sessionId,
+        chunk_index: state.chunkIndex,
+        data_base64: buffer.toString("base64"),
+      },
+      {
+        signal: AbortSignal.timeout(5_000),
+        actingUserId: snapshot.scope.actingUserId,
+        ...requestOptions,
+      },
+    );
+    if (
+      response.chunk_index !== state.chunkIndex ||
+      response.accepted_bytes !== buffer.length
+    ) {
+      throw new Error("Native session chunk acknowledgment mismatch");
+    }
+    state.offset += buffer.length;
+    state.chunkIndex++;
+  }
+}
+
+async function drainSnapshots(
   state: CaptureState,
   source: NativeSessionSource,
   sessionId: string,
   requestOptions: { baseUrl?: string; apiKey?: string },
 ): Promise<void> {
-  const handle = await open(state.path, "r").catch(() => undefined);
-  if (!handle) return;
-  try {
-    const file = await handle.stat();
-    if (!file.isFile()) return;
-    const identity = `${file.dev}:${file.ino}`;
-    if (state.fileIdentity && state.fileIdentity !== identity) return;
-    state.fileIdentity = identity;
-    // Snapshot EOF: app-server can continue writing while uploads are in flight.
-    const end = file.size;
-    if (end < state.offset) return; // Never replay bytes after truncation.
-    while (state.offset < end) {
-      const buffer = Buffer.alloc(Math.min(CHUNK_BYTES, end - state.offset));
-      const { bytesRead } = await handle.read(
-        buffer,
-        0,
-        buffer.length,
-        state.offset,
-      );
-      if (!bytesRead) return;
-      const response = await apiRequest<{
-        accepted_bytes: number;
-        chunk_index: number;
-      }>(
-        "POST",
-        `/v1/conversations/${encodeURIComponent(state.scope.conversationId)}/native-session/chunks`,
-        {
-          agent_id: state.scope.agentId,
-          source,
-          session_id: sessionId,
-          chunk_index: state.chunkIndex,
-          data_base64: buffer.subarray(0, bytesRead).toString("base64"),
-        },
-        {
-          signal: AbortSignal.timeout(5_000),
-          actingUserId: state.scope.actingUserId,
-          ...requestOptions,
-        },
-      );
-      if (
-        response.chunk_index !== state.chunkIndex ||
-        response.accepted_bytes !== bytesRead
-      ) {
-        throw new Error("Native session chunk acknowledgment mismatch");
-      }
-      state.offset += bytesRead;
-      state.chunkIndex++;
-    }
-  } finally {
-    await handle.close();
+  while (state.snapshots.length > 0) {
+    const snapshot = state.snapshots[0];
+    if (!snapshot) return;
+    await drain(state, snapshot, source, sessionId, requestOptions);
+    if (state.snapshots[0] === snapshot) state.snapshots.shift();
   }
 }
 
 /** Scope is captured at launch, never derived from process globals after a turn. */
-export async function captureNativeSession(
+export function captureNativeSession(
   source: NativeSessionSource,
   sessionId: string,
   scope: NativeSessionScope | undefined,
@@ -164,33 +293,36 @@ export async function captureNativeSession(
     !isCloudServerUrl(requestOptions.cloudUrl ?? getServerUrl()) ||
     !UUID.test(sessionId)
   )
-    return;
+    return Promise.resolve();
   const id = key(source, sessionId);
   const existing = states.get(id);
   // Unknown resumed sessions may predate this process. A known native file
   // contains earlier turns, so never copy it into a different conversation
   // merely because that caller supplied the session UUID.
-  if (!existing || !sameScope(existing.scope, scope)) return;
-  if (existing.pending) {
-    // A later turn can finish while the previous snapshot is still uploading.
-    // Check its new EOF after the in-flight upload settles, even if it failed.
-    await existing.pending.catch(() => undefined);
-    return captureNativeSession(source, sessionId, scope, env, requestOptions);
+  if (!existing || !sameScope(existing.scope, scope)) return Promise.resolve();
+  const path =
+    existing.path || findNativeSessionPathSync(source, sessionId, env);
+  if (!path) return Promise.resolve();
+  let boundary: ReturnType<typeof snapshotFile>;
+  try {
+    boundary = snapshotFile(path, existing.offset, true);
+  } catch (error) {
+    return Promise.reject(error);
   }
-  // Preserve the conversation binding, but use the actor who ran this turn.
-  // An in-flight drain retains its prior actor until it settles above.
-  existing.scope = scope;
-  // Claim the session synchronously, before the first filesystem await.
-  existing.pending = (async () => {
-    const path =
-      existing.path || (await findNativeSessionPath(source, sessionId, env));
-    if (!path) return;
-    existing.path = path;
-    await drain(existing, source, sessionId, requestOptions);
-  })().finally(() => {
-    existing.pending = undefined;
+  if (!boundary) return Promise.resolve();
+  existing.path = path;
+  const snapshot: CaptureSnapshot = { scope, ...boundary };
+  existing.snapshots.push(snapshot);
+  const prior = existing.pending;
+  const pending = (
+    prior ? prior.catch(() => undefined) : Promise.resolve()
+  ).then(() => drainSnapshots(existing, source, sessionId, requestOptions));
+  let tracked: Promise<void>;
+  tracked = pending.finally(() => {
+    if (existing.pending === tracked) existing.pending = undefined;
   });
-  await existing.pending;
+  existing.pending = tracked;
+  return tracked;
 }
 
 export function rememberNativeSession(
@@ -201,7 +333,13 @@ export function rememberNativeSession(
 ): void {
   const id = key(source, sessionId);
   if (!states.has(id) && UUID.test(sessionId) && isCloudServerUrl(cloudUrl)) {
-    states.set(id, { scope, path: "", offset: 0, chunkIndex: 0 });
+    states.set(id, {
+      scope,
+      path: "",
+      offset: 0,
+      chunkIndex: 0,
+      snapshots: [],
+    });
   }
 }
 

@@ -164,6 +164,90 @@ describe("native CLI JSONL capture", () => {
     ).toEqual(["first\n", "second\n"]);
   });
 
+  test("an in-place rewrite during upload cannot corrupt the captured EOF", async () => {
+    const native = Buffer.alloc(256 * 1024 * 2 + 17, "a");
+    const { path, env } = await fixture("codex", native);
+    const calls: Array<{
+      url: string;
+      body: Record<string, unknown>;
+      actingUser: string | undefined;
+    }> = [];
+    let firstReceived!: () => void;
+    let releaseFirst!: () => void;
+    const received = new Promise<void>((resolve) => {
+      firstReceived = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const url = await endpoint(calls, false, async (number) => {
+      if (number === 1) {
+        firstReceived();
+        await release;
+      }
+    });
+    rememberNativeSession("codex", ID, scope, "https://api.letta.com");
+    const capture = captureNativeSession("codex", ID, scope, env, {
+      baseUrl: url,
+      apiKey: "test",
+      cloudUrl: "https://api.letta.com",
+    });
+    await received;
+    await writeFile(path, Buffer.alloc(native.length, "b"));
+    releaseFirst();
+    await capture;
+    expect(
+      Buffer.concat(
+        calls.map(({ body }) =>
+          Buffer.from(String(body.data_base64), "base64"),
+        ),
+      ),
+    ).toEqual(native);
+  });
+
+  test.each(["claude_code", "codex"] as const)(
+    "%s snapshots each turn EOF before returning to the next actor",
+    async (source) => {
+      const { path, env } = await fixture(source, Buffer.from("turn-a\n"));
+      const calls: Array<{
+        url: string;
+        body: Record<string, unknown>;
+        actingUser: string | undefined;
+      }> = [];
+      let releaseFirst!: () => void;
+      const release = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      const url = await endpoint(calls, false, async (number) => {
+        if (number === 1) await release;
+      });
+      const options = {
+        baseUrl: url,
+        apiKey: "test",
+        cloudUrl: "https://api.letta.com",
+      };
+      const actorA = { ...scope, actingUserId: "actor-a" };
+      const actorB = { ...scope, actingUserId: "actor-b" };
+      rememberNativeSession(source, ID, actorA, "https://api.letta.com");
+
+      const first = captureNativeSession(source, ID, actorA, env, options);
+      await appendFile(path, "turn-b\n");
+      const second = captureNativeSession(source, ID, actorB, env, options);
+      releaseFirst();
+      await Promise.all([first, second]);
+
+      expect(
+        calls.map((call) => ({
+          actor: call.actingUser,
+          data: Buffer.from(String(call.body.data_base64), "base64").toString(),
+        })),
+      ).toEqual([
+        { actor: "actor-a", data: "turn-a\n" },
+        { actor: "actor-b", data: "turn-b\n" },
+      ]);
+    },
+  );
+
   test.each(["claude_code", "codex"] as const)(
     "uploads exact %s bytes, then only resumed append",
     async (source) => {
@@ -298,19 +382,34 @@ describe("native CLI JSONL capture", () => {
     await new Promise<void>((resolve) => server?.close(() => resolve()));
     server = undefined;
     url = await endpoint(calls);
-    await captureNativeSession("codex", ID, scope, env, {
+    const later = Buffer.from('{"later":"actor"}\n');
+    await appendFile(path, later);
+    const laterScope = { ...scope, actingUserId: "user-later" };
+    await captureNativeSession("codex", ID, laterScope, env, {
       baseUrl: url,
       apiKey: "test",
       cloudUrl: "https://api.letta.com",
     });
-    expect(calls.map(({ body }) => body.chunk_index)).toEqual([0, 0]);
+    expect(calls.map(({ body }) => body.chunk_index)).toEqual([0, 0, 1]);
+    expect(calls.map(({ actingUser }) => actingUser)).toEqual([
+      "user-parent",
+      "user-parent",
+      "user-later",
+    ]);
+    expect(
+      Buffer.concat(
+        calls
+          .slice(1)
+          .map(({ body }) => Buffer.from(String(body.data_base64), "base64")),
+      ),
+    ).toEqual(Buffer.concat([native, later]));
     clearNativeSessionCaptureForTests();
     await captureNativeSession("codex", ID, scope, env, {
       baseUrl: url,
       apiKey: "test",
       cloudUrl: "https://api.letta.com",
     });
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(3);
   });
 
   test.each([

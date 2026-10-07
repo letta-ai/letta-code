@@ -56,6 +56,7 @@ export function createTurnFinalizer(params: {
                 options.persistTerminalWithoutConsumers ?? true,
               expectedInterruptedAuthorityRevision:
                 params.interruptedRevisionRef?.current,
+              recoveryLineageId,
               readInterruptedAuthorityRevision: () =>
                 readInterruptedTurnAuthorityRevision(
                   params.runtime,

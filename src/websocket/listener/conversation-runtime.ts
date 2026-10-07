@@ -1,5 +1,6 @@
 import { type QueueItem, QueueRuntime } from "@/queue/queue-runtime";
 import type { QueueRemovalTransition } from "@/types/queue-update-protocol";
+import { debugWarn } from "@/utils/debug";
 import { enqueueInboundUserMessage } from "./inbound-queue";
 import {
   forgetQueuedInputDispositions,
@@ -9,6 +10,7 @@ import {
 } from "./input-disposition";
 import {
   clearPreparedInputTerminal,
+  discardPreparedInputTerminal,
   loadPreparedInputTerminals,
 } from "./input-terminal-journal";
 import {
@@ -92,12 +94,22 @@ export function scheduleDurableQueueRestore(
           clearDurableQueueRestoreRetry(listener);
           return;
         }
-        const result = listener.restoreDurableQueuedInputs?.();
-        if (
-          result &&
-          typeof (result as unknown as PromiseLike<number>).then === "function"
-        ) {
-          await result;
+        const restored = await Promise.resolve(
+          listener.restoreDurableQueuedInputs?.() ?? 0,
+        );
+        if (restored > 0) {
+          try {
+            listener.scheduleRestoredQueuePumps?.();
+          } catch (error) {
+            // Durable entries are already enqueued. A wake failure must not be
+            // treated as a restore failure whose retry can return zero and
+            // strand the queue again.
+            debugWarn(
+              "queue",
+              "Failed to wake queue pumps after durable refill",
+              error,
+            );
+          }
         }
         clearDurableQueueRestoreRetry(listener);
       } catch {
@@ -252,14 +264,27 @@ export function restoreDurableQueuedInputs(
   listener: ListenerRuntime,
   terminalStore = createTurnFinishedStore(),
   providedInterruptedRecords?: InterruptedTurnRecord[],
-  options: { queuedOnly?: boolean } = {},
+  options: {
+    queuedOnly?: boolean;
+    interruptedStore?: Pick<
+      ReturnType<typeof createInterruptedTurnStore>,
+      "listDurableInputOwnership"
+    >;
+  } = {},
 ): number {
   promotePreparedInputTerminals(listener, terminalStore);
   let restored = 0;
-  const interruptedRecords =
-    providedInterruptedRecords ?? createInterruptedTurnStore().list();
+  const interruptedOwnership = providedInterruptedRecords
+    ? providedInterruptedRecords.map((record) => ({
+        agentId: record.agentId,
+        conversationId: record.conversationId,
+        durableInputIdentities: record.durableInputIdentities ?? [],
+      }))
+    : (
+        options.interruptedStore ?? createInterruptedTurnStore()
+      ).listDurableInputOwnership();
   const interruptedIdentityKeys = new Set(
-    interruptedRecords.flatMap((record) =>
+    interruptedOwnership.flatMap((record) =>
       (record.durableInputIdentities ?? []).map((identity) =>
         JSON.stringify([
           record.agentId,
@@ -359,6 +384,7 @@ export function promotePreparedInputTerminals(
   listener: ListenerRuntime,
   terminalStore = createTurnFinishedStore(),
   onlyScope?: { agentId: string | null; conversationId: string },
+  interruptedStore = createInterruptedTurnStore(),
 ): number {
   let promoted = 0;
   for (const prepared of loadPreparedInputTerminals(listener)) {
@@ -368,6 +394,65 @@ export function promotePreparedInputTerminals(
         prepared.scope.conversationId !== onlyScope.conversationId)
     ) {
       continue;
+    }
+    if (
+      prepared.owner.recoveryLineageId &&
+      prepared.owner.interruptedRevision &&
+      prepared.owner.interruptedAuthorityRevision
+    ) {
+      let snapshot: ReturnType<
+        ReturnType<typeof createInterruptedTurnStore>["readRecoverySnapshot"]
+      >;
+      try {
+        snapshot = interruptedStore.readRecoverySnapshot(
+          prepared.scope.agentId ?? "",
+          prepared.scope.conversationId,
+          prepared.owner.recoveryLineageId,
+        );
+      } catch {
+        // Corrupt authority state fails closed; preserve the journal for a
+        // later repair rather than promoting or discarding unverifiable proof.
+        continue;
+      }
+      const persisted = terminalStore
+        .read(prepared.scope.agentId, prepared.scope.conversationId)
+        ?.terminals.find((terminal) =>
+          prepared.owner.terminalIdentity
+            ? terminal.owner.terminalIdentity ===
+              prepared.owner.terminalIdentity
+            : terminal.message.turn_id === prepared.message.turn_id,
+        );
+      if (!snapshot) {
+        // A completed recovery removes its sidecar after remote ACK. Preserve
+        // and promote the matching unacknowledged terminal that outlived it;
+        // without terminal proof, retain the journal for later repair.
+        if (!persisted) continue;
+      } else if (
+        snapshot.record.revision !== prepared.owner.interruptedRevision ||
+        snapshot.revisionToken !== prepared.owner.interruptedAuthorityRevision
+      ) {
+        if (snapshot.record.recoveryClaimCompletion?.state === "pending") {
+          continue;
+        }
+        if (persisted) {
+          terminalStore.remove(
+            prepared.scope.agentId,
+            prepared.scope.conversationId,
+            persisted.id,
+          );
+        }
+        if (
+          !discardPreparedInputTerminal(
+            listener,
+            prepared.scope,
+            prepared.owner.terminalIdentity,
+            prepared.message.turn_id,
+          )
+        ) {
+          throw new Error("Failed to discard stale prepared input terminal");
+        }
+        continue;
+      }
     }
     let owner = prepared.owner;
     let replayConnectionId: string | null = null;

@@ -6,6 +6,7 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -41,6 +42,10 @@ export function createRecoveryLineageSidecarAccess(params: {
   directory: string;
   syncDirectory: (directory: string) => void;
 }) {
+  const canonicalSidecarName = /\.json\.recovery-[0-9a-f]{24}$/;
+  const temporarySidecarName =
+    /\.json\.recovery-[0-9a-f]{24}\.(\d+)\.[0-9a-f-]{36}\.tmp$/;
+  const staleTemporaryAgeMs = 60_000;
   const path = (
     agentId: string,
     conversationId: string,
@@ -131,7 +136,7 @@ export function createRecoveryLineageSidecarAccess(params: {
       sidecar.conversationId,
       sidecar.lineageId,
     );
-    const temporary = `${destination}.${randomUUID()}.tmp`;
+    const temporary = `${destination}.${process.pid}.${randomUUID()}.tmp`;
     try {
       writeFileSync(temporary, JSON.stringify(sidecar), {
         mode: 0o600,
@@ -308,8 +313,30 @@ export function createRecoveryLineageSidecarAccess(params: {
       } catch {}
     };
     try {
-      return readdirSync(params.directory)
-        .filter((file) => file.includes(".json.recovery-"))
+      const files = readdirSync(params.directory);
+      for (const file of files) {
+        const temporaryMatch = file.match(temporarySidecarName);
+        if (!temporaryMatch) continue;
+        try {
+          const ownerPid = Number(temporaryMatch[1]);
+          let ownerIsAlive = true;
+          try {
+            process.kill(ownerPid, 0);
+          } catch (error) {
+            ownerIsAlive = (error as NodeJS.ErrnoException).code !== "ESRCH";
+          }
+          if (
+            !ownerIsAlive &&
+            Date.now() - statSync(join(params.directory, file)).mtimeMs >=
+              staleTemporaryAgeMs
+          ) {
+            rmSync(join(params.directory, file), { force: true });
+            params.syncDirectory(params.directory);
+          }
+        } catch {}
+      }
+      return files
+        .filter((file) => canonicalSidecarName.test(file))
         .flatMap((file) => {
           try {
             const value: unknown = JSON.parse(

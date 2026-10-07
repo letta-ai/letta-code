@@ -78,6 +78,7 @@ function clearListenerRetryTimers(runtime: ListenerRuntime): void {
   runtime.durableQueueRestoreScheduled = false;
   runtime.durableQueueRestoreRerunRequested = false;
   runtime.durableQueueRestoreFailures = 0;
+  runtime.scheduleRestoredQueuePumps = undefined;
   cancelFailedTeleportCleanup(runtime);
 }
 

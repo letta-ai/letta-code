@@ -344,6 +344,10 @@ function validateDurableStore(value: unknown): DurableStore {
           typeof prepared.owner.terminalIdentity !== "string") ||
         (prepared.owner.interruptedRevision !== undefined &&
           typeof prepared.owner.interruptedRevision !== "string") ||
+        (prepared.owner.recoveryLineageId !== undefined &&
+          typeof prepared.owner.recoveryLineageId !== "string") ||
+        (prepared.owner.interruptedAuthorityRevision !== undefined &&
+          typeof prepared.owner.interruptedAuthorityRevision !== "string") ||
         rawEntry.queuedInput !== undefined ||
         rawEntry.replayCompleted !== true
       ) {
@@ -355,6 +359,17 @@ function validateDurableStore(value: unknown): DurableStore {
       typeof rawEntry.completedTerminalRevision !== "string"
     ) {
       throw new Error("Completed terminal revision is invalid");
+    }
+    const authority = rawEntry.completedTerminalAuthority;
+    if (
+      authority !== undefined &&
+      (!isRecord(authority) ||
+        typeof authority.interruptedRevision !== "string" ||
+        typeof authority.authorityRevision !== "string" ||
+        (authority.recoveryLineageId !== undefined &&
+          typeof authority.recoveryLineageId !== "string"))
+    ) {
+      throw new Error("Completed terminal authority is invalid");
     }
   }
   for (const [key, rawReservation] of Object.entries(value.reservations)) {
@@ -967,28 +982,6 @@ export function loadDurableQueuedInputEntries(
       result: collect(Object.values(store.entries)),
       changed: false,
     };
-  });
-}
-
-export function hasCompletedInputTerminalRevision(
-  listener: ListenerRuntime,
-  runtimeKey: string,
-  identities: readonly InputIdentity[],
-  revision: string,
-): boolean {
-  if (identities.length === 0) return false;
-  const ledger = getLedger(listener);
-  const keys = identities.map((identity) =>
-    dispositionKey(runtimeKey, identity),
-  );
-  const matches = (entries: Map<string, AcceptedInputDispositionEntry>) =>
-    keys.every(
-      (key) => entries.get(key)?.completedTerminalRevision === revision,
-    );
-  if (!ledger.persistentPath) return matches(ledger.entries);
-  return durableTransaction(ledger.persistentPath, (store) => {
-    syncMemoryFromDurable(ledger, store);
-    return { result: matches(ledger.entries), changed: false };
   });
 }
 

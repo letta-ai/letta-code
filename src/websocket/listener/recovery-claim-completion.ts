@@ -37,23 +37,17 @@ export function retireAcknowledgedRecoveryClaim(
 export function markRecoveryClaimCompletionPending(
   store: InterruptedTurnStore,
   record: InterruptedTurnRecord,
+  observedRevision: string | undefined = record.revision,
 ): InterruptedTurnRecord | null {
   const marker = record.recoveryClaimCompletion;
   if (!record.revision || !marker || marker.state !== "running") return null;
   try {
-    const expectedRevision = marker.independentSuccessor
-      ? store.readRecoverySnapshot(
-          record.agentId,
-          record.conversationId,
-          marker.lineageId,
-        )?.revisionToken
-      : record.revision;
-    if (!expectedRevision) return null;
+    if (!observedRevision) return null;
     return store.markRecoveryClaimCompletionPending({
       agentId: record.agentId,
       conversationId: record.conversationId,
       lineageId: marker.lineageId,
-      expectedRevision,
+      expectedRevision: observedRevision,
     });
   } catch {
     return null;
