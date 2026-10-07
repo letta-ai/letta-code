@@ -22,6 +22,8 @@ const roots = [
   "grammy",
   "@pierre/diffs",
   "@shikijs/langs",
+  // External so its QuickJS worker and WASM resolve beside the package.
+  "@earendil-works/pi-codemode",
   "sharp",
 ];
 
