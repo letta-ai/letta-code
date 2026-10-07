@@ -43,6 +43,33 @@ export interface RecoveryLineageSidecar {
   retiredAt?: number;
 }
 
+export function clearRetiredLineageFromMain(
+  current: InterruptedTurnRecord,
+  retired: RecoveryLineageSidecar,
+): InterruptedTurnRecord {
+  const retiredToolCallIds = new Set(retired.toolCallIds);
+  return {
+    ...current,
+    toolCallIds: current.toolCallIds.filter(
+      (toolCallId) => !retiredToolCallIds.has(toolCallId),
+    ),
+    results: current.results.filter(
+      (result) => !retiredToolCallIds.has(result.tool_call_id),
+    ),
+    unstartedToolCallIds: current.unstartedToolCallIds?.filter(
+      (toolCallId) => !retiredToolCallIds.has(toolCallId),
+    ),
+    teleport:
+      retired.teleport &&
+      current.teleport?.teleportId === retired.teleport.teleportId
+        ? undefined
+        : current.teleport,
+    settledRecoveryEffects: current.settledRecoveryEffects?.filter(
+      (effect) => effect.lineageId !== retired.lineageId,
+    ),
+  };
+}
+
 const sidecarWriterInstanceId = randomUUID();
 
 export const __recoveryLineageSidecarTestUtils = {
@@ -203,9 +230,18 @@ export function createRecoveryLineageSidecarAccess(params: {
             teleport: current.teleport,
           });
     const retired: RecoveryLineageSidecar = {
-      ...previous,
       revision: randomUUID(),
+      agentId: previous.agentId,
+      conversationId: previous.conversationId,
+      lineageId: previous.lineageId,
+      sourceMainRevision: previous.sourceMainRevision,
       state: "retired",
+      runId: null,
+      toolCallIds: [...previous.toolCallIds],
+      results: [],
+      requestOtid: "",
+      workingDirectory: "",
+      teleport: previous.teleport,
       retiredInterruptedRevision: previous.sourceMainRevision,
       retiredAuthorityRevision:
         previous.pendingAuthorityRevision ?? previous.revision,
@@ -213,6 +249,36 @@ export function createRecoveryLineageSidecarAccess(params: {
     };
     write(retired);
     return retired;
+  };
+
+  const compactRetired = (
+    retired: RecoveryLineageSidecar,
+  ): RecoveryLineageSidecar => {
+    const current = read(
+      retired.agentId,
+      retired.conversationId,
+      retired.lineageId,
+    );
+    if (current?.state !== "retired" || current.revision !== retired.revision)
+      return current ?? retired;
+    const compact: RecoveryLineageSidecar = {
+      revision: randomUUID(),
+      agentId: current.agentId,
+      conversationId: current.conversationId,
+      lineageId: current.lineageId,
+      sourceMainRevision: current.sourceMainRevision,
+      state: "retired",
+      runId: null,
+      toolCallIds: [],
+      results: [],
+      requestOtid: "",
+      workingDirectory: "",
+      retiredInterruptedRevision: current.retiredInterruptedRevision,
+      retiredAuthorityRevision: current.retiredAuthorityRevision,
+      retiredAt: current.retiredAt,
+    };
+    write(compact);
+    return compact;
   };
 
   const retiredAuthority = (
@@ -393,6 +459,36 @@ export function createRecoveryLineageSidecarAccess(params: {
     params.syncDirectory(params.directory);
   };
 
+  const removeRetired = (
+    sidecar: RecoveryLineageSidecar,
+    canRemove: () => boolean = () => true,
+  ): boolean => {
+    const sidecarPath = path(
+      sidecar.agentId,
+      sidecar.conversationId,
+      sidecar.lineageId,
+    );
+    const separator = sidecarPath.lastIndexOf(".recovery-");
+    if (separator < 0) return false;
+    const release = acquireDurableFileLock(sidecarPath.slice(0, separator), {
+      waitMs: params.lockWaitMs,
+    });
+    try {
+      const current = read(
+        sidecar.agentId,
+        sidecar.conversationId,
+        sidecar.lineageId,
+      );
+      if (current?.state !== "retired" || current.revision !== sidecar.revision)
+        return false;
+      if (!canRemove()) return false;
+      remove(current);
+      return true;
+    } finally {
+      release();
+    }
+  };
+
   const list = (): RecoveryLineageSidecar[] => {
     const removeMalformedOrphan = (file: string) => {
       const separator = file.indexOf(".recovery-");
@@ -489,6 +585,7 @@ export function createRecoveryLineageSidecarAccess(params: {
 
   return {
     initial,
+    compactRetired,
     list,
     mainView,
     read,
@@ -496,6 +593,7 @@ export function createRecoveryLineageSidecarAccess(params: {
     retiredAuthority,
     recoveryView,
     remove,
+    removeRetired,
     snapshot,
     write,
   };

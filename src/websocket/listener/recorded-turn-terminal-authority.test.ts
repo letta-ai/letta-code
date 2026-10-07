@@ -820,6 +820,10 @@ test.each([true, false])(
           ),
         ).toBe(1);
         expect(loadPreparedInputTerminals(listener)).toHaveLength(1);
+        const promotedWinner = terminalStore.read("agent-1", "conv-1")
+          ?.terminals[0];
+        if (!promotedWinner) throw new Error("missing promoted winner");
+        terminalStore.remove("agent-1", "conv-1", promotedWinner.id);
         expect(
           promotePreparedInputTerminals(
             listener,
@@ -839,9 +843,9 @@ test.each([true, false])(
         ).toBe(1);
       }
       expect(loadPreparedInputTerminals(listener)).toEqual([]);
-      expect(terminalStore.read("agent-1", "conv-1")?.terminals).toHaveLength(
-        1,
-      );
+      expect(
+        terminalStore.read("agent-1", "conv-1")?.terminals ?? [],
+      ).toHaveLength(persistedWinner ? 1 : 0);
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

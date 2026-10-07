@@ -34,7 +34,6 @@ import type {
   ListenerRuntime,
 } from "./types";
 
-/** Cover Cloud's five ten-minute delivery attempts plus bounded retry backoff. */
 export const ACCEPTED_INPUT_DISPOSITION_TTL_MS = 60 * 60 * 1000;
 export const MAX_ACCEPTED_INPUT_DISPOSITIONS_PER_SCOPE = 4096;
 export const MAX_ACCEPTED_INPUT_DISPOSITIONS = 65_536;
@@ -42,14 +41,12 @@ export const MAX_DURABLE_QUEUED_INPUT_BYTES = 1024 * 1024;
 export const MAX_INPUT_DISPOSITION_STORE_BYTES = 64 * 1024 * 1024;
 const LOCK_WAIT_MS = 2_000;
 
-/** A client-chosen `client_message_id`. Never shares keys with teleport ids. */
 export function ordinaryInputIdentity(
   clientMessageId: string | undefined,
 ): InputIdentity | undefined {
   return clientMessageId ? { domain: "input", id: clientMessageId } : undefined;
 }
 
-/** A cloud-chosen teleport id. Never shares keys with client message ids. */
 export function teleportInputIdentity(teleportId: string): InputIdentity {
   return { domain: "teleport", id: teleportId };
 }
@@ -354,6 +351,9 @@ function validateDurableStore(value: unknown): DurableStore {
           typeof prepared.owner.recoveryLineageId !== "string") ||
         (prepared.owner.interruptedAuthorityRevision !== undefined &&
           typeof prepared.owner.interruptedAuthorityRevision !== "string") ||
+        (prepared.owner.preparationSequence !== undefined &&
+          (!Number.isSafeInteger(prepared.owner.preparationSequence) ||
+            (prepared.owner.preparationSequence as number) < 0)) ||
         rawEntry.queuedInput !== undefined ||
         rawEntry.replayCompleted !== true
       ) {
@@ -373,7 +373,12 @@ function validateDurableStore(value: unknown): DurableStore {
         typeof authority.interruptedRevision !== "string" ||
         typeof authority.authorityRevision !== "string" ||
         (authority.recoveryLineageId !== undefined &&
-          typeof authority.recoveryLineageId !== "string"))
+          typeof authority.recoveryLineageId !== "string") ||
+        (authority.terminalIdentity !== undefined &&
+          typeof authority.terminalIdentity !== "string") ||
+        (authority.preparationSequence !== undefined &&
+          (!Number.isSafeInteger(authority.preparationSequence) ||
+            (authority.preparationSequence as number) < 0)))
     ) {
       throw new Error("Completed terminal authority is invalid");
     }
@@ -605,7 +610,6 @@ function reserveDurably(
   }
 }
 
-/** Atomically checks a stable ID and reserves capacity before side effects. */
 export function reserveInputDisposition(
   runtime: ConversationRuntime,
   identity: InputIdentity | undefined,
@@ -777,7 +781,6 @@ export function getInputDisposition(
   return ledger.entries.get(key)?.disposition ?? undefined;
 }
 
-/** Test/setup helper; production ingress should use reserve/commit/rollback. */
 export function rememberInputDisposition(
   runtime: ConversationRuntime,
   identity: InputIdentity | undefined,
@@ -798,7 +801,6 @@ export function rememberInputDisposition(
   return true;
 }
 
-/** A discarded queued input is no longer accepted; its stable-ID retry may restore it. */
 export function forgetQueuedInputDisposition(
   runtime: ConversationRuntime,
   identity: InputIdentity | undefined,

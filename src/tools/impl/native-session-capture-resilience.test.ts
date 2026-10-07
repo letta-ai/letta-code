@@ -83,6 +83,37 @@ async function endpoint(
 }
 
 describe("native CLI JSONL capture resilience", () => {
+  test("retries real same-inode growth under the original actor admission", async () => {
+    const { path, env } = await fixture(Buffer.from("actor-a\n"));
+    const calls: Array<{
+      url: string;
+      body: Record<string, unknown>;
+      actingUser: string | undefined;
+    }> = [];
+    const url = await endpoint(calls);
+    let appended = false;
+    setNativeSessionCaptureSealHookForTests(async () => {
+      if (appended) return;
+      appended = true;
+      await appendFile(path, "late-flush\n");
+    });
+    rememberNativeSession("codex", ID, scope, "https://api.letta.com");
+    const actorA = await reserveNativeSessionCapture(
+      "codex",
+      ID,
+      { ...scope, actingUserId: "actor-a" },
+      env,
+      { baseUrl: url, apiKey: "test", cloudUrl: "https://api.letta.com" },
+    );
+    await expect(actorA.capture()).resolves.toBeUndefined();
+    await awaitNativeSessionCaptureDrainForTests("codex", ID);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.actingUser).toBe("actor-a");
+    expect(
+      Buffer.from(String(calls[0]?.body.data_base64), "base64").toString(),
+    ).toBe("actor-a\nlate-flush\n");
+  });
+
   test("terminal seal failure resets at EOF before capturing the next actor", async () => {
     const { path, env } = await fixture(Buffer.from("actor-a\n"));
     const calls: Array<{

@@ -295,6 +295,7 @@ export type DurablePreparedInputTerminal = {
     recoveryLineageId?: string;
     /** Exact mutable main/sidecar generation validated by this terminal. */
     interruptedAuthorityRevision?: string;
+    preparationSequence?: number;
   };
 };
 
@@ -302,6 +303,8 @@ export type InterruptedTerminalAuthority = {
   interruptedRevision: string;
   authorityRevision: string;
   recoveryLineageId?: string;
+  terminalIdentity?: string;
+  preparationSequence?: number;
 };
 
 export type AcceptedInputDispositionEntry = {

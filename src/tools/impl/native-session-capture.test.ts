@@ -951,7 +951,7 @@ describe("native CLI JSONL capture", () => {
   });
 
   test.each([
-    ["rewrite", (path: string) => writeFile(path, "second\n")],
+    ["rewrite", (path: string) => writeFile(path, "other\n")],
     ["truncation", (path: string) => writeFile(path, "x")],
   ] as const)(
     "fails closed on source %s during sealing",

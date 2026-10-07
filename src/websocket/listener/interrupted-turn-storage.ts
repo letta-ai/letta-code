@@ -1,8 +1,30 @@
 import { createHash } from "node:crypto";
-import { closeSync, fsyncSync, openSync } from "node:fs";
+import {
+  closeSync,
+  fsyncSync,
+  openSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { getServerUrl } from "@/backend/api/server-url";
+import type { InterruptedTurnRecord } from "./interrupted-turn-types";
+
+export function writeInterruptedTurnRecordFile(
+  temporary: string,
+  destination: string,
+  directory: string,
+  record: InterruptedTurnRecord,
+  syncDirectory: (directory: string) => void,
+): void {
+  writeFileSync(temporary, JSON.stringify(record), {
+    mode: 0o600,
+    flush: true,
+  });
+  renameSync(temporary, destination);
+  syncDirectory(directory);
+}
 
 export function fsyncInterruptedTurnDirectory(
   directory: string,

@@ -3,7 +3,6 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
-  renameSync,
   rmSync,
   unlinkSync,
   writeFileSync,
@@ -15,16 +14,18 @@ import { debugWarn } from "@/utils/debug";
 import { acquireDurableFileLock } from "./durable-file-lock";
 import {
   collectInterruptedTurnInputOwnershipWithSidecars,
-  listInterruptedTurnMainSnapshot,
+  listInterruptedTurnMainSnapshot as snapshotMain,
 } from "./interrupted-turn-input-ownership";
 import { isInterruptedTurnRecord } from "./interrupted-turn-schema";
 import {
   defaultInterruptedTurnDirectory,
   fsyncInterruptedTurnDirectory,
+  writeInterruptedTurnRecordFile,
 } from "./interrupted-turn-storage";
 import type { InterruptedTurnRecord } from "./interrupted-turn-types";
 import { allRecordedResults } from "./recorded-tool-results";
 import {
+  clearRetiredLineageFromMain,
   createRecoveryLineageSidecarAccess,
   type RecoveryLineageSidecar,
 } from "./recovery-lineage-sidecar";
@@ -47,8 +48,21 @@ export function createInterruptedTurnStore(
     lockWaitMs?: number;
   } = {},
 ) {
-  const syncDirectory =
-    dependencies.fsyncDirectory ?? fsyncInterruptedTurnDirectory;
+  const sync = dependencies.fsyncDirectory ?? fsyncInterruptedTurnDirectory;
+  function persist(destination: string, record: InterruptedTurnRecord) {
+    const temporary = `${destination}.${randomUUID()}.tmp`;
+    try {
+      writeInterruptedTurnRecordFile(
+        temporary,
+        destination,
+        directory,
+        record,
+        sync,
+      );
+    } finally {
+      rmSync(temporary, { force: true });
+    }
+  }
   function path(agentId: string, conversationId: string) {
     return join(
       directory,
@@ -75,6 +89,7 @@ export function createInterruptedTurnStore(
     }
   }
   const {
+    compactRetired: compactRetiredSidecar,
     initial: initialSidecar,
     list: listSidecars,
     mainView: readMainView,
@@ -83,20 +98,19 @@ export function createInterruptedTurnStore(
     retiredAuthority: readRetiredRecoveryAuthority,
     recoveryView: readRecoveryView,
     remove: removeSidecar,
+    removeRetired: removeRetiredSidecar,
     snapshot: snapshotSidecar,
     write: writeSidecar,
   } = createRecoveryLineageSidecarAccess({
     directory,
-    syncDirectory,
+    syncDirectory: sync,
     lockWaitMs: dependencies.lockWaitMs,
   });
-  const listRawSnapshot = () =>
-    listInterruptedTurnMainSnapshot(directory, readRecord);
-  const listRawRecords = () => listRawSnapshot().records;
+  const rawSnapshot = () => snapshotMain(directory, readRecord);
   return {
     list(): InterruptedTurnRecord[] {
       try {
-        const rawRecords = listRawRecords();
+        const rawRecords = rawSnapshot().records;
         const liveLineages = new Set(
           rawRecords.flatMap((record) => {
             const lineageId = record.recoveryClaimCompletion?.lineageId;
@@ -107,9 +121,32 @@ export function createInterruptedTurnStore(
         );
         for (const sidecar of listSidecars()) {
           if (sidecar.state === "retired") {
-            // Authority is evidence-linked, not age-linked. Retain tombstones
-            // until reference-aware GC can prove no terminal or prepared
-            // journal still depends on this generation.
+            if (sidecar.toolCallIds.length > 0) {
+              const destination = path(sidecar.agentId, sidecar.conversationId);
+              const release = acquireDurableFileLock(destination, {
+                waitMs: dependencies.lockWaitMs,
+              });
+              try {
+                const current = readRecord(destination);
+                if (
+                  current?.recoveryClaimCompletion?.lineageId ===
+                  sidecar.lineageId
+                ) {
+                  const preserved = clearRetiredLineageFromMain(
+                    current,
+                    sidecar,
+                  );
+                  persist(destination, preserved);
+                  const index = rawRecords.findIndex(
+                    (record) => record.revision === current.revision,
+                  );
+                  if (index >= 0) rawRecords[index] = preserved;
+                }
+                compactRetiredSidecar(sidecar);
+              } finally {
+                release();
+              }
+            }
             continue;
           }
           const key = `${sidecar.agentId}\0${sidecar.conversationId}\0${sidecar.lineageId}`;
@@ -152,7 +189,7 @@ export function createInterruptedTurnStore(
       }
     },
     listDurableInputOwnership() {
-      const snapshot = listRawSnapshot();
+      const snapshot = rawSnapshot();
       return collectInterruptedTurnInputOwnershipWithSidecars(
         snapshot.records,
         readMainView,
@@ -210,6 +247,20 @@ export function createInterruptedTurnStore(
       }
     },
     readRetiredRecoveryAuthority,
+    listRecoverySidecars: listSidecars,
+    removeRetiredRecoverySidecar(sidecar: RecoveryLineageSidecar) {
+      return removeRetiredSidecar(sidecar, () => {
+        const destination = path(sidecar.agentId, sidecar.conversationId);
+        const current = readRecord(destination);
+        if (current?.recoveryClaimCompletion?.lineageId !== sidecar.lineageId)
+          return true;
+        persist(destination, {
+          ...clearRetiredLineageFromMain(current, sidecar),
+          recoveryClaimCompletion: undefined,
+        });
+        return true;
+      });
+    },
     write(
       record: InterruptedTurnRecord,
       expectedRevision?: string | null,
@@ -219,7 +270,6 @@ export function createInterruptedTurnStore(
       const release = acquireDurableFileLock(destination, {
         waitMs: dependencies.lockWaitMs,
       });
-      const temporary = `${destination}.${randomUUID()}.tmp`;
       try {
         const current = readRecord(destination);
         const retiredSidecar =
@@ -236,9 +286,6 @@ export function createInterruptedTurnStore(
         ) {
           throw new Error("Recovery lineage retired");
         }
-        // A revision-bearing record is a full snapshot of existing durable
-        // state, never a creation intent. Once the current file is absent, no
-        // stale owner may recreate it, regardless of its expected revision.
         if (!current && record.revision) {
           throw new Error("Interrupted-turn revision cannot recreate a record");
         }
@@ -264,15 +311,9 @@ export function createInterruptedTurnStore(
               }
             : {}),
         };
-        writeFileSync(temporary, JSON.stringify(written), {
-          mode: 0o600,
-          flush: true,
-        });
-        renameSync(temporary, destination);
-        syncDirectory(directory);
+        persist(destination, written);
         return written;
       } finally {
-        rmSync(temporary, { force: true });
         release();
       }
     },
@@ -333,9 +374,6 @@ export function createInterruptedTurnStore(
               ]),
             ]
           : previous.toolCallIds;
-        // Checkpoints are complete snapshots. In particular a pre-effect
-        // rollback must be able to remove an earlier unknown result. Exact
-        // post-effect settlements live separately and are never erased here.
         const results = params.update.results
           ? [...params.update.results]
           : previous.results;
@@ -402,7 +440,6 @@ export function createInterruptedTurnStore(
       const release = acquireDurableFileLock(destination, {
         waitMs: dependencies.lockWaitMs,
       });
-      const temporary = `${destination}.${randomUUID()}.tmp`;
       try {
         const current = readRecord(destination);
         const marker = current?.recoveryClaimCompletion;
@@ -467,18 +504,12 @@ export function createInterruptedTurnStore(
                 (toolCallId) => toolCallId !== params.result.tool_call_id,
               ),
         };
-        writeFileSync(temporary, JSON.stringify(written), {
-          mode: 0o600,
-          flush: true,
-        });
-        renameSync(temporary, destination);
-        syncDirectory(directory);
+        persist(destination, written);
         return {
           revision,
           independentSuccessor: false,
         };
       } finally {
-        rmSync(temporary, { force: true });
         release();
       }
     },
@@ -492,7 +523,6 @@ export function createInterruptedTurnStore(
       const release = acquireDurableFileLock(destination, {
         waitMs: dependencies.lockWaitMs,
       });
-      const temporary = `${destination}.${randomUUID()}.tmp`;
       try {
         const current = readRecord(destination);
         const marker = current?.recoveryClaimCompletion;
@@ -539,15 +569,9 @@ export function createInterruptedTurnStore(
             effectRevision: current.revision,
           },
         };
-        writeFileSync(temporary, JSON.stringify(written), {
-          mode: 0o600,
-          flush: true,
-        });
-        renameSync(temporary, destination);
-        syncDirectory(directory);
+        persist(destination, written);
         return written;
       } finally {
-        rmSync(temporary, { force: true });
         release();
       }
     },
@@ -561,7 +585,6 @@ export function createInterruptedTurnStore(
       const release = acquireDurableFileLock(destination, {
         waitMs: dependencies.lockWaitMs,
       });
-      const temporary = `${destination}.${randomUUID()}.tmp`;
       try {
         const current = readRecord(destination);
         const marker = current?.recoveryClaimCompletion;
@@ -584,7 +607,10 @@ export function createInterruptedTurnStore(
             if (previous.state === "retired") return "stale";
             throw new Error("Recovery lineage pending revision changed");
           }
-          retireSidecar(current, previous);
+          const retired = retireSidecar(current, previous);
+          const preserved = clearRetiredLineageFromMain(current, previous);
+          persist(destination, preserved);
+          compactRetiredSidecar(retired);
           return "preserved";
         }
         if (
@@ -595,20 +621,21 @@ export function createInterruptedTurnStore(
           const evidence = readFileSync(destination, "utf8");
           unlinkSync(destination);
           try {
-            syncDirectory(directory);
+            sync(directory);
           } catch (error) {
             try {
               writeFileSync(destination, evidence, {
                 mode: 0o600,
                 flush: true,
               });
-              syncDirectory(directory);
+              sync(directory);
             } catch {}
             try {
               removeSidecar(retiredAuthority);
             } catch {}
             throw error;
           }
+          compactRetiredSidecar(retiredAuthority);
           return "removed";
         }
         if (!current.revision || !marker.independentSuccessor) return "stale";
@@ -636,15 +663,9 @@ export function createInterruptedTurnStore(
             (effect) => effect.lineageId !== params.lineageId,
           ),
         };
-        writeFileSync(temporary, JSON.stringify(preserved), {
-          mode: 0o600,
-          flush: true,
-        });
-        renameSync(temporary, destination);
-        syncDirectory(directory);
+        persist(destination, preserved);
         return "preserved";
       } finally {
-        rmSync(temporary, { force: true });
         release();
       }
     },
@@ -675,14 +696,11 @@ export function createInterruptedTurnStore(
           throw error;
         }
         try {
-          syncDirectory(directory);
+          sync(directory);
         } catch (error) {
-          // A removal whose directory entry could not be committed is not safe to
-          // acknowledge. Restore the evidence best-effort so this live process
-          // also remains fail-closed; the original fsync failure still propagates.
           try {
             writeFileSync(destination, evidence, { mode: 0o600, flush: true });
-            syncDirectory(directory);
+            sync(directory);
           } catch {}
           throw error;
         }
@@ -826,9 +844,6 @@ export function recordListenerWork(
     recoveryClaimCompletion: inheritedCompletion,
     durableInputIdentities: previous?.durableInputIdentities,
     terminalConsumerIds: previous?.terminalConsumerIds,
-    // A continuation input atomically takes ownership from its exact teleport
-    // intent. Different input identities and unrelated checkpoint writes must
-    // continue carrying the live intent until its own continuation is admitted.
     teleport: consumesInheritedTeleport ? undefined : previous?.teleport,
     workingDirectory:
       runtime.activeWorkingDirectory ??

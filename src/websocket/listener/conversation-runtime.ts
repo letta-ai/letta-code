@@ -11,6 +11,7 @@ import {
 import {
   clearPreparedInputTerminal,
   discardPreparedInputTerminal,
+  loadCompletedTerminalAuthorities,
   loadPreparedInputTerminals,
 } from "./input-terminal-journal";
 import {
@@ -22,6 +23,7 @@ import { scheduleQueueEmit } from "./queue-update-outbound";
 import {
   evictConversationRuntimeIfIdle,
   getActiveRuntime,
+  getConversationRuntimeKey,
   getOrCreateConversationRuntime,
 } from "./runtime";
 import { isListenerTransportOpen } from "./transport";
@@ -60,6 +62,30 @@ const preparedTerminalPromotionRetries = new WeakMap<
   ListenerRuntime,
   { timer?: ReturnType<typeof setTimeout>; delayMs: number }
 >();
+const retiredAuthorityCleanupTimers = new WeakMap<
+  ListenerRuntime,
+  { timer: ReturnType<typeof setTimeout>; expiresAt: number }
+>();
+
+function scheduleRetiredAuthorityCleanup(
+  listener: ListenerRuntime,
+  expiresAt: number,
+): void {
+  const existing = retiredAuthorityCleanupTimers.get(listener);
+  if (existing && existing.expiresAt <= expiresAt) return;
+  if (existing) clearTimeout(existing.timer);
+  const timer = setTimeout(
+    () => {
+      retiredAuthorityCleanupTimers.delete(listener);
+      if (!listener.intentionallyClosed) {
+        listener.promotePreparedInputTerminals?.();
+      }
+    },
+    Math.max(0, expiresAt - Date.now() + 1),
+  );
+  timer.unref?.();
+  retiredAuthorityCleanupTimers.set(listener, { timer, expiresAt });
+}
 
 function schedulePreparedTerminalPromotion(listener: ListenerRuntime): void {
   if (!listener.promotePreparedInputTerminals) return;
@@ -426,7 +452,13 @@ export function promotePreparedInputTerminals(
   interruptedStore: Pick<
     ReturnType<typeof createInterruptedTurnStore>,
     "readRecoverySnapshot" | "readRetiredRecoveryAuthority"
-  > = createInterruptedTurnStore(),
+  > &
+    Partial<
+      Pick<
+        ReturnType<typeof createInterruptedTurnStore>,
+        "listRecoverySidecars" | "removeRetiredRecoverySidecar"
+      >
+    > = createInterruptedTurnStore(),
   discardPreparedTerminal = discardPreparedInputTerminal,
   clearPreparedTerminal = clearPreparedInputTerminal,
   loadPreparedTerminals = loadPreparedInputTerminals,
@@ -434,8 +466,10 @@ export function promotePreparedInputTerminals(
   let promoted = 0;
   let deferred = false;
   let preparedTerminals: ReturnType<typeof loadPreparedInputTerminals>;
+  let completedAuthorities: ReturnType<typeof loadCompletedTerminalAuthorities>;
   try {
     preparedTerminals = loadPreparedTerminals(listener);
+    completedAuthorities = loadCompletedTerminalAuthorities(listener);
   } catch (error) {
     debugWarn(
       "recovery",
@@ -559,6 +593,29 @@ export function promotePreparedInputTerminals(
               Math.max(
                 evidence.get(identity) ?? -1,
                 terminal.owner.preparationSequence ?? -1,
+              ),
+            );
+          }
+          const runtimeKey = getConversationRuntimeKey(
+            prepared.scope.agentId,
+            prepared.scope.conversationId,
+          );
+          for (const completed of completedAuthorities) {
+            if (
+              completed.runtimeKey !== runtimeKey ||
+              completed.authority.recoveryLineageId !==
+                prepared.owner.recoveryLineageId ||
+              completed.authority.interruptedRevision !==
+                prepared.owner.interruptedRevision ||
+              !completed.authority.terminalIdentity ||
+              completed.authority.preparationSequence === undefined
+            )
+              continue;
+            evidence.set(
+              completed.authority.terminalIdentity,
+              Math.max(
+                evidence.get(completed.authority.terminalIdentity) ?? -1,
+                completed.authority.preparationSequence,
               ),
             );
           }
@@ -731,6 +788,65 @@ export function promotePreparedInputTerminals(
           terminalStore,
         );
       }
+    }
+  }
+  if (
+    interruptedStore.listRecoverySidecars &&
+    interruptedStore.removeRetiredRecoverySidecar
+  ) {
+    try {
+      const remainingJournals = loadPreparedTerminals(listener);
+      for (const retired of interruptedStore
+        .listRecoverySidecars()
+        .filter((sidecar) => sidecar.state === "retired")) {
+        const interruptedRevision =
+          retired.retiredInterruptedRevision ?? retired.sourceMainRevision;
+        const hasJournalReference = remainingJournals.some(
+          (candidate) =>
+            candidate.scope.agentId === retired.agentId &&
+            candidate.scope.conversationId === retired.conversationId &&
+            candidate.owner.recoveryLineageId === retired.lineageId &&
+            candidate.owner.interruptedRevision === interruptedRevision,
+        );
+        if (hasJournalReference) continue;
+        const retiredRuntimeKey = getConversationRuntimeKey(
+          retired.agentId,
+          retired.conversationId,
+        );
+        const completedReference = completedAuthorities.find(
+          (completed) =>
+            completed.runtimeKey === retiredRuntimeKey &&
+            completed.authority.recoveryLineageId === retired.lineageId &&
+            completed.authority.interruptedRevision === interruptedRevision,
+        );
+        if (completedReference) {
+          scheduleRetiredAuthorityCleanup(
+            listener,
+            completedReference.expiresAt,
+          );
+          continue;
+        }
+        const hasTerminalReference = Boolean(
+          terminalStore
+            .readOrThrow(retired.agentId, retired.conversationId)
+            ?.terminals.some(
+              (terminal) =>
+                terminal.owner.recoveryLineageId === retired.lineageId &&
+                terminal.owner.interruptedRevision === interruptedRevision,
+            ),
+        );
+        if (hasTerminalReference) continue;
+        if (!interruptedStore.removeRetiredRecoverySidecar(retired)) {
+          deferred = true;
+        }
+      }
+    } catch (error) {
+      deferred = true;
+      debugWarn(
+        "recovery",
+        "Failed to sweep unreferenced retired recovery authority",
+        error,
+      );
     }
   }
   if (deferred) schedulePreparedTerminalPromotion(listener);

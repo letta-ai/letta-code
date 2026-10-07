@@ -36,6 +36,12 @@ function recordCompletedTerminalAuthority(
     ...(owner.recoveryLineageId
       ? { recoveryLineageId: owner.recoveryLineageId }
       : {}),
+    ...(owner.terminalIdentity
+      ? { terminalIdentity: owner.terminalIdentity }
+      : {}),
+    ...(owner.preparationSequence !== undefined
+      ? { preparationSequence: owner.preparationSequence }
+      : {}),
   };
 }
 
@@ -63,11 +69,13 @@ export function prepareInputTerminal(
             return { result: false, changed: false };
           }
         }
+        const preparationSequence =
+          terminal.preparationSequence ?? ++store.nextGeneration;
         const prepared = {
           ...preparedBase,
           preparedAt: terminal.preparedAt ?? Date.now(),
-          preparationSequence:
-            terminal.preparationSequence ?? ++store.nextGeneration,
+          preparationSequence,
+          owner: { ...preparedBase.owner, preparationSequence },
         };
         let changed = false;
         for (const key of keys) {
@@ -91,11 +99,13 @@ export function prepareInputTerminal(
       return false;
     }
   }
+  const preparationSequence =
+    terminal.preparationSequence ?? ++ledger.nextGeneration;
   const prepared = {
     ...preparedBase,
     preparedAt: terminal.preparedAt ?? Date.now(),
-    preparationSequence:
-      terminal.preparationSequence ?? ++ledger.nextGeneration,
+    preparationSequence,
+    owner: { ...preparedBase.owner, preparationSequence },
   };
   for (const key of keys) {
     const entry = ledger.entries.get(key);
@@ -153,6 +163,25 @@ export function loadPreparedInputTerminals(
   listener: ListenerRuntime,
 ): DurablePreparedInputTerminal[] {
   const ledger = getLedger(listener);
+  const backfillPreparationSequence = (
+    entries: Iterable<AcceptedInputDispositionEntry>,
+  ): boolean => {
+    let changed = false;
+    for (const entry of entries) {
+      const prepared = entry.preparedTerminal;
+      if (!prepared) continue;
+      const sequence = prepared.preparationSequence ?? entry.generation;
+      if (prepared.preparationSequence === undefined) {
+        prepared.preparationSequence = sequence;
+        changed = true;
+      }
+      if (prepared.owner.preparationSequence === undefined) {
+        prepared.owner.preparationSequence = sequence;
+        changed = true;
+      }
+    }
+    return changed;
+  };
   const collect = (entries: Iterable<AcceptedInputDispositionEntry>) => {
     const byTurnId = new Map<string, DurablePreparedInputTerminal>();
     for (const entry of entries) {
@@ -164,6 +193,13 @@ export function loadPreparedInputTerminals(
           // generation as a stable upgrade order. New writes always carry the
           // exact monotonic preparation sequence.
           preparationSequence: prepared.preparationSequence ?? entry.generation,
+          owner: {
+            ...prepared.owner,
+            preparationSequence:
+              prepared.owner.preparationSequence ??
+              prepared.preparationSequence ??
+              entry.generation,
+          },
         };
         const key =
           ordered.owner.terminalIdentity ??
@@ -174,12 +210,30 @@ export function loadPreparedInputTerminals(
           ]);
         const existing = byTurnId.get(key);
         if (existing) {
-          const { preparationSequence: existingSequence, ...existingPayload } =
-            existing;
-          const { preparationSequence: orderedSequence, ...orderedPayload } =
-            ordered;
+          const {
+            preparationSequence: existingSequence,
+            owner: existingOwner,
+            ...existingPayload
+          } = existing;
+          const {
+            preparationSequence: orderedSequence,
+            owner: orderedOwner,
+            ...orderedPayload
+          } = ordered;
+          const {
+            preparationSequence: _existingOwnerSequence,
+            ...existingOwnerPayload
+          } = existingOwner;
+          const {
+            preparationSequence: _orderedOwnerSequence,
+            ...orderedOwnerPayload
+          } = orderedOwner;
           if (
-            JSON.stringify(existingPayload) !== JSON.stringify(orderedPayload)
+            JSON.stringify({
+              ...existingPayload,
+              owner: existingOwnerPayload,
+            }) !==
+            JSON.stringify({ ...orderedPayload, owner: orderedOwnerPayload })
           ) {
             throw new Error("Prepared terminal identity collision");
           }
@@ -193,6 +247,48 @@ export function loadPreparedInputTerminals(
     }
     return [...byTurnId.values()];
   };
+  if (!ledger.persistentPath) {
+    backfillPreparationSequence(ledger.entries.values());
+    return collect(ledger.entries.values());
+  }
+  return durableTransaction(ledger.persistentPath, (store) => {
+    const changed = backfillPreparationSequence(Object.values(store.entries));
+    syncMemoryFromDurable(ledger, store);
+    return {
+      result: collect(Object.values(store.entries)),
+      changed,
+    };
+  });
+}
+
+export function loadCompletedTerminalAuthorities(
+  listener: ListenerRuntime,
+): Array<{
+  runtimeKey: string;
+  expiresAt: number;
+  authority: NonNullable<
+    AcceptedInputDispositionEntry["completedTerminalAuthority"]
+  >;
+}> {
+  const ledger = getLedger(listener);
+  const collect = (entries: Iterable<AcceptedInputDispositionEntry>) =>
+    [...entries]
+      .filter(
+        (entry) =>
+          entry.expiresAt > Date.now() &&
+          entry.completedTerminalAuthority?.recoveryLineageId &&
+          entry.completedTerminalAuthority.terminalIdentity &&
+          entry.completedTerminalAuthority.preparationSequence !== undefined,
+      )
+      .map((entry) => ({
+        runtimeKey: entry.runtimeKey,
+        expiresAt: entry.expiresAt,
+        authority: structuredClone(
+          entry.completedTerminalAuthority as NonNullable<
+            AcceptedInputDispositionEntry["completedTerminalAuthority"]
+          >,
+        ),
+      }));
   if (!ledger.persistentPath) return collect(ledger.entries.values());
   return durableTransaction(ledger.persistentPath, (store) => {
     syncMemoryFromDurable(ledger, store);

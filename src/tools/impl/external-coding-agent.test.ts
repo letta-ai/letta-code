@@ -305,8 +305,15 @@ describe("external coding agent output and preflight", () => {
         throw new Error("second Codex start blocked on leaked admission");
       }),
     ]);
-    expect(second.error).toContain("boundary reset");
-    expect(starts).toBe(2);
+    expect(second.error).toContain("turn/start rejected");
+    const third = await Promise.race([
+      run(),
+      Bun.sleep(500).then(() => {
+        throw new Error("third Codex start blocked by the reset fence");
+      }),
+    ]);
+    expect(third.error).toContain("turn/start rejected");
+    expect(starts).toBe(3);
   });
 
   test.each([

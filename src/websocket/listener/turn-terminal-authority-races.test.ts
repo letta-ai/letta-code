@@ -13,7 +13,10 @@ import {
   openListenerConnection,
   subscribeListenerConnection,
 } from "./connection";
-import { getOrCreateScopedRuntime } from "./conversation-runtime";
+import {
+  getOrCreateScopedRuntime,
+  promotePreparedInputTerminals,
+} from "./conversation-runtime";
 import { createInterruptedTurnStore } from "./interrupted-turn-record";
 import { createRuntime } from "./lifecycle";
 import type { ListenerTransport } from "./transport";
@@ -297,6 +300,11 @@ test.each(["exact", "legacy"] as const)(
       if (!sidecar) throw new Error("missing retired authority sidecar");
       const sidecarPath = join(directory, "interrupted", sidecar);
       const retired = JSON.parse(readFileSync(sidecarPath, "utf8"));
+      expect(retired.results).toEqual([]);
+      expect(retired.exactResults).toBeUndefined();
+      expect(retired.durableInputIdentities).toBeUndefined();
+      expect(retired.actingUserId).toBeUndefined();
+      expect(retired.teleport).toBeUndefined();
       if (format === "legacy") {
         const legacy = retired;
         delete legacy.retiredInterruptedRevision;
@@ -362,6 +370,66 @@ test.each(["exact", "legacy"] as const)(
           .read("agent-1", "conversation-1")
           ?.terminals.map((terminal) => terminal.message.turn_id),
       ).toEqual(["turn-winning"]);
+      const winner = terminalStore.read("agent-1", "conversation-1")
+        ?.terminals[0];
+      if (!winner) throw new Error("missing winning terminal");
+      terminalStore.remove("agent-1", "conversation-1", winner.id);
+      expect(
+        terminalStore.read("agent-1", "conversation-1")?.terminals ?? [],
+      ).toEqual([]);
+      const completedEntry = {
+        disposition: "started" as const,
+        acceptedAt: Date.now(),
+        expiresAt: Date.now() + 60_000,
+        runtimeKey: runtime.key,
+        generation: 1,
+        replayCompleted: true as const,
+        completedTerminalRevision: winner.owner.interruptedRevision,
+        completedTerminalAuthority: {
+          interruptedRevision: winner.owner.interruptedRevision as string,
+          authorityRevision: winner.owner
+            .interruptedAuthorityRevision as string,
+          recoveryLineageId: winner.owner.recoveryLineageId,
+          terminalIdentity: winner.owner.terminalIdentity,
+          preparationSequence: 2,
+        },
+      };
+      listener.acceptedInputDispositionLedger.persistentPath = null;
+      listener.acceptedInputDispositionLedger.entries.set(
+        "completed-winner",
+        completedEntry,
+      );
+      expect(
+        promotePreparedInputTerminals(
+          listener,
+          terminalStore,
+          undefined,
+          interruptedStore,
+        ),
+      ).toBe(0);
+      expect(
+        interruptedStore.readRetiredRecoveryAuthority(
+          "agent-1",
+          "conversation-1",
+          "lineage-shared",
+        ),
+      ).not.toBeNull();
+      completedEntry.expiresAt = Date.now() - 1;
+      expect(
+        promotePreparedInputTerminals(
+          listener,
+          terminalStore,
+          undefined,
+          interruptedStore,
+        ),
+      ).toBe(0);
+      expect(
+        interruptedStore.readRetiredRecoveryAuthority(
+          "agent-1",
+          "conversation-1",
+          "lineage-shared",
+        ),
+      ).toBeNull();
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

@@ -60,6 +60,12 @@ class NativeChunkAcknowledgmentError extends Error {
   }
 }
 
+class NativeSessionSourceGrowthError extends Error {
+  constructor() {
+    super("Native session grew during EOF capture");
+  }
+}
+
 export interface NativeSessionCaptureReservation {
   capture(): Promise<void>;
 }
@@ -275,8 +281,10 @@ export async function reserveNativeSessionCapture(
       try {
         await resetCaptureBoundary(state, source, sessionId, env);
       } catch (error) {
-        admission.release();
-        throw error;
+        // Capture is auxiliary. Keep this actor's admission/fence, but allow
+        // the native turn to recreate or relocate its session file; the EOF
+        // finalizer will retry the reset without bricking every later send.
+        reportNativeSessionCaptureFailure(source, sessionId, error);
       }
     }
     let settled = false;
@@ -291,6 +299,7 @@ export async function reserveNativeSessionCapture(
 }
 
 function retryableSealFailure(error: unknown): boolean {
+  if (error instanceof NativeSessionSourceGrowthError) return true;
   const code =
     (error as NodeJS.ErrnoException)?.code ??
     (error as { cause?: NodeJS.ErrnoException })?.cause?.code;
@@ -417,8 +426,12 @@ async function seal(
       position += bytesRead;
     }
     const after = await input.stat();
+    const afterIdentity = `${after.dev}:${after.ino}`;
+    if (afterIdentity === identity && after.size > before.size) {
+      throw new NativeSessionSourceGrowthError();
+    }
     if (
-      `${after.dev}:${after.ino}` !== identity ||
+      afterIdentity !== identity ||
       after.size !== before.size ||
       after.ctimeMs !== before.ctimeMs ||
       after.mtimeMs !== before.mtimeMs
