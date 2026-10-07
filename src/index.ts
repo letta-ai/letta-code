@@ -42,6 +42,7 @@ import {
 } from "./backend";
 import { getBillingTier } from "./backend/api/metadata";
 import { LOCAL_BACKEND_EXPERIMENTAL_ENV } from "./backend/local/paths";
+import { startBrowserDiscoveryServer } from "./browser-discovery-server";
 import {
   extractBackendFlag,
   type ParsedCliArgs,
@@ -570,8 +571,8 @@ async function getLocalBackendStartupFallbackSession(
 
 async function main(): Promise<void> {
   markMilestone("CLI_START");
+  void startBrowserDiscoveryServer().ready.catch(() => undefined);
   await initializeDesktopCredentials();
-
   // Exit when the owning Desktop or terminal process dies.
   startOrphanDetection();
 
@@ -2572,6 +2573,5 @@ async function main(): Promise<void> {
     },
   );
 }
-
 assertSupportedBunRuntime();
 main();
