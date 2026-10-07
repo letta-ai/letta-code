@@ -300,11 +300,11 @@ export function captureNativeSession(
   // contains earlier turns, so never copy it into a different conversation
   // merely because that caller supplied the session UUID.
   if (!existing || !sameScope(existing.scope, scope)) return Promise.resolve();
-  const path =
-    existing.path || findNativeSessionPathSync(source, sessionId, env);
-  if (!path) return Promise.resolve();
+  let path: string | undefined;
   let boundary: ReturnType<typeof snapshotFile>;
   try {
+    path = existing.path || findNativeSessionPathSync(source, sessionId, env);
+    if (!path) return Promise.resolve();
     boundary = snapshotFile(path, existing.offset, true);
   } catch (error) {
     return Promise.reject(error);
