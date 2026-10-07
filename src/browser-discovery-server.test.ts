@@ -4,7 +4,9 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { type AddressInfo, createConnection } from "node:net";
 import { join, relative } from "node:path";
+import type { BrowserDeviceMcpOAuthRequest } from "./browser-device-mcp-oauth";
 import {
+  BROWSER_DEVICE_MCP_OAUTH_PATH,
   BROWSER_DISCOVERY_HOST,
   type BrowserDiscoveryServerHandle,
   startBrowserDiscoveryServer,
@@ -33,7 +35,9 @@ describe("browser discovery server", () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ status: "ok" });
-    expect(response.headers.get("access-control-allow-origin")).toBe("*");
+    expect(response.headers.get("access-control-allow-origin")).toBe(
+      "https://chat.letta.com",
+    );
     expect(response.headers.get("access-control-allow-private-network")).toBe(
       "true",
     );
@@ -54,9 +58,11 @@ describe("browser discovery server", () => {
     expect(response.status).toBe(204);
     expect(await response.text()).toBe("");
     expect(response.headers.get("access-control-allow-methods")).toBe(
-      "GET, OPTIONS",
+      "GET, POST, OPTIONS",
     );
-    expect(response.headers.get("access-control-allow-origin")).toBe("*");
+    expect(response.headers.get("access-control-allow-origin")).toBe(
+      "https://chat.letta.com",
+    );
     expect(response.headers.get("access-control-allow-private-network")).toBe(
       "true",
     );
@@ -77,6 +83,102 @@ describe("browser discovery server", () => {
         })
       ).status,
     ).toBe(400);
+  });
+
+  test("starts MCP OAuth from an allowed browser origin", async () => {
+    const requests: BrowserDeviceMcpOAuthRequest[] = [];
+    const { address } = await startServer(async (request) => {
+      requests.push(request);
+    });
+    const response = await fetch(
+      `http://${address.host}:${address.port}${BROWSER_DEVICE_MCP_OAUTH_PATH}`,
+      {
+        body: JSON.stringify({
+          agentId: "agent-123",
+          service: "datadog",
+          serverUrl: "https://mcp.datadoghq.com/v1/mcp",
+        }),
+        headers: {
+          "Content-Type": "application/json",
+          Origin: "https://chat.letta.com",
+          "X-Letta-Local-Connect": "1",
+        },
+        method: "POST",
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ status: "connected" });
+    expect(response.headers.get("access-control-allow-origin")).toBe(
+      "https://chat.letta.com",
+    );
+    expect(requests).toEqual([
+      {
+        agentId: "agent-123",
+        service: "datadog",
+        serverUrl: "https://mcp.datadoghq.com/v1/mcp",
+      },
+    ]);
+  });
+
+  test("rejects untrusted origins and malformed command bodies", async () => {
+    const { address } = await startServer(async () => undefined);
+    const url = `http://${address.host}:${address.port}${BROWSER_DEVICE_MCP_OAUTH_PATH}`;
+    const untrusted = await fetch(url, {
+      body: JSON.stringify({
+        agentId: "agent-123",
+        service: "datadog",
+        serverUrl: "https://mcp.datadoghq.com/v1/mcp",
+      }),
+      headers: {
+        "Content-Type": "application/json",
+        Origin: "https://attacker.invalid",
+        "X-Letta-Local-Connect": "1",
+      },
+      method: "POST",
+    });
+    expect(untrusted.status).toBe(403);
+    expect(untrusted.headers.get("access-control-allow-origin")).toBeNull();
+
+    const malformed = await fetch(url, {
+      body: JSON.stringify({ agentId: "agent-123" }),
+      headers: {
+        "Content-Type": "application/json",
+        Origin: "https://chat.letta.com",
+        "X-Letta-Local-Connect": "1",
+      },
+      method: "POST",
+    });
+    expect(malformed.status).toBe(400);
+    expect(await malformed.json()).toEqual({ status: "invalid_request" });
+  });
+
+  test("answers command private-network preflight with narrow CORS", async () => {
+    const { address } = await startServer(async () => undefined);
+    const response = await fetch(
+      `http://${address.host}:${address.port}${BROWSER_DEVICE_MCP_OAUTH_PATH}`,
+      {
+        method: "OPTIONS",
+        headers: {
+          Origin: "https://chat.letta.com",
+          "Access-Control-Request-Headers":
+            "content-type,x-letta-local-connect",
+          "Access-Control-Request-Method": "POST",
+          "Access-Control-Request-Private-Network": "true",
+        },
+      },
+    );
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get("access-control-allow-origin")).toBe(
+      "https://chat.letta.com",
+    );
+    expect(response.headers.get("access-control-allow-headers")).toBe(
+      "Content-Type, X-Letta-Local-Connect",
+    );
+    expect(response.headers.get("access-control-allow-private-network")).toBe(
+      "true",
+    );
   });
 
   test("takes over the fixed port after another owner exits", async () => {
@@ -194,8 +296,23 @@ console.log("closed");
 async function startServer(): Promise<{
   handle: BrowserDiscoveryServerHandle;
   address: Awaited<BrowserDiscoveryServerHandle["ready"]>;
+}>;
+async function startServer(
+  connectMcpOAuth: (request: BrowserDeviceMcpOAuthRequest) => Promise<void>,
+): Promise<{
+  handle: BrowserDiscoveryServerHandle;
+  address: Awaited<BrowserDiscoveryServerHandle["ready"]>;
+}>;
+async function startServer(
+  connectMcpOAuth?: (request: BrowserDeviceMcpOAuthRequest) => Promise<void>,
+): Promise<{
+  handle: BrowserDiscoveryServerHandle;
+  address: Awaited<BrowserDiscoveryServerHandle["ready"]>;
 }> {
-  const handle = startBrowserDiscoveryServer({ port: 0 });
+  const handle = startBrowserDiscoveryServer({
+    ...(connectMcpOAuth ? { connectMcpOAuth } : {}),
+    port: 0,
+  });
   handles.push(handle);
   return { handle, address: await handle.ready };
 }

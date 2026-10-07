@@ -5,13 +5,22 @@ import {
   type ServerResponse,
 } from "node:http";
 import type { AddressInfo } from "node:net";
+import {
+  type BrowserDeviceMcpOAuthRequest,
+  connectBrowserDeviceMcpOAuth,
+} from "@/browser-device-mcp-oauth";
 
 export const BROWSER_DISCOVERY_HOST = "127.0.0.1";
 export const BROWSER_DISCOVERY_PORT = 8284;
 export const BROWSER_DISCOVERY_PATH = "/status";
+export const BROWSER_DEVICE_MCP_OAUTH_PATH = "/mcp-oauth/connect";
 
 const DEFAULT_RETRY_DELAY_MS = 1_000;
+const MAX_REQUEST_BODY_BYTES = 4_096;
+const LOCAL_CONNECT_HEADER = "x-letta-local-connect";
 const STATUS_BODY = JSON.stringify({ status: "ok" });
+const LOCAL_BROWSER_ORIGIN = /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?$/;
+const ALLOWED_BROWSER_ORIGINS = new Set(["https://chat.letta.com"]);
 
 export interface BrowserDiscoveryServerAddress {
   host: string;
@@ -25,6 +34,7 @@ export interface BrowserDiscoveryServerHandle {
 }
 
 interface BrowserDiscoveryServerOptions {
+  connectMcpOAuth?: (request: BrowserDeviceMcpOAuthRequest) => Promise<void>;
   port?: number;
   retryDelayMs?: number;
 }
@@ -42,6 +52,8 @@ export function startBrowserDiscoveryServer(
 ): BrowserDiscoveryServerHandle {
   const port = options.port ?? BROWSER_DISCOVERY_PORT;
   const retryDelayMs = options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
+  const connectMcpOAuth =
+    options.connectMcpOAuth ?? connectBrowserDeviceMcpOAuth;
   let activeServer: Server | null = null;
   let pendingServer: Server | null = null;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -69,7 +81,7 @@ export function startBrowserDiscoveryServer(
   const attemptListen = (): void => {
     if (stopped || activeServer || pendingServer) return;
 
-    const candidate = createBrowserDiscoveryHttpServer();
+    const candidate = createBrowserDiscoveryHttpServer(connectMcpOAuth);
     pendingServer = candidate;
     const onStartupError = (error: Error & { code?: string }): void => {
       pendingServer = null;
@@ -146,10 +158,17 @@ export function startBrowserDiscoveryServer(
   };
 }
 
-function createBrowserDiscoveryHttpServer(): Server {
+function createBrowserDiscoveryHttpServer(
+  connectMcpOAuth: (request: BrowserDeviceMcpOAuthRequest) => Promise<void>,
+): Server {
   let server: Server;
   server = createServer((request, response) => {
-    handleBrowserDiscoveryRequest(server, request, response);
+    void handleBrowserDiscoveryRequest(
+      server,
+      request,
+      response,
+      connectMcpOAuth,
+    );
   });
   server.on("connection", (socket) => socket.unref());
   server.on("clientError", (_error, socket) => {
@@ -161,11 +180,16 @@ function createBrowserDiscoveryHttpServer(): Server {
   return server;
 }
 
-function handleBrowserDiscoveryRequest(
+async function handleBrowserDiscoveryRequest(
   server: Server,
   request: IncomingMessage,
   response: ServerResponse,
-): void {
+  connectMcpOAuth: (request: BrowserDeviceMcpOAuthRequest) => Promise<void>,
+): Promise<void> {
+  if (!isLoopbackAddress(request.socket.remoteAddress)) {
+    respond(response, 403, "Browser connection must use loopback");
+    return;
+  }
   const address = server.address();
   const expectedHost =
     address && typeof address !== "string"
@@ -175,45 +199,199 @@ function handleBrowserDiscoveryRequest(
     respond(response, 400, "Invalid discovery host");
     return;
   }
-  if (request.url !== BROWSER_DISCOVERY_PATH) {
+  if (
+    request.url !== BROWSER_DISCOVERY_PATH &&
+    request.url !== BROWSER_DEVICE_MCP_OAUTH_PATH
+  ) {
     respond(response, 404, "Not found");
     return;
   }
 
+  const origin = allowedBrowserOrigin(request.headers.origin);
   if (request.method === "OPTIONS") {
+    if (!origin) {
+      respond(response, 403, "Browser origin is not allowed");
+      return;
+    }
     response.writeHead(204, {
-      ...browserAccessHeaders(),
+      ...browserAccessHeaders(origin),
       "Content-Length": "0",
     });
     response.end();
     return;
   }
-  if (request.method !== "GET") {
-    response.writeHead(405, {
-      ...browserAccessHeaders(),
-      Allow: "GET, OPTIONS",
-      "Content-Type": "text/plain; charset=utf-8",
+  if (request.url === BROWSER_DISCOVERY_PATH && request.method === "GET") {
+    response.writeHead(200, {
+      ...browserAccessHeaders(origin),
+      "Content-Length": String(Buffer.byteLength(STATUS_BODY)),
+      "Content-Type": "application/json; charset=utf-8",
     });
-    response.end("Method not allowed");
+    response.end(STATUS_BODY);
+    return;
+  }
+  if (
+    request.url === BROWSER_DEVICE_MCP_OAUTH_PATH &&
+    request.method === "POST"
+  ) {
+    if (!origin) {
+      respond(response, 403, "Browser origin is not allowed");
+      return;
+    }
+    await handleMcpOAuthConnectRequest(
+      request,
+      response,
+      origin,
+      connectMcpOAuth,
+    );
     return;
   }
 
-  response.writeHead(200, {
-    ...browserAccessHeaders(),
-    "Content-Length": String(Buffer.byteLength(STATUS_BODY)),
-    "Content-Type": "application/json; charset=utf-8",
+  const allow =
+    request.url === BROWSER_DEVICE_MCP_OAUTH_PATH
+      ? "POST, OPTIONS"
+      : "GET, OPTIONS";
+  response.writeHead(405, {
+    ...browserAccessHeaders(origin),
+    Allow: allow,
+    "Content-Type": "text/plain; charset=utf-8",
   });
-  response.end(STATUS_BODY);
+  response.end("Method not allowed");
 }
 
-function browserAccessHeaders(): Record<string, string> {
+async function handleMcpOAuthConnectRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  origin: string,
+  connectMcpOAuth: (request: BrowserDeviceMcpOAuthRequest) => Promise<void>,
+): Promise<void> {
+  if (!request.headers["content-type"]?.startsWith("application/json")) {
+    response.writeHead(415, {
+      ...browserAccessHeaders(origin),
+      "Content-Type": "text/plain; charset=utf-8",
+    });
+    response.end("Content-Type must be application/json");
+    return;
+  }
+  if (request.headers[LOCAL_CONNECT_HEADER] !== "1") {
+    respondJson(response, 400, { status: "invalid_request" }, origin);
+    return;
+  }
+  try {
+    const parsed = parseMcpOAuthRequest(await readRequestBody(request));
+    await connectMcpOAuth(parsed);
+    respondJson(response, 200, { status: "connected" }, origin);
+  } catch (error) {
+    if (error instanceof BrowserRequestError) {
+      respondJson(
+        response,
+        error.status,
+        { status: "invalid_request" },
+        origin,
+      );
+      return;
+    }
+    if (
+      error instanceof Error &&
+      error.name === "BrowserDeviceMcpOAuthRequestError"
+    ) {
+      respondJson(response, 400, { status: "invalid_request" }, origin);
+      return;
+    }
+    respondJson(response, 502, { status: "connection_failed" }, origin);
+  }
+}
+
+function allowedBrowserOrigin(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  return ALLOWED_BROWSER_ORIGINS.has(value) || LOCAL_BROWSER_ORIGIN.test(value)
+    ? value
+    : undefined;
+}
+
+function isLoopbackAddress(value: string | undefined): boolean {
+  return value === "127.0.0.1" || value === "::ffff:127.0.0.1";
+}
+
+function browserAccessHeaders(origin?: string): Record<string, string> {
   return {
-    "Access-Control-Allow-Methods": "GET, OPTIONS",
-    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "Content-Type, X-Letta-Local-Connect",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    ...(origin ? { "Access-Control-Allow-Origin": origin } : {}),
     "Access-Control-Allow-Private-Network": "true",
     "Cache-Control": "no-store",
-    Vary: "Origin, Access-Control-Request-Method, Access-Control-Request-Private-Network",
+    Vary: "Origin, Access-Control-Request-Headers, Access-Control-Request-Method, Access-Control-Request-Private-Network",
   };
+}
+
+class BrowserRequestError extends Error {
+  constructor(readonly status: number) {
+    super("Invalid browser request");
+  }
+}
+
+async function readRequestBody(request: IncomingMessage): Promise<string> {
+  const declaredLength = Number(request.headers["content-length"]);
+  if (
+    Number.isFinite(declaredLength) &&
+    declaredLength > MAX_REQUEST_BODY_BYTES
+  ) {
+    request.resume();
+    throw new BrowserRequestError(413);
+  }
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const rawChunk of request) {
+    const chunk = Buffer.isBuffer(rawChunk)
+      ? rawChunk
+      : Buffer.from(rawChunk as ArrayBuffer);
+    size += chunk.length;
+    if (size > MAX_REQUEST_BODY_BYTES) {
+      throw new BrowserRequestError(413);
+    }
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+function parseMcpOAuthRequest(value: string): BrowserDeviceMcpOAuthRequest {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new BrowserRequestError(400);
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new BrowserRequestError(400);
+  }
+  const record = parsed as Record<string, unknown>;
+  if (
+    Object.keys(record).length !== 3 ||
+    typeof record.agentId !== "string" ||
+    typeof record.service !== "string" ||
+    typeof record.serverUrl !== "string"
+  ) {
+    throw new BrowserRequestError(400);
+  }
+  return {
+    agentId: record.agentId,
+    service: record.service,
+    serverUrl: record.serverUrl,
+  };
+}
+
+function respondJson(
+  response: ServerResponse,
+  statusCode: number,
+  body: Record<string, string>,
+  origin: string,
+): void {
+  const serialized = JSON.stringify(body);
+  response.writeHead(statusCode, {
+    ...browserAccessHeaders(origin),
+    "Content-Length": String(Buffer.byteLength(serialized)),
+    "Content-Type": "application/json; charset=utf-8",
+  });
+  response.end(serialized);
 }
 
 function respond(
