@@ -66,7 +66,7 @@ function clearDurableQueueRestoreRetry(listener: ListenerRuntime): void {
   listener.durableQueueRestoreFailures = 0;
 }
 
-function scheduleDurableQueueRestore(
+export function scheduleDurableQueueRestore(
   listener: ListenerRuntime,
   capacityReleased = true,
 ): void {

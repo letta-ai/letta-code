@@ -15,6 +15,7 @@ import {
 import { getBackend } from "@/backend";
 import {
   allRecordedResults,
+  createInterruptedTurnStore,
   readInterruptedTurn,
 } from "./interrupted-turn-record";
 import { getRecoveryEligibility } from "./recovery-ownership";
@@ -58,6 +59,11 @@ export async function recoverApprovalStateForSync(
   if (!scope.agent_id) {
     clearRecoveredApprovalState(runtime);
     return;
+  }
+  if (opts.resumeInterruptedTurn) {
+    runtime.pendingInterruptedResults = null;
+    runtime.pendingInterruptedContext = null;
+    runtime.pendingInterruptedToolCallIds = null;
   }
   if (hasInterruptedCacheForScope(runtime.listener, scope)) {
     clearRecoveredApprovalState(runtime);
@@ -131,7 +137,16 @@ export async function recoverApprovalStateForSync(
     return;
   }
 
-  const recorded = resolvedDeps.readInterruptedTurn(runtime);
+  const rawRecorded = resolvedDeps.readInterruptedTurn(runtime);
+  const recorded =
+    rawRecorded?.recoveryClaimCompletion?.independentSuccessor &&
+    deps.readInterruptedTurn === undefined
+      ? (createInterruptedTurnStore().readRecoveryView(
+          rawRecorded.agentId,
+          rawRecorded.conversationId,
+          rawRecorded.recoveryClaimCompletion.lineageId,
+        ) ?? rawRecorded)
+      : rawRecorded;
   const recordedResults = new Map(
     (recorded ? allRecordedResults(recorded) : []).map((result) => [
       result.tool_call_id,
@@ -217,6 +232,9 @@ export async function recoverApprovalStateForSync(
     durableInputIdentities: recorded?.durableInputIdentities,
     terminalConsumerIds: recorded?.terminalConsumerIds,
     interruptedRevision: recorded?.revision,
+    recoveryLineageId: recorded?.recoveryClaimCompletion?.lineageId,
+    recoveryUsesIndependentSuccessor:
+      recorded?.recoveryClaimCompletion?.independentSuccessor === true,
   };
   return undefined;
 }

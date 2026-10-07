@@ -6,11 +6,14 @@ import {
   getOrCreateProcessTransport,
   getSubscribedListenerConnections,
 } from "./connection";
-import { getOrCreateScopedRuntime } from "./conversation-runtime";
+import {
+  getOrCreateScopedRuntime,
+  scheduleDurableQueueRestore,
+} from "./conversation-runtime";
 import { rejectPendingExternalToolCallsForConnection } from "./external-tools";
 import {
-  forgetQueuedInputDispositions,
   ordinaryInputIdentity,
+  requeueStartedInputDispositions,
 } from "./input-disposition";
 import { revokeRecoveryClaims } from "./recovery-ownership";
 import { evictConversationRuntimeIfIdle } from "./runtime";
@@ -56,13 +59,14 @@ export function createConnectionTurnProcessor(
           const identity = ordinaryInputIdentity(clientMessageId);
           return identity ? [identity] : [];
         });
-      forgetQueuedInputDispositions(scopedRuntime, discardedIdentities);
+      requeueStartedInputDispositions(scopedRuntime, discardedIdentities);
       scopedRuntime.dequeuedClientMessageIdsByBatchId.delete(
         dequeuedBatch.batchId,
       );
       scopedRuntime.dequeuedInputIdentitiesByBatchId.delete(
         dequeuedBatch.batchId,
       );
+      scheduleDurableQueueRestore(runtime, false);
       return;
     }
     await handleIncomingMessage(

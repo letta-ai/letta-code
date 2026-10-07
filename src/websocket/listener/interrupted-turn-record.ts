@@ -17,64 +17,22 @@ import type { ApprovalResult } from "@/agent/approval-execution";
 import { STALE_APPROVAL_RECOVERY_DENIAL_REASON } from "@/agent/turn-recovery-policy";
 import { getServerUrl } from "@/backend/api/server-url";
 import { reportListenerStateWriteFailure } from "@/telemetry/error-reporting";
-import type { TeleportContinuation } from "@/types/protocol_v2";
-import { isTerminalConsumerId } from "@/types/turn-finished-protocol";
 import { debugWarn } from "@/utils/debug";
 import { acquireDurableFileLock } from "./durable-file-lock";
-import { isTeleportContinuation } from "./teleport-protocol-inbound";
-import type { ConversationRuntime, InputIdentity } from "./types";
+import { isInterruptedTurnRecord } from "./interrupted-turn-schema";
+import type { InterruptedTurnRecord } from "./interrupted-turn-types";
+import {
+  createRecoveryLineageSidecarAccess,
+  type RecoveryLineageSidecar,
+} from "./recovery-lineage-sidecar";
+import type { ConversationRuntime } from "./types";
+
+export type { InterruptedTurnRecord } from "./interrupted-turn-types";
 
 export type ListenerStateWritePhase =
   | "run_observed"
   | "before_tool_execution"
   | "after_tool_execution";
-
-/** Local execution evidence, never populated by observing another runtime. */
-export interface InterruptedTurnRecord {
-  revision?: string;
-  teleportId?: string;
-  teleport?: {
-    teleportId: string;
-    connectionId: string;
-    connectionGeneration?: string;
-    activeTurn: boolean;
-    continuation?: TeleportContinuation;
-    ready: boolean;
-    /** Revision created when this exact intent was first journaled. */
-    intentRevision?: string;
-    /** Interrupted-record revision captured by the durable terminal owner. */
-    committedRevision?: string;
-  };
-  actingUserId?: string;
-  recoveryClaimCompletion?: {
-    lineageId: string;
-    state: "running" | "pending";
-    /** Exact predecessor revision whose completed effects this marker covers. */
-    effectRevision?: string;
-    /** Input identities owned by that predecessor, retained across a successor write. */
-    effectInputIdentities?: InputIdentity[];
-    /** Complete tool namespace owned by that predecessor recovery lineage. */
-    effectToolCallIds?: string[];
-    /** A write outside this recovery lineage has added genuine successor work. */
-    independentSuccessor?: boolean;
-  };
-  agentId: string;
-  conversationId: string;
-  runId: string | null;
-  toolCallIds: string[];
-  /** Approved tools which have not crossed their own execution boundary. */
-  unstartedToolCallIds?: string[];
-  results: ApprovalResult[];
-  /** Exact settled effects that survive an independent successor snapshot. */
-  settledRecoveryEffects?: Array<{
-    lineageId: string;
-    result: ApprovalResult;
-  }>;
-  requestOtid: string;
-  workingDirectory: string;
-  durableInputIdentities?: InputIdentity[];
-  terminalConsumerIds?: string[];
-}
 
 function fsyncDirectory(
   directory: string,
@@ -122,102 +80,8 @@ export function createInterruptedTurnStore(
   }
   function readRecord(file: string): InterruptedTurnRecord | null {
     try {
-      const value = JSON.parse(
-        readFileSync(file, "utf8"),
-      ) as InterruptedTurnRecord;
-      if (
-        !value ||
-        typeof value.agentId !== "string" ||
-        typeof value.conversationId !== "string" ||
-        path(value.agentId, value.conversationId) !== file ||
-        !Array.isArray(value.toolCallIds) ||
-        !value.toolCallIds.every((id) => typeof id === "string") ||
-        (value.unstartedToolCallIds !== undefined &&
-          (!Array.isArray(value.unstartedToolCallIds) ||
-            !value.unstartedToolCallIds.every(
-              (id) => typeof id === "string",
-            ))) ||
-        !Array.isArray(value.results) ||
-        !value.results.every(
-          (result) => result && typeof result.tool_call_id === "string",
-        ) ||
-        (value.settledRecoveryEffects !== undefined &&
-          (!Array.isArray(value.settledRecoveryEffects) ||
-            !value.settledRecoveryEffects.every(
-              (effect) =>
-                effect &&
-                typeof effect.lineageId === "string" &&
-                effect.lineageId.length > 0 &&
-                effect.result &&
-                typeof effect.result.tool_call_id === "string",
-            ))) ||
-        (value.durableInputIdentities !== undefined &&
-          (!Array.isArray(value.durableInputIdentities) ||
-            !value.durableInputIdentities.every(
-              (identity) =>
-                identity &&
-                (identity.domain === "input" ||
-                  identity.domain === "teleport") &&
-                typeof identity.id === "string" &&
-                identity.id.length > 0,
-            ))) ||
-        (value.terminalConsumerIds !== undefined &&
-          (!Array.isArray(value.terminalConsumerIds) ||
-            !value.terminalConsumerIds.every(isTerminalConsumerId))) ||
-        (value.actingUserId !== undefined &&
-          typeof value.actingUserId !== "string") ||
-        (value.recoveryClaimCompletion !== undefined &&
-          (!value.recoveryClaimCompletion ||
-            typeof value.recoveryClaimCompletion.lineageId !== "string" ||
-            value.recoveryClaimCompletion.lineageId.length === 0 ||
-            (value.recoveryClaimCompletion.state !== "running" &&
-              value.recoveryClaimCompletion.state !== "pending") ||
-            (value.recoveryClaimCompletion.effectRevision !== undefined &&
-              typeof value.recoveryClaimCompletion.effectRevision !==
-                "string") ||
-            (value.recoveryClaimCompletion.effectInputIdentities !==
-              undefined &&
-              (!Array.isArray(
-                value.recoveryClaimCompletion.effectInputIdentities,
-              ) ||
-                !value.recoveryClaimCompletion.effectInputIdentities.every(
-                  (identity) =>
-                    identity &&
-                    (identity.domain === "input" ||
-                      identity.domain === "teleport") &&
-                    typeof identity.id === "string" &&
-                    identity.id.length > 0,
-                ))) ||
-            (value.recoveryClaimCompletion.effectToolCallIds !== undefined &&
-              (!Array.isArray(
-                value.recoveryClaimCompletion.effectToolCallIds,
-              ) ||
-                !value.recoveryClaimCompletion.effectToolCallIds.every(
-                  (toolCallId) =>
-                    typeof toolCallId === "string" && toolCallId.length > 0,
-                ))) ||
-            (value.recoveryClaimCompletion.independentSuccessor !== undefined &&
-              typeof value.recoveryClaimCompletion.independentSuccessor !==
-                "boolean") ||
-            (value.recoveryClaimCompletion.state === "pending" &&
-              !value.recoveryClaimCompletion.effectRevision))) ||
-        (value.teleport !== undefined &&
-          (!value.teleport ||
-            typeof value.teleport.teleportId !== "string" ||
-            typeof value.teleport.connectionId !== "string" ||
-            (value.teleport.connectionGeneration !== undefined &&
-              typeof value.teleport.connectionGeneration !== "string") ||
-            typeof value.teleport.activeTurn !== "boolean" ||
-            typeof value.teleport.ready !== "boolean" ||
-            (value.teleport.intentRevision !== undefined &&
-              typeof value.teleport.intentRevision !== "string") ||
-            (value.teleport.committedRevision !== undefined &&
-              typeof value.teleport.committedRevision !== "string") ||
-            (value.teleport.continuation !== undefined &&
-              !isTeleportContinuation(value.teleport.continuation)))) ||
-        typeof value.requestOtid !== "string" ||
-        typeof value.workingDirectory !== "string"
-      ) {
+      const value: unknown = JSON.parse(readFileSync(file, "utf8"));
+      if (!isInterruptedTurnRecord(value, file, path)) {
         throw new Error("Invalid interrupted-turn record");
       }
       return value;
@@ -227,18 +91,32 @@ export function createInterruptedTurnStore(
           "recovery",
           "Ignoring unreadable interrupted-turn record",
           file,
+          error,
         );
       }
       return null;
     }
   }
+  const sidecars = createRecoveryLineageSidecarAccess({
+    directory,
+    syncDirectory,
+  });
+  const {
+    initial: initialSidecar,
+    mainView: readMainView,
+    read: readSidecar,
+    recoveryView: readRecoveryView,
+    remove: removeSidecar,
+    write: writeSidecar,
+  } = sidecars;
   return {
     list(): InterruptedTurnRecord[] {
       try {
         return readdirSync(directory)
           .filter((file) => file.endsWith(".json"))
           .map((file) => readRecord(join(directory, file)))
-          .filter((record): record is InterruptedTurnRecord => record !== null);
+          .filter((record): record is InterruptedTurnRecord => record !== null)
+          .map(readMainView);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
         throw error;
@@ -248,7 +126,18 @@ export function createInterruptedTurnStore(
       agentId: string,
       conversationId: string,
     ): InterruptedTurnRecord | null {
-      return readRecord(path(agentId, conversationId));
+      const current = readRecord(path(agentId, conversationId));
+      return current ? readMainView(current) : null;
+    },
+    readRecoveryView(
+      agentId: string,
+      conversationId: string,
+      lineageId: string,
+    ): InterruptedTurnRecord | null {
+      const current = readRecord(path(agentId, conversationId));
+      if (current?.recoveryClaimCompletion?.lineageId !== lineageId)
+        return null;
+      return readRecoveryView(current);
     },
     write(
       record: InterruptedTurnRecord,
@@ -262,6 +151,20 @@ export function createInterruptedTurnStore(
       const temporary = `${destination}.${randomUUID()}.tmp`;
       try {
         const current = readRecord(destination);
+        const retiredSidecar =
+          current?.recoveryClaimCompletion?.independentSuccessor === true
+            ? readSidecar(
+                current.agentId,
+                current.conversationId,
+                current.recoveryClaimCompletion.lineageId,
+              )
+            : null;
+        if (
+          retiredSidecar?.state === "retired" &&
+          record.recoveryClaimCompletion?.lineageId === retiredSidecar.lineageId
+        ) {
+          throw new Error("Recovery lineage retired");
+        }
         // A revision-bearing record is a full snapshot of existing durable
         // state, never a creation intent. Once the current file is absent, no
         // stale owner may recreate it, regardless of its expected revision.
@@ -278,8 +181,16 @@ export function createInterruptedTurnStore(
         const written = {
           ...record,
           revision,
-          ...(record.teleport && !record.teleport.intentRevision
-            ? { teleport: { ...record.teleport, intentRevision: revision } }
+          ...(record.teleport
+            ? {
+                teleport: {
+                  ...record.teleport,
+                  intentRevision: record.teleport.intentRevision ?? revision,
+                  readyRevision: record.teleport.ready
+                    ? (record.teleport.readyRevision ?? revision)
+                    : record.teleport.readyRevision,
+                },
+              }
             : {}),
         };
         writeFileSync(temporary, JSON.stringify(written), {
@@ -288,9 +199,120 @@ export function createInterruptedTurnStore(
         });
         renameSync(temporary, destination);
         syncDirectory(directory);
+        if (
+          retiredSidecar?.state === "retired" &&
+          !written.recoveryClaimCompletion
+        ) {
+          removeSidecar(retiredSidecar);
+        }
         return written;
       } finally {
         rmSync(temporary, { force: true });
+        release();
+      }
+    },
+    writeRecoveryLineageSnapshot(params: {
+      agentId: string;
+      conversationId: string;
+      lineageId: string;
+      update: Partial<
+        Pick<
+          InterruptedTurnRecord,
+          | "runId"
+          | "toolCallIds"
+          | "unstartedToolCallIds"
+          | "results"
+          | "requestOtid"
+          | "actingUserId"
+          | "durableInputIdentities"
+          | "terminalConsumerIds"
+          | "teleport"
+        >
+      >;
+    }): { mainRevision: string; sidecarRevision: string } {
+      const destination = path(params.agentId, params.conversationId);
+      const release = acquireDurableFileLock(destination, {
+        waitMs: dependencies.lockWaitMs,
+      });
+      try {
+        const current = readRecord(destination);
+        const marker = current?.recoveryClaimCompletion;
+        if (
+          !current?.revision ||
+          marker?.lineageId !== params.lineageId ||
+          !marker.independentSuccessor
+        ) {
+          throw new Error("Independent recovery lineage changed");
+        }
+        const previous =
+          readSidecar(
+            params.agentId,
+            params.conversationId,
+            params.lineageId,
+          ) ?? initialSidecar(current);
+        if (previous.state !== "running") {
+          throw new Error("Recovery lineage is not running");
+        }
+        const toolCallIds = params.update.toolCallIds
+          ? [
+              ...new Set([
+                ...previous.toolCallIds,
+                ...params.update.toolCallIds,
+              ]),
+            ]
+          : previous.toolCallIds;
+        const results = [...previous.results];
+        for (const result of params.update.results ?? []) {
+          const index = results.findIndex(
+            (candidate) => candidate.tool_call_id === result.tool_call_id,
+          );
+          if (index >= 0) results[index] = result;
+          else results.push(result);
+        }
+        const written: RecoveryLineageSidecar = {
+          ...previous,
+          revision: randomUUID(),
+          toolCallIds,
+          results,
+          ...(params.update.runId !== undefined
+            ? { runId: params.update.runId }
+            : {}),
+          ...(Object.hasOwn(params.update, "unstartedToolCallIds")
+            ? {
+                unstartedToolCallIds:
+                  params.update.unstartedToolCallIds === undefined
+                    ? undefined
+                    : [...params.update.unstartedToolCallIds],
+              }
+            : {}),
+          ...(params.update.requestOtid
+            ? { requestOtid: params.update.requestOtid }
+            : {}),
+          ...(Object.hasOwn(params.update, "actingUserId")
+            ? { actingUserId: params.update.actingUserId }
+            : {}),
+          ...(params.update.durableInputIdentities
+            ? {
+                durableInputIdentities: [
+                  ...params.update.durableInputIdentities,
+                ],
+              }
+            : {}),
+          ...(params.update.terminalConsumerIds
+            ? {
+                terminalConsumerIds: [...params.update.terminalConsumerIds],
+              }
+            : {}),
+          ...(Object.hasOwn(params.update, "teleport")
+            ? { teleport: params.update.teleport }
+            : {}),
+        };
+        writeSidecar(written);
+        return {
+          mainRevision: current.revision,
+          sidecarRevision: written.revision,
+        };
+      } finally {
         release();
       }
     },
@@ -313,6 +335,35 @@ export function createInterruptedTurnStore(
           throw new Error(
             "Recovery lineage changed before exact result commit",
           );
+        }
+        if (marker.independentSuccessor) {
+          if (!current.revision) {
+            throw new Error("Independent successor has no durable revision");
+          }
+          const previous =
+            readSidecar(
+              params.agentId,
+              params.conversationId,
+              params.lineageId,
+            ) ?? initialSidecar(current);
+          if (previous.state !== "running") {
+            throw new Error("Recovery lineage is not running");
+          }
+          const resultIndex = previous.results.findIndex(
+            (result) => result.tool_call_id === params.result.tool_call_id,
+          );
+          const results = [...previous.results];
+          if (resultIndex >= 0) results[resultIndex] = params.result;
+          else results.push(params.result);
+          writeSidecar({
+            ...previous,
+            revision: randomUUID(),
+            results,
+            unstartedToolCallIds: previous.unstartedToolCallIds?.filter(
+              (toolCallId) => toolCallId !== params.result.tool_call_id,
+            ),
+          });
+          return { revision: current.revision, independentSuccessor: true };
         }
         const revision = randomUUID();
         const written: InterruptedTurnRecord = {
@@ -349,7 +400,7 @@ export function createInterruptedTurnStore(
         syncDirectory(directory);
         return {
           revision,
-          independentSuccessor: marker.independentSuccessor === true,
+          independentSuccessor: false,
         };
       } finally {
         rmSync(temporary, { force: true });
@@ -377,6 +428,26 @@ export function createInterruptedTurnStore(
           marker.lineageId !== params.lineageId
         ) {
           return null;
+        }
+        if (marker.independentSuccessor) {
+          const previous =
+            readSidecar(
+              params.agentId,
+              params.conversationId,
+              params.lineageId,
+            ) ?? initialSidecar(current);
+          if (previous.state === "retired") return null;
+          const pending =
+            previous.state === "pending"
+              ? previous
+              : {
+                  ...previous,
+                  revision: randomUUID(),
+                  state: "pending" as const,
+                };
+          if (pending !== previous) writeSidecar(pending);
+          const view = readRecoveryView(current);
+          return view ? { ...view, revision: pending.revision } : null;
         }
         if (marker.state === "pending") return current;
         const written: InterruptedTurnRecord = {
@@ -416,6 +487,29 @@ export function createInterruptedTurnStore(
         const marker = current?.recoveryClaimCompletion;
         if (!current || !marker || marker.lineageId !== params.lineageId) {
           return "stale";
+        }
+        if (marker.independentSuccessor) {
+          const existing = readSidecar(
+            params.agentId,
+            params.conversationId,
+            params.lineageId,
+          );
+          const previous = existing ?? initialSidecar(current);
+          if (
+            previous.state !== "pending" ||
+            (existing !== null &&
+              previous.revision !== params.pendingRevision &&
+              current.revision !== params.pendingRevision)
+          ) {
+            if (previous.state === "retired") return "stale";
+            throw new Error("Recovery lineage pending revision changed");
+          }
+          writeSidecar({
+            ...previous,
+            revision: randomUUID(),
+            state: "retired",
+          });
+          return "preserved";
         }
         if (
           current.revision === params.pendingRevision &&
@@ -554,9 +648,50 @@ export function recordListenerWork(
   if (!runtime.agentId || !runtime.listener.connectionId?.startsWith("conn-"))
     return undefined;
   const previous = store.read(runtime.agentId, runtime.conversationId);
+  const sameRecoveryLineage =
+    previous?.recoveryClaimCompletion !== undefined &&
+    recoveryLineageId === previous.recoveryClaimCompletion.lineageId;
   const inheritedCompletion = previous?.recoveryClaimCompletion
-    ? recoveryLineageId === previous.recoveryClaimCompletion.lineageId
-      ? previous.recoveryClaimCompletion
+    ? sameRecoveryLineage
+      ? {
+          ...previous.recoveryClaimCompletion,
+          effectToolCallIds: update.toolCallIds
+            ? [
+                ...new Set([
+                  ...(previous.recoveryClaimCompletion.effectToolCallIds ??
+                    previous.toolCallIds),
+                  ...update.toolCallIds,
+                ]),
+              ]
+            : previous.recoveryClaimCompletion.effectToolCallIds,
+          effectRunId:
+            update.runId !== undefined
+              ? update.runId
+              : previous.recoveryClaimCompletion.effectRunId,
+          effectRequestOtid:
+            update.requestOtid ??
+            previous.recoveryClaimCompletion.effectRequestOtid,
+          effectResults:
+            update.results ?? previous.recoveryClaimCompletion.effectResults,
+          effectUnstartedToolCallIds: Object.hasOwn(
+            update,
+            "unstartedToolCallIds",
+          )
+            ? update.unstartedToolCallIds
+            : previous.recoveryClaimCompletion.effectUnstartedToolCallIds,
+          effectInputIdentities:
+            update.durableInputIdentities ??
+            previous.recoveryClaimCompletion.effectInputIdentities,
+          effectActingUserId: Object.hasOwn(update, "actingUserId")
+            ? (update.actingUserId ?? null)
+            : previous.recoveryClaimCompletion.effectActingUserId,
+          effectTerminalConsumerIds:
+            update.terminalConsumerIds ??
+            previous.recoveryClaimCompletion.effectTerminalConsumerIds,
+          effectTeleport: Object.hasOwn(update, "teleport")
+            ? update.teleport
+            : previous.recoveryClaimCompletion.effectTeleport,
+        }
       : {
           ...previous.recoveryClaimCompletion,
           independentSuccessor: true,
@@ -565,7 +700,39 @@ export function recordListenerWork(
             previous.revision,
           effectInputIdentities:
             previous.recoveryClaimCompletion.effectInputIdentities ??
-            previous.durableInputIdentities,
+            previous.durableInputIdentities ??
+            [],
+          effectToolCallIds:
+            previous.recoveryClaimCompletion.effectToolCallIds ??
+            previous.toolCallIds,
+          effectRunId:
+            previous.recoveryClaimCompletion.effectRunId !== undefined
+              ? previous.recoveryClaimCompletion.effectRunId
+              : previous.runId,
+          effectRequestOtid:
+            previous.recoveryClaimCompletion.effectRequestOtid ??
+            previous.requestOtid,
+          effectWorkingDirectory:
+            previous.recoveryClaimCompletion.effectWorkingDirectory ??
+            previous.workingDirectory,
+          effectActingUserId:
+            previous.recoveryClaimCompletion.effectActingUserId !== undefined
+              ? previous.recoveryClaimCompletion.effectActingUserId
+              : (previous.actingUserId ?? null),
+          effectResults:
+            previous.recoveryClaimCompletion.effectResults ??
+            allRecordedResults(previous),
+          effectUnstartedToolCallIds:
+            previous.recoveryClaimCompletion.effectUnstartedToolCallIds ??
+            previous.unstartedToolCallIds ??
+            [],
+          effectTerminalConsumerIds:
+            previous.recoveryClaimCompletion.effectTerminalConsumerIds ??
+            previous.terminalConsumerIds ??
+            [],
+          effectTeleport:
+            previous.recoveryClaimCompletion.effectTeleport ??
+            previous.teleport,
         }
     : undefined;
   const consumesInheritedTeleport =
@@ -576,6 +743,7 @@ export function recordListenerWork(
         identity.id === previous.teleport?.teleportId,
     );
   const record: InterruptedTurnRecord = {
+    revision: previous?.revision,
     agentId: runtime.agentId,
     conversationId: runtime.conversationId,
     runId: previous?.runId ?? null,
@@ -599,14 +767,29 @@ export function recordListenerWork(
     ...update,
   };
   try {
-    const written = store.write(
-      record,
-      expectedRevision === undefined
-        ? (previous?.revision ?? null)
-        : expectedRevision,
-    );
+    const independentRecoveryWrite =
+      sameRecoveryLineage &&
+      previous?.recoveryClaimCompletion?.independentSuccessor === true;
+    const written = independentRecoveryWrite
+      ? store.writeRecoveryLineageSnapshot({
+          agentId: record.agentId,
+          conversationId: record.conversationId,
+          lineageId: recoveryLineageId as string,
+          update,
+        })
+      : store.write(
+          record,
+          expectedRevision === undefined
+            ? (previous?.revision ?? null)
+            : expectedRevision,
+        );
+    const durableInputIdentities = independentRecoveryWrite
+      ? (update.durableInputIdentities ??
+        previous?.recoveryClaimCompletion?.effectInputIdentities ??
+        [])
+      : ((written as InterruptedTurnRecord).durableInputIdentities ?? []);
     const durableIdentityKeys = new Set(
-      (written.durableInputIdentities ?? []).map(
+      durableInputIdentities.map(
         (identity) => `${identity.domain}:${identity.id}`,
       ),
     );
@@ -623,7 +806,10 @@ export function recordListenerWork(
         runtime.dequeuedInputIdentitiesByBatchId.delete(batchId);
       }
     }
-    return written.revision;
+    return independentRecoveryWrite
+      ? (previous?.recoveryClaimCompletion?.effectRevision ??
+          (written as { mainRevision: string }).mainRevision)
+      : (written as InterruptedTurnRecord).revision;
   } catch (error) {
     reportListenerStateWriteFailure({
       phase,
@@ -655,19 +841,27 @@ export async function recordListenerWorkRetriably(
     createInterruptedTurnStore(defaultInterruptedTurnDirectory(), {
       lockWaitMs: options.lockWaitMs ?? 25,
     });
+  let retryExpectedRevision = expectedRevision;
   while (options.shouldContinue?.() !== false) {
     try {
       return recordListenerWork(
         runtime,
         update,
         phase,
-        expectedRevision,
+        retryExpectedRevision,
         recoveryLineageId,
         store,
       );
     } catch (error) {
-      if (
-        !(error instanceof Error) ||
+      if (!(error instanceof Error)) throw error;
+      if (error.message === "Interrupted-turn revision changed") {
+        if (!recoveryLineageId || !runtime.agentId) throw error;
+        const current = store.read(runtime.agentId, runtime.conversationId);
+        if (current?.recoveryClaimCompletion?.lineageId !== recoveryLineageId) {
+          throw error;
+        }
+        retryExpectedRevision = current.revision ?? null;
+      } else if (
         error.message !== "Timed out acquiring durable filesystem lock"
       ) {
         throw error;

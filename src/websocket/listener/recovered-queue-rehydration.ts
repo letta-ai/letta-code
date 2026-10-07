@@ -1,3 +1,4 @@
+import { scheduleDurableQueueRestore } from "./conversation-runtime";
 import { enqueueInboundUserMessage } from "./inbound-queue";
 import { requeueStartedInputDispositions } from "./input-disposition";
 import { scheduleQueuePump } from "./queue";
@@ -33,11 +34,13 @@ export function rehydrateClaimLostQueuedTurn(
       queuedTurn.durableInputIdentities ?? [],
     )
   ) {
+    scheduleDurableQueueRestore(runtime.listener, false);
     throw new Error("Failed to requeue claim-lost durable continuation");
   }
   if (
     !enqueueInboundUserMessage(runtime, queuedTurn, queuedTurn.actingUserId)
   ) {
+    scheduleDurableQueueRestore(runtime.listener, false);
     throw new Error("Failed to rehydrate claim-lost queued continuation");
   }
   scheduleQueuePump(

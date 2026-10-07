@@ -229,6 +229,10 @@ export type RecoveredApprovalState = {
   terminalConsumerIds?: readonly string[];
   /** Interrupted-record revision this recovery authority originally observed. */
   interruptedRevision?: string;
+  /** Existing durable lineage reused when restart observes an in-flight recovery. */
+  recoveryLineageId?: string;
+  /** The lineage lives beside an independent successor's main revision. */
+  recoveryUsesIndependentSuccessor?: boolean;
 };
 
 export type AcceptedInputDisposition = "started" | "queued";

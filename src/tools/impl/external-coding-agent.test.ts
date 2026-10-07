@@ -277,6 +277,7 @@ describe("external coding agent output and preflight", () => {
       const result = await runExternalCodingAgent(
         { type, prompt: "test", parentAgentId: "parent" },
         {
+          env: { ...process.env, LETTA_ACTING_USER_ID: "ambient-user" },
           runPreflight: async () => ({ exitCode: 0, stdout: auth, stderr: "" }),
           runProcess: async (_command, options) => {
             receivedEnv = options.env;
@@ -295,6 +296,7 @@ describe("external coding agent output and preflight", () => {
       expect(receivedEnv?.LETTA_AGENT_ID).toBe("parent");
       expect(receivedEnv?.LETTA_PARENT_AGENT_ID).toBe("parent");
       expect(receivedEnv?.LETTA_CODE_AGENT_ROLE).toBe("subagent");
+      expect(receivedEnv?.LETTA_ACTING_USER_ID).toBeUndefined();
     },
   );
 });

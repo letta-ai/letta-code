@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
+import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
 import type { SubagentConfig, SubagentResult } from "@/agent/subagents";
 import { getCurrentSubagentDepth } from "@/agent/subagents/subagent-depth";
 import {
@@ -380,7 +381,7 @@ export async function runExternalCodingAgent(
   deps: ExternalCodingAgentDependencies = {},
 ): Promise<SubagentResult> {
   const startedAt = Date.now();
-  const env = {
+  const env: NodeJS.ProcessEnv = {
     ...(deps.env ?? process.env),
     AGENT_ID: options.parentAgentId,
     LETTA_AGENT_ID: options.parentAgentId,
@@ -389,6 +390,8 @@ export async function runExternalCodingAgent(
     // A Letta CLI launched from the worker's shell stays inside the depth bound.
     [SUBAGENT_DEPTH_ENV]: String(getCurrentSubagentDepth() + 1),
   };
+  if (options.actingUserId) env[ACTING_USER_ID_ENV] = options.actingUserId;
+  else delete env[ACTING_USER_ID_ENV];
   const cwd = options.cwd ?? getCurrentWorkingDirectory();
   const scope = options.parentConversationId
     ? {

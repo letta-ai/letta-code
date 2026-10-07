@@ -13,6 +13,13 @@ import {
   createConnectionTurnProcessor,
 } from "./connection-lifecycle";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
+import {
+  commitInputDisposition,
+  createAcceptedInputDispositionLedger,
+  loadDurableQueuedInputEntries,
+  ordinaryInputIdentity,
+  reserveInputDisposition,
+} from "./input-disposition";
 import { createRuntime } from "./lifecycle";
 import type { StartListenerOptions } from "./types";
 
@@ -53,14 +60,32 @@ function makeOptions(connectionId: string): StartListenerOptions {
 }
 
 describe("listener connection lifecycle", () => {
-  test("a disconnected queued turn drops its unconsumed correlation", async () => {
+  test("a disconnected queued turn requeues its durable input", async () => {
     const runtime = createRuntime();
+    runtime.acceptedInputDispositionLedger =
+      createAcceptedInputDispositionLedger();
+    runtime.restoreDurableQueuedInputs = () => 0;
     const scopedRuntime = getOrCreateScopedRuntime(
       runtime,
       "agent-1",
       "conversation-1",
     );
+    const identity = ordinaryInputIdentity("cm-1");
+    if (!identity) throw new Error("expected durable identity");
+    const reservation = reserveInputDisposition(scopedRuntime, identity);
+    if (reservation.kind !== "reserved")
+      throw new Error("expected reservation");
+    commitInputDisposition(scopedRuntime, reservation.reservation, "started", {
+      incoming: {
+        type: "message",
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        messages: [{ role: "user", content: "hello" }],
+        durableInputIdentities: [identity],
+      },
+    });
     scopedRuntime.dequeuedClientMessageIdsByBatchId.set("batch-1", ["cm-1"]);
+    scopedRuntime.dequeuedInputIdentitiesByBatchId.set("batch-1", [identity]);
 
     await createConnectionTurnProcessor(runtime)(
       {
@@ -79,6 +104,9 @@ describe("listener connection lifecycle", () => {
     );
 
     expect(scopedRuntime.dequeuedClientMessageIdsByBatchId.size).toBe(0);
+    expect(loadDurableQueuedInputEntries(runtime)).toMatchObject([
+      { disposition: "queued", payload: { identity } },
+    ]);
   });
 
   test("connection cleanup preserves other subscribers", () => {

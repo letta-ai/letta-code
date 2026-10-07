@@ -4,14 +4,12 @@ import {
   type ApprovalDecision,
   executeApprovalBatch,
 } from "@/agent/approval-execution";
-import { getResumeDataFromBackend } from "@/agent/check-approval";
 import { normalizeStreamErrorTypeToStopReason } from "@/agent/turn-recovery-policy";
-import { getBackend } from "@/backend";
 import { createBuffers } from "@/cli/helpers/accumulator";
 import { drainStreamWithResume } from "@/cli/helpers/stream";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import type { StreamDelta } from "@/types/protocol_v2";
-import { debugWarn, isDebugEnabled } from "@/utils/debug";
+import { debugWarn } from "@/utils/debug";
 import { normalizeCloudRetryWireMessage } from "./cloud-retry-message";
 import {
   findListenerConnectionByTransport,
@@ -74,7 +72,10 @@ import {
   createRecoveredTurnFinalizer,
   finalizeHandledRecoveryTurn,
 } from "./recovered-turn-finalizer";
-import { retireAcknowledgedRecoveryClaim } from "./recovery-claim-completion";
+import {
+  markRecoveryClaimCompletionPending,
+  retireAcknowledgedRecoveryClaim,
+} from "./recovery-claim-completion";
 import {
   createRecoveryEvidenceCheckpoint,
   type RecoveredContinuationProcessTurn,
@@ -107,6 +108,7 @@ import { createTurnInputState } from "./turn-input-state";
 import type { TurnLease } from "./turn-lifecycle";
 import { setTurnLoopStatus } from "./turn-status";
 
+export { debugLogApprovalResumeState } from "./recovery-debug";
 export { finalizeHandledRecoveryTurn };
 
 import type { ConversationRuntime } from "./types";
@@ -193,68 +195,6 @@ export async function drainRecoveryStreamWithEmission(
     undefined,
     LISTENER_STREAM_RESUME_POLICY,
   );
-}
-
-export async function debugLogApprovalResumeState(
-  runtime: ConversationRuntime,
-  params: {
-    agentId: string;
-    conversationId: string;
-    expectedToolCallIds: string[];
-    sentToolCallIds: string[];
-  },
-): Promise<void> {
-  if (!isDebugEnabled()) {
-    return;
-  }
-
-  try {
-    const backend = getBackend();
-    const agent = await backend.retrieveAgent(params.agentId);
-    const isExplicitConversation =
-      params.conversationId.length > 0 && params.conversationId !== "default";
-    const lastInContextId = isExplicitConversation
-      ? ((
-          await backend.retrieveConversation(params.conversationId)
-        ).in_context_message_ids?.at(-1) ?? null)
-      : (agent.message_ids?.at(-1) ?? null);
-    const lastInContextMessages = lastInContextId
-      ? await backend.retrieveMessage(lastInContextId)
-      : [];
-    const resumeData = await getResumeDataFromBackend(
-      agent,
-      params.conversationId,
-      {
-        includeMessageHistory: false,
-      },
-    );
-
-    console.log(
-      "[Listen][DEBUG] Post-approval continuation resume snapshot",
-      JSON.stringify(
-        {
-          conversationId: params.conversationId,
-          activeRunId: runtime.activeRunId,
-          expectedToolCallIds: params.expectedToolCallIds,
-          sentToolCallIds: params.sentToolCallIds,
-          pendingApprovalToolCallIds: (resumeData.pendingApprovals ?? []).map(
-            (approval) => approval.toolCallId,
-          ),
-          lastInContextMessageId: lastInContextId,
-          lastInContextMessageTypes: lastInContextMessages.map(
-            (message) => message.message_type,
-          ),
-        },
-        null,
-        2,
-      ),
-    );
-  } catch (error) {
-    console.warn(
-      "[Listen][DEBUG] Failed to capture post-approval resume snapshot:",
-      error instanceof Error ? error.message : String(error),
-    );
-  }
 }
 
 export type RecoveredContinuationDependencies = {
@@ -475,7 +415,7 @@ async function executeRecoveredApprovalContinuation(params: {
   const hasRecoveryOwnership = () =>
     runtime.turnLifecycle.isCurrent(recoveryLease) &&
     (!recoveryClaim || recoveryClaim.owned);
-  const recoveryLineageId = crypto.randomUUID();
+  const recoveryLineageId = recovered.recoveryLineageId ?? crypto.randomUUID();
   const evidence = createRecoveryEvidenceCheckpoint(
     runtime,
     recordWork,
@@ -483,11 +423,15 @@ async function executeRecoveredApprovalContinuation(params: {
     recoveryLineageId,
     dependencies?.mergeSettledRecoveryResult,
   );
+  const interruptedTerminalRevision = () =>
+    recovered.recoveryUsesIndependentSuccessor
+      ? recovered.interruptedRevision
+      : evidence.revision;
   const finishRecoveredTurn = createRecoveredTurnFinalizer({
     runtime,
     recoveryLease,
     recovered,
-    getInterruptedRevision: () => evidence.revision,
+    getInterruptedRevision: interruptedTerminalRevision,
     canCommit: hasRecoveryOwnership,
   });
   const shouldInterruptDelivery = () =>
@@ -673,6 +617,20 @@ async function executeRecoveredApprovalContinuation(params: {
             effectToolCallIds: decisions.map(
               ({ approval }) => approval.toolCallId,
             ),
+            effectRunId: runtime.activeRunId,
+            effectRequestOtid: continuationOtid,
+            effectWorkingDirectory: workingDirectory,
+            effectActingUserId: recovered.actingUserId ?? null,
+            effectResults: effectBoundary.initialResults,
+            effectUnstartedToolCallIds:
+              effectBoundary.initialUnstartedToolCallIds,
+            effectInputIdentities: [
+              ...(recovered.durableInputIdentities ?? []),
+            ],
+            effectTerminalConsumerIds: [
+              ...(recovered.terminalConsumerIds ?? []),
+            ],
+            effectTeleport: undefined,
           },
         },
         "before_tool_execution",
@@ -716,7 +674,10 @@ async function executeRecoveredApprovalContinuation(params: {
         throw error;
       }
       await evidence.write(
-        { results: approvalResults, unstartedToolCallIds: [] },
+        {
+          results: effectBoundary.results,
+          unstartedToolCallIds: effectBoundary.unstartedToolCallIds,
+        },
         "after_tool_execution",
       );
       recoveredContinuationOtid = continuationOtid;
@@ -894,7 +855,7 @@ async function executeRecoveredApprovalContinuation(params: {
       continuationCorrelation,
       hasRecoveryOwnership,
       true,
-      evidence.revision,
+      interruptedTerminalRevision(),
       recoveryClaim !== null,
       recoveryLineageId,
     );
@@ -919,23 +880,11 @@ async function executeRecoveredApprovalContinuation(params: {
         ) {
           return;
         }
-        let pendingCompletionRevision: string | undefined;
-        try {
-          pendingCompletionRevision = createInterruptedTurnStore().write(
-            {
-              ...completed,
-              recoveryClaimCompletion: {
-                ...completed.recoveryClaimCompletion,
-                lineageId: recoveryLineageId,
-                state: "pending",
-                effectRevision: completed.revision,
-              },
-            },
-            completed.revision,
-          ).revision;
-        } catch {
-          return;
-        }
+        const pendingCompletionRevision = markRecoveryClaimCompletionPending(
+          createInterruptedTurnStore(),
+          completed,
+        )?.revision;
+        if (!pendingCompletionRevision) return;
         claimSettled = await recoveryClaim.complete();
         if (!claimSettled) return;
         // Completion is the remote exactly-once boundary. An independent writer

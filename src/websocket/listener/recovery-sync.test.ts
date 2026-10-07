@@ -234,6 +234,22 @@ describe("recoverApprovalStateForSync restart recovery", () => {
       continuationEpoch: runtime.continuationEpoch,
     });
     expect(getPendingControlRequests(runtime.listener, scope)).toHaveLength(0);
+
+    await recoverApprovalStateForSync(
+      runtime,
+      scope,
+      createDeps([bashApproval]),
+      { resumeInterruptedTurn: true },
+    );
+    expect(runtime.pendingInterruptedResults).toBeNull();
+    expect(runtime.pendingInterruptedContext).toBeNull();
+    expect(runtime.recoveredApprovalState?.autoDecisions).toEqual([
+      {
+        type: "deny",
+        approval: bashApproval,
+        reason: STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+      },
+    ]);
   });
 
   test("observer sync leaves explicitly unstarted work for the owner", async () => {
@@ -247,6 +263,13 @@ describe("recoverApprovalStateForSync restart recovery", () => {
       results: [],
       requestOtid: "request-unstarted",
       workingDirectory: "/project",
+      revision: "revision-unstarted",
+      recoveryClaimCompletion: {
+        lineageId: "lineage-unstarted",
+        state: "running" as const,
+        effectRevision: "revision-unstarted",
+        independentSuccessor: true,
+      },
     };
     const deps = {
       ...createDeps([bashApproval]),
@@ -265,6 +288,11 @@ describe("recoverApprovalStateForSync restart recovery", () => {
     expect(runtime.recoveredApprovalState?.autoDecisions).toEqual([
       { type: "approve", approval: bashApproval },
     ]);
+    expect(runtime.recoveredApprovalState).toMatchObject({
+      interruptedRevision: "revision-unstarted",
+      recoveryLineageId: "lineage-unstarted",
+      recoveryUsesIndependentSuccessor: true,
+    });
   });
 
   test("an owner sync that recovers only stale denials sends them as a turn immediately", async () => {

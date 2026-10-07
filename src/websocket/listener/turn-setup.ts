@@ -129,7 +129,12 @@ export async function prepareListenerTurn(params: {
       conversationId,
     });
   }
-  trackListenerUserInput(msg.messages, "unknown", msg.actingUserId);
+  trackListenerUserInput(
+    msg.messages,
+    "unknown",
+    msg.actingUserId,
+    msg.suppressActingUserFallback,
+  );
 
   const messagesToSend: Array<MessageCreate | ApprovalCreate> = [];
   let queuedInterruptedToolCallIds: string[] = [];

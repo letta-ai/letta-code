@@ -42,6 +42,26 @@ export type SettledRecoveryResultWriter = (
   | { revision: string; independentSuccessor: boolean }
   | Promise<{ revision: string; independentSuccessor: boolean }>;
 
+export async function mergeSettledRecoveryResultRetriably(
+  store: ReturnType<typeof createInterruptedTurnStore>,
+  params: Parameters<typeof store.mergeSettledRecoveryResult>[0],
+  retryDelayMs = 10,
+): Promise<ReturnType<typeof store.mergeSettledRecoveryResult>> {
+  while (true) {
+    try {
+      return store.mergeSettledRecoveryResult(params);
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        error.message !== "Timed out acquiring durable filesystem lock"
+      ) {
+        throw error;
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, retryDelayMs));
+    }
+  }
+}
+
 export function createRecoveryEvidenceCheckpoint(
   runtime: ConversationRuntime,
   writer?: RecoveryEvidenceWriter,
@@ -97,7 +117,8 @@ export function createRecoveryEvidenceCheckpoint(
             "Custom recovery evidence writer requires exact-result merge capability",
           );
         }
-        const next = createInterruptedTurnStore().mergeSettledRecoveryResult({
+        const store = createInterruptedTurnStore();
+        const next = await mergeSettledRecoveryResultRetriably(store, {
           agentId: runtime.agentId ?? "",
           conversationId: runtime.conversationId,
           lineageId: recoveryLineageId,

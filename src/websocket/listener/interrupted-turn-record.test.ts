@@ -197,7 +197,7 @@ test.each(["direct", "detached"])(
       ).toBe("preserved");
       const retiredSuccessor = store.read("agent-test", "conv-test");
       expect(retiredSuccessor?.revision).toBeString();
-      expect(retiredSuccessor?.revision).not.toBe(successorRevision);
+      expect(retiredSuccessor?.revision).toBe(successorRevision);
       if (!retiredSuccessor) throw new Error("expected retired successor");
       expect(() =>
         store.write(
@@ -213,7 +213,7 @@ test.each(["direct", "detached"])(
           },
           successorRevision,
         ),
-      ).toThrow("Interrupted-turn revision changed");
+      ).toThrow("Recovery lineage retired");
       expect(store.read("agent-test", "conv-test")?.requestOtid).toBe(
         "request-successor",
       );
@@ -743,10 +743,17 @@ test("a settled recovery result survives an independent successor snapshot", () 
           lineageId: "lineage-effect",
           state: "running",
           independentSuccessor: true,
+          effectRevision: predecessor.revision,
+          effectRunId: predecessor.runId,
+          effectRequestOtid: predecessor.requestOtid,
+          effectWorkingDirectory: predecessor.workingDirectory,
+          effectResults: predecessor.results,
+          effectUnstartedToolCallIds: predecessor.unstartedToolCallIds,
         },
       },
       predecessor.revision,
     );
+    if (!successor.revision) throw new Error("expected successor revision");
     const exactResult = {
       type: "tool" as const,
       tool_call_id: "call-effect",
@@ -771,18 +778,29 @@ test("a settled recovery result survives an independent successor snapshot", () 
         successorResult,
       ],
     });
-    expect(afterMerge && allRecordedResults(afterMerge)).toContainEqual(
+    const recoveryView = store.readRecoveryView(
+      "agent-test",
+      "conv-test",
+      "lineage-effect",
+    );
+    expect(recoveryView && allRecordedResults(recoveryView)).toContainEqual(
       exactResult,
     );
 
     if (!afterMerge?.revision) throw new Error("expected merged record");
-    expect(afterMerge.revision).not.toBe(successor.revision);
+    expect(afterMerge.revision).toBe(successor.revision);
+    const currentSuccessor = store.read("agent-test", "conv-test");
+    if (!currentSuccessor) throw new Error("expected current successor");
+    const successorCheckpoint = store.write(
+      { ...currentSuccessor, runId: "run-successor-checkpoint" },
+      successor.revision,
+    );
 
     const pending = store.markRecoveryClaimCompletionPending({
       agentId: "agent-test",
       conversationId: "conv-test",
       lineageId: "lineage-effect",
-      expectedRevision: afterMerge.revision,
+      expectedRevision: successorCheckpoint.revision as string,
     });
     if (!pending?.revision) throw new Error("expected pending record");
     expect(
@@ -795,16 +813,132 @@ test("a settled recovery result survives an independent successor snapshot", () 
     ).toBe("preserved");
     const retired = store.read("agent-test", "conv-test");
     expect(retired).toMatchObject({
-      runId: "run-successor",
+      runId: "run-successor-checkpoint",
       requestOtid: "request-successor",
       durableInputIdentities: [{ domain: "input", id: "cm-successor" }],
       toolCallIds: ["call-successor"],
       results: [successorResult],
       unstartedToolCallIds: [],
     });
+    expect(retired?.revision).toBe(successorCheckpoint.revision);
     expect(retired && allRecordedResults(retired)).not.toContainEqual(
       exactResult,
     );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("a pre-effect rollback retries into a racing successor sidecar", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "listener-effect-rollback-"));
+  try {
+    const store = createInterruptedTurnStore(directory);
+    const listener = createRuntime();
+    listener.connectionId = "conn-test";
+    const runtime = getOrCreateScopedRuntime(
+      listener,
+      "agent-test",
+      "conv-test",
+    );
+    const lineageId = "lineage-rollback";
+    const predecessor = store.write({
+      agentId: "agent-test",
+      conversationId: "conv-test",
+      runId: "run-predecessor",
+      toolCallIds: ["call-started", "call-unstarted"],
+      unstartedToolCallIds: ["call-started", "call-unstarted"],
+      results: [],
+      requestOtid: "request-predecessor",
+      workingDirectory: "/predecessor",
+      recoveryClaimCompletion: {
+        lineageId,
+        state: "running",
+        effectToolCallIds: ["call-started", "call-unstarted"],
+      },
+    });
+    const successorRecord: InterruptedTurnRecord = {
+      ...predecessor,
+      runId: "run-successor",
+      toolCallIds: ["call-successor"],
+      results: [
+        {
+          type: "tool",
+          tool_call_id: "call-successor",
+          tool_return: "successor-result",
+          status: "success",
+        },
+      ],
+      requestOtid: "request-successor",
+      recoveryClaimCompletion: {
+        ...predecessor.recoveryClaimCompletion,
+        lineageId,
+        state: "running",
+        independentSuccessor: true,
+        effectRevision: predecessor.revision,
+        effectRunId: predecessor.runId,
+        effectRequestOtid: predecessor.requestOtid,
+        effectWorkingDirectory: predecessor.workingDirectory,
+        effectResults: predecessor.results,
+        effectUnstartedToolCallIds: predecessor.unstartedToolCallIds,
+      },
+    };
+    let successorRevision: string | undefined;
+    let racePending = true;
+    const racingStore: typeof store = {
+      ...store,
+      read(agentId, conversationId) {
+        const observed = store.read(agentId, conversationId);
+        if (racePending) {
+          racePending = false;
+          successorRevision = store.write(
+            successorRecord,
+            predecessor.revision,
+          ).revision;
+        }
+        return observed;
+      },
+    };
+
+    expect(
+      await recordListenerWorkRetriably(
+        runtime,
+        {
+          toolCallIds: ["call-started", "call-unstarted", "call-later"],
+          results: [],
+          unstartedToolCallIds: [
+            "call-started",
+            "call-unstarted",
+            "call-later",
+          ],
+        },
+        "before_tool_execution",
+        predecessor.revision,
+        lineageId,
+        { store: racingStore, retryDelayMs: 1 },
+      ),
+    ).toBe(predecessor.revision);
+    if (!successorRevision) throw new Error("expected successor revision");
+
+    const main = store.read("agent-test", "conv-test");
+    expect(main?.revision).toBe(successorRevision);
+    expect(main).toMatchObject({
+      runId: "run-successor",
+      toolCallIds: ["call-successor"],
+      results: [{ tool_call_id: "call-successor" }],
+    });
+    expect(
+      store.readRecoveryView("agent-test", "conv-test", lineageId),
+    ).toMatchObject({
+      runId: "run-predecessor",
+      toolCallIds: ["call-started", "call-unstarted", "call-later"],
+      results: [],
+      unstartedToolCallIds: ["call-started", "call-unstarted", "call-later"],
+    });
+    const checkpoint = store.write(
+      { ...(store.read("agent-test", "conv-test") as InterruptedTurnRecord) },
+      successorRevision,
+    );
+    expect(checkpoint.revision).not.toBe(successorRevision);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

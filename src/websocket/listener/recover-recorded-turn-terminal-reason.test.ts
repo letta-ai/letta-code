@@ -50,6 +50,7 @@ test.each([
         persistentPath: join(directory, "inputs.json"),
       });
     try {
+      let processTurns = 0;
       const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
       const identity = ordinaryInputIdentity(`cm-${runStatus}`);
       if (!identity) throw new Error("expected identity");
@@ -86,14 +87,26 @@ test.each([
           retrieveAgent: async () => ({ id: "agent-1" }),
           retrieveRun: async () => ({ status: runStatus }),
         } as never,
-        resume: (async () => ({ pendingApprovals: [] })) as never,
+        resume: (async () => ({
+          pendingApprovals: [
+            {
+              toolCallId: "stale-approval",
+              toolName: "stale_tool",
+              toolArgs: {},
+            },
+          ],
+        })) as never,
         canRecover: async () => true,
         acquireClaim: acquireTestClaim,
+        processTurn: async () => {
+          processTurns += 1;
+        },
       });
 
       expect(loadPreparedInputTerminals(listener)[0]?.message.stop_reason).toBe(
         expectedStopReason,
       );
+      expect(processTurns).toBe(0);
     } finally {
       listener.intentionallyClosed = true;
       rmSync(directory, { recursive: true, force: true });
