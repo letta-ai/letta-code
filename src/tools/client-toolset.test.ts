@@ -4,7 +4,7 @@ import {
   getServerToolName,
 } from "@/tools/manager";
 import { prepareToolExecutionContextForResolvedTarget } from "@/tools/toolset";
-import { TOOLSET_CATALOG } from "@/tools/toolset-catalog";
+import { getPresetToolNames } from "@/tools/toolset-catalog";
 
 describe("request-scoped client toolsets", () => {
   afterEach(() => {
@@ -80,7 +80,7 @@ describe("request-scoped client toolsets", () => {
 
       expect(prepared.toolset).toBe("letta");
       expect(prepared.preparedToolContext.loadedToolNames).toEqual(
-        TOOLSET_CATALOG.letta.tools.map(getServerToolName),
+        getPresetToolNames("letta").map(getServerToolName),
       );
       expect(prepared.preparedToolContext.loadedToolNames).toContain("Edit");
       expect(prepared.preparedToolContext.loadedToolNames).not.toContain(
