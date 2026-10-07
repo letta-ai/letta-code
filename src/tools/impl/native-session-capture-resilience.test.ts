@@ -158,6 +158,22 @@ describe("native CLI JSONL capture resilience", () => {
 
     await expect(actorA.capture()).rejects.toThrow(/prefix changed/);
     expect(calls).toHaveLength(0);
+
+    await appendFile(path, "actor-b\n");
+    const actorB = await reserveNativeSessionCapture(
+      "codex",
+      ID,
+      { ...scope, actingUserId: "actor-b" },
+      env,
+      { baseUrl: url, apiKey: "test", cloudUrl: "https://api.letta.com" },
+    );
+    await expect(actorB.capture()).resolves.toBeUndefined();
+    await awaitNativeSessionCaptureDrainForTests("codex", ID);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.actingUser).toBe("actor-b");
+    expect(
+      Buffer.from(String(calls[0]?.body.data_base64), "base64").toString(),
+    ).toBe("actor-b\n");
   });
 
   test("terminal seal failure resets at EOF before capturing the next actor", async () => {

@@ -317,6 +317,7 @@ async function resetCaptureBoundary(
   state.sealedOffset = snapshot.size;
   state.fileIdentity = `${snapshot.dev}:${snapshot.ino}`;
   state.prefixHash = prefixHash;
+  state.pendingGrowthProof = undefined;
   state.drainError = undefined;
   state.retryDelayMs = INITIAL_DRAIN_RETRY_MS;
   state.requiresBoundaryReset = false;
