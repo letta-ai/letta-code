@@ -21,6 +21,18 @@ describe("fresh local agent memory layout", () => {
     );
   });
 
+  test("uses the root layout when the create body omits the MEMORY block", () => {
+    const files = initialMemoryFilesFromCreateBody({
+      memory_blocks: [{ label: "system/persona", value: "I am rooted." }],
+    } as never);
+
+    expect(files.map((file) => file.relativePath)).toEqual([
+      "MEMORY.md",
+      "persona.md",
+    ]);
+    expect(files[1]?.content).toContain("name: Persona");
+  });
+
   test("creates and compiles the canonical root MemFS layout", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-root-memfs-"));
     try {
