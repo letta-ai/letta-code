@@ -66,65 +66,79 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 }
 
 describe("recovered approval lease boundaries", () => {
-  test("a queued user's identity survives recovered denial continuation", async () => {
-    const runtime = getOrCreateScopedRuntime(
-      createRuntime(),
-      "agent-1",
-      "conv-1",
-    );
-    runtime.recoveredApprovalState = createRecoveredState();
-    enqueueInboundUserMessage(
-      runtime,
-      {
-        type: "message",
-        agentId: "agent-1",
-        conversationId: "conv-1",
-        messages: [{ role: "user", content: "message from Charles" }],
-      },
-      "cloud-user-charles",
-    );
-    let receivedActingUserId: string | undefined;
-    let receivedMessages: unknown;
-
-    const handled = await startRecoveredApprovalContinuation(
-      runtime,
-      createTransport([]),
-      async (
-        message,
-        _socket,
-        ownerRuntime,
-        _onStatusChange,
-        _connectionId,
-        _batchId,
-        turnLease,
-      ) => {
-        receivedActingUserId = message.actingUserId;
-        receivedMessages = message.messages;
-        if (turnLease) ownerRuntime.turnLifecycle.finish(turnLease, "end_turn");
-      },
-      {
-        dependencies: {
-          ensureSecretsHydrated: async () => {},
-          prepareToolExecutionContext: async () => createPreparedToolContext(),
-          executeApprovalBatch: async () => createDenialResults(),
+  test.each([false, true])(
+    "recovered denial continuation respects explicit steering (%s)",
+    async (steering) => {
+      const runtime = getOrCreateScopedRuntime(
+        createRuntime(),
+        "agent-1",
+        "conv-1",
+      );
+      runtime.recoveredApprovalState = createRecoveredState();
+      enqueueInboundUserMessage(
+        runtime,
+        {
+          type: "message",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+          messages: [{ role: "user", content: "message from Charles" }],
         },
-      },
-    );
+        "cloud-user-charles",
+      );
+      if (steering)
+        runtime.queueRuntime.steer(runtime.queueRuntime.items[0]?.id ?? "");
+      let receivedActingUserId: string | undefined;
+      let receivedMessages: unknown;
 
-    expect(handled).toBe(true);
-    expect(receivedActingUserId).toBeUndefined();
-    expect(receivedMessages).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          type: "approval",
-          approvals: createDenialResults(),
-        }),
-      ]),
-    );
-    expect(JSON.stringify(receivedMessages)).toContain(
-      '"attribution":{"acting_user_id":"cloud-user-charles"}',
-    );
-  });
+      const handled = await startRecoveredApprovalContinuation(
+        runtime,
+        createTransport([]),
+        async (
+          message,
+          _socket,
+          ownerRuntime,
+          _onStatusChange,
+          _connectionId,
+          _batchId,
+          turnLease,
+        ) => {
+          receivedActingUserId = message.actingUserId;
+          receivedMessages = message.messages;
+          if (turnLease)
+            ownerRuntime.turnLifecycle.finish(turnLease, "end_turn");
+        },
+        {
+          dependencies: {
+            ensureSecretsHydrated: async () => {},
+            prepareToolExecutionContext: async () =>
+              createPreparedToolContext(),
+            executeApprovalBatch: async () => createDenialResults(),
+          },
+        },
+      );
+
+      expect(handled).toBe(true);
+      expect(receivedActingUserId).toBeUndefined();
+      expect(receivedMessages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: "approval",
+            approvals: createDenialResults(),
+          }),
+        ]),
+      );
+      expect(runtime.queueRuntime.length).toBe(steering ? 0 : 1);
+      if (!steering) {
+        expect(JSON.stringify(receivedMessages)).not.toContain(
+          "message from Charles",
+        );
+        return;
+      }
+      expect(JSON.stringify(receivedMessages)).toContain(
+        '"attribution":{"acting_user_id":"cloud-user-charles"}',
+      );
+    },
+  );
 
   test("stale recovered denial processing emits nothing into a replacement run", async () => {
     const runtime = getOrCreateScopedRuntime(

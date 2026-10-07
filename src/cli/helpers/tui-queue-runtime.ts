@@ -6,7 +6,7 @@ import type { QueuedMessage } from "@/utils/message-queue-bridge";
 
 /**
  * The TUI's authoritative queue. `queueDisplay` is derived UI state kept in
- * sync only through these callbacks: enqueue appends, dequeue/remove drop by
+ * sync through callbacks: enqueue keeps queue order, dequeue/remove drop by
  * queue item id, clear empties, and pause/resume re-project the paused flags.
  *
  * maxItems: Infinity disables drop limits to match the earlier unbounded
@@ -24,7 +24,12 @@ export function createTuiQueueRuntime(
           `enqueued item_id=${item.id} kind=${item.kind} queue_len=${queueLen}`,
         );
         if (item.kind === "message" || item.kind === "task_notification") {
-          setQueueDisplay((prev) => [...prev, toQueuedMsg(item)]);
+          const atFront = queue.items[0]?.id === item.id;
+          setQueueDisplay((prev) =>
+            atFront
+              ? [toQueuedMsg(item), ...prev]
+              : [...prev, toQueuedMsg(item)],
+          );
         }
       },
       onDequeued: (batch) => {
