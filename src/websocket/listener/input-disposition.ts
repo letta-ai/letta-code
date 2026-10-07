@@ -100,6 +100,7 @@ export function createAcceptedInputDispositionLedger(options?: {
     expiryQueue: [],
     expiryQueueHead: 0,
     nextGeneration: 0,
+    abandonedReservations: new Map(),
     persistentPath:
       options && "persistentPath" in options
         ? (options.persistentPath ?? null)
@@ -138,7 +139,7 @@ function compactExpiryQueueIfSparse(
   ledger.expiryQueueHead = 0;
 }
 
-function deleteCurrentEntry(
+export function deleteCurrentEntry(
   ledger: AcceptedInputDispositionLedger,
   key: string,
   generation?: number,
@@ -476,6 +477,16 @@ export function syncMemoryFromDurable(
   ledger.expiryQueue = [];
   ledger.expiryQueueHead = 0;
   ledger.nextGeneration = store.nextGeneration;
+  for (const [key, abandoned] of ledger.abandonedReservations) {
+    const reservation = store.reservations[key];
+    if (
+      !reservation ||
+      reservation.token !== abandoned.token ||
+      reservation.generation !== abandoned.generation
+    ) {
+      ledger.abandonedReservations.delete(key);
+    }
+  }
   for (const [key, entry] of Object.entries(store.entries)) {
     ledger.entries.set(key, { ...entry });
     ledger.scopeCounts.set(
@@ -505,55 +516,69 @@ function reserveDurably(
   const path = ledger.persistentPath;
   if (!path) return { kind: "full" };
   try {
-    return durableTransaction<InputDispositionAdmission>(path, (store) => {
-      syncMemoryFromDurable(ledger, store);
-      const existing = store.entries[key];
-      if (existing) {
-        if (!existing.disposition) {
-          throw new Error("Durable disposition entry is uncommitted");
+    const result = durableTransaction<InputDispositionAdmission>(
+      path,
+      (store) => {
+        syncMemoryFromDurable(ledger, store);
+        const existing = store.entries[key];
+        if (existing) {
+          if (!existing.disposition) {
+            throw new Error("Durable disposition entry is uncommitted");
+          }
+          return {
+            result: { kind: "duplicate", disposition: existing.disposition },
+            changed: false,
+          };
         }
+        const heldReservation = store.reservations[key];
+        const abandoned = ledger.abandonedReservations.get(key);
+        if (
+          heldReservation &&
+          abandoned &&
+          heldReservation.generation === abandoned.generation &&
+          heldReservation.token === abandoned.token
+        ) {
+          delete store.reservations[key];
+        } else if (heldReservation) {
+          return { result: { kind: "full" }, changed: false };
+        }
+        const scopeCount = Object.values(store.entries).filter(
+          (entry) => entry.runtimeKey === runtimeKey,
+        ).length;
+        const reservedScopeCount = Object.values(store.reservations).filter(
+          (entry) => entry.runtimeKey === runtimeKey,
+        ).length;
+        if (
+          Object.keys(store.entries).length +
+            Object.keys(store.reservations).length >=
+            MAX_ACCEPTED_INPUT_DISPOSITIONS ||
+          scopeCount + reservedScopeCount >=
+            MAX_ACCEPTED_INPUT_DISPOSITIONS_PER_SCOPE
+        ) {
+          return { result: { kind: "full" }, changed: false };
+        }
+        const generation = ++store.nextGeneration;
+        const owner = currentProcessOwner();
+        store.reservations[key] = { runtimeKey, generation, ...owner };
+        ledger.nextGeneration = generation;
         return {
-          result: { kind: "duplicate", disposition: existing.disposition },
-          changed: false,
-        };
-      }
-      if (store.reservations[key]) {
-        return { result: { kind: "full" }, changed: false };
-      }
-      const scopeCount = Object.values(store.entries).filter(
-        (entry) => entry.runtimeKey === runtimeKey,
-      ).length;
-      const reservedScopeCount = Object.values(store.reservations).filter(
-        (entry) => entry.runtimeKey === runtimeKey,
-      ).length;
-      if (
-        Object.keys(store.entries).length +
-          Object.keys(store.reservations).length >=
-          MAX_ACCEPTED_INPUT_DISPOSITIONS ||
-        scopeCount + reservedScopeCount >=
-          MAX_ACCEPTED_INPUT_DISPOSITIONS_PER_SCOPE
-      ) {
-        return { result: { kind: "full" }, changed: false };
-      }
-      const generation = ++store.nextGeneration;
-      const owner = currentProcessOwner();
-      store.reservations[key] = { runtimeKey, generation, ...owner };
-      ledger.nextGeneration = generation;
-      return {
-        result: {
-          kind: "reserved",
-          reservation: {
-            key,
-            generation,
-            runtimeKey,
-            token: owner.token,
-            ownerPid: owner.pid,
-            ownerProcessStart: owner.processStart,
+          result: {
+            kind: "reserved",
+            reservation: {
+              key,
+              generation,
+              runtimeKey,
+              token: owner.token,
+              ownerPid: owner.pid,
+              ownerProcessStart: owner.processStart,
+            },
           },
-        },
-        changed: true,
-      };
-    });
+          changed: true,
+        };
+      },
+    );
+    if (result.kind === "reserved") ledger.abandonedReservations.delete(key);
+    return result;
   } catch {
     return { kind: "full" };
   }
@@ -705,33 +730,6 @@ export function commitInputDisposition(
     generation: entry.generation,
   });
   return true;
-}
-
-export function rollbackInputDisposition(
-  runtime: ConversationRuntime,
-  reservation: InputDispositionReservation | undefined,
-): void {
-  if (!reservation) return;
-  const ledger = getLedger(runtime.listener);
-  if (ledger.persistentPath) {
-    try {
-      durableTransaction(ledger.persistentPath, (store) => {
-        const held = store.reservations[reservation.key];
-        const matches =
-          !!held &&
-          held.token === reservation.token &&
-          held.generation === reservation.generation &&
-          held.runtimeKey === runtime.key;
-        if (matches) delete store.reservations[reservation.key];
-        syncMemoryFromDurable(ledger, store);
-        return { result: undefined, changed: matches };
-      });
-    } catch {}
-    return;
-  }
-  const entry = ledger.entries.get(reservation.key);
-  if (!entry || entry.disposition !== null) return;
-  deleteCurrentEntry(ledger, reservation.key, reservation.generation);
 }
 
 export function getInputDisposition(
@@ -903,7 +901,7 @@ export function requeueStartedInputDispositions(
         let changed = false;
         for (const key of keys) {
           const entry = store.entries[key];
-          if (!entry || !entry.queuedInput) {
+          if (!entry?.queuedInput) {
             syncMemoryFromDurable(ledger, store);
             return { result: false, changed: false };
           }

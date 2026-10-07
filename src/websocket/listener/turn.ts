@@ -64,7 +64,11 @@ import {
   createTurnCorrelation,
   type TurnCorrelation,
 } from "./turn-correlation";
-import { createTurnDurabilityOwnership } from "./turn-durability-ownership";
+import {
+  checkpointTurnInputOwnership,
+  createTurnDurabilityOwnership,
+} from "./turn-durability-ownership";
+import { createTurnFinalizer } from "./turn-finalizer";
 import {
   createDeploymentRecoveryTurnInput,
   rebuildTurnInputWithFreshDenials,
@@ -81,23 +85,22 @@ import {
 import { prepareListenerTurn } from "./turn-setup";
 import { setTurnLoopStatus } from "./turn-status";
 import { drainTurnStreamWithEmission } from "./turn-stream";
-import { buildTurnUsage, finishListenerTurn } from "./turn-terminal";
 import { seedInboundUserTranscriptLines } from "./turn-transcript";
 import type { ConversationRuntime, IncomingMessage } from "./types";
 export async function handleIncomingMessage(
   msg: IncomingMessage,
   socket: ListenerTransport,
   runtime: ConversationRuntime,
-  onStatusChange?: (
-    status: "idle" | "receiving" | "processing",
-    connectionId: string,
-  ) => void,
+  onStatusChange?: import("./types").StartListenerOptions["onStatusChange"],
   connectionId?: string,
   dequeuedBatchId: string = `batch-direct-${crypto.randomUUID()}`,
   existingTurnLease?: TurnLease,
   existingTurnCorrelation?: TurnCorrelation,
   terminalCommitGuard?: () => boolean,
   retainRecoveredApprovalState: boolean = false,
+  initialInterruptedRevision?: string,
+  deferInterruptedCleanup: boolean = false,
+  recoveryLineageId?: string,
 ): Promise<void> {
   notifyTurnStarted(msg);
   try {
@@ -112,6 +115,9 @@ export async function handleIncomingMessage(
       existingTurnCorrelation,
       terminalCommitGuard,
       retainRecoveredApprovalState,
+      initialInterruptedRevision,
+      deferInterruptedCleanup,
+      recoveryLineageId,
     );
   } finally {
     notifyTurnFinished(msg);
@@ -121,16 +127,16 @@ async function handleIncomingMessageInner(
   msg: IncomingMessage,
   socket: ListenerTransport,
   runtime: ConversationRuntime,
-  onStatusChange?: (
-    status: "idle" | "receiving" | "processing",
-    connectionId: string,
-  ) => void,
+  onStatusChange?: import("./types").StartListenerOptions["onStatusChange"],
   connectionId?: string,
   dequeuedBatchId: string = `batch-direct-${crypto.randomUUID()}`,
   existingTurnLease?: TurnLease,
   existingTurnCorrelation?: TurnCorrelation,
   terminalCommitGuard?: () => boolean,
   retainRecoveredApprovalState: boolean = false,
+  initialInterruptedRevision?: string,
+  deferInterruptedCleanup: boolean = false,
+  recoveryLineageId?: string,
 ): Promise<void> {
   const agentId = normalizeCwdAgentId(msg.agentId);
   const requestedConversationId = msg.conversationId || undefined;
@@ -161,6 +167,7 @@ async function handleIncomingMessageInner(
   let lastExecutingToolCallIds: string[] = [];
   let lastNeedsUserInputToolCallIds: string[] = [];
   const durabilityOwnership = createTurnDurabilityOwnership();
+  const interruptedRevisionRef = { current: initialInterruptedRevision };
   durabilityOwnership.recordInput(msg);
   const turnLease =
     existingTurnLease ??
@@ -178,54 +185,20 @@ async function handleIncomingMessageInner(
   if (!runtime.turnLifecycle.isCurrent(turnLease))
     throw new Error("Cannot continue a turn with a stale lifecycle lease");
   const turnAbortSignal = turnLease.signal;
-  let finalizedByThisInvocation = false;
   const buffers = createBuffers(agentId ?? undefined);
-  const noteFinalization = (
-    transition: ReturnType<typeof finishListenerTurn>,
-  ) => {
-    finalizedByThisInvocation ||= transition.finished;
-    return transition;
-  };
-  const finishTurn = (options: Parameters<typeof finishListenerTurn>[2]) => {
-    const transition = noteFinalization(
-      finishListenerTurn(runtime, turnLease, {
-        ...options,
-        socket: options.socket ?? socket,
-        turnId: durabilityOwnership.terminalTurnId,
-        terminalConsumerIds: durabilityOwnership.terminalConsumerIds,
-        durableInputIdentities: durabilityOwnership.durableInputIdentities,
-        ...(terminalCommitGuard ? { canCommit: terminalCommitGuard } : {}),
-        ...(options.errorNotice
-          ? {
-              errorNotice: {
-                ...options.errorNotice,
-                clientMessageIds: turnCorrelation.clientMessageIds,
-              },
-            }
-          : {}),
-        ...(runtime.executionSettings
-          ? { usage: buildTurnUsage(buffers.usage) }
-          : {}),
-      }),
-    );
-    return transition;
-  };
-  const finishIfInterrupted = (runId?: string | null): boolean => {
-    if (
-      !turnAbortSignal.aborted &&
-      runtime.turnLifecycle.isCurrent(turnLease)
-    ) {
-      return false;
-    }
-    finishTurn({
-      stopReason: "cancelled",
-      socket,
-      runId,
-      agentId: agentId ?? null,
-      conversationId,
-    });
-    return true;
-  };
+  const finalizer = createTurnFinalizer({
+    runtime,
+    turnLease,
+    socket,
+    ownership: durabilityOwnership,
+    turnCorrelation,
+    buffers,
+    agentId,
+    conversationId,
+    terminalCommitGuard,
+    deferInterruptedCleanup,
+  });
+  const { finishIfInterrupted, finishTurn, noteFinalization } = finalizer;
   try {
     runtime.lastTerminalLoopErrorMessage = null;
     runtime.lastTerminalLoopErrorRunId = null;
@@ -300,6 +273,7 @@ async function handleIncomingMessageInner(
       onTerminal: noteFinalization,
       finalizeTerminal: finishTurn,
       getTurnId: () => activeDequeuedBatchId,
+      authorityGuard: terminalCommitGuard,
     });
     const {
       sender: turnInputSender,
@@ -342,6 +316,9 @@ async function handleIncomingMessageInner(
           runId,
           durableInputIdentities: durabilityOwnership.durableInputIdentities,
           terminalConsumerIds: durabilityOwnership.terminalConsumerIds,
+          authorityGuard: terminalCommitGuard,
+          interruptedRevisionRef,
+          recoveryLineageId,
         },
       );
       const result = drained.result;
@@ -393,7 +370,10 @@ async function handleIncomingMessageInner(
           : null;
         if (pendingTeleport) {
           noteFinalization(
-            tp.finishClaimedTeleport(runtime, pendingTeleport, finishTurn),
+            tp.finishClaimedTeleport(runtime, pendingTeleport, finishTurn, {
+              canCommit: terminalCommitGuard,
+              expectedInterruptedRevision: interruptedRevisionRef.current,
+            }),
           );
           return;
         }
@@ -419,12 +399,20 @@ async function handleIncomingMessageInner(
         ) {
           break;
         }
-        const transition = finishTurn({
-          stopReason: "end_turn",
-          agentId,
-          conversationId,
-        });
-        if (agentId) tp.finishDrainedTeleport(runtime, transition);
+        if (agentId) {
+          tp.finishDrainedTeleport(
+            runtime,
+            finishTurn,
+            terminalCommitGuard,
+            interruptedRevisionRef.current,
+          );
+        } else {
+          finishTurn({
+            stopReason: "end_turn",
+            agentId,
+            conversationId,
+          });
+        }
         break;
       }
       if (stopReason === "cancelled") {
@@ -802,12 +790,22 @@ async function handleIncomingMessageInner(
         turnToolContextId,
         turnLease,
         turnCorrelation,
-        onConsumeQueuedTurn: (queuedTurn) =>
-          durabilityOwnership.recordInput(queuedTurn),
+        onConsumeQueuedTurn: (queuedTurn) => {
+          durabilityOwnership.recordInput(queuedTurn);
+          interruptedRevisionRef.current = checkpointTurnInputOwnership(
+            runtime,
+            durabilityOwnership,
+            interruptedRevisionRef.current,
+            queuedTurn.actingUserId,
+            recoveryLineageId,
+          );
+        },
         processOwnedTurn: msg.processOwnedTurn === true,
         originConnectionId: msg.connectionId,
         originConnectionCanResume,
         authorityGuard: terminalCommitGuard,
+        interruptedRevisionRef,
+        recoveryLineageId,
         buildSendOptions,
       });
       if (approvalResult.kind === "error") {
@@ -841,7 +839,10 @@ async function handleIncomingMessageInner(
       if (approvalResult.kind === "teleport") {
         const pending = approvalResult.pendingTeleport;
         noteFinalization(
-          tp.finishClaimedTeleport(runtime, pending, finishTurn),
+          tp.finishClaimedTeleport(runtime, pending, finishTurn, {
+            canCommit: terminalCommitGuard,
+            expectedInterruptedRevision: interruptedRevisionRef.current,
+          }),
         );
         return;
       }
@@ -982,19 +983,17 @@ async function handleIncomingMessageInner(
     if (runtime.activeConnectionId === connectionId) {
       runtime.activeConnectionId = null;
     }
-
     try {
       await runListenerTurnCleanup({
         runtime,
         agentId,
         normalizedAgentId: agentId,
         conversationId,
-        finalized: finalizedByThisInvocation,
+        finalized: finalizer.finalized,
       });
     } finally {
       releaseListenerTurnContext({ runtime, agentId, conversationId });
     }
-
     evictConversationRuntimeIfIdle(runtime);
   }
 }

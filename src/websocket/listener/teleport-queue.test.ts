@@ -23,6 +23,7 @@ import {
   isInboundTeleportExpected,
   isRuntimeTeleportPending,
 } from "./teleport";
+import { admitTeleportContinueInput } from "./teleport-continue-input";
 import type { IncomingMessage, StartListenerOptions } from "./types";
 
 class MockSocket {
@@ -249,7 +250,9 @@ test("accepted queue drains before teleport readiness", () => {
   } as Parameters<typeof runtime.queueRuntime.enqueue>[0]);
 
   requestTeleport(listener);
-  const pending = listener.pendingTeleports?.get("teleport-1");
+  const pending = [...(listener.pendingTeleports?.values() ?? [])].find(
+    (candidate) => candidate.teleportId === "teleport-1",
+  );
   expect(pending?.drainAcceptedInputs).toBe(true);
   expect(
     claimPendingTeleportAtBoundary({
@@ -259,8 +262,7 @@ test("accepted queue drains before teleport readiness", () => {
       activeTurn: true,
     }),
   ).toBeNull();
-  finishDrainedTeleport(
-    runtime,
+  finishDrainedTeleport(runtime, () =>
     runtime.turnLifecycle.finish(firstLease, "end_turn"),
   );
   expect(pending?.readyAt).toBeUndefined();
@@ -278,8 +280,7 @@ test("accepted queue drains before teleport readiness", () => {
       activeTurn: true,
     }),
   ).toBeNull();
-  finishDrainedTeleport(
-    runtime,
+  finishDrainedTeleport(runtime, () =>
     runtime.turnLifecycle.finish(queuedLease, "error"),
   );
 
@@ -435,4 +436,74 @@ test.each([
     }),
   );
   runtime.turnLifecycle.finish(lease, "end_turn");
+});
+
+test("expected teleport id survives mismatches and failed durable admission", () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    "agent-1",
+    "conversation-expected",
+  );
+  expectInboundTeleport(runtime, "teleport-b");
+  const acknowledgements: Array<{
+    accepted: boolean;
+    error?: string;
+    disposition?: "started" | "queued";
+  }> = [];
+  const tasks: Array<() => Promise<void>> = [];
+  const base = {
+    listener,
+    scopedRuntime: runtime,
+    connectionId: "source",
+    agentId: "agent-1",
+    conversationId: "conversation-expected",
+    onStatusChange: undefined,
+    acknowledgeInput: (
+      accepted: boolean,
+      error?: string,
+      disposition?: "started" | "queued",
+    ) => acknowledgements.push({ accepted, error, disposition }),
+    runDetachedListenerTask: (_name: string, task: () => Promise<void>) => {
+      tasks.push(task);
+    },
+    processIncomingMessage: mock(async () => {}),
+  };
+  const payload = (teleportId: string) => ({
+    kind: "teleport_continue" as const,
+    teleport_id: teleportId,
+    source: { device_id: "source-device", connection_name: "Source" },
+  });
+
+  admitTeleportContinueInput({ ...base, payload: payload("teleport-a") });
+  expect(runtime.expectedTeleportId).toBe("teleport-b");
+  expect(acknowledgements.at(-1)).toMatchObject({ accepted: false });
+
+  admitTeleportContinueInput({
+    ...base,
+    payload: payload("teleport-b"),
+    commitDisposition: () => false,
+  });
+  expect(runtime.expectedTeleportId).toBe("teleport-b");
+  expect(acknowledgements.at(-1)).toMatchObject({ accepted: false });
+
+  expect(() =>
+    admitTeleportContinueInput({
+      ...base,
+      payload: payload("teleport-b"),
+      commitDisposition: () => {
+        throw new Error("injected disposition failure");
+      },
+    }),
+  ).toThrow("injected disposition failure");
+  expect(runtime.expectedTeleportId).toBe("teleport-b");
+
+  admitTeleportContinueInput({ ...base, payload: payload("teleport-b") });
+  expect(runtime.expectedTeleportId).toBeNull();
+  expect(acknowledgements.at(-1)).toEqual({
+    accepted: true,
+    error: undefined,
+    disposition: "started",
+  });
+  expect(tasks).toHaveLength(1);
 });

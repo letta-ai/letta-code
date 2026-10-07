@@ -229,7 +229,7 @@ export class QueueRuntime {
     // Hard ceiling check
     if (this.store.length >= this.hardMaxItems) {
       const phantom = this.makeItem(input);
-      this.mutationAllowed("beforeDropped", phantom);
+      if (!this.mutationAllowed("beforeDropped", phantom)) return null;
       this.safeCallback(
         "onDropped",
         phantom,
@@ -246,7 +246,7 @@ export class QueueRuntime {
       if (dropped !== undefined) {
         if (!this.mutationAllowed("beforeDropped", dropped)) {
           const rejected = this.makeItem(input);
-          this.mutationAllowed("beforeDropped", rejected);
+          if (!this.mutationAllowed("beforeDropped", rejected)) return null;
           this.safeCallback(
             "onDropped",
             rejected,

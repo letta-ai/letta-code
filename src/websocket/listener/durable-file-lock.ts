@@ -12,7 +12,6 @@ import {
   readdirSync,
   readFileSync,
   readSync,
-  renameSync,
   rmdirSync,
   rmSync,
   unlinkSync,
@@ -23,6 +22,7 @@ import { basename, dirname, join } from "node:path";
 const MAX_OWNER_BYTES = 4096;
 const WAIT_SLICE_MS = 5;
 const MAX_CANDIDATE_SWEEP = 128;
+const INSTALLING_OWNER_NAME = ".installing";
 let cachedCurrentProcessStart: string | null | undefined;
 
 export type DurableLockOwner = {
@@ -39,6 +39,8 @@ export type DurableFileLockOptions = {
   beforeExactUnlink?: (path: string) => void;
   /** Deterministic race injection used by the lock's adversarial tests. */
   afterOwnerUnlink?: (lockPath: string) => void;
+  /** Deterministic injection after mkdir, before the candidate owner is linked. */
+  afterInstallMkdir?: (lockPath: string) => void;
 };
 
 type ProcessStartCommand = (
@@ -51,19 +53,57 @@ type ProcessProbe = (pid: number) => void;
 function installCandidateDirectory(
   candidatePath: string,
   lockPath: string,
-): void {
+  afterMkdir?: (lockPath: string) => void,
+): boolean {
   // mkdir is the one portable no-replacement primitive available on every
-  // supported platform. The already-fsynced candidate remains beside the
-  // temporarily empty canonical directory, proving whether its installer is
-  // live if the process dies before the owner-file rename.
+  // supported platform. A stale empty-directory cleanup can still pass its
+  // identity check before this mkdir and remove this directory afterward. Keep
+  // the already-fsynced candidate intact and link (rather than move) its unique
+  // owner into the canonical directory so that installation can verify which
+  // directory received the link and retry safely when it lost that race.
   mkdirSync(lockPath, { mode: 0o700 });
+  const directoryIdentity = pathIdentity(lockPath);
+  if (!directoryIdentity) return false;
   const names = readdirSync(candidatePath);
   if (names.length !== 1) throw new Error("Invalid durable lock candidate");
-  renameSync(
-    join(candidatePath, names[0] as string),
-    join(lockPath, names[0] as string),
-  );
+  const candidateOwnerPath = join(candidatePath, names[0] as string);
+  const installingOwnerPath = join(lockPath, INSTALLING_OWNER_NAME);
+  const installedOwnerPath = join(lockPath, names[0] as string);
+  afterMkdir?.(lockPath);
+  try {
+    // The fixed installation name elects at most one installer in a directory.
+    // In particular, a delayed installer cannot add its unique owner alongside
+    // an owner that already populated a replacement directory.
+    linkSync(candidateOwnerPath, installingOwnerPath);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "EEXIST") return false;
+    throw error;
+  }
+
+  // The installation link pins whichever directory received it. If stale
+  // cleanup replaced our mkdir before the link, relinquish the fixed name and
+  // retry; the private candidate still contains the durable owner record.
+  const installingNames = readdirSync(lockPath);
+  if (
+    !hasPathIdentity(lockPath, directoryIdentity) ||
+    installingNames.length !== 1 ||
+    installingNames[0] !== INSTALLING_OWNER_NAME
+  ) {
+    if (sameFile(candidateOwnerPath, installingOwnerPath)) {
+      unlinkSync(installingOwnerPath);
+      fsyncDirectory(lockPath);
+    }
+    return false;
+  }
+
+  linkSync(candidateOwnerPath, installedOwnerPath);
+  fsyncDirectory(lockPath);
+  unlinkSync(installingOwnerPath);
+  fsyncDirectory(lockPath);
+  unlinkSync(candidateOwnerPath);
   rmdirSync(candidatePath);
+  return true;
 }
 
 /** Windows does not support opening/fsyncing directories. File fsyncs still run. */
@@ -181,11 +221,11 @@ function readOwnerDirectory(lockPath: string): {
   // removing a dead owner and rmdir. Populated directories are never published
   // empty, so a contender may safely finish that cleanup.
   if (names.length === 0) return null;
-  if (names.length !== 1) {
+  if (names.length > 2) {
     throw new Error("Invalid durable lock owner directory");
   }
-  const ownerPath = join(lockPath, names[0] as string);
-  const fd = openSync(ownerPath, "r");
+  const firstPath = join(lockPath, names[0] as string);
+  const fd = openSync(firstPath, "r");
   try {
     const stat = fstatSync(fd);
     if (!stat.isFile() || stat.size > MAX_OWNER_BYTES) {
@@ -195,10 +235,25 @@ function readOwnerDirectory(lockPath: string): {
     const read = readSync(fd, bytes, 0, bytes.length, 0);
     if (read !== bytes.length) throw new Error("Short durable lock owner read");
     const owner = parseOwner(JSON.parse(bytes.toString("utf8")));
-    if (names[0] !== ownerFileName(owner)) {
-      throw new Error("Invalid durable lock owner filename");
-    }
-    return { owner, ownerPath };
+    const stableName = ownerFileName(owner);
+    const validNames =
+      (names.length === 1 &&
+        (names[0] === stableName || names[0] === INSTALLING_OWNER_NAME)) ||
+      (names.length === 2 &&
+        names.includes(stableName) &&
+        names.includes(INSTALLING_OWNER_NAME) &&
+        sameFile(
+          join(lockPath, stableName),
+          join(lockPath, INSTALLING_OWNER_NAME),
+        ));
+    if (!validNames) throw new Error("Invalid durable lock owner filename");
+    return {
+      owner,
+      ownerPath: join(
+        lockPath,
+        names.includes(stableName) ? stableName : INSTALLING_OWNER_NAME,
+      ),
+    };
   } finally {
     closeSync(fd);
   }
@@ -231,7 +286,30 @@ function sameFile(first: string, second: string): boolean {
   }
 }
 
-function removeDirectoryIfEmpty(path: string, parent: string): boolean {
+type FileIdentity = { dev: number | bigint; ino: number | bigint };
+
+function pathIdentity(path: string): FileIdentity | null {
+  try {
+    const stat = lstatSync(path, { bigint: true });
+    return { dev: stat.dev, ino: stat.ino };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+function hasPathIdentity(path: string, expected: FileIdentity): boolean {
+  const current = pathIdentity(path);
+  return current?.dev === expected.dev && current.ino === expected.ino;
+}
+
+function removeDirectoryIfEmpty(
+  path: string,
+  parent: string,
+  expectedIdentity?: FileIdentity,
+): boolean {
+  if (expectedIdentity && !hasPathIdentity(path, expectedIdentity))
+    return false;
   try {
     rmdirSync(path);
     fsyncDirectory(parent);
@@ -251,6 +329,8 @@ function removeDeadOwner(
   ownerPath: string,
   afterOwnerUnlink?: (lockPath: string) => void,
 ): void {
+  const directoryIdentity = pathIdentity(lockPath);
+  if (!directoryIdentity) return;
   try {
     unlinkSync(ownerPath);
   } catch (error) {
@@ -260,7 +340,7 @@ function removeDeadOwner(
   // installs M1 over this now-empty M0 directory, it has a different populated
   // filename: this stale rmdir cannot remove it.
   afterOwnerUnlink?.(lockPath);
-  removeDirectoryIfEmpty(lockPath, parent);
+  removeDirectoryIfEmpty(lockPath, parent, directoryIdentity);
 }
 
 function sweepDeadCandidates(
@@ -384,10 +464,11 @@ function prepareCandidate(
 }
 
 /**
- * An inter-process lock represented by an atomically installed, pre-populated
- * directory. Each incarnation has a unique owner filename. Recovery unlinks only
- * that filename before removing the empty directory, so stale cleanup cannot
- * unlink or rmdir an atomically installed replacement.
+ * An inter-process lock represented by a pre-populated directory with a unique
+ * owner filename. A stale empty-directory cleanup can remove a replacement in
+ * the narrow interval before its owner link is installed. Installation therefore
+ * retains its private candidate and verifies the canonical directory identity;
+ * losing that race forces a retry and never publishes two owners concurrently.
  */
 export function acquireDurableFileLock(
   path: string,
@@ -448,7 +529,15 @@ export function acquireDurableFileLock(
     while (true) {
       if (finishLegacyRecovery()) continue;
       try {
-        installCandidateDirectory(candidatePath, lockPath);
+        if (
+          !installCandidateDirectory(
+            candidatePath,
+            lockPath,
+            options.afterInstallMkdir,
+          )
+        ) {
+          continue;
+        }
         installed = true;
         fsyncDirectory(parent);
         break;
@@ -493,10 +582,12 @@ export function acquireDurableFileLock(
         throw error; // Corrupt or multiple-owner directories fail closed.
       }
       if (incumbent === null) {
+        const emptyDirectoryIdentity = pathIdentity(lockPath);
+        if (!emptyDirectoryIdentity) continue;
         if (sweepDeadCandidates(lockPath, parent, isAlive, candidatePath)) {
           waitOrThrow();
         } else {
-          removeDirectoryIfEmpty(lockPath, parent);
+          removeDirectoryIfEmpty(lockPath, parent, emptyDirectoryIdentity);
         }
         continue;
       }
@@ -527,6 +618,7 @@ export function acquireDurableFileLock(
   return () => {
     if (released) return;
     const ownPath = join(lockPath, ownerFileName(owner));
+    const directoryIdentity = pathIdentity(lockPath);
     let removedOwnFile = false;
     try {
       unlinkSync(ownPath);
@@ -536,7 +628,9 @@ export function acquireDurableFileLock(
     }
     if (removedOwnFile) {
       options.afterOwnerUnlink?.(lockPath);
-      removeDirectoryIfEmpty(lockPath, parent);
+      if (directoryIdentity) {
+        removeDirectoryIfEmpty(lockPath, parent, directoryIdentity);
+      }
     }
     released = true;
   };

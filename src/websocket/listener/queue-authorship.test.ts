@@ -57,6 +57,7 @@ test("preserves every input message and author across queue entries", () => {
   const ids = runtime.queueRuntime.peek().map((item) => item.id);
   const consumed = consumeQueuedTurn(runtime);
   expect(consumed?.queuedTurn.messages).toEqual([...first, third]);
+  expect(consumed?.queuedTurn.actingUserId).toBe("human-b");
   expect(consumed?.dequeuedBatch.items.map((item) => item.id)).toEqual(ids);
   expect(
     runtime.dequeuedClientMessageIdsByBatchId.get(
@@ -106,6 +107,7 @@ test("a principal reminder never blocks later human steering", () => {
       attribution: { acting_user_id: "human-b" },
     },
   ]);
+  expect(consumed?.queuedTurn.actingUserId).toBe("human-b");
   expect(runtime.queueRuntime.length).toBe(0);
 });
 

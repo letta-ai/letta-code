@@ -15,6 +15,7 @@ import { createRuntime } from "./lifecycle";
 import { getOutboundQueueStats, OUTBOUND_QUEUE_LIMITS } from "./outbound-wire";
 import { RECOVERED_APPROVAL_OUTCOME_UNKNOWN } from "./recovered-approval-checkpoint";
 import { startRecoveredApprovalContinuation } from "./recovery";
+import { createRecoveryEvidenceCheckpoint } from "./recovery-evidence";
 import { clearConversationRuntimeState } from "./runtime";
 import type { ListenerTransport } from "./transport";
 import { finishListenerTurn } from "./turn-terminal";
@@ -128,9 +129,10 @@ function createPreparedToolContext() {
 }
 
 async function waitFor(predicate: () => boolean): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  const deadline = performance.now() + 2_000;
+  while (performance.now() < deadline) {
     if (predicate()) return;
-    await Bun.sleep(1);
+    await Bun.sleep(5);
   }
   throw new Error("Timed out waiting for recovered approval state");
 }
@@ -644,6 +646,7 @@ describe("recovered approval lease boundaries", () => {
     let receivedActingUserId: string | undefined;
     let receivedMessages: unknown;
     const recordedToolCallIds: string[][] = [];
+    const recordedActingUserIds: Array<string | undefined> = [];
 
     const handled = await startRecoveredApprovalContinuation(
       runtime,
@@ -670,13 +673,15 @@ describe("recovered approval lease boundaries", () => {
           recordListenerWork: (_runtime, update) => {
             if (update.toolCallIds)
               recordedToolCallIds.push(update.toolCallIds);
+            if (update.durableInputIdentities)
+              recordedActingUserIds.push(update.actingUserId);
           },
         },
       },
     );
 
     expect(handled).toBe(true);
-    expect(receivedActingUserId).toBeUndefined();
+    expect(receivedActingUserId).toBe("cloud-user-charles");
     expect(receivedMessages).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -689,9 +694,10 @@ describe("recovered approval lease boundaries", () => {
       '"attribution":{"acting_user_id":"cloud-user-charles"}',
     );
     expect(recordedToolCallIds).toEqual([["call-1"]]);
+    expect(recordedActingUserIds).toEqual(["cloud-user-charles"]);
   });
 
-  test("claim loss after dequeue rehydrates the queued user before retry", async () => {
+  test("claim loss after dequeue checkpoints the queued user before retry", async () => {
     const listener = createRuntime();
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
     runtime.recoveredApprovalState = createRecoveredState();
@@ -701,6 +707,8 @@ describe("recovered approval lease boundaries", () => {
         type: "message",
         agentId: "agent-1",
         conversationId: "conv-1",
+        durableInputIdentities: [{ domain: "input", id: "cm-must-survive" }],
+        terminalConsumerIds: ["slack:agent-1"],
         messages: [{ role: "user", content: "must survive" }],
       },
       "cloud-user-charles",
@@ -708,6 +716,7 @@ describe("recovered approval lease boundaries", () => {
     const scheduleRecordedRecovery = mock(() => {});
     listener.scheduleRecordedRecovery = scheduleRecordedRecovery;
     const processTurn = mock(async () => {});
+    const ownershipCheckpoints: unknown[] = [];
 
     expect(
       await startRecoveredApprovalContinuation(
@@ -721,7 +730,11 @@ describe("recovered approval lease boundaries", () => {
             prepareToolExecutionContext: async () =>
               createPreparedToolContext(),
             executeApprovalBatch: async () => createDenialResults(),
-            recordListenerWork: () => {},
+            recordListenerWork: (_runtime, update) => {
+              if (update.durableInputIdentities) {
+                ownershipCheckpoints.push(update);
+              }
+            },
             acquireRecoveryClaim: (async (
               _runtime: unknown,
               onLost: () => void,
@@ -747,7 +760,23 @@ describe("recovered approval lease boundaries", () => {
       ),
     ).toBe(true);
     expect(processTurn).toHaveBeenCalledTimes(0);
-    expect(runtime.queueRuntime.length).toBe(1);
+    expect(
+      ownershipCheckpoints.some((checkpoint) => {
+        const value = checkpoint as {
+          durableInputIdentities?: Array<{ domain: string; id: string }>;
+          terminalConsumerIds?: string[];
+          actingUserId?: string;
+        };
+        return (
+          value.actingUserId === "cloud-user-charles" &&
+          value.durableInputIdentities?.some(
+            (identity) => identity.id === "cm-must-survive",
+          ) === true &&
+          value.terminalConsumerIds?.includes("slack:agent-1") === true
+        );
+      }),
+    ).toBe(true);
+    expect(runtime.queueRuntime.length).toBe(0);
     await new Promise((resolve) => setImmediate(resolve));
     expect(scheduleRecordedRecovery).toHaveBeenCalledTimes(1);
   });
@@ -811,11 +840,34 @@ describe("recovered approval lease boundaries", () => {
     expect(recordedResults.at(-1)).toEqual(createDenialResults());
   });
 
+  test("recovered evidence starts from the observed interrupted revision", () => {
+    const runtime = getOrCreateScopedRuntime(
+      createRuntime(),
+      "agent-1",
+      "conv-1",
+    );
+    const expectedRevisions: Array<string | null | undefined> = [];
+    let nextRevision = 0;
+    const evidence = createRecoveryEvidenceCheckpoint(
+      runtime,
+      (_runtime, _update, _phase, expectedRevision) => {
+        expectedRevisions.push(expectedRevision);
+        nextRevision += 1;
+        return `revision-${nextRevision}`;
+      },
+      "revision-observed",
+    );
+    evidence.write({ results: [] }, "before_tool_execution");
+    evidence.write({ results: [] }, "after_tool_execution");
+    expect(expectedRevisions).toEqual(["revision-observed", "revision-1"]);
+  });
   test("claim expiry during the pre-effect checkpoint skips execution", async () => {
     const listener = createRuntime();
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
     runtime.recoveredApprovalState = createApprovedRecoveredState();
     const executeApprovalBatch = mock(async () => createToolResults());
+    const scheduleRecordedRecovery = mock(() => {});
+    listener.scheduleRecordedRecovery = scheduleRecordedRecovery;
     let expired = false;
     let lost = false;
 
@@ -834,7 +886,6 @@ describe("recovered approval lease boundaries", () => {
             recordListenerWork: (_runtime, _update, phase) => {
               if (phase === "before_tool_execution") {
                 expired = true;
-                listener.intentionallyClosed = true;
               }
             },
             acquireRecoveryClaim: (async (
@@ -856,12 +907,12 @@ describe("recovered approval lease boundaries", () => {
         },
       ),
     ).toBe(true);
-
     expect(executeApprovalBatch).not.toHaveBeenCalled();
     expect(lost).toBe(true);
+    expect(scheduleRecordedRecovery).not.toHaveBeenCalled();
     expect(runtime.turnLifecycle.kind).toBe("idle");
+    listener.intentionallyClosed = true;
   });
-
   test("aborted recovered denial processing that throws finalizes exactly once without tool starts", async () => {
     const runtime = getOrCreateScopedRuntime(
       createRuntime(),
@@ -893,11 +944,9 @@ describe("recovered approval lease boundaries", () => {
       },
     );
     await waitFor(() => executionStarted);
-
     runtime.turnLifecycle.requestCancellation({ cause: "explicit_user" });
     rejectExecution(new Error("denial processing crashed"));
     await handled.catch(() => {});
-
     const frames = sentPayloads.map((payload) => JSON.parse(payload));
     const terminals = frames.filter((frame) => frame.type === "turn_finished");
     expect(terminals).toHaveLength(1);
@@ -914,7 +963,6 @@ describe("recovered approval lease boundaries", () => {
     expect(runtime.turnLifecycle.kind).toBe("idle");
     expect(processTurn).not.toHaveBeenCalled();
   });
-
   test("terminated recovered denial processing omits terminal error details", async () => {
     const runtime = getOrCreateScopedRuntime(
       createRuntime(),
@@ -938,9 +986,7 @@ describe("recovered approval lease boundaries", () => {
         },
       },
     );
-
     await handled.catch(() => {});
-
     const terminal = sentPayloads
       .map((payload) => JSON.parse(payload))
       .find((frame) => frame.type === "turn_finished");

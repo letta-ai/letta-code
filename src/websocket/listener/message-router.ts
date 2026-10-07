@@ -57,8 +57,8 @@ import {
   getInputDisposition,
   ordinaryInputIdentity,
   reserveInputDisposition,
-  rollbackInputDisposition,
 } from "./input-disposition";
+import { rollbackInputDisposition } from "./input-disposition-rollback";
 import {
   isExecuteCommandCommand,
   parseServerLifecycleMessage,
@@ -333,6 +333,7 @@ export function createListenerMessageHandler(
           listener: runtime,
           command: parsed,
           socket,
+          connectionId,
           onStatusChange: opts.onStatusChange,
           getOrCreateScopedRuntime,
           runDetachedListenerTask,

@@ -636,6 +636,52 @@ test("adoption merges correlations observed after private token issuance", () =>
   ).toEqual(["cm-2"]);
 });
 
+test("replacement adoption carries the issuer's live abandonment state", () => {
+  const predecessor = createRuntime();
+  setActiveRuntime(predecessor);
+  predecessor.acceptedInputDispositionLedger.abandonedReservations.set(
+    "removed-before-adoption",
+    { generation: 1, token: "old-token" },
+  );
+  const replacement = createListenerClientReplacement(
+    predecessor,
+    optionsFor("conn-abandonment"),
+  );
+
+  predecessor.acceptedInputDispositionLedger.abandonedReservations.delete(
+    "removed-before-adoption",
+  );
+  predecessor.acceptedInputDispositionLedger.abandonedReservations.set(
+    "added-after-token",
+    { generation: 2, token: "live-token" },
+  );
+  setActiveRuntime(null);
+  stopRuntime(predecessor, true);
+
+  const successor = createRuntime();
+  adoptListenerClientReplacement(
+    successor,
+    optionsFor("conn-abandonment-next", replacement),
+  );
+
+  expect(
+    successor.acceptedInputDispositionLedger.abandonedReservations,
+  ).toEqual(
+    new Map([["added-after-token", { generation: 2, token: "live-token" }]]),
+  );
+  const issuerReservation =
+    predecessor.acceptedInputDispositionLedger.abandonedReservations.get(
+      "added-after-token",
+    );
+  if (!issuerReservation) throw new Error("expected issuer reservation");
+  issuerReservation.generation = 3;
+  expect(
+    successor.acceptedInputDispositionLedger.abandonedReservations.get(
+      "added-after-token",
+    )?.generation,
+  ).toBe(2);
+});
+
 test("replacement correlation snapshots enforce conversation and run bounds", () => {
   const predecessor = createRuntime();
   setActiveRuntime(predecessor);

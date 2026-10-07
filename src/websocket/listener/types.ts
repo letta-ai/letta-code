@@ -218,6 +218,8 @@ export type RecoveredApprovalState = {
   allApprovals?: ApprovalRequest[];
   durableInputIdentities?: readonly InputIdentity[];
   terminalConsumerIds?: readonly string[];
+  /** Interrupted-record revision this recovery authority originally observed. */
+  interruptedRevision?: string;
 };
 
 export type AcceptedInputDisposition = "started" | "queued";
@@ -305,6 +307,11 @@ export type AcceptedInputDispositionLedger = {
   expiryQueue: Array<{ key: string; expiresAt: number; generation: number }>;
   expiryQueueHead: number;
   nextGeneration: number;
+  /** Reservations whose durable rollback failed and may be reclaimed exactly. */
+  abandonedReservations: Map<
+    string,
+    { generation: number; token: string | undefined }
+  >;
   /** Durable cross-process store; null is used by isolated unit runtimes. */
   persistentPath: string | null;
 };

@@ -30,9 +30,9 @@ import {
   ordinaryInputIdentity,
   rememberInputDisposition,
   reserveInputDisposition,
-  rollbackInputDisposition,
   teleportInputIdentity,
 } from "./input-disposition";
+import { rollbackInputDisposition } from "./input-disposition-rollback";
 import { completeInputReplay } from "./input-terminal-journal";
 import { createRuntime } from "./lifecycle";
 import {

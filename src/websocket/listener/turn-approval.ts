@@ -22,6 +22,7 @@ import {
   requestApprovalOverWS,
   validateApprovalResultIds,
 } from "./approval";
+import { approvalExecutionFailureResults } from "./approval-failure-results";
 import {
   applySuggestedPermissionsForApproval,
   buildApprovalSuggestionPayload,
@@ -103,46 +104,6 @@ type Decision =
       };
       reason: string;
     };
-
-function approvalExecutionFailureResults(
-  decisions: Decision[],
-  error: unknown,
-): ApprovalResult[] {
-  const partial =
-    error && typeof error === "object"
-      ? (("results" in error && Array.isArray(error.results)
-          ? error.results
-          : "partialResults" in error && Array.isArray(error.partialResults)
-            ? error.partialResults
-            : []) as ApprovalResult[])
-      : [];
-  const partialById = new Map(
-    partial
-      .filter((result) => result && typeof result.tool_call_id === "string")
-      .map((result) => [result.tool_call_id, result]),
-  );
-  const failure = `Approval batch failed: ${String(error)}`;
-  return decisions.map((decision) => {
-    const toolCallId = decision.approval.toolCallId;
-    const completed = partialById.get(toolCallId);
-    if (completed) return completed;
-    if (decision.type === "deny") {
-      return {
-        type: "approval",
-        tool_call_id: toolCallId,
-        approve: false,
-        reason: decision.reason,
-      };
-    }
-    return {
-      type: "tool",
-      tool_call_id: toolCallId,
-      tool_return: failure,
-      status: "error",
-      reason: decision.reason,
-    };
-  });
-}
 
 type ApprovalBranchProgress = {
   turnInput: TurnInputState;
@@ -227,6 +188,9 @@ export async function handleApprovalStop(params: {
   originConnectionCanResume?: boolean;
   /** Recovery authority fences transport/finalization without aborting effects. */
   authorityGuard?: () => boolean;
+  /** Mutable CAS chain shared by stream and nested approval checkpoints. */
+  interruptedRevisionRef?: { current: string | undefined };
+  recoveryLineageId?: string;
   buildSendOptions: () => Parameters<
     typeof sendApprovalContinuationWithRetry
   >[2];
@@ -258,6 +222,8 @@ export async function handleApprovalStop(params: {
     originConnectionId,
     originConnectionCanResume = true,
     authorityGuard = () => true,
+    interruptedRevisionRef,
+    recoveryLineageId,
     buildSendOptions,
     dependencies,
   } = params;
@@ -274,6 +240,21 @@ export async function handleApprovalStop(params: {
     dependencies?.waitForApprovalTransportOpen ?? waitForApprovalTransportOpen;
   const checkpointListenerWork =
     dependencies?.recordListenerWork ?? recordListenerWork;
+  const checkpoint = (
+    update: Parameters<typeof recordListenerWork>[1],
+    phase: Parameters<typeof recordListenerWork>[2],
+  ) => {
+    const revision = checkpointListenerWork(
+      runtime,
+      update,
+      phase,
+      interruptedRevisionRef?.current,
+      recoveryLineageId,
+    );
+    if (revision && interruptedRevisionRef) {
+      interruptedRevisionRef.current = revision;
+    }
+  };
 
   if (approvals.length === 0) {
     return {
@@ -286,6 +267,23 @@ export async function handleApprovalStop(params: {
   rememberPendingApprovalBatchIds(runtime, approvals, dequeuedBatchId);
   const classificationRunId =
     runId || runtime.activeRunId || msgRunIds[msgRunIds.length - 1];
+  const shouldInterrupt = () =>
+    abortSignal.aborted ||
+    !runtime.turnLifecycle.isCurrent(turnLease) ||
+    !authorityGuard();
+  if (shouldInterrupt()) {
+    return {
+      kind: "interrupted",
+      turnInput,
+      dequeuedBatchId,
+      pendingNormalizationInterruptedToolCallIds: [],
+      turnToolContextId,
+      lastExecutionResults: null,
+      lastExecutingToolCallIds: [],
+      lastNeedsUserInputToolCallIds: [],
+      lastApprovalContinuationAccepted: false,
+    };
+  }
   const classificationScope = {
     agent_id: agentId,
     conversation_id: conversationId,
@@ -302,6 +300,19 @@ export async function handleApprovalStop(params: {
       toolContextId: turnToolContextId ?? undefined,
     },
   );
+  if (shouldInterrupt()) {
+    return {
+      kind: "interrupted",
+      turnInput,
+      dequeuedBatchId,
+      pendingNormalizationInterruptedToolCallIds: [],
+      turnToolContextId,
+      lastExecutionResults: null,
+      lastExecutingToolCallIds: [],
+      lastNeedsUserInputToolCallIds: [],
+      lastApprovalContinuationAccepted: false,
+    };
+  }
   const classificationEnd: ApprovalClassificationEndMessage = {
     ...createLifecycleMessageBase(
       "approval_classification_end",
@@ -332,10 +343,6 @@ export async function handleApprovalStop(params: {
   let lastExecutionResults: ApprovalResult[] | null = null;
   let lastExecutingToolCallIds: string[] = [];
 
-  const shouldInterrupt = () =>
-    abortSignal.aborted ||
-    !runtime.turnLifecycle.isCurrent(turnLease) ||
-    !authorityGuard();
   const isDeliveryReady = (): boolean => {
     const listener = runtime.listener;
     const scopedSubscribers = getSubscribedListenerConnections(listener, {
@@ -517,11 +524,13 @@ export async function handleApprovalStop(params: {
       if ("decision" in responseBody) {
         const response = responseBody.decision as ApprovalResponseDecision;
         if (response.behavior === "allow") {
+          if (shouldInterrupt()) return interruptTermination();
           const savedSuggestions = await applySuggestedPermissionsForApproval({
             decision: response,
             context: ac.context,
             workingDirectory: turnWorkingDirectory,
           });
+          if (shouldInterrupt()) return interruptTermination();
           const finalApproval = response.updated_input
             ? {
                 ...ac.approval,
@@ -547,6 +556,7 @@ export async function handleApprovalStop(params: {
                 toolContextId: turnToolContextId ?? undefined,
               },
             );
+            if (shouldInterrupt()) return interruptTermination();
 
             decisions.push(
               ...reclassified.autoAllowed.map((entry) => ({
@@ -614,8 +624,7 @@ export async function handleApprovalStop(params: {
   lastExecutingToolCallIds = approvedDecisions.map(
     (decision) => decision.approval.toolCallId,
   );
-  checkpointListenerWork(
-    runtime,
+  checkpoint(
     {
       toolCallIds: decisions.map((decision) => decision.approval.toolCallId),
       results: recoveredApprovalInFlightResults(decisions),
@@ -623,6 +632,7 @@ export async function handleApprovalStop(params: {
     },
     "before_tool_execution",
   );
+  if (shouldInterrupt()) return interruptTermination();
   runtime.turnLifecycle.setExecutingToolCallIds(
     turnLease,
     lastExecutingToolCallIds,
@@ -715,11 +725,7 @@ export async function handleApprovalStop(params: {
       failureResults,
     );
     lastExecutionResults = failureResults;
-    checkpointListenerWork(
-      runtime,
-      { results: failureResults },
-      "after_tool_execution",
-    );
+    checkpoint({ results: failureResults }, "after_tool_execution");
 
     // Execution threw before normal finished-event emission. Close the
     // client_tool_start lifecycle explicitly or observer UIs shimmer forever.
@@ -769,11 +775,8 @@ export async function handleApprovalStop(params: {
   // Tool side effects are already committed. Durably replace the pre-execution
   // empty checkpoint before any transport readiness or delivery await so a
   // crash/re-registration recovers the exact outcomes rather than stale denials.
-  checkpointListenerWork(
-    runtime,
-    { results: persistedExecutionResults },
-    "after_tool_execution",
-  );
+  checkpoint({ results: persistedExecutionResults }, "after_tool_execution");
+  if (shouldInterrupt()) return interruptTermination();
 
   // A relay can disconnect after client-side execution begins. Do not drop the
   // terminal tool frames into the startup barrier of its replacement: wait
@@ -852,10 +855,14 @@ export async function handleApprovalStop(params: {
   ]);
   let continuationBatchId = dequeuedBatchId;
   const sendOptions = buildSendOptions() ?? {};
+  if (shouldInterrupt()) return interruptTermination();
   const consumedQueuedTurn = consumeQueuedTurn(runtime);
   if (consumedQueuedTurn) {
     const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
     params.onConsumeQueuedTurn?.(queuedTurn);
+    // The queued user owns this continuation request. Assignment (rather than a
+    // conditional spread) also clears an actor inherited from the prior input.
+    sendOptions.actingUserId = queuedTurn.actingUserId;
     turnCorrelation?.appendDequeuedBatch(dequeuedBatch.batchId);
     continuationBatchId = dequeuedBatch.batchId;
     nextTurnInput = appendQueuedTurnToInput(nextTurnInput, queuedTurn);
@@ -900,6 +907,7 @@ export async function handleApprovalStop(params: {
       socket,
       runtime,
       turnLease,
+      { authorityGuard },
     );
   } catch (error) {
     if (shouldInterrupt()) {

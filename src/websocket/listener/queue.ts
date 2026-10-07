@@ -80,6 +80,12 @@ function hasSameQueueScope(a: QueueItem, b: QueueItem): boolean {
 }
 
 function getBatchActingUserId(items: QueueItem[]): string | undefined {
+  // The latest ordinary user message owns a coalesced continuation request.
+  // This deliberately returns undefined for an unattributed latest user so it
+  // clears, rather than inherits, the actor from the turn being continued.
+  const userMessages = items.filter((item) => item.kind === "message");
+  if (userMessages.length > 0) return userMessages.at(-1)?.actingUserId;
+
   const actingUserId = items[0]?.actingUserId;
   if (
     !actingUserId ||
@@ -146,7 +152,9 @@ function buildQueuedTurnMessage(
     agentId: scopeItem?.agentId ?? runtime.agentId ?? undefined,
     conversationId: scopeItem?.conversationId ?? runtime.conversationId,
     ...template,
-    actingUserId: template?.actingUserId ?? getBatchActingUserId(batch.items),
+    actingUserId: batch.items.some((item) => item.kind === "message")
+      ? getBatchActingUserId(batch.items)
+      : (template?.actingUserId ?? getBatchActingUserId(batch.items)),
     ...(durableInputIdentities.length > 0
       ? { durableInputIdentities: [...new Set(durableInputIdentities)] }
       : {}),

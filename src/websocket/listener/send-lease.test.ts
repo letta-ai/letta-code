@@ -3,7 +3,7 @@ import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { enqueueInboundUserMessage } from "./inbound-queue";
 import { createRuntime } from "./lifecycle";
 import { clearConversationRuntimeState } from "./runtime";
-import { resolveStaleApprovals } from "./send";
+import { resolveStaleApprovals, sendMessageStreamWithRetry } from "./send";
 import type { ListenerTransport } from "./transport";
 
 function createTransport(): ListenerTransport {
@@ -29,14 +29,42 @@ function createPreparedToolContext() {
 }
 
 async function waitFor(predicate: () => boolean): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  const deadline = performance.now() + 2_000;
+  while (performance.now() < deadline) {
     if (predicate()) return;
-    await Bun.sleep(1);
+    await Bun.sleep(5);
   }
   throw new Error("Timed out waiting for stale approval preparation");
 }
 
 describe("pre-stream recovery lease boundaries", () => {
+  test("lost recovery authority fences backend submission before entry", async () => {
+    const runtime = getOrCreateScopedRuntime(
+      createRuntime(),
+      "agent-1",
+      "conv-1",
+    );
+    const lease = runtime.turnLifecycle.begin({
+      origin: "approval_recovery",
+      workingDirectory: process.cwd(),
+    });
+
+    await expect(
+      sendMessageStreamWithRetry(
+        "conv-1",
+        [{ role: "user", content: "must not submit" }],
+        {},
+        createTransport(),
+        runtime,
+        lease,
+        { authorityGuard: () => false },
+      ),
+    ).rejects.toThrow("Recovery ownership lost");
+    expect(runtime.turnLifecycle.snapshot().loopStatus).not.toBe(
+      "WAITING_FOR_API_RESPONSE",
+    );
+  });
+
   test("a reset during tool preparation cannot consume replacement input", async () => {
     const runtime = getOrCreateScopedRuntime(
       createRuntime(),
@@ -161,7 +189,7 @@ describe("pre-stream recovery lease boundaries", () => {
     );
 
     expect(result?.stopReason).toBe("end_turn");
-    expect(sentActingUserId).toBeUndefined();
+    expect(sentActingUserId).toBe("cloud-user-charles");
     expect(JSON.stringify(sentMessages)).toContain(
       '"attribution":{"acting_user_id":"cloud-user-charles"}',
     );

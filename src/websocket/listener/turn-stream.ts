@@ -33,6 +33,9 @@ export type TurnStreamDrainParams = {
   runId: string | undefined;
   durableInputIdentities?: readonly InputIdentity[];
   terminalConsumerIds?: readonly string[];
+  authorityGuard?: () => boolean;
+  interruptedRevisionRef?: { current: string | undefined };
+  recoveryLineageId?: string;
 };
 
 export type TurnStreamDrainResult = {
@@ -73,12 +76,13 @@ export async function drainTurnStreamWithEmission(
         return undefined;
       }
       const maybeRunId = (chunk as { run_id?: unknown }).run_id;
+      const hasAuthority = () => params.authorityGuard?.() !== false;
       if (typeof maybeRunId === "string") {
         runId = maybeRunId;
         runtime.turnLifecycle.setRunId(turnLease, maybeRunId);
         turnCorrelation.observeRun(maybeRunId);
         if (!runIdSent) {
-          recordListenerWork(
+          const revision = recordListenerWork(
             runtime,
             {
               runId: maybeRunId,
@@ -91,13 +95,20 @@ export async function drainTurnStreamWithEmission(
                 : undefined,
             },
             "run_observed",
+            params.interruptedRevisionRef?.current,
+            params.recoveryLineageId,
           );
+          if (revision && params.interruptedRevisionRef) {
+            params.interruptedRevisionRef.current = revision;
+          }
           runIdSent = true;
           msgRunIds.push(maybeRunId);
-          emitLoopStatusUpdate(socket, runtime, {
-            agent_id: agentId,
-            conversation_id: conversationId,
-          });
+          if (hasAuthority()) {
+            emitLoopStatusUpdate(socket, runtime, {
+              agent_id: agentId,
+              conversation_id: conversationId,
+            });
+          }
         }
       }
       if (errorInfo) {
@@ -105,7 +116,11 @@ export async function drainTurnStreamWithEmission(
           getApprovalToolCallDesyncErrorText(errorInfo);
         const deploymentInterrupted =
           isCloudApiDeploymentInterrupted(errorInfo);
-        if (!recoverableApprovalErrorText && !deploymentInterrupted) {
+        if (
+          hasAuthority() &&
+          !recoverableApprovalErrorText &&
+          !deploymentInterrupted
+        ) {
           emitLoopErrorNotice(socket, runtime, {
             message: errorInfo.message || "Stream error",
             stopReason: normalizeStreamErrorTypeToStopReason(
@@ -130,7 +145,7 @@ export async function drainTurnStreamWithEmission(
           return { shouldOutput: false, shouldAccumulate: false };
         }
       }
-      if (shouldOutput) {
+      if (shouldOutput && hasAuthority()) {
         const normalizedChunk =
           normalizeCloudRetryWireMessage(chunk) ??
           normalizeToolReturnWireMessage(

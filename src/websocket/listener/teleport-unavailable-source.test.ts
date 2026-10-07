@@ -267,8 +267,7 @@ for (const boundary of ["idle", "active", "drained"] as const) {
           expect(store.read(agentId, conversationId)).toEqual(saved);
           if (boundary === "drained") {
             expect(runtime.queueRuntime.length).toBe(1);
-            finishDrainedTeleport(
-              runtime,
+            finishDrainedTeleport(runtime, () =>
               runtime.turnLifecycle.finish(lease, "end_turn"),
             );
             expect(runtime.queueRuntime.length).toBe(1);
@@ -277,13 +276,11 @@ for (const boundary of ["idle", "active", "drained"] as const) {
               origin: "message",
               workingDirectory: process.cwd(),
             });
-            finishDrainedTeleport(
-              runtime,
+            finishDrainedTeleport(runtime, () =>
               runtime.turnLifecycle.finish(queuedLease, "end_turn"),
             );
           } else {
-            finishDrainedTeleport(
-              runtime,
+            finishDrainedTeleport(runtime, () =>
               runtime.turnLifecycle.finish(lease, "end_turn"),
             );
           }

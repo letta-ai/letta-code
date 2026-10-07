@@ -1,12 +1,37 @@
 import { randomUUID } from "node:crypto";
 import type { ApprovalResult } from "@/agent/approval-execution";
-import type { IncomingMessage, InputIdentity } from "./types";
+import { recordListenerWork } from "./interrupted-turn-record";
+import type {
+  ConversationRuntime,
+  IncomingMessage,
+  InputIdentity,
+} from "./types";
 
 export type TurnContinuationMetadata = {
   lastExecutionResults: ApprovalResult[] | null;
   lastExecutingToolCallIds: string[];
   lastNeedsUserInputToolCallIds: string[];
 };
+
+export function checkpointTurnInputOwnership(
+  runtime: ConversationRuntime,
+  ownership: ReturnType<typeof createTurnDurabilityOwnership>,
+  expectedRevision?: string,
+  actingUserId?: string,
+  recoveryLineageId?: string,
+): string | undefined {
+  return recordListenerWork(
+    runtime,
+    {
+      durableInputIdentities: [...ownership.durableInputIdentities],
+      terminalConsumerIds: [...ownership.terminalConsumerIds],
+      actingUserId,
+    },
+    "run_observed",
+    expectedRevision,
+    recoveryLineageId,
+  );
+}
 
 /** Turn-owned metadata survives every generic approval continuation. */
 export function createTurnDurabilityOwnership() {

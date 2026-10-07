@@ -163,6 +163,7 @@ export async function recoverApprovalStateForSync(
     allApprovals: pendingApprovals,
     durableInputIdentities: recorded?.durableInputIdentities,
     terminalConsumerIds: recorded?.terminalConsumerIds,
+    interruptedRevision: recorded?.revision,
   };
   return undefined;
 }

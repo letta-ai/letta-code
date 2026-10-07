@@ -102,6 +102,7 @@ export async function completeInitialConnectionStartup(
   }
   markListenerConnectionInitialized(listener, options.connectionId, connection);
   if (!isCurrent() || !connection.initialized) return false;
+  listener.promotePreparedInputTerminals?.();
   for (const runtime of listener.conversationRuntimes.values()) {
     replayPendingTurnFinishedToConnection(
       transport,
@@ -132,6 +133,7 @@ export async function replaySubscribedConnectionState(
   await (options.refreshGitContext ?? refreshDeviceGitContext)(listener, scope);
   if (!isCurrent()) return;
   if (connection) {
+    listener.promotePreparedInputTerminals?.();
     replayPendingApprovalRequestsToConnection(
       runtime,
       connection.id,

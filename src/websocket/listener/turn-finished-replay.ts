@@ -494,6 +494,7 @@ export function prepareTurnFinished(
   message: ReplayableTurnFinished,
   providedStore?: ReturnType<typeof createTurnFinishedStore>,
   providedOwner?: TurnFinishedOwner,
+  persistWithoutConsumers = false,
 ): PreparedTurnFinished {
   const owner = providedOwner ?? getTurnFinishedOwner(runtime);
   // Process-owned work and rotating App Server clients have no peer that
@@ -504,8 +505,9 @@ export function prepareTurnFinished(
   // their terminal is intentionally best-effort even on a stable connection.
   if (
     runtime.agentId === null ||
-    !message.terminal_consumer_ids?.length ||
-    (!providedStore && (owner.connectionId === null || owner.canRotate))
+    (!persistWithoutConsumers &&
+      (!message.terminal_consumer_ids?.length ||
+        (!providedStore && (owner.connectionId === null || owner.canRotate))))
   ) {
     return { kind: "ephemeral" };
   }

@@ -165,6 +165,7 @@ export function createTurnInputSender(params: {
     options: Parameters<typeof finishListenerTurn>[2],
   ) => TurnFinishTransition;
   getTurnId: () => string;
+  authorityGuard?: () => boolean;
 }): {
   send: (
     input: Array<MessageCreate | ApprovalCreate>,
@@ -183,6 +184,7 @@ export function createTurnInputSender(params: {
           params.socket,
           params.runtime,
           params.turnLease,
+          { authorityGuard: params.authorityGuard },
         );
       }
       return {
@@ -194,6 +196,7 @@ export function createTurnInputSender(params: {
           params.socket,
           params.runtime,
           params.turnLease,
+          { authorityGuard: params.authorityGuard },
         ),
       };
     },

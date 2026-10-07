@@ -3,13 +3,14 @@ import { getOrCreateProcessTransport } from "./connection";
 import {
   commitInputDisposition,
   reserveInputDisposition,
-  rollbackInputDisposition,
   teleportInputIdentity,
 } from "./input-disposition";
+import { rollbackInputDisposition } from "./input-disposition-rollback";
 import {
   buildTeleportContinuationMessages,
   clearExpectedInboundTeleport,
   clearPriorReadyTeleports,
+  isInboundTeleportExpected,
 } from "./teleport";
 import type { handleIncomingMessage } from "./turn";
 import type {
@@ -47,6 +48,7 @@ export function admitTeleportContinueInput(params: {
     task: () => Promise<void>,
   ) => void;
   processIncomingMessage: typeof handleIncomingMessage;
+  commitDisposition?: typeof commitInputDisposition;
 }): void {
   const {
     listener,
@@ -58,6 +60,16 @@ export function admitTeleportContinueInput(params: {
     acknowledgeInput,
   } = params;
   const teleportId = payload.teleport_id;
+  if (
+    isInboundTeleportExpected(scopedRuntime) &&
+    scopedRuntime.expectedTeleportId !== teleportId
+  ) {
+    acknowledgeInput(
+      false,
+      "Teleport continuation does not match the expected handoff",
+    );
+    return;
+  }
   const admission = reserveInputDisposition(
     scopedRuntime,
     teleportInputIdentity(teleportId),
@@ -84,7 +96,6 @@ export function admitTeleportContinueInput(params: {
       conversationId,
       currentTeleportId: teleportId,
     });
-    clearExpectedInboundTeleport(scopedRuntime);
     const identity = teleportInputIdentity(teleportId);
     const continuationInput = {
       type: "message" as const,
@@ -99,9 +110,14 @@ export function admitTeleportContinueInput(params: {
       durableInputIdentities: [identity],
     };
     if (
-      !commitInputDisposition(scopedRuntime, reservation, "started", {
-        incoming: continuationInput,
-      })
+      !(params.commitDisposition ?? commitInputDisposition)(
+        scopedRuntime,
+        reservation,
+        "started",
+        {
+          incoming: continuationInput,
+        },
+      )
     ) {
       rollbackInputDisposition(scopedRuntime, reservation);
       acknowledgeInput(
@@ -110,6 +126,7 @@ export function admitTeleportContinueInput(params: {
       );
       return;
     }
+    clearExpectedInboundTeleport(scopedRuntime);
     acknowledgeInput(true, undefined, "started");
     params.runDetachedListenerTask("teleport_continue", async () => {
       await params.processIncomingMessage(

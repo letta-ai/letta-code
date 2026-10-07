@@ -17,8 +17,16 @@ import {
   resolvePendingApprovalResolver,
 } from "@/websocket/listener/approval";
 import { getOrCreateScopedRuntime } from "@/websocket/listener/conversation-runtime";
-import { getActiveRuntime } from "@/websocket/listener/runtime";
-import { handleListenerSocketOpenFailure } from "@/websocket/listener/split-stream-lifecycle";
+import { createRuntime } from "@/websocket/listener/lifecycle";
+import {
+  getActiveRuntime,
+  setActiveRuntime,
+} from "@/websocket/listener/runtime";
+import {
+  handleListenerSocketOpenFailure,
+  isCurrentSocketPair,
+  terminateControlAfterStreamClose,
+} from "@/websocket/listener/split-stream-lifecycle";
 
 type ListenerSettings = Awaited<
   ReturnType<typeof settingsManager.getSettingsWithSecureTokens>
@@ -34,6 +42,30 @@ async function waitFor(
   }
   throw new Error(message);
 }
+
+test("normal stream close retains pair identity until control revokes its generation", () => {
+  const runtime = createRuntime();
+  const terminate = mock(() => {});
+  const control = {
+    readyState: WebSocket.OPEN,
+    terminate,
+  } as unknown as WebSocket;
+  const stream = {
+    readyState: WebSocket.CLOSED,
+  } as unknown as WebSocket;
+  runtime.socket = control;
+  runtime.streamSocket = stream;
+  runtime.streamTransport = stream;
+  setActiveRuntime(runtime);
+
+  terminateControlAfterStreamClose(runtime, stream, 1006, Buffer.alloc(0));
+
+  expect(runtime.streamSocket).toBe(stream);
+  expect(runtime.streamTransport).toBeNull();
+  expect(isCurrentSocketPair(runtime, control, stream)).toBe(true);
+  expect(terminate).toHaveBeenCalledTimes(1);
+  setActiveRuntime(null);
+});
 
 describe("split stream listener lifecycle", () => {
   const originalHome = process.env.HOME;

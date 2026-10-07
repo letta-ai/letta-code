@@ -80,6 +80,12 @@ function cloneDispositionLedger(
       [...ledger.entries].map(([key, entry]) => [key, structuredClone(entry)]),
     ),
     scopeCounts: new Map(ledger.scopeCounts),
+    abandonedReservations: new Map(
+      [...ledger.abandonedReservations].map(([key, reservation]) => [
+        key,
+        { ...reservation },
+      ]),
+    ),
     expiryQueue: ledger.expiryQueue.map((entry) => ({ ...entry })),
     expiryQueueHead: ledger.expiryQueueHead,
     nextGeneration: ledger.nextGeneration,
@@ -205,6 +211,15 @@ export function adoptListenerClientReplacement(
   succeededListenerRuntimes.add(provenance.issuer);
   runtime.acceptedInputDispositionLedger = cloneDispositionLedger(
     provenance.ledger,
+  );
+  // Rollback failures can be recorded after the replacement token is minted
+  // while the issuer is still serving. Its live abandonment set is the newest
+  // exact-authority view (including removals), so carry that state across the
+  // synchronous handoff rather than restoring only the older token snapshot.
+  runtime.acceptedInputDispositionLedger.abandonedReservations = new Map(
+    [
+      ...provenance.issuer.acceptedInputDispositionLedger.abandonedReservations,
+    ].map(([key, reservation]) => [key, { ...reservation }]),
   );
   // The retry-exhausted path can leave the issuer serving while async
   // registration is in flight. Merge its exact-authority live correlations at

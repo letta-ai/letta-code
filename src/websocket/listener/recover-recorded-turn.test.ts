@@ -81,6 +81,64 @@ test("a successful teleport receipt retires saved work without sending results",
   }
 });
 
+test("startup recovery preserves a teleport intent with its matching terminal", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "recorded-teleport-terminal-"));
+  const store = createInterruptedTurnStore(join(directory, "interrupted"));
+  const terminalStore = createTurnFinishedStore(join(directory, "terminals"));
+  const listener = createRuntime();
+  listener.connectionId = "conn-replacement";
+  try {
+    const persisted = store.write({
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      runId: "run-1",
+      toolCallIds: ["call-1"],
+      results: [],
+      requestOtid: "request-1",
+      workingDirectory: "/project",
+      teleport: {
+        teleportId: "teleport-1",
+        connectionId: "source-a",
+        connectionGeneration: "generation-a",
+        activeTurn: true,
+        continuation: { approvals: [] },
+        ready: false,
+      },
+    });
+    terminalStore.put(
+      "agent-1",
+      "conv-1",
+      {
+        type: "turn_finished",
+        turn_id: "turn-teleport",
+        stop_reason: "cancelled",
+      },
+      {
+        connectionId: "conn-source",
+        canRotate: true,
+        lineageId: "lineage-source",
+        interruptedRevision: persisted.revision,
+      },
+    );
+
+    await recoverRecordedTurns(listener, {
+      store,
+      terminalStore,
+      canRecover: async () => true,
+      teleportStatus: (async () => ({ status: "failed" })) as never,
+    });
+
+    expect(store.read("agent-1", "conv-1")?.teleport).toMatchObject({
+      teleportId: "teleport-1",
+      activeTurn: true,
+      continuation: { approvals: [] },
+      ready: false,
+    });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("a revision-matched durable terminal retires the interrupted record", async () => {
   const directory = mkdtempSync(join(tmpdir(), "recorded-terminal-revision-"));
   const store = createInterruptedTurnStore(join(directory, "interrupted"));
@@ -198,11 +256,51 @@ test("a prepared revision is promoted before recorded work can replay", async ()
 
 import { createInterruptedTurnStore } from "./interrupted-turn-record";
 import { createRuntime } from "./lifecycle";
-import { recoverRecordedTurns } from "./recover-recorded-turn";
+import {
+  recoverRecordedTurns,
+  scheduleRecordedTurnRecovery,
+} from "./recover-recorded-turn";
 import { setActiveRuntime } from "./runtime";
 import type { handleIncomingMessage } from "./turn";
 import { createTurnFinishedStore } from "./turn-finished-replay";
 import type { IncomingMessage } from "./types";
+
+async function eventually(
+  assertion: () => void,
+  attempts = 100,
+): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      assertion();
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+  }
+  throw lastError;
+}
+
+test("a top-level recorded recovery rejection schedules another attempt", async () => {
+  const listener = createRuntime();
+  listener.connectionId = "conn-retry";
+  setActiveRuntime(listener);
+  let attempts = 0;
+  const recover = mock(async () => {
+    attempts += 1;
+    if (attempts === 1) throw new Error("startup scan failed");
+  });
+  try {
+    scheduleRecordedTurnRecovery(listener, recover, 1);
+    for (let i = 0; i < 50 && attempts < 2; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 2));
+    }
+    expect(attempts).toBe(2);
+  } finally {
+    setActiveRuntime(null);
+  }
+});
 
 const acquireTestClaim = async () => {
   let owned = true;
@@ -223,6 +321,49 @@ const acquireTestClaim = async () => {
   } as never;
 };
 
+test("a failed deferred retry rearms recorded recovery", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "recorded-deferred-retry-"));
+  const realStore = createInterruptedTurnStore(directory);
+  const listener = createRuntime();
+  listener.connectionId = "conn-retry";
+  setActiveRuntime(listener);
+  let scans = 0;
+  const store = {
+    ...realStore,
+    list: () => {
+      scans += 1;
+      if (scans === 2) throw new Error("deferred scan failed");
+      return realStore.list();
+    },
+  };
+  try {
+    realStore.write({
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      runId: "run-1",
+      toolCallIds: [],
+      results: [],
+      requestOtid: "request-1",
+      workingDirectory: "/project",
+      teleportId: "teleport-pending",
+    });
+    await recoverRecordedTurns(listener, {
+      store,
+      teleportStatus: (async () => ({ status: "pending" })) as never,
+      canRecover: async () => false,
+      retryDelayMs: 1,
+    });
+    for (let attempt = 0; attempt < 100 && scans < 3; attempt += 1) {
+      await Bun.sleep(2);
+    }
+    expect(scans).toBeGreaterThanOrEqual(3);
+  } finally {
+    listener.intentionallyClosed = true;
+    setActiveRuntime(null);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("post-start claim loss schedules one coalesced recorded recovery retry", async () => {
   const directory = mkdtempSync(join(tmpdir(), "recorded-claim-loss-"));
   const store = createInterruptedTurnStore(directory);
@@ -233,6 +374,7 @@ test("post-start claim loss schedules one coalesced recorded recovery retry", as
   const pendingTurns: Array<() => void> = [];
   const terminalGuards: Array<() => boolean> = [];
   let starts = 0;
+  let completions = 0;
   try {
     store.write({
       agentId: "agent-1",
@@ -262,7 +404,10 @@ test("post-start claim loss schedules one coalesced recorded recovery retry", as
           get owned() {
             return owned;
           },
-          complete: async () => false,
+          complete: async () => {
+            completions += 1;
+            return false;
+          },
           release: async () => {},
           abandon: () => {},
         } as never;
@@ -273,6 +418,7 @@ test("post-start claim loss schedules one coalesced recorded recovery retry", as
       ) => {
         starts += 1;
         terminalGuards.push(args[8] ?? (() => true));
+        expect(args[11]).toBe(true);
         await new Promise<void>((resolve) => pendingTurns.push(resolve));
       },
     };
@@ -283,11 +429,16 @@ test("post-start claim loss schedules one coalesced recorded recovery retry", as
     lostCallbacks[0]?.();
     expect(terminalGuards[0]?.()).toBe(false);
     // A successor must not begin until the detached predecessor has unwound.
-    await Bun.sleep(10);
+    await new Promise<void>((resolve) => setImmediate(resolve));
     expect(starts).toBe(1);
     pendingTurns.shift()?.();
-    await Bun.sleep(10);
-    expect(starts).toBe(2);
+    await eventually(() => expect(completions).toBeGreaterThanOrEqual(2));
+    expect(starts).toBe(1);
+    expect(
+      store.read("agent-1", "conv-1")?.recoveryClaimCompletion,
+    ).toMatchObject({
+      state: "pending",
+    });
   } finally {
     listener.intentionallyClosed = true;
     for (const resolve of pendingTurns) resolve();
@@ -627,6 +778,129 @@ test("a tool generated while the listener was down is recovered only from its re
     expect(sent).toHaveLength(1);
     expect(store.read("agent-1", "conv-1")).toBeNull();
   } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("mixed owned and unowned approvals rearm until owned work converges", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "recorded-mixed-owned-"));
+  const store = createInterruptedTurnStore(directory);
+  const listener = createRuntime();
+  listener.connectionId = "conn-replacement";
+  setActiveRuntime(listener);
+  let scans = 0;
+  let starts = 0;
+  try {
+    store.write({
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      runId: "run-1",
+      toolCallIds: ["call-owned"],
+      results: [],
+      requestOtid: "request-1",
+      workingDirectory: "/project",
+    });
+    await recoverRecordedTurns(listener, {
+      store,
+      backend: { retrieveAgent: async () => ({ id: "agent-1" }) } as never,
+      resume: (async () => {
+        scans += 1;
+        return {
+          pendingApprovals: [
+            { toolCallId: "call-owned", toolName: "Bash", toolArgs: "{}" },
+            ...(scans === 1
+              ? [
+                  {
+                    toolCallId: "call-unowned",
+                    toolName: "Bash",
+                    toolArgs: "{}",
+                  },
+                ]
+              : []),
+          ],
+        };
+      }) as never,
+      canRecover: async () => true,
+      acquireClaim: acquireTestClaim,
+      processTurn: async (
+        _message,
+        _transport,
+        ownerRuntime,
+        _onStatus,
+        _connectionId,
+        _batchId,
+        turnLease,
+      ) => {
+        starts += 1;
+        if (turnLease) ownerRuntime.turnLifecycle.finish(turnLease, "end_turn");
+      },
+      setCwd: () => {},
+      retryDelayMs: 1,
+    });
+    const deadline = performance.now() + 2_000;
+    while (starts === 0 && performance.now() < deadline) await Bun.sleep(5);
+    expect(scans).toBeGreaterThanOrEqual(2);
+    expect(starts).toBe(1);
+  } finally {
+    listener.intentionallyClosed = true;
+    setActiveRuntime(null);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("recovery eligibility conflict rearms and later owned work converges", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "recorded-conflict-owned-"));
+  const store = createInterruptedTurnStore(directory);
+  const listener = createRuntime();
+  listener.connectionId = "conn-replacement";
+  setActiveRuntime(listener);
+  let eligibilityChecks = 0;
+  let starts = 0;
+  try {
+    store.write({
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      runId: "run-1",
+      toolCallIds: ["call-1"],
+      results: [],
+      requestOtid: "request-1",
+      workingDirectory: "/project",
+    });
+    await recoverRecordedTurns(listener, {
+      store,
+      backend: { retrieveAgent: async () => ({ id: "agent-1" }) } as never,
+      resume: (async () => ({
+        pendingApprovals: [
+          { toolCallId: "call-1", toolName: "Bash", toolArgs: "{}" },
+        ],
+      })) as never,
+      canRecover: async () => {
+        eligibilityChecks += 1;
+        return eligibilityChecks !== 2;
+      },
+      acquireClaim: acquireTestClaim,
+      processTurn: async (
+        _message,
+        _transport,
+        ownerRuntime,
+        _onStatus,
+        _connectionId,
+        _batchId,
+        turnLease,
+      ) => {
+        starts += 1;
+        if (turnLease) ownerRuntime.turnLifecycle.finish(turnLease, "end_turn");
+      },
+      setCwd: () => {},
+      retryDelayMs: 1,
+    });
+    const deadline = performance.now() + 2_000;
+    while (starts === 0 && performance.now() < deadline) await Bun.sleep(5);
+    expect(eligibilityChecks).toBeGreaterThanOrEqual(4);
+    expect(starts).toBe(1);
+  } finally {
+    listener.intentionallyClosed = true;
+    setActiveRuntime(null);
     rmSync(directory, { recursive: true, force: true });
   }
 });

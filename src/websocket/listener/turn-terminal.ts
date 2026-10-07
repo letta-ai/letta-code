@@ -67,6 +67,8 @@ export function finishListenerTurn(
     turnFinishedStore?: ReturnType<typeof createTurnFinishedStore>;
     prepareInputTerminal?: typeof prepareInputTerminal;
     completePreparedInputTerminal?: typeof completePreparedInputTerminal;
+    /** Persist a crash proof even when no external terminal consumer exists. */
+    persistTerminalWithoutConsumers?: boolean;
   },
 ): TurnFinishTransition {
   const rejectedCommit = (): TurnFinishTransition => ({
@@ -142,6 +144,7 @@ export function finishListenerTurn(
             turnFinishedMessage,
             options.turnFinishedStore,
             terminalOwner,
+            options.persistTerminalWithoutConsumers,
           )
         : null;
     if (
@@ -236,7 +239,10 @@ export function finishListenerTurn(
       transition.interruptionCause !== "transport")
   ) {
     try {
-      (options.forgetWork ?? (() => forgetListenerWork(runtime)))();
+      (
+        options.forgetWork ??
+        (() => forgetListenerWork(runtime, interruptedRevision ?? null))
+      )();
     } catch (error) {
       // The terminal transition already owns cleanup. A failed unlink is
       // recoverable evidence, not a reason to wedge or reject a detached turn.

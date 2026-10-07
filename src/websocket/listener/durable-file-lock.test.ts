@@ -144,6 +144,50 @@ test("a release cannot rmdir an atomically installed replacement", () => {
   }
 });
 
+test("installation retries when stale cleanup removes its empty directory", () => {
+  const f = fixture();
+  try {
+    let installs = 0;
+    const release = acquireDurableFileLock(f.path, {
+      waitMs: 50,
+      afterInstallMkdir: (target) => {
+        installs += 1;
+        if (installs === 1) rmdirSync(target);
+      },
+    });
+    expect(installs).toBe(2);
+    expect(readdirSync(f.lock)).toHaveLength(1);
+    release();
+    expect(existsSync(f.lock)).toBe(false);
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test("installation does not claim a replacement created after its mkdir", () => {
+  const f = fixture();
+  try {
+    let interleaved = false;
+    expect(() =>
+      acquireDurableFileLock(f.path, {
+        waitMs: 10,
+        afterInstallMkdir: (target) => {
+          if (interleaved) return;
+          interleaved = true;
+          rmdirSync(target);
+          f.install(liveOwner);
+        },
+      }),
+    ).toThrow("Timed out acquiring");
+    expect(readdirSync(f.lock)).toEqual([f.ownerName(liveOwner)]);
+    expect(readFileSync(join(f.lock, f.ownerName(liveOwner)), "utf8")).toBe(
+      JSON.stringify(liveOwner),
+    );
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
 test("a paused live owner is never evicted and contender candidates are cleaned", () => {
   const f = fixture();
   try {
@@ -308,6 +352,21 @@ test("an empty recovery artifact is cleaned", () => {
     mkdirSync(f.lock);
     const release = acquireDurableFileLock(f.path, { waitMs: 50 });
     expect(readdirSync(f.lock)).toHaveLength(1);
+    release();
+    expect(readdirSync(f.root)).toEqual([]);
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test("an orphaned installation marker is recovered", () => {
+  const f = fixture();
+  try {
+    mkdirSync(f.lock);
+    writeFileSync(join(f.lock, ".installing"), JSON.stringify(deadOwner));
+    const release = acquireDurableFileLock(f.path, { waitMs: 50 });
+    expect(readdirSync(f.lock)).toHaveLength(1);
+    expect(readdirSync(f.lock)).not.toContain(".installing");
     release();
     expect(readdirSync(f.root)).toEqual([]);
   } finally {

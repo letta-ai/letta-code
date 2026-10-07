@@ -11,8 +11,8 @@ import {
   forgetQueuedInputDisposition,
   ordinaryInputIdentity,
   reserveInputDisposition,
-  rollbackInputDisposition,
 } from "./input-disposition";
+import { rollbackInputDisposition } from "./input-disposition-rollback";
 import {
   scheduleQueuePump,
   shouldProcessInboundMessageDirectly,

@@ -121,6 +121,47 @@ describe("listener turn lifecycle integration", () => {
     setConversationId(null);
   });
 
+  test("lost recovery authority suppresses a pending classification result", async () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const turnLease = runtime.turnLifecycle.begin({
+      origin: "approval_recovery",
+      workingDirectory: process.cwd(),
+      initialStatus: "PROCESSING_API_RESPONSE",
+    });
+    const sentPayloads: string[] = [];
+    let authoritative = true;
+    let resolveClassification!: (value: {
+      autoAllowed: never[];
+      autoDenied: never[];
+      needsUserInput: never[];
+    }) => void;
+    const classification = new Promise<{
+      autoAllowed: never[];
+      autoDenied: never[];
+      needsUserInput: never[];
+    }>((resolve) => {
+      resolveClassification = resolve;
+    });
+
+    const result = startToolApproval(runtime, turnLease, {
+      socket: createOpenTransport(sentPayloads),
+      authorityGuard: () => authoritative,
+      dependencies: {
+        classifyApprovals: (() => classification) as never,
+      },
+    });
+    authoritative = false;
+    resolveClassification({
+      autoAllowed: [],
+      autoDenied: [],
+      needsUserInput: [],
+    });
+
+    expect((await result).kind).toBe("interrupted");
+    expect(sentPayloads).toEqual([]);
+  });
+
   test("publishes classification outcome before waiting for user approval", async () => {
     const listener = createRuntime();
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
@@ -289,7 +330,7 @@ describe("listener turn lifecycle integration", () => {
     ["user-a", "user-a"],
     [undefined, undefined],
   ])(
-    "reminder and steering keep request actor %s with queued author %s",
+    "active actor %s yields request attribution to queued author %s",
     async (activeUser, queuedUser) => {
       const runtime = getOrCreateScopedRuntime(
         createRuntime(),
@@ -335,7 +376,7 @@ describe("listener turn lifecycle integration", () => {
         async fetch(request) {
           const actor = request.headers.get(ACTING_USER_ID_HEADER) ?? undefined;
           requests.push({ actor, body: await request.json() });
-          if (actor !== activeUser) {
+          if (actor !== queuedUser) {
             return Response.json(
               { message: "Conversation not found" },
               { status: 404 },
@@ -416,7 +457,7 @@ describe("listener turn lifecycle integration", () => {
 
         expect(result.kind).toBe("terminal");
         expect(requests).toHaveLength(1);
-        expect(requests[0]?.actor).toBe(activeUser);
+        expect(requests[0]?.actor).toBe(queuedUser);
         expect(JSON.stringify(requests[0]?.body)).toContain("call-monitor");
         expect(JSON.stringify(requests[0]?.body)).toContain(
           "scheduled reminder",
@@ -536,14 +577,14 @@ describe("listener turn lifecycle integration", () => {
       },
     });
 
-    finishDrainedTeleport(
-      runtime,
+    finishDrainedTeleport(runtime, () =>
       runtime.turnLifecycle.finish(lease, "end_turn"),
     );
 
-    expect(listener.pendingTeleports?.get("teleport-text")?.readyAt).toEqual(
-      expect.any(Number),
+    const pending = [...(listener.pendingTeleports?.values() ?? [])].find(
+      (teleport) => teleport.teleportId === "teleport-text",
     );
+    expect(pending?.readyAt).toEqual(expect.any(Number));
   });
 
   test("checkpoints exact tool outcomes before waiting for replacement transport", async () => {

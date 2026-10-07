@@ -655,3 +655,160 @@ test("restored durable input retains the current physical terminal owner", () =>
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("promotion immediately replays a deferred terminal to its new exact owner", () => {
+  const root = mkdtempSync(join(tmpdir(), "letta-promoted-replay-"));
+  try {
+    const runtime = persistentRuntime(join(root, "state.json"));
+    const identity = admitStartedInput(runtime, "cm-promoted-replay");
+    const sent: unknown[] = [];
+    openListenerConnection({
+      runtime: runtime.listener,
+      connectionId: "conn-owner",
+      writer: {
+        kind: "runtime",
+        bufferedAmount: 0,
+        isOpen: () => true,
+        send: (payload: string) => sent.push(JSON.parse(payload)),
+      },
+      options: {
+        connectionId: "conn-owner",
+        wsUrl: "local://test",
+        deviceId: "device-owner",
+        connectionName: "Owner",
+        onConnected: () => {},
+        onDisconnected: () => {},
+        onError: () => {},
+      },
+    });
+    subscribeListenerConnection(runtime.listener, "conn-owner", {
+      agent_id: runtime.agentId,
+      conversation_id: runtime.conversationId,
+    });
+    markListenerConnectionInitialized(runtime.listener, "conn-owner");
+    expect(
+      prepareInputTerminal(runtime, [identity], {
+        scope: {
+          agentId: runtime.agentId,
+          conversationId: runtime.conversationId,
+        },
+        message: {
+          type: "turn_finished",
+          turn_id: "turn-promoted-replay",
+          stop_reason: "end_turn",
+          terminal_consumer_ids: ["slack:agent-durable"],
+        },
+        owner: {
+          connectionId: null,
+          canRotate: true,
+          lineageId: null,
+          terminalIdentity: "terminal-promoted-replay",
+        },
+      }),
+    ).toBe(true);
+
+    expect(
+      promotePreparedInputTerminals(
+        runtime.listener,
+        createTurnFinishedStore(join(root, "terminals")),
+      ),
+    ).toBe(1);
+    expect(sent).toContainEqual(
+      expect.objectContaining({
+        type: "turn_finished",
+        turn_id: "turn-promoted-replay",
+      }),
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("promotion never overwrites an unrelated active connection", () => {
+  const root = mkdtempSync(join(tmpdir(), "letta-promoted-owner-"));
+  try {
+    const runtime = persistentRuntime(join(root, "state.json"));
+    const identity = admitStartedInput(runtime, "cm-owner-fence");
+    runtime.activeConnectionId = "conn-unrelated";
+    expect(
+      prepareInputTerminal(runtime, [identity], {
+        scope: {
+          agentId: runtime.agentId,
+          conversationId: runtime.conversationId,
+        },
+        message: {
+          type: "turn_finished",
+          turn_id: "turn-owner-fence",
+          stop_reason: "end_turn",
+          terminal_consumer_ids: ["slack:agent-durable"],
+        },
+        owner: {
+          connectionId: null,
+          canRotate: true,
+          lineageId: null,
+          terminalIdentity: "terminal-owner-fence",
+        },
+      }),
+    ).toBe(true);
+
+    expect(
+      promotePreparedInputTerminals(
+        runtime.listener,
+        createTurnFinishedStore(join(root, "terminals")),
+      ),
+    ).toBe(0);
+    expect(runtime.activeConnectionId).toBe("conn-unrelated");
+    expect(loadPreparedInputTerminals(runtime.listener)).toHaveLength(1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("promotion reconciles an already-persisted terminal without owner collision", () => {
+  const root = mkdtempSync(join(tmpdir(), "letta-promoted-existing-"));
+  try {
+    const runtime = persistentRuntime(join(root, "state.json"));
+    const identity = admitStartedInput(runtime, "cm-existing-terminal");
+    const terminalStore = createTurnFinishedStore(join(root, "terminals"));
+    const message = {
+      type: "turn_finished" as const,
+      turn_id: "turn-existing-terminal",
+      stop_reason: "end_turn" as const,
+      terminal_consumer_ids: ["slack:agent-durable"],
+    };
+    terminalStore.put(runtime.agentId, runtime.conversationId, message, {
+      connectionId: "conn-original",
+      canRotate: false,
+      lineageId: "lineage-original",
+      terminalIdentity: "terminal-existing",
+    });
+    expect(
+      prepareInputTerminal(runtime, [identity], {
+        scope: {
+          agentId: runtime.agentId,
+          conversationId: runtime.conversationId,
+        },
+        message,
+        owner: {
+          connectionId: "conn-reassigned-before-crash",
+          canRotate: false,
+          lineageId: "lineage-reassigned",
+          terminalIdentity: "terminal-existing",
+        },
+      }),
+    ).toBe(true);
+
+    expect(promotePreparedInputTerminals(runtime.listener, terminalStore)).toBe(
+      1,
+    );
+    expect(loadPreparedInputTerminals(runtime.listener)).toEqual([]);
+    const terminals = terminalStore.read(
+      runtime.agentId,
+      runtime.conversationId,
+    )?.terminals;
+    expect(terminals).toHaveLength(1);
+    expect(terminals?.[0]?.owner.connectionId).toBe("conn-original");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

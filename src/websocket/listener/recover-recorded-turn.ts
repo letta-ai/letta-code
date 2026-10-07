@@ -16,8 +16,13 @@ import {
 } from "./input-terminal-journal";
 import {
   createInterruptedTurnStore,
+  type InterruptedTurnRecord,
   recordedToolResults,
 } from "./interrupted-turn-record";
+import {
+  markRecoveryClaimCompletionPending,
+  retireAcknowledgedRecoveryClaim,
+} from "./recovery-claim-completion";
 import {
   acquireRecoveryClaim,
   canRecoverConversation,
@@ -31,25 +36,90 @@ import {
   getTurnFinishedOwner,
 } from "./turn-finished-replay";
 import type { TurnLease } from "./turn-lifecycle";
-import type { ListenerRuntime } from "./types";
+import type { ConversationRuntime, ListenerRuntime } from "./types";
+
+function prepareRecordedInputTerminal(
+  listener: ListenerRuntime,
+  terminalStore: ReturnType<typeof createTurnFinishedStore>,
+  runtime: ConversationRuntime,
+  record: InterruptedTurnRecord,
+  runId: string | null,
+): boolean {
+  const identities = record.durableInputIdentities ?? [];
+  if (!identities.length || !record.revision) return true;
+  const scope = {
+    agentId: record.agentId,
+    conversationId: record.conversationId,
+  };
+  if (
+    hasCompletedInputTerminalRevision(
+      listener,
+      runtime.key,
+      identities,
+      record.revision,
+    )
+  ) {
+    return true;
+  }
+  const ownerConnection = [...listener.connections.values()].find(
+    (connection) =>
+      connection.initialized && connection.subscriptions.has(runtime.key),
+  );
+  runtime.activeConnectionId = ownerConnection?.id ?? null;
+  if (
+    !prepareInputTerminal(runtime, identities, {
+      scope,
+      message: {
+        type: "turn_finished",
+        turn_id: `turn-recovered-complete-${randomUUID()}`,
+        stop_reason: "end_turn",
+        ...(record.terminalConsumerIds?.length
+          ? { terminal_consumer_ids: [...new Set(record.terminalConsumerIds)] }
+          : {}),
+        ...(runId ? { run_id: runId } : {}),
+      },
+      owner: getTurnFinishedOwner(runtime, record.revision),
+    })
+  ) {
+    return false;
+  }
+  promotePreparedInputTerminals(listener, terminalStore, scope);
+  return !hasPreparedInputTerminalRevision(listener, scope, record.revision);
+}
 
 export function scheduleRecordedTurnRecovery(
   listener: ListenerRuntime,
   recover = recoverRecordedTurns,
+  retryDelayMs = 5000,
 ): void {
   if (scheduledRecoveries.has(listener)) return;
   scheduledRecoveries.add(listener);
   setImmediate(() => {
     scheduledRecoveries.delete(listener);
     if (listener !== getActiveRuntime() || listener.intentionallyClosed) return;
+    if (recovering.has(listener)) {
+      pendingRecoveries.add(listener);
+      return;
+    }
     void recover(listener).catch((error) => {
       debugWarn("recovery", "Recorded restart recovery failed", error);
+      if (listener !== getActiveRuntime() || listener.intentionallyClosed)
+        return;
+      const previous = retryTimers.get(listener);
+      if (previous) clearTimeout(previous);
+      const timer = setTimeout(() => {
+        retryTimers.delete(listener);
+        scheduleRecordedTurnRecovery(listener, recover, retryDelayMs);
+      }, retryDelayMs);
+      retryTimers.set(listener, timer);
+      timer.unref();
     });
   });
 }
 
 const scheduledRecoveries = new WeakSet<ListenerRuntime>();
 const recovering = new WeakSet<ListenerRuntime>();
+const pendingRecoveries = new WeakSet<ListenerRuntime>();
 const retryTimers = new WeakMap<
   ListenerRuntime,
   ReturnType<typeof setTimeout>
@@ -68,14 +138,18 @@ export async function recoverRecordedTurns(
     setCwd: typeof setConversationWorkingDirectory;
     teleportStatus: typeof getTeleportStatus;
     terminalStore: ReturnType<typeof createTurnFinishedStore>;
+    retryDelayMs: number;
   }> = {},
 ): Promise<void> {
   if (
     !listener.connectionId?.startsWith("conn-") ||
-    listener.intentionallyClosed ||
-    recovering.has(listener)
+    listener.intentionallyClosed
   )
     return;
+  if (recovering.has(listener)) {
+    pendingRecoveries.add(listener);
+    return;
+  }
   recovering.add(listener);
   const timer = retryTimers.get(listener);
   if (timer) clearTimeout(timer);
@@ -103,20 +177,23 @@ export async function recoverRecordedTurns(
           }
         }
         if (
-          hasCompletedInputTerminalRevision(
+          !record.teleport &&
+          !record.teleportId &&
+          !record.recoveryClaimCompletion &&
+          (hasCompletedInputTerminalRevision(
             listener,
             getConversationRuntimeKey(record.agentId, record.conversationId),
             record.durableInputIdentities ?? [],
-            record.revision,
+            record.revision ?? null,
           ) ||
-          terminalStore
-            .read(record.agentId, record.conversationId)
-            ?.terminals.some(
-              (terminal) =>
-                terminal.owner.interruptedRevision === record.revision,
-            )
+            terminalStore
+              .read(record.agentId, record.conversationId)
+              ?.terminals.some(
+                (terminal) =>
+                  terminal.owner.interruptedRevision === record.revision,
+              ))
         ) {
-          store.remove(record.agentId, record.conversationId);
+          store.remove(record.agentId, record.conversationId, record.revision);
           continue;
         }
       }
@@ -142,17 +219,78 @@ export async function recoverRecordedTurns(
       let continuationStarted = false;
       let continuationLease: TurnLease | undefined;
       try {
-        if (record.teleportId) {
+        if (record.recoveryClaimCompletion?.state === "pending") {
+          const eligibility = await resolveRecoveryEligibility(
+            runtime,
+            deps.canRecover,
+          );
+          if (eligibility !== "owned") {
+            deferred = true;
+            continue;
+          }
+          if (!unchanged()) {
+            deferred = true;
+            continue;
+          }
+          recoveryClaim = await (deps.acquireClaim ?? acquireRecoveryClaim)(
+            runtime,
+            () =>
+              scheduleRecordedTurnRecovery(listener, () =>
+                recoverRecordedTurns(listener, deps),
+              ),
+          );
+          if (!recoveryClaim) {
+            deferred = true;
+            continue;
+          }
+          if (!unchanged()) {
+            await recoveryClaim.release();
+            recoveryClaim = undefined;
+            deferred = true;
+            continue;
+          }
+          if (!(await recoveryClaim.complete())) {
+            recoveryClaim.abandon();
+            recoveryClaim = undefined;
+            deferred = true;
+            continue;
+          }
+          recoveryClaim = undefined;
+          const retirement = record.revision
+            ? retireAcknowledgedRecoveryClaim(store, {
+                agentId: record.agentId,
+                conversationId: record.conversationId,
+                lineageId: record.recoveryClaimCompletion.lineageId,
+                pendingRevision: record.revision,
+              })
+            : "failed";
+          if (retirement === "failed" || retirement === "preserved") {
+            deferred = true;
+          }
+          continue;
+        }
+        const teleportId = record.teleport?.teleportId ?? record.teleportId;
+        if (teleportId) {
           const teleport = await (deps.teleportStatus ?? getTeleportStatus)(
             record.agentId,
             record.conversationId,
-            record.teleportId,
+            teleportId,
           );
-          if (!unchanged()) continue;
+          if (!unchanged()) {
+            deferred = true;
+            continue;
+          }
           if (teleport.status === "completed") {
-            store.remove(record.agentId, record.conversationId);
+            store.remove(
+              record.agentId,
+              record.conversationId,
+              record.revision ?? null,
+            );
           } else if (teleport.status === "failed") {
-            store.write({ ...record, teleportId: undefined });
+            // The cloud's teleport_failed event carries the error text needed by
+            // the source continuation. Keep the durable intent until that
+            // continuation has itself been durably admitted; event redelivery
+            // then remains safe across restart and CAS races.
             deferred = true;
           } else {
             deferred = true;
@@ -168,7 +306,10 @@ export async function recoverRecordedTurns(
             { includeMessageHistory: false },
           )
         ).pendingApprovals;
-        if (!unchanged()) continue;
+        if (!unchanged()) {
+          deferred = true;
+          continue;
+        }
         // A run can finish generating its tool call while its listener is down.
         // Require the stored approval message to name the recorded run in that case.
         let recordedRunId = record.runId;
@@ -207,50 +348,99 @@ export async function recoverRecordedTurns(
           const run = recordedRunId
             ? await backend.retrieveRun(recordedRunId)
             : null;
-          if (!unchanged()) continue;
+          if (!unchanged()) {
+            deferred = true;
+            continue;
+          }
           if (run?.status === "running" || run?.status === "created") {
             deferred = true;
             continue;
           }
-          if (record.durableInputIdentities?.length) {
-            const ownerConnection = [...listener.connections.values()].find(
-              (connection) =>
-                connection.initialized &&
-                connection.subscriptions.has(runtime.key),
+          if (record.recoveryClaimCompletion?.state === "running") {
+            const eligibility = await resolveRecoveryEligibility(
+              runtime,
+              deps.canRecover,
             );
-            runtime.activeConnectionId = ownerConnection?.id ?? null;
-            const turnId = `turn-recovered-complete-${randomUUID()}`;
-            if (
-              !prepareInputTerminal(runtime, record.durableInputIdentities, {
-                scope: {
-                  agentId: record.agentId,
-                  conversationId: record.conversationId,
-                },
-                message: {
-                  type: "turn_finished",
-                  turn_id: turnId,
-                  stop_reason: "end_turn",
-                  ...(record.terminalConsumerIds?.length
-                    ? {
-                        terminal_consumer_ids: [
-                          ...new Set(record.terminalConsumerIds),
-                        ],
-                      }
-                    : {}),
-                  ...(recordedRunId ? { run_id: recordedRunId } : {}),
-                },
-                owner: getTurnFinishedOwner(runtime, record.revision),
-              })
-            ) {
+            if (eligibility !== "owned" || !unchanged()) {
               deferred = true;
               continue;
             }
-            promotePreparedInputTerminals(listener, terminalStore, {
+            recoveryClaim = await (deps.acquireClaim ?? acquireRecoveryClaim)(
+              runtime,
+              () =>
+                scheduleRecordedTurnRecovery(listener, () =>
+                  recoverRecordedTurns(listener, deps),
+                ),
+            );
+            if (!recoveryClaim) {
+              deferred = true;
+              continue;
+            }
+            if (!unchanged()) {
+              await recoveryClaim.release();
+              recoveryClaim = undefined;
+              deferred = true;
+              continue;
+            }
+            if (
+              !prepareRecordedInputTerminal(
+                listener,
+                terminalStore,
+                runtime,
+                record,
+                recordedRunId,
+              )
+            ) {
+              await recoveryClaim.release();
+              recoveryClaim = undefined;
+              deferred = true;
+              continue;
+            }
+            const pendingCompletion = markRecoveryClaimCompletionPending(
+              store,
+              record,
+            );
+            if (!pendingCompletion?.revision) {
+              await recoveryClaim.release();
+              recoveryClaim = undefined;
+              deferred = true;
+              continue;
+            }
+            if (!recoveryClaim.owned || !(await recoveryClaim.complete())) {
+              recoveryClaim.abandon();
+              recoveryClaim = undefined;
+              deferred = true;
+              continue;
+            }
+            recoveryClaim = undefined;
+            const retirement = retireAcknowledgedRecoveryClaim(store, {
               agentId: record.agentId,
               conversationId: record.conversationId,
+              lineageId: record.recoveryClaimCompletion.lineageId,
+              pendingRevision: pendingCompletion.revision,
             });
+            if (retirement === "failed" || retirement === "preserved") {
+              deferred = true;
+            }
+            continue;
           }
-          store.remove(record.agentId, record.conversationId);
+          if (
+            !prepareRecordedInputTerminal(
+              listener,
+              terminalStore,
+              runtime,
+              record,
+              recordedRunId,
+            )
+          ) {
+            deferred = true;
+            continue;
+          }
+          store.remove(
+            record.agentId,
+            record.conversationId,
+            record.revision ?? null,
+          );
           continue;
         }
         const owned = [];
@@ -269,21 +459,34 @@ export async function recoverRecordedTurns(
           )
             owned.push(approval);
         }
-        if (!unchanged()) continue;
-        if (!owned.length) {
-          store.remove(record.agentId, record.conversationId);
+        if (!unchanged()) {
+          deferred = true;
           continue;
         }
-        if (owned.length !== pending.length) continue;
+        if (!owned.length) {
+          store.remove(
+            record.agentId,
+            record.conversationId,
+            record.revision ?? null,
+          );
+          continue;
+        }
+        if (owned.length !== pending.length) {
+          deferred = true;
+          continue;
+        }
         const eligibility = await resolveRecoveryEligibility(
           runtime,
           deps.canRecover,
         );
         if (eligibility !== "owned") {
-          if (eligibility === "unavailable") deferred = true;
+          deferred = true;
           continue;
         }
-        if (!unchanged()) continue;
+        if (!unchanged()) {
+          deferred = true;
+          continue;
+        }
         recoveryClaim = await (deps.acquireClaim ?? acquireRecoveryClaim)(
           runtime,
           () => {
@@ -302,6 +505,7 @@ export async function recoverRecordedTurns(
         if (!unchanged()) {
           await recoveryClaim?.release();
           recoveryClaim = undefined;
+          deferred = true;
           continue;
         }
         const approvals = recordedToolResults(
@@ -318,10 +522,16 @@ export async function recoverRecordedTurns(
               results: approvals,
               requestOtid: randomUUID(),
             };
-        store.write(continuation);
-        const persistedContinuation = store.read(
-          continuation.agentId,
-          continuation.conversationId,
+        const recoveryLineageId = randomUUID();
+        const persistedContinuation = store.write(
+          {
+            ...continuation,
+            recoveryClaimCompletion: {
+              lineageId: recoveryLineageId,
+              state: "running",
+            },
+          },
+          record.revision ?? null,
         );
         // An observer sync may have parked generic stale denials. The saved
         // results below replace those, rather than appending a second result.
@@ -365,34 +575,66 @@ export async function recoverRecordedTurns(
           continuationLease,
           undefined,
           hasRecoveryOwnership,
+          false,
+          persistedContinuation.revision,
+          recoveryClaim !== null && recoveryClaim !== undefined,
+          recoveryLineageId,
         );
         continuationStarted = true;
         void continuationPromise
           .then(async () => {
-            if (recoveryClaim && !(await recoveryClaim.complete())) {
-              if (
-                continuationLease &&
-                runtime.turnLifecycle.isCurrent(continuationLease)
-              ) {
-                runtime.turnLifecycle.requestCancellation({
-                  cause: "transport",
-                });
-                runtime.turnLifecycle.finish(continuationLease, "cancelled");
-              }
+            const completed = store.read(
+              continuation.agentId,
+              continuation.conversationId,
+            );
+            if (
+              !completed?.revision ||
+              completed.recoveryClaimCompletion?.lineageId !== recoveryLineageId
+            ) {
               scheduleRecordedTurnRecovery(listener, () =>
                 recoverRecordedTurns(listener, deps),
               );
               return;
             }
-            const current = store.read(
-              continuation.agentId,
-              continuation.conversationId,
-            );
-            if (
-              current?.revision &&
-              current.revision === persistedContinuation?.revision
-            ) {
-              store.remove(continuation.agentId, continuation.conversationId);
+            let pendingCompletion: typeof completed;
+            try {
+              pendingCompletion = store.write(
+                {
+                  ...completed,
+                  recoveryClaimCompletion: {
+                    ...completed.recoveryClaimCompletion,
+                    lineageId: recoveryLineageId,
+                    state: "pending",
+                    effectRevision: completed.revision,
+                  },
+                },
+                completed.revision,
+              );
+            } catch {
+              scheduleRecordedTurnRecovery(listener, () =>
+                recoverRecordedTurns(listener, deps),
+              );
+              return;
+            }
+            if (recoveryClaim && !(await recoveryClaim.complete())) {
+              recoveryClaim.abandon();
+              scheduleRecordedTurnRecovery(listener, () =>
+                recoverRecordedTurns(listener, deps),
+              );
+              return;
+            }
+            const retirement = pendingCompletion.revision
+              ? retireAcknowledgedRecoveryClaim(store, {
+                  agentId: continuation.agentId,
+                  conversationId: continuation.conversationId,
+                  lineageId: recoveryLineageId,
+                  pendingRevision: pendingCompletion.revision,
+                })
+              : "failed";
+            if (retirement === "failed" || retirement === "preserved") {
+              scheduleRecordedTurnRecovery(listener, () =>
+                recoverRecordedTurns(listener, deps),
+              );
             }
           })
           .catch(async (error) => {
@@ -437,10 +679,22 @@ export async function recoverRecordedTurns(
     }
   } finally {
     recovering.delete(listener);
-    if (deferred && !listener.intentionallyClosed) {
+    if (pendingRecoveries.delete(listener)) {
+      scheduleRecordedTurnRecovery(
+        listener,
+        () => recoverRecordedTurns(listener, deps),
+        deps.retryDelayMs,
+      );
+    } else if (deferred && !listener.intentionallyClosed) {
+      const retryDelayMs = deps.retryDelayMs ?? 5000;
       const timer = setTimeout(() => {
-        void recoverRecordedTurns(listener, deps);
-      }, 5000);
+        retryTimers.delete(listener);
+        scheduleRecordedTurnRecovery(
+          listener,
+          () => recoverRecordedTurns(listener, deps),
+          retryDelayMs,
+        );
+      }, retryDelayMs);
       timer.unref();
       retryTimers.set(listener, timer);
     }

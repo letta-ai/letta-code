@@ -2,11 +2,330 @@ import { expect, mock, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import {
   createInterruptedTurnStore,
   type InterruptedTurnRecord,
   recordedToolResults,
+  recordListenerWork,
 } from "./interrupted-turn-record";
+import { createRuntime } from "./lifecycle";
+import { retireAcknowledgedRecoveryClaim } from "./recovery-claim-completion";
+
+test.each([
+  { name: "missing approvals", continuation: {} },
+  { name: "non-array approvals", continuation: { approvals: "invalid" } },
+  {
+    name: "malformed approval",
+    continuation: { approvals: [{ status: "success", tool_return: "ok" }] },
+  },
+  {
+    name: "malformed content part",
+    continuation: {
+      approvals: [
+        {
+          tool_call_id: "call-1",
+          status: "success",
+          tool_return: [{ type: "image", source: { type: "base64" } }],
+        },
+      ],
+    },
+  },
+])("rejects persisted teleport continuation with $name", ({ continuation }) => {
+  const directory = mkdtempSync(join(tmpdir(), "listener-invalid-teleport-"));
+  try {
+    writeFileSync(
+      join(directory, "agent-test_conv-test.json"),
+      JSON.stringify({
+        agentId: "agent-test",
+        conversationId: "conv-test",
+        runId: "run-test",
+        toolCallIds: [],
+        results: [],
+        requestOtid: "request-test",
+        workingDirectory: "/project",
+        teleport: {
+          teleportId: "teleport-test",
+          connectionId: "source",
+          activeTurn: true,
+          ready: true,
+          continuation,
+        },
+      }),
+    );
+    expect(
+      createInterruptedTurnStore(directory).read("agent-test", "conv-test"),
+    ).toBeNull();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test.each(["direct", "detached"])(
+  "%s recovery completion preserves an independent successor write",
+  (path) => {
+    const directory = mkdtempSync(join(tmpdir(), "listener-successor-"));
+    const store = createInterruptedTurnStore(directory);
+    const listener = createRuntime();
+    listener.connectionId = "conn-successor";
+    const runtime = getOrCreateScopedRuntime(
+      listener,
+      "agent-test",
+      "conv-test",
+    );
+    const lineageId = "recovery-lineage";
+    try {
+      const running = store.write({
+        agentId: "agent-test",
+        conversationId: "conv-test",
+        runId: "run-predecessor",
+        toolCallIds: ["call-predecessor"],
+        results: [],
+        requestOtid: "request-predecessor",
+        workingDirectory: "/predecessor",
+        recoveryClaimCompletion: { lineageId, state: "running" },
+      });
+      const pendingRevision =
+        path === "direct"
+          ? recordListenerWork(
+              runtime,
+              {
+                recoveryClaimCompletion: {
+                  lineageId,
+                  state: "pending",
+                  effectRevision: running.revision,
+                },
+              },
+              "after_tool_execution",
+              running.revision,
+              lineageId,
+              store,
+            )
+          : store.write(
+              {
+                ...running,
+                recoveryClaimCompletion: {
+                  lineageId,
+                  state: "pending",
+                  effectRevision: running.revision,
+                },
+              },
+              running.revision,
+            ).revision;
+      expect(pendingRevision).toBeString();
+
+      const successorRevision = recordListenerWork(
+        runtime,
+        {
+          runId: "run-successor",
+          toolCallIds: ["call-successor"],
+          results: [
+            {
+              tool_call_id: "call-successor",
+              status: "success",
+              tool_return: "successor-result",
+            },
+          ],
+          requestOtid: "request-successor",
+          actingUserId: "actor-successor",
+          durableInputIdentities: [{ domain: "input", id: "input-successor" }],
+          terminalConsumerIds: ["slack:agent-test"],
+        },
+        "after_tool_execution",
+        pendingRevision,
+        undefined,
+        store,
+      );
+      expect(successorRevision).toBeString();
+      expect(
+        store.read("agent-test", "conv-test")?.recoveryClaimCompletion,
+      ).toMatchObject({ lineageId, independentSuccessor: true });
+
+      expect(
+        retireAcknowledgedRecoveryClaim(store, {
+          agentId: "agent-test",
+          conversationId: "conv-test",
+          lineageId,
+          pendingRevision: pendingRevision ?? "missing",
+        }),
+      ).toBe("preserved");
+      expect(store.read("agent-test", "conv-test")?.revision).toBe(
+        successorRevision,
+      );
+      const successorCheckpoint = recordListenerWork(
+        runtime,
+        { terminalConsumerIds: ["slack:agent-test"] },
+        "after_tool_execution",
+        successorRevision,
+        undefined,
+        store,
+      );
+      expect(successorCheckpoint).toBeString();
+      expect(store.read("agent-test", "conv-test")).toMatchObject({
+        runId: "run-successor",
+        toolCallIds: ["call-successor"],
+        results: [{ tool_call_id: "call-successor" }],
+        requestOtid: "request-successor",
+        actingUserId: "actor-successor",
+        durableInputIdentities: [{ domain: "input", id: "input-successor" }],
+        terminalConsumerIds: ["slack:agent-test"],
+      });
+      expect(
+        store.read("agent-test", "conv-test")?.recoveryClaimCompletion,
+      ).toBeUndefined();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test("round-trips persisted teleport text and image ToolReturn parts", () => {
+  const directory = mkdtempSync(join(tmpdir(), "listener-teleport-parts-"));
+  try {
+    const store = createInterruptedTurnStore(directory);
+    const written = store.write({
+      agentId: "agent-test",
+      conversationId: "conv-test",
+      runId: null,
+      toolCallIds: [],
+      results: [],
+      requestOtid: "request-test",
+      workingDirectory: "/project",
+      teleport: {
+        teleportId: "teleport-test",
+        connectionId: "source",
+        activeTurn: true,
+        ready: true,
+        continuation: {
+          approvals: [
+            {
+              tool_call_id: "call-1",
+              status: "success",
+              tool_return: [
+                { type: "text", text: "done" },
+                {
+                  type: "image",
+                  source: {
+                    type: "base64",
+                    media_type: "image/png",
+                    data: "aW1hZ2U=",
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      },
+    } as InterruptedTurnRecord);
+    expect(store.read("agent-test", "conv-test")).toEqual(written);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test.each([
+  { name: "null", actingUserId: null },
+  { name: "number", actingUserId: 42 },
+  { name: "object", actingUserId: {} },
+  { name: "array", actingUserId: [] },
+])("rejects persisted $name actingUserId", ({ actingUserId }) => {
+  const directory = mkdtempSync(join(tmpdir(), "listener-invalid-actor-"));
+  try {
+    writeFileSync(
+      join(directory, "agent-test_conv-test.json"),
+      JSON.stringify({
+        agentId: "agent-test",
+        conversationId: "conv-test",
+        runId: null,
+        toolCallIds: [],
+        results: [],
+        requestOtid: "request-test",
+        workingDirectory: "/project",
+        actingUserId,
+      }),
+    );
+    expect(
+      createInterruptedTurnStore(directory).read("agent-test", "conv-test"),
+    ).toBeNull();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test.each([
+  { lineageId: "", state: "pending", effectRevision: "revision-1" },
+  { lineageId: "lineage-1", state: "unknown" },
+  { lineageId: "lineage-1", state: "pending" },
+  { lineageId: "lineage-1", state: "pending", effectRevision: 42 },
+])("rejects malformed recovery claim completion marker %#", (marker) => {
+  const directory = mkdtempSync(
+    join(tmpdir(), "listener-invalid-claim-marker-"),
+  );
+  try {
+    writeFileSync(
+      join(directory, "agent-test_conv-test.json"),
+      JSON.stringify({
+        agentId: "agent-test",
+        conversationId: "conv-test",
+        runId: null,
+        toolCallIds: [],
+        results: [],
+        requestOtid: "request-test",
+        workingDirectory: "/project",
+        recoveryClaimCompletion: marker,
+      }),
+    );
+    expect(
+      createInterruptedTurnStore(directory).read("agent-test", "conv-test"),
+    ).toBeNull();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("a queued unattributed user clears inherited actor in restart evidence", () => {
+  const directory = mkdtempSync(join(tmpdir(), "listener-actor-clear-"));
+  try {
+    const store = createInterruptedTurnStore(directory);
+    const first = store.write({
+      agentId: "agent-test",
+      conversationId: "conv-test",
+      runId: null,
+      toolCallIds: [],
+      results: [],
+      requestOtid: "request-test",
+      workingDirectory: "/project",
+      actingUserId: "user-a",
+    });
+    store.write({ ...first, actingUserId: undefined }, first.revision);
+    expect(store.read("agent-test", "conv-test")?.actingUserId).toBeUndefined();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test.each([undefined, "user-1"])(
+  "accepts persisted actingUserId %p",
+  (actingUserId) => {
+    const directory = mkdtempSync(join(tmpdir(), "listener-valid-actor-"));
+    try {
+      const store = createInterruptedTurnStore(directory);
+      const written = store.write({
+        agentId: "agent-test",
+        conversationId: "conv-test",
+        runId: null,
+        toolCallIds: [],
+        results: [],
+        requestOtid: "request-test",
+        workingDirectory: "/project",
+        actingUserId,
+      });
+      expect(store.read("agent-test", "conv-test")).toEqual(written);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 test("fsyncs the parent after publishing and removing a checkpoint", () => {
   const directory = mkdtempSync(join(tmpdir(), "listener-fsync-"));
@@ -77,6 +396,39 @@ test("does not fsync when removing a checkpoint that does not exist", () => {
       fsyncDirectory: syncDirectory,
     }).remove("agent-test", "conv-test");
     expect(syncDirectory).not.toHaveBeenCalled();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("stale owners cannot overwrite or remove a successor checkpoint", () => {
+  const directory = mkdtempSync(join(tmpdir(), "listener-revision-cas-"));
+  try {
+    const store = createInterruptedTurnStore(directory);
+    const first = store.write({
+      agentId: "agent-test",
+      conversationId: "conv-test",
+      runId: "run-first",
+      toolCallIds: ["call-test"],
+      results: [],
+      requestOtid: "request-first",
+      workingDirectory: "/project",
+    });
+    const successor = store.write(
+      { ...first, runId: "run-successor", requestOtid: "request-successor" },
+      first.revision,
+    );
+
+    expect(() =>
+      store.write({ ...first, results: [] }, first.revision),
+    ).toThrow("Interrupted-turn revision changed");
+    expect(store.remove("agent-test", "conv-test", first.revision)).toBe(false);
+    expect(store.read("agent-test", "conv-test")?.revision).toBe(
+      successor.revision,
+    );
+    expect(store.remove("agent-test", "conv-test", successor.revision)).toBe(
+      true,
+    );
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

@@ -21,8 +21,10 @@ import {
   evictConversationRuntimeIfIdle,
   getOrCreateConversationRuntime,
 } from "./runtime";
+import { isListenerTransportOpen } from "./transport";
 import {
   createTurnFinishedStore,
+  replayPendingTurnFinishedToConnection,
   TurnFinishedCapacityError,
 } from "./turn-finished-replay";
 import type { ConversationRuntime, ListenerRuntime } from "./types";
@@ -255,6 +257,7 @@ export function promotePreparedInputTerminals(
       continue;
     }
     let owner = prepared.owner;
+    let replayConnectionId: string | null = null;
     try {
       if (prepared.message.terminal_consumer_ids?.length) {
         const existing = terminalStore
@@ -266,31 +269,47 @@ export function promotePreparedInputTerminals(
               : terminal.owner.terminalIdentity === undefined &&
                 terminal.message.turn_id === prepared.message.turn_id,
           );
-        if (!existing && owner.connectionId === null) {
+        if (existing) {
+          replayConnectionId = existing.owner.connectionId;
+        } else if (owner.connectionId === null) {
           const runtime = getOrCreateScopedRuntime(
             listener,
             prepared.scope.agentId,
             prepared.scope.conversationId,
           );
-          const connection = [...listener.connections.values()].find(
-            (candidate) =>
-              candidate.initialized && candidate.subscriptions.has(runtime.key),
-          );
+          const activeConnection = runtime.activeConnectionId
+            ? listener.connections.get(runtime.activeConnectionId)
+            : undefined;
+          const connection =
+            runtime.activeConnectionId !== null
+              ? activeConnection?.initialized &&
+                activeConnection.subscriptions.has(runtime.key)
+                ? activeConnection
+                : undefined
+              : [...listener.connections.values()].find(
+                  (candidate) =>
+                    candidate.initialized &&
+                    candidate.subscriptions.has(runtime.key),
+                );
           if (!connection) continue;
-          runtime.activeConnectionId = connection.id;
           owner = {
             ...owner,
             connectionId: connection.id,
             canRotate: connection.options.connectionIdCanResume === false,
             lineageId: connection.startupOwner.lineageId,
           };
+          replayConnectionId = connection.id;
+        } else {
+          replayConnectionId = owner.connectionId;
         }
-        terminalStore.put(
-          prepared.scope.agentId,
-          prepared.scope.conversationId,
-          prepared.message,
-          existing ? prepared.owner : owner,
-        );
+        if (!existing) {
+          terminalStore.put(
+            prepared.scope.agentId,
+            prepared.scope.conversationId,
+            prepared.message,
+            owner,
+          );
+        }
       }
     } catch (error) {
       if (error instanceof TurnFinishedCapacityError) continue;
@@ -307,6 +326,26 @@ export function promotePreparedInputTerminals(
       throw new Error("Failed to promote prepared input terminal");
     }
     promoted += 1;
+    if (replayConnectionId) {
+      const connection = listener.connections.get(replayConnectionId);
+      const transport = connection?.streamWriter ?? connection?.writer;
+      if (
+        connection?.initialized &&
+        transport &&
+        isListenerTransportOpen(transport)
+      ) {
+        replayPendingTurnFinishedToConnection(
+          transport,
+          getOrCreateScopedRuntime(
+            listener,
+            prepared.scope.agentId,
+            prepared.scope.conversationId,
+          ),
+          connection.id,
+          terminalStore,
+        );
+      }
+    }
   }
   return promoted;
 }
