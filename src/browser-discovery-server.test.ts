@@ -153,6 +153,72 @@ describe("browser discovery server", () => {
     expect(await malformed.json()).toEqual({ status: "invalid_request" });
   });
 
+  test("requires an explicit opt-in for local development origins", async () => {
+    const request = {
+      body: JSON.stringify({
+        agentId: "agent-123",
+        service: "datadog",
+        serverUrl: "https://mcp.datadoghq.com/v1/mcp",
+      }),
+      headers: {
+        "Content-Type": "application/json",
+        Origin: "http://localhost:4201",
+        "X-Letta-Local-Connect": "1",
+      },
+      method: "POST",
+    } as const;
+    const denied = await startServer(async () => undefined);
+    const deniedUrl = `http://${denied.address.host}:${denied.address.port}${BROWSER_DEVICE_MCP_OAUTH_PATH}`;
+    expect((await fetch(deniedUrl, request)).status).toBe(403);
+
+    const handle = startBrowserDiscoveryServer({
+      allowLocalBrowserOrigins: true,
+      connectMcpOAuth: async () => undefined,
+      port: 0,
+    });
+    handles.push(handle);
+    const address = await handle.ready;
+    const allowedUrl = `http://${address.host}:${address.port}${BROWSER_DEVICE_MCP_OAUTH_PATH}`;
+    expect((await fetch(allowedUrl, request)).status).toBe(200);
+  });
+
+  test("deduplicates concurrent connection attempts", async () => {
+    let release: (() => void) | undefined;
+    let started: (() => void) | undefined;
+    const operationStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const operationReleased = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { address } = await startServer(async () => {
+      started?.();
+      await operationReleased;
+    });
+    const url = `http://${address.host}:${address.port}${BROWSER_DEVICE_MCP_OAUTH_PATH}`;
+    const request = {
+      body: JSON.stringify({
+        agentId: "agent-123",
+        service: "datadog",
+        serverUrl: "https://mcp.datadoghq.com/v1/mcp",
+      }),
+      headers: {
+        "Content-Type": "application/json",
+        Origin: "https://chat.letta.com",
+        "X-Letta-Local-Connect": "1",
+      },
+      method: "POST",
+    } as const;
+
+    const first = fetch(url, request);
+    await operationStarted;
+    const duplicate = await fetch(url, request);
+    expect(duplicate.status).toBe(409);
+    expect(await duplicate.json()).toEqual({ status: "already_connecting" });
+    release?.();
+    expect((await first).status).toBe(200);
+  });
+
   test("answers command private-network preflight with narrow CORS", async () => {
     const { address } = await startServer(async () => undefined);
     const response = await fetch(

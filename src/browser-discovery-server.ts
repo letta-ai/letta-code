@@ -34,6 +34,7 @@ export interface BrowserDiscoveryServerHandle {
 }
 
 interface BrowserDiscoveryServerOptions {
+  allowLocalBrowserOrigins?: boolean;
   connectMcpOAuth?: (request: BrowserDeviceMcpOAuthRequest) => Promise<void>;
   port?: number;
   retryDelayMs?: number;
@@ -52,6 +53,9 @@ export function startBrowserDiscoveryServer(
 ): BrowserDiscoveryServerHandle {
   const port = options.port ?? BROWSER_DISCOVERY_PORT;
   const retryDelayMs = options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
+  const allowLocalBrowserOrigins =
+    options.allowLocalBrowserOrigins ??
+    process.env.LETTA_BROWSER_DEVICE_ALLOW_LOCAL_ORIGINS === "1";
   const connectMcpOAuth =
     options.connectMcpOAuth ?? connectBrowserDeviceMcpOAuth;
   let activeServer: Server | null = null;
@@ -81,7 +85,10 @@ export function startBrowserDiscoveryServer(
   const attemptListen = (): void => {
     if (stopped || activeServer || pendingServer) return;
 
-    const candidate = createBrowserDiscoveryHttpServer(connectMcpOAuth);
+    const candidate = createBrowserDiscoveryHttpServer(
+      connectMcpOAuth,
+      allowLocalBrowserOrigins,
+    );
     pendingServer = candidate;
     const onStartupError = (error: Error & { code?: string }): void => {
       pendingServer = null;
@@ -160,7 +167,9 @@ export function startBrowserDiscoveryServer(
 
 function createBrowserDiscoveryHttpServer(
   connectMcpOAuth: (request: BrowserDeviceMcpOAuthRequest) => Promise<void>,
+  allowLocalBrowserOrigins: boolean,
 ): Server {
+  const activeConnections = new Set<string>();
   let server: Server;
   server = createServer((request, response) => {
     void handleBrowserDiscoveryRequest(
@@ -168,6 +177,8 @@ function createBrowserDiscoveryHttpServer(
       request,
       response,
       connectMcpOAuth,
+      allowLocalBrowserOrigins,
+      activeConnections,
     );
   });
   server.on("connection", (socket) => socket.unref());
@@ -185,6 +196,8 @@ async function handleBrowserDiscoveryRequest(
   request: IncomingMessage,
   response: ServerResponse,
   connectMcpOAuth: (request: BrowserDeviceMcpOAuthRequest) => Promise<void>,
+  allowLocalBrowserOrigins: boolean,
+  activeConnections: Set<string>,
 ): Promise<void> {
   if (!isLoopbackAddress(request.socket.remoteAddress)) {
     respond(response, 403, "Browser connection must use loopback");
@@ -207,7 +220,10 @@ async function handleBrowserDiscoveryRequest(
     return;
   }
 
-  const origin = allowedBrowserOrigin(request.headers.origin);
+  const origin = allowedBrowserOrigin(
+    request.headers.origin,
+    request.url === BROWSER_DISCOVERY_PATH || allowLocalBrowserOrigins,
+  );
   if (request.method === "OPTIONS") {
     if (!origin) {
       respond(response, 403, "Browser origin is not allowed");
@@ -242,6 +258,7 @@ async function handleBrowserDiscoveryRequest(
       response,
       origin,
       connectMcpOAuth,
+      activeConnections,
     );
     return;
   }
@@ -263,6 +280,7 @@ async function handleMcpOAuthConnectRequest(
   response: ServerResponse,
   origin: string,
   connectMcpOAuth: (request: BrowserDeviceMcpOAuthRequest) => Promise<void>,
+  activeConnections: Set<string>,
 ): Promise<void> {
   if (!request.headers["content-type"]?.startsWith("application/json")) {
     response.writeHead(415, {
@@ -278,8 +296,18 @@ async function handleMcpOAuthConnectRequest(
   }
   try {
     const parsed = parseMcpOAuthRequest(await readRequestBody(request));
-    await connectMcpOAuth(parsed);
-    respondJson(response, 200, { status: "connected" }, origin);
+    const connectionKey = `${parsed.agentId}\0${parsed.service}\0${parsed.serverUrl}`;
+    if (activeConnections.has(connectionKey)) {
+      respondJson(response, 409, { status: "already_connecting" }, origin);
+      return;
+    }
+    activeConnections.add(connectionKey);
+    try {
+      await connectMcpOAuth(parsed);
+      respondJson(response, 200, { status: "connected" }, origin);
+    } finally {
+      activeConnections.delete(connectionKey);
+    }
   } catch (error) {
     if (error instanceof BrowserRequestError) {
       respondJson(
@@ -301,9 +329,13 @@ async function handleMcpOAuthConnectRequest(
   }
 }
 
-function allowedBrowserOrigin(value: string | undefined): string | undefined {
+function allowedBrowserOrigin(
+  value: string | undefined,
+  allowLocalBrowserOrigins: boolean,
+): string | undefined {
   if (!value) return undefined;
-  return ALLOWED_BROWSER_ORIGINS.has(value) || LOCAL_BROWSER_ORIGIN.test(value)
+  return ALLOWED_BROWSER_ORIGINS.has(value) ||
+    (allowLocalBrowserOrigins && LOCAL_BROWSER_ORIGIN.test(value))
     ? value
     : undefined;
 }
