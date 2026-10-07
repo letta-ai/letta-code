@@ -227,6 +227,108 @@ describe("browser discovery server", () => {
     expect((await first).status).toBe(200);
   });
 
+  test("cancels OAuth when the initiating browser request disconnects", async () => {
+    const fixture = await buildNodeFixture(`
+import { createConnection } from "node:net";
+let started;
+const operationStarted = new Promise((resolve) => { started = resolve; });
+let cancelled;
+const operationCancelled = new Promise((resolve) => { cancelled = resolve; });
+const handle = startBrowserDiscoveryServer({
+  connectMcpOAuth: async (_request, signal) => {
+    started();
+    await new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => {
+        cancelled();
+        reject(signal.reason);
+      }, { once: true });
+    });
+  },
+  oauthTimeoutMs: 2_000,
+  port: 0,
+});
+const address = await handle.ready;
+const body = JSON.stringify({
+  handoffKey: "${HANDOFF_KEY}",
+  service: "datadog",
+  serverUrl: "https://mcp.datadoghq.com/v1/mcp",
+});
+const socket = createConnection(address.port, address.host);
+await new Promise((resolve, reject) => {
+  socket.once("connect", resolve);
+  socket.once("error", reject);
+});
+socket.write(
+  "POST /mcp-oauth/connect HTTP/1.1\\r\\n" +
+  "Host: " + address.host + ":" + address.port + "\\r\\n" +
+  "Content-Type: application/json\\r\\n" +
+  "Origin: https://chat.letta.com\\r\\n" +
+  "X-Letta-Local-Connect: 1\\r\\n" +
+  "Content-Length: " + Buffer.byteLength(body) + "\\r\\n" +
+  "Connection: close\\r\\n" +
+  "\\r\\n" +
+  body,
+);
+await operationStarted;
+socket.destroy();
+await Promise.race([
+  operationCancelled,
+  new Promise((_resolve, reject) => setTimeout(
+    () => reject(new Error("disconnect was not cancelled")),
+    1_000,
+  )),
+]);
+await handle.close();
+console.log("cancelled");
+`);
+    const result = spawnSync("node", [fixture], {
+      encoding: "utf8",
+      timeout: 5_000,
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe("cancelled");
+    expect(result.stderr).toBe("");
+  });
+
+  test("bounds the complete browser-device OAuth operation", async () => {
+    let timeoutName: string | undefined;
+    const handle = startBrowserDiscoveryServer({
+      connectMcpOAuth: async (_request, signal) => {
+        await new Promise<void>((_resolve, reject) => {
+          const abort = (): void => {
+            timeoutName = signal.reason?.name;
+            reject(signal.reason);
+          };
+          signal.addEventListener("abort", abort, { once: true });
+        });
+      },
+      oauthTimeoutMs: 10,
+      port: 0,
+    });
+    handles.push(handle);
+    const address = await handle.ready;
+    const response = await fetch(
+      `http://${address.host}:${address.port}${BROWSER_DEVICE_MCP_OAUTH_PATH}`,
+      {
+        body: JSON.stringify({
+          handoffKey: HANDOFF_KEY,
+          service: "datadog",
+          serverUrl: "https://mcp.datadoghq.com/v1/mcp",
+        }),
+        headers: {
+          "Content-Type": "application/json",
+          Origin: "https://chat.letta.com",
+          "X-Letta-Local-Connect": "1",
+        },
+        method: "POST",
+      },
+    );
+
+    expect(response.status).toBe(502);
+    expect(timeoutName).toBe("TimeoutError");
+  });
+
   test("answers command private-network preflight with narrow CORS", async () => {
     const { address } = await startServer(async () => undefined);
     const response = await fetch(
@@ -386,13 +488,19 @@ async function startServer(): Promise<{
   address: Awaited<BrowserDiscoveryServerHandle["ready"]>;
 }>;
 async function startServer(
-  connectMcpOAuth: (request: BrowserDeviceMcpOAuthRequest) => Promise<void>,
+  connectMcpOAuth: (
+    request: BrowserDeviceMcpOAuthRequest,
+    signal: AbortSignal,
+  ) => Promise<void>,
 ): Promise<{
   handle: BrowserDiscoveryServerHandle;
   address: Awaited<BrowserDiscoveryServerHandle["ready"]>;
 }>;
 async function startServer(
-  connectMcpOAuth?: (request: BrowserDeviceMcpOAuthRequest) => Promise<void>,
+  connectMcpOAuth?: (
+    request: BrowserDeviceMcpOAuthRequest,
+    signal: AbortSignal,
+  ) => Promise<void>,
 ): Promise<{
   handle: BrowserDiscoveryServerHandle;
   address: Awaited<BrowserDiscoveryServerHandle["ready"]>;

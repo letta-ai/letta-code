@@ -86,6 +86,32 @@ describe("browser device MCP OAuth", () => {
     ).toBeNull();
   });
 
+  test("propagates caller cancellation through authorization and skips import", async () => {
+    const controller = new AbortController();
+    let imported = false;
+    const operation = connectBrowserDeviceMcpOAuth(
+      REQUEST,
+      {
+        authorize: async (options) => {
+          await new Promise<void>((_resolve, reject) => {
+            const abort = (): void => reject(options.signal?.reason);
+            options.signal?.addEventListener("abort", abort, { once: true });
+          });
+          return CREDENTIALS;
+        },
+        importCredentials: async () => {
+          imported = true;
+        },
+        openBrowser: async () => undefined,
+      },
+      controller.signal,
+    );
+
+    controller.abort(new DOMException("Caller left", "AbortError"));
+    await expect(operation).rejects.toHaveProperty("name", "AbortError");
+    expect(imported).toBe(false);
+  });
+
   test("rejects invalid handoffs, services, server URLs, and authorization origins", async () => {
     const dependencies = {
       authorize: async (options: AuthorizeMcpServerWithStorageOptions) => {
@@ -246,19 +272,26 @@ describe("browser device MCP OAuth", () => {
     ).rejects.toThrow("OAuth authorization origin is not allowed");
   });
 
-  test("submits with the handoff key and no ambient authorization", async () => {
+  test("reconciles a processing handoff without ambient authorization", async () => {
     const originalFetch = globalThis.fetch;
-    let submitted: Request | undefined;
+    const submitted: Request[] = [];
     const fetchStub = async (
       input: string | URL | Request,
       init?: RequestInit,
     ): Promise<Response> => {
-      submitted =
+      const request =
         typeof input === "string"
           ? new Request(input, init)
           : input instanceof URL
             ? new Request(input.href, init)
             : new Request(input, init);
+      submitted.push(request);
+      if (submitted.length === 1) {
+        return new Response(
+          JSON.stringify({ error: "OAuth handoff submission is in progress" }),
+          { status: 409 },
+        );
+      }
       return new Response(
         JSON.stringify({ authorized: true, connected: true }),
         { status: 200 },
@@ -269,18 +302,53 @@ describe("browser device MCP OAuth", () => {
     });
 
     try {
-      await submitBrowserDeviceMcpOAuthHandoff(REQUEST, CREDENTIALS);
+      await submitBrowserDeviceMcpOAuthHandoff(
+        REQUEST,
+        CREDENTIALS,
+        undefined,
+        { retryDelayMs: 0 },
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }
 
-    expect(submitted?.url).toBe(
+    expect(submitted).toHaveLength(2);
+    expect(submitted[1]?.url).toBe(
       "https://api.letta.com/v1/tools/mcp/browser-device-oauth/handoffs",
     );
-    expect(submitted?.headers.get("authorization")).toBeNull();
-    expect(await submitted?.json()).toEqual({
+    expect(submitted[1]?.headers.get("authorization")).toBeNull();
+    expect(await submitted[1]?.json()).toEqual({
       ...CREDENTIALS,
       handoff_key: REQUEST.handoffKey,
     });
+  });
+
+  test("retries the same handoff after an ambiguous transport failure", async () => {
+    const originalFetch = globalThis.fetch;
+    let attempts = 0;
+    const fetchStub = async (): Promise<Response> => {
+      attempts += 1;
+      if (attempts === 1) throw new TypeError("connection reset");
+      return new Response(
+        JSON.stringify({ authorized: true, connected: true }),
+        { status: 200 },
+      );
+    };
+    globalThis.fetch = Object.assign(fetchStub, {
+      preconnect: originalFetch.preconnect,
+    });
+
+    try {
+      await submitBrowserDeviceMcpOAuthHandoff(
+        REQUEST,
+        CREDENTIALS,
+        undefined,
+        { retryDelayMs: 0 },
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(attempts).toBe(2);
   });
 });

@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
-import { apiRequest } from "@/backend/api/request";
+import { ApiRequestError, apiRequest } from "@/backend/api/request";
 import {
   type AuthorizeMcpServerWithStorageOptions,
   authorizeMcpServerWithStorage,
@@ -28,12 +28,16 @@ interface BrowserDeviceMcpOAuthDependencies {
   importCredentials: (
     request: BrowserDeviceMcpOAuthRequest,
     credentials: McpOAuthCredentialSnapshot,
+    signal?: AbortSignal,
   ) => Promise<void>;
   providerFetch?: McpOAuthFetch;
   openBrowser: (url: string) => Promise<void>;
 }
 
 const HANDOFF_KEY_PATTERN = /^[A-Za-z0-9_-]{43,128}$/;
+const HANDOFF_SUBMIT_TIMEOUT_MS = 90_000;
+const HANDOFF_ATTEMPT_TIMEOUT_MS = 10_000;
+const HANDOFF_RETRY_DELAY_MS = 250;
 
 const BROWSER_DEVICE_MCP_OAUTH_SERVICES: Record<
   string,
@@ -76,7 +80,9 @@ export async function connectBrowserDeviceMcpOAuth(
     importCredentials: submitBrowserDeviceMcpOAuthHandoff,
     openBrowser: openSystemBrowser,
   },
+  signal?: AbortSignal,
 ): Promise<void> {
+  signal?.throwIfAborted();
   const definition = resolveDefinition(request);
   const canonicalRequest = { ...request, serverUrl: definition.serverUrl };
   const ephemeralStorage = createEphemeralStorage();
@@ -96,10 +102,11 @@ export async function connectBrowserDeviceMcpOAuth(
       ),
       serverName: definition.serverName,
       serverUrl: definition.serverUrl,
+      signal,
       storage: ephemeralStorage.storage,
       storageNamespace: `browser-device-mcp-oauth-${randomUUID()}`,
     });
-    await dependencies.importCredentials(canonicalRequest, credentials);
+    await dependencies.importCredentials(canonicalRequest, credentials, signal);
   } finally {
     ephemeralStorage.clear();
   }
@@ -273,24 +280,84 @@ function createEphemeralStorage(): {
 export async function submitBrowserDeviceMcpOAuthHandoff(
   request: BrowserDeviceMcpOAuthRequest,
   credentials: McpOAuthCredentialSnapshot,
+  signal?: AbortSignal,
+  retryOptions: {
+    attemptTimeoutMs?: number;
+    retryDelayMs?: number;
+    timeoutMs?: number;
+  } = {},
 ): Promise<void> {
-  const response = await apiRequest<{
-    authorized?: unknown;
-    connected?: unknown;
-  }>(
-    "POST",
-    "/v1/tools/mcp/browser-device-oauth/handoffs",
-    { ...credentials, handoff_key: request.handoffKey },
-    {
-      actingUserId: null,
-      apiKey: "",
-      baseUrl: LETTA_CLOUD_API_URL,
-      signal: AbortSignal.timeout(90_000),
-    },
+  const timeoutSignal = AbortSignal.timeout(
+    retryOptions.timeoutMs ?? HANDOFF_SUBMIT_TIMEOUT_MS,
   );
-  if (response.authorized !== true || response.connected !== true) {
-    throw new Error("Cloud did not confirm the MCP OAuth connection");
+  const operationSignal = signal
+    ? AbortSignal.any([signal, timeoutSignal])
+    : timeoutSignal;
+  while (true) {
+    operationSignal.throwIfAborted();
+    const attemptSignal = AbortSignal.any([
+      operationSignal,
+      AbortSignal.timeout(
+        retryOptions.attemptTimeoutMs ?? HANDOFF_ATTEMPT_TIMEOUT_MS,
+      ),
+    ]);
+    try {
+      const response = await apiRequest<{
+        authorized?: unknown;
+        connected?: unknown;
+      }>(
+        "POST",
+        "/v1/tools/mcp/browser-device-oauth/handoffs",
+        { ...credentials, handoff_key: request.handoffKey },
+        {
+          actingUserId: null,
+          apiKey: "",
+          baseUrl: LETTA_CLOUD_API_URL,
+          signal: attemptSignal,
+        },
+      );
+      if (response.authorized !== true || response.connected !== true) {
+        throw new Error("Cloud did not confirm the MCP OAuth connection");
+      }
+      return;
+    } catch (error) {
+      if (operationSignal.aborted) throw operationSignal.reason;
+      if (!isRetryableHandoffSubmissionError(error)) throw error;
+      await abortableDelay(
+        retryOptions.retryDelayMs ?? HANDOFF_RETRY_DELAY_MS,
+        operationSignal,
+      );
+    }
   }
+}
+
+function isRetryableHandoffSubmissionError(error: unknown): boolean {
+  if (error instanceof ApiRequestError) {
+    return error.status === 409 || error.status === 429 || error.status === 503;
+  }
+  return (
+    error instanceof TypeError ||
+    (error instanceof DOMException &&
+      (error.name === "AbortError" || error.name === "TimeoutError"))
+  );
+}
+
+async function abortableDelay(
+  delayMs: number,
+  signal: AbortSignal,
+): Promise<void> {
+  signal.throwIfAborted();
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(finish, delayMs);
+    const abort = (): void => finish(signal.reason);
+    function finish(error?: unknown): void {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", abort);
+      if (error) reject(error);
+      else resolve();
+    }
+    signal.addEventListener("abort", abort, { once: true });
+  });
 }
 
 function datadogDefinition(
