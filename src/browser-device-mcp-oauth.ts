@@ -5,6 +5,7 @@ import {
   type AuthorizeMcpServerWithStorageOptions,
   authorizeMcpServerWithStorage,
   type McpOAuthCredentialSnapshot,
+  type McpOAuthFetch,
   type McpOAuthStorage,
 } from "@/mcp-oauth-public";
 
@@ -33,6 +34,7 @@ interface BrowserDeviceMcpOAuthDependencies {
     request: BrowserDeviceMcpOAuthRequest,
     credentials: McpOAuthCredentialSnapshot,
   ) => Promise<void>;
+  providerFetch?: McpOAuthFetch;
   openBrowser: (url: string) => Promise<void>;
 }
 
@@ -103,6 +105,10 @@ export async function connectBrowserDeviceMcpOAuth(
         );
         await dependencies.openBrowser(url.href);
       },
+      fetch: createProviderFetch(
+        definition,
+        dependencies.providerFetch ?? globalThis.fetch,
+      ),
       serverName: definition.serverName,
       serverUrl: definition.serverUrl,
       storage: ephemeralStorage.storage,
@@ -112,6 +118,75 @@ export async function connectBrowserDeviceMcpOAuth(
   } finally {
     ephemeralStorage.clear();
   }
+}
+
+function createProviderFetch(
+  definition: BrowserDeviceMcpOAuthDefinition,
+  baseFetch: McpOAuthFetch,
+): McpOAuthFetch {
+  const allowedOrigins = new Set([
+    ...definition.authorizationOrigins,
+    ...definition.serverUrls.map((value) => new URL(value).origin),
+  ]);
+  return async (input, init) => {
+    const request = new Request(input.toString(), init);
+    const method = request.method.toUpperCase();
+    const body =
+      method === "GET" || method === "HEAD"
+        ? undefined
+        : await request.arrayBuffer();
+    let currentUrl = allowedProviderUrl(request.url, allowedOrigins);
+    for (let redirects = 0; redirects <= 3; redirects += 1) {
+      const response = await baseFetch(currentUrl, {
+        body,
+        headers: request.headers,
+        method,
+        redirect: "manual",
+        signal: request.signal,
+      });
+      if (response.status < 300 || response.status >= 400) return response;
+      await response.body?.cancel();
+      if (method !== "GET" && method !== "HEAD") {
+        throw new Error("OAuth provider POST redirects are not allowed");
+      }
+      if (redirects === 3) {
+        throw new Error("OAuth provider returned too many redirects");
+      }
+      const location = response.headers.get("location");
+      if (!location) {
+        throw new Error("OAuth provider redirect is missing a location");
+      }
+      const nextUrl = allowedProviderUrl(
+        new URL(location, currentUrl).href,
+        allowedOrigins,
+      );
+      if (nextUrl.origin !== currentUrl.origin) {
+        throw new Error(
+          "Cross-origin OAuth provider redirects are not allowed",
+        );
+      }
+      currentUrl = nextUrl;
+    }
+    throw new Error("OAuth provider returned too many redirects");
+  };
+}
+
+function allowedProviderUrl(value: string, allowedOrigins: Set<string>): URL {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error("OAuth provider returned an invalid URL");
+  }
+  if (
+    url.protocol !== "https:" ||
+    url.username ||
+    url.password ||
+    !allowedOrigins.has(url.origin)
+  ) {
+    throw new Error("OAuth provider URL is not allowed");
+  }
+  return url;
 }
 
 function resolveDefinition(

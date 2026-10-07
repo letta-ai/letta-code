@@ -54,6 +54,7 @@ describe("browser device MCP OAuth", () => {
     expect(authorization?.storageNamespace).toMatch(
       /^browser-device-mcp-oauth-/,
     );
+    expect(authorization?.fetch).toEqual(expect.any(Function));
     expect(opened).toEqual([
       "https://app.datadoghq.com/oauth2/authorize?state=test",
     ]);
@@ -115,6 +116,35 @@ describe("browser device MCP OAuth", () => {
     await expect(
       connectBrowserDeviceMcpOAuth(REQUEST, dependencies),
     ).rejects.toThrow("OAuth authorization origin is not allowed");
+  });
+
+  test("limits provider network requests to known HTTPS origins", async () => {
+    await expect(
+      connectBrowserDeviceMcpOAuth(REQUEST, {
+        authorize: async (options) => {
+          await options.fetch?.("http://127.0.0.1/internal");
+          return CREDENTIALS;
+        },
+        importCredentials: async () => undefined,
+        openBrowser: async () => undefined,
+        providerFetch: async () => new Response(null, { status: 200 }),
+      }),
+    ).rejects.toThrow("OAuth provider URL is not allowed");
+
+    const requested: string[] = [];
+    await connectBrowserDeviceMcpOAuth(REQUEST, {
+      authorize: async (options) => {
+        await options.fetch?.("https://mcp.datadoghq.com/v1/mcp");
+        return CREDENTIALS;
+      },
+      importCredentials: async () => undefined,
+      openBrowser: async () => undefined,
+      providerFetch: async (input) => {
+        requested.push(String(input));
+        return new Response(null, { status: 200 });
+      },
+    });
+    expect(requested).toEqual(["https://mcp.datadoghq.com/v1/mcp"]);
   });
 
   test("accepts every catalog Datadog region and Comfy Cloud", async () => {
