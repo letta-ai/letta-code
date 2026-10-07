@@ -12,6 +12,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import { detectMemoryFormat, isCoreMemoryPath } from "@/agent/memory-format";
 import {
   getFileNodes,
   readFileContent,
@@ -161,7 +162,8 @@ function parseFrontmatter(raw: string): {
 }
 
 /** Collect memory files from the working tree on disk. */
-function collectFiles(memoryRoot: string): MemoryFile[] {
+export function collectMemoryViewerFiles(memoryRoot: string): MemoryFile[] {
+  const format = detectMemoryFormat(memoryRoot, false);
   const treeNodes = scanMemoryFilesystem(memoryRoot);
   const fileNodes = getFileNodes(treeNodes);
 
@@ -172,9 +174,7 @@ function collectFiles(memoryRoot: string): MemoryFile[] {
       const { frontmatter, body } = parseFrontmatter(raw);
       return {
         path: n.relativePath,
-        isSystem:
-          n.relativePath.startsWith("system/") ||
-          n.relativePath.startsWith("system\\"),
+        isSystem: isCoreMemoryPath(n.relativePath, format),
         frontmatter,
         content: body,
       };
@@ -302,7 +302,7 @@ async function collectMemoryData(
   conversationId?: string,
 ): Promise<MemoryViewerData> {
   // Filesystem scan (synchronous)
-  const files = collectFiles(memoryRoot);
+  const files = collectMemoryViewerFiles(memoryRoot);
 
   // Git calls (parallel)
   const [metadata, statsMap, diffsMap, totalCount] = await Promise.all([
