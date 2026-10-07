@@ -950,15 +950,15 @@ test("record locks never evict a live paused owner and recover a dead owner", ()
       processStart: "dead",
     }),
   );
-  const recovered = createTurnFinishedStore(directory, { lockAttempts: 2 }).put(
-    "agent",
-    "conversation",
-    {
-      type: "turn_finished",
-      turn_id: "recovered",
-      stop_reason: "end_turn",
-    },
-  );
+  // Allow real directory fsync latency on hosted macOS; the live-owner case
+  // above retains the intentionally tiny timeout assertion.
+  const recovered = createTurnFinishedStore(directory, {
+    lockAttempts: 100,
+  }).put("agent", "conversation", {
+    type: "turn_finished",
+    turn_id: "recovered",
+    stop_reason: "end_turn",
+  });
   expect(recovered.message.turn_id).toBe("recovered");
   expect(existsSync(lockPath)).toBe(false);
   expect(existsSync(deadOwner)).toBe(false);

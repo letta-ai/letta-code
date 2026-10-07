@@ -67,7 +67,9 @@ test("a dead lock directory is recovered", () => {
   const f = fixture();
   try {
     f.install(deadOwner);
-    const release = acquireDurableFileLock(f.path, { waitMs: 50 });
+    // Real directory fsyncs can exceed 50 ms on hosted macOS runners. This
+    // assertion covers successful dead-owner recovery, not the timeout edge.
+    const release = acquireDurableFileLock(f.path, { waitMs: 500 });
     const names = readdirSync(f.lock);
     expect(names).toHaveLength(1);
     expect(names[0]).not.toBe(f.ownerName(deadOwner));
@@ -82,7 +84,9 @@ test("a dead legacy file lock is reclaimed without replacing a live file", () =>
   const f = fixture();
   try {
     writeFileSync(f.lock, JSON.stringify(deadOwner), { mode: 0o600 });
-    const release = acquireDurableFileLock(f.path, { waitMs: 50 });
+    // Legacy recovery adds hard-link quarantine and directory fsyncs; preserve
+    // the tiny timeout only for the live-owner contention assertion below.
+    const release = acquireDurableFileLock(f.path, { waitMs: 500 });
     expect(readdirSync(f.lock)).toHaveLength(1);
     release();
     expect(existsSync(f.lock)).toBe(false);
@@ -357,7 +361,9 @@ test("PID reuse is detected by process-start identity", () => {
       processStart: `${getProcessStart(process.pid)}-previous`,
     };
     f.install(reused);
-    const release = acquireDurableFileLock(f.path, { waitMs: 50 });
+    // Windows process-creation identity lookup can take hundreds of
+    // milliseconds; this case verifies recovery, not the timeout threshold.
+    const release = acquireDurableFileLock(f.path, { waitMs: 1_000 });
     expect(readdirSync(f.lock)).not.toContain(f.ownerName(reused));
     release();
   } finally {

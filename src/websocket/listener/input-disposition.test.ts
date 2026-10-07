@@ -664,7 +664,9 @@ test("dead lock recovery quarantines only the observed owner", () => {
       }),
       { mode: 0o600 },
     );
-    const release = __inputDispositionTestUtils.acquireLock(path, 20);
+    // Successful recovery performs multiple real fsyncs, which can exceed the
+    // tiny contention budget on hosted macOS runners.
+    const release = __inputDispositionTestUtils.acquireLock(path, 500);
     const ownerFile = readdirSync(lockPath)[0];
     expect(
       ownerFile &&
