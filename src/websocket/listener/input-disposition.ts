@@ -28,9 +28,11 @@ import {
   rebuildDispositionCapacityCounts,
   removeDispositionCapacityEntry,
 } from "./input-disposition-capacity";
+import { expireDispositionEntries } from "./input-disposition-expiry";
 import { inputDispositionPersistentPath } from "./input-disposition-path";
 import {
   buildLegacyAuthorityReferenceIndex,
+  settleExpiredQuarantineJournals,
   shouldRetainDisposition,
 } from "./input-disposition-retention";
 import { legacyAuthorityQuarantineEntryIsValid } from "./input-disposition-validation";
@@ -145,46 +147,12 @@ export function expireAcceptedInputDispositions(
   ledger: AcceptedInputDispositionLedger,
   now: number,
 ): void {
-  let references: ReadonlySet<string> | undefined;
-  while (ledger.expiryQueueHead < ledger.expiryQueue.length) {
-    const expiry = ledger.expiryQueue[ledger.expiryQueueHead];
-    if (!expiry || expiry.expiresAt > now) break;
-    ledger.expiryQueueHead += 1;
-    const entry = ledger.entries.get(expiry.key);
-    if (
-      entry?.generation === expiry.generation &&
-      entry.expiresAt !== expiry.expiresAt
-    ) {
-      continue;
-    }
-    if (
-      entry?.generation === expiry.generation &&
-      shouldRetainDisposition(entry, () => {
-        references ??= buildLegacyAuthorityReferenceIndex(
-          ledger.entries.values(),
-        );
-        return references;
-      })
-    ) {
-      // Accepted replay lasts until terminal; the sender horizon bounds only
-      // tombstones and must not erase in-flight work during an offline restart.
-      entry.expiresAt = now + ACCEPTED_INPUT_DISPOSITION_TTL_MS;
-      ledger.expiryQueue.push({
-        key: expiry.key,
-        expiresAt: entry.expiresAt,
-        generation: entry.generation,
-      });
-    } else {
-      deleteCurrentEntry(ledger, expiry.key, expiry.generation);
-    }
-  }
-  if (
-    ledger.expiryQueueHead >= 1024 &&
-    ledger.expiryQueueHead * 2 >= ledger.expiryQueue.length
-  ) {
-    ledger.expiryQueue = ledger.expiryQueue.slice(ledger.expiryQueueHead);
-    ledger.expiryQueueHead = 0;
-  }
+  expireDispositionEntries(
+    ledger,
+    now,
+    ACCEPTED_INPUT_DISPOSITION_TTL_MS,
+    (key, generation) => deleteCurrentEntry(ledger, key, generation),
+  );
 }
 
 type ProcessOwner = DurableLockOwner;
@@ -461,8 +429,15 @@ function acquireLock(path: string, waitMs = LOCK_WAIT_MS): () => void {
 
 function pruneDurableStore(store: DurableStore, now: number): boolean {
   let changed = false;
-  const entries = Object.values(store.entries);
-  const references = buildLegacyAuthorityReferenceIndex(entries);
+  changed =
+    settleExpiredQuarantineJournals(
+      Object.entries(store.entries),
+      now,
+      (key) => delete store.entries[key],
+    ) || changed;
+  const references = buildLegacyAuthorityReferenceIndex(
+    Object.values(store.entries),
+  );
   for (const [key, entry] of Object.entries(store.entries)) {
     if (entry.expiresAt <= now) {
       if (shouldRetainDisposition(entry, () => references)) {

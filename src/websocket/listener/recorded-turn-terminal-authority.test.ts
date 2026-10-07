@@ -966,7 +966,7 @@ test.each([
           ),
         ).toBe(0);
         expect(listener.acceptedInputDispositionLedger.quarantinedCount).toBe(
-          0,
+          1,
         );
         expect(interruptedStore.listRecoverySidecars?.() ?? []).toEqual([
           expect.objectContaining({

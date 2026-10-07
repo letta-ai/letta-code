@@ -141,6 +141,24 @@ test("retired exact recovery result reaches the next turn after restart", async 
     expect(sent[0]?.messages?.[0]).toMatchObject({
       approvals: [exactResult],
     });
+    const consumed = restartedStore.read("agent-1", "conv-1");
+    if (!consumed?.revision) throw new Error("missing consumed recovery view");
+    restartedStore.write(
+      { ...consumed, runId: "run-after-consumption" },
+      consumed.revision,
+    );
+    const consumedSidecar = restartedStore
+      .listRecoverySidecars()
+      .find((sidecar) => sidecar.lineageId === "lineage-exact");
+    if (!consumedSidecar) throw new Error("missing consumed recovery sidecar");
+    expect(restartedStore.compactRetiredRecoverySidecar(consumedSidecar)).toBe(
+      true,
+    );
+    const compactedSidecar = restartedStore
+      .listRecoverySidecars()
+      .find((sidecar) => sidecar.lineageId === "lineage-exact");
+    expect(compactedSidecar).toMatchObject({ toolCallIds: [] });
+    expect(compactedSidecar?.exactResults).toBeUndefined();
     expect(successor.revision).toBeDefined();
   } finally {
     listener.intentionallyClosed = true;

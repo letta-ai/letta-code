@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -12,8 +12,14 @@ import {
   rememberInputDisposition,
 } from "./input-disposition";
 import { seedLegacyAuthorityQuarantine } from "./input-disposition.test-helpers";
-import { rebuildDispositionExpiryQueue } from "./input-disposition-capacity";
-import { shouldRetainDisposition } from "./input-disposition-retention";
+import {
+  rebuildDispositionCapacityCounts,
+  rebuildDispositionExpiryQueue,
+} from "./input-disposition-capacity";
+import {
+  PERMANENT_LEGACY_AUTHORITY_QUARANTINE_EXPIRY,
+  shouldRetainDisposition,
+} from "./input-disposition-retention";
 import { legacyAuthorityQuarantineEntryIsValid } from "./input-disposition-validation";
 import {
   loadLegacyAuthorityQuarantines,
@@ -22,6 +28,7 @@ import {
   quarantinePreparedTerminalAuthority,
 } from "./input-terminal-journal";
 import { createRuntime, stopRuntime } from "./lifecycle";
+import type { AcceptedInputDispositionEntry } from "./types";
 
 function expireQuarantine(listener: ReturnType<typeof createRuntime>): void {
   const entry = [
@@ -72,7 +79,7 @@ test("legacy authority quarantine is isolated by conversation scope", () => {
   ).toBe(true);
 });
 
-test("volatile legacy quarantine expires without rescheduling", () => {
+test("volatile legacy quarantine settles without rescheduling", () => {
   const listener = createRuntime();
   const runtime = getOrCreateScopedRuntime(
     listener,
@@ -81,8 +88,12 @@ test("volatile legacy quarantine expires without rescheduling", () => {
   );
   seedLegacyAuthorityQuarantine(listener, runtime);
   expireQuarantine(listener);
-  expect(loadLegacyAuthorityQuarantines(listener)).toHaveLength(0);
-  expect(listener.acceptedInputDispositionLedger.quarantinedCount).toBe(0);
+  expect(loadLegacyAuthorityQuarantines(listener)).toEqual([
+    expect.objectContaining({
+      expiresAt: PERMANENT_LEGACY_AUTHORITY_QUARANTINE_EXPIRY,
+    }),
+  ]);
+  expect(listener.acceptedInputDispositionLedger.quarantinedCount).toBe(1);
 });
 
 test("legacy quarantine rejects divergent expiry authorities", () => {
@@ -136,7 +147,7 @@ test("legacy quarantine is never re-armed by predecessor references", () => {
   );
 });
 
-test("durable quarantine expires beside a matching predecessor journal", () => {
+test("quarantine expiry permanently fences matching predecessor journals", () => {
   const directory = mkdtempSync(join(tmpdir(), "legacy-quarantine-retention-"));
   const ledgerPath = join(directory, "input-dispositions.json");
   try {
@@ -208,6 +219,7 @@ test("durable quarantine expires beside a matching predecessor journal", () => {
       reservations: {},
     };
     const entries = Object.values(store.entries);
+    const referenceKey = Object.keys(store.entries)[1];
     const quarantinedEntry = entries[0];
     const referenceEntry = entries[1];
     const quarantine = quarantinedEntry?.legacyAuthorityQuarantine as {
@@ -217,6 +229,7 @@ test("durable quarantine expires beside a matching predecessor journal", () => {
       !quarantinedEntry ||
       !referenceEntry ||
       !quarantine ||
+      !referenceKey ||
       !referencePrepared
     ) {
       throw new Error("missing durable quarantine retention fixture");
@@ -231,13 +244,60 @@ test("durable quarantine expires beside a matching predecessor journal", () => {
     };
     delete referenceEntry.legacyAuthorityQuarantine;
     referenceEntry.preparedTerminal = referencePrepared;
+
+    const volatile = createRuntime();
+    volatile.acceptedInputDispositionLedger.entries = new Map(
+      Object.entries(structuredClone(store.entries)) as [
+        string,
+        AcceptedInputDispositionEntry,
+      ][],
+    );
+    volatile.acceptedInputDispositionLedger.nextGeneration =
+      store.nextGeneration;
+    rebuildDispositionCapacityCounts(volatile.acceptedInputDispositionLedger);
+    rebuildDispositionExpiryQueue(volatile.acceptedInputDispositionLedger);
+    expect(promotePreparedInputTerminals(volatile)).toBe(0);
+    expect(loadLegacyAuthorityQuarantines(volatile)).toEqual([
+      expect.objectContaining({
+        expiresAt: PERMANENT_LEGACY_AUTHORITY_QUARANTINE_EXPIRY,
+      }),
+    ]);
+    expect(loadPreparedInputTerminals(volatile)).toHaveLength(0);
+    volatile.acceptedInputDispositionLedger.entries.set(
+      referenceKey,
+      structuredClone(
+        referenceEntry,
+      ) as unknown as AcceptedInputDispositionEntry,
+    );
+    rebuildDispositionCapacityCounts(volatile.acceptedInputDispositionLedger);
+    rebuildDispositionExpiryQueue(volatile.acceptedInputDispositionLedger);
+    expect(promotePreparedInputTerminals(volatile)).toBe(0);
+    expect(loadPreparedInputTerminals(volatile)).toHaveLength(0);
+    expect(volatile.acceptedInputDispositionLedger.entries.size).toBe(1);
+
     writeFileSync(ledgerPath, JSON.stringify(store), "utf8");
 
     const restarted = createRuntime();
     restarted.acceptedInputDispositionLedger =
       createAcceptedInputDispositionLedger({ persistentPath: ledgerPath });
-    expect(loadLegacyAuthorityQuarantines(restarted)).toHaveLength(0);
-    expect(loadPreparedInputTerminals(restarted)).toHaveLength(1);
+    expect(promotePreparedInputTerminals(restarted)).toBe(0);
+    expect(loadLegacyAuthorityQuarantines(restarted)).toHaveLength(1);
+    expect(loadPreparedInputTerminals(restarted)).toHaveLength(0);
+    const settledStore = JSON.parse(readFileSync(ledgerPath, "utf8")) as {
+      entries: Record<string, Record<string, unknown>>;
+    };
+    settledStore.entries[referenceKey] = structuredClone(referenceEntry);
+    writeFileSync(ledgerPath, JSON.stringify(settledStore), "utf8");
+    const reread = createRuntime();
+    reread.acceptedInputDispositionLedger =
+      createAcceptedInputDispositionLedger({ persistentPath: ledgerPath });
+    expect(promotePreparedInputTerminals(reread)).toBe(0);
+    expect(loadPreparedInputTerminals(reread)).toHaveLength(0);
+    expect(loadLegacyAuthorityQuarantines(reread)).toHaveLength(1);
+    const finalStore = JSON.parse(readFileSync(ledgerPath, "utf8")) as {
+      entries: Record<string, unknown>;
+    };
+    expect(Object.keys(finalStore.entries)).toHaveLength(1);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

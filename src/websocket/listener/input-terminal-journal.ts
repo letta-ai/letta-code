@@ -1,4 +1,5 @@
 import {
+  deleteCurrentEntry,
   dispositionKey,
   durableTransaction,
   expireAcceptedInputDispositions,
@@ -9,6 +10,11 @@ import {
   rebuildDispositionCapacityCounts,
   rebuildDispositionExpiryQueue,
 } from "./input-disposition-capacity";
+import {
+  buildLegacyAuthorityQuarantineIndex,
+  preparedTerminalMatchesLegacyAuthorityIndex,
+  settleExpiredQuarantineJournals,
+} from "./input-disposition-retention";
 import { TURN_FINISHED_REPLAY_TTL_MS } from "./turn-finished-replay";
 import type {
   AcceptedInputDispositionEntry,
@@ -230,9 +236,17 @@ export function loadPreparedInputTerminals(
     return changed;
   };
   const collect = (entries: Iterable<AcceptedInputDispositionEntry>) => {
+    const values = [...entries];
+    const quarantines = buildLegacyAuthorityQuarantineIndex(values);
     const byTurnId = new Map<string, DurablePreparedInputTerminal>();
-    for (const entry of entries) {
+    for (const entry of values) {
       const prepared = entry.preparedTerminal;
+      if (
+        prepared &&
+        preparedTerminalMatchesLegacyAuthorityIndex(entry, quarantines)
+      ) {
+        continue;
+      }
       if (prepared) {
         const ordered = {
           ...prepared,
@@ -295,6 +309,15 @@ export function loadPreparedInputTerminals(
     return [...byTurnId.values()];
   };
   if (!ledger.persistentPath) {
+    const now = Date.now();
+    const nextExpiry = ledger.expiryQueue[ledger.expiryQueueHead];
+    const expiryWillSettle = Boolean(nextExpiry && nextExpiry.expiresAt <= now);
+    expireAcceptedInputDispositions(ledger, now);
+    if (!expiryWillSettle && ledger.quarantinedCount > 0) {
+      settleExpiredQuarantineJournals(ledger.entries, now, (key, entry) =>
+        deleteCurrentEntry(ledger, key, entry.generation),
+      );
+    }
     backfillPreparationSequence(ledger.entries.values());
     return collect(ledger.entries.values());
   }
@@ -332,6 +355,7 @@ export function quarantinePreparedTerminalAuthority(
   const mark = (entries: Iterable<AcceptedInputDispositionEntry>) => {
     let matched = false;
     let changed = false;
+    const expiresAt = Date.now() + TURN_FINISHED_REPLAY_TTL_MS;
     for (const entry of entries) {
       const prepared = entry.preparedTerminal;
       if (
@@ -343,7 +367,6 @@ export function quarantinePreparedTerminalAuthority(
         continue;
       matched = true;
       if (!entry.legacyAuthorityQuarantine) {
-        const expiresAt = Date.now() + TURN_FINISHED_REPLAY_TTL_MS;
         entry.legacyAuthorityQuarantine = {
           scope: structuredClone(prepared.scope),
           recoveryLineageId,

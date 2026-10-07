@@ -225,7 +225,14 @@ export function createInterruptedTurnStore(
     compactRetiredRecoverySidecar(sidecar: RecoveryLineageSidecar) {
       let compacted = false;
       removeRetiredSidecar(sidecar, () => {
-        compactRetiredSidecarReference(sidecar);
+        const current = readRecord(
+          path(sidecar.agentId, sidecar.conversationId),
+        );
+        if (current?.recoveryClaimCompletion?.lineageId === sidecar.lineageId) {
+          compactRetiredSidecarReference(sidecar);
+        } else {
+          compactRetiredSidecar(sidecar);
+        }
         compacted = true;
         return false;
       });

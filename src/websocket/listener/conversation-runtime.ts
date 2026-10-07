@@ -8,6 +8,7 @@ import {
   markQueuedInputDispositionsStarted,
   ordinaryInputIdentity,
 } from "./input-disposition";
+import { PERMANENT_LEGACY_AUTHORITY_QUARANTINE_EXPIRY } from "./input-disposition-retention";
 import {
   clearPreparedInputTerminal,
   discardPreparedInputTerminal,
@@ -92,6 +93,14 @@ function scheduleRetiredAuthorityCleanup(
   );
   timer.unref?.();
   retiredAuthorityCleanupTimers.set(listener, { timer, expiresAt });
+}
+
+function scheduleLegacyAuthorityQuarantineCleanup(
+  listener: ListenerRuntime,
+  expiresAt: number,
+): void {
+  if (expiresAt === PERMANENT_LEGACY_AUTHORITY_QUARANTINE_EXPIRY) return;
+  scheduleRetiredAuthorityCleanup(listener, expiresAt);
 }
 
 function schedulePreparedTerminalPromotion(listener: ListenerRuntime): void {
@@ -264,7 +273,6 @@ export function ensureConversationQueueRuntime(
         });
       },
       onPauseChanged: () => {
-        // Paused flags ride on the update_queue snapshot.
         scheduleQueueEmit(listener, {
           agent_id: runtime.agentId,
           conversation_id: runtime.conversationId,
@@ -272,8 +280,7 @@ export function ensureConversationQueueRuntime(
       },
       onCleared: (reason, _clearedCount, items) => {
         runtime.pendingTurns = 0;
-        // Runtime replacement clears volatile queues but deliberately retains
-        // durable payloads for the successor process to restore.
+        // Runtime replacement retains durable payloads for its successor.
         if (reason === "shutdown") {
           for (const item of items) {
             runtime.queuedMessagesByItemId.delete(item.id);
@@ -370,8 +377,7 @@ export function restoreDurableQueuedInputs(
         : [],
     ),
   );
-  // Dequeue precedes the first interrupted record; do not misclassify that
-  // narrow handoff as an orphan during the capacity-refill microtask.
+  // Do not misclassify dequeue-to-first-record handoff as an orphan.
   const volatileStartedIdentityKeys = new Set(
     [...listener.conversationRuntimes.values()].flatMap((runtime) =>
       [...runtime.dequeuedInputIdentitiesByBatchId.values()].flatMap(
@@ -430,9 +436,8 @@ export function restoreDurableQueuedInputs(
           )?.id === payload.identity.id),
     );
     if (alreadyRestored) continue;
-    // A dead connection id cannot own restored work. The process transport and
-    // current scope subscriber become the delivery path after startup. Preserve
-    // the explicit identity so teleport payloads never enter the ordinary id domain.
+    // Dead connections cannot own restored work; preserve explicit identity so
+    // teleport payloads never enter the ordinary id domain.
     const replayOwner = [...listener.connections.values()].find(
       (connection) =>
         connection.initialized && connection.subscriptions.has(runtime.key),
@@ -447,8 +452,7 @@ export function restoreDurableQueuedInputs(
         preserveExisting: true,
       })
     ) {
-      // The durable disposition remains authoritative and will be retried on a
-      // later restart; rehydration never evicts or retires already accepted work.
+      // Durable disposition remains authoritative for a later restart.
       continue;
     }
     restored += 1;
@@ -517,8 +521,7 @@ export function promotePreparedInputTerminals(
           prepared.owner.recoveryLineageId,
         );
       } catch {
-        // Corrupt authority state fails closed; preserve the journal for a
-        // later repair rather than promoting or discarding unverifiable proof.
+        // Corrupt authority fails closed; preserve the journal for repair.
         deferred = true;
         continue;
       }
@@ -536,8 +539,7 @@ export function promotePreparedInputTerminals(
             : terminal.message.turn_id === prepared.message.turn_id,
         );
       } catch {
-        // Unavailable/corrupt terminal state is not absence. Preserve both
-        // durable artifacts until an exact later pass can reconcile them.
+        // Unavailable terminal state is not absence; preserve both artifacts.
         deferred = true;
         continue;
       }
@@ -791,10 +793,8 @@ export function promotePreparedInputTerminals(
                 terminal.message.turn_id === prepared.message.turn_id,
           );
         if (existing) {
-          // The terminal put may have committed just before the process crashed,
-          // and ownership may since have rotated in the durable replay store.
-          // Re-submit the prepared payload with that persisted owner so put still
-          // performs its complete identity/message validation idempotently.
+          // A pre-crash put may have committed and rotated ownership; re-submit
+          // with its persisted owner for full identity/message validation.
           owner = existing.owner;
           replayConnectionId = existing.owner.connectionId;
         } else if (owner.connectionId === null) {
@@ -923,7 +923,7 @@ export function promotePreparedInputTerminals(
           interruptedRevision,
         );
         if (quarantineReference) {
-          scheduleRetiredAuthorityCleanup(
+          scheduleLegacyAuthorityQuarantineCleanup(
             listener,
             quarantineReference.expiresAt,
           );
@@ -976,7 +976,7 @@ export function promotePreparedInputTerminals(
     }
   }
   for (const quarantine of quarantines) {
-    scheduleRetiredAuthorityCleanup(listener, quarantine.expiresAt);
+    scheduleLegacyAuthorityQuarantineCleanup(listener, quarantine.expiresAt);
   }
   if (deferred) schedulePreparedTerminalPromotion(listener);
   else resetPreparedTerminalPromotionRetry(listener);
