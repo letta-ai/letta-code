@@ -291,6 +291,83 @@ console.log("cancelled");
     expect(result.stderr).toBe("");
   });
 
+  test("does not lose a disconnect immediately after the request upload", async () => {
+    const fixture = await buildNodeFixture(`
+import { createConnection } from "node:net";
+const firstKey = "${HANDOFF_KEY}";
+const handle = startBrowserDiscoveryServer({
+  connectMcpOAuth: async (request, signal) => {
+    if (request.handoffKey !== firstKey) return;
+    signal.throwIfAborted();
+    await new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    });
+  },
+  oauthTimeoutMs: 2_000,
+  port: 0,
+});
+const address = await handle.ready;
+const body = JSON.stringify({
+  handoffKey: firstKey,
+  service: "datadog",
+  serverUrl: "https://mcp.datadoghq.com/v1/mcp",
+});
+const socket = createConnection(address.port, address.host);
+await new Promise((resolve, reject) => {
+  socket.once("connect", resolve);
+  socket.once("error", reject);
+});
+await new Promise((resolve, reject) => {
+  socket.write(
+    "POST /mcp-oauth/connect HTTP/1.1\\r\\n" +
+    "Host: " + address.host + ":" + address.port + "\\r\\n" +
+    "Content-Type: application/json\\r\\n" +
+    "Origin: https://chat.letta.com\\r\\n" +
+    "X-Letta-Local-Connect: 1\\r\\n" +
+    "Content-Length: " + Buffer.byteLength(body) + "\\r\\n" +
+    "Connection: close\\r\\n" +
+    "\\r\\n" +
+    body,
+    (error) => {
+      if (error) reject(error);
+      else resolve();
+    },
+  );
+});
+socket.destroy();
+await new Promise((resolve) => setTimeout(resolve, 50));
+const response = await fetch(
+  "http://" + address.host + ":" + address.port + "/mcp-oauth/connect",
+  {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Origin": "https://chat.letta.com",
+      "X-Letta-Local-Connect": "1",
+    },
+    body: JSON.stringify({
+      handoffKey: "d".repeat(43),
+      service: "datadog",
+      serverUrl: "https://mcp.datadoghq.com/v1/mcp",
+    }),
+  },
+);
+if (response.status !== 200) {
+  throw new Error("disconnect left OAuth active: " + response.status);
+}
+await handle.close();
+console.log("released");
+`);
+    const result = spawnSync("node", [fixture], {
+      encoding: "utf8",
+      timeout: 5_000,
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe("released");
+    expect(result.stderr).toBe("");
+  });
+
   test("bounds the complete browser-device OAuth operation", async () => {
     let timeoutName: string | undefined;
     const handle = startBrowserDiscoveryServer({

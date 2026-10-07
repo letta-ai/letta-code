@@ -318,39 +318,46 @@ async function handleMcpOAuthConnectRequest(
     respondJson(response, 400, { status: "invalid_request" }, origin);
     return;
   }
+  request.socket.ref();
+  const disconnectController = new AbortController();
+  const abortForDisconnect = (): void => {
+    if (response.writableEnded || disconnectController.signal.aborted) return;
+    disconnectController.abort(
+      new DOMException("Browser request disconnected", "AbortError"),
+    );
+  };
+  request.once("aborted", abortForDisconnect);
+  request.socket.once("close", abortForDisconnect);
+  response.once("close", abortForDisconnect);
+  const signal = AbortSignal.any([
+    disconnectController.signal,
+    AbortSignal.timeout(oauthTimeoutMs),
+  ]);
+  let connectionKey: string | undefined;
   try {
+    if (
+      request.aborted ||
+      request.destroyed ||
+      request.socket.destroyed ||
+      response.destroyed
+    ) {
+      abortForDisconnect();
+    }
+    signal.throwIfAborted();
     const parsed = canonicalizeBrowserDeviceMcpOAuthRequest(
       parseMcpOAuthRequest(await readRequestBody(request)),
     );
-    const connectionKey = `${parsed.service}\0${parsed.serverUrl}`;
+    signal.throwIfAborted();
+    connectionKey = `${parsed.service}\0${parsed.serverUrl}`;
     if (activeConnections.has(connectionKey)) {
       respondJson(response, 409, { status: "already_connecting" }, origin);
       return;
     }
     activeConnections.add(connectionKey);
-    request.socket.ref();
-    const disconnectController = new AbortController();
-    const abortForDisconnect = (): void => {
-      if (response.writableEnded || disconnectController.signal.aborted) return;
-      disconnectController.abort(
-        new DOMException("Browser request disconnected", "AbortError"),
-      );
-    };
-    request.once("aborted", abortForDisconnect);
-    request.socket.once("close", abortForDisconnect);
-    response.once("close", abortForDisconnect);
-    const signal = AbortSignal.any([
-      disconnectController.signal,
-      AbortSignal.timeout(oauthTimeoutMs),
-    ]);
     try {
       await connectMcpOAuth(parsed, signal);
       respondJson(response, 200, { status: "connected" }, origin);
     } finally {
-      request.off("aborted", abortForDisconnect);
-      request.socket.off("close", abortForDisconnect);
-      response.off("close", abortForDisconnect);
-      request.socket.unref();
       activeConnections.delete(connectionKey);
     }
   } catch (error) {
@@ -372,6 +379,11 @@ async function handleMcpOAuthConnectRequest(
       return;
     }
     respondJson(response, 502, { status: "connection_failed" }, origin);
+  } finally {
+    request.off("aborted", abortForDisconnect);
+    request.socket.off("close", abortForDisconnect);
+    response.off("close", abortForDisconnect);
+    request.socket.unref();
   }
 }
 

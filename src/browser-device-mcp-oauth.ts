@@ -37,7 +37,9 @@ interface BrowserDeviceMcpOAuthDependencies {
 const HANDOFF_KEY_PATTERN = /^[A-Za-z0-9_-]{43,128}$/;
 const HANDOFF_SUBMIT_TIMEOUT_MS = 90_000;
 const HANDOFF_ATTEMPT_TIMEOUT_MS = 10_000;
-const HANDOFF_RETRY_DELAY_MS = 250;
+const HANDOFF_RETRY_BASE_DELAY_MS = 1_000;
+const HANDOFF_RETRY_MAX_DELAY_MS = 10_000;
+const HANDOFF_RETRY_AFTER_MAX_DELAY_MS = 60_000;
 
 const BROWSER_DEVICE_MCP_OAUTH_SERVICES: Record<
   string,
@@ -293,6 +295,7 @@ export async function submitBrowserDeviceMcpOAuthHandoff(
   const operationSignal = signal
     ? AbortSignal.any([signal, timeoutSignal])
     : timeoutSignal;
+  let failedAttempts = 0;
   while (true) {
     operationSignal.throwIfAborted();
     const attemptSignal = AbortSignal.any([
@@ -323,23 +326,47 @@ export async function submitBrowserDeviceMcpOAuthHandoff(
     } catch (error) {
       if (operationSignal.aborted) throw operationSignal.reason;
       if (!isRetryableHandoffSubmissionError(error)) throw error;
-      await abortableDelay(
-        retryOptions.retryDelayMs ?? HANDOFF_RETRY_DELAY_MS,
-        operationSignal,
-      );
+      const delayMs =
+        retryOptions.retryDelayMs ??
+        handoffSubmissionRetryDelayMs(error, failedAttempts);
+      failedAttempts += 1;
+      await abortableDelay(delayMs, operationSignal);
     }
   }
 }
 
 function isRetryableHandoffSubmissionError(error: unknown): boolean {
   if (error instanceof ApiRequestError) {
-    return error.status === 409 || error.status === 429 || error.status === 503;
+    return [408, 409, 425, 429, 500, 502, 503, 504].includes(error.status);
   }
   return (
     error instanceof TypeError ||
     (error instanceof DOMException &&
       (error.name === "AbortError" || error.name === "TimeoutError"))
   );
+}
+
+function handoffSubmissionRetryDelayMs(
+  error: unknown,
+  failedAttempts: number,
+): number {
+  if (error instanceof ApiRequestError) {
+    const retryAfter = error.headers?.get("Retry-After");
+    if (retryAfter) {
+      const seconds = Number(retryAfter);
+      const delayMs = Number.isFinite(seconds)
+        ? seconds * 1_000
+        : Date.parse(retryAfter) - Date.now();
+      if (Number.isFinite(delayMs) && delayMs >= 0) {
+        return Math.min(delayMs, HANDOFF_RETRY_AFTER_MAX_DELAY_MS);
+      }
+    }
+  }
+  const exponentialDelay = Math.min(
+    HANDOFF_RETRY_BASE_DELAY_MS * 2 ** Math.min(failedAttempts, 8),
+    HANDOFF_RETRY_MAX_DELAY_MS,
+  );
+  return Math.round(exponentialDelay * (0.8 + Math.random() * 0.4));
 }
 
 async function abortableDelay(

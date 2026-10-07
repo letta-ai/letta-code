@@ -351,4 +351,62 @@ describe("browser device MCP OAuth", () => {
 
     expect(attempts).toBe(2);
   });
+
+  test("retries the same handoff after an admission-ambiguous gateway response", async () => {
+    const originalFetch = globalThis.fetch;
+    let attempts = 0;
+    const fetchStub = async (): Promise<Response> => {
+      attempts += 1;
+      return attempts === 1
+        ? new Response("Bad Gateway", { status: 502 })
+        : new Response(JSON.stringify({ authorized: true, connected: true }), {
+            status: 200,
+          });
+    };
+    globalThis.fetch = Object.assign(fetchStub, {
+      preconnect: originalFetch.preconnect,
+    });
+
+    try {
+      await submitBrowserDeviceMcpOAuthHandoff(
+        REQUEST,
+        CREDENTIALS,
+        undefined,
+        { retryDelayMs: 0 },
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(attempts).toBe(2);
+  });
+
+  test("honors Retry-After instead of applying the default backoff", async () => {
+    const originalFetch = globalThis.fetch;
+    let attempts = 0;
+    const fetchStub = async (): Promise<Response> => {
+      attempts += 1;
+      return attempts === 1
+        ? new Response("Too Many Requests", {
+            headers: { "Retry-After": "0" },
+            status: 429,
+          })
+        : new Response(JSON.stringify({ authorized: true, connected: true }), {
+            status: 200,
+          });
+    };
+    globalThis.fetch = Object.assign(fetchStub, {
+      preconnect: originalFetch.preconnect,
+    });
+    const startedAt = Date.now();
+
+    try {
+      await submitBrowserDeviceMcpOAuthHandoff(REQUEST, CREDENTIALS);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(attempts).toBe(2);
+    expect(Date.now() - startedAt).toBeLessThan(500);
+  });
 });
