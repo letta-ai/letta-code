@@ -283,6 +283,8 @@ function validateDurableStore(value: unknown): DurableStore {
         (prepared.preparationSequence !== undefined &&
           (!Number.isSafeInteger(prepared.preparationSequence) ||
             (prepared.preparationSequence as number) < 0)) ||
+        (prepared.publicationClaimed !== undefined &&
+          prepared.publicationClaimed !== true) ||
         !isRecord(prepared.scope) ||
         (prepared.scope.agentId !== null &&
           typeof prepared.scope.agentId !== "string") ||

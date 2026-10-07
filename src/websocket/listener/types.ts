@@ -273,6 +273,8 @@ export type DurablePreparedInputTerminal = {
   preparedAt?: number;
   /** Durable monotonic order used to reconcile legacy retired authority. */
   preparationSequence?: number;
+  /** Durable claim that orders this publication before later quarantine. */
+  publicationClaimed?: true;
   scope: { agentId: string | null; conversationId: string };
   message: {
     type: "turn_finished";

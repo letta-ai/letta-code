@@ -331,7 +331,7 @@ test("stale terminal cleanup failures defer startup and converge on later promot
   }
 });
 
-test("startup promotion contains load put and post-put clear failures", () => {
+test("startup promotion contains load and put failures then retires consumer journal", () => {
   const directory = mkdtempSync(join(tmpdir(), "promotion-io-failures-"));
   const listener = createRuntime();
   setDispositionLedger(listener, null);
@@ -408,6 +408,7 @@ test("startup promotion contains load put and post-put clear failures", () => {
     ).not.toThrow();
     expect(loadPreparedInputTerminals(listener)).toHaveLength(1);
 
+    let legacyClearCalls = 0;
     expect(
       promotePreparedInputTerminals(
         listener,
@@ -415,14 +416,14 @@ test("startup promotion contains load put and post-put clear failures", () => {
         undefined,
         interruptedStore,
         undefined,
-        () => false,
+        () => {
+          legacyClearCalls += 1;
+          return false;
+        },
       ),
-    ).toBe(0);
-    expect(loadPreparedInputTerminals(listener)).toHaveLength(1);
-    expect(terminalStore.read("agent-1", "conv-1")?.terminals).toHaveLength(1);
-
-    expect(promotePreparedInputTerminals(listener, terminalStore)).toBe(1);
-    expect(loadPreparedInputTerminals(listener)).toEqual([]);
+    ).toBe(1);
+    expect(legacyClearCalls).toBe(0);
+    expect(loadPreparedInputTerminals(listener)).toHaveLength(0);
     expect(terminalStore.read("agent-1", "conv-1")?.terminals).toHaveLength(1);
   } finally {
     rmSync(directory, { recursive: true, force: true });

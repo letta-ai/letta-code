@@ -505,6 +505,7 @@ export function promotePreparedInputTerminals(
       continue;
     }
     if (
+      !prepared.publicationClaimed &&
       prepared.owner.recoveryLineageId &&
       prepared.owner.interruptedRevision &&
       prepared.owner.interruptedAuthorityRevision
@@ -519,7 +520,6 @@ export function promotePreparedInputTerminals(
           prepared.owner.recoveryLineageId,
         );
       } catch {
-        // Corrupt authority fails closed; preserve the journal for repair.
         deferred = true;
         continue;
       }
@@ -537,7 +537,6 @@ export function promotePreparedInputTerminals(
             : terminal.message.turn_id === prepared.message.turn_id,
         );
       } catch {
-        // Unavailable terminal state is not absence; preserve both artifacts.
         deferred = true;
         continue;
       }
@@ -852,6 +851,7 @@ export function promotePreparedInputTerminals(
       continue;
     }
     if (
+      !prepared.message.terminal_consumer_ids?.length &&
       !clearPreparedTerminal(
         listener,
         prepared.scope,

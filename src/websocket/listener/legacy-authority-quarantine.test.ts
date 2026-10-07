@@ -28,6 +28,7 @@ import {
   quarantinePreparedTerminalAuthority,
 } from "./input-terminal-journal";
 import { createRuntime, stopRuntime } from "./lifecycle";
+import { createTurnFinishedStore } from "./turn-finished-replay";
 import type { AcceptedInputDispositionEntry } from "./types";
 
 function expireQuarantine(listener: ReturnType<typeof createRuntime>): void {
@@ -327,7 +328,7 @@ test("promotion revalidates after expiry wins a detached journal race", () => {
         terminal_consumer_ids: ["consumer-detached-race"],
       },
       owner: {
-        connectionId: null,
+        connectionId: "connection-detached-race",
         canRotate: false,
         lineageId: "listener-detached-race",
         terminalIdentity: "terminal-detached-race",
@@ -384,6 +385,171 @@ test("promotion revalidates after expiry wins a detached journal race", () => {
     ),
   ).toBe(0);
   expect(putCalls).toBe(0);
+});
+
+test("publication claim survives put-then-throw and outranks quarantine", () => {
+  const directory = mkdtempSync(join(tmpdir(), "publication-claim-race-"));
+  const ledgerPath = join(directory, "dispositions.json");
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    "agent-0",
+    "conversation-0",
+  );
+  const identity = ordinaryInputIdentity("publication-claim-race");
+  if (!identity || !rememberInputDisposition(runtime, identity, "started")) {
+    throw new Error("failed to seed publication claim race");
+  }
+  const interruptedRevision = "revision-publication-claim";
+  const recoveryLineageId = "lineage-publication-claim";
+  const authorityRevision = "authority-publication-claim";
+  expect(
+    prepareInputTerminal(runtime, [identity], {
+      scope: { agentId: "agent-0", conversationId: "conversation-0" },
+      message: {
+        type: "turn_finished",
+        turn_id: "turn-publication-claim",
+        stop_reason: "end_turn",
+        terminal_consumer_ids: ["consumer-publication-claim"],
+      },
+      owner: {
+        connectionId: "connection-publication-claim",
+        canRotate: false,
+        lineageId: "listener-publication-claim",
+        terminalIdentity: "terminal-publication-claim",
+        interruptedRevision,
+        recoveryLineageId,
+        interruptedAuthorityRevision: authorityRevision,
+      },
+    }),
+  ).toBe(true);
+  let putCalls = 0;
+  let throwAfterPut = true;
+  const terminalStore = {
+    read: () => null,
+    readOrThrow: () => null,
+    put: () => {
+      putCalls += 1;
+      if (throwAfterPut) {
+        throwAfterPut = false;
+        throw new Error("put committed then transport failed");
+      }
+    },
+  };
+  let currentAuthorityRevision = authorityRevision;
+  const interruptedStore = {
+    readRecoverySnapshot: () => ({
+      record: { revision: interruptedRevision },
+      revisionToken: currentAuthorityRevision,
+    }),
+    readRetiredRecoveryAuthority: () => null,
+  };
+  writeFileSync(
+    ledgerPath,
+    JSON.stringify({
+      version: 4,
+      nextGeneration: listener.acceptedInputDispositionLedger.nextGeneration,
+      entries: Object.fromEntries(
+        listener.acceptedInputDispositionLedger.entries,
+      ),
+      reservations: {},
+    }),
+    "utf8",
+  );
+  const durable = createRuntime();
+  durable.acceptedInputDispositionLedger = createAcceptedInputDispositionLedger(
+    { persistentPath: ledgerPath },
+  );
+  expect(
+    promotePreparedInputTerminals(
+      durable,
+      terminalStore as never,
+      undefined,
+      interruptedStore as never,
+    ),
+  ).toBe(0);
+  const restarted = createRuntime();
+  restarted.acceptedInputDispositionLedger =
+    createAcceptedInputDispositionLedger({ persistentPath: ledgerPath });
+  expect(loadPreparedInputTerminals(restarted)[0]?.publicationClaimed).toBe(
+    true,
+  );
+  currentAuthorityRevision = "newer-authority-after-publication-claim";
+  const legacyAuthority = {
+    interruptedRevision,
+    recoveryLineageId,
+    authorityRevision: "legacy-publication-claim",
+  };
+  expect(
+    quarantinePreparedTerminalAuthority(
+      restarted,
+      { agentId: "agent-0", conversationId: "conversation-0" },
+      legacyAuthority,
+    ),
+  ).toBe(false);
+  expect(
+    promotePreparedInputTerminals(
+      restarted,
+      terminalStore as never,
+      undefined,
+      interruptedStore as never,
+    ),
+  ).toBe(1);
+  expect(
+    quarantinePreparedTerminalAuthority(
+      restarted,
+      { agentId: "agent-0", conversationId: "conversation-0" },
+      legacyAuthority,
+    ),
+  ).toBe(false);
+  expect(putCalls).toBe(2);
+  expect(loadPreparedInputTerminals(restarted)).toHaveLength(0);
+  expect(loadLegacyAuthorityQuarantines(restarted)).toHaveLength(0);
+  rmSync(directory, { recursive: true, force: true });
+});
+
+test("non-consumer promotion still defers when journal clearing fails", () => {
+  const directory = mkdtempSync(join(tmpdir(), "non-consumer-clear-"));
+  try {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const identity = ordinaryInputIdentity("non-consumer-clear-failure");
+    if (!identity || !rememberInputDisposition(runtime, identity, "started")) {
+      throw new Error("failed to seed non-consumer clear failure");
+    }
+    expect(
+      prepareInputTerminal(runtime, [identity], {
+        scope: { agentId: "agent-1", conversationId: "conv-1" },
+        message: {
+          type: "turn_finished",
+          turn_id: "turn-non-consumer-clear-failure",
+          stop_reason: "end_turn",
+        },
+        owner: {
+          connectionId: null,
+          canRotate: false,
+          lineageId: null,
+          terminalIdentity: "terminal-non-consumer-clear-failure",
+        },
+      }),
+    ).toBe(true);
+    const terminalStore = createTurnFinishedStore(join(directory, "terminal"));
+    expect(
+      promotePreparedInputTerminals(
+        listener,
+        terminalStore,
+        undefined,
+        undefined,
+        undefined,
+        () => false,
+      ),
+    ).toBe(0);
+    expect(loadPreparedInputTerminals(listener)).toHaveLength(1);
+    expect(promotePreparedInputTerminals(listener, terminalStore)).toBe(1);
+    expect(loadPreparedInputTerminals(listener)).toHaveLength(0);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("listener stop clears legacy quarantine cleanup timers", async () => {

@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import {
   deleteCurrentEntry,
   dispositionKey,
@@ -337,20 +338,52 @@ export function publishPreparedInputTerminalIfCurrent(
   publish: () => void,
 ): boolean {
   const ledger = getLedger(listener);
-  const publishCurrent = (entries: Iterable<AcceptedInputDispositionEntry>) => {
+  const withoutClaim = (candidate: DurablePreparedInputTerminal) => {
+    const { publicationClaimed: _, ...durable } = candidate;
+    return durable;
+  };
+  const expected = withoutClaim(terminal);
+  const claimCurrent = (entries: Iterable<AcceptedInputDispositionEntry>) => {
     const values = [...entries];
     const quarantines = buildLegacyAuthorityQuarantineIndex(values);
-    const current = values.some((entry) => {
+    const matches = values.filter((entry) => {
       if (preparedTerminalMatchesLegacyAuthorityIndex(entry, quarantines)) {
         return false;
       }
       return (
         entry.preparedTerminal !== undefined &&
-        JSON.stringify(entry.preparedTerminal) === JSON.stringify(terminal)
+        isDeepStrictEqual(withoutClaim(entry.preparedTerminal), expected)
       );
     });
-    if (current) publish();
-    return current;
+    const changed = matches.some(
+      (entry) => entry.preparedTerminal?.publicationClaimed !== true,
+    );
+    for (const entry of matches) {
+      if (entry.preparedTerminal)
+        entry.preparedTerminal.publicationClaimed = true;
+    }
+    return { current: matches.length > 0, changed };
+  };
+  const publishAndRetire = (
+    entries: Iterable<AcceptedInputDispositionEntry>,
+  ) => {
+    const values = [...entries];
+    const quarantines = buildLegacyAuthorityQuarantineIndex(values);
+    const matches = values.filter(
+      (entry) =>
+        !preparedTerminalMatchesLegacyAuthorityIndex(entry, quarantines) &&
+        entry.preparedTerminal?.publicationClaimed === true &&
+        isDeepStrictEqual(withoutClaim(entry.preparedTerminal), expected),
+    );
+    if (matches.length === 0) return false;
+    publish();
+    for (const entry of matches) {
+      const prepared = entry.preparedTerminal;
+      if (!prepared) continue;
+      recordCompletedTerminalAuthority(entry, prepared.owner);
+      delete entry.preparedTerminal;
+    }
+    return true;
   };
   if (!ledger.persistentPath) {
     const now = Date.now();
@@ -358,12 +391,19 @@ export function publishPreparedInputTerminalIfCurrent(
     settleExpiredQuarantineJournals(ledger.entries, now, (key, entry) =>
       deleteCurrentEntry(ledger, key, entry.generation),
     );
-    return publishCurrent(ledger.entries.values());
+    if (!claimCurrent(ledger.entries.values()).current) return false;
+    return publishAndRetire(ledger.entries.values());
   }
-  return durableTransaction(ledger.persistentPath, (store) => {
-    const result = publishCurrent(Object.values(store.entries));
+  const claimed = durableTransaction(ledger.persistentPath, (store) => {
+    const claim = claimCurrent(Object.values(store.entries));
     syncMemoryFromDurable(ledger, store);
-    return { result, changed: false };
+    return { result: claim.current, changed: claim.changed };
+  });
+  if (!claimed) return false;
+  return durableTransaction(ledger.persistentPath, (store) => {
+    const result = publishAndRetire(Object.values(store.entries));
+    syncMemoryFromDurable(ledger, store);
+    return { result, changed: result };
   });
 }
 
@@ -389,19 +429,27 @@ export function quarantinePreparedTerminalAuthority(
   }
   const ledger = getLedger(listener);
   const mark = (entries: Iterable<AcceptedInputDispositionEntry>) => {
-    let matched = false;
+    const candidates = [...entries].filter((entry) => {
+      const prepared = entry.preparedTerminal;
+      return (
+        prepared?.scope.agentId === scope.agentId &&
+        prepared.scope.conversationId === scope.conversationId &&
+        prepared.owner.recoveryLineageId === recoveryLineageId &&
+        prepared.owner.interruptedRevision === interruptedRevision
+      );
+    });
+    if (
+      candidates.some(
+        (entry) => entry.preparedTerminal?.publicationClaimed === true,
+      )
+    ) {
+      return { matched: false, changed: false };
+    }
     let changed = false;
     const expiresAt = Date.now() + TURN_FINISHED_REPLAY_TTL_MS;
-    for (const entry of entries) {
+    for (const entry of candidates) {
       const prepared = entry.preparedTerminal;
-      if (
-        prepared?.scope.agentId !== scope.agentId ||
-        prepared?.scope.conversationId !== scope.conversationId ||
-        prepared.owner.recoveryLineageId !== recoveryLineageId ||
-        prepared.owner.interruptedRevision !== interruptedRevision
-      )
-        continue;
-      matched = true;
+      if (!prepared) continue;
       if (!entry.legacyAuthorityQuarantine) {
         entry.legacyAuthorityQuarantine = {
           scope: structuredClone(prepared.scope),
@@ -414,7 +462,7 @@ export function quarantinePreparedTerminalAuthority(
         changed = true;
       }
     }
-    return { matched, changed };
+    return { matched: candidates.length > 0, changed };
   };
   if (!ledger.persistentPath) {
     const result = mark(ledger.entries.values());
