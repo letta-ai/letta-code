@@ -22,9 +22,13 @@ import {
 } from "./input-disposition-retention";
 import { legacyAuthorityQuarantineEntryIsValid } from "./input-disposition-validation";
 import {
+  claimPreparedInputTerminalIfCurrent,
+  hasCompetingCompletedPublicationClaim,
+  loadCompletedTerminalAuthorities,
   loadLegacyAuthorityQuarantines,
   loadPreparedInputTerminals,
   prepareInputTerminal,
+  publishPreparedInputTerminalIfCurrent,
   quarantinePreparedTerminalAuthority,
 } from "./input-terminal-journal";
 import { createRuntime, stopRuntime } from "./lifecycle";
@@ -506,6 +510,269 @@ test("publication claim survives put-then-throw and outranks quarantine", () => 
   expect(loadPreparedInputTerminals(restarted)).toHaveLength(0);
   expect(loadLegacyAuthorityQuarantines(restarted)).toHaveLength(0);
   rmSync(directory, { recursive: true, force: true });
+});
+
+test("publication claim rejects completed authority added after validation", () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    "agent-0",
+    "conversation-0",
+  );
+  const identity = ordinaryInputIdentity("authority-cas-race");
+  if (!identity || !rememberInputDisposition(runtime, identity, "started")) {
+    throw new Error("failed to seed authority CAS race");
+  }
+  const interruptedRevision = "revision-authority-cas";
+  const recoveryLineageId = "lineage-authority-cas";
+  const authorityRevision = "authority-cas";
+  expect(
+    prepareInputTerminal(runtime, [identity], {
+      scope: { agentId: "agent-0", conversationId: "conversation-0" },
+      message: {
+        type: "turn_finished",
+        turn_id: "turn-authority-cas",
+        stop_reason: "end_turn",
+        terminal_consumer_ids: ["consumer-authority-cas"],
+      },
+      owner: {
+        connectionId: "connection-authority-cas",
+        canRotate: false,
+        lineageId: "listener-authority-cas",
+        terminalIdentity: "terminal-authority-cas",
+        interruptedRevision,
+        recoveryLineageId,
+        interruptedAuthorityRevision: authorityRevision,
+      },
+    }),
+  ).toBe(true);
+  let insertedCompetingAuthority = false;
+  let putCalls = 0;
+  const terminalStore = {
+    read: () => null,
+    readOrThrow: () => {
+      if (!insertedCompetingAuthority) {
+        insertedCompetingAuthority = true;
+        listener.acceptedInputDispositionLedger.entries.set(
+          "competing-completed-authority",
+          {
+            disposition: "started",
+            acceptedAt: Date.now(),
+            expiresAt: Date.now() + 60_000,
+            runtimeKey: runtime.key,
+            generation: 99_001,
+            replayCompleted: true,
+            completedTerminalAuthority: {
+              interruptedRevision,
+              recoveryLineageId,
+              authorityRevision: "competing-authority-cas",
+              terminalIdentity: "terminal-competing-authority-cas",
+              preparationSequence: 99_001,
+            },
+          },
+        );
+      }
+      return null;
+    },
+    put: () => {
+      putCalls += 1;
+    },
+  };
+  const interruptedStore = {
+    readRecoverySnapshot: () => ({
+      record: { revision: interruptedRevision },
+      revisionToken: authorityRevision,
+    }),
+    readRetiredRecoveryAuthority: () => null,
+  };
+  expect(
+    promotePreparedInputTerminals(
+      listener,
+      terminalStore as never,
+      undefined,
+      interruptedStore as never,
+    ),
+  ).toBe(0);
+  expect(putCalls).toBe(0);
+  expect(loadPreparedInputTerminals(listener)[0]?.publicationClaimed).toBe(
+    undefined,
+  );
+});
+
+test("publication claim rejects recovery authority rotation at its lock", () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    "agent-0",
+    "conversation-0",
+  );
+  const identity = ordinaryInputIdentity("authority-lock-race");
+  if (!identity || !rememberInputDisposition(runtime, identity, "started")) {
+    throw new Error("failed to seed authority lock race");
+  }
+  expect(
+    prepareInputTerminal(runtime, [identity], {
+      scope: { agentId: "agent-0", conversationId: "conversation-0" },
+      message: {
+        type: "turn_finished",
+        turn_id: "turn-authority-lock",
+        stop_reason: "end_turn",
+      },
+      owner: {
+        connectionId: "connection-authority-lock",
+        canRotate: false,
+        lineageId: "listener-authority-lock",
+        terminalIdentity: "terminal-authority-lock",
+        interruptedRevision: "revision-authority-lock",
+        recoveryLineageId: "lineage-authority-lock",
+        interruptedAuthorityRevision: "authority-lock-before-rotation",
+      },
+    }),
+  ).toBe(true);
+  const prepared = loadPreparedInputTerminals(listener)[0];
+  if (!prepared) throw new Error("missing authority lock journal");
+  let actions = 0;
+  expect(
+    claimPreparedInputTerminalIfCurrent(listener, prepared, [], {
+      withRecoveryAuthority: ({ expectedRevision }) => {
+        expect(expectedRevision).toBe("authority-lock-before-rotation");
+        actions += 1;
+        return false;
+      },
+    }),
+  ).toBe(false);
+  expect(actions).toBe(1);
+  expect(loadPreparedInputTerminals(listener)[0]?.publicationClaimed).toBe(
+    undefined,
+  );
+});
+
+test("one publication claim fences a later competing journal", () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    "agent-0",
+    "conversation-0",
+  );
+  const interruptedRevision = "revision-competing-claim";
+  const recoveryLineageId = "lineage-competing-claim";
+  const prepare = (id: string) => {
+    const identity = ordinaryInputIdentity(`input-${id}`);
+    if (!identity || !rememberInputDisposition(runtime, identity, "started")) {
+      throw new Error(`failed to seed ${id}`);
+    }
+    expect(
+      prepareInputTerminal(runtime, [identity], {
+        scope: { agentId: "agent-0", conversationId: "conversation-0" },
+        message: {
+          type: "turn_finished",
+          turn_id: `turn-${id}`,
+          stop_reason: "end_turn",
+          terminal_consumer_ids: [`consumer-${id}`],
+        },
+        owner: {
+          connectionId: `connection-${id}`,
+          canRotate: false,
+          lineageId: `listener-${id}`,
+          terminalIdentity: `terminal-${id}`,
+          interruptedRevision,
+          recoveryLineageId,
+          interruptedAuthorityRevision: `authority-${id}`,
+        },
+      }),
+    ).toBe(true);
+  };
+  prepare("first-claim");
+  const first = loadPreparedInputTerminals(listener)[0];
+  if (!first) throw new Error("missing first publication journal");
+  expect(claimPreparedInputTerminalIfCurrent(listener, first)).toBe(true);
+  const laterIdentity = ordinaryInputIdentity("input-later-claim");
+  if (
+    !laterIdentity ||
+    !rememberInputDisposition(runtime, laterIdentity, "started")
+  ) {
+    throw new Error("failed to seed later claim");
+  }
+  const laterTerminal = {
+    scope: { agentId: "agent-0", conversationId: "conversation-0" },
+    message: {
+      type: "turn_finished" as const,
+      turn_id: "turn-later-claim",
+      stop_reason: "end_turn" as const,
+      terminal_consumer_ids: ["consumer-later-claim"],
+    },
+    owner: {
+      connectionId: "connection-later-claim",
+      canRotate: false,
+      lineageId: "listener-later-claim",
+      terminalIdentity: "terminal-later-claim",
+      interruptedRevision,
+      recoveryLineageId,
+      interruptedAuthorityRevision: "authority-later-claim",
+    },
+  };
+  expect(prepareInputTerminal(runtime, [laterIdentity], laterTerminal)).toBe(
+    true,
+  );
+  const laterEntry = [
+    ...listener.acceptedInputDispositionLedger.entries.values(),
+  ].find(
+    (entry) => entry.preparedTerminal?.message.turn_id === "turn-later-claim",
+  );
+  if (!laterEntry) throw new Error("missing later claim entry");
+  const later = loadPreparedInputTerminals(listener).find(
+    (prepared) => prepared.message.turn_id === "turn-later-claim",
+  );
+  if (!later) throw new Error("missing later publication journal");
+  expect(() => claimPreparedInputTerminalIfCurrent(listener, later)).toThrow(
+    "Competing terminal already owns publication claim",
+  );
+  expect(
+    quarantinePreparedTerminalAuthority(
+      listener,
+      { agentId: "agent-0", conversationId: "conversation-0" },
+      {
+        interruptedRevision,
+        recoveryLineageId,
+        authorityRevision: "legacy-competing-claim",
+      },
+    ),
+  ).toBe(false);
+  expect(publishPreparedInputTerminalIfCurrent(listener, first, () => {})).toBe(
+    true,
+  );
+  expect(loadPreparedInputTerminals(listener)).toHaveLength(0);
+  expect(
+    hasCompetingCompletedPublicationClaim(
+      later,
+      loadCompletedTerminalAuthorities(listener),
+    ),
+  ).toBe(true);
+  laterEntry.preparedTerminal = structuredClone(later);
+  let latePutCalls = 0;
+  expect(
+    promotePreparedInputTerminals(
+      listener,
+      {
+        read: () => null,
+        readOrThrow: () => null,
+        remove: () => true,
+        put: () => {
+          latePutCalls += 1;
+        },
+      } as never,
+      undefined,
+      {
+        readRecoverySnapshot: () => ({
+          record: { revision: interruptedRevision },
+          revisionToken: "authority-later-claim",
+        }),
+        readRetiredRecoveryAuthority: () => null,
+      } as never,
+    ),
+  ).toBe(0);
+  expect(latePutCalls).toBe(0);
+  expect(loadPreparedInputTerminals(listener)).toHaveLength(0);
 });
 
 test("non-consumer promotion still defers when journal clearing fails", () => {

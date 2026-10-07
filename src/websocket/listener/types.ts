@@ -307,6 +307,7 @@ export type InterruptedTerminalAuthority = {
   recoveryLineageId?: string;
   terminalIdentity?: string;
   preparationSequence?: number;
+  publicationClaimed?: true;
 };
 
 export type AcceptedInputDispositionEntry = {
@@ -321,7 +322,7 @@ export type AcceptedInputDispositionEntry = {
   replayCompleted?: true;
   /** Pending promotion into the terminal replay store after an atomic effect commit. */
   preparedTerminal?: DurablePreparedInputTerminal;
-  /** Compact predecessor migration fence; bounded to the terminal replay horizon. */
+  /** Compact predecessor migration fence for an authority that cannot be replayed. */
   legacyAuthorityQuarantine?: {
     scope: { agentId: string | null; conversationId: string };
     recoveryLineageId: string;

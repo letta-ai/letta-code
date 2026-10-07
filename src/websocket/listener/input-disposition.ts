@@ -350,7 +350,9 @@ function validateDurableStore(value: unknown): DurableStore {
           typeof authority.terminalIdentity !== "string") ||
         (authority.preparationSequence !== undefined &&
           (!Number.isSafeInteger(authority.preparationSequence) ||
-            (authority.preparationSequence as number) < 0)))
+            (authority.preparationSequence as number) < 0)) ||
+        (authority.publicationClaimed !== undefined &&
+          authority.publicationClaimed !== true))
     ) {
       throw new Error("Completed terminal authority is invalid");
     }

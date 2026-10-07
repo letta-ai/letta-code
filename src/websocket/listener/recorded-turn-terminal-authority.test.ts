@@ -40,6 +40,7 @@ import {
   downgradeCompletedAuthority,
   expireDispositionLedgerEntries,
   setDispositionLedger,
+  snapshotDispositionStore,
 } from "./recorded-turn-terminal-authority.test-helpers";
 import {
   markRecoveryClaimCompletionPending,
@@ -841,7 +842,8 @@ test.each([
         delete legacySidecar.retiredAuthorityRevision;
         delete legacySidecar.retiredAt;
         writeFileSync(sidecarPath, JSON.stringify(legacySidecar), "utf8");
-        const completedCandidate = loadPreparedInputTerminals(listener).find(
+        const preparedCandidates = loadPreparedInputTerminals(listener);
+        const completedCandidate = preparedCandidates.find(
           (candidate) =>
             candidate.owner.terminalIdentity ===
             (completedJournal === "winner"
@@ -850,6 +852,11 @@ test.each([
         );
         if (!completedCandidate)
           throw new Error("missing completed journal fixture");
+        const remainingCandidate = preparedCandidates.find(
+          (candidate) => candidate !== completedCandidate,
+        );
+        if (!remainingCandidate)
+          throw new Error("missing remaining journal fixture");
         expect(
           promotePreparedInputTerminals(
             listener,
@@ -861,35 +868,12 @@ test.each([
             () => [completedCandidate],
           ),
         ).toBe(1);
-        expect(loadPreparedInputTerminals(listener)).toHaveLength(1);
+        expect(loadPreparedInputTerminals(listener)).toHaveLength(0);
         const promotedWinner = terminalStore.read("agent-1", "conv-1")
           ?.terminals[0];
         if (!promotedWinner) throw new Error("missing promoted winner");
         terminalStore.remove("agent-1", "conv-1", promotedWinner.id);
-        const oldStore = {
-          version: 4,
-          nextGeneration:
-            listener.acceptedInputDispositionLedger.nextGeneration,
-          entries: Object.fromEntries(
-            listener.acceptedInputDispositionLedger.entries,
-          ),
-          reservations: {},
-        } as {
-          version: number;
-          nextGeneration: number;
-          entries: Record<
-            string,
-            {
-              expiresAt: number;
-              completedTerminalAuthority?: {
-                authorityRevision: string;
-                terminalIdentity?: string;
-                preparationSequence?: number;
-              };
-            }
-          >;
-          reservations: Record<string, never>;
-        };
+        const oldStore = snapshotDispositionStore(listener);
         const completed = Object.values(oldStore.entries).find(
           (entry) =>
             entry.completedTerminalAuthority?.authorityRevision ===
@@ -897,6 +881,14 @@ test.each([
         );
         if (!completed) throw new Error("missing completed entry fixture");
         downgradeCompletedAuthority(completed);
+        const journalEntry = Object.values(oldStore.entries).find(
+          (entry) => entry !== completed,
+        );
+        if (!journalEntry)
+          throw new Error("missing late journal entry fixture");
+        delete journalEntry.completedTerminalAuthority;
+        delete journalEntry.completedTerminalRevision;
+        journalEntry.preparedTerminal = remainingCandidate;
         if (extraCompletedAuthority) {
           const extra = structuredClone(completed);
           if (!extra.completedTerminalAuthority)

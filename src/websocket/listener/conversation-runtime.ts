@@ -12,6 +12,7 @@ import { PERMANENT_LEGACY_AUTHORITY_QUARANTINE_EXPIRY } from "./input-dispositio
 import {
   clearPreparedInputTerminal,
   discardPreparedInputTerminal,
+  hasCompetingCompletedPublicationClaim,
   loadCompletedTerminalAuthorities,
   loadLegacyAuthorityQuarantines,
   loadPreparedInputTerminals,
@@ -44,13 +45,9 @@ import type {
   ListenerRuntime,
 } from "./types";
 
-function discardQueuedItem(
-  runtime: ConversationRuntime,
-  item: QueueItem,
-): void {
+const discardQueuedItem = (runtime: ConversationRuntime, item: QueueItem) => {
   runtime.queuedMessagesByItemId.delete(item.id);
-}
-
+};
 function itemIdentities(
   runtime: ConversationRuntime,
   items: readonly QueueItem[],
@@ -64,7 +61,6 @@ function itemIdentities(
     return fallback ? [fallback] : [];
   });
 }
-
 const DURABLE_QUEUE_RESTORE_RETRY_DELAY_MS = 10;
 const DURABLE_QUEUE_RESTORE_MAX_RETRY_DELAY_MS = 250;
 const preparedTerminalPromotionRetries = new WeakMap<
@@ -75,7 +71,6 @@ const retiredAuthorityCleanupTimers = new WeakMap<
   ListenerRuntime,
   { timer: ReturnType<typeof setTimeout>; expiresAt: number }
 >();
-
 function scheduleRetiredAuthorityCleanup(
   listener: ListenerRuntime,
   expiresAt: number,
@@ -95,7 +90,6 @@ function scheduleRetiredAuthorityCleanup(
   timer.unref?.();
   retiredAuthorityCleanupTimers.set(listener, { timer, expiresAt });
 }
-
 function scheduleLegacyAuthorityQuarantineCleanup(
   listener: ListenerRuntime,
   expiresAt: number,
@@ -103,7 +97,6 @@ function scheduleLegacyAuthorityQuarantineCleanup(
   if (expiresAt === PERMANENT_LEGACY_AUTHORITY_QUARANTINE_EXPIRY) return;
   scheduleRetiredAuthorityCleanup(listener, expiresAt);
 }
-
 function schedulePreparedTerminalPromotion(listener: ListenerRuntime): void {
   if (!listener.promotePreparedInputTerminals) return;
   const retry = preparedTerminalPromotionRetries.get(listener) ?? {
@@ -120,13 +113,11 @@ function schedulePreparedTerminalPromotion(listener: ListenerRuntime): void {
   retry.delayMs = Math.min(1_000, retry.delayMs * 2);
   preparedTerminalPromotionRetries.set(listener, retry);
 }
-
 function resetPreparedTerminalPromotionRetry(listener: ListenerRuntime): void {
   const retry = preparedTerminalPromotionRetries.get(listener);
   if (retry?.timer) clearTimeout(retry.timer);
   preparedTerminalPromotionRetries.delete(listener);
 }
-
 export function clearPreparedTerminalPromotionTimers(
   listener: ListenerRuntime,
 ): void {
@@ -181,8 +172,6 @@ export function scheduleDurableQueueRestore(
           try {
             listener.scheduleRestoredQueuePumps?.();
           } catch (error) {
-            // A wake failure cannot roll back already-enqueued durable work or
-            // a zero-result retry could strand it.
             debugWarn(
               "queue",
               "Failed to wake queue pumps after durable refill",
@@ -198,8 +187,6 @@ export function scheduleDurableQueueRestore(
           clearDurableQueueRestoreRetry(listener);
           return;
         }
-        // Keep one capped, coalesced wake alive so accepted durable work never
-        // depends on a future capacity callback or grows timers during outage.
         const delay = Math.min(
           DURABLE_QUEUE_RESTORE_MAX_RETRY_DELAY_MS,
           DURABLE_QUEUE_RESTORE_RETRY_DELAY_MS *
@@ -281,7 +268,6 @@ export function ensureConversationQueueRuntime(
       },
       onCleared: (reason, _clearedCount, items) => {
         runtime.pendingTurns = 0;
-        // Runtime replacement retains durable payloads for its successor.
         if (reason === "shutdown") {
           for (const item of items) {
             runtime.queuedMessagesByItemId.delete(item.id);
@@ -378,7 +364,6 @@ export function restoreDurableQueuedInputs(
         : [],
     ),
   );
-  // Do not misclassify dequeue-to-first-record handoff as an orphan.
   const volatileStartedIdentityKeys = new Set(
     [...listener.conversationRuntimes.values()].flatMap((runtime) =>
       [...runtime.dequeuedInputIdentitiesByBatchId.values()].flatMap(
@@ -473,6 +458,7 @@ export function promotePreparedInputTerminals(
         | "compactRetiredRecoverySidecar"
         | "listRecoverySidecars"
         | "removeRetiredRecoverySidecar"
+        | "withRecoveryAuthority"
       >
     > = createInterruptedTurnStore(),
   discardPreparedTerminal = discardPreparedInputTerminal,
@@ -504,6 +490,7 @@ export function promotePreparedInputTerminals(
       deferred = true;
       continue;
     }
+    let liveAuthorityGuard: typeof interruptedStore | undefined;
     if (
       !prepared.publicationClaimed &&
       prepared.owner.recoveryLineageId &&
@@ -540,8 +527,11 @@ export function promotePreparedInputTerminals(
         deferred = true;
         continue;
       }
-      let staleAuthority = false;
-      if (!snapshot) {
+      let staleAuthority = hasCompetingCompletedPublicationClaim(
+        prepared,
+        completedAuthorities,
+      );
+      if (!staleAuthority && !snapshot) {
         let retired: ReturnType<
           typeof interruptedStore.readRetiredRecoveryAuthority
         >;
@@ -732,8 +722,11 @@ export function promotePreparedInputTerminals(
           staleAuthority = newest[0]?.[0] !== preparedIdentity;
         }
       } else if (
-        snapshot.record.revision !== prepared.owner.interruptedRevision ||
-        snapshot.revisionToken !== prepared.owner.interruptedAuthorityRevision
+        !staleAuthority &&
+        snapshot !== null &&
+        (snapshot.record.revision !== prepared.owner.interruptedRevision ||
+          snapshot.revisionToken !==
+            prepared.owner.interruptedAuthorityRevision)
       ) {
         if (snapshot.record.recoveryClaimCompletion?.state === "pending") {
           deferred = true;
@@ -741,6 +734,7 @@ export function promotePreparedInputTerminals(
         }
         staleAuthority = true;
       }
+      if (snapshot) liveAuthorityGuard = interruptedStore;
       if (staleAuthority) {
         try {
           if (persisted) {
@@ -824,17 +818,23 @@ export function promotePreparedInputTerminals(
           replayConnectionId = owner.connectionId;
         }
         if (
-          !publishPreparedInputTerminalIfCurrent(listener, prepared, () => {
-            terminalStore.put(
-              prepared.scope.agentId,
-              prepared.scope.conversationId,
-              prepared.message,
-              {
-                ...owner,
-                preparationSequence: prepared.preparationSequence,
-              },
-            );
-          })
+          !publishPreparedInputTerminalIfCurrent(
+            listener,
+            prepared,
+            () => {
+              terminalStore.put(
+                prepared.scope.agentId,
+                prepared.scope.conversationId,
+                prepared.message,
+                {
+                  ...owner,
+                  preparationSequence: prepared.preparationSequence,
+                },
+              );
+            },
+            completedAuthorities,
+            liveAuthorityGuard,
+          )
         ) {
           continue;
         }

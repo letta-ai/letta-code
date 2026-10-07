@@ -24,6 +24,7 @@ import {
 } from "./interrupted-turn-storage";
 import type { InterruptedTurnRecord } from "./interrupted-turn-types";
 import { allRecordedResults } from "./recorded-tool-results";
+import { createRecoveryAuthorityGuard } from "./recovery-authority-guard";
 import {
   createRecoveryLineageSidecarAccess,
   type RecoveryLineageSidecar,
@@ -105,6 +106,25 @@ export function createInterruptedTurnStore(
     directory,
     syncDirectory: sync,
     lockWaitMs: dependencies.lockWaitMs,
+  });
+  const recoveryAuthority = createRecoveryAuthorityGuard({
+    path,
+    readRecord,
+    exists: existsSync,
+    acquire: (destination) =>
+      acquireDurableFileLock(destination, {
+        waitMs: dependencies.lockWaitMs,
+      }),
+    ensureSidecar: (current) => {
+      const marker = current.recoveryClaimCompletion;
+      if (
+        marker?.lineageId &&
+        !readSidecar(current.agentId, current.conversationId, marker.lineageId)
+      ) {
+        writeSidecar(initialSidecar(current));
+      }
+    },
+    snapshotSidecar,
   });
   const rawSnapshot = () => snapshotMain(directory, readRecord);
   return {
@@ -189,37 +209,8 @@ export function createInterruptedTurnStore(
         return null;
       return readRecoveryView(current);
     },
-    readRecoverySnapshot(
-      agentId: string,
-      conversationId: string,
-      lineageId: string,
-    ): {
-      record: InterruptedTurnRecord;
-      revisionToken: string;
-    } | null {
-      const destination = path(agentId, conversationId);
-      const release = acquireDurableFileLock(destination, {
-        waitMs: dependencies.lockWaitMs,
-      });
-      try {
-        const current = readRecord(destination);
-        if (!current && existsSync(destination)) {
-          throw new Error("Interrupted-turn authority is unreadable");
-        }
-        if (current?.recoveryClaimCompletion?.lineageId !== lineageId)
-          return null;
-        if (current.recoveryClaimCompletion.independentSuccessor !== true)
-          return current.revision
-            ? { record: current, revisionToken: current.revision }
-            : null;
-        if (!readSidecar(agentId, conversationId, lineageId)) {
-          writeSidecar(initialSidecar(current));
-        }
-        return snapshotSidecar(current);
-      } finally {
-        release();
-      }
-    },
+    readRecoverySnapshot: recoveryAuthority.readSnapshot,
+    withRecoveryAuthority: recoveryAuthority.withAuthority,
     readRetiredRecoveryAuthority,
     listRecoverySidecars: listSidecars,
     compactRetiredRecoverySidecar(sidecar: RecoveryLineageSidecar) {

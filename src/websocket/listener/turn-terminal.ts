@@ -4,11 +4,16 @@ import type { StopReasonType } from "@/types/protocol_v2";
 import { debugWarn } from "@/utils/debug";
 import { TO_SUBSCRIBERS } from "./connection";
 import {
+  claimPreparedInputTerminalIfCurrent,
   completePreparedInputTerminal,
+  loadPreparedInputTerminals,
   prepareInputTerminal,
 } from "./input-terminal-journal";
 import { readInterruptedTurn } from "./interrupted-turn-read";
-import { forgetListenerWork } from "./interrupted-turn-record";
+import {
+  createInterruptedTurnStore,
+  forgetListenerWork,
+} from "./interrupted-turn-record";
 import {
   emitInterruptedStatusDelta,
   emitRuntimeStateUpdates,
@@ -182,6 +187,40 @@ export function finishListenerTurn(
     terminalOwner.connectionId === null &&
     !identitylessConsumerTerminal &&
     !options.turnFinishedStore;
+  try {
+    if (
+      !options.prepareInputTerminal &&
+      !deferUntilReplayOwner &&
+      turnFinishedMessage?.terminal_consumer_ids?.length &&
+      (options.durableInputIdentities?.length ?? 0) > 0
+    ) {
+      const preparedInputTerminal = loadPreparedInputTerminals(
+        runtime.listener,
+      ).find(
+        (prepared) =>
+          prepared.scope.agentId === runtime.agentId &&
+          prepared.scope.conversationId === runtime.conversationId &&
+          prepared.owner.terminalIdentity === terminalOwner.terminalIdentity,
+      );
+      if (
+        !preparedInputTerminal ||
+        !claimPreparedInputTerminalIfCurrent(
+          runtime.listener,
+          preparedInputTerminal,
+          [],
+          !options.readInterruptedRevision &&
+            !options.readInterruptedAuthorityRevision
+            ? createInterruptedTurnStore()
+            : undefined,
+        )
+      ) {
+        throw new Error("Failed to claim accepted-input terminal publication");
+      }
+    }
+  } catch (error) {
+    runtime.turnLifecycle.finish(lease, options.stopReason);
+    throw error;
+  }
   try {
     preparedTurnFinished =
       turnFinishedMessage && !deferUntilReplayOwner

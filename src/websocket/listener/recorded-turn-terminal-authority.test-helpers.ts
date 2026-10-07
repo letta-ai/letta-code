@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { createAcceptedInputDispositionLedger } from "./input-disposition";
-import type { ListenerRuntime } from "./types";
+import type { AcceptedInputDispositionEntry, ListenerRuntime } from "./types";
 
 type ExpirableEntry = {
   expiresAt: number;
@@ -8,6 +8,7 @@ type ExpirableEntry = {
   completedTerminalAuthority?: {
     terminalIdentity?: string;
     preparationSequence?: number;
+    publicationClaimed?: true;
   };
 };
 
@@ -16,6 +17,7 @@ export function downgradeCompletedAuthority(entry: ExpirableEntry): void {
   if (!authority) throw new Error("missing completed authority fixture");
   delete authority.terminalIdentity;
   delete authority.preparationSequence;
+  delete authority.publicationClaimed;
   entry.expiresAt = Date.now() - 1;
 }
 
@@ -51,4 +53,22 @@ export function setDispositionLedger(
 ): void {
   listener.acceptedInputDispositionLedger =
     createAcceptedInputDispositionLedger({ persistentPath });
+}
+
+export function snapshotDispositionStore(listener: ListenerRuntime): {
+  version: 4;
+  nextGeneration: number;
+  entries: Record<string, AcceptedInputDispositionEntry>;
+  reservations: Record<string, never>;
+} {
+  return {
+    version: 4,
+    nextGeneration: listener.acceptedInputDispositionLedger.nextGeneration,
+    entries: Object.fromEntries(
+      [...listener.acceptedInputDispositionLedger.entries].map(
+        ([key, entry]) => [key, structuredClone(entry)],
+      ),
+    ),
+    reservations: {},
+  };
 }

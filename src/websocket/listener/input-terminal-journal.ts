@@ -16,12 +16,14 @@ import {
   preparedTerminalMatchesLegacyAuthorityIndex,
   settleExpiredQuarantineJournals,
 } from "./input-disposition-retention";
+import { getConversationRuntimeKey } from "./runtime";
 import { TURN_FINISHED_REPLAY_TTL_MS } from "./turn-finished-replay";
 import type {
   AcceptedInputDispositionEntry,
   ConversationRuntime,
   DurablePreparedInputTerminal,
   InputIdentity,
+  InterruptedTerminalAuthority,
   ListenerRuntime,
 } from "./types";
 
@@ -61,6 +63,7 @@ function hasLegacyAuthorityQuarantine(
 function recordCompletedTerminalAuthority(
   entry: AcceptedInputDispositionEntry,
   owner: DurablePreparedInputTerminal["owner"],
+  publicationClaimed = false,
 ): void {
   if (!owner.interruptedRevision) return;
   entry.completedTerminalRevision = owner.interruptedRevision;
@@ -77,7 +80,23 @@ function recordCompletedTerminalAuthority(
     ...(owner.preparationSequence !== undefined
       ? { preparationSequence: owner.preparationSequence }
       : {}),
+    ...(publicationClaimed ? { publicationClaimed: true } : {}),
   };
+}
+
+function terminalAuthorityMatches(
+  candidate: DurablePreparedInputTerminal,
+  terminal: DurablePreparedInputTerminal,
+): boolean {
+  return Boolean(
+    terminal.owner.recoveryLineageId &&
+      terminal.owner.interruptedRevision &&
+      candidate.scope.agentId === terminal.scope.agentId &&
+      candidate.scope.conversationId === terminal.scope.conversationId &&
+      candidate.owner.recoveryLineageId === terminal.owner.recoveryLineageId &&
+      candidate.owner.interruptedRevision ===
+        terminal.owner.interruptedRevision,
+  );
 }
 
 /**
@@ -190,6 +209,7 @@ export function completePreparedInputTerminal(
             recordCompletedTerminalAuthority(
               entry,
               entry.preparedTerminal.owner,
+              entry.preparedTerminal.publicationClaimed,
             );
             delete entry.preparedTerminal;
             changed = true;
@@ -205,7 +225,11 @@ export function completePreparedInputTerminal(
   for (const key of keys) {
     const entry = ledger.entries.get(key);
     if (entry?.preparedTerminal?.message.turn_id === turnId) {
-      recordCompletedTerminalAuthority(entry, entry.preparedTerminal.owner);
+      recordCompletedTerminalAuthority(
+        entry,
+        entry.preparedTerminal.owner,
+        entry.preparedTerminal.publicationClaimed,
+      );
       delete entry.preparedTerminal;
     }
   }
@@ -332,17 +356,71 @@ export function loadPreparedInputTerminals(
   });
 }
 
-export function publishPreparedInputTerminalIfCurrent(
+function preparedTerminalWithoutClaim(candidate: DurablePreparedInputTerminal) {
+  const { publicationClaimed: _, ...durable } = candidate;
+  return durable;
+}
+
+function completedAuthorityKey(
+  authority: InterruptedTerminalAuthority,
+): string {
+  return JSON.stringify([
+    authority.interruptedRevision,
+    authority.authorityRevision,
+    authority.recoveryLineageId ?? null,
+    authority.terminalIdentity ?? null,
+    authority.preparationSequence ?? null,
+    authority.publicationClaimed ?? null,
+  ]);
+}
+
+export function hasCompetingCompletedPublicationClaim(
+  terminal: DurablePreparedInputTerminal,
+  completedAuthorities: readonly {
+    runtimeKey: string;
+    authority: InterruptedTerminalAuthority;
+  }[],
+): boolean {
+  const runtimeKey = getConversationRuntimeKey(
+    terminal.scope.agentId,
+    terminal.scope.conversationId,
+  );
+  return completedAuthorities.some(
+    (completed) =>
+      completed.runtimeKey === runtimeKey &&
+      completed.authority.publicationClaimed === true &&
+      completed.authority.recoveryLineageId ===
+        terminal.owner.recoveryLineageId &&
+      completed.authority.interruptedRevision ===
+        terminal.owner.interruptedRevision &&
+      (completed.authority.terminalIdentity !==
+        terminal.owner.terminalIdentity ||
+        completed.authority.preparationSequence !==
+          terminal.owner.preparationSequence),
+  );
+}
+
+type RecoveryAuthorityGuard = {
+  withRecoveryAuthority?: (params: {
+    agentId: string;
+    conversationId: string;
+    lineageId: string;
+    expectedRevision: string;
+    action: () => boolean;
+  }) => boolean;
+};
+
+export function claimPreparedInputTerminalIfCurrent(
   listener: ListenerRuntime,
   terminal: DurablePreparedInputTerminal,
-  publish: () => void,
+  validatedCompletedAuthorities: readonly {
+    runtimeKey: string;
+    authority: InterruptedTerminalAuthority;
+  }[] = [],
+  authorityGuard?: RecoveryAuthorityGuard,
 ): boolean {
   const ledger = getLedger(listener);
-  const withoutClaim = (candidate: DurablePreparedInputTerminal) => {
-    const { publicationClaimed: _, ...durable } = candidate;
-    return durable;
-  };
-  const expected = withoutClaim(terminal);
+  const expected = preparedTerminalWithoutClaim(terminal);
   const claimCurrent = (entries: Iterable<AcceptedInputDispositionEntry>) => {
     const values = [...entries];
     const quarantines = buildLegacyAuthorityQuarantineIndex(values);
@@ -352,9 +430,67 @@ export function publishPreparedInputTerminalIfCurrent(
       }
       return (
         entry.preparedTerminal !== undefined &&
-        isDeepStrictEqual(withoutClaim(entry.preparedTerminal), expected)
+        isDeepStrictEqual(
+          preparedTerminalWithoutClaim(entry.preparedTerminal),
+          expected,
+        )
       );
     });
+    if (matches.length === 0) return { current: false, changed: false };
+    const recoveryLineageId = terminal.owner.recoveryLineageId;
+    const interruptedRevision = terminal.owner.interruptedRevision;
+    if (recoveryLineageId && interruptedRevision) {
+      const competingClaim = values.some((entry) => {
+        const prepared = entry.preparedTerminal;
+        return (
+          prepared?.publicationClaimed === true &&
+          prepared.scope.agentId === terminal.scope.agentId &&
+          prepared.scope.conversationId === terminal.scope.conversationId &&
+          prepared.owner.recoveryLineageId === recoveryLineageId &&
+          prepared.owner.interruptedRevision === interruptedRevision &&
+          !isDeepStrictEqual(preparedTerminalWithoutClaim(prepared), expected)
+        );
+      });
+      if (competingClaim) {
+        throw new Error("Competing terminal already owns publication claim");
+      }
+      if (
+        !matches.some(
+          (entry) => entry.preparedTerminal?.publicationClaimed === true,
+        )
+      ) {
+        const runtimeKey = matches[0]?.runtimeKey;
+        const currentAuthorities = values
+          .filter(
+            (entry) =>
+              entry.runtimeKey === runtimeKey &&
+              entry.completedTerminalAuthority?.recoveryLineageId ===
+                recoveryLineageId &&
+              entry.completedTerminalAuthority.interruptedRevision ===
+                interruptedRevision,
+          )
+          .map((entry) =>
+            completedAuthorityKey(
+              entry.completedTerminalAuthority as InterruptedTerminalAuthority,
+            ),
+          )
+          .sort();
+        const validatedAuthorities = validatedCompletedAuthorities
+          .filter(
+            (completed) =>
+              completed.runtimeKey === runtimeKey &&
+              completed.authority.recoveryLineageId === recoveryLineageId &&
+              completed.authority.interruptedRevision === interruptedRevision,
+          )
+          .map((completed) => completedAuthorityKey(completed.authority))
+          .sort();
+        if (!isDeepStrictEqual(currentAuthorities, validatedAuthorities)) {
+          throw new Error(
+            "Terminal authority changed before publication claim",
+          );
+        }
+      }
+    }
     const changed = matches.some(
       (entry) => entry.preparedTerminal?.publicationClaimed !== true,
     );
@@ -364,6 +500,62 @@ export function publishPreparedInputTerminalIfCurrent(
     }
     return { current: matches.length > 0, changed };
   };
+  const claim = () => {
+    if (!ledger.persistentPath) {
+      const now = Date.now();
+      expireAcceptedInputDispositions(ledger, now);
+      settleExpiredQuarantineJournals(ledger.entries, now, (key, entry) =>
+        deleteCurrentEntry(ledger, key, entry.generation),
+      );
+      return claimCurrent(ledger.entries.values()).current;
+    }
+    return durableTransaction(ledger.persistentPath, (store) => {
+      const current = claimCurrent(Object.values(store.entries));
+      syncMemoryFromDurable(ledger, store);
+      return { result: current.current, changed: current.changed };
+    });
+  };
+  const lineageId = terminal.owner.recoveryLineageId;
+  const expectedRevision = terminal.owner.interruptedAuthorityRevision;
+  if (
+    terminal.publicationClaimed !== true &&
+    lineageId &&
+    expectedRevision &&
+    authorityGuard?.withRecoveryAuthority
+  ) {
+    return authorityGuard.withRecoveryAuthority({
+      agentId: terminal.scope.agentId ?? "",
+      conversationId: terminal.scope.conversationId,
+      lineageId,
+      expectedRevision,
+      action: claim,
+    });
+  }
+  return claim();
+}
+
+export function publishPreparedInputTerminalIfCurrent(
+  listener: ListenerRuntime,
+  terminal: DurablePreparedInputTerminal,
+  publish: () => void,
+  validatedCompletedAuthorities: readonly {
+    runtimeKey: string;
+    authority: InterruptedTerminalAuthority;
+  }[] = [],
+  authorityGuard?: RecoveryAuthorityGuard,
+): boolean {
+  if (
+    !claimPreparedInputTerminalIfCurrent(
+      listener,
+      terminal,
+      validatedCompletedAuthorities,
+      authorityGuard,
+    )
+  ) {
+    return false;
+  }
+  const ledger = getLedger(listener);
+  const expected = preparedTerminalWithoutClaim(terminal);
   const publishAndRetire = (
     entries: Iterable<AcceptedInputDispositionEntry>,
   ) => {
@@ -373,33 +565,37 @@ export function publishPreparedInputTerminalIfCurrent(
       (entry) =>
         !preparedTerminalMatchesLegacyAuthorityIndex(entry, quarantines) &&
         entry.preparedTerminal?.publicationClaimed === true &&
-        isDeepStrictEqual(withoutClaim(entry.preparedTerminal), expected),
+        isDeepStrictEqual(
+          preparedTerminalWithoutClaim(entry.preparedTerminal),
+          expected,
+        ),
     );
     if (matches.length === 0) return false;
     publish();
-    for (const entry of matches) {
+    const winner = matches[0]?.preparedTerminal;
+    if (!winner) return false;
+    const resolvedEntries = values.filter((entry) => {
+      const prepared = entry.preparedTerminal;
+      return (
+        prepared !== undefined &&
+        (matches.includes(entry) || terminalAuthorityMatches(prepared, winner))
+      );
+    });
+    for (const entry of resolvedEntries) {
       const prepared = entry.preparedTerminal;
       if (!prepared) continue;
-      recordCompletedTerminalAuthority(entry, prepared.owner);
+      recordCompletedTerminalAuthority(
+        entry,
+        winner.owner,
+        winner.publicationClaimed,
+      );
       delete entry.preparedTerminal;
     }
     return true;
   };
   if (!ledger.persistentPath) {
-    const now = Date.now();
-    expireAcceptedInputDispositions(ledger, now);
-    settleExpiredQuarantineJournals(ledger.entries, now, (key, entry) =>
-      deleteCurrentEntry(ledger, key, entry.generation),
-    );
-    if (!claimCurrent(ledger.entries.values()).current) return false;
     return publishAndRetire(ledger.entries.values());
   }
-  const claimed = durableTransaction(ledger.persistentPath, (store) => {
-    const claim = claimCurrent(Object.values(store.entries));
-    syncMemoryFromDurable(ledger, store);
-    return { result: claim.current, changed: claim.changed };
-  });
-  if (!claimed) return false;
   return durableTransaction(ledger.persistentPath, (store) => {
     const result = publishAndRetire(Object.values(store.entries));
     syncMemoryFromDurable(ledger, store);
@@ -609,7 +805,11 @@ export function clearPreparedInputTerminal(
             prepared.scope.agentId === scope.agentId &&
             prepared.scope.conversationId === scope.conversationId
           ) {
-            recordCompletedTerminalAuthority(entry, prepared.owner);
+            recordCompletedTerminalAuthority(
+              entry,
+              prepared.owner,
+              prepared.publicationClaimed,
+            );
             delete entry.preparedTerminal;
             changed = true;
           }
@@ -631,7 +831,11 @@ export function clearPreparedInputTerminal(
       prepared.scope.agentId === scope.agentId &&
       prepared.scope.conversationId === scope.conversationId
     ) {
-      recordCompletedTerminalAuthority(entry, prepared.owner);
+      recordCompletedTerminalAuthority(
+        entry,
+        prepared.owner,
+        prepared.publicationClaimed,
+      );
       delete entry.preparedTerminal;
     }
   }

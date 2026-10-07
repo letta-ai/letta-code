@@ -194,7 +194,9 @@ test.each(["put_then_throw", "clear_failure"] as const)(
             : {}),
         }),
       ).toThrow();
-      expect(loadPreparedInputTerminals(runtime.listener)).toHaveLength(1);
+      expect(loadPreparedInputTerminals(runtime.listener)).toEqual([
+        expect.objectContaining({ publicationClaimed: true }),
+      ]);
 
       const restarted = persistentRuntime(path);
       expect(
