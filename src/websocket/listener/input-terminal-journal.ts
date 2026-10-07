@@ -331,6 +331,42 @@ export function loadPreparedInputTerminals(
   });
 }
 
+export function publishPreparedInputTerminalIfCurrent(
+  listener: ListenerRuntime,
+  terminal: DurablePreparedInputTerminal,
+  publish: () => void,
+): boolean {
+  const ledger = getLedger(listener);
+  const publishCurrent = (entries: Iterable<AcceptedInputDispositionEntry>) => {
+    const values = [...entries];
+    const quarantines = buildLegacyAuthorityQuarantineIndex(values);
+    const current = values.some((entry) => {
+      if (preparedTerminalMatchesLegacyAuthorityIndex(entry, quarantines)) {
+        return false;
+      }
+      return (
+        entry.preparedTerminal !== undefined &&
+        JSON.stringify(entry.preparedTerminal) === JSON.stringify(terminal)
+      );
+    });
+    if (current) publish();
+    return current;
+  };
+  if (!ledger.persistentPath) {
+    const now = Date.now();
+    expireAcceptedInputDispositions(ledger, now);
+    settleExpiredQuarantineJournals(ledger.entries, now, (key, entry) =>
+      deleteCurrentEntry(ledger, key, entry.generation),
+    );
+    return publishCurrent(ledger.entries.values());
+  }
+  return durableTransaction(ledger.persistentPath, (store) => {
+    const result = publishCurrent(Object.values(store.entries));
+    syncMemoryFromDurable(ledger, store);
+    return { result, changed: false };
+  });
+}
+
 /**
  * Convert unresolved predecessor journals into a stable migration fence.
  * Only pre-sequence/pre-identity authorities can reach this path, so its

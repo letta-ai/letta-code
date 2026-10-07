@@ -15,6 +15,7 @@ import {
   loadCompletedTerminalAuthorities,
   loadLegacyAuthorityQuarantines,
   loadPreparedInputTerminals,
+  publishPreparedInputTerminalIfCurrent,
   quarantinePreparedTerminalAuthority,
 } from "./input-terminal-journal";
 import {
@@ -436,8 +437,6 @@ export function restoreDurableQueuedInputs(
           )?.id === payload.identity.id),
     );
     if (alreadyRestored) continue;
-    // Dead connections cannot own restored work; preserve explicit identity so
-    // teleport payloads never enter the ordinary id domain.
     const replayOwner = [...listener.connections.values()].find(
       (connection) =>
         connection.initialized && connection.subscriptions.has(runtime.key),
@@ -452,7 +451,6 @@ export function restoreDurableQueuedInputs(
         preserveExisting: true,
       })
     ) {
-      // Durable disposition remains authoritative for a later restart.
       continue;
     }
     restored += 1;
@@ -793,8 +791,6 @@ export function promotePreparedInputTerminals(
                 terminal.message.turn_id === prepared.message.turn_id,
           );
         if (existing) {
-          // A pre-crash put may have committed and rotated ownership; re-submit
-          // with its persisted owner for full identity/message validation.
           owner = existing.owner;
           replayConnectionId = existing.owner.connectionId;
         } else if (owner.connectionId === null) {
@@ -828,17 +824,21 @@ export function promotePreparedInputTerminals(
         } else {
           replayConnectionId = owner.connectionId;
         }
-        // Always pass through the store's full identity-collision validation.
-        // An existing identity is idempotent only when both payload and owner match.
-        terminalStore.put(
-          prepared.scope.agentId,
-          prepared.scope.conversationId,
-          prepared.message,
-          {
-            ...owner,
-            preparationSequence: prepared.preparationSequence,
-          },
-        );
+        if (
+          !publishPreparedInputTerminalIfCurrent(listener, prepared, () => {
+            terminalStore.put(
+              prepared.scope.agentId,
+              prepared.scope.conversationId,
+              prepared.message,
+              {
+                ...owner,
+                preparationSequence: prepared.preparationSequence,
+              },
+            );
+          })
+        ) {
+          continue;
+        }
       }
     } catch (error) {
       deferred = true;

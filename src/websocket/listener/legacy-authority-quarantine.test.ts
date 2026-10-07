@@ -303,6 +303,89 @@ test("quarantine expiry permanently fences matching predecessor journals", () =>
   }
 });
 
+test("promotion revalidates after expiry wins a detached journal race", () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    "agent-0",
+    "conversation-0",
+  );
+  const identity = ordinaryInputIdentity("detached-promotion-race");
+  if (!identity || !rememberInputDisposition(runtime, identity, "started")) {
+    throw new Error("failed to seed detached promotion race");
+  }
+  const interruptedRevision = "revision-detached-race";
+  const recoveryLineageId = "lineage-detached-race";
+  const authorityRevision = "authority-detached-race";
+  expect(
+    prepareInputTerminal(runtime, [identity], {
+      scope: { agentId: "agent-0", conversationId: "conversation-0" },
+      message: {
+        type: "turn_finished",
+        turn_id: "turn-detached-race",
+        stop_reason: "end_turn",
+        terminal_consumer_ids: ["consumer-detached-race"],
+      },
+      owner: {
+        connectionId: null,
+        canRotate: false,
+        lineageId: "listener-detached-race",
+        terminalIdentity: "terminal-detached-race",
+        interruptedRevision,
+        recoveryLineageId,
+        interruptedAuthorityRevision: authorityRevision,
+      },
+    }),
+  ).toBe(true);
+  let putCalls = 0;
+  const terminalStore = {
+    read: () => null,
+    readOrThrow: () => null,
+    put: () => {
+      putCalls += 1;
+    },
+  };
+  const interruptedStore = {
+    readRecoverySnapshot: () => ({
+      record: { revision: interruptedRevision },
+      revisionToken: authorityRevision,
+    }),
+    readRetiredRecoveryAuthority: () => null,
+  };
+  let raced = false;
+  const raceLoader = () => {
+    const detached = loadPreparedInputTerminals(listener);
+    if (raced) return detached;
+    raced = true;
+    expect(
+      quarantinePreparedTerminalAuthority(
+        listener,
+        { agentId: "agent-0", conversationId: "conversation-0" },
+        {
+          interruptedRevision,
+          recoveryLineageId,
+          authorityRevision: "legacy-detached-race",
+        },
+      ),
+    ).toBe(true);
+    expireQuarantine(listener);
+    expect(loadLegacyAuthorityQuarantines(listener)).toHaveLength(1);
+    return detached;
+  };
+  expect(
+    promotePreparedInputTerminals(
+      listener,
+      terminalStore as never,
+      undefined,
+      interruptedStore as never,
+      undefined,
+      undefined,
+      raceLoader,
+    ),
+  ).toBe(0);
+  expect(putCalls).toBe(0);
+});
+
 test("listener stop clears legacy quarantine cleanup timers", async () => {
   const listener = createRuntime();
   const runtime = getOrCreateScopedRuntime(
