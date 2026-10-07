@@ -32,6 +32,11 @@ export function createRecoveredTurnFinalizer(params: {
   canCommit: () => boolean;
 }) {
   const recoveryLineageId = params.recovered.recoveryLineageId;
+  if (recoveryLineageId && !params.authorityStore) {
+    throw new Error(
+      "Recovered finalizer requires its recovery authority store",
+    );
+  }
   const authorityStore = params.authorityStore ?? createInterruptedTurnStore();
   const commit = (options: Parameters<typeof finishListenerTurn>[2]) =>
     finishListenerTurn(params.runtime, params.recoveryLease, {

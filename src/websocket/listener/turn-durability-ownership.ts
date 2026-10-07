@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { ApprovalResult } from "@/agent/approval-execution";
-import { recordListenerWorkRetriably } from "./interrupted-turn-record";
+import {
+  type recordListenerWork,
+  recordListenerWorkRetriably,
+} from "./interrupted-turn-record";
 import type {
   ConversationRuntime,
   IncomingMessage,
@@ -19,14 +22,28 @@ export async function checkpointTurnInputOwnership(
   expectedRevision?: string,
   actingUserId?: string,
   recoveryLineageId?: string,
+  recoveryEvidenceWriter?: (
+    ...args: Parameters<typeof recordListenerWork>
+  ) => unknown | Promise<unknown>,
 ): Promise<string | undefined> {
+  const update = {
+    durableInputIdentities: [...ownership.durableInputIdentities],
+    terminalConsumerIds: [...ownership.terminalConsumerIds],
+    actingUserId,
+  };
+  if (recoveryEvidenceWriter) {
+    const revision = await recoveryEvidenceWriter(
+      runtime,
+      update,
+      "run_observed",
+      expectedRevision,
+      recoveryLineageId,
+    );
+    return typeof revision === "string" ? revision : undefined;
+  }
   return recordListenerWorkRetriably(
     runtime,
-    {
-      durableInputIdentities: [...ownership.durableInputIdentities],
-      terminalConsumerIds: [...ownership.terminalConsumerIds],
-      actingUserId,
-    },
+    update,
     "run_observed",
     expectedRevision,
     recoveryLineageId,

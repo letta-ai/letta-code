@@ -20,6 +20,7 @@ import {
 } from "./protocol-outbound";
 import { emitLoopErrorNotice } from "./recoverable-notices";
 import { getApprovalToolCallDesyncErrorText } from "./recovery";
+import type { RecoveryEvidenceWriter } from "./recovery-evidence";
 import type { ListenerTransport } from "./transport";
 import type { TurnCorrelation } from "./turn-correlation";
 import type { TurnLease } from "./turn-lifecycle";
@@ -39,6 +40,7 @@ export type TurnStreamDrainParams = {
   authorityGuard?: () => boolean;
   interruptedRevisionRef?: { current: string | undefined };
   recoveryLineageId?: string;
+  recoveryEvidenceWriter?: RecoveryEvidenceWriter;
 };
 
 export type TurnStreamDrainResult = {
@@ -96,42 +98,56 @@ export async function drainTurnStreamWithEmission(
               : undefined,
           };
           const expectedRevision = params.interruptedRevisionRef?.current;
-          try {
-            const revision = recordListenerWork(
+          if (params.recoveryEvidenceWriter) {
+            const revision = await params.recoveryEvidenceWriter(
               runtime,
               update,
               "run_observed",
               expectedRevision,
               params.recoveryLineageId,
             );
-            if (revision && params.interruptedRevisionRef) {
+            if (typeof revision === "string" && params.interruptedRevisionRef) {
               params.interruptedRevisionRef.current = revision;
             }
-          } catch (error) {
-            if (
-              !(error instanceof Error) ||
-              (error.message !==
-                "Timed out acquiring durable filesystem lock" &&
-                error.message !== "Interrupted-turn revision changed" &&
-                error.message !== "Recovery lineage revision changed" &&
-                error.message !==
-                  "Interrupted-turn revision cannot recreate a record")
-            ) {
-              throw error;
-            }
-            const revision = await recordListenerWorkRetriably(
-              runtime,
-              update,
-              "run_observed",
-              expectedRevision,
-              params.recoveryLineageId,
-              {
-                shouldContinue: () =>
-                  runtime.turnLifecycle.isCurrent(turnLease) && hasAuthority(),
-              },
-            );
-            if (revision && params.interruptedRevisionRef) {
-              params.interruptedRevisionRef.current = revision;
+          } else {
+            try {
+              const revision = recordListenerWork(
+                runtime,
+                update,
+                "run_observed",
+                expectedRevision,
+                params.recoveryLineageId,
+              );
+              if (revision && params.interruptedRevisionRef) {
+                params.interruptedRevisionRef.current = revision;
+              }
+            } catch (error) {
+              if (
+                !(error instanceof Error) ||
+                (error.message !==
+                  "Timed out acquiring durable filesystem lock" &&
+                  error.message !== "Interrupted-turn revision changed" &&
+                  error.message !== "Recovery lineage revision changed" &&
+                  error.message !==
+                    "Interrupted-turn revision cannot recreate a record")
+              ) {
+                throw error;
+              }
+              const revision = await recordListenerWorkRetriably(
+                runtime,
+                update,
+                "run_observed",
+                expectedRevision,
+                params.recoveryLineageId,
+                {
+                  shouldContinue: () =>
+                    runtime.turnLifecycle.isCurrent(turnLease) &&
+                    hasAuthority(),
+                },
+              );
+              if (revision && params.interruptedRevisionRef) {
+                params.interruptedRevisionRef.current = revision;
+              }
             }
           }
           runIdSent = true;

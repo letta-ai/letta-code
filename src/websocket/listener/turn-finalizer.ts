@@ -30,6 +30,11 @@ export function createTurnFinalizer(params: {
   recoveryAuthorityStore?: RecoveryAuthorityStore;
 }) {
   const recoveryLineageId = params.recoveryLineageId;
+  if (recoveryLineageId && !params.recoveryAuthorityStore) {
+    throw new Error(
+      "Recovered finalizer requires its recovery authority store",
+    );
+  }
   const recoveryAuthorityStore =
     params.recoveryAuthorityStore ?? createInterruptedTurnStore();
   let finalized = false;

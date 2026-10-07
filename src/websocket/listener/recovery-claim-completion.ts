@@ -6,6 +6,10 @@ import type {
 export type InterruptedTurnStore = ReturnType<
   typeof createInterruptedTurnStore
 >;
+type RecoveryClaimCompletionStore = Pick<
+  InterruptedTurnStore,
+  "markRecoveryClaimCompletionPending" | "retireRecoveryClaimCompletion"
+>;
 
 /**
  * Retire an acknowledged recovery claim without deleting evidence written by a
@@ -18,7 +22,7 @@ export type RecoveryClaimRetirement =
   | "failed";
 
 export function retireAcknowledgedRecoveryClaim(
-  store: InterruptedTurnStore,
+  store: RecoveryClaimCompletionStore,
   params: {
     agentId: string;
     conversationId: string;
@@ -35,7 +39,7 @@ export function retireAcknowledgedRecoveryClaim(
 
 /** Durably move one exact running recovery lineage to completion-pending. */
 export function markRecoveryClaimCompletionPending(
-  store: InterruptedTurnStore,
+  store: RecoveryClaimCompletionStore,
   record: InterruptedTurnRecord,
   observedRevision: string | undefined = record.revision,
 ): InterruptedTurnRecord | null {

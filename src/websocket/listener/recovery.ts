@@ -19,7 +19,6 @@ import { LISTENER_STREAM_RESUME_POLICY } from "./constants";
 import { appendQueuedTurnToInput } from "./continuation-input";
 import { promotePreparedInputTerminals } from "./conversation-runtime";
 import { getConversationWorkingDirectory } from "./cwd";
-import { readInterruptedTurn } from "./interrupted-turn-read";
 import { createInterruptedTurnStore } from "./interrupted-turn-record";
 import {
   createToolExecutionOutputEmitter,
@@ -394,6 +393,11 @@ async function executeRecoveredApprovalContinuation(params: {
   const recordWork = dependencies?.recordListenerWork;
   const recoveryAuthorityStore =
     dependencies?.recoveryAuthorityStore ?? createInterruptedTurnStore();
+  if (dependencies?.recoveryAuthorityStore && !recordWork) {
+    throw new Error(
+      "Custom recovery authority store requires matching evidence writer",
+    );
+  }
   if (
     recordWork &&
     !dependencies?.mergeSettledRecoveryResult &&
@@ -865,6 +869,7 @@ async function executeRecoveredApprovalContinuation(params: {
       recoveryLineageId,
       undefined,
       recoveryAuthorityStore,
+      recordWork,
     );
 
     if (runtime.turnLifecycle.isCurrent(recoveryLease)) {
@@ -875,7 +880,11 @@ async function executeRecoveredApprovalContinuation(params: {
     }
     continuationFinalized = true;
     if (recoveryClaim) {
-      const completed = readInterruptedTurn(runtime);
+      const completed = recoveryAuthorityStore.readRecoverySnapshot(
+        runtime.agentId ?? "",
+        runtime.conversationId,
+        recoveryLineageId,
+      )?.record;
       if (!completed) {
         // Observer-only recovery has no local execution evidence to retire.
         claimSettled = await recoveryClaim.complete();
@@ -891,7 +900,7 @@ async function executeRecoveredApprovalContinuation(params: {
           return;
         }
         const pendingCompletionRevision = markRecoveryClaimCompletionPending(
-          createInterruptedTurnStore(),
+          recoveryAuthorityStore,
           completed,
           evidence.revision ?? undefined,
         )?.revision;
@@ -907,7 +916,7 @@ async function executeRecoveredApprovalContinuation(params: {
         // may have advanced the record while complete() was awaiting its ACK; in
         // that case clear only this lineage's marker and preserve successor work.
         const retirement = pendingCompletionRevision
-          ? retireAcknowledgedRecoveryClaim(createInterruptedTurnStore(), {
+          ? retireAcknowledgedRecoveryClaim(recoveryAuthorityStore, {
               agentId: completed.agentId,
               conversationId: completed.conversationId,
               lineageId: recoveryLineageId,

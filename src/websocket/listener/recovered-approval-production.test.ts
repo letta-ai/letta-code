@@ -94,7 +94,9 @@ test("production batch waits for crossed effects before scheduling claim-loss re
     {
       dependencies: {
         recoveryAuthorityStore: {
+          markRecoveryClaimCompletionPending: () => null,
           readRecoverySnapshot: () => null,
+          retireRecoveryClaimCompletion: () => "removed",
           withRecoveryAuthority: ({ action }) => action(),
         },
         ensureSecretsHydrated: async () => {},
@@ -188,6 +190,13 @@ test("unattributed recovered queued continuation suppresses ambient attribution"
   let preparedActor:
     | { actingUserId?: string; suppressActingUserFallback?: boolean }
     | undefined;
+  const recoveryEvidenceWriter = () => {};
+  const recoveryAuthorityStore = {
+    markRecoveryClaimCompletionPending: () => null,
+    readRecoverySnapshot: () => null,
+    retireRecoveryClaimCompletion: () => "removed" as const,
+    withRecoveryAuthority: ({ action }: { action: () => boolean }) => action(),
+  };
 
   const handled = await startRecoveredApprovalContinuation(
     runtime,
@@ -195,6 +204,8 @@ test("unattributed recovered queued continuation suppresses ambient attribution"
     async (message, _socket, ownerRuntime, ...args) => {
       received = message;
       const turnLease = args[3];
+      expect(args[11]).toBe(recoveryAuthorityStore);
+      expect(args[12]).toBe(recoveryEvidenceWriter);
       if (turnLease) ownerRuntime.turnLifecycle.finish(turnLease, "end_turn");
     },
     {
@@ -206,7 +217,8 @@ test("unattributed recovered queued continuation suppresses ambient attribution"
           return createPreparedToolContext();
         },
         executeApprovalBatch: async () => [],
-        recordListenerWork: () => {},
+        recordListenerWork: recoveryEvidenceWriter,
+        recoveryAuthorityStore,
       },
     },
   );

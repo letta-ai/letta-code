@@ -46,7 +46,10 @@ import {
   getApprovalToolCallDesyncErrorText,
   shouldAttemptPostStopApprovalRecovery,
 } from "./recovery";
-import type { RecoveryAuthorityStore } from "./recovery-evidence";
+import type {
+  RecoveryAuthorityStore,
+  RecoveryEvidenceWriter,
+} from "./recovery-evidence";
 import {
   clearRecoveredApprovalStateUnlessRetained,
   evictConversationRuntimeIfIdle,
@@ -115,6 +118,7 @@ async function handleIncomingMessageInner(
   recoveryLineageId?: string,
   recoveryTerminalRevision?: string,
   recoveryAuthorityStore?: RecoveryAuthorityStore,
+  recoveryEvidenceWriter?: RecoveryEvidenceWriter,
 ): Promise<void> {
   const agentId = normalizeCwdAgentId(msg.agentId);
   const requestedConversationId = msg.conversationId || undefined;
@@ -305,6 +309,7 @@ async function handleIncomingMessageInner(
           authorityGuard: terminalCommitGuard,
           interruptedRevisionRef,
           recoveryLineageId,
+          recoveryEvidenceWriter,
         },
       );
       const result = drained.result;
@@ -782,6 +787,7 @@ async function handleIncomingMessageInner(
             interruptedRevisionRef.current,
             queuedTurn.actingUserId,
             recoveryLineageId,
+            recoveryEvidenceWriter,
           );
         },
         processOwnedTurn: msg.processOwnedTurn === true,
@@ -790,7 +796,11 @@ async function handleIncomingMessageInner(
         authorityGuard: terminalCommitGuard,
         interruptedRevisionRef,
         recoveryLineageId,
+        recoveryAuthorityStore,
         buildSendOptions,
+        dependencies: recoveryEvidenceWriter
+          ? { recordListenerWork: recoveryEvidenceWriter }
+          : undefined,
       });
       if (approvalResult.kind === "error") {
         const terminalRunId = runId || runtime.activeRunId;

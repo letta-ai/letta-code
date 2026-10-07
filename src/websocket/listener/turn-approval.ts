@@ -62,6 +62,10 @@ import {
   recoveredApprovalFailureResults,
 } from "./recovered-approval-checkpoint";
 import { debugLogApprovalResumeState } from "./recovery";
+import type {
+  RecoveryAuthorityStore,
+  RecoveryEvidenceWriter,
+} from "./recovery-evidence";
 import { ensureSecretsHydratedForAgent } from "./secrets-sync";
 import {
   type ApprovalContinuationSendResult,
@@ -104,7 +108,6 @@ type Decision =
       };
       reason: string;
     };
-
 type ApprovalBranchProgress = {
   turnInput: TurnInputState;
   dequeuedBatchId: string;
@@ -115,7 +118,6 @@ type ApprovalBranchProgress = {
   lastNeedsUserInputToolCallIds: string[];
   lastApprovalContinuationAccepted: boolean;
 };
-
 export type ApprovalBranchResult =
   | ({
       kind: "continue";
@@ -134,7 +136,6 @@ export type ApprovalBranchResult =
       >["drainResult"];
     } & ApprovalBranchProgress)
   | { kind: "error"; message: string };
-
 export async function handleApprovalStop(params: {
   approvals: Array<{
     toolCallId: string;
@@ -167,6 +168,7 @@ export async function handleApprovalStop(params: {
   /** Mutable CAS chain shared by stream and nested approval checkpoints. */
   interruptedRevisionRef?: { current: string | undefined };
   recoveryLineageId?: string;
+  recoveryAuthorityStore?: RecoveryAuthorityStore;
   buildSendOptions: () => Parameters<
     typeof sendApprovalContinuationWithRetry
   >[2];
@@ -176,7 +178,7 @@ export async function handleApprovalStop(params: {
     ensureSecretsHydrated?: typeof ensureSecretsHydratedForAgent;
     sendApprovalContinuation?: typeof sendApprovalContinuationWithRetry;
     waitForApprovalTransportOpen?: WaitForApprovalTransportOpen;
-    recordListenerWork?: typeof recordListenerWork;
+    recordListenerWork?: RecoveryEvidenceWriter;
   };
 }): Promise<ApprovalBranchResult> {
   const {
@@ -237,21 +239,19 @@ export async function handleApprovalStop(params: {
             recoveryLineageId,
             { shouldContinue },
           ));
-      if (revision && interruptedRevisionRef) {
+      if (typeof revision === "string" && interruptedRevisionRef) {
         interruptedRevisionRef.current = revision;
       }
     });
     checkpointChain = operation.catch(() => {});
     return operation;
   };
-
   if (approvals.length === 0) {
     return {
       kind: "error",
       message: "requires_approval stop returned no approvals",
     };
   }
-
   clearPendingApprovalBatchIds(runtime, approvals);
   rememberPendingApprovalBatchIds(runtime, approvals, dequeuedBatchId);
   const classificationRunId =
@@ -324,14 +324,12 @@ export async function handleApprovalStop(params: {
     classificationScope,
   );
   const continuationWasFullyAutoHandled = needsUserInput.length === 0;
-
   let pendingNeedsUserInput = [...needsUserInput];
   let lastNeedsUserInputToolCallIds = pendingNeedsUserInput.map(
     (ac) => ac.approval.toolCallId,
   );
   let lastExecutionResults: ApprovalResult[] | null = null;
   let lastExecutingToolCallIds: string[] = [];
-
   const isDeliveryReady = (): boolean => {
     const listener = runtime.listener;
     const scopedSubscribers = getSubscribedListenerConnections(listener, {
@@ -416,7 +414,6 @@ export async function handleApprovalStop(params: {
       );
     }
   };
-
   const interruptTermination = (
     interruptedTurnInput: TurnInputState = turnInput,
     interruptedBatchId: string = dequeuedBatchId,
@@ -433,7 +430,6 @@ export async function handleApprovalStop(params: {
       lastApprovalContinuationAccepted: false,
     };
   };
-
   const decisions: Decision[] = [
     ...autoAllowed.map((ac) => ({
       type: "approve" as const,
@@ -445,16 +441,13 @@ export async function handleApprovalStop(params: {
       reason: formatPermissionDenial(ac.permission, ac.denyReason),
     })),
   ];
-
   if (shouldInterrupt()) {
     return interruptTermination();
   }
-
   if (pendingNeedsUserInput.length > 0) {
     if (shouldInterrupt()) {
       return interruptTermination();
     }
-
     while (pendingNeedsUserInput.length > 0) {
       const ac = pendingNeedsUserInput.shift();
       if (!ac) {
@@ -862,11 +855,19 @@ export async function handleApprovalStop(params: {
     };
   }
 
+  const interruptedRecord =
+    recoveryLineageId && params.recoveryAuthorityStore
+      ? params.recoveryAuthorityStore.readRecoverySnapshot(
+          runtime.agentId ?? "",
+          runtime.conversationId,
+          recoveryLineageId,
+        )?.record
+      : readInterruptedTurn(runtime);
   let nextTurnInput = createTurnInputState([
     {
       type: "approval",
       approvals: persistedExecutionResults,
-      otid: readInterruptedTurn(runtime)?.requestOtid ?? crypto.randomUUID(),
+      otid: interruptedRecord?.requestOtid ?? crypto.randomUUID(),
     },
   ]);
   let continuationBatchId = dequeuedBatchId;

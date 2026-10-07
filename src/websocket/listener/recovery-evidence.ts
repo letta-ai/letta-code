@@ -30,6 +30,7 @@ export type RecoveredContinuationProcessTurn = (
   recoveryLineageId?: string,
   recoveryTerminalRevision?: string,
   recoveryAuthorityStore?: RecoveryAuthorityStore,
+  recoveryEvidenceWriter?: RecoveryEvidenceWriter,
 ) => Promise<void>;
 
 export type RecoveryEvidenceWriter = (
@@ -45,7 +46,10 @@ export type SettledRecoveryResultWriter = (
   | Promise<{ revision: string; independentSuccessor: boolean }>;
 export type RecoveryAuthorityStore = Pick<
   ReturnType<typeof createInterruptedTurnStore>,
-  "readRecoverySnapshot" | "withRecoveryAuthority"
+  | "markRecoveryClaimCompletionPending"
+  | "readRecoverySnapshot"
+  | "retireRecoveryClaimCompletion"
+  | "withRecoveryAuthority"
 >;
 
 export async function mergeSettledRecoveryResultRetriably(
