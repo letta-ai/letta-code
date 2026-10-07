@@ -66,7 +66,7 @@ function terminalAuthorityStatus(
     !owner.interruptedRevision ||
     !owner.interruptedAuthorityRevision
   ) {
-    return "stale";
+    return "unknown";
   }
   try {
     const snapshot = createInterruptedTurnStore().readRecoverySnapshot(
@@ -334,6 +334,14 @@ export function createTurnFinishedStore(
 
   return {
     read,
+    readOrThrow(
+      agentId: string | null,
+      conversationId: string,
+    ): PersistedTurnFinishedRecord | null {
+      return withRecordLock(agentId, conversationId, () =>
+        readPrunedRecord(agentId, conversationId),
+      );
+    },
     put(
       agentId: string | null,
       conversationId: string,

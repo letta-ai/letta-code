@@ -12,6 +12,7 @@ import {
 import { join } from "node:path";
 import type { ApprovalResult } from "@/agent/approval-execution";
 import { isTerminalConsumerId } from "@/types/turn-finished-protocol";
+import { acquireDurableFileLock } from "./durable-file-lock";
 import { isInputIdentity, isTeleportIntent } from "./interrupted-turn-schema";
 import type { InterruptedTurnRecord } from "./interrupted-turn-types";
 import type { InputIdentity } from "./types";
@@ -38,14 +39,24 @@ export interface RecoveryLineageSidecar {
   teleport?: InterruptedTurnRecord["teleport"];
 }
 
+const sidecarWriterInstanceId = randomUUID();
+
+export const __recoveryLineageSidecarTestUtils = {
+  sidecarWriterInstanceId,
+};
+
 export function createRecoveryLineageSidecarAccess(params: {
   directory: string;
   syncDirectory: (directory: string) => void;
+  lockWaitMs?: number;
 }) {
   const canonicalSidecarName = /\.json\.recovery-[0-9a-f]{24}$/;
   const temporarySidecarName =
-    /\.json\.recovery-[0-9a-f]{24}\.(\d+)\.[0-9a-f-]{36}\.tmp$/;
+    /^(.+\.json)\.recovery-[0-9a-f]{24}\.(\d+)\.([0-9a-f-]{36})\.[0-9a-f-]{36}\.tmp$/;
+  const legacyTemporarySidecarName =
+    /^(.+\.json)\.recovery-[0-9a-f]{24}\.(\d+)\.[0-9a-f-]{36}\.tmp$/;
   const staleTemporaryAgeMs = 60_000;
+  const maximumTemporaryAgeMs = 24 * 60 * 60 * 1_000;
   const path = (
     agentId: string,
     conversationId: string,
@@ -136,7 +147,7 @@ export function createRecoveryLineageSidecarAccess(params: {
       sidecar.conversationId,
       sidecar.lineageId,
     );
-    const temporary = `${destination}.${process.pid}.${randomUUID()}.tmp`;
+    const temporary = `${destination}.${process.pid}.${sidecarWriterInstanceId}.${randomUUID()}.tmp`;
     try {
       writeFileSync(temporary, JSON.stringify(sidecar), {
         mode: 0o600,
@@ -315,23 +326,57 @@ export function createRecoveryLineageSidecarAccess(params: {
     try {
       const files = readdirSync(params.directory);
       for (const file of files) {
-        const temporaryMatch = file.match(temporarySidecarName);
+        const temporaryMatch =
+          file.match(temporarySidecarName) ??
+          file.match(legacyTemporarySidecarName);
         if (!temporaryMatch) continue;
         try {
-          const ownerPid = Number(temporaryMatch[1]);
+          const mainFile = temporaryMatch[1];
+          if (!mainFile) continue;
+          const ownerPid = Number(temporaryMatch[2]);
+          const ownerInstanceId = temporaryMatch[3];
+          const ownerIsCurrentWriter =
+            ownerPid === process.pid &&
+            ownerInstanceId === sidecarWriterInstanceId;
           let ownerIsAlive = true;
-          try {
-            process.kill(ownerPid, 0);
-          } catch (error) {
-            ownerIsAlive = (error as NodeJS.ErrnoException).code !== "ESRCH";
-          }
           if (
-            !ownerIsAlive &&
-            Date.now() - statSync(join(params.directory, file)).mtimeMs >=
-              staleTemporaryAgeMs
+            ownerPid === process.pid &&
+            ownerInstanceId !== sidecarWriterInstanceId
           ) {
-            rmSync(join(params.directory, file), { force: true });
-            params.syncDirectory(params.directory);
+            // The operating system reused this PID after the writer died.
+            ownerIsAlive = false;
+          } else {
+            try {
+              process.kill(ownerPid, 0);
+            } catch (error) {
+              ownerIsAlive = (error as NodeJS.ErrnoException).code !== "ESRCH";
+            }
+          }
+          const ageMs =
+            Date.now() - statSync(join(params.directory, file)).mtimeMs;
+          if (
+            !ownerIsCurrentWriter &&
+            ((!ownerIsAlive && ageMs >= staleTemporaryAgeMs) ||
+              ageMs >= maximumTemporaryAgeMs)
+          ) {
+            const release = acquireDurableFileLock(
+              join(params.directory, mainFile),
+              { waitMs: params.lockWaitMs },
+            );
+            try {
+              const currentAgeMs =
+                Date.now() - statSync(join(params.directory, file)).mtimeMs;
+              if (
+                !ownerIsCurrentWriter &&
+                ((!ownerIsAlive && currentAgeMs >= staleTemporaryAgeMs) ||
+                  currentAgeMs >= maximumTemporaryAgeMs)
+              ) {
+                rmSync(join(params.directory, file), { force: true });
+                params.syncDirectory(params.directory);
+              }
+            } finally {
+              release();
+            }
           }
         } catch {}
       }
@@ -342,7 +387,13 @@ export function createRecoveryLineageSidecarAccess(params: {
             const value: unknown = JSON.parse(
               readFileSync(join(params.directory, file), "utf8"),
             );
-            if (isSidecar(value)) return [value];
+            if (
+              isSidecar(value) &&
+              join(params.directory, file) ===
+                path(value.agentId, value.conversationId, value.lineageId)
+            ) {
+              return [value];
+            }
             removeMalformedOrphan(file);
             return [];
           } catch {

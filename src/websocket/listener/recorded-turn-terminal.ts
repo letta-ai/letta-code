@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import type { StopReasonType } from "@/types/protocol_v2";
 import { promotePreparedInputTerminals } from "./conversation-runtime";
 import {
@@ -15,12 +15,14 @@ import {
 import {
   hasPreparedInputTerminalAuthority,
   hasPreparedInputTerminalRevision,
+  loadPreparedInputTerminals,
   prepareInputTerminal,
 } from "./input-terminal-journal";
 import type { InterruptedTurnRecord } from "./interrupted-turn-types";
 import {
   type createTurnFinishedStore,
   getTurnFinishedOwner,
+  prepareTurnFinished,
 } from "./turn-finished-replay";
 import type { ConversationRuntime, ListenerRuntime } from "./types";
 
@@ -102,7 +104,7 @@ export function prepareRecordedInputTerminal(
   authority?: { revisionToken: string; lineageId: string },
 ): boolean {
   const identities = record.durableInputIdentities ?? [];
-  if (!identities.length || !record.revision) return true;
+  if (!record.revision) return true;
   const scope = {
     agentId: record.agentId,
     conversationId: record.conversationId,
@@ -114,6 +116,18 @@ export function prepareRecordedInputTerminal(
         recoveryLineageId: authority.lineageId,
       }
     : undefined;
+  const existingPrepared = loadPreparedInputTerminals(listener).find(
+    (prepared) =>
+      prepared.scope.agentId === scope.agentId &&
+      prepared.scope.conversationId === scope.conversationId &&
+      prepared.owner.interruptedRevision === record.revision &&
+      (terminalAuthority
+        ? prepared.owner.recoveryLineageId ===
+            terminalAuthority.recoveryLineageId &&
+          prepared.owner.interruptedAuthorityRevision ===
+            terminalAuthority.authorityRevision
+        : prepared.owner.recoveryLineageId === undefined),
+  );
   if (
     terminalAuthority
       ? hasCompletedInputTerminalAuthority(
@@ -147,26 +161,55 @@ export function prepareRecordedInputTerminal(
       : eligibleConnections.find(
           (connection) => connection.options.connectionIdCanResume !== false,
         );
-  const owner = getTurnFinishedOwner(runtime, record.revision);
-  if (terminalAuthority) {
-    owner.recoveryLineageId = terminalAuthority.recoveryLineageId;
-    owner.interruptedAuthorityRevision = terminalAuthority.authorityRevision;
+  const owner = existingPrepared
+    ? { ...existingPrepared.owner }
+    : getTurnFinishedOwner(runtime, record.revision);
+  if (!existingPrepared) {
+    if (terminalAuthority) {
+      owner.recoveryLineageId = terminalAuthority.recoveryLineageId;
+      owner.interruptedAuthorityRevision = terminalAuthority.authorityRevision;
+    }
+    owner.connectionId = ownerConnection?.id ?? null;
+    owner.canRotate = ownerConnection?.options.connectionIdCanResume === false;
+    owner.lineageId = ownerConnection?.startupOwner.lineageId ?? null;
+    const terminalDigest = createHash("sha256")
+      .update(
+        JSON.stringify([
+          "recorded-turn-terminal-v1",
+          record.agentId,
+          record.conversationId,
+          record.revision,
+          terminalAuthority?.recoveryLineageId ?? null,
+          terminalAuthority?.authorityRevision ?? null,
+        ]),
+      )
+      .digest("hex");
+    owner.terminalIdentity = `recorded:${terminalDigest}`;
   }
-  owner.connectionId = ownerConnection?.id ?? null;
-  owner.canRotate = ownerConnection?.options.connectionIdCanResume === false;
-  owner.lineageId = ownerConnection?.startupOwner.lineageId ?? null;
+  const message = existingPrepared?.message ?? {
+    type: "turn_finished" as const,
+    turn_id: `turn-recovered-complete-${owner.terminalIdentity?.replace(
+      /^recorded:/,
+      "",
+    )}`,
+    stop_reason: stopReason,
+    ...(record.terminalConsumerIds?.length
+      ? { terminal_consumer_ids: [...new Set(record.terminalConsumerIds)] }
+      : {}),
+    ...(runId ? { run_id: runId } : {}),
+  };
+  if (!identities.length) {
+    if (!message.terminal_consumer_ids?.length) return true;
+    if (owner.connectionId === null) owner.canRotate = true;
+    return (
+      prepareTurnFinished(runtime, message, terminalStore, owner, true).kind ===
+      "durable"
+    );
+  }
   if (
     !prepareInputTerminal(runtime, identities, {
       scope,
-      message: {
-        type: "turn_finished",
-        turn_id: `turn-recovered-complete-${randomUUID()}`,
-        stop_reason: stopReason,
-        ...(record.terminalConsumerIds?.length
-          ? { terminal_consumer_ids: [...new Set(record.terminalConsumerIds)] }
-          : {}),
-        ...(runId ? { run_id: runId } : {}),
-      },
+      message,
       owner,
     })
   ) {

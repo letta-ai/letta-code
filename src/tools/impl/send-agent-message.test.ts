@@ -388,7 +388,7 @@ test("explicit actor suppression does not reuse a stale ordinary-send actor", as
 
   expect(result.status).toBe("success");
   expect(f.submissions).toHaveLength(1);
-  expect(f.submissions[0]?.actingUserId).toBeUndefined();
+  expect(f.submissions[0]?.actingUserId).toBeNull();
 });
 
 test("ordinary sends inherit an ambient actor when runtime context has none", async () => {

@@ -51,5 +51,51 @@ export function collectInterruptedTurnInputOwnership(
   });
 }
 
+export function collectInterruptedTurnInputOwnershipWithSidecars(
+  records: InterruptedTurnRecord[],
+  readMainView: (record: InterruptedTurnRecord) => InterruptedTurnRecord,
+  sidecars: Array<{
+    agentId: string;
+    conversationId: string;
+    durableInputIdentities?: InputIdentity[];
+  }>,
+  mainExists: (agentId: string, conversationId: string) => boolean,
+): InterruptedTurnInputOwnership[] {
+  const ownership = collectInterruptedTurnInputOwnership(records, readMainView);
+  const readableScopes = new Set(
+    records.map((record) =>
+      JSON.stringify([record.agentId, record.conversationId]),
+    ),
+  );
+  const corruptScopes = new Map<string, InterruptedTurnInputOwnership>();
+  for (const sidecar of sidecars) {
+    const scopeKey = JSON.stringify([sidecar.agentId, sidecar.conversationId]);
+    if (
+      readableScopes.has(scopeKey) ||
+      !mainExists(sidecar.agentId, sidecar.conversationId)
+    ) {
+      continue;
+    }
+    const entry = corruptScopes.get(scopeKey) ?? {
+      agentId: sidecar.agentId,
+      conversationId: sidecar.conversationId,
+      durableInputIdentities: [],
+      quarantined: true,
+    };
+    const identities = new Map(
+      entry.durableInputIdentities.map((identity) => [
+        `${identity.domain}\0${identity.id}`,
+        identity,
+      ]),
+    );
+    for (const identity of sidecar.durableInputIdentities ?? []) {
+      identities.set(`${identity.domain}\0${identity.id}`, identity);
+    }
+    entry.durableInputIdentities = [...identities.values()];
+    corruptScopes.set(scopeKey, entry);
+  }
+  return [...ownership, ...corruptScopes.values()];
+}
+
 import { readdirSync } from "node:fs";
 import { join } from "node:path";

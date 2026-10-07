@@ -30,16 +30,64 @@ import type { ListenerTransport } from "./transport";
 import { createTurnCorrelation } from "./turn-correlation";
 import type { IncomingMessage, StartListenerOptions } from "./types";
 
-function createDurableRuntime() {
+function createDurableRuntime(persistentPath: string | null = null) {
   const listener = createRuntime();
   listener.acceptedInputDispositionLedger =
-    createAcceptedInputDispositionLedger({ persistentPath: null });
+    createAcceptedInputDispositionLedger({ persistentPath });
   return getOrCreateScopedRuntime(
     listener,
     "agent-durable",
     "conversation-durable",
   );
 }
+
+test("a quarantined interrupted scope fences every started payload but not queued work", () => {
+  const root = mkdtempSync(join(tmpdir(), "letta-disposition-quarantine-"));
+  try {
+    const path = join(root, "state.json");
+    const runtime = createDurableRuntime(path);
+    for (const [clientMessageId, disposition] of [
+      ["cm-corrupt-predecessor", "started"],
+      ["cm-corrupt-successor", "started"],
+      ["cm-still-queued", "queued"],
+    ] as const) {
+      const identity = ordinaryInputIdentity(clientMessageId);
+      if (!identity) throw new Error("expected ordinary identity");
+      const admission = reserveInputDisposition(runtime, identity);
+      if (admission.kind !== "reserved")
+        throw new Error("expected reservation");
+      expect(
+        commitInputDisposition(runtime, admission.reservation, disposition, {
+          incoming: durableIncoming(clientMessageId),
+        }),
+      ).toBe(true);
+    }
+
+    const restarted = createDurableRuntime(path);
+    expect(
+      restoreDurableQueuedInputs(restarted.listener, undefined, undefined, {
+        interruptedStore: {
+          listDurableInputOwnership: () => [
+            {
+              agentId: "agent-durable",
+              conversationId: "conversation-durable",
+              durableInputIdentities: [
+                { domain: "input", id: "cm-corrupt-predecessor" },
+              ],
+              quarantined: true,
+            },
+          ],
+        },
+      }),
+    ).toBe(1);
+    expect(restarted.queueRuntime.peek()).toHaveLength(1);
+    expect(restarted.queueRuntime.peek()[0]?.clientMessageId).toBe(
+      "cm-still-queued",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 function durableIncoming(clientMessageId: string): IncomingMessage {
   return {

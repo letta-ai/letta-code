@@ -45,25 +45,36 @@ export function trackExternalFollowupCompletion(args: {
         const interrupt = () => void args.interrupt().catch(() => undefined);
         signal?.addEventListener("abort", interrupt, { once: true });
         if (signal?.aborted) interrupt();
+        let result: SubagentResult | undefined;
+        let completionError: unknown;
+        let completionFailed = false;
         try {
-          return await args.completion;
+          result = await args.completion;
+        } catch (error) {
+          completionError = error;
+          completionFailed = true;
         } finally {
           signal?.removeEventListener("abort", interrupt);
-          const target = parseExternalCodingAgentId(args.agentId);
-          if (target) {
-            void captureNativeSession(
-              target.type === "claude-code" ? "claude_code" : "codex",
+        }
+        const target = parseExternalCodingAgentId(args.agentId);
+        if (target) {
+          const source =
+            target.type === "claude-code" ? "claude_code" : "codex";
+          try {
+            await captureNativeSession(
+              source,
               target.sessionId,
               args.parentScope,
-            ).catch((error) =>
-              reportNativeSessionCaptureFailure(
-                target.type === "claude-code" ? "claude_code" : "codex",
-                target.sessionId,
-                error,
-              ),
             );
+          } catch (error) {
+            reportNativeSessionCaptureFailure(source, target.sessionId, error);
+            if (!completionFailed) throw error;
           }
         }
+        if (completionFailed) throw completionError;
+        if (!result)
+          throw new Error("External coding agent returned no result");
+        return result;
       },
     },
   });

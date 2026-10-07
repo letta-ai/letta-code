@@ -194,30 +194,6 @@ export function finishListenerTurn(
               identitylessConsumerTerminal,
           )
         : null;
-    if (
-      preparedTurnFinished?.kind === "durable" &&
-      terminalOwner.recoveryLineageId &&
-      terminalOwner.interruptedAuthorityRevision
-    ) {
-      for (const terminal of preparedTurnFinished.store.read(
-        runtime.agentId,
-        runtime.conversationId,
-      )?.terminals ?? []) {
-        if (
-          terminal.id !== preparedTurnFinished.terminal.id &&
-          terminal.owner.recoveryLineageId ===
-            terminalOwner.recoveryLineageId &&
-          terminal.owner.interruptedAuthorityRevision !==
-            terminalOwner.interruptedAuthorityRevision
-        ) {
-          preparedTurnFinished.store.remove(
-            runtime.agentId,
-            runtime.conversationId,
-            terminal.id,
-          );
-        }
-      }
-    }
     if (!ownsInterruptedRevision()) return rejectedCommit();
     if (
       turnFinishedMessage &&

@@ -14,17 +14,300 @@ import {
 } from "./input-disposition";
 import {
   completePreparedInputTerminal,
+  discardPreparedInputTerminal,
   loadPreparedInputTerminals,
   prepareInputTerminal,
 } from "./input-terminal-journal";
 import { createInterruptedTurnStore } from "./interrupted-turn-record";
 import { createRuntime } from "./lifecycle";
-import { hasRecordedTerminalEvidence } from "./recorded-turn-terminal";
+import {
+  hasRecordedTerminalEvidence,
+  prepareRecordedInputTerminal,
+} from "./recorded-turn-terminal";
 import {
   markRecoveryClaimCompletionPending,
   retireAcknowledgedRecoveryClaim,
 } from "./recovery-claim-completion";
 import { createTurnFinishedStore } from "./turn-finished-replay";
+
+test("identity-free recorded recovery persists consumer evidence before retirement", () => {
+  const directory = mkdtempSync(join(tmpdir(), "identity-free-recorded-"));
+  const listener = createRuntime();
+  listener.acceptedInputDispositionLedger =
+    createAcceptedInputDispositionLedger({ persistentPath: null });
+  const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+  const terminalStore = createTurnFinishedStore(join(directory, "terminals"));
+  const interruptedStore = createInterruptedTurnStore(
+    join(directory, "interrupted"),
+  );
+  try {
+    const record = interruptedStore.write({
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      runId: "run-identity-free",
+      toolCallIds: [],
+      results: [],
+      requestOtid: "request-identity-free",
+      workingDirectory: "/identity-free",
+      durableInputIdentities: [],
+      terminalConsumerIds: ["slack:agent-1"],
+    });
+
+    expect(
+      prepareRecordedInputTerminal(
+        listener,
+        terminalStore,
+        runtime,
+        record,
+        record.runId,
+      ),
+    ).toBe(true);
+    expect(loadPreparedInputTerminals(listener)).toEqual([]);
+    const terminal = terminalStore.read("agent-1", "conv-1")?.terminals[0];
+    expect(terminal?.requiredConsumerIds).toEqual(["slack:agent-1"]);
+    expect(terminal?.owner).toMatchObject({
+      connectionId: null,
+      canRotate: true,
+      interruptedRevision: record.revision,
+    });
+    expect(
+      hasRecordedTerminalEvidence(listener, terminalStore, {
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        runtimeKey: runtime.key,
+        identities: [],
+        revision: record.revision ?? "",
+      }),
+    ).toBe(true);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("stale terminal cleanup failures defer startup and converge on later promotion", () => {
+  const directory = mkdtempSync(join(tmpdir(), "stale-terminal-cleanup-"));
+  const listener = createRuntime();
+  listener.acceptedInputDispositionLedger =
+    createAcceptedInputDispositionLedger({ persistentPath: null });
+  const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+  const terminalStore = createTurnFinishedStore(join(directory, "terminals"));
+  const identity = ordinaryInputIdentity("cm-stale-cleanup");
+  if (!identity) throw new Error("missing input identity");
+  try {
+    const reservation = reserveInputDisposition(runtime, identity);
+    if (reservation.kind !== "reserved")
+      throw new Error("expected reservation");
+    expect(
+      commitInputDisposition(runtime, reservation.reservation, "started", {
+        incoming: {
+          type: "message",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+          messages: [
+            {
+              role: "user",
+              content: "run",
+              client_message_id: "cm-stale-cleanup",
+            },
+          ],
+        },
+      }),
+    ).toBe(true);
+    const owner = {
+      connectionId: null,
+      canRotate: true,
+      lineageId: null,
+      terminalIdentity: "terminal-stale-cleanup",
+      interruptedRevision: "revision-old",
+      recoveryLineageId: "lineage-old",
+      interruptedAuthorityRevision: "authority-old",
+    };
+    const message = {
+      type: "turn_finished" as const,
+      turn_id: "turn-stale-cleanup",
+      stop_reason: "end_turn" as const,
+      terminal_consumer_ids: ["slack:agent-1"],
+    };
+    expect(
+      prepareInputTerminal(runtime, [identity], {
+        scope: { agentId: "agent-1", conversationId: "conv-1" },
+        message,
+        owner,
+      }),
+    ).toBe(true);
+    terminalStore.put("agent-1", "conv-1", message, owner);
+    const interruptedStore = {
+      readRecoverySnapshot: () => ({
+        record: {
+          agentId: "agent-1",
+          conversationId: "conv-1",
+          runId: "run-new",
+          toolCallIds: [],
+          results: [],
+          requestOtid: "request-new",
+          workingDirectory: "/new",
+          revision: "revision-new",
+        },
+        revisionToken: "authority-new",
+      }),
+    };
+    let readAttempts = 0;
+    let removeAttempts = 0;
+    const retryingStore = {
+      ...terminalStore,
+      readOrThrow: (...args: Parameters<typeof terminalStore.readOrThrow>) => {
+        readAttempts += 1;
+        if (readAttempts === 1) throw new Error("transient terminal read lock");
+        return terminalStore.readOrThrow(...args);
+      },
+      remove: (...args: Parameters<typeof terminalStore.remove>) => {
+        removeAttempts += 1;
+        if (removeAttempts === 1) throw new Error("transient terminal lock");
+        return terminalStore.remove(...args);
+      },
+    };
+    let discardAttempts = 0;
+    const retryingDiscard: typeof discardPreparedInputTerminal = (...args) => {
+      discardAttempts += 1;
+      if (discardAttempts === 1) return false;
+      return discardPreparedInputTerminal(...args);
+    };
+
+    expect(() =>
+      promotePreparedInputTerminals(
+        listener,
+        retryingStore,
+        undefined,
+        interruptedStore,
+        retryingDiscard,
+      ),
+    ).not.toThrow();
+    expect(loadPreparedInputTerminals(listener)).toHaveLength(1);
+    expect(terminalStore.read("agent-1", "conv-1")?.terminals).toHaveLength(1);
+
+    expect(() =>
+      promotePreparedInputTerminals(
+        listener,
+        retryingStore,
+        undefined,
+        interruptedStore,
+        retryingDiscard,
+      ),
+    ).not.toThrow();
+    expect(loadPreparedInputTerminals(listener)).toHaveLength(1);
+    expect(terminalStore.read("agent-1", "conv-1")?.terminals).toHaveLength(1);
+
+    expect(
+      promotePreparedInputTerminals(
+        listener,
+        retryingStore,
+        undefined,
+        interruptedStore,
+        retryingDiscard,
+      ),
+    ).toBe(0);
+    expect(loadPreparedInputTerminals(listener)).toHaveLength(1);
+    expect(terminalStore.read("agent-1", "conv-1")).toBeNull();
+
+    expect(
+      promotePreparedInputTerminals(
+        listener,
+        retryingStore,
+        undefined,
+        interruptedStore,
+        retryingDiscard,
+      ),
+    ).toBe(0);
+    expect(loadPreparedInputTerminals(listener)).toEqual([]);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("recorded recovery reuses a put-committed prepared identity on retry", () => {
+  const directory = mkdtempSync(join(tmpdir(), "recorded-terminal-retry-"));
+  const listener = createRuntime();
+  listener.acceptedInputDispositionLedger =
+    createAcceptedInputDispositionLedger({ persistentPath: null });
+  const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+  const terminalStore = createTurnFinishedStore(join(directory, "terminals"));
+  const interruptedStore = createInterruptedTurnStore(
+    join(directory, "interrupted"),
+  );
+  const identity = ordinaryInputIdentity("cm-recorded-retry");
+  if (!identity) throw new Error("missing input identity");
+  try {
+    const reservation = reserveInputDisposition(runtime, identity);
+    if (reservation.kind !== "reserved")
+      throw new Error("expected reservation");
+    expect(
+      commitInputDisposition(runtime, reservation.reservation, "started", {
+        incoming: {
+          type: "message",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+          messages: [
+            {
+              role: "user",
+              content: "run",
+              client_message_id: "cm-recorded-retry",
+            },
+          ],
+        },
+      }),
+    ).toBe(true);
+    const record = interruptedStore.write({
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      runId: "run-recorded-retry",
+      toolCallIds: [],
+      results: [],
+      requestOtid: "request-recorded-retry",
+      workingDirectory: "/retry",
+      durableInputIdentities: [identity],
+      terminalConsumerIds: ["slack:agent-1"],
+    });
+    const message = {
+      type: "turn_finished" as const,
+      turn_id: "turn-recorded-retry",
+      stop_reason: "end_turn" as const,
+      terminal_consumer_ids: ["slack:agent-1"],
+      run_id: "run-recorded-retry",
+    };
+    const owner = {
+      connectionId: null,
+      canRotate: true,
+      lineageId: null,
+      terminalIdentity: "terminal-recorded-retry",
+      interruptedRevision: record.revision,
+    };
+    expect(
+      prepareInputTerminal(runtime, [identity], {
+        scope: { agentId: "agent-1", conversationId: "conv-1" },
+        message,
+        owner,
+      }),
+    ).toBe(true);
+    terminalStore.put("agent-1", "conv-1", message, owner);
+
+    expect(
+      prepareRecordedInputTerminal(
+        listener,
+        terminalStore,
+        runtime,
+        record,
+        record.runId,
+      ),
+    ).toBe(true);
+    expect(loadPreparedInputTerminals(listener)).toEqual([]);
+    const terminals = terminalStore.read("agent-1", "conv-1")?.terminals;
+    expect(terminals).toHaveLength(1);
+    expect(terminals?.[0]?.message).toEqual(message);
+    expect(terminals?.[0]?.owner).toEqual(owner);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test("terminal evidence is bound to the exact sidecar authority token", () => {
   const directory = mkdtempSync(join(tmpdir(), "terminal-authority-"));

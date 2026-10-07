@@ -1,28 +1,27 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import {
-  closeSync,
   existsSync,
-  fsyncSync,
   mkdirSync,
-  openSync,
   readFileSync,
   renameSync,
   rmSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ApprovalResult } from "@/agent/approval-execution";
-import { getServerUrl } from "@/backend/api/server-url";
 import { reportListenerStateWriteFailure } from "@/telemetry/error-reporting";
 import { debugWarn } from "@/utils/debug";
 import { acquireDurableFileLock } from "./durable-file-lock";
 import {
-  collectInterruptedTurnInputOwnership,
+  collectInterruptedTurnInputOwnershipWithSidecars,
   listRawInterruptedTurnRecords,
 } from "./interrupted-turn-input-ownership";
 import { isInterruptedTurnRecord } from "./interrupted-turn-schema";
+import {
+  defaultInterruptedTurnDirectory,
+  fsyncInterruptedTurnDirectory,
+} from "./interrupted-turn-storage";
 import type { InterruptedTurnRecord } from "./interrupted-turn-types";
 import { allRecordedResults } from "./recorded-tool-results";
 import {
@@ -41,34 +40,6 @@ export type ListenerStateWritePhase =
   | "run_observed"
   | "before_tool_execution"
   | "after_tool_execution";
-function fsyncDirectory(
-  directory: string,
-  platform: NodeJS.Platform = process.platform,
-): void {
-  // Windows cannot open directories. The temp file itself is still flushed by
-  // writeFileSync, while POSIX additionally commits directory entry changes.
-  if (platform === "win32") return;
-  const fd = openSync(directory, "r");
-  try {
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
-  }
-}
-function defaultInterruptedTurnDirectory(): string {
-  let serverUrl: string;
-  try {
-    serverUrl = getServerUrl();
-  } catch {
-    serverUrl = process.env.LETTA_BASE_URL ?? "uninitialized";
-  }
-  return join(
-    homedir(),
-    ".letta",
-    "listener-state",
-    createHash("sha256").update(serverUrl).digest("hex").slice(0, 24),
-  );
-}
 export function createInterruptedTurnStore(
   directory = defaultInterruptedTurnDirectory(),
   dependencies: {
@@ -76,7 +47,8 @@ export function createInterruptedTurnStore(
     lockWaitMs?: number;
   } = {},
 ) {
-  const syncDirectory = dependencies.fsyncDirectory ?? fsyncDirectory;
+  const syncDirectory =
+    dependencies.fsyncDirectory ?? fsyncInterruptedTurnDirectory;
   function path(agentId: string, conversationId: string) {
     return join(
       directory,
@@ -111,7 +83,11 @@ export function createInterruptedTurnStore(
     remove: removeSidecar,
     snapshot: snapshotSidecar,
     write: writeSidecar,
-  } = createRecoveryLineageSidecarAccess({ directory, syncDirectory });
+  } = createRecoveryLineageSidecarAccess({
+    directory,
+    syncDirectory,
+    lockWaitMs: dependencies.lockWaitMs,
+  });
   const listRawRecords = () =>
     listRawInterruptedTurnRecords(directory, readRecord);
   return {
@@ -167,9 +143,12 @@ export function createInterruptedTurnStore(
       }
     },
     listDurableInputOwnership() {
-      return collectInterruptedTurnInputOwnership(
-        listRawRecords(),
+      const rawRecords = listRawRecords();
+      return collectInterruptedTurnInputOwnershipWithSidecars(
+        rawRecords,
         readMainView,
+        listSidecars(),
+        (agentId, conversationId) => existsSync(path(agentId, conversationId)),
       );
     },
     read(

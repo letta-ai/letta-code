@@ -1,6 +1,14 @@
-import { closeSync, fstatSync, openSync, readdirSync, readSync } from "node:fs";
-import { readdir, stat } from "node:fs/promises";
-import { homedir } from "node:os";
+import { randomUUID } from "node:crypto";
+import { type Dirent, readdirSync, rmSync } from "node:fs";
+import {
+  type FileHandle,
+  mkdtemp,
+  open,
+  readdir,
+  rm,
+  stat,
+} from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { ApiRequestError, apiRequest } from "@/backend/api/request";
 import { getServerUrl, isCloudServerUrl } from "@/backend/api/server-url";
@@ -12,40 +20,107 @@ export interface NativeSessionScope {
   conversationId: string;
   actingUserId?: string | null;
 }
-
-interface CaptureState {
-  scope: NativeSessionScope;
-  path: string;
-  /** Number of native bytes acknowledged by Cloud. */
-  offset: number;
-  chunkIndex: number;
-  fileIdentity?: string;
-  pending?: Promise<void>;
-  snapshots: CaptureSnapshot[];
-}
-
-interface CaptureSnapshot {
+interface Segment {
   scope: NativeSessionScope;
   start: number;
   end: number;
-  fileIdentity: string;
-  bytes: Buffer;
+  path: string;
   requestOptions: { baseUrl?: string; apiKey?: string };
 }
-
+interface CaptureState {
+  scope: NativeSessionScope;
+  path: string;
+  ackedOffset: number;
+  sealedOffset: number;
+  chunkIndex: number;
+  fileIdentity?: string;
+  sealing: Promise<void>;
+  draining?: Promise<void>;
+  drainError?: unknown;
+  retryTimer?: ReturnType<typeof setTimeout>;
+  retryDelayMs: number;
+  segments: Segment[];
+}
 const states = new Map<string, CaptureState>();
-
-const CHUNK_BYTES = 256 * 1024;
+const spoolDirectories = new Set<string>();
+const captureProcessInstanceId = randomUUID();
+const activeInstanceRegistryKey = Symbol.for(
+  "letta.native-session-capture.active-instances",
+);
+const activeCaptureInstances = (() => {
+  const globalRegistry = globalThis as typeof globalThis & {
+    [activeInstanceRegistryKey]?: Set<string>;
+  };
+  globalRegistry[activeInstanceRegistryKey] ??= new Set<string>();
+  return globalRegistry[activeInstanceRegistryKey];
+})();
+activeCaptureInstances.add(captureProcessInstanceId);
+const spoolDirectoryName = /^letta-native-session-(\d+)-([0-9a-f-]{36})-/;
+let staleSpoolsScavenged = false;
+let sealHookForTests: (() => Promise<void>) | undefined;
+export const NATIVE_SESSION_CAPTURE_CHUNK_BYTES = 256 * 1024;
+const INITIAL_DRAIN_RETRY_MS = 250;
+const MAX_DRAIN_RETRY_MS = 30_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function key(source: NativeSessionSource, sessionId: string): string {
-  return `${source}:${sessionId}`;
+function cleanupSpoolDirectorySync(directory: string): void {
+  rmSync(directory, { recursive: true, force: true });
+  spoolDirectories.delete(directory);
 }
 
-function sameScope(a: NativeSessionScope, b: NativeSessionScope): boolean {
+function scavengeStaleSpoolDirectories(): void {
+  if (staleSpoolsScavenged) return;
+  staleSpoolsScavenged = true;
+  let entries: Dirent<string>[];
+  try {
+    entries = readdirSync(tmpdir(), { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const match = entry.name.match(spoolDirectoryName);
+    if (!match) continue;
+    const ownerPid = Number(match[1]);
+    const ownerInstanceId = match[2];
+    let ownerIsAlive = true;
+    if (ownerPid === process.pid) {
+      ownerIsAlive = activeCaptureInstances.has(ownerInstanceId ?? "");
+    } else {
+      try {
+        process.kill(ownerPid, 0);
+      } catch (error) {
+        ownerIsAlive = (error as NodeJS.ErrnoException).code !== "ESRCH";
+      }
+    }
+    if (!ownerIsAlive) cleanupSpoolDirectorySync(join(tmpdir(), entry.name));
+  }
+}
+
+process.once("exit", () => {
+  activeCaptureInstances.delete(captureProcessInstanceId);
+  for (const directory of [...spoolDirectories]) {
+    cleanupSpoolDirectorySync(directory);
+  }
+});
+function key(source: NativeSessionSource, sessionId: string) {
+  return `${source}:${sessionId}`;
+}
+function sameScope(a: NativeSessionScope, b: NativeSessionScope) {
   return a.agentId === b.agentId && a.conversationId === b.conversationId;
 }
 
+async function entries(path: string, directories: boolean): Promise<string[]> {
+  try {
+    return (await readdir(path, { withFileTypes: true }))
+      .filter((entry) => (directories ? entry.isDirectory() : entry.isFile()))
+      .map((entry) => entry.name);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return [];
+    throw error;
+  }
+}
 /** Find the exact native file for a CLI session, not a stdout projection. */
 export async function findNativeSessionPath(
   source: NativeSessionSource,
@@ -55,235 +130,237 @@ export async function findNativeSessionPath(
   if (!UUID.test(sessionId)) return undefined;
   const home = env.HOME || homedir();
   if (source === "claude_code") {
-    // Claude's --session-id/--resume writes one JSONL under its project directory.
     const projects = join(
       env.CLAUDE_CONFIG_DIR || join(home, ".claude"),
       "projects",
     );
-    for (const project of await readdir(projects, {
-      withFileTypes: true,
-    }).catch(() => [])) {
-      if (!project.isDirectory()) continue;
-      const path = join(projects, project.name, `${sessionId}.jsonl`);
-      if ((await stat(path).catch(() => undefined))?.isFile()) return path;
-    }
-    return undefined;
-  }
-  // Codex app-server rollouts nest under sessions/YYYY/MM/DD; filename embeds
-  // the native thread UUID returned by thread/start.
-  const root = join(env.CODEX_HOME || join(home, ".codex"), "sessions");
-  for (const year of await readdir(root, { withFileTypes: true }).catch(
-    () => [],
-  )) {
-    if (!year.isDirectory() || !/^\d{4}$/.test(year.name)) continue;
-    for (const month of await readdir(join(root, year.name), {
-      withFileTypes: true,
-    }).catch(() => [])) {
-      if (!month.isDirectory() || !/^\d{2}$/.test(month.name)) continue;
-      for (const day of await readdir(join(root, year.name, month.name), {
-        withFileTypes: true,
-      }).catch(() => [])) {
-        if (!day.isDirectory() || !/^\d{2}$/.test(day.name)) continue;
-        const directory = join(root, year.name, month.name, day.name);
-        for (const file of await readdir(directory, {
-          withFileTypes: true,
-        }).catch(() => [])) {
-          if (
-            file.isFile() &&
-            file.name.startsWith("rollout-") &&
-            file.name.endsWith(`-${sessionId}.jsonl`)
-          ) {
-            return join(directory, file.name);
-          }
-        }
+    for (const project of await entries(projects, true)) {
+      const path = join(projects, project, `${sessionId}.jsonl`);
+      try {
+        if ((await stat(path)).isFile()) return path;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
     }
-  }
-  return undefined;
-}
-
-function findNativeSessionPathSync(
-  source: NativeSessionSource,
-  sessionId: string,
-  env: NodeJS.ProcessEnv,
-): string | undefined {
-  if (!UUID.test(sessionId)) return undefined;
-  const home = env.HOME || homedir();
-  if (source === "claude_code") {
-    const projects = join(
-      env.CLAUDE_CONFIG_DIR || join(home, ".claude"),
-      "projects",
-    );
-    for (const project of safeReadDirectories(projects)) {
-      const path = join(projects, project, `${sessionId}.jsonl`);
-      if (snapshotFile(path)) return path;
-    }
     return undefined;
   }
   const root = join(env.CODEX_HOME || join(home, ".codex"), "sessions");
-  for (const year of safeReadDirectories(root).filter((name) =>
+  for (const year of (await entries(root, true)).filter((name) =>
     /^\d{4}$/.test(name),
-  )) {
-    for (const month of safeReadDirectories(join(root, year)).filter((name) =>
+  ))
+    for (const month of (await entries(join(root, year), true)).filter((name) =>
       /^\d{2}$/.test(name),
-    )) {
-      for (const day of safeReadDirectories(join(root, year, month)).filter(
+    ))
+      for (const day of (await entries(join(root, year, month), true)).filter(
         (name) => /^\d{2}$/.test(name),
       )) {
         const directory = join(root, year, month, day);
-        for (const file of safeReadFiles(directory)) {
+        for (const file of await entries(directory, false))
           if (
             file.startsWith("rollout-") &&
             file.endsWith(`-${sessionId}.jsonl`)
           )
             return join(directory, file);
-        }
       }
-    }
-  }
   return undefined;
 }
 
-function safeReadDirectories(path: string): string[] {
+async function seal(
+  state: CaptureState,
+  source: NativeSessionSource,
+  sessionId: string,
+  scope: NativeSessionScope,
+  env: NodeJS.ProcessEnv,
+  requestOptions: { baseUrl?: string; apiKey?: string },
+): Promise<void> {
+  const path =
+    state.path || (await findNativeSessionPath(source, sessionId, env));
+  if (!path) {
+    throw new Error("Native session file was not found before EOF capture");
+  }
+  let input: FileHandle;
   try {
-    return readdirSync(path, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name);
+    input = await open(path, "r");
   } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT" || code === "ENOTDIR") return [];
+    if ((error as NodeJS.ErrnoException).code === "ENOENT")
+      throw new Error("Native session file disappeared before EOF capture");
     throw error;
   }
-}
-
-function safeReadFiles(path: string): string[] {
+  const directory = await mkdtemp(
+    join(
+      tmpdir(),
+      `letta-native-session-${process.pid}-${captureProcessInstanceId}-`,
+    ),
+  );
+  spoolDirectories.add(directory);
+  const spoolPath = join(directory, "segment");
+  let output: FileHandle | undefined;
+  let retained = false;
   try {
-    return readdirSync(path, { withFileTypes: true })
-      .filter((entry) => entry.isFile())
-      .map((entry) => entry.name);
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT" || code === "ENOTDIR") return [];
-    throw error;
-  }
-}
-
-function snapshotFile(path: string, start = 0, captureBytes = false) {
-  let descriptor: number | undefined;
-  try {
-    descriptor = openSync(path, "r");
-    const file = fstatSync(descriptor);
-    if (!file.isFile()) return undefined;
-    if (file.size < start) {
+    const before = await input.stat();
+    if (!before.isFile())
+      throw new Error("Native session capture source is not a file");
+    if (before.size < state.sealedOffset)
       throw new Error("Native session file was truncated before capture");
-    }
-    const end = file.size;
-    const bytes = Buffer.alloc(captureBytes ? end - start : 0);
-    let offset = 0;
-    while (offset < bytes.length) {
-      const read = readSync(
-        descriptor,
-        bytes,
-        offset,
-        bytes.length - offset,
-        start + offset,
-      );
-      if (!read) {
+    const identity = `${before.dev}:${before.ino}`;
+    if (state.fileIdentity && state.fileIdentity !== identity)
+      throw new Error("Native session capture changed file identity");
+    const start = state.sealedOffset;
+    const end = before.size;
+    await sealHookForTests?.();
+    output = await open(spoolPath, "wx", 0o600);
+    const buffer = Buffer.allocUnsafe(NATIVE_SESSION_CAPTURE_CHUNK_BYTES);
+    let position = start;
+    while (position < end) {
+      const length = Math.min(buffer.length, end - position);
+      const { bytesRead } = await input.read(buffer, 0, length, position);
+      if (bytesRead !== length)
         throw new Error("Native session changed during EOF capture");
-      }
-      offset += read;
+      let written = 0;
+      while (written < bytesRead)
+        written += (
+          await output.write(buffer, written, bytesRead - written, null)
+        ).bytesWritten;
+      position += bytesRead;
     }
-    const completed = fstatSync(descriptor);
+    const after = await input.stat();
     if (
-      completed.dev !== file.dev ||
-      completed.ino !== file.ino ||
-      completed.size < end ||
-      completed.ctimeMs !== file.ctimeMs ||
-      completed.mtimeMs !== file.mtimeMs
-    ) {
+      `${after.dev}:${after.ino}` !== identity ||
+      after.size !== before.size ||
+      after.ctimeMs !== before.ctimeMs ||
+      after.mtimeMs !== before.mtimeMs
+    )
       throw new Error("Native session changed during EOF capture");
+    state.path = path;
+    state.fileIdentity = identity;
+    if (end > state.sealedOffset) {
+      state.segments.push({
+        scope: { ...scope },
+        start,
+        end,
+        path: spoolPath,
+        requestOptions: { ...requestOptions },
+      });
+      state.sealedOffset = end;
+      retained = true;
     }
-    return {
-      start,
-      end,
-      fileIdentity: `${file.dev}:${file.ino}`,
-      bytes,
-    };
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw error;
   } finally {
-    if (descriptor !== undefined) closeSync(descriptor);
+    await input.close();
+    await output?.close();
+    if (!retained) {
+      await rm(directory, { recursive: true, force: true });
+      spoolDirectories.delete(directory);
+    }
   }
 }
 
 async function drain(
   state: CaptureState,
-  snapshot: CaptureSnapshot,
   source: NativeSessionSource,
   sessionId: string,
 ): Promise<void> {
-  if (state.fileIdentity && state.fileIdentity !== snapshot.fileIdentity) {
-    throw new Error("Native session capture changed file identity");
-  }
-  state.fileIdentity = snapshot.fileIdentity;
-  if (state.offset < snapshot.start) {
-    throw new Error("Native session snapshot has an unrecorded byte gap");
-  }
-  while (state.offset < snapshot.end) {
-    const relativeOffset = state.offset - snapshot.start;
-    const buffer = snapshot.bytes.subarray(
-      relativeOffset,
-      Math.min(snapshot.bytes.length, relativeOffset + CHUNK_BYTES),
-    );
-    if (buffer.length === 0) {
-      throw new Error("Native session snapshot ended before its captured EOF");
+  while (state.segments.length) {
+    const segment = state.segments[0];
+    if (!segment) return;
+    const spool = await open(segment.path, "r");
+    try {
+      while (state.ackedOffset < segment.end) {
+        if (state.ackedOffset < segment.start)
+          throw new Error("Native session segment has an unrecorded byte gap");
+        const length = Math.min(
+          NATIVE_SESSION_CAPTURE_CHUNK_BYTES,
+          segment.end - state.ackedOffset,
+        );
+        const buffer = Buffer.allocUnsafe(length);
+        const { bytesRead } = await spool.read(
+          buffer,
+          0,
+          length,
+          state.ackedOffset - segment.start,
+        );
+        if (bytesRead !== length)
+          throw new Error("Native session spool ended before its sealed EOF");
+        const response = await apiRequest<{
+          accepted_bytes: number;
+          chunk_index: number;
+        }>(
+          "POST",
+          `/v1/conversations/${encodeURIComponent(segment.scope.conversationId)}/native-session/chunks`,
+          {
+            agent_id: segment.scope.agentId,
+            source,
+            session_id: sessionId,
+            chunk_index: state.chunkIndex,
+            data_base64: buffer.toString("base64"),
+          },
+          {
+            signal: AbortSignal.timeout(5_000),
+            actingUserId: segment.scope.actingUserId,
+            ...segment.requestOptions,
+          },
+        );
+        if (
+          response.chunk_index !== state.chunkIndex ||
+          response.accepted_bytes !== length
+        )
+          throw new Error("Native session chunk acknowledgment mismatch");
+        state.ackedOffset += length;
+        state.chunkIndex++;
+      }
+    } finally {
+      await spool.close();
     }
-    const response = await apiRequest<{
-      accepted_bytes: number;
-      chunk_index: number;
-    }>(
-      "POST",
-      `/v1/conversations/${encodeURIComponent(snapshot.scope.conversationId)}/native-session/chunks`,
-      {
-        agent_id: snapshot.scope.agentId,
-        source,
-        session_id: sessionId,
-        chunk_index: state.chunkIndex,
-        data_base64: buffer.toString("base64"),
-      },
-      {
-        signal: AbortSignal.timeout(5_000),
-        actingUserId: snapshot.scope.actingUserId,
-        ...snapshot.requestOptions,
-      },
-    );
-    if (
-      response.chunk_index !== state.chunkIndex ||
-      response.accepted_bytes !== buffer.length
-    ) {
-      throw new Error("Native session chunk acknowledgment mismatch");
-    }
-    state.offset += buffer.length;
-    state.chunkIndex++;
+    state.segments.shift();
+    const directory = join(segment.path, "..");
+    await rm(directory, { recursive: true, force: true });
+    spoolDirectories.delete(directory);
   }
 }
 
-async function drainSnapshots(
+function startDrain(
   state: CaptureState,
   source: NativeSessionSource,
   sessionId: string,
-): Promise<void> {
-  while (state.snapshots.length > 0) {
-    const snapshot = state.snapshots[0];
-    if (!snapshot) return;
-    await drain(state, snapshot, source, sessionId);
-    if (state.snapshots[0] === snapshot) state.snapshots.shift();
+): void {
+  if (state.draining || !state.segments.length) return;
+  if (state.retryTimer) {
+    clearTimeout(state.retryTimer);
+    state.retryTimer = undefined;
   }
+  state.drainError = undefined;
+  const running = drain(state, source, sessionId);
+  state.draining = running;
+  let failed = false;
+  void running
+    .catch((error) => {
+      failed = true;
+      state.drainError = error;
+      reportNativeSessionCaptureFailure(source, sessionId, error);
+      if (!state.retryTimer) {
+        const delayMs = state.retryDelayMs;
+        state.retryDelayMs = Math.min(
+          MAX_DRAIN_RETRY_MS,
+          state.retryDelayMs * 2,
+        );
+        state.retryTimer = setTimeout(() => {
+          state.retryTimer = undefined;
+          startDrain(state, source, sessionId);
+        }, delayMs);
+        state.retryTimer.unref?.();
+      }
+    })
+    .finally(() => {
+      if (state.draining === running) state.draining = undefined;
+      if (!failed && state.segments.length) {
+        startDrain(state, source, sessionId);
+      } else if (!failed) {
+        state.retryDelayMs = INITIAL_DRAIN_RETRY_MS;
+      }
+    });
 }
 
-/** Scope is captured at launch, never derived from process globals after a turn. */
-export async function captureNativeSession(
+/** Resolves once the turn's bytes are immutable on disk; network drain is background work. */
+export function captureNativeSession(
   source: NativeSessionSource,
   sessionId: string,
   scope: NativeSessionScope | undefined,
@@ -297,46 +374,38 @@ export async function captureNativeSession(
     !UUID.test(sessionId)
   )
     return Promise.resolve();
-  const id = key(source, sessionId);
-  const existing = states.get(id);
-  // Unknown resumed sessions may predate this process. A known native file
-  // contains earlier turns, so never copy it into a different conversation
-  // merely because that caller supplied the session UUID.
-  if (!existing || !sameScope(existing.scope, scope)) return Promise.resolve();
-  let path: string | undefined;
-  let boundary: ReturnType<typeof snapshotFile>;
-  try {
-    path = existing.path || findNativeSessionPathSync(source, sessionId, env);
-    if (!path) return Promise.resolve();
-    boundary = snapshotFile(path, existing.offset, true);
-  } catch (error) {
-    return Promise.reject(error);
-  }
-  if (!boundary) {
-    return Promise.reject(
-      new Error("Native session file disappeared before EOF capture"),
-    );
-  }
-  existing.path = path;
-  const snapshot: CaptureSnapshot = {
-    scope: { ...scope },
-    requestOptions: {
-      baseUrl: requestOptions.baseUrl,
-      apiKey: requestOptions.apiKey,
-    },
-    ...boundary,
+  const state = states.get(key(source, sessionId));
+  if (!state || !sameScope(state.scope, scope)) return Promise.resolve();
+  const frozenScope = { ...scope };
+  const frozenOptions = {
+    baseUrl: requestOptions.baseUrl,
+    apiKey: requestOptions.apiKey,
   };
-  existing.snapshots.push(snapshot);
-  const prior = existing.pending;
-  const pending = (
-    prior ? prior.catch(() => undefined) : Promise.resolve()
-  ).then(() => drainSnapshots(existing, source, sessionId));
-  let tracked: Promise<void>;
-  tracked = pending.finally(() => {
-    if (existing.pending === tracked) existing.pending = undefined;
-  });
-  existing.pending = tracked;
-  return tracked;
+  const sealing = state.sealing.then(() =>
+    seal(state, source, sessionId, frozenScope, env, frozenOptions),
+  );
+  // A failed seal poisons this process-owned session. Advancing to a later
+  // reservation would permanently skip bytes whose actor could not be frozen.
+  state.sealing = sealing;
+  return sealing.then(() => startDrain(state, source, sessionId));
+}
+
+export async function awaitNativeSessionCaptureDrainForTests(
+  source?: NativeSessionSource,
+  sessionId?: string,
+): Promise<void> {
+  const selected =
+    source && sessionId
+      ? [states.get(key(source, sessionId))].filter(
+          (value): value is CaptureState => Boolean(value),
+        )
+      : [...states.values()];
+  for (const state of selected) {
+    await state.sealing;
+    if (source && sessionId) startDrain(state, source, sessionId);
+    await state.draining?.catch(() => undefined);
+    if (state.drainError) throw state.drainError;
+  }
 }
 
 export function rememberNativeSession(
@@ -345,20 +414,42 @@ export function rememberNativeSession(
   scope: NativeSessionScope,
   cloudUrl = getServerUrl(),
 ): void {
+  scavengeStaleSpoolDirectories();
   const id = key(source, sessionId);
-  if (!states.has(id) && UUID.test(sessionId) && isCloudServerUrl(cloudUrl)) {
+  if (!states.has(id) && UUID.test(sessionId) && isCloudServerUrl(cloudUrl))
     states.set(id, {
       scope: { ...scope },
       path: "",
-      offset: 0,
+      ackedOffset: 0,
+      sealedOffset: 0,
       chunkIndex: 0,
-      snapshots: [],
+      sealing: Promise.resolve(),
+      retryDelayMs: INITIAL_DRAIN_RETRY_MS,
+      segments: [],
     });
+}
+
+export async function clearNativeSessionCaptureForTests(): Promise<void> {
+  sealHookForTests = undefined;
+  const captured = [...states.values()];
+  states.clear();
+  for (const state of captured) {
+    if (state.retryTimer) clearTimeout(state.retryTimer);
+    await state.sealing.catch(() => undefined);
+    await state.draining?.catch(() => undefined);
+    if (state.retryTimer) clearTimeout(state.retryTimer);
+    for (const segment of state.segments) {
+      const directory = join(segment.path, "..");
+      await rm(directory, { recursive: true, force: true });
+      spoolDirectories.delete(directory);
+    }
   }
 }
 
-export function clearNativeSessionCaptureForTests(): void {
-  states.clear();
+export function setNativeSessionCaptureSealHookForTests(
+  hook: (() => Promise<void>) | undefined,
+): void {
+  sealHookForTests = hook;
 }
 
 /** Report delivery failure without logging raw transcripts or response bodies. */

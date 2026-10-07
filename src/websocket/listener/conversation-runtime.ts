@@ -27,6 +27,7 @@ import {
 import { isListenerTransportOpen } from "./transport";
 import {
   createTurnFinishedStore,
+  type PersistedTurnFinished,
   replayPendingTurnFinishedToConnection,
   TurnFinishedCapacityError,
 } from "./turn-finished-replay";
@@ -279,6 +280,7 @@ export function restoreDurableQueuedInputs(
         agentId: record.agentId,
         conversationId: record.conversationId,
         durableInputIdentities: record.durableInputIdentities ?? [],
+        quarantined: false,
       }))
     : (
         options.interruptedStore ?? createInterruptedTurnStore()
@@ -293,6 +295,13 @@ export function restoreDurableQueuedInputs(
           identity.id,
         ]),
       ),
+    ),
+  );
+  const quarantinedInterruptedScopes = new Set(
+    interruptedOwnership.flatMap((record) =>
+      record.quarantined
+        ? [JSON.stringify([record.agentId, record.conversationId])]
+        : [],
     ),
   );
   // Dequeue marks an input started before the turn has written its first
@@ -325,7 +334,10 @@ export function restoreDurableQueuedInputs(
     ]);
     if (
       disposition === "started" &&
-      (interruptedIdentityKeys.has(identityKey) ||
+      (quarantinedInterruptedScopes.has(
+        JSON.stringify([payload.scope.agentId, payload.scope.conversationId]),
+      ) ||
+        interruptedIdentityKeys.has(identityKey) ||
         volatileStartedIdentityKeys.has(identityKey))
     ) {
       continue;
@@ -384,7 +396,11 @@ export function promotePreparedInputTerminals(
   listener: ListenerRuntime,
   terminalStore = createTurnFinishedStore(),
   onlyScope?: { agentId: string | null; conversationId: string },
-  interruptedStore = createInterruptedTurnStore(),
+  interruptedStore: Pick<
+    ReturnType<typeof createInterruptedTurnStore>,
+    "readRecoverySnapshot"
+  > = createInterruptedTurnStore(),
+  discardPreparedTerminal = discardPreparedInputTerminal,
 ): number {
   let promoted = 0;
   for (const prepared of loadPreparedInputTerminals(listener)) {
@@ -414,14 +430,21 @@ export function promotePreparedInputTerminals(
         // later repair rather than promoting or discarding unverifiable proof.
         continue;
       }
-      const persisted = terminalStore
-        .read(prepared.scope.agentId, prepared.scope.conversationId)
-        ?.terminals.find((terminal) =>
-          prepared.owner.terminalIdentity
-            ? terminal.owner.terminalIdentity ===
-              prepared.owner.terminalIdentity
-            : terminal.message.turn_id === prepared.message.turn_id,
-        );
+      let persisted: PersistedTurnFinished | undefined;
+      try {
+        persisted = terminalStore
+          .readOrThrow(prepared.scope.agentId, prepared.scope.conversationId)
+          ?.terminals.find((terminal) =>
+            prepared.owner.terminalIdentity
+              ? terminal.owner.terminalIdentity ===
+                prepared.owner.terminalIdentity
+              : terminal.message.turn_id === prepared.message.turn_id,
+          );
+      } catch {
+        // Unavailable/corrupt terminal state is not absence. Preserve both
+        // durable artifacts until an exact later pass can reconcile them.
+        continue;
+      }
       if (!snapshot) {
         // A completed recovery removes its sidecar after remote ACK. Preserve
         // and promote the matching unacknowledged terminal that outlived it;
@@ -434,22 +457,34 @@ export function promotePreparedInputTerminals(
         if (snapshot.record.recoveryClaimCompletion?.state === "pending") {
           continue;
         }
-        if (persisted) {
-          terminalStore.remove(
-            prepared.scope.agentId,
-            prepared.scope.conversationId,
-            persisted.id,
+        try {
+          if (persisted) {
+            terminalStore.remove(
+              prepared.scope.agentId,
+              prepared.scope.conversationId,
+              persisted.id,
+            );
+          }
+          if (
+            discardPreparedTerminal(
+              listener,
+              prepared.scope,
+              prepared.owner.terminalIdentity,
+              prepared.message.turn_id,
+            )
+          ) {
+            continue;
+          }
+          debugWarn(
+            "recovery",
+            "Failed to discard stale prepared input terminal; deferring retry",
           );
-        }
-        if (
-          !discardPreparedInputTerminal(
-            listener,
-            prepared.scope,
-            prepared.owner.terminalIdentity,
-            prepared.message.turn_id,
-          )
-        ) {
-          throw new Error("Failed to discard stale prepared input terminal");
+        } catch (error) {
+          debugWarn(
+            "recovery",
+            "Failed to remove stale persisted terminal; deferring cleanup",
+            error,
+          );
         }
         continue;
       }

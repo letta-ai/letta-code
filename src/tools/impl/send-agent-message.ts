@@ -239,7 +239,7 @@ export async function send_agent_message(
       throw new Error("SendAgentMessage requires a Cloud backend.");
     }
     const computer = normalizeAgentMessageComputer(args.computer);
-    const actingUserId = getRuntimeActingUserAttribution() ?? undefined;
+    const actingUserId = getRuntimeActingUserAttribution();
     if (!actingUserId) {
       debugLog("SendAgentMessage", "Sending without X-Letta-Acting-User-Id", {
         senderAgentId: sender.agentId,

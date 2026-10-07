@@ -415,12 +415,15 @@ export async function runExternalCodingAgent(
       }
     : undefined;
   const source = options.type === "claude-code" ? "claude_code" : "codex";
-  const capture = (result: SubagentResult): SubagentResult => {
+  const capture = async (result: SubagentResult): Promise<SubagentResult> => {
     const sessionId = result.runtimeSessionId ?? options.resumeSessionId;
     if (scope && sessionId) {
-      void captureNativeSession(source, sessionId, scope, env).catch((error) =>
-        reportNativeSessionCaptureFailure(source, sessionId, error),
-      );
+      try {
+        await captureNativeSession(source, sessionId, scope, env);
+      } catch (error) {
+        reportNativeSessionCaptureFailure(source, sessionId, error);
+        throw error;
+      }
     }
     return result;
   };

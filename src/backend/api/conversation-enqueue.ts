@@ -73,7 +73,7 @@ export interface EnqueueConversationInput {
   clientMessageId: string;
   content: MessageCreate["content"];
   computer?: string;
-  actingUserId?: string;
+  actingUserId?: string | null;
 }
 
 /** Cloud owns delivery after this request returns 202. Never retry by executing locally. */

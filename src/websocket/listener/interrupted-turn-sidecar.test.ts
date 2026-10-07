@@ -16,6 +16,7 @@ import {
   recordListenerWorkRetriably,
 } from "./interrupted-turn-record";
 import { createRuntime } from "./lifecycle";
+import { __recoveryLineageSidecarTestUtils } from "./recovery-lineage-sidecar";
 
 test("a pre-effect rollback retries into a racing successor sidecar", async () => {
   const directory = mkdtempSync(join(tmpdir(), "listener-effect-rollback-"));
@@ -160,6 +161,7 @@ test("sidecar rollback replaces unknown snapshots without erasing exact settleme
         ...predecessor,
         runId: "run-successor",
         toolCallIds: ["call-successor"],
+        durableInputIdentities: [{ domain: "input", id: "input-successor" }],
         results: [],
         requestOtid: "request-successor",
         recoveryClaimCompletion: {
@@ -513,6 +515,7 @@ test("sidecar scavenging preserves evidence beside an unreadable main", () => {
       results: [],
       requestOtid: "request-predecessor",
       workingDirectory: "/predecessor",
+      durableInputIdentities: [{ domain: "input", id: "input-predecessor" }],
       recoveryClaimCompletion: {
         lineageId: "lineage-corrupt-main",
         state: "running",
@@ -530,6 +533,7 @@ test("sidecar scavenging preserves evidence beside an unreadable main", () => {
           independentSuccessor: true,
           effectRevision: predecessor.revision,
           effectToolCallIds: predecessor.toolCallIds,
+          effectInputIdentities: predecessor.durableInputIdentities,
         },
       },
       predecessor.revision,
@@ -561,6 +565,14 @@ test("sidecar scavenging preserves evidence beside an unreadable main", () => {
       ),
     ).toThrow("authority is unreadable");
     expect(readdirSync(directory)).toContain(sidecar);
+    expect(store.listDurableInputOwnership()).toEqual([
+      {
+        agentId: "agent-corrupt-main",
+        conversationId: "conv-test",
+        durableInputIdentities: [{ domain: "input", id: "input-predecessor" }],
+        quarantined: true,
+      },
+    ]);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -571,7 +583,7 @@ test("sidecar enumeration removes stale crash-left temporary files", () => {
   const store = createInterruptedTurnStore(directory);
   try {
     const record = store.write({
-      agentId: "agent-temp",
+      agentId: "agent.recovery-temp",
       conversationId: "conv-test",
       runId: "run-temp",
       toolCallIds: [],
@@ -597,17 +609,25 @@ test("sidecar enumeration removes stale crash-left temporary files", () => {
     );
     if (!canonical) throw new Error("missing canonical sidecar");
     const temporary = `${canonical}.2147483647.00000000-0000-4000-8000-000000000000.tmp`;
-    const liveTemporary = `${canonical}.${process.pid}.00000000-0000-4000-8000-000000000001.tmp`;
+    const liveTemporary = `${canonical}.${process.pid}.${__recoveryLineageSidecarTestUtils.sidecarWriterInstanceId}.00000000-0000-4000-8000-000000000001.tmp`;
+    const reusedPidTemporary = `${canonical}.${process.pid}.00000000-0000-4000-8000-000000000002.00000000-0000-4000-8000-000000000003.tmp`;
     copyFileSync(join(directory, canonical), join(directory, temporary));
     copyFileSync(join(directory, canonical), join(directory, liveTemporary));
+    copyFileSync(
+      join(directory, canonical),
+      join(directory, reusedPidTemporary),
+    );
     const stale = new Date(Date.now() - 120_000);
+    const abandoned = new Date(Date.now() - 25 * 60 * 60 * 1_000);
     utimesSync(join(directory, temporary), stale, stale);
-    utimesSync(join(directory, liveTemporary), stale, stale);
+    utimesSync(join(directory, liveTemporary), abandoned, abandoned);
+    utimesSync(join(directory, reusedPidTemporary), abandoned, abandoned);
 
     store.list();
     expect(readdirSync(directory)).toContain(canonical);
     expect(readdirSync(directory)).not.toContain(temporary);
     expect(readdirSync(directory)).toContain(liveTemporary);
+    expect(readdirSync(directory)).not.toContain(reusedPidTemporary);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

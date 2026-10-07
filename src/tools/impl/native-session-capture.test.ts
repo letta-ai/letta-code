@@ -11,10 +11,13 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  captureNativeSession,
+  awaitNativeSessionCaptureDrainForTests,
   clearNativeSessionCaptureForTests,
   findNativeSessionPath,
+  NATIVE_SESSION_CAPTURE_CHUNK_BYTES,
   rememberNativeSession,
+  captureNativeSession as sealNativeSession,
+  setNativeSessionCaptureSealHookForTests,
 } from "./native-session-capture";
 
 const ID = "11111111-1111-4111-8111-111111111111";
@@ -32,8 +35,15 @@ afterEach(async () => {
   server = undefined;
   if (directory) await rm(directory, { recursive: true, force: true });
   directory = undefined;
-  clearNativeSessionCaptureForTests();
+  await clearNativeSessionCaptureForTests();
 });
+
+async function captureNativeSession(
+  ...args: Parameters<typeof sealNativeSession>
+): Promise<void> {
+  await sealNativeSession(...args);
+  await awaitNativeSessionCaptureDrainForTests(args[0], args[1]);
+}
 
 async function fixture(source: "claude_code" | "codex", bytes: Buffer) {
   directory = await mkdtemp(join(tmpdir(), "native-session-capture-"));
@@ -287,11 +297,11 @@ describe("native CLI JSONL capture", () => {
       const actorB = { ...scope, actingUserId: "actor-b" };
       rememberNativeSession(source, ID, actorA, "https://api.letta.com");
 
-      const first = captureNativeSession(source, ID, actorA, env, options);
+      await sealNativeSession(source, ID, actorA, env, options);
       await appendFile(path, "turn-b\n");
-      const second = captureNativeSession(source, ID, actorB, env, options);
+      await sealNativeSession(source, ID, actorB, env, options);
       releaseFirst();
-      await Promise.all([first, second]);
+      await awaitNativeSessionCaptureDrainForTests(source, ID);
 
       expect(
         calls.map((call) => ({
@@ -418,14 +428,18 @@ describe("native CLI JSONL capture", () => {
     }> = [];
     const url = await endpoint(calls, (requestNumber) => requestNumber === 1);
     rememberNativeSession("codex", ID, scope, "https://api.letta.com");
-    await captureNativeSession(
-      "codex",
-      ID,
-      scope,
-      { HOME: directory },
-      { baseUrl: url, apiKey: "test", cloudUrl: "https://api.letta.com" },
-    );
+    await expect(
+      sealNativeSession(
+        "codex",
+        ID,
+        scope,
+        { HOME: directory },
+        { baseUrl: url, apiKey: "test", cloudUrl: "https://api.letta.com" },
+      ),
+    ).rejects.toThrow("not found before EOF capture");
     expect(calls).toHaveLength(0);
+    await clearNativeSessionCaptureForTests();
+    rememberNativeSession("codex", ID, scope, "https://api.letta.com");
     const native = Buffer.from('{"hello":"world"}\n');
     const { path, env } = await fixture("codex", native);
     await expect(
@@ -457,13 +471,40 @@ describe("native CLI JSONL capture", () => {
           .map(({ body }) => Buffer.from(String(body.data_base64), "base64")),
       ),
     ).toEqual(Buffer.concat([native, later]));
-    clearNativeSessionCaptureForTests();
+    await clearNativeSessionCaptureForTests();
     await captureNativeSession("codex", ID, scope, env, {
       baseUrl: url,
       apiKey: "test",
       cloudUrl: "https://api.letta.com",
     });
     expect(calls).toHaveLength(3);
+  });
+
+  test("retries a final sealed segment without waiting for another turn", async () => {
+    const native = Buffer.from('{"final":"turn"}\n');
+    const { env } = await fixture("codex", native);
+    const calls: Array<{
+      url: string;
+      body: Record<string, unknown>;
+      actingUser: string | undefined;
+    }> = [];
+    const url = await endpoint(calls, (requestNumber) => requestNumber === 1);
+    rememberNativeSession("codex", ID, scope, "https://api.letta.com");
+
+    await sealNativeSession("codex", ID, scope, env, {
+      baseUrl: url,
+      apiKey: "test",
+      cloudUrl: "https://api.letta.com",
+    });
+    for (let attempt = 0; attempt < 20 && calls.length < 2; attempt += 1) {
+      await Bun.sleep(20);
+    }
+    await awaitNativeSessionCaptureDrainForTests("codex", ID);
+
+    expect(calls).toHaveLength(2);
+    expect(Buffer.from(String(calls[1]?.body.data_base64), "base64")).toEqual(
+      native,
+    );
   });
 
   test.each([
@@ -517,4 +558,121 @@ describe("native CLI JSONL capture", () => {
     });
     expect(calls).toHaveLength(0);
   });
+
+  test("seals rapid turns into non-overlapping actor-owned segments while upload is stalled", async () => {
+    const { path, env } = await fixture("codex", Buffer.from("one\n"));
+    const calls: Array<{
+      url: string;
+      body: Record<string, unknown>;
+      actingUser: string | undefined;
+    }> = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const url = await endpoint(calls, false, async (number) => {
+      if (number === 1) await gate;
+    });
+    const options = {
+      baseUrl: url,
+      apiKey: "test",
+      cloudUrl: "https://api.letta.com",
+    };
+    rememberNativeSession("codex", ID, scope, "https://api.letta.com");
+    await sealNativeSession(
+      "codex",
+      ID,
+      { ...scope, actingUserId: "one" },
+      env,
+      options,
+    );
+    await appendFile(path, "two\n");
+    await sealNativeSession(
+      "codex",
+      ID,
+      { ...scope, actingUserId: "two" },
+      env,
+      options,
+    );
+    await appendFile(path, "three\n");
+    await sealNativeSession(
+      "codex",
+      ID,
+      { ...scope, actingUserId: "three" },
+      env,
+      options,
+    );
+    release();
+    await awaitNativeSessionCaptureDrainForTests("codex", ID);
+    expect(
+      calls.map((call) => ({
+        actor: call.actingUser,
+        data: Buffer.from(String(call.body.data_base64), "base64").toString(),
+      })),
+    ).toEqual([
+      { actor: "one", data: "one\n" },
+      { actor: "two", data: "two\n" },
+      { actor: "three", data: "three\n" },
+    ]);
+  });
+
+  test("capture resolves after asynchronous bounded sealing without waiting for upload", async () => {
+    const native = Buffer.alloc(NATIVE_SESSION_CAPTURE_CHUNK_BYTES * 12, "x");
+    const { env } = await fixture("claude_code", native);
+    const calls: Array<{
+      url: string;
+      body: Record<string, unknown>;
+      actingUser: string | undefined;
+    }> = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const url = await endpoint(calls, false, async () => gate);
+    rememberNativeSession("claude_code", ID, scope, "https://api.letta.com");
+    let yielded = false;
+    setTimeout(() => {
+      yielded = true;
+    }, 0);
+    await sealNativeSession("claude_code", ID, scope, env, {
+      baseUrl: url,
+      apiKey: "test",
+      cloudUrl: "https://api.letta.com",
+    });
+    expect(yielded).toBe(true);
+    expect(calls).toHaveLength(0);
+    release();
+    await awaitNativeSessionCaptureDrainForTests("claude_code", ID);
+    expect(calls.length).toBeGreaterThan(1);
+    expect(
+      calls.every(
+        (call) =>
+          Buffer.from(String(call.body.data_base64), "base64").length <=
+          NATIVE_SESSION_CAPTURE_CHUNK_BYTES,
+      ),
+    ).toBe(true);
+  });
+
+  test.each([
+    ["rewrite", (path: string) => writeFile(path, "second\n")],
+    ["truncation", (path: string) => writeFile(path, "x")],
+  ] as const)(
+    "fails closed on source %s during sealing",
+    async (_name, mutate) => {
+      const { path, env } = await fixture("codex", Buffer.from("first\n"));
+      rememberNativeSession("codex", ID, scope, "https://api.letta.com");
+      setNativeSessionCaptureSealHookForTests(async () => mutate(path));
+      await expect(
+        sealNativeSession("codex", ID, scope, env, {
+          cloudUrl: "https://api.letta.com",
+        }),
+      ).rejects.toThrow(/changed|truncated/);
+      setNativeSessionCaptureSealHookForTests(undefined);
+      await expect(
+        sealNativeSession("codex", ID, scope, env, {
+          cloudUrl: "https://api.letta.com",
+        }),
+      ).rejects.toThrow(/changed|truncated/);
+    },
+  );
 });
