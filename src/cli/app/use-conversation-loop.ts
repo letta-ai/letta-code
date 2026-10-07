@@ -184,6 +184,14 @@ function isTurnInputArray(
 }
 
 type ConversationLoopContext = {
+  onNestedToolApproval: (request: {
+    toolName: string;
+    args: Record<string, unknown>;
+    toolCallId: string;
+    reason?: string;
+    allowPersistence?: boolean;
+    signal?: AbortSignal;
+  }) => Promise<{ approved: boolean; args?: Record<string, unknown> }>;
   abortControllerRef: MutableRefObject<AbortController | null>;
   agentIdRef: MutableRefObject<string>;
   appendError: AppendError;
@@ -286,6 +294,7 @@ type ConversationLoopContext = {
 
 export function useConversationLoop(ctx: ConversationLoopContext) {
   const {
+    onNestedToolApproval,
     abortControllerRef,
     agentIdRef,
     appendError,
@@ -1930,6 +1939,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                     tempModelOverrideRef.current ?? undefined,
                   )
                 ).preparedToolContext.contextId;
+              approvalToolContextIdRef.current = approvalToolContextId;
               autoAllowedResults =
                 autoAllowed.length > 0
                   ? await executeAutoAllowedTools(
@@ -1937,6 +1947,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                       (chunk) => onChunk(buffersRef.current, chunk),
                       {
                         abortSignal: autoAllowedAbortController.signal,
+                        onNestedToolApproval,
                         onStreamingOutput: updateStreamingOutput,
                         toolContextId: approvalToolContextId,
                       },
@@ -2839,6 +2850,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
       setConversationSummary,
       currentModelId,
       updateStreamingOutput,
+      onNestedToolApproval,
       needsEagerApprovalCheck,
       queueApprovalResults,
       consumeQueuedMessages,

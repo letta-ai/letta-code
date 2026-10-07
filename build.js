@@ -117,6 +117,9 @@ await Bun.build({
     "@pierre/diffs/*",
     "@shikijs/langs",
     "@shikijs/langs/*",
+    // Keep QuickJS worker and WASM together with its runtime package on disk.
+    "@earendil-works/pi-codemode",
+    "@earendil-works/pi-codemode/*",
   ],
   features: features,
 });

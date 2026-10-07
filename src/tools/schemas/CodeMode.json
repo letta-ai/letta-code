@@ -1,0 +1,11 @@
+{
+  "type": "object",
+  "properties": {
+    "code": {
+      "type": "string",
+      "description": "JavaScript async function body executed in a constrained sandbox"
+    }
+  },
+  "required": ["code"],
+  "additionalProperties": false
+}

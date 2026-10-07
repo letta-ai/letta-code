@@ -103,6 +103,7 @@ import type {
   QueuedOverlayAction,
   StaticItem,
 } from "./types";
+import type { useNestedToolApproval } from "./use-nested-tool-approval";
 
 type ModelSelectorOptions = {
   filterProvider?: string;
@@ -126,6 +127,7 @@ type QueuedApprovalDecision = {
 };
 
 type AppViewProps = {
+  nestedToolApproval: ReturnType<typeof useNestedToolApproval>;
   activeOverlay: ActiveOverlay;
   agentId: string;
   agentName: string | null;
@@ -346,6 +348,7 @@ type AppViewProps = {
 
 export function AppView(props: AppViewProps) {
   const {
+    nestedToolApproval,
     activeOverlay,
     agentId,
     agentName,
@@ -487,6 +490,7 @@ export function AppView(props: AppViewProps) {
     uiPermissionMode,
     updateAgentName,
   } = props;
+  const nestedApprovalActive = nestedToolApproval.current !== null;
 
   return (
     <Box key={resumeKey} flexDirection="column">
@@ -563,6 +567,7 @@ export function AppView(props: AppViewProps) {
                     const matchesCurrentApproval =
                       ln.kind === "tool_call" &&
                       currentApproval &&
+                      !nestedApprovalActive &&
                       ln.toolCallId === currentApproval.toolCallId;
 
                     return (
@@ -652,26 +657,56 @@ export function AppView(props: AppViewProps) {
               )}
 
               {/* Fallback approval UI when backfill is disabled (no liveItems) */}
-              {liveItems.length === 0 && currentApproval && (
-                <Box flexDirection="column">
+              {liveItems.length === 0 &&
+                currentApproval &&
+                !nestedApprovalActive && (
+                  <Box flexDirection="column">
+                    <ApprovalSwitch
+                      approval={currentApproval}
+                      onApprove={handleApproveCurrent}
+                      onApproveAlways={handleApproveAlways}
+                      onDeny={handleDenyCurrent}
+                      onCancel={handleCancelApprovals}
+                      allDiffs={precomputedDiffsRef.current}
+                      isFocused={true}
+                      approveAlwaysText={
+                        currentApprovalContext?.approveAlwaysText
+                      }
+                      allowPersistence={
+                        currentApprovalContext?.allowPersistence ?? true
+                      }
+                      defaultScope={
+                        currentApprovalContext?.defaultScope === "user"
+                          ? "session"
+                          : (currentApprovalContext?.defaultScope ?? "project")
+                      }
+                      showPreview={showApprovalPreview}
+                    />
+                  </Box>
+                )}
+
+              {nestedToolApproval.current && (
+                <Box flexDirection="column" marginTop={1}>
                   <ApprovalSwitch
-                    approval={currentApproval}
-                    onApprove={handleApproveCurrent}
-                    onApproveAlways={handleApproveAlways}
-                    onDeny={handleDenyCurrent}
-                    onCancel={handleCancelApprovals}
-                    allDiffs={precomputedDiffsRef.current}
+                    key={nestedToolApproval.current.approval.toolCallId}
+                    approval={nestedToolApproval.current.approval}
+                    onApprove={() => nestedToolApproval.decide(true)}
+                    onApproveAlways={(scope) =>
+                      void nestedToolApproval.approveAlways(scope)
+                    }
+                    onDeny={() => nestedToolApproval.decide(false)}
+                    onCancel={() => nestedToolApproval.decide(false)}
                     isFocused={true}
                     approveAlwaysText={
-                      currentApprovalContext?.approveAlwaysText
+                      nestedToolApproval.current.context.approveAlwaysText
                     }
                     allowPersistence={
-                      currentApprovalContext?.allowPersistence ?? true
+                      nestedToolApproval.current.context.allowPersistence
                     }
                     defaultScope={
-                      currentApprovalContext?.defaultScope === "user"
+                      nestedToolApproval.current.context.defaultScope === "user"
                         ? "session"
-                        : (currentApprovalContext?.defaultScope ?? "project")
+                        : nestedToolApproval.current.context.defaultScope
                     }
                     showPreview={showApprovalPreview}
                   />
@@ -735,7 +770,9 @@ export function AppView(props: AppViewProps) {
                 onBashInterrupt={handleBashInterrupt}
                 inputEnabled={inputEnabled}
                 collapseInputWhenDisabled={
-                  pendingApprovals.length > 0 || anySelectorOpen
+                  pendingApprovals.length > 0 ||
+                  nestedApprovalActive ||
+                  anySelectorOpen
                 }
                 permissionMode={uiPermissionMode}
                 onPermissionModeChange={handlePermissionModeChange}

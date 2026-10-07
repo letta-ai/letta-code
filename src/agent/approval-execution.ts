@@ -140,6 +140,15 @@ export type ApprovalToolResult = ToolReturn & {
 // Align result type with the SDK's expected union for approvals payloads
 export type ApprovalResult = ApprovalToolResult | ApprovalReturn;
 
+type NestedToolApproval = (request: {
+  toolName: string;
+  args: Record<string, unknown>;
+  toolCallId: string;
+  reason?: string;
+  allowPersistence?: boolean;
+  signal?: AbortSignal;
+}) => Promise<{ approved: boolean; args?: Record<string, unknown> }>;
+
 /**
  * Execute a single approval decision and return the result.
  * Extracted to allow parallel execution of Task tools.
@@ -157,6 +166,7 @@ async function executeSingleDecision(
     toolContextId?: string;
     parentScope?: { agentId: string; conversationId: string };
     onFileWrite?: (filePath: string, content: string) => void;
+    onNestedToolApproval?: NestedToolApproval;
   },
 ): Promise<ApprovalResult> {
   // If aborted, record an interrupted result
@@ -225,6 +235,7 @@ async function executeSingleDecision(
                 )
             : undefined,
           onFileWrite: options?.onFileWrite,
+          onNestedToolApproval: options?.onNestedToolApproval,
         },
       );
 
@@ -335,6 +346,7 @@ export async function executeApprovalBatch(
     workingDirectory?: string;
     parentScope?: { agentId: string; conversationId: string };
     onFileWrite?: (filePath: string, content: string) => void;
+    onNestedToolApproval?: NestedToolApproval;
   },
 ): Promise<ApprovalResult[]> {
   // Tools are what fill the disk, so watch it while they run.
@@ -463,6 +475,7 @@ export async function executeAutoAllowedTools(
     toolContextId?: string;
     workingDirectory?: string;
     onFileWrite?: (filePath: string, content: string) => void;
+    onNestedToolApproval?: NestedToolApproval;
   },
 ): Promise<AutoAllowedResult[]> {
   const decisions: ApprovalDecision[] = autoAllowed.map((ac) => ({

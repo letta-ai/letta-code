@@ -58,6 +58,14 @@ type RestoredApprovalRecoveryState = {
 };
 
 type ApprovalFlowContext = {
+  onNestedToolApproval: (request: {
+    toolName: string;
+    args: Record<string, unknown>;
+    toolCallId: string;
+    reason?: string;
+    allowPersistence?: boolean;
+    signal?: AbortSignal;
+  }) => Promise<{ approved: boolean; args?: Record<string, unknown> }>;
   abortControllerRef: MutableRefObject<AbortController | null>;
   agentId: string;
   appendError: AppendError;
@@ -125,6 +133,7 @@ type ApprovalFlowContext = {
 
 export function useApprovalFlow(ctx: ApprovalFlowContext) {
   const {
+    onNestedToolApproval,
     abortControllerRef,
     agentId,
     appendError,
@@ -439,6 +448,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
                 tempModelOverrideRef.current ?? undefined,
               )
             ).preparedToolContext.contextId;
+          approvalToolContextIdRef.current = approvalToolContextId;
           executedResults = await executeApprovalBatch(
             allDecisions,
             (chunk) => {
@@ -463,6 +473,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
             },
             {
               abortSignal: approvalAbortController.signal,
+              onNestedToolApproval,
               onStreamingOutput: updateStreamingOutput,
               toolContextId: approvalToolContextId,
             },
@@ -616,6 +627,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
       appendError,
       setStreaming,
       updateStreamingOutput,
+      onNestedToolApproval,
       queueApprovalResults,
       consumeQueuedMessages,
       appendTaskNotificationEvents,
@@ -864,6 +876,9 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
                   tempModelOverrideRef.current ?? undefined,
                 )
               ).preparedToolContext.contextId;
+            approvalToolContextIdRef.current = approvalToolContextId;
+            const approvalAbortController = new AbortController();
+            toolAbortControllerRef.current = approvalAbortController;
             const executedResults = await executeApprovalBatch(
               allDecisions,
               (chunk) => {
@@ -871,6 +886,8 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
                 refreshDerived();
               },
               {
+                abortSignal: approvalAbortController.signal,
+                onNestedToolApproval,
                 onStreamingOutput: updateStreamingOutput,
                 toolContextId: approvalToolContextId,
               },
@@ -922,6 +939,8 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
             syncTrajectoryElapsedBase();
             refreshDerived();
           } finally {
+            toolAbortControllerRef.current = null;
+            clearApprovalToolContext();
             setIsExecutingTool(false);
           }
           return; // Don't call handleApproveCurrent - we handled everything
@@ -951,6 +970,8 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
       syncTrajectoryElapsedBase,
       prepareScopedToolExecutionContext,
       updateStreamingOutput,
+      onNestedToolApproval,
+      clearApprovalToolContext,
       setApprovalContexts,
       setApprovalResults,
       setAutoDeniedApprovals,

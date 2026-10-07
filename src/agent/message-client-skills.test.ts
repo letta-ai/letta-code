@@ -32,4 +32,29 @@ describe("buildConversationMessagesCreateRequestBody client_skills", () => {
       },
     ]);
   });
+
+  test("uses a fail-closed MCP CodeMode request while keeping direct tools", () => {
+    const tools = [
+      {
+        name: "CodeMode",
+        description: "Compose MCP tools",
+        parameters: { type: "object" },
+      },
+      {
+        name: "Read",
+        description: "Read files",
+        parameters: { type: "object" },
+      },
+    ];
+    const body = buildConversationMessagesCreateRequestBody(
+      "default",
+      [{ type: "message", role: "user", content: "hello" }],
+      { agentId: "agent-1" },
+      tools,
+    );
+    expect(body.client_tools as unknown).toEqual({
+      mode: "mcp_code",
+      definitions: tools,
+    });
+  });
 });

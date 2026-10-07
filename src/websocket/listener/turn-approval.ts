@@ -20,6 +20,7 @@ import {
   collectDecisionToolCallIds,
   rememberPendingApprovalBatchIds,
   requestApprovalOverWS,
+  requestNestedToolApproval,
   validateApprovalResultIds,
 } from "./approval";
 import {
@@ -555,6 +556,15 @@ export async function handleApprovalStop(params: {
       parentScope:
         agentId && conversationId ? { agentId, conversationId } : undefined,
       onFileWrite,
+      onNestedToolApproval: (request) =>
+        requestNestedToolApproval({
+          runtime,
+          socket,
+          turnLease,
+          agentId,
+          conversationId,
+          request,
+        }),
     });
   } catch (error) {
     // Execution threw before results exist, so the normal finished-events

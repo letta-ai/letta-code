@@ -1,9 +1,12 @@
 import { isRecord } from "@/utils/type-guards";
 
-/** Structural API surface used only by the unified `letta mcp` command. */
+/** Structural API surface shared by the MCP CLI and agent-scoped script executor. */
 export interface UnifiedMcpClient {
   get(path: string): Promise<unknown>;
-  post(path: string, options?: { body?: unknown }): Promise<unknown>;
+  post(
+    path: string,
+    options?: { body?: unknown; signal?: AbortSignal },
+  ): Promise<unknown>;
   mcpServers?: {
     list(): Promise<unknown[]>;
   };
@@ -290,11 +293,15 @@ export async function runUnifiedMcpTool(params: {
   toolId: string;
   args: Record<string, unknown>;
   timeoutMs?: number;
+  signal?: AbortSignal;
 }): Promise<UnifiedMcpRunResult> {
   const value = await withTimeout(
     params.client.post(
       `/v1/agents/${encodeURIComponent(params.agentId)}/mcp-servers/${encodeURIComponent(params.mcpServerId)}/tools/${encodeURIComponent(params.toolId)}/run`,
-      { body: { args: params.args } },
+      {
+        body: { args: params.args },
+        ...(params.signal ? { signal: params.signal } : {}),
+      },
     ),
     params.timeoutMs ?? 60_000,
     "Running agent MCP tool",

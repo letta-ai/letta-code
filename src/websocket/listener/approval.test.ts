@@ -4,6 +4,7 @@ import type { ApprovalResponseBody, ControlRequest } from "@/types/protocol_v2";
 import {
   rejectPendingApprovalResolvers,
   requestApprovalOverWS,
+  requestNestedToolApproval,
   resolvePendingApprovalResolver,
 } from "./approval";
 import {
@@ -518,6 +519,109 @@ describe("listener approval lifecycle", () => {
     runtime.turnLifecycle.requestCancellation();
 
     await expect(pending).rejects.toThrow("Cancelled by user");
+    expect(runtime.pendingApprovalResolvers.size).toBe(0);
+  });
+});
+
+describe("nested CodeMode approval", () => {
+  function startNested(
+    runtime: ConversationRuntime,
+    socket: MockSocket,
+    lease: ReturnType<typeof beginApprovalWait>,
+    toolCallId: string,
+  ) {
+    return requestNestedToolApproval({
+      runtime,
+      socket,
+      turnLease: lease,
+      agentId: "agent-1",
+      conversationId: "default",
+      request: {
+        toolName: "Write",
+        args: { file_path: "/tmp/nested-test", content: toolCallId },
+        toolCallId,
+      },
+    });
+  }
+
+  test("sends the actual nested call with a fresh request ID and honors edited approval", async () => {
+    const runtime = createScopedRuntime();
+    const socket = new MockSocket();
+    const lease = beginApprovalWait(runtime);
+    const first = startNested(runtime, socket, lease, "nested-1");
+    const second = startNested(runtime, socket, lease, "nested-2");
+    const [firstRequest, secondRequest] = [
+      ...new Set(runtime.pendingApprovalResolvers.values()),
+    ];
+    if (!firstRequest || !secondRequest)
+      throw new Error("Missing nested approvals");
+    expect(firstRequest.requestId).toStartWith("perm-nested-");
+    expect(secondRequest.requestId).toStartWith("perm-nested-");
+    expect(firstRequest.requestId).not.toBe(secondRequest.requestId);
+    expect(firstRequest.controlRequest?.request).toEqual({
+      subtype: "can_use_tool",
+      tool_name: "Write",
+      input: { file_path: "/tmp/nested-test", content: "nested-1" },
+      tool_call_id: "nested-1",
+      permission_suggestions: [],
+      blocked_path: null,
+    });
+    expect(
+      socket.sentPayloads.some((payload) =>
+        payload.includes(firstRequest.requestId),
+      ),
+    ).toBe(true);
+    resolvePendingApprovalResolver(runtime, {
+      request_id: firstRequest.requestId,
+      decision: { behavior: "allow", updated_input: { content: "edited" } },
+    });
+    resolvePendingApprovalResolver(runtime, {
+      request_id: secondRequest.requestId,
+      decision: { behavior: "deny", message: "no" },
+    });
+    expect(await first).toEqual({
+      approved: true,
+      args: { content: "edited" },
+    });
+    expect(await second).toEqual({ approved: false });
+  });
+
+  test("aborted and stale leases fail closed and cannot send after replacement", async () => {
+    const runtime = createScopedRuntime();
+    const socket = new MockSocket();
+    const lease = beginApprovalWait(runtime);
+    const pending = startNested(runtime, socket, lease, "nested-1");
+    runtime.turnLifecycle.requestCancellation();
+    expect(await pending).toEqual({ approved: false });
+    expect(runtime.pendingApprovalResolvers.size).toBe(0);
+
+    clearConversationRuntimeState(runtime);
+    const replacement = beginApprovalWait(runtime);
+    const sentCount = socket.sentPayloads.length;
+    expect(await startNested(runtime, socket, lease, "nested-stale")).toEqual({
+      approved: false,
+    });
+    expect(socket.sentPayloads.length).toBe(sentCount);
+    expect(runtime.turnLifecycle.isCurrent(replacement)).toBe(true);
+  });
+
+  test("headless execution settings deny without a control request", async () => {
+    const runtime = createScopedRuntime();
+    runtime.executionSettings = {
+      allowed_tools: [],
+      disallowed_tools: [],
+      disable_memory_guard: false,
+    };
+    const socket = new MockSocket();
+    expect(
+      await startNested(
+        runtime,
+        socket,
+        beginApprovalWait(runtime),
+        "nested-headless",
+      ),
+    ).toEqual({ approved: false });
+    expect(socket.sentPayloads).toEqual([]);
     expect(runtime.pendingApprovalResolvers.size).toBe(0);
   });
 });

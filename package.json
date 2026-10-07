@@ -149,6 +149,7 @@
   },
   "dependencies": {
     "@earendil-works/pi-ai": "^0.99.1",
+    "@earendil-works/pi-codemode": "0.99.2",
     "@janhapke/sharp-electron": "0.35.3-electron.1",
     "@letta-ai/letta-agent-sdk": "0.8.24",
     "@letta-ai/letta-client": "^1.10.2",

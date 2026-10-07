@@ -248,6 +248,7 @@ import { useConversationLoop } from "./use-conversation-loop";
 import { useConversationSwitching } from "./use-conversation-switching";
 import { useFeedbackHandler } from "./use-feedback-handler";
 import { useInterruptHandler } from "./use-interrupt-handler";
+import { useNestedToolApproval } from "./use-nested-tool-approval";
 import { useQueuedApprovalSubmit } from "./use-queued-approval-submit";
 import { useReasoningCycle } from "./use-reasoning-cycle";
 import { useSubmitHandler } from "./use-submit-handler";
@@ -1571,6 +1572,11 @@ export function App({
     null,
   );
   const approvalToolContextIdRef = useRef<string | null>(null);
+  const nestedToolApproval = useNestedToolApproval(
+    conversationGenerationRef,
+    conversationIdRef,
+    approvalToolContextIdRef,
+  );
   const clearApprovalToolContext = useCallback(() => {
     const contextId = approvalToolContextIdRef.current;
     if (!contextId) return;
@@ -3673,6 +3679,7 @@ export function App({
   }, [agentName, agentDescription, appendTaskNotificationEvents]);
 
   const processConversation = useConversationLoop({
+    onNestedToolApproval: nestedToolApproval.requestApproval,
     abortControllerRef,
     agentIdRef,
     appendError,
@@ -3770,6 +3777,7 @@ export function App({
     handleDenyCurrent,
     handleCancelApprovals,
   } = useApprovalFlow({
+    onNestedToolApproval: nestedToolApproval.requestApproval,
     abortControllerRef,
     agentId,
     appendError,
@@ -4967,6 +4975,7 @@ export function App({
         conversationId={conversationId}
         conversationSummary={conversationSummary}
         projectDirectory={projectDirectory}
+        nestedToolApproval={nestedToolApproval}
         currentApproval={currentApproval}
         currentApprovalContext={currentApprovalContext}
         currentModelDisplay={currentModelDisplay}

@@ -9,6 +9,14 @@ interface ToolsetDefinition extends Omit<ToolsetOption, "id"> {
   tools: readonly ToolName[];
 }
 
+export function getPresetToolNames(toolset: ToolsetName): readonly ToolName[] {
+  const tools = TOOLSET_CATALOG[toolset].tools;
+  // Legacy Cloud APIs reject the CodeMode client_tools object until rollout.
+  return process.env.LETTA_MCP_CODE_MODE === "1"
+    ? tools
+    : tools.filter((name) => name !== "CodeMode");
+}
+
 export const WORKTREE_TOOL_NAMES = new Set<ToolName>([
   "EnterWorktree",
   "ExitWorktree",
@@ -23,6 +31,7 @@ export const TOOLSET_CATALOG: Readonly<Record<ToolsetName, ToolsetDefinition>> =
       description: "Experimental unified toolset for every model",
       is_featured: true,
       tools: [
+        "CodeMode",
         "EnterWorktree",
         "ExitWorktree",
         "SetWorkingDirectory",
@@ -57,6 +66,7 @@ export const TOOLSET_CATALOG: Readonly<Record<ToolsetName, ToolsetDefinition>> =
         "Optimized for Anthropic models, recommended for all non-OpenAI models",
       is_featured: true,
       tools: [
+        "CodeMode",
         "Bash",
         "Monitor",
         "WatchPR",
@@ -84,6 +94,7 @@ export const TOOLSET_CATALOG: Readonly<Record<ToolsetName, ToolsetDefinition>> =
       description: "Optimized for GPT/Codex models",
       is_featured: true,
       tools: [
+        "CodeMode",
         "EnterWorktree",
         "ExitWorktree",
         "SetWorkingDirectory",

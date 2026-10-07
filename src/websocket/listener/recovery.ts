@@ -17,6 +17,7 @@ import { createBuffers } from "@/cli/helpers/accumulator";
 import { drainStreamWithResume } from "@/cli/helpers/stream";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import type { StopReasonType, StreamDelta } from "@/types/protocol_v2";
+import { requestNestedToolApproval } from "./approval";
 import { normalizeCloudRetryWireMessage } from "./cloud-retry-message";
 import {
   LISTENER_STREAM_RESUME_POLICY,
@@ -573,6 +574,15 @@ async function executeRecoveredApprovalContinuation(params: {
         preparedToolContext.preparedToolContext.loadedToolNames;
       approvalResults = await executeApprovals(decisions, undefined, {
         abortSignal: recoveryLease.signal,
+        onNestedToolApproval: (request) =>
+          requestNestedToolApproval({
+            runtime,
+            socket,
+            turnLease: recoveryLease,
+            agentId: recovered.agentId,
+            conversationId: recovered.conversationId,
+            request,
+          }),
         onStreamingOutput: emitToolExecutionOutput,
         toolContextId: preparedToolContext.preparedToolContext.contextId,
         workingDirectory,

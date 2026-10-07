@@ -3,7 +3,7 @@ import {
   assignMcpServerAliases,
   formatServerMcpToolName,
   uniqueMcpName,
-} from "./mcp-tool-names";
+} from "@/mcp-tool-names";
 
 describe("MCP CLI tool names", () => {
   test("assigns server aliases before client aliases", () => {

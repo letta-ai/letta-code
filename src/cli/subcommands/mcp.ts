@@ -1,30 +1,21 @@
 import { parseArgs } from "node:util";
-import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
 import { getBackend } from "@/backend";
 import { getClient as getDefaultClient } from "@/backend/api/client";
-import { getServerUrl } from "@/backend/api/server-url";
 import {
   listUnifiedMcpServers,
-  listUnifiedMcpTools,
-  runUnifiedMcpTool,
   searchUnifiedMcpTools,
   type UnifiedMcpClient,
-  type UnifiedMcpRunResult,
   type UnifiedMcpServer,
 } from "@/backend/api/unified-mcp";
-import {
-  type ConnectedMcpServer,
-  connectMcpServer,
-  type McpOAuthConnection,
-  type McpServerConfig,
-  type McpToolDefinition,
-  type McpToolResult,
-} from "@/mcp-client";
-import { createMcpOAuthSession } from "@/mcp-oauth";
-import { formatClientMcpToolName } from "@/mcp-runtime";
+import type { connectMcpServer, McpServerConfig } from "@/mcp-client";
+import type { createMcpOAuthSession } from "@/mcp-oauth";
 import { getMcpScopeAgentId, type ParentAgentLookup } from "@/mcp-scope";
+import {
+  buildMcpToolCatalog,
+  callMcpCatalogTool,
+  type McpToolCatalog,
+} from "@/mcp-tool-catalog";
 import { settingsManager } from "@/settings-manager";
-import { isRecord } from "@/utils/type-guards";
 import {
   loadMcpToolArgs,
   McpCliError,
@@ -40,11 +31,6 @@ import {
   runMcpSearch,
   searchLocalMcpTools,
 } from "./mcp-search";
-import {
-  assignMcpServerAliases,
-  formatServerMcpToolName,
-  uniqueMcpName,
-} from "./mcp-tool-names";
 
 type McpTransport = "stdio" | "streamable_http" | "sse" | "unknown";
 
@@ -71,42 +57,6 @@ type McpServerDetails =
 type ServerTarget =
   | { kind: "client"; config: McpServerConfig }
   | { kind: "server"; server: UnifiedMcpServer };
-
-type ToolTarget =
-  | {
-      kind: "client";
-      connection: ConnectedMcpServer;
-      rawName: string;
-    }
-  | {
-      kind: "server";
-      serverId: string;
-      toolId: string;
-    };
-
-interface CatalogTool {
-  schema: McpToolDefinition;
-  target: ToolTarget;
-}
-
-interface ToolCatalog {
-  tools: CatalogTool[];
-  /** True when hosted Letta Cloud excluded stdio-type cloud servers. */
-  excludedHostedStdioServers: boolean;
-  close(): Promise<void>;
-}
-
-/**
- * Hosted Letta Cloud cannot execute stdio-type cloud-connected servers, so
- * their synced tools must not surface through tools/schema/search/call.
- */
-function defaultIsHostedLettaCloud(): boolean {
-  try {
-    return getServerUrl() === LETTA_CLOUD_API_URL;
-  } catch {
-    return !process.env.LETTA_BASE_URL;
-  }
-}
 
 export interface McpSubcommandDependencies {
   initializeSettings?: () => Promise<void>;
@@ -348,238 +298,6 @@ function resolveServer(
   return match;
 }
 
-function hasAuthorizationHeader(config: McpServerConfig): boolean {
-  return (
-    (config.transport === "http" || config.transport === "sse") &&
-    Object.keys(config.headers ?? {}).some(
-      (name) => name.toLowerCase() === "authorization",
-    )
-  );
-}
-
-async function oauthForConfig(
-  deps: McpSubcommandDependencies,
-  agentId: string,
-  config: McpServerConfig,
-  interactive: boolean,
-): Promise<McpOAuthConnection | undefined> {
-  if (config.transport !== "http" && config.transport !== "sse")
-    return undefined;
-  if (hasAuthorizationHeader(config)) return undefined;
-  const create = deps.createOAuthSession ?? createMcpOAuthSession;
-  return create(agentId, config.name, config.url, {
-    interactive,
-    onStatus: (message) => (deps.stderr ?? console.error)(message),
-  });
-}
-
-async function connectConfiguredServer(
-  deps: McpSubcommandDependencies,
-  agentId: string,
-  config: McpServerConfig,
-  interactive: boolean,
-): Promise<ConnectedMcpServer> {
-  const oauth = await oauthForConfig(deps, agentId, config, interactive);
-  return (deps.connectLocalServer ?? connectMcpServer)(config, {
-    ...(oauth ? { oauth } : {}),
-    stderr: "pipe",
-  });
-}
-
-function serverKey(target: ServerTarget): string {
-  return target.kind === "client"
-    ? `client:${target.config.name}`
-    : `server:${target.server.id}`;
-}
-
-function serverName(target: ServerTarget): string {
-  return target.kind === "client"
-    ? target.config.name
-    : target.server.serverName;
-}
-
-async function buildToolCatalog(
-  deps: McpSubcommandDependencies,
-  agentId: string,
-  options: {
-    serverSelector?: string;
-    toolName?: string;
-    targetKind?: ServerTarget["kind"];
-  } = {},
-): Promise<ToolCatalog> {
-  const servers = await listUnifiedServers(deps, agentId);
-  const aliases = assignMcpServerAliases(
-    servers.map((target) => ({
-      key: serverKey(target),
-      name: serverName(target),
-      kind: target.kind,
-    })),
-  );
-  let activeServers = options.targetKind
-    ? servers.filter((target) => target.kind === options.targetKind)
-    : servers;
-  if (options.serverSelector) {
-    const selectedKey = serverKey(
-      resolveServer(servers, options.serverSelector),
-    );
-    activeServers = servers.filter(
-      (target) => serverKey(target) === selectedKey,
-    );
-  } else if (options.toolName) {
-    activeServers = servers.filter((target) => {
-      const alias = aliases.get(serverKey(target));
-      return (
-        alias !== undefined &&
-        options.toolName?.startsWith(`mcp__${alias}__`) === true
-      );
-    });
-  }
-  const catalog: CatalogTool[] = [];
-  const connections: ConnectedMcpServer[] = [];
-  const usedNames = new Set<string>();
-
-  try {
-    const hostedLettaCloud = (
-      deps.isHostedLettaCloud ?? defaultIsHostedLettaCloud
-    )();
-    const allServerTargets = activeServers.filter(
-      (target): target is Extract<ServerTarget, { kind: "server" }> =>
-        target.kind === "server",
-    );
-    const serverTargets = hostedLettaCloud
-      ? allServerTargets.filter(({ server }) => server.serverType !== "stdio")
-      : allServerTargets;
-    const excludedHostedStdioServers =
-      serverTargets.length !== allServerTargets.length;
-    if (serverTargets.length > 0) {
-      const client = await getServerClient(deps);
-      const toolLists = await Promise.all(
-        serverTargets.map(async ({ server }) => ({
-          server,
-          tools: await listUnifiedMcpTools(client, agentId, server.id),
-        })),
-      );
-      for (const { server, tools } of toolLists) {
-        const alias = aliases.get(`server:${server.id}`);
-        if (!alias) throw new Error("MCP server alias was not assigned");
-        for (const tool of [...tools].sort((left, right) =>
-          left.id.localeCompare(right.id),
-        )) {
-          const name = uniqueMcpName(
-            formatServerMcpToolName(server.serverName, alias, tool.name),
-            usedNames,
-          );
-          catalog.push({
-            schema: {
-              name,
-              ...(tool.title ? { title: tool.title } : {}),
-              ...(tool.description ? { description: tool.description } : {}),
-              inputSchema: tool.inputSchema,
-              ...(tool.outputSchema ? { outputSchema: tool.outputSchema } : {}),
-              ...(tool.annotations ? { annotations: tool.annotations } : {}),
-              ...(tool.execution ? { execution: tool.execution } : {}),
-              ...(tool._meta ? { _meta: tool._meta } : {}),
-              ...(tool.icons ? { icons: tool.icons } : {}),
-            },
-            target: {
-              kind: "server",
-              serverId: server.id,
-              toolId: tool.id,
-            },
-          });
-        }
-      }
-    }
-
-    const clientTargets = activeServers.filter(
-      (target): target is Extract<ServerTarget, { kind: "client" }> =>
-        target.kind === "client",
-    );
-    const settled = await Promise.allSettled(
-      clientTargets.map(async ({ config }) => ({
-        config,
-        connection: await connectConfiguredServer(deps, agentId, config, false),
-      })),
-    );
-    const rejected = settled.find(
-      (result): result is PromiseRejectedResult => result.status === "rejected",
-    );
-    for (const result of settled) {
-      if (result.status === "fulfilled")
-        connections.push(result.value.connection);
-    }
-    if (rejected) throw rejected.reason;
-
-    for (const result of settled) {
-      if (result.status !== "fulfilled") continue;
-      const { config, connection } = result.value;
-      const alias = aliases.get(`client:${config.name}`);
-      if (!alias) throw new Error("MCP server alias was not assigned");
-      for (const tool of connection.tools) {
-        const name = uniqueMcpName(
-          formatClientMcpToolName(alias, tool.name),
-          usedNames,
-        );
-        catalog.push({
-          schema: { ...tool, name },
-          target: { kind: "client", connection, rawName: tool.name },
-        });
-      }
-    }
-
-    return {
-      tools: catalog,
-      excludedHostedStdioServers,
-      close: async () => {
-        await Promise.allSettled(
-          connections.map((connection) => connection.close()),
-        );
-      },
-    };
-  } catch (error) {
-    await Promise.allSettled(
-      connections.map((connection) => connection.close()),
-    );
-    throw error;
-  }
-}
-
-function mcpToolResultFromServer(result: UnifiedMcpRunResult): McpToolResult {
-  const success = result.status === "success";
-  const value = result.funcReturn;
-  let normalized: McpToolResult;
-  if (isRecord(value) && Array.isArray(value.content)) {
-    normalized = {
-      content: value.content,
-      ...(value.isError === true ? { isError: true } : {}),
-      ...(isRecord(value.structuredContent)
-        ? { structuredContent: value.structuredContent }
-        : {}),
-      ...(isRecord(value._meta) ? { _meta: value._meta } : {}),
-    };
-  } else if (isRecord(value)) {
-    normalized = {
-      content: [{ type: "text", text: JSON.stringify(value) }],
-      structuredContent: value,
-    };
-  } else if (value === undefined || value === null) {
-    normalized = { content: [] };
-  } else {
-    normalized = {
-      content: [
-        {
-          type: "text",
-          text: typeof value === "string" ? value : JSON.stringify(value),
-        },
-      ],
-    };
-  }
-  return {
-    ...normalized,
-    isError: !success || normalized.isError === true,
-  };
-}
-
 async function printJson(stdout: McpOutput, value: unknown): Promise<void> {
   await stdout(JSON.stringify(value, null, 2));
 }
@@ -618,7 +336,7 @@ async function runTools(
   full: boolean,
   stdout: McpOutput,
 ): Promise<number> {
-  const catalog = await buildToolCatalog(deps, agentId, { serverSelector });
+  const catalog = await buildMcpToolCatalog(deps, agentId, { serverSelector });
   try {
     await printJson(
       stdout,
@@ -652,7 +370,7 @@ async function runSchema(
       "Usage: letta mcp schema <tool-name>",
     );
   }
-  const catalog = await buildToolCatalog(deps, agentId, { toolName });
+  const catalog = await buildMcpToolCatalog(deps, agentId, { toolName });
   try {
     const tool = catalog.tools.find(
       (candidate) => candidate.schema.name === toolName,
@@ -688,7 +406,7 @@ async function runSearch(
         if (request.searchMode === "vector") {
           return searchLocalMcpTools({ tools: [], ...request });
         }
-        const catalog = await buildToolCatalog(deps, agentId);
+        const catalog = await buildMcpToolCatalog(deps, agentId);
         try {
           return searchLocalMcpTools({
             tools: catalog.tools.map((tool) => tool.schema),
@@ -706,10 +424,10 @@ async function runSearch(
         agentId,
         ...request,
       });
-      const catalogPromise = buildToolCatalog(deps, agentId, {
+      const catalogPromise = buildMcpToolCatalog(deps, agentId, {
         ...(includeLocal ? {} : { targetKind: "server" }),
       });
-      let catalog: ToolCatalog | undefined;
+      let catalog: McpToolCatalog | undefined;
       try {
         const [searchResults, resolvedCatalog] = await Promise.all([
           searchPromise,
@@ -782,7 +500,7 @@ async function runCall(
     stringValue(parsed.values["args-file"]),
     deps,
   );
-  const catalog = await buildToolCatalog(deps, agentId, { toolName });
+  const catalog = await buildMcpToolCatalog(deps, agentId, { toolName });
   try {
     const tool = catalog.tools.find(
       (candidate) => candidate.schema.name === toolName,
@@ -793,18 +511,7 @@ async function runCall(
         `MCP tool '${toolName}' is not available`,
       );
     }
-    const result =
-      tool.target.kind === "client"
-        ? await tool.target.connection.callTool(tool.target.rawName, args)
-        : mcpToolResultFromServer(
-            await runUnifiedMcpTool({
-              client: await getServerClient(deps),
-              agentId,
-              mcpServerId: tool.target.serverId,
-              toolId: tool.target.toolId,
-              args,
-            }),
-          );
+    const result = await callMcpCatalogTool(tool, agentId, args, deps);
     await printJson(stdout, result);
     return result.isError === true ? 2 : 0;
   } finally {
