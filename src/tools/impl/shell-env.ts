@@ -322,7 +322,10 @@ function applyHostedMemfsGitHeaderEnv(env: NodeJS.ProcessEnv): void {
  * Get enhanced environment variables for shell execution.
  * Includes bundled tools (like ripgrep) in PATH and Letta context for skill scripts.
  */
-export function getShellEnv(): NodeJS.ProcessEnv {
+export function getShellEnvWithPathPrefixes(): {
+  env: NodeJS.ProcessEnv;
+  pathPrefixes: string[];
+} {
   const executionEnv = getRuntimeExecutionEnv(
     process.env,
     getRuntimeContext()?.executionSettings,
@@ -551,5 +554,9 @@ export function getShellEnv(): NodeJS.ProcessEnv {
   }
   applyHostedMemfsGitHeaderEnv(env);
 
-  return env;
+  return { env, pathPrefixes };
+}
+
+export function getShellEnv(): NodeJS.ProcessEnv {
+  return getShellEnvWithPathPrefixes().env;
 }
