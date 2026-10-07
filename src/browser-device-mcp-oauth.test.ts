@@ -352,6 +352,48 @@ describe("browser device MCP OAuth", () => {
     expect(attempts).toBe(2);
   });
 
+  test("decrements token lifetime across handoff submission retries", async () => {
+    const originalFetch = globalThis.fetch;
+    const submitted: Array<Record<string, unknown>> = [];
+    const fetchStub = async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      const request =
+        input instanceof Request
+          ? input
+          : input instanceof URL
+            ? new Request(input.href, init)
+            : new Request(input, init);
+      submitted.push((await request.json()) as Record<string, unknown>);
+      return submitted.length === 1
+        ? new Response("Bad Gateway", { status: 502 })
+        : new Response(JSON.stringify({ authorized: true, connected: true }), {
+            status: 200,
+          });
+    };
+    globalThis.fetch = Object.assign(fetchStub, {
+      preconnect: originalFetch.preconnect,
+    });
+    const readings = [0, 0, 30_500];
+
+    try {
+      await submitBrowserDeviceMcpOAuthHandoff(
+        REQUEST,
+        { ...CREDENTIALS, expires_in: 120 },
+        undefined,
+        {
+          monotonicNow: () => readings.shift() ?? 30_500,
+          retryDelayMs: 0,
+        },
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(submitted.map((body) => body.expires_in)).toEqual([120, 89]);
+  });
+
   test("retries the same handoff after an admission-ambiguous gateway response", async () => {
     const originalFetch = globalThis.fetch;
     let attempts = 0;

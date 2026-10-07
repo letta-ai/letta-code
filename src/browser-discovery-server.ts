@@ -344,7 +344,7 @@ async function handleMcpOAuthConnectRequest(
   request.once("aborted", abortForDisconnect);
   request.socket.once("close", abortForDisconnect);
   response.once("close", abortForDisconnect);
-  const operationDeadlineAt = Date.now() + oauthTimeoutMs;
+  const operationDeadlineAt = performance.now() + oauthTimeoutMs;
   const signal = AbortSignal.any([
     disconnectController.signal,
     AbortSignal.timeout(oauthTimeoutMs),
@@ -373,7 +373,7 @@ async function handleMcpOAuthConnectRequest(
     try {
       const authorizationTimeoutMs =
         operationDeadlineAt -
-        Date.now() -
+        performance.now() -
         BROWSER_DEVICE_HANDOFF_SUBMIT_TIMEOUT_MS -
         HANDOFF_SUBMISSION_MARGIN_MS;
       if (authorizationTimeoutMs <= 0) {

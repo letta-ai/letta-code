@@ -293,10 +293,13 @@ export async function submitBrowserDeviceMcpOAuthHandoff(
   signal?: AbortSignal,
   retryOptions: {
     attemptTimeoutMs?: number;
+    monotonicNow?: () => number;
     retryDelayMs?: number;
     timeoutMs?: number;
   } = {},
 ): Promise<void> {
+  const monotonicNow = retryOptions.monotonicNow ?? (() => performance.now());
+  const credentialsReceivedAt = monotonicNow();
   const timeoutSignal = AbortSignal.timeout(
     retryOptions.timeoutMs ?? BROWSER_DEVICE_HANDOFF_SUBMIT_TIMEOUT_MS,
   );
@@ -312,6 +315,10 @@ export async function submitBrowserDeviceMcpOAuthHandoff(
         retryOptions.attemptTimeoutMs ?? HANDOFF_ATTEMPT_TIMEOUT_MS,
       ),
     ]);
+    const submittedCredentials = credentialsForSubmission(
+      credentials,
+      Math.max(0, monotonicNow() - credentialsReceivedAt),
+    );
     try {
       const response = await apiRequest<{
         authorized?: unknown;
@@ -319,7 +326,7 @@ export async function submitBrowserDeviceMcpOAuthHandoff(
       }>(
         "POST",
         "/v1/tools/mcp/browser-device-oauth/handoffs",
-        { ...credentials, handoff_key: request.handoffKey },
+        { ...submittedCredentials, handoff_key: request.handoffKey },
         {
           actingUserId: null,
           apiKey: "",
@@ -341,6 +348,21 @@ export async function submitBrowserDeviceMcpOAuthHandoff(
       await abortableDelay(delayMs, operationSignal);
     }
   }
+}
+
+function credentialsForSubmission(
+  credentials: McpOAuthCredentialSnapshot,
+  elapsedMs: number,
+): McpOAuthCredentialSnapshot {
+  if (credentials.expires_in === undefined) return credentials;
+  const expiresIn =
+    credentials.expires_in - Math.ceil(Math.max(0, elapsedMs) / 1_000);
+  if (expiresIn <= 0) {
+    throw new BrowserDeviceMcpOAuthRequestError(
+      "MCP OAuth credentials expired before Cloud import completed",
+    );
+  }
+  return { ...credentials, expires_in: expiresIn };
 }
 
 function isRetryableHandoffSubmissionError(error: unknown): boolean {

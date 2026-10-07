@@ -425,7 +425,7 @@ console.log("timed-out");
       connectMcpOAuth: async () => {
         connectCalls += 1;
       },
-      oauthTimeoutMs: 10,
+      oauthTimeoutMs: 95_000,
       port: 0,
     });
     handles.push(handle);
@@ -448,6 +448,54 @@ console.log("timed-out");
     );
 
     expect(response.status).toBe(502);
+    expect(connectCalls).toBe(0);
+  });
+
+  test("charges completed body intake against the submission reserve", async () => {
+    let connectCalls = 0;
+    const handle = startBrowserDiscoveryServer({
+      connectMcpOAuth: async () => {
+        connectCalls += 1;
+      },
+      oauthTimeoutMs: 95_500,
+      port: 0,
+    });
+    handles.push(handle);
+    const address = await handle.ready;
+    const body = JSON.stringify({
+      handoffKey: HANDOFF_KEY,
+      service: "datadog",
+      serverUrl: "https://mcp.datadoghq.com/v1/mcp",
+    });
+    const splitAt = Math.floor(body.length / 2);
+    const socket = createConnection(address.port, address.host);
+    const response = new Promise<string>((resolve, reject) => {
+      let received = "";
+      socket.setEncoding("utf8");
+      socket.on("data", (chunk) => {
+        received += chunk;
+      });
+      socket.once("end", () => resolve(received));
+      socket.once("error", reject);
+    });
+    await new Promise<void>((resolve, reject) => {
+      socket.once("connect", resolve);
+      socket.once("error", reject);
+    });
+    socket.write(
+      `POST ${BROWSER_DEVICE_MCP_OAUTH_PATH} HTTP/1.1\r\n` +
+        `Host: ${address.host}:${address.port}\r\n` +
+        "Content-Type: application/json\r\n" +
+        "Origin: https://chat.letta.com\r\n" +
+        "X-Letta-Local-Connect: 1\r\n" +
+        `Content-Length: ${Buffer.byteLength(body)}\r\n` +
+        "Connection: close\r\n\r\n" +
+        body.slice(0, splitAt),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    socket.write(body.slice(splitAt));
+
+    expect(await response).toContain("502 Bad Gateway");
     expect(connectCalls).toBe(0);
   });
 
