@@ -381,14 +381,16 @@ describe("browser device MCP OAuth", () => {
     expect(attempts).toBe(2);
   });
 
-  test("honors Retry-After instead of applying the default backoff", async () => {
+  test("treats an elapsed Retry-After HTTP date as retry now", async () => {
     const originalFetch = globalThis.fetch;
     let attempts = 0;
     const fetchStub = async (): Promise<Response> => {
       attempts += 1;
       return attempts === 1
         ? new Response("Too Many Requests", {
-            headers: { "Retry-After": "0" },
+            headers: {
+              "Retry-After": new Date(Date.now() - 1_000).toUTCString(),
+            },
             status: 429,
           })
         : new Response(JSON.stringify({ authorized: true, connected: true }), {

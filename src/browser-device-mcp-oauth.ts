@@ -37,6 +37,7 @@ interface BrowserDeviceMcpOAuthDependencies {
 const HANDOFF_KEY_PATTERN = /^[A-Za-z0-9_-]{43,128}$/;
 const HANDOFF_SUBMIT_TIMEOUT_MS = 90_000;
 const HANDOFF_ATTEMPT_TIMEOUT_MS = 10_000;
+const PROVIDER_AUTHORIZATION_TIMEOUT_MS = 190_000;
 const HANDOFF_RETRY_BASE_DELAY_MS = 1_000;
 const HANDOFF_RETRY_MAX_DELAY_MS = 10_000;
 const HANDOFF_RETRY_AFTER_MAX_DELAY_MS = 60_000;
@@ -88,6 +89,12 @@ export async function connectBrowserDeviceMcpOAuth(
   const definition = resolveDefinition(request);
   const canonicalRequest = { ...request, serverUrl: definition.serverUrl };
   const ephemeralStorage = createEphemeralStorage();
+  const providerTimeoutSignal = AbortSignal.timeout(
+    PROVIDER_AUTHORIZATION_TIMEOUT_MS,
+  );
+  const authorizationSignal = signal
+    ? AbortSignal.any([signal, providerTimeoutSignal])
+    : providerTimeoutSignal;
   try {
     const credentials = await dependencies.authorize({
       agentId: handoffNamespace(request.handoffKey),
@@ -104,7 +111,7 @@ export async function connectBrowserDeviceMcpOAuth(
       ),
       serverName: definition.serverName,
       serverUrl: definition.serverUrl,
-      signal,
+      signal: authorizationSignal,
       storage: ephemeralStorage.storage,
       storageNamespace: `browser-device-mcp-oauth-${randomUUID()}`,
     });
@@ -354,11 +361,15 @@ function handoffSubmissionRetryDelayMs(
     const retryAfter = error.headers?.get("Retry-After");
     if (retryAfter) {
       const seconds = Number(retryAfter);
-      const delayMs = Number.isFinite(seconds)
-        ? seconds * 1_000
-        : Date.parse(retryAfter) - Date.now();
-      if (Number.isFinite(delayMs) && delayMs >= 0) {
-        return Math.min(delayMs, HANDOFF_RETRY_AFTER_MAX_DELAY_MS);
+      if (Number.isFinite(seconds) && seconds >= 0) {
+        return Math.min(seconds * 1_000, HANDOFF_RETRY_AFTER_MAX_DELAY_MS);
+      }
+      const retryAt = Date.parse(retryAfter);
+      if (Number.isFinite(retryAt)) {
+        return Math.min(
+          Math.max(retryAt - Date.now(), 0),
+          HANDOFF_RETRY_AFTER_MAX_DELAY_MS,
+        );
       }
     }
   }
