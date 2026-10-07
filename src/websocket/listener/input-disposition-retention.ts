@@ -42,6 +42,7 @@ export function shouldRetainDisposition(
   entry: AcceptedInputDispositionEntry,
   references: () => ReadonlySet<string>,
 ): boolean {
+  if (entry.legacyAuthorityQuarantine) return false;
   if (entry.queuedInput || entry.preparedTerminal) return true;
   const authority = entry.completedTerminalAuthority;
   if (
