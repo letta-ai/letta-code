@@ -431,6 +431,7 @@ async function executeRecoveredApprovalContinuation(params: {
     recovered,
     getInterruptedRevision: interruptedTerminalRevision,
     getAuthorityRevision: () => evidence.revision,
+    authorityGuard: createInterruptedTurnStore(),
     canCommit: hasRecoveryOwnership,
   });
   const shouldInterruptDelivery = () =>

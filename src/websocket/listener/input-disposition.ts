@@ -285,6 +285,8 @@ function validateDurableStore(value: unknown): DurableStore {
             (prepared.preparationSequence as number) < 0)) ||
         (prepared.publicationClaimed !== undefined &&
           prepared.publicationClaimed !== true) ||
+        (prepared.persistWithoutConsumers !== undefined &&
+          prepared.persistWithoutConsumers !== true) ||
         !isRecord(prepared.scope) ||
         (prepared.scope.agentId !== null &&
           typeof prepared.scope.agentId !== "string") ||

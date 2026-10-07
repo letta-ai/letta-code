@@ -3,6 +3,7 @@ import {
   readInterruptedTurn,
   readInterruptedTurnAuthorityRevision,
 } from "./interrupted-turn-read";
+import type { createInterruptedTurnStore } from "./interrupted-turn-record";
 import {
   emitLoopErrorNotice,
   getTranscriptLoopErrorMessage,
@@ -30,6 +31,10 @@ export function createRecoveredTurnFinalizer(params: {
   };
   getInterruptedRevision: () => string | undefined;
   getAuthorityRevision?: () => string | undefined;
+  authorityGuard?: Pick<
+    ReturnType<typeof createInterruptedTurnStore>,
+    "withRecoveryAuthority"
+  >;
   canCommit: () => boolean;
 }) {
   const recoveryLineageId = params.recovered.recoveryLineageId;
@@ -54,6 +59,7 @@ export function createRecoveredTurnFinalizer(params: {
               ),
             readInterruptedRevision: () =>
               readInterruptedTurn(params.runtime, recoveryLineageId)?.revision,
+            recoveryAuthorityGuard: params.authorityGuard,
           }
         : {}),
       canCommit: params.canCommit,

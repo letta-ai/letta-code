@@ -275,6 +275,8 @@ export type DurablePreparedInputTerminal = {
   preparationSequence?: number;
   /** Durable claim that orders this publication before later quarantine. */
   publicationClaimed?: true;
+  /** Persist a crash proof even when no external terminal consumer exists. */
+  persistWithoutConsumers?: true;
   scope: { agentId: string | null; conversationId: string };
   message: {
     type: "turn_finished";

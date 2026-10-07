@@ -277,6 +277,59 @@ test("terminal prepare failure releases the lifecycle lease", () => {
   }
 });
 
+test("recovered finalization guards authority before publication claim", () => {
+  const root = mkdtempSync(join(tmpdir(), "letta-terminal-authority-guard-"));
+  try {
+    const runtime = persistentRuntime(join(root, "state.json"));
+    const identity = admitStartedInput(runtime, "cm-authority-guard");
+    const terminalStore = createTurnFinishedStore(join(root, "terminals"));
+    const lease = runtime.turnLifecycle.begin({
+      origin: "approval_recovery",
+      workingDirectory: process.cwd(),
+    });
+    let guardCalls = 0;
+    expect(() =>
+      finishListenerTurn(runtime, lease, {
+        socket: {
+          kind: "local",
+          bufferedAmount: 0,
+          isOpen: () => true,
+          send: () => {},
+        },
+        turnId: "turn-authority-guard",
+        stopReason: "end_turn",
+        agentId: runtime.agentId,
+        conversationId: runtime.conversationId,
+        terminalConsumerIds: ["slack:agent-durable"],
+        durableInputIdentities: [identity],
+        turnFinishedStore: terminalStore,
+        expectedInterruptedRevision: "interrupted-authority-guard",
+        readInterruptedRevision: () => "interrupted-authority-guard",
+        expectedInterruptedAuthorityRevision: "authority-before-rotation",
+        readInterruptedAuthorityRevision: () => "authority-before-rotation",
+        recoveryLineageId: "lineage-authority-guard",
+        recoveryAuthorityGuard: {
+          withRecoveryAuthority: ({ expectedRevision }) => {
+            guardCalls += 1;
+            expect(expectedRevision).toBe("authority-before-rotation");
+            return false;
+          },
+        },
+      }),
+    ).toThrow("Failed to claim accepted-input terminal publication");
+    expect(guardCalls).toBe(1);
+    expect(runtime.turnLifecycle.kind).toBe("idle");
+    expect(
+      terminalStore.read(runtime.agentId, runtime.conversationId),
+    ).toBeNull();
+    expect(
+      loadPreparedInputTerminals(runtime.listener)[0]?.publicationClaimed,
+    ).toBe(undefined);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("same local turn id in two conversations promotes both exact journals", () => {
   const root = mkdtempSync(join(tmpdir(), "letta-terminal-scope-"));
   try {

@@ -33,6 +33,7 @@ import {
 } from "./input-terminal-journal";
 import { createRuntime, stopRuntime } from "./lifecycle";
 import { createTurnFinishedStore } from "./turn-finished-replay";
+import { finishListenerTurn } from "./turn-terminal";
 import type { AcceptedInputDispositionEntry } from "./types";
 
 function expireQuarantine(listener: ReturnType<typeof createRuntime>): void {
@@ -814,6 +815,94 @@ test("non-consumer promotion still defers when journal clearing fails", () => {
     expect(loadPreparedInputTerminals(listener)).toHaveLength(1);
     expect(promotePreparedInputTerminals(listener, terminalStore)).toBe(1);
     expect(loadPreparedInputTerminals(listener)).toHaveLength(0);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("crash-proof non-consumer journal persists before atomic retirement", () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+  const identity = ordinaryInputIdentity("non-consumer-crash-proof");
+  if (!identity || !rememberInputDisposition(runtime, identity, "started")) {
+    throw new Error("failed to seed crash-proof non-consumer journal");
+  }
+  expect(
+    prepareInputTerminal(runtime, [identity], {
+      persistWithoutConsumers: true,
+      scope: { agentId: "agent-1", conversationId: "conv-1" },
+      message: {
+        type: "turn_finished",
+        turn_id: "turn-non-consumer-crash-proof",
+        stop_reason: "end_turn",
+      },
+      owner: {
+        connectionId: null,
+        canRotate: true,
+        lineageId: null,
+        terminalIdentity: "terminal-non-consumer-crash-proof",
+      },
+    }),
+  ).toBe(true);
+  let putCalls = 0;
+  let failPut = true;
+  const terminalStore = {
+    read: () => null,
+    readOrThrow: () => null,
+    put: () => {
+      putCalls += 1;
+      if (failPut) throw new Error("non-consumer put failed");
+    },
+  };
+  expect(promotePreparedInputTerminals(listener, terminalStore as never)).toBe(
+    0,
+  );
+  expect(loadPreparedInputTerminals(listener)).toEqual([
+    expect.objectContaining({
+      persistWithoutConsumers: true,
+      publicationClaimed: true,
+    }),
+  ]);
+  failPut = false;
+  expect(promotePreparedInputTerminals(listener, terminalStore as never)).toBe(
+    1,
+  );
+  expect(putCalls).toBe(2);
+  expect(loadPreparedInputTerminals(listener)).toHaveLength(0);
+});
+
+test("live non-consumer crash proof claims before terminal persistence", () => {
+  const directory = mkdtempSync(join(tmpdir(), "live-non-consumer-"));
+  try {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const identity = ordinaryInputIdentity("live-non-consumer-crash-proof");
+    if (!identity || !rememberInputDisposition(runtime, identity, "started")) {
+      throw new Error("failed to seed live crash-proof journal");
+    }
+    const lease = runtime.turnLifecycle.begin({
+      origin: "approval_recovery",
+      workingDirectory: process.cwd(),
+    });
+    const terminalStore = createTurnFinishedStore(directory);
+    const transition = finishListenerTurn(runtime, lease, {
+      socket: {
+        kind: "local",
+        bufferedAmount: 0,
+        isOpen: () => true,
+        send: () => {},
+      },
+      turnId: "turn-live-non-consumer-crash-proof",
+      stopReason: "end_turn",
+      agentId: runtime.agentId,
+      conversationId: runtime.conversationId,
+      durableInputIdentities: [identity],
+      persistTerminalWithoutConsumers: true,
+      turnFinishedStore: terminalStore,
+    });
+    expect(transition.finished).toBe(true);
+    expect(loadPreparedInputTerminals(listener)).toHaveLength(0);
+    expect(terminalStore.read("agent-1", "conv-1")?.terminals).toHaveLength(1);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

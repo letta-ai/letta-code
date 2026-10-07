@@ -126,11 +126,9 @@ export function clearPreparedTerminalPromotionTimers(
   if (cleanup) clearTimeout(cleanup.timer);
   retiredAuthorityCleanupTimers.delete(listener);
 }
-
 function durableQueueRestoreIsActive(listener: ListenerRuntime): boolean {
   return listener === getActiveRuntime() && !listener.intentionallyClosed;
 }
-
 function clearDurableQueueRestoreRetry(listener: ListenerRuntime): void {
   if (listener.durableQueueRestoreTimer) {
     clearTimeout(listener.durableQueueRestoreTimer);
@@ -138,7 +136,6 @@ function clearDurableQueueRestoreRetry(listener: ListenerRuntime): void {
   }
   listener.durableQueueRestoreFailures = 0;
 }
-
 export function scheduleDurableQueueRestore(
   listener: ListenerRuntime,
   capacityReleased = true,
@@ -209,7 +206,6 @@ export function scheduleDurableQueueRestore(
     })();
   });
 }
-
 function queueRemovalTransition(
   item: QueueItem,
   disposition: QueueRemovalTransition["disposition"],
@@ -219,7 +215,6 @@ function queueRemovalTransition(
     disposition,
   };
 }
-
 export function ensureConversationQueueRuntime(
   listener: ListenerRuntime,
   runtime: ConversationRuntime,
@@ -304,7 +299,6 @@ export function ensureConversationQueueRuntime(
   });
   return runtime;
 }
-
 export function getOrCreateScopedRuntime(
   listener: ListenerRuntime,
   agentId?: string | null,
@@ -773,7 +767,10 @@ export function promotePreparedInputTerminals(
     let owner = prepared.owner;
     let replayConnectionId: string | null = null;
     try {
-      if (prepared.message.terminal_consumer_ids?.length) {
+      const hasTerminalConsumers = Boolean(
+        prepared.message.terminal_consumer_ids?.length,
+      );
+      if (hasTerminalConsumers || prepared.persistWithoutConsumers) {
         const existing = terminalStore
           .read(prepared.scope.agentId, prepared.scope.conversationId)
           ?.terminals.find((terminal) =>
@@ -785,8 +782,10 @@ export function promotePreparedInputTerminals(
           );
         if (existing) {
           owner = existing.owner;
-          replayConnectionId = existing.owner.connectionId;
-        } else if (owner.connectionId === null) {
+          if (hasTerminalConsumers) {
+            replayConnectionId = existing.owner.connectionId;
+          }
+        } else if (hasTerminalConsumers && owner.connectionId === null) {
           const runtime = getOrCreateScopedRuntime(
             listener,
             prepared.scope.agentId,
@@ -814,7 +813,7 @@ export function promotePreparedInputTerminals(
             lineageId: connection.startupOwner.lineageId,
           };
           replayConnectionId = connection.id;
-        } else {
+        } else if (hasTerminalConsumers) {
           replayConnectionId = owner.connectionId;
         }
         if (
@@ -852,6 +851,7 @@ export function promotePreparedInputTerminals(
     }
     if (
       !prepared.message.terminal_consumer_ids?.length &&
+      !prepared.persistWithoutConsumers &&
       !clearPreparedTerminal(
         listener,
         prepared.scope,

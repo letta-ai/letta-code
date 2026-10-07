@@ -81,6 +81,10 @@ export function finishListenerTurn(
     readInterruptedAuthorityRevision?: () => string | undefined;
     /** Independent recovery lineage bound to the mutable authority token. */
     recoveryLineageId?: string;
+    recoveryAuthorityGuard?: Pick<
+      ReturnType<typeof createInterruptedTurnStore>,
+      "withRecoveryAuthority"
+    >;
   },
 ): TurnFinishTransition {
   const rejectedCommit = (): TurnFinishTransition => ({
@@ -169,6 +173,9 @@ export function finishListenerTurn(
         },
         message: turnFinishedMessage,
         owner: terminalOwner,
+        ...(options.persistTerminalWithoutConsumers
+          ? { persistWithoutConsumers: true }
+          : {}),
       },
     )
   ) {
@@ -187,12 +194,19 @@ export function finishListenerTurn(
     terminalOwner.connectionId === null &&
     !identitylessConsumerTerminal &&
     !options.turnFinishedStore;
+  const authorityGuard =
+    options.recoveryAuthorityGuard ??
+    (!options.readInterruptedRevision &&
+    !options.readInterruptedAuthorityRevision
+      ? createInterruptedTurnStore()
+      : undefined);
+  let guardDirectPublication = false;
   try {
     if (
       !options.prepareInputTerminal &&
       !deferUntilReplayOwner &&
-      turnFinishedMessage?.terminal_consumer_ids?.length &&
-      (options.durableInputIdentities?.length ?? 0) > 0
+      (turnFinishedMessage?.terminal_consumer_ids?.length ||
+        options.persistTerminalWithoutConsumers)
     ) {
       const preparedInputTerminal = loadPreparedInputTerminals(
         runtime.listener,
@@ -202,19 +216,25 @@ export function finishListenerTurn(
           prepared.scope.conversationId === runtime.conversationId &&
           prepared.owner.terminalIdentity === terminalOwner.terminalIdentity,
       );
-      if (
-        !preparedInputTerminal ||
-        !claimPreparedInputTerminalIfCurrent(
-          runtime.listener,
-          preparedInputTerminal,
-          [],
-          !options.readInterruptedRevision &&
-            !options.readInterruptedAuthorityRevision
-            ? createInterruptedTurnStore()
-            : undefined,
-        )
+      if (preparedInputTerminal) {
+        if (
+          !claimPreparedInputTerminalIfCurrent(
+            runtime.listener,
+            preparedInputTerminal,
+            [],
+            authorityGuard,
+          )
+        ) {
+          throw new Error(
+            "Failed to claim accepted-input terminal publication",
+          );
+        }
+      } else if (
+        options.recoveryLineageId &&
+        expectedAuthorityRevision &&
+        authorityGuard?.withRecoveryAuthority
       ) {
-        throw new Error("Failed to claim accepted-input terminal publication");
+        guardDirectPublication = true;
       }
     }
   } catch (error) {
@@ -222,7 +242,7 @@ export function finishListenerTurn(
     throw error;
   }
   try {
-    preparedTurnFinished =
+    const persistTerminal = () =>
       turnFinishedMessage && !deferUntilReplayOwner
         ? prepareTurnFinished(
             runtime,
@@ -233,6 +253,27 @@ export function finishListenerTurn(
               identitylessConsumerTerminal,
           )
         : null;
+    if (
+      guardDirectPublication &&
+      authorityGuard?.withRecoveryAuthority &&
+      options.recoveryLineageId &&
+      expectedAuthorityRevision
+    ) {
+      const guarded = authorityGuard.withRecoveryAuthority({
+        agentId: runtime.agentId ?? "",
+        conversationId: runtime.conversationId,
+        lineageId: options.recoveryLineageId,
+        expectedRevision: expectedAuthorityRevision,
+        action: () => {
+          preparedTurnFinished = persistTerminal();
+          return true;
+        },
+      });
+      if (!guarded)
+        throw new Error("Recovery authority changed before terminal");
+    } else {
+      preparedTurnFinished = persistTerminal();
+    }
     if (!ownsInterruptedRevision()) return rejectedCommit();
     if (
       turnFinishedMessage &&
