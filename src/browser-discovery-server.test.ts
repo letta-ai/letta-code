@@ -248,7 +248,7 @@ const handle = startBrowserDiscoveryServer({
       }, { once: true });
     });
   },
-  oauthTimeoutMs: 2_000,
+  oauthTimeoutMs: 100_000,
   port: 0,
 });
 const address = await handle.ready;
@@ -307,7 +307,7 @@ const handle = startBrowserDiscoveryServer({
       signal.addEventListener("abort", () => reject(signal.reason), { once: true });
     });
   },
-  oauthTimeoutMs: 2_000,
+  oauthTimeoutMs: 100_000,
   port: 0,
 });
 const address = await handle.ready;
@@ -419,17 +419,11 @@ console.log("timed-out");
     expect(result.stderr).toBe("");
   });
 
-  test("bounds the complete browser-device OAuth operation", async () => {
-    let timeoutName: string | undefined;
+  test("fails closed before OAuth when the submission reserve is exhausted", async () => {
+    let connectCalls = 0;
     const handle = startBrowserDiscoveryServer({
-      connectMcpOAuth: async (_request, signal) => {
-        await new Promise<void>((_resolve, reject) => {
-          const abort = (): void => {
-            timeoutName = signal.reason?.name;
-            reject(signal.reason);
-          };
-          signal.addEventListener("abort", abort, { once: true });
-        });
+      connectMcpOAuth: async () => {
+        connectCalls += 1;
       },
       oauthTimeoutMs: 10,
       port: 0,
@@ -454,7 +448,7 @@ console.log("timed-out");
     );
 
     expect(response.status).toBe(502);
-    expect(timeoutName).toBe("TimeoutError");
+    expect(connectCalls).toBe(0);
   });
 
   test("answers command private-network preflight with narrow CORS", async () => {
