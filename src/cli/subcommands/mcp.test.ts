@@ -6,7 +6,11 @@ import type {
   McpServerConfig,
   McpToolResult,
 } from "@/mcp-client";
-import { type McpSubcommandDependencies, runMcpSubcommand } from "./mcp";
+import {
+  createAgentMcpSession,
+  type McpSubcommandDependencies,
+  runMcpSubcommand,
+} from "./mcp";
 
 const EVERYTHING_SERVER = fileURLToPath(
   new URL(
@@ -989,5 +993,29 @@ describe("mcp subcommand", () => {
         (tool: { name: string }) => tool.name,
       ),
     ).toEqual(["mcp__duplicate__search", "mcp__duplicate__search_2"]);
+  });
+
+  test("an agent MCP session connects once and closes on close()", async () => {
+    let connects = 0;
+    const closes = { count: 0 };
+    const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const harness = localHarness({ servers: [localServer] });
+    harness.deps.connectLocalServer = async () => {
+      connects++;
+      return fakeConnection({ closes, calls });
+    };
+    const session = createAgentMcpSession("agent-1", harness.deps);
+    const name = "mcp__Mixed_Server__search_exact-name";
+
+    await Promise.all([
+      session.callTool(name, { query: "a" }),
+      session.callTool(name, { query: "b" }),
+    ]);
+    await session.callTool(name, { query: "c" });
+    expect(connects).toBe(1);
+    expect(calls.map((call) => call.args.query)).toEqual(["a", "b", "c"]);
+
+    await session.close();
+    expect(closes.count).toBe(1);
   });
 });

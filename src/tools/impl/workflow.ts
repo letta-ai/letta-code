@@ -232,8 +232,12 @@ export async function createSdkSpawnerHandle(
     ? manager.getExecutionContextPermissionModeState(toolContextId)
     : undefined;
   const permissionCwd = getCurrentWorkingDirectory();
+  // Memoize the promise, not the session: concurrent first calls must share
+  // one session so cleanup closes every connection that was opened.
   let mcpSession:
-    | ReturnType<typeof import("@/cli/subcommands/mcp").createAgentMcpSession>
+    | Promise<
+        ReturnType<typeof import("@/cli/subcommands/mcp").createAgentMcpSession>
+      >
     | undefined;
   return {
     spawner,
@@ -252,13 +256,15 @@ export async function createSdkSpawnerHandle(
             : `${toolName} needs approval, which a workflow cannot request; add an allow rule for it to call it from a script.`,
         );
       }
-      mcpSession ??= (
-        await import("@/cli/subcommands/mcp")
-      ).createAgentMcpSession(parentAgentId);
-      return mcpSession.callTool(toolName, toolArgs);
+      mcpSession ??= import("@/cli/subcommands/mcp").then((mcp) =>
+        mcp.createAgentMcpSession(parentAgentId),
+      );
+      return (await mcpSession).callTool(toolName, toolArgs);
     },
     cleanup: async () => {
-      await mcpSession?.close().catch(() => undefined);
+      await mcpSession
+        ?.then((session) => session.close())
+        .catch(() => undefined);
       await client[Symbol.asyncDispose]?.().catch(() => undefined);
     },
   };
