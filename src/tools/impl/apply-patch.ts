@@ -33,7 +33,24 @@ interface UpdateChunk {
   changeContext: string | null;
   oldLines: string[];
   newLines: string[];
+  /**
+   * Pairs of indices into `oldLines` and `newLines` for lines parsed as
+   * context, so they stay distinguishable from identical changed lines.
+   */
+  contextLineIndices: Array<[oldIndex: number, newIndex: number]>;
   isEndOfFile: boolean;
+}
+
+type LineEnding = "\n" | "\r\n" | "\r";
+
+interface SourceLine {
+  text: string;
+  ending: LineEnding | null;
+}
+
+interface SourceFile {
+  lines: SourceLine[];
+  preferredEnding: LineEnding;
 }
 
 const BEGIN_PATCH_MARKER = "*** Begin Patch";
@@ -276,8 +293,15 @@ function parseUpdateChunk(
 
   const oldLines: string[] = [];
   const newLines: string[] = [];
+  const contextLineIndices: UpdateChunk["contextLineIndices"] = [];
   let isEndOfFile = false;
   let parsedLineCount = 0;
+
+  const pushContextLine = (text: string): void => {
+    contextLineIndices.push([oldLines.length, newLines.length]);
+    oldLines.push(text);
+    newLines.push(text);
+  };
 
   while (index < endIndex) {
     const line = lines[index] ?? "";
@@ -294,8 +318,7 @@ function parseUpdateChunk(
     }
 
     if (line.length === 0) {
-      oldLines.push("");
-      newLines.push("");
+      pushContextLine("");
       parsedLineCount += 1;
       index += 1;
       continue;
@@ -303,9 +326,7 @@ function parseUpdateChunk(
 
     const prefix = line[0];
     if (prefix === " ") {
-      const text = line.slice(1);
-      oldLines.push(text);
-      newLines.push(text);
+      pushContextLine(line.slice(1));
       parsedLineCount += 1;
       index += 1;
       continue;
@@ -339,6 +360,7 @@ function parseUpdateChunk(
       changeContext,
       oldLines,
       newLines,
+      contextLineIndices,
       isEndOfFile,
     },
     nextIndex: index,
@@ -440,23 +462,54 @@ async function deriveNewContentsFromChunks(
     );
   }
 
-  const originalLines = originalContents.split("\n");
-  if (originalLines[originalLines.length - 1] === "") {
-    originalLines.pop();
-  }
+  const sourceFile = parseSourceFile(originalContents);
+  const originalLines = sourceFile.lines.map((line) => line.text);
 
   const replacements = computeReplacements(
     originalLines,
     filePathForErrors,
     chunks,
   );
-  const newLines = applyReplacements([...originalLines], replacements);
+  return applyReplacements(sourceFile, replacements)
+    .map((line) => `${line.text}${line.ending ?? ""}`)
+    .join("");
+}
 
-  if (newLines[newLines.length - 1] !== "") {
-    newLines.push("");
+/**
+ * Splits contents into logical lines while retaining each line ending.
+ *
+ * The first existing ending becomes the preferred style for inserted lines;
+ * files without an ending default to LF.
+ */
+function parseSourceFile(contents: string): SourceFile {
+  const lines: SourceLine[] = [];
+  let preferredEnding: LineEnding | null = null;
+  let lineStart = 0;
+  let cursor = 0;
+
+  while (cursor < contents.length) {
+    const char = contents[cursor];
+    let ending: LineEnding;
+    if (char === "\r") {
+      ending = contents[cursor + 1] === "\n" ? "\r\n" : "\r";
+    } else if (char === "\n") {
+      ending = "\n";
+    } else {
+      cursor += 1;
+      continue;
+    }
+
+    preferredEnding ??= ending;
+    lines.push({ text: contents.slice(lineStart, cursor), ending });
+    cursor += ending.length;
+    lineStart = cursor;
   }
 
-  return newLines.join("\n");
+  if (lineStart < contents.length) {
+    lines.push({ text: contents.slice(lineStart), ending: null });
+  }
+
+  return { lines, preferredEnding: preferredEnding ?? "\n" };
 }
 
 type Replacement = [
@@ -490,11 +543,7 @@ function computeReplacements(
     }
 
     if (chunk.oldLines.length === 0) {
-      const insertionIndex =
-        originalLines[originalLines.length - 1] === ""
-          ? originalLines.length - 1
-          : originalLines.length;
-      replacements.push([insertionIndex, 0, [...chunk.newLines]]);
+      replacements.push([originalLines.length, 0, [...chunk.newLines]]);
       continue;
     }
 
@@ -526,7 +575,34 @@ function computeReplacements(
       );
     }
 
-    replacements.push([found, pattern.length, newSlice]);
+    // Context lines occur in both sides of a patch chunk. Keep those original
+    // lines in place so their exact contents and terminators survive,
+    // especially when the file has mixed line endings.
+    let oldStart = 0;
+    let newStart = 0;
+    for (const [oldContext, newContext] of chunk.contextLineIndices) {
+      // A trailing empty context line can be removed from `pattern` and
+      // `newSlice` above when it represents the final newline.
+      if (oldContext >= pattern.length || newContext >= newSlice.length) {
+        break;
+      }
+      if (oldStart !== oldContext || newStart !== newContext) {
+        replacements.push([
+          found + oldStart,
+          oldContext - oldStart,
+          newSlice.slice(newStart, newContext),
+        ]);
+      }
+      oldStart = oldContext + 1;
+      newStart = newContext + 1;
+    }
+    if (oldStart !== pattern.length || newStart !== newSlice.length) {
+      replacements.push([
+        found + oldStart,
+        pattern.length - oldStart,
+        newSlice.slice(newStart),
+      ]);
+    }
     lineIndex = found + pattern.length;
   }
 
@@ -534,23 +610,35 @@ function computeReplacements(
   return replacements;
 }
 
+/**
+ * Rebuilds the file from source-ordered, non-overlapping replacements.
+ *
+ * Unchanged lines retain their original endings, inserted lines use the
+ * preferred ending, and every resulting line receives an ending to match
+ * apply-patch's historical trailing-newline behavior.
+ */
 function applyReplacements(
-  lines: string[],
+  { lines, preferredEnding }: SourceFile,
   replacements: Replacement[],
-): string[] {
-  for (let i = replacements.length - 1; i >= 0; i -= 1) {
-    const [startIndex, oldLength, newSegment] = replacements[i] as Replacement;
+): SourceLine[] {
+  const newLines: SourceLine[] = [];
+  let sourceIndex = 0;
 
-    for (let j = 0; j < oldLength; j += 1) {
-      if (startIndex < lines.length) {
-        lines.splice(startIndex, 1);
-      }
-    }
-
-    lines.splice(startIndex, 0, ...newSegment);
+  for (const [startIndex, oldLength, newSegment] of replacements) {
+    newLines.push(...lines.slice(sourceIndex, startIndex));
+    newLines.push(
+      ...newSegment.map((text) => ({ text, ending: preferredEnding })),
+    );
+    sourceIndex = startIndex + oldLength;
   }
+  newLines.push(...lines.slice(sourceIndex));
 
-  return lines;
+  // Updates have historically added a trailing newline. This also gives an
+  // unterminated last line an ending if an insertion moved it inward.
+  return newLines.map((line) => ({
+    text: line.text,
+    ending: line.ending ?? preferredEnding,
+  }));
 }
 
 function seekSequence(
@@ -570,7 +658,7 @@ function seekSequence(
   const maxStart = lines.length - pattern.length;
   const searchStart =
     eof && lines.length >= pattern.length
-      ? lines.length - pattern.length
+      ? Math.max(lines.length - pattern.length, start)
       : start;
 
   const tryMatch = (

@@ -244,6 +244,68 @@ EOF`,
     expect(readFileSync(filePath, "utf-8")).toBe("line1\nline2 updated\n");
   });
 
+  test.each([
+    {
+      name: "preserves CRLF from the target file",
+      original: "one\r\ntwo\r\nthree\r\n",
+      hunk: "-one\n+uno\n@@\n two\n+\n+between\n three",
+      expected: "uno\r\ntwo\r\n\r\nbetween\r\nthree\r\n",
+    },
+    {
+      name: "appends after a trailing blank CRLF line",
+      original: "a\r\n\r\n",
+      hunk: "+new",
+      expected: "a\r\n\r\nnew\r\n",
+    },
+    {
+      name: "preserves CR from the target file",
+      original: "one\rtwo\rthree\r",
+      hunk: "-one\n+uno\n@@\n two\n+\n+between\n three",
+      expected: "uno\rtwo\r\rbetween\rthree\r",
+    },
+    {
+      name: "preserves change order with repeated lines",
+      original: "a\nb\n",
+      hunk: "-a\n-b\n+b\n+b\n+a",
+      expected: "b\nb\na\n",
+    },
+    {
+      name: "preserves the context line ending when a repeated line is removed",
+      original: "same\r\nsame\n",
+      hunk: "-same\n same",
+      expected: "same\n",
+    },
+    {
+      name: "preserves untouched mixed line endings",
+      original: "one\r\ntwo\rthree\nfour\r\n",
+      hunk: " one\n two\n-three\n+THREE\n four",
+      expected: "one\r\ntwo\rTHREE\r\nfour\r\n",
+    },
+    {
+      name: "uses the preferred ending for a new trailing newline",
+      original: "one\r\ntwo",
+      hunk: "-one\n+ONE",
+      expected: "ONE\r\ntwo\r\n",
+    },
+  ])("$name", async ({ original, hunk, expected }) => {
+    testDir = new TestDirectory();
+    originalUserCwd = process.env.USER_CWD;
+    process.env.USER_CWD = testDir.path;
+
+    testDir.createFile("endings.txt", original);
+
+    await apply_patch({
+      input: `*** Begin Patch
+*** Update File: endings.txt
+@@
+${hunk}
+*** End Patch`,
+    });
+
+    const filePath = join(testDir.path, "endings.txt");
+    expect(readFileSync(filePath, "utf-8")).toBe(expected);
+  });
+
   test("rejects duplicate resolved paths across operations", async () => {
     testDir = new TestDirectory();
     originalUserCwd = process.env.USER_CWD;
