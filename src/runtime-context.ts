@@ -38,6 +38,8 @@ export interface RuntimeContextSnapshot {
    */
   workingDirectoryRecoveredFrom?: string | null;
   toolContextId?: string | null;
+  /** Model-facing tool names from the current turn's filtered tool context. */
+  clientToolNames?: string[];
   permissionMode?: RuntimePermissionMode;
   workspaceSandbox?: RuntimeWorkspaceSandbox;
   executionSettings?: RuntimeExecutionSettings;

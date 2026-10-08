@@ -22,7 +22,11 @@ import { resolveModel } from "@/agent/model-catalog";
 import { getPrimaryAgentModelHandle } from "@/agent/subagents/subagent-model";
 import { getBackend } from "@/backend";
 import { resolveBackendMode } from "@/backend/backend-mode";
-import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { permissionMode } from "@/permissions/mode";
+import {
+  getCurrentWorkingDirectory,
+  getRuntimeContext,
+} from "@/runtime-context";
 import {
   finishWorkflowExecution,
   recordWorkflowProgress,
@@ -39,10 +43,7 @@ import {
 } from "@/tools/workflow/journal";
 import { parseWorkflowMeta } from "@/tools/workflow/meta";
 import { loadAgentSdk } from "@/tools/workflow/sdk-loader";
-import {
-  createSdkSpawner,
-  DEFAULT_ALLOWED_TOOLS,
-} from "@/tools/workflow/sdk-spawner";
+import { createSdkSpawner } from "@/tools/workflow/sdk-spawner";
 import type {
   SubagentSpawner,
   WorkflowExecutionResult,
@@ -203,7 +204,9 @@ export async function createSdkSpawnerHandle(
       parentAgentId,
       model,
       resolveModel,
-      allowedTools: args.allowedTools ?? [...DEFAULT_ALLOWED_TOOLS],
+      allowedTools: args.allowedTools ?? getRuntimeContext()?.clientToolNames,
+      permissionMode:
+        getRuntimeContext()?.permissionMode ?? permissionMode.getMode(),
       cwd: getCurrentWorkingDirectory(),
       supportsAgentFreeResume: sdk.supportsAgentFreeResume,
       verifyPersistedRuns: backendMode === "api",

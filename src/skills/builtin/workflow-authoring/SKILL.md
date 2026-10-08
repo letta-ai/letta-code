@@ -52,8 +52,8 @@ skills. Put ALL context a stage needs in the prompt — file paths, the rule it
 should apply, what shape to return.
 
 Subagents are told their final text IS the return value (not a human-facing
-message), so they return raw data. Tools default to read-only (`Read`,
-`Grep`, `Glob`); widen with `allowedTools` for stages that must write. For
+message), so they return raw data. Workers inherit the invoking session's tools
+and permission mode; use `allowedTools` to restrict a workflow or stage. For
 stages whose input is entirely in the prompt (synthesis, judging, scoring)
 pass `allowedTools: []` — a model that can still read files tends to wander,
 and a subagent that re-issues an identical tool call three times is stopped
@@ -245,5 +245,6 @@ The script is never replayed, but one worker can continue:
 `agent(prompt, {conversationId})` re-prompts it with history and model intact,
 using a journal ID and only once its last Run is terminal. Local workers can
 only continue inside the same workflow execution that observed their completed
-turn. Tools default to `[]`; `schema` and `effort` are chosen per turn. Needs
+turn. Tools inherit the invoking session unless `allowedTools` is supplied;
+`schema` and `effort` are chosen per turn. Needs
 SDK 0.8.20+.
