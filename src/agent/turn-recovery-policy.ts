@@ -59,6 +59,7 @@ const RETRYABLE_PROVIDER_DETAIL_PATTERNS = [
   "other side closed",
   "fetch failed",
   "socket hang up",
+  "socket connection was closed",
   "ended without",
   "http2 request did not get a response",
   "terminated",
