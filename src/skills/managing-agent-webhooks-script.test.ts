@@ -4,7 +4,7 @@ import {
   parseAgentWebhookArgs,
   resolveAgentWebhookTarget,
   safeAgentWebhook,
-} from "@/skills/builtin/managing-agent-webhooks/scripts/manage-agent-webhooks";
+} from "@/skills/builtin/managing-agent-webhooks/scripts/manage-agent-webhooks.mjs";
 
 describe("managing-agent-webhooks helper", () => {
   test("parses a public create request", () => {

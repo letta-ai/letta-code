@@ -4,15 +4,6 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-type Args = Record<string, string | boolean>;
-type JsonObject = Record<string, unknown>;
-
-interface AgentWebhook extends JsonObject {
-  id: string;
-  webhook_url: string;
-  requires_authorization_header: boolean;
-}
-
 const COMMANDS = new Set([
   "create",
   "delete",
@@ -24,16 +15,16 @@ const COMMANDS = new Set([
   "test",
 ]);
 
-function usage(): never {
+function usage() {
   console.error(`Usage:
-  node manage-agent-webhooks.ts list [--agent-id <id>] [--base-url <url>]
-  node manage-agent-webhooks.ts create --name <name> (--public | --security-key-stdin) [--preprompt <text>] [--disabled]
-  node manage-agent-webhooks.ts test --webhook-id <id> [--payload-json <json> | --payload-file <path>] [--security-key-stdin]
-  node manage-agent-webhooks.ts requests --webhook-id <id> [--limit <1-50>] [--include-body]
-  node manage-agent-webhooks.ts enable --webhook-id <id>
-  node manage-agent-webhooks.ts disable --webhook-id <id> --confirm
-  node manage-agent-webhooks.ts rotate --webhook-id <id> --confirm
-  node manage-agent-webhooks.ts delete --webhook-id <id> --confirm
+  node manage-agent-webhooks.mjs list [--agent-id <id>] [--base-url <url>]
+  node manage-agent-webhooks.mjs create --name <name> (--public | --security-key-stdin) [--preprompt <text>] [--disabled]
+  node manage-agent-webhooks.mjs test --webhook-id <id> [--payload-json <json> | --payload-file <path>] [--security-key-stdin]
+  node manage-agent-webhooks.mjs requests --webhook-id <id> [--limit <1-50>] [--include-body]
+  node manage-agent-webhooks.mjs enable --webhook-id <id>
+  node manage-agent-webhooks.mjs disable --webhook-id <id> --confirm
+  node manage-agent-webhooks.mjs rotate --webhook-id <id> --confirm
+  node manage-agent-webhooks.mjs delete --webhook-id <id> --confirm
 
 Environment:
   LETTA_API_KEY   Required for management operations
@@ -43,10 +34,7 @@ Environment:
   process.exit(2);
 }
 
-export function parseAgentWebhookArgs(argv: string[]): {
-  args: Args;
-  command: string;
-} {
+export function parseAgentWebhookArgs(argv) {
   const [command = "", ...rest] = argv;
   if (!COMMANDS.has(command)) usage();
 
@@ -57,7 +45,7 @@ export function parseAgentWebhookArgs(argv: string[]): {
     "public",
     "security-key-stdin",
   ]);
-  const args: Args = {};
+  const args = {};
   for (let index = 0; index < rest.length; index++) {
     const argument = rest[index];
     if (argument === undefined) {
@@ -81,16 +69,13 @@ export function parseAgentWebhookArgs(argv: string[]): {
   return { args, command };
 }
 
-function requireString(value: unknown, message: string): string {
+function requireString(value, message) {
   const stringValue = String(value ?? "").trim();
   if (!stringValue) throw new Error(message);
   return stringValue;
 }
 
-export function resolveAgentWebhookTarget(params: {
-  currentAgentId?: string;
-  requestedAgentId?: string;
-}): string {
+export function resolveAgentWebhookTarget(params) {
   const requested = params.requestedAgentId?.trim();
   const current = params.currentAgentId?.trim();
   if (requested && current && requested !== current) {
@@ -104,7 +89,7 @@ export function resolveAgentWebhookTarget(params: {
   );
 }
 
-export function safeAgentWebhook(webhook: JsonObject): JsonObject {
+export function safeAgentWebhook(webhook) {
   const {
     authorization_header: _authorizationHeader,
     webhook_slug: _webhookSlug,
@@ -113,14 +98,12 @@ export function safeAgentWebhook(webhook: JsonObject): JsonObject {
   return safe;
 }
 
-export function buildAgentWebhookBasicAuthorization(
-  securityKey: string,
-): string {
+export function buildAgentWebhookBasicAuthorization(securityKey) {
   if (!securityKey) throw new Error("Security key must be non-empty");
   return `Basic ${Buffer.from(`webhook:${securityKey}`, "utf8").toString("base64")}`;
 }
 
-function normalizedBaseUrl(value: unknown): string {
+function normalizedBaseUrl(value) {
   const baseUrl = requireString(
     value,
     "Set LETTA_BASE_URL or pass --base-url; do not guess the active server",
@@ -132,7 +115,7 @@ function normalizedBaseUrl(value: unknown): string {
   return parsed.toString().replace(/\/$/, "");
 }
 
-async function parseResponse(response: Response): Promise<unknown> {
+async function parseResponse(response) {
   const text = await response.text();
   if (!text) return null;
   try {
@@ -142,7 +125,7 @@ async function parseResponse(response: Response): Promise<unknown> {
   }
 }
 
-async function requestJson(url: string, init: RequestInit): Promise<unknown> {
+async function requestJson(url, init) {
   const response = await fetch(url, init);
   const body = await parseResponse(response);
   if (!response.ok) {
@@ -154,14 +137,14 @@ async function requestJson(url: string, init: RequestInit): Promise<unknown> {
   return body;
 }
 
-function jsonObject(value: unknown, message: string): JsonObject {
+function jsonObject(value, message) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(message);
   }
-  return value as JsonObject;
+  return value;
 }
 
-function webhookFromUnknown(value: unknown): AgentWebhook {
+function webhookFromUnknown(value) {
   const webhook = jsonObject(value, "Webhook response must be an object");
   const id = requireString(webhook.id, "Webhook response is missing id");
   const webhookUrl = requireString(
@@ -181,7 +164,7 @@ function webhookFromUnknown(value: unknown): AgentWebhook {
   };
 }
 
-function webhookList(value: unknown): AgentWebhook[] {
+function webhookList(value) {
   const body = jsonObject(value, "Webhook list response must be an object");
   if (!Array.isArray(body.webhooks)) {
     throw new Error("Webhook list response is missing webhooks");
@@ -189,7 +172,7 @@ function webhookList(value: unknown): AgentWebhook[] {
   return body.webhooks.map(webhookFromUnknown);
 }
 
-async function readSecurityKey(args: Args): Promise<string | undefined> {
+async function readSecurityKey(args) {
   if (args["security-key-stdin"] !== true) return undefined;
   process.stdin.setEncoding("utf8");
   let value = "";
@@ -199,7 +182,7 @@ async function readSecurityKey(args: Args): Promise<string | undefined> {
   return value;
 }
 
-async function readPayload(args: Args): Promise<unknown> {
+async function readPayload(args) {
   if (args["payload-file"] && args["payload-json"]) {
     throw new Error("Use only one of --payload-file or --payload-json");
   }
@@ -216,7 +199,7 @@ async function readPayload(args: Args): Promise<unknown> {
   };
 }
 
-function positiveInteger(value: unknown, fallback: number): number {
+function positiveInteger(value, fallback) {
   if (value === undefined) return fallback;
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 1 || parsed > 50) {
@@ -225,7 +208,7 @@ function positiveInteger(value: unknown, fallback: number): number {
   return parsed;
 }
 
-function managementHeaders(apiKey: string): Record<string, string> {
+function managementHeaders(apiKey) {
   return {
     Accept: "application/json",
     Authorization: `Bearer ${apiKey}`,
@@ -233,25 +216,21 @@ function managementHeaders(apiKey: string): Record<string, string> {
   };
 }
 
-function printJson(value: unknown): void {
+function printJson(value) {
   console.log(JSON.stringify(value, null, 2));
 }
 
-function requireWebhookId(args: Args): string {
+function requireWebhookId(args) {
   return requireString(args["webhook-id"], "Pass --webhook-id");
 }
 
-function requireConfirmation(args: Args, action: string): void {
+function requireConfirmation(args, action) {
   if (args.confirm !== true) {
     throw new Error(`${action} requires --confirm`);
   }
 }
 
-async function listWebhooks(params: {
-  agentId: string;
-  baseUrl: string;
-  headers: Record<string, string>;
-}): Promise<AgentWebhook[]> {
+async function listWebhooks(params) {
   return webhookList(
     await requestJson(
       `${params.baseUrl}/v1/agents/${params.agentId}/webhooks`,
@@ -262,13 +241,7 @@ async function listWebhooks(params: {
   );
 }
 
-async function runManagementCommand(params: {
-  agentId: string;
-  args: Args;
-  baseUrl: string;
-  command: string;
-  headers: Record<string, string>;
-}): Promise<void> {
+async function runManagementCommand(params) {
   const collectionUrl = `${params.baseUrl}/v1/agents/${params.agentId}/webhooks`;
 
   if (params.command === "list") {
@@ -284,7 +257,7 @@ async function runManagementCommand(params: {
       throw new Error("Choose exactly one of --public or --security-key-stdin");
     }
     const securityKey = await readSecurityKey(params.args);
-    const body: JsonObject = {
+    const body = {
       enabled: params.args.disabled !== true,
       name: requireString(params.args.name, "Create requires --name"),
       requires_authorization_header: usesSecurityKey,
@@ -391,7 +364,7 @@ async function runManagementCommand(params: {
       throw new Error("This webhook is public; do not supply a security key");
     }
 
-    const headers: Record<string, string> = {
+    const headers = {
       Accept: "application/json",
       "Content-Type": "application/json",
     };
@@ -421,7 +394,7 @@ async function runManagementCommand(params: {
   throw new Error(`Unsupported command: ${params.command}`);
 }
 
-export async function runAgentWebhookCli(argv: string[]): Promise<void> {
+export async function runAgentWebhookCli(argv) {
   const { args, command } = parseAgentWebhookArgs(argv);
   const agentId = resolveAgentWebhookTarget({
     currentAgentId: process.env.AGENT_ID,
@@ -448,7 +421,7 @@ const isMain =
   fileURLToPath(import.meta.url) === resolve(process.argv[1]);
 
 if (isMain) {
-  runAgentWebhookCli(process.argv.slice(2)).catch((error: unknown) => {
+  runAgentWebhookCli(process.argv.slice(2)).catch((error) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);
   });

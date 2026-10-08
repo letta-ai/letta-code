@@ -37,7 +37,7 @@ AGENT_ID=agent-...    # defaults to the current agent
 Run the helper with:
 
 ```bash
-node <SKILL_DIR>/scripts/manage-agent-webhooks.ts <command> [options]
+node <SKILL_DIR>/scripts/manage-agent-webhooks.mjs <command> [options]
 ```
 
 Output is JSON. Summarize the result for the user instead of pasting large raw
@@ -60,7 +60,7 @@ responses.
 ### List
 
 ```bash
-node <SKILL_DIR>/scripts/manage-agent-webhooks.ts list
+node <SKILL_DIR>/scripts/manage-agent-webhooks.mjs list
 ```
 
 ### Create a public webhook
@@ -68,7 +68,7 @@ node <SKILL_DIR>/scripts/manage-agent-webhooks.ts list
 Use only when the user explicitly accepts a public capability URL:
 
 ```bash
-node <SKILL_DIR>/scripts/manage-agent-webhooks.ts create \
+node <SKILL_DIR>/scripts/manage-agent-webhooks.mjs create \
   --name "Build events" \
   --preprompt "Summarize this build event and tell the user whether action is needed." \
   --public
@@ -80,7 +80,7 @@ Read the key from stdin without echoing or placing it in process arguments:
 
 ```bash
 printf '%s' "$WEBHOOK_SECURITY_KEY" | \
-  node <SKILL_DIR>/scripts/manage-agent-webhooks.ts create \
+  node <SKILL_DIR>/scripts/manage-agent-webhooks.mjs create \
     --name "Pager events" \
     --preprompt "Triage this pager event and summarize its urgency." \
     --security-key-stdin
@@ -95,7 +95,7 @@ requests when the same key is piped through stdin.
 Public webhook:
 
 ```bash
-node <SKILL_DIR>/scripts/manage-agent-webhooks.ts test \
+node <SKILL_DIR>/scripts/manage-agent-webhooks.mjs test \
   --webhook-id webhook-agent-... \
   --payload-json '{"event":"test","message":"hello"}'
 ```
@@ -104,7 +104,7 @@ Secured webhook:
 
 ```bash
 printf '%s' "$WEBHOOK_SECURITY_KEY" | \
-  node <SKILL_DIR>/scripts/manage-agent-webhooks.ts test \
+  node <SKILL_DIR>/scripts/manage-agent-webhooks.mjs test \
     --webhook-id webhook-agent-... \
     --payload-file /tmp/event.json \
     --security-key-stdin
@@ -113,7 +113,7 @@ printf '%s' "$WEBHOOK_SECURITY_KEY" | \
 Then verify delivery:
 
 ```bash
-node <SKILL_DIR>/scripts/manage-agent-webhooks.ts requests \
+node <SKILL_DIR>/scripts/manage-agent-webhooks.mjs requests \
   --webhook-id webhook-agent-... \
   --limit 5
 ```
@@ -124,20 +124,20 @@ to display them.
 ### Enable or disable
 
 ```bash
-node <SKILL_DIR>/scripts/manage-agent-webhooks.ts disable \
+node <SKILL_DIR>/scripts/manage-agent-webhooks.mjs disable \
   --webhook-id webhook-agent-... --confirm
 
-node <SKILL_DIR>/scripts/manage-agent-webhooks.ts enable \
+node <SKILL_DIR>/scripts/manage-agent-webhooks.mjs enable \
   --webhook-id webhook-agent-...
 ```
 
 ### Rotate or delete
 
 ```bash
-node <SKILL_DIR>/scripts/manage-agent-webhooks.ts rotate \
+node <SKILL_DIR>/scripts/manage-agent-webhooks.mjs rotate \
   --webhook-id webhook-agent-... --confirm
 
-node <SKILL_DIR>/scripts/manage-agent-webhooks.ts delete \
+node <SKILL_DIR>/scripts/manage-agent-webhooks.mjs delete \
   --webhook-id webhook-agent-... --confirm
 ```
 
