@@ -71,7 +71,7 @@ function createZip(entries: ZipEntry[]): Buffer {
     // Central directory header
     const centralHeader = Buffer.alloc(46 + pathBuffer.length);
     centralHeader.writeUInt32LE(0x02014b50, 0); // Central directory signature
-    centralHeader.writeUInt16LE(20, 4); // Version made by
+    centralHeader.writeUInt16LE(0x0314, 4); // Version 2.0, made by Unix
     centralHeader.writeUInt16LE(20, 6); // Version needed to extract
     centralHeader.writeUInt16LE(0x0800, 8); // General purpose bit flag (UTF-8 names)
     centralHeader.writeUInt16LE(entry.isDirectory ? 0 : 8, 10); // Compression method
@@ -85,7 +85,10 @@ function createZip(entries: ZipEntry[]): Buffer {
     centralHeader.writeUInt16LE(0, 32); // File comment length
     centralHeader.writeUInt16LE(0, 34); // Disk number start
     centralHeader.writeUInt16LE(0, 36); // Internal file attributes
-    centralHeader.writeUInt32LE(entry.isDirectory ? 0x10 : 0, 38); // External file attributes
+    const unixMode = entry.isDirectory ? 0o40755 : 0o100644;
+    const externalAttributes =
+      ((unixMode << 16) | (entry.isDirectory ? 0x10 : 0)) >>> 0;
+    centralHeader.writeUInt32LE(externalAttributes, 38); // Unix mode + DOS directory bit
     centralHeader.writeUInt32LE(offset, 42); // Relative offset of local header
     pathBuffer.copy(centralHeader, 46);
 
