@@ -72,6 +72,12 @@ export function finishListenerTurn(
     completePreparedInputTerminal?: typeof completePreparedInputTerminal;
     /** Persist a crash proof even when no external terminal consumer exists. */
     persistTerminalWithoutConsumers?: boolean;
+    /**
+     * The turn continues on a teleport destination, which reports its real
+     * end. Keep local terminal durability but publish no `turn_finished`:
+     * channel gateways retire the turn's delivery when they receive one.
+     */
+    teleportHandoff?: boolean;
     /** Exact interrupted revision owned by this finalizer. */
     expectedInterruptedRevision?: string;
     /** Recovery lineages read their sidecar revision view, not successor main. */
@@ -105,7 +111,7 @@ export function finishListenerTurn(
           type: "turn_finished",
           turn_id: options.turnId,
           stop_reason: options.stopReason,
-          ...(options.terminalConsumerIds?.length
+          ...(options.terminalConsumerIds?.length && !options.teleportHandoff
             ? {
                 terminal_consumer_ids: [
                   ...new Set(options.terminalConsumerIds),
@@ -347,7 +353,8 @@ export function finishListenerTurn(
     mayEmit &&
     options.socket &&
     turnFinishedMessage &&
-    preparedTurnFinished
+    preparedTurnFinished &&
+    !options.teleportHandoff
   ) {
     emitDurableTurnFinished(
       options.socket,
