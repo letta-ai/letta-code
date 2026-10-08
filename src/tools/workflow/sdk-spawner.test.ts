@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
   createSdkSpawner,
-  DEFAULT_ALLOWED_TOOLS,
   DEFAULT_MAX_SUBAGENT_TOOL_CALLS,
   parseJsonReply,
   type SdkSpawnerConfig,
@@ -133,6 +132,7 @@ describe("createSdkSpawner", () => {
     const outcome = await createSdkSpawner(client, {
       ...CONFIG,
       cwd: "/repo",
+      permissionMode: "strict",
       parentModelSettings: { temperature: 0.2, reasoning_effort: "medium" },
       parentContextWindowLimit: 64_000,
     })(
@@ -155,8 +155,9 @@ describe("createSdkSpawner", () => {
       parentAgentId: "agent-parent",
       isSubagent: true,
       name: "review:a",
-      permissionMode: "unrestricted",
+      permissionMode: "strict",
       allowedTools: ["Read"],
+      toolset: { base: "none", include: ["Read"] },
       skillSources: [],
       cwd: "/repo",
       modelSettings: { temperature: 0.2, reasoning_effort: "low" },
@@ -182,16 +183,50 @@ describe("createSdkSpawner", () => {
     expect(client.calls[0]?.options.env).toBeUndefined();
   });
 
-  test("defaults to read-only tools and a numbered worker name", async () => {
+  test("leaves tools and permission mode to the harness when no parent snapshot exists", async () => {
     const client = fakeClient([{ type: "result", success: true, result: "" }]);
     await createSdkSpawner(client, CONFIG)(
       { ...request(), callIndex: 4 },
       new AbortController().signal,
     );
     expect(client.calls[0]?.options).toMatchObject({
-      allowedTools: DEFAULT_ALLOWED_TOOLS,
       name: "Workflow worker 5",
     });
+    expect(client.calls[0]?.options.allowedTools).toBeUndefined();
+    expect(client.calls[0]?.options.permissionMode).toBeUndefined();
+  });
+
+  test("inherits parent write tools and honors workflow, per-call, and empty allowlists", async () => {
+    const client = fakeClient([
+      { type: "result", success: true, result: "done" },
+    ]);
+    const spawner = createSdkSpawner(client, {
+      ...CONFIG,
+      permissionMode: "acceptEdits",
+      allowedTools: ["Read", "Write", "exec_command", "Agent", "custom_tool"],
+    });
+    for (const options of [
+      {},
+      { allowedTools: ["Read"] },
+      { allowedTools: [] },
+    ]) {
+      await spawner(request(options), new AbortController().signal);
+    }
+    expect(client.calls.map((call) => call.options.allowedTools)).toEqual([
+      ["Read", "Write", "exec_command", "Agent", "custom_tool"],
+      ["Read"],
+      [],
+    ]);
+    expect(client.calls.map((call) => call.options.toolset)).toEqual([
+      { base: "none", include: ["Read", "Write", "exec_command", "Task"] },
+      { base: "none", include: ["Read"] },
+      { base: "none", include: [] },
+    ]);
+    expect(
+      client.calls.every(
+        (call) => call.options.permissionMode === "acceptEdits",
+      ),
+    ).toBe(true);
   });
 
   test("resolves per-call model aliases and fails unknown ones before querying", async () => {
@@ -339,6 +374,8 @@ describe("createSdkSpawner", () => {
     ]);
     const spawner = createSdkSpawner(client, {
       ...CONFIG,
+      allowedTools: ["Read", "Write"],
+      permissionMode: "standard",
       supportsAgentFreeResume: true,
       retrieveConversation: async () => ({
         agent_id: null,
@@ -360,7 +397,8 @@ describe("createSdkSpawner", () => {
       value: "duplicate",
       conversationId: "conv-worker",
     });
-    expect(client.calls[0]?.options.allowedTools).toEqual([]);
+    expect(client.calls[0]?.options.allowedTools).toEqual(["Read", "Write"]);
+    expect(client.calls[0]?.options.permissionMode).toBe("standard");
   });
 
   test("applies explicit per-turn schema and no-tools configuration on continuation", async () => {
