@@ -14,7 +14,7 @@ import type {
   BrowserDeviceMcpOAuthResponseMessage,
 } from "@/types/task-control-protocol";
 
-const OPERATION_TIMEOUT_MS = 280_000;
+const MAX_DEADLINE_BUDGET_MS = 285_000;
 const HANDOFF_SUBMISSION_MARGIN_MS = 5_000;
 const MINIMUM_OPERATION_BUDGET_MS =
   BROWSER_DEVICE_HANDOFF_SUBMIT_TIMEOUT_MS + HANDOFF_SUBMISSION_MARGIN_MS + 1;
@@ -114,7 +114,7 @@ async function runBrowserDeviceMcpOAuth(
     command.deadline_ms - (dependencies.now?.() ?? Date.now());
   if (
     remainingMs < MINIMUM_OPERATION_BUDGET_MS ||
-    remainingMs > OPERATION_TIMEOUT_MS
+    remainingMs > MAX_DEADLINE_BUDGET_MS
   ) {
     sendTerminalResponse(command.request_id, "invalid_request", dependencies);
     return;

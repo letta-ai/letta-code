@@ -26,7 +26,7 @@ function startCommand(
     handoff_key: VALID_HANDOFF_KEY,
     service: "datadog",
     server_url: "https://mcp.datadoghq.com/v1/mcp",
-    deadline_ms: NOW_MS + 280_000,
+    deadline_ms: NOW_MS + 285_000,
     ...overrides,
   };
 }
@@ -263,7 +263,19 @@ describe("browser-device MCP OAuth command handling", () => {
     expect(authorizationBudgets).toEqual([105_000]);
     expect(harness.responses[0]?.success).toBe(true);
 
-    for (const deadline_ms of [NOW_MS, NOW_MS + 95_000, NOW_MS + 280_001]) {
+    const maximum = createHarness(
+      async (_request, _dependencies, _signal, authorizationTimeoutMs) => {
+        authorizationBudgets.push(authorizationTimeoutMs);
+      },
+    );
+    handleBrowserDeviceMcpOAuthProtocolCommand(
+      startCommand({ request_id: "maximum-budget" }),
+      maximum.dependencies,
+    );
+    await Promise.all(maximum.tasks);
+    expect(authorizationBudgets).toEqual([105_000, 190_000]);
+
+    for (const deadline_ms of [NOW_MS, NOW_MS + 95_000, NOW_MS + 285_001]) {
       const rejected = createHarness(async () => {
         throw new Error("must not run");
       });
