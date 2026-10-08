@@ -31,6 +31,10 @@ import { debugLog, debugWarn } from "@/utils/debug";
 import { withRepositoryCheckout } from "@/utils/repository-checkout";
 import { GIT_MEMORY_ENABLED_TAG } from "./agent-tags";
 import { listAttachedAgentRepositories } from "./attached-repositories";
+import {
+  type RepositoryMountGitArgs,
+  syncAttachedRepositoryCheckout,
+} from "./attached-repository-checkout";
 import { getAuthToken } from "./memory-auth";
 import { getScopedMemoryFilesystemRoot } from "./memory-filesystem";
 import { withSerializedGitConfigMutation } from "./memory-git-config-lock";
@@ -305,15 +309,6 @@ async function maybeUpdateRepositoryRemoteOrigin(args: {
   }
 }
 
-interface RepositoryMountGitArgs {
-  agentId: string;
-  repositoryName: string;
-  directory: string;
-  remoteUrl: string;
-  token: string;
-  publishedDirectory?: string;
-}
-
 export async function prepareAttachedRepositoryForGitOps(
   args: RepositoryMountGitArgs,
 ): Promise<void> {
@@ -327,31 +322,12 @@ export async function prepareAttachedRepositoryForGitOps(
 }
 
 async function syncRepoMount(args: RepositoryMountGitArgs): Promise<void> {
-  await withRepositoryCheckout(args.directory, async (directory, fresh) => {
-    args = { ...args, publishedDirectory: args.directory, directory };
-    if (fresh) {
-      await runGitWithRetry(
-        directory,
-        ["clone", args.remoteUrl, "."],
-        args.token,
-        {
-          operation: `clone repository ${args.repositoryName}`,
-          timeoutMs: GIT_CLONE_TIMEOUT_MS,
-        },
-      );
-    } else if (!existsSync(join(directory, ".git"))) {
-      throw new Error(
-        `repository mount path already exists and is not a git repository: ${args.directory}`,
-      );
-    } else {
-      await prepareAttachedRepositoryForGitOps(args);
-      await runGitWithRetry(args.directory, ["pull", "--ff-only"], args.token, {
-        operation: `pull repository ${args.repositoryName}`,
-      });
-    }
-
-    await prepareAttachedRepositoryForGitOps(args);
-    installSharedMemoryPreCommitHook(args.directory);
+  await syncAttachedRepositoryCheckout(args, {
+    git: runGit,
+    gitWithRetry: runGitWithRetry,
+    prepare: prepareAttachedRepositoryForGitOps,
+    installHook: installSharedMemoryPreCommitHook,
+    cloneTimeoutMs: GIT_CLONE_TIMEOUT_MS,
   });
 }
 
