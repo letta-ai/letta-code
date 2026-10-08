@@ -41,6 +41,15 @@ interface ClaudeSession {
   awaitingReplacementStart: boolean;
   suppressedResult?: Record<string, unknown>;
   resultCount: number;
+  /** Background subagents and workflows; shell tasks never block settling. */
+  runningAgentTasks: number;
+  agentTaskIds: Set<string>;
+  /** Agent task notifications not yet answered by a notification turn. */
+  pendingNotifications: number;
+  /** A result held back until background agent work reports in. */
+  deferredResult?: Record<string, unknown>;
+  /** stdin is closed; Claude finishes queued notification turns and exits. */
+  draining: boolean;
   turnWaiters: Set<TurnWaiter>;
   writeLock: Promise<void>;
   completion: Promise<SubagentResult>;
@@ -319,17 +328,78 @@ function settleResult(
   }
 }
 
+function isShellTask(task: Record<string, unknown>): boolean {
+  return task.task_type === "local_bash";
+}
+
+function handleBackgroundTasks(
+  session: ClaudeSession,
+  value: Record<string, unknown>,
+): void {
+  if (!Array.isArray(value.tasks)) return;
+  let running = 0;
+  for (const entry of value.tasks) {
+    const task = readRecord(entry);
+    if (!task || isShellTask(task)) continue;
+    running++;
+    if (typeof task.task_id === "string")
+      session.agentTaskIds.add(task.task_id);
+  }
+  session.runningAgentTasks = running;
+}
+
+function handleTaskStarted(
+  session: ClaudeSession,
+  value: Record<string, unknown>,
+): void {
+  if (!isShellTask(value) && typeof value.task_id === "string")
+    session.agentTaskIds.add(value.task_id);
+}
+
+function handleTaskNotification(
+  session: ClaudeSession,
+  value: Record<string, unknown>,
+): void {
+  if (typeof value.task_id !== "string") return;
+  if (session.agentTaskIds.delete(value.task_id))
+    session.pendingNotifications++;
+}
+
+/**
+ * A worker that backgrounds a subagent ends its turn with an interim result
+ * ("the agent is running…"); Claude then answers the task notification in a
+ * later turn. Settle only on the result that follows all agent work.
+ */
 function handleResult(
   session: ClaudeSession,
   value: Record<string, unknown>,
 ): void {
   session.interruptible = false;
   session.resultCount++;
+  if (readRecord(value.origin)?.kind === "task-notification") {
+    session.pendingNotifications = Math.max(
+      0,
+      session.pendingNotifications - 1,
+    );
+  }
   if (session.pendingSteers > 0) {
     session.pendingSteers--;
     session.suppressedResult = value;
     return;
   }
+  if (session.runningAgentTasks > 0) {
+    session.deferredResult = value;
+    return;
+  }
+  if (session.pendingNotifications > 0) {
+    // Several notifications can share one turn, so don't wait on a count.
+    // On EOF Claude runs the queued notification turns, then exits.
+    session.deferredResult = value;
+    session.draining = true;
+    closeInput(session);
+    return;
+  }
+  session.deferredResult = undefined;
   settleResult(session, value);
 }
 
@@ -391,6 +461,11 @@ async function launchSession(
     awaitingReplacementStart: false,
     suppressedResult: undefined,
     resultCount: 0,
+    runningAgentTasks: 0,
+    agentTaskIds: new Set(),
+    pendingNotifications: 0,
+    deferredResult: undefined,
+    draining: false,
     turnWaiters: new Set(),
     writeLock: Promise.resolve(),
     completion,
@@ -413,6 +488,13 @@ async function launchSession(
         handleControlResponse(session, value);
       } else if (value.type === "result") {
         handleResult(session, value);
+      } else if (value.type === "system") {
+        if (value.subtype === "background_tasks_changed")
+          handleBackgroundTasks(session, value);
+        else if (value.subtype === "task_started")
+          handleTaskStarted(session, value);
+        else if (value.subtype === "task_notification")
+          handleTaskNotification(session, value);
       } else if (
         value.type === "stream_event" &&
         readRecord(value.event)?.type === "message_start"
@@ -426,6 +508,10 @@ async function launchSession(
   transport.completion
     .then(({ exitCode, exitSignal }) => {
       if (session.settled) return;
+      if (session.deferredResult && !transport.wasAborted()) {
+        settleResult(session, session.deferredResult);
+        return;
+      }
       const detail = session.stderr.trim();
       const protocolDetail = session.protocolError
         ? `; protocol error: ${session.protocolError}`
@@ -499,6 +585,16 @@ async function steerSession(
 ): Promise<void> {
   await withWriteLock(session, async () => {
     signal?.throwIfAborted();
+    if (session.draining) {
+      await session.completion;
+      throw new Error("Claude Code session is no longer active");
+    }
+    if (session.deferredResult && !session.interruptible) {
+      // Idle between turns while background agents run: nothing to interrupt.
+      session.deferredResult = undefined;
+      await writeInput(session.transport.process.stdin, prompt);
+      return;
+    }
     await waitForTurnStart(session, signal);
     if (session.settled || sessions.get(session.sessionId) !== session) {
       throw new Error("Claude Code session is no longer active");
@@ -574,7 +670,10 @@ export async function sendClaudeMessage(
 ): Promise<ClaudeMessageReceipt> {
   options.signal?.throwIfAborted();
   const active = sessions.get(options.sessionId);
-  if (active && !active.settled) {
+  if (active?.draining) {
+    // stdin is closed; let queued notification turns finish, then resume.
+    await active.completion;
+  } else if (active && !active.settled) {
     try {
       await steerSession(active, options.prompt, options.signal);
       return { mode: "steered", sessionId: options.sessionId };

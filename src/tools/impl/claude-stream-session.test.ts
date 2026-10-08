@@ -9,7 +9,7 @@ import {
 
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";
 
-function transportFixture() {
+function transportFixture({ exitOnStdinEnd = true } = {}) {
   const stdin = new PassThrough();
   const stdout = new PassThrough();
   const stderr = new PassThrough();
@@ -31,7 +31,8 @@ function transportFixture() {
     ended = true;
     return originalEnd(...args);
   }) as typeof stdin.end;
-  stdin.on("finish", () => finish({ exitCode: 0, exitSignal: null }));
+  if (exitOnStdinEnd)
+    stdin.on("finish", () => finish({ exitCode: 0, exitSignal: null }));
   const transport: ClaudeSessionTransport = {
     process: { stdin, stdout, stderr } as ClaudeSessionTransport["process"],
     completion,
@@ -172,6 +173,154 @@ describe("Claude stream sessions", () => {
     fixture.emit({ type: "result", is_error: false, result: "done" });
     expect(await running).toMatchObject({ success: true, report: "done" });
     expect(fixture.ended()).toBe(true);
+  });
+
+  describe("background agents", () => {
+    const agentTask = {
+      task_id: "agent-task",
+      task_type: "local_agent",
+      description: "Read hello.txt",
+    };
+    const started = {
+      type: "system",
+      subtype: "task_started",
+      task_id: "agent-task",
+      task_type: "local_agent",
+    };
+    const tasksChanged = (tasks: unknown[]) => ({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks,
+    });
+    const notification = {
+      type: "system",
+      subtype: "task_notification",
+      task_id: "agent-task",
+      status: "completed",
+    };
+    const interim = {
+      type: "result",
+      is_error: false,
+      result: "The agent is reading hello.txt now.",
+    };
+    const final = {
+      type: "result",
+      is_error: false,
+      result: "The secret word is pineapple.",
+      origin: { kind: "task-notification", producer: "session-task" },
+    };
+
+    test("holds the interim result until the notification turn answers", async () => {
+      const fixture = transportFixture();
+      let completed = false;
+      const running = runClaudeTurn(
+        { ...base, prompt: "work", sessionId: SESSION_ID },
+        { createTransport: () => fixture.transport },
+      ).then((result) => {
+        completed = true;
+        return result;
+      });
+      await Bun.sleep(0);
+      fixture.emit(tasksChanged([agentTask]));
+      fixture.emit(started);
+      fixture.emit(interim);
+      await Bun.sleep(0);
+      expect(completed).toBe(false);
+      expect(fixture.ended()).toBe(false);
+      fixture.emit(notification);
+      fixture.emit(tasksChanged([]));
+      fixture.emit(final);
+      expect(await running).toMatchObject({
+        success: true,
+        report: "The secret word is pineapple.",
+      });
+    });
+
+    test("drains a notification that lands before the interim result", async () => {
+      const fixture = transportFixture({ exitOnStdinEnd: false });
+      let completed = false;
+      const running = runClaudeTurn(
+        { ...base, prompt: "work", sessionId: SESSION_ID },
+        { createTransport: () => fixture.transport },
+      ).then((result) => {
+        completed = true;
+        return result;
+      });
+      await Bun.sleep(0);
+      fixture.emit(tasksChanged([agentTask]));
+      fixture.emit(started);
+      fixture.emit(tasksChanged([]));
+      fixture.emit(notification);
+      fixture.emit(interim);
+      await Bun.sleep(0);
+      expect(completed).toBe(false);
+      expect(fixture.ended()).toBe(true);
+      fixture.emit(final);
+      expect(await running).toMatchObject({
+        report: "The secret word is pineapple.",
+      });
+    });
+
+    test("settles on the last result when a drain exits without another", async () => {
+      const fixture = transportFixture();
+      const running = runClaudeTurn(
+        { ...base, prompt: "work", sessionId: SESSION_ID },
+        { createTransport: () => fixture.transport },
+      );
+      await Bun.sleep(0);
+      fixture.emit(started);
+      fixture.emit(notification);
+      fixture.emit(interim);
+      expect(await running).toMatchObject({
+        success: true,
+        report: "The agent is reading hello.txt now.",
+      });
+    });
+
+    test("does not wait on background shell commands", async () => {
+      const fixture = transportFixture();
+      const running = runClaudeTurn(
+        { ...base, prompt: "work", sessionId: SESSION_ID },
+        { createTransport: () => fixture.transport },
+      );
+      await Bun.sleep(0);
+      fixture.emit(
+        tasksChanged([
+          { task_id: "dev", task_type: "local_bash", description: "dev" },
+        ]),
+      );
+      fixture.emit({ type: "result", is_error: false, result: "started" });
+      expect(await running).toMatchObject({ report: "started" });
+    });
+
+    test("writes a steer directly while idle between agent turns", async () => {
+      const fixture = transportFixture();
+      const running = runClaudeTurn(
+        { ...base, prompt: "work", sessionId: SESSION_ID },
+        { createTransport: () => fixture.transport },
+      );
+      await Bun.sleep(0);
+      fixture.emit(tasksChanged([agentTask]));
+      fixture.emit(interim);
+      await Bun.sleep(0);
+      const receipt = await sendClaudeMessage({
+        ...base,
+        prompt: "also check README",
+        sessionId: SESSION_ID,
+      });
+      expect(receipt.mode).toBe("steered");
+      const steer = parseWrite(fixture, 1);
+      expect(steer.type).toBe("user");
+      expect(fixture.writes).toHaveLength(2);
+      fixture.emit({ type: "stream_event", event: { type: "message_start" } });
+      fixture.emit({ type: "result", is_error: false, result: "waiting" });
+      fixture.emit(notification);
+      fixture.emit(tasksChanged([]));
+      fixture.emit(final);
+      expect(await running).toMatchObject({
+        report: "The secret word is pineapple.",
+      });
+    });
   });
 
   test("idle concurrent sends start one resume and serialize the second steer", async () => {
