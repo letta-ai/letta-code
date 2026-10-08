@@ -11,6 +11,8 @@ This file explains how to work effectively in this repo. It covers the rules enf
 3. **One PR per logical change.** Don't bundle unrelated changes — harder to revert if something breaks.
 4. **Never amend commits.** Always create a new commit.
 5. **Check the current branch** before editing files. If in doubt, ask.
+6. **Gate pushes on an explicit successful check result.** Treat `bun run check` as passing only when it prints its explicit `✓ N checks passed` line; the absence of `FAIL` is not sufficient.
+7. **Triage flaky integration or API failures against the baseline first.** Reproduce on unmodified `main` and inspect recent `main` CI runs before attributing a failure to a PR; use `gh run rerun <id> --failed` when appropriate, and wait for the run to finish before relying on its job logs.
 
 ---
 
@@ -273,6 +275,8 @@ directory first. Otherwise the run reads and mutates your real
 ### Known Gotchas
 
 - **Prettier is not used.** Biome is the sole formatter. Do not add Prettier — they conflict.
+- **Preserve the repository runtime configuration when launching from another cwd.** Running `bun run <repo>/src/index.ts` externally can skip `bunfig.toml` loader mappings (`.md`, `.mdx`, and `.txt` as text) and the `@/` alias, producing misleading parse or resolution errors. Use `bun --config=<repo>/bunfig.toml run ...` or `bun --cwd <repo> run src/index.ts`.
+- **Use a restrictive permission mode when testing permission gates.** `DEFAULT_PERMISSION_MODE` is `unrestricted`; verify gating with `--permission-mode standard --allowedTools ...` rather than relying on the default.
 - **`new URL("./path.ts", import.meta.url)` in tests** is not a static import and is not caught by the `@/` import codemod. Scan for `new URL(` manually when moving source files.
 - **grep exits 1 on no matches** — pre-commit hooks use `|| true` on grep pipes to prevent false failures on clean commits.
 - **macOS case-insensitive FS** — `existsSync("bash.ts")` returns `true` when `Bash.ts` exists. Rename scripts that use `existsSync` to check kebab-case targets will silently skip single-word PascalCase files. Use `git mv` for renames.
