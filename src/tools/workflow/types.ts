@@ -33,7 +33,7 @@ export interface AgentCallOptions {
   phase?: string;
   /**
    * Ask the subagent for a JSON value and resolve to the parsed result. No
-   * schema is enforced; a reply that is not valid JSON resolves to null.
+   * schema is enforced; a reply that is not valid JSON fails the call.
    */
   json?: boolean;
   /** JSON Schema for a validated result; takes precedence over json. */

@@ -339,10 +339,32 @@ export async function executeWorkflow(
         totalTokens: outcome.totalTokens,
       });
       if (signal.aborted) throw new Error("Workflow aborted.");
-      return outcome.failed ? null : outcome.value;
+      if (outcome.failed) {
+        const worker = outcome.conversationId
+          ? ` (${outcome.conversationId})`
+          : "";
+        throw Object.assign(
+          new Error(
+            `Workflow agent "${label}"${worker} failed: ${outcome.error ?? "unknown error"}`,
+          ),
+          { callIndex, conversationId: outcome.conversationId },
+        );
+      }
+      return outcome.value;
     } finally {
       semaphore.release();
     }
+  }
+
+  async function collectResults(tasks: Promise<unknown>[]): Promise<unknown[]> {
+    // Preserve sibling completion, but never turn an unhandled failure into
+    // a successful null result. Scripts can catch inside each callback for
+    // best-effort processing.
+    const outcomes = await Promise.allSettled(tasks);
+    return outcomes.map((outcome) => {
+      if (outcome.status === "rejected") throw outcome.reason;
+      return outcome.value;
+    });
   }
 
   async function parallel(thunks: unknown): Promise<unknown[]> {
@@ -354,14 +376,12 @@ export async function executeWorkflow(
         `parallel() accepts at most ${MAX_ITEMS_PER_HELPER} items, got ${thunks.length}.`,
       );
     }
-    return Promise.all(
+    return collectResults(
       thunks.map(async (thunk) => {
-        if (typeof thunk !== "function") return null;
-        try {
-          return await thunk();
-        } catch {
-          return null;
+        if (typeof thunk !== "function") {
+          throw new Error("parallel() takes an array of zero-arg functions.");
         }
+        return await thunk();
       }),
     );
   }
@@ -386,15 +406,11 @@ export async function executeWorkflow(
     );
     // No barrier between stages: each item flows through its whole chain
     // independently, so item A can be in stage 3 while item B is in stage 1.
-    return Promise.all(
+    return collectResults(
       items.map(async (item, index) => {
         let value: unknown = item;
         for (const stage of stageFns) {
-          try {
-            value = await stage(value, item, index);
-          } catch {
-            return null;
-          }
+          value = await stage(value, item, index);
         }
         return value;
       }),

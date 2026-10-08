@@ -6,7 +6,7 @@ ONLY call this tool when the user has explicitly opted into multi-agent orchestr
 
 Scripts can also call the agent's MCP tools directly with `await tools.mcp__server__tool(args)`, subject to the user's permission rules.
 
-Scripts are plain JavaScript and must begin with `export const meta = {...}`, a pure literal (no variables, calls, or interpolation). Pass the work list via `args`. Prefer `pipeline()` so each item moves to its next stage as soon as it is ready; `agent()` resolves to `null` on failure, so guard and filter:
+Scripts are plain JavaScript and must begin with `export const meta = {...}`, a pure literal (no variables, calls, or interpolation). Pass the work list via `args`. Prefer `pipeline()` so each item moves to its next stage as soon as it is ready. Await `agent()` calls: failures reject with the cause, `callIndex`, and `conversationId` when available. `parallel()` and `pipeline()` let siblings finish, then reject if any callback failed; a failed pipeline item skips its remaining stages. Catch errors explicitly inside callbacks for best-effort processing.
 
   export const meta = {
     name: 'review-files',
@@ -18,10 +18,10 @@ Scripts are plain JavaScript and must begin with `export const meta = {...}`, a 
   const results = await pipeline(
     args.files,
     f => agent(`Review ${f} for bugs.`, { phase: 'Review', schema: findings }),
-    (review, f) => parallel((review?.bugs ?? []).map(bug => () =>
+    (review, f) => parallel(review.bugs.map(bug => () =>
       agent(`Is this a real bug in ${f}? ${bug}`, { phase: 'Verify', schema: verdict })
-        .then(v => v?.real ? { file: f, bug } : null))),
+        .then(v => v.real ? { file: f, bug } : null))),
   )
-  return results.filter(Boolean).flat().filter(Boolean)
+  return results.flat().filter(Boolean)
 
 Before authoring a script, load the `workflow-authoring` skill — the script API, pipeline-vs-barrier rules, quality patterns, worked examples, and how to diagnose a run.
