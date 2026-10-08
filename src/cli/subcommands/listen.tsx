@@ -507,13 +507,11 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         }
       }
     }
-
     const readiness = createListenerReadinessController(
       channelNames.length > 0 || restoreEnabledChannels,
       (ready) => lifecycleOutput?.emit(ready ? "connected" : "reconnecting"),
       (status) => lifecycleOutput?.emitListenerStatus(status),
     );
-
     let channelGatewayStart: Promise<void> | null = null;
     const startChannelGateway = (): Promise<void> => {
       if (channelGatewayStart) return channelGatewayStart;
@@ -617,7 +615,6 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     sessionLog.log(`Session started (debug=${debugMode})`);
     sessionLog.log(`deviceId: ${deviceId}`);
     sessionLog.log(`connectionName: ${connectionName}`);
-
     if (startupMode.kind === "local-channels") {
       const connectionId = `local-${deviceId}`;
       const startupLabel =
@@ -654,13 +651,12 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             console.log(`[${formatTimestamp()}] status: ${status}`);
           }
         },
-        onConnected: async () => {
-          await startChannelGateway();
-        },
+        onConnected: () => {},
         onConnectionReady: async (connectedId) => {
           const ready = await completeListenerConnectionStartup(
             connectedId,
             readiness,
+            startChannelGateway,
           );
           if (!ready) return;
           sessionLog.log("Local channel listener ready.");
@@ -811,13 +807,12 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             }
           },
           onLog: logListenerMessage,
-          onConnected: async () => {
-            await startChannelGateway();
-          },
+          onConnected: () => {},
           onConnectionReady: async (connectedId) => {
             const ready = await completeListenerConnectionStartup(
               connectedId,
               readiness,
+              startChannelGateway,
             );
             if (!ready) return;
             sessionLog.log("Connected. Awaiting instructions.");
@@ -931,9 +926,15 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             updateStatusCallback?.(status);
           },
           onLog: logListenerMessage,
-          onConnected: async () => {
+          onConnected: () => {},
+          onConnectionReady: async (connectedId) => {
+            const ready = await completeListenerConnectionStartup(
+              connectedId,
+              readiness,
+              startChannelGateway,
+            );
+            if (!ready) return;
             sessionLog.log("Connected. Awaiting instructions.");
-            await startChannelGateway();
             clearRetryStatusCallback?.();
             updateStatusCallback?.("idle");
           },
