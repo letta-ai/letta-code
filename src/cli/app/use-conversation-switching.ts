@@ -50,7 +50,6 @@ import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import type { ModConversationCloseReason } from "@/cli/mods/types";
 import type { LocalModAdapter } from "@/cli/mods/use-local-mod-adapter";
-import { runSessionStartHooks } from "@/hooks";
 import { updateProjectSettings } from "@/settings";
 import { settingsManager } from "@/settings-manager";
 import type { PreparedScopeToolContext } from "@/tools/toolset";
@@ -101,15 +100,16 @@ type ConversationSwitchingContext = {
   resetPendingReasoningCycle: () => void;
   resetTrajectoryBases: () => void;
   runEndHooks: (reason?: ModConversationCloseReason) => Promise<void>;
-  sessionHooksRanRef: MutableRefObject<boolean>;
-  sessionStartFeedbackRef: MutableRefObject<string[]>;
   setActiveOverlay: Dispatch<SetStateAction<ActiveOverlay>>;
   setAgentId: Dispatch<SetStateAction<string>>;
   setAgentState: Dispatch<SetStateAction<AgentState | null | undefined>>;
   setBtwState: Dispatch<SetStateAction<BtwState>>;
   setCommandRunning: (value: boolean) => void;
   setConversationAutoTitleEligibility: (enabled: boolean) => void;
-  setConversationIdAndRef: (nextConversationId: string) => void;
+  setConversationIdAndRef: (
+    nextConversationId: string,
+    isNewSession?: boolean,
+  ) => void;
   setConversationSummary: (summary: string | null) => void;
   setCurrentModelHandle: Dispatch<SetStateAction<string | null>>;
   setInterruptRequested: Dispatch<SetStateAction<boolean>>;
@@ -153,8 +153,6 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
     resetPendingReasoningCycle,
     resetTrajectoryBases,
     runEndHooks,
-    sessionHooksRanRef,
-    sessionStartFeedbackRef,
     setActiveOverlay,
     setAgentId,
     setAgentState,
@@ -421,20 +419,6 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
           await recoverRestoredPendingApprovals(resumeData.pendingApprovals);
         }
 
-        sessionHooksRanRef.current = false;
-        runSessionStartHooks(
-          true,
-          agentId,
-          agentName ?? undefined,
-          conversationId,
-        )
-          .then((result) => {
-            if (result.feedback.length > 0) {
-              sessionStartFeedbackRef.current = result.feedback;
-            }
-          })
-          .catch(() => {});
-        sessionHooksRanRef.current = true;
         void modAdapter.events.emit(
           "conversation_open",
           {
@@ -480,8 +464,6 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
       conversationGenerationRef,
       hasBackfilledRef,
       pendingConversationSwitchRef,
-      sessionHooksRanRef,
-      sessionStartFeedbackRef,
       setBtwState,
       setInterruptRequested,
       setIsExecutingTool,
@@ -800,7 +782,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         setLlmConfig(agent.llm_config);
         const agentModelHandle = getPreferredAgentModelHandle(agent);
         setCurrentModelHandle(agentModelHandle);
-        setConversationIdAndRef(targetConversationId);
+        setConversationIdAndRef(targetConversationId, true);
         setConversationAutoTitleEligibility(false);
         setConversationSummary(null);
 
