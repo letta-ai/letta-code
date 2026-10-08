@@ -24,7 +24,7 @@
     "allowedTools": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "Default tool allowlist for subagents (per-call opts.allowedTools overrides). Defaults to read-only: Read, Grep, Glob. Widen deliberately for workflows that must write."
+      "description": "Default tool allowlist for subagents (per-call opts.allowedTools overrides). Omit to inherit the invoking session's tools and permission mode. Pass [] for no tools."
     }
   },
   "additionalProperties": false,
