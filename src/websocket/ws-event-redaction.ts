@@ -28,11 +28,11 @@ const OAUTH_CONTEXT_SENSITIVE_KEYS = new Set([
  * never copied into logs.
  */
 export function redactWsEventForLogging(event: unknown): unknown {
-  return redactValue(
-    event,
-    new WeakSet<object>(),
-    isBrowserDeviceMcpOAuthValue(event),
-  );
+  const seen = new WeakSet<object>();
+  const oauthContext = isBrowserDeviceMcpOAuthValue(event);
+  return typeof event === "string"
+    ? redactString(event, seen, oauthContext)
+    : redactValue(event, seen, oauthContext);
 }
 
 function redactValue(
@@ -41,7 +41,7 @@ function redactValue(
   oauthContext: boolean,
 ): unknown {
   if (typeof value === "string") {
-    return redactString(value, seen, oauthContext);
+    return oauthContext ? redactString(value, seen, true) : value;
   }
   if (value === null || typeof value !== "object" || value instanceof Date) {
     return value;

@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import type WebSocket from "ws";
-import type { BrowserDeviceMcpOAuthRequest } from "@/browser-device-mcp-oauth";
+import {
+  type BrowserDeviceMcpOAuthRequest,
+  connectBrowserDeviceMcpOAuth,
+} from "@/browser-device-mcp-oauth";
 import type {
   BrowserDeviceMcpOAuthCancelCommand,
   BrowserDeviceMcpOAuthCommand,
@@ -550,6 +553,73 @@ describe("browser-device MCP OAuth command handling", () => {
     }
   });
 
+  test("retains cancel-before-start so a replayed start cannot import", () => {
+    let connectCalls = 0;
+    const harness = createHarness(async () => {
+      connectCalls += 1;
+    });
+    handleBrowserDeviceMcpOAuthProtocolCommand(
+      {
+        type: "browser_device_mcp_oauth_cancel",
+        operation_id: "operation-1",
+      },
+      harness.dependencies,
+    );
+    expect(harness.responses).toEqual([]);
+
+    handleBrowserDeviceMcpOAuthProtocolCommand(
+      startCommand(),
+      harness.dependencies,
+    );
+    expect(connectCalls).toBe(0);
+    expect(harness.tasks).toEqual([]);
+    const cancelledResponse: BrowserDeviceMcpOAuthResponseMessage = {
+      type: "browser_device_mcp_oauth_response",
+      request_id: "operation-1",
+      success: false,
+      error_code: "cancelled",
+    };
+    expect(harness.responses).toEqual([cancelledResponse]);
+
+    rebindBrowserDeviceMcpOAuthOperationsToSocket(
+      harness.dependencies.owner,
+      harness.dependencies.lineageId,
+      createTestSocket(),
+    );
+    expect(harness.responses).toEqual([cancelledResponse, cancelledResponse]);
+  });
+
+  test("cancel-before-start tombstones expire within the operation bound", async () => {
+    let monotonicNow = MONOTONIC_NOW_MS;
+    let connectCalls = 0;
+    const harness = createHarness(async () => {
+      connectCalls += 1;
+    });
+    harness.dependencies.monotonicNow = () => monotonicNow;
+    handleBrowserDeviceMcpOAuthProtocolCommand(
+      {
+        type: "browser_device_mcp_oauth_cancel",
+        operation_id: "operation-1",
+      },
+      harness.dependencies,
+    );
+
+    monotonicNow += 285_001;
+    handleBrowserDeviceMcpOAuthProtocolCommand(
+      startCommand(),
+      harness.dependencies,
+    );
+    await Promise.all(harness.tasks);
+    expect(connectCalls).toBe(1);
+    expect(harness.responses).toEqual([
+      {
+        type: "browser_device_mcp_oauth_response",
+        request_id: "operation-1",
+        success: true,
+      },
+    ]);
+  });
+
   test("cancels only the matching operation and retains its terminal for reconnect", async () => {
     let observedSignal: AbortSignal | undefined;
     const owner = createRuntime();
@@ -616,6 +686,57 @@ describe("browser-device MCP OAuth command handling", () => {
       VALID_HANDOFF_KEY,
     );
     stopRuntime(owner, true);
+  });
+
+  test("cancel after Cloud commit waits for the held response and reports success", async () => {
+    let markCommitted: (() => void) | undefined;
+    let releaseResponse: (() => void) | undefined;
+    const committed = new Promise<void>((resolve) => {
+      markCommitted = resolve;
+    });
+    const harness = createHarness(async (request, _dependencies, signal) => {
+      await connectBrowserDeviceMcpOAuth(
+        request,
+        {
+          authorize: async () => ({
+            access_token: "provider-access-token",
+            client_id: "provider-client-id",
+            redirect_uri: "http://127.0.0.1:43210/callback",
+          }),
+          importCredentials: async (_request, _credentials, importSignal) => {
+            expect(importSignal).toBeUndefined();
+            markCommitted?.();
+            await new Promise<void>((resolve) => {
+              releaseResponse = resolve;
+            });
+          },
+          openBrowser: async () => undefined,
+        },
+        signal,
+      );
+    });
+    handleBrowserDeviceMcpOAuthProtocolCommand(
+      startCommand(),
+      harness.dependencies,
+    );
+    await committed;
+
+    handleBrowserDeviceMcpOAuthProtocolCommand(
+      {
+        type: "browser_device_mcp_oauth_cancel",
+        operation_id: "operation-1",
+      },
+      harness.dependencies,
+    );
+    releaseResponse?.();
+    await Promise.all(harness.tasks);
+    expect(harness.responses).toEqual([
+      {
+        type: "browser_device_mcp_oauth_response",
+        request_id: "operation-1",
+        success: true,
+      },
+    ]);
   });
 
   test("cancel preserves a success terminal that already won the race", async () => {

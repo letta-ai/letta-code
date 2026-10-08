@@ -112,6 +112,35 @@ describe("browser device MCP OAuth", () => {
     expect(imported).toBe(false);
   });
 
+  test("finishes a committed submission after cancel while its response is held", async () => {
+    const controller = new AbortController();
+    let releaseResponse: (() => void) | undefined;
+    let markCommitted: (() => void) | undefined;
+    const committed = new Promise<void>((resolve) => {
+      markCommitted = resolve;
+    });
+    const operation = connectBrowserDeviceMcpOAuth(
+      REQUEST,
+      {
+        authorize: async () => CREDENTIALS,
+        importCredentials: async (_request, _credentials, signal) => {
+          expect(signal).toBeUndefined();
+          markCommitted?.();
+          await new Promise<void>((resolve) => {
+            releaseResponse = resolve;
+          });
+        },
+        openBrowser: async () => undefined,
+      },
+      controller.signal,
+    );
+
+    await committed;
+    controller.abort(new DOMException("Caller left", "AbortError"));
+    releaseResponse?.();
+    await expect(operation).resolves.toBeUndefined();
+  });
+
   test("rejects invalid handoffs, services, server URLs, and authorization origins", async () => {
     const dependencies = {
       authorize: async (options: AuthorizeMcpServerWithStorageOptions) => {

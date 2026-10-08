@@ -24,13 +24,14 @@ const COMPLETED_OPERATION_RETENTION_MS = 60_000;
 interface OperationRecord {
   controller: AbortController;
   flightKey: string | null;
-  requestDigest: string;
+  requestDigest: string | null;
   expiresAtMonotonicMs: number;
   dependencies: BrowserDeviceMcpOAuthCommandDependencies;
   owner: ListenerRuntime;
   lineageId: string;
   response?: BrowserDeviceMcpOAuthResponseMessage;
   lastAttemptedSocket: WebSocket | null;
+  pendingStartCancellation: boolean;
   disposed: boolean;
 }
 
@@ -70,9 +71,19 @@ export function handleBrowserDeviceMcpOAuthProtocolCommand(
   pruneExpiredOperations(receivedAtMonotonicMs);
 
   if (command.type === "browser_device_mcp_oauth_cancel") {
-    const operation = operations.get(
-      operationKey(dependencies.lineageId, command.operation_id),
-    );
+    const key = operationKey(dependencies.lineageId, command.operation_id);
+    const operation = operations.get(key);
+    if (!operation) {
+      operations.set(
+        key,
+        createCancelTombstone(
+          command.operation_id,
+          dependencies,
+          receivedAtMonotonicMs,
+        ),
+      );
+      return true;
+    }
     // The original credential-free terminal is the application-level cancel
     // acknowledgement. Abort only live work owned by this runtime; a terminal
     // that already won the race remains retained for reconnect delivery.
@@ -92,12 +103,22 @@ export function handleBrowserDeviceMcpOAuthProtocolCommand(
   const key = operationKey(dependencies.lineageId, command.request_id);
   const existing = operations.get(key);
   if (existing) {
-    // Only an exact replay from the same explicit replacement lineage may adopt
-    // the successor socket. Retain a digest rather than the bearer handoff.
-    if (
-      existing.owner !== dependencies.owner ||
-      existing.requestDigest !== requestDigest(command)
-    ) {
+    // Only the same runtime on this explicit replacement lineage may consume a
+    // pending cancel or adopt a successor socket.
+    if (existing.owner !== dependencies.owner) {
+      sendTerminalResponse(command.request_id, "invalid_request", dependencies);
+      return true;
+    }
+    const digest = requestDigest(command);
+    if (existing.pendingStartCancellation) {
+      existing.pendingStartCancellation = false;
+      existing.requestDigest = digest;
+      existing.dependencies = dependencies;
+      deliverTerminal(existing);
+      return true;
+    }
+    // Retain a digest rather than the bearer handoff for exact replay matching.
+    if (existing.requestDigest !== digest) {
       sendTerminalResponse(command.request_id, "invalid_request", dependencies);
       return true;
     }
@@ -185,6 +206,7 @@ async function runBrowserDeviceMcpOAuth(
     owner: dependencies.owner,
     lineageId: dependencies.lineageId,
     lastAttemptedSocket: null,
+    pendingStartCancellation: false,
     disposed: false,
   };
   operations.set(operationMapKey, operation);
@@ -252,7 +274,13 @@ function createTerminalResponse(
 }
 
 function deliverTerminal(operation: OperationRecord): void {
-  if (!operation.response || operation.disposed) return;
+  if (
+    !operation.response ||
+    operation.pendingStartCancellation ||
+    operation.disposed
+  ) {
+    return;
+  }
   const socket = operation.dependencies.socket;
   if (operation.lastAttemptedSocket === socket) return;
   operation.lastAttemptedSocket = socket;
@@ -265,6 +293,26 @@ function deliverTerminal(operation: OperationRecord): void {
   if (!sent && operation.lastAttemptedSocket === socket) {
     operation.lastAttemptedSocket = null;
   }
+}
+
+function createCancelTombstone(
+  requestId: string,
+  dependencies: BrowserDeviceMcpOAuthCommandDependencies,
+  receivedAtMonotonicMs: number,
+): OperationRecord {
+  return {
+    controller: new AbortController(),
+    flightKey: null,
+    requestDigest: null,
+    expiresAtMonotonicMs: receivedAtMonotonicMs + MAX_OPERATION_TIMEOUT_MS,
+    dependencies,
+    owner: dependencies.owner,
+    lineageId: dependencies.lineageId,
+    response: createTerminalResponse(requestId, "cancelled"),
+    lastAttemptedSocket: null,
+    pendingStartCancellation: true,
+    disposed: false,
+  };
 }
 
 function cacheTerminalResponse(
@@ -284,6 +332,7 @@ function cacheTerminalResponse(
     lineageId: dependencies.lineageId,
     response: createTerminalResponse(command.request_id, errorCode),
     lastAttemptedSocket: null,
+    pendingStartCancellation: false,
     disposed: false,
   };
   operations.set(operationMapKey, operation);
@@ -307,7 +356,9 @@ function pruneExpiredOperations(monotonicNowMs: number): void {
   for (const [key, operation] of operations) {
     const expiresAtMonotonicMs =
       operation.expiresAtMonotonicMs +
-      (operation.response ? COMPLETED_OPERATION_RETENTION_MS : 0);
+      (operation.response && !operation.pendingStartCancellation
+        ? COMPLETED_OPERATION_RETENTION_MS
+        : 0);
     if (monotonicNowMs > expiresAtMonotonicMs) {
       disposeOperation(
         key,
@@ -344,7 +395,9 @@ export function rebindBrowserDeviceMcpOAuthOperationsToSocket(
       operation.dependencies.monotonicNow?.() ?? performance.now();
     const expiresAtMonotonicMs =
       operation.expiresAtMonotonicMs +
-      (operation.response ? COMPLETED_OPERATION_RETENTION_MS : 0);
+      (operation.response && !operation.pendingStartCancellation
+        ? COMPLETED_OPERATION_RETENTION_MS
+        : 0);
     if (monotonicNowMs > expiresAtMonotonicMs) {
       disposeOperation(
         key,

@@ -123,7 +123,11 @@ export async function connectBrowserDeviceMcpOAuth(
       storage: ephemeralStorage.storage,
       storageNamespace: `browser-device-mcp-oauth-${randomUUID()}`,
     });
-    await dependencies.importCredentials(canonicalRequest, credentials, signal);
+    // Once credential submission begins, caller cancellation is ambiguous: Cloud
+    // may have committed the handoff before its response is observed. Let the
+    // submission's own bounded, idempotent reconciliation finish so we never
+    // report `cancelled` for credentials that were durably saved.
+    await dependencies.importCredentials(canonicalRequest, credentials);
   } finally {
     ephemeralStorage.clear();
   }

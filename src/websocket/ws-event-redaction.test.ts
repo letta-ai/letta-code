@@ -39,15 +39,15 @@ describe("WS event redaction", () => {
     expect(
       redactWsEventForLogging({
         type: "sync_response",
-        error: "runtime unavailable",
-        state: "retrying",
+        error: '{"upstream":"truncated"',
+        state: '{"phase":"retrying"}',
         code: "E_RETRY",
         access_token: "secret-token",
       }),
     ).toEqual({
       type: "sync_response",
-      error: "runtime unavailable",
-      state: "retrying",
+      error: '{"upstream":"truncated"',
+      state: '{"phase":"retrying"}',
       code: "E_RETRY",
       access_token: "[REDACTED]",
     });
