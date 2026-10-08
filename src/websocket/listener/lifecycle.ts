@@ -17,6 +17,7 @@ import {
   rejectPendingApprovalResolversForConnection,
 } from "./approval";
 import { resolveListenerReconnectAuth } from "./auth";
+import { disposeBrowserDeviceMcpOAuthOperationsForRuntime } from "./commands/browser-device-mcp-oauth";
 import {
   getOrCreateProcessTransport,
   isCurrentInitializedListenerConnection,
@@ -215,6 +216,7 @@ export function stopRuntime(
   suppressCallbacks: boolean,
 ): void {
   runtime.intentionallyClosed = true;
+  disposeBrowserDeviceMcpOAuthOperationsForRuntime(runtime);
   clearPreparedTerminalPromotionTimers(runtime);
   revokeRecoveryClaims(runtime);
   notifyStreamObserversRuntimeStopped(runtime);

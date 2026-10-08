@@ -13,6 +13,7 @@ import type {
   BrowserDeviceMcpOAuthErrorCode,
   BrowserDeviceMcpOAuthResponseMessage,
 } from "@/types/task-control-protocol";
+import type { ListenerRuntime } from "@/websocket/listener/types";
 
 const MAX_DEADLINE_BUDGET_MS = 285_000;
 const HANDOFF_SUBMISSION_MARGIN_MS = 5_000;
@@ -26,8 +27,10 @@ interface OperationRecord {
   requestDigest: string;
   deadlineMs: number;
   dependencies: BrowserDeviceMcpOAuthCommandDependencies;
+  owner: ListenerRuntime;
   response?: BrowserDeviceMcpOAuthResponseMessage;
   delivered: boolean;
+  disposed: boolean;
 }
 
 interface BrowserDeviceMcpOAuthCommandDependencies {
@@ -48,6 +51,7 @@ interface BrowserDeviceMcpOAuthCommandDependencies {
     context: string,
   ) => boolean;
   socket: WebSocket;
+  owner: ListenerRuntime;
   /** Stable across physical WebSocket replacements, unlike connection IDs. */
   lineageId: string;
   now?: () => number;
@@ -78,7 +82,10 @@ export function handleBrowserDeviceMcpOAuthProtocolCommand(
   if (existing) {
     // Only an exact replay from the same explicit replacement lineage may adopt
     // the successor socket. Retain a digest rather than the bearer handoff.
-    if (existing.requestDigest !== requestDigest(command)) {
+    if (
+      existing.owner !== dependencies.owner ||
+      existing.requestDigest !== requestDigest(command)
+    ) {
       sendTerminalResponse(command.request_id, "invalid_request", dependencies);
       return true;
     }
@@ -137,7 +144,9 @@ async function runBrowserDeviceMcpOAuth(
     requestDigest: requestDigest(command),
     deadlineMs: command.deadline_ms,
     dependencies,
+    owner: dependencies.owner,
     delivered: false,
+    disposed: false,
   };
   operations.set(operationMapKey, operation);
   activeFlights.set(flightKey, operationMapKey);
@@ -168,6 +177,7 @@ async function runBrowserDeviceMcpOAuth(
     }
   }
 
+  if (operation.disposed) return;
   operation.response = createTerminalResponse(command.request_id, errorCode);
   deliverTerminal(operation);
 }
@@ -236,8 +246,25 @@ function pruneCompletedOperations(now: number): void {
   }
 }
 
+export function disposeBrowserDeviceMcpOAuthOperationsForRuntime(
+  runtime: ListenerRuntime,
+): void {
+  for (const [key, operation] of operations) {
+    if (operation.owner !== runtime) continue;
+    operation.disposed = true;
+    operations.delete(key);
+    if (activeFlights.get(operation.flightKey) === key) {
+      activeFlights.delete(operation.flightKey);
+    }
+    operation.controller.abort(
+      new DOMException("Listener runtime stopped", "AbortError"),
+    );
+  }
+}
+
 export function resetBrowserDeviceMcpOAuthOperationsForTests(): void {
   for (const operation of operations.values()) {
+    operation.disposed = true;
     operation.controller.abort();
   }
   operations.clear();

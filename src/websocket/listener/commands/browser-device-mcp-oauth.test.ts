@@ -7,8 +7,10 @@ import type {
   BrowserDeviceMcpOAuthCommand,
   BrowserDeviceMcpOAuthResponseMessage,
 } from "@/types/task-control-protocol";
+import { createRuntime, stopRuntime } from "@/websocket/listener/lifecycle";
 import { SUPPORTED_REMOTE_COMMANDS } from "@/websocket/listener/listener-constants";
 import { parseServerMessage } from "@/websocket/listener/protocol-inbound";
+import type { ListenerRuntime } from "@/websocket/listener/types";
 import {
   handleBrowserDeviceMcpOAuthProtocolCommand,
   resetBrowserDeviceMcpOAuthOperationsForTests,
@@ -38,6 +40,7 @@ function createHarness(
     signal: AbortSignal,
     authorizationTimeoutMs: number,
   ) => Promise<void>,
+  owner: ListenerRuntime = {} as ListenerRuntime,
 ) {
   const responses: BrowserDeviceMcpOAuthResponseMessage[] = [];
   const tasks: Promise<void>[] = [];
@@ -46,6 +49,7 @@ function createHarness(
     dependencies: {
       connect,
       socket,
+      owner,
       lineageId: "listener-lineage-1",
       now: () => NOW_MS,
       runDetachedListenerTask: (
@@ -150,6 +154,7 @@ describe("browser-device MCP OAuth command handling", () => {
       });
     const common = {
       connect,
+      owner: {} as ListenerRuntime,
       lineageId: "stable-lineage",
       now: () => NOW_MS,
       runDetachedListenerTask: (
@@ -246,6 +251,44 @@ describe("browser-device MCP OAuth command handling", () => {
         success: true,
       },
     ]);
+  });
+
+  test("runtime shutdown aborts stale work, releases its flight, and suppresses its terminal", async () => {
+    const staleOwner = createRuntime();
+    const stale = createHarness(
+      async (_request, _dependencies, signal) =>
+        await new Promise<void>((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          });
+        }),
+      staleOwner,
+    );
+    handleBrowserDeviceMcpOAuthProtocolCommand(
+      startCommand(),
+      stale.dependencies,
+    );
+
+    stopRuntime(staleOwner, true);
+
+    const successorOwner = createRuntime();
+    const successor = createHarness(async () => undefined, successorOwner);
+    successor.dependencies.lineageId = "unrelated-successor-lineage";
+    handleBrowserDeviceMcpOAuthProtocolCommand(
+      startCommand({ request_id: "successor-operation" }),
+      successor.dependencies,
+    );
+    await Promise.all([...stale.tasks, ...successor.tasks]);
+
+    expect(stale.responses).toEqual([]);
+    expect(successor.responses).toEqual([
+      {
+        type: "browser_device_mcp_oauth_response",
+        request_id: "successor-operation",
+        success: true,
+      },
+    ]);
+    stopRuntime(successorOwner, true);
   });
 
   test("uses the remaining absolute deadline and rejects unsafe budgets", async () => {

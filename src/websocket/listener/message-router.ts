@@ -814,6 +814,7 @@ export function createListenerMessageHandler(
         }) ||
         handleBrowserDeviceMcpOAuthProtocolCommand(parsed, {
           socket,
+          owner: runtime,
           lineageId,
           safeSocketSend,
           runDetachedListenerTask,
