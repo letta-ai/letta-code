@@ -128,6 +128,13 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * The computer's listener no longer has the worker. Subagent state lives in
+ * the listener process, so this means the listener restarted (taking the CLI
+ * child with it) before the caller saw a result.
+ */
+class RemoteWorkerLostError extends Error {}
+
 /** Follows the computer's snapshot for one launch, reconnecting if the socket drops. */
 class RemoteSubagentFollower {
   private latest: SubagentSnapshot | undefined;
@@ -138,6 +145,8 @@ class RemoteSubagentFollower {
   private disconnected = false;
   /** The computer dropped the entry before this follower saw it finish. */
   private lost = false;
+  /** The computer accepted the launch, so its snapshot must include the entry. */
+  private launched = false;
 
   constructor(
     private readonly scope: ParentScope,
@@ -163,7 +172,7 @@ class RemoteSubagentFollower {
         (entry) => entry.tool_call_id === this.toolCallId,
       );
       if (snapshot) this.latest = snapshot;
-      else if (this.latest) this.lost = true;
+      else if (this.latest || this.launched) this.lost = true;
       this.wake.resolve();
     });
     const offDisconnect = client.onDisconnect(() => {
@@ -174,6 +183,11 @@ class RemoteSubagentFollower {
       offMessage();
       offDisconnect();
     };
+  }
+
+  /** Call once the launch succeeds; the entry is registered before the response. */
+  markLaunched(): void {
+    this.launched = true;
   }
 
   close(): void {
@@ -198,7 +212,7 @@ class RemoteSubagentFollower {
         const latest = this.latest;
         if (latest?.status === "completed" || latest?.status === "error")
           return latest;
-        if (this.lost) throw new Error("Lost track of the subagent's result");
+        if (this.lost) throw new RemoteWorkerLostError();
         if (latest) onProgress(latest);
         if (this.disconnected) {
           await new Promise((resolve) =>
@@ -312,6 +326,8 @@ export async function launchRemoteExternalCodingAgent(
     };
   }
 
+  follower.markLaunched();
+
   const { taskId, outputFile } = deps.spawn({
     subagentType: type,
     config: createExternalCodingAgentConfig(type),
@@ -348,8 +364,11 @@ export async function launchRemoteExternalCodingAgent(
             model,
             report: "",
             success: false,
-            // No remote stop command exists yet; the worker keeps running.
-            error: `${signal?.aborted ? "Stopped following this subagent" : errorMessage(error)}. The ${type} worker may still be running on ${computer}.`,
+            error:
+              error instanceof RemoteWorkerLostError && !signal?.aborted
+                ? `The ${type} worker on ${computer} was lost: the Letta Code listener on ${computer} restarted before the worker reported a result, and the worker did not survive the restart. Launch it again if the work is still needed.`
+                : // No remote stop command exists yet; the worker keeps running.
+                  `${signal?.aborted ? "Stopped following this subagent" : errorMessage(error)}. The ${type} worker may still be running on ${computer}.`,
             durationMs: Date.now() - startedAt,
           } satisfies SubagentResult;
         } finally {

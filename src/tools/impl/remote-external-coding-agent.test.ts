@@ -110,6 +110,15 @@ class FakeComputer {
       );
   }
 
+  /** A snapshot from a listener that has no subagents for this conversation. */
+  emptySnapshot(seq = 1) {
+    for (const handler of this.messageHandlers)
+      handler(
+        { type: "update_subagent_state", runtime, seq, subagents: [] } as never,
+        "control",
+      );
+  }
+
   drop() {
     for (const handler of this.disconnectHandlers)
       handler({ channel: "control", event: { code: 1013 } });
@@ -268,6 +277,26 @@ describe("launchRemoteExternalCodingAgent", () => {
     const message = await notified();
     expect(second.syncs).toBe(1);
     expect(message.text).toContain("Done after drop");
+  });
+
+  test("says the worker was lost when a restarted listener no longer has it", async () => {
+    const first = new FakeComputer(() => accepted);
+    // The replacement listener is a new process with no record of the worker.
+    const second = new FakeComputer(
+      () => accepted,
+      (computer) => computer.emptySnapshot(),
+    );
+    const result = await launch([first, second]);
+    if (!result.success) throw new Error(result.error);
+    // Drop before any progress snapshot: the accepted launch alone must count.
+    first.drop();
+    const message = await notified();
+    expect(second.syncs).toBe(1);
+    expect(message.text).toContain("<status>failed</status>");
+    expect(message.text).toContain(
+      "the Letta Code listener on brad-box restarted",
+    );
+    expect(message.text).not.toContain("may still be running");
   });
 
   test("tells the caller to update an older Letta Code without connecting", async () => {

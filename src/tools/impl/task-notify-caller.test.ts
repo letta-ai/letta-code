@@ -19,6 +19,8 @@ const parentScope = { agentId: "agent-parent", conversationId: "conv-parent" };
 const queued: QueuedMessage[] = [];
 let bin: string;
 const originalPath = process.env.PATH;
+// Fake CLIs are shebang scripts, which Windows cannot execute from PATH.
+const isWindows = process.platform === "win32";
 
 function fakeExecutable(name: string, source: string): void {
   const path = join(bin, name);
@@ -105,22 +107,27 @@ describe("notify caller on the launching computer", () => {
     },
   );
 
-  test("fails a Claude Code launch that is not signed in", async () => {
-    fakeExecutable(
-      "claude",
-      `process.stdout.write(JSON.stringify({ loggedIn: false })); process.exit(1);`,
-    );
-    expect(await launch("claude-code")).toMatchObject({
-      success: false,
-      error_code: "not_signed_in",
-    });
-    expect(queued).toHaveLength(0);
-  });
+  test.skipIf(isWindows)(
+    "fails a Claude Code launch that is not signed in",
+    async () => {
+      fakeExecutable(
+        "claude",
+        `process.stdout.write(JSON.stringify({ loggedIn: false })); process.exit(1);`,
+      );
+      expect(await launch("claude-code")).toMatchObject({
+        success: false,
+        error_code: "not_signed_in",
+      });
+      expect(queued).toHaveLength(0);
+    },
+  );
 
-  test("fails a Codex launch whose app-server needs an OpenAI sign-in", async () => {
-    fakeExecutable(
-      "codex",
-      `if (process.argv[2] === "--version") { console.log("codex-cli 0.0.0"); process.exit(0); }
+  test.skipIf(isWindows)(
+    "fails a Codex launch whose app-server needs an OpenAI sign-in",
+    async () => {
+      fakeExecutable(
+        "codex",
+        `if (process.argv[2] === "--version") { console.log("codex-cli 0.0.0"); process.exit(0); }
 const rl = require("node:readline").createInterface({ input: process.stdin });
 rl.on("line", (line) => {
   const request = JSON.parse(line);
@@ -130,11 +137,12 @@ rl.on("line", (line) => {
     : request.method === "thread/start" ? { thread: { id: "thread-1" } } : {};
   process.stdout.write(JSON.stringify({ id: request.id, result }) + "\\n");
 });`,
-    );
-    expect(await launch("codex")).toMatchObject({
-      success: false,
-      error_code: "not_signed_in",
-    });
-    expect(queued).toHaveLength(0);
-  });
+      );
+      expect(await launch("codex")).toMatchObject({
+        success: false,
+        error_code: "not_signed_in",
+      });
+      expect(queued).toHaveLength(0);
+    },
+  );
 });
