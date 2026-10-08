@@ -1272,6 +1272,7 @@ async function main(): Promise<void> {
     console.error(startupPermissionMode.message);
     process.exit(1);
   }
+
   if (isHeadless) {
     markMilestone("HEADLESS_MODE_START");
     // For headless mode, load tools synchronously (respecting model/toolset when provided)
@@ -1297,7 +1298,6 @@ async function main(): Promise<void> {
       !noSystemInfoReminderFlag,
       { requestedBackendMode: explicitBackendMode },
     );
-    await browserDiscoveryServer.close();
     return;
   }
 
@@ -2573,5 +2573,5 @@ async function main(): Promise<void> {
   );
 }
 assertSupportedBunRuntime();
-const browserDiscoveryServer = startBrowserDiscoveryServer();
+void startBrowserDiscoveryServer().ready.catch(() => undefined);
 main();
