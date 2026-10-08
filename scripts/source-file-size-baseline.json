@@ -21,7 +21,7 @@
   "src/cli/subcommands/skills.ts": 1264,
   "src/headless.ts": 4778,
   "src/hooks/integration.test.ts": 1147,
-  "src/index.ts": 2577,
+  "src/index.ts": 2575,
   "src/mods/learning-harness.ts": 2434,
   "src/mods/mod-engine.test.ts": 2153,
   "src/mods/mod-engine.ts": 1836,
@@ -35,10 +35,10 @@
   "src/settings-manager.ts": 2092,
   "src/tools/manager.ts": 2592,
   "src/tools/tool-execution-context.test.ts": 1092,
-  "src/types/protocol_v2.ts": 2548,
+  "src/types/protocol_v2.ts": 2544,
   "src/websocket/listen-client-concurrency.test.ts": 2557,
   "src/websocket/listen-client-protocol.test.ts": 5707,
   "src/websocket/listener/commands/memory.ts": 1114,
   "src/websocket/listener/file-commands.ts": 1053,
-  "src/websocket/listener/protocol-inbound.ts": 2062
+  "src/websocket/listener/protocol-inbound.ts": 2056
 }

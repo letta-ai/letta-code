@@ -1,5 +1,34 @@
 import type { AgentRuntimeScope } from "./runtime-scope";
 
+export type BrowserDeviceMcpOAuthErrorCode =
+  | "already_connecting"
+  | "authorization_failed"
+  | "cancelled"
+  | "invalid_request";
+
+/** Start localhost-callback MCP OAuth on this device without an agent turn. */
+export interface BrowserDeviceMcpOAuthCommand {
+  type: "browser_device_mcp_oauth";
+  request_id: string;
+  handoff_key: string;
+  service: string;
+  server_url: string;
+}
+
+/** Cancel one in-process browser-device OAuth operation by its start request ID. */
+export interface BrowserDeviceMcpOAuthCancelCommand {
+  type: "browser_device_mcp_oauth_cancel";
+  operation_id: string;
+}
+
+/** Credential-free terminal result for a browser-device OAuth start command. */
+export interface BrowserDeviceMcpOAuthResponseMessage {
+  type: "browser_device_mcp_oauth_response";
+  request_id: string;
+  success: boolean;
+  error_code?: BrowserDeviceMcpOAuthErrorCode;
+}
+
 /** Run a slash command in an agent conversation. */
 export interface ExecuteCommandCommand {
   type: "execute_command";

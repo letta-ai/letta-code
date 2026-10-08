@@ -23,6 +23,7 @@ import { handleExecuteCommand } from "./commands";
 import { handleAgentConversationManagementProtocolCommand } from "./commands/agents-conversations";
 import { handleAppServerInfoCommand } from "./commands/app-server-info";
 import { handleCwdProtocolCommand } from "./commands/boot-working-directory";
+import { handleBrowserDeviceMcpOAuthProtocolCommand } from "./commands/browser-device-mcp-oauth";
 import { handleChatGPTUsageCommand } from "./commands/chatgpt-usage";
 import { handleConnectProvidersCommand } from "./commands/connect-providers";
 import { handleCronProtocolCommand } from "./commands/cron";
@@ -802,6 +803,11 @@ export function createListenerMessageHandler(
 
       if (
         handleCronProtocolCommand(parsed, {
+          socket,
+          safeSocketSend,
+          runDetachedListenerTask,
+        }) ||
+        handleBrowserDeviceMcpOAuthProtocolCommand(parsed, {
           socket,
           safeSocketSend,
           runDetachedListenerTask,

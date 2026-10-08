@@ -1,4 +1,3 @@
-import { startBrowserDiscoveryServer } from "@/browser-discovery-server";
 import { runAppServerSubcommand } from "@/cli/subcommands/app-server";
 import { runListenSubcommand } from "@/cli/subcommands/listen.tsx";
 
@@ -120,8 +119,6 @@ export async function runServerSubcommand(argv: string[]): Promise<number> {
     console.error(error instanceof Error ? `Error: ${error.message}` : error);
     return 1;
   }
-
-  void startBrowserDiscoveryServer().ready.catch(() => undefined);
 
   if (command.kind === "app-server") {
     return runAppServerSubcommand(command.argv);

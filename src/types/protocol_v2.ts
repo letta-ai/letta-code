@@ -68,14 +68,7 @@ import type {
   CronProtocolResponseMessage,
 } from "./schedule-protocol";
 import type * as SubagentProtocol from "./subagent-protocol";
-import type {
-  ExecuteCommandCommand,
-  ExecuteCommandResponseMessage,
-  MonitorStopCommand,
-  MonitorStopResponse,
-  RemoveQueueItemCommand,
-  RemoveQueueItemResponse,
-} from "./task-control-protocol";
+import type * as TaskControlProtocol from "./task-control-protocol";
 
 export type * from "./subagent-protocol";
 
@@ -2428,10 +2421,12 @@ export type WsProtocolCommand =
   | ChannelTargetBindCommand
   | ChannelRouteRemoveCommand
   | ChannelRouteUpdateCommand
-  | ExecuteCommandCommand
-  | RemoveQueueItemCommand
+  | TaskControlProtocol.BrowserDeviceMcpOAuthCommand
+  | TaskControlProtocol.BrowserDeviceMcpOAuthCancelCommand
+  | TaskControlProtocol.ExecuteCommandCommand
+  | TaskControlProtocol.RemoveQueueItemCommand
   | SubagentProtocol.LaunchSubagentCommand
-  | MonitorStopCommand
+  | TaskControlProtocol.MonitorStopCommand
   | SearchBranchesCommand
   | CheckoutBranchCommand
   | SecretListCommand
@@ -2440,10 +2435,11 @@ export type WsProtocolCommand =
 export type WsProtocolCommandType = WsProtocolCommand["type"];
 
 export type WsProtocolMessage =
+  | TaskControlProtocol.BrowserDeviceMcpOAuthResponseMessage
   | ControlRequest
   | InputAcceptedResponseMessage
   | TeleportProtocol.TeleportProtocolMessage
-  | ExecuteCommandResponseMessage
+  | TaskControlProtocol.ExecuteCommandResponseMessage
   | DeviceStatusUpdateMessage
   | LoopStatusUpdateMessage
   | QueueUpdateMessage
@@ -2539,8 +2535,8 @@ export type WsProtocolMessage =
   | CheckoutBranchResponse
   | SecretListResponse
   | SecretApplyResponse
-  | RemoveQueueItemResponse
-  | MonitorStopResponse
+  | TaskControlProtocol.RemoveQueueItemResponse
+  | TaskControlProtocol.MonitorStopResponse
   | SubagentProtocol.LaunchSubagentResponse;
 
 export type WsProtocolMessageType = WsProtocolMessage["type"];

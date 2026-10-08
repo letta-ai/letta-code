@@ -1902,11 +1902,7 @@ export function isSecretApplyCommand(
 }
 
 import { isLaunchSubagentCommand } from "./subagent-protocol-inbound";
-import {
-  isExecuteCommandCommand,
-  isMonitorStopCommand,
-  isRemoveQueueItemCommand,
-} from "./task-control-protocol-inbound";
+import { isTaskControlProtocolCommand } from "./task-control-protocol-inbound";
 
 export {
   isExecuteCommandCommand,
@@ -2035,9 +2031,7 @@ export function parseServerMessage(
       isChannelTargetBindCommand(parsed) ||
       isChannelRouteUpdateCommand(parsed) ||
       isChannelRouteRemoveCommand(parsed) ||
-      isExecuteCommandCommand(parsed) ||
-      isRemoveQueueItemCommand(parsed) ||
-      isMonitorStopCommand(parsed) ||
+      isTaskControlProtocolCommand(parsed) ||
       isLaunchSubagentCommand(parsed) ||
       isSearchBranchesCommand(parsed) ||
       isCheckoutBranchCommand(parsed) ||

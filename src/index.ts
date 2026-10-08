@@ -42,7 +42,6 @@ import {
 } from "./backend";
 import { getBillingTier } from "./backend/api/metadata";
 import { LOCAL_BACKEND_EXPERIMENTAL_ENV } from "./backend/local/paths";
-import { startBrowserDiscoveryServer } from "./browser-discovery-server";
 import {
   extractBackendFlag,
   type ParsedCliArgs,
@@ -1300,7 +1299,6 @@ async function main(): Promise<void> {
     return;
   }
 
-  void startBrowserDiscoveryServer().ready.catch(() => undefined);
   markMilestone("TUI_MODE_START");
 
   // Interactive: lazy-load React/Ink + App
