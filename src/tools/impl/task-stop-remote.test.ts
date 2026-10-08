@@ -40,15 +40,45 @@ describe("TaskStop for remote subagents", () => {
   });
 
   test("cancels the child conversation in Cloud", async () => {
-    const cancel = spyOn(getBackend(), "cancelConversation").mockResolvedValue(
-      {} as never,
-    );
+    const cancel = spyOn(getBackend(), "cancelConversation").mockResolvedValue({
+      "run-child": "cancelled",
+    });
     startRemoteTask("task_remote_ok", "conv-child");
     expect(await task_stop({ task_id: "task_remote_ok" })).toEqual({
       killed: true,
       output: "Cancelled the remote run",
     });
     expect(cancel).toHaveBeenCalledWith("conv-child");
+    cancel.mockRestore();
+  });
+
+  test("does not claim success or lose the handle when Cloud returns a failed run", async () => {
+    const cancel = spyOn(getBackend(), "cancelConversation").mockResolvedValue({
+      "run-child": "cancelled",
+      "run-still-active": "failed",
+    });
+    startRemoteTask("task_remote_partial", "conv-child");
+    const task = backgroundTasks.get("task_remote_partial");
+
+    expect(await task_stop({ task_id: "task_remote_partial" })).toEqual({
+      killed: false,
+      output: "Couldn't cancel the remote run: Cloud did not cancel every run",
+    });
+    expect(task?.abortController?.signal.aborted).toBe(false);
+    expect(task?.status).toBe("running");
+    cancel.mockRestore();
+  });
+
+  test("does not claim success when Cloud returns no cancelled runs", async () => {
+    const cancel = spyOn(getBackend(), "cancelConversation").mockResolvedValue(
+      {},
+    );
+    startRemoteTask("task_remote_empty", "conv-child");
+
+    expect(await task_stop({ task_id: "task_remote_empty" })).toEqual({
+      killed: false,
+      output: "Couldn't cancel the remote run: Cloud did not cancel every run",
+    });
     cancel.mockRestore();
   });
 
@@ -61,6 +91,7 @@ describe("TaskStop for remote subagents", () => {
       killed: false,
       output: "Couldn't cancel the remote run: boom",
     });
+    expect(backgroundTasks.get("task_remote_err")?.status).toBe("running");
     cancel.mockRestore();
   });
 });

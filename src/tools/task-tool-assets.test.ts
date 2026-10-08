@@ -73,6 +73,19 @@ describe("task() computer guard", () => {
   });
 });
 
+describe("Task subagent_type requirement", () => {
+  test("the schema leaves subagent_type optional so resumes can omit it", () => {
+    expect(taskSchema.required).not.toContain("subagent_type");
+  });
+
+  test("launching a new subagent without subagent_type is still rejected", async () => {
+    const { launchSubagent } = await import("./impl/task");
+    await expect(
+      launchSubagent({ prompt: "Work", description: "New task" } as never),
+    ).rejects.toThrow("missing required parameter: subagent_type");
+  });
+});
+
 describe("resolveBackendSpecificToolAssets Task dispatch", () => {
   const originalBaseUrl = process.env.LETTA_BASE_URL;
 

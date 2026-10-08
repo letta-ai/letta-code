@@ -11,7 +11,7 @@
     },
     "subagent_type": {
       "type": "string",
-      "description": "The type of specialized agent to use for this task. Use claude-code or codex for a worker backed by the corresponding local CLI."
+      "description": "The type of specialized agent to use for this task. Required when launching a new subagent; optional with agent_id or conversation_id, where it defaults to general-purpose. Use claude-code or codex for a worker backed by the corresponding local CLI."
     },
     "model": {
       "type": "string",
@@ -47,7 +47,7 @@
       "additionalProperties": false
     }
   },
-  "required": ["description", "prompt", "subagent_type"],
+  "required": ["description", "prompt"],
   "additionalProperties": false,
   "$schema": "http://json-schema.org/draft-07/schema#"
 }

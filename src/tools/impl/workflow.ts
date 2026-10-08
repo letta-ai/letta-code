@@ -22,7 +22,11 @@ import { resolveModel } from "@/agent/model-catalog";
 import { getPrimaryAgentModelHandle } from "@/agent/subagents/subagent-model";
 import { getBackend } from "@/backend";
 import { resolveBackendMode } from "@/backend/backend-mode";
-import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { permissionMode } from "@/permissions/mode";
+import {
+  getCurrentWorkingDirectory,
+  getRuntimeContext,
+} from "@/runtime-context";
 import {
   finishWorkflowExecution,
   recordWorkflowProgress,
@@ -39,13 +43,11 @@ import {
 } from "@/tools/workflow/journal";
 import { parseWorkflowMeta } from "@/tools/workflow/meta";
 import { loadAgentSdk } from "@/tools/workflow/sdk-loader";
-import {
-  createSdkSpawner,
-  DEFAULT_ALLOWED_TOOLS,
-} from "@/tools/workflow/sdk-spawner";
+import { createSdkSpawner } from "@/tools/workflow/sdk-spawner";
 import type {
   SubagentSpawner,
   WorkflowExecutionResult,
+  WorkflowMcpCaller,
   WorkflowMeta,
   WorkflowProgressEvent,
 } from "@/tools/workflow/types";
@@ -90,6 +92,8 @@ interface WorkflowResult {
 /** What the tool needs from a subagent backend; the SDK spawner in production. */
 export interface WorkflowSpawnerHandle {
   spawner: SubagentSpawner;
+  /** Backs the script's `tools.mcp__*()` calls with the invoking agent's MCP tools. */
+  callMcpTool?: WorkflowMcpCaller;
   cleanup(): Promise<void>;
 }
 
@@ -203,7 +207,9 @@ export async function createSdkSpawnerHandle(
       parentAgentId,
       model,
       resolveModel,
-      allowedTools: args.allowedTools ?? [...DEFAULT_ALLOWED_TOOLS],
+      allowedTools: args.allowedTools ?? getRuntimeContext()?.clientToolNames,
+      permissionMode:
+        getRuntimeContext()?.permissionMode ?? permissionMode.getMode(),
       cwd: getCurrentWorkingDirectory(),
       supportsAgentFreeResume: sdk.supportsAgentFreeResume,
       verifyPersistedRuns: backendMode === "api",
@@ -216,9 +222,51 @@ export async function createSdkSpawnerHandle(
     void client[Symbol.asyncDispose]?.().catch(() => undefined);
     throw error;
   }
+  // The run outlives this tool call, so capture the invoking turn's permission
+  // inputs now; each direct MCP call is checked against them.
+  const runtime = getRuntimeContext();
+  const toolContextId = runtime?.toolContextId ?? null;
+  // Lazy: tool impls are loaded by the manager, so a static import cycles.
+  const manager = await import("@/tools/manager");
+  const permissionModeState = toolContextId
+    ? manager.getExecutionContextPermissionModeState(toolContextId)
+    : undefined;
+  const permissionCwd = getCurrentWorkingDirectory();
+  // Memoize the promise, not the session: concurrent first calls must share
+  // one session so cleanup closes every connection that was opened.
+  let mcpSession:
+    | Promise<
+        ReturnType<typeof import("@/cli/subcommands/mcp").createAgentMcpSession>
+      >
+    | undefined;
   return {
     spawner,
+    callMcpTool: async (toolName, toolArgs) => {
+      const { decision } = await manager.checkToolPermission(
+        toolName,
+        toolArgs,
+        permissionCwd,
+        permissionModeState && { ...permissionModeState },
+        // Same agent whose MCP scope runs the call; a nested agent-free
+        // worker's runtime agent would not match it.
+        parentAgentId,
+      );
+      if (decision !== "allow") {
+        throw new Error(
+          decision === "deny"
+            ? `${toolName} is denied by permission rules.`
+            : `${toolName} needs approval, which a workflow cannot request; add an allow rule for it to call it from a script.`,
+        );
+      }
+      mcpSession ??= import("@/cli/subcommands/mcp").then((mcp) =>
+        mcp.createAgentMcpSession(parentAgentId),
+      );
+      return (await mcpSession).callTool(toolName, toolArgs);
+    },
     cleanup: async () => {
+      await mcpSession
+        ?.then((session) => session.close())
+        .catch(() => undefined);
       await client[Symbol.asyncDispose]?.().catch(() => undefined);
     },
   };
@@ -549,6 +597,7 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
     maxConcurrent: args.maxConcurrent ?? DEFAULT_MAX_CONCURRENT,
     journalPath,
     signal: abortController.signal,
+    ...(handle.callMcpTool ? { callMcpTool: handle.callMcpTool } : {}),
     onProgress: (event) => {
       recordWorkflowProgress(taskId, event);
       if (event.kind !== "log") publishProgress();

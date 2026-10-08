@@ -52,8 +52,8 @@ skills. Put ALL context a stage needs in the prompt — file paths, the rule it
 should apply, what shape to return.
 
 Subagents are told their final text IS the return value (not a human-facing
-message), so they return raw data. Tools default to read-only (`Read`,
-`Grep`, `Glob`); widen with `allowedTools` for stages that must write. For
+message), so they return raw data. Workers inherit the invoking session's tools
+and permission mode; use `allowedTools` to restrict a workflow or stage. For
 stages whose input is entirely in the prompt (synthesis, judging, scoring)
 pass `allowedTools: []` — a model that can still read files tends to wander,
 and a subagent that re-issues an identical tool call three times is stopped
@@ -113,6 +113,20 @@ Cloud decisions service.
       })
       const verdict = call?.answers?.behavior?.choice  // 'bad' | 'not_bad'
 
+- `tools.mcp__server__tool(args?)` → Promise; not a subagent call. Calls one
+  of the invoking agent's MCP tools directly (find names with
+  `letta mcp search` / `letta mcp tools` before writing the script). Each call
+  goes through the same permission rules as a normal MCP tool call; a tool
+  that would ask for approval throws instead, so the user must allow it first.
+  Resolves to the tool's `structuredContent`, else its text output (parsed
+  when it is JSON), else the raw `content` array. Throws when the tool is
+  unavailable, not allowed, or reports an error; `parallel()` and `pipeline()`
+  propagate that rejection. Use it for deterministic fetches and
+  writes whose arguments the script already knows; use `agent()` when a step
+  needs judgment.
+
+      const issues = await tools.mcp__linear__list_issues({ team: 'LET', limit: 20 })
+
 - `args` — the value passed as the tool's `args` input, verbatim. Pass
   arrays/objects as actual JSON values, NOT as a JSON-encoded string.
 
@@ -129,8 +143,8 @@ Math, Array, etc.) are available; the hooks are the only globals provided.
 The script runs inside the CLI process with the CLI's own privileges (the
 `vm` context is a scope, not a security boundary), and the user approves it
 by reading it. Keep the script to orchestration: decide what runs and combine
-results. All reading, searching, and writing belongs in subagents, where the
-tool allowlist applies.
+results. Direct MCP calls belong in `tools.mcp__*()`; other reading, searching, and
+writing belongs in subagents, where the tool allowlist applies.
 
 ## Pipeline vs barrier
 
@@ -244,5 +258,6 @@ The script is never replayed, but one worker can continue:
 `agent(prompt, {conversationId})` re-prompts it with history and model intact,
 using a journal ID and only once its last Run is terminal. Local workers can
 only continue inside the same workflow execution that observed their completed
-turn. Tools default to `[]`; `schema` and `effort` are chosen per turn. Needs
+turn. Tools inherit the invoking session unless `allowedTools` is supplied;
+`schema` and `effort` are chosen per turn. Needs
 SDK 0.8.20+.

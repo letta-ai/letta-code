@@ -10,7 +10,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getBackend } from "@/backend";
 import { runWithRuntimeContext } from "@/runtime-context";
-import { clearCapturedToolExecutionContexts } from "@/tools/manager";
+import {
+  clearCapturedToolExecutionContexts,
+  getExecutionContextById,
+} from "@/tools/manager";
 import { prepareToolExecutionContextForResolvedTarget } from "@/tools/toolset";
 import { TOOLSET_CATALOG } from "@/tools/toolset-catalog";
 import {
@@ -91,6 +94,10 @@ describe("Workflow tool toolsets", () => {
         clientToolAllowlist: ["Read"],
       });
       expect(restricted.preparedToolContext.loadedToolNames).toEqual(["Read"]);
+      expect(
+        getExecutionContextById(restricted.preparedToolContext.contextId)
+          ?.runtimeContext.clientToolNames,
+      ).toEqual(["Read"]);
     } finally {
       clearCapturedToolExecutionContexts();
     }

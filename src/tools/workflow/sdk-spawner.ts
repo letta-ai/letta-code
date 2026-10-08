@@ -6,6 +6,9 @@
  */
 
 import { getBackend } from "@/backend";
+import type { RuntimePermissionMode } from "@/runtime-context";
+import { getInternalToolName } from "@/tools/tool-name-mapping";
+import { TOOLSET_CATALOG } from "@/tools/toolset-catalog";
 import type {
   AgentCallOptions,
   SdkClient,
@@ -23,8 +26,10 @@ export interface SdkSpawnerConfig {
   model: string;
   /** Resolves a handle or alias from agent() opts; null when unknown. */
   resolveModel?: (identifier: string) => string | null;
-  /** Default tool allowlist for subagents. Keep it read-only by default. */
+  /** Parent tool pool, or the workflow's explicit allowlist override. */
   allowedTools?: string[];
+  /** Invoking session's permission mode. Omit to use the harness default. */
+  permissionMode?: RuntimePermissionMode;
   /** Working directory for subagent sessions. */
   cwd?: string;
   /** Local parent provider settings snapshotted when the workflow starts. */
@@ -77,8 +82,6 @@ async function retrieveWorkerConversation(
 ): Promise<WorkerConversation> {
   return getBackend().retrieveConversation(id) as Promise<WorkerConversation>;
 }
-
-export const DEFAULT_ALLOWED_TOOLS = ["Read", "Grep", "Glob"];
 
 /**
  * Runaway guards. Live runs showed models re-issuing the identical tool call
@@ -345,6 +348,10 @@ function buildQueryOptions(
     ...(!options.model ? config.parentModelSettings : {}),
     ...(options.effort ? { reasoning_effort: options.effort } : {}),
   };
+  const allowedTools = options.allowedTools ?? config.allowedTools;
+  const bundledTools = new Set<string>(
+    Object.values(TOOLSET_CATALOG).flatMap((preset) => [...preset.tools]),
+  );
   return {
     model,
     ...(options.schema
@@ -354,12 +361,18 @@ function buildQueryOptions(
     isSubagent: true,
     name: options.label ?? `Workflow worker ${callIndex + 1}`,
     system,
-    permissionMode: "unrestricted",
-    allowedTools:
-      options.allowedTools ??
-      (options.conversationId
-        ? []
-        : (config.allowedTools ?? DEFAULT_ALLOWED_TOOLS)),
+    ...(config.permissionMode ? { permissionMode: config.permissionMode } : {}),
+    ...(allowedTools !== undefined
+      ? {
+          allowedTools: [...allowedTools],
+          toolset: {
+            base: "none",
+            include: allowedTools
+              .map(getInternalToolName)
+              .filter((name) => bundledTools.has(name)),
+          },
+        }
+      : {}),
     skillSources: [],
     ...(config.cwd ? { cwd: config.cwd } : {}),
     disableMemoryGuard: true,

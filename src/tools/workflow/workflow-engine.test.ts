@@ -236,6 +236,76 @@ return errors`,
     expect(run.totalTokens).toBe(0);
   });
 
+  test("tools.mcp__*() calls the agent's MCP tools and journals each call", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "wf-mcp-"));
+    const journalPath = join(dir, "journal.jsonl");
+    const calls: Array<[string, Record<string, unknown>]> = [];
+    try {
+      const run = await executeWorkflow(echoSpawner(), {
+        script: `${META}
+const structured = await tools.mcp__db__query({ sql: 'select 1' })
+const json = await tools.mcp__db__json()
+const text = await tools.mcp__db__text()
+let failed = null
+try { await tools.mcp__db__broken() } catch (e) { failed = e.message }
+const invalid = typeof tools.Bash
+return { structured, json, text, failed, invalid }`,
+        journalPath,
+        callMcpTool: async (toolName, args) => {
+          calls.push([toolName, args]);
+          if (toolName === "mcp__db__query")
+            return { content: [], structuredContent: { rows: [1] } };
+          if (toolName === "mcp__db__json")
+            return { content: [{ type: "text", text: '{"n":2}' }] };
+          if (toolName === "mcp__db__broken")
+            return {
+              content: [{ type: "text", text: "denied" }],
+              isError: true,
+            };
+          return { content: [{ type: "text", text: "plain" }] };
+        },
+      });
+      expect(run.result).toEqual({
+        structured: { rows: [1] },
+        json: { n: 2 },
+        text: "plain",
+        failed: "mcp__db__broken failed: denied",
+        invalid: "undefined",
+      });
+      expect(calls[0]).toEqual(["mcp__db__query", { sql: "select 1" }]);
+      expect(calls[1]).toEqual(["mcp__db__json", {}]);
+      const journal = readFileSync(journalPath, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(
+        journal.map((entry) => [entry.kind, entry.toolName, entry.isError]),
+      ).toEqual([
+        ["mcp_call", "mcp__db__query", false],
+        ["mcp_call", "mcp__db__json", false],
+        ["mcp_call", "mcp__db__text", false],
+        ["mcp_call", "mcp__db__broken", true],
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test.each([
+    "return await parallel([() => tools.mcp__db__broken()])",
+    "return await pipeline([1], () => tools.mcp__db__broken())",
+  ])("helpers propagate direct MCP failures: %s", async (script) => {
+    await expect(
+      executeWorkflow(echoSpawner(), {
+        script: META + script,
+        callMcpTool: async () => ({
+          content: [{ type: "text", text: "denied" }],
+          isError: true,
+        }),
+      }),
+    ).rejects.toThrow("mcp__db__broken failed: denied");
+  });
+
   test("validates hook arguments", async () => {
     const run = await executeWorkflow(echoSpawner(), {
       script: `${META}

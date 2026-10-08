@@ -794,16 +794,20 @@ function capturePreparedToolExecutionContext(
       options?.permissionModeState,
     ),
   };
+  const clientTools = buildClientToolsFromSnapshot(
+    executionSnapshot.toolRegistry,
+    executionSnapshot.externalTools,
+    executionSnapshot.modTools,
+  );
+  executionSnapshot.runtimeContext.clientToolNames = clientTools.map(
+    (tool) => tool.name,
+  );
   const contextId = saveExecutionContext(executionSnapshot);
   executionSnapshot.runtimeContext.toolContextId = contextId;
 
   return {
     contextId,
-    clientTools: buildClientToolsFromSnapshot(
-      executionSnapshot.toolRegistry,
-      executionSnapshot.externalTools,
-      executionSnapshot.modTools,
-    ),
+    clientTools,
     loadedToolNames: buildClientToolsFromSnapshot(
       executionSnapshot.toolRegistry,
       new Map(),
@@ -2510,11 +2514,7 @@ export async function executeTool(
     : res;
 }
 
-/**
- * Gets all loaded tool names (for passing to Letta agent creation).
- *
- * @returns Array of tool names
- */
+/** Gets loaded internal tool names. */
 export function getToolNames(): string[] {
   return Array.from(toolRegistry.keys());
 }
