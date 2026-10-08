@@ -32,6 +32,7 @@ function createDeps(): {
       getClientType: () => "cli",
       submitFeedback: async (apiKey, deviceId, payload) => {
         submissions.push({ apiKey, deviceId, payload });
+        return { success: true };
       },
       stdout: (message) => stdout.push(message),
       stderr: (message) => stderr.push(message),
@@ -40,6 +41,21 @@ function createDeps(): {
 }
 
 describe("feedback subcommand", () => {
+  test("prints policy rejection verbatim without success or retry advice", async () => {
+    const { deps, stdout, stderr } = createDeps();
+    const message = "Read the user's correction. Do not submit it again.";
+    deps.submitFeedback = async () => ({
+      success: false,
+      status: "rejected",
+      message,
+    });
+    expect(
+      await runFeedbackSubcommand(["--message", "fixture report"], deps),
+    ).toBe(0);
+    expect(stdout).toEqual([message]);
+    expect(stderr).toEqual([]);
+  });
+
   test("prints help", async () => {
     const { stdout, deps } = createDeps();
 
