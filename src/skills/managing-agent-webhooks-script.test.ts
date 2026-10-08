@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { copyFile, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   buildAgentWebhookBasicAuthorization,
@@ -144,6 +144,30 @@ describe("managing-agent-webhooks helper", () => {
     );
   });
 
+  test("rejects a whitespace-only preprompt before making a request", async () => {
+    await withWebhookEnvironment(
+      {
+        AGENT_ID: "agent-current",
+        LETTA_API_KEY: "dummy-secret",
+        LETTA_BASE_URL: "http://127.0.0.1:1",
+      },
+      async () => {
+        await expect(
+          runAgentWebhookCli([
+            "create",
+            "--name",
+            "Build events",
+            "--preprompt",
+            "   ",
+            "--public",
+          ]),
+        ).rejects.toThrow(
+          "--preprompt must contain a non-whitespace character",
+        );
+      },
+    );
+  });
+
   test("rejects plaintext non-loopback runtime origins", async () => {
     await withWebhookEnvironment(
       {
@@ -172,6 +196,13 @@ describe("managing-agent-webhooks helper", () => {
     );
     await mkdir(dirname(packagedScript), { recursive: true });
     await copyFile(SCRIPT_PATH, packagedScript);
+    const aliasRoot = join(dirname(root), `${basename(root)}-alias`);
+    await symlink(
+      root,
+      aliasRoot,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    const aliasedPackagedScript = packagedScript.replace(root, aliasRoot);
 
     const received: Array<{
       authorization?: string;
@@ -248,7 +279,7 @@ describe("managing-agent-webhooks helper", () => {
         throw new Error("Expected a TCP test server address");
       }
       const runNode = async (args: string[]): Promise<unknown> => {
-        const child = Bun.spawn(["node", packagedScript, ...args], {
+        const child = Bun.spawn(["node", aliasedPackagedScript, ...args], {
           env: {
             ...process.env,
             AGENT_ID: "agent-current/encoded",
@@ -265,6 +296,7 @@ describe("managing-agent-webhooks helper", () => {
         ]);
         expect(stderr).toBe("");
         expect(exitCode).toBe(0);
+        expect(stdout.length).toBeGreaterThan(0);
         return JSON.parse(stdout);
       };
 
@@ -279,6 +311,8 @@ describe("managing-agent-webhooks helper", () => {
         "create",
         "--name",
         "Build events",
+        "--preprompt",
+        "  Summarize this build.  ",
         "--public",
         "--disabled",
       ]);
@@ -331,6 +365,7 @@ describe("managing-agent-webhooks helper", () => {
       expect(JSON.parse(createRequest?.body ?? "")).toEqual({
         enabled: false,
         name: "Build events",
+        preprompt: "Summarize this build.",
         requires_authorization_header: false,
       });
       const ingressRequest = received.find(
@@ -340,10 +375,46 @@ describe("managing-agent-webhooks helper", () => {
         event: "agent-webhook-test",
         message: "Test delivery from Letta Code",
       });
+
+      const whitespaceKeyChild = Bun.spawn(
+        [
+          "node",
+          aliasedPackagedScript,
+          "create",
+          "--name",
+          "Whitespace key",
+          "--security-key-stdin",
+        ],
+        {
+          env: {
+            ...process.env,
+            AGENT_ID: "agent-current/encoded",
+            LETTA_API_KEY: "dummy-secret",
+            LETTA_BASE_URL: `http://127.0.0.1:${address.port}`,
+          },
+          stderr: "pipe",
+          stdin: "pipe",
+          stdout: "pipe",
+        },
+      );
+      whitespaceKeyChild.stdin.write(" \t\n");
+      whitespaceKeyChild.stdin.end();
+      const [whitespaceExitCode, whitespaceStdout, whitespaceStderr] =
+        await Promise.all([
+          whitespaceKeyChild.exited,
+          new Response(whitespaceKeyChild.stdout).text(),
+          new Response(whitespaceKeyChild.stderr).text(),
+        ]);
+      expect(whitespaceExitCode).toBe(1);
+      expect(whitespaceStdout).toBe("");
+      expect(whitespaceStderr).toContain(
+        "Security key from stdin must contain a non-whitespace character",
+      );
     } finally {
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
       });
+      await rm(aliasRoot, { force: true, recursive: true });
       await rm(root, { force: true, recursive: true });
     }
   });

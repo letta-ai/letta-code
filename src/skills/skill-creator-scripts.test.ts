@@ -8,6 +8,8 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
+  readdirSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -411,7 +413,40 @@ This skill can be packaged.
 
     const result = packageSkill(skillDir, TEST_DIR);
     expect(result).not.toBeNull();
-    expect(existsSync(join(TEST_DIR, "packagable-skill.skill"))).toBe(true);
+    const archivePath = join(TEST_DIR, "packagable-skill.skill");
+    expect(existsSync(archivePath)).toBe(true);
+
+    const extractedDir = join(TEST_DIR, "extracted");
+    mkdirSync(extractedDir);
+    const extraction =
+      process.platform === "win32"
+        ? (() => {
+            const zipPath = `${archivePath}.zip`;
+            copyFileSync(archivePath, zipPath);
+            return spawnSync(
+              "powershell.exe",
+              [
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Expand-Archive -LiteralPath $args[0] -DestinationPath $args[1] -Force",
+                zipPath,
+                extractedDir,
+              ],
+              { encoding: "utf8" },
+            );
+          })()
+        : spawnSync("unzip", ["-qq", archivePath, "-d", extractedDir], {
+            encoding: "utf8",
+          });
+    expect(extraction.status).toBe(0);
+    expect(extraction.stderr).toBe("");
+    expect(readdirSync(extractedDir)).toEqual(["packagable-skill"]);
+    const extractedSkillDir = join(extractedDir, "packagable-skill");
+    expect(readdirSync(extractedSkillDir)).toEqual(["SKILL.md"]);
+    expect(readFileSync(join(extractedSkillDir, "SKILL.md"))).toEqual(
+      readFileSync(join(skillDir, "SKILL.md")),
+    );
   });
 
   test("fails when skill directory does not exist", () => {

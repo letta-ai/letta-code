@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -198,7 +199,11 @@ async function readSecurityKey(args) {
   let value = "";
   for await (const chunk of process.stdin) value += chunk;
   value = value.replace(/[\r\n]+$/, "");
-  if (!value) throw new Error("Security key from stdin must be non-empty");
+  if (!value.trim()) {
+    throw new Error(
+      "Security key from stdin must contain a non-whitespace character",
+    );
+  }
   return value;
 }
 
@@ -278,7 +283,12 @@ async function runManagementCommand(params) {
       name: requireString(params.args.name, "Create requires --name"),
       requires_authorization_header: usesSecurityKey,
     };
-    if (params.args.preprompt) body.preprompt = String(params.args.preprompt);
+    if (params.args.preprompt !== undefined) {
+      body.preprompt = requireString(
+        params.args.preprompt,
+        "--preprompt must contain a non-whitespace character",
+      );
+    }
     if (securityKey) body.security_key = securityKey;
 
     const response = jsonObject(
@@ -444,7 +454,8 @@ export async function runAgentWebhookCli(argv) {
 
 const isMain =
   process.argv[1] !== undefined &&
-  fileURLToPath(import.meta.url) === resolve(process.argv[1]);
+  realpathSync(fileURLToPath(import.meta.url)) ===
+    realpathSync(resolve(process.argv[1]));
 
 if (isMain) {
   runAgentWebhookCli(process.argv.slice(2)).catch((error) => {
