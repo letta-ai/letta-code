@@ -210,6 +210,40 @@ setTimeout(() => undefined, 500);
     }
   });
 
+  test("the discovery listener does not keep the Bun runtime alive", async () => {
+    const fixture = await buildNodeFixture(`
+await startBrowserDiscoveryServer({ port: 0 }).ready;
+setTimeout(() => undefined, 500);
+`);
+    const result = spawnSync("bun", [fixture], {
+      encoding: "utf8",
+      timeout: 5_000,
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("");
+  });
+
+  test("a fixed-port contender does not keep the published Node runtime alive", async () => {
+    const blocker = createServer();
+    blockers.push(blocker);
+    await listen(blocker, 0);
+    const port = (blocker.address() as AddressInfo).port;
+    const fixture = await buildNodeFixture(`
+startBrowserDiscoveryServer({ port: ${port}, retryDelayMs: 10 });
+setTimeout(() => undefined, 500);
+`);
+    const result = spawnSync("node", [fixture], {
+      encoding: "utf8",
+      timeout: 5_000,
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("");
+  });
+
   test("early close does not leave an unhandled ready rejection in Node", async () => {
     const fixture = await buildNodeFixture(`
 const handle = startBrowserDiscoveryServer({ port: 0 });

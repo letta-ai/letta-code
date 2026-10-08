@@ -7,7 +7,7 @@ import {
 import type { AddressInfo } from "node:net";
 
 export const BROWSER_DISCOVERY_HOST = "127.0.0.1";
-export const BROWSER_DISCOVERY_PORT = 8284;
+export const BROWSER_DISCOVERY_PORT = 32_187;
 export const BROWSER_DISCOVERY_PATH = "/status";
 
 const DEFAULT_RETRY_DELAY_MS = 1_000;
