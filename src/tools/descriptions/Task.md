@@ -4,7 +4,7 @@ Launch a new agent to handle complex, multi-step tasks autonomously.
 
 The Agent tool launches specialized subagents that autonomously handle complex tasks. Each subagent type has specific capabilities and tools available to it.
 
-When using the Agent tool, you must specify a subagent_type parameter to select which agent type to use.
+When launching a new subagent, you must specify a subagent_type parameter to select which agent type to use. When deploying an existing agent with agent_id or conversation_id, it is optional and defaults to general-purpose.
 
 ## When NOT to use the Agent tool:
 
