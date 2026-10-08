@@ -9,8 +9,10 @@ This file explains how to work effectively in this repo. It covers the rules enf
 1. **Create a worktree** for any non-trivial change — especially if another agent may be working concurrently.
 2. **Make your change**, then run `bun run check` and fix all failures before opening a PR.
 3. **One PR per logical change.** Don't bundle unrelated changes — harder to revert if something breaks.
-4. **Never amend commits.** Always create a new commit.
-5. **Check the current branch** before editing files. If in doubt, ask.
+4. **Gate pushes only on the explicit `bun run check` pass summary.** A script that gates a push must match the `✓ N checks passed` line; treating absence of `FAIL` as success lets a failing check slip through (that once pushed a broken intermediate commit). Commit and push after the same run that passed.
+5. **Before blaming a PR for a failing integration/API CI job, reproduce it on unmodified `main`.** The Cloud-backed integration tests (teleport, sandbox transfer) can fail independently of a change — they time out on the test's own model calls and fail on `main` too. Run the same test locally against `origin/main`, check `main`'s recent CI runs, then rerun only the failed jobs with `gh run rerun <id> --failed`. Job logs are only served after the whole run finishes.
+6. **Never amend commits.** Always create a new commit.
+7. **Check the current branch** before editing files. If in doubt, ask.
 
 ---
 
@@ -277,6 +279,8 @@ directory first. Otherwise the run reads and mutates your real
 - **grep exits 1 on no matches** — pre-commit hooks use `|| true` on grep pipes to prevent false failures on clean commits.
 - **macOS case-insensitive FS** — `existsSync("bash.ts")` returns `true` when `Bash.ts` exists. Rename scripts that use `existsSync` to check kebab-case targets will silently skip single-word PascalCase files. Use `git mv` for renames.
 - **Native modules can behave differently under Bun and Node.** The published package runs the bundled `letta.js` under Node (>= 22.19), while `bun run dev` runs the source under Bun. Example: `node-pty` is loaded directly under Node but through a Node bridge process under Bun, because its native handles do not integrate reliably with Bun's event loop (`src/tools/impl/shell-runner.ts`). Test runtime-sensitive code on both paths.
+- **Running the CLI against a checkout from another directory needs the repo's bunfig.** `bun run <repo>/src/index.ts` from a different cwd does not load the repo's `bunfig.toml`, so the loader mappings (`.md`/`.mdx`/`.txt` → `text`) and the `@/` alias do not resolve — expect obscure MDX/TS parse errors or `Cannot access 'TOOL_DEFINITIONS' before initialization`. Use `bun --cwd <repo> run src/index.ts`, or `bun --config=<repo>/bunfig.toml run <repo>/src/index.ts` when the cwd must stay elsewhere.
+- **Default permission mode is `unrestricted`** (`DEFAULT_PERMISSION_MODE` in `src/permissions/mode.ts`): every tool is auto-approved unless overridden. To verify allow/deny gating in a headless run, start the CLI with `--permission-mode standard` (plus `--allowedTools ...`); the default mode will not exercise deny rules.
 - **`setTimeout(fn, 0)` fires on the next tick, not never.** For "no timeout" behavior, check the timeout value before scheduling the timer instead of passing 0.
 - **Extend `@letta-ai/letta-client` types instead of redeclaring them.** Use the SDK's `ToolCall`, `StopReasonType`, and similar wire types directly; do not duplicate wire shapes or cast with `as any`.
 - **Package subpath entrypoints use relative imports and dedicated entry files.** Library entries (`src/agent-presets.ts`, `src/channels-*.ts`, `src/app-server-client.ts`) are bundled separately and their emitted `.d.ts` files go through an alias rewrite in `build.js`; anything reachable from a browser-targeted entry must stay free of node builtins and backend/provider imports. Consumers on `moduleResolution: "node"` resolve subpath types through `typesVersions` in `package.json`, so new subpaths need entries there too.
