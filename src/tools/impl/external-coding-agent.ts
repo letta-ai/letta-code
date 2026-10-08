@@ -14,9 +14,10 @@ import {
 } from "@/reminders/engine";
 import { createSharedReminderState } from "@/reminders/state";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
+import type { SubagentStartupErrorCode } from "@/types/subagent-protocol";
 import { SUBAGENT_DEPTH_ENV } from "@/utils/subagent-depth-env";
 import { runClaudeTurn } from "./claude-stream-session";
-import { runCodexTurn } from "./codex-app-server";
+import { CODEX_NOT_SIGNED_IN_ERROR, runCodexTurn } from "./codex-app-server";
 import {
   captureNativeSession,
   rememberNativeSession,
@@ -259,6 +260,10 @@ async function runProcess(
   return { exitCode: result.exitCode, stdout, stderr };
 }
 
+const MISSING_EXECUTABLE_PREFIX = "Required executable '";
+const CODEX_NOT_READY_PREFIX = "Codex executable is not ready";
+const CLAUDE_NOT_SIGNED_IN_PREFIX = "claude-code authentication is not ready";
+
 async function defaultRunPreflight(
   executable: string,
   args: string[],
@@ -294,11 +299,28 @@ async function defaultRunPreflight(
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "ENOENT") {
       throw new Error(
-        `Required executable '${executable}' was not found on PATH`,
+        `${MISSING_EXECUTABLE_PREFIX}${executable}' was not found on PATH`,
       );
     }
     throw error;
   }
+}
+
+/** Classify this module's startup failures for a remote caller. */
+export function classifyExternalCodingAgentStartupError(
+  error: string,
+): SubagentStartupErrorCode | undefined {
+  if (
+    error.startsWith(MISSING_EXECUTABLE_PREFIX) ||
+    error.startsWith(CODEX_NOT_READY_PREFIX)
+  )
+    return "not_installed";
+  if (
+    error.startsWith(CLAUDE_NOT_SIGNED_IN_PREFIX) ||
+    error.startsWith(CODEX_NOT_SIGNED_IN_ERROR)
+  )
+    return "not_signed_in";
+  return undefined;
 }
 
 function preflightArgs(type: ExternalCodingAgentType): string[] {
@@ -322,8 +344,8 @@ function assertPreflightReady(
   }
   throw new Error(
     type === "codex"
-      ? `Codex executable is not ready${output ? `: ${output}` : ""}`
-      : `${type} authentication is not ready${output ? `: ${output}` : ""}`,
+      ? `${CODEX_NOT_READY_PREFIX}${output ? `: ${output}` : ""}`
+      : `${CLAUDE_NOT_SIGNED_IN_PREFIX}${output ? `: ${output}` : ""}`,
   );
 }
 

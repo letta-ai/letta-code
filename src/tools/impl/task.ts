@@ -45,6 +45,7 @@ import {
   resolveNotificationScope,
 } from "@/utils/task-notifications.js";
 import {
+  classifyExternalCodingAgentStartupError,
   createExternalCodingAgentConfig,
   isExternalCodingAgentType,
   resolveExternalCodingAgentMcpReminder,
@@ -65,6 +66,7 @@ import {
   getNextTaskId,
   scheduleBackgroundTaskCleanup,
 } from "./process_manager.js";
+import { launchRemoteExternalCodingAgent } from "./remote-external-coding-agent";
 import {
   buildTaskResultHeader,
   writeTaskTranscriptResult,
@@ -78,6 +80,8 @@ interface TaskArgs extends Partial<SubagentLaunchArgs> {
   toolCallId?: string; // Injected by executeTool for linking subagent to parent tool call
   signal?: AbortSignal; // Injected by executeTool for interruption handling
   parentScope?: { agentId: string; conversationId: string }; // Injected by executeTool for notification routing
+  /** The launching App Server client owns the completion notification. */
+  notifyCaller?: boolean;
 }
 
 // Valid subagent_types when deploying an existing agent
@@ -140,6 +144,8 @@ export interface SpawnBackgroundSubagentTaskArgs {
    * a normal task notification event.
    */
   emitCompletionNotification?: boolean;
+  /** Publish the truncated final report on the subagent state snapshot. */
+  publishResult?: boolean;
   /**
    * Optional override for the completion notification summary.
    */
@@ -241,6 +247,7 @@ export function spawnBackgroundSubagentTask(
     actingUserId: explicitActingUserId,
     silentCompletion: requestedSilentCompletion,
     emitCompletionNotification,
+    publishResult,
     completionSummary,
     onComplete,
     transcriptPath,
@@ -408,6 +415,16 @@ export function spawnBackgroundSubagentTask(
         success: result.success,
         error: result.error,
         totalTokens: result.totalTokens,
+        ...(publishResult && result.success
+          ? {
+              result: truncateByChars(
+                result.report || "",
+                LIMITS.TASK_OUTPUT_CHARS,
+                "Task",
+                { workingDirectory: getCurrentWorkingDirectory() },
+              ).content,
+            }
+          : {}),
       });
 
       try {
@@ -725,19 +742,35 @@ export async function launchSubagent(
   let effectiveAgentId = args.agent_id;
   let effectiveConversationId = args.conversation_id;
 
+  const callerNotification = args.notifyCaller
+    ? { emitCompletionNotification: false, publishResult: true }
+    : {};
   if (isExternalCodingAgent) {
-    if (typeof args.computer === "string" && args.computer.trim()) {
-      return {
-        success: false,
-        error: `${subagent_type} runs in the current working directory and does not support computer routing`,
-      };
-    }
     const parentAgentId = resolvedParentScope?.agentId ?? getCurrentAgentId();
     if (!parentAgentId) {
       return {
         success: false,
         error: `${subagent_type} requires a parent agent identity`,
       };
+    }
+    if (typeof args.computer === "string" && args.computer.trim()) {
+      return launchRemoteExternalCodingAgent(
+        {
+          type: externalCodingAgentType,
+          computer: args.computer.trim(),
+          prompt: inputPrompt,
+          description,
+          model,
+          mcp: args.mcp,
+          toolCallId,
+          parentScope: resolvedParentScope ?? {
+            agentId: parentAgentId,
+            conversationId: getConversationId() ?? "default",
+          },
+          signal,
+        },
+        { spawn: spawnBackgroundSubagentTask },
+      );
     }
     let mcpReminder: string | undefined;
     try {
@@ -760,6 +793,7 @@ export async function launchSubagent(
       model,
       toolCallId,
       parentScope: resolvedParentScope,
+      ...callerNotification,
       deps: {
         spawnSubagentImpl: async (
           _type,
@@ -799,6 +833,14 @@ export async function launchSubagent(
       } finally {
         signal?.removeEventListener("abort", abortStartup);
       }
+    }
+    const failed = getSubagentSnapshot().agents.find(
+      (a) => a.id === subagentId && a.status === "error",
+    );
+    if (args.notifyCaller && !agentId && failed) {
+      const error = failed.error ?? `${subagent_type} failed to start`;
+      const code = classifyExternalCodingAgentStartupError(error);
+      return { success: false, error, ...(code ? { error_code: code } : {}) };
     }
     return {
       success: true,
@@ -877,6 +919,7 @@ export async function launchSubagent(
     clientMessageId: args.client_message_id,
     forkedContext: subagent_type !== "memory" && config.fork,
     parentScope: resolvedParentScope,
+    ...callerNotification,
     environment:
       typeof args.computer === "string" && args.computer.trim()
         ? args.computer.trim()

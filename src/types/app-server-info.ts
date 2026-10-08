@@ -23,6 +23,8 @@ export interface AppServerInfoResponseMessage {
     /** Agent-free conversation creation/resume, including the local backend. */
     agent_free_conversations?: boolean;
     launch_subagent?: boolean;
+    /** `launch_subagent` accepts `notify: "caller"`. */
+    launch_subagent_notify_caller?: boolean;
     runtime_workspace_sandbox?: boolean;
     runtime_external_tools_update?: boolean;
     structured_outputs?: boolean;
@@ -65,6 +67,8 @@ export function isAppServerInfoResponseMessage(
       typeof capabilityRecord.agent_free_conversations === "boolean") &&
     (capabilityRecord.launch_subagent === undefined ||
       typeof capabilityRecord.launch_subagent === "boolean") &&
+    (capabilityRecord.launch_subagent_notify_caller === undefined ||
+      typeof capabilityRecord.launch_subagent_notify_caller === "boolean") &&
     (capabilityRecord.runtime_workspace_sandbox === undefined ||
       typeof capabilityRecord.runtime_workspace_sandbox === "boolean") &&
     (capabilityRecord.runtime_external_tools_update === undefined ||

@@ -353,6 +353,32 @@ function scheduleIdleSessionCleanup(session: CodexSession): void {
   session.idleTimer.unref?.();
 }
 
+export const CODEX_NOT_SIGNED_IN_ERROR =
+  "Codex is not signed in. Run `codex login` on this computer.";
+
+/**
+ * Codex reports `requiresOpenaiAuth: false` when its model provider needs no
+ * OpenAI login, such as the Letta proxy used by managed sandboxes.
+ */
+async function assertCodexSignedIn(client: CodexAppServerClient) {
+  const timeout = Promise.withResolvers<null>();
+  const timer = setTimeout(() => timeout.resolve(null), 10_000);
+  try {
+    const account = await Promise.race([
+      client.request("account/read", { refreshToken: false }),
+      timeout.promise,
+    ]);
+    if (account?.account == null && account?.requiresOpenaiAuth === true)
+      throw new Error(CODEX_NOT_SIGNED_IN_ERROR);
+  } catch (error) {
+    if (error instanceof Error && error.message === CODEX_NOT_SIGNED_IN_ERROR)
+      throw error;
+    // Codex without account/read: the turn itself reports provider failures.
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function createSession(
   options: CodexTurnOptions,
   deps: CodexAppServerDependencies,
@@ -382,6 +408,7 @@ async function createSession(
   let response: Record<string, unknown>;
   try {
     await client.initialize();
+    await assertCodexSignedIn(client);
     const method = options.resumeThreadId ? "thread/resume" : "thread/start";
     const params = options.resumeThreadId
       ? {

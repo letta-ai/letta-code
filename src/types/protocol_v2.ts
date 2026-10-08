@@ -469,9 +469,7 @@ export interface QueueUpdateMessage extends RuntimeEnvelope {
   removed: import("./queue-update-protocol").QueueRemovalTransition[];
 }
 
-/**
- * Standard Letta message delta forwarded through the stream channel.
- */
+/** Standard Letta message delta forwarded through the stream channel. */
 export type MessageDelta = { type: "message" } & LettaStreamingResponse;
 
 export interface ClientToolStartMessage extends UmiLifecycleMessageBase {
@@ -573,6 +571,8 @@ export interface SubagentSnapshot {
   total_tokens: number;
   duration_ms: number;
   error?: string;
+  /** Truncated final report, set for `notify: "caller"` launches. */
+  result?: string;
 }
 
 export interface SubagentStateUpdateMessage extends RuntimeEnvelope {

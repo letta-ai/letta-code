@@ -58,8 +58,20 @@ describe("launch_subagent protocol", () => {
     { args: { ...command.args, parentScope: { agentId: "someone-else" } } },
     { args: { ...command.args, command: "refresh" } },
     { tool_call_id: 1 },
+    { notify: "self" },
+    { args: { ...command.args, mcp: [] } },
+    { args: { ...command.args, notifyCaller: true } },
   ])("rejects malformed or injected launch fields %j", (fields) => {
     expect(isLaunchSubagentCommand({ ...command, ...fields })).toBe(false);
+  });
+  test("accepts caller notification and an MCP selection", () => {
+    const input = {
+      ...command,
+      tool_call_id: "call-1",
+      notify: "caller",
+      args: { ...command.args, mcp: { inherit: false } },
+    };
+    expect(isLaunchSubagentCommand(input)).toBe(true);
   });
   test("clients can distinguish older servers without rejecting their info response", () => {
     const info = buildAppServerInfoResponse(

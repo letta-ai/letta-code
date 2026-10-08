@@ -832,6 +832,7 @@ export function buildSubagentSnapshot(
       total_tokens: a.totalTokens,
       duration_ms: a.durationMs,
       error: a.error,
+      ...(a.result !== undefined ? { result: a.result } : {}),
     }));
 }
 

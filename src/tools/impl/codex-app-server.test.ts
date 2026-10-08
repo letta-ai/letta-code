@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { PassThrough } from "node:stream";
 import {
   __resetCodexSessionsForTests,
+  CODEX_NOT_SIGNED_IN_ERROR,
   type CodexAppServerTransport,
   sendCodexMessage,
   startCodexTurn,
@@ -17,6 +18,10 @@ class FakeCodexTransport {
   steerRace = false;
   completeBeforeTurnStartSettles = false;
   initializeError = false;
+  account: Record<string, unknown> | null = {
+    account: { type: "chatgpt" },
+    requiresOpenaiAuth: true,
+  };
   killed = false;
 
   constructor() {
@@ -78,6 +83,10 @@ class FakeCodexTransport {
       } else {
         this.reply(request.id, {});
       }
+    }
+    if (method === "account/read") {
+      if (this.account) this.reply(request.id, this.account);
+      else this.send({ id: request.id, error: { message: "unknown method" } });
     }
     if (method === "thread/start" || method === "thread/resume") {
       const params = request.params as Record<string, unknown>;
@@ -188,6 +197,41 @@ describe("Codex app-server lifecycle", () => {
       ),
     ).rejects.toThrow("initialize failed");
     expect(fake.killed).toBe(true);
+  });
+
+  test("fails before starting a thread when Codex needs an OpenAI sign-in", async () => {
+    const fake = new FakeCodexTransport();
+    fake.account = { account: null, requiresOpenaiAuth: true };
+    await expect(
+      startCodexTurn(
+        { prompt: "Initial", parentAgentId: "parent", cwd: "/repo" },
+        { createTransport: () => fake.transport() },
+      ),
+    ).rejects.toThrow(CODEX_NOT_SIGNED_IN_ERROR);
+    expect(fake.requests.map((request) => request.method)).not.toContain(
+      "thread/start",
+    );
+    expect(fake.killed).toBe(true);
+  });
+
+  test.each([
+    [
+      "a provider that needs no OpenAI login (managed proxy)",
+      {
+        account: null,
+        requiresOpenaiAuth: false,
+      },
+    ],
+    ["a Codex without account/read", null],
+  ])("starts the turn for %s", async (_label, account) => {
+    const fake = new FakeCodexTransport();
+    fake.account = account;
+    const handle = await startCodexTurn(
+      { prompt: "Initial", parentAgentId: "parent", cwd: "/repo" },
+      { createTransport: () => fake.transport() },
+    );
+    fake.complete();
+    expect(await handle.completion).toMatchObject({ success: true });
   });
 
   test("fails active completion and evicts the session when stdout closes", async () => {
