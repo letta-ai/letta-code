@@ -18,6 +18,7 @@ export interface ListenerReadinessController {
 export async function completeListenerConnectionStartup(
   expectedConnection: import("@/websocket/listener/types").ListenerConnectionState,
   readiness: ListenerReadinessController,
+  startGateway: () => Promise<void> = async () => {},
 ): Promise<boolean> {
   const { getActiveRuntime } = await import("@/websocket/listener/runtime");
   const runtime = getActiveRuntime();
@@ -35,7 +36,15 @@ export async function completeListenerConnectionStartup(
     "@/websocket/listener/transport"
   );
   if (!isListenerTransportOpen(connection.writer)) return false;
+  await startGateway();
   if (getActiveRuntime()?.connections.get(connection.id) !== connection)
+    return false;
+  if (
+    !connection.initialized ||
+    !connection.ingressReady ||
+    connection.cancellation.signal.aborted ||
+    !isListenerTransportOpen(connection.writer)
+  )
     return false;
   readiness.completeCloudStartup(epoch);
   return true;
