@@ -7,10 +7,18 @@ import type {
   BrowserDeviceMcpOAuthCommand,
   BrowserDeviceMcpOAuthResponseMessage,
 } from "@/types/task-control-protocol";
+import {
+  markListenerConnectionInitialized,
+  openListenerConnection,
+  suspendListenerConnection,
+} from "@/websocket/listener/connection";
 import { createRuntime, stopRuntime } from "@/websocket/listener/lifecycle";
 import { SUPPORTED_REMOTE_COMMANDS } from "@/websocket/listener/listener-constants";
 import { parseServerMessage } from "@/websocket/listener/protocol-inbound";
-import type { ListenerRuntime } from "@/websocket/listener/types";
+import type {
+  ListenerRuntime,
+  StartListenerOptions,
+} from "@/websocket/listener/types";
 import {
   handleBrowserDeviceMcpOAuthProtocolCommand,
   resetBrowserDeviceMcpOAuthOperationsForTests,
@@ -31,6 +39,16 @@ function startCommand(
     timeout_ms: 285_000,
     ...overrides,
   };
+}
+
+function createTestSocket(): WebSocket {
+  return {
+    readyState: 1,
+    bufferedAmount: 0,
+    send() {},
+    removeAllListeners() {},
+    close() {},
+  } as unknown as WebSocket;
 }
 
 function createHarness(
@@ -142,61 +160,69 @@ describe("browser-device MCP OAuth command handling", () => {
     ]);
   });
 
-  test("transfers an active operation to its replacement connection", async () => {
+  test("physical reconnect rebinds an active operation without replaying start", async () => {
+    const owner = createRuntime();
+    const options: StartListenerOptions = {
+      connectionId: "physical-reconnect",
+      connectionIdCanResume: true,
+      wsUrl: "wss://example.test/listener",
+      deviceId: "device-test",
+      connectionName: "computer-test",
+      onConnected: () => {},
+      onDisconnected: () => {},
+      onError: () => {},
+    };
+    const oldSocket = createTestSocket();
+    const replacementSocket = createTestSocket();
+    const firstConnection = openListenerConnection({
+      runtime: owner,
+      connectionId: options.connectionId,
+      writer: oldSocket,
+      options,
+    });
+    markListenerConnectionInitialized(
+      owner,
+      options.connectionId,
+      firstConnection,
+    );
+
     let finishImport: (() => void) | undefined;
     const oldResponses: BrowserDeviceMcpOAuthResponseMessage[] = [];
     const replacementResponses: BrowserDeviceMcpOAuthResponseMessage[] = [];
     const tasks: Promise<void>[] = [];
-    const oldSocket = { name: "old" } as unknown as WebSocket;
-    const replacementSocket = { name: "replacement" } as unknown as WebSocket;
-    const connect = async (): Promise<void> =>
-      await new Promise<void>((resolve) => {
-        finishImport = resolve;
-      });
-    const common = {
-      connect,
-      owner: {} as ListenerRuntime,
-      lineageId: "stable-lineage",
+    const dependencies = {
+      connect: async (): Promise<void> =>
+        await new Promise<void>((resolve) => {
+          finishImport = resolve;
+        }),
+      owner,
+      lineageId: firstConnection.startupOwner.lineageId,
       monotonicNow: () => MONOTONIC_NOW_MS,
+      socket: oldSocket,
       runDetachedListenerTask: (
         _commandName: string,
         task: () => Promise<void>,
       ) => tasks.push(task()),
-    };
-    const oldDependencies = {
-      ...common,
-      socket: oldSocket,
-      safeSocketSend: (
-        _socket: WebSocket,
-        payload: unknown,
-        _errorType: string,
-        _context: string,
-      ) => {
-        oldResponses.push(payload as BrowserDeviceMcpOAuthResponseMessage);
+      safeSocketSend: (_socket: WebSocket, payload: unknown) => {
+        const response = payload as BrowserDeviceMcpOAuthResponseMessage;
+        if (_socket === replacementSocket) replacementResponses.push(response);
+        else oldResponses.push(response);
         return true;
       },
     };
-    const replacementDependencies = {
-      ...common,
-      socket: replacementSocket,
-      safeSocketSend: (
-        socket: WebSocket,
-        payload: unknown,
-        _errorType: string,
-        _context: string,
-      ) => {
-        expect(socket).toBe(replacementSocket);
-        replacementResponses.push(
-          payload as BrowserDeviceMcpOAuthResponseMessage,
-        );
-        return true;
-      },
-    };
+    handleBrowserDeviceMcpOAuthProtocolCommand(startCommand(), dependencies);
 
-    handleBrowserDeviceMcpOAuthProtocolCommand(startCommand(), oldDependencies);
-    handleBrowserDeviceMcpOAuthProtocolCommand(
-      startCommand(),
-      replacementDependencies,
+    suspendListenerConnection(owner, options.connectionId);
+    const replacementConnection = openListenerConnection({
+      runtime: owner,
+      connectionId: options.connectionId,
+      writer: replacementSocket,
+      options,
+    });
+    markListenerConnectionInitialized(
+      owner,
+      options.connectionId,
+      replacementConnection,
     );
     finishImport?.();
     await Promise.all(tasks);
@@ -212,38 +238,64 @@ describe("browser-device MCP OAuth command handling", () => {
     expect(JSON.stringify(replacementResponses)).not.toContain(
       VALID_HANDOFF_KEY,
     );
+    stopRuntime(owner, true);
   });
 
-  test("replays a terminal that completed while the original socket was closed", async () => {
-    const harness = createHarness(async () => undefined);
-    harness.dependencies.safeSocketSend = () => false;
+  test("physical reconnect retries a terminal after a successful send-close race", async () => {
+    const owner = createRuntime();
+    const options: StartListenerOptions = {
+      connectionId: "send-close-race",
+      connectionIdCanResume: true,
+      wsUrl: "wss://example.test/listener",
+      deviceId: "device-test",
+      connectionName: "computer-test",
+      onConnected: () => {},
+      onDisconnected: () => {},
+      onError: () => {},
+    };
+    const oldSocket = createTestSocket();
+    const replacementSocket = createTestSocket();
+    const firstConnection = openListenerConnection({
+      runtime: owner,
+      connectionId: options.connectionId,
+      writer: oldSocket,
+      options,
+    });
+    markListenerConnectionInitialized(
+      owner,
+      options.connectionId,
+      firstConnection,
+    );
+    const oldResponses: BrowserDeviceMcpOAuthResponseMessage[] = [];
+    const replacementResponses: BrowserDeviceMcpOAuthResponseMessage[] = [];
+    const harness = createHarness(async () => undefined, owner);
+    harness.dependencies.socket = oldSocket;
+    harness.dependencies.lineageId = firstConnection.startupOwner.lineageId;
+    harness.dependencies.safeSocketSend = (socket, payload) => {
+      const response = payload as BrowserDeviceMcpOAuthResponseMessage;
+      if (socket === replacementSocket) replacementResponses.push(response);
+      else oldResponses.push(response);
+      return true;
+    };
     handleBrowserDeviceMcpOAuthProtocolCommand(
       startCommand(),
       harness.dependencies,
     );
     await Promise.all(harness.tasks);
+    expect(oldResponses).toHaveLength(1);
 
-    const replacementResponses: BrowserDeviceMcpOAuthResponseMessage[] = [];
-    handleBrowserDeviceMcpOAuthProtocolCommand(startCommand(), {
-      ...harness.dependencies,
-      socket: { replacement: true } as unknown as WebSocket,
-      safeSocketSend: (_socket, payload) => {
-        replacementResponses.push(
-          payload as BrowserDeviceMcpOAuthResponseMessage,
-        );
-        return true;
-      },
+    suspendListenerConnection(owner, options.connectionId);
+    const replacementConnection = openListenerConnection({
+      runtime: owner,
+      connectionId: options.connectionId,
+      writer: replacementSocket,
+      options,
     });
-    handleBrowserDeviceMcpOAuthProtocolCommand(startCommand(), {
-      ...harness.dependencies,
-      socket: { replacement: true } as unknown as WebSocket,
-      safeSocketSend: (_socket, payload) => {
-        replacementResponses.push(
-          payload as BrowserDeviceMcpOAuthResponseMessage,
-        );
-        return true;
-      },
-    });
+    markListenerConnectionInitialized(
+      owner,
+      options.connectionId,
+      replacementConnection,
+    );
 
     expect(replacementResponses).toEqual([
       {
@@ -252,6 +304,7 @@ describe("browser-device MCP OAuth command handling", () => {
         success: true,
       },
     ]);
+    stopRuntime(owner, true);
   });
 
   test("runtime shutdown aborts stale work, releases its flight, and suppresses its terminal", async () => {

@@ -28,8 +28,9 @@ interface OperationRecord {
   expiresAtMonotonicMs: number;
   dependencies: BrowserDeviceMcpOAuthCommandDependencies;
   owner: ListenerRuntime;
+  lineageId: string;
   response?: BrowserDeviceMcpOAuthResponseMessage;
-  delivered: boolean;
+  lastAttemptedSocket: WebSocket | null;
   disposed: boolean;
 }
 
@@ -91,7 +92,7 @@ export function handleBrowserDeviceMcpOAuthProtocolCommand(
       return true;
     }
     existing.dependencies = dependencies;
-    if (existing.response && !existing.delivered) deliverTerminal(existing);
+    deliverTerminal(existing);
     return true;
   }
 
@@ -158,7 +159,8 @@ async function runBrowserDeviceMcpOAuth(
     expiresAtMonotonicMs: receivedAtMonotonicMs + command.timeout_ms,
     dependencies,
     owner: dependencies.owner,
-    delivered: false,
+    lineageId: dependencies.lineageId,
+    lastAttemptedSocket: null,
     disposed: false,
   };
   operations.set(operationMapKey, operation);
@@ -226,13 +228,19 @@ function createTerminalResponse(
 }
 
 function deliverTerminal(operation: OperationRecord): void {
-  if (!operation.response || operation.delivered) return;
-  operation.delivered = operation.dependencies.safeSocketSend(
-    operation.dependencies.socket,
+  if (!operation.response || operation.disposed) return;
+  const socket = operation.dependencies.socket;
+  if (operation.lastAttemptedSocket === socket) return;
+  operation.lastAttemptedSocket = socket;
+  const sent = operation.dependencies.safeSocketSend(
+    socket,
     operation.response,
     "browser_device_mcp_oauth_response_failed",
     "browser_device_mcp_oauth",
   );
+  if (!sent && operation.lastAttemptedSocket === socket) {
+    operation.lastAttemptedSocket = null;
+  }
 }
 
 function sendTerminalResponse(
@@ -257,6 +265,24 @@ function pruneCompletedOperations(monotonicNowMs: number): void {
     ) {
       operations.delete(key);
     }
+  }
+}
+
+export function rebindBrowserDeviceMcpOAuthOperationsToSocket(
+  runtime: ListenerRuntime,
+  lineageId: string,
+  socket: WebSocket,
+): void {
+  for (const operation of operations.values()) {
+    if (
+      operation.owner !== runtime ||
+      operation.lineageId !== lineageId ||
+      operation.disposed
+    ) {
+      continue;
+    }
+    operation.dependencies = { ...operation.dependencies, socket };
+    deliverTerminal(operation);
   }
 }
 
