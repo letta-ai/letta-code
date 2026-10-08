@@ -1,5 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import { MANAGED_CLOUD_RUNTIME_ENV } from "@/managed-cloud-runtime";
+import { beforeEach, describe, expect, it, mock } from "bun:test";
 import {
   deriveListenerInstanceId,
   registerWithCloud,
@@ -17,19 +16,8 @@ const mockFetch = mock(() => {
   throw new Error("fetch not mocked for this test");
 });
 
-const originalManagedCloudRuntime = process.env[MANAGED_CLOUD_RUNTIME_ENV];
-
 beforeEach(() => {
   mockFetch.mockReset();
-  delete process.env[MANAGED_CLOUD_RUNTIME_ENV];
-});
-
-afterEach(() => {
-  if (originalManagedCloudRuntime === undefined) {
-    delete process.env[MANAGED_CLOUD_RUNTIME_ENV];
-  } else {
-    process.env[MANAGED_CLOUD_RUNTIME_ENV] = originalManagedCloudRuntime;
-  }
 });
 
 describe("registerWithCloud", () => {
@@ -72,7 +60,6 @@ describe("registerWithCloud", () => {
       connectionName: "test-machine",
       metadata: {
         lettaCodeVersion: expect.any(String),
-        runtimeLocation: "local",
         os: expect.any(String),
         nodeVersion: expect.any(String),
         machine: {
@@ -83,25 +70,6 @@ describe("registerWithCloud", () => {
     });
     // Not provided → omitted so legacy servers see an unchanged payload
     expect(body).not.toHaveProperty("listenerInstanceId");
-  });
-
-  it("identifies managed Cloud runtimes in registration metadata", async () => {
-    process.env[MANAGED_CLOUD_RUNTIME_ENV] = "1";
-    mockFetch.mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({ connectionId: "conn-1", wsUrl: "wss://example.com" }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      ),
-    );
-
-    await registerWithCloud(defaultOpts, mockFetch as unknown as typeof fetch);
-
-    const [, init] = mockFetch.mock.calls[0] as unknown as [
-      string,
-      RequestInit,
-    ];
-    const body = JSON.parse(init.body as string);
-    expect(body.metadata.runtimeLocation).toBe("managed-cloud");
   });
 
   it("includes listenerInstanceId in the payload when provided", async () => {

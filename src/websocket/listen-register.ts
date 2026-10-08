@@ -5,7 +5,6 @@
 
 import { createHash } from "node:crypto";
 import { getDesktopAccessToken } from "@/auth/desktop-credentials";
-import { isManagedCloudRuntime } from "@/managed-cloud-runtime";
 import { getSelfUpdateStatus } from "@/updater/auto-update";
 import { getMachineMetadata } from "@/utils/machine-metadata";
 import { getVersion } from "@/version.ts";
@@ -31,13 +30,6 @@ export interface RegisterOptions {
    * Optional: servers that predate the field ignore it.
    */
   listenerInstanceId?: string;
-}
-
-export type RuntimeLocation = "local" | "managed-cloud";
-
-/** Distinguishes a user's device from Letta-managed Cloud execution. */
-export function getRuntimeLocation(): RuntimeLocation {
-  return isManagedCloudRuntime() ? "managed-cloud" : "local";
 }
 
 /**
@@ -137,7 +129,6 @@ export async function registerWithCloud(
       connectionName: opts.connectionName,
       metadata: {
         lettaCodeVersion: getVersion(),
-        runtimeLocation: getRuntimeLocation(),
         os: process.platform,
         nodeVersion: process.version,
         machine: await getMachineMetadata(),
