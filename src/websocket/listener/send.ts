@@ -26,6 +26,7 @@ import {
   rememberPendingApprovalBatchIds,
   resolveRecoveryBatchId,
 } from "./approval";
+import { resolveTurnExecutionConnectionId } from "./connection";
 import {
   LLM_API_ERROR_MAX_RETRIES,
   MAX_PRE_STREAM_RECOVERY,
@@ -363,6 +364,11 @@ export async function resolveStaleApprovals(
     runtime.agentId,
   );
   const preparedToolContext = await prepareToolExecutionContext({
+    connectionId: resolveTurnExecutionConnectionId(
+      runtime.listener,
+      scope,
+      runtime.activeConnectionId ?? undefined,
+    ),
     agentId: runtime.agentId,
     conversationId: recoveryConversationId,
     workingDirectory: recoveryWorkingDirectory,

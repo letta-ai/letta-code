@@ -194,6 +194,25 @@ export function getSubscribedListenerConnections(
     .sort((a, b) => a.ordinal - b.ordinal);
 }
 
+/**
+ * Connection that executes a turn. Process-originated turns (task
+ * notifications, cron, mod continues) carry no submitting connection, but their
+ * tools still run on this listener; children they launch must attach to it.
+ */
+export function resolveTurnExecutionConnectionId(
+  runtime: ListenerRuntime,
+  scope: { agent_id?: string | null; conversation_id?: string | null },
+  submittingConnectionId?: string,
+): string | undefined {
+  if (submittingConnectionId) return submittingConnectionId;
+  const subscribed = getSubscribedListenerConnections(runtime, scope);
+  if (subscribed[0]) return subscribed[0].id;
+  if (runtime.connections.size === 1) {
+    return runtime.connections.keys().next().value;
+  }
+  return undefined;
+}
+
 export function findListenerConnectionByTransport(
   runtime: ListenerRuntime,
   transport: ListenerTransport,
