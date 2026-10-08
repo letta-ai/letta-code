@@ -6,17 +6,20 @@
  * opens it in the user's browser.
  */
 
+import { isUtf8 } from "node:buffer";
 import { execFile as execFileCb } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
-import {
-  getFileNodes,
-  readFileContent,
-  scanMemoryFilesystem,
-} from "@/agent/memory-scanner";
+import { getFileNodes, scanMemoryFilesystem } from "@/agent/memory-scanner";
 import { getAgentContextOverview } from "@/backend/api/agents";
 import { getClient } from "@/backend/api/client";
 import { apiRequest } from "@/backend/api/request";
@@ -161,24 +164,51 @@ function parseFrontmatter(raw: string): {
 }
 
 /** Collect memory files from the working tree on disk. */
-function collectFiles(memoryRoot: string): MemoryFile[] {
+export function collectFiles(memoryRoot: string): MemoryFile[] {
   const treeNodes = scanMemoryFilesystem(memoryRoot);
   const fileNodes = getFileNodes(treeNodes);
 
-  return fileNodes
-    .filter((n) => n.name.endsWith(".md"))
-    .map((n) => {
-      const raw = readFileContent(n.fullPath);
-      const { frontmatter, body } = parseFrontmatter(raw);
+  return fileNodes.map((n): MemoryFile => {
+    const file = {
+      path: n.relativePath,
+      isSystem:
+        n.relativePath.startsWith("system/") ||
+        n.relativePath.startsWith("system\\"),
+    };
+    let bytes: Buffer;
+    try {
+      bytes = readFileSync(n.fullPath);
+    } catch {
       return {
-        path: n.relativePath,
-        isSystem:
-          n.relativePath.startsWith("system/") ||
-          n.relativePath.startsWith("system\\"),
-        frontmatter,
-        content: body,
+        ...file,
+        frontmatter: {},
+        content: "",
+        contentType: "unreadable",
       };
-    });
+    }
+    // 资源文件保留在目录中，但不将二进制或无效 UTF-8 字节注入 HTML。
+    if (bytes.includes(0) || !isUtf8(bytes)) {
+      return {
+        ...file,
+        frontmatter: {},
+        content: "",
+        contentType: "binary",
+        sizeBytes: bytes.length,
+      };
+    }
+    const raw = bytes.toString("utf8");
+    const isMarkdown = /\.(md|markdown)$/i.test(n.name);
+    const { frontmatter, body } = isMarkdown
+      ? parseFrontmatter(raw)
+      : { frontmatter: {}, body: raw };
+    return {
+      ...file,
+      frontmatter,
+      content: body,
+      contentType: isMarkdown ? "markdown" : "text",
+      sizeBytes: bytes.length,
+    };
+  });
 }
 
 /** Collect commit metadata via a single git log call. */

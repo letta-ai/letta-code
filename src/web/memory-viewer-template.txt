@@ -1296,7 +1296,7 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
   // Strip system/ prefix for core files display
   var coreFilesStripped = coreFiles.map(function(f) {
     var stripped = String(f.path).replace(/^system[\\/]/, '');
-    return { path: stripped, origPath: f.path, isSystem: f.isSystem, frontmatter: f.frontmatter, content: f.content };
+    return { path: stripped, origPath: f.path, isSystem: f.isSystem, frontmatter: f.frontmatter, content: f.content, contentType: f.contentType, sizeBytes: f.sizeBytes };
   });
 
   var coreTreeRoot = buildTree(coreFilesStripped);
@@ -1353,7 +1353,8 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
       html += '<div class="tree-item file" data-path="' + escAttr(file.origPath || file.path) + '">';
       var charCount = (file.content || '').length;
       var charLabel = charCount >= 1000 ? Math.round(charCount / 1000) + 'k' : String(charCount);
-      html += escHtml(displayName) + ' <span class="file-chars">' + charLabel + ' chars</span>';
+      var sizeLabel = file.contentType === 'binary' ? file.sizeBytes + ' bytes' : file.contentType === 'unreadable' ? 'unreadable' : charLabel + ' chars';
+      html += escHtml(displayName) + ' <span class="file-chars">' + escHtml(sizeLabel) + '</span>';
       html += '</div>';
     });
 
@@ -1422,6 +1423,7 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
     var panel = targetPanel || activeFilePanel;
     if (!panel) return;
     var fm = file.frontmatter || {};
+    var previewable = file.contentType === 'markdown' || file.contentType === 'text';
     var metaHtml = '';
     var pills = '';
     if (fm.description) pills += '<span class="meta-pill">description: <strong>' + escHtml(fm.description) + '</strong></span>';
@@ -1443,14 +1445,26 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
 
     metaHtml += lcHtml;
     metaHtml += '<div class="file-meta">';
-    metaHtml += '<button class="raw-toggle' + (rawMode ? ' active' : '') + '">' + (rawMode ? 'Rendered' : 'Raw') + '</button>';
+    if (previewable) metaHtml += '<button class="raw-toggle' + (rawMode ? ' active' : '') + '">' + (rawMode ? 'Rendered' : 'Raw') + '</button>';
     // file path omitted - already visible from tree selection
     if (pills) metaHtml += '<div class="meta-row">' + pills + '</div>';
     metaHtml += '</div>';
 
+    if (!previewable) {
+      var notice = file.contentType === 'binary'
+        ? 'Binary or non-UTF-8 file (' + file.sizeBytes + ' bytes). Preview is not available.'
+        : 'Unable to read file. Preview is not available.';
+      panel.innerHTML = metaHtml + '<div class="empty">' + escHtml(notice) + '</div>';
+      panel.currentFile = file;
+      return;
+    }
+
+    var renderedContent = file.contentType === 'markdown'
+      ? renderMarkdown(file.content)
+      : '<pre><code>' + escHtml(file.content) + '</code></pre>';
     panel.innerHTML =
       metaHtml +
-      '<article class="file-body" style="' + (rawMode ? 'display:none' : '') + '">' + renderMarkdown(file.content || '') + '</article>' +
+      '<article class="file-body" style="' + (rawMode ? 'display:none' : '') + '">' + renderedContent + '</article>' +
       '<pre class="file-body-raw" style="' + (rawMode ? 'display:block' : '') + '">' + escHtml(file.content || '') + '</pre>';
 
     panel.currentFile = file;
