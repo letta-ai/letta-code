@@ -39,6 +39,7 @@ import { isListenerTransportOpen, type ListenerTransport } from "./transport";
 import type {
   ConversationRuntime,
   IncomingMessage,
+  InputIdentity,
   StartListenerOptions,
 } from "./types";
 
@@ -78,7 +79,14 @@ function hasSameQueueScope(a: QueueItem, b: QueueItem): boolean {
   );
 }
 
-function getBatchActingUserId(items: QueueItem[]): string | undefined {
+function getBatchActingUserId(items: QueueItem[]): string | null | undefined {
+  // The latest ordinary user message owns a coalesced continuation request.
+  // This deliberately returns undefined for an unattributed latest user so it
+  // clears, rather than inherits, the actor from the turn being continued.
+  const userMessages = items.filter((item) => item.kind === "message");
+  if (userMessages.length > 0) return userMessages.at(-1)?.actingUserId;
+
+  if (items.some((item) => item.actingUserId === null)) return null;
   const actingUserId = items[0]?.actingUserId;
   if (
     !actingUserId ||
@@ -95,13 +103,19 @@ function buildQueuedTurnMessage(
 ): IncomingMessage | null {
   let template: IncomingMessage | undefined;
   const messages: IncomingMessage["messages"] = [];
+  const durableInputIdentities: InputIdentity[] = [];
+  const terminalConsumerIds = new Set<string>();
   for (const item of batch.items) {
     const incoming = runtime.queuedMessagesByItemId.get(item.id);
     if (item.kind === "message" && incoming) {
       template ??= {
         ...incoming,
-        actingUserId: incoming.actingUserId ?? item.actingUserId,
+        actingUserId: incoming.actingUserId ?? item.actingUserId ?? undefined,
       };
+      durableInputIdentities.push(...(incoming.durableInputIdentities ?? []));
+      for (const consumerId of incoming.terminalConsumerIds ?? []) {
+        terminalConsumerIds.add(consumerId);
+      }
       messages.push(
         ...incoming.messages.map((message) =>
           "content" in message
@@ -116,7 +130,7 @@ function buildQueuedTurnMessage(
       messages.push(
         withMessageAttribution(
           { role: "user", content: item.content },
-          item.actingUserId,
+          item.actingUserId ?? undefined,
         ),
       );
     } else if (isCoalescable(item.kind) && "text" in item) {
@@ -134,12 +148,25 @@ function buildQueuedTurnMessage(
   }
   if (messages.length === 0) return null;
   const scopeItem = batch.items[0];
+  const batchActingUserId = batch.items.some((item) => item.kind === "message")
+    ? getBatchActingUserId(batch.items)
+    : (template?.actingUserId ?? getBatchActingUserId(batch.items));
   return {
     type: "message",
     agentId: scopeItem?.agentId ?? runtime.agentId ?? undefined,
     conversationId: scopeItem?.conversationId ?? runtime.conversationId,
     ...template,
-    actingUserId: template?.actingUserId ?? getBatchActingUserId(batch.items),
+    actingUserId: batchActingUserId ?? undefined,
+    suppressActingUserFallback:
+      batchActingUserId === null ||
+      (batchActingUserId === undefined &&
+        template?.suppressActingUserFallback === true),
+    ...(durableInputIdentities.length > 0
+      ? { durableInputIdentities: [...new Set(durableInputIdentities)] }
+      : {}),
+    ...(terminalConsumerIds.size > 0
+      ? { terminalConsumerIds: [...terminalConsumerIds] }
+      : {}),
     messages,
   };
 }
@@ -321,6 +348,11 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
       clientMessageIds,
     );
   }
+  if (queuedTurn.durableInputIdentities?.length) {
+    runtime.dequeuedInputIdentitiesByBatchId.set(dequeuedBatch.batchId, [
+      ...queuedTurn.durableInputIdentities,
+    ]);
+  }
 
   return {
     dequeuedBatch,
@@ -365,6 +397,46 @@ function emitTurnBoundaryStatus(
   };
   emitQueueUpdate(socket, runtime, scope);
   emitLoopStatusUpdate(socket, runtime, scope);
+}
+
+function reportQueueStatusCallbackError(error: unknown): void {
+  trackBoundaryError({
+    errorType: "listener_status_callback_failed",
+    error,
+    context: "listener_queue_pump",
+  });
+  debugWarn("Listen", "Error in listener status callback:", error);
+}
+
+function emitQueueListenerStatus(
+  runtime: ConversationRuntime,
+  opts: StartListenerOptions,
+): void {
+  try {
+    emitListenerStatus(
+      runtime.listener,
+      opts.onStatusChange,
+      opts.connectionId,
+    );
+  } catch (error) {
+    reportQueueStatusCallbackError(error);
+  }
+}
+
+function emitQueuePumpBoundary(operation: () => void): void {
+  try {
+    operation();
+  } catch (error) {
+    // Queue ownership has already transferred. Outbound projection failures must
+    // not strand committed work, and restoring after a partial send could replay
+    // user-visible side effects.
+    trackBoundaryError({
+      errorType: "listener_queue_boundary_failed",
+      error,
+      context: "listener_queue_pump",
+    });
+    debugWarn("Listen", "Error emitting listener queue boundary:", error);
+  }
 }
 
 function resolveQueuePumpTransport(
@@ -461,14 +533,18 @@ async function drainQueuedMessages(
       }
 
       const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
-      emitDequeuedUserMessage(
-        turnTransport,
-        runtime,
-        queuedTurn,
-        dequeuedBatch,
+      emitQueuePumpBoundary(() =>
+        emitDequeuedUserMessage(
+          turnTransport,
+          runtime,
+          queuedTurn,
+          dequeuedBatch,
+        ),
       );
       // Turn start boundary: unconditional snapshot even when nothing changed.
-      emitTurnBoundaryStatus(runtime, turnTransport);
+      emitQueuePumpBoundary(() =>
+        emitTurnBoundaryStatus(runtime, turnTransport),
+      );
 
       const preTurnStatus =
         getListenerStatus(runtime.listener) === "processing"
@@ -479,18 +555,24 @@ async function drainQueuedMessages(
         runtime.listener.lastEmittedStatus !== preTurnStatus
       ) {
         runtime.listener.lastEmittedStatus = preTurnStatus;
-        opts.onStatusChange?.(preTurnStatus, opts.connectionId);
+        try {
+          opts.onStatusChange?.(preTurnStatus, opts.connectionId);
+        } catch (error) {
+          // The item is already dequeued and its stable ID is committed. A host
+          // callback must not strand accepted work that a retry will deduplicate.
+          reportQueueStatusCallbackError(error);
+        }
       }
       await processQueuedTurn(queuedTurn, dequeuedBatch);
-      emitListenerStatus(
-        runtime.listener,
-        opts.onStatusChange,
-        opts.connectionId,
-      );
+      emitQueueListenerStatus(runtime, opts);
       // Turn end boundary: repair any queue/loop frame the turn's own
       // change-driven emissions failed to deliver.
       const endTransport = resolveQueuePumpTransport(runtime, socket);
-      if (endTransport) emitTurnBoundaryStatus(runtime, endTransport);
+      if (endTransport) {
+        emitQueuePumpBoundary(() =>
+          emitTurnBoundaryStatus(runtime, endTransport),
+        );
+      }
       evictConversationRuntimeIfIdle(runtime);
     }
   } finally {
@@ -531,11 +613,7 @@ export function scheduleQueuePump(
         context: "listener_queue_pump",
       });
       debugWarn("Listen", "Error in queue pump:", error);
-      emitListenerStatus(
-        runtime.listener,
-        opts.onStatusChange,
-        opts.connectionId,
-      );
+      emitQueueListenerStatus(runtime, opts);
       evictConversationRuntimeIfIdle(runtime);
     });
 }

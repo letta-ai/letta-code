@@ -265,8 +265,10 @@ export async function handleListen(
       wsUrlValue: string,
       nextSupportsSplitStatusChannels: boolean,
       nextSupportsPairedListenerGenerations: boolean,
+      replacement?: import("@/websocket/listener/types").ListenerClientReplacement,
     ): Promise<void> => {
       await startListenerClient({
+        replacement,
         connectionId: connId,
         wsUrl: wsUrlValue,
         supportsSplitStatusChannels: nextSupportsSplitStatusChannels,
@@ -326,7 +328,7 @@ export async function handleListen(
           );
           ctx.setCommandRunning(false);
         },
-        onNeedsReregister: async () => {
+        onNeedsReregister: async (replacement) => {
           updateCommandResult(
             ctx.buffersRef,
             ctx.refreshDerived,
@@ -364,6 +366,7 @@ export async function handleListen(
               reregisterResult.wsUrl,
               reregisterResult.supportsSplitStatusChannels,
               reregisterResult.supportsPairedListenerGenerations,
+              replacement,
             );
           } catch (error) {
             updateCommandResult(

@@ -65,6 +65,8 @@ export interface EnqueueReceipt {
   super_run_id: string;
   /** Listener selected for a managed Agent launch, used only for cancellation. */
   connection_id?: string;
+  /** Original enqueue attribution; preserve null so cancellation suppresses fallback. */
+  acting_user_id?: string | null;
 }
 
 export interface EnqueueConversationInput {
@@ -73,7 +75,7 @@ export interface EnqueueConversationInput {
   clientMessageId: string;
   content: MessageCreate["content"];
   computer?: string;
-  actingUserId?: string;
+  actingUserId?: string | null;
 }
 
 /** Cloud owns delivery after this request returns 202. Never retry by executing locally. */
@@ -133,6 +135,7 @@ export async function enqueueConversationMessage(
     status: "queued",
     agent_id: input.agentId,
     conversation_id: input.conversationId,
+    acting_user_id: input.actingUserId,
   };
 }
 
@@ -140,7 +143,7 @@ export async function enqueueConversationMessage(
 export async function dequeueConversationMessage(
   input: Pick<
     EnqueueConversationInput,
-    "agentId" | "conversationId" | "clientMessageId"
+    "agentId" | "conversationId" | "clientMessageId" | "actingUserId"
   >,
   signal?: AbortSignal,
   request = apiRequest,
@@ -157,6 +160,7 @@ export async function dequeueConversationMessage(
       ...(input.conversationId === "default"
         ? { query: { agent_id: input.agentId } }
         : {}),
+      ...actingUserRequestOptions(input.actingUserId),
     },
   );
 }

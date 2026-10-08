@@ -60,6 +60,7 @@ export interface ClaudeTurnOptions {
   resumeSessionId?: string;
   sessionId?: string;
   onStarted?: (sessionId: string) => void;
+  beforeStart?: () => Promise<void>;
 }
 
 export interface ClaudeMessageReceipt {
@@ -584,6 +585,7 @@ export async function sendClaudeMessage(
       // Process completed while acquiring the write lock; resume exactly once below.
     }
   }
+  if (options.beforeStart) await options.beforeStart();
   const session = await startSession(
     { ...options, resumeSessionId: options.sessionId },
     deps,

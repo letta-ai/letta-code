@@ -13,6 +13,7 @@
     "README.md",
     "letta.js",
     "image-resize-worker.js",
+    "npm-shrinkwrap.json",
     "assets/tutor-profile.png",
     "scripts",
     "skills",
@@ -209,14 +210,17 @@
     "check:test-coverage": "node scripts/check-test-coverage.cjs",
     "check:skill-frontmatter": "node scripts/check-skill-frontmatter.js",
     "check:bundled-skill-scripts": "node scripts/check-bundled-skill-scripts.js",
+    "runtime-graph:generate": "bun run scripts/runtime-graph.ts generate",
+    "runtime-graph:verify": "bun run scripts/runtime-graph.ts verify",
     "check": "bun run scripts/check.js",
     "dev": "node scripts/dev.cjs",
     "build": "node scripts/postinstall-patches.js && bun run build.js",
     "test:update-chain:manual": "bun run src/test-utils/update-chain-smoke.ts --mode manual",
     "test:update-chain:startup": "bun run src/test-utils/update-chain-smoke.ts --mode startup",
-    "prepublishOnly": "bun run build",
+    "prepublishOnly": "bun run runtime-graph:verify && bun run build",
     "postinstall": "node scripts/postinstall-patches.js || echo letta: vendor patches skipped && node -e \"try{require('fs').chmodSync(require('path').join(require.resolve('node-pty/package.json'),'../prebuilds/darwin-arm64/spawn-helper'),0o755)}catch(e){}\" || true",
-    "mod-learning:memory-citations": "bun scripts/mod-learning/learn-mod.ts --env docs/examples/mods/learning/memory-citations.env.json"
+    "mod-learning:memory-citations": "bun scripts/mod-learning/learn-mod.ts --env docs/examples/mods/learning/memory-citations.env.json",
+    "test:built-entrypoints": "LETTA_TEST_CLI_BUNDLE=\"$PWD/letta.js\" LETTA_TEST_BUILT_ARTIFACT=1 bun test src/cli/subcommands/lifecycle-output.test.ts src/websocket/app-server-dream.test.ts --timeout 60000"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx,json}": [
@@ -268,5 +272,8 @@
         "./dist/types/types/protocol.d.ts"
       ]
     }
-  }
+  },
+  "lettaLifecycleProtocol": 1,
+  "lettaRuntimeGraphProtocol": 1,
+  "lettaRuntimeGraphSha512": "sha512-DE7UQDvouQXFbKDDYgttDJs4IRXGbjhFGC/ddpQVoEqfgvlf1d/ewlnIenvNrCIwUV7rpQl/tYqnCvY7sWfrZw=="
 }

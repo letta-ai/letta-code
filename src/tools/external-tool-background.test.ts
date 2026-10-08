@@ -33,7 +33,7 @@ describe("external tool auto-backgrounding", () => {
       text: string;
       agentId?: string;
       conversationId?: string;
-      actingUserId?: string;
+      actingUserId?: string | null;
     }> = [];
     const operation = new Promise<{ status: "success"; toolReturn: string }>(
       (resolve) => {
@@ -65,6 +65,28 @@ describe("external tool auto-backgrounding", () => {
     expect(notifications[0]?.text).toContain("messageId");
     expect(notifications[0]?.text).toContain("123.45");
     expect(notifications[0]?.text).not.toContain("Full transcript available");
+  });
+
+  test("preserves explicit actor suppression on late completion", async () => {
+    let complete!: (result: { status: "success"; toolReturn: string }) => void;
+    const operation = new Promise<{ status: "success"; toolReturn: string }>(
+      (resolve) => {
+        complete = resolve;
+      },
+    );
+    const notifications: Array<{ actingUserId?: string | null }> = [];
+    await autoBackgroundExternalTool("reply", listenerTool, operation, {
+      yieldMs: 0,
+      runtimeScope: {
+        ...scope,
+        suppressActingUserFallback: true,
+      },
+      enqueue: (message) => notifications.push(message),
+    });
+    complete({ status: "success", toolReturn: "done" });
+    await Bun.sleep(0);
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]?.actingUserId).toBeNull();
   });
 
   test("preserves a late tool result's text and image parts in order", async () => {

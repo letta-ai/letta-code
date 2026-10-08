@@ -59,6 +59,9 @@ describe("server subcommand routing", () => {
     expect(() =>
       resolveServerCommand(["--channels=slack", "--listen"]),
     ).toThrow("--channels cannot be used with --listen");
+    expect(() =>
+      resolveServerCommand(["--listen", "--lifecycle-output=jsonl"]),
+    ).toThrow("--lifecycle-output cannot be used with --listen");
   });
 
   test("maps the legacy command to App Server mode", () => {

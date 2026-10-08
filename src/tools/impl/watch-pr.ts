@@ -2,7 +2,7 @@ import { rmSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   getCurrentWorkingDirectory,
-  getRuntimeActingUserId,
+  getRuntimeActingUserAttribution,
   getRuntimeContext,
 } from "@/runtime-context";
 import { scrubSecretsFromString } from "@/tools/secret-substitution";
@@ -128,7 +128,7 @@ export async function watch_pr(
         }
       : undefined);
   const scope = resolveNotificationScope(parentScope);
-  const actingUserId = getRuntimeActingUserId();
+  const actingUserId = getRuntimeActingUserAttribution();
   const description = `PR ${ref.owner}/${ref.repo}#${ref.number} checks, reviews, and mergeability`;
   const controller = new AbortController();
   const secrets: Readonly<Record<string, string>> = {};

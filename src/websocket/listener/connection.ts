@@ -1,5 +1,7 @@
 import type WebSocket from "ws";
+import { closeOutboundTransportQueue } from "./outbound-wire";
 import { getConversationRuntimeKey, nextEventSeq } from "./runtime";
+import { reserveStartupIngressOwner } from "./startup-ingress";
 import {
   isListenerTransportOpen,
   type ListenerTransport,
@@ -11,6 +13,7 @@ import type {
   ListenerMessageRouting,
   ListenerRuntime,
   StartListenerOptions,
+  StartupIngressOwner,
 } from "./types";
 
 export const TO_SUBSCRIBERS = {
@@ -82,6 +85,8 @@ export function openListenerConnection(params: {
   streamWriter?: ListenerTransport | null;
   cancellation?: AbortController;
   options: StartListenerOptions;
+  /** Owner already reserved before the transport existed; claimed as-is. */
+  startupOwner?: StartupIngressOwner;
 }): ListenerConnectionState {
   const existing = params.runtime.connections.get(params.connectionId);
   if (existing) {
@@ -91,13 +96,28 @@ export function openListenerConnection(params: {
   const resumeStates = getResumeStates(params.runtime);
   const resumed = resumeStates.get(params.connectionId);
   resumeStates.delete(params.connectionId);
+  let resolveStartupReady!: () => void;
+  const startupReady = new Promise<void>((resolve) => {
+    resolveStartupReady = resolve;
+  });
+  const startupOwner =
+    params.startupOwner ??
+    reserveStartupIngressOwner(params.runtime, {
+      connectionId: params.connectionId,
+      replacement: params.options.replacement,
+      connectionIdCanResume: params.options.connectionIdCanResume,
+    });
   const connection: ListenerConnectionState = {
     id: params.connectionId,
     ordinal: resumed?.ordinal ?? params.runtime.nextConnectionOrdinal,
+    startupOwner,
     writer: params.writer,
     streamWriter: params.streamWriter ?? null,
     cancellation: params.cancellation ?? new AbortController(),
     initialized: false,
+    ingressReady: false,
+    startupReady,
+    resolveStartupReady,
     subscriptions: resumed?.subscriptions ?? new Set(),
     eventSeqCounter: resumed?.eventSeqCounter ?? 0,
     options: params.options,
@@ -119,13 +139,44 @@ export function openListenerConnection(params: {
   return connection;
 }
 
+export async function waitForListenerConnectionStartup(
+  runtime: ListenerRuntime,
+  connectionId: ListenerConnectionId,
+  expectedWriter: ListenerTransport,
+): Promise<boolean> {
+  const connection = runtime.connections.get(connectionId);
+  if (!connection || connection.writer !== expectedWriter) return false;
+  await connection.startupReady;
+  return (
+    runtime.connections.get(connectionId) === connection &&
+    connection.writer === expectedWriter &&
+    connection.initialized
+  );
+}
+
+export function isCurrentInitializedListenerConnection(
+  runtime: ListenerRuntime,
+  connection: ListenerConnectionState,
+): boolean {
+  return (
+    runtime.connections.get(connection.id) === connection &&
+    connection.initialized
+  );
+}
+
 export function markListenerConnectionInitialized(
   runtime: ListenerRuntime,
   connectionId: ListenerConnectionId,
+  expectedConnection?: ListenerConnectionState,
 ): void {
   const connection = runtime.connections.get(connectionId);
-  if (connection) {
+  if (
+    connection &&
+    (!expectedConnection || connection === expectedConnection) &&
+    !connection.initialized
+  ) {
     connection.initialized = true;
+    connection.resolveStartupReady();
   }
 }
 
@@ -341,7 +392,20 @@ export function closeListenerConnection(
     unsubscribeListenerConnection(runtime, connectionId, runtimeKey);
   }
   runtime.connections.delete(connectionId);
+  connection.resolveStartupReady();
   connection.cancellation.abort();
+  const { lineageId, generation, handoffEnabled } = connection.startupOwner;
+  if (
+    !handoffEnabled &&
+    runtime.startupGenerationByLineage.get(lineageId) === generation
+  ) {
+    runtime.startupGenerationByLineage.delete(lineageId);
+    runtime.pendingStartupFramesByLineage.delete(lineageId);
+  }
+  closeOutboundTransportQueue(connection.writer);
+  if (connection.streamWriter) {
+    closeOutboundTransportQueue(connection.streamWriter);
+  }
   refreshLegacySingleConnection(runtime);
   return connection;
 }

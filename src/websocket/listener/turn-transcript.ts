@@ -10,9 +10,10 @@ export function trackListenerUserInput(
   messages: InboundMessagePayload[],
   modelId: string,
   actingUserId?: string,
+  suppressActingUserFallback = false,
 ): void {
   // Input is tracked before the listener prepares the turn's tool context.
-  runWithRuntimeContext({ actingUserId }, () => {
+  runWithRuntimeContext({ actingUserId, suppressActingUserFallback }, () => {
     for (const message of messages) {
       if (!("role" in message) || message.role !== "user") {
         continue;

@@ -57,6 +57,7 @@ export interface CodexTurnOptions {
   signal?: AbortSignal;
   resumeThreadId?: string;
   onStarted?: (threadId: string, turnId: string) => void;
+  beforeStart?: (threadId: string) => Promise<void>;
 }
 
 export interface CodexTurnHandle {
@@ -470,6 +471,7 @@ async function startTurnUnlocked(
   session: CodexSession,
   prompt: string,
   signal?: AbortSignal,
+  onStarted?: (threadId: string, turnId: string) => void,
 ): Promise<CodexTurnHandle> {
   if (session.activeTurnId) {
     throw new Error("Codex thread already has an active turn");
@@ -499,6 +501,7 @@ async function startTurnUnlocked(
       model: session.model,
     };
   });
+  onStarted?.(session.threadId, turnId);
   replayPendingNotifications(session);
   const abort = () => {
     void session.client
@@ -513,12 +516,20 @@ async function startTurnUnlocked(
 
 function startTurn(
   session: CodexSession,
-  prompt: string,
-  signal?: AbortSignal,
+  options: Pick<
+    CodexTurnOptions,
+    "prompt" | "signal" | "onStarted" | "beforeStart"
+  >,
 ): Promise<CodexTurnHandle> {
-  return withSessionLock(session, () =>
-    startTurnUnlocked(session, prompt, signal),
-  );
+  return withSessionLock(session, async () => {
+    await options.beforeStart?.(session.threadId);
+    return startTurnUnlocked(
+      session,
+      options.prompt,
+      options.signal,
+      options.onStarted,
+    );
+  });
 }
 
 export async function startCodexTurn(
@@ -527,8 +538,7 @@ export async function startCodexTurn(
 ): Promise<CodexTurnHandle> {
   const session = await createSession(options, deps);
   try {
-    const handle = await startTurn(session, options.prompt, options.signal);
-    options.onStarted?.(handle.threadId, handle.turnId);
+    const handle = await startTurn(session, options);
     return handle;
   } catch (error) {
     disposeSession(session);
@@ -582,7 +592,13 @@ export async function sendCodexMessage(
         }
       }
       options.signal?.throwIfAborted();
-      const handle = await startTurnUnlocked(session, options.prompt);
+      await options.beforeStart?.(session.threadId);
+      const handle = await startTurnUnlocked(
+        session,
+        options.prompt,
+        undefined,
+        options.onStarted,
+      );
       if (options.signal?.aborted) {
         await session.client.request("turn/interrupt", {
           threadId: handle.threadId,

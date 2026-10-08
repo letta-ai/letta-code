@@ -236,6 +236,8 @@ describe("telemetry acting-user HTTP attribution", () => {
   });
 
   test("listener input uses the inbound turn before its tool context exists", async () => {
+    const originalActor = process.env.LETTA_ACTING_USER_ID;
+    process.env.LETTA_ACTING_USER_ID = "ambient-process-user";
     runWithRuntimeContext({ actingUserId: "unrelated-dispatch" }, () => {
       trackListenerUserInput(
         [{ role: "user", content: "hello" }],
@@ -247,9 +249,18 @@ describe("telemetry acting-user HTTP attribution", () => {
         "model",
         undefined,
       );
+      trackListenerUserInput(
+        [{ role: "user", content: "suppressed" }],
+        "model",
+        undefined,
+        true,
+      );
     });
+    if (originalActor === undefined) delete process.env.LETTA_ACTING_USER_ID;
+    else process.env.LETTA_ACTING_USER_ID = originalActor;
     await telemetry.drain();
     expect(submissions.map((request) => request.actingUserId).sort()).toEqual([
+      "ambient-process-user",
       "inbound-customer",
       null,
     ]);

@@ -32,7 +32,8 @@ type QueueItemBase = {
    * Undefined for self-hosted, single-user, or pre-channel-split
    * flows where cloud doesn't stamp the field.
    */
-  actingUserId?: string;
+  /** Null explicitly suppresses fallback to the runtime owner's identity. */
+  actingUserId?: string | null;
   source: QueueItemSource;
   enqueuedAt: number;
   /**
@@ -130,6 +131,14 @@ export interface DequeuedBatch {
 }
 
 export interface QueueCallbacks {
+  /** Durable ownership guards run synchronously before volatile mutation. */
+  beforeDequeued?: (items: readonly QueueItem[]) => boolean;
+  beforeDropped?: (item: QueueItem) => boolean;
+  beforeRemoved?: (item: QueueItem) => boolean;
+  beforeCleared?: (
+    reason: QueueClearedReason,
+    items: readonly QueueItem[],
+  ) => boolean;
   onEnqueued?: (item: QueueItem, queueLen: number) => void;
   onDequeued?: (batch: DequeuedBatch) => void;
   /**
@@ -217,10 +226,23 @@ export class QueueRuntime {
    *   applies to coalescable items).
    * - If at hard ceiling: rejects all item kinds, fires onDropped("buffer_limit").
    */
-  enqueue(input: Omit<QueueItem, "id" | "enqueuedAt">): QueueItem | null {
+  enqueue(
+    input: Omit<QueueItem, "id" | "enqueuedAt">,
+    options: { preserveExisting?: boolean } = {},
+  ): QueueItem | null {
+    // Durable rehydration must be observational on rejection: its payload remains
+    // in the disposition store and no queued item may be evicted to make room.
+    if (
+      options.preserveExisting &&
+      (this.store.length >= this.hardMaxItems ||
+        (this.store.length >= this.maxItems && isCoalescable(input.kind)))
+    ) {
+      return null;
+    }
     // Hard ceiling check
     if (this.store.length >= this.hardMaxItems) {
       const phantom = this.makeItem(input);
+      if (!this.mutationAllowed("beforeDropped", phantom)) return null;
       this.safeCallback(
         "onDropped",
         phantom,
@@ -233,9 +255,20 @@ export class QueueRuntime {
     // Soft limit: only drop coalescable items
     if (this.store.length >= this.maxItems && isCoalescable(input.kind)) {
       const dropIdx = this.store.findIndex((i) => isCoalescable(i.kind));
-      const dropped =
-        dropIdx !== -1 ? this.store.splice(dropIdx, 1)[0] : undefined;
+      const dropped = dropIdx !== -1 ? this.store[dropIdx] : undefined;
       if (dropped !== undefined) {
+        if (!this.mutationAllowed("beforeDropped", dropped)) {
+          const rejected = this.makeItem(input);
+          if (!this.mutationAllowed("beforeDropped", rejected)) return null;
+          this.safeCallback(
+            "onDropped",
+            rejected,
+            "buffer_limit",
+            this.store.length,
+          );
+          return null;
+        }
+        this.store.splice(dropIdx, 1);
         const item = this.makeItem(input);
         this.store.push(item);
         // queueLen after: same as before (one dropped, one added)
@@ -322,6 +355,7 @@ export class QueueRuntime {
     if (batch.length === 0) {
       return null;
     }
+    if (!this.mutationAllowed("beforeDequeued", batch)) return null;
     this.removeAll(batch);
 
     // When queue becomes empty after dequeue, reset blocked epoch tracking
@@ -353,6 +387,7 @@ export class QueueRuntime {
     const batch = this.store.filter((item) => !item.paused).slice(0, n);
     const count = batch.length;
     if (count === 0) return null;
+    if (!this.mutationAllowed("beforeDequeued", batch)) return null;
     this.removeAll(batch);
     if (this.store.length === 0) {
       this.blockedEmittedForNonEmpty = false;
@@ -387,6 +422,10 @@ export class QueueRuntime {
   removeItem(id: string): QueueItem | null {
     const idx = this.store.findIndex((item) => item.id === id);
     if (idx === -1) return null;
+    const candidate = this.store[idx];
+    if (!candidate || !this.mutationAllowed("beforeRemoved", candidate)) {
+      return null;
+    }
     const removed = this.store.splice(idx, 1)[0];
     if (!removed) return null;
     if (this.store.length === 0) {
@@ -443,6 +482,7 @@ export class QueueRuntime {
   clear(reason: QueueClearedReason): void {
     const count = this.store.length;
     const clearedItems = this.store.slice();
+    if (!this.mutationAllowed("beforeCleared", reason, clearedItems)) return;
     this.store.length = 0;
     this.lastEmittedBlockedReason = null;
     this.blockedEmittedForNonEmpty = false;
@@ -499,6 +539,18 @@ export class QueueRuntime {
       id: `q-${++this.nextId}`,
       enqueuedAt: Date.now(),
     } as QueueItem;
+  }
+
+  private mutationAllowed<
+    K extends keyof Pick<
+      QueueCallbacks,
+      "beforeDequeued" | "beforeDropped" | "beforeRemoved" | "beforeCleared"
+    >,
+  >(name: K, ...args: Parameters<NonNullable<QueueCallbacks[K]>>): boolean {
+    const callback = this.callbacks[name] as
+      | ((...values: Parameters<NonNullable<QueueCallbacks[K]>>) => boolean)
+      | undefined;
+    return callback?.(...args) ?? true;
   }
 
   private safeCallback<K extends keyof QueueCallbacks>(

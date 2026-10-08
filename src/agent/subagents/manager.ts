@@ -9,7 +9,6 @@
 
 import { rmSync } from "node:fs";
 import { platform } from "node:os";
-import { resolveActingUserId } from "@/agent/acting-user";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { detectMemoryFormat } from "@/agent/memory-format";
@@ -34,6 +33,7 @@ import { resolveAllowedMemoryRoots } from "@/permissions/memory-paths";
 import { sessionPermissions } from "@/permissions/session";
 import {
   getCurrentWorkingDirectory,
+  getRuntimeActingUserId,
   getRuntimeContext,
   runWithRuntimeContext,
 } from "@/runtime-context";
@@ -287,7 +287,7 @@ async function executeSubagent(
   memoryScope?: SubagentMemoryScope,
   systemPromptOverride?: string,
   environment?: string,
-  actingUserIdOverride?: string,
+  actingUserIdOverride?: string | null,
   parentAgentName?: string | null,
   parentConversationId?: string,
   clientMessageId?: string,
@@ -833,13 +833,17 @@ async function spawnSubagentInContext(
   memoryScope?: SubagentMemoryScope,
   systemPromptOverride?: string,
   environment?: string,
-  actingUserId?: string,
+  actingUserId?: string | null,
   resolvedConfig?: SubagentConfig,
   clientMessageId?: string,
 ): Promise<SubagentResult> {
-  const launchActingUserId = resolveActingUserId(actingUserId);
+  const launchActingUserId =
+    actingUserId !== undefined
+      ? actingUserId
+      : getRuntimeContext()?.suppressActingUserFallback
+        ? null
+        : getRuntimeActingUserId();
   let config = resolvedConfig ?? (await getAllSubagentConfigs())[type];
-
   if (!config) {
     return {
       agentId: "",
@@ -961,7 +965,7 @@ async function spawnSubagentInContext(
   }
 
   // Execute subagent - state updates are handled via the state store
-  const result = await executeSubagent(
+  return executeSubagent(
     type,
     config,
     model,
@@ -982,8 +986,6 @@ async function spawnSubagentInContext(
     resolvedParentConversationId,
     clientMessageId,
   );
-
-  return result;
 }
 
 export function spawnSubagent(

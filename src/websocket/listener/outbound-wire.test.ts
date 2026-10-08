@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import WebSocket from "ws";
 import {
   enqueueOutboundFrame,
@@ -133,6 +133,29 @@ describe("outbound wire queue", () => {
     expect(getOutboundQueueStats(transport).queuedFrames).toBe(0);
   });
 
+  test("terminates a websocket that stays above the high watermark", async () => {
+    let now = 1_000;
+    const clock = spyOn(Date, "now").mockImplementation(() => now);
+    const { transport, wasTerminated } = makeWsTransport({
+      bufferedAmount: OUTBOUND_QUEUE_LIMITS.HIGH_WATERMARK_BUFFERED_BYTES,
+    });
+    try {
+      const receipt = enqueueOutboundFrame(
+        transport,
+        frame("terminal", "critical"),
+      );
+      now += OUTBOUND_QUEUE_LIMITS.MAX_BACKPRESSURE_MS;
+      await new Promise((resolve) =>
+        setTimeout(resolve, OUTBOUND_QUEUE_LIMITS.DRAIN_POLL_MS + 20),
+      );
+      expect(wasTerminated()).toBe(true);
+      await expect(receipt.settlement).resolves.toBe("dropped");
+      expect(getOutboundQueueStats(transport).killed).toBe(true);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   test("coalesces status frames latest-wins per key while queued", async () => {
     const { transport, sent, raw } = makeLocalTransport({
       bufferedAmount: OUTBOUND_QUEUE_LIMITS.HIGH_WATERMARK_BUFFERED_BYTES,
@@ -233,7 +256,10 @@ describe("outbound wire queue", () => {
       },
     } as ListenerTransport;
 
-    enqueueOutboundFrame(transport, frame("stranded", "critical"));
+    const receipt = enqueueOutboundFrame(
+      transport,
+      frame("stranded", "critical"),
+    );
     expect(getOutboundQueueStats(transport).queuedFrames).toBe(1);
 
     open = false;
@@ -241,6 +267,20 @@ describe("outbound wire queue", () => {
       setTimeout(resolve, OUTBOUND_QUEUE_LIMITS.DRAIN_POLL_MS + 20),
     );
     expect(sent).toEqual([]);
+    expect(getOutboundQueueStats(transport).queuedFrames).toBe(0);
+    await expect(receipt.settlement).resolves.toBe("dropped");
+  });
+
+  test("cancelling a queued critical frame settles and removes it", async () => {
+    const { transport } = makeLocalTransport({
+      bufferedAmount: OUTBOUND_QUEUE_LIMITS.HIGH_WATERMARK_BUFFERED_BYTES,
+    });
+    const receipt = enqueueOutboundFrame(
+      transport,
+      frame("cancelled", "critical"),
+    );
+    receipt.cancel();
+    await expect(receipt.settlement).resolves.toBe("dropped");
     expect(getOutboundQueueStats(transport).queuedFrames).toBe(0);
   });
 

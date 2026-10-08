@@ -10,7 +10,10 @@ import {
 import { clearAllRoutes } from "@/channels/routing";
 import type { ChannelRoute } from "@/channels/types";
 import type { WsProtocolCommand } from "@/types/protocol_v2";
-import { openListenerConnection } from "./connection";
+import {
+  markListenerConnectionInitialized,
+  openListenerConnection,
+} from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import {
   registerRuntimeExternalTools,
@@ -89,12 +92,13 @@ function fixture() {
     onDisconnected: () => {},
     onError: () => {},
   };
-  openListenerConnection({
+  const connection = openListenerConnection({
     runtime: listener,
     connectionId: "source",
     writer: socket as unknown as WebSocket,
     options,
   });
+  markListenerConnectionInitialized(listener, "source", connection);
   setActiveRuntime(listener);
   const processIncomingMessage = mock(async () => {});
   const runDetachedListenerTask = mock(() => {});

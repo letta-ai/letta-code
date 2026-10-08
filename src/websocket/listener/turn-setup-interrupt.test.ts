@@ -67,7 +67,7 @@ test("turn setup delivers the interrupt recovery notice once, only to the interr
   setActiveRuntime(listener);
 
   async function prepareInput(
-    scopeAgentId: string,
+    scopeAgentId: string | null,
     scopeConversationId: string,
   ) {
     const runtime = getOrCreateScopedRuntime(
@@ -165,6 +165,40 @@ test("turn setup delivers the interrupt recovery notice once, only to the interr
       INTERRUPT_RECOVERY_ALERT.trim(),
     );
     expect(laterMessages).toHaveLength(1);
+
+    const nullAgentRuntime = getOrCreateScopedRuntime(
+      listener,
+      null,
+      "agent-free",
+    );
+    nullAgentRuntime.pendingInterruptedResults = [
+      {
+        type: "tool",
+        tool_call_id: "agent-free-tool",
+        tool_return: "Interrupted by user",
+        status: "error",
+      },
+    ];
+    nullAgentRuntime.pendingInterruptedContext = {
+      agentId: null,
+      conversationId: "agent-free",
+      continuationEpoch: nullAgentRuntime.continuationEpoch,
+    };
+    nullAgentRuntime.pendingInterruptedToolCallIds = ["agent-free-tool"];
+    const nullAgentMessages = await prepareInput(null, "agent-free");
+    expect(nullAgentMessages[0]).toMatchObject({
+      type: "approval",
+      approvals: [expect.objectContaining({ tool_call_id: "agent-free-tool" })],
+    });
+    expect(JSON.stringify(nullAgentMessages[1])).toContain(
+      INTERRUPT_RECOVERY_ALERT.trim(),
+    );
+    expect(nullAgentMessages[2]).toMatchObject({
+      role: "user",
+      content: "continue after interrupt",
+    });
+    expect(nullAgentRuntime.pendingInterruptedContext).toBeNull();
+    expect(nullAgentRuntime.pendingInterruptedResults).toBeNull();
   } finally {
     disposeListenerModAdapter(listener);
     __listenerWarmupTestUtils.resetWarmupDepsForTests();

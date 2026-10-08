@@ -234,6 +234,138 @@ describe("recoverApprovalStateForSync restart recovery", () => {
       continuationEpoch: runtime.continuationEpoch,
     });
     expect(getPendingControlRequests(runtime.listener, scope)).toHaveLength(0);
+
+    await recoverApprovalStateForSync(
+      runtime,
+      scope,
+      createDeps([bashApproval]),
+      { resumeInterruptedTurn: true },
+    );
+    expect(runtime.pendingInterruptedResults).toBeNull();
+    expect(runtime.pendingInterruptedContext).toBeNull();
+    expect(runtime.recoveredApprovalState?.autoDecisions).toEqual([
+      {
+        type: "deny",
+        approval: bashApproval,
+        reason: STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+      },
+    ]);
+  });
+
+  test("owner sync preserves the observer cache when backend recovery fails", async () => {
+    const runtime = createScopedRuntime();
+    await recoverApprovalStateForSync(
+      runtime,
+      scope,
+      createDeps([bashApproval]),
+    );
+    const parkedResults = structuredClone(runtime.pendingInterruptedResults);
+    const parkedContext = structuredClone(runtime.pendingInterruptedContext);
+
+    await expect(
+      recoverApprovalStateForSync(
+        runtime,
+        scope,
+        {
+          getBackend: (() => ({
+            retrieveAgent: async () => {
+              throw new Error("transient backend failure");
+            },
+          })) as never,
+        },
+        { resumeInterruptedTurn: true },
+      ),
+    ).rejects.toThrow("transient backend failure");
+    expect(runtime.pendingInterruptedResults).toEqual(parkedResults);
+    expect(runtime.pendingInterruptedContext).toEqual(parkedContext);
+    expect(runtime.recoveredApprovalState).toBeNull();
+  });
+
+  test("owner sync partitions a mixed predecessor and successor approval batch", async () => {
+    const runtime = createScopedRuntime();
+    const successorApproval = {
+      toolCallId: "call-successor",
+      toolName: "Bash",
+      toolArgs: "{}",
+    };
+    const recorded = {
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      runId: "run-predecessor",
+      toolCallIds: [bashApproval.toolCallId],
+      results: [],
+      requestOtid: "request-predecessor",
+      workingDirectory: "/project",
+      revision: "revision-predecessor",
+      recoveryClaimCompletion: {
+        lineageId: "lineage-predecessor",
+        state: "running" as const,
+        effectRevision: "revision-predecessor",
+        independentSuccessor: true,
+      },
+    };
+
+    expect(
+      await recoverApprovalStateForSync(
+        runtime,
+        scope,
+        {
+          ...createDeps([bashApproval, successorApproval]),
+          readInterruptedTurn: () => recorded,
+        },
+        { resumeInterruptedTurn: true },
+      ),
+    ).toBeUndefined();
+    expect(runtime.recoveredApprovalState?.allApprovals).toEqual([
+      bashApproval,
+    ]);
+    expect(runtime.recoveredApprovalState?.autoDecisions).toEqual([
+      expect.objectContaining({ approval: bashApproval }),
+    ]);
+    expect(runtime.pendingInterruptedResults).toBeNull();
+  });
+
+  test("observer sync leaves explicitly unstarted work for the owner", async () => {
+    const runtime = createScopedRuntime();
+    const recorded = {
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      runId: "run-unstarted",
+      toolCallIds: [bashApproval.toolCallId],
+      unstartedToolCallIds: [bashApproval.toolCallId],
+      results: [],
+      requestOtid: "request-unstarted",
+      workingDirectory: "/project",
+      revision: "revision-unstarted",
+      recoveryClaimCompletion: {
+        lineageId: "lineage-unstarted",
+        state: "running" as const,
+        effectRevision: "revision-unstarted",
+        independentSuccessor: true,
+      },
+    };
+    const deps = {
+      ...createDeps([bashApproval]),
+      readInterruptedTurn: () => recorded,
+    };
+
+    expect(await recoverApprovalStateForSync(runtime, scope, deps)).toBe(
+      "deferred",
+    );
+    expect(runtime.pendingInterruptedResults).toBeNull();
+    expect(runtime.recoveredApprovalState).toBeNull();
+
+    await recoverApprovalStateForSync(runtime, scope, deps, {
+      resumeInterruptedTurn: true,
+    });
+    expect(runtime.recoveredApprovalState?.autoDecisions).toEqual([
+      { type: "approve", approval: bashApproval },
+    ]);
+    expect(runtime.recoveredApprovalState).toMatchObject({
+      interruptedRevision: "revision-unstarted",
+      recoveryLineageId: "lineage-unstarted",
+      recoveryUsesIndependentSuccessor: true,
+    });
   });
 
   test("an owner sync that recovers only stale denials sends them as a turn immediately", async () => {
@@ -268,6 +400,7 @@ describe("recoverApprovalStateForSync restart recovery", () => {
           );
         },
         recoveredContinuationDependencies: {
+          ensureModAdapters: async () => [],
           ensureSecretsHydrated: async () => {},
           prepareToolExecutionContext: async () =>
             ({
@@ -492,19 +625,18 @@ describe("recoverApprovalStateForSync restart recovery", () => {
     expect(getPendingControlRequests(runtime.listener, scope)).toHaveLength(0);
   });
 
-  test("sync wiring denies recovered stale approvals and never auto-runs them", () => {
+  test("sync wiring replays only explicitly unstarted approvals", () => {
     const recoveryPath = fileURLToPath(
       new URL("./recovery-sync.ts", import.meta.url),
     );
     const source = readFileSync(recoveryPath, "utf-8");
 
-    // Interrupted tools become stale denials, never live control requests.
-    // Recovery may not classify or auto-execute restored approvals. The denials
-    // ride on recovered state as deny decisions; the sync caller sends them
-    // as the next turn, and nothing here approves or runs a restored tool.
+    // Legacy/unrelated tools remain stale denials, while an explicit durable
+    // unstarted marker is the only path which reconstructs an approval.
     expect(source).toContain('type: "deny" as const,');
     expect(source).toContain("STALE_APPROVAL_RECOVERY_DENIAL_REASON");
-    expect(source).not.toContain('type: "approve"');
+    expect(source).toContain("recorded.unstartedToolCallIds?.includes");
+    expect(source).toContain('type: "approve" as const');
     expect(source).toContain("clearRecoveredApprovalState(runtime);");
     expect(source).not.toContain("isInteractiveApprovalTool");
     expect(source).not.toContain("classifyApprovalsWithSuggestions(");

@@ -1,9 +1,20 @@
+import { isDebugEnabled } from "@/utils/debug";
 import {
   LISTENER_HEARTBEAT_INTERVAL_MS,
   LISTENER_PONG_TIMEOUT_MS,
 } from "./constants";
-import { getListenerTransportKind, type ListenerTransport } from "./transport";
+import {
+  getListenerTransportKind,
+  isListenerTransportOpen,
+  type ListenerTransport,
+} from "./transport";
 import type { ListenerRuntime } from "./types";
+
+type ReportListenerError = (
+  errorType: string,
+  error: unknown,
+  context: string,
+) => void;
 
 export interface MissedPongWatchdog {
   shouldTerminate(lastPongAt: number | null): boolean;
@@ -92,4 +103,51 @@ export function startConnectionHeartbeat(
       sendPing(streamTransport);
     }
   }, options.intervalMs ?? LISTENER_HEARTBEAT_INTERVAL_MS);
+}
+
+function sendHeartbeatPing(
+  transport: ListenerTransport,
+  report: ReportListenerError,
+): boolean {
+  if (!isListenerTransportOpen(transport)) {
+    return false;
+  }
+  try {
+    transport.send(JSON.stringify({ type: "ping" }));
+    return true;
+  } catch (error) {
+    report("listener_ping_send_failed", error, "listener_heartbeat");
+    if (isDebugEnabled()) {
+      console.error("[Listen] listener_heartbeat send failed:", error);
+    }
+    return false;
+  }
+}
+
+/**
+ * Wire the relay heartbeat for one connected listener transport.
+ *
+ * A half-open relay socket never emits `close`, so the watchdog terminates the
+ * control socket itself to force the ordinary reconnect path.
+ */
+export function startListenerPongHeartbeat(
+  runtime: ListenerRuntime,
+  transport: ListenerTransport,
+  report: ReportListenerError,
+): void {
+  startConnectionHeartbeat(
+    runtime,
+    transport,
+    () => {
+      report(
+        "listener_pong_timeout",
+        new Error(
+          `No relay pong within ${LISTENER_PONG_TIMEOUT_MS}ms; terminating half-open socket to force reconnect`,
+        ),
+        "listener_heartbeat",
+      );
+      runtime.socket?.terminate();
+    },
+    (heartbeatTransport) => sendHeartbeatPing(heartbeatTransport, report),
+  );
 }

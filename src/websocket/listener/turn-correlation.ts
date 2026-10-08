@@ -6,8 +6,53 @@ import type {
   ListenerRuntime,
 } from "./types";
 
+const MAX_CLIENT_MESSAGE_IDS_PER_RUN = 32;
 const MAX_RECENT_RUN_CORRELATIONS = 32;
 const MAX_RECENT_CONVERSATIONS = 256;
+
+export type TurnCorrelationIndex = Map<string, Map<string, string[]>>;
+
+/**
+ * Merge bounded correlation snapshots from oldest to newest. Re-inserting every
+ * touched key makes later snapshots authoritative for eviction order while
+ * retaining mappings that only exist in an older private handoff snapshot.
+ */
+export function mergeTurnCorrelationIndexes(
+  ...sources: Array<TurnCorrelationIndex | undefined>
+): TurnCorrelationIndex {
+  const merged: TurnCorrelationIndex = new Map();
+  for (const source of sources) {
+    for (const [conversationKey, runs] of source ?? []) {
+      const mergedRuns = merged.get(conversationKey) ?? new Map();
+      for (const [runId, clientMessageIds] of runs) {
+        const mergedClientMessageIds = [
+          ...new Set([...(mergedRuns.get(runId) ?? []), ...clientMessageIds]),
+        ].slice(-MAX_CLIENT_MESSAGE_IDS_PER_RUN);
+        mergedRuns.delete(runId);
+        mergedRuns.set(runId, mergedClientMessageIds);
+        while (mergedRuns.size > MAX_RECENT_RUN_CORRELATIONS) {
+          const oldestRunId = mergedRuns.keys().next().value;
+          if (!oldestRunId) break;
+          mergedRuns.delete(oldestRunId);
+        }
+      }
+      merged.delete(conversationKey);
+      merged.set(conversationKey, mergedRuns);
+      while (merged.size > MAX_RECENT_CONVERSATIONS) {
+        const oldestConversationKey = merged.keys().next().value;
+        if (!oldestConversationKey) break;
+        merged.delete(oldestConversationKey);
+      }
+    }
+  }
+  return merged;
+}
+
+export function cloneTurnCorrelationIndex(
+  source: TurnCorrelationIndex | undefined,
+): TurnCorrelationIndex {
+  return mergeTurnCorrelationIndexes(source);
+}
 
 function takeDequeuedClientMessageIds(
   runtime: ConversationRuntime,
@@ -45,6 +90,9 @@ export function createTurnCorrelation(
 ): TurnCorrelation {
   const clientMessageIds = new Set([
     ...getInboundClientMessageIds(message),
+    ...(message.durableInputIdentities ?? []).flatMap((identity) =>
+      identity.domain === "input" ? [identity.id] : [],
+    ),
     ...takeDequeuedClientMessageIds(runtime, batchId),
   ]);
   let correlationsByConversation =
@@ -92,7 +140,10 @@ export function createTurnCorrelation(
         ...clientMessageIds,
       ]);
       correlations.delete(runId);
-      correlations.set(runId, [...merged]);
+      correlations.set(
+        runId,
+        [...merged].slice(-MAX_CLIENT_MESSAGE_IDS_PER_RUN),
+      );
       while (correlations.size > MAX_RECENT_RUN_CORRELATIONS) {
         const oldestRunId = correlations.keys().next().value;
         if (!oldestRunId) break;

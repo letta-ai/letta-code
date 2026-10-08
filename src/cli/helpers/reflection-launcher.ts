@@ -78,11 +78,9 @@ const suppressedAutomaticReflections = new Map<
   string,
   { model?: string; message: string }
 >();
-
 export type ReflectionLaunchTriggerSource =
   | "manual"
   | Exclude<ReflectionTrigger, "off">;
-
 export type ReflectionLaunchSkippedReason =
   | "memfs_disabled"
   | "windows_disabled"
@@ -245,6 +243,7 @@ export interface ReflectionLaunchOptions {
   memfsEnabled: boolean;
   triggerSource: ReflectionLaunchTriggerSource;
   reflectionSettings?: ReflectionSettings;
+  actingUserId?: string | null;
   description: string;
   /** Explicit model for this reflection subagent, if requested by the caller. */
   model?: string;
@@ -884,6 +883,7 @@ export async function launchReflectionSubagent(
       transcriptPath: autoPayload.payloadPath,
       memoryScope: buildReflectionMemoryScope(worktree),
       parentScope: { agentId, conversationId },
+      actingUserId: options.actingUserId,
       onComplete: async ({
         success,
         error,

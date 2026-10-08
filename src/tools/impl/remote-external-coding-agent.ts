@@ -34,7 +34,7 @@ import {
 interface ParentScope {
   agentId: string;
   conversationId: string;
-  actingUserId?: string;
+  actingUserId?: string | null;
 }
 
 /** The subset of spawnBackgroundSubagentTask used here (injected to avoid a cycle). */

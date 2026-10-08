@@ -4,8 +4,13 @@ import type {
   AgentRuntimeStatusSnapshot,
 } from "@/backend/api/agents";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
-import { createRuntime } from "./lifecycle";
-import { canRecoverConversation } from "./recovery-ownership";
+import { createRuntime, stopRuntime } from "./lifecycle";
+import {
+  acquireRecoveryClaim,
+  canRecoverConversation,
+  getRecoveryEligibility,
+  revokeRecoveryClaims,
+} from "./recovery-ownership";
 import { evictConversationRuntimeIfIdle } from "./runtime";
 import {
   clearExpectedInboundTeleport,
@@ -15,6 +20,7 @@ import {
 function runtime() {
   const value = getOrCreateScopedRuntime(createRuntime(), "agent-1", "conv-1");
   value.listener.connectionId = "conn-self";
+  value.listener.connectionGeneration = "generation-self";
   return value;
 }
 
@@ -96,6 +102,11 @@ describe("recovery ownership", () => {
         throw new Error("offline");
       }),
     ).toBe(false);
+    expect(
+      await getRecoveryEligibility(runtime(), async () => {
+        throw new Error("offline");
+      }),
+    ).toBe("unavailable");
   });
   test("handoff or connection replacement during lookup prevents recovery", async () => {
     const value = runtime();
@@ -112,5 +123,272 @@ describe("recovery ownership", () => {
         return snapshot({});
       }),
     ).toBe(false);
+  });
+
+  test("two processes cannot concurrently acquire the same recovery claim", async () => {
+    let owner: { connectionId: string; token: string; fence: number } | null =
+      null;
+    let nextFence = 1;
+    const request = async (_agentId: string, body: Record<string, unknown>) => {
+      const action = body.action;
+      const connectionId = body.connection_id as string;
+      if (action === "acquire") {
+        if (owner) throw new Error("already claimed");
+        owner = {
+          connectionId,
+          token: `token-${connectionId}`,
+          fence: nextFence++,
+        };
+        return { token: owner.token, fence: owner.fence, expires_at: 30_000 };
+      }
+      if (
+        action === "release" &&
+        owner?.connectionId === connectionId &&
+        owner.token === body.token
+      ) {
+        owner = null;
+      }
+      return { released: owner === null };
+    };
+    const first = runtime();
+    const second = runtime();
+    second.listener.connectionId = "conn-second";
+    second.listener.connectionGeneration = "generation-second";
+    const dependencies = {
+      request: request as never,
+      schedule: () => 1,
+      cancel: () => {},
+    };
+
+    const firstClaim = await acquireRecoveryClaim(
+      first,
+      () => {},
+      dependencies,
+    );
+    expect(firstClaim?.owned).toBe(true);
+    expect(
+      await acquireRecoveryClaim(second, () => {}, dependencies),
+    ).toBeNull();
+    await firstClaim?.release();
+    expect(
+      (await acquireRecoveryClaim(second, () => {}, dependencies))?.owned,
+    ).toBe(true);
+  });
+
+  test("renewal loss fences the old process before its next side effect", async () => {
+    const scheduled: Array<() => void> = [];
+    let lost = false;
+    let renews = 0;
+    const value = runtime();
+    const claim = await acquireRecoveryClaim(
+      value,
+      () => {
+        lost = true;
+      },
+      {
+        request: (async (_agentId: string, body: { action: string }) => {
+          if (body.action === "acquire") {
+            return { token: "token-1", fence: 7, expires_at: 30_000 };
+          }
+          renews += 1;
+          return { token: "token-2", fence: 8, expires_at: 30_000 };
+        }) as never,
+        schedule: (callback) => {
+          scheduled.push(callback);
+          return callback;
+        },
+        cancel: () => {},
+      },
+    );
+    expect(claim?.owned).toBe(true);
+    scheduled.shift()?.();
+    for (let attempt = 0; attempt < 20 && !lost; attempt += 1) {
+      await Promise.resolve();
+    }
+    expect(renews).toBe(1);
+    expect(lost).toBe(true);
+    expect(claim?.owned).toBe(false);
+  });
+
+  test("local expiry fences a paused process before a delayed renewal", async () => {
+    let now = 1_000;
+    let lost = false;
+    const value = runtime();
+    const claim = await acquireRecoveryClaim(
+      value,
+      () => {
+        lost = true;
+      },
+      {
+        request: (async () => ({
+          token: "token-1",
+          fence: 7,
+          expires_at: 16_000,
+        })) as never,
+        schedule: () => 1,
+        cancel: () => {},
+        now: () => now,
+      },
+    );
+    expect(claim?.owned).toBe(true);
+    now = 15_500;
+    expect(claim?.owned).toBe(false);
+    expect(lost).toBe(true);
+    expect(await claim?.renew()).toBe(false);
+    expect(lost).toBe(true);
+  });
+
+  test("failed completion reports claim loss for retry", async () => {
+    const value = runtime();
+    let losses = 0;
+    const claim = await acquireRecoveryClaim(
+      value,
+      () => {
+        losses += 1;
+      },
+      {
+        request: (async (_agentId: string, body: { action: string }) =>
+          body.action === "acquire"
+            ? { token: "token-1", fence: 1, expires_at: 30_000 }
+            : { completed: false }) as never,
+        schedule: () => 1,
+        cancel: () => {},
+      },
+    );
+
+    expect(await claim?.complete()).toBe(false);
+    expect(losses).toBe(1);
+  });
+
+  test("an in-flight renewal cannot report loss after intentional teardown", async () => {
+    const value = runtime();
+    let resolveRenewal: ((value: unknown) => void) | undefined;
+    let losses = 0;
+    const claim = await acquireRecoveryClaim(
+      value,
+      () => {
+        losses += 1;
+      },
+      {
+        request: (async (_agentId: string, body: { action: string }) => {
+          if (body.action === "acquire") {
+            return { token: "token-1", fence: 1, expires_at: 30_000 };
+          }
+          return await new Promise((resolve) => {
+            resolveRenewal = resolve;
+          });
+        }) as never,
+        schedule: () => 1,
+        cancel: () => {},
+      },
+    );
+
+    const renewal = claim?.renew();
+    claim?.abandon();
+    resolveRenewal?.({ token: "stale", fence: 0, expires_at: 0 });
+
+    expect(await renewal).toBe(false);
+    expect(losses).toBe(0);
+  });
+
+  test("disconnect revokes its registered recovery claim", async () => {
+    const value = runtime();
+    const actions: string[] = [];
+    const scheduled: Array<() => void> = [];
+    let losses = 0;
+    const claim = await acquireRecoveryClaim(
+      value,
+      () => {
+        losses += 1;
+      },
+      {
+        request: (async (_agentId: string, body: { action: string }) => {
+          actions.push(body.action);
+          return body.action === "acquire"
+            ? { token: "token-1", fence: 1, expires_at: 30_000 }
+            : { released: true };
+        }) as never,
+        schedule: (callback) => {
+          scheduled.push(callback);
+          return callback;
+        },
+        cancel: () => {},
+      },
+    );
+    expect(value.listener.activeRecoveryClaims?.has(claim as never)).toBe(true);
+
+    revokeRecoveryClaims(value.listener, "conn-self");
+    await Promise.resolve();
+    scheduled[0]?.();
+    await Promise.resolve();
+
+    expect(actions).toEqual(["acquire", "release"]);
+    expect(losses).toBe(1);
+    expect(claim?.owned).toBe(false);
+    expect(value.listener.activeRecoveryClaims?.size).toBe(0);
+  });
+
+  test("runtime stop revokes every registered recovery claim", async () => {
+    const value = runtime();
+    const actions: string[] = [];
+    const scheduled: Array<() => void> = [];
+    let losses = 0;
+    await acquireRecoveryClaim(
+      value,
+      () => {
+        losses += 1;
+      },
+      {
+        request: (async (_agentId: string, body: { action: string }) => {
+          actions.push(body.action);
+          return body.action === "acquire"
+            ? { token: "token-stop", fence: 2, expires_at: 30_000 }
+            : { released: true };
+        }) as never,
+        schedule: (callback) => {
+          scheduled.push(callback);
+          return callback;
+        },
+        cancel: () => {},
+      },
+    );
+
+    stopRuntime(value.listener, true);
+    await Promise.resolve();
+    scheduled[0]?.();
+    await Promise.resolve();
+
+    expect(actions).toEqual(["acquire", "release"]);
+    expect(losses).toBe(1);
+    expect(value.listener.activeRecoveryClaims?.size).toBe(0);
+  });
+
+  test("a delayed old close revokes only its physical generation", async () => {
+    const value = runtime();
+    const losses: string[] = [];
+    const request = (async (_agentId: string, body: { action: string }) =>
+      body.action === "acquire"
+        ? { token: crypto.randomUUID(), fence: 1, expires_at: 30_000 }
+        : { released: true }) as never;
+    value.listener.connectionGeneration = "generation-old";
+    const oldClaim = await acquireRecoveryClaim(
+      value,
+      () => losses.push("old"),
+      { request, schedule: () => 1, cancel: () => {} },
+    );
+    value.listener.connectionGeneration = "generation-new";
+    const newClaim = await acquireRecoveryClaim(
+      value,
+      () => losses.push("new"),
+      { request, schedule: () => 2, cancel: () => {} },
+    );
+
+    revokeRecoveryClaims(value.listener, undefined, "generation-old");
+    await Promise.resolve();
+
+    expect(losses).toEqual(["old"]);
+    expect(oldClaim?.owned).toBe(false);
+    expect(newClaim?.owned).toBe(true);
+    newClaim?.abandon();
   });
 });

@@ -74,7 +74,7 @@ export async function resolveAgentMessageDestination(
     agentId?: string;
     conversationId?: string;
     senderAgentId?: string;
-    actingUserId?: string;
+    actingUserId?: string | null;
     /** Calling runtime, independent of optional sender attribution overrides. */
     currentConversation?: { agentId?: string; conversationId?: string };
   },
