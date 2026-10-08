@@ -20,6 +20,8 @@ const HANDOFF_SUBMISSION_MARGIN_MS = 5_000;
 const MINIMUM_OPERATION_BUDGET_MS =
   BROWSER_DEVICE_HANDOFF_SUBMIT_TIMEOUT_MS + HANDOFF_SUBMISSION_MARGIN_MS + 1;
 const COMPLETED_OPERATION_RETENTION_MS = 60_000;
+const MAX_CANCEL_TOMBSTONES_PER_RUNTIME = 128;
+const MAX_CANCEL_TOMBSTONES_GLOBAL = 512;
 
 interface OperationRecord {
   controller: AbortController;
@@ -32,6 +34,7 @@ interface OperationRecord {
   response?: BrowserDeviceMcpOAuthResponseMessage;
   lastAttemptedSocket: WebSocket | null;
   pendingStartCancellation: boolean;
+  phase: "authorization" | "submission";
   disposed: boolean;
 }
 
@@ -41,6 +44,7 @@ interface BrowserDeviceMcpOAuthCommandDependencies {
     dependencies: undefined,
     signal: AbortSignal,
     authorizationTimeoutMs: number,
+    onSubmissionStarted?: () => void,
   ) => Promise<void>;
   runDetachedListenerTask: (
     commandName: string,
@@ -82,6 +86,7 @@ export function handleBrowserDeviceMcpOAuthProtocolCommand(
           receivedAtMonotonicMs,
         ),
       );
+      enforceCancelTombstoneLimits(dependencies.owner);
       return true;
     }
     // The original credential-free terminal is the application-level cancel
@@ -207,6 +212,7 @@ async function runBrowserDeviceMcpOAuth(
     lineageId: dependencies.lineageId,
     lastAttemptedSocket: null,
     pendingStartCancellation: false,
+    phase: "authorization",
     disposed: false,
   };
   operations.set(operationMapKey, operation);
@@ -226,10 +232,17 @@ async function runBrowserDeviceMcpOAuth(
       undefined,
       operationSignal,
       authorizationTimeoutMs,
+      () => {
+        operation.phase = "submission";
+      },
     );
   } catch (error) {
-    if (controller.signal.aborted) errorCode = "cancelled";
-    else if (error instanceof BrowserDeviceMcpOAuthRequestError) {
+    if (operation.phase === "authorization" && controller.signal.aborted) {
+      errorCode = "cancelled";
+    } else if (
+      operation.phase === "authorization" &&
+      error instanceof BrowserDeviceMcpOAuthRequestError
+    ) {
       errorCode = "invalid_request";
     } else errorCode = "authorization_failed";
   } finally {
@@ -311,8 +324,45 @@ function createCancelTombstone(
     response: createTerminalResponse(requestId, "cancelled"),
     lastAttemptedSocket: null,
     pendingStartCancellation: true,
+    phase: "authorization",
     disposed: false,
   };
+}
+
+function enforceCancelTombstoneLimits(runtime: ListenerRuntime): void {
+  while (
+    countCancelTombstones((operation) => operation.owner === runtime) >
+    MAX_CANCEL_TOMBSTONES_PER_RUNTIME
+  ) {
+    evictOldestCancelTombstone((operation) => operation.owner === runtime);
+  }
+  while (countCancelTombstones(() => true) > MAX_CANCEL_TOMBSTONES_GLOBAL) {
+    evictOldestCancelTombstone(() => true);
+  }
+}
+
+function countCancelTombstones(
+  matches: (operation: OperationRecord) => boolean,
+): number {
+  let count = 0;
+  for (const operation of operations.values()) {
+    if (operation.pendingStartCancellation && matches(operation)) count += 1;
+  }
+  return count;
+}
+
+function evictOldestCancelTombstone(
+  matches: (operation: OperationRecord) => boolean,
+): void {
+  for (const [key, operation] of operations) {
+    if (!operation.pendingStartCancellation || !matches(operation)) continue;
+    disposeOperation(
+      key,
+      operation,
+      new DOMException("Cancel tombstone capacity exceeded", "AbortError"),
+    );
+    return;
+  }
 }
 
 function cacheTerminalResponse(
@@ -333,6 +383,7 @@ function cacheTerminalResponse(
     response: createTerminalResponse(command.request_id, errorCode),
     lastAttemptedSocket: null,
     pendingStartCancellation: false,
+    phase: "authorization",
     disposed: false,
   };
   operations.set(operationMapKey, operation);

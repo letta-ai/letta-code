@@ -92,6 +92,7 @@ export async function connectBrowserDeviceMcpOAuth(
   },
   signal?: AbortSignal,
   authorizationTimeoutMs = PROVIDER_AUTHORIZATION_TIMEOUT_MS,
+  onSubmissionStarted?: () => void,
 ): Promise<void> {
   signal?.throwIfAborted();
   const definition = resolveDefinition(request);
@@ -123,6 +124,10 @@ export async function connectBrowserDeviceMcpOAuth(
       storage: ephemeralStorage.storage,
       storageNamespace: `browser-device-mcp-oauth-${randomUUID()}`,
     });
+    // Authorization implementations are not required to cooperate with abort.
+    // Re-check synchronously before crossing into the non-cancellable commit phase.
+    authorizationSignal.throwIfAborted();
+    onSubmissionStarted?.();
     // Once credential submission begins, caller cancellation is ambiguous: Cloud
     // may have committed the handoff before its response is observed. Let the
     // submission's own bounded, idempotent reconciliation finish so we never

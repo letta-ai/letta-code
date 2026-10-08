@@ -61,6 +61,7 @@ function createHarness(
     dependencies: undefined,
     signal: AbortSignal,
     authorizationTimeoutMs: number,
+    onSubmissionStarted?: () => void,
   ) => Promise<void>,
   owner: ListenerRuntime = {} as ListenerRuntime,
 ) {
@@ -694,27 +695,37 @@ describe("browser-device MCP OAuth command handling", () => {
     const committed = new Promise<void>((resolve) => {
       markCommitted = resolve;
     });
-    const harness = createHarness(async (request, _dependencies, signal) => {
-      await connectBrowserDeviceMcpOAuth(
+    const harness = createHarness(
+      async (
         request,
-        {
-          authorize: async () => ({
-            access_token: "provider-access-token",
-            client_id: "provider-client-id",
-            redirect_uri: "http://127.0.0.1:43210/callback",
-          }),
-          importCredentials: async (_request, _credentials, importSignal) => {
-            expect(importSignal).toBeUndefined();
-            markCommitted?.();
-            await new Promise<void>((resolve) => {
-              releaseResponse = resolve;
-            });
-          },
-          openBrowser: async () => undefined,
-        },
+        _dependencies,
         signal,
-      );
-    });
+        authorizationTimeoutMs,
+        onSubmissionStarted,
+      ) => {
+        await connectBrowserDeviceMcpOAuth(
+          request,
+          {
+            authorize: async () => ({
+              access_token: "provider-access-token",
+              client_id: "provider-client-id",
+              redirect_uri: "http://127.0.0.1:43210/callback",
+            }),
+            importCredentials: async (_request, _credentials, importSignal) => {
+              expect(importSignal).toBeUndefined();
+              markCommitted?.();
+              await new Promise<void>((resolve) => {
+                releaseResponse = resolve;
+              });
+            },
+            openBrowser: async () => undefined,
+          },
+          signal,
+          authorizationTimeoutMs,
+          onSubmissionStarted,
+        );
+      },
+    );
     handleBrowserDeviceMcpOAuthProtocolCommand(
       startCommand(),
       harness.dependencies,
@@ -737,6 +748,54 @@ describe("browser-device MCP OAuth command handling", () => {
         success: true,
       },
     ]);
+  });
+
+  test("cancel after Cloud commit does not relabel reconciliation failure", async () => {
+    let markCommitted: (() => void) | undefined;
+    let releaseFailure: (() => void) | undefined;
+    const committed = new Promise<void>((resolve) => {
+      markCommitted = resolve;
+    });
+    const harness = createHarness(
+      async (request, _dependencies, signal, timeout, submissionStarted) => {
+        await connectBrowserDeviceMcpOAuth(
+          request,
+          {
+            authorize: async () => ({
+              access_token: "provider-access-token",
+              client_id: "provider-client-id",
+              redirect_uri: "http://127.0.0.1:43210/callback",
+            }),
+            importCredentials: async () => {
+              markCommitted?.();
+              await new Promise<void>((resolve) => {
+                releaseFailure = resolve;
+              });
+              throw new DOMException("Reconciliation expired", "TimeoutError");
+            },
+            openBrowser: async () => undefined,
+          },
+          signal,
+          timeout,
+          submissionStarted,
+        );
+      },
+    );
+    handleBrowserDeviceMcpOAuthProtocolCommand(
+      startCommand(),
+      harness.dependencies,
+    );
+    await committed;
+    handleBrowserDeviceMcpOAuthProtocolCommand(
+      {
+        type: "browser_device_mcp_oauth_cancel",
+        operation_id: "operation-1",
+      },
+      harness.dependencies,
+    );
+    releaseFailure?.();
+    await Promise.all(harness.tasks);
+    expect(harness.responses[0]?.error_code).toBe("authorization_failed");
   });
 
   test("cancel preserves a success terminal that already won the race", async () => {
