@@ -72,7 +72,11 @@ jobs:
           node-version: "22.22.2"
 
       - name: Setup npm
-        run: npm install --global npm@12.2.0
+        run: |
+          bun add --global npm@12.2.0
+          NPM_BIN_DIR=$(bun pm bin --global)
+          echo "$NPM_BIN_DIR" >> "$GITHUB_PATH"
+          "$NPM_BIN_DIR/npm" --version
 
       - name: Configure Git
         run: |
