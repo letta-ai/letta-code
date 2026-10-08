@@ -23,7 +23,7 @@ const COMPLETED_OPERATION_RETENTION_MS = 60_000;
 
 interface OperationRecord {
   controller: AbortController;
-  flightKey: string;
+  flightKey: string | null;
   requestDigest: string;
   expiresAtMonotonicMs: number;
   dependencies: BrowserDeviceMcpOAuthCommandDependencies;
@@ -59,7 +59,7 @@ interface BrowserDeviceMcpOAuthCommandDependencies {
 }
 
 const operations = new Map<string, OperationRecord>();
-const activeFlights = new Map<string, string>();
+const activeFlights = new Map<string, OperationRecord>();
 
 export function handleBrowserDeviceMcpOAuthProtocolCommand(
   command: WsProtocolCommand,
@@ -70,11 +70,21 @@ export function handleBrowserDeviceMcpOAuthProtocolCommand(
   pruneCompletedOperations(receivedAtMonotonicMs);
 
   if (command.type === "browser_device_mcp_oauth_cancel") {
-    operations
-      .get(operationKey(dependencies.lineageId, command.operation_id))
-      ?.controller.abort(
+    const operation = operations.get(
+      operationKey(dependencies.lineageId, command.operation_id),
+    );
+    // The original credential-free terminal is the application-level cancel
+    // acknowledgement. Abort only live work owned by this runtime; a terminal
+    // that already won the race remains retained for reconnect delivery.
+    if (
+      operation?.owner === dependencies.owner &&
+      !operation.response &&
+      !operation.disposed
+    ) {
+      operation.controller.abort(
         new DOMException("Browser-device OAuth was cancelled", "AbortError"),
       );
+    }
     return true;
   }
   if (command.type !== "browser_device_mcp_oauth") return false;
@@ -121,7 +131,13 @@ async function runBrowserDeviceMcpOAuth(
       service: command.service,
     });
   } catch {
-    sendTerminalResponse(command.request_id, "invalid_request", dependencies);
+    cacheTerminalResponse(
+      command,
+      "invalid_request",
+      dependencies,
+      operationMapKey,
+      receivedAtMonotonicMs,
+    );
     return;
   }
 
@@ -137,16 +153,24 @@ async function runBrowserDeviceMcpOAuth(
     command.timeout_ms > MAX_OPERATION_TIMEOUT_MS ||
     remainingMs < MINIMUM_OPERATION_BUDGET_MS
   ) {
-    sendTerminalResponse(command.request_id, "invalid_request", dependencies);
+    cacheTerminalResponse(
+      command,
+      "invalid_request",
+      dependencies,
+      operationMapKey,
+      receivedAtMonotonicMs,
+    );
     return;
   }
 
   const flightKey = `${request.service}\0${request.serverUrl}`;
   if (activeFlights.has(flightKey)) {
-    sendTerminalResponse(
-      command.request_id,
+    cacheTerminalResponse(
+      command,
       "already_connecting",
       dependencies,
+      operationMapKey,
+      receivedAtMonotonicMs,
     );
     return;
   }
@@ -164,7 +188,7 @@ async function runBrowserDeviceMcpOAuth(
     disposed: false,
   };
   operations.set(operationMapKey, operation);
-  activeFlights.set(flightKey, operationMapKey);
+  activeFlights.set(flightKey, operation);
   const operationSignal = AbortSignal.any([
     controller.signal,
     AbortSignal.timeout(remainingMs),
@@ -187,7 +211,7 @@ async function runBrowserDeviceMcpOAuth(
       errorCode = "invalid_request";
     } else errorCode = "authorization_failed";
   } finally {
-    if (activeFlights.get(flightKey) === operationMapKey) {
+    if (activeFlights.get(flightKey) === operation) {
       activeFlights.delete(flightKey);
     }
   }
@@ -243,6 +267,29 @@ function deliverTerminal(operation: OperationRecord): void {
   }
 }
 
+function cacheTerminalResponse(
+  command: BrowserDeviceMcpOAuthCommand,
+  errorCode: BrowserDeviceMcpOAuthErrorCode,
+  dependencies: BrowserDeviceMcpOAuthCommandDependencies,
+  operationMapKey: string,
+  receivedAtMonotonicMs: number,
+): void {
+  const operation: OperationRecord = {
+    controller: new AbortController(),
+    flightKey: null,
+    requestDigest: requestDigest(command),
+    expiresAtMonotonicMs: receivedAtMonotonicMs + command.timeout_ms,
+    dependencies,
+    owner: dependencies.owner,
+    lineageId: dependencies.lineageId,
+    response: createTerminalResponse(command.request_id, errorCode),
+    lastAttemptedSocket: null,
+    disposed: false,
+  };
+  operations.set(operationMapKey, operation);
+  deliverTerminal(operation);
+}
+
 function sendTerminalResponse(
   requestId: string,
   errorCode: BrowserDeviceMcpOAuthErrorCode | undefined,
@@ -273,7 +320,17 @@ export function rebindBrowserDeviceMcpOAuthOperationsToSocket(
   lineageId: string,
   socket: WebSocket,
 ): void {
-  for (const operation of operations.values()) {
+  for (const [key, operation] of operations) {
+    const monotonicNowMs =
+      operation.dependencies.monotonicNow?.() ?? performance.now();
+    if (
+      operation.response &&
+      monotonicNowMs >
+        operation.expiresAtMonotonicMs + COMPLETED_OPERATION_RETENTION_MS
+    ) {
+      operations.delete(key);
+      continue;
+    }
     if (
       operation.owner !== runtime ||
       operation.lineageId !== lineageId ||
@@ -293,7 +350,10 @@ export function disposeBrowserDeviceMcpOAuthOperationsForRuntime(
     if (operation.owner !== runtime) continue;
     operation.disposed = true;
     operations.delete(key);
-    if (activeFlights.get(operation.flightKey) === key) {
+    if (
+      operation.flightKey &&
+      activeFlights.get(operation.flightKey) === operation
+    ) {
       activeFlights.delete(operation.flightKey);
     }
     operation.controller.abort(

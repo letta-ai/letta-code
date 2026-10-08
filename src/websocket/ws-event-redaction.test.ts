@@ -15,6 +15,7 @@ describe("WS event redaction", () => {
         state: "oauth-state",
         refresh_token: "refresh-token",
         error: "provider-body",
+        provider_response: "raw-provider-response",
       },
       error_code: "authorization_failed",
     };
@@ -27,13 +28,32 @@ describe("WS event redaction", () => {
         state: "[REDACTED]",
         refresh_token: "[REDACTED]",
         error: "[REDACTED]",
+        provider_response: "[REDACTED]",
       },
       error_code: "authorization_failed",
     });
     expect(event.handoff_key).toBe("live-handoff");
   });
 
-  test("never copies malformed raw payloads into debug collectors", () => {
+  test("preserves unrelated protocol diagnostics while redacting clear secrets", () => {
+    expect(
+      redactWsEventForLogging({
+        type: "sync_response",
+        error: "runtime unavailable",
+        state: "retrying",
+        code: "E_RETRY",
+        access_token: "secret-token",
+      }),
+    ).toEqual({
+      type: "sync_response",
+      error: "runtime unavailable",
+      state: "retrying",
+      code: "E_RETRY",
+      access_token: "[REDACTED]",
+    });
+  });
+
+  test("never copies identifiable malformed OAuth payloads into debug collectors", () => {
     const collected: unknown[] = [];
     setActiveRuntime({
       onWsEvent: (
@@ -47,7 +67,7 @@ describe("WS event redaction", () => {
 
     safeEmitWsEvent("recv", "lifecycle", {
       type: "_ws_unparseable",
-      raw: '{"handoff_key":"live-handoff", "state":"oauth-state"',
+      raw: '{"type":"browser_device_mcp_oauth","handoff_key":"live-handoff","state":"oauth-state"',
     });
 
     expect(collected).toEqual([

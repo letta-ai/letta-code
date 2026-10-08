@@ -1,35 +1,48 @@
 const REDACTED = "[REDACTED]";
 const REDACTED_RAW = "[REDACTED_UNPARSEABLE_WS_PAYLOAD]";
 
-const SENSITIVE_KEYS = new Set([
+const ALWAYS_SENSITIVE_KEYS = new Set([
   "access_token",
   "authorization_code",
   "client_secret",
-  "code",
   "credentials",
-  "error",
   "handoff_key",
   "id_token",
-  "provider_response",
   "raw",
   "refresh_token",
-  "state",
   "token",
+]);
+const OAUTH_CONTEXT_SENSITIVE_KEYS = new Set([
+  "code",
+  "error",
+  "provider_response",
+  "state",
 ]);
 
 /**
  * Return a detached, log-safe representation of a WebSocket event.
  *
- * Parsed fields are recursively redacted. Raw strings are parsed and redacted
- * when possible; malformed payloads are never copied into logs because their
- * structure cannot be trusted to expose secret-bearing field boundaries.
+ * Unambiguously secret fields are always redacted. Generic diagnostic fields
+ * such as `error` and `state` are redacted only for browser-device OAuth frames,
+ * so unrelated protocol diagnostics remain useful. Raw malformed payloads are
+ * never copied into logs.
  */
 export function redactWsEventForLogging(event: unknown): unknown {
-  return redactValue(event, new WeakSet<object>());
+  return redactValue(
+    event,
+    new WeakSet<object>(),
+    isBrowserDeviceMcpOAuthValue(event),
+  );
 }
 
-function redactValue(value: unknown, seen: WeakSet<object>): unknown {
-  if (typeof value === "string") return redactString(value, seen);
+function redactValue(
+  value: unknown,
+  seen: WeakSet<object>,
+  oauthContext: boolean,
+): unknown {
+  if (typeof value === "string") {
+    return redactString(value, seen, oauthContext);
+  }
   if (value === null || typeof value !== "object" || value instanceof Date) {
     return value;
   }
@@ -37,15 +50,22 @@ function redactValue(value: unknown, seen: WeakSet<object>): unknown {
   seen.add(value);
   try {
     if (Array.isArray(value)) {
-      return value.map((item) => redactValue(item, seen));
+      return value.map((item) => redactValue(item, seen, oauthContext));
     }
+    const record = value as Record<string, unknown>;
+    const nestedOAuthContext =
+      oauthContext || isBrowserDeviceMcpOAuthValue(record);
     const result: Record<string, unknown> = {};
-    for (const [key, item] of Object.entries(value)) {
-      result[key] = SENSITIVE_KEYS.has(key.toLowerCase())
-        ? key.toLowerCase() === "raw"
+    for (const [key, item] of Object.entries(record)) {
+      const normalizedKey = key.toLowerCase();
+      const sensitive =
+        ALWAYS_SENSITIVE_KEYS.has(normalizedKey) ||
+        (nestedOAuthContext && OAUTH_CONTEXT_SENSITIVE_KEYS.has(normalizedKey));
+      result[key] = sensitive
+        ? normalizedKey === "raw"
           ? REDACTED_RAW
           : REDACTED
-        : redactValue(item, seen);
+        : redactValue(item, seen, nestedOAuthContext);
     }
     return result;
   } finally {
@@ -53,12 +73,32 @@ function redactValue(value: unknown, seen: WeakSet<object>): unknown {
   }
 }
 
-function redactString(value: string, seen: WeakSet<object>): string | unknown {
+function redactString(
+  value: string,
+  seen: WeakSet<object>,
+  oauthContext: boolean,
+): string | unknown {
   const trimmed = value.trim();
   if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return value;
   try {
-    return redactValue(JSON.parse(trimmed) as unknown, seen);
+    const parsed = JSON.parse(trimmed) as unknown;
+    return redactValue(
+      parsed,
+      seen,
+      oauthContext || isBrowserDeviceMcpOAuthValue(parsed),
+    );
   } catch {
     return REDACTED_RAW;
   }
+}
+
+function isBrowserDeviceMcpOAuthValue(value: unknown): boolean {
+  if (typeof value === "string") {
+    return value.includes('"type":"browser_device_mcp_oauth');
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const type = (value as { type?: unknown }).type;
+  return (
+    typeof type === "string" && type.startsWith("browser_device_mcp_oauth")
+  );
 }

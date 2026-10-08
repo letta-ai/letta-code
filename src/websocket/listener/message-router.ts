@@ -128,6 +128,7 @@ type MessageRouterParams = {
   runtime: ListenerRuntime;
   socket: WebSocket;
   connectionId?: ListenerConnectionId;
+  lineageId?: string;
   opts: StartListenerOptions;
   processQueuedTurn: ProcessQueuedTurn;
   fileCommandSession: FileCommandSession;
@@ -200,6 +201,7 @@ export function createListenerMessageHandler(
     runtime,
     socket,
     connectionId: explicitConnectionId,
+    lineageId: explicitLineageId,
     opts,
     processQueuedTurn,
     fileCommandSession,
@@ -217,10 +219,10 @@ export function createListenerMessageHandler(
   } = params;
   const connectionId = explicitConnectionId ?? opts.connectionId;
   const lineageId =
+    explicitLineageId ??
     runtime.connections.get(connectionId)?.startupOwner.lineageId ??
     connectionId ??
     runtime.sessionId;
-
   return async (data: WebSocket.RawData): Promise<void> => {
     if (
       !(await waitForListenerConnectionStartup(runtime, connectionId, socket))

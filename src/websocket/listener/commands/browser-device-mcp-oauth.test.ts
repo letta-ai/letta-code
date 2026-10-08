@@ -21,6 +21,7 @@ import type {
 } from "@/websocket/listener/types";
 import {
   handleBrowserDeviceMcpOAuthProtocolCommand,
+  rebindBrowserDeviceMcpOAuthOperationsToSocket,
   resetBrowserDeviceMcpOAuthOperationsForTests,
 } from "./browser-device-mcp-oauth";
 
@@ -160,14 +161,20 @@ describe("browser-device MCP OAuth command handling", () => {
     ]);
   });
 
-  test("physical reconnect rebinds an active operation without replaying start", async () => {
+  test("re-registered lineage survives physical reconnect without replaying start", async () => {
     const owner = createRuntime();
     const options: StartListenerOptions = {
-      connectionId: "physical-reconnect",
+      connectionId: "new-connection-id",
       connectionIdCanResume: true,
       wsUrl: "wss://example.test/listener",
       deviceId: "device-test",
       connectionName: "computer-test",
+      replacement: {
+        deviceId: "device-test",
+        connectionName: "computer-test",
+        lineageId: "old-connection-id",
+        generation: 1,
+      },
       onConnected: () => {},
       onDisconnected: () => {},
       onError: () => {},
@@ -307,6 +314,36 @@ describe("browser-device MCP OAuth command handling", () => {
     stopRuntime(owner, true);
   });
 
+  test("expired completed terminals are pruned before socket rebinding", async () => {
+    let monotonicNow = MONOTONIC_NOW_MS;
+    const owner = createRuntime();
+    const replacementSocket = createTestSocket();
+    const replacementResponses: BrowserDeviceMcpOAuthResponseMessage[] = [];
+    const harness = createHarness(async () => undefined, owner);
+    harness.dependencies.monotonicNow = () => monotonicNow;
+    handleBrowserDeviceMcpOAuthProtocolCommand(
+      startCommand(),
+      harness.dependencies,
+    );
+    await Promise.all(harness.tasks);
+    expect(harness.responses).toHaveLength(1);
+
+    monotonicNow += 345_001;
+    harness.dependencies.safeSocketSend = (_socket, payload) => {
+      replacementResponses.push(
+        payload as BrowserDeviceMcpOAuthResponseMessage,
+      );
+      return true;
+    };
+    rebindBrowserDeviceMcpOAuthOperationsToSocket(
+      owner,
+      harness.dependencies.lineageId,
+      replacementSocket,
+    );
+    expect(replacementResponses).toEqual([]);
+    stopRuntime(owner, true);
+  });
+
   test("runtime shutdown aborts stale work, releases its flight, and suppresses its terminal", async () => {
     const staleOwner = createRuntime();
     const stale = createHarness(
@@ -342,6 +379,66 @@ describe("browser-device MCP OAuth command handling", () => {
         success: true,
       },
     ]);
+    stopRuntime(successorOwner, true);
+  });
+
+  test("retired ABA completion cannot release a successor flight with the same identity", async () => {
+    let settleRetired: (() => void) | undefined;
+    const retiredOwner = createRuntime();
+    const retired = createHarness(
+      async () =>
+        await new Promise<void>((resolve) => {
+          settleRetired = resolve;
+        }),
+      retiredOwner,
+    );
+    handleBrowserDeviceMcpOAuthProtocolCommand(
+      startCommand(),
+      retired.dependencies,
+    );
+    stopRuntime(retiredOwner, true);
+
+    const successorOwner = createRuntime();
+    const successor = createHarness(
+      async (_request, _dependencies, signal) =>
+        await new Promise<void>((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          });
+        }),
+      successorOwner,
+    );
+    handleBrowserDeviceMcpOAuthProtocolCommand(
+      startCommand(),
+      successor.dependencies,
+    );
+
+    settleRetired?.();
+    await Promise.all(retired.tasks);
+
+    const third = createHarness(async () => undefined, successorOwner);
+    handleBrowserDeviceMcpOAuthProtocolCommand(
+      startCommand({ request_id: "third-operation" }),
+      third.dependencies,
+    );
+    await Promise.all(third.tasks);
+    expect(third.responses).toEqual([
+      {
+        type: "browser_device_mcp_oauth_response",
+        request_id: "third-operation",
+        success: false,
+        error_code: "already_connecting",
+      },
+    ]);
+
+    handleBrowserDeviceMcpOAuthProtocolCommand(
+      {
+        type: "browser_device_mcp_oauth_cancel",
+        operation_id: "operation-1",
+      },
+      successor.dependencies,
+    );
+    await Promise.all(successor.tasks);
     stopRuntime(successorOwner, true);
   });
 
@@ -414,8 +511,13 @@ describe("browser-device MCP OAuth command handling", () => {
     }
   });
 
-  test("cancels only the matching operation and emits cancelled", async () => {
+  test("cancels only the matching operation and retains its terminal for reconnect", async () => {
     let observedSignal: AbortSignal | undefined;
+    const owner = createRuntime();
+    const oldSocket = createTestSocket();
+    const replacementSocket = createTestSocket();
+    const oldResponses: BrowserDeviceMcpOAuthResponseMessage[] = [];
+    const replacementResponses: BrowserDeviceMcpOAuthResponseMessage[] = [];
     const harness = createHarness(
       async (_request, _dependencies, signal) =>
         await new Promise<void>((_resolve, reject) => {
@@ -424,7 +526,15 @@ describe("browser-device MCP OAuth command handling", () => {
             once: true,
           });
         }),
+      owner,
     );
+    harness.dependencies.socket = oldSocket;
+    harness.dependencies.safeSocketSend = (socket, payload) => {
+      const response = payload as BrowserDeviceMcpOAuthResponseMessage;
+      if (socket === replacementSocket) replacementResponses.push(response);
+      else oldResponses.push(response);
+      return true;
+    };
     handleBrowserDeviceMcpOAuthProtocolCommand(
       startCommand(),
       harness.dependencies,
@@ -449,14 +559,64 @@ describe("browser-device MCP OAuth command handling", () => {
     await Promise.all(harness.tasks);
 
     expect(observedSignal?.aborted).toBe(true);
-    expect(harness.responses).toEqual([
+    const cancelledResponse: BrowserDeviceMcpOAuthResponseMessage = {
+      type: "browser_device_mcp_oauth_response",
+      request_id: "operation-1",
+      success: false,
+      error_code: "cancelled",
+    };
+    expect(oldResponses).toEqual([cancelledResponse]);
+
+    rebindBrowserDeviceMcpOAuthOperationsToSocket(
+      owner,
+      harness.dependencies.lineageId,
+      replacementSocket,
+    );
+    expect(replacementResponses).toEqual([cancelledResponse]);
+    expect(JSON.stringify(replacementResponses)).not.toContain(
+      VALID_HANDOFF_KEY,
+    );
+    stopRuntime(owner, true);
+  });
+
+  test("cancel preserves a success terminal that already won the race", async () => {
+    const owner = createRuntime();
+    const replacementSocket = createTestSocket();
+    const replacementResponses: BrowserDeviceMcpOAuthResponseMessage[] = [];
+    const harness = createHarness(async () => undefined, owner);
+    handleBrowserDeviceMcpOAuthProtocolCommand(
+      startCommand(),
+      harness.dependencies,
+    );
+    await Promise.all(harness.tasks);
+
+    handleBrowserDeviceMcpOAuthProtocolCommand(
+      {
+        type: "browser_device_mcp_oauth_cancel",
+        operation_id: "operation-1",
+      },
+      harness.dependencies,
+    );
+    harness.dependencies.safeSocketSend = (_socket, payload) => {
+      replacementResponses.push(
+        payload as BrowserDeviceMcpOAuthResponseMessage,
+      );
+      return true;
+    };
+    rebindBrowserDeviceMcpOAuthOperationsToSocket(
+      owner,
+      harness.dependencies.lineageId,
+      replacementSocket,
+    );
+
+    expect(replacementResponses).toEqual([
       {
         type: "browser_device_mcp_oauth_response",
         request_id: "operation-1",
-        success: false,
-        error_code: "cancelled",
+        success: true,
       },
     ]);
+    stopRuntime(owner, true);
   });
 
   test("prevents simultaneous flights for the same canonical service URL", async () => {
@@ -498,6 +658,29 @@ describe("browser-device MCP OAuth command handling", () => {
       harness.dependencies,
     );
     await harness.tasks[0];
+
+    handleBrowserDeviceMcpOAuthProtocolCommand(
+      startCommand({
+        request_id: "operation-2",
+        server_url: "https://mcp.datadoghq.com/v1/mcp/",
+      }),
+      harness.dependencies,
+    );
+    expect(harness.tasks).toHaveLength(2);
+    expect(harness.responses).toEqual([
+      {
+        type: "browser_device_mcp_oauth_response",
+        request_id: "operation-2",
+        success: false,
+        error_code: "already_connecting",
+      },
+      {
+        type: "browser_device_mcp_oauth_response",
+        request_id: "operation-1",
+        success: false,
+        error_code: "cancelled",
+      },
+    ]);
   });
 
   test("maps raw failures to a generic terminal code without secret leakage", async () => {
@@ -536,14 +719,27 @@ describe("browser-device MCP OAuth command handling", () => {
     );
     await Promise.all(harness.tasks);
 
-    expect(harness.responses).toEqual([
-      {
-        type: "browser_device_mcp_oauth_response",
-        request_id: "operation-1",
-        success: false,
-        error_code: "invalid_request",
-      },
-    ]);
+    const invalidResponse: BrowserDeviceMcpOAuthResponseMessage = {
+      type: "browser_device_mcp_oauth_response",
+      request_id: "operation-1",
+      success: false,
+      error_code: "invalid_request",
+    };
+    expect(harness.responses).toEqual([invalidResponse]);
+
+    const replacementResponses: BrowserDeviceMcpOAuthResponseMessage[] = [];
+    harness.dependencies.safeSocketSend = (_socket, payload) => {
+      replacementResponses.push(
+        payload as BrowserDeviceMcpOAuthResponseMessage,
+      );
+      return true;
+    };
+    rebindBrowserDeviceMcpOAuthOperationsToSocket(
+      harness.dependencies.owner,
+      harness.dependencies.lineageId,
+      createTestSocket(),
+    );
+    expect(replacementResponses).toEqual([invalidResponse]);
   });
 });
 

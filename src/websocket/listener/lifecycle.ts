@@ -425,6 +425,7 @@ export async function attachOpenListenerSocket(
     runtime,
     socket,
     connectionId: opts.connectionId,
+    lineageId: connection.startupOwner.lineageId,
     opts,
     processQueuedTurn,
     fileCommandSession,
@@ -732,10 +733,14 @@ async function connectWithRetry(
   runtime.streamSocket = streamSocket;
   const transport = socket;
   const processQueuedTurn = createConnectionTurnProcessor(runtime);
+  // Reserve before constructing the handler so re-registered connection IDs use
+  // the inherited replacement lineage from their first accepted frame onward.
+  const startupOwner = reserveStartupIngressOwner(runtime, opts);
   const handleMessage = createListenerMessageHandler({
     runtime,
     socket,
     connectionId: opts.connectionId,
+    lineageId: startupOwner.lineageId,
     opts,
     processQueuedTurn,
     fileCommandSession,
@@ -750,8 +755,6 @@ async function connectWithRetry(
     runDetachedListenerTask,
     trackListenerError,
   });
-  // Buffer pre-ready ingress under explicit replacement lineage ownership.
-  const startupOwner = reserveStartupIngressOwner(runtime, opts);
   const pendingStartupFrames = StartupFrameBuffer.forSockets(
     socket,
     () => streamSocket,
