@@ -1,6 +1,6 @@
 {
   "name": "@letta-ai/letta-code",
-  "version": "0.34.6",
+  "version": "0.34.7",
   "lockfileVersion": 3,
   "packages": {
     "node_modules/@alcalzone/ansi-tokenize": {
@@ -2356,9 +2356,9 @@
       "license": "MIT"
     },
     "node_modules/@smithy/core": {
-      "version": "3.35.1",
-      "resolved": "https://registry.npmjs.org/@smithy/core/-/core-3.35.1.tgz",
-      "integrity": "sha512-i4YPS4B6ts7bjn7UwLnGjiZdprOvHvgGobFZsYK3GIY3E5hIqtj0rReU69BcTpGp+fvtraSNXeG1l+jtJvF55w==",
+      "version": "3.35.2",
+      "resolved": "https://registry.npmjs.org/@smithy/core/-/core-3.35.2.tgz",
+      "integrity": "sha512-ejTukBuP/Pg3t9N8Ux+0zKsXeHWm7p6W3HbXFOyltKasSxZwCFmvTut7kBdZSCF3m9y1bXXyVu6p2xuMFcsTyQ==",
       "license": "Apache-2.0",
       "dependencies": {
         "@smithy/types": "^4.19.0",
@@ -5731,7 +5731,7 @@
     },
     "": {
       "name": "@letta-ai/letta-code",
-      "version": "0.34.6",
+      "version": "0.34.7",
       "dependencies": {
         "@earendil-works/pi-ai": "^0.99.1",
         "@janhapke/sharp-electron": "0.35.3-electron.1",
