@@ -130,7 +130,12 @@ export async function prepareListenerTurn(params: {
       conversationId,
     });
   }
-  trackListenerUserInput(msg.messages, "unknown", msg.actingUserId);
+  trackListenerUserInput(
+    msg.messages,
+    "unknown",
+    msg.actingUserId,
+    msg.suppressActingUserFallback,
+  );
 
   const messagesToSend: Array<MessageCreate | ApprovalCreate> = [];
   let queuedInterruptedToolCallIds: string[] = [];
@@ -138,9 +143,7 @@ export async function prepareListenerTurn(params: {
     agent_id: agentId,
     conversation_id: conversationId,
   });
-  const consumed = agentId
-    ? consumeInterruptQueue(runtime, agentId, conversationId)
-    : null;
+  const consumed = consumeInterruptQueue(runtime, agentId, conversationId);
   if (consumed) {
     messagesToSend.push(consumed.approvalMessage);
     queuedInterruptedToolCallIds = consumed.interruptedToolCallIds;
@@ -326,6 +329,7 @@ export async function prepareListenerTurn(params: {
     agentId,
     conversationId,
     actingUserId: msg.actingUserId,
+    suppressActingUserFallback: msg.suppressActingUserFallback,
     clientToolset: msg.clientToolset,
     clientToolAllowlist: msg.clientToolAllowlist,
     // Honor explicit client exclusions; headless execution does not block questions.

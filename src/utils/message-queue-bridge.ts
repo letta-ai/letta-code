@@ -22,7 +22,8 @@ export type QueuedMessage = {
   /** Optional parent conversation scope for routing in listener mode. */
   conversationId?: string;
   /** Authenticated human responsible for a notification-triggered turn. */
-  actingUserId?: string;
+  /** Null explicitly suppresses fallback to an ambient runtime actor. */
+  actingUserId?: string | null;
   /** QueueRuntime-assigned ID for targeted remove/edit operations. */
   queueItemId?: string;
   /** Parked by Esc; waits for Enter on an empty input or the next message. */

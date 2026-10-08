@@ -180,6 +180,12 @@ describe("listener auth lifecycle", () => {
       onDisconnected?: () => void;
       onNeedsReregister?: () => void;
       onError?: (error: Error) => void;
+      onRetrying?: (
+        attempt: number,
+        maxAttempts: number,
+        nextRetryIn: number,
+        connectionId?: string,
+      ) => void;
       supportsSplitStatusChannels?: boolean;
     } = {},
   ) {
@@ -193,6 +199,7 @@ describe("listener auth lifecycle", () => {
       onDisconnected: overrides.onDisconnected ?? mock(() => {}),
       onNeedsReregister: overrides.onNeedsReregister ?? mock(() => {}),
       onError: overrides.onError ?? mock(() => {}),
+      onRetrying: overrides.onRetrying,
     });
   }
 
@@ -311,6 +318,35 @@ describe("listener auth lifecycle", () => {
 
     expect(authorizations[1]).toBe("Bearer refreshed-access-token");
     expect(settings.refreshToken).toBe("rotated-refresh-token");
+  });
+
+  test("reports the attempt-zero reconnect as soon as a connected socket closes", async () => {
+    const onRetrying = mock(
+      (
+        _attempt: number,
+        _maxAttempts: number,
+        _nextRetryIn: number,
+        _connectionId?: string,
+      ) => {},
+    );
+    await startClient({ onRetrying });
+    await waitFor(
+      () => connections.length === 1 && isClientInitialized(),
+      "initial socket did not open",
+    );
+
+    connections[0]?.close(1000, "reconnect");
+    await waitFor(
+      () => onRetrying.mock.calls.length > 0,
+      "listener did not report reconnecting",
+    );
+
+    expect(onRetrying).toHaveBeenCalledWith(
+      0,
+      expect.any(Number),
+      0,
+      "connection-id",
+    );
   });
 
   test("transient relay closes preserve turn state queues and approval resolvers", async () => {

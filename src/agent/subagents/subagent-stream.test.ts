@@ -219,6 +219,32 @@ describe("result envelope parsing", () => {
     expect(state.finalResult).toBeNull();
   });
 
+  test.each(["user-a", null] as const)(
+    "preserves queued receipt acting-user attribution: %s",
+    (actingUserId) => {
+      const state = freshState();
+      processStreamEvent(
+        JSON.stringify({
+          type: "result",
+          subtype: "queued",
+          is_error: false,
+          result: null,
+          status: "queued",
+          agent_id: "agent-1",
+          conversation_id: "conv-1",
+          client_message_id: "cm-1",
+          super_run_id: "sr-1",
+          workflow_id: "wf-1",
+          acting_user_id: actingUserId,
+        }),
+        state,
+        "sub-1",
+      );
+      expect(state.enqueueReceipt?.acting_user_id).toBe(actingUserId);
+      expect(state.finalError).toBeNull();
+    },
+  );
+
   test("a queued envelope missing receipt fields is an error, not a silent success", () => {
     const state = freshState();
     processStreamEvent(

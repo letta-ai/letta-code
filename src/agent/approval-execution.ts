@@ -157,6 +157,15 @@ async function executeSingleDecision(
     toolContextId?: string;
     parentScope?: { agentId: string; conversationId: string };
     onFileWrite?: (filePath: string, content: string) => void;
+    /** Synchronous durability fence immediately before an approved tool runs. */
+    beforeToolExecution?: (toolCallId: string) => void | Promise<void>;
+    /** Durable result checkpoint immediately after approved tool code settles. */
+    afterToolExecution?: (
+      toolCallId: string,
+      result: ApprovalResult,
+    ) => void | Promise<void>;
+    /** Injectable executor for production-path concurrency tests. */
+    executeTool?: typeof executeTool;
   },
 ): Promise<ApprovalResult> {
   // If aborted, record an interrupted result
@@ -193,6 +202,9 @@ async function executeSingleDecision(
       };
     }
 
+    // Cross the caller's durable effect fence immediately before tool code can run.
+    await options?.beforeToolExecution?.(decision.approval.toolCallId);
+
     // Execute the approved tool
     try {
       // Safe parse - toolArgs should be "{}" but handle edge cases
@@ -208,7 +220,7 @@ async function executeSingleDecision(
         parsedArgs = decision.approval.toolArgs || {};
       }
 
-      const toolResult = await executeTool(
+      const toolResult = await (options?.executeTool ?? executeTool)(
         decision.approval.toolName,
         parsedArgs,
         {
@@ -335,6 +347,12 @@ export async function executeApprovalBatch(
     workingDirectory?: string;
     parentScope?: { agentId: string; conversationId: string };
     onFileWrite?: (filePath: string, content: string) => void;
+    beforeToolExecution?: (toolCallId: string) => void | Promise<void>;
+    afterToolExecution?: (
+      toolCallId: string,
+      result: ApprovalResult,
+    ) => void | Promise<void>;
+    executeTool?: typeof executeTool;
   },
 ): Promise<ApprovalResult[]> {
   // Tools are what fill the disk, so watch it while they run.
@@ -343,6 +361,22 @@ export async function executeApprovalBatch(
     (text) => deliverDiskSpaceReminder(text, options?.parentScope),
     () => executeApprovalBatchUnwatched(decisions, onChunk, options),
   );
+}
+
+export async function settleApprovalExecutionTasks(
+  tasks: readonly Promise<void>[],
+  partialResults: () => ApprovalResult[] = () => [],
+): Promise<void> {
+  const settled = await Promise.allSettled(tasks);
+  for (const result of settled) {
+    if (result.status !== "rejected") continue;
+    const error =
+      result.reason instanceof Error
+        ? result.reason
+        : new Error(String(result.reason));
+    Object.assign(error, { partialResults: partialResults() });
+    throw error;
+  }
 }
 
 async function executeApprovalBatchUnwatched(
@@ -413,10 +447,22 @@ async function executeApprovalBatchUnwatched(
   const execute = async (i: number) => {
     const decision = decisions[i];
     if (decision) {
-      results[i] = await executeSingleDecision(decision, onChunk, {
+      let crossedEffectBoundary = false;
+      const result = await executeSingleDecision(decision, onChunk, {
         ...options,
         toolContextId,
+        beforeToolExecution: async (toolCallId) => {
+          await options?.beforeToolExecution?.(toolCallId);
+          crossedEffectBoundary = true;
+        },
       });
+      results[i] = result;
+      if (decision.type === "approve" && crossedEffectBoundary) {
+        await options?.afterToolExecution?.(
+          decision.approval.toolCallId,
+          result,
+        );
+      }
     }
   };
 
@@ -424,17 +470,23 @@ async function executeApprovalBatchUnwatched(
   // 1. Parallel-safe tools (all in parallel)
   // 2. Write tools grouped by resource (sequential within each group, parallel across groups)
   // 3. Denials (no actual execution needed, but process for UI updates)
-  await Promise.all([
-    // Parallel-safe tools + denials: all run in parallel
-    ...parallelIndices.map(execute),
-    ...denyIndices.map(execute),
-    // Write tools: sequential within each resource group, parallel across groups
-    ...Array.from(writeToolsByResource.values()).map(async (indices) => {
-      for (const i of indices) {
-        await execute(i);
-      }
-    }),
-  ]);
+  //
+  // Do not fail fast here. A sibling may already have crossed its effect boundary;
+  // callers must retain their claim/lease until every started group has settled.
+  await settleApprovalExecutionTasks(
+    [
+      // Parallel-safe tools + denials: all run in parallel
+      ...parallelIndices.map(execute),
+      ...denyIndices.map(execute),
+      // Write tools: sequential within each resource group, parallel across groups
+      ...Array.from(writeToolsByResource.values()).map(async (indices) => {
+        for (const i of indices) {
+          await execute(i);
+        }
+      }),
+    ],
+    () => results.filter((result): result is ApprovalResult => result !== null),
+  );
 
   // Filter out nulls (shouldn't happen, but TypeScript needs this)
   return results.filter((r): r is ApprovalResult => r !== null);

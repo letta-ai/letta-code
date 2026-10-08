@@ -5,7 +5,6 @@
  * Supports both built-in subagent types and custom subagents defined in .letta/agents/.
  */
 
-import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
@@ -33,7 +32,7 @@ import { getBackend } from "@/backend";
 import { runSubagentStopHooks } from "@/hooks";
 import {
   getCurrentWorkingDirectory,
-  getRuntimeContext,
+  getRuntimeActingUserAttribution,
 } from "@/runtime-context";
 import type {
   SubagentLaunchArgs,
@@ -110,7 +109,8 @@ export interface SpawnBackgroundSubagentTaskArgs {
   /** Parent conversation scope for routing notifications in listener mode. */
   parentScope?: { agentId: string; conversationId: string };
   /** Authenticated Cloud user responsible for the launch-time turn. */
-  actingUserId?: string;
+  /** Null explicitly suppresses fallback to an ambient runtime actor. */
+  actingUserId?: string | null;
   /** Transcript/payload file exposed as TRANSCRIPT_PATH for reflection prompts. */
   transcriptPath?: string;
   /** Optional exact memory scope for harness-created memory worktrees. */
@@ -256,9 +256,9 @@ export function spawnBackgroundSubagentTask(
 
   const resolvedParentScope = resolveNotificationScope(parentScope);
   const actingUserId =
-    explicitActingUserId ??
-    getRuntimeContext()?.actingUserId ??
-    process.env[ACTING_USER_ID_ENV];
+    explicitActingUserId === undefined
+      ? getRuntimeActingUserAttribution()
+      : explicitActingUserId;
 
   const spawnSubagentFn = deps?.spawnSubagentImpl ?? spawnSubagent;
   const copyGitHubPullRequestTagsFn =

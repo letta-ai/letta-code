@@ -40,7 +40,9 @@ const MAX_ACCEPTED_CLIENT_MESSAGE_IDS = 2048;
 
 export interface ChannelGatewayClient {
   close(): void;
-  onMessage(listener: (message: WsProtocolMessage) => void): () => void;
+  onMessage(
+    listener: (message: WsProtocolMessage) => Promise<void> | void,
+  ): () => void;
   onExternalToolCall(
     handler: (
       request: ExternalToolCallRequestMessage,
@@ -757,7 +759,7 @@ export class ChannelGateway {
     }
   }
 
-  private handleMessage(message: WsProtocolMessage): void {
+  private async handleMessage(message: WsProtocolMessage): Promise<void> {
     if (message.type === "update_queue") {
       if (hasAgentRuntime(message)) this.handleQueueUpdate(message);
       return;
@@ -768,7 +770,7 @@ export class ChannelGateway {
     }
     if (message.type === "turn_finished") {
       if (!hasAgentRuntime(message)) return;
-      this.handleTurnFinished(message.runtime, {
+      await this.handleTurnFinished(message.runtime, {
         stopReason: message.stop_reason,
         runId: message.run_id,
         error: message.error,
@@ -932,17 +934,17 @@ export class ChannelGateway {
       runId?: string;
       error?: string;
     },
-  ): void {
+  ): Promise<void> {
     const state = this.getState(runtime);
     const active = state.active;
-    if (!active) return;
+    if (!active) return Promise.resolve();
     state.active = null;
     active.richDraft?.dispose();
     const remainingSources =
       lifecycleOutcome(terminal.stopReason) === "completed"
         ? this.remainingSources(state)
         : [];
-    void this.enqueueHook(state, () =>
+    return this.enqueueHook(state, () =>
       this.hooks.onLifecycle({
         type: "finished",
         batchId: active.batchId,

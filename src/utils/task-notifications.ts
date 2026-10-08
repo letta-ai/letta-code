@@ -16,7 +16,7 @@ import { getRuntimeContext } from "@/runtime-context";
 export interface NotificationScope {
   agentId: string;
   conversationId: string;
-  actingUserId?: string;
+  actingUserId?: string | null;
 }
 
 export interface TaskNotification {
@@ -65,11 +65,15 @@ export function resolveNotificationScope(parentScope?: {
   agentId: string;
   conversationId: string;
 }): NotificationScope | undefined {
+  const runtime = getRuntimeContext();
+  const actingUserId = runtime?.suppressActingUserFallback
+    ? null
+    : runtime?.actingUserId;
   if (parentScope?.agentId) {
     return {
       agentId: parentScope.agentId,
       conversationId: parentScope.conversationId || "default",
-      actingUserId: getRuntimeContext()?.actingUserId,
+      actingUserId,
     };
   }
 
@@ -77,7 +81,7 @@ export function resolveNotificationScope(parentScope?: {
     return {
       agentId: getCurrentAgentId(),
       conversationId: getConversationId() ?? "default",
-      actingUserId: getRuntimeContext()?.actingUserId,
+      actingUserId,
     };
   } catch {
     return undefined;

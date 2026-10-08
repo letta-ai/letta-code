@@ -3,7 +3,7 @@ import stripAnsi from "strip-ansi";
 import { type RawData, WebSocket } from "ws";
 import {
   getCurrentWorkingDirectory,
-  getRuntimeActingUserId,
+  getRuntimeActingUserAttribution,
 } from "@/runtime-context";
 import {
   captureSecretRedactions,
@@ -311,7 +311,7 @@ export function queueMonitorEvent(params: {
   taskId: string;
   event: string;
   scope: ReturnType<typeof resolveNotificationScope>;
-  actingUserId?: string;
+  actingUserId?: string | null;
   secrets: Readonly<Record<string, string>>;
 }): void {
   const { taskId, event, scope, actingUserId, secrets } = params;
@@ -323,7 +323,7 @@ export function queueMonitorEvent(params: {
       event: sanitizedEvent,
     }),
     ...scope,
-    ...(actingUserId ? { actingUserId } : {}),
+    ...(actingUserId !== undefined ? { actingUserId } : {}),
   });
 }
 
@@ -373,7 +373,7 @@ function queueCommandCompletion(params: {
       usage: durationMs === undefined ? undefined : { durationMs },
     }),
     ...scope,
-    ...(processState.actingUserId
+    ...(processState.actingUserId !== undefined
       ? { actingUserId: processState.actingUserId }
       : {}),
   });
@@ -411,7 +411,7 @@ function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
   const outputFile = createBackgroundOutputFile(taskId);
   const output = new MonitorOutputWriter(outputFile);
   const scope = resolveNotificationScope(args.parentScope);
-  const actingUserId = getRuntimeActingUserId();
+  const actingUserId = getRuntimeActingUserAttribution();
   const secrets = captureSecretRedactions(
     args.parentScope?.agentId,
     args.secretEnv ?? {},
@@ -599,7 +599,7 @@ function startWebSocketMonitor(args: NormalizedMonitorArgs): MonitorResult {
   const outputFile = createBackgroundOutputFile(taskId);
   const output = new MonitorOutputWriter(outputFile);
   const scope = resolveNotificationScope(args.parentScope);
-  const actingUserId = getRuntimeActingUserId();
+  const actingUserId = getRuntimeActingUserAttribution();
   const secrets: Readonly<Record<string, string>> = {};
   const socket = new WebSocket(source.url, source.protocols, {
     maxPayload: WEBSOCKET_MAX_PAYLOAD_BYTES,

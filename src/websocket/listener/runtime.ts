@@ -2,6 +2,7 @@ import { createContextTracker } from "@/cli/helpers/context-tracker";
 import { createSharedReminderState } from "@/reminders/state";
 import type { PendingControlRequest } from "@/types/protocol_v2";
 import { getWorkingDirectoryScopeKey } from "./cwd";
+import { cancelFailedTeleportCleanup } from "./failed-teleport-cleanup";
 import {
   normalizeConversationId,
   normalizeCwdAgentId,
@@ -18,12 +19,34 @@ import type {
 } from "./types";
 
 let activeRuntime: ListenerRuntime | null = null;
+/**
+ * Process-wide authority history. Clearing the active pointer deliberately does
+ * not reset this epoch: a stopped predecessor remains current only until a new
+ * non-null runtime takes ownership.
+ */
+let activeRuntimeAuthorityEpoch = 0;
+const authorityEpochByRuntime = new WeakMap<ListenerRuntime, number>();
 
 export function getActiveRuntime(): ListenerRuntime | null {
   return activeRuntime;
 }
 
+export function getLatestRuntimeAuthorityEpoch(): number {
+  return activeRuntimeAuthorityEpoch;
+}
+
+export function getRuntimeAuthorityEpoch(
+  runtime: ListenerRuntime,
+): number | null {
+  return authorityEpochByRuntime.get(runtime) ?? null;
+}
+
 export function setActiveRuntime(runtime: ListenerRuntime | null): void {
+  if (runtime !== null && runtime !== activeRuntime) {
+    if (activeRuntime) clearListenerRetryTimers(activeRuntime);
+    activeRuntimeAuthorityEpoch += 1;
+    authorityEpochByRuntime.set(runtime, activeRuntimeAuthorityEpoch);
+  }
   activeRuntime = runtime;
 }
 
@@ -47,7 +70,20 @@ export function nextEventSeq(runtime: ListenerRuntime | null): number | null {
   return runtime.eventSeqCounter;
 }
 
+function clearListenerRetryTimers(runtime: ListenerRuntime): void {
+  if (runtime.durableQueueRestoreTimer) {
+    clearTimeout(runtime.durableQueueRestoreTimer);
+    runtime.durableQueueRestoreTimer = undefined;
+  }
+  runtime.durableQueueRestoreScheduled = false;
+  runtime.durableQueueRestoreRerunRequested = false;
+  runtime.durableQueueRestoreFailures = 0;
+  runtime.scheduleRestoredQueuePumps = undefined;
+  cancelFailedTeleportCleanup(runtime);
+}
+
 export function clearRuntimeTimers(runtime: ListenerRuntime): void {
+  clearListenerRetryTimers(runtime);
   if (runtime.reconnectTimeout) {
     clearTimeout(runtime.reconnectTimeout);
     runtime.reconnectTimeout = null;
@@ -264,7 +300,6 @@ export function createConversationRuntime(
     activeConnectionId: null,
     turnLifecycle,
     messageQueue: Promise.resolve(),
-    acceptedInputDispositions: new Map(),
     pendingApprovalResolvers: new Map(),
     recoveredApprovalState: null,
     expectedTeleportId: null,
@@ -291,6 +326,7 @@ export function createConversationRuntime(
     queueRuntime: null as unknown as ConversationRuntime["queueRuntime"],
     queuedMessagesByItemId: new Map(),
     dequeuedClientMessageIdsByBatchId: new Map(),
+    dequeuedInputIdentitiesByBatchId: new Map(),
     queuePumpActive: false,
     queuePumpScheduled: false,
     pendingInboundDispatches: 0,
@@ -309,6 +345,7 @@ export function createConversationRuntime(
     pendingInterruptedContext: null,
     continuationEpoch: 0,
     pendingInterruptedToolCallIds: null,
+    pendingTerminalDeliveryCount: 0,
     reminderState:
       listener.reminderStateByConversation.get(runtimeKey) ??
       (() => {
@@ -420,9 +457,11 @@ export function clearConversationRuntimeState(
   runtime.pendingInterruptedResults = null;
   runtime.pendingInterruptedContext = null;
   runtime.pendingInterruptedToolCallIds = null;
+  runtime.pendingTerminalDeliveryCount = 0;
   runtime.expectedTeleportId = null;
   runtime.expectedTeleportExpiresAt = null;
   runtime.dequeuedClientMessageIdsByBatchId.clear();
+  runtime.dequeuedInputIdentitiesByBatchId.clear();
   runtime.continuationEpoch += 1;
   runtime.pendingTurns = 0;
   runtime.queuePumpActive = false;
@@ -476,6 +515,17 @@ export function clearRecoveredApprovalStateForScope(
   if (conversationRuntime?.recoveredApprovalState) {
     clearRecoveredApprovalState(conversationRuntime);
   }
+}
+
+export function clearRecoveredApprovalStateUnlessRetained(
+  runtime: ConversationRuntime,
+  retain: boolean,
+): void {
+  if (retain) return;
+  clearRecoveredApprovalStateForScope(runtime.listener, {
+    agent_id: runtime.agentId,
+    conversation_id: runtime.conversationId,
+  });
 }
 
 export function getPendingControlRequests(
@@ -533,7 +583,7 @@ export function hasInterruptedCacheForScope(
   const context = conversationRuntime.pendingInterruptedContext;
   if (
     context &&
-    context.agentId === (scopedAgentId ?? "") &&
+    context.agentId === scopedAgentId &&
     context.conversationId === scopedConversationId &&
     context.continuationEpoch === conversationRuntime.continuationEpoch
   ) {

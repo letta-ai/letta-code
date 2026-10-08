@@ -149,6 +149,7 @@ export function buildMaybeLaunchReflectionSubagent(params: {
   agentId: string;
   conversationId: string;
   reflectionSettings?: ReflectionSettings;
+  actingUserId?: string | null;
 }): (triggerSource: Exclude<ReflectionTrigger, "off">) => Promise<boolean> {
   return async (triggerSource) => {
     const { runtime, socket, agentId, conversationId, reflectionSettings } =
@@ -164,6 +165,7 @@ export function buildMaybeLaunchReflectionSubagent(params: {
       memfsEnabled: settingsManager.isMemfsEnabled(agentId),
       triggerSource,
       reflectionSettings,
+      actingUserId: params.actingUserId,
       description: AUTO_REFLECTION_DESCRIPTION,
       recompileByConversation:
         runtime.listener.systemPromptRecompileByConversation,

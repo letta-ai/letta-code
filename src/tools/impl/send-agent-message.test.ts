@@ -68,10 +68,12 @@ test.each([false, true])(
       LETTA_DEBUG: process.env.LETTA_DEBUG,
       DEBUG: process.env.DEBUG,
       LETTA_DEBUG_FILE: process.env.LETTA_DEBUG_FILE,
+      LETTA_ACTING_USER_ID: process.env.LETTA_ACTING_USER_ID,
     };
     process.env.LETTA_DEBUG = debug ? "1" : "0";
     delete process.env.DEBUG;
     delete process.env.LETTA_DEBUG_FILE;
+    delete process.env.LETTA_ACTING_USER_ID;
     const info = spyOn(console, "info").mockImplementation(() => {});
     const log = spyOn(console, "log").mockImplementation(() => {});
     const error = spyOn(console, "error").mockImplementation(() => {});
@@ -156,6 +158,7 @@ test("resumes an external coding-agent session without the Cloud backend", async
     parentScope: {
       agentId: "agent-caller",
       conversationId: "conv-caller",
+      actingUserId: "user-caller",
     },
     completion: expect.any(Promise),
     interrupt: expect.any(Function),
@@ -232,28 +235,30 @@ test("tracks an idle Codex new turn through background lifecycle", async () => {
     report: "done",
     success: true,
   });
-  const result = await runWithRuntimeContext(caller, () =>
-    send_agent_message(
-      { agent_id: CODEX_AGENT_ID, message: "Continue" },
-      {
-        ...f,
-        sendCodexMessage: async () => ({
-          mode: "new_turn",
-          threadId: CODEX_THREAD_ID,
-          turnId: "turn-2",
-          completion,
-          interrupt: async () => undefined,
-        }),
-        trackExternalFollowup: (input) => {
-          tracked.push(input);
-          return {
-            taskId: "task-codex",
-            outputFile: "/tmp/task-codex.log",
-            subagentId: "subagent-codex",
-          };
+  const result = await runWithRuntimeContext(
+    { ...caller, suppressActingUserFallback: true },
+    () =>
+      send_agent_message(
+        { agent_id: CODEX_AGENT_ID, message: "Continue" },
+        {
+          ...f,
+          sendCodexMessage: async () => ({
+            mode: "new_turn",
+            threadId: CODEX_THREAD_ID,
+            turnId: "turn-2",
+            completion,
+            interrupt: async () => undefined,
+          }),
+          trackExternalFollowup: (input) => {
+            tracked.push(input);
+            return {
+              taskId: "task-codex",
+              outputFile: "/tmp/task-codex.log",
+              subagentId: "subagent-codex",
+            };
+          },
         },
-      },
-    ),
+      ),
   );
   expect(JSON.parse(result.content)).toMatchObject({
     delivery: "turn/start",
@@ -263,6 +268,11 @@ test("tracks an idle Codex new turn through background lifecycle", async () => {
   expect(tracked).toHaveLength(1);
   expect(tracked[0]).toMatchObject({
     agentId: CODEX_AGENT_ID,
+    parentScope: {
+      agentId: "agent-caller",
+      conversationId: "conv-caller",
+      actingUserId: null,
+    },
     completion,
     interrupt: expect.any(Function),
   });
@@ -367,6 +377,35 @@ test("returns acceptance and an explicit return address, with no task or answer"
   expect(JSON.stringify(f.submissions[0]?.content)).toContain(
     "Ordinary assistant output is not forwarded",
   );
+});
+
+test("explicit actor suppression does not reuse a stale ordinary-send actor", async () => {
+  const f = fixture();
+  const result = await runWithRuntimeContext(
+    { ...caller, suppressActingUserFallback: true },
+    () => send_agent_message(message, f),
+  );
+
+  expect(result.status).toBe("success");
+  expect(f.submissions).toHaveLength(1);
+  expect(f.submissions[0]?.actingUserId).toBeNull();
+});
+
+test("ordinary sends inherit an ambient actor when runtime context has none", async () => {
+  const previous = process.env.LETTA_ACTING_USER_ID;
+  process.env.LETTA_ACTING_USER_ID = "user-ambient";
+  try {
+    const f = fixture();
+    const result = await runWithRuntimeContext(
+      { agentId: caller.agentId, conversationId: caller.conversationId },
+      () => send_agent_message(message, f),
+    );
+    expect(result.status).toBe("success");
+    expect(f.submissions[0]?.actingUserId).toBe("user-ambient");
+  } finally {
+    if (previous === undefined) delete process.env.LETTA_ACTING_USER_ID;
+    else process.env.LETTA_ACTING_USER_ID = previous;
+  }
 });
 
 test("does not return queued until the server accepts", async () => {

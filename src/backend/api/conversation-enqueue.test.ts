@@ -230,6 +230,74 @@ test("retries only a typed pre-admission shutdown rejection with the same messag
   }
 });
 
+test("explicit actor suppression reaches enqueue and cancellation despite an ambient actor", async () => {
+  const previous = process.env.LETTA_ACTING_USER_ID;
+  process.env.LETTA_ACTING_USER_ID = "user-ambient";
+  const requests: Array<{ method: string; actingUser: string | null }> = [];
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch(request) {
+      requests.push({
+        method: request.method,
+        actingUser: request.headers.get("X-Letta-Acting-User-Id"),
+      });
+      if (request.method === "DELETE") {
+        return Response.json({
+          client_message_id: "cm-suppressed",
+          status: "dequeued",
+        });
+      }
+      return Response.json(
+        {
+          client_message_id: "cm-suppressed",
+          workflow_id: "wf-suppressed",
+          super_run_id: "sr-suppressed",
+        },
+        { status: 202 },
+      );
+    },
+  });
+  const request: typeof apiRequest = (method, path, body, options = {}) =>
+    apiRequest(method, path, body, {
+      ...options,
+      baseUrl: server.url.toString().replace(/\/$/, ""),
+      apiKey: "test-only",
+    });
+  try {
+    const receipt = await enqueueConversationMessage(
+      {
+        agentId: "agent-target",
+        conversationId: "conv-target",
+        clientMessageId: "cm-suppressed",
+        content: "hello",
+        actingUserId: null,
+      },
+      undefined,
+      request,
+    );
+    expect(receipt.acting_user_id).toBeNull();
+    await dequeueConversationMessage(
+      {
+        agentId: receipt.agent_id,
+        conversationId: receipt.conversation_id,
+        clientMessageId: receipt.client_message_id,
+        actingUserId: receipt.acting_user_id,
+      },
+      undefined,
+      request,
+    );
+    expect(requests).toEqual([
+      { method: "POST", actingUser: null },
+      { method: "DELETE", actingUser: null },
+    ]);
+  } finally {
+    server.stop(true);
+    if (previous === undefined) delete process.env.LETTA_ACTING_USER_ID;
+    else process.env.LETTA_ACTING_USER_ID = previous;
+  }
+});
+
 test.each([
   { admitted: true, retryable: true, errorCode: "cloud_api_shutting_down" },
   { admitted: false, retryable: false, errorCode: "cloud_api_shutting_down" },

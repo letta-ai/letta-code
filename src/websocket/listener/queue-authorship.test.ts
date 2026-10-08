@@ -1,6 +1,9 @@
 import { expect, test } from "bun:test";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import type { TaskNotificationQueueItem } from "@/queue/queue-runtime";
+import type {
+  QueueItem,
+  TaskNotificationQueueItem,
+} from "@/queue/queue-runtime";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { enqueueInboundUserMessage } from "./inbound-queue";
 import { createRuntime } from "./lifecycle";
@@ -57,6 +60,7 @@ test("preserves every input message and author across queue entries", () => {
   const ids = runtime.queueRuntime.peek().map((item) => item.id);
   const consumed = consumeQueuedTurn(runtime);
   expect(consumed?.queuedTurn.messages).toEqual([...first, third]);
+  expect(consumed?.queuedTurn.actingUserId).toBe("human-b");
   expect(consumed?.dequeuedBatch.items.map((item) => item.id)).toEqual(ids);
   expect(
     runtime.dequeuedClientMessageIdsByBatchId.get(
@@ -106,6 +110,7 @@ test("a principal reminder never blocks later human steering", () => {
       attribution: { acting_user_id: "human-b" },
     },
   ]);
+  expect(consumed?.queuedTurn.actingUserId).toBe("human-b");
   expect(runtime.queueRuntime.length).toBe(0);
 });
 
@@ -163,6 +168,30 @@ test("same-owner background notifications keep their acting user", () => {
     expect(message).toMatchObject({ attribution: {} });
   }
   expect(runtime.queueRuntime.length).toBe(0);
+});
+
+test("an explicitly unattributed mod continuation suppresses owner fallback", () => {
+  const runtime = getOrCreateScopedRuntime(
+    createRuntime(),
+    "agent-a",
+    "conv-a",
+  );
+  const continuation: Omit<
+    Extract<QueueItem, { kind: "mod_continue" }>,
+    "id" | "enqueuedAt"
+  > = {
+    kind: "mod_continue",
+    source: "system",
+    agentId: "agent-a",
+    conversationId: "conv-a",
+    text: "continue safely",
+    actingUserId: null,
+  };
+  runtime.queueRuntime.enqueue(continuation);
+
+  const consumed = consumeQueuedTurn(runtime);
+  expect(consumed?.queuedTurn.actingUserId).toBeUndefined();
+  expect(consumed?.queuedTurn.suppressActingUserFallback).toBe(true);
 });
 
 test("same-author messages stay separate and paused messages stay parked", () => {

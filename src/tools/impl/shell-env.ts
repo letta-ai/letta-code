@@ -372,6 +372,8 @@ export function getShellEnv(): NodeJS.ProcessEnv {
   const actingUserId = getRuntimeActingUserId();
   if (actingUserId) {
     env[ACTING_USER_ID_ENV] = actingUserId;
+  } else if (getRuntimeContext()?.suppressActingUserFallback) {
+    delete env[ACTING_USER_ID_ENV];
   }
 
   // Add Letta context for skill scripts.

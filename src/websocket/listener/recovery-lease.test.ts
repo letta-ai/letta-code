@@ -1,12 +1,53 @@
-import { describe, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
+import WebSocket from "ws";
 import { STALE_APPROVAL_RECOVERY_DENIAL_REASON } from "@/agent/turn-recovery-policy";
+import {
+  getOrCreateProcessTransport,
+  markListenerConnectionInitialized,
+  openListenerConnection,
+  subscribeListenerConnection,
+} from "./connection";
+import { cleanupListenerConnection } from "./connection-lifecycle";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { enqueueInboundUserMessage } from "./inbound-queue";
+import { consumeInterruptQueue } from "./interrupts";
 import { createRuntime } from "./lifecycle";
+import { getOutboundQueueStats, OUTBOUND_QUEUE_LIMITS } from "./outbound-wire";
 import { startRecoveredApprovalContinuation } from "./recovery";
+import { createRecoveryEvidenceCheckpoint } from "./recovery-evidence";
 import { clearConversationRuntimeState } from "./runtime";
 import type { ListenerTransport } from "./transport";
-import type { RecoveredApprovalState } from "./types";
+import { finishListenerTurn } from "./turn-terminal";
+import type { RecoveredApprovalState, StartListenerOptions } from "./types";
+
+class MockSocket {
+  bufferedAmount = 0;
+  readyState: number = WebSocket.OPEN;
+  readonly sent: unknown[] = [];
+  onTerminate?: () => void;
+
+  send(data: string): void {
+    this.sent.push(JSON.parse(data));
+  }
+
+  terminate(): void {
+    this.readyState = WebSocket.CLOSED;
+    this.onTerminate?.();
+  }
+}
+
+function makeOptions(connectionId: string): StartListenerOptions {
+  return {
+    connectionId,
+    wsUrl: "ws://app-server.test",
+    deviceId: connectionId,
+    connectionName: connectionId,
+    connectionIdCanResume: false,
+    onConnected: () => {},
+    onDisconnected: () => {},
+    onError: () => {},
+  };
+}
 
 function createTransport(sentPayloads: string[]): ListenerTransport {
   return {
@@ -26,11 +67,40 @@ function createRecoveredState(): RecoveredApprovalState {
   return {
     agentId: "agent-1",
     conversationId: "conv-1",
+    durableInputIdentities: [{ domain: "input", id: "scheduled-1" }],
+    terminalConsumerIds: ["slack:agent-1"],
     autoDecisions: [
       { type: "deny", approval, reason: STALE_APPROVAL_RECOVERY_DENIAL_REASON },
     ],
     allApprovals: [approval],
   };
+}
+
+function createApprovedRecoveredState(): RecoveredApprovalState {
+  const approval = {
+    toolCallId: "call-approved",
+    toolName: "Read",
+    toolArgs: '{"file_path":"/tmp/example"}',
+  };
+  return {
+    agentId: "agent-1",
+    conversationId: "conv-1",
+    durableInputIdentities: [{ domain: "input", id: "scheduled-1" }],
+    terminalConsumerIds: ["slack:agent-1"],
+    autoDecisions: [{ type: "approve", approval }],
+    allApprovals: [approval],
+  };
+}
+
+function createToolResults() {
+  return [
+    {
+      type: "tool" as const,
+      tool_call_id: "call-approved",
+      status: "success" as const,
+      tool_return: "contents",
+    },
+  ];
 }
 
 function createDenialResults() {
@@ -58,14 +128,496 @@ function createPreparedToolContext() {
 }
 
 async function waitFor(predicate: () => boolean): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  const deadline = performance.now() + 2_000;
+  while (performance.now() < deadline) {
     if (predicate()) return;
-    await Bun.sleep(1);
+    await Bun.sleep(5);
   }
   throw new Error("Timed out waiting for recovered approval state");
 }
 
+afterEach(() => {
+  mock.restore();
+});
+
 describe("recovered approval lease boundaries", () => {
+  test.each(["before terminal send", "during continuation callback"])(
+    "claim loss %s fences the stale recovered terminal",
+    async (lossPoint) => {
+      const listener = createRuntime();
+      const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+      runtime.recoveredApprovalState = createRecoveredState();
+      const sent: string[] = [];
+      let owned = true;
+      let attempted: ReturnType<typeof finishListenerTurn> | null = null;
+      const processTurn = mock(
+        async (
+          message,
+          socket,
+          ownerRuntime,
+          _onStatusChange,
+          _connectionId,
+          batchId,
+          turnLease,
+          _correlation,
+          terminalCommitGuard,
+        ) => {
+          if (lossPoint === "during continuation callback") {
+            await Promise.resolve();
+          }
+          owned = false;
+          if (!turnLease) throw new Error("expected recovery lease");
+          attempted = finishListenerTurn(ownerRuntime, turnLease, {
+            socket,
+            turnId: batchId,
+            stopReason: "end_turn",
+            agentId: message.agentId,
+            conversationId: message.conversationId ?? "default",
+            terminalConsumerIds: message.terminalConsumerIds,
+            durableInputIdentities: message.durableInputIdentities,
+            canCommit: terminalCommitGuard,
+          });
+        },
+      );
+
+      expect(
+        await startRecoveredApprovalContinuation(
+          runtime,
+          createTransport(sent),
+          processTurn,
+          {
+            dependencies: {
+              ensureSecretsHydrated: async () => {},
+              ensureModAdapters: async () => [],
+              prepareToolExecutionContext: async () =>
+                createPreparedToolContext(),
+              executeApprovalBatch: async () => createDenialResults(),
+              recordListenerWork: () => {},
+              acquireRecoveryClaim: (async () => ({
+                get owned() {
+                  return owned;
+                },
+                complete: async () => false,
+                release: async () => {},
+                abandon: () => {},
+              })) as never,
+            },
+          },
+        ),
+      ).toBe(true);
+      expect(attempted).toMatchObject({ finished: false });
+      expect(
+        sent.some(
+          (payload) =>
+            (JSON.parse(payload) as { type?: string }).type === "turn_finished",
+        ),
+      ).toBe(false);
+      expect(runtime.turnLifecycle.kind).toBe("idle");
+    },
+  );
+
+  test("claim loss reacquires and resumes on the same healthy connection", async () => {
+    const listener = createRuntime();
+    listener.connectionId = "conn-hosted";
+    listener.connectionGeneration = "generation-hosted";
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    runtime.recoveredApprovalState = createRecoveredState();
+    const sent: string[] = [];
+    let acquisitions = 0;
+    let firstLoss: (() => void) | undefined;
+    const processTurn = mock(
+      async (
+        message,
+        socket,
+        ownerRuntime,
+        _onStatusChange,
+        _connectionId,
+        batchId,
+        turnLease,
+        _correlation,
+        terminalCommitGuard,
+      ) => {
+        if (!turnLease) throw new Error("expected recovery lease");
+        finishListenerTurn(ownerRuntime, turnLease, {
+          socket,
+          turnId: batchId,
+          stopReason: "end_turn",
+          agentId: message.agentId,
+          conversationId: message.conversationId ?? "default",
+          terminalConsumerIds: message.terminalConsumerIds,
+          durableInputIdentities: message.durableInputIdentities,
+          canCommit: terminalCommitGuard,
+          forgetWork: () => {},
+        });
+      },
+    );
+
+    await startRecoveredApprovalContinuation(
+      runtime,
+      createTransport(sent),
+      processTurn,
+      {
+        dependencies: {
+          canRecover: async () => true,
+          ensureSecretsHydrated: async () => {},
+          ensureModAdapters: async () => [],
+          prepareToolExecutionContext: async () => createPreparedToolContext(),
+          executeApprovalBatch: async () => createDenialResults(),
+          recordListenerWork: () => {
+            if (acquisitions === 1) firstLoss?.();
+          },
+          acquireRecoveryClaim: (async (
+            _runtime: unknown,
+            onLost: () => void,
+          ) => {
+            acquisitions += 1;
+            if (acquisitions === 2) return null;
+            let owned = true;
+            if (acquisitions === 1) {
+              firstLoss = () => {
+                owned = false;
+                onLost();
+              };
+            }
+            return {
+              get owned() {
+                return owned;
+              },
+              complete: async () => true,
+              release: async () => {},
+              abandon: () => {},
+            } as never;
+          }) as never,
+        },
+      },
+    );
+
+    // The first failed reacquire enters bounded exponential backoff instead of
+    // polling the authenticated claim route four times per second forever.
+    await Bun.sleep(1_100);
+    await waitFor(() => acquisitions === 3);
+    await waitFor(() => runtime.recoveredApprovalState === null);
+    expect(processTurn).toHaveBeenCalledTimes(1);
+    expect(runtime.turnLifecycle.kind).toBe("idle");
+  });
+
+  test("timed-out recovery replays terminal pairs to a later App Server owner", async () => {
+    let now = 1_000;
+    spyOn(Date, "now").mockImplementation(() => now);
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    runtime.recoveredApprovalState = createApprovedRecoveredState();
+    runtime.activeConnectionId = "client-a";
+    const socketA = new MockSocket();
+    const socketB = new MockSocket();
+    socketA.bufferedAmount =
+      OUTBOUND_QUEUE_LIMITS.HIGH_WATERMARK_BUFFERED_BYTES;
+    const scope = { agent_id: "agent-1", conversation_id: "conv-1" };
+    openListenerConnection({
+      runtime: listener,
+      connectionId: "client-a",
+      writer: socketA as never,
+      options: makeOptions("client-a"),
+    });
+    markListenerConnectionInitialized(listener, "client-a");
+    subscribeListenerConnection(listener, "client-a", scope);
+    socketA.onTerminate = () => cleanupListenerConnection(listener, "client-a");
+    const continuedConnectionIds: Array<string | undefined> = [];
+    const continuedMessageConnectionIds: Array<string | undefined> = [];
+    const submittedOtids: string[] = [];
+    const continuedConsumers: Array<readonly string[] | undefined> = [];
+    const continuedIdentities: Array<
+      RecoveredApprovalState["durableInputIdentities"]
+    > = [];
+    const recordedOtids: string[] = [];
+    const processTurn = mock(
+      async (
+        message,
+        _socket,
+        ownerRuntime,
+        _onStatusChange,
+        connectionId,
+        _batchId,
+        turnLease,
+      ) => {
+        continuedConnectionIds.push(connectionId);
+        continuedMessageConnectionIds.push(message.connectionId);
+        continuedConsumers.push(message.terminalConsumerIds);
+        continuedIdentities.push(message.durableInputIdentities);
+        const approvalMessage = message.messages[0] as { otid?: string };
+        if (approvalMessage.otid) submittedOtids.push(approvalMessage.otid);
+        if (turnLease) ownerRuntime.turnLifecycle.finish(turnLease, "end_turn");
+      },
+    );
+    const handled = startRecoveredApprovalContinuation(
+      runtime,
+      getOrCreateProcessTransport(listener),
+      processTurn,
+      {
+        connectionId: "client-a",
+        dependencies: {
+          ensureSecretsHydrated: async () => {},
+          ensureModAdapters: async () => [],
+          prepareToolExecutionContext: async () => createPreparedToolContext(),
+          executeApprovalBatch: async () => createToolResults(),
+          recordListenerWork: (_runtime, update) => {
+            if (update.requestOtid) recordedOtids.push(update.requestOtid);
+          },
+        },
+      },
+    );
+    await waitFor(
+      () => getOutboundQueueStats(socketA as never).queuedFrames >= 3,
+    );
+    now += OUTBOUND_QUEUE_LIMITS.MAX_BACKPRESSURE_MS;
+    await waitFor(() => getOutboundQueueStats(socketA as never).killed);
+    openListenerConnection({
+      runtime: listener,
+      connectionId: "client-b",
+      writer: socketB as never,
+      options: makeOptions("client-b"),
+    });
+    markListenerConnectionInitialized(listener, "client-b");
+    subscribeListenerConnection(listener, "client-b", scope);
+
+    expect(await handled).toBe(true);
+    expect(processTurn).toHaveBeenCalledTimes(1);
+    expect(continuedConsumers).toEqual([["slack:agent-1"]]);
+    expect(continuedIdentities).toEqual([
+      [{ domain: "input", id: "scheduled-1" }],
+    ]);
+    expect(runtime.turnLifecycle.kind).toBe("idle");
+    const terminalTypes = socketB.sent
+      .filter(
+        (message) => (message as { type?: string }).type === "stream_delta",
+      )
+      .map(
+        (message) =>
+          (message as { delta?: { message_type?: string } }).delta
+            ?.message_type,
+      )
+      .filter((messageType) =>
+        ["client_tool_end", "tool_return_message"].includes(messageType ?? ""),
+      );
+    expect(terminalTypes).toEqual(["client_tool_end", "tool_return_message"]);
+    expect(runtime.activeConnectionId).toBe("client-b");
+    expect(continuedConnectionIds).toEqual(["client-b"]);
+    expect(continuedMessageConnectionIds).toEqual(["client-b"]);
+    expect(recordedOtids).toHaveLength(1);
+    expect(recordedOtids).toEqual(submittedOtids);
+  });
+
+  test("a missing explicit process origin defers recovery for a later owner", async () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    runtime.recoveredApprovalState = createApprovedRecoveredState();
+    runtime.activeConnectionId = "client-a";
+    const socketA = new MockSocket();
+    openListenerConnection({
+      runtime: listener,
+      connectionId: "client-a",
+      writer: socketA as never,
+      options: makeOptions("client-a"),
+    });
+    markListenerConnectionInitialized(listener, "client-a");
+    subscribeListenerConnection(listener, "client-a", {
+      agent_id: "agent-1",
+      conversation_id: "conv-1",
+    });
+    cleanupListenerConnection(listener, "client-a");
+    const processTurn = mock(
+      async (
+        _message,
+        _socket,
+        ownerRuntime,
+        _onStatusChange,
+        _connectionId,
+        _batchId,
+        turnLease,
+      ) => {
+        if (turnLease) ownerRuntime.turnLifecycle.finish(turnLease, "end_turn");
+      },
+    );
+
+    expect(
+      await startRecoveredApprovalContinuation(
+        runtime,
+        getOrCreateProcessTransport(listener),
+        processTurn,
+        {
+          connectionId: "client-a",
+          dependencies: {
+            ensureSecretsHydrated: async () => {},
+            ensureModAdapters: async () => [],
+            prepareToolExecutionContext: async () =>
+              createPreparedToolContext(),
+            executeApprovalBatch: async () => createToolResults(),
+          },
+        },
+      ),
+    ).toBe(false);
+    expect(processTurn).not.toHaveBeenCalled();
+    expect(runtime.recoveredApprovalState).not.toBeNull();
+    expect(runtime.turnLifecycle.kind).toBe("idle");
+    expect(runtime.activeConnectionId).toBeNull();
+
+    const socketB = new MockSocket();
+    openListenerConnection({
+      runtime: listener,
+      connectionId: "client-b",
+      writer: socketB as never,
+      options: makeOptions("client-b"),
+    });
+    markListenerConnectionInitialized(listener, "client-b");
+    subscribeListenerConnection(listener, "client-b", {
+      agent_id: "agent-1",
+      conversation_id: "conv-1",
+    });
+    expect(
+      await startRecoveredApprovalContinuation(
+        runtime,
+        getOrCreateProcessTransport(listener),
+        processTurn,
+        {
+          connectionId: "client-b",
+          dependencies: {
+            ensureSecretsHydrated: async () => {},
+            ensureModAdapters: async () => [],
+            prepareToolExecutionContext: async () =>
+              createPreparedToolContext(),
+            executeApprovalBatch: async () => createToolResults(),
+          },
+        },
+      ),
+    ).toBe(true);
+    expect(processTurn).toHaveBeenCalledTimes(1);
+  });
+
+  test("thrown recovery replays its closing tool terminal to a later App Server owner", async () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    runtime.recoveredApprovalState = createApprovedRecoveredState();
+    runtime.activeConnectionId = "client-a";
+    const socketA = new MockSocket();
+    const socketB = new MockSocket();
+    socketA.bufferedAmount =
+      OUTBOUND_QUEUE_LIMITS.HIGH_WATERMARK_BUFFERED_BYTES;
+    const scope = { agent_id: "agent-1", conversation_id: "conv-1" };
+    openListenerConnection({
+      runtime: listener,
+      connectionId: "client-a",
+      writer: socketA as never,
+      options: makeOptions("client-a"),
+    });
+    markListenerConnectionInitialized(listener, "client-a");
+    subscribeListenerConnection(listener, "client-a", scope);
+    const processTurn = mock(async () => {});
+    const checkpoints: Array<{
+      phase: string;
+      update: { results?: unknown[] };
+    }> = [];
+    const handled = startRecoveredApprovalContinuation(
+      runtime,
+      getOrCreateProcessTransport(listener),
+      processTurn,
+      {
+        connectionId: "client-a",
+        dependencies: {
+          ensureSecretsHydrated: async () => {},
+          ensureModAdapters: async () => [],
+          prepareToolExecutionContext: async () => createPreparedToolContext(),
+          executeApprovalBatch: async () => {
+            throw new Error("recovery crashed");
+          },
+          recordListenerWork: (_runtime, update, phase) => {
+            checkpoints.push({ phase, update });
+          },
+        },
+      },
+    );
+    const handledOutcome = handled.then(
+      (value) => ({ value }),
+      (error: unknown) => ({ error }),
+    );
+    await waitFor(
+      () => getOutboundQueueStats(socketA as never).queuedFrames >= 2,
+    );
+    openListenerConnection({
+      runtime: listener,
+      connectionId: "client-b",
+      writer: socketB as never,
+      options: makeOptions("client-b"),
+    });
+    markListenerConnectionInitialized(listener, "client-b");
+    subscribeListenerConnection(listener, "client-b", scope);
+    socketA.readyState = WebSocket.CLOSED;
+    cleanupListenerConnection(listener, "client-a");
+
+    const outcome = await handledOutcome;
+    expect(outcome).toHaveProperty("error");
+    expect(processTurn).not.toHaveBeenCalled();
+    expect(checkpoints.map(({ phase }) => phase)).toEqual([
+      "before_tool_execution",
+      "after_tool_execution",
+    ]);
+    expect(checkpoints[0]?.update.results).toEqual([]);
+    expect(checkpoints[1]?.update.results).toEqual([]);
+    expect(
+      socketB.sent.some(
+        (message) =>
+          (message as { delta?: { message_type?: string } }).delta
+            ?.message_type === "client_tool_end",
+      ),
+    ).toBe(true);
+  });
+
+  test("a dropped direct recovery terminal releases its lease", async () => {
+    const runtime = getOrCreateScopedRuntime(
+      createRuntime(),
+      "agent-1",
+      "conv-1",
+    );
+    runtime.recoveredApprovalState = createApprovedRecoveredState();
+    const transport = {
+      kind: "local" as const,
+      bufferedAmount: 0,
+      isOpen: () => true,
+      send: () => {
+        throw new Error("transport failed");
+      },
+    } as ListenerTransport;
+    const processTurn = mock(async () => {});
+    const recordedOtids: string[] = [];
+
+    expect(
+      await startRecoveredApprovalContinuation(
+        runtime,
+        transport,
+        processTurn,
+        {
+          dependencies: {
+            ensureSecretsHydrated: async () => {},
+            ensureModAdapters: async () => [],
+            prepareToolExecutionContext: async () =>
+              createPreparedToolContext(),
+            executeApprovalBatch: async () => createToolResults(),
+            recordListenerWork: (_runtime, update) => {
+              if (update.requestOtid) recordedOtids.push(update.requestOtid);
+            },
+          },
+        },
+      ),
+    ).toBe(true);
+    expect(processTurn).not.toHaveBeenCalled();
+    expect(runtime.turnLifecycle.kind).toBe("idle");
+    expect(runtime.pendingInterruptedResults).toEqual(createToolResults());
+    expect(runtime.pendingInterruptedToolCallIds).toEqual([]);
+    expect(runtime.recoveredApprovalState).toBeNull();
+    const queued = consumeInterruptQueue(runtime, "agent-1", "conv-1");
+    expect(recordedOtids).toHaveLength(1);
+    expect(queued?.approvalMessage.otid).toBe(recordedOtids[0]);
+  });
+
   test("a queued user's identity survives recovered denial continuation", async () => {
     const runtime = getOrCreateScopedRuntime(
       createRuntime(),
@@ -85,6 +637,8 @@ describe("recovered approval lease boundaries", () => {
     );
     let receivedActingUserId: string | undefined;
     let receivedMessages: unknown;
+    const recordedToolCallIds: string[][] = [];
+    const recordedActingUserIds: Array<string | undefined> = [];
 
     const handled = await startRecoveredApprovalContinuation(
       runtime,
@@ -105,14 +659,21 @@ describe("recovered approval lease boundaries", () => {
       {
         dependencies: {
           ensureSecretsHydrated: async () => {},
+          ensureModAdapters: async () => [],
           prepareToolExecutionContext: async () => createPreparedToolContext(),
           executeApprovalBatch: async () => createDenialResults(),
+          recordListenerWork: (_runtime, update) => {
+            if (update.toolCallIds)
+              recordedToolCallIds.push(update.toolCallIds);
+            if (update.durableInputIdentities)
+              recordedActingUserIds.push(update.actingUserId);
+          },
         },
       },
     );
 
     expect(handled).toBe(true);
-    expect(receivedActingUserId).toBeUndefined();
+    expect(receivedActingUserId).toBe("cloud-user-charles");
     expect(receivedMessages).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -124,6 +685,92 @@ describe("recovered approval lease boundaries", () => {
     expect(JSON.stringify(receivedMessages)).toContain(
       '"attribution":{"acting_user_id":"cloud-user-charles"}',
     );
+    expect(recordedToolCallIds).toEqual([["call-1"]]);
+    expect(recordedActingUserIds).toEqual(["cloud-user-charles"]);
+  });
+
+  test("claim loss after dequeue checkpoints the queued user before retry", async () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    runtime.recoveredApprovalState = createRecoveredState();
+    enqueueInboundUserMessage(
+      runtime,
+      {
+        type: "message",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        durableInputIdentities: [{ domain: "input", id: "cm-must-survive" }],
+        terminalConsumerIds: ["slack:agent-1"],
+        messages: [{ role: "user", content: "must survive" }],
+      },
+      "cloud-user-charles",
+    );
+    const scheduleRecordedRecovery = mock(() => {});
+    listener.scheduleRecordedRecovery = scheduleRecordedRecovery;
+    const processTurn = mock(async () => {});
+    const ownershipCheckpoints: unknown[] = [];
+
+    expect(
+      await startRecoveredApprovalContinuation(
+        runtime,
+        createTransport([]),
+        processTurn,
+        {
+          dependencies: {
+            ensureSecretsHydrated: async () => {},
+            ensureModAdapters: async () => [],
+            prepareToolExecutionContext: async () =>
+              createPreparedToolContext(),
+            executeApprovalBatch: async () => createDenialResults(),
+            recordListenerWork: (_runtime, update) => {
+              if (update.durableInputIdentities) {
+                ownershipCheckpoints.push(update);
+              }
+            },
+            acquireRecoveryClaim: (async (
+              _runtime: unknown,
+              onLost: () => void,
+            ) => {
+              let lossReported = false;
+              return {
+                get owned() {
+                  // Ownership is lost in the exact destructive-dequeue window.
+                  const owned = !runtime.queueRuntime.isEmpty;
+                  if (!owned && !lossReported) {
+                    lossReported = true;
+                    onLost();
+                  }
+                  return owned;
+                },
+                complete: async () => false,
+                release: async () => {},
+                abandon: () => {},
+              };
+            }) as never,
+          },
+        },
+      ),
+    ).toBe(true);
+    expect(processTurn).toHaveBeenCalledTimes(0);
+    expect(
+      ownershipCheckpoints.some((checkpoint) => {
+        const value = checkpoint as {
+          durableInputIdentities?: Array<{ domain: string; id: string }>;
+          terminalConsumerIds?: string[];
+          actingUserId?: string;
+        };
+        return (
+          value.actingUserId === "cloud-user-charles" &&
+          value.durableInputIdentities?.some(
+            (identity) => identity.id === "cm-must-survive",
+          ) === true &&
+          value.terminalConsumerIds?.includes("slack:agent-1") === true
+        );
+      }),
+    ).toBe(true);
+    expect(runtime.queueRuntime.length).toBe(0);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(scheduleRecordedRecovery).toHaveBeenCalledTimes(1);
   });
 
   test("stale recovered denial processing emits nothing into a replacement run", async () => {
@@ -143,6 +790,7 @@ describe("recovered approval lease boundaries", () => {
         resolveExecution = resolve;
       },
     );
+    const recordedResults: unknown[] = [];
     const processTurn = mock(async () => {});
     const handled = startRecoveredApprovalContinuation(
       runtime,
@@ -151,6 +799,7 @@ describe("recovered approval lease boundaries", () => {
       {
         dependencies: {
           ensureSecretsHydrated: async () => {},
+          ensureModAdapters: async () => [],
           prepareToolExecutionContext: async () => createPreparedToolContext(),
           executeApprovalBatch: async (decisions) => {
             expect(decisions).toEqual(
@@ -158,6 +807,9 @@ describe("recovered approval lease boundaries", () => {
             );
             executionStarted = true;
             return execution;
+          },
+          recordListenerWork: (_runtime, update) => {
+            if (update.results) recordedResults.push(update.results);
           },
         },
       },
@@ -177,8 +829,85 @@ describe("recovered approval lease boundaries", () => {
     expect(processTurn).not.toHaveBeenCalled();
     expect(runtime.turnLifecycle.isCurrent(replacementLease)).toBe(true);
     expect(sentPayloads).toEqual([]);
+    expect(recordedResults.at(-1)).toEqual(createDenialResults());
   });
 
+  test("recovered evidence starts from the observed interrupted revision", async () => {
+    const runtime = getOrCreateScopedRuntime(
+      createRuntime(),
+      "agent-1",
+      "conv-1",
+    );
+    const expectedRevisions: Array<string | null | undefined> = [];
+    let nextRevision = 0;
+    const evidence = createRecoveryEvidenceCheckpoint(
+      runtime,
+      (_runtime, _update, _phase, expectedRevision) => {
+        expectedRevisions.push(expectedRevision);
+        nextRevision += 1;
+        return `revision-${nextRevision}`;
+      },
+      "revision-observed",
+      undefined,
+      undefined,
+      true,
+    );
+    await evidence.write({ results: [] }, "before_tool_execution");
+    await evidence.write({ results: [] }, "after_tool_execution");
+    expect(expectedRevisions).toEqual(["revision-observed", "revision-1"]);
+  });
+  test("claim expiry during the pre-effect checkpoint skips execution", async () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    runtime.recoveredApprovalState = createApprovedRecoveredState();
+    const executeApprovalBatch = mock(async () => createToolResults());
+    const scheduleRecordedRecovery = mock(() => {});
+    listener.scheduleRecordedRecovery = scheduleRecordedRecovery;
+    let expired = false;
+    let lost = false;
+
+    expect(
+      await startRecoveredApprovalContinuation(
+        runtime,
+        createTransport([]),
+        mock(async () => {}),
+        {
+          dependencies: {
+            ensureSecretsHydrated: async () => {},
+            ensureModAdapters: async () => [],
+            prepareToolExecutionContext: async () =>
+              createPreparedToolContext(),
+            executeApprovalBatch,
+            recordListenerWork: (_runtime, _update, phase) => {
+              if (phase === "before_tool_execution") {
+                expired = true;
+              }
+            },
+            acquireRecoveryClaim: (async (
+              _runtime: unknown,
+              onLost: () => void,
+            ) => ({
+              get owned() {
+                if (expired && !lost) {
+                  lost = true;
+                  onLost();
+                }
+                return !expired;
+              },
+              complete: async () => false,
+              release: async () => {},
+              abandon: () => {},
+            })) as never,
+          },
+        },
+      ),
+    ).toBe(true);
+    expect(executeApprovalBatch).not.toHaveBeenCalled();
+    expect(lost).toBe(true);
+    expect(scheduleRecordedRecovery).toHaveBeenCalledTimes(1);
+    expect(runtime.turnLifecycle.kind).toBe("idle");
+    listener.intentionallyClosed = true;
+  });
   test("aborted recovered denial processing that throws finalizes exactly once without tool starts", async () => {
     const runtime = getOrCreateScopedRuntime(
       createRuntime(),
@@ -200,6 +929,7 @@ describe("recovered approval lease boundaries", () => {
       {
         dependencies: {
           ensureSecretsHydrated: async () => {},
+          ensureModAdapters: async () => [],
           prepareToolExecutionContext: async () => createPreparedToolContext(),
           executeApprovalBatch: async () => {
             executionStarted = true;
@@ -209,11 +939,9 @@ describe("recovered approval lease boundaries", () => {
       },
     );
     await waitFor(() => executionStarted);
-
-    runtime.turnLifecycle.requestCancellation();
+    runtime.turnLifecycle.requestCancellation({ cause: "explicit_user" });
     rejectExecution(new Error("denial processing crashed"));
     await handled.catch(() => {});
-
     const frames = sentPayloads.map((payload) => JSON.parse(payload));
     const terminals = frames.filter((frame) => frame.type === "turn_finished");
     expect(terminals).toHaveLength(1);
@@ -230,7 +958,6 @@ describe("recovered approval lease boundaries", () => {
     expect(runtime.turnLifecycle.kind).toBe("idle");
     expect(processTurn).not.toHaveBeenCalled();
   });
-
   test("terminated recovered denial processing omits terminal error details", async () => {
     const runtime = getOrCreateScopedRuntime(
       createRuntime(),
@@ -246,6 +973,7 @@ describe("recovered approval lease boundaries", () => {
       {
         dependencies: {
           ensureSecretsHydrated: async () => {},
+          ensureModAdapters: async () => [],
           prepareToolExecutionContext: async () => createPreparedToolContext(),
           executeApprovalBatch: async () => {
             throw new Error("terminated");
@@ -253,9 +981,7 @@ describe("recovered approval lease boundaries", () => {
         },
       },
     );
-
     await handled.catch(() => {});
-
     const terminal = sentPayloads
       .map((payload) => JSON.parse(payload))
       .find((frame) => frame.type === "turn_finished");

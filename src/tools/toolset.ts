@@ -293,6 +293,7 @@ export async function prepareToolExecutionContextForScope(params: {
   agentId: string | null;
   conversationId?: string | null;
   actingUserId?: string;
+  suppressActingUserFallback?: boolean;
   overrideModel?: string | null;
   overrideProviderType?: string | null;
   cachedEffectiveModel?: string | null;
@@ -317,6 +318,7 @@ export async function prepareToolExecutionContextForScope(params: {
     agentId,
     conversationId,
     actingUserId,
+    suppressActingUserFallback,
     overrideModel,
     overrideProviderType,
     cachedEffectiveModel,
@@ -428,6 +430,9 @@ export async function prepareToolExecutionContextForScope(params: {
       agentName: (agent as AgentState | null)?.name ?? null,
       conversationId: scopedConversationId,
       ...(actingUserId ? { actingUserId } : {}),
+      ...(suppressActingUserFallback
+        ? { suppressActingUserFallback: true }
+        : {}),
       workingDirectory,
       ...(skillsDirectory !== undefined ? { skillsDirectory } : {}),
       ...(skillSources !== undefined ? { skillSources } : {}),

@@ -17,6 +17,7 @@ Remote computer options:
   --channels <list>  Comma-separated channel names to enable (e.g. telegram)
   --install-channel-runtimes  Install missing runtime dependencies for selected channels
   --debug  Log WebSocket events instead of showing the interactive status UI
+  --lifecycle-output jsonl  Emit payload-free JSON lifecycle transitions
 
 App Server options:
   --listen [url]  Accept App Server connections. If URL is omitted, binds to an available loopback port
@@ -89,7 +90,9 @@ export function resolveServerCommand(argv: string[]): ServerCommand {
         arg === "--env-name" ||
         arg.startsWith("--env-name=") ||
         arg === "--channels" ||
-        arg.startsWith("--channels="),
+        arg.startsWith("--channels=") ||
+        arg === "--lifecycle-output" ||
+        arg.startsWith("--lifecycle-output="),
     );
     if (conflictingOption) {
       throw new Error(
@@ -107,7 +110,13 @@ export function asLegacyAppServerCommand(argv: string[]): string[] {
 }
 
 export async function runServerSubcommand(argv: string[]): Promise<number> {
-  if (argv.includes("--help") || argv.includes("-h")) {
+  if (
+    (argv.includes("--help") || argv.includes("-h")) &&
+    !argv.some(
+      (arg) =>
+        arg === "--lifecycle-output" || arg.startsWith("--lifecycle-output="),
+    )
+  ) {
     printServerHelp();
     return 0;
   }

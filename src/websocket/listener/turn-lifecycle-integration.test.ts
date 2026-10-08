@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Letta } from "@letta-ai/letta-client";
 import { ACTING_USER_ID_HEADER } from "@/agent/acting-user";
 import {
@@ -16,15 +19,21 @@ import {
 import { openListenerConnection } from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { enqueueInboundUserMessage } from "./inbound-queue";
+import {
+  createInterruptedTurnStore,
+  type InterruptedTurnRecord,
+  recordedToolResults,
+} from "./interrupted-turn-record";
 import { createRuntime } from "./lifecycle";
 import { shouldProcessInboundMessageDirectly } from "./queue";
 import { finalizeHandledRecoveryTurn } from "./recovery";
 import { clearConversationRuntimeState } from "./runtime";
-import { finishPendingTeleport, handleTeleportRequest } from "./teleport";
+import { finishDrainedTeleport, handleTeleportRequest } from "./teleport";
 import type { ListenerTransport } from "./transport";
 import { handleApprovalStop } from "./turn-approval";
 import { releaseListenerTurnContext } from "./turn-context";
 import type { TurnLease } from "./turn-lifecycle";
+import { finishListenerTurn } from "./turn-terminal";
 
 function createOpenTransport(sentPayloads: string[] = []): ListenerTransport {
   return {
@@ -110,6 +119,47 @@ describe("listener turn lifecycle integration", () => {
   afterEach(() => {
     setCurrentAgentId(null);
     setConversationId(null);
+  });
+
+  test("lost recovery authority suppresses a pending classification result", async () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const turnLease = runtime.turnLifecycle.begin({
+      origin: "approval_recovery",
+      workingDirectory: process.cwd(),
+      initialStatus: "PROCESSING_API_RESPONSE",
+    });
+    const sentPayloads: string[] = [];
+    let authoritative = true;
+    let resolveClassification!: (value: {
+      autoAllowed: never[];
+      autoDenied: never[];
+      needsUserInput: never[];
+    }) => void;
+    const classification = new Promise<{
+      autoAllowed: never[];
+      autoDenied: never[];
+      needsUserInput: never[];
+    }>((resolve) => {
+      resolveClassification = resolve;
+    });
+
+    const result = startToolApproval(runtime, turnLease, {
+      socket: createOpenTransport(sentPayloads),
+      authorityGuard: () => authoritative,
+      dependencies: {
+        classifyApprovals: (() => classification) as never,
+      },
+    });
+    authoritative = false;
+    resolveClassification({
+      autoAllowed: [],
+      autoDenied: [],
+      needsUserInput: [],
+    });
+
+    expect((await result).kind).toBe("interrupted");
+    expect(sentPayloads).toEqual([]);
   });
 
   test("publishes classification outcome before waiting for user approval", async () => {
@@ -280,7 +330,7 @@ describe("listener turn lifecycle integration", () => {
     ["user-a", "user-a"],
     [undefined, undefined],
   ])(
-    "reminder and steering keep request actor %s with queued author %s",
+    "active actor %s yields request attribution to queued author %s",
     async (activeUser, queuedUser) => {
       const runtime = getOrCreateScopedRuntime(
         createRuntime(),
@@ -326,7 +376,7 @@ describe("listener turn lifecycle integration", () => {
         async fetch(request) {
           const actor = request.headers.get(ACTING_USER_ID_HEADER) ?? undefined;
           requests.push({ actor, body: await request.json() });
-          if (actor !== activeUser) {
+          if (actor !== queuedUser) {
             return Response.json(
               { message: "Conversation not found" },
               { status: 404 },
@@ -407,7 +457,7 @@ describe("listener turn lifecycle integration", () => {
 
         expect(result.kind).toBe("terminal");
         expect(requests).toHaveLength(1);
-        expect(requests[0]?.actor).toBe(activeUser);
+        expect(requests[0]?.actor).toBe(queuedUser);
         expect(JSON.stringify(requests[0]?.body)).toContain("call-monitor");
         expect(JSON.stringify(requests[0]?.body)).toContain(
           "scheduled reminder",
@@ -527,18 +577,123 @@ describe("listener turn lifecycle integration", () => {
       },
     });
 
-    runtime.turnLifecycle.finish(lease, "end_turn");
-    finishPendingTeleport(runtime);
-
-    expect(listener.pendingTeleports?.get("teleport-text")?.readyAt).toEqual(
-      expect.any(Number),
+    finishDrainedTeleport(runtime, () =>
+      runtime.turnLifecycle.finish(lease, "end_turn"),
     );
+
+    const pending = [...(listener.pendingTeleports?.values() ?? [])].find(
+      (teleport) => teleport.teleportId === "teleport-text",
+    );
+    expect(pending?.readyAt).toEqual(expect.any(Number));
+  });
+
+  test("checkpoints exact tool outcomes before waiting for replacement transport", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "approval-checkpoint-"));
+    try {
+      const store = createInterruptedTurnStore(directory);
+      const runtime = getOrCreateScopedRuntime(
+        createRuntime(),
+        "agent-1",
+        "conv-1",
+      );
+      const turnLease = runtime.turnLifecycle.begin({
+        origin: "message",
+        workingDirectory: process.cwd(),
+        initialStatus: "PROCESSING_API_RESPONSE",
+      });
+      runtime.turnLifecycle.setRunId(turnLease, "run-checkpoint");
+      const approval = {
+        toolCallId: "call-checkpoint",
+        toolName: "Bash",
+        toolArgs: '{"command":"pwd"}',
+      };
+      const exactResults = [
+        {
+          type: "tool" as const,
+          tool_call_id: approval.toolCallId,
+          status: "success" as const,
+          tool_return: "/workspace/exact",
+        },
+      ];
+      let transportOpen = true;
+      let durableRecord: InterruptedTurnRecord = {
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        runId: "run-checkpoint",
+        toolCallIds: [],
+        results: [],
+        requestOtid: "initial-otid",
+        workingDirectory: process.cwd(),
+      };
+      let enterTransportWait!: () => void;
+      const transportWaitEntered = new Promise<void>((resolve) => {
+        enterTransportWait = resolve;
+      });
+      let releaseTransportWait!: (result: "interrupted") => void;
+      const transportWait = new Promise<"interrupted">((resolve) => {
+        releaseTransportWait = resolve;
+      });
+
+      const approvalPromise = startToolApproval(runtime, turnLease, {
+        approvals: [approval],
+        socket: {
+          kind: "runtime",
+          bufferedAmount: 0,
+          isOpen: () => transportOpen,
+          send: () => {},
+        },
+        dependencies: {
+          classifyApprovals: async () => ({
+            autoAllowed: [
+              { approval, parsedArgs: { command: "pwd" }, context: null },
+            ],
+            autoDenied: [],
+            needsUserInput: [],
+          }),
+          executeApprovalBatch: async () => {
+            transportOpen = false;
+            return exactResults;
+          },
+          ensureSecretsHydrated: async () => {},
+          recordListenerWork: (
+            _runtime: typeof runtime,
+            update: Partial<InterruptedTurnRecord>,
+          ) => {
+            durableRecord = { ...durableRecord, ...update };
+            store.write(durableRecord);
+          },
+          waitForApprovalTransportOpen: async () => {
+            enterTransportWait();
+            return transportWait;
+          },
+        } as never,
+      });
+
+      await transportWaitEntered;
+      // Simulate a crash/re-registration while terminal delivery is still
+      // blocked: a fresh store instance must recover the executed outcome, not
+      // synthesize the stale-denial fallback from the earlier empty checkpoint.
+      const recovered = createInterruptedTurnStore(directory).read(
+        "agent-1",
+        "conv-1",
+      );
+      expect(recovered?.results).toEqual(exactResults);
+      expect(
+        recovered && recordedToolResults(recovered, [approval.toolCallId]),
+      ).toEqual(exactResults);
+
+      runtime.turnLifecycle.requestCancellation({ cause: "transport" });
+      releaseTransportWait("interrupted");
+      expect((await approvalPromise).kind).toBe("interrupted");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   // Guards the gate's polarity and its default. A relay turn's results must
   // reach the client that asked for them, so a closed transport still waits for
   // reconnect (#3522) — only an explicitly process-owned turn may skip it.
-  test("a relay-owned turn still waits for reconnect before executing tools", async () => {
+  test("a relay-owned turn waits for reconnect before execution and terminal emission", async () => {
     const runtime = getOrCreateScopedRuntime(
       createRuntime(),
       "agent-1",
@@ -554,17 +709,22 @@ describe("listener turn lifecycle integration", () => {
       toolName: "Bash",
       toolArgs: '{"command":"pwd"}',
     };
-    const executeApprovalBatch = mock(async () => [
-      {
-        type: "tool" as const,
-        tool_call_id: approval.toolCallId,
-        status: "success" as const,
-        tool_return: "/workspace",
-      },
-    ]);
-    let waitedBeforeExecuting = false;
+    let transportOpen = false;
+    const executeApprovalBatch = mock(async () => {
+      transportOpen = false;
+      return [
+        {
+          type: "tool" as const,
+          tool_call_id: approval.toolCallId,
+          status: "success" as const,
+          tool_return: "/workspace",
+        },
+      ];
+    });
+    const executionStartedAtWait: boolean[] = [];
     const waitForApprovalTransportOpen = mock(async () => {
-      waitedBeforeExecuting = executeApprovalBatch.mock.calls.length === 0;
+      executionStartedAtWait.push(executeApprovalBatch.mock.calls.length > 0);
+      transportOpen = true;
       return "open" as const;
     });
 
@@ -575,10 +735,8 @@ describe("listener turn lifecycle integration", () => {
       socket: {
         kind: "runtime",
         bufferedAmount: 0,
-        isOpen: () => false,
-        send: () => {
-          throw new Error("process transport cannot send implicitly");
-        },
+        isOpen: () => transportOpen,
+        send: () => {},
       },
       dependencies: {
         classifyApprovals: async () => ({
@@ -599,8 +757,8 @@ describe("listener turn lifecycle integration", () => {
     });
 
     expect(result.kind).toBe("terminal");
-    expect(waitForApprovalTransportOpen).toHaveBeenCalledTimes(1);
-    expect(waitedBeforeExecuting).toBe(true);
+    expect(waitForApprovalTransportOpen).toHaveBeenCalledTimes(2);
+    expect(executionStartedAtWait).toEqual([false, true]);
     expect(executeApprovalBatch).toHaveBeenCalledTimes(1);
   });
 
@@ -693,18 +851,19 @@ describe("listener turn lifecycle integration", () => {
       origin: "approval_recovery",
       workingDirectory: process.cwd(),
     });
+    runtime.turnLifecycle.setRunId(lease, "run-recovery-error");
     const sentPayloads: string[] = [];
 
     const transition = finalizeHandledRecoveryTurn(
       runtime,
       createOpenTransport(sentPayloads),
-      lease,
       {
         drainResult: { stopReason: "error" } as never,
         agentId: "agent-1",
         conversationId: "conv-1",
         turnId: "test-turn-1",
       },
+      (options) => finishListenerTurn(runtime, lease, options),
     );
     const payloads = sentPayloads.map((payload) => JSON.parse(payload));
 
@@ -721,6 +880,9 @@ describe("listener turn lifecycle integration", () => {
     expect(JSON.stringify(payloads[0])).not.toContain(
       "Recovery continuation ended unexpectedly",
     );
+    expect(payloads[1]).toMatchObject({
+      delta: { run_id: "run-recovery-error" },
+    });
   });
 
   test("a stale recovery owner cannot finish or report errors for its replacement", () => {
@@ -741,13 +903,13 @@ describe("listener turn lifecycle integration", () => {
     const transition = finalizeHandledRecoveryTurn(
       runtime,
       createOpenTransport(sentPayloads),
-      staleLease,
       {
         drainResult: { stopReason: "error" } as never,
         agentId: "agent-1",
         conversationId: "conv-1",
         turnId: "test-turn-1",
       },
+      (options) => finishListenerTurn(runtime, staleLease, options),
     );
 
     expect(transition.finished).toBe(false);

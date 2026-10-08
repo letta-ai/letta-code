@@ -161,13 +161,28 @@ test.each([
           accepted = result.accepted;
         },
       });
+      const terminalBackpressureRelease =
+        backpressure && afterTool
+          ? setTimeout(() => {
+              socket.bufferedAmount = 0;
+              enqueueOutboundFrame(socket, {
+                typeLabel: "flush",
+                frameClass: "critical",
+                build: () => null,
+              });
+            }, 500)
+          : null;
       await runtime.messageQueue;
-      socket.bufferedAmount = 0;
-      enqueueOutboundFrame(socket, {
-        typeLabel: "flush",
-        frameClass: "critical",
-        build: () => null,
-      });
+      if (terminalBackpressureRelease) {
+        clearTimeout(terminalBackpressureRelease);
+      } else {
+        socket.bufferedAmount = 0;
+        enqueueOutboundFrame(socket, {
+          typeLabel: "flush",
+          frameClass: "critical",
+          build: () => null,
+        });
+      }
       expect(accepted).toBe(true);
       expect(request).toHaveBeenCalledTimes(afterTool ? 2 : 1);
       const failures = frames.filter(

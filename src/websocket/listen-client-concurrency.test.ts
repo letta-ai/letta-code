@@ -774,7 +774,7 @@ describe("listen-client multi-worker concurrency", () => {
 
     const leaseA = beginTestTurn(runtimeA);
     const leaseB = beginTestTurn(runtimeB);
-    runtimeA.turnLifecycle.requestCancellation();
+    runtimeA.turnLifecycle.requestCancellation({ cause: "explicit_user" });
 
     expect(leaseA.signal.aborted).toBe(true);
     expect(leaseB.signal.aborted).toBe(false);

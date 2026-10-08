@@ -1,6 +1,11 @@
 import { expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { APIError } from "@letta-ai/letta-client/error";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
+import { readInterruptedTurnAuthorityRevision } from "./interrupted-turn-read";
+import { createInterruptedTurnStore } from "./interrupted-turn-record";
 import { createRuntime } from "./lifecycle";
 import {
   emitLoopErrorNotice,
@@ -9,7 +14,140 @@ import {
   getTranscriptLoopErrorMessage,
 } from "./recoverable-notices";
 import type { ListenerTransport } from "./transport";
+import { createTurnFinishedStore } from "./turn-finished-replay";
 import { finishListenerTurn } from "./turn-terminal";
+
+test("recovery terminal fencing can read predecessor lineage instead of successor main", () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+  const lease = runtime.turnLifecycle.begin({
+    origin: "approval_recovery",
+    workingDirectory: process.cwd(),
+  });
+
+  expect(
+    finishListenerTurn(runtime, lease, {
+      stopReason: "end_turn",
+      conversationId: "conv-1",
+      expectedInterruptedRevision: "revision-predecessor",
+      readInterruptedRevision: () => "revision-predecessor",
+      forgetWork: () => {},
+    }).finished,
+  ).toBe(true);
+});
+
+test("recovery terminal fencing rejects a stale sidecar generation", () => {
+  const directory = mkdtempSync(join(tmpdir(), "terminal-sidecar-fence-"));
+  const store = createInterruptedTurnStore(directory);
+  const lineageId = "lineage-terminal";
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+  try {
+    const predecessor = store.write({
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      runId: "run-predecessor",
+      toolCallIds: ["call-1"],
+      results: [],
+      requestOtid: "request-predecessor",
+      workingDirectory: "/predecessor",
+      recoveryClaimCompletion: {
+        lineageId,
+        state: "running",
+        effectToolCallIds: ["call-1"],
+      },
+    });
+    store.write(
+      {
+        ...predecessor,
+        runId: "run-successor",
+        toolCallIds: ["call-successor"],
+        requestOtid: "request-successor",
+        recoveryClaimCompletion: {
+          lineageId,
+          state: "running",
+          independentSuccessor: true,
+          effectRevision: predecessor.revision,
+          effectToolCallIds: predecessor.toolCallIds,
+          effectRunId: predecessor.runId,
+          effectRequestOtid: predecessor.requestOtid,
+          effectWorkingDirectory: predecessor.workingDirectory,
+          effectResults: predecessor.results,
+        },
+      },
+      predecessor.revision,
+    );
+    const observed = store.readRecoverySnapshot("agent-1", "conv-1", lineageId);
+    if (!observed) throw new Error("missing recovery snapshot");
+    store.writeRecoveryLineageSnapshot({
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      lineageId,
+      expectedSidecarRevision: observed.revisionToken,
+      update: { results: [], unstartedToolCallIds: ["call-1"] },
+    });
+    const lease = runtime.turnLifecycle.begin({
+      origin: "approval_recovery",
+      workingDirectory: process.cwd(),
+    });
+    expect(
+      finishListenerTurn(runtime, lease, {
+        stopReason: "end_turn",
+        conversationId: "conv-1",
+        expectedInterruptedRevision: predecessor.revision,
+        readInterruptedRevision: () => predecessor.revision,
+        expectedInterruptedAuthorityRevision: observed.revisionToken,
+        readInterruptedAuthorityRevision: () =>
+          store.readRecoverySnapshot("agent-1", "conv-1", lineageId)
+            ?.revisionToken,
+        forgetWork: () => {},
+      }).finished,
+    ).toBe(false);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("ordinary recovery terminal fencing uses the main record revision", () => {
+  const oldHome = process.env.HOME;
+  const home = mkdtempSync(join(tmpdir(), "terminal-main-fence-"));
+  process.env.HOME = home;
+  const lineageId = "lineage-main";
+  const listener = createRuntime();
+  listener.connectionId = "conn-main-fence";
+  const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+  try {
+    const record = createInterruptedTurnStore().write({
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      runId: "run-main",
+      toolCallIds: [],
+      results: [],
+      requestOtid: "request-main",
+      workingDirectory: "/main",
+      recoveryClaimCompletion: { lineageId, state: "running" },
+    });
+    const lease = runtime.turnLifecycle.begin({
+      origin: "approval_recovery",
+      workingDirectory: process.cwd(),
+    });
+    expect(
+      finishListenerTurn(runtime, lease, {
+        stopReason: "end_turn",
+        conversationId: "conv-1",
+        expectedInterruptedRevision: record.revision,
+        readInterruptedRevision: () => record.revision,
+        expectedInterruptedAuthorityRevision: record.revision,
+        readInterruptedAuthorityRevision: () =>
+          readInterruptedTurnAuthorityRevision(runtime, lineageId),
+        forgetWork: () => {},
+      }).finished,
+    ).toBe(true);
+  } finally {
+    process.env.HOME = oldHome;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
 
 test.each(["end_turn", "error"] as const)(
   "finishListenerTurn emits exactly one correlated terminal event (%s)",
@@ -84,6 +222,56 @@ test.each(["end_turn", "error"] as const)(
     ).toHaveLength(stopReason === "error" ? 1 : 0);
   },
 );
+
+test("terminal consumers without a client identity persist a rotatable terminal", () => {
+  const oldHome = process.env.HOME;
+  const home = mkdtempSync(join(tmpdir(), "identityless-terminal-"));
+  process.env.HOME = home;
+  const listener = createRuntime();
+  listener.connectionId = "conn-identityless";
+  const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+  const socket: ListenerTransport = {
+    kind: "local",
+    bufferedAmount: 0,
+    isOpen: () => true,
+    send: () => {},
+  };
+  try {
+    const lease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+    });
+    expect(
+      finishListenerTurn(runtime, lease, {
+        turnId: "turn-identityless",
+        stopReason: "end_turn",
+        socket,
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        terminalConsumerIds: ["slack:agent-1"],
+        durableInputIdentities: [],
+        forgetWork: () => {},
+      }).finished,
+    ).toBe(true);
+    expect(
+      createTurnFinishedStore().read("agent-1", "conv-1")?.terminals,
+    ).toEqual([
+      expect.objectContaining({
+        message: expect.objectContaining({
+          turn_id: "turn-identityless",
+          terminal_consumer_ids: ["slack:agent-1"],
+        }),
+        owner: expect.objectContaining({
+          connectionId: null,
+          canRotate: true,
+        }),
+      }),
+    ]);
+  } finally {
+    process.env.HOME = oldHome;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
 
 test("terminal error formatting preserves classifications and rejects raw fallbacks", () => {
   const unknownApiError = new APIError(

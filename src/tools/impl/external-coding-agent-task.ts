@@ -7,6 +7,7 @@ import {
 } from "./external-coding-agent";
 import {
   captureNativeSession,
+  type NativeSessionCaptureReservation,
   reportNativeSessionCaptureFailure,
 } from "./native-session-capture";
 import {
@@ -21,10 +22,11 @@ export function trackExternalFollowupCompletion(args: {
   parentScope: {
     agentId: string;
     conversationId: string;
-    actingUserId?: string;
+    actingUserId?: string | null;
   };
   completion: Promise<SubagentResult>;
   interrupt: () => Promise<void>;
+  captureReservation?: NativeSessionCaptureReservation;
 }): SpawnBackgroundSubagentTaskResult {
   return spawnBackgroundSubagentTask({
     subagentType: args.type,
@@ -33,6 +35,7 @@ export function trackExternalFollowupCompletion(args: {
     description: `Continue ${args.type} session`,
     existingAgentId: args.agentId,
     parentScope: args.parentScope,
+    actingUserId: args.parentScope.actingUserId,
     deps: {
       spawnSubagentImpl: async (
         _type,
@@ -44,25 +47,39 @@ export function trackExternalFollowupCompletion(args: {
         const interrupt = () => void args.interrupt().catch(() => undefined);
         signal?.addEventListener("abort", interrupt, { once: true });
         if (signal?.aborted) interrupt();
+        let result: SubagentResult | undefined;
+        let completionError: unknown;
+        let completionFailed = false;
         try {
-          return await args.completion;
+          result = await args.completion;
+        } catch (error) {
+          completionError = error;
+          completionFailed = true;
         } finally {
           signal?.removeEventListener("abort", interrupt);
-          const target = parseExternalCodingAgentId(args.agentId);
-          if (target) {
-            void captureNativeSession(
-              target.type === "claude-code" ? "claude_code" : "codex",
-              target.sessionId,
-              args.parentScope,
-            ).catch((error) =>
-              reportNativeSessionCaptureFailure(
-                target.type === "claude-code" ? "claude_code" : "codex",
+        }
+        const target = parseExternalCodingAgentId(args.agentId);
+        if (target) {
+          const source =
+            target.type === "claude-code" ? "claude_code" : "codex";
+          try {
+            if (args.captureReservation) {
+              await args.captureReservation.capture();
+            } else {
+              await captureNativeSession(
+                source,
                 target.sessionId,
-                error,
-              ),
-            );
+                args.parentScope,
+              );
+            }
+          } catch (error) {
+            reportNativeSessionCaptureFailure(source, target.sessionId, error);
           }
         }
+        if (completionFailed) throw completionError;
+        if (!result)
+          throw new Error("External coding agent returned no result");
+        return result;
       },
     },
   });
@@ -74,7 +91,7 @@ export function spawnExternalCodingAgentFollowup(args: {
   parentScope: {
     agentId: string;
     conversationId: string;
-    actingUserId?: string;
+    actingUserId?: string | null;
   };
 }): SpawnBackgroundSubagentTaskResult {
   const target = parseExternalCodingAgentId(args.agentId);
@@ -87,6 +104,7 @@ export function spawnExternalCodingAgentFollowup(args: {
     prompt: args.message,
     description: `Continue ${target.type} session`,
     parentScope: args.parentScope,
+    actingUserId: args.parentScope.actingUserId,
     deps: {
       spawnSubagentImpl: async (_type, prompt, _model, _subagentId, signal) =>
         runExternalCodingAgent({

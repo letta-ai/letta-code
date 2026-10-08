@@ -14,6 +14,7 @@ import {
   markListenerConnectionInitialized,
   openListenerConnection,
   subscribeListenerConnection,
+  suspendListenerConnection,
   TO_SUBSCRIBERS,
   toListenerConnection,
 } from "@/websocket/listener/connection";
@@ -37,7 +38,7 @@ import type {
 } from "@/websocket/listener/types";
 
 class MockSocket {
-  readyState = WebSocket.OPEN;
+  readyState: number = WebSocket.OPEN;
   bufferedAmount = 0;
   sentPayloads: string[] = [];
   terminated = false;
@@ -82,6 +83,114 @@ function parseOnlyStreamDelta(socket: MockSocket): StreamDeltaMessage {
 }
 
 describe("emitProtocolV2Message backpressure", () => {
+  test("delivers the canonical null-agent default scope", async () => {
+    const listener = createListenerRuntime();
+    const socket = new MockSocket();
+    const options = {
+      connectionId: "agent-free",
+      wsUrl: "ws://local",
+      deviceId: "device",
+      connectionName: "local",
+      onConnected: () => {},
+      onDisconnected: () => {},
+      onError: () => {},
+    };
+    openListenerConnection({
+      runtime: listener,
+      connectionId: options.connectionId,
+      writer: socket as never,
+      options,
+    });
+    markListenerConnectionInitialized(listener, options.connectionId);
+    const scope = { agent_id: null, conversation_id: "default" };
+    subscribeListenerConnection(listener, options.connectionId, scope);
+    const runtime = getOrCreateScopedRuntime(listener, null, "default");
+
+    const delivery = emitProtocolV2Message(
+      socket as never,
+      runtime,
+      {
+        type: "stream_delta",
+        delta: {
+          type: "message",
+          id: "agent-free-terminal",
+          date: new Date(0).toISOString(),
+          message_type: "client_tool_end",
+          tool_call_id: "tool-1",
+          status: "success",
+        },
+      } as never,
+      scope,
+      TO_SUBSCRIBERS,
+    );
+
+    await expect(delivery.receipts[0]?.settlement).resolves.toBe("sent");
+    const message = JSON.parse(socket.sentPayloads[0] ?? "{}");
+    expect(message.runtime).toEqual(scope);
+  });
+
+  test("replays a known-unsent terminal delta to a same-ID replacement", async () => {
+    const listener = createListenerRuntime();
+    const original = new MockSocket();
+    original.bufferedAmount =
+      OUTBOUND_QUEUE_LIMITS.HIGH_WATERMARK_BUFFERED_BYTES;
+    const options = {
+      connectionId: "relay",
+      wsUrl: "ws://relay",
+      deviceId: "device",
+      connectionName: "relay",
+      onConnected: () => {},
+      onDisconnected: () => {},
+      onError: () => {},
+    };
+    openListenerConnection({
+      runtime: listener,
+      connectionId: "relay",
+      writer: original as never,
+      options,
+    });
+    markListenerConnectionInitialized(listener, "relay");
+    const scope = { agent_id: "agent-1", conversation_id: "conv-1" };
+    subscribeListenerConnection(listener, "relay", scope);
+    const runtime = getOrCreateScopedRuntime(
+      listener,
+      scope.agent_id,
+      scope.conversation_id,
+    );
+    const delta = {
+      type: "message",
+      id: "stable-terminal-id",
+      date: new Date(0).toISOString(),
+      message_type: "client_tool_end",
+      tool_call_id: "tool-1",
+      status: "success",
+    } as never;
+    const delivery = emitProtocolV2Message(
+      original as never,
+      runtime,
+      { type: "stream_delta", delta } as never,
+      scope,
+      TO_SUBSCRIBERS,
+    );
+    original.readyState = WebSocket.CLOSED;
+    suspendListenerConnection(listener, "relay");
+    await expect(delivery.receipts[0]?.settlement).resolves.toBe("dropped");
+
+    const replacement = new MockSocket();
+    openListenerConnection({
+      runtime: listener,
+      connectionId: "relay",
+      writer: replacement as never,
+      options,
+    });
+    markListenerConnectionInitialized(listener, "relay");
+    const replay = delivery.replayTo("relay");
+    await expect(replay.receipts[0]?.settlement).resolves.toBe("sent");
+    const message = JSON.parse(replacement.sentPayloads[0] ?? "{}");
+    expect(message.delta.id).toBe("stable-terminal-id");
+    expect(original.sentPayloads).toEqual([]);
+  });
+
   test("never sheds stream deltas that snapshots cannot replay", () => {
     const { runtime, socket } = createRuntime();
     socket.bufferedAmount = OUTBOUND_QUEUE_LIMITS.HIGH_WATERMARK_BUFFERED_BYTES;
