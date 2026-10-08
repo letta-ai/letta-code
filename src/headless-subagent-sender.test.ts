@@ -98,6 +98,11 @@ test("new, existing and forked child CLI launches persist the sender as a separa
       });
     }
   } finally {
-    await rm(home, { recursive: true, force: true });
+    await rm(home, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    });
   }
 }, 65_000);
