@@ -4,6 +4,8 @@ import { apiRequest } from "./request";
 export interface EnvironmentMetadata {
   os?: string;
   lettaCodeVersion?: string;
+  /** Stable location signal for web clients; do not infer this from OS or device IDs. */
+  runtimeLocation?: "local" | "managed-cloud";
   nodeVersion?: string;
   environmentMessageProtocol?: string;
   workingDirectory?: string;
