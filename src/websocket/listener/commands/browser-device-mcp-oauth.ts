@@ -20,8 +20,8 @@ const HANDOFF_SUBMISSION_MARGIN_MS = 5_000;
 const MINIMUM_OPERATION_BUDGET_MS =
   BROWSER_DEVICE_HANDOFF_SUBMIT_TIMEOUT_MS + HANDOFF_SUBMISSION_MARGIN_MS + 1;
 const COMPLETED_OPERATION_RETENTION_MS = 60_000;
-const MAX_CANCEL_TOMBSTONES_PER_RUNTIME = 128;
-const MAX_CANCEL_TOMBSTONES_GLOBAL = 512;
+const MAX_RETAINED_OPERATIONS_PER_RUNTIME = 128;
+const MAX_RETAINED_OPERATIONS_GLOBAL = 512;
 
 interface OperationRecord {
   controller: AbortController;
@@ -86,7 +86,7 @@ export function handleBrowserDeviceMcpOAuthProtocolCommand(
           receivedAtMonotonicMs,
         ),
       );
-      enforceCancelTombstoneLimits(dependencies.owner);
+      enforceRetainedOperationLimits(dependencies.owner);
       return true;
     }
     // The original credential-free terminal is the application-level cancel
@@ -254,6 +254,7 @@ async function runBrowserDeviceMcpOAuth(
   if (operation.disposed) return;
   operation.response = createTerminalResponse(command.request_id, errorCode);
   deliverTerminal(operation);
+  enforceRetainedOperationLimits(operation.owner);
 }
 
 function requestDigest(command: BrowserDeviceMcpOAuthCommand): string {
@@ -329,37 +330,37 @@ function createCancelTombstone(
   };
 }
 
-function enforceCancelTombstoneLimits(runtime: ListenerRuntime): void {
+function enforceRetainedOperationLimits(runtime: ListenerRuntime): void {
   while (
-    countCancelTombstones((operation) => operation.owner === runtime) >
-    MAX_CANCEL_TOMBSTONES_PER_RUNTIME
+    countRetainedOperations((operation) => operation.owner === runtime) >
+    MAX_RETAINED_OPERATIONS_PER_RUNTIME
   ) {
-    evictOldestCancelTombstone((operation) => operation.owner === runtime);
+    evictOldestRetainedOperation((operation) => operation.owner === runtime);
   }
-  while (countCancelTombstones(() => true) > MAX_CANCEL_TOMBSTONES_GLOBAL) {
-    evictOldestCancelTombstone(() => true);
+  while (countRetainedOperations(() => true) > MAX_RETAINED_OPERATIONS_GLOBAL) {
+    evictOldestRetainedOperation(() => true);
   }
 }
 
-function countCancelTombstones(
+function countRetainedOperations(
   matches: (operation: OperationRecord) => boolean,
 ): number {
   let count = 0;
   for (const operation of operations.values()) {
-    if (operation.pendingStartCancellation && matches(operation)) count += 1;
+    if (operation.response && matches(operation)) count += 1;
   }
   return count;
 }
 
-function evictOldestCancelTombstone(
+function evictOldestRetainedOperation(
   matches: (operation: OperationRecord) => boolean,
 ): void {
   for (const [key, operation] of operations) {
-    if (!operation.pendingStartCancellation || !matches(operation)) continue;
+    if (!operation.response || !matches(operation)) continue;
     disposeOperation(
       key,
       operation,
-      new DOMException("Cancel tombstone capacity exceeded", "AbortError"),
+      new DOMException("Retained OAuth capacity exceeded", "AbortError"),
     );
     return;
   }
@@ -388,6 +389,7 @@ function cacheTerminalResponse(
   };
   operations.set(operationMapKey, operation);
   deliverTerminal(operation);
+  enforceRetainedOperationLimits(operation.owner);
 }
 
 function sendTerminalResponse(

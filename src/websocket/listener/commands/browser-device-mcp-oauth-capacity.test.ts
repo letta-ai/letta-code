@@ -12,7 +12,10 @@ import {
 
 const HANDOFF_KEY = "h".repeat(43);
 
-function startCommand(request_id: string): BrowserDeviceMcpOAuthCommand {
+function startCommand(
+  request_id: string,
+  overrides: Partial<BrowserDeviceMcpOAuthCommand> = {},
+): BrowserDeviceMcpOAuthCommand {
   return {
     type: "browser_device_mcp_oauth",
     request_id,
@@ -20,6 +23,7 @@ function startCommand(request_id: string): BrowserDeviceMcpOAuthCommand {
     service: "datadog",
     server_url: "https://mcp.datadoghq.com/v1/mcp",
     timeout_ms: 285_000,
+    ...overrides,
   };
 }
 
@@ -55,7 +59,92 @@ function cancel(harness: Harness, operation_id: string): void {
 
 afterEach(() => resetBrowserDeviceMcpOAuthOperationsForTests());
 
-describe("browser-device MCP OAuth cancel tombstone capacity", () => {
+describe("browser-device MCP OAuth retained operation capacity", () => {
+  test("bounds invalid canonicalization terminals per runtime", async () => {
+    let connectCalls = 0;
+    const harness = createHarness(async () => {
+      connectCalls += 1;
+    });
+    for (let index = 0; index < 129; index += 1) {
+      handleBrowserDeviceMcpOAuthProtocolCommand(
+        startCommand(`invalid-${index}`, {
+          server_url: "https://unsupported.example/mcp",
+        }),
+        harness.dependencies,
+      );
+    }
+    await Promise.all(harness.tasks);
+    const floodTaskCount = harness.tasks.length;
+
+    handleBrowserDeviceMcpOAuthProtocolCommand(
+      startCommand("invalid-0"),
+      harness.dependencies,
+    );
+    handleBrowserDeviceMcpOAuthProtocolCommand(
+      startCommand("invalid-128"),
+      harness.dependencies,
+    );
+    await Promise.all(harness.tasks.slice(floodTaskCount));
+
+    expect(connectCalls).toBe(1);
+    const oldest = harness.responses.filter(
+      (response) => response.request_id === "invalid-0",
+    );
+    const newest = harness.responses.filter(
+      (response) => response.request_id === "invalid-128",
+    );
+    expect(oldest.at(-1)?.success).toBe(true);
+    expect(newest.at(-1)?.error_code).toBe("invalid_request");
+  });
+
+  test("bounds already-connecting terminals without evicting the live flight", async () => {
+    let connectCalls = 0;
+    let settleLive: (() => void) | undefined;
+    const harness = createHarness(async () => {
+      connectCalls += 1;
+      if (connectCalls !== 1) return;
+      await new Promise<void>((resolve) => {
+        settleLive = resolve;
+      });
+    });
+    handleBrowserDeviceMcpOAuthProtocolCommand(
+      startCommand("live-operation"),
+      harness.dependencies,
+    );
+    for (let index = 0; index < 129; index += 1) {
+      handleBrowserDeviceMcpOAuthProtocolCommand(
+        startCommand(`contender-${index}`),
+        harness.dependencies,
+      );
+    }
+    await Promise.all(harness.tasks.slice(1));
+    expect(connectCalls).toBe(1);
+
+    settleLive?.();
+    await harness.tasks[0];
+    const completedTaskCount = harness.tasks.length;
+    handleBrowserDeviceMcpOAuthProtocolCommand(
+      startCommand("contender-0"),
+      harness.dependencies,
+    );
+    handleBrowserDeviceMcpOAuthProtocolCommand(
+      startCommand("contender-128"),
+      harness.dependencies,
+    );
+    await Promise.all(harness.tasks.slice(completedTaskCount));
+
+    expect(connectCalls).toBe(2);
+    const oldest = harness.responses.filter(
+      (response) => response.request_id === "contender-0",
+    );
+    const newest = harness.responses.filter(
+      (response) => response.request_id === "contender-128",
+    );
+    expect(oldest.at(-1)?.success).toBe(true);
+    expect(newest).toHaveLength(1);
+    expect(newest[0]?.error_code).toBe("already_connecting");
+  });
+
   test("evicts oldest per-runtime entries without touching a live flight", async () => {
     let settleLive: (() => void) | undefined;
     const harness = createHarness(
