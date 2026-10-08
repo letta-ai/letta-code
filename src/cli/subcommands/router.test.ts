@@ -110,7 +110,7 @@ describe("subcommand router", () => {
     }
   });
 
-  test("routes the remote alias through unified server ownership", async () => {
+  test("routes the remote alias to the ordinary listener help", async () => {
     const messages: string[] = [];
     const originalLog = console.log;
     console.log = (message?: unknown) => {
@@ -121,7 +121,9 @@ describe("subcommand router", () => {
       const exitCode = await runSubcommand(["remote", "--help"]);
 
       expect(exitCode).toBe(0);
-      expect(messages.join("\n")).toContain("letta server [remote options]");
+      expect(messages.join("\n")).toContain(
+        "Usage: letta server [--computer-name <name>]",
+      );
     } finally {
       console.log = originalLog;
     }
