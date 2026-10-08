@@ -216,6 +216,10 @@ export function createListenerMessageHandler(
     processIncomingMessage = handleIncomingMessage,
   } = params;
   const connectionId = explicitConnectionId ?? opts.connectionId;
+  const lineageId =
+    runtime.connections.get(connectionId)?.startupOwner.lineageId ??
+    connectionId ??
+    runtime.sessionId;
 
   return async (data: WebSocket.RawData): Promise<void> => {
     if (
@@ -227,7 +231,6 @@ export function createListenerMessageHandler(
       parseListenerReadyMessage(data) ?? parseServerLifecycleMessage(data);
     // Seal before parsing; only projected pongs are content-free.
     if (lifecycleMessage?.type !== "pong") sealStartupLogs();
-    const raw = data.toString();
     let parsedScope: ParsedRuntimeScope = null;
 
     try {
@@ -246,15 +249,8 @@ export function createListenerMessageHandler(
       } else {
         safeEmitWsEvent("recv", "lifecycle", {
           type: "_ws_unparseable",
-          raw,
         });
       }
-      if (isDebugEnabled()) {
-        console.log(
-          `[Listen] Received message: ${JSON.stringify(parsed, null, 2)}`,
-        );
-      }
-
       if (!parsed) {
         return;
       }
@@ -818,6 +814,7 @@ export function createListenerMessageHandler(
         }) ||
         handleBrowserDeviceMcpOAuthProtocolCommand(parsed, {
           socket,
+          lineageId,
           safeSocketSend,
           runDetachedListenerTask,
         })

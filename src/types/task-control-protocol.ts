@@ -13,6 +13,8 @@ export interface BrowserDeviceMcpOAuthCommand {
   handoff_key: string;
   service: string;
   server_url: string;
+  /** Absolute Unix epoch deadline minted by Chat for the whole operation. */
+  deadline_ms: number;
 }
 
 /** Cancel one in-process browser-device OAuth operation by its start request ID. */

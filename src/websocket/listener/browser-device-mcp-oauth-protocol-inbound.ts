@@ -15,7 +15,7 @@ export function isBrowserDeviceMcpOAuthProtocolCommand(
   const record = value as Record<string, unknown>;
   if (record.type === "browser_device_mcp_oauth") {
     return (
-      Object.keys(record).length === 5 &&
+      Object.keys(record).length === 6 &&
       typeof record.request_id === "string" &&
       REQUEST_ID_PATTERN.test(record.request_id) &&
       typeof record.handoff_key === "string" &&
@@ -25,7 +25,10 @@ export function isBrowserDeviceMcpOAuthProtocolCommand(
       typeof record.server_url === "string" &&
       record.server_url.length > 0 &&
       record.server_url.length <= MAX_SERVER_URL_LENGTH &&
-      !hasControlCharacters(record.server_url)
+      !hasControlCharacters(record.server_url) &&
+      typeof record.deadline_ms === "number" &&
+      Number.isSafeInteger(record.deadline_ms) &&
+      record.deadline_ms > 0
     );
   }
   return (

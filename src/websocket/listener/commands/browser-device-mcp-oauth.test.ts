@@ -15,6 +15,7 @@ import {
 } from "./browser-device-mcp-oauth";
 
 const VALID_HANDOFF_KEY = "h".repeat(43);
+const NOW_MS = 1_800_000_000_000;
 
 function startCommand(
   overrides: Partial<BrowserDeviceMcpOAuthCommand> = {},
@@ -25,6 +26,7 @@ function startCommand(
     handoff_key: VALID_HANDOFF_KEY,
     service: "datadog",
     server_url: "https://mcp.datadoghq.com/v1/mcp",
+    deadline_ms: NOW_MS + 280_000,
     ...overrides,
   };
 }
@@ -44,6 +46,8 @@ function createHarness(
     dependencies: {
       connect,
       socket,
+      lineageId: "listener-lineage-1",
+      now: () => NOW_MS,
       runDetachedListenerTask: (
         _commandName: string,
         task: () => Promise<void>,
@@ -90,6 +94,8 @@ describe("browser-device MCP OAuth protocol parsing", () => {
     startCommand({ service: "UPPERCASE" }),
     startCommand({ server_url: `https://example.com/${"x".repeat(2048)}` }),
     startCommand({ server_url: "https://example.com/\nsecret" }),
+    startCommand({ deadline_ms: 1.5 }),
+    startCommand({ deadline_ms: -1 }),
     {
       type: "browser_device_mcp_oauth_cancel",
       operation_id: "operation-1",
@@ -129,6 +135,155 @@ describe("browser-device MCP OAuth command handling", () => {
         success: true,
       },
     ]);
+  });
+
+  test("transfers an active operation to its replacement connection", async () => {
+    let finishImport: (() => void) | undefined;
+    const oldResponses: BrowserDeviceMcpOAuthResponseMessage[] = [];
+    const replacementResponses: BrowserDeviceMcpOAuthResponseMessage[] = [];
+    const tasks: Promise<void>[] = [];
+    const oldSocket = { name: "old" } as unknown as WebSocket;
+    const replacementSocket = { name: "replacement" } as unknown as WebSocket;
+    const connect = async (): Promise<void> =>
+      await new Promise<void>((resolve) => {
+        finishImport = resolve;
+      });
+    const common = {
+      connect,
+      lineageId: "stable-lineage",
+      now: () => NOW_MS,
+      runDetachedListenerTask: (
+        _commandName: string,
+        task: () => Promise<void>,
+      ) => tasks.push(task()),
+    };
+    const oldDependencies = {
+      ...common,
+      socket: oldSocket,
+      safeSocketSend: (
+        _socket: WebSocket,
+        payload: unknown,
+        _errorType: string,
+        _context: string,
+      ) => {
+        oldResponses.push(payload as BrowserDeviceMcpOAuthResponseMessage);
+        return true;
+      },
+    };
+    const replacementDependencies = {
+      ...common,
+      socket: replacementSocket,
+      safeSocketSend: (
+        socket: WebSocket,
+        payload: unknown,
+        _errorType: string,
+        _context: string,
+      ) => {
+        expect(socket).toBe(replacementSocket);
+        replacementResponses.push(
+          payload as BrowserDeviceMcpOAuthResponseMessage,
+        );
+        return true;
+      },
+    };
+
+    handleBrowserDeviceMcpOAuthProtocolCommand(startCommand(), oldDependencies);
+    handleBrowserDeviceMcpOAuthProtocolCommand(
+      startCommand(),
+      replacementDependencies,
+    );
+    finishImport?.();
+    await Promise.all(tasks);
+
+    expect(oldResponses).toEqual([]);
+    expect(replacementResponses).toEqual([
+      {
+        type: "browser_device_mcp_oauth_response",
+        request_id: "operation-1",
+        success: true,
+      },
+    ]);
+    expect(JSON.stringify(replacementResponses)).not.toContain(
+      VALID_HANDOFF_KEY,
+    );
+  });
+
+  test("replays a terminal that completed while the original socket was closed", async () => {
+    const harness = createHarness(async () => undefined);
+    harness.dependencies.safeSocketSend = () => false;
+    handleBrowserDeviceMcpOAuthProtocolCommand(
+      startCommand(),
+      harness.dependencies,
+    );
+    await Promise.all(harness.tasks);
+
+    const replacementResponses: BrowserDeviceMcpOAuthResponseMessage[] = [];
+    handleBrowserDeviceMcpOAuthProtocolCommand(startCommand(), {
+      ...harness.dependencies,
+      socket: { replacement: true } as unknown as WebSocket,
+      safeSocketSend: (_socket, payload) => {
+        replacementResponses.push(
+          payload as BrowserDeviceMcpOAuthResponseMessage,
+        );
+        return true;
+      },
+    });
+    handleBrowserDeviceMcpOAuthProtocolCommand(startCommand(), {
+      ...harness.dependencies,
+      socket: { replacement: true } as unknown as WebSocket,
+      safeSocketSend: (_socket, payload) => {
+        replacementResponses.push(
+          payload as BrowserDeviceMcpOAuthResponseMessage,
+        );
+        return true;
+      },
+    });
+
+    expect(replacementResponses).toEqual([
+      {
+        type: "browser_device_mcp_oauth_response",
+        request_id: "operation-1",
+        success: true,
+      },
+    ]);
+  });
+
+  test("uses the remaining absolute deadline and rejects unsafe budgets", async () => {
+    const authorizationBudgets: number[] = [];
+    const harness = createHarness(
+      async (_request, _dependencies, _signal, authorizationTimeoutMs) => {
+        authorizationBudgets.push(authorizationTimeoutMs);
+      },
+    );
+    handleBrowserDeviceMcpOAuthProtocolCommand(
+      startCommand({ deadline_ms: NOW_MS + 200_000 }),
+      harness.dependencies,
+    );
+    await Promise.all(harness.tasks);
+    expect(authorizationBudgets).toEqual([105_000]);
+    expect(harness.responses[0]?.success).toBe(true);
+
+    for (const deadline_ms of [NOW_MS, NOW_MS + 95_000, NOW_MS + 280_001]) {
+      const rejected = createHarness(async () => {
+        throw new Error("must not run");
+      });
+      handleBrowserDeviceMcpOAuthProtocolCommand(
+        startCommand({
+          request_id: `rejected-${deadline_ms}`,
+          deadline_ms,
+        }),
+        rejected.dependencies,
+      );
+      await Promise.all(rejected.tasks);
+      expect(rejected.responses).toEqual([
+        {
+          type: "browser_device_mcp_oauth_response",
+          request_id: `rejected-${deadline_ms}`,
+          success: false,
+          error_code: "invalid_request",
+        },
+      ]);
+    }
   });
 
   test("cancels only the matching operation and emits cancelled", async () => {
