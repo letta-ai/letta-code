@@ -72,6 +72,12 @@ export function finishListenerTurn(
     completePreparedInputTerminal?: typeof completePreparedInputTerminal;
     /** Persist a crash proof even when no external terminal consumer exists. */
     persistTerminalWithoutConsumers?: boolean;
+    /**
+     * The turn yields to a teleport destination that continues the same
+     * delivery. Record the terminal as local proof only: it carries no
+     * terminal consumers and is never emitted or replayed as `turn_finished`.
+     */
+    teleportYield?: boolean;
     /** Exact interrupted revision owned by this finalizer. */
     expectedInterruptedRevision?: string;
     /** Recovery lineages read their sidecar revision view, not successor main. */
@@ -99,17 +105,20 @@ export function finishListenerTurn(
   if (options.canCommit && !options.canCommit()) {
     return rejectedCommit();
   }
+  // A teleport yield hands the consumers' delivery to the destination, whose
+  // own terminal finishes it. The source proof therefore has no consumers.
+  const terminalConsumerIds = options.teleportYield
+    ? undefined
+    : options.terminalConsumerIds;
   const turnFinishedMessage: ReplayableTurnFinished | null =
     options.socket && options.turnId
       ? {
           type: "turn_finished",
           turn_id: options.turnId,
           stop_reason: options.stopReason,
-          ...(options.terminalConsumerIds?.length
+          ...(terminalConsumerIds?.length
             ? {
-                terminal_consumer_ids: [
-                  ...new Set(options.terminalConsumerIds),
-                ],
+                terminal_consumer_ids: [...new Set(terminalConsumerIds)],
               }
             : {}),
           ...((options.runId ?? runtime.activeRunId)
@@ -150,6 +159,7 @@ export function finishListenerTurn(
     terminalOwner.recoveryLineageId = options.recoveryLineageId;
     terminalOwner.interruptedAuthorityRevision = expectedAuthorityRevision;
   }
+  if (options.teleportYield) terminalOwner.teleportYield = true;
   const identitylessConsumerTerminal =
     !!turnFinishedMessage?.terminal_consumer_ids?.length &&
     (options.durableInputIdentities?.length ?? 0) === 0;
@@ -347,7 +357,8 @@ export function finishListenerTurn(
     mayEmit &&
     options.socket &&
     turnFinishedMessage &&
-    preparedTurnFinished
+    preparedTurnFinished &&
+    !options.teleportYield
   ) {
     emitDurableTurnFinished(
       options.socket,

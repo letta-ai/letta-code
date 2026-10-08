@@ -322,6 +322,8 @@ function validateDurableStore(value: unknown): DurableStore {
           typeof prepared.owner.recoveryLineageId !== "string") ||
         (prepared.owner.interruptedAuthorityRevision !== undefined &&
           typeof prepared.owner.interruptedAuthorityRevision !== "string") ||
+        (prepared.owner.teleportYield !== undefined &&
+          prepared.owner.teleportYield !== true) ||
         (prepared.owner.preparationSequence !== undefined &&
           (!Number.isSafeInteger(prepared.owner.preparationSequence) ||
             (prepared.owner.preparationSequence as number) < 0)) ||

@@ -48,7 +48,21 @@ export type TurnFinishedOwner = {
   interruptedAuthorityRevision?: string;
   /** Durable journal generation retained across promotion and crash recovery. */
   preparationSequence?: number;
+  /**
+   * The source yielded this turn to a teleport destination. The record stays
+   * durable as local proof that the source turn ended, but it is never sent or
+   * replayed as `turn_finished`: the destination continues the same delivery,
+   * and Cloud treats any `turn_finished` as delivery completion.
+   */
+  teleportYield?: true;
 };
+
+/** Teleport-yield terminals are local recovery proof only, never wire frames. */
+export function isTeleportYieldTerminal(terminal: {
+  owner: Pick<TurnFinishedOwner, "teleportYield">;
+}): boolean {
+  return terminal.owner.teleportYield === true;
+}
 
 export class TurnFinishedCapacityError extends Error {
   constructor() {
@@ -268,6 +282,8 @@ export function createTurnFinishedStore(
             (terminal.owner.interruptedAuthorityRevision === undefined ||
               typeof terminal.owner.interruptedAuthorityRevision ===
                 "string") &&
+            (terminal.owner.teleportYield === undefined ||
+              terminal.owner.teleportYield === true) &&
             (terminal.owner.preparationSequence === undefined ||
               (Number.isSafeInteger(terminal.owner.preparationSequence) &&
                 terminal.owner.preparationSequence >= 0)),
@@ -746,6 +762,7 @@ export function emitDurableTurnFinished(
     );
     return;
   }
+  if (isTeleportYieldTerminal(prepared.terminal)) return;
   const authorityStatus = terminalAuthorityStatus(
     runtime,
     prepared.terminal,
@@ -801,6 +818,9 @@ export function replayPendingTurnFinishedToConnection(
   const record = store.read(runtime.agentId, runtime.conversationId);
   if (!record) return;
   for (const terminal of record.terminals) {
+    // Retained only as local proof that the source turn ended; replaying it
+    // would finish the delivery the teleport destination now owns.
+    if (isTeleportYieldTerminal(terminal)) continue;
     const authorityStatus = terminalAuthorityStatus(
       runtime,
       terminal,

@@ -300,6 +300,8 @@ export type DurablePreparedInputTerminal = {
     /** Exact mutable main/sidecar generation validated by this terminal. */
     interruptedAuthorityRevision?: string;
     preparationSequence?: number;
+    /** Local crash proof for a teleport yield; never sent as turn_finished. */
+    teleportYield?: true;
   };
 };
 

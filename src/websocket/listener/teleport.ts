@@ -700,6 +700,7 @@ export function finishClaimedTeleport(
     agentId: string;
     conversationId: string;
     persistTerminalWithoutConsumers?: boolean;
+    teleportYield?: boolean;
     expectedInterruptedRevision?: string;
   }) => TurnFinishTransition,
   options: {
@@ -728,6 +729,9 @@ export function finishClaimedTeleport(
       agentId: pending.agentId,
       conversationId: pending.conversationId,
       persistTerminalWithoutConsumers: intentRevision !== undefined,
+      // The destination continues this delivery. The source terminal is
+      // durable local proof only and must not reach Cloud as turn_finished.
+      teleportYield: true,
       expectedInterruptedRevision: intentRevision,
     });
   } catch (error) {
@@ -794,6 +798,7 @@ export function finishDrainedTeleport(
     agentId: string;
     conversationId: string;
     persistTerminalWithoutConsumers?: boolean;
+    teleportYield?: boolean;
     expectedInterruptedRevision?: string;
   }) => TurnFinishTransition,
   canCommit?: () => boolean,
