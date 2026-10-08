@@ -185,20 +185,19 @@ return errors`,
     expect(run.totalTokens).toBe(0);
   });
 
-  test("mcp() calls the agent's MCP tools and journals each call", async () => {
+  test("tools.mcp__*() calls the agent's MCP tools and journals each call", async () => {
     const dir = mkdtempSync(join(tmpdir(), "wf-mcp-"));
     const journalPath = join(dir, "journal.jsonl");
     const calls: Array<[string, Record<string, unknown>]> = [];
     try {
       const run = await executeWorkflow(echoSpawner(), {
         script: `${META}
-const structured = await mcp('mcp__db__query', { sql: 'select 1' })
-const json = await mcp('mcp__db__json')
-const text = await mcp('mcp__db__text')
+const structured = await tools.mcp__db__query({ sql: 'select 1' })
+const json = await tools.mcp__db__json()
+const text = await tools.mcp__db__text()
 let failed = null
-try { await mcp('mcp__db__broken') } catch (e) { failed = e.message }
-let invalid = null
-try { await mcp('Bash', {}) } catch (e) { invalid = e.message }
+try { await tools.mcp__db__broken() } catch (e) { failed = e.message }
+const invalid = typeof tools.Bash
 return { structured, json, text, failed, invalid }`,
         journalPath,
         callMcpTool: async (toolName, args) => {
@@ -220,7 +219,7 @@ return { structured, json, text, failed, invalid }`,
         json: { n: 2 },
         text: "plain",
         failed: "mcp__db__broken failed: denied",
-        invalid: "mcp() requires an mcp__server__tool name.",
+        invalid: "undefined",
       });
       expect(calls[0]).toEqual(["mcp__db__query", { sql: "select 1" }]);
       expect(calls[1]).toEqual(["mcp__db__json", {}]);

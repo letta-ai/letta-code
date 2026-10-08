@@ -22,7 +22,10 @@ import { resolveModel } from "@/agent/model-catalog";
 import { getPrimaryAgentModelHandle } from "@/agent/subagents/subagent-model";
 import { getBackend } from "@/backend";
 import { resolveBackendMode } from "@/backend/backend-mode";
-import { getCurrentWorkingDirectory } from "@/runtime-context";
+import {
+  getCurrentWorkingDirectory,
+  getRuntimeContext,
+} from "@/runtime-context";
 import {
   finishWorkflowExecution,
   recordWorkflowProgress,
@@ -91,7 +94,7 @@ interface WorkflowResult {
 /** What the tool needs from a subagent backend; the SDK spawner in production. */
 export interface WorkflowSpawnerHandle {
   spawner: SubagentSpawner;
-  /** Backs the script's `mcp()` hook with the invoking agent's MCP tools. */
+  /** Backs the script's `tools.mcp__*()` calls with the invoking agent's MCP tools. */
   callMcpTool?: WorkflowMcpCaller;
   cleanup(): Promise<void>;
 }
@@ -219,13 +222,43 @@ export async function createSdkSpawnerHandle(
     void client[Symbol.asyncDispose]?.().catch(() => undefined);
     throw error;
   }
+  // The run outlives this tool call, so capture the invoking turn's permission
+  // inputs now; each direct MCP call is checked against them.
+  const runtime = getRuntimeContext();
+  const toolContextId = runtime?.toolContextId ?? null;
+  // Lazy: tool impls are loaded by the manager, so a static import cycles.
+  const manager = await import("@/tools/manager");
+  const permissionModeState = toolContextId
+    ? manager.getExecutionContextPermissionModeState(toolContextId)
+    : undefined;
+  const permissionCwd = getCurrentWorkingDirectory();
+  let mcpSession:
+    | ReturnType<typeof import("@/cli/subcommands/mcp").createAgentMcpSession>
+    | undefined;
   return {
     spawner,
     callMcpTool: async (toolName, toolArgs) => {
-      const { callAgentMcpTool } = await import("@/cli/subcommands/mcp");
-      return callAgentMcpTool(parentAgentId, toolName, toolArgs);
+      const { decision } = await manager.checkToolPermission(
+        toolName,
+        toolArgs,
+        permissionCwd,
+        permissionModeState && { ...permissionModeState },
+        runtime?.agentId ?? parentAgentId,
+      );
+      if (decision !== "allow") {
+        throw new Error(
+          decision === "deny"
+            ? `${toolName} is denied by permission rules.`
+            : `${toolName} needs approval, which a workflow cannot request; add an allow rule for it to call it from a script.`,
+        );
+      }
+      mcpSession ??= (
+        await import("@/cli/subcommands/mcp")
+      ).createAgentMcpSession(parentAgentId);
+      return mcpSession.callTool(toolName, toolArgs);
     },
     cleanup: async () => {
+      await mcpSession?.close().catch(() => undefined);
       await client[Symbol.asyncDispose]?.().catch(() => undefined);
     },
   };

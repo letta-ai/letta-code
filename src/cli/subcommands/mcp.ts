@@ -787,6 +787,35 @@ async function runCall(
   return result.isError === true ? 2 : 0;
 }
 
+async function callCatalogTool(
+  catalog: ToolCatalog,
+  deps: McpSubcommandDependencies,
+  agentId: string,
+  toolName: string,
+  args: Record<string, unknown>,
+): Promise<McpToolResult> {
+  const tool = catalog.tools.find(
+    (candidate) => candidate.schema.name === toolName,
+  );
+  if (!tool) {
+    throw new McpCliError(
+      "tool_not_found",
+      `MCP tool '${toolName}' is not available`,
+    );
+  }
+  return tool.target.kind === "client"
+    ? await tool.target.connection.callTool(tool.target.rawName, args)
+    : mcpToolResultFromServer(
+        await runUnifiedMcpTool({
+          client: await getServerClient(deps),
+          agentId,
+          mcpServerId: tool.target.serverId,
+          toolId: tool.target.toolId,
+          args,
+        }),
+      );
+}
+
 /**
  * Call one agent-scoped MCP tool by its `mcp__server__tool` name, resolving it
  * through the same catalog as `letta mcp call`.
@@ -799,29 +828,48 @@ export async function callAgentMcpTool(
 ): Promise<McpToolResult> {
   const catalog = await buildToolCatalog(deps, agentId, { toolName });
   try {
-    const tool = catalog.tools.find(
-      (candidate) => candidate.schema.name === toolName,
-    );
-    if (!tool) {
-      throw new McpCliError(
-        "tool_not_found",
-        `MCP tool '${toolName}' is not available`,
-      );
-    }
-    return tool.target.kind === "client"
-      ? await tool.target.connection.callTool(tool.target.rawName, args)
-      : mcpToolResultFromServer(
-          await runUnifiedMcpTool({
-            client: await getServerClient(deps),
-            agentId,
-            mcpServerId: tool.target.serverId,
-            toolId: tool.target.toolId,
-            args,
-          }),
-        );
+    return await callCatalogTool(catalog, deps, agentId, toolName, args);
   } finally {
     await catalog.close();
   }
+}
+
+export interface AgentMcpSession {
+  callTool(
+    toolName: string,
+    args: Record<string, unknown>,
+  ): Promise<McpToolResult>;
+  close(): Promise<void>;
+}
+
+/**
+ * Like callAgentMcpTool, but builds the agent's catalog (and any local server
+ * connections) once on first use and reuses it until close().
+ */
+export function createAgentMcpSession(
+  agentId: string,
+  deps: McpSubcommandDependencies = {},
+): AgentMcpSession {
+  let catalog: Promise<ToolCatalog> | undefined;
+  let closed = false;
+  const load = () => {
+    if (closed) throw new Error("MCP session is closed");
+    catalog ??= buildToolCatalog(deps, agentId).catch((error: unknown) => {
+      catalog = undefined;
+      throw error;
+    });
+    return catalog;
+  };
+  return {
+    callTool: async (toolName, args) =>
+      callCatalogTool(await load(), deps, agentId, toolName, args),
+    close: async () => {
+      closed = true;
+      const pending = catalog;
+      catalog = undefined;
+      await (await pending?.catch(() => undefined))?.close();
+    },
+  };
 }
 
 export async function runMcpSubcommand(

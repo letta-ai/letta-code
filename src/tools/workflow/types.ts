@@ -126,7 +126,7 @@ export interface RunWorkflowOptions {
   signal?: AbortSignal;
   /** Progress callback. */
   onProgress?: (event: WorkflowProgressEvent) => void;
-  /** Calls one of the invoking agent's MCP tools; backs the `mcp()` hook. */
+  /** Calls one of the invoking agent's MCP tools; backs the `tools` global. */
   callMcpTool?: WorkflowMcpCaller;
   /** Lifetime MCP tool call cap (runaway-loop backstop). Default 1000. */
   maxTotalMcpCalls?: number;

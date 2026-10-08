@@ -1,6 +1,6 @@
 /**
  * The workflow engine: parses the meta block, builds the script-facing hooks
- * (agent / decide / mcp / parallel / pipeline / phase / log / args), executes the script
+ * (agent / decide / tools / parallel / pipeline / phase / log / args), executes the script
  * body inside a node:vm context, and appends every subagent outcome to the
  * run's journal.
  *
@@ -141,23 +141,25 @@ export async function executeWorkflow(
     return trackCall(callDecision(state, questions, callOptions));
   }
 
-  function mcp(toolName: unknown, args?: unknown): Promise<unknown> {
-    return trackCall(callMcp(toolName, args));
-  }
+  // Codex-style `tools` global: `await tools.mcp__server__tool(args)`. Only
+  // the invoking agent's MCP tools are exposed; any other name is undefined.
+  const tools = new Proxy(Object.freeze({}), {
+    get: (_target, name) =>
+      typeof name === "string" && name.startsWith("mcp__")
+        ? (args?: unknown) => trackCall(callMcp(name, args))
+        : undefined,
+  });
 
-  async function callMcp(toolName: unknown, args?: unknown): Promise<unknown> {
+  async function callMcp(toolName: string, args?: unknown): Promise<unknown> {
     const callMcpTool = options.callMcpTool;
     if (!callMcpTool) {
-      throw new Error("mcp() is unavailable: no agent MCP scope.");
-    }
-    if (typeof toolName !== "string" || !toolName.startsWith("mcp__")) {
-      throw new Error("mcp() requires an mcp__server__tool name.");
+      throw new Error("tools are unavailable: no agent MCP scope.");
     }
     if (
       args !== undefined &&
       (!args || typeof args !== "object" || Array.isArray(args))
     ) {
-      throw new Error("mcp() arguments must be an object.");
+      throw new Error(`tools.${toolName}() arguments must be an object.`);
     }
     if (signal.aborted) throw new Error("Workflow aborted.");
     if (mcpCallCounter >= maxTotalMcpCalls) {
@@ -414,7 +416,7 @@ export async function executeWorkflow(
   const context = vm.createContext({
     agent,
     decide,
-    mcp,
+    tools,
     parallel,
     pipeline,
     phase,
