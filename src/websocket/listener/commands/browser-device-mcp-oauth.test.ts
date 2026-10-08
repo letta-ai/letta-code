@@ -17,7 +17,7 @@ import {
 } from "./browser-device-mcp-oauth";
 
 const VALID_HANDOFF_KEY = "h".repeat(43);
-const NOW_MS = 1_800_000_000_000;
+const MONOTONIC_NOW_MS = 1_000;
 
 function startCommand(
   overrides: Partial<BrowserDeviceMcpOAuthCommand> = {},
@@ -28,7 +28,7 @@ function startCommand(
     handoff_key: VALID_HANDOFF_KEY,
     service: "datadog",
     server_url: "https://mcp.datadoghq.com/v1/mcp",
-    deadline_ms: NOW_MS + 285_000,
+    timeout_ms: 285_000,
     ...overrides,
   };
 }
@@ -51,7 +51,7 @@ function createHarness(
       socket,
       owner,
       lineageId: "listener-lineage-1",
-      now: () => NOW_MS,
+      monotonicNow: () => MONOTONIC_NOW_MS,
       runDetachedListenerTask: (
         _commandName: string,
         task: () => Promise<void>,
@@ -98,8 +98,9 @@ describe("browser-device MCP OAuth protocol parsing", () => {
     startCommand({ service: "UPPERCASE" }),
     startCommand({ server_url: `https://example.com/${"x".repeat(2048)}` }),
     startCommand({ server_url: "https://example.com/\nsecret" }),
-    startCommand({ deadline_ms: 1.5 }),
-    startCommand({ deadline_ms: -1 }),
+    startCommand({ timeout_ms: 1.5 }),
+    startCommand({ timeout_ms: -1 }),
+    startCommand({ timeout_ms: 285_001 }),
     {
       type: "browser_device_mcp_oauth_cancel",
       operation_id: "operation-1",
@@ -156,7 +157,7 @@ describe("browser-device MCP OAuth command handling", () => {
       connect,
       owner: {} as ListenerRuntime,
       lineageId: "stable-lineage",
-      now: () => NOW_MS,
+      monotonicNow: () => MONOTONIC_NOW_MS,
       runDetachedListenerTask: (
         _commandName: string,
         task: () => Promise<void>,
@@ -291,7 +292,7 @@ describe("browser-device MCP OAuth command handling", () => {
     stopRuntime(successorOwner, true);
   });
 
-  test("uses the remaining absolute deadline and rejects unsafe budgets", async () => {
+  test("derives phases from one relative timeout and rejects unsafe budgets", async () => {
     const authorizationBudgets: number[] = [];
     const harness = createHarness(
       async (_request, _dependencies, _signal, authorizationTimeoutMs) => {
@@ -299,7 +300,7 @@ describe("browser-device MCP OAuth command handling", () => {
       },
     );
     handleBrowserDeviceMcpOAuthProtocolCommand(
-      startCommand({ deadline_ms: NOW_MS + 200_000 }),
+      startCommand({ timeout_ms: 200_000 }),
       harness.dependencies,
     );
     await Promise.all(harness.tasks);
@@ -318,14 +319,33 @@ describe("browser-device MCP OAuth command handling", () => {
     await Promise.all(maximum.tasks);
     expect(authorizationBudgets).toEqual([105_000, 190_000]);
 
-    for (const deadline_ms of [NOW_MS, NOW_MS + 95_000, NOW_MS + 285_001]) {
+    let monotonicNow = MONOTONIC_NOW_MS;
+    const delayedTasks: Array<() => Promise<void>> = [];
+    const delayed = createHarness(
+      async (_request, _dependencies, _signal, authorizationTimeoutMs) => {
+        authorizationBudgets.push(authorizationTimeoutMs);
+      },
+    );
+    delayed.dependencies.monotonicNow = () => monotonicNow;
+    delayed.dependencies.runDetachedListenerTask = (_commandName, task) => {
+      delayedTasks.push(task);
+    };
+    handleBrowserDeviceMcpOAuthProtocolCommand(
+      startCommand({ request_id: "delayed-dispatch", timeout_ms: 200_000 }),
+      delayed.dependencies,
+    );
+    monotonicNow += 10_000;
+    await delayedTasks[0]?.();
+    expect(authorizationBudgets).toEqual([105_000, 190_000, 95_000]);
+
+    for (const timeout_ms of [0, 95_000, 285_001]) {
       const rejected = createHarness(async () => {
         throw new Error("must not run");
       });
       handleBrowserDeviceMcpOAuthProtocolCommand(
         startCommand({
-          request_id: `rejected-${deadline_ms}`,
-          deadline_ms,
+          request_id: `rejected-${timeout_ms}`,
+          timeout_ms,
         }),
         rejected.dependencies,
       );
@@ -333,7 +353,7 @@ describe("browser-device MCP OAuth command handling", () => {
       expect(rejected.responses).toEqual([
         {
           type: "browser_device_mcp_oauth_response",
-          request_id: `rejected-${deadline_ms}`,
+          request_id: `rejected-${timeout_ms}`,
           success: false,
           error_code: "invalid_request",
         },

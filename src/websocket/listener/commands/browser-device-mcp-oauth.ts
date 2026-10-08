@@ -15,7 +15,7 @@ import type {
 } from "@/types/task-control-protocol";
 import type { ListenerRuntime } from "@/websocket/listener/types";
 
-const MAX_DEADLINE_BUDGET_MS = 285_000;
+const MAX_OPERATION_TIMEOUT_MS = 285_000;
 const HANDOFF_SUBMISSION_MARGIN_MS = 5_000;
 const MINIMUM_OPERATION_BUDGET_MS =
   BROWSER_DEVICE_HANDOFF_SUBMIT_TIMEOUT_MS + HANDOFF_SUBMISSION_MARGIN_MS + 1;
@@ -25,7 +25,7 @@ interface OperationRecord {
   controller: AbortController;
   flightKey: string;
   requestDigest: string;
-  deadlineMs: number;
+  expiresAtMonotonicMs: number;
   dependencies: BrowserDeviceMcpOAuthCommandDependencies;
   owner: ListenerRuntime;
   response?: BrowserDeviceMcpOAuthResponseMessage;
@@ -54,7 +54,7 @@ interface BrowserDeviceMcpOAuthCommandDependencies {
   owner: ListenerRuntime;
   /** Stable across physical WebSocket replacements, unlike connection IDs. */
   lineageId: string;
-  now?: () => number;
+  monotonicNow?: () => number;
 }
 
 const operations = new Map<string, OperationRecord>();
@@ -64,8 +64,9 @@ export function handleBrowserDeviceMcpOAuthProtocolCommand(
   command: WsProtocolCommand,
   dependencies: BrowserDeviceMcpOAuthCommandDependencies,
 ): boolean {
-  const now = dependencies.now?.() ?? Date.now();
-  pruneCompletedOperations(now);
+  const receivedAtMonotonicMs =
+    dependencies.monotonicNow?.() ?? performance.now();
+  pruneCompletedOperations(receivedAtMonotonicMs);
 
   if (command.type === "browser_device_mcp_oauth_cancel") {
     operations
@@ -95,7 +96,12 @@ export function handleBrowserDeviceMcpOAuthProtocolCommand(
   }
 
   dependencies.runDetachedListenerTask("browser_device_mcp_oauth", async () => {
-    await runBrowserDeviceMcpOAuth(command, dependencies, key);
+    await runBrowserDeviceMcpOAuth(
+      command,
+      dependencies,
+      key,
+      receivedAtMonotonicMs,
+    );
   });
   return true;
 }
@@ -104,6 +110,7 @@ async function runBrowserDeviceMcpOAuth(
   command: BrowserDeviceMcpOAuthCommand,
   dependencies: BrowserDeviceMcpOAuthCommandDependencies,
   operationMapKey: string,
+  receivedAtMonotonicMs: number,
 ): Promise<void> {
   let request: BrowserDeviceMcpOAuthRequest;
   try {
@@ -117,11 +124,17 @@ async function runBrowserDeviceMcpOAuth(
     return;
   }
 
-  const remainingMs =
-    command.deadline_ms - (dependencies.now?.() ?? Date.now());
+  const elapsedMs = Math.max(
+    0,
+    Math.ceil(
+      (dependencies.monotonicNow?.() ?? performance.now()) -
+        receivedAtMonotonicMs,
+    ),
+  );
+  const remainingMs = command.timeout_ms - elapsedMs;
   if (
-    remainingMs < MINIMUM_OPERATION_BUDGET_MS ||
-    remainingMs > MAX_DEADLINE_BUDGET_MS
+    command.timeout_ms > MAX_OPERATION_TIMEOUT_MS ||
+    remainingMs < MINIMUM_OPERATION_BUDGET_MS
   ) {
     sendTerminalResponse(command.request_id, "invalid_request", dependencies);
     return;
@@ -142,7 +155,7 @@ async function runBrowserDeviceMcpOAuth(
     controller,
     flightKey,
     requestDigest: requestDigest(command),
-    deadlineMs: command.deadline_ms,
+    expiresAtMonotonicMs: receivedAtMonotonicMs + command.timeout_ms,
     dependencies,
     owner: dependencies.owner,
     delivered: false,
@@ -192,7 +205,7 @@ function requestDigest(command: BrowserDeviceMcpOAuthCommand): string {
     .update("\0")
     .update(command.server_url)
     .update("\0")
-    .update(String(command.deadline_ms))
+    .update(String(command.timeout_ms))
     .digest("hex");
 }
 
@@ -235,11 +248,12 @@ function sendTerminalResponse(
   );
 }
 
-function pruneCompletedOperations(now: number): void {
+function pruneCompletedOperations(monotonicNowMs: number): void {
   for (const [key, operation] of operations) {
     if (
       operation.response &&
-      now > operation.deadlineMs + COMPLETED_OPERATION_RETENTION_MS
+      monotonicNowMs >
+        operation.expiresAtMonotonicMs + COMPLETED_OPERATION_RETENTION_MS
     ) {
       operations.delete(key);
     }

@@ -7,6 +7,7 @@ const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const HANDOFF_KEY_PATTERN = /^[A-Za-z0-9_-]{43,128}$/;
 const SERVICE_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const MAX_SERVER_URL_LENGTH = 2_048;
+const MAX_TIMEOUT_MS = 285_000;
 
 export function isBrowserDeviceMcpOAuthProtocolCommand(
   value: unknown,
@@ -26,9 +27,10 @@ export function isBrowserDeviceMcpOAuthProtocolCommand(
       record.server_url.length > 0 &&
       record.server_url.length <= MAX_SERVER_URL_LENGTH &&
       !hasControlCharacters(record.server_url) &&
-      typeof record.deadline_ms === "number" &&
-      Number.isSafeInteger(record.deadline_ms) &&
-      record.deadline_ms > 0
+      typeof record.timeout_ms === "number" &&
+      Number.isSafeInteger(record.timeout_ms) &&
+      record.timeout_ms > 0 &&
+      record.timeout_ms <= MAX_TIMEOUT_MS
     );
   }
   return (
