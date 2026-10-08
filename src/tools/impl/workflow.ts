@@ -247,7 +247,9 @@ export async function createSdkSpawnerHandle(
         toolArgs,
         permissionCwd,
         permissionModeState && { ...permissionModeState },
-        runtime?.agentId ?? parentAgentId,
+        // Same agent whose MCP scope runs the call; a nested agent-free
+        // worker's runtime agent would not match it.
+        parentAgentId,
       );
       if (decision !== "allow") {
         throw new Error(
