@@ -73,6 +73,7 @@ export async function cancelListenerInput(params: {
       agentId: params.scope.agent_id,
       conversationId: params.scope.conversation_id,
       clientMessageId: params.clientMessageId,
+      actingUserId: params.scope.acting_user_id,
     },
     AbortSignal.timeout(30_000),
   );
@@ -103,6 +104,7 @@ export async function cancelAcceptedListenerInput(
       agentId: receipt.agent_id,
       conversationId: receipt.conversation_id,
       clientMessageId: receipt.client_message_id,
+      actingUserId: receipt.acting_user_id,
     },
     AbortSignal.timeout(10_000),
   );

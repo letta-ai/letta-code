@@ -52,16 +52,16 @@ skills. Put ALL context a stage needs in the prompt — file paths, the rule it
 should apply, what shape to return.
 
 Subagents are told their final text IS the return value (not a human-facing
-message), so they return raw data. Tools default to read-only (`Read`,
-`Grep`, `Glob`); widen with `allowedTools` for stages that must write. For
+message), so they return raw data. Workers inherit the invoking session's tools
+and permission mode; use `allowedTools` to restrict a workflow or stage. For
 stages whose input is entirely in the prompt (synthesis, judging, scoring)
 pass `allowedTools: []` — a model that can still read files tends to wander,
 and a subagent that re-issues an identical tool call three times is stopped
-and resolves to `null`.
+and rejects with the failure detail.
 
 Their model defaults to the invoking conversation's model. `opts.model` (or
 the tool's `model` input) accepts any handle or alias listed by
-`letta model list`; an unknown value resolves that call to `null`. Use a
+`letta model list`; an unknown value rejects that call. Use a
 cheaper model for mechanical stages only when you know a valid handle.
 
 Use the invoking backend for workflow workers. Local execution requires an Agent
@@ -72,10 +72,11 @@ Cloud decisions service.
 
 - `agent(prompt, opts?)` → Promise. Spawn one subagent. Resolves to its final
   text, or with `schema` (JSON Schema) to a validated object. Prefer `schema`
-  for shaped results: invalid or missing output is retried, then resolves to
-  `null` with validation detail in the journal. `json: true` still parses
-  without validating; `schema` wins if both are set. Resolves to `null` on
-  failure — filter with `.filter(Boolean)`. Options: `label` (display name),
+  for shaped results: invalid or missing output is retried, then rejects
+  with validation detail in the error and journal. `json: true` still parses
+  without validating; `schema` wins if both are set. Await each call; failures
+  reject with the cause, `callIndex`, and `conversationId` when available.
+  Catch errors explicitly to recover. Options: `label` (display name),
   `phase` (progress group — use this inside concurrent stages), `schema`,
   `json`, `model`, `effort` (`'low'` for mechanical stages, higher for the
   hardest verify/judge stages), `allowedTools`, `systemPrompt` (extra system
@@ -88,13 +89,12 @@ Cloud decisions service.
   Wall-clock = slowest single-item chain, not sum-of-slowest-per-stage. Every
   stage callback receives `(prevResult, originalItem, index)` — use
   originalItem/index in later stages to label work without threading context
-  through stage 1's return value. A stage that throws drops that item to
-  `null` and skips its remaining stages.
+  through stage 1's return value. A stage that throws skips that item's
+  remaining stages; siblings finish, then the helper rejects.
 - `parallel(thunks)` → run zero-arg functions concurrently. This is a
-  BARRIER: it awaits all thunks before returning. A thunk that throws
-  resolves to `null` in the result array — the call itself never rejects, so
-  `.filter(Boolean)` before using the results. Use ONLY when you genuinely
-  need all results together.
+  BARRIER: it awaits all thunks, then rejects if any threw. For best-effort
+  processing, catch errors inside each thunk and return explicit success/error
+  results. Use ONLY when you genuinely need all results together.
 - `phase(title)` — start a new phase; subsequent agent() calls are grouped
   under this title in progress output.
 - `log(message)` — emit a progress message to the user.
@@ -113,6 +113,20 @@ Cloud decisions service.
       })
       const verdict = call?.answers?.behavior?.choice  // 'bad' | 'not_bad'
 
+- `tools.mcp__server__tool(args?)` → Promise; not a subagent call. Calls one
+  of the invoking agent's MCP tools directly (find names with
+  `letta mcp search` / `letta mcp tools` before writing the script). Each call
+  goes through the same permission rules as a normal MCP tool call; a tool
+  that would ask for approval throws instead, so the user must allow it first.
+  Resolves to the tool's `structuredContent`, else its text output (parsed
+  when it is JSON), else the raw `content` array. Throws when the tool is
+  unavailable, not allowed, or reports an error; `parallel()` and `pipeline()`
+  propagate that rejection. Use it for deterministic fetches and
+  writes whose arguments the script already knows; use `agent()` when a step
+  needs judgment.
+
+      const issues = await tools.mcp__linear__list_issues({ team: 'LET', limit: 20 })
+
 - `args` — the value passed as the tool's `args` input, verbatim. Pass
   arrays/objects as actual JSON values, NOT as a JSON-encoded string.
 
@@ -129,8 +143,8 @@ Math, Array, etc.) are available; the hooks are the only globals provided.
 The script runs inside the CLI process with the CLI's own privileges (the
 `vm` context is a scope, not a security boundary), and the user approves it
 by reading it. Keep the script to orchestration: decide what runs and combine
-results. All reading, searching, and writing belongs in subagents, where the
-tool allowlist applies.
+results. Direct MCP calls belong in `tools.mcp__*()`; other reading, searching, and
+writing belongs in subagents, where the tool allowlist applies.
 
 ## Pipeline vs barrier
 
@@ -237,13 +251,13 @@ Every run persists its script, args, and a `journal.jsonl` with one line per
 completed subagent call (prompt, outcome, conversation id) under
 `~/.letta/workflows/executions/<id>/`; the tool result names the paths. Before
 diagnosing why a workflow returned an empty or unexpected result, read that
-journal — it records each agent's actual return value and, for a `null`,
-which guard or error produced it. A failed run is not resumable: fix the
-script and launch it again.
+journal — it records each agent's actual return value and failure detail.
+A failed run is not resumable: fix the script and launch it again.
 
 The script is never replayed, but one worker can continue:
 `agent(prompt, {conversationId})` re-prompts it with history and model intact,
 using a journal ID and only once its last Run is terminal. Local workers can
 only continue inside the same workflow execution that observed their completed
-turn. Tools default to `[]`; `schema` and `effort` are chosen per turn. Needs
+turn. Tools inherit the invoking session unless `allowedTools` is supplied;
+`schema` and `effort` are chosen per turn. Needs
 SDK 0.8.20+.

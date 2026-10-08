@@ -10,7 +10,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getBackend } from "@/backend";
 import { runWithRuntimeContext } from "@/runtime-context";
-import { clearCapturedToolExecutionContexts } from "@/tools/manager";
+import {
+  clearCapturedToolExecutionContexts,
+  getExecutionContextById,
+} from "@/tools/manager";
 import { prepareToolExecutionContextForResolvedTarget } from "@/tools/toolset";
 import { TOOLSET_CATALOG } from "@/tools/toolset-catalog";
 import {
@@ -91,6 +94,10 @@ describe("Workflow tool toolsets", () => {
         clientToolAllowlist: ["Read"],
       });
       expect(restricted.preparedToolContext.loadedToolNames).toEqual(["Read"]);
+      expect(
+        getExecutionContextById(restricted.preparedToolContext.contextId)
+          ?.runtimeContext.clientToolNames,
+      ).toEqual(["Read"]);
     } finally {
       clearCapturedToolExecutionContexts();
     }
@@ -623,6 +630,38 @@ throw new Error('kaboom')`,
     );
     expect(queuedMessages[0]?.text).toContain("kaboom");
   });
+
+  test.each([
+    "return await agent('reader')",
+    "return await parallel([() => agent('reader')])",
+    "return await pipeline(['reader'], prompt => agent(prompt))",
+  ])(
+    "worker failures mark the task and notification failed: %s",
+    async (script) => {
+      installSpawner(async () => ({
+        value: null,
+        failed: true,
+        error: "provider unavailable",
+        conversationId: "conv-failed-worker",
+      }));
+      const launched = await workflow({
+        script: `export const meta = { name: 'failure', description: 'worker failure' }\n${script}`,
+      });
+      const taskId = taskIdOf(launched.toolReturn);
+      await waitFor(() => cleanupCalls === 1);
+      const task = backgroundProcesses.get(taskId);
+      expect(task?.status).toBe("failed");
+      expect(task?.exitCode).toBe(1);
+      expect(queuedMessages).toHaveLength(1);
+      expect(queuedMessages[0]?.text).toContain("<status>failed</status>");
+      expect(queuedMessages[0]?.text).toContain(
+        'Workflow agent "reader" (conv-failed-worker) failed: provider unavailable',
+      );
+      expect(readFileSync(task?.outputFile as string, "utf8")).toContain(
+        "[error]",
+      );
+    },
+  );
 
   test("survives script return values JSON cannot encode", async () => {
     installSpawner(async () => ({ value: "x", failed: false }));

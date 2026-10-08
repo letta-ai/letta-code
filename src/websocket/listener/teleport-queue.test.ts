@@ -1,21 +1,29 @@
 import { afterEach, expect, mock, test } from "bun:test";
 import WebSocket from "ws";
 import type { TeleportContinuation } from "@/types/protocol_v2";
-import { openListenerConnection } from "./connection";
+import {
+  markListenerConnectionInitialized,
+  openListenerConnection,
+} from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { dispatchInboundMessageWhenReady } from "./inbound-dispatch";
+import {
+  ordinaryInputIdentity,
+  rememberInputDisposition,
+} from "./input-disposition";
 import { createRuntime } from "./lifecycle";
 import { createListenerMessageHandler } from "./message-router";
 import { setActiveRuntime } from "./runtime";
 import {
   claimPendingTeleportAtBoundary,
   expectInboundTeleport,
-  finishPendingTeleport,
-  finishTeleport,
+  finalizeClaimedTeleport,
+  finishDrainedTeleport,
   handleTeleportRequest,
   isInboundTeleportExpected,
   isRuntimeTeleportPending,
 } from "./teleport";
+import { admitTeleportContinueInput } from "./teleport-continue-input";
 import type { IncomingMessage, StartListenerOptions } from "./types";
 
 class MockSocket {
@@ -48,12 +56,13 @@ function openSource(
   listener: ReturnType<typeof createRuntime>,
   socket: MockSocket,
 ): void {
-  openListenerConnection({
+  const connection = openListenerConnection({
     runtime: listener,
     connectionId: "source",
     writer: socket as never,
     options: makeOptions(),
   });
+  markListenerConnectionInitialized(listener, "source", connection);
 }
 
 function requestTeleport(listener: ReturnType<typeof createRuntime>): void {
@@ -111,7 +120,11 @@ test("new production input waits outside a pending teleport", async () => {
   openSource(listener, socket);
   setActiveRuntime(listener);
   requestTeleport(listener);
-  runtime.acceptedInputDispositions.set("cm-known", "queued");
+  rememberInputDisposition(
+    runtime,
+    ordinaryInputIdentity("cm-known"),
+    "queued",
+  );
   const handleMessage = createListenerMessageHandler({
     runtime: listener,
     socket: socket as unknown as WebSocket,
@@ -204,7 +217,9 @@ test("serialized direct input cannot start after source readiness", async () => 
   });
   expect(pending).not.toBeNull();
   if (!pending) throw new Error("Teleport did not reach the source boundary");
-  finishTeleport(runtime, lease, pending);
+  finalizeClaimedTeleport(listener, pending, () =>
+    runtime.turnLifecycle.finish(lease, "cancelled"),
+  );
   releaseCurrentTurn?.();
   await runtime.messageQueue;
 
@@ -235,7 +250,9 @@ test("accepted queue drains before teleport readiness", () => {
   } as Parameters<typeof runtime.queueRuntime.enqueue>[0]);
 
   requestTeleport(listener);
-  const pending = listener.pendingTeleports?.get("teleport-1");
+  const pending = [...(listener.pendingTeleports?.values() ?? [])].find(
+    (candidate) => candidate.teleportId === "teleport-1",
+  );
   expect(pending?.drainAcceptedInputs).toBe(true);
   expect(
     claimPendingTeleportAtBoundary({
@@ -245,8 +262,9 @@ test("accepted queue drains before teleport readiness", () => {
       activeTurn: true,
     }),
   ).toBeNull();
-  runtime.turnLifecycle.finish(firstLease, "end_turn");
-  finishPendingTeleport(runtime);
+  finishDrainedTeleport(runtime, () =>
+    runtime.turnLifecycle.finish(firstLease, "end_turn"),
+  );
   expect(pending?.readyAt).toBeUndefined();
 
   runtime.queueRuntime.consumeItems(1);
@@ -262,8 +280,9 @@ test("accepted queue drains before teleport readiness", () => {
       activeTurn: true,
     }),
   ).toBeNull();
-  runtime.turnLifecycle.finish(queuedLease, "error");
-  finishPendingTeleport(runtime);
+  finishDrainedTeleport(runtime, () =>
+    runtime.turnLifecycle.finish(queuedLease, "error"),
+  );
 
   expect(pending?.readyAt).toEqual(expect.any(Number));
   expect(pending?.activeTurn).toBe(false);
@@ -417,4 +436,74 @@ test.each([
     }),
   );
   runtime.turnLifecycle.finish(lease, "end_turn");
+});
+
+test("expected teleport id survives mismatches and failed durable admission", () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    "agent-1",
+    "conversation-expected",
+  );
+  expectInboundTeleport(runtime, "teleport-b");
+  const acknowledgements: Array<{
+    accepted: boolean;
+    error?: string;
+    disposition?: "started" | "queued";
+  }> = [];
+  const tasks: Array<() => Promise<void>> = [];
+  const base = {
+    listener,
+    scopedRuntime: runtime,
+    connectionId: "source",
+    agentId: "agent-1",
+    conversationId: "conversation-expected",
+    onStatusChange: undefined,
+    acknowledgeInput: (
+      accepted: boolean,
+      error?: string,
+      disposition?: "started" | "queued",
+    ) => acknowledgements.push({ accepted, error, disposition }),
+    runDetachedListenerTask: (_name: string, task: () => Promise<void>) => {
+      tasks.push(task);
+    },
+    processIncomingMessage: mock(async () => {}),
+  };
+  const payload = (teleportId: string) => ({
+    kind: "teleport_continue" as const,
+    teleport_id: teleportId,
+    source: { device_id: "source-device", connection_name: "Source" },
+  });
+
+  admitTeleportContinueInput({ ...base, payload: payload("teleport-a") });
+  expect(runtime.expectedTeleportId).toBe("teleport-b");
+  expect(acknowledgements.at(-1)).toMatchObject({ accepted: false });
+
+  admitTeleportContinueInput({
+    ...base,
+    payload: payload("teleport-b"),
+    commitDisposition: () => false,
+  });
+  expect(runtime.expectedTeleportId).toBe("teleport-b");
+  expect(acknowledgements.at(-1)).toMatchObject({ accepted: false });
+
+  expect(() =>
+    admitTeleportContinueInput({
+      ...base,
+      payload: payload("teleport-b"),
+      commitDisposition: () => {
+        throw new Error("injected disposition failure");
+      },
+    }),
+  ).toThrow("injected disposition failure");
+  expect(runtime.expectedTeleportId).toBe("teleport-b");
+
+  admitTeleportContinueInput({ ...base, payload: payload("teleport-b") });
+  expect(runtime.expectedTeleportId).toBeNull();
+  expect(acknowledgements.at(-1)).toEqual({
+    accepted: true,
+    error: undefined,
+    disposition: "started",
+  });
+  expect(tasks).toHaveLength(1);
 });

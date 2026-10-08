@@ -28,6 +28,8 @@ export interface RuntimeContextSnapshot {
   conversationId?: string | null;
   /** Authenticated Cloud user responsible for the current turn. */
   actingUserId?: string;
+  /** Explicitly disable inherited process/runtime acting-user attribution. */
+  suppressActingUserFallback?: boolean;
   skillsDirectory?: string | null;
   skillSources?: SkillSource[];
   workingDirectory?: string | null;
@@ -38,6 +40,8 @@ export interface RuntimeContextSnapshot {
    */
   workingDirectoryRecoveredFrom?: string | null;
   toolContextId?: string | null;
+  /** Model-facing tool names from the current turn's filtered tool context. */
+  clientToolNames?: string[];
   permissionMode?: RuntimePermissionMode;
   workspaceSandbox?: RuntimeWorkspaceSandbox;
   executionSettings?: RuntimeExecutionSettings;
@@ -51,7 +55,15 @@ export function getRuntimeContext(): RuntimeContextSnapshot | undefined {
 
 /** Resolve the current turn's customer, including inherited headless env scope. */
 export function getRuntimeActingUserId(): string | undefined {
-  return resolveActingUserId(undefined, getRuntimeContext()?.actingUserId);
+  const context = getRuntimeContext();
+  if (context?.suppressActingUserFallback) return undefined;
+  return resolveActingUserId(undefined, context?.actingUserId);
+}
+
+/** Capture actor inheritance as a tri-state value for delayed work. */
+export function getRuntimeActingUserAttribution(): string | null | undefined {
+  if (getRuntimeContext()?.suppressActingUserFallback) return null;
+  return getRuntimeActingUserId();
 }
 
 export function runWithRuntimeContext<T>(

@@ -20,7 +20,7 @@ import {
   installProcessEventRouting,
 } from "./process-services";
 import { scheduleQueuePump } from "./queue";
-import { setActiveRuntime } from "./runtime";
+import { hasInterruptedCacheForScope, setActiveRuntime } from "./runtime";
 import type { ListenerTransport } from "./transport";
 import { finishListenerTurn } from "./turn-terminal";
 import type { IncomingMessage, StartListenerOptions } from "./types";
@@ -372,6 +372,111 @@ describe("listener interrupt queue handoff", () => {
     expect(processQueuedTurn).toHaveBeenCalledTimes(1);
   });
 
+  test("explicit abort upgrades current transport cancellation but rejects it after replacement", async () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, null, "conv-replaced");
+    const socket = createOpenTransport();
+    const lease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+    });
+    runtime.turnLifecycle.setRunId(lease, "run-disconnected");
+    runtime.turnLifecycle.setExecutingToolCallIds(lease, ["tool-disconnected"]);
+    runtime.turnLifecycle.requestCancellation({ cause: "transport" });
+    const cancellation = createDeferred();
+    const cancelConversationRun = mock(async () => cancellation.promise);
+    const forgotWork = mock(() => {});
+    setActiveRuntime(listener);
+
+    expect(
+      await handleAbortMessageInput(
+        listener,
+        {
+          command: {
+            type: "abort_message",
+            runtime: { agent_id: null, conversation_id: "conv-replaced" },
+            run_id: "run-disconnected",
+          },
+          socket,
+          opts: {} as StartListenerOptions,
+          processQueuedTurn: async () => {},
+        },
+        { cancelConversationRun },
+      ),
+    ).toBe(true);
+    expect(cancelConversationRun).toHaveBeenCalledWith(
+      "conv-replaced",
+      "run-disconnected",
+    );
+    expect(runtime.pendingInterruptedResults).toEqual([
+      {
+        type: "tool",
+        tool_call_id: "tool-disconnected",
+        tool_return: "Interrupted by user",
+        status: "error",
+      },
+    ]);
+
+    const finished = finishListenerTurn(runtime, lease, {
+      stopReason: "cancelled",
+      socket,
+      runId: "run-disconnected",
+      agentId: null,
+      conversationId: "conv-replaced",
+      forgetWork: forgotWork,
+    });
+    expect(finished.interruptionCause).toBe("explicit_user");
+    expect(forgotWork).toHaveBeenCalledTimes(1);
+    expect(runtime.turnLifecycle.kind).toBe("cancelling");
+
+    // The owner has finished, so the fenced lease is no longer current even
+    // though backend settlement still keeps the lifecycle in `cancelling`.
+    expect(
+      await handleAbortMessageInput(
+        listener,
+        {
+          command: {
+            type: "abort_message",
+            runtime: { agent_id: null, conversation_id: "conv-replaced" },
+            run_id: "run-disconnected",
+          },
+          socket,
+          opts: {} as StartListenerOptions,
+          processQueuedTurn: async () => {},
+        },
+        { cancelConversationRun },
+      ),
+    ).toBe(false);
+    expect(cancelConversationRun).toHaveBeenCalledTimes(1);
+
+    cancellation.resolve();
+    await waitFor(() => runtime.turnLifecycle.kind === "idle");
+    const replacementLease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+    });
+    runtime.turnLifecycle.setRunId(replacementLease, "run-replacement");
+
+    expect(
+      await handleAbortMessageInput(
+        listener,
+        {
+          command: {
+            type: "abort_message",
+            runtime: { agent_id: null, conversation_id: "conv-replaced" },
+            run_id: "run-disconnected",
+          },
+          socket,
+          opts: {} as StartListenerOptions,
+          processQueuedTurn: async () => {},
+        },
+        { cancelConversationRun },
+      ),
+    ).toBe(false);
+    expect(runtime.turnLifecycle.isCurrent(replacementLease)).toBe(true);
+    expect(cancelConversationRun).toHaveBeenCalledTimes(1);
+  });
+
   test("targets the exact run without conversation-wide fallback when agent_id is null", async () => {
     const listener = createRuntime();
     const runtime = getOrCreateScopedRuntime(listener, null, "conv-null-owner");
@@ -409,6 +514,14 @@ describe("listener interrupt queue handoff", () => {
         },
         { cancelConversationRun, cancelConversation },
       ),
+    ).toBe(true);
+
+    expect(runtime.pendingInterruptedContext?.agentId).toBeNull();
+    expect(
+      hasInterruptedCacheForScope(listener, {
+        agent_id: null,
+        conversation_id: "conv-null-owner",
+      }),
     ).toBe(true);
 
     expect(

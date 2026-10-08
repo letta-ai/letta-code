@@ -286,6 +286,30 @@ describe("Monitor", () => {
     }
   });
 
+  test("preserves explicit actor suppression for delayed events", async () => {
+    const result = await runWithRuntimeContext(
+      {
+        actingUserId: "ambient-user",
+        suppressActingUserFallback: true,
+      },
+      () =>
+        monitor({
+          description: "Suppressed owner",
+          command: nodeCommand('console.log("suppressed event")'),
+          timeout_ms: 5000,
+          parentScope: {
+            agentId: "agent-suppressed",
+            conversationId: "conv-suppressed",
+          },
+        }),
+    );
+    await waitFor(() => queuedMessages.length > 0);
+    expect(result.taskId).toMatch(/^monitor_/);
+    expect(
+      queuedMessages.every((message) => message.actingUserId === null),
+    ).toBe(true);
+  });
+
   test("accepts an empty ws placeholder and uses the reference defaults", async () => {
     const result = await monitor({
       description: "defaults",

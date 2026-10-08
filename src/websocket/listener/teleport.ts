@@ -10,16 +10,31 @@ import type {
   TeleportRequestCommand,
 } from "@/types/protocol_v2";
 import { toListenerConnection } from "./connection";
-import { createInterruptedTurnStore } from "./interrupted-turn-record";
-import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
+import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import {
-  emitProtocolV2Message,
-  emitRuntimeStateUpdates,
-} from "./protocol-outbound";
+  clearAcceptedFailedTeleportBounded,
+  type FailedTeleportCleanupDependencies,
+} from "./failed-teleport-cleanup";
+import {
+  commitInputDisposition,
+  reserveInputDisposition,
+  teleportInputIdentity,
+} from "./input-disposition";
+import { rollbackInputDisposition } from "./input-disposition-rollback";
+import { hasCompletedInputTerminalRevision } from "./input-terminal-evidence";
+import { hasPreparedInputTerminalRevision } from "./input-terminal-journal";
+import {
+  createInterruptedTurnStore,
+  type InterruptedTurnRecord,
+  recordListenerWork,
+} from "./interrupted-turn-record";
+import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
+import { emitProtocolV2Message } from "./protocol-outbound";
 import { emitLoopErrorNotice } from "./recoverable-notices";
-import { getConversationRuntime } from "./runtime";
+import { getConversationRuntime, getConversationRuntimeKey } from "./runtime";
 import { isListenerTransportOpen, type ListenerTransport } from "./transport";
-import type { TurnFinishTransition, TurnLease } from "./turn-lifecycle";
+import { createTurnFinishedStore } from "./turn-finished-replay";
+import type { TurnFinishTransition } from "./turn-lifecycle";
 import type {
   ConversationRuntime,
   IncomingMessage,
@@ -37,20 +52,7 @@ type SafeSocketSend = (
 ) => boolean;
 
 const TELEPORT_RECOVERY_TTL_MS = 5 * 60_000;
-/**
- * How long a destination waits for the `teleport_continue` announced by its
- * `runtime_start` before sync recovery may again finish stale approvals on its
- * own. The cloud holds its per-conversation teleport lock for 60 seconds.
- */
 const INBOUND_TELEPORT_CONTINUE_TTL_MS = 60_000;
-
-/**
- * Record that the cloud is about to send `teleport_continue` for this scope.
- * The source's yielded turn left pending approvals on the backend; the
- * continuation carries their results, so sync recovery must not deny them as
- * stale and start a competing turn (the destination would then reject the
- * continuation with "already processing").
- */
 export function expectInboundTeleport(
   runtime: ConversationRuntime,
   teleportId: string,
@@ -137,6 +139,188 @@ function getPendingTeleports(
   return runtime.pendingTeleports;
 }
 
+function pendingTeleportKey(
+  agentId: string,
+  conversationId: string,
+  teleportId: string,
+): string {
+  return JSON.stringify([agentId, conversationId, teleportId]);
+}
+
+function persistedTeleportRecord(
+  agentId: string,
+  conversationId: string,
+  teleportId: string,
+): InterruptedTurnRecord | null {
+  const record = createInterruptedTurnStore().read(agentId, conversationId);
+  return record?.teleport?.teleportId === teleportId ? record : null;
+}
+
+function persistedTeleportTerminalIsDurable(
+  listener: ListenerRuntime,
+  record: InterruptedTurnRecord,
+): boolean {
+  const revision = record.revision;
+  if (!revision) return false;
+  const scope = {
+    agentId: record.agentId,
+    conversationId: record.conversationId,
+  };
+  return (
+    hasPreparedInputTerminalRevision(listener, scope, revision) ||
+    hasCompletedInputTerminalRevision(
+      listener,
+      getConversationRuntimeKey(record.agentId, record.conversationId),
+      record.durableInputIdentities ?? [],
+      revision,
+    ) ||
+    createTurnFinishedStore()
+      .read(record.agentId, record.conversationId)
+      ?.terminals.some(
+        (terminal) => terminal.owner.interruptedRevision === revision,
+      ) === true
+  );
+}
+
+function retireTeleportTerminalProof(
+  record: InterruptedTurnRecord,
+  committedRevision: string | undefined,
+): void {
+  if (!committedRevision) return;
+  const store = createTurnFinishedStore();
+  const proof = store
+    .read(record.agentId, record.conversationId)
+    ?.terminals.find(
+      (terminal) =>
+        terminal.requiredConsumerIds.length === 0 &&
+        terminal.owner.interruptedRevision === committedRevision,
+    );
+  if (proof) store.remove(record.agentId, record.conversationId, proof.id);
+}
+
+function authorizePersistedTeleportReady(
+  listener: ListenerRuntime,
+  pending: PendingTeleport,
+  record: InterruptedTurnRecord,
+): boolean {
+  const intent = record.teleport;
+  if (!intent || !record.revision) return false;
+  if (!intent.ready && !persistedTeleportTerminalIsDurable(listener, record)) {
+    return false;
+  }
+  pending.activeTurn = intent.activeTurn;
+  pending.continuation = intent.continuation;
+  if (intent.ready) {
+    retireTeleportTerminalProof(record, intent.committedRevision);
+    return true;
+  }
+  const store = createInterruptedTurnStore();
+  try {
+    const readyRecord = store.write(
+      {
+        ...record,
+        teleport: {
+          ...intent,
+          connectionId: pending.connectionId,
+          ready: true,
+          committedRevision: record.revision,
+        },
+      },
+      record.revision,
+    );
+    pending.interruptedRevision = readyRecord.revision;
+    retireTeleportTerminalProof(readyRecord, record.revision);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function journalTeleportIntent(
+  runtime: ConversationRuntime,
+  pending: PendingTeleport,
+  expectedRevision?: string,
+): string | undefined {
+  return recordListenerWork(
+    runtime,
+    {
+      teleport: {
+        teleportId: pending.teleportId,
+        connectionId: pending.connectionId,
+        connectionGeneration:
+          runtime.listener.connectionGeneration ?? undefined,
+        activeTurn: pending.activeTurn,
+        continuation: pending.continuation,
+        ready: false,
+      },
+    },
+    "after_tool_execution",
+    expectedRevision,
+  );
+}
+
+function persistIdleTeleportReady(
+  pending: PendingTeleport,
+  intentRevision: string,
+): boolean {
+  const store = createInterruptedTurnStore();
+  const record = store.read(pending.agentId, pending.conversationId);
+  if (
+    record?.revision !== intentRevision ||
+    record.teleport?.teleportId !== pending.teleportId
+  ) {
+    return false;
+  }
+  try {
+    const readyRecord = store.write(
+      {
+        ...record,
+        teleport: {
+          ...record.teleport,
+          ready: true,
+          committedRevision: intentRevision,
+        },
+      },
+      intentRevision,
+    );
+    pending.interruptedRevision = readyRecord.revision;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function abandonTeleportIntent(
+  listener: ListenerRuntime,
+  pending: PendingTeleport,
+  intentRevision: string | undefined,
+): void {
+  listener.pendingTeleports?.delete(
+    pendingTeleportKey(
+      pending.agentId,
+      pending.conversationId,
+      pending.teleportId,
+    ),
+  );
+  if (!intentRevision) return;
+  const store = createInterruptedTurnStore();
+  const record = store.read(pending.agentId, pending.conversationId);
+  if (
+    record?.revision !== intentRevision ||
+    record.teleport?.teleportId !== pending.teleportId
+  ) {
+    return;
+  }
+  try {
+    store.write(
+      { ...record, teleportId: undefined, teleport: undefined },
+      intentRevision,
+    );
+  } catch {
+    // A successor revision now owns the record and must decide its outcome.
+  }
+}
+
 function findPendingTeleportForRuntime(
   runtime: ListenerRuntime,
   agentId: string,
@@ -176,9 +360,9 @@ export function clearPriorReadyTeleports(params: {
 }): void {
   const pendingTeleports = params.listener.pendingTeleports;
   if (!pendingTeleports) return;
-  for (const [teleportId, pending] of pendingTeleports) {
+  for (const [key, pending] of pendingTeleports) {
     if (
-      teleportId === params.currentTeleportId ||
+      pending.teleportId === params.currentTeleportId ||
       pending.readyAt === undefined
     ) {
       continue;
@@ -187,7 +371,7 @@ export function clearPriorReadyTeleports(params: {
       pending.agentId === params.agentId &&
       pending.conversationId === params.conversationId
     ) {
-      pendingTeleports.delete(teleportId);
+      pendingTeleports.delete(key);
     }
   }
 }
@@ -249,10 +433,15 @@ function retainTeleportForRecovery(
   runtime: ListenerRuntime,
   pending: PendingTeleport,
 ): void {
+  const key = pendingTeleportKey(
+    pending.agentId,
+    pending.conversationId,
+    pending.teleportId,
+  );
   const timeout = setTimeout(() => {
-    const current = runtime.pendingTeleports?.get(pending.teleportId);
+    const current = runtime.pendingTeleports?.get(key);
     if (current === pending) {
-      runtime.pendingTeleports?.delete(pending.teleportId);
+      runtime.pendingTeleports?.delete(key);
     }
   }, TELEPORT_RECOVERY_TTL_MS);
   timeout.unref?.();
@@ -282,16 +471,38 @@ export function handleTeleportRequest(params: {
   listener: ListenerRuntime;
   command: TeleportRequestCommand;
   connectionId: ListenerConnectionId;
+  journalIntent?: typeof journalTeleportIntent;
+  persistIdleReady?: typeof persistIdleTeleportReady;
 }): void {
   const { listener, command, connectionId } = params;
   const pendingTeleports = getPendingTeleports(listener);
-  const existing = pendingTeleports.get(command.teleport_id);
+  const key = pendingTeleportKey(
+    command.runtime.agent_id,
+    command.runtime.conversation_id,
+    command.teleport_id,
+  );
+  const existing = pendingTeleports.get(key);
   if (existing) {
+    // A retry belongs to the physical connection that issued it, never the
+    // transport that happened to create or reconstruct the durable intent.
+    existing.connectionId = connectionId;
     if (existing.readyAt !== undefined) {
       sendTeleportReady(listener, existing, {
         success: existing.error === undefined,
         error: existing.error,
       });
+    } else {
+      const record = persistedTeleportRecord(
+        command.runtime.agent_id,
+        command.runtime.conversation_id,
+        command.teleport_id,
+      );
+      if (
+        record &&
+        authorizePersistedTeleportReady(listener, existing, record)
+      ) {
+        emitClaimedTeleportReady(listener, existing);
+      }
     }
     return;
   }
@@ -305,11 +516,38 @@ export function handleTeleportRequest(params: {
     drainAcceptedInputs: false,
     activeTurn: false,
   };
+  const persistedForScope = listener.connectionId?.startsWith("conn-")
+    ? createInterruptedTurnStore().read(pending.agentId, pending.conversationId)
+    : null;
+  const persisted =
+    persistedForScope?.teleport?.teleportId === pending.teleportId
+      ? persistedForScope
+      : null;
+  if (persisted?.teleport) {
+    pending.activeTurn = persisted.teleport.activeTurn;
+    pending.continuation = persisted.teleport.continuation;
+    pendingTeleports.set(key, pending);
+    if (authorizePersistedTeleportReady(listener, pending, persisted)) {
+      emitClaimedTeleportReady(listener, pending);
+    }
+    return;
+  }
+  if (persistedForScope?.teleport) {
+    pendingTeleports.set(key, pending);
+    pending.readyAt = Date.now();
+    pending.error = "Conversation already has a teleport pending";
+    sendTeleportReady(listener, pending, {
+      success: false,
+      error: pending.error,
+    });
+    retainTeleportForRecovery(listener, pending);
+    return;
+  }
   const channelError = getLocalChannelTeleportError(pending);
   if (channelError) {
     pending.readyAt = Date.now();
     pending.error = channelError;
-    pendingTeleports.set(pending.teleportId, pending);
+    pendingTeleports.set(key, pending);
     sendTeleportReady(listener, pending, {
       success: false,
       error: channelError,
@@ -323,7 +561,7 @@ export function handleTeleportRequest(params: {
     pending.conversationId,
   );
   if (conflicting) {
-    pendingTeleports.set(pending.teleportId, pending);
+    pendingTeleports.set(key, pending);
     pending.readyAt = Date.now();
     pending.error = "Conversation already has a teleport pending";
     sendTeleportReady(listener, pending, {
@@ -334,19 +572,45 @@ export function handleTeleportRequest(params: {
     return;
   }
 
-  pendingTeleports.set(pending.teleportId, pending);
-  const conversationRuntime = getConversationRuntime(
+  pendingTeleports.set(key, pending);
+  const conversationRuntime = getOrCreateScopedRuntime(
     listener,
     pending.agentId,
     pending.conversationId,
   );
-  pending.drainAcceptedInputs = conversationRuntime
-    ? hasAcceptedInputsWaiting(conversationRuntime, true)
-    : false;
-  if (!conversationRuntime?.isProcessing && !pending.drainAcceptedInputs) {
+  pending.drainAcceptedInputs = hasAcceptedInputsWaiting(
+    conversationRuntime,
+    true,
+  );
+  if (!conversationRuntime.isProcessing && !pending.drainAcceptedInputs) {
     const connection = listener.connections.get(pending.connectionId);
     if (!connection || !isListenerTransportOpen(connection.writer)) {
-      pendingTeleports.delete(pending.teleportId);
+      pendingTeleports.delete(key);
+      return;
+    }
+    if (!listener.connectionId?.startsWith("conn-")) {
+      if (emitClaimedTeleportReady(listener, pending))
+        pending.readyAt = Date.now();
+      return;
+    }
+    let intentRevision: string | undefined;
+    try {
+      intentRevision = (params.journalIntent ?? journalTeleportIntent)(
+        conversationRuntime,
+        pending,
+      );
+    } catch {
+      pendingTeleports.delete(key);
+      return;
+    }
+    if (
+      !intentRevision ||
+      !(params.persistIdleReady ?? persistIdleTeleportReady)(
+        pending,
+        intentRevision,
+      )
+    ) {
+      abandonTeleportIntent(listener, pending, intentRevision);
       return;
     }
     if (emitClaimedTeleportReady(listener, pending)) {
@@ -361,13 +625,15 @@ export function claimPendingTeleportAtBoundary(params: {
   conversationId: string;
   activeTurn: boolean;
   continuation?: TeleportContinuation;
+  drainedOnly?: boolean;
 }): PendingTeleport | null {
   const pending = findPendingTeleportForRuntime(
     params.listener,
     params.agentId,
     params.conversationId,
   );
-  if (!pending) return null;
+  if (!pending || (params.drainedOnly && !pending.drainAcceptedInputs))
+    return null;
   if (pending.drainAcceptedInputs) {
     if (params.activeTurn) return null;
     const runtime = getConversationRuntime(
@@ -381,10 +647,15 @@ export function claimPendingTeleportAtBoundary(params: {
   if (!connection || !isListenerTransportOpen(connection.writer)) {
     // No readiness was sent and the source still owns its turn and results.
     // Drop only the handoff request so later input is not blocked forever.
-    params.listener.pendingTeleports?.delete(pending.teleportId);
+    params.listener.pendingTeleports?.delete(
+      pendingTeleportKey(
+        pending.agentId,
+        pending.conversationId,
+        pending.teleportId,
+      ),
+    );
     return null;
   }
-  pending.readyAt = Date.now();
   pending.activeTurn = params.activeTurn;
   pending.continuation = params.continuation;
   return pending;
@@ -394,89 +665,222 @@ export function emitClaimedTeleportReady(
   listener: ListenerRuntime,
   pending: PendingTeleport,
 ): boolean {
-  if (listener.connectionId?.startsWith("conn-"))
-    suspendRecordedTeleport(pending, true);
   const sent = sendTeleportReady(listener, pending, { success: true });
   if (sent) {
+    pending.readyAt = Date.now();
     retainTeleportForRecovery(listener, pending);
-  } else if (listener.connectionId?.startsWith("conn-")) {
-    suspendRecordedTeleport(pending, false);
+    listener.scheduleRecordedRecovery?.();
   }
   return sent;
 }
 
-function suspendRecordedTeleport(
+/** Publish transfer readiness only after the source turn's durable terminal commits. */
+export function finalizeClaimedTeleport<T extends { finished: boolean }>(
+  runtime: ListenerRuntime,
   pending: PendingTeleport,
-  suspended: boolean,
-): void {
-  const store = createInterruptedTurnStore();
-  const record = store.read(pending.agentId, pending.conversationId);
-  if (record)
-    store.write({
-      ...record,
-      teleportId: suspended ? pending.teleportId : undefined,
-    });
-}
-
-export function finishTeleport(
-  runtime: ConversationRuntime,
-  lease: TurnLease,
-  pending: PendingTeleport,
-): TurnFinishTransition {
-  const transition = runtime.turnLifecycle.finish(lease, "cancelled");
-  if (!transition.finished) return transition;
-  emitRuntimeStateUpdates(runtime, {
-    agent_id: pending.agentId,
-    conversation_id: pending.conversationId,
-  });
-  emitClaimedTeleportReady(runtime.listener, pending);
+  commitTerminal: () => T,
+  canCommit: () => boolean = () => true,
+): T {
+  const transition = commitTerminal();
+  if (
+    transition.finished &&
+    canCommit() &&
+    emitClaimedTeleportReady(runtime, pending)
+  ) {
+    pending.readyAt = pending.readyAt ?? Date.now();
+  }
   return transition;
 }
 
-export function finishPendingTeleport(runtime: ConversationRuntime): void {
-  if (!runtime.agentId) return;
-  const pending = findPendingTeleportForRuntime(
-    runtime.listener,
-    runtime.agentId,
-    runtime.conversationId,
-  );
-  if (
-    !pending ||
-    (runtime.lastStopReason !== "end_turn" && !pending.drainAcceptedInputs)
-  ) {
-    return;
+export function finishClaimedTeleport(
+  runtime: ConversationRuntime,
+  pending: PendingTeleport,
+  commit: (options: {
+    stopReason: import("@/types/protocol_v2").StopReasonType;
+    agentId: string;
+    conversationId: string;
+    persistTerminalWithoutConsumers?: boolean;
+    expectedInterruptedRevision?: string;
+  }) => TurnFinishTransition,
+  options: {
+    stopReason?: import("@/types/protocol_v2").StopReasonType;
+    canCommit?: () => boolean;
+    expectedInterruptedRevision?: string;
+    beforeReadyPersist?: () => void;
+  } = {},
+): TurnFinishTransition {
+  let intentRevision: string | undefined;
+  try {
+    intentRevision = journalTeleportIntent(
+      runtime,
+      pending,
+      options.expectedInterruptedRevision,
+    );
+  } catch (error) {
+    abandonTeleportIntent(runtime.listener, pending, undefined);
+    throw error;
   }
-  const claimed = claimPendingTeleportAtBoundary({
+
+  let transition: TurnFinishTransition;
+  try {
+    transition = commit({
+      stopReason: options.stopReason ?? "cancelled",
+      agentId: pending.agentId,
+      conversationId: pending.conversationId,
+      persistTerminalWithoutConsumers: intentRevision !== undefined,
+      expectedInterruptedRevision: intentRevision,
+    });
+  } catch (error) {
+    abandonTeleportIntent(runtime.listener, pending, intentRevision);
+    throw error;
+  }
+  if (!transition.finished) {
+    abandonTeleportIntent(runtime.listener, pending, intentRevision);
+    return transition;
+  }
+
+  if (!intentRevision) {
+    if (options.canCommit?.() !== false)
+      emitClaimedTeleportReady(runtime.listener, pending);
+    return transition;
+  }
+  const store = createInterruptedTurnStore();
+  const record = store.read(pending.agentId, pending.conversationId);
+  if (record?.revision !== intentRevision || !record.teleport)
+    return transition;
+  const terminalIsDurable = persistedTeleportTerminalIsDurable(
+    runtime.listener,
+    record,
+  );
+  if (options.canCommit?.() === false) {
+    // Before a durable terminal, authority loss may discard the uncommitted
+    // intent. Once the terminal owns this exact revision, retain it so restart
+    // can publish readiness from proof instead of replaying generic approvals.
+    if (!terminalIsDurable) {
+      abandonTeleportIntent(runtime.listener, pending, intentRevision);
+    } else {
+      runtime.listener.scheduleRecordedRecovery?.();
+    }
+    return transition;
+  }
+  try {
+    options.beforeReadyPersist?.();
+    const readyRecord = store.write(
+      {
+        ...record,
+        teleport: {
+          ...record.teleport,
+          ready: true,
+          committedRevision: intentRevision,
+        },
+      },
+      intentRevision,
+    );
+    pending.interruptedRevision = readyRecord.revision;
+    retireTeleportTerminalProof(readyRecord, intentRevision);
+    emitClaimedTeleportReady(runtime.listener, pending);
+  } catch {
+    // Keep both the terminal proof and intent. A same-generation request retry
+    // can now finish this CAS and emit readiness without rerunning the turn.
+    runtime.listener.scheduleRecordedRecovery?.();
+  }
+  return transition;
+}
+
+export function finishDrainedTeleport(
+  runtime: ConversationRuntime,
+  commit: (options: {
+    stopReason: import("@/types/protocol_v2").StopReasonType;
+    agentId: string;
+    conversationId: string;
+    persistTerminalWithoutConsumers?: boolean;
+    expectedInterruptedRevision?: string;
+  }) => TurnFinishTransition,
+  canCommit?: () => boolean,
+  expectedInterruptedRevision?: string,
+): TurnFinishTransition | null {
+  if (!runtime.agentId) return null;
+  const pending = claimPendingTeleportAtBoundary({
     listener: runtime.listener,
     agentId: runtime.agentId,
     conversationId: runtime.conversationId,
     activeTurn: false,
   });
-  if (claimed) emitClaimedTeleportReady(runtime.listener, claimed);
+  if (!pending) {
+    return commit({
+      stopReason: "end_turn",
+      agentId: runtime.agentId,
+      conversationId: runtime.conversationId,
+    });
+  }
+  return finishClaimedTeleport(runtime, pending, commit, {
+    stopReason: "end_turn",
+    canCommit,
+    expectedInterruptedRevision,
+  });
 }
 
-function takeFailedTeleport(params: {
+function findFailedTeleport(params: {
   listener: ListenerRuntime;
   teleportId: string;
   agentId: string;
   conversationId: string;
+  connectionId: ListenerConnectionId;
 }): PendingTeleport | null {
-  const pending = params.listener.pendingTeleports?.get(params.teleportId);
-  if (
-    !pending ||
-    pending.agentId !== params.agentId ||
-    pending.conversationId !== params.conversationId
-  ) {
-    return null;
+  const key = pendingTeleportKey(
+    params.agentId,
+    params.conversationId,
+    params.teleportId,
+  );
+  let pending = params.listener.pendingTeleports?.get(key);
+  const persisted = createInterruptedTurnStore().read(
+    params.agentId,
+    params.conversationId,
+  );
+  const exactPersisted =
+    persisted?.teleport?.teleportId === params.teleportId ? persisted : null;
+  if (!pending && exactPersisted?.teleport) {
+    pending = {
+      teleportId: params.teleportId,
+      connectionId: params.connectionId,
+      agentId: params.agentId,
+      conversationId: params.conversationId,
+      requestedAt: Date.now(),
+      drainAcceptedInputs: false,
+      activeTurn: exactPersisted.teleport.activeTurn,
+      continuation: exactPersisted.teleport.continuation,
+      readyAt: exactPersisted.teleport.ready ? Date.now() : undefined,
+      interruptedRevision: exactPersisted.teleport.ready
+        ? undefined
+        : exactPersisted.revision,
+    };
+    getPendingTeleports(params.listener).set(key, pending);
   }
-  params.listener.pendingTeleports?.delete(params.teleportId);
+  if (!pending) return null;
+  pending.connectionId = params.connectionId;
+  if (
+    !pending.interruptedRevision &&
+    exactPersisted?.revision &&
+    !exactPersisted.teleport?.ready
+  ) {
+    pending.interruptedRevision = exactPersisted.revision;
+  }
   return pending;
+}
+
+export function clearAcceptedFailedTeleport(
+  listener: ListenerRuntime,
+  pending: PendingTeleport,
+  dependencies: FailedTeleportCleanupDependencies = {},
+): void {
+  clearAcceptedFailedTeleportBounded(listener, pending, dependencies);
 }
 
 export function handleTeleportFailure(params: {
   listener: ListenerRuntime;
   command: TeleportFailedCommand;
   socket: ListenerTransport;
+  connectionId: ListenerConnectionId;
   onStatusChange?: StartListenerOptions["onStatusChange"];
   getOrCreateScopedRuntime: (
     listener: ListenerRuntime,
@@ -493,13 +897,17 @@ export function handleTeleportFailure(params: {
     runtime: ConversationRuntime,
     onStatusChange?: StartListenerOptions["onStatusChange"],
     connectionId?: string,
+    dequeuedBatchId?: string,
   ) => Promise<void>;
+  /** Deterministic cleanup seam for durability race tests. */
+  failedTeleportCleanup?: FailedTeleportCleanupDependencies;
 }): void {
-  const pending = takeFailedTeleport({
+  const pending = findFailedTeleport({
     listener: params.listener,
     teleportId: params.command.teleport_id,
     agentId: params.command.runtime.agent_id,
     conversationId: params.command.runtime.conversation_id,
+    connectionId: params.connectionId,
   });
   // Rejected requests never yielded, so their source turn needs no recovery.
   if (!pending || pending.error) return;
@@ -509,6 +917,60 @@ export function handleTeleportFailure(params: {
     pending.agentId,
     pending.conversationId,
   );
+  const identity = teleportInputIdentity(params.command.teleport_id);
+  const incoming: IncomingMessage = {
+    type: "message",
+    connectionId: params.connectionId,
+    agentId: pending.agentId,
+    conversationId: pending.conversationId,
+    messages: buildTeleportFailureMessages({
+      teleportId: params.command.teleport_id,
+      error: params.command.error,
+      approvals: pending.continuation?.approvals,
+    }),
+    durableInputIdentities: [identity],
+  };
+  const admission = reserveInputDisposition(runtime, identity);
+  if (admission.kind === "full") return;
+  if (admission.kind === "duplicate") {
+    clearAcceptedFailedTeleport(
+      params.listener,
+      pending,
+      params.failedTeleportCleanup,
+    );
+    params.listener.pendingTeleports?.delete(
+      pendingTeleportKey(
+        pending.agentId,
+        pending.conversationId,
+        pending.teleportId,
+      ),
+    );
+    return;
+  }
+  const reservation =
+    admission.kind === "reserved" ? admission.reservation : undefined;
+  if (
+    !commitInputDisposition(runtime, reservation, "started", {
+      incoming,
+    })
+  ) {
+    rollbackInputDisposition(runtime, reservation);
+    return;
+  }
+  const directBatchId = `batch-teleport-failed-${crypto.randomUUID()}`;
+  runtime.dequeuedInputIdentitiesByBatchId.set(directBatchId, [identity]);
+  clearAcceptedFailedTeleport(
+    params.listener,
+    pending,
+    params.failedTeleportCleanup,
+  );
+  params.listener.pendingTeleports?.delete(
+    pendingTeleportKey(
+      pending.agentId,
+      pending.conversationId,
+      pending.teleportId,
+    ),
+  );
   emitLoopErrorNotice(params.socket, runtime, {
     message: `Teleport failed: ${params.command.error}`,
     stopReason: "error",
@@ -517,22 +979,17 @@ export function handleTeleportFailure(params: {
     conversationId: pending.conversationId,
   });
   params.runDetachedListenerTask("teleport_failed", async () => {
-    await params.processIncomingMessage(
-      {
-        type: "message",
-        connectionId: pending.connectionId,
-        agentId: pending.agentId,
-        conversationId: pending.conversationId,
-        messages: buildTeleportFailureMessages({
-          teleportId: params.command.teleport_id,
-          error: params.command.error,
-          approvals: pending.continuation?.approvals,
-        }),
-      },
-      params.socket,
-      runtime,
-      params.onStatusChange,
-      pending.connectionId,
-    );
+    try {
+      await params.processIncomingMessage(
+        incoming,
+        params.socket,
+        runtime,
+        params.onStatusChange,
+        params.connectionId,
+        directBatchId,
+      );
+    } finally {
+      runtime.dequeuedInputIdentitiesByBatchId.delete(directBatchId);
+    }
   });
 }

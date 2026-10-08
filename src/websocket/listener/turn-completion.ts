@@ -20,7 +20,7 @@ export async function completeSuccessfulListenerTurn(params: {
   conversationId: string;
   workingDirectory: string;
   permissionMode: string;
-  actingUserId?: string;
+  actingUserId?: string | null;
   assistantMessage?: string;
   transcriptLines: Line[];
   getCachedAgent: () => AgentState | null;
@@ -102,6 +102,7 @@ export async function completeSuccessfulListenerTurn(params: {
         agentId: params.agentId,
         conversationId: params.conversationId,
         reflectionSettings,
+        actingUserId: params.actingUserId,
       }),
     });
   } catch (error) {

@@ -55,6 +55,14 @@ export interface OutboundFrame {
   build(): { payload: string; perfKey: string; onSent?: () => void } | null;
   /** Called if the socket write throws. */
   onSendError?(error: unknown): void;
+  /** Called when this frame is known not to have reached transport.send(). */
+  onDropped?(): void;
+}
+
+export type OutboundFrameSettlement = "sent" | "dropped";
+export interface OutboundFrameReceipt {
+  settlement: Promise<OutboundFrameSettlement>;
+  cancel(): void;
 }
 
 /**
@@ -71,6 +79,7 @@ export const OUTBOUND_QUEUE_LIMITS = {
   HIGH_WATERMARK_BUFFERED_BYTES: 512 * 1024,
   KILL_THRESHOLD_BUFFERED_BYTES: 16 * 1024 * 1024,
   DRAIN_POLL_MS: 50,
+  MAX_BACKPRESSURE_MS: 5_000,
 } as const;
 
 type OutboundQueueState = {
@@ -78,6 +87,7 @@ type OutboundQueueState = {
   pollTimer: ReturnType<typeof setTimeout> | null;
   draining: boolean;
   killed: boolean;
+  backpressureStartedAt: number | null;
 };
 
 const queueByTransport = new WeakMap<ListenerTransport, OutboundQueueState>();
@@ -90,6 +100,7 @@ function getQueueState(transport: ListenerTransport): OutboundQueueState {
       pollTimer: null,
       draining: false,
       killed: false,
+      backpressureStartedAt: null,
     };
     queueByTransport.set(transport, state);
   }
@@ -102,7 +113,7 @@ function terminateStalledTransport(
   reason: string,
 ): void {
   state.killed = true;
-  state.frames = [];
+  for (const frame of state.frames.splice(0)) frame.onDropped?.();
   if (state.pollTimer) {
     clearTimeout(state.pollTimer);
     state.pollTimer = null;
@@ -127,27 +138,70 @@ function terminateStalledTransport(
 export function enqueueOutboundFrame(
   transport: ListenerTransport,
   frame: OutboundFrame,
-): void {
+): OutboundFrameReceipt {
+  let settled = false;
+  let settle!: (result: OutboundFrameSettlement) => void;
+  const settlement = new Promise<OutboundFrameSettlement>((resolve) => {
+    settle = resolve;
+  });
+  const queuedFrame: OutboundFrame = {
+    ...frame,
+    onDropped: () => {
+      frame.onDropped?.();
+      if (!settled) {
+        settled = true;
+        settle("dropped");
+      }
+    },
+    build: () => {
+      const built = frame.build();
+      if (!built) {
+        queuedFrame.onDropped?.();
+        return null;
+      }
+      return {
+        ...built,
+        onSent: () => {
+          built.onSent?.();
+          if (!settled) {
+            settled = true;
+            settle("sent");
+          }
+        },
+      };
+    },
+  };
   const state = getQueueState(transport);
-  if (state.killed) return;
+  if (state.killed) {
+    queuedFrame.onDropped?.();
+    return { settlement, cancel: () => undefined };
+  }
 
-  if (frame.frameClass === "status" && frame.coalesceKey) {
+  if (queuedFrame.frameClass === "status" && queuedFrame.coalesceKey) {
     const index = state.frames.findIndex(
-      (f) => f.frameClass === "status" && f.coalesceKey === frame.coalesceKey,
+      (f) =>
+        f.frameClass === "status" && f.coalesceKey === queuedFrame.coalesceKey,
     );
     if (index !== -1) {
       // Keep the latest snapshot after critical frames it was emitted after.
       // Replacing an earlier queue slot could put idle before a terminal error.
-      state.frames.splice(index, 1);
+      state.frames.splice(index, 1)[0]?.onDropped?.();
     }
   }
 
-  state.frames.push(frame);
+  state.frames.push(queuedFrame);
   if (state.frames.length > OUTBOUND_QUEUE_LIMITS.MAX_QUEUED_FRAMES) {
     terminateStalledTransport(transport, state, "outbound queue full");
-    return;
+    return { settlement, cancel: () => undefined };
   }
   drainOutboundQueue(transport, state);
+  return {
+    settlement,
+    cancel: () => {
+      const index = state.frames.indexOf(queuedFrame);
+      if (index !== -1) state.frames.splice(index, 1)[0]?.onDropped?.();
+    },
+  };
 }
 
 function scheduleDrainPoll(
@@ -172,7 +226,7 @@ function drainOutboundQueue(
     while (state.frames.length > 0) {
       if (!isListenerTransportOpen(transport)) {
         // The connection is already lost; queued wire frames can no longer be delivered.
-        state.frames = [];
+        for (const frame of state.frames.splice(0)) frame.onDropped?.();
         return;
       }
       const buffered = transport.bufferedAmount;
@@ -181,9 +235,23 @@ function drainOutboundQueue(
         return;
       }
       if (buffered >= OUTBOUND_QUEUE_LIMITS.HIGH_WATERMARK_BUFFERED_BYTES) {
+        const now = Date.now();
+        state.backpressureStartedAt ??= now;
+        if (
+          now - state.backpressureStartedAt >=
+          OUTBOUND_QUEUE_LIMITS.MAX_BACKPRESSURE_MS
+        ) {
+          terminateStalledTransport(
+            transport,
+            state,
+            "socket buffer stayed above the high watermark",
+          );
+          return;
+        }
         scheduleDrainPoll(transport, state);
         return;
       }
+      state.backpressureStartedAt = null;
 
       const frame = state.frames.shift();
       if (!frame) return;
@@ -193,6 +261,7 @@ function drainOutboundQueue(
         built = frame.build();
       } catch (error) {
         frame.onSendError?.(error);
+        frame.onDropped?.();
         terminateStalledTransport(transport, state, "frame build failed");
         return;
       }
@@ -203,6 +272,7 @@ function drainOutboundQueue(
         transport.send(built.payload);
       } catch (error) {
         frame.onSendError?.(error);
+        frame.onDropped?.();
         terminateStalledTransport(transport, state, "socket write failed");
         return;
       }
@@ -231,10 +301,12 @@ function drainOutboundQueue(
         state.frames.length > 0 &&
         bufferedAfter >= OUTBOUND_QUEUE_LIMITS.HIGH_WATERMARK_BUFFERED_BYTES
       ) {
+        state.backpressureStartedAt ??= Date.now();
         scheduleDrainPoll(transport, state);
         return;
       }
     }
+    state.backpressureStartedAt = null;
   } finally {
     state.draining = false;
   }
@@ -250,6 +322,22 @@ export function getOutboundQueueStats(transport: ListenerTransport): {
     queuedFrames: state?.frames.length ?? 0,
     killed: state?.killed ?? false,
   };
+}
+
+/** Settle every queued frame when its owning connection closes. */
+export function closeOutboundTransportQueue(
+  transport: ListenerTransport,
+): void {
+  const state = queueByTransport.get(transport);
+  if (!state) return;
+  if (state.pollTimer) {
+    clearTimeout(state.pollTimer);
+    state.pollTimer = null;
+  }
+  for (const frame of state.frames.splice(0)) frame.onDropped?.();
+  // Keep terminal diagnostics for a transport that this queue killed. Normal
+  // connection closes can forget the queue because the writer is discarded.
+  if (!state.killed) queueByTransport.delete(transport);
 }
 
 // ----- Wire perf telemetry (moved from protocol-outbound.ts) -----

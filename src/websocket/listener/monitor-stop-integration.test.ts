@@ -5,6 +5,11 @@ import {
   clearBackgroundProcessCleanup,
 } from "@/tools/impl/process_manager";
 import { clearPendingMessages } from "@/utils/message-queue-bridge";
+import {
+  markListenerConnectionInitialized,
+  openListenerConnection,
+  subscribeListenerConnection,
+} from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { enqueueInboundUserMessage } from "./inbound-queue";
 import { createRuntime } from "./lifecycle";
@@ -50,6 +55,17 @@ for (const busy of [false, true])
       onDisconnected() {},
       onError() {},
     };
+    const connection = openListenerConnection({
+      runtime: listener,
+      connectionId: opts.connectionId,
+      writer: socket,
+      options: opts,
+    });
+    markListenerConnectionInitialized(listener, opts.connectionId, connection);
+    subscribeListenerConnection(listener, opts.connectionId, {
+      agent_id: "agent-a",
+      conversation_id: "default",
+    });
     const delivered: IncomingMessage[] = [];
     let onDelivered!: () => void;
     const deliveredPromise = new Promise<void>((resolve) => {

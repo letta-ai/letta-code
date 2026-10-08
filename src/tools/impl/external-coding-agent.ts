@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
+import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
 import type { SubagentConfig, SubagentResult } from "@/agent/subagents";
 import { getCurrentSubagentDepth } from "@/agent/subagents/subagent-depth";
 import {
@@ -13,14 +14,20 @@ import {
   type McpServersReminderDependencies,
 } from "@/reminders/engine";
 import { createSharedReminderState } from "@/reminders/state";
-import { getCurrentWorkingDirectory } from "@/runtime-context";
+import {
+  getCurrentWorkingDirectory,
+  getRuntimeActingUserAttribution,
+  getRuntimeContext,
+} from "@/runtime-context";
 import { SUBAGENT_DEPTH_ENV } from "@/utils/subagent-depth-env";
 import { runClaudeTurn } from "./claude-stream-session";
 import { runCodexTurn } from "./codex-app-server";
 import {
   captureNativeSession,
+  type NativeSessionCaptureReservation,
   rememberNativeSession,
   reportNativeSessionCaptureFailure,
+  reserveNativeSessionCapture,
 } from "./native-session-capture";
 
 export const EXTERNAL_CODING_AGENT_TYPES = ["claude-code", "codex"] as const;
@@ -43,7 +50,7 @@ export interface ExternalCodingAgentRunOptions {
   model?: string;
   parentAgentId: string;
   parentConversationId?: string;
-  actingUserId?: string;
+  actingUserId?: string | null;
   resumeSessionId?: string;
   cwd?: string;
   mcpReminder?: string;
@@ -380,7 +387,7 @@ export async function runExternalCodingAgent(
   deps: ExternalCodingAgentDependencies = {},
 ): Promise<SubagentResult> {
   const startedAt = Date.now();
-  const env = {
+  const env: NodeJS.ProcessEnv = {
     ...(deps.env ?? process.env),
     AGENT_ID: options.parentAgentId,
     LETTA_AGENT_ID: options.parentAgentId,
@@ -389,21 +396,54 @@ export async function runExternalCodingAgent(
     // A Letta CLI launched from the worker's shell stays inside the depth bound.
     [SUBAGENT_DEPTH_ENV]: String(getCurrentSubagentDepth() + 1),
   };
+  if (typeof options.actingUserId === "string") {
+    env[ACTING_USER_ID_ENV] = options.actingUserId;
+  } else if (
+    options.actingUserId === null ||
+    getRuntimeContext()?.suppressActingUserFallback
+  ) {
+    delete env[ACTING_USER_ID_ENV];
+  }
   const cwd = options.cwd ?? getCurrentWorkingDirectory();
+  const captureActingUserId =
+    options.actingUserId !== undefined
+      ? options.actingUserId
+      : getRuntimeActingUserAttribution();
   const scope = options.parentConversationId
     ? {
         agentId: options.parentAgentId,
         conversationId: options.parentConversationId,
-        actingUserId: options.actingUserId,
+        actingUserId: captureActingUserId,
       }
     : undefined;
   const source = options.type === "claude-code" ? "claude_code" : "codex";
-  const capture = (result: SubagentResult): SubagentResult => {
-    const sessionId = result.runtimeSessionId ?? options.resumeSessionId;
+  let captureReservation: Promise<NativeSessionCaptureReservation> | undefined;
+  let captureSessionId = options.resumeSessionId;
+  const reserveCapture = (sessionId: string) => {
+    captureSessionId = sessionId;
+    captureReservation ??= reserveNativeSessionCapture(
+      source,
+      sessionId,
+      scope as NonNullable<typeof scope>,
+      env,
+    );
+    return captureReservation;
+  };
+  const capture = async (result: SubagentResult): Promise<SubagentResult> => {
+    const sessionId = result.runtimeSessionId ?? captureSessionId;
     if (scope && sessionId) {
-      void captureNativeSession(source, sessionId, scope, env).catch((error) =>
-        reportNativeSessionCaptureFailure(source, sessionId, error),
-      );
+      try {
+        const reservation = captureReservation
+          ? await captureReservation
+          : undefined;
+        if (reservation) {
+          await reservation.capture();
+        } else {
+          await captureNativeSession(source, sessionId, scope, env);
+        }
+      } catch (error) {
+        reportNativeSessionCaptureFailure(source, sessionId, error);
+      }
     }
     return result;
   };
@@ -428,6 +468,9 @@ export async function runExternalCodingAgent(
         options.signal,
       );
       assertPreflightReady("codex", preflight);
+      if (scope && options.resumeSessionId) {
+        await reserveCapture(options.resumeSessionId);
+      }
       // The managed sandbox wrapper authenticates model requests with its
       // sandbox key, not native `codex login`. A real app-server turn is the
       // authority on whether the configured provider can answer.
@@ -441,9 +484,15 @@ export async function runExternalCodingAgent(
             mcpReminder: options.mcpReminder,
             signal: options.signal,
             resumeThreadId: options.resumeSessionId,
+            beforeStart: async (threadId) => {
+              if (scope && !captureReservation) {
+                if (!options.resumeSessionId) {
+                  rememberNativeSession("codex", threadId, scope);
+                }
+                await reserveCapture(threadId);
+              }
+            },
             onStarted: (threadId) => {
-              if (scope && !options.resumeSessionId)
-                rememberNativeSession("codex", threadId, scope);
               options.onStarted?.(
                 formatExternalCodingAgentId("codex", threadId),
               );
@@ -475,6 +524,7 @@ export async function runExternalCodingAgent(
       const sessionId = options.resumeSessionId ?? randomUUID();
       if (scope && !options.resumeSessionId)
         rememberNativeSession("claude_code", sessionId, scope);
+      if (scope) await reserveCapture(sessionId);
       options.onStarted?.(
         formatExternalCodingAgentId("claude-code", sessionId),
       );

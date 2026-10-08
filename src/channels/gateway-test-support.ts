@@ -36,7 +36,9 @@ export interface FakeClientOptions {
 }
 
 export class FakeClient implements ChannelGatewayClient {
-  private messageListeners: Array<(message: WsProtocolMessage) => void> = [];
+  private messageListeners: Array<
+    (message: WsProtocolMessage) => Promise<void> | void
+  > = [];
   private externalToolListeners: Array<
     (request: ExternalToolCallRequestMessage) => unknown
   > = [];
@@ -64,7 +66,9 @@ export class FakeClient implements ChannelGatewayClient {
     };
   }
 
-  onMessage(listener: (message: WsProtocolMessage) => void): () => void {
+  onMessage(
+    listener: (message: WsProtocolMessage) => Promise<void> | void,
+  ): () => void {
     this.messageListeners.push(listener);
     return () => {
       const idx = this.messageListeners.indexOf(listener);

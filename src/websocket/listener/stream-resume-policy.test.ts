@@ -138,6 +138,41 @@ afterEach(() => {
 });
 
 describe("listener stream resume policy", () => {
+  test("lost recovery authority records the run but emits no stale stream state", async () => {
+    const transport = new MockTransport();
+    const runtime = createTestRuntime(transport);
+    const turnLease = runtime.turnLifecycle.begin({
+      origin: "approval_recovery",
+      workingDirectory: process.cwd(),
+    });
+    const msgRunIds: string[] = [];
+    try {
+      await drainTurnStreamWithEmission(
+        stream([ping("run-stale", 1), stop("run-stale", 2, "end_turn")]),
+        createBuffers("agent-1"),
+        transport,
+        runtime,
+        {
+          agentId: "agent-1",
+          conversationId: "conversation-1",
+          turnLease,
+          turnCorrelation: {
+            clientMessageIds: [],
+            appendDequeuedBatch: () => {},
+            observeRun: () => {},
+          },
+          msgRunIds,
+          runId: undefined,
+          authorityGuard: () => false,
+        },
+      );
+      expect(msgRunIds).toEqual(["run-stale"]);
+      expect(transport.sent).toEqual([]);
+    } finally {
+      runtime.turnLifecycle.finish(turnLease, "cancelled");
+    }
+  });
+
   test("waits about five minutes across resume attempts", () => {
     // A cloud-api rolling restart takes minutes, and after reconnecting the
     // server waits 90 s of producer silence before reporting loss. One

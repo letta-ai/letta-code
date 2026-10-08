@@ -65,15 +65,26 @@ export function validateMemoryConstraintsHead(
     });
     const layoutPolicy = memoryLayoutPolicy(memoryDir);
     writeFileSync(validatorPath, MEMORY_CONSTRAINTS_VALIDATOR_SCRIPT, "utf8");
+    // Run the validator with this process's own runtime, like the pre-commit
+    // hook does. Desktop installs ship no system `node`, so a PATH lookup fails
+    // and every audit would report invalid memory.
     const result = spawnSync(
-      "node",
+      process.execPath,
       [validatorPath, "--layout", layoutPolicy, "--audit"],
       {
         cwd: memoryDir,
         encoding: "utf8",
-        env,
+        env: process.versions.electron
+          ? { ...env, ELECTRON_RUN_AS_NODE: "1" }
+          : env,
       },
     );
+    if (result.error) {
+      return {
+        valid: false,
+        output: `Could not run the memory validator: ${result.error.message}`,
+      };
+    }
     return {
       valid: result.status === 0,
       output: `${result.stdout ?? ""}${result.stderr ?? ""}`.trim(),

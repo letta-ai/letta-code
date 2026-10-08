@@ -25,6 +25,7 @@ import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import { debugWarn, isDebugEnabled } from "@/utils/debug";
 import { detectShellContext } from "@/utils/shell-context";
 import { publishChannelRuntimeToolsForTurn } from "./channel-runtime-tools";
+import { resolveTurnExecutionConnectionId } from "./connection";
 import { getInboundImageFailureModes } from "./image-policy";
 import { consumeInterruptQueue } from "./interrupts";
 import {
@@ -129,7 +130,12 @@ export async function prepareListenerTurn(params: {
       conversationId,
     });
   }
-  trackListenerUserInput(msg.messages, "unknown", msg.actingUserId);
+  trackListenerUserInput(
+    msg.messages,
+    "unknown",
+    msg.actingUserId,
+    msg.suppressActingUserFallback,
+  );
 
   const messagesToSend: Array<MessageCreate | ApprovalCreate> = [];
   let queuedInterruptedToolCallIds: string[] = [];
@@ -137,9 +143,7 @@ export async function prepareListenerTurn(params: {
     agent_id: agentId,
     conversation_id: conversationId,
   });
-  const consumed = agentId
-    ? consumeInterruptQueue(runtime, agentId, conversationId)
-    : null;
+  const consumed = consumeInterruptQueue(runtime, agentId, conversationId);
   if (consumed) {
     messagesToSend.push(consumed.approvalMessage);
     queuedInterruptedToolCallIds = consumed.interruptedToolCallIds;
@@ -308,18 +312,24 @@ export async function prepareListenerTurn(params: {
   if (isInterrupted()) {
     return { kind: "interrupted" };
   }
-  const listenerOptions = connectionId
-    ? runtime.listener.connections.get(connectionId)?.options
+  const executionConnectionId = resolveTurnExecutionConnectionId(
+    runtime.listener,
+    { agent_id: agentId, conversation_id: conversationId },
+    connectionId,
+  );
+  const listenerOptions = executionConnectionId
+    ? runtime.listener.connections.get(executionConnectionId)?.options
     : runtime.listener.connections.values().next().value?.options;
   const environmentDeviceId = listenerOptions?.deviceId;
   if (msg.clientPreferences !== undefined)
     replaceClientPreferences(agentId, conversationId, msg.clientPreferences);
   const preparedToolContext = await prepareToolExecutionContextForScope({
-    connectionId,
+    connectionId: executionConnectionId,
     environmentDeviceId,
     agentId,
     conversationId,
     actingUserId: msg.actingUserId,
+    suppressActingUserFallback: msg.suppressActingUserFallback,
     clientToolset: msg.clientToolset,
     clientToolAllowlist: msg.clientToolAllowlist,
     // Honor explicit client exclusions; headless execution does not block questions.

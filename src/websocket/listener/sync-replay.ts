@@ -75,7 +75,15 @@ export async function replaySyncStateForRuntime(
     syncScopedRuntime.recoveredApprovalState &&
     (syncScopedRuntime.recoveredApprovalState.autoDecisions?.length ?? 0) > 0
   ) {
-    void startRecoveredApprovalContinuation(
+    let signalLeaseReady!: () => void;
+    let releaseLeaseBarrier!: () => void;
+    const leaseReady = new Promise<void>((resolve) => {
+      signalLeaseReady = resolve;
+    });
+    const leaseBarrier = new Promise<void>((resolve) => {
+      releaseLeaseBarrier = resolve;
+    });
+    const recovery = startRecoveredApprovalContinuation(
       syncScopedRuntime,
       getOrCreateProcessTransport(listenerRuntime),
       opts?.processIncomingMessage ?? handleIncomingMessage,
@@ -83,8 +91,13 @@ export async function replaySyncStateForRuntime(
         onStatusChange: opts?.onStatusChange,
         connectionId: opts?.connectionId,
         dependencies: opts?.recoveredContinuationDependencies,
+        onLeaseAcquired: () => {
+          signalLeaseReady();
+          return leaseBarrier;
+        },
       },
-    ).catch((error) => {
+    );
+    void recovery.catch((error) => {
       trackBoundaryError({
         errorType: "listener_startup_approval_recovery_failed",
         error,
@@ -94,6 +107,24 @@ export async function replaySyncStateForRuntime(
         console.error("[Listen] startup approval recovery failed:", error);
       }
     });
+    void recovery.finally(signalLeaseReady).catch(() => {});
+    await leaseReady;
+    try {
+      await replaySubscribedConnectionState(
+        listenerRuntime,
+        socket,
+        syncScopedRuntime,
+        scope,
+        opts,
+      );
+    } finally {
+      releaseLeaseBarrier();
+    }
+    (opts?.scheduleWarmupsAfterSync ?? scheduleListenerWarmupsAfterSync)(
+      listenerRuntime,
+      scope,
+    );
+    return;
   }
 
   await replaySubscribedConnectionState(

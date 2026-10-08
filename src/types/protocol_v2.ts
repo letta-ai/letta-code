@@ -1,9 +1,7 @@
 /**
  * Protocol V2 (alpha hard-cut contract)
- *
  * This file defines the runtime-scoped websocket contract for device-mode UIs.
- * It is intentionally self-defined and does not import transport/event shapes
- * from the legacy protocol.ts surface.
+ * It is self-defined rather than importing legacy transport/event shapes.
  */
 
 import type {
@@ -31,6 +29,7 @@ import type {
 } from "@letta-ai/letta-client/resources/conversations/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import type { ConnectProviderOAuthConfig } from "@/types/provider-oauth-config";
+import type { TurnFinishedAckCommand } from "@/types/turn-finished-protocol";
 import type {
   AppServerInfoCommand,
   AppServerInfoResponseMessage,
@@ -199,8 +198,6 @@ export interface ReflectionSettingsSnapshot {
 export type ChannelId = string;
 
 export type ChannelPluginConfig = Record<string, unknown>;
-
-// ── Channel config schema (declarative plugin UI) ──
 
 export interface ChannelConfigFieldBase {
   key: string;
@@ -533,6 +530,7 @@ export interface TurnFinishedMessage extends RuntimeEnvelope {
   type: "turn_finished";
   turn_id: string;
   stop_reason: StopReasonType;
+  terminal_consumer_ids?: string[];
   run_id?: string;
   error?: string;
   /** Final CLI counters, independent of control/stream socket delivery order. */
@@ -644,6 +642,7 @@ export interface InputCommand {
   type: "input";
   /** Correlates acknowledgement without waiting for the turn to finish. */
   request_id?: string;
+  terminal_consumer_id?: string;
   runtime: ConversationRuntimeScope;
   payload: InputPayload;
 }
@@ -2339,6 +2338,7 @@ export interface SecretApplyResponse {
 }
 
 export type WsProtocolCommand =
+  | TurnFinishedAckCommand
   | InputCommand
   | ChangeDeviceStateCommand
   | AbortMessageCommand

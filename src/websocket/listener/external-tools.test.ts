@@ -131,7 +131,7 @@ describe("listener runtime_start external tool bridge", () => {
     );
     expect(cancellationGuard?.isCurrent()).toBe(true);
 
-    runtime.turnLifecycle.requestCancellation();
+    runtime.turnLifecycle.requestCancellation({ cause: "explicit_user" });
     expect(cancellationGuard?.isCurrent()).toBe(true);
 
     clearConversationRuntimeState(runtime);

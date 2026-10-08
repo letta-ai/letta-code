@@ -37,7 +37,9 @@ describe("TurnLifecycle", () => {
     lifecycle.setRunId(lease, "run-1");
     lifecycle.setExecutingToolCallIds(lease, ["tool-1"]);
 
-    const cancellation = lifecycle.requestCancellation();
+    const cancellation = lifecycle.requestCancellation({
+      cause: "explicit_user",
+    });
 
     expect(cancellation).toMatchObject({
       transitioned: true,
@@ -57,10 +59,59 @@ describe("TurnLifecycle", () => {
       finished: true,
       previousKind: "cancelling",
       runId: "run-1",
+      interruptionCause: "explicit_user",
     });
     expect(lifecycle.kind).toBe("idle");
     expect(lifecycle.cancelRequested).toBe(false);
     expect(lifecycle.lastStopReason).toBe("cancelled");
+  });
+
+  test("explicit user cancellation overrides transport interruption", () => {
+    const lifecycle = new TurnLifecycle(() => "lease-1");
+    const lease = lifecycle.begin({
+      origin: "message",
+      workingDirectory: "/tmp/worktree",
+    });
+
+    expect(lifecycle.markTransportInterruption(lease)).toBe(true);
+    expect(
+      lifecycle.requestCancellation({ cause: "explicit_user" })
+        .interruptionCause,
+    ).toBe("explicit_user");
+    expect(lifecycle.finish(lease, "cancelled").interruptionCause).toBe(
+      "explicit_user",
+    );
+  });
+
+  test("explicit abort upgrades a transport cancellation with an external fence", () => {
+    const lifecycle = new TurnLifecycle(() => "lease-1");
+    const lease = lifecycle.begin({
+      origin: "message",
+      workingDirectory: "/tmp/worktree",
+    });
+    lifecycle.setRunId(lease, "run-1");
+
+    lifecycle.requestCancellation({ cause: "transport" });
+    expect(
+      lifecycle.requestCancellation({
+        cause: "explicit_user",
+        waitForExternalSettlement: true,
+      }),
+    ).toMatchObject({
+      transitioned: false,
+      lease,
+      runId: "run-1",
+      interruptionCause: "explicit_user",
+    });
+    expect(lifecycle.finish(lease, "cancelled").interruptionCause).toBe(
+      "explicit_user",
+    );
+    expect(lifecycle.kind).toBe("cancelling");
+    expect(lifecycle.settleCancellation(lease)).toEqual({
+      settled: true,
+      released: true,
+    });
+    expect(lifecycle.kind).toBe("idle");
   });
 
   test("cancellation waits for both its owner and external cleanup", () => {
@@ -70,11 +121,15 @@ describe("TurnLifecycle", () => {
       workingDirectory: "/tmp/worktree",
     });
 
-    lifecycle.requestCancellation({ waitForExternalSettlement: true });
+    lifecycle.requestCancellation({
+      cause: "explicit_user",
+      waitForExternalSettlement: true,
+    });
     expect(lifecycle.finish(lease, "cancelled")).toEqual({
       finished: true,
       previousKind: "cancelling",
       runId: null,
+      interruptionCause: "explicit_user",
     });
     expect(lifecycle.kind).toBe("cancelling");
     expect(lifecycle.isCurrent(lease)).toBe(false);
@@ -99,7 +154,10 @@ describe("TurnLifecycle", () => {
       workingDirectory: "/tmp/worktree",
     });
 
-    lifecycle.requestCancellation({ waitForExternalSettlement: true });
+    lifecycle.requestCancellation({
+      cause: "explicit_user",
+      waitForExternalSettlement: true,
+    });
     expect(lifecycle.settleCancellation(lease)).toEqual({
       settled: true,
       released: false,

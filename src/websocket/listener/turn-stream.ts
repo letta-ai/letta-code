@@ -9,7 +9,10 @@ import { isCloudApiDeploymentInterrupted } from "@/utils/cloud-api-shutdown";
 import { debugLog } from "@/utils/debug";
 import { normalizeCloudRetryWireMessage } from "./cloud-retry-message";
 import { LISTENER_STREAM_RESUME_POLICY } from "./constants";
-import { recordListenerWork } from "./interrupted-turn-record";
+import {
+  recordListenerWork,
+  recordListenerWorkRetriably,
+} from "./interrupted-turn-record";
 import { normalizeToolReturnWireMessage } from "./interrupts";
 import {
   emitCanonicalMessageDelta,
@@ -17,10 +20,11 @@ import {
 } from "./protocol-outbound";
 import { emitLoopErrorNotice } from "./recoverable-notices";
 import { getApprovalToolCallDesyncErrorText } from "./recovery";
+import type { RecoveryEvidenceWriter } from "./recovery-evidence";
 import type { ListenerTransport } from "./transport";
 import type { TurnCorrelation } from "./turn-correlation";
 import type { TurnLease } from "./turn-lifecycle";
-import type { ConversationRuntime } from "./types";
+import type { ConversationRuntime, InputIdentity } from "./types";
 
 export type TurnStreamDrainParams = {
   agentId: string | null;
@@ -31,6 +35,12 @@ export type TurnStreamDrainParams = {
   msgRunIds: string[];
   /** Last run ID observed by the turn before this stream started, if any. */
   runId: string | undefined;
+  durableInputIdentities?: readonly InputIdentity[];
+  terminalConsumerIds?: readonly string[];
+  authorityGuard?: () => boolean;
+  interruptedRevisionRef?: { current: string | undefined };
+  recoveryLineageId?: string;
+  recoveryEvidenceWriter?: RecoveryEvidenceWriter;
 };
 
 export type TurnStreamDrainResult = {
@@ -66,30 +76,88 @@ export async function drainTurnStreamWithEmission(
     () => {},
     turnAbortSignal,
     undefined,
-    ({ chunk, shouldOutput, errorInfo }) => {
+    async ({ chunk, shouldOutput, errorInfo }) => {
       if (turnAbortSignal.aborted) {
         return undefined;
       }
       const maybeRunId = (chunk as { run_id?: unknown }).run_id;
+      const hasAuthority = () => params.authorityGuard?.() !== false;
       if (typeof maybeRunId === "string") {
         runId = maybeRunId;
         runtime.turnLifecycle.setRunId(turnLease, maybeRunId);
         turnCorrelation.observeRun(maybeRunId);
         if (!runIdSent) {
-          recordListenerWork(
-            runtime,
-            {
-              runId: maybeRunId,
-              actingUserId: getStreamRequestContext(stream)?.actingUserId,
-            },
-            "run_observed",
-          );
+          const update = {
+            runId: maybeRunId,
+            actingUserId: getStreamRequestContext(stream)?.actingUserId,
+            durableInputIdentities: params.durableInputIdentities
+              ? [...params.durableInputIdentities]
+              : undefined,
+            terminalConsumerIds: params.terminalConsumerIds
+              ? [...params.terminalConsumerIds]
+              : undefined,
+          };
+          const expectedRevision = params.interruptedRevisionRef?.current;
+          if (params.recoveryEvidenceWriter) {
+            const revision = await params.recoveryEvidenceWriter(
+              runtime,
+              update,
+              "run_observed",
+              expectedRevision,
+              params.recoveryLineageId,
+            );
+            if (typeof revision === "string" && params.interruptedRevisionRef) {
+              params.interruptedRevisionRef.current = revision;
+            }
+          } else {
+            try {
+              const revision = recordListenerWork(
+                runtime,
+                update,
+                "run_observed",
+                expectedRevision,
+                params.recoveryLineageId,
+              );
+              if (revision && params.interruptedRevisionRef) {
+                params.interruptedRevisionRef.current = revision;
+              }
+            } catch (error) {
+              if (
+                !(error instanceof Error) ||
+                (error.message !==
+                  "Timed out acquiring durable filesystem lock" &&
+                  error.message !== "Interrupted-turn revision changed" &&
+                  error.message !== "Recovery lineage revision changed" &&
+                  error.message !==
+                    "Interrupted-turn revision cannot recreate a record")
+              ) {
+                throw error;
+              }
+              const revision = await recordListenerWorkRetriably(
+                runtime,
+                update,
+                "run_observed",
+                expectedRevision,
+                params.recoveryLineageId,
+                {
+                  shouldContinue: () =>
+                    runtime.turnLifecycle.isCurrent(turnLease) &&
+                    hasAuthority(),
+                },
+              );
+              if (revision && params.interruptedRevisionRef) {
+                params.interruptedRevisionRef.current = revision;
+              }
+            }
+          }
           runIdSent = true;
           msgRunIds.push(maybeRunId);
-          emitLoopStatusUpdate(socket, runtime, {
-            agent_id: agentId,
-            conversation_id: conversationId,
-          });
+          if (hasAuthority()) {
+            emitLoopStatusUpdate(socket, runtime, {
+              agent_id: agentId,
+              conversation_id: conversationId,
+            });
+          }
         }
       }
       if (errorInfo) {
@@ -97,7 +165,11 @@ export async function drainTurnStreamWithEmission(
           getApprovalToolCallDesyncErrorText(errorInfo);
         const deploymentInterrupted =
           isCloudApiDeploymentInterrupted(errorInfo);
-        if (!recoverableApprovalErrorText && !deploymentInterrupted) {
+        if (
+          hasAuthority() &&
+          !recoverableApprovalErrorText &&
+          !deploymentInterrupted
+        ) {
           emitLoopErrorNotice(socket, runtime, {
             message: errorInfo.message || "Stream error",
             stopReason: normalizeStreamErrorTypeToStopReason(
@@ -122,7 +194,7 @@ export async function drainTurnStreamWithEmission(
           return { shouldOutput: false, shouldAccumulate: false };
         }
       }
-      if (shouldOutput) {
+      if (shouldOutput && hasAuthority()) {
         const normalizedChunk =
           normalizeCloudRetryWireMessage(chunk) ??
           normalizeToolReturnWireMessage(

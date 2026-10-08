@@ -28,6 +28,13 @@ export type JournalEntry =
       outcome: SubagentOutcome;
     }
   | {
+      kind: "mcp_call";
+      toolName: string;
+      isError: boolean;
+      durationMs: number;
+      error?: string;
+    }
+  | {
       kind: "decision";
       model: string;
       cost?: number;

@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import type {
   OAuthClientProvider,
   OAuthDiscoveryState,
@@ -18,6 +18,11 @@ import {
   SafeUrlSchema,
 } from "@modelcontextprotocol/sdk/shared/auth.js";
 import { callbackPort, startOAuthCallbackServer } from "@/mcp-oauth-callback";
+import {
+  hasMatchingRedirectUri,
+  legacyMcpOAuthCredentialKeys,
+  mcpOAuthCredentialKey,
+} from "@/mcp-oauth-identity";
 import {
   deleteSecretValue,
   getSecretValue,
@@ -123,7 +128,15 @@ export async function clearMcpOAuthCredentials(
     credentialKey,
     coordinationKey,
   );
-  return result === true;
+  let cleared = result === true;
+  for (const legacyKey of legacyMcpOAuthCredentialKeys(
+    agentId,
+    serverName,
+    serverUrl,
+  )) {
+    if ((await bunSecretStorage.delete(legacyKey)) === true) cleared = true;
+  }
+  return cleared;
 }
 
 export async function createMcpOAuthSession(
@@ -132,7 +145,12 @@ export async function createMcpOAuthSession(
   serverUrl: string,
   options: McpOAuthSessionOptions,
 ): Promise<McpOAuthSession | undefined> {
-  const credentialKey = mcpOAuthCredentialKey(agentId, serverName, serverUrl);
+  const credentialKey = await migrateLegacyMcpOAuthCredentials(
+    bunSecretStorage,
+    agentId,
+    serverName,
+    serverUrl,
+  );
   return createMcpOAuthSessionWithStorage({
     credentialKey,
     storageNamespace: "bun-secrets",
@@ -311,7 +329,7 @@ class PersistentMcpOAuthProvider implements OAuthClientProvider {
     return client &&
       "redirect_uris" in client &&
       Array.isArray(client.redirect_uris) &&
-      client.redirect_uris.includes(this.redirectUrl)
+      hasMatchingRedirectUri(client.redirect_uris, this.redirectUrl)
       ? client
       : undefined;
   }
@@ -649,7 +667,7 @@ function exportCredentialSnapshot(
   const validClient =
     clientInformation &&
     "redirect_uris" in clientInformation &&
-    clientInformation.redirect_uris.includes(state.redirectUrl)
+    hasMatchingRedirectUri(clientInformation.redirect_uris, state.redirectUrl)
       ? clientInformation
       : undefined;
   if (!validClient?.client_id || !tokens?.access_token) {
@@ -825,16 +843,30 @@ async function openSystemBrowser(url: string): Promise<void> {
   }
 }
 
-export function mcpOAuthCredentialKey(
+/**
+ * Moves credentials stored under a pre-normalization key to the current key
+ * and returns the current key.
+ */
+export async function migrateLegacyMcpOAuthCredentials(
+  storage: McpOAuthStorage,
   agentId: string,
   serverName: string,
   serverUrl: string,
-): string {
-  const digest = createHash("sha256")
-    .update(`${agentId}\0${serverName}\0${serverUrl}`)
-    .digest("hex")
-    .slice(0, 32);
-  return `mcp-oauth-${digest}`;
+): Promise<string> {
+  const credentialKey = mcpOAuthCredentialKey(agentId, serverName, serverUrl);
+  if (await storage.get(credentialKey)) return credentialKey;
+  for (const legacyKey of legacyMcpOAuthCredentialKeys(
+    agentId,
+    serverName,
+    serverUrl,
+  )) {
+    const value = await storage.get(legacyKey);
+    if (!value) continue;
+    await storage.set(credentialKey, value);
+    await storage.delete(legacyKey);
+    break;
+  }
+  return credentialKey;
 }
 
 async function loadState(

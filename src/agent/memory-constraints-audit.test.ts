@@ -1,8 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { validateMemoryConstraintsHead } from "./memory-constraints-audit";
 
 describe("committed MemFS constraints audit", () => {
@@ -89,6 +95,40 @@ describe("committed MemFS constraints audit", () => {
     expect(result.output).toContain(
       "MEMORY.md: root memory index is required for MemFS v2",
     );
+  });
+
+  test("validates without a node binary on PATH", () => {
+    repo = mkdtempSync(join(tmpdir(), "memfs-no-node-audit-"));
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "Test Agent"], { cwd: repo });
+    execFileSync("git", ["config", "user.email", "test@example.com"], {
+      cwd: repo,
+    });
+    writeFileSync(join(repo, "MEMORY.md"), "# Memory\n");
+    writeFileSync(
+      join(repo, "persona.md"),
+      "---\nname: Persona\ndescription: Identity\n---\nCommitted.\n",
+    );
+    execFileSync("git", ["add", "."], { cwd: repo });
+    execFileSync("git", ["commit", "-qm", "valid memory"], { cwd: repo });
+
+    // Desktop installs have git but no system node. Keep PATH entries that
+    // provide git and drop every directory that provides node.
+    const nodeName = process.platform === "win32" ? "node.exe" : "node";
+    const pathWithoutNode = (process.env.PATH ?? "")
+      .split(delimiter)
+      .filter((dir) => dir && !existsSync(join(dir, nodeName)))
+      .join(delimiter);
+    const originalPath = process.env.PATH;
+    process.env.PATH = pathWithoutNode;
+    try {
+      expect(validateMemoryConstraintsHead(repo)).toEqual({
+        valid: true,
+        output: "",
+      });
+    } finally {
+      process.env.PATH = originalPath;
+    }
   });
 
   test("keeps legacy validation before a repository enters v2", () => {

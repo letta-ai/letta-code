@@ -62,7 +62,6 @@ import {
 import {
   createRuntime,
   runDetachedListenerTask,
-  safeSocketSend,
   startConnectedListenerRuntime,
   stopRuntime,
 } from "./lifecycle";
@@ -93,6 +92,7 @@ import {
   markAwaitingAcceptedApprovalContinuationRunId,
   resolveStaleApprovals,
 } from "./send";
+import { safeSocketSend } from "./socket-send";
 import { replaySyncStateForRuntime } from "./sync-replay";
 import { handleIncomingMessage } from "./turn";
 import type {
@@ -151,6 +151,9 @@ function createLegacyTestRuntime(): ConversationRuntime & {
   hasSuccessfulConnection: boolean;
   everConnected: boolean;
   conversationRuntimes: ListenerRuntime["conversationRuntimes"];
+  acceptedInputDispositionLedger: ListenerRuntime["acceptedInputDispositionLedger"];
+  pendingStartupFramesByLineage: ListenerRuntime["pendingStartupFramesByLineage"];
+  startupGenerationByLineage: ListenerRuntime["startupGenerationByLineage"];
   memfsSyncedAgents: ListenerRuntime["memfsSyncedAgents"];
   secretsHydrationByAgent: ListenerRuntime["secretsHydrationByAgent"];
   secretsHydrationFreshnessByAgent: ListenerRuntime["secretsHydrationFreshnessByAgent"];
@@ -205,6 +208,9 @@ function createLegacyTestRuntime(): ConversationRuntime & {
     hasSuccessfulConnection: boolean;
     everConnected: boolean;
     conversationRuntimes: ListenerRuntime["conversationRuntimes"];
+    acceptedInputDispositionLedger: ListenerRuntime["acceptedInputDispositionLedger"];
+    pendingStartupFramesByLineage: ListenerRuntime["pendingStartupFramesByLineage"];
+    startupGenerationByLineage: ListenerRuntime["startupGenerationByLineage"];
     memfsSyncedAgents: ListenerRuntime["memfsSyncedAgents"];
     secretsHydrationByAgent: ListenerRuntime["secretsHydrationByAgent"];
     secretsHydrationFreshnessByAgent: ListenerRuntime["secretsHydrationFreshnessByAgent"];

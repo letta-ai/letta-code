@@ -339,3 +339,29 @@ describe("fork launch receipt", () => {
     2000,
   );
 });
+
+describe("nested Agent launch", () => {
+  test("a subagent's Agent call returns a background receipt without waiting for the child", async () => {
+    const originalDepth = process.env.LETTA_SUBAGENT_DEPTH;
+    process.env.LETTA_SUBAGENT_DEPTH = "1";
+    try {
+      // The stubbed child never exits, so a blocking call would time out.
+      const receipt = await runWithRuntimeContext(
+        { workingDirectory: testHome },
+        () =>
+          task({
+            subagent_type: "fork",
+            prompt: "Nested work",
+            description: "Nested background launch",
+          }),
+      );
+      expect(receipt).toContain("Task running in background with task ID:");
+      expect(receipt).toContain("<task-notification>");
+      expect(spawnProcess).toHaveBeenCalledTimes(1);
+      expect([...backgroundTasks.values()][0]?.status).toBe("running");
+    } finally {
+      if (originalDepth === undefined) delete process.env.LETTA_SUBAGENT_DEPTH;
+      else process.env.LETTA_SUBAGENT_DEPTH = originalDepth;
+    }
+  }, 2000);
+});

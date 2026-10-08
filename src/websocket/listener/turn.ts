@@ -46,8 +46,12 @@ import {
   getApprovalToolCallDesyncErrorText,
   shouldAttemptPostStopApprovalRecovery,
 } from "./recovery";
+import type {
+  RecoveryAuthorityStore,
+  RecoveryEvidenceWriter,
+} from "./recovery-evidence";
 import {
-  clearRecoveredApprovalStateForScope,
+  clearRecoveredApprovalStateUnlessRetained,
   evictConversationRuntimeIfIdle,
 } from "./runtime";
 import { normalizeCwdAgentId } from "./scope";
@@ -65,6 +69,11 @@ import {
   type TurnCorrelation,
 } from "./turn-correlation";
 import {
+  checkpointTurnInputOwnership,
+  createTurnDurabilityOwnership,
+} from "./turn-durability-ownership";
+import { createTurnFinalizer } from "./turn-finalizer";
+import {
   createDeploymentRecoveryTurnInput,
   rebuildTurnInputWithFreshDenials,
   refreshTurnInputOtidsForNewRequest,
@@ -80,53 +89,36 @@ import {
 import { prepareListenerTurn } from "./turn-setup";
 import { setTurnLoopStatus } from "./turn-status";
 import { drainTurnStreamWithEmission } from "./turn-stream";
-import { buildTurnUsage, finishListenerTurn } from "./turn-terminal";
 import { seedInboundUserTranscriptLines } from "./turn-transcript";
 import type { ConversationRuntime, IncomingMessage } from "./types";
-
 export async function handleIncomingMessage(
-  msg: IncomingMessage,
-  socket: ListenerTransport,
-  runtime: ConversationRuntime,
-  onStatusChange?: (
-    status: "idle" | "receiving" | "processing",
-    connectionId: string,
-  ) => void,
-  connectionId?: string,
-  dequeuedBatchId: string = `batch-direct-${crypto.randomUUID()}`,
-  existingTurnLease?: TurnLease,
-  existingTurnCorrelation?: TurnCorrelation,
+  ...args: Parameters<typeof handleIncomingMessageInner>
 ): Promise<void> {
+  const [msg] = args;
   notifyTurnStarted(msg);
   try {
-    await handleIncomingMessageInner(
-      msg,
-      socket,
-      runtime,
-      onStatusChange,
-      connectionId,
-      dequeuedBatchId,
-      existingTurnLease,
-      existingTurnCorrelation,
-    );
+    await handleIncomingMessageInner(...args);
   } finally {
     notifyTurnFinished(msg);
-    tp.finishPendingTeleport(runtime);
   }
 }
-
 async function handleIncomingMessageInner(
   msg: IncomingMessage,
   socket: ListenerTransport,
   runtime: ConversationRuntime,
-  onStatusChange?: (
-    status: "idle" | "receiving" | "processing",
-    connectionId: string,
-  ) => void,
+  onStatusChange?: import("./types").StartListenerOptions["onStatusChange"],
   connectionId?: string,
   dequeuedBatchId: string = `batch-direct-${crypto.randomUUID()}`,
   existingTurnLease?: TurnLease,
   existingTurnCorrelation?: TurnCorrelation,
+  terminalCommitGuard?: () => boolean,
+  retainRecoveredApprovalState: boolean = false,
+  initialInterruptedRevision?: string,
+  deferInterruptedCleanup: boolean = false,
+  recoveryLineageId?: string,
+  recoveryTerminalRevision?: string,
+  recoveryAuthorityStore?: RecoveryAuthorityStore,
+  recoveryEvidenceWriter?: RecoveryEvidenceWriter,
 ): Promise<void> {
   const agentId = normalizeCwdAgentId(msg.agentId);
   const requestedConversationId = msg.conversationId || undefined;
@@ -156,6 +148,9 @@ async function handleIncomingMessageInner(
   let lastExecutionResults: ApprovalResult[] | null = null;
   let lastExecutingToolCallIds: string[] = [];
   let lastNeedsUserInputToolCallIds: string[] = [];
+  const durabilityOwnership = createTurnDurabilityOwnership();
+  const interruptedRevisionRef = { current: initialInterruptedRevision };
+  durabilityOwnership.recordInput(msg);
   const turnLease =
     existingTurnLease ??
     runtime.turnLifecycle.begin({
@@ -165,52 +160,36 @@ async function handleIncomingMessageInner(
   if (connectionId) {
     runtime.activeConnectionId = connectionId;
   }
+  const originConnectionCanResume = connectionId
+    ? runtime.listener.connections.get(connectionId)?.options
+        .connectionIdCanResume !== false
+    : false;
   if (!runtime.turnLifecycle.isCurrent(turnLease))
     throw new Error("Cannot continue a turn with a stale lifecycle lease");
   const turnAbortSignal = turnLease.signal;
-  let finalizedByThisInvocation = false;
   const buffers = createBuffers(agentId ?? undefined);
-  const noteFinalization = (
-    transition: ReturnType<typeof finishListenerTurn>,
-  ) => {
-    finalizedByThisInvocation ||= transition.finished;
-    return transition;
-  };
-  const finishTurn = (options: Parameters<typeof finishListenerTurn>[2]) =>
-    noteFinalization(
-      finishListenerTurn(runtime, turnLease, {
-        ...options,
-        socket: options.socket ?? socket,
-        turnId: activeDequeuedBatchId,
-        ...(options.errorNotice
-          ? {
-              errorNotice: {
-                ...options.errorNotice,
-                clientMessageIds: turnCorrelation.clientMessageIds,
-              },
-            }
-          : {}),
-        ...(runtime.executionSettings
-          ? { usage: buildTurnUsage(buffers.usage) }
-          : {}),
-      }),
-    );
-  const finishIfInterrupted = (runId?: string | null): boolean => {
-    if (
-      !turnAbortSignal.aborted &&
-      runtime.turnLifecycle.isCurrent(turnLease)
-    ) {
-      return false;
-    }
-    finishTurn({
-      stopReason: "cancelled",
-      socket,
-      runId,
-      agentId: agentId ?? null,
-      conversationId,
-    });
-    return true;
-  };
+  const finalizer = createTurnFinalizer({
+    runtime,
+    turnLease,
+    socket,
+    ownership: durabilityOwnership,
+    turnCorrelation,
+    buffers,
+    agentId,
+    conversationId,
+    terminalCommitGuard,
+    interruptedRevisionRef,
+    deferInterruptedCleanup,
+    recoveryLineageId,
+    recoveryTerminalRevision,
+    recoveryAuthorityStore,
+  });
+  const {
+    finishClaimedTurn,
+    finishIfInterrupted,
+    finishTurn,
+    noteFinalization,
+  } = finalizer;
   try {
     runtime.lastTerminalLoopErrorMessage = null;
     runtime.lastTerminalLoopErrorRunId = null;
@@ -218,10 +197,10 @@ async function handleIncomingMessageInner(
       agent_id: agentId ?? null,
       conversation_id: conversationId,
     });
-    clearRecoveredApprovalStateForScope(runtime.listener, {
-      agent_id: agentId ?? null,
-      conversation_id: conversationId,
-    });
+    clearRecoveredApprovalStateUnlessRetained(
+      runtime,
+      retainRecoveredApprovalState,
+    );
     emitRuntimeStateUpdates(runtime, {
       agent_id: agentId ?? null,
       conversation_id: conversationId,
@@ -278,12 +257,14 @@ async function handleIncomingMessageInner(
       preparedToolContext: setup.preparedToolContext.preparedToolContext,
       overrideModel,
       responseFormat: msg.responseFormat,
-      actingUserId: msg.actingUserId,
+      actingUserId: msg.suppressActingUserFallback ? null : msg.actingUserId,
       getInput: () => turnInput,
       getInterruptedToolCallIds: () =>
         pendingNormalizationInterruptedToolCallIds,
       onTerminal: noteFinalization,
+      finalizeTerminal: finishTurn,
       getTurnId: () => activeDequeuedBatchId,
+      authorityGuard: terminalCommitGuard,
     });
     const {
       sender: turnInputSender,
@@ -305,7 +286,6 @@ async function handleIncomingMessageInner(
       agent_id: agentId,
       conversation_id: conversationId,
     });
-
     turnToolContextId = getStreamToolContextId(
       stream as Stream<LettaStreamingResponse>,
     );
@@ -324,6 +304,12 @@ async function handleIncomingMessageInner(
           turnCorrelation,
           msgRunIds,
           runId,
+          durableInputIdentities: durabilityOwnership.durableInputIdentities,
+          terminalConsumerIds: durabilityOwnership.terminalConsumerIds,
+          authorityGuard: terminalCommitGuard,
+          interruptedRevisionRef,
+          recoveryLineageId,
+          recoveryEvidenceWriter,
         },
       );
       const result = drained.result;
@@ -375,7 +361,15 @@ async function handleIncomingMessageInner(
           : null;
         if (pendingTeleport) {
           noteFinalization(
-            tp.finishTeleport(runtime, turnLease, pendingTeleport),
+            tp.finishClaimedTeleport(
+              runtime,
+              pendingTeleport,
+              finishClaimedTurn,
+              {
+                canCommit: terminalCommitGuard,
+                expectedInterruptedRevision: interruptedRevisionRef.current,
+              },
+            ),
           );
           return;
         }
@@ -387,7 +381,9 @@ async function handleIncomingMessageInner(
           conversationId,
           workingDirectory: turnWorkingDirectory,
           permissionMode: turnPermissionModeState.mode,
-          actingUserId: msg.actingUserId,
+          actingUserId: msg.suppressActingUserFallback
+            ? null
+            : msg.actingUserId,
           assistantMessage: findLastAssistantText(transcriptLines),
           transcriptLines,
           getCachedAgent: setup.getCachedAgent,
@@ -771,7 +767,7 @@ async function handleIncomingMessageInner(
         approvals,
         runtime,
         socket,
-        agentId: agentId ?? undefined,
+        agentId,
         conversationId,
         turnWorkingDirectory,
         turnPermissionModeState,
@@ -783,8 +779,28 @@ async function handleIncomingMessageInner(
         turnToolContextId,
         turnLease,
         turnCorrelation,
+        onConsumeQueuedTurn: async (queuedTurn) => {
+          durabilityOwnership.recordInput(queuedTurn);
+          interruptedRevisionRef.current = await checkpointTurnInputOwnership(
+            runtime,
+            durabilityOwnership,
+            interruptedRevisionRef.current,
+            queuedTurn.actingUserId,
+            recoveryLineageId,
+            recoveryEvidenceWriter,
+          );
+        },
         processOwnedTurn: msg.processOwnedTurn === true,
+        originConnectionId: msg.connectionId,
+        originConnectionCanResume,
+        authorityGuard: terminalCommitGuard,
+        interruptedRevisionRef,
+        recoveryLineageId,
+        recoveryAuthorityStore,
         buildSendOptions,
+        dependencies: recoveryEvidenceWriter
+          ? { recordListenerWork: recoveryEvidenceWriter }
+          : undefined,
       });
       if (approvalResult.kind === "error") {
         const terminalRunId = runId || runtime.activeRunId;
@@ -806,16 +822,22 @@ async function handleIncomingMessageInner(
       pendingNormalizationInterruptedToolCallIds =
         approvalResult.pendingNormalizationInterruptedToolCallIds;
       turnToolContextId = approvalResult.turnToolContextId;
-      lastExecutionResults = approvalResult.lastExecutionResults;
-      lastExecutingToolCallIds = approvalResult.lastExecutingToolCallIds;
-      lastNeedsUserInputToolCallIds =
-        approvalResult.lastNeedsUserInputToolCallIds;
+      ({
+        lastExecutionResults,
+        lastExecutingToolCallIds,
+        lastNeedsUserInputToolCallIds,
+      } = durabilityOwnership.record(approvalResult));
       lastApprovalContinuationAccepted =
         approvalResult.lastApprovalContinuationAccepted;
 
       if (approvalResult.kind === "teleport") {
         const pending = approvalResult.pendingTeleport;
-        noteFinalization(tp.finishTeleport(runtime, turnLease, pending));
+        noteFinalization(
+          tp.finishClaimedTeleport(runtime, pending, finishClaimedTurn, {
+            canCommit: terminalCommitGuard,
+            expectedInterruptedRevision: interruptedRevisionRef.current,
+          }),
+        );
         return;
       }
       if (approvalResult.kind === "interrupted") {
@@ -824,7 +846,7 @@ async function handleIncomingMessageInner(
             lastExecutionResults,
             lastExecutingToolCallIds,
             lastNeedsUserInputToolCallIds,
-            agentId: agentId || "",
+            agentId,
             conversationId,
           });
         }
@@ -840,12 +862,17 @@ async function handleIncomingMessageInner(
 
       if (approvalResult.kind === "terminal") {
         noteFinalization(
-          finalizeHandledRecoveryTurn(runtime, socket, turnLease, {
-            drainResult: approvalResult.drainResult,
-            agentId,
-            conversationId,
-            turnId: activeDequeuedBatchId,
-          }),
+          finalizeHandledRecoveryTurn(
+            runtime,
+            socket,
+            {
+              drainResult: approvalResult.drainResult,
+              agentId,
+              conversationId,
+              turnId: activeDequeuedBatchId,
+            },
+            finishTurn,
+          ),
         );
         return;
       }
@@ -871,19 +898,19 @@ async function handleIncomingMessageInner(
           lastExecutionResults,
           lastExecutingToolCallIds,
           lastNeedsUserInputToolCallIds,
-          agentId: agentId || "",
+          agentId,
           conversationId,
         });
         const approvalsForEmission = getInterruptApprovalsForEmission(runtime, {
           lastExecutionResults,
-          agentId: agentId || "",
+          agentId,
           conversationId,
         });
         if (approvalsForEmission) {
           emitToolExecutionFinishedEvents(socket, runtime, {
             approvals: approvalsForEmission,
             runId: runtime.activeRunId || msgRunIds[msgRunIds.length - 1],
-            agentId: agentId || "",
+            agentId,
             conversationId,
           });
           emitInterruptToolReturnMessage(
@@ -950,19 +977,17 @@ async function handleIncomingMessageInner(
     if (runtime.activeConnectionId === connectionId) {
       runtime.activeConnectionId = null;
     }
-
     try {
       await runListenerTurnCleanup({
         runtime,
         agentId,
         normalizedAgentId: agentId,
         conversationId,
-        finalized: finalizedByThisInvocation,
+        finalized: finalizer.finalized,
       });
     } finally {
       releaseListenerTurnContext({ runtime, agentId, conversationId });
     }
-
     evictConversationRuntimeIfIdle(runtime);
   }
 }

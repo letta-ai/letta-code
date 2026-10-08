@@ -351,6 +351,16 @@ test("getShellEnv prefers runtime-scoped agent, conversation, and cwd", () => {
   }
 });
 
+test("getShellEnv deletes an ambient actor when fallback is suppressed", () => {
+  withTemporaryEnv({ LETTA_ACTING_USER_ID: "ambient-user" }, () => {
+    const env = runWithRuntimeContext(
+      { suppressActingUserFallback: true },
+      () => getShellEnv(),
+    );
+    expect(env.LETTA_ACTING_USER_ID).toBeUndefined();
+  });
+});
+
 test("getShellEnv prefers the active listener device over inherited process state", () => {
   withTemporaryEnv(
     { LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID: "device-stale-installation" },

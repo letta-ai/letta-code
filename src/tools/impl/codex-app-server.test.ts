@@ -127,11 +127,18 @@ describe("Codex app-server lifecycle", () => {
   test("starts a native thread and turn, then resolves completion", async () => {
     const fake = new FakeCodexTransport();
     let started: string | undefined;
+    let admitted: string | undefined;
     const handle = await startCodexTurn(
       {
         prompt: "Implement it",
         parentAgentId: "parent",
         cwd: "/repo",
+        beforeStart: async (threadId) => {
+          admitted = threadId;
+          expect(fake.requests.map((request) => request.method)).not.toContain(
+            "turn/start",
+          );
+        },
         onStarted: (threadId) => {
           started = threadId;
         },
@@ -139,6 +146,7 @@ describe("Codex app-server lifecycle", () => {
       { createTransport: () => fake.transport() },
     );
     expect(handle.threadId).toBe("thread-1");
+    expect(admitted).toBe("thread-1");
     expect(started).toBe("thread-1");
     expect(fake.requests.map((request) => request.method)).toContain(
       "turn/start",

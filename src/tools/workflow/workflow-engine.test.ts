@@ -81,16 +81,25 @@ return [a, b]`,
     );
   });
 
-  test("a failed subagent resolves to null and reports the error", async () => {
+  test("a failed subagent rejects with its identity and reports the error", async () => {
     const events: WorkflowProgressEvent[] = [];
-    const run = await executeWorkflow(
-      async () => ({ value: null, failed: true, error: "boom" }),
+    const pending = executeWorkflow(
+      async () => ({
+        value: null,
+        failed: true,
+        error: "boom",
+        conversationId: "conv-failed-worker",
+      }),
       {
-        script: `${META}return await agent('x')`,
+        script: `${META}return await agent('x', { label: 'reader' })`,
         onProgress: (event) => events.push(event),
       },
     );
-    expect(run.result).toBeNull();
+    await expect(pending).rejects.toMatchObject({
+      message: 'Workflow agent "reader" (conv-failed-worker) failed: boom',
+      callIndex: 0,
+      conversationId: "conv-failed-worker",
+    });
     expect(events.at(-1)).toMatchObject({ status: "error", detail: "boom" });
   });
 
@@ -128,17 +137,59 @@ return await pipeline(['a', 'b'],
     expect(run.result).toEqual(["s2:s1:a:0", "s2:s1:b:1"]);
   });
 
-  test("a throwing stage drops its item to null; parallel never rejects", async () => {
-    const run = await executeWorkflow(echoSpawner(), {
-      script: `${META}
-const piped = await pipeline([1, 2], (n) => { if (n === 2) throw new Error('no'); return n })
-const par = await parallel([() => agent('ok'), () => { throw new Error('no') }, 'not a function'])
-return { piped, par }`,
-    });
-    expect(run.result).toEqual({
-      piped: [1, null],
-      par: ["echo:ok", null, null],
-    });
+  test.each([
+    "return await pipeline([1, 2], n => { if (n === 2) throw new Error('no'); return n })",
+    "return await parallel([() => agent('ok'), () => { throw new Error('no') }])",
+  ])("helpers propagate callback errors: %s", async (script) => {
+    await expect(
+      executeWorkflow(echoSpawner(), { script: META + script }),
+    ).rejects.toThrow("no");
+  });
+
+  test.each([
+    "return await parallel([() => agent('bad'), () => agent('good')])",
+    "return await pipeline(['bad', 'good'], x => agent(x), x => agent('next:' + x))",
+  ])(
+    "helpers report worker failure after siblings finish: %s",
+    async (script) => {
+      const seen: string[] = [];
+      const pending = executeWorkflow(
+        async (request) => {
+          if (request.prompt === "bad") {
+            return { value: null, failed: true, error: "worker failed" };
+          }
+          await Bun.sleep(5);
+          seen.push(request.prompt);
+          return { value: request.prompt, failed: false };
+        },
+        { script: META + script, maxConcurrent: 1 },
+      );
+      await expect(pending).rejects.toThrow("worker failed");
+      expect(seen).toContain("good");
+      if (script.includes("pipeline")) expect(seen).toContain("next:good");
+      expect(seen).not.toContain("next:null");
+    },
+  );
+
+  test("explicit catches allow best-effort work and preserve successful nulls", async () => {
+    const run = await executeWorkflow(
+      async (request) => ({
+        value: null,
+        failed: request.prompt === "bad",
+        error: request.prompt === "bad" ? "boom" : undefined,
+      }),
+      {
+        script: `${META}
+return await parallel(['bad', 'empty'].map(prompt => async () => {
+  try { return { value: await agent(prompt) } }
+  catch (error) { return { error: error.message } }
+}))`,
+      },
+    );
+    expect(run.result).toEqual([
+      { error: 'Workflow agent "bad" failed: boom' },
+      { value: null },
+    ]);
   });
 
   test("caps concurrency and total agents", async () => {
@@ -183,6 +234,76 @@ return errors`,
       "Lifetime decision cap of 2 reached.",
     ]);
     expect(run.totalTokens).toBe(0);
+  });
+
+  test("tools.mcp__*() calls the agent's MCP tools and journals each call", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "wf-mcp-"));
+    const journalPath = join(dir, "journal.jsonl");
+    const calls: Array<[string, Record<string, unknown>]> = [];
+    try {
+      const run = await executeWorkflow(echoSpawner(), {
+        script: `${META}
+const structured = await tools.mcp__db__query({ sql: 'select 1' })
+const json = await tools.mcp__db__json()
+const text = await tools.mcp__db__text()
+let failed = null
+try { await tools.mcp__db__broken() } catch (e) { failed = e.message }
+const invalid = typeof tools.Bash
+return { structured, json, text, failed, invalid }`,
+        journalPath,
+        callMcpTool: async (toolName, args) => {
+          calls.push([toolName, args]);
+          if (toolName === "mcp__db__query")
+            return { content: [], structuredContent: { rows: [1] } };
+          if (toolName === "mcp__db__json")
+            return { content: [{ type: "text", text: '{"n":2}' }] };
+          if (toolName === "mcp__db__broken")
+            return {
+              content: [{ type: "text", text: "denied" }],
+              isError: true,
+            };
+          return { content: [{ type: "text", text: "plain" }] };
+        },
+      });
+      expect(run.result).toEqual({
+        structured: { rows: [1] },
+        json: { n: 2 },
+        text: "plain",
+        failed: "mcp__db__broken failed: denied",
+        invalid: "undefined",
+      });
+      expect(calls[0]).toEqual(["mcp__db__query", { sql: "select 1" }]);
+      expect(calls[1]).toEqual(["mcp__db__json", {}]);
+      const journal = readFileSync(journalPath, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(
+        journal.map((entry) => [entry.kind, entry.toolName, entry.isError]),
+      ).toEqual([
+        ["mcp_call", "mcp__db__query", false],
+        ["mcp_call", "mcp__db__json", false],
+        ["mcp_call", "mcp__db__text", false],
+        ["mcp_call", "mcp__db__broken", true],
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test.each([
+    "return await parallel([() => tools.mcp__db__broken()])",
+    "return await pipeline([1], () => tools.mcp__db__broken())",
+  ])("helpers propagate direct MCP failures: %s", async (script) => {
+    await expect(
+      executeWorkflow(echoSpawner(), {
+        script: META + script,
+        callMcpTool: async () => ({
+          content: [{ type: "text", text: "denied" }],
+          isError: true,
+        }),
+      }),
+    ).rejects.toThrow("mcp__db__broken failed: denied");
   });
 
   test("validates hook arguments", async () => {
@@ -274,8 +395,8 @@ return errors`,
         },
         {
           script: `${META}
-const failed = await agent('first')
-return await agent('continue', { conversationId: 'conv-same-worker' })`,
+try { await agent('first') }
+catch (error) { return await agent('continue', { conversationId: error.conversationId }) }`,
           journalPath,
         },
       );

@@ -155,6 +155,7 @@ function isEnqueueReceipt(event: {
   client_message_id?: unknown;
   super_run_id?: unknown;
   workflow_id?: unknown;
+  acting_user_id?: unknown;
 }): event is EnqueueReceipt {
   return (
     event.status === "queued" &&
@@ -162,7 +163,10 @@ function isEnqueueReceipt(event: {
     typeof event.conversation_id === "string" &&
     typeof event.client_message_id === "string" &&
     typeof event.super_run_id === "string" &&
-    typeof event.workflow_id === "string"
+    typeof event.workflow_id === "string" &&
+    (event.acting_user_id === undefined ||
+      event.acting_user_id === null ||
+      typeof event.acting_user_id === "string")
   );
 }
 
@@ -196,6 +200,7 @@ function handleResultEvent(
     super_run_id?: unknown;
     workflow_id?: unknown;
     connection_id?: unknown;
+    acting_user_id?: unknown;
   },
   state: ExecutionState,
   subagentId: string,
@@ -212,6 +217,9 @@ function handleResultEvent(
         ...(typeof event.connection_id === "string"
           ? { connection_id: event.connection_id }
           : {}),
+        ...(event.acting_user_id === undefined
+          ? {}
+          : { acting_user_id: event.acting_user_id }),
       };
     } else {
       state.finalError =

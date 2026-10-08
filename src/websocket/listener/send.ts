@@ -21,17 +21,20 @@ import { type ConversationMessageStreamBody, getBackend } from "@/backend";
 import { getRetryStatusMessage } from "@/cli/helpers/error-formatter";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import { shouldEmitRetryNotice } from "@/utils/cloud-api-shutdown";
+import { isDebugEnabled } from "@/utils/debug";
 import { createStreamAbortRelay } from "@/utils/stream-abort-relay";
 import {
   rememberPendingApprovalBatchIds,
   resolveRecoveryBatchId,
 } from "./approval";
+import { resolveTurnExecutionConnectionId } from "./connection";
 import {
   LLM_API_ERROR_MAX_RETRIES,
   MAX_PRE_STREAM_RECOVERY,
 } from "./constants";
 import { appendQueuedTurnToInput } from "./continuation-input";
 import { getConversationWorkingDirectory } from "./cwd";
+import { readInterruptedTurn } from "./interrupted-turn-read";
 import {
   createListenerAgentModContext,
   createListenerModEvents,
@@ -264,7 +267,7 @@ async function tryResumeBusyConversationStream(params: {
     if (abortSignal?.aborted) {
       throw new Error("Cancelled by user");
     }
-    if (process.env.DEBUG) {
+    if (isDebugEnabled()) {
       console.warn(
         debugMessage,
         resumeError instanceof Error
@@ -291,6 +294,7 @@ export async function resolveStaleApprovals(
     prepareToolExecutionContext?: typeof prepareToolExecutionContextForScope;
     sendApprovalContinuation?: typeof sendApprovalContinuationWithRetry;
     drainRecoveryStream?: typeof drainRecoveryStreamWithEmission;
+    authorityGuard?: () => boolean;
   } = {},
 ): Promise<Awaited<ReturnType<typeof drainRecoveryStreamWithEmission>> | null> {
   if (!runtime.agentId) return null;
@@ -305,7 +309,8 @@ export async function resolveStaleApprovals(
   const assertCurrentTurnLease = () => {
     if (
       turnLease.signal.aborted ||
-      !runtime.turnLifecycle.isCurrent(turnLease)
+      !runtime.turnLifecycle.isCurrent(turnLease) ||
+      deps.authorityGuard?.() === false
     ) {
       throw new Error("Cancelled by user");
     }
@@ -363,6 +368,11 @@ export async function resolveStaleApprovals(
     runtime.agentId,
   );
   const preparedToolContext = await prepareToolExecutionContext({
+    connectionId: resolveTurnExecutionConnectionId(
+      runtime.listener,
+      scope,
+      runtime.activeConnectionId ?? undefined,
+    ),
     agentId: runtime.agentId,
     conversationId: recoveryConversationId,
     workingDirectory: recoveryWorkingDirectory,
@@ -380,6 +390,7 @@ export async function resolveStaleApprovals(
   runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;
   runtime.currentLoadedTools =
     preparedToolContext.preparedToolContext.loadedToolNames;
+  let recoveryActingUserId = readInterruptedTurn(runtime)?.actingUserId;
 
   while (pendingApprovals.length > 0) {
     assertCurrentTurnLease();
@@ -411,6 +422,7 @@ export async function resolveStaleApprovals(
       const consumedQueuedTurn = consumeQueuedTurn(runtime);
       if (consumedQueuedTurn) {
         const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
+        recoveryActingUserId = queuedTurn.actingUserId;
         recoveryTurnCorrelation = createTurnCorrelation(
           runtime,
           queuedTurn,
@@ -441,6 +453,7 @@ export async function resolveStaleApprovals(
           background: true,
           workingDirectory: recoveryWorkingDirectory,
           preparedToolContext: preparedToolContext.preparedToolContext,
+          actingUserId: recoveryActingUserId ?? null,
           ...(continuationInput.imageFailureModesByMessageOtid
             ? {
                 imageFailureModesByMessageOtid:
@@ -451,7 +464,10 @@ export async function resolveStaleApprovals(
         socket,
         runtime,
         turnLease,
-        { allowApprovalRecovery: false },
+        {
+          allowApprovalRecovery: false,
+          authorityGuard: deps.authorityGuard,
+        },
       );
       assertCurrentTurnLease();
       if (recoverySendResult.kind !== "stream") {
@@ -472,6 +488,7 @@ export async function resolveStaleApprovals(
           conversationId: recoveryConversationId,
           turnLease,
           turnCorrelation: recoveryTurnCorrelation,
+          authorityGuard: deps.authorityGuard,
         },
       );
       assertCurrentTurnLease();
@@ -502,6 +519,7 @@ export async function sendMessageStreamWithRetry(
   socket: ListenerTransport,
   runtime: ConversationRuntime,
   turnLease: TurnLease,
+  retryOptions: { authorityGuard?: () => boolean } = {},
 ): Promise<Awaited<ReturnType<typeof sendMessageStream>>> {
   const abortSignal = turnLease.signal;
   let transientRetries = 0;
@@ -512,6 +530,9 @@ export async function sendMessageStreamWithRetry(
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
+    if (retryOptions.authorityGuard?.() === false) {
+      throw new Error("Recovery ownership lost");
+    }
     if (abortSignal?.aborted) {
       throw new Error("Cancelled by user");
     }
@@ -521,7 +542,7 @@ export async function sendMessageStreamWithRetry(
     });
 
     try {
-      return await sendMessageStream(
+      const stream = await sendMessageStream(
         conversationId,
         messages,
         { ...opts, agentId: opts?.agentId ?? runtime.agentId ?? undefined },
@@ -529,7 +550,15 @@ export async function sendMessageStreamWithRetry(
           ? { maxRetries: 0, signal: abortSignal }
           : { maxRetries: 0 },
       );
+      if (retryOptions.authorityGuard?.() === false) {
+        stream.controller.abort();
+        throw new Error("Recovery ownership lost");
+      }
+      return stream;
     } catch (preStreamError) {
+      if (retryOptions.authorityGuard?.() === false) {
+        throw new Error("Recovery ownership lost");
+      }
       if (abortSignal?.aborted) {
         throw new Error("Cancelled by user");
       }
@@ -566,9 +595,17 @@ export async function sendMessageStreamWithRetry(
         ) {
           preStreamRecoveryAttempts++;
           try {
-            await resolveStaleApprovals(runtime, socket, turnLease);
+            await resolveStaleApprovals(runtime, socket, turnLease, {
+              authorityGuard: retryOptions.authorityGuard,
+            });
+            if (retryOptions.authorityGuard?.() === false) {
+              throw new Error("Recovery ownership lost");
+            }
             continue;
           } catch (_recoveryError) {
+            if (retryOptions.authorityGuard?.() === false) {
+              throw new Error("Recovery ownership lost");
+            }
             if (abortSignal.aborted) throw new Error("Cancelled by user");
           }
         }
@@ -639,6 +676,10 @@ export async function sendMessageStreamWithRetry(
           debugMessage:
             "[Listen] Pre-stream resume failed, falling back to wait/retry:",
         });
+        if (retryOptions.authorityGuard?.() === false) {
+          resumeStream?.controller.abort();
+          throw new Error("Recovery ownership lost");
+        }
         if (resumeStream) {
           return resumeStream;
         }
@@ -697,6 +738,7 @@ export async function sendApprovalContinuationWithRetry(
   turnLease: TurnLease,
   retryOptions: {
     allowApprovalRecovery?: boolean;
+    authorityGuard?: () => boolean;
   } = {},
 ): Promise<ApprovalContinuationSendResult> {
   const abortSignal = turnLease.signal;
@@ -709,6 +751,9 @@ export async function sendApprovalContinuationWithRetry(
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
+    if (retryOptions.authorityGuard?.() === false) {
+      throw new Error("Recovery ownership lost");
+    }
     if (abortSignal?.aborted) {
       throw new Error("Cancelled by user");
     }
@@ -726,8 +771,15 @@ export async function sendApprovalContinuationWithRetry(
           ? { maxRetries: 0, signal: abortSignal }
           : { maxRetries: 0 },
       );
+      if (retryOptions.authorityGuard?.() === false) {
+        stream.controller.abort();
+        throw new Error("Recovery ownership lost");
+      }
       return { kind: "stream", stream };
     } catch (preStreamError) {
+      if (retryOptions.authorityGuard?.() === false) {
+        throw new Error("Recovery ownership lost");
+      }
       if (abortSignal?.aborted) {
         throw new Error("Cancelled by user");
       }
@@ -767,7 +819,11 @@ export async function sendApprovalContinuationWithRetry(
             runtime,
             socket,
             turnLease,
+            { authorityGuard: retryOptions.authorityGuard },
           );
+          if (retryOptions.authorityGuard?.() === false) {
+            throw new Error("Recovery ownership lost");
+          }
           if (drainResult) {
             return { kind: "terminal", drainResult };
           }
@@ -846,6 +902,10 @@ export async function sendApprovalContinuationWithRetry(
           debugMessage:
             "[Listen] Approval continuation pre-stream resume failed, falling back to wait/retry:",
         });
+        if (retryOptions.authorityGuard?.() === false) {
+          resumeStream?.controller.abort();
+          throw new Error("Recovery ownership lost");
+        }
         if (resumeStream) {
           return { kind: "stream", stream: resumeStream };
         }

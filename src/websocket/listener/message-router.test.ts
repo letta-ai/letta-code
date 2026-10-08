@@ -15,12 +15,17 @@ import {
 } from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { enqueueInboundUserMessage } from "./inbound-queue";
-import { createRuntime, safeSocketSend } from "./lifecycle";
+import { createRuntime } from "./lifecycle";
 import { createListenerMessageHandler } from "./message-router";
 import { scheduleQueuePump } from "./queue";
 import { setActiveRuntime } from "./runtime";
+import { safeSocketSend } from "./socket-send";
 import { isListenerTransportOpen, type ListenerTransport } from "./transport";
-import type { IncomingMessage, StartListenerOptions } from "./types";
+import type {
+  IncomingMessage,
+  ListenerRuntime,
+  StartListenerOptions,
+} from "./types";
 
 class MockSocket {
   readyState = WebSocket.OPEN;
@@ -41,6 +46,23 @@ function makeListenerOptions(): StartListenerOptions {
     onDisconnected: () => {},
     onError: () => {},
   };
+}
+
+function initializeMockConnection(
+  listener: ListenerRuntime,
+  socket: MockSocket,
+): void {
+  const connection = openListenerConnection({
+    runtime: listener,
+    connectionId: "conn-test",
+    writer: socket as unknown as WebSocket,
+    options: makeListenerOptions(),
+  });
+  markListenerConnectionInitialized(listener, "conn-test", connection);
+  subscribeListenerConnection(listener, "conn-test", {
+    agent_id: "agent-1",
+    conversation_id: "conv-1",
+  });
 }
 
 async function waitFor(predicate: () => boolean): Promise<void> {
@@ -175,6 +197,7 @@ describe("listener message router ownership handoff", () => {
     const listener = createRuntime();
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
     const socket = new MockSocket();
+    initializeMockConnection(listener, socket);
     const sent: unknown[] = [];
     const onLog = mock(() => {});
     setActiveRuntime(listener);
@@ -254,6 +277,7 @@ describe("listener message router ownership handoff", () => {
     const listener = createRuntime();
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
     const socket = new MockSocket();
+    initializeMockConnection(listener, socket);
     const opts = makeListenerOptions();
     const processIncomingMessage = mock(async () => {});
     const processedTurns: IncomingMessage[] = [];
@@ -386,6 +410,7 @@ describe("listener message router ownership handoff", () => {
     const listener = createRuntime();
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
     const socket = new MockSocket();
+    initializeMockConnection(listener, socket);
     const sent: unknown[] = [];
     let receivedActingUserId: string | undefined;
     const processIncomingMessage = mock(async (incoming: IncomingMessage) => {
@@ -488,10 +513,12 @@ describe("listener message router ownership handoff", () => {
     const listener = createRuntime();
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
     const sent: unknown[] = [];
+    const socket = new MockSocket();
+    initializeMockConnection(listener, socket);
     setActiveRuntime(listener);
     const handleMessage = createListenerMessageHandler({
       runtime: listener,
-      socket: new MockSocket() as unknown as WebSocket,
+      socket: socket as unknown as WebSocket,
       opts: makeListenerOptions(),
       processQueuedTurn: async () => {},
       fileCommandSession: { handle: () => false },
@@ -540,6 +567,7 @@ describe("listener message router ownership handoff", () => {
     const listener = createRuntime();
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
     const socket = new MockSocket();
+    initializeMockConnection(listener, socket);
     listener.socket = socket as unknown as WebSocket;
     const sent: unknown[] = [];
     setActiveRuntime(listener);
@@ -627,6 +655,7 @@ describe("listener message router ownership handoff", () => {
     const listener = createRuntime();
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
     const socket = new MockSocket();
+    initializeMockConnection(listener, socket);
     listener.socket = socket as unknown as WebSocket;
     const sent: unknown[] = [];
     setActiveRuntime(listener);
@@ -669,6 +698,10 @@ describe("listener message router ownership handoff", () => {
     ).toBe(true);
     const enqueued = runtime.queueRuntime.peek()[0];
     expect(enqueued).toBeDefined();
+    // Let the enqueue callback's initial snapshot flush before isolating the
+    // removal snapshots asserted below.
+    await Promise.resolve();
+    socket.sentPayloads.length = 0;
 
     await handleMessage(
       Buffer.from(
@@ -708,6 +741,7 @@ describe("listener message router ownership handoff", () => {
     const listener = createRuntime();
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
     const socket = new MockSocket();
+    initializeMockConnection(listener, socket);
     listener.socket = socket as unknown as WebSocket;
     const sent: unknown[] = [];
     const processedTurns: IncomingMessage[] = [];
@@ -792,6 +826,7 @@ describe("listener message router ownership handoff", () => {
     const listener = createRuntime();
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
     const socket = new MockSocket();
+    initializeMockConnection(listener, socket);
     const opts = makeListenerOptions();
     const response = {
       type: "channel_routes_list_response" as const,

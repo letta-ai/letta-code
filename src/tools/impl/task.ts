@@ -5,7 +5,6 @@
  * Supports both built-in subagent types and custom subagents defined in .letta/agents/.
  */
 
-import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
@@ -29,12 +28,11 @@ import {
 } from "@/agent/subagents/background-link";
 import { forkParentConversation } from "@/agent/subagents/fork-conversation";
 import { spawnSubagent } from "@/agent/subagents/manager";
-import { getCurrentSubagentDepth } from "@/agent/subagents/subagent-depth";
 import { getBackend } from "@/backend";
 import { runSubagentStopHooks } from "@/hooks";
 import {
   getCurrentWorkingDirectory,
-  getRuntimeContext,
+  getRuntimeActingUserAttribution,
 } from "@/runtime-context";
 import type {
   SubagentLaunchArgs,
@@ -66,7 +64,6 @@ import {
   getNextTaskId,
   scheduleBackgroundTaskCleanup,
 } from "./process_manager.js";
-import { runForegroundTask } from "./task-foreground";
 import {
   buildTaskResultHeader,
   writeTaskTranscriptResult,
@@ -112,7 +109,8 @@ export interface SpawnBackgroundSubagentTaskArgs {
   /** Parent conversation scope for routing notifications in listener mode. */
   parentScope?: { agentId: string; conversationId: string };
   /** Authenticated Cloud user responsible for the launch-time turn. */
-  actingUserId?: string;
+  /** Null explicitly suppresses fallback to an ambient runtime actor. */
+  actingUserId?: string | null;
   /** Transcript/payload file exposed as TRANSCRIPT_PATH for reflection prompts. */
   transcriptPath?: string;
   /** Optional exact memory scope for harness-created memory worktrees. */
@@ -258,9 +256,9 @@ export function spawnBackgroundSubagentTask(
 
   const resolvedParentScope = resolveNotificationScope(parentScope);
   const actingUserId =
-    explicitActingUserId ??
-    getRuntimeContext()?.actingUserId ??
-    process.env[ACTING_USER_ID_ENV];
+    explicitActingUserId === undefined
+      ? getRuntimeActingUserAttribution()
+      : explicitActingUserId;
 
   const spawnSubagentFn = deps?.spawnSubagentImpl ?? spawnSubagent;
   const copyGitHubPullRequestTagsFn =
@@ -589,12 +587,7 @@ export function spawnBackgroundSubagentTask(
 /** Launch through the same task lifecycle for tools and App Server commands. */
 export async function launchSubagent(
   args: TaskArgs,
-  options: Pick<SpawnBackgroundSubagentTaskArgs, "onComplete"> = {},
 ): Promise<SubagentLaunchResult> {
-  // A foreground caller receives the result directly instead of a notification.
-  const completion = options.onComplete
-    ? { onComplete: options.onComplete, emitCompletionNotification: false }
-    : {};
   const { model, toolCallId, signal } = args;
   if (
     args.client_message_id !== undefined &&
@@ -767,7 +760,6 @@ export async function launchSubagent(
       model,
       toolCallId,
       parentScope: resolvedParentScope,
-      ...completion,
       deps: {
         spawnSubagentImpl: async (
           _type,
@@ -885,7 +877,6 @@ export async function launchSubagent(
     clientMessageId: args.client_message_id,
     forkedContext: subagent_type !== "memory" && config.fork,
     parentScope: resolvedParentScope,
-    ...completion,
     environment:
       typeof args.computer === "string" && args.computer.trim()
         ? args.computer.trim()
@@ -945,8 +936,6 @@ export async function task(args: TaskArgs): Promise<string> {
     const errorSuffix = errors.length > 0 ? `, ${errors.length} error(s)` : "";
     return `Refreshed subagents list: found ${Object.keys(allConfigs).length} total (${subagents.length} custom)${errorSuffix}`;
   }
-  if (args.subagent_type !== "memory" && getCurrentSubagentDepth() > 0)
-    return runForegroundTask(args, launchSubagent);
   const result = await launchSubagent(args);
   if (!result.success) return `Error: ${result.error}`;
   if (args.subagent_type === "memory") {

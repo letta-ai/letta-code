@@ -39,6 +39,7 @@ export function listenerExternalToolBackgroundOptions(
     agentId?: string | null;
     conversationId?: string | null;
     actingUserId?: string;
+    suppressActingUserFallback?: boolean;
   },
 ): {
   runtimeScope: typeof runtimeScope;
