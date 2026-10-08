@@ -782,6 +782,21 @@ async function runCall(
     stringValue(parsed.values["args-file"]),
     deps,
   );
+  const result = await callAgentMcpTool(agentId, toolName, args, deps);
+  await printJson(stdout, result);
+  return result.isError === true ? 2 : 0;
+}
+
+/**
+ * Call one agent-scoped MCP tool by its `mcp__server__tool` name, resolving it
+ * through the same catalog as `letta mcp call`.
+ */
+export async function callAgentMcpTool(
+  agentId: string,
+  toolName: string,
+  args: Record<string, unknown>,
+  deps: McpSubcommandDependencies = {},
+): Promise<McpToolResult> {
   const catalog = await buildToolCatalog(deps, agentId, { toolName });
   try {
     const tool = catalog.tools.find(
@@ -793,20 +808,17 @@ async function runCall(
         `MCP tool '${toolName}' is not available`,
       );
     }
-    const result =
-      tool.target.kind === "client"
-        ? await tool.target.connection.callTool(tool.target.rawName, args)
-        : mcpToolResultFromServer(
-            await runUnifiedMcpTool({
-              client: await getServerClient(deps),
-              agentId,
-              mcpServerId: tool.target.serverId,
-              toolId: tool.target.toolId,
-              args,
-            }),
-          );
-    await printJson(stdout, result);
-    return result.isError === true ? 2 : 0;
+    return tool.target.kind === "client"
+      ? await tool.target.connection.callTool(tool.target.rawName, args)
+      : mcpToolResultFromServer(
+          await runUnifiedMcpTool({
+            client: await getServerClient(deps),
+            agentId,
+            mcpServerId: tool.target.serverId,
+            toolId: tool.target.toolId,
+            args,
+          }),
+        );
   } finally {
     await catalog.close();
   }

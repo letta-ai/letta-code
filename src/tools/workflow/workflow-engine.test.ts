@@ -185,6 +185,62 @@ return errors`,
     expect(run.totalTokens).toBe(0);
   });
 
+  test("mcp() calls the agent's MCP tools and journals each call", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "wf-mcp-"));
+    const journalPath = join(dir, "journal.jsonl");
+    const calls: Array<[string, Record<string, unknown>]> = [];
+    try {
+      const run = await executeWorkflow(echoSpawner(), {
+        script: `${META}
+const structured = await mcp('mcp__db__query', { sql: 'select 1' })
+const json = await mcp('mcp__db__json')
+const text = await mcp('mcp__db__text')
+let failed = null
+try { await mcp('mcp__db__broken') } catch (e) { failed = e.message }
+let invalid = null
+try { await mcp('Bash', {}) } catch (e) { invalid = e.message }
+return { structured, json, text, failed, invalid }`,
+        journalPath,
+        callMcpTool: async (toolName, args) => {
+          calls.push([toolName, args]);
+          if (toolName === "mcp__db__query")
+            return { content: [], structuredContent: { rows: [1] } };
+          if (toolName === "mcp__db__json")
+            return { content: [{ type: "text", text: '{"n":2}' }] };
+          if (toolName === "mcp__db__broken")
+            return {
+              content: [{ type: "text", text: "denied" }],
+              isError: true,
+            };
+          return { content: [{ type: "text", text: "plain" }] };
+        },
+      });
+      expect(run.result).toEqual({
+        structured: { rows: [1] },
+        json: { n: 2 },
+        text: "plain",
+        failed: "mcp__db__broken failed: denied",
+        invalid: "mcp() requires an mcp__server__tool name.",
+      });
+      expect(calls[0]).toEqual(["mcp__db__query", { sql: "select 1" }]);
+      expect(calls[1]).toEqual(["mcp__db__json", {}]);
+      const journal = readFileSync(journalPath, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(
+        journal.map((entry) => [entry.kind, entry.toolName, entry.isError]),
+      ).toEqual([
+        ["mcp_call", "mcp__db__query", false],
+        ["mcp_call", "mcp__db__json", false],
+        ["mcp_call", "mcp__db__text", false],
+        ["mcp_call", "mcp__db__broken", true],
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("validates hook arguments", async () => {
     const run = await executeWorkflow(echoSpawner(), {
       script: `${META}

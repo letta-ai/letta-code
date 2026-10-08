@@ -46,6 +46,7 @@ import {
 import type {
   SubagentSpawner,
   WorkflowExecutionResult,
+  WorkflowMcpCaller,
   WorkflowMeta,
   WorkflowProgressEvent,
 } from "@/tools/workflow/types";
@@ -90,6 +91,8 @@ interface WorkflowResult {
 /** What the tool needs from a subagent backend; the SDK spawner in production. */
 export interface WorkflowSpawnerHandle {
   spawner: SubagentSpawner;
+  /** Backs the script's `mcp()` hook with the invoking agent's MCP tools. */
+  callMcpTool?: WorkflowMcpCaller;
   cleanup(): Promise<void>;
 }
 
@@ -218,6 +221,10 @@ export async function createSdkSpawnerHandle(
   }
   return {
     spawner,
+    callMcpTool: async (toolName, toolArgs) => {
+      const { callAgentMcpTool } = await import("@/cli/subcommands/mcp");
+      return callAgentMcpTool(parentAgentId, toolName, toolArgs);
+    },
     cleanup: async () => {
       await client[Symbol.asyncDispose]?.().catch(() => undefined);
     },
@@ -549,6 +556,7 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
     maxConcurrent: args.maxConcurrent ?? DEFAULT_MAX_CONCURRENT,
     journalPath,
     signal: abortController.signal,
+    ...(handle.callMcpTool ? { callMcpTool: handle.callMcpTool } : {}),
     onProgress: (event) => {
       recordWorkflowProgress(taskId, event);
       if (event.kind !== "log") publishProgress();

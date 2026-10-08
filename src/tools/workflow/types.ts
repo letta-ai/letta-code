@@ -126,7 +126,23 @@ export interface RunWorkflowOptions {
   signal?: AbortSignal;
   /** Progress callback. */
   onProgress?: (event: WorkflowProgressEvent) => void;
+  /** Calls one of the invoking agent's MCP tools; backs the `mcp()` hook. */
+  callMcpTool?: WorkflowMcpCaller;
+  /** Lifetime MCP tool call cap (runaway-loop backstop). Default 1000. */
+  maxTotalMcpCalls?: number;
 }
+
+/** MCP tool result shape (`content`, `structuredContent`, `isError`). */
+export interface WorkflowMcpResult {
+  content: unknown[];
+  isError?: boolean;
+  structuredContent?: Record<string, unknown>;
+}
+
+export type WorkflowMcpCaller = (
+  toolName: string,
+  args: Record<string, unknown>,
+) => Promise<WorkflowMcpResult>;
 
 export interface WorkflowExecutionResult {
   meta: WorkflowMeta;
