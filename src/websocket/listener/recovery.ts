@@ -11,10 +11,10 @@ import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import type { StreamDelta } from "@/types/protocol_v2";
 import { debugWarn } from "@/utils/debug";
 import { normalizeCloudRetryWireMessage } from "./cloud-retry-message";
-import { resolveTurnExecutionConnectionId } from "./connection";
 import {
   findListenerConnectionByTransport,
   getSubscribedListenerConnections,
+  resolveTurnExecutionConnectionId,
 } from "./connection";
 import { LISTENER_STREAM_RESUME_POLICY } from "./constants";
 import { appendQueuedTurnToInput } from "./continuation-input";

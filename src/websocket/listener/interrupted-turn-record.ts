@@ -945,10 +945,12 @@ export async function recordListenerWorkRetriably(
       ) {
         throw error;
       }
-      await new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, options.retryDelayMs ?? 10);
-        timer.unref?.();
-      });
+      // Keep this timer referenced: it is the only event-loop yield between
+      // synchronous lock attempts, and Bun on Windows can otherwise strand the
+      // awaited retry promise indefinitely.
+      await new Promise<void>((resolve) =>
+        setTimeout(resolve, options.retryDelayMs ?? 10),
+      );
     }
   }
   throw new Error("Interrupted durable write lost authority before commit");
