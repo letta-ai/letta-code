@@ -192,6 +192,7 @@ export function buildDeviceStatus(
       current_available_skills: [],
       background_processes: buildBackgroundProcessSnapshot(),
       pending_control_requests: [],
+      pending_async_questions: [],
       experiments: experimentManager.list(),
       memory_directory: null,
       cwd_map: {},
@@ -251,6 +252,11 @@ export function buildDeviceStatus(
     pending_control_requests: interruptedCacheActive
       ? []
       : getPendingControlRequests(listener, scope),
+    // Unlike approvals, pending questions survive interrupts: the receipt is
+    // already persisted, so the answer can arrive whenever the user resumes.
+    pending_async_questions: [
+      ...(conversationRuntime?.pendingAsyncQuestionToolCallIds ?? []),
+    ],
     experiments: experimentManager.list(),
     memory_directory: agentId ? getScopedMemoryFilesystemRoot(agentId) : null,
     ...(params === undefined

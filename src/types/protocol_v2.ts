@@ -380,7 +380,6 @@ export interface DeviceStatus {
   is_processing: boolean;
   current_permission_mode: DevicePermissionMode;
   current_working_directory: string | null;
-  /** Monotonic signal for cwd changes and rejected stale cwd requests. */
   cwd_revision?: number;
   git_context: GitContext | null;
   letta_code_version: string | null;
@@ -391,6 +390,7 @@ export interface DeviceStatus {
   current_available_skills: AvailableSkillSummary[];
   background_processes: BackgroundProcessSummary[];
   pending_control_requests: PendingControlRequest[];
+  pending_async_questions: string[];
   experiments: ExperimentSnapshot[];
   memory_directory: string | null;
   /**
