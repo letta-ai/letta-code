@@ -4,7 +4,7 @@ Workflows run in the background: this tool returns immediately with a task ID, a
 
 ONLY call this tool when the user has explicitly opted into multi-agent orchestration — they asked for a workflow or multi-agent orchestration in their own words ("use a workflow", "fan out agents"), or invoked a skill whose instructions call this tool. Workflows can spawn many subagents and cost real money. For any other task, even one that would benefit from parallelism, describe what a workflow could do and ask first.
 
-Scripts are plain JavaScript and must begin with `export const meta = {...}`, a pure literal (no variables, calls, or interpolation). Pass the work list via `args`. Prefer `pipeline()` so each item moves to its next stage as soon as it is ready; `agent()` resolves to `null` on failure, so guard and filter:
+Scripts are plain JavaScript and must begin with `export const meta = {...}`, a pure literal (no variables, calls, or interpolation). Pass the work list via `args`. Prefer `pipeline()` so each item moves to its next stage as soon as it is ready. Await `agent()` calls: failures reject with the cause, `callIndex`, and `conversationId` when available. `parallel()` and `pipeline()` let siblings finish, then reject if any callback failed; a failed pipeline item skips its remaining stages. Catch errors explicitly inside callbacks for best-effort processing.
 
   export const meta = {
     name: 'review-files',
@@ -16,10 +16,10 @@ Scripts are plain JavaScript and must begin with `export const meta = {...}`, a 
   const results = await pipeline(
     args.files,
     f => agent(`Review ${f} for bugs.`, { phase: 'Review', schema: findings }),
-    (review, f) => parallel((review?.bugs ?? []).map(bug => () =>
+    (review, f) => parallel(review.bugs.map(bug => () =>
       agent(`Is this a real bug in ${f}? ${bug}`, { phase: 'Verify', schema: verdict })
-        .then(v => v?.real ? { file: f, bug } : null))),
+        .then(v => v.real ? { file: f, bug } : null))),
   )
-  return results.filter(Boolean).flat().filter(Boolean)
+  return results.flat().filter(Boolean)
 
 Before authoring a script, load the `workflow-authoring` skill — the script API, pipeline-vs-barrier rules, quality patterns, worked examples, and how to diagnose a run.

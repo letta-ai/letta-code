@@ -624,6 +624,38 @@ throw new Error('kaboom')`,
     expect(queuedMessages[0]?.text).toContain("kaboom");
   });
 
+  test.each([
+    "return await agent('reader')",
+    "return await parallel([() => agent('reader')])",
+    "return await pipeline(['reader'], prompt => agent(prompt))",
+  ])(
+    "worker failures mark the task and notification failed: %s",
+    async (script) => {
+      installSpawner(async () => ({
+        value: null,
+        failed: true,
+        error: "provider unavailable",
+        conversationId: "conv-failed-worker",
+      }));
+      const launched = await workflow({
+        script: `export const meta = { name: 'failure', description: 'worker failure' }\n${script}`,
+      });
+      const taskId = taskIdOf(launched.toolReturn);
+      await waitFor(() => cleanupCalls === 1);
+      const task = backgroundProcesses.get(taskId);
+      expect(task?.status).toBe("failed");
+      expect(task?.exitCode).toBe(1);
+      expect(queuedMessages).toHaveLength(1);
+      expect(queuedMessages[0]?.text).toContain("<status>failed</status>");
+      expect(queuedMessages[0]?.text).toContain(
+        'Workflow agent "reader" (conv-failed-worker) failed: provider unavailable',
+      );
+      expect(readFileSync(task?.outputFile as string, "utf8")).toContain(
+        "[error]",
+      );
+    },
+  );
+
   test("survives script return values JSON cannot encode", async () => {
     installSpawner(async () => ({ value: "x", failed: false }));
     const result = await workflow({
