@@ -18,7 +18,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 // Simple zip implementation using Node.js built-in zlib
 // For a proper zip file, we'll create the structure manually
@@ -54,7 +54,7 @@ function createZip(entries: ZipEntry[]): Buffer {
     const localHeader = Buffer.alloc(30 + pathBuffer.length);
     localHeader.writeUInt32LE(0x04034b50, 0); // Local file header signature
     localHeader.writeUInt16LE(20, 4); // Version needed to extract
-    localHeader.writeUInt16LE(0, 6); // General purpose bit flag
+    localHeader.writeUInt16LE(0x0800, 6); // General purpose bit flag (UTF-8 names)
     localHeader.writeUInt16LE(entry.isDirectory ? 0 : 8, 8); // Compression method (8 = deflate)
     localHeader.writeUInt16LE(0, 10); // File last modification time
     localHeader.writeUInt16LE(0, 12); // File last modification date
@@ -73,7 +73,7 @@ function createZip(entries: ZipEntry[]): Buffer {
     centralHeader.writeUInt32LE(0x02014b50, 0); // Central directory signature
     centralHeader.writeUInt16LE(20, 4); // Version made by
     centralHeader.writeUInt16LE(20, 6); // Version needed to extract
-    centralHeader.writeUInt16LE(0, 8); // General purpose bit flag
+    centralHeader.writeUInt16LE(0x0800, 8); // General purpose bit flag (UTF-8 names)
     centralHeader.writeUInt16LE(entry.isDirectory ? 0 : 8, 10); // Compression method
     centralHeader.writeUInt16LE(0, 12); // File last modification time
     centralHeader.writeUInt16LE(0, 14); // File last modification date
@@ -145,7 +145,7 @@ function getAllFiles(dir: string, baseDir: string): ZipEntry[] {
 
   for (const item of items) {
     const fullPath = join(dir, item.name);
-    const relativePath = relative(baseDir, fullPath);
+    const relativePath = normalizeZipEntryPath(relative(baseDir, fullPath));
 
     if (item.isDirectory()) {
       entries.push({
@@ -164,6 +164,13 @@ function getAllFiles(dir: string, baseDir: string): ZipEntry[] {
   }
 
   return entries;
+}
+
+export function normalizeZipEntryPath(
+  relativePath: string,
+  separator = sep,
+): string {
+  return relativePath.split(separator).join("/");
 }
 
 function packageSkill(skillPath: string, outputDir?: string): string | null {

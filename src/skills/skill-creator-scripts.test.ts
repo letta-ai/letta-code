@@ -18,7 +18,10 @@ import {
   initSkill,
   titleCaseSkillName,
 } from "@/skills/builtin/creating-skills/scripts/init-skill";
-import { packageSkill } from "@/skills/builtin/creating-skills/scripts/package-skill";
+import {
+  normalizeZipEntryPath,
+  packageSkill,
+} from "@/skills/builtin/creating-skills/scripts/package-skill";
 import { validateSkill } from "@/skills/builtin/creating-skills/scripts/validate-skill";
 
 const TEST_DIR = join(import.meta.dir, ".test-skill-creator");
@@ -410,6 +413,10 @@ description: A skill that can be packaged
 This skill can be packaged.
 `,
     );
+    const scriptsDir = join(skillDir, "scripts");
+    mkdirSync(scriptsDir);
+    const unicodeScriptPath = join(scriptsDir, "café.mjs");
+    writeFileSync(unicodeScriptPath, 'console.log("déjà vu");\n');
 
     const result = packageSkill(skillDir, TEST_DIR);
     expect(result).not.toBeNull();
@@ -418,34 +425,55 @@ This skill can be packaged.
 
     const extractedDir = join(TEST_DIR, "extracted");
     mkdirSync(extractedDir);
-    const extraction =
-      process.platform === "win32"
-        ? (() => {
-            const zipPath = `${archivePath}.zip`;
-            copyFileSync(archivePath, zipPath);
-            return spawnSync(
-              "powershell.exe",
-              [
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                "Expand-Archive -LiteralPath $args[0] -DestinationPath $args[1] -Force",
-                zipPath,
-                extractedDir,
-              ],
-              { encoding: "utf8" },
-            );
-          })()
-        : spawnSync("unzip", ["-qq", archivePath, "-d", extractedDir], {
-            encoding: "utf8",
-          });
+    const extraction = spawnSync(
+      process.platform === "win32" ? "python" : "python3",
+      [
+        "-c",
+        [
+          "import json, sys",
+          "from zipfile import ZipFile",
+          "with ZipFile(sys.argv[1]) as archive:",
+          "    print(json.dumps(archive.namelist(), ensure_ascii=True))",
+          "    archive.extractall(sys.argv[2])",
+        ].join("\n"),
+        archivePath,
+        extractedDir,
+      ],
+      { encoding: "utf8" },
+    );
     expect(extraction.status).toBe(0);
     expect(extraction.stderr).toBe("");
+    expect(JSON.parse(extraction.stdout).sort()).toEqual(
+      [
+        "packagable-skill/",
+        "packagable-skill/SKILL.md",
+        "packagable-skill/scripts/",
+        "packagable-skill/scripts/café.mjs",
+      ].sort(),
+    );
     expect(readdirSync(extractedDir)).toEqual(["packagable-skill"]);
     const extractedSkillDir = join(extractedDir, "packagable-skill");
-    expect(readdirSync(extractedSkillDir)).toEqual(["SKILL.md"]);
+    expect(readdirSync(extractedSkillDir).sort()).toEqual([
+      "SKILL.md",
+      "scripts",
+    ]);
     expect(readFileSync(join(extractedSkillDir, "SKILL.md"))).toEqual(
       readFileSync(join(skillDir, "SKILL.md")),
+    );
+    expect(readdirSync(join(extractedSkillDir, "scripts"))).toEqual([
+      "café.mjs",
+    ]);
+    expect(
+      readFileSync(join(extractedSkillDir, "scripts", "café.mjs")),
+    ).toEqual(readFileSync(unicodeScriptPath));
+  });
+
+  test("normalizes only the current platform's path separators", () => {
+    expect(normalizeZipEntryPath("skill\\scripts\\helper.mjs", "\\")).toBe(
+      "skill/scripts/helper.mjs",
+    );
+    expect(normalizeZipEntryPath("skill/literal\\name.txt", "/")).toBe(
+      "skill/literal\\name.txt",
     );
   });
 
