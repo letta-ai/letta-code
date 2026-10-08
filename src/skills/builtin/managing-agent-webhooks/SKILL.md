@@ -6,13 +6,14 @@ description: Creates, lists, tests, enables, disables, rotates, inspects, and de
 # Managing Agent Webhooks
 
 Use the helper script for deterministic, secret-safe webhook management. Agent
-webhooks are a Letta Cloud feature: every accepted `POST` creates a new
-conversation for the agent and enqueues the JSON payload as a user message.
+webhooks are a Letta Cloud feature: after accepting a `POST`, the server
+asynchronously attempts to create a new conversation and enqueue the JSON
+payload as a user message.
 
 ## Safety
 
-- Manage the current agent only. The helper rejects an explicit agent ID that
-  differs from `AGENT_ID`.
+- Manage the current agent only. `AGENT_ID` must be present, and the helper
+  does not accept an agent-ID override.
 - Treat each webhook URL as a capability secret. Do not post it publicly.
 - Choose authentication deliberately. If the user did not specify public or
   Basic-auth access, ask before creating the webhook.
@@ -23,6 +24,9 @@ conversation for the agent and enqueues the JSON payload as a user message.
   `--confirm` flag only after the user has approved that exact action.
 - Request bodies may contain sensitive third-party data. `requests` omits them
   unless `--include-body` is explicitly passed.
+- Sending a test starts asynchronous agent work. Ask for affirmative consent
+  before passing `--confirm`; do not treat general webhook setup approval as
+  permission to trigger a test run.
 
 ## Environment
 
@@ -30,8 +34,8 @@ Live operations require:
 
 ```bash
 LETTA_API_KEY=...     # supplied by the active Letta runtime
-LETTA_BASE_URL=...    # use the active server; never guess or hard-code it
-AGENT_ID=agent-...    # defaults to the current agent
+LETTA_BASE_URL=...    # supplied by the active runtime; never override it
+AGENT_ID=agent-...    # required; the helper manages only this agent
 ```
 
 Run the helper with:
@@ -50,10 +54,13 @@ responses.
    should interpret payloads, and whether the endpoint is public or secured.
 3. Create the webhook and report its URL. Remind the user to treat it as a
    secret even when Basic auth is enabled.
-4. Send a small smoke-test payload unless the user asked not to trigger it.
-5. Read request history and confirm `status_code: 202`,
-   `authorization_passed: true`, and `enqueued: true` before claiming delivery.
-6. Explain that every accepted request starts a separate conversation.
+4. Ask for affirmative consent before sending a smoke-test payload. Then pass
+   `--confirm` for that exact test.
+5. Report HTTP `202` only as accepted by the ingress handler. Conversation
+   creation and queue submission happen asynchronously after the response;
+   request history cannot prove or correlate successful dispatch.
+6. Explain that every accepted request attempts to start a separate
+   conversation asynchronously.
 
 ## Commands
 
@@ -90,14 +97,14 @@ The caller sends `Authorization: Basic <base64("webhook:<security-key>")>`.
 Do not print that header or the key. The helper derives it internally for test
 requests when the same key is piped through stdin.
 
-### Test and verify
+### Test acceptance
 
 Public webhook:
 
 ```bash
 node <SKILL_DIR>/scripts/manage-agent-webhooks.mjs test \
   --webhook-id webhook-agent-... \
-  --payload-json '{"event":"test","message":"hello"}'
+  --confirm
 ```
 
 Secured webhook:
@@ -107,10 +114,15 @@ printf '%s' "$WEBHOOK_SECURITY_KEY" | \
   node <SKILL_DIR>/scripts/manage-agent-webhooks.mjs test \
     --webhook-id webhook-agent-... \
     --payload-file /tmp/event.json \
-    --security-key-stdin
+    --security-key-stdin \
+    --confirm
 ```
 
-Then verify delivery:
+For a custom payload, prefer an existing protected JSON file. Never place
+sensitive payload JSON directly in argv, shell history, or process listings.
+Delete temporary payload files after the test.
+
+Inspect recent accepted requests separately:
 
 ```bash
 node <SKILL_DIR>/scripts/manage-agent-webhooks.mjs requests \
@@ -119,7 +131,8 @@ node <SKILL_DIR>/scripts/manage-agent-webhooks.mjs requests \
 ```
 
 Pass `--include-body` only when the user needs payload contents and it is safe
-to display them.
+to display them. Request history is written fire-and-forget and cannot be
+correlated with the test command, so do not use it as proof of dispatch.
 
 ### Enable or disable
 
@@ -152,5 +165,7 @@ longer works.
   the response's `errorCode`.
 - `401 Unauthorized` from a webhook test means the endpoint requires Basic
   auth and the supplied key was missing or wrong.
-- A `202 {"ok":true}` response means accepted, not completed. Verify request
-  history before reporting successful enqueueing.
+- A `202 {"ok":true}` response means accepted by the ingress handler, not
+  dispatched or completed. Do not report successful conversation creation or
+  queueing from that response or from the history `enqueued` field; the server
+  currently derives that field from the same `202` status.

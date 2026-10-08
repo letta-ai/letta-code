@@ -14,12 +14,35 @@ const COMMANDS = new Set([
   "rotate",
   "test",
 ]);
+const BOOLEAN_FLAGS = new Set([
+  "confirm",
+  "disabled",
+  "include-body",
+  "public",
+  "security-key-stdin",
+]);
+const COMMAND_OPTIONS = new Map([
+  [
+    "create",
+    new Set(["disabled", "name", "preprompt", "public", "security-key-stdin"]),
+  ],
+  ["delete", new Set(["confirm", "webhook-id"])],
+  ["disable", new Set(["confirm", "webhook-id"])],
+  ["enable", new Set(["webhook-id"])],
+  ["list", new Set()],
+  ["requests", new Set(["include-body", "limit", "webhook-id"])],
+  ["rotate", new Set(["confirm", "webhook-id"])],
+  [
+    "test",
+    new Set(["confirm", "payload-file", "security-key-stdin", "webhook-id"]),
+  ],
+]);
 
 function usage() {
   console.error(`Usage:
-  node manage-agent-webhooks.mjs list [--agent-id <id>] [--base-url <url>]
+  node manage-agent-webhooks.mjs list
   node manage-agent-webhooks.mjs create --name <name> (--public | --security-key-stdin) [--preprompt <text>] [--disabled]
-  node manage-agent-webhooks.mjs test --webhook-id <id> [--payload-json <json> | --payload-file <path>] [--security-key-stdin]
+  node manage-agent-webhooks.mjs test --webhook-id <id> --confirm [--payload-file <path>] [--security-key-stdin]
   node manage-agent-webhooks.mjs requests --webhook-id <id> [--limit <1-50>] [--include-body]
   node manage-agent-webhooks.mjs enable --webhook-id <id>
   node manage-agent-webhooks.mjs disable --webhook-id <id> --confirm
@@ -28,8 +51,8 @@ function usage() {
 
 Environment:
   LETTA_API_KEY   Required for management operations
-  LETTA_BASE_URL  Required unless --base-url is provided
-  AGENT_ID        Current agent; used unless --agent-id is provided
+  LETTA_BASE_URL  Active server supplied by the runtime
+  AGENT_ID        Required current agent
 `);
   process.exit(2);
 }
@@ -37,14 +60,8 @@ Environment:
 export function parseAgentWebhookArgs(argv) {
   const [command = "", ...rest] = argv;
   if (!COMMANDS.has(command)) usage();
-
-  const booleanFlags = new Set([
-    "confirm",
-    "disabled",
-    "include-body",
-    "public",
-    "security-key-stdin",
-  ]);
+  const allowedOptions = COMMAND_OPTIONS.get(command);
+  if (!allowedOptions) throw new Error(`Unsupported command: ${command}`);
   const args = {};
   for (let index = 0; index < rest.length; index++) {
     const argument = rest[index];
@@ -56,7 +73,13 @@ export function parseAgentWebhookArgs(argv) {
       throw new Error(`Unexpected positional argument: ${argument}`);
     }
     const key = argument.slice(2);
-    if (booleanFlags.has(key)) {
+    if (!allowedOptions.has(key)) {
+      throw new Error(`Unsupported option --${key} for ${command}`);
+    }
+    if (Object.hasOwn(args, key)) {
+      throw new Error(`Duplicate option --${key}`);
+    }
+    if (BOOLEAN_FLAGS.has(key)) {
       args[key] = true;
       continue;
     }
@@ -75,17 +98,10 @@ function requireString(value, message) {
   return stringValue;
 }
 
-export function resolveAgentWebhookTarget(params) {
-  const requested = params.requestedAgentId?.trim();
-  const current = params.currentAgentId?.trim();
-  if (requested && current && requested !== current) {
-    throw new Error(
-      `Refusing to manage ${requested}; the current agent is ${current}`,
-    );
-  }
+export function resolveAgentWebhookTarget(currentAgentId) {
   return requireString(
-    requested || current,
-    "Set AGENT_ID or pass --agent-id for the current agent",
+    currentAgentId,
+    "AGENT_ID is required; this helper only manages the current agent",
   );
 }
 
@@ -106,11 +122,15 @@ export function buildAgentWebhookBasicAuthorization(securityKey) {
 function normalizedBaseUrl(value) {
   const baseUrl = requireString(
     value,
-    "Set LETTA_BASE_URL or pass --base-url; do not guess the active server",
+    "LETTA_BASE_URL is required from the active runtime",
   );
   const parsed = new URL(baseUrl);
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
     throw new Error("Base URL must use http or https");
+  }
+  const loopbackHostnames = new Set(["localhost", "127.0.0.1", "[::1]"]);
+  if (parsed.protocol === "http:" && !loopbackHostnames.has(parsed.hostname)) {
+    throw new Error("Plaintext LETTA_BASE_URL is allowed only on loopback");
   }
   return parsed.toString().replace(/\/$/, "");
 }
@@ -183,14 +203,8 @@ async function readSecurityKey(args) {
 }
 
 async function readPayload(args) {
-  if (args["payload-file"] && args["payload-json"]) {
-    throw new Error("Use only one of --payload-file or --payload-json");
-  }
   if (args["payload-file"]) {
     return JSON.parse(await readFile(String(args["payload-file"]), "utf8"));
-  }
-  if (args["payload-json"]) {
-    return JSON.parse(String(args["payload-json"]));
   }
   return {
     event: "agent-webhook-test",
@@ -231,9 +245,10 @@ function requireConfirmation(args, action) {
 }
 
 async function listWebhooks(params) {
+  const encodedAgentId = encodeURIComponent(params.agentId);
   return webhookList(
     await requestJson(
-      `${params.baseUrl}/v1/agents/${params.agentId}/webhooks`,
+      `${params.baseUrl}/v1/agents/${encodedAgentId}/webhooks`,
       {
         headers: params.headers,
       },
@@ -242,7 +257,8 @@ async function listWebhooks(params) {
 }
 
 async function runManagementCommand(params) {
-  const collectionUrl = `${params.baseUrl}/v1/agents/${params.agentId}/webhooks`;
+  const encodedAgentId = encodeURIComponent(params.agentId);
+  const collectionUrl = `${params.baseUrl}/v1/agents/${encodedAgentId}/webhooks`;
 
   if (params.command === "list") {
     const webhooks = await listWebhooks(params);
@@ -282,6 +298,10 @@ async function runManagementCommand(params) {
   const webhookId = requireWebhookId(params.args);
   const itemUrl = `${collectionUrl}/${encodeURIComponent(webhookId)}`;
 
+  if (params.command === "test") {
+    requireConfirmation(params.args, "Testing a webhook");
+  }
+
   if (params.command === "requests") {
     const limit = positiveInteger(params.args.limit, 10);
     const response = jsonObject(
@@ -298,9 +318,18 @@ async function runManagementCommand(params) {
         entry,
         "Request history item must be an object",
       );
-      if (params.args["include-body"] === true) return request;
-      const { request_body: _requestBody, ...safe } = request;
-      return safe;
+      const {
+        enqueued: _enqueued,
+        request_body: requestBody,
+        ...acceptedRequest
+      } = request;
+      return {
+        ...acceptedRequest,
+        accepted: request.status_code === 202,
+        ...(params.args["include-body"] === true
+          ? { request_body: requestBody }
+          : {}),
+      };
     });
     printJson({ requests });
     return;
@@ -384,8 +413,10 @@ async function runManagementCommand(params) {
       );
     }
     printJson({
-      accepted: response.status === 202,
+      accepted_for_processing: response.status === 202,
       body,
+      dispatch_verified: false,
+      note: "HTTP 202 confirms only that the ingress handler accepted the request; conversation creation and queue submission happen asynchronously.",
       status_code: response.status,
     });
     return;
@@ -396,13 +427,8 @@ async function runManagementCommand(params) {
 
 export async function runAgentWebhookCli(argv) {
   const { args, command } = parseAgentWebhookArgs(argv);
-  const agentId = resolveAgentWebhookTarget({
-    currentAgentId: process.env.AGENT_ID,
-    requestedAgentId: args["agent-id"] ? String(args["agent-id"]) : undefined,
-  });
-  const baseUrl = normalizedBaseUrl(
-    args["base-url"] || process.env.LETTA_BASE_URL,
-  );
+  const agentId = resolveAgentWebhookTarget(process.env.AGENT_ID);
+  const baseUrl = normalizedBaseUrl(process.env.LETTA_BASE_URL);
   const apiKey = requireString(
     process.env.LETTA_API_KEY,
     "LETTA_API_KEY is required",
