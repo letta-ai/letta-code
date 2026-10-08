@@ -126,7 +126,11 @@ describe("browser discovery server", () => {
       response.writeHead(503).end();
     });
     blockers.push(blocker);
-    await listen(blocker, 0);
+    await withTimeout(
+      listen(blocker, 0),
+      2_000,
+      "Discovery takeover blocker did not start",
+    );
     const port = (blocker.address() as AddressInfo).port;
 
     const handle = startBrowserDiscoveryServer({ port, retryDelayMs: 10 });
@@ -138,12 +142,28 @@ describe("browser discovery server", () => {
     await Bun.sleep(30);
     expect(ready).toBe(false);
 
-    await closeServer(blocker);
+    await withTimeout(
+      closeServer(blocker),
+      2_000,
+      `Discovery takeover blocker did not close port ${port}`,
+    );
     blockers.splice(blockers.indexOf(blocker), 1);
-    const address = await handle.ready;
+    // Keep a referenced watchdog while waiting: the production retry timer is
+    // intentionally unref'd, and Bun on Windows does not schedule it when the
+    // test harness is otherwise the only remaining owner of the event loop.
+    const address = await withTimeout(
+      handle.ready,
+      2_000,
+      `Discovery contender did not take over released port ${port}`,
+    );
 
     expect(address.port).toBe(port);
-    expect(await (await fetch(address.url)).json()).toEqual({ status: "ok" });
+    const response = await withTimeout(
+      fetch(address.url),
+      2_000,
+      `Discovery takeover endpoint did not respond on port ${port}`,
+    );
+    expect(await response.json()).toEqual({ status: "ok" });
   });
 
   test("closing a contender cancels port takeover", async () => {
@@ -281,6 +301,24 @@ async function closeServer(server: Server): Promise<void> {
   server.closeAllConnections();
   if (!server.listening) return;
   await new Promise<void>((resolve) => server.close(() => resolve()));
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string,
+): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
 
 async function buildNodeFixture(body: string): Promise<string> {
