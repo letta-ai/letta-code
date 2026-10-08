@@ -344,6 +344,45 @@ describe("browser-device MCP OAuth command handling", () => {
     stopRuntime(owner, true);
   });
 
+  test("budget expiry disposes a non-cooperative live flight and admits the next request", async () => {
+    let monotonicNow = MONOTONIC_NOW_MS;
+    let settleExpired: (() => void) | undefined;
+    const owner = createRuntime();
+    const expired = createHarness(
+      async () =>
+        await new Promise<void>((resolve) => {
+          settleExpired = resolve;
+        }),
+      owner,
+    );
+    expired.dependencies.monotonicNow = () => monotonicNow;
+    handleBrowserDeviceMcpOAuthProtocolCommand(
+      startCommand(),
+      expired.dependencies,
+    );
+
+    monotonicNow += 285_001;
+    const successor = createHarness(async () => undefined, owner);
+    successor.dependencies.monotonicNow = () => monotonicNow;
+    handleBrowserDeviceMcpOAuthProtocolCommand(
+      startCommand({ request_id: "post-expiry-operation" }),
+      successor.dependencies,
+    );
+    await Promise.all(successor.tasks);
+    expect(successor.responses).toEqual([
+      {
+        type: "browser_device_mcp_oauth_response",
+        request_id: "post-expiry-operation",
+        success: true,
+      },
+    ]);
+
+    settleExpired?.();
+    await Promise.all(expired.tasks);
+    expect(expired.responses).toEqual([]);
+    stopRuntime(owner, true);
+  });
+
   test("runtime shutdown aborts stale work, releases its flight, and suppresses its terminal", async () => {
     const staleOwner = createRuntime();
     const stale = createHarness(

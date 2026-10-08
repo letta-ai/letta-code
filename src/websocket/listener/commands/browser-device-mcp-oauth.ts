@@ -67,7 +67,7 @@ export function handleBrowserDeviceMcpOAuthProtocolCommand(
 ): boolean {
   const receivedAtMonotonicMs =
     dependencies.monotonicNow?.() ?? performance.now();
-  pruneCompletedOperations(receivedAtMonotonicMs);
+  pruneExpiredOperations(receivedAtMonotonicMs);
 
   if (command.type === "browser_device_mcp_oauth_cancel") {
     const operation = operations.get(
@@ -303,16 +303,35 @@ function sendTerminalResponse(
   );
 }
 
-function pruneCompletedOperations(monotonicNowMs: number): void {
+function pruneExpiredOperations(monotonicNowMs: number): void {
   for (const [key, operation] of operations) {
-    if (
-      operation.response &&
-      monotonicNowMs >
-        operation.expiresAtMonotonicMs + COMPLETED_OPERATION_RETENTION_MS
-    ) {
-      operations.delete(key);
+    const expiresAtMonotonicMs =
+      operation.expiresAtMonotonicMs +
+      (operation.response ? COMPLETED_OPERATION_RETENTION_MS : 0);
+    if (monotonicNowMs > expiresAtMonotonicMs) {
+      disposeOperation(
+        key,
+        operation,
+        new DOMException("Browser-device OAuth expired", "TimeoutError"),
+      );
     }
   }
+}
+
+function disposeOperation(
+  key: string,
+  operation: OperationRecord,
+  reason: DOMException,
+): void {
+  operation.disposed = true;
+  if (operations.get(key) === operation) operations.delete(key);
+  if (
+    operation.flightKey &&
+    activeFlights.get(operation.flightKey) === operation
+  ) {
+    activeFlights.delete(operation.flightKey);
+  }
+  operation.controller.abort(reason);
 }
 
 export function rebindBrowserDeviceMcpOAuthOperationsToSocket(
@@ -323,12 +342,15 @@ export function rebindBrowserDeviceMcpOAuthOperationsToSocket(
   for (const [key, operation] of operations) {
     const monotonicNowMs =
       operation.dependencies.monotonicNow?.() ?? performance.now();
-    if (
-      operation.response &&
-      monotonicNowMs >
-        operation.expiresAtMonotonicMs + COMPLETED_OPERATION_RETENTION_MS
-    ) {
-      operations.delete(key);
+    const expiresAtMonotonicMs =
+      operation.expiresAtMonotonicMs +
+      (operation.response ? COMPLETED_OPERATION_RETENTION_MS : 0);
+    if (monotonicNowMs > expiresAtMonotonicMs) {
+      disposeOperation(
+        key,
+        operation,
+        new DOMException("Browser-device OAuth expired", "TimeoutError"),
+      );
       continue;
     }
     if (
@@ -348,15 +370,9 @@ export function disposeBrowserDeviceMcpOAuthOperationsForRuntime(
 ): void {
   for (const [key, operation] of operations) {
     if (operation.owner !== runtime) continue;
-    operation.disposed = true;
-    operations.delete(key);
-    if (
-      operation.flightKey &&
-      activeFlights.get(operation.flightKey) === operation
-    ) {
-      activeFlights.delete(operation.flightKey);
-    }
-    operation.controller.abort(
+    disposeOperation(
+      key,
+      operation,
       new DOMException("Listener runtime stopped", "AbortError"),
     );
   }
