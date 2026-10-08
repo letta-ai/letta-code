@@ -1,6 +1,6 @@
 /**
  * The workflow engine: parses the meta block, builds the script-facing hooks
- * (agent / decide / parallel / pipeline / phase / log / args), executes the script
+ * (agent / decide / tools / parallel / pipeline / phase / log / args), executes the script
  * body inside a node:vm context, and appends every subagent outcome to the
  * run's journal.
  *
@@ -24,12 +24,14 @@ import type {
   RunWorkflowOptions,
   SubagentSpawner,
   WorkflowExecutionResult,
+  WorkflowMcpResult,
   WorkflowProgressEvent,
 } from "./types.ts";
 
 export const DEFAULT_MAX_CONCURRENT = 16;
 const DEFAULT_MAX_TOTAL_AGENTS = 1000;
 const DEFAULT_MAX_TOTAL_DECISIONS = 1000;
+const DEFAULT_MAX_TOTAL_MCP_CALLS = 1000;
 const MAX_ITEMS_PER_HELPER = 4096;
 
 class Semaphore {
@@ -55,6 +57,33 @@ class Semaphore {
   }
 }
 
+function mcpText(content: unknown[]): string[] {
+  return content.flatMap((part) =>
+    part &&
+    typeof part === "object" &&
+    (part as { type?: unknown }).type === "text" &&
+    typeof (part as { text?: unknown }).text === "string"
+      ? [(part as { text: string }).text]
+      : [],
+  );
+}
+
+/** Text results resolve to a string (parsed when JSON); others stay raw. */
+function mcpContentValue(content: unknown[]): unknown {
+  const text = mcpText(content);
+  if (text.length !== content.length || text.length === 0) return content;
+  const joined = text.join("\n");
+  try {
+    return JSON.parse(joined);
+  } catch {
+    return joined;
+  }
+}
+
+function mcpErrorText(result: { content: unknown[] }): string {
+  return mcpText(result.content).join("\n").slice(0, 2000) || "MCP tool error";
+}
+
 function defaultLabel(prompt: string): string {
   const oneLine = prompt.replace(/\s+/g, " ").trim();
   return oneLine.length <= 48 ? oneLine : `${oneLine.slice(0, 45)}...`;
@@ -78,6 +107,8 @@ export async function executeWorkflow(
   const maxTotalAgents = options.maxTotalAgents ?? DEFAULT_MAX_TOTAL_AGENTS;
   const maxTotalDecisions =
     options.maxTotalDecisions ?? DEFAULT_MAX_TOTAL_DECISIONS;
+  const maxTotalMcpCalls =
+    options.maxTotalMcpCalls ?? DEFAULT_MAX_TOTAL_MCP_CALLS;
   const semaphore = new Semaphore(
     options.maxConcurrent ?? DEFAULT_MAX_CONCURRENT,
   );
@@ -85,6 +116,7 @@ export async function executeWorkflow(
   let currentPhase: string | null = null;
   let callCounter = 0;
   let decisionCounter = 0;
+  let mcpCallCounter = 0;
   let agentsSpawned = 0;
   let totalTokens = 0;
 
@@ -107,6 +139,65 @@ export async function executeWorkflow(
     callOptions?: unknown,
   ): Promise<unknown> {
     return trackCall(callDecision(state, questions, callOptions));
+  }
+
+  // Codex-style `tools` global: `await tools.mcp__server__tool(args)`. Only
+  // the invoking agent's MCP tools are exposed; any other name is undefined.
+  const tools = new Proxy(Object.freeze({}), {
+    get: (_target, name) =>
+      typeof name === "string" && name.startsWith("mcp__")
+        ? (args?: unknown) => trackCall(callMcp(name, args))
+        : undefined,
+  });
+
+  async function callMcp(toolName: string, args?: unknown): Promise<unknown> {
+    const callMcpTool = options.callMcpTool;
+    if (!callMcpTool) {
+      throw new Error("tools are unavailable: no agent MCP scope.");
+    }
+    if (
+      args !== undefined &&
+      (!args || typeof args !== "object" || Array.isArray(args))
+    ) {
+      throw new Error(`tools.${toolName}() arguments must be an object.`);
+    }
+    if (signal.aborted) throw new Error("Workflow aborted.");
+    if (mcpCallCounter >= maxTotalMcpCalls) {
+      throw new Error(`Lifetime MCP call cap of ${maxTotalMcpCalls} reached.`);
+    }
+    mcpCallCounter++;
+    await semaphore.acquire();
+    const startedAt = Date.now();
+    const journal = (isError: boolean, error?: string) => {
+      if (!options.journalPath) return;
+      appendJournalEntry(options.journalPath, {
+        kind: "mcp_call",
+        toolName,
+        isError,
+        durationMs: Date.now() - startedAt,
+        ...(error ? { error } : {}),
+      });
+    };
+    let result: WorkflowMcpResult;
+    try {
+      if (signal.aborted) throw new Error("Workflow aborted.");
+      result = await callMcpTool(
+        toolName,
+        (args ?? {}) as Record<string, unknown>,
+      );
+    } catch (error) {
+      journal(true, error instanceof Error ? error.message : String(error));
+      throw error;
+    } finally {
+      semaphore.release();
+    }
+    if (result.isError) {
+      const message = mcpErrorText(result);
+      journal(true, message);
+      throw new Error(`${toolName} failed: ${message}`);
+    }
+    journal(false);
+    return result.structuredContent ?? mcpContentValue(result.content);
   }
 
   async function callDecision(
@@ -325,6 +416,7 @@ export async function executeWorkflow(
   const context = vm.createContext({
     agent,
     decide,
+    tools,
     parallel,
     pipeline,
     phase,

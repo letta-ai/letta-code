@@ -4,6 +4,8 @@ Workflows run in the background: this tool returns immediately with a task ID, a
 
 ONLY call this tool when the user has explicitly opted into multi-agent orchestration — they asked for a workflow or multi-agent orchestration in their own words ("use a workflow", "fan out agents"), or invoked a skill whose instructions call this tool. Workflows can spawn many subagents and cost real money. For any other task, even one that would benefit from parallelism, describe what a workflow could do and ask first.
 
+Scripts can also call the agent's MCP tools directly with `await tools.mcp__server__tool(args)`, subject to the user's permission rules.
+
 Scripts are plain JavaScript and must begin with `export const meta = {...}`, a pure literal (no variables, calls, or interpolation). Pass the work list via `args`. Prefer `pipeline()` so each item moves to its next stage as soon as it is ready; `agent()` resolves to `null` on failure, so guard and filter:
 
   export const meta = {
