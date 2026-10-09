@@ -450,6 +450,22 @@ silently affect `bar.test.ts` if they share a worker.
 - **Review signal:** any test using `mock.module()` without `afterAll`
   restoration, especially if the mocked module is consumed by other test files.
 
+### Secret Redaction Sinks
+
+Tool-output redaction lives in `src/tools/secret-substitution.ts`, but the main
+scrub runs before two paths that can change the returned content: post-tool hook
+feedback (PostToolUse/PostToolUseFailure) is appended after it, and a `tool_end`
+mod can replace the result entirely. Either path can return an ambient runtime
+credential (inherited `$LETTA_API_KEY`, settings-env key, Desktop access token,
+including the base64 `letta:<token>` git-credential form) to the model
+unredacted.
+
+- **Invariant:** re-run the scrub on the final tool-return string after hook
+  feedback and after `tool_end` overrides; scrub feedback before truncation or
+  overflow writes.
+- **Review signal:** any PR adding a tool-output sink or a post-scrub
+  transformation of tool-return content without re-scrubbing.
+
 ### Don't Rename Existing Test Fixtures
 
 When adding a feature that uses a different provider/entity name, ADD new
@@ -924,6 +940,11 @@ and create draft parity PRs when warranted.
 - Compact prompt for re-reviews (existing conversation detected).
 - Background agent gets stuck on complex reviews requiring repo setup + extensive
   reading. Do those in the foreground.
+- **`review`/`sync` red is an agent-runner failure, not a diff failure.** Both
+  checks run the AI reviewer through `letta-ai/letta-code-action` (pinned SHA in
+  the workflow) and can exit 1 inside the action after ~30 seconds with hidden
+  output even when every source suite is green. Rerun the job; do not start a
+  source investigation from a red `review`/`sync` check alone.
 
 ### Secret Injection Syntax
 
