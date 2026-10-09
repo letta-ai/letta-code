@@ -21,6 +21,7 @@ describe("listen subcommand telemetry", () => {
   const originalInitialize = settingsManager.initialize;
   const originalApiKey = process.env.LETTA_API_KEY;
   const originalBaseUrl = process.env.LETTA_BASE_URL;
+  const originalDebug = process.env.LETTA_DEBUG;
   const originalDesktopDebugPanel = process.env.LETTA_DESKTOP_MODE;
   const originalRestoreEnabledChannels =
     process.env.LETTA_RESTORE_ENABLED_CHANNELS;
@@ -40,6 +41,7 @@ describe("listen subcommand telemetry", () => {
     telemetryState.sessionEndTracked = false;
     delete process.env.LETTA_API_KEY;
     delete process.env.LETTA_BASE_URL;
+    process.env.LETTA_DEBUG = "0";
     delete process.env.LETTA_DESKTOP_MODE;
     delete process.env.LETTA_RESTORE_ENABLED_CHANNELS;
     delete process.env.LETTA_RESTORE_CHANNEL_AGENT_SCOPE;
@@ -83,6 +85,11 @@ describe("listen subcommand telemetry", () => {
       delete process.env.LETTA_BASE_URL;
     } else {
       process.env.LETTA_BASE_URL = originalBaseUrl;
+    }
+    if (originalDebug === undefined) {
+      delete process.env.LETTA_DEBUG;
+    } else {
+      process.env.LETTA_DEBUG = originalDebug;
     }
     if (originalDesktopDebugPanel === undefined) {
       delete process.env.LETTA_DESKTOP_MODE;
@@ -135,5 +142,79 @@ describe("listen subcommand telemetry", () => {
       "listener_self_hosted_no_channels",
     );
     expect(flushMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("reports signed-out lifecycle state without starting browser auth", async () => {
+    const lines: string[] = [];
+    const originalWrite = process.stdout.write;
+    process.stdout.write = mock((chunk: string | Uint8Array) => {
+      lines.push(String(chunk));
+      return true;
+    }) as typeof process.stdout.write;
+    const openInBrowser = mock(() => {});
+    __listenerAuthTestUtils.setOAuthDepsForTests({
+      LETTA_CLOUD_API_URL: "https://api.letta.com",
+      openInBrowser,
+    });
+
+    try {
+      const exitCode = await runListenSubcommand([
+        "--computer-name",
+        "ci-env",
+        "--lifecycle-output=jsonl",
+      ]);
+
+      expect(exitCode).toBe(1);
+      expect(lines.join("")).toBe(
+        '{"lettaLifecycleProtocol":1,"state":"signed_out"}\n',
+      );
+      expect(openInBrowser).not.toHaveBeenCalled();
+    } finally {
+      process.stdout.write = originalWrite;
+    }
+  });
+
+  test("opens browser auth only when lifecycle sign-in is explicit", async () => {
+    const lines: string[] = [];
+    const originalWrite = process.stdout.write;
+    process.stdout.write = mock((chunk: string | Uint8Array) => {
+      lines.push(String(chunk));
+      return true;
+    }) as typeof process.stdout.write;
+    const openInBrowser = mock(() => {});
+    __listenerAuthTestUtils.setOAuthDepsForTests({
+      LETTA_CLOUD_API_URL: "https://api.letta.com",
+      openInBrowser,
+      requestDeviceCode: mock(async () => ({
+        device_code: "device-code",
+        user_code: "ABCD-EFGH",
+        verification_uri: "https://app.letta.com/device",
+        verification_uri_complete: "https://app.letta.com/device?code=ABCD",
+        expires_in: 600,
+        interval: 1,
+      })),
+      pollForToken: mock(async () => {
+        throw new Error("sign-in cancelled");
+      }),
+    });
+
+    try {
+      const exitCode = await runListenSubcommand([
+        "--computer-name",
+        "ci-env",
+        "--lifecycle-output=jsonl",
+        "--interactive-auth",
+      ]);
+
+      expect(exitCode).toBe(1);
+      expect(openInBrowser).toHaveBeenCalledWith(
+        "https://app.letta.com/device?code=ABCD",
+      );
+      expect(lines.join("")).toBe(
+        '{"lettaLifecycleProtocol":1,"state":"error"}\n',
+      );
+    } finally {
+      process.stdout.write = originalWrite;
+    }
   });
 });

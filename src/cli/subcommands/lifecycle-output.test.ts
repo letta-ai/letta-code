@@ -53,6 +53,7 @@ describe("server lifecycle output", () => {
     output.emitListenerStatus("receiving");
     output.emitListenerStatus("processing");
     output.emit("reconnecting");
+    output.emit("signed_out");
     output.emit("error");
 
     expect(lines.map((line) => JSON.parse(line))).toEqual([
@@ -61,6 +62,7 @@ describe("server lifecycle output", () => {
       { lettaLifecycleProtocol: 1, state: "idle" },
       { lettaLifecycleProtocol: 1, state: "working" },
       { lettaLifecycleProtocol: 1, state: "reconnecting" },
+      { lettaLifecycleProtocol: 1, state: "signed_out" },
       { lettaLifecycleProtocol: 1, state: "error" },
     ]);
     expect(lines.join("\n")).not.toContain("connectionId");

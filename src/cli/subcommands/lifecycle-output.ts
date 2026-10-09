@@ -3,6 +3,7 @@ export type ServerLifecycleState =
   | "reconnecting"
   | "working"
   | "idle"
+  | "signed_out"
   | "error";
 
 export type ServerLifecycleEvent = {

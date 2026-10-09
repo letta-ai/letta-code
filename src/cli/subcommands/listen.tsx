@@ -42,6 +42,7 @@ import {
 import {
   getListenerServerUrl,
   isCloudListenerServerUrl,
+  ListenerReauthenticationRequiredError,
   MissingListenerApiKeyError,
   resolveListenerRegistrationOptions,
 } from "@/websocket/listener/auth";
@@ -169,6 +170,7 @@ const LISTEN_OPTIONS = {
   help: { type: "boolean", short: "h" },
   debug: { type: "boolean" },
   "lifecycle-output": { type: "string" },
+  "interactive-auth": { type: "boolean" },
 } as const;
 
 export async function runListenSubcommand(argv: string[]): Promise<number> {
@@ -412,9 +414,23 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         registerOptions = await resolveListenerRegistrationOptions(
           deviceId,
           connectionName,
-          { allowInteractiveOAuth: !lifecycleOutput, organizationId },
+          {
+            allowInteractiveOAuth:
+              !lifecycleOutput || Boolean(values["interactive-auth"]),
+            organizationId,
+            suppressInteractiveOAuthOutput: Boolean(lifecycleOutput),
+          },
         );
       } catch (authErr) {
+        if (
+          lifecycleOutput &&
+          (authErr instanceof MissingListenerApiKeyError ||
+            authErr instanceof ListenerReauthenticationRequiredError)
+        ) {
+          lifecycleOutput.emit("signed_out");
+          await flushListenerTelemetryEnd("listener_reauthentication_required");
+          return 1;
+        }
         if (authErr instanceof MissingListenerApiKeyError) {
           reportError("Error: LETTA_API_KEY not found");
           if (!lifecycleOutput) {

@@ -25,6 +25,9 @@ export function printListenUsage(): void {
   console.log(
     "  --lifecycle-output jsonl  Emit payload-free JSON lifecycle transitions for a process supervisor",
   );
+  console.log(
+    "  --interactive-auth  Allow explicit browser sign-in while lifecycle output is enabled",
+  );
   console.log("  -h, --help         Show this help message\n");
   console.log("Examples:");
   console.log(

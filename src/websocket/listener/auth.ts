@@ -74,6 +74,7 @@ type ListenerOAuthDeps = {
 
 type ListenerAuthOptions = {
   allowInteractiveOAuth?: boolean;
+  suppressInteractiveOAuthOutput?: boolean;
   /**
    * Sign in to this organization specifically. Credentials live in a slot
    * keyed by the organization, so the global sign-in is neither used nor
@@ -228,17 +229,21 @@ async function runListenerOAuthLogin(
   deviceId: string,
   connectionName: string,
   organizationId?: string,
+  suppressOutput = false,
 ): Promise<string> {
   const oauthDeps = getListenerOAuthDeps();
-  console.log("No API key found. Starting OAuth login...\n");
+  if (!suppressOutput)
+    console.log("No API key found. Starting OAuth login...\n");
 
   const deviceData = await oauthDeps.requestDeviceCode(organizationId);
-  console.log("Opening your browser to sign in...");
-  console.log(
-    `If it didn't open, visit: ${deviceData.verification_uri_complete}`,
-  );
-  console.log(`Your code: ${deviceData.user_code}\n`);
-  console.log("Waiting for authorization...\n");
+  if (!suppressOutput) {
+    console.log("Opening your browser to sign in...");
+    console.log(
+      `If it didn't open, visit: ${deviceData.verification_uri_complete}`,
+    );
+    console.log(`Your code: ${deviceData.user_code}\n`);
+    console.log("Waiting for authorization...\n");
+  }
   oauthDeps.openInBrowser(deviceData.verification_uri_complete);
 
   const tokens = await oauthDeps.pollForToken(
@@ -256,7 +261,7 @@ async function runListenerOAuthLogin(
     tokenExpiresAt: now + tokens.expires_in * 1000,
   });
 
-  console.log("Authenticated successfully.\n");
+  if (!suppressOutput) console.log("Authenticated successfully.\n");
   return tokens.access_token;
 }
 
@@ -282,6 +287,7 @@ async function resolveListenerAuth(
       connectionName,
       allowInteractiveOAuth,
       options.organizationId,
+      options.suppressInteractiveOAuthOutput,
     );
     // Turns, memfs, and subagents in this process read the organization
     // sign-in from here, so they act as the organization the computer joined.
@@ -314,6 +320,8 @@ async function resolveListenerAuth(
       deviceId,
       connectionName,
       allowInteractiveOAuth,
+      undefined,
+      options.suppressInteractiveOAuthOutput,
     ),
   };
 }
@@ -324,6 +332,7 @@ async function resolveCloudCredentials(
   connectionName: string,
   allowInteractiveOAuth: boolean,
   organizationId?: string,
+  suppressInteractiveOAuthOutput = false,
 ): Promise<string> {
   const credentials = await slot.read();
   let apiKey = credentials.apiKey;
@@ -366,6 +375,7 @@ async function resolveCloudCredentials(
       deviceId,
       connectionName,
       organizationId,
+      suppressInteractiveOAuthOutput,
     );
   }
 
