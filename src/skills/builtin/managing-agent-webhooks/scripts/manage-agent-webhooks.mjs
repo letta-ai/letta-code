@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
+import { randomBytes } from "node:crypto";
 import { realpathSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { open, readFile, unlink } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -21,11 +22,20 @@ const BOOLEAN_FLAGS = new Set([
   "include-body",
   "public",
   "security-key-stdin",
+  "secure",
 ]);
 const COMMAND_OPTIONS = new Map([
   [
     "create",
-    new Set(["disabled", "name", "preprompt", "public", "security-key-stdin"]),
+    new Set([
+      "credential-output",
+      "disabled",
+      "name",
+      "preprompt",
+      "public",
+      "security-key-stdin",
+      "secure",
+    ]),
   ],
   ["delete", new Set(["confirm", "webhook-id"])],
   ["disable", new Set(["confirm", "webhook-id"])],
@@ -35,15 +45,21 @@ const COMMAND_OPTIONS = new Map([
   ["rotate", new Set(["confirm", "webhook-id"])],
   [
     "test",
-    new Set(["confirm", "payload-file", "security-key-stdin", "webhook-id"]),
+    new Set([
+      "confirm",
+      "credential-file",
+      "payload-file",
+      "security-key-stdin",
+      "webhook-id",
+    ]),
   ],
 ]);
 
 function usage() {
   console.error(`Usage:
   node manage-agent-webhooks.mjs list
-  node manage-agent-webhooks.mjs create --name <name> (--public | --security-key-stdin) [--preprompt <text>] [--disabled]
-  node manage-agent-webhooks.mjs test --webhook-id <id> --confirm [--payload-file <path>] [--security-key-stdin]
+  node manage-agent-webhooks.mjs create --name <name> (--public | --secure --credential-output <path> | --security-key-stdin) [--preprompt <text>] [--disabled]
+  node manage-agent-webhooks.mjs test --webhook-id <id> --confirm [--payload-file <path>] [--credential-file <path> | --security-key-stdin]
   node manage-agent-webhooks.mjs requests --webhook-id <id> [--limit <1-50>] [--include-body]
   node manage-agent-webhooks.mjs enable --webhook-id <id>
   node manage-agent-webhooks.mjs disable --webhook-id <id> --confirm
@@ -207,6 +223,59 @@ async function readSecurityKey(args) {
   return value;
 }
 
+async function reserveCredentialFile(outputPath) {
+  const path = resolve(
+    requireString(
+      outputPath,
+      "Generated credentials require --credential-output <path>",
+    ),
+  );
+  const handle = await open(path, "wx", 0o600);
+  const securityKey = randomBytes(24).toString("base64url");
+  const authorizationHeader = buildAgentWebhookBasicAuthorization(securityKey);
+  const contents = `${JSON.stringify(
+    {
+      authorization_header: authorizationHeader,
+      security_key: securityKey,
+    },
+    null,
+    2,
+  )}\n`;
+  try {
+    await handle.writeFile(contents, "utf8");
+    await handle.sync();
+    return { handle, path, securityKey };
+  } catch (error) {
+    await handle.close().catch(() => {});
+    await unlink(path).catch(() => {});
+    throw error;
+  }
+}
+
+async function discardCredentialFile(reservation) {
+  await reservation.handle.close().catch(() => {});
+  await unlink(reservation.path).catch(() => {});
+}
+
+async function finishCredentialFile(reservation) {
+  await reservation.handle.close();
+  return reservation.path;
+}
+
+async function readCredentialAuthorizationHeader(pathValue) {
+  const path = resolve(
+    requireString(pathValue, "Pass --credential-file <path>"),
+  );
+  const credential = jsonObject(
+    JSON.parse(await readFile(path, "utf8")),
+    "Credential file must contain a JSON object",
+  );
+  return requireString(
+    credential.authorization_header,
+    "Credential file is missing authorization_header",
+  );
+}
+
 async function readPayload(args) {
   if (args["payload-file"]) {
     return JSON.parse(await readFile(String(args["payload-file"]), "utf8"));
@@ -273,15 +342,26 @@ async function runManagementCommand(params) {
 
   if (params.command === "create") {
     const isPublic = params.args.public === true;
+    const usesGeneratedCredential = params.args.secure === true;
     const usesSecurityKey = params.args["security-key-stdin"] === true;
-    if (isPublic === usesSecurityKey) {
-      throw new Error("Choose exactly one of --public or --security-key-stdin");
+    const modeCount = [
+      isPublic,
+      usesGeneratedCredential,
+      usesSecurityKey,
+    ].filter(Boolean).length;
+    if (modeCount !== 1) {
+      throw new Error(
+        "Choose exactly one of --public, --secure, or --security-key-stdin",
+      );
+    }
+    if (!usesGeneratedCredential && params.args["credential-output"]) {
+      throw new Error("--credential-output is valid only with --secure");
     }
     const securityKey = await readSecurityKey(params.args);
     const body = {
       enabled: params.args.disabled !== true,
       name: requireString(params.args.name, "Create requires --name"),
-      requires_authorization_header: usesSecurityKey,
+      requires_authorization_header: usesGeneratedCredential || usesSecurityKey,
     };
     if (params.args.preprompt !== undefined) {
       body.preprompt = requireString(
@@ -290,18 +370,49 @@ async function runManagementCommand(params) {
       );
     }
     if (securityKey) body.security_key = securityKey;
+    const credentialReservation = usesGeneratedCredential
+      ? await reserveCredentialFile(params.args["credential-output"])
+      : undefined;
+    if (credentialReservation) {
+      body.security_key = credentialReservation.securityKey;
+    }
 
-    const response = jsonObject(
-      await requestJson(collectionUrl, {
+    let webhookCreated = false;
+    try {
+      const responseBody = await requestJson(collectionUrl, {
         body: JSON.stringify(body),
         headers: params.headers,
         method: "POST",
-      }),
-      "Create response must be an object",
-    );
-    printJson({
-      webhook: safeAgentWebhook(webhookFromUnknown(response.webhook)),
-    });
+      });
+      webhookCreated = true;
+      const response = jsonObject(
+        responseBody,
+        "Create response must be an object",
+      );
+      const webhook = webhookFromUnknown(response.webhook);
+      const credentialFile = credentialReservation
+        ? await finishCredentialFile(credentialReservation)
+        : undefined;
+      printJson({
+        ...(credentialFile
+          ? {
+              credential_file: credentialFile,
+              credential_file_is_sensitive: true,
+              credential_is_recoverable_from_server: false,
+            }
+          : {}),
+        webhook: safeAgentWebhook(webhook),
+      });
+    } catch (error) {
+      if (credentialReservation) {
+        if (webhookCreated) {
+          await credentialReservation.handle.close().catch(() => {});
+        } else {
+          await discardCredentialFile(credentialReservation);
+        }
+      }
+      throw error;
+    }
     return;
   }
 
@@ -395,20 +506,34 @@ async function runManagementCommand(params) {
     const webhooks = await listWebhooks(params);
     const webhook = webhooks.find((candidate) => candidate.id === webhookId);
     if (!webhook) throw new Error(`Webhook not found: ${webhookId}`);
-    const securityKey = await readSecurityKey(params.args);
-    if (webhook.requires_authorization_header && !securityKey) {
-      throw new Error("This webhook requires --security-key-stdin");
+    const usesCredentialFile = params.args["credential-file"] !== undefined;
+    const usesSecurityKey = params.args["security-key-stdin"] === true;
+    if (usesCredentialFile && usesSecurityKey) {
+      throw new Error(
+        "Choose at most one of --credential-file or --security-key-stdin",
+      );
     }
-    if (!webhook.requires_authorization_header && securityKey) {
-      throw new Error("This webhook is public; do not supply a security key");
+    const securityKey = await readSecurityKey(params.args);
+    const authorizationHeader = usesCredentialFile
+      ? await readCredentialAuthorizationHeader(params.args["credential-file"])
+      : securityKey
+        ? buildAgentWebhookBasicAuthorization(securityKey)
+        : undefined;
+    if (webhook.requires_authorization_header && !authorizationHeader) {
+      throw new Error(
+        "This webhook requires --credential-file or --security-key-stdin",
+      );
+    }
+    if (!webhook.requires_authorization_header && authorizationHeader) {
+      throw new Error("This webhook is public; do not supply credentials");
     }
 
     const headers = {
       Accept: "application/json",
       "Content-Type": "application/json",
     };
-    if (securityKey) {
-      headers.Authorization = buildAgentWebhookBasicAuthorization(securityKey);
+    if (authorizationHeader) {
+      headers.Authorization = authorizationHeader;
     }
     const response = await fetch(webhook.webhook_url, {
       body: JSON.stringify(await readPayload(params.args)),

@@ -1,5 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { copyFile, mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -168,6 +177,71 @@ describe("managing-agent-webhooks helper", () => {
     );
   });
 
+  test("requires credential output only for generated secure creation", async () => {
+    await withWebhookEnvironment(
+      {
+        AGENT_ID: "agent-current",
+        LETTA_API_KEY: "dummy-secret",
+        LETTA_BASE_URL: "http://127.0.0.1:1",
+      },
+      async () => {
+        await expect(
+          runAgentWebhookCli([
+            "create",
+            "--name",
+            "Secured events",
+            "--secure",
+          ]),
+        ).rejects.toThrow(
+          "Generated credentials require --credential-output <path>",
+        );
+        await expect(
+          runAgentWebhookCli([
+            "create",
+            "--name",
+            "Public events",
+            "--public",
+            "--credential-output",
+            "/tmp/should-not-exist.json",
+          ]),
+        ).rejects.toThrow("--credential-output is valid only with --secure");
+      },
+    );
+  });
+
+  test("validates secure creation before reserving its credential file", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-webhook-credential-"));
+    const credentialOutput = join(root, "credential.json");
+    try {
+      await withWebhookEnvironment(
+        {
+          AGENT_ID: "agent-current",
+          LETTA_API_KEY: "dummy-secret",
+          LETTA_BASE_URL: "http://127.0.0.1:1",
+        },
+        async () => {
+          await expect(
+            runAgentWebhookCli([
+              "create",
+              "--name",
+              "Secured events",
+              "--preprompt",
+              "   ",
+              "--secure",
+              "--credential-output",
+              credentialOutput,
+            ]),
+          ).rejects.toThrow(
+            "--preprompt must contain a non-whitespace character",
+          );
+        },
+      );
+      expect(await Bun.file(credentialOutput).exists()).toBe(false);
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
   test("rejects plaintext non-loopback runtime origins", async () => {
     await withWebhookEnvironment(
       {
@@ -181,6 +255,128 @@ describe("managing-agent-webhooks helper", () => {
         );
       },
     );
+  });
+
+  test("refuses to overwrite a generated credential file", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-webhook-credential-"));
+    const credentialOutput = join(root, "credential.json");
+    await writeFile(credentialOutput, "keep me", "utf8");
+    try {
+      await withWebhookEnvironment(
+        {
+          AGENT_ID: "agent-current",
+          LETTA_API_KEY: "dummy-secret",
+          LETTA_BASE_URL: "http://127.0.0.1:1",
+        },
+        async () => {
+          await expect(
+            runAgentWebhookCli([
+              "create",
+              "--name",
+              "Secured events",
+              "--secure",
+              "--credential-output",
+              credentialOutput,
+            ]),
+          ).rejects.toThrow();
+        },
+      );
+      expect(await readFile(credentialOutput, "utf8")).toBe("keep me");
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
+  test("removes a reserved credential file when creation fails", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-webhook-credential-"));
+    const credentialOutput = join(root, "credential.json");
+    const server = createServer((_request, response) => {
+      response.setHeader("Content-Type", "application/json");
+      response.writeHead(500);
+      response.end('{"message":"failed"}');
+    });
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Expected a TCP test server address");
+      }
+      await withWebhookEnvironment(
+        {
+          AGENT_ID: "agent-current",
+          LETTA_API_KEY: "dummy-secret",
+          LETTA_BASE_URL: `http://127.0.0.1:${address.port}`,
+        },
+        async () => {
+          await expect(
+            runAgentWebhookCli([
+              "create",
+              "--name",
+              "Secured events",
+              "--secure",
+              "--credential-output",
+              credentialOutput,
+            ]),
+          ).rejects.toThrow("HTTP 500");
+        },
+      );
+      expect(await Bun.file(credentialOutput).exists()).toBe(false);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
+  test("preserves credentials after a successful but malformed response", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-webhook-credential-"));
+    const credentialOutput = join(root, "credential.json");
+    const server = createServer((_request, response) => {
+      response.setHeader("Content-Type", "application/json");
+      response.writeHead(200);
+      response.end("{}");
+    });
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Expected a TCP test server address");
+      }
+      await withWebhookEnvironment(
+        {
+          AGENT_ID: "agent-current",
+          LETTA_API_KEY: "dummy-secret",
+          LETTA_BASE_URL: `http://127.0.0.1:${address.port}`,
+        },
+        async () => {
+          await expect(
+            runAgentWebhookCli([
+              "create",
+              "--name",
+              "Secured events",
+              "--secure",
+              "--credential-output",
+              credentialOutput,
+            ]),
+          ).rejects.toThrow("Webhook response must be an object");
+        },
+      );
+      const credential = JSON.parse(
+        await readFile(credentialOutput, "utf8"),
+      ) as Record<string, unknown>;
+      expect(credential).toHaveProperty("authorization_header");
+      expect(credential).toHaveProperty("security_key");
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+      await rm(root, { force: true, recursive: true });
+    }
   });
 
   test("runs from a packaged node_modules layout with plain Node", async () => {
@@ -210,6 +406,7 @@ describe("managing-agent-webhooks helper", () => {
       method?: string;
       path?: string;
     }> = [];
+    let listedAuthorizationHeader: string | null = null;
     const server = createServer(async (request, response) => {
       let body = "";
       for await (const chunk of request) body += chunk;
@@ -227,10 +424,10 @@ describe("managing-agent-webhooks helper", () => {
         return;
       }
       const webhook = {
-        authorization_header: "Basic do-not-print",
+        authorization_header: listedAuthorizationHeader,
         id: "webhook-agent-1",
         name: "Build events",
-        requires_authorization_header: false,
+        requires_authorization_header: listedAuthorizationHeader !== null,
         webhook_slug: "private-slug",
         webhook_url: `http://127.0.0.1:${address.port}/ingress`,
       };
@@ -241,8 +438,25 @@ describe("managing-agent-webhooks helper", () => {
         return;
       }
       if (request.method === "POST" && request.url?.endsWith("/webhooks")) {
+        const createBody = JSON.parse(body) as {
+          requires_authorization_header?: boolean;
+          security_key?: string;
+        };
+        listedAuthorizationHeader = createBody.requires_authorization_header
+          ? createBody.security_key
+            ? buildAgentWebhookBasicAuthorization(createBody.security_key)
+            : "Basic generated-one-time"
+          : null;
         response.writeHead(201);
-        response.end(JSON.stringify({ webhook }));
+        response.end(
+          JSON.stringify({
+            webhook: {
+              ...webhook,
+              authorization_header: listedAuthorizationHeader,
+              requires_authorization_header: listedAuthorizationHeader !== null,
+            },
+          }),
+        );
         return;
       }
       if (request.method === "GET" && request.url?.includes("/requests?")) {
@@ -375,6 +589,75 @@ describe("managing-agent-webhooks helper", () => {
         event: "agent-webhook-test",
         message: "Test delivery from Letta Code",
       });
+
+      const credentialOutput = join(root, "generated-webhook-credential.json");
+      const secured = (await runNode([
+        "create",
+        "--name",
+        "Secured build events",
+        "--secure",
+        "--credential-output",
+        credentialOutput,
+      ])) as {
+        credential_file: string;
+        credential_file_is_sensitive: boolean;
+        credential_is_recoverable_from_server: boolean;
+        webhook: Record<string, unknown>;
+      };
+      expect(secured).toMatchObject({
+        credential_file: credentialOutput,
+        credential_file_is_sensitive: true,
+        credential_is_recoverable_from_server: false,
+      });
+      expect(secured.webhook).not.toHaveProperty("authorization_header");
+      const credential = JSON.parse(
+        await readFile(credentialOutput, "utf8"),
+      ) as {
+        authorization_header: string;
+        security_key: string;
+      };
+      expect(credential.security_key).toHaveLength(32);
+      expect(credential.authorization_header).toBe(
+        buildAgentWebhookBasicAuthorization(credential.security_key),
+      );
+      expect(JSON.stringify(secured)).not.toContain(credential.security_key);
+      expect(JSON.stringify(secured)).not.toContain(
+        credential.authorization_header,
+      );
+      if (process.platform !== "win32") {
+        expect((await stat(credentialOutput)).mode & 0o777).toBe(0o600);
+      }
+      const secureCreateRequest = received
+        .filter(
+          (request) =>
+            request.method === "POST" && request.path?.endsWith("/webhooks"),
+        )
+        .at(-1);
+      expect(JSON.parse(secureCreateRequest?.body ?? "")).toEqual({
+        enabled: true,
+        name: "Secured build events",
+        requires_authorization_header: true,
+        security_key: credential.security_key,
+      });
+
+      expect(
+        await runNode([
+          "test",
+          "--webhook-id",
+          "webhook-agent-1",
+          "--credential-file",
+          credentialOutput,
+          "--confirm",
+        ]),
+      ).toMatchObject({ accepted_for_processing: true, status_code: 202 });
+      const securedIngressRequest = received
+        .filter(
+          (request) => request.method === "POST" && request.path === "/ingress",
+        )
+        .at(-1);
+      expect(securedIngressRequest?.authorization).toBe(
+        credential.authorization_header,
+      );
 
       const whitespaceKeyChild = Bun.spawn(
         [

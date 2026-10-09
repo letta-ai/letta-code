@@ -17,9 +17,18 @@ payload as a user message.
 - Treat each webhook URL as a capability secret. Do not post it publicly.
 - Choose authentication deliberately. If the user did not specify public or
   Basic-auth access, ask before creating the webhook.
-- Never put a security key on the command line or in chat. Pipe it through
-  stdin from an agent secret or another non-printing source.
-- The helper redacts the one-time `authorization_header` returned by the API.
+- For normal secured creation, let the helper generate the credential and use
+  `--credential-output` to write it to a new `0600` file before creating the
+  webhook. The helper never prints the credential. Do not read or paste the
+  file into the transcript.
+- Give the file to the user through a private file download. On a Cloud
+  computer, create it under `/root/downloads` and return a sandbox download
+  link. Tell the user it is shown only once and cannot be recovered later.
+- Never put a security key on the command line or in chat. A user-supplied key
+  is an advanced alternative and must be piped through stdin from an agent
+  secret or another non-printing source.
+- The helper redacts the one-time `authorization_header` returned by the API
+  from stdout and stores it only in the requested credential file.
 - Rotating invalidates the old URL. Deleting is permanent. Use the required
   `--confirm` flag only after the user has approved that exact action.
 - Request bodies may contain sensitive third-party data. `requests` omits them
@@ -52,8 +61,10 @@ responses.
 1. List current webhooks first to avoid accidental duplicates.
 2. For creation, establish a short name, a preprompt describing how the agent
    should interpret payloads, and whether the endpoint is public or secured.
-3. Create the webhook and report its URL. Remind the user to treat it as a
-   secret even when Basic auth is enabled.
+3. Create the webhook and report its URL. For a secured webhook, give the user
+   the generated credential file as a private download without opening it.
+   Remind the user to store it safely because the credential is not returned
+   by later list calls.
 4. Ask for affirmative consent before sending a smoke-test payload. Then pass
    `--confirm` for that exact test.
 5. Report HTTP `202` only as accepted by the ingress handler. Conversation
@@ -81,7 +92,33 @@ node <SKILL_DIR>/scripts/manage-agent-webhooks.mjs create \
   --public
 ```
 
-### Create a Basic-auth webhook
+### Create a secured webhook with a generated credential
+
+Prefer this for normal secured creation. Choose a unique new filename; the
+helper refuses to overwrite an existing file.
+
+```bash
+node <SKILL_DIR>/scripts/manage-agent-webhooks.mjs create \
+  --name "Pager events" \
+  --preprompt "Triage this pager event and summarize its urgency." \
+  --secure \
+  --credential-output /root/downloads/pager-events-webhook-credential.json
+```
+
+The output reports the webhook URL and credential-file path but not the file's
+contents. Return the URL in chat and a private download link for the file. The
+file contains the generated security key and complete `Authorization` header,
+is created with mode `0600` on POSIX systems, and must be treated as a secret.
+The helper writes it before the API request and deletes it if creation fails,
+so a successfully created webhook cannot lose its one-time credential to a
+later file-write failure. Do not use `cat`, JSON inspection, shell
+interpolation, or any other operation that would put its contents in the agent
+transcript. Delete the sandbox copy after the user confirms safe receipt.
+
+### Create a webhook with a user-supplied security key
+
+Use this advanced path only when the user already controls the key and does not
+need a generated credential file.
 
 Read the key from stdin without echoing or placing it in process arguments:
 
@@ -107,7 +144,19 @@ node <SKILL_DIR>/scripts/manage-agent-webhooks.mjs test \
   --confirm
 ```
 
-Secured webhook:
+Secured webhook using the generated credential file:
+
+```bash
+node <SKILL_DIR>/scripts/manage-agent-webhooks.mjs test \
+  --webhook-id webhook-agent-... \
+  --credential-file /root/downloads/pager-events-webhook-credential.json \
+  --payload-file /tmp/event.json \
+  --confirm
+```
+
+The helper reads the authorization header internally; it does not print it.
+
+Secured webhook using a user-supplied key:
 
 ```bash
 printf '%s' "$WEBHOOK_SECURITY_KEY" | \
