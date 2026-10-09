@@ -250,6 +250,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Verify development graph has no nested Letta Code
+        run: |
+          if test -e node_modules/@letta-ai/letta-code/package.json; then
+            echo "Bun installed a nested Letta Code copy instead of satisfying the Agent SDK peer from the repository root."
+            exit 1
+          fi
+
       - name: Verify native binaries
         run: |
           node -e "try { require('sharp'); console.log('sharp: OK') } catch(e) { console.error('sharp: FAIL —', e.message); process.exit(1) }"
@@ -352,6 +359,17 @@ jobs:
           cache_dir="$(mktemp -d)"
           BUN_RUNTIME_TRANSPILER_CACHE_PATH="$cache_dir" letta --version
           test -n "$(find "$cache_dir" -type f -name '*.pile' -print -quit)"
+          consumer_dir="$(mktemp -d)"
+          tarball="$(realpath ./letta-ai-letta-code-*.tgz)"
+          trap 'rm -rf "$cache_dir" "$consumer_dir"' EXIT
+          cd "$consumer_dir"
+          npm init -y
+          npm install "$tarball"
+          npm install --no-save picomatch@2.3.1
+          if find "$consumer_dir/node_modules/@letta-ai/letta-code/node_modules" -path '*/node_modules/@letta-ai/letta-code/package.json' -print -quit | grep -q .; then
+            echo "The packed runtime graph installed a nested Letta Code copy."
+            exit 1
+          fi
 
       - name: Headless smoke test (packaged local backend)
         env:
