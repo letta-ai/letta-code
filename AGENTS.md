@@ -285,6 +285,14 @@ directory first. Otherwise the run reads and mutates your real
 - **Headless duplicates App.tsx logic.** `headless.ts` has its own approval
   handling loop (not shared with App.tsx). When making changes to
   streaming/approval logic, check if headless.ts needs matching changes.
+- **Headless response-state reuse is automatic-continuation-only.** Both
+  headless loops (`-p` one-shot and `--input-format stream-json`
+  bidirectional) opt into Redis execution-state reuse via the shared sender
+  only for fully automatic tool-result continuations
+  (`needsUserInput.length === 0`). New user input, human-reviewed approvals,
+  mixed or recovered input, and changed skill catalogs must not inherit
+  eligibility. This is not provider prompt caching. Regression tests must
+  cover both loops.
 - **`protocol_v2.ts` changes propagate to consumers.** Used by LCD (Letta Cloud
   Desktop). Changes likely need to propagate upstream.
 - **Agent loop naming is confusing.** `letta_agent_v1` is the agent_type name
