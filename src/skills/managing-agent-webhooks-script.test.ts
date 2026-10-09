@@ -260,7 +260,7 @@ describe("managing-agent-webhooks helper", () => {
         name: "Build events",
         requires_authorization_header: listedAuthorizationHeader !== null,
         webhook_slug: "private-slug",
-        webhook_url: `http://127.0.0.1:${address.port}/ingress`,
+        webhook_url: `http://127.0.0.1:${address.port}/v1/agent-webhooks/private-slug`,
       };
       response.setHeader("Content-Type", "application/json");
       if (request.method === "GET" && request.url?.endsWith("/webhooks")) {
@@ -309,7 +309,10 @@ describe("managing-agent-webhooks helper", () => {
         );
         return;
       }
-      if (request.method === "POST" && request.url === "/ingress") {
+      if (
+        request.method === "POST" &&
+        request.url === "/v1/agent-webhooks/private-slug"
+      ) {
         response.writeHead(202);
         response.end('{"ok":true}');
         return;
@@ -417,7 +420,9 @@ describe("managing-agent-webhooks helper", () => {
         requires_authorization_header: false,
       });
       const ingressRequest = received.find(
-        (request) => request.method === "POST" && request.path === "/ingress",
+        (request) =>
+          request.method === "POST" &&
+          request.path === "/v1/agent-webhooks/private-slug",
       );
       expect(JSON.parse(ingressRequest?.body ?? "")).toMatchObject({
         event: "agent-webhook-test",
@@ -488,7 +493,9 @@ describe("managing-agent-webhooks helper", () => {
       ).toMatchObject({ accepted_for_processing: true, status_code: 202 });
       const securedIngressRequest = received
         .filter(
-          (request) => request.method === "POST" && request.path === "/ingress",
+          (request) =>
+            request.method === "POST" &&
+            request.path === "/v1/agent-webhooks/private-slug",
         )
         .at(-1);
       expect(securedIngressRequest?.authorization).toBe(

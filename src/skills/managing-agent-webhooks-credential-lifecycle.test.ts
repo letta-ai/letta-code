@@ -500,6 +500,19 @@ describe("managing-agent-webhooks credential lifecycle", () => {
     const securityKey = "credential-backed-test-secret";
     const authorizationHeader =
       buildAgentWebhookBasicAuthorization(securityKey);
+    const secretFields = {
+      apiToken: "api-token-value",
+      clientSecret: "client-secret-value",
+      credential_file: "untrusted-credential-file-value",
+      databasePassword: "database-password-value",
+      idToken: "id-token-value",
+      passwordHash: "password-hash-value",
+      private_key: "private-key-value",
+      privateKey: "private-camel-key-value",
+      requires_authorization_header: "untrusted-auth-mode-value",
+      sessionToken: "session-token-value",
+      signing_key: "signing-key-value",
+    };
     await writeFile(
       credentialPath,
       JSON.stringify({
@@ -528,25 +541,33 @@ describe("managing-agent-webhooks credential lifecycle", () => {
                 name: "Secure events",
                 requires_authorization_header: true,
                 webhook_slug: "private",
-                webhook_url: `http://127.0.0.1:${address.port}/ingress`,
+                webhook_url: `http://127.0.0.1:${address.port}/v1/agent-webhooks/private`,
               },
             ],
           }),
         );
         return;
       }
-      if (request.method === "POST" && request.url === "/ingress") {
+      if (
+        request.method === "POST" &&
+        request.url === "/v1/agent-webhooks/private"
+      ) {
         for await (const _chunk of request) {
           // Consume the request before responding.
         }
         response.writeHead(ingressShouldFail ? 401 : 202);
         response.end(
           JSON.stringify({
+            ...secretFields,
             authorization_header: authorizationHeader,
-            error: { [`leak-${securityKey}`]: "bad" },
+            error: {
+              ...secretFields,
+              [`leak-${securityKey}`]: "bad",
+            },
             errors: [{ security_key: securityKey }],
             [`leak-${securityKey}`]: "ok",
             message: `Reflected ${securityKey}`,
+            nested: { ...secretFields },
             secretary: "Ada",
             token_count: 42,
           }),
@@ -603,6 +624,7 @@ describe("managing-agent-webhooks credential lifecycle", () => {
         securityKey,
         authorizationHeader,
         authorizationHeader.slice("Basic ".length),
+        ...Object.values(secretFields),
       ]) {
         expect(failed.stdout).not.toContain(secret);
         expect(failed.stderr).not.toContain(secret);
@@ -616,10 +638,15 @@ describe("managing-agent-webhooks credential lifecycle", () => {
         securityKey,
         authorizationHeader,
         authorizationHeader.slice("Basic ".length),
+        ...Object.values(secretFields),
       ]) {
         expect(accepted.stdout).not.toContain(secret);
       }
-      expect(JSON.parse(accepted.stdout).body).toEqual({
+      const acceptedBody = JSON.parse(accepted.stdout).body as Record<
+        string,
+        unknown
+      >;
+      expect(acceptedBody).toMatchObject({
         authorization_header: "[REDACTED]",
         error: { "leak-[REDACTED]": "[REDACTED]" },
         errors: [{ security_key: "[REDACTED]" }],
@@ -628,6 +655,15 @@ describe("managing-agent-webhooks credential lifecycle", () => {
         secretary: "Ada",
         token_count: 42,
       });
+      for (const field of Object.keys(secretFields)) {
+        expect(acceptedBody[field]).toBe("[REDACTED]");
+        expect((acceptedBody.nested as Record<string, unknown>)[field]).toBe(
+          "[REDACTED]",
+        );
+        expect((acceptedBody.error as Record<string, unknown>)[field]).toBe(
+          "[REDACTED]",
+        );
+      }
     } finally {
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
@@ -662,7 +698,7 @@ describe("managing-agent-webhooks credential lifecycle", () => {
               name: "Malformed file test",
               requires_authorization_header: secured,
               webhook_slug: "private",
-              webhook_url: `http://127.0.0.1:${address.port}/ingress`,
+              webhook_url: `http://127.0.0.1:${address.port}/v1/agent-webhooks/private`,
             },
           ],
         }),

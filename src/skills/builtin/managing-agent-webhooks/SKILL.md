@@ -34,11 +34,20 @@ payload as a user message.
 - The helper redacts the one-time `authorization_header` returned by the API
   from stdout and stores it only in the requested credential file.
 - Management and ingress responses are untrusted. The helper allowlists safe
-  webhook/error fields; recursively redacts secret-shaped property names and
-  values plus the exact generated key, Basic header, encoded credential, and
-  management token; then applies one final exact-value pass before anything
-  reaches stdout, stderr, or a thrown error. Successful ingress response bodies
-  receive the same redaction, and serialized output is capped at 1 MiB.
+  webhook/error fields; normalizes camelCase and punctuation before classifying
+  secret-bearing property names; recursively redacts their values plus the exact
+  generated key, Basic header, encoded credential, and management token; then
+  applies one final exact-value pass before anything reaches stdout, stderr, or
+  a thrown error. Safe output-field exemptions apply only to locally constructed,
+  type-validated envelopes. Successful ingress response bodies receive the same
+  redaction. Serialized output is capped at 1 MiB; accepted side effects whose
+  body exceeds that limit emit a bounded success envelope rather than a failure
+  that could invite a duplicate retry.
+- Before a test sends payload or authorization, the returned URL must use the
+  active runtime's canonical origin and exactly
+  `/v1/agent-webhooks/<returned-slug>`, with no URL credentials, query, fragment,
+  malformed slug, or redirect. Treat a validation or redirect failure as a
+  blocked delivery, not as an accepted webhook request.
 - Rotating invalidates the old URL. Deleting is permanent. Use the required
   `--confirm` flag only after the user has approved that exact action.
 - Request bodies may contain sensitive third-party data. `requests` omits them
@@ -47,9 +56,11 @@ payload as a user message.
   before passing `--confirm`; do not treat general webhook setup approval as
   permission to trigger a test run.
 - After a secure-create request is dispatched, any transport failure, 5xx, or
-  unreadable/truncated success response is ambiguous. The helper preserves the
-  credential and tells you to list webhooks and reconcile the name before any
-  retry. Never blindly retry an ambiguous create.
+  unreadable/truncated/contradictory success response is ambiguous. The helper
+  validates the returned authentication mode for public, generated-key, and
+  user-supplied-key creation, plus the returned Basic header for both secured
+  modes. It preserves generated credentials and tells you to list webhooks and
+  reconcile the name before any retry. Never blindly retry an ambiguous create.
 
 ## Environment
 

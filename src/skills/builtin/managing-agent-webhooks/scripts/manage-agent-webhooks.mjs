@@ -123,22 +123,24 @@ export function resolveAgentWebhookTarget(currentAgentId) {
 }
 
 export function safeAgentWebhook(webhook) {
-  const safeFields = [
+  const safe = /** @type {Record<string, unknown>} */ ({});
+  for (const field of [
     "agent_id",
     "created_at",
-    "disabled_at",
-    "enabled",
     "id",
     "name",
     "preprompt",
-    "requires_authorization_header",
     "webhook_url",
-  ];
-  return Object.fromEntries(
-    safeFields
-      .filter((field) => Object.hasOwn(webhook, field))
-      .map((field) => [field, webhook[field]]),
-  );
+  ]) {
+    if (typeof webhook[field] === "string") safe[field] = webhook[field];
+  }
+  for (const field of ["enabled", "requires_authorization_header"]) {
+    if (typeof webhook[field] === "boolean") safe[field] = webhook[field];
+  }
+  if (typeof webhook.disabled_at === "string" || webhook.disabled_at === null) {
+    safe.disabled_at = webhook.disabled_at;
+  }
+  return safe;
 }
 
 export function buildAgentWebhookBasicAuthorization(securityKey) {
@@ -162,6 +164,45 @@ function normalizedBaseUrl(value) {
   return parsed.toString().replace(/\/$/, "");
 }
 
+export function validatedWebhookIngressUrl(webhook, baseUrl) {
+  const webhookUrl = requireString(
+    webhook.webhook_url,
+    "Webhook response is missing webhook_url",
+  );
+  const webhookSlug = requireString(
+    webhook.webhook_slug,
+    "Webhook response is missing webhook_slug",
+  );
+  if (!/^[A-Za-z0-9_-]+$/.test(webhookSlug)) {
+    throw new Error("Webhook response contains an invalid webhook_slug");
+  }
+  let parsed;
+  try {
+    parsed = new URL(webhookUrl);
+  } catch {
+    throw new Error("Webhook response contains an invalid webhook_url");
+  }
+  const managementOrigin = new URL(baseUrl).origin;
+  if (
+    parsed.origin !== managementOrigin ||
+    parsed.username ||
+    parsed.password ||
+    parsed.search ||
+    parsed.hash
+  ) {
+    throw new Error(
+      "Webhook URL must use the active runtime origin without credentials, query, or fragment",
+    );
+  }
+  const expectedPath = `/v1/agent-webhooks/${webhookSlug}`;
+  if (parsed.pathname !== expectedPath) {
+    throw new Error(
+      "Webhook URL path does not match the returned webhook_slug",
+    );
+  }
+  return parsed.toString();
+}
+
 async function parseResponse(response) {
   const text = await response.text();
   if (!text) return null;
@@ -181,20 +222,38 @@ const SAFE_ERROR_FIELDS = new Set([
   "requestId",
   "request_id",
 ]);
-const SENSITIVE_FIELD_PATTERN =
-  /(?:^|[_-])(?:api[_-]?key|auth(?:entication|orization)?(?:[_-]?header)?|(?:access|auth|bearer|refresh)[_-]?token|credentials?|password|secret|security[_-]?key)(?:$|[_-])/i;
-const SAFE_NON_SECRET_FIELD_NAMES = new Set([
-  "authorization_passed",
-  "credential_file",
-  "credential_file_is_sensitive",
-  "credential_is_recoverable_from_server",
-  "requires_authorization_header",
-]);
+function fieldNameTokens(key) {
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/[^A-Za-z0-9]+/g, "_")
+    .toLowerCase()
+    .split("_")
+    .filter(Boolean);
+}
 
-function isSensitiveFieldName(key) {
+function hasTokenPair(tokens, left, right) {
+  return tokens.some(
+    (token, index) => token === left && tokens[index + 1] === right,
+  );
+}
+
+function isSensitiveFieldName(key, path, trustedPaths) {
+  if (trustedPaths.has([...path, key].join("."))) return false;
+  const tokens = fieldNameTokens(key);
+  if (tokens.length === 2 && tokens[0] === "token" && tokens[1] === "count") {
+    return false;
+  }
   return (
-    !SAFE_NON_SECRET_FIELD_NAMES.has(key) &&
-    (key.toLowerCase() === "token" || SENSITIVE_FIELD_PATTERN.test(key))
+    tokens.includes("authorization") ||
+    tokens.includes("credential") ||
+    tokens.includes("credentials") ||
+    tokens.includes("password") ||
+    tokens.includes("secret") ||
+    tokens.includes("token") ||
+    hasTokenPair(tokens, "api", "key") ||
+    hasTokenPair(tokens, "private", "key") ||
+    hasTokenPair(tokens, "security", "key") ||
+    hasTokenPair(tokens, "signing", "key")
   );
 }
 
@@ -209,12 +268,15 @@ function redactString(value, sensitiveValues) {
   return redacted;
 }
 
-function redactSensitiveValue(value, sensitiveValues) {
+function redactSensitiveValue(value, sensitiveValues, options = {}, path = []) {
+  const trustedPaths = options.trustedPaths ?? new Set();
   if (typeof value === "string") {
     return redactString(value, sensitiveValues);
   }
   if (Array.isArray(value)) {
-    return value.map((entry) => redactSensitiveValue(entry, sensitiveValues));
+    return value.map((entry) =>
+      redactSensitiveValue(entry, sensitiveValues, options, [...path, "*"]),
+    );
   }
   if (value && typeof value === "object") {
     return Object.fromEntries(
@@ -222,9 +284,12 @@ function redactSensitiveValue(value, sensitiveValues) {
         const redactedKey = redactString(key, sensitiveValues);
         return [
           redactedKey,
-          isSensitiveFieldName(key)
+          isSensitiveFieldName(key, path, trustedPaths)
             ? "[REDACTED]"
-            : redactSensitiveValue(entry, sensitiveValues),
+            : redactSensitiveValue(entry, sensitiveValues, options, [
+                ...path,
+                key,
+              ]),
         ];
       }),
     );
@@ -405,11 +470,12 @@ export async function cleanupCredentialFile(
   }
   const originalMessage = safeErrorMessage(originalError, sensitiveValues);
   const safeCause = safeErrorCause(originalError, sensitiveValues);
+  const safePath = redactString(reservation.path, sensitiveValues);
   if (cleanupFailures.length === 0) {
     return new Error(originalMessage, { cause: safeCause });
   }
   return new Error(
-    `${originalMessage} Credential cleanup did not complete; a sensitive file may remain at ${reservation.path}. Remove it manually. Cleanup errors: ${cleanupFailures.join("; ")}`,
+    `${originalMessage} Credential cleanup did not complete; a sensitive file may remain at ${safePath}. Remove it manually. Cleanup errors: ${cleanupFailures.join("; ")}`,
     { cause: safeCause },
   );
 }
@@ -433,8 +499,9 @@ export async function preserveCredentialFile(
   const suffix = closeFailure
     ? ` The file handle did not close cleanly (${closeFailure}); the process will release it on exit.`
     : "";
+  const safePath = redactString(reservation.path, sensitiveValues);
   return new Error(
-    `${safeErrorMessage(originalError, sensitiveValues)} Webhook creation status is unknown or may have succeeded. The credential was retained at ${reservation.path}.${suffix} Run list and reconcile the webhook name before retrying; do not create a duplicate.`,
+    `${safeErrorMessage(originalError, sensitiveValues)} Webhook creation status is unknown or may have succeeded. The credential was retained at ${safePath}.${suffix} Run list and reconcile the webhook name before retrying; do not create a duplicate.`,
     { cause: safeErrorCause(originalError, sensitiveValues) },
   );
 }
@@ -526,17 +593,47 @@ function managementHeaders(apiKey) {
   };
 }
 
-function printJson(value, sensitiveValues = []) {
-  const sanitized = redactSensitiveValue(value, sensitiveValues);
-  const serialized = redactString(
-    JSON.stringify(sanitized, null, 2),
-    sensitiveValues,
-  );
-  if (Buffer.byteLength(serialized, "utf8") > 1024 * 1024) {
-    throw new Error("Sanitized output exceeds the 1 MiB display limit");
-  }
-  console.log(serialized);
+function serializeSanitizedJson(value, sensitiveValues, options) {
+  const sanitized = redactSensitiveValue(value, sensitiveValues, options);
+  return redactString(JSON.stringify(sanitized, null, 2), sensitiveValues);
 }
+
+function printJson(value, sensitiveValues = [], options = {}) {
+  const serialized = serializeSanitizedJson(value, sensitiveValues, options);
+  if (Buffer.byteLength(serialized, "utf8") + 1 <= 1024 * 1024) {
+    console.log(serialized);
+    return;
+  }
+  const oversizedFallback = options.oversizedFallback ?? {
+    output_omitted: true,
+    reason: "Sanitized output exceeded the 1 MiB display limit",
+  };
+  const fallback = serializeSanitizedJson(
+    oversizedFallback,
+    sensitiveValues,
+    options,
+  );
+  if (Buffer.byteLength(fallback, "utf8") + 1 > 1024 * 1024) {
+    console.log(
+      '{\n  "output_omitted": true,\n  "reason": "Sanitized output exceeded the 1 MiB display limit"\n}',
+    );
+    return;
+  }
+  console.log(fallback);
+}
+
+const CREATE_OUTPUT_TRUSTED_PATHS = new Set([
+  "credential_file",
+  "credential_file_is_sensitive",
+  "credential_is_recoverable_from_server",
+  "webhook.requires_authorization_header",
+]);
+const LIST_OUTPUT_TRUSTED_PATHS = new Set([
+  "webhooks.*.requires_authorization_header",
+]);
+const WEBHOOK_OUTPUT_TRUSTED_PATHS = new Set([
+  "webhook.requires_authorization_header",
+]);
 
 function requireWebhookId(args) {
   return requireString(args["webhook-id"], "Pass --webhook-id");
@@ -572,6 +669,14 @@ async function runManagementCommand(params) {
     printJson(
       { webhooks: webhooks.map(safeAgentWebhook) },
       managementSensitiveValues,
+      {
+        oversizedFallback: {
+          output_omitted: true,
+          reason: "Webhook list exceeded the 1 MiB display limit",
+          webhook_count: webhooks.length,
+        },
+        trustedPaths: LIST_OUTPUT_TRUSTED_PATHS,
+      },
     );
     return;
   }
@@ -649,13 +754,32 @@ async function runManagementCommand(params) {
         "Create response must be an object",
       );
       const webhook = webhookFromUnknown(response.webhook);
+      const requestedAuthorization = usesGeneratedCredential || usesSecurityKey;
+      if (webhook.requires_authorization_header !== requestedAuthorization) {
+        throw new Error(
+          "Create response authentication mode does not match the request",
+        );
+      }
+      const expectedAuthorizationHeader = credentialReservation
+        ? credentialReservation.authorizationHeader
+        : securityKey
+          ? buildAgentWebhookBasicAuthorization(securityKey)
+          : undefined;
       if (
-        credentialReservation &&
-        webhook.authorization_header !==
-          credentialReservation.authorizationHeader
+        expectedAuthorizationHeader &&
+        webhook.authorization_header !== expectedAuthorizationHeader
       ) {
         throw new Error(
-          "Create response authorization_header does not match the generated credential",
+          "Create response authorization_header does not match the requested credential",
+        );
+      }
+      if (
+        !expectedAuthorizationHeader &&
+        webhook.authorization_header !== null &&
+        webhook.authorization_header !== undefined
+      ) {
+        throw new Error(
+          "Create response unexpectedly returned a credential for a public webhook",
         );
       }
       const credentialFile = credentialReservation
@@ -673,6 +797,17 @@ async function runManagementCommand(params) {
           webhook: safeAgentWebhook(webhook),
         },
         sensitiveValues,
+        {
+          oversizedFallback: {
+            created: true,
+            credential_file: credentialFile,
+            output_omitted: true,
+            reason: "Create output exceeded the 1 MiB display limit",
+            webhook_id: webhook.id,
+            webhook_url: webhook.webhook_url,
+          },
+          trustedPaths: CREATE_OUTPUT_TRUSTED_PATHS,
+        },
       );
     } catch (error) {
       if (credentialReservation) {
@@ -736,7 +871,13 @@ async function runManagementCommand(params) {
           : {}),
       };
     });
-    printJson({ requests }, managementSensitiveValues);
+    printJson({ requests }, managementSensitiveValues, {
+      oversizedFallback: {
+        output_omitted: true,
+        reason: "Request history exceeded the 1 MiB display limit",
+        request_count: requests.length,
+      },
+    });
     return;
   }
 
@@ -757,6 +898,15 @@ async function runManagementCommand(params) {
         webhook: safeAgentWebhook(webhookFromUnknown(response.webhook)),
       },
       managementSensitiveValues,
+      {
+        oversizedFallback: {
+          output_omitted: true,
+          reason: "Update output exceeded the 1 MiB display limit",
+          updated: true,
+          webhook_id: webhookId,
+        },
+        trustedPaths: WEBHOOK_OUTPUT_TRUSTED_PATHS,
+      },
     );
     return;
   }
@@ -776,6 +926,15 @@ async function runManagementCommand(params) {
         webhook: safeAgentWebhook(webhookFromUnknown(response.webhook)),
       },
       managementSensitiveValues,
+      {
+        oversizedFallback: {
+          output_omitted: true,
+          reason: "Rotate output exceeded the 1 MiB display limit",
+          rotated: true,
+          webhook_id: webhookId,
+        },
+        trustedPaths: WEBHOOK_OUTPUT_TRUSTED_PATHS,
+      },
     );
     return;
   }
@@ -789,6 +948,14 @@ async function runManagementCommand(params) {
         method: "DELETE",
       }),
       managementSensitiveValues,
+      {
+        oversizedFallback: {
+          deleted: true,
+          output_omitted: true,
+          reason: "Delete output exceeded the 1 MiB display limit",
+          webhook_id: webhookId,
+        },
+      },
     );
     return;
   }
@@ -834,10 +1001,12 @@ async function runManagementCommand(params) {
     if (authorizationHeader) {
       headers.Authorization = authorizationHeader;
     }
-    const response = await fetch(webhook.webhook_url, {
+    const ingressUrl = validatedWebhookIngressUrl(webhook, params.baseUrl);
+    const response = await fetch(ingressUrl, {
       body: JSON.stringify(await readPayload(params.args)),
       headers,
       method: "POST",
+      redirect: "error",
     });
     const body = await parseResponse(response);
     if (!response.ok) {
@@ -857,6 +1026,16 @@ async function runManagementCommand(params) {
         status_code: response.status,
       },
       sensitiveValues,
+      {
+        oversizedFallback: {
+          accepted_for_processing: response.status === 202,
+          body_omitted: true,
+          dispatch_verified: false,
+          note: "HTTP 202 confirms only that the ingress handler accepted the request; conversation creation and queue submission happen asynchronously.",
+          reason: "Webhook response body exceeded the 1 MiB display limit",
+          status_code: response.status,
+        },
+      },
     );
     return;
   }
