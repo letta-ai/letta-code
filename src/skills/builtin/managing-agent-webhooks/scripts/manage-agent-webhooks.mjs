@@ -115,6 +115,13 @@ function requireString(value, message) {
   return stringValue;
 }
 
+function requireResponseString(value, message) {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(message);
+  }
+  return value.trim();
+}
+
 export function resolveAgentWebhookTarget(currentAgentId) {
   return requireString(
     currentAgentId,
@@ -165,11 +172,11 @@ function normalizedBaseUrl(value) {
 }
 
 export function validatedWebhookIngressUrl(webhook, baseUrl) {
-  const webhookUrl = requireString(
+  const webhookUrl = requireResponseString(
     webhook.webhook_url,
     "Webhook response is missing webhook_url",
   );
-  const webhookSlug = requireString(
+  const webhookSlug = requireResponseString(
     webhook.webhook_slug,
     "Webhook response is missing webhook_slug",
   );
@@ -446,8 +453,11 @@ function jsonObject(value, message) {
 
 function webhookFromUnknown(value) {
   const webhook = jsonObject(value, "Webhook response must be an object");
-  const id = requireString(webhook.id, "Webhook response is missing id");
-  const webhookUrl = requireString(
+  const id = requireResponseString(
+    webhook.id,
+    "Webhook response is missing id",
+  );
+  const webhookUrl = requireResponseString(
     webhook.webhook_url,
     "Webhook response is missing webhook_url",
   );
@@ -466,7 +476,7 @@ function webhookFromUnknown(value) {
 
 function validatedWebhookFromUnknown(value, baseUrl, agentId) {
   const webhook = webhookFromUnknown(value);
-  const responseAgentId = requireString(
+  const responseAgentId = requireResponseString(
     webhook.agent_id,
     "Webhook response is missing agent_id",
   );
@@ -985,9 +995,9 @@ async function runManagementCommand(params) {
         entry,
         "Request history item must be an object",
       );
-      const id = requireString(
+      const id = requireResponseString(
         request.id,
-        "Request history item is missing id",
+        "Request history item id must be a nonblank string",
       );
       if (!Number.isInteger(request.status_code)) {
         throw new Error("Request history item status_code must be an integer");
@@ -1008,9 +1018,9 @@ async function runManagementCommand(params) {
           "Request history item error_message must be a string or null",
         );
       }
-      const createdAt = requireString(
+      const createdAt = requireResponseString(
         request.created_at,
-        "Request history item is missing created_at",
+        "Request history item created_at must be a nonblank string",
       );
       return {
         authorization_passed: request.authorization_passed,

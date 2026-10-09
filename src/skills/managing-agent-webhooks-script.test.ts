@@ -304,21 +304,33 @@ describe("managing-agent-webhooks helper", () => {
         return;
       }
       if (request.method === "GET" && request.url?.includes("/requests?")) {
-        const malformedAuthorization =
-          new URL(request.url, "http://fixture.test").searchParams.get(
-            "limit",
-          ) === "1";
+        const requestedLimit = new URL(
+          request.url,
+          "http://fixture.test",
+        ).searchParams.get("limit");
         response.writeHead(200);
         response.end(
           JSON.stringify({
             requests: [
               {
-                authorization_passed: malformedAuthorization ? "yes" : true,
+                authorization_passed: requestedLimit === "1" ? "yes" : true,
                 body: { customer_ssn: "123-45-6789" },
-                created_at: "2026-10-09T00:00:00.000Z",
+                created_at:
+                  {
+                    "3": { invalid: true },
+                    "7": 0,
+                    "8": false,
+                    "9": ["invalid"],
+                  }[requestedLimit ?? ""] ?? "2026-10-09T00:00:00.000Z",
                 enqueued: true,
                 error_message: null,
-                id: "request-1",
+                id:
+                  {
+                    "2": 123,
+                    "4": true,
+                    "5": ["invalid"],
+                    "6": { invalid: true },
+                  }[requestedLimit ?? ""] ?? "request-1",
                 raw_request: { account: "sensitive" },
                 request_body: { secret: "hidden-by-default" },
                 status_code: 202,
@@ -428,15 +440,25 @@ describe("managing-agent-webhooks helper", () => {
       });
       expect(historyWithBody.requests[0]).not.toHaveProperty("body");
       expect(historyWithBody.requests[0]).not.toHaveProperty("raw_request");
-      const malformedHistory = (await runNode(
-        ["requests", "--webhook-id", "webhook-agent-1", "--limit", "1"],
-        undefined,
-        1,
-      )) as { stderr: string; stdout: string };
-      expect(malformedHistory.stdout).toBe("");
-      expect(malformedHistory.stderr).toContain(
-        "authorization_passed must be a boolean",
-      );
+      for (const [limit, expectedError] of [
+        ["1", "authorization_passed must be a boolean"],
+        ["2", "Request history item id must be a nonblank string"],
+        ["3", "Request history item created_at must be a nonblank string"],
+        ["4", "Request history item id must be a nonblank string"],
+        ["5", "Request history item id must be a nonblank string"],
+        ["6", "Request history item id must be a nonblank string"],
+        ["7", "Request history item created_at must be a nonblank string"],
+        ["8", "Request history item created_at must be a nonblank string"],
+        ["9", "Request history item created_at must be a nonblank string"],
+      ] as const) {
+        const malformedHistory = (await runNode(
+          ["requests", "--webhook-id", "webhook-agent-1", "--limit", limit],
+          undefined,
+          1,
+        )) as { stderr: string; stdout: string };
+        expect(malformedHistory.stdout).toBe("");
+        expect(malformedHistory.stderr).toContain(expectedError);
+      }
 
       expect(
         await runNode(["test", "--webhook-id", "webhook-agent-1", "--confirm"]),
