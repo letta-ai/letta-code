@@ -61,7 +61,10 @@ import {
   buildInitMessage,
   gatherInitGitContext,
 } from "@/cli/helpers/init-command";
-import { buildLogoutSuccessMessage } from "@/cli/helpers/logout-message";
+import {
+  buildLogoutMessage,
+  revokeAndClearCredentials,
+} from "@/cli/helpers/logout-message";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
 import {
   buildMessageContentFromDisplay,
@@ -1590,30 +1593,24 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               conversationIdRef.current ?? "default";
             const currentAgentIsLocal = isLocalAgentId(currentAgentId);
 
-            // Revoke refresh token on server if we have one
-            if (currentSettings.refreshToken) {
-              const { revokeToken } = await import("@/auth/oauth");
-              await revokeToken(currentSettings.refreshToken);
-            }
-
-            // Clear all credentials including secrets
-            await settingsManager.logout();
+            // Revoke on the server (if we have a token), then always clear local credentials
+            const { revokeToken } = await import("@/auth/oauth");
+            const { revokeFailed } = await revokeAndClearCredentials({
+              refreshToken: currentSettings.refreshToken,
+              revokeToken,
+              clearLocalCredentials: () => settingsManager.logout(),
+            });
+            const localAgentLabel = currentAgentIsLocal
+              ? (agentName ?? currentAgentId)
+              : undefined;
+            const opts = { hasEnvApiKey, revokeFailed, localAgentLabel };
+            cmd.finish(buildLogoutMessage(opts), true);
 
             // Logged out while already using a local agent → stay in place.
             if (currentAgentIsLocal) {
-              const localAgentLabel = agentName ?? currentAgentId;
-              const baseMessage = `Logged out successfully. You're still using your local agent ${localAgentLabel}.`;
-              cmd.finish(
-                hasEnvApiKey
-                  ? `${baseMessage}\n\n${buildLogoutSuccessMessage(true)}`
-                  : baseMessage,
-                true,
-              );
               refreshDerived();
               return { submitted: true };
             }
-
-            cmd.finish(buildLogoutSuccessMessage(hasEnvApiKey), true);
 
             await prepareSessionExit(currentConversationId);
 
