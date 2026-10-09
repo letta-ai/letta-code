@@ -564,7 +564,7 @@ describe("managing-agent-webhooks endpoint safety", () => {
         response.end(
           JSON.stringify(
             deleteRequests === 1
-              ? { data: "x".repeat(1_100_000) }
+              ? { padding: "x".repeat(1_100_000), success: true }
               : deleteRequests === 2
                 ? {
                     ...secretFields,

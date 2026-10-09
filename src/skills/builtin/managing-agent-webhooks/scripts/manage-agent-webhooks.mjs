@@ -203,14 +203,40 @@ export function validatedWebhookIngressUrl(webhook, baseUrl) {
   return parsed.toString();
 }
 
-async function parseResponse(response) {
-  const text = await response.text();
-  if (!text) return null;
-  try {
-    return JSON.parse(text);
-  } catch {
-    return text;
+const MAX_RESPONSE_BODY_BYTES = 1024 * 1024;
+
+async function parseResponse(response, options = {}) {
+  const chunks = [];
+  let totalBytes = 0;
+  if (response.body) {
+    const reader = response.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > MAX_RESPONSE_BODY_BYTES) {
+        await reader.cancel();
+        if (options.allowOmitted === true) {
+          return { body: null, omitted: true };
+        }
+        throw new Error("Response body exceeds the 1 MiB read limit");
+      }
+      chunks.push(Buffer.from(value));
+    }
   }
+  const text = Buffer.concat(chunks).toString("utf8");
+  let body = null;
+  if (text) {
+    try {
+      body = JSON.parse(text);
+    } catch {
+      body = text;
+    }
+  }
+  if (options.allowOmitted === true) {
+    return { body, omitted: false };
+  }
+  return body;
 }
 
 const SAFE_ERROR_FIELDS = new Set([
@@ -392,7 +418,9 @@ async function requestSideEffect(url, init, options) {
   let body;
   let bodyReadFailed = false;
   try {
-    body = await parseResponse(response);
+    const parsed = await parseResponse(response, { allowOmitted: true });
+    body = parsed.body;
+    bodyReadFailed = parsed.omitted;
   } catch {
     bodyReadFailed = true;
   }

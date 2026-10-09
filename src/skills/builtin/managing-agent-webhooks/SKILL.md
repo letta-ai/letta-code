@@ -43,6 +43,9 @@ payload as a user message.
   redaction. Serialized output is capped at 1 MiB; accepted side effects whose
   body exceeds that limit emit a bounded success envelope rather than a failure
   that could invite a duplicate retry.
+- Response ingestion is also capped at 1 MiB. The helper stops reading and does
+  not parse or trust any prefix once that limit is exceeded; side-effect receipts
+  become bounded accepted-but-unconfirmed output.
 - Every management request rejects redirects. Every returned webhook URL is
   validated before it can be displayed or used for delivery: it must use the
   active runtime's canonical origin and exactly
