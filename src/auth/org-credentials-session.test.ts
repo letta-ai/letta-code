@@ -5,21 +5,23 @@ import {
   orgCredentialStore,
 } from "@/websocket/listener/org-credentials";
 
+import {
+  __orgCredentialsTestUtils,
+  activateOrgCredentials as activate,
+  bindOrgCredentials,
+  getOrgAccessToken,
+  peekOrgAccessToken,
+} from "./org-credentials-session";
+
 const refreshAccessTokenMock = mock(async (): Promise<TokenResponse> => {
   throw new Error("refreshAccessToken not mocked");
 });
 
-mock.module("@/auth/oauth", () => ({
-  refreshAccessToken: refreshAccessTokenMock,
-}));
-
-const {
-  __orgCredentialsTestUtils,
-  activateOrgCredentials,
-  bindOrgCredentials,
-  getOrgAccessToken,
-  peekOrgAccessToken,
-} = await import("./org-credentials-session");
+const activateOrgCredentials: typeof activate = (
+  organizationId,
+  deviceId,
+  credentials,
+) => activate(organizationId, deviceId, credentials, refreshAccessTokenMock);
 
 describe("org credential session", () => {
   const originalLoad = orgCredentialStore.load;

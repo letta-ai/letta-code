@@ -1,5 +1,6 @@
 import { hostname } from "node:os";
 import { getDesktopAccessToken } from "@/auth/desktop-credentials";
+import { refreshAccessToken } from "@/auth/oauth";
 import { refreshAccessTokenSingleFlight } from "@/auth/oauth-refresh";
 import {
   type OrgCredentials,
@@ -13,6 +14,7 @@ import {
 const ORG_TOKEN_REFRESH_WINDOW_MS = 5 * 60 * 1000;
 
 type SignedIn = OrgCredentials & { apiKey: string };
+type RefreshAccessToken = typeof refreshAccessToken;
 
 /**
  * A `letta server --org` process signs in to one organization. Every
@@ -31,6 +33,7 @@ export class OrgCredentialSession {
     private readonly deviceId: string,
     credentials: SignedIn,
     private readonly deviceName: string = hostname(),
+    private readonly refreshTokens: RefreshAccessToken = refreshAccessToken,
   ) {
     this.current = credentials;
   }
@@ -70,6 +73,7 @@ export class OrgCredentialSession {
         refreshToken,
         this.deviceId,
         this.deviceName,
+        this.refreshTokens,
       );
       const next: SignedIn = {
         apiKey: tokens.access_token,
@@ -111,12 +115,19 @@ export function activateOrgCredentials(
   organizationId: string,
   deviceId: string,
   credentials: SignedIn,
+  refresh: RefreshAccessToken = refreshAccessToken,
 ): void {
   if (session?.organizationId === organizationId) {
     session.update(credentials);
     return;
   }
-  session = new OrgCredentialSession(organizationId, deviceId, credentials);
+  session = new OrgCredentialSession(
+    organizationId,
+    deviceId,
+    credentials,
+    undefined,
+    refresh,
+  );
 }
 
 /** Undefined means an ordinary CLI process, never an organization fallback. */
