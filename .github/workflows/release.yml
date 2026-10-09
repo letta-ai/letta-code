@@ -28,7 +28,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      - name: Detect release bump commit
+      - name: Detect release version change
         id: detect
         run: |
           set -euo pipefail
@@ -39,14 +39,16 @@ jobs:
             exit 0
           fi
 
-          SUBJECT=$(git log --format=%s "${{ github.event.before }}..${{ github.sha }}" | grep -E '^chore: bump version to ' | tail -n 1 || true)
-          if [ -z "$SUBJECT" ]; then
+          PREVIOUS_VERSION=$(git show "${{ github.event.before }}:package.json" | jq -r '.version')
+          CURRENT_VERSION=$(jq -r '.version' package.json)
+
+          if [ "$PREVIOUS_VERSION" = "$CURRENT_VERSION" ]; then
             echo "should_publish=false" >> $GITHUB_OUTPUT
             exit 0
           fi
 
           echo "should_publish=true" >> $GITHUB_OUTPUT
-          echo "subject=$SUBJECT" >> $GITHUB_OUTPUT
+          echo "subject=package version $PREVIOUS_VERSION -> $CURRENT_VERSION" >> $GITHUB_OUTPUT
 
       - name: Configure Git
         if: steps.detect.outputs.should_publish == 'true'
@@ -179,13 +181,21 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
+          package_dir=$(mktemp -d)
+          trap 'rm -rf "$package_dir"' EXIT
+          OUTPUT=""
+
           for _ in {1..90}; do
-            if OUTPUT=$(npm view "$PACKAGE_NAME@$VERSION" version 2>&1); then
-              exit 0
+            rm -f "$package_dir"/*.tgz
+            if OUTPUT=$(npm pack "$PACKAGE_NAME@$VERSION" --pack-destination "$package_dir" --silent 2>&1); then
+              tarball=$(find "$package_dir" -maxdepth 1 -type f -name '*.tgz' -print -quit)
+              if [ -n "$tarball" ] && tar -tzf "$tarball" >/dev/null; then
+                exit 0
+              fi
             fi
             sleep 10
           done
-          echo "Package $PACKAGE_NAME@$VERSION did not become available within fifteen minutes."
+          echo "Package tarball $PACKAGE_NAME@$VERSION did not become fetchable within fifteen minutes."
           printf '%s\n' "$OUTPUT"
           exit 1
 
