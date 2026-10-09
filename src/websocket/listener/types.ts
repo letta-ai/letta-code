@@ -47,6 +47,8 @@ export interface StartListenerOptions {
   supportsPairedListenerGenerations?: boolean;
   deviceId: string;
   connectionName: string;
+  /** Set for `letta server --org`: reconnects reuse that organization's sign-in. */
+  organizationId?: string;
   /** False when reconnecting necessarily allocates a new physical id. */
   connectionIdCanResume?: boolean;
   skillsDirectory?: string;

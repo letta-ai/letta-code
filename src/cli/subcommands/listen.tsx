@@ -1,6 +1,5 @@
 import { hostname } from "node:os";
 import { parseArgs } from "node:util";
-import { MessageChannel } from "node:worker_threads";
 import { render } from "ink";
 import { configureBackendMode } from "@/backend";
 import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
@@ -19,6 +18,7 @@ import {
   resolveServerLifecycleOutput,
 } from "@/cli/subcommands/lifecycle-output";
 import { printFirstRunWelcome } from "@/cli/subcommands/listen-first-run-welcome";
+import { createListenerProcessAnchorPromise } from "@/cli/subcommands/listen-process-anchor";
 import { printListenUsage } from "@/cli/subcommands/listen-usage";
 import {
   applyGatewayLifecycleReadiness,
@@ -56,16 +56,9 @@ import {
   ManualListenerLockUnavailableError,
   shouldAcquireManualListenerLock,
 } from "@/websocket/listener/manual-instance-lock";
+import { deriveOrgDeviceId } from "@/websocket/listener/org-credentials";
 import { flushRemoteSettingsWrites } from "@/websocket/listener/remote-settings";
 import type { ListenerClientReplacement } from "@/websocket/listener/types";
-
-type ListenerProcessAnchor = {
-  close: () => void;
-};
-
-type CreateListenerProcessAnchor = () => ListenerProcessAnchor;
-
-const activeListenerProcessAnchors = new Set<ListenerProcessAnchor>();
 
 function formatTimestamp(): string {
   const now = new Date();
@@ -74,34 +67,6 @@ function formatTimestamp(): string {
   const s = String(now.getSeconds()).padStart(2, "0");
   const ms = String(now.getMilliseconds()).padStart(3, "0");
   return `${h}:${m}:${s}.${ms}`;
-}
-
-function createMessageChannelProcessAnchor(): ListenerProcessAnchor {
-  const { port1, port2 } = new MessageChannel();
-
-  port1.ref();
-  port2.ref();
-
-  return {
-    close: () => {
-      port1.close();
-      port2.close();
-    },
-  };
-}
-
-function createListenerProcessAnchorPromise(
-  createProcessAnchor: CreateListenerProcessAnchor = createMessageChannelProcessAnchor,
-): Promise<number> {
-  const anchor = createProcessAnchor();
-
-  activeListenerProcessAnchors.add(anchor);
-
-  return new Promise<number>(() => {
-    // Never resolves - runs until the process receives a shutdown signal.
-    // The ref'ed MessageChannel above is a zero-wakeup process anchor for
-    // channel-only listeners whose adapters may not own a persistent handle.
-  });
 }
 
 async function flushListenerTelemetryEnd(exitReason: string): Promise<void> {
@@ -197,6 +162,7 @@ export const __listenSubcommandTestUtils = {
 const LISTEN_OPTIONS = {
   "computer-name": { type: "string" },
   "env-name": { type: "string" },
+  org: { type: "string" },
   channels: { type: "string" },
   skills: { type: "string" },
   "install-channel-runtimes": { type: "boolean" },
@@ -406,7 +372,12 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   };
 
   try {
-    const deviceId = spawnerDeviceId ?? settingsManager.getOrCreateDeviceId();
+    const organizationId = values.org;
+    const baseDeviceId =
+      spawnerDeviceId ?? settingsManager.getOrCreateDeviceId();
+    const deviceId = organizationId
+      ? deriveOrgDeviceId(baseDeviceId, organizationId)
+      : baseDeviceId;
     if (spawnerDeviceId)
       process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID = deviceId;
     const startupMode = await resolveListenerStartupMode(
@@ -441,7 +412,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         registerOptions = await resolveListenerRegistrationOptions(
           deviceId,
           connectionName,
-          { allowInteractiveOAuth: !lifecycleOutput },
+          { allowInteractiveOAuth: !lifecycleOutput, organizationId },
         );
       } catch (authErr) {
         if (authErr instanceof MissingListenerApiKeyError) {
@@ -730,7 +701,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       const nextRegisterOptions = await resolveListenerRegistrationOptions(
         deviceId,
         connectionName,
-        { allowInteractiveOAuth: !lifecycleOutput },
+        { allowInteractiveOAuth: !lifecycleOutput, organizationId },
       );
       const result = await registerWithCloudRetry(nextRegisterOptions, {
         maxDurationMs: Infinity,
@@ -797,6 +768,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             nextSupportsPairedListenerGenerations,
           deviceId,
           connectionName,
+          organizationId,
           skillsDirectory,
           onWsEvent: shouldLogWsEvents ? wsEventLogger : undefined,
           onStatusChange: (status) => {
@@ -918,6 +890,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             nextSupportsPairedListenerGenerations,
           deviceId,
           connectionName,
+          organizationId,
           skillsDirectory,
           onWsEvent: shouldLogWsEvents ? wsEventLogger : undefined,
           onStatusChange: (status) => {

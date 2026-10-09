@@ -1,11 +1,14 @@
 export function printListenUsage(): void {
   console.log(
-    "Usage: letta server [--computer-name <name>] [--channels <list>] [--skills <path>] [--debug]\n",
+    "Usage: letta server [--computer-name <name>] [--org <id>] [--channels <list>] [--skills <path>] [--debug]\n",
   );
   console.log("Register this computer to receive messages from Letta Cloud.\n");
   console.log("Options:");
   console.log(
     "  --computer-name <name>  Friendly name for this computer (uses hostname if not provided)",
+  );
+  console.log(
+    "  --org <id>         Register this computer in a specific organization, signing in just for it",
   );
   console.log(
     "  --channels <list>  Comma-separated channel names to enable (e.g. telegram)",
@@ -31,6 +34,9 @@ export function printListenUsage(): void {
     "  letta server                              # Uses hostname as default",
   );
   console.log('  letta server --computer-name "work-laptop"');
+  console.log(
+    "  letta server --org org-123                 # Register in one organization",
+  );
   console.log(
     "  letta server --channels telegram           # Enable Telegram channel",
   );
