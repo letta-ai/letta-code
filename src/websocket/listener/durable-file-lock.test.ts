@@ -199,9 +199,15 @@ test("a release cannot rmdir an atomically installed replacement", () => {
 test("installation retries when stale cleanup removes its empty directory", () => {
   const f = fixture();
   try {
+    let now = 0;
     let installs = 0;
     const release = acquireDurableFileLock(f.path, {
       waitMs: 50,
+      // Filesystem latency must not consume this retry-behavior test's budget.
+      now: () => now,
+      sleep: (milliseconds) => {
+        now += milliseconds;
+      },
       afterInstallMkdir: (target) => {
         installs += 1;
         if (installs === 1) rmdirSync(target);
