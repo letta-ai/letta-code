@@ -135,13 +135,14 @@ If a local change is required:
 
 Only for a `pr_created` outcome, after the tracker update succeeds, call the native `MessageChannel` tool with `action="send"`, `channel="slack"`, and `target="C0871ER46KT"` to send exactly one message. Do not use `curl` or another Slack API client.
 
-Use the selected Slack owner ID from the run inputs and the created PR URL. Send exactly one line in this form:
+Use the selected Slack owner ID from the run inputs and the created PR URL. Send the mention and link, then one short sentence describing the verified change and why it matters:
 
 ```text
 <@U079W8F9Z7G> https://github.com/letta-ai/letta-code/pull/1234
+Aligns Read's line-number spacing with Claude Code so suggested patches match file contents.
 ```
 
-Replace the example values with the selected owner and created PR. Do not include a watcher prefix, tracker URL, workflow URL, or any other text. The notification creates the Slack thread route back to this watcher conversation. Do not send a Slack notification for `no_local_impact` or `needs_human_review`.
+Replace the example values and sentence with the selected owner, created PR, and its actual change. Make the sentence useful without a link preview, not just a restatement of the PR title. Do not include a watcher prefix, tracker URL, workflow URL, or extra text. The notification creates the Slack thread route back to this watcher conversation. Do not send a Slack notification for `no_local_impact` or `needs_human_review`.
 
 ## Final response
 
