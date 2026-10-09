@@ -162,14 +162,109 @@ async function parseResponse(response) {
   }
 }
 
-async function requestJson(url, init) {
+const SAFE_ERROR_FIELDS = new Set([
+  "code",
+  "error",
+  "errorCode",
+  "error_code",
+  "message",
+  "requestId",
+  "request_id",
+]);
+const SENSITIVE_FIELD_PATTERN =
+  /authorization|credential|password|secret|security[_-]?key|token/i;
+
+function redactString(value, sensitiveValues) {
+  let redacted = value;
+  const uniqueValues = [...new Set(sensitiveValues)]
+    .filter((secret) => typeof secret === "string" && secret.length > 0)
+    .sort((left, right) => right.length - left.length);
+  for (const secret of uniqueValues) {
+    redacted = redacted.replaceAll(secret, "[REDACTED]");
+  }
+  return redacted;
+}
+
+function redactSensitiveValue(value, sensitiveValues) {
+  if (typeof value === "string") {
+    return redactString(value, sensitiveValues);
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactSensitiveValue(entry, sensitiveValues));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [
+        key,
+        SENSITIVE_FIELD_PATTERN.test(key)
+          ? "[REDACTED]"
+          : redactSensitiveValue(entry, sensitiveValues),
+      ]),
+    );
+  }
+  return value;
+}
+
+function safeResponseDetails(body, sensitiveValues = []) {
+  const redacted = redactSensitiveValue(body, sensitiveValues);
+  if (typeof redacted === "string") {
+    const normalized = redacted.trim();
+    return normalized ? normalized.slice(0, 500) : "[response details omitted]";
+  }
+  if (redacted && typeof redacted === "object" && !Array.isArray(redacted)) {
+    const allowed = Object.fromEntries(
+      Object.entries(redacted).filter(([key]) => SAFE_ERROR_FIELDS.has(key)),
+    );
+    if (Object.keys(allowed).length > 0) {
+      return JSON.stringify(allowed).slice(0, 500);
+    }
+  }
+  return "[response details omitted]";
+}
+
+function safeErrorMessage(error, sensitiveValues = []) {
+  const message = error instanceof Error ? error.message : String(error);
+  return redactString(message, sensitiveValues);
+}
+
+function safeErrorCause(error, sensitiveValues = []) {
+  const message = safeErrorMessage(error, sensitiveValues);
+  return error instanceof Error && error.message === message
+    ? error
+    : new Error(message);
+}
+
+function authorizationSensitiveValues(authorizationHeader, securityKey) {
+  return [
+    authorizationHeader,
+    authorizationHeader?.includes(" ")
+      ? authorizationHeader.slice(authorizationHeader.indexOf(" ") + 1)
+      : undefined,
+    securityKey,
+  ].filter((value) => typeof value === "string" && value.length > 0);
+}
+
+function httpError(response, body, sensitiveValues = [], prefix = "HTTP") {
+  const statusText = redactString(response.statusText, sensitiveValues);
+  return new Error(
+    `${prefix} ${response.status} ${statusText}: ${safeResponseDetails(
+      body,
+      sensitiveValues,
+    )}`,
+  );
+}
+
+async function requestJson(url, init, options = {}) {
+  const managementAuthorization =
+    init?.headers?.Authorization ?? init?.headers?.authorization;
+  const sensitiveValues = [
+    ...(options.sensitiveValues ?? []),
+    ...authorizationSensitiveValues(managementAuthorization),
+  ];
   const response = await fetch(url, init);
   const body = await parseResponse(response);
   if (!response.ok) {
-    const rendered = typeof body === "string" ? body : JSON.stringify(body);
-    throw new Error(
-      `HTTP ${response.status} ${response.statusText}: ${rendered}`,
-    );
+    throw httpError(response, body, sensitiveValues);
   }
   return body;
 }
@@ -223,43 +318,101 @@ async function readSecurityKey(args) {
   return value;
 }
 
-async function reserveCredentialFile(outputPath) {
+export async function reserveCredentialFile(outputPath, operations = {}) {
   const path = resolve(
     requireString(
       outputPath,
       "Generated credentials require --credential-output <path>",
     ),
   );
-  const handle = await open(path, "wx", 0o600);
-  const securityKey = randomBytes(24).toString("base64url");
-  const authorizationHeader = buildAgentWebhookBasicAuthorization(securityKey);
-  const contents = `${JSON.stringify(
-    {
-      authorization_header: authorizationHeader,
-      security_key: securityKey,
-    },
-    null,
-    2,
-  )}\n`;
+  const openFile = operations.openFile ?? open;
+  const generateRandomBytes = operations.randomBytes ?? randomBytes;
+  const unlinkFile = operations.unlinkFile ?? unlink;
+  const handle = await openFile(path, "wx", 0o600);
+  const reservation = { handle, path };
+  let sensitiveValues = [];
   try {
+    const securityKey = generateRandomBytes(24).toString("base64url");
+    const authorizationHeader =
+      buildAgentWebhookBasicAuthorization(securityKey);
+    sensitiveValues = authorizationSensitiveValues(
+      authorizationHeader,
+      securityKey,
+    );
+    const contents = `${JSON.stringify(
+      {
+        authorization_header: authorizationHeader,
+        security_key: securityKey,
+      },
+      null,
+      2,
+    )}\n`;
     await handle.writeFile(contents, "utf8");
     await handle.sync();
-    return { handle, path, securityKey };
+    return { ...reservation, authorizationHeader, securityKey };
   } catch (error) {
-    await handle.close().catch(() => {});
-    await unlink(path).catch(() => {});
-    throw error;
+    throw await cleanupCredentialFile(reservation, error, {
+      sensitiveValues,
+      unlinkFile,
+    });
   }
 }
 
-async function discardCredentialFile(reservation) {
-  await reservation.handle.close().catch(() => {});
-  await unlink(reservation.path).catch(() => {});
+export async function cleanupCredentialFile(
+  reservation,
+  originalError,
+  operations = {},
+) {
+  const unlinkFile = operations.unlinkFile ?? unlink;
+  const sensitiveValues = operations.sensitiveValues ?? [];
+  const cleanupFailures = [];
+  try {
+    await reservation.handle.close();
+  } catch (error) {
+    cleanupFailures.push(`close: ${safeErrorMessage(error)}`);
+  }
+  try {
+    await unlinkFile(reservation.path);
+  } catch (error) {
+    cleanupFailures.push(`unlink: ${safeErrorMessage(error)}`);
+  }
+  const originalMessage = safeErrorMessage(originalError, sensitiveValues);
+  const safeCause = safeErrorCause(originalError, sensitiveValues);
+  if (cleanupFailures.length === 0) {
+    return originalError instanceof Error &&
+      originalError.message === originalMessage
+      ? originalError
+      : new Error(originalMessage, { cause: safeCause });
+  }
+  return new Error(
+    `${originalMessage} Credential cleanup did not complete; a sensitive file may remain at ${reservation.path}. Remove it manually. Cleanup errors: ${cleanupFailures.join("; ")}`,
+    { cause: safeCause },
+  );
 }
 
 async function finishCredentialFile(reservation) {
   await reservation.handle.close();
   return reservation.path;
+}
+
+export async function preserveCredentialFile(
+  reservation,
+  originalError,
+  sensitiveValues,
+) {
+  let closeFailure;
+  try {
+    await reservation.handle.close();
+  } catch (error) {
+    closeFailure = safeErrorMessage(error);
+  }
+  const suffix = closeFailure
+    ? ` The file handle did not close cleanly (${closeFailure}); the process will release it on exit.`
+    : "";
+  return new Error(
+    `${safeErrorMessage(originalError, sensitiveValues)} Webhook creation status is unknown or may have succeeded. The credential was retained at ${reservation.path}.${suffix} Run list and reconcile the webhook name before retrying; do not create a duplicate.`,
+    { cause: safeErrorCause(originalError, sensitiveValues) },
+  );
 }
 
 async function readCredentialAuthorizationHeader(pathValue) {
@@ -270,10 +423,32 @@ async function readCredentialAuthorizationHeader(pathValue) {
     JSON.parse(await readFile(path, "utf8")),
     "Credential file must contain a JSON object",
   );
-  return requireString(
+  const authorizationHeader = requireString(
     credential.authorization_header,
     "Credential file is missing authorization_header",
   );
+  const securityKey =
+    credential.security_key === undefined
+      ? undefined
+      : requireString(
+          credential.security_key,
+          "Credential file security_key must be non-empty",
+        );
+  if (
+    securityKey &&
+    authorizationHeader !== buildAgentWebhookBasicAuthorization(securityKey)
+  ) {
+    throw new Error(
+      "Credential file authorization_header does not match security_key",
+    );
+  }
+  return {
+    authorizationHeader,
+    sensitiveValues: authorizationSensitiveValues(
+      authorizationHeader,
+      securityKey,
+    ),
+  };
 }
 
 async function readPayload(args) {
@@ -294,6 +469,17 @@ function positiveInteger(value, fallback) {
     throw new Error("--limit must be an integer from 1 through 50");
   }
   return parsed;
+}
+
+const DEFINITIVE_CREATE_REJECTION_STATUSES = new Set([
+  400, 401, 403, 404, 405, 413, 415, 422,
+]);
+
+function unknownCreationError(originalError, sensitiveValues) {
+  return new Error(
+    `${safeErrorMessage(originalError, sensitiveValues)} Webhook creation status is unknown or may have succeeded. Run list and reconcile the webhook name before retrying; do not create a duplicate.`,
+    { cause: safeErrorCause(originalError, sensitiveValues) },
+  );
 }
 
 function managementHeaders(apiKey) {
@@ -377,19 +563,51 @@ async function runManagementCommand(params) {
       body.security_key = credentialReservation.securityKey;
     }
 
-    let webhookCreated = false;
+    const sensitiveValues = [
+      ...authorizationSensitiveValues(params.headers.Authorization),
+      ...(credentialReservation
+        ? authorizationSensitiveValues(
+            credentialReservation.authorizationHeader,
+            credentialReservation.securityKey,
+          )
+        : securityKey
+          ? authorizationSensitiveValues(
+              buildAgentWebhookBasicAuthorization(securityKey),
+              securityKey,
+            )
+          : []),
+    ];
+    let creationState = "before-dispatch";
     try {
-      const responseBody = await requestJson(collectionUrl, {
+      creationState = "dispatched";
+      const rawResponse = await fetch(collectionUrl, {
         body: JSON.stringify(body),
         headers: params.headers,
         method: "POST",
       });
-      webhookCreated = true;
+      if (rawResponse.ok) {
+        creationState = "accepted";
+      } else if (DEFINITIVE_CREATE_REJECTION_STATUSES.has(rawResponse.status)) {
+        creationState = "definitive-rejection";
+      }
+      const responseBody = await parseResponse(rawResponse);
+      if (!rawResponse.ok) {
+        throw httpError(rawResponse, responseBody, sensitiveValues);
+      }
       const response = jsonObject(
         responseBody,
         "Create response must be an object",
       );
       const webhook = webhookFromUnknown(response.webhook);
+      if (
+        credentialReservation &&
+        webhook.authorization_header !==
+          credentialReservation.authorizationHeader
+      ) {
+        throw new Error(
+          "Create response authorization_header does not match the generated credential",
+        );
+      }
       const credentialFile = credentialReservation
         ? await finishCredentialFile(credentialReservation)
         : undefined;
@@ -405,13 +623,26 @@ async function runManagementCommand(params) {
       });
     } catch (error) {
       if (credentialReservation) {
-        if (webhookCreated) {
-          await credentialReservation.handle.close().catch(() => {});
-        } else {
-          await discardCredentialFile(credentialReservation);
+        if (
+          creationState === "before-dispatch" ||
+          creationState === "definitive-rejection"
+        ) {
+          throw await cleanupCredentialFile(credentialReservation, error, {
+            sensitiveValues,
+          });
         }
+        throw await preserveCredentialFile(
+          credentialReservation,
+          error,
+          sensitiveValues,
+        );
       }
-      throw error;
+      if (creationState === "dispatched" || creationState === "accepted") {
+        throw unknownCreationError(error, sensitiveValues);
+      }
+      throw new Error(safeErrorMessage(error, sensitiveValues), {
+        cause: safeErrorCause(error, sensitiveValues),
+      });
     }
     return;
   }
@@ -514,11 +745,19 @@ async function runManagementCommand(params) {
       );
     }
     const securityKey = await readSecurityKey(params.args);
-    const authorizationHeader = usesCredentialFile
+    const credential = usesCredentialFile
       ? await readCredentialAuthorizationHeader(params.args["credential-file"])
+      : undefined;
+    const authorizationHeader = credential
+      ? credential.authorizationHeader
       : securityKey
         ? buildAgentWebhookBasicAuthorization(securityKey)
         : undefined;
+    const sensitiveValues = credential
+      ? credential.sensitiveValues
+      : authorizationHeader
+        ? authorizationSensitiveValues(authorizationHeader, securityKey)
+        : [];
     if (webhook.requires_authorization_header && !authorizationHeader) {
       throw new Error(
         "This webhook requires --credential-file or --security-key-stdin",
@@ -542,14 +781,16 @@ async function runManagementCommand(params) {
     });
     const body = await parseResponse(response);
     if (!response.ok) {
-      const rendered = typeof body === "string" ? body : JSON.stringify(body);
-      throw new Error(
-        `Webhook test failed with HTTP ${response.status}: ${rendered}`,
+      throw httpError(
+        response,
+        body,
+        sensitiveValues,
+        "Webhook test failed with HTTP",
       );
     }
     printJson({
       accepted_for_processing: response.status === 202,
-      body,
+      body: redactSensitiveValue(body, sensitiveValues),
       dispatch_verified: false,
       note: "HTTP 202 confirms only that the ingress handler accepted the request; conversation creation and queue submission happen asynchronously.",
       status_code: response.status,

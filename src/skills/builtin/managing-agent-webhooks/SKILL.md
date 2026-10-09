@@ -23,12 +23,21 @@ payload as a user message.
   file into the transcript.
 - Give the file to the user through a private file download. On a Cloud
   computer, create it under `/root/downloads` and return a sandbox download
-  link. Tell the user it is shown only once and cannot be recovered later.
+  link in the form
+  `[filename](#letta-sandbox-download//root/downloads/filename)`. Do not write
+  credentials beneath an attacker-writable parent. Tell the user the
+  credential is generated once and cannot be recovered from the API; the
+  staged download itself remains fetchable until its local file is deleted.
 - Never put a security key on the command line or in chat. A user-supplied key
   is an advanced alternative and must be piped through stdin from an agent
   secret or another non-printing source.
 - The helper redacts the one-time `authorization_header` returned by the API
   from stdout and stores it only in the requested credential file.
+- Management and ingress responses are untrusted. The helper allowlists safe
+  error fields and recursively redacts secret-shaped fields plus the exact
+  generated key, Basic header, encoded credential, and management token before
+  anything reaches stdout, stderr, or a thrown error. Successful ingress
+  response bodies receive the same recursive redaction.
 - Rotating invalidates the old URL. Deleting is permanent. Use the required
   `--confirm` flag only after the user has approved that exact action.
 - Request bodies may contain sensitive third-party data. `requests` omits them
@@ -36,6 +45,10 @@ payload as a user message.
 - Sending a test starts asynchronous agent work. Ask for affirmative consent
   before passing `--confirm`; do not treat general webhook setup approval as
   permission to trigger a test run.
+- After a secure-create request is dispatched, any transport failure, 5xx, or
+  unreadable/truncated success response is ambiguous. The helper preserves the
+  credential and tells you to list webhooks and reconcile the name before any
+  retry. Never blindly retry an ambiguous create.
 
 ## Environment
 
@@ -109,9 +122,11 @@ The output reports the webhook URL and credential-file path but not the file's
 contents. Return the URL in chat and a private download link for the file. The
 file contains the generated security key and complete `Authorization` header,
 is created with mode `0600` on POSIX systems, and must be treated as a secret.
-The helper writes it before the API request and deletes it if creation fails,
-so a successfully created webhook cannot lose its one-time credential to a
-later file-write failure. Do not use `cat`, JSON inspection, shell
+The helper writes and syncs it before the API request. It removes the file only
+after a definitive rejection; once dispatch begins it preserves the credential
+across connection resets, 5xx responses, truncated success bodies, malformed
+responses, close failures, and stdout failures. Do not use `cat`, JSON
+inspection, shell
 interpolation, or any other operation that would put its contents in the agent
 transcript. Delete the sandbox copy after the user confirms safe receipt.
 
@@ -155,6 +170,8 @@ node <SKILL_DIR>/scripts/manage-agent-webhooks.mjs test \
 ```
 
 The helper reads the authorization header internally; it does not print it.
+When the generated JSON contains both fields, the helper verifies that
+`authorization_header` matches `security_key` before sending a request.
 
 Secured webhook using a user-supplied key:
 
@@ -214,6 +231,11 @@ longer works.
   the response's `errorCode`.
 - `401 Unauthorized` from a webhook test means the endpoint requires Basic
   auth and the supplied key was missing or wrong.
+- If secure creation says its status is unknown or may have succeeded, keep the
+  credential file, run `list`, and reconcile the requested name before retrying
+  or deleting anything. A retry without reconciliation can create a duplicate.
+- If cleanup reports that a sensitive file may remain, tell the user the path
+  without reading it and remove it manually once it is safe to do so.
 - A `202 {"ok":true}` response means accepted by the ingress handler, not
   dispatched or completed. Do not report successful conversation creation or
   queueing from that response or from the history `enqueued` field; the server
