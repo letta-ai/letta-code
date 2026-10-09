@@ -325,6 +325,11 @@ export async function startConnectedListenerRuntime(
   if (options.startHeartbeat !== false) {
     startListenerPongHeartbeat(runtime, transport, trackListenerError);
   }
+  // Reset backoff on close only after startup completed; a stalled startup
+  // marked earlier would loop at attempt 0 and never hit the retry deadline.
+  if (options.updateReconnectState) {
+    runtime.hasSuccessfulConnection = true;
+  }
   if (options.startProcessServices === false) return;
   const scheduleNonEmptyQueuePumps = createRestoredQueuePumpWake(
     runtime,
