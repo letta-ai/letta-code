@@ -39,6 +39,22 @@ transcript behavior must identify and run the focused tests for every affected
 path. `bun run check` is always required, but it does not replace those behavior
 tests.
 
+### Interactive user-input tools register across coordinated surfaces
+
+A tool that pauses mid-turn for human input must be added or removed on every
+surface at once: definition/schema/implementation (`src/tools/tool-definitions.ts`,
+`src/tools/impl/`), permission (`src/tools/tool-permissions.ts`), toolset presets
+(`src/tools/toolset-catalog.ts`), and interactive policy
+(`src/tools/interactive-policy.ts`: `INTERACTIVE_APPROVAL_TOOLS`,
+`INTERACTIVE_USER_INPUT_TOOL_NAMES`, and the `getInteractiveApprovalKind` switch).
+
+Headless/automation exclusion and every interactive-approval consumer (TUI
+approval mapping, websocket listener turn approval/recovery, channels gateway)
+must read that shared policy instead of listing tool names locally. Before
+adding such a tool, grep for hard-coded tool-name lists — the headless startup
+`exclude: ["AskUserQuestion"]` in `src/index.ts` silently missed a new
+interactive tool; exclude via `[...INTERACTIVE_USER_INPUT_TOOL_NAMES]` instead.
+
 ---
 
 ## Rules and Why They Exist
