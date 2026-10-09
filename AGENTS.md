@@ -378,6 +378,21 @@ resent. Interrupt handler marking tools cancelled even when execution completed.
 - **Review signal:** any PR touching approval flow, tool execution, or
   interrupt handling.
 
+### Local Stream Identity Must Match History Projection
+
+Streamed segment IDs (`identityForContentSegment` / `contiguousContentStartIndex`
+in `src/backend/dev/provider-turn-executor.ts`) must equal the IDs
+`projectLocalMessageToStoredMessages` (`src/backend/local/local-message-projection.ts`)
+assigns when history is reloaded; live rows are reconciled against history, so a
+mismatch recreates duplicate rows. Projection drops empty `thinking` blocks and
+indexes each reasoning row from the first nonempty thinking index, so reasoning
+identity must resolve to the first nonempty block of the contiguous run,
+including start-only blocks emitted via `thinking_start` with no delta.
+
+- **Review signal:** changes to provider-turn-executor identity logic or
+  local-message-projection reasoning/text grouping; keep the live-vs-history
+  identity tests in `src/backend/provider-turn-executor.test.ts` passing.
+
 ### Shell Tool Parity Gap
 
 Policy/UI layer treats both shell tools (`Bash`, `exec_command`) identically,
