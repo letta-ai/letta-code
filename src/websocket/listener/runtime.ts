@@ -1,6 +1,7 @@
 import { createContextTracker } from "@/cli/helpers/context-tracker";
 import { createSharedReminderState } from "@/reminders/state";
 import type { PendingControlRequest } from "@/types/protocol_v2";
+import { redactWsEventForLogging } from "@/websocket/ws-event-redaction";
 import { getWorkingDirectoryScopeKey } from "./cwd";
 import { cancelFailedTeleportCleanup } from "./failed-teleport-cleanup";
 import {
@@ -56,7 +57,11 @@ export function safeEmitWsEvent(
   event: unknown,
 ): void {
   try {
-    activeRuntime?.onWsEvent?.(direction, label, event);
+    activeRuntime?.onWsEvent?.(
+      direction,
+      label,
+      redactWsEventForLogging(event),
+    );
   } catch {
     // Debug hook must never break transport flow.
   }
