@@ -48,8 +48,10 @@ payload as a user message.
   active runtime's canonical origin and exactly
   `/v1/agent-webhooks/<returned-slug>`, with no URL credentials, query, fragment,
   malformed slug, or redirect. A redirect or transport failure after a mutation
-  dispatch is ambiguous; reconcile before retrying and never treat a redirect
-  target's response as a definitive rejection.
+  dispatch is ambiguous. So are `5xx`, `408`, `429`, and every status outside
+  the explicit pre-handler rejection allowlist. Reconcile before retrying and
+  never treat a redirect target or non-definitive status as proof that the
+  mutation did nothing.
 - Rotating invalidates the old URL. Deleting is permanent. Use the required
   `--confirm` flag only after the user has approved that exact action.
 - Request bodies may contain sensitive third-party data. `requests` omits them
@@ -69,6 +71,11 @@ payload as a user message.
   or cannot be validated, the helper emits an operation-specific exit-0 receipt
   with the HTTP status and reconciliation guidance rather than a generic error
   that could trigger a duplicate mutation.
+- Normal update output additionally requires the returned webhook ID and
+  `enabled` state to match the requested operation; normal rotate output
+  requires the returned webhook ID to match. Canonical but contradictory 2xx
+  records receive the same accepted/reconcile envelope and are never printed as
+  ordinary success.
 
 ## Environment
 

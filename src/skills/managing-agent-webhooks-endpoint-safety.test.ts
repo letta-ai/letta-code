@@ -608,16 +608,51 @@ describe("managing-agent-webhooks endpoint safety", () => {
       }
       if (request.method === "POST" && request.url?.endsWith("/refresh")) {
         rotateRequests += 1;
-        response.writeHead(200, { "Content-Length": "100" });
-        response.flushHeaders();
-        response.write('{"partial":');
-        setImmediate(() => response.destroy());
+        if (rotateRequests <= 2) {
+          response.writeHead(rotateRequests === 1 ? 200 : 500, {
+            "Content-Length": "100",
+          });
+          response.flushHeaders();
+          response.write('{"partial":');
+          setImmediate(() => response.destroy());
+        } else {
+          response.writeHead(200);
+          response.end(
+            JSON.stringify({
+              webhook: {
+                authorization_header: null,
+                id: "different-webhook",
+                name: "Wrong rotate record",
+                requires_authorization_header: true,
+                webhook_slug: "different-rotate",
+                webhook_url: `http://127.0.0.1:${address.port}/v1/agent-webhooks/different-rotate`,
+              },
+            }),
+          );
+        }
         return;
       }
       if (request.method === "PATCH") {
         updateRequests += 1;
         response.writeHead(200);
-        response.end("not-json");
+        response.end(
+          updateRequests === 1
+            ? "not-json"
+            : JSON.stringify({
+                webhook: {
+                  authorization_header: null,
+                  enabled: true,
+                  id:
+                    updateRequests === 2
+                      ? "different-webhook"
+                      : "webhook-agent-truncated",
+                  name: "Wrong update record",
+                  requires_authorization_header: true,
+                  webhook_slug: "different-update",
+                  webhook_url: `http://127.0.0.1:${address.port}/v1/agent-webhooks/different-update`,
+                },
+              }),
+        );
         return;
       }
       response.writeHead(404);
@@ -664,6 +699,37 @@ describe("managing-agent-webhooks endpoint safety", () => {
       });
       expect(rotateRequests).toBe(1);
 
+      const ambiguousRotate = await runHelper(baseUrl, [
+        "rotate",
+        "--webhook-id",
+        "webhook-agent-truncated",
+        "--confirm",
+      ]);
+      expect(ambiguousRotate).toMatchObject({ exitCode: 1, stdout: "" });
+      expect(ambiguousRotate.stderr).toContain("HTTP 500");
+      expect(ambiguousRotate.stderr).toContain(
+        "status is unknown and may have succeeded",
+      );
+      expect(ambiguousRotate.stderr).toContain("do not blindly retry");
+      expect(rotateRequests).toBe(2);
+
+      const mismatchedRotate = await runHelper(baseUrl, [
+        "rotate",
+        "--webhook-id",
+        "webhook-agent-truncated",
+        "--confirm",
+      ]);
+      expect(mismatchedRotate).toMatchObject({ exitCode: 0, stderr: "" });
+      expect(JSON.parse(mismatchedRotate.stdout)).toMatchObject({
+        accepted: true,
+        body_omitted: true,
+        operation: "rotate",
+        status_code: 200,
+        webhook_id: "webhook-agent-truncated",
+      });
+      expect(mismatchedRotate.stdout).not.toContain("different-webhook");
+      expect(rotateRequests).toBe(3);
+
       const updated = await runHelper(baseUrl, [
         "enable",
         "--webhook-id",
@@ -677,6 +743,38 @@ describe("managing-agent-webhooks endpoint safety", () => {
         status_code: 200,
       });
       expect(updateRequests).toBe(1);
+
+      const mismatchedUpdate = await runHelper(baseUrl, [
+        "disable",
+        "--webhook-id",
+        "webhook-agent-truncated",
+        "--confirm",
+      ]);
+      expect(mismatchedUpdate).toMatchObject({ exitCode: 0, stderr: "" });
+      expect(JSON.parse(mismatchedUpdate.stdout)).toMatchObject({
+        accepted: true,
+        body_omitted: true,
+        operation: "disable",
+        status_code: 200,
+        webhook_id: "webhook-agent-truncated",
+      });
+      expect(mismatchedUpdate.stdout).not.toContain("different-webhook");
+      expect(updateRequests).toBe(2);
+
+      const mismatchedState = await runHelper(baseUrl, [
+        "disable",
+        "--webhook-id",
+        "webhook-agent-truncated",
+        "--confirm",
+      ]);
+      expect(mismatchedState).toMatchObject({ exitCode: 0, stderr: "" });
+      expect(JSON.parse(mismatchedState.stdout)).toMatchObject({
+        accepted: true,
+        body_omitted: true,
+        operation: "disable",
+        status_code: 200,
+      });
+      expect(updateRequests).toBe(3);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await rm(root, { force: true, recursive: true });

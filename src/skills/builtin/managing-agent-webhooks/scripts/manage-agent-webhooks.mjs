@@ -250,6 +250,8 @@ function isSensitiveFieldName(key, path, trustedPaths) {
       compact,
     ) ||
     tokens.includes("authorization") ||
+    tokens.includes("auth") ||
+    tokens.includes("authentication") ||
     tokens.includes("credential") ||
     tokens.includes("credentials") ||
     tokens.includes("password") ||
@@ -392,7 +394,14 @@ async function requestSideEffect(url, init, options) {
     bodyReadFailed = true;
   }
   if (!response.ok) {
-    throw httpError(response, body, sensitiveValues);
+    const error = httpError(response, body, sensitiveValues);
+    if (DEFINITIVE_MUTATION_REJECTION_STATUSES.has(response.status)) {
+      throw error;
+    }
+    throw new Error(
+      `${safeErrorMessage(error, sensitiveValues)} ${options.operation} status is unknown and may have succeeded. Reconcile webhook state before retrying; do not blindly retry.`,
+      { cause: safeErrorCause(error, sensitiveValues) },
+    );
   }
   return { body, bodyReadFailed, response };
 }
@@ -620,7 +629,7 @@ function positiveInteger(value, fallback) {
   return parsed;
 }
 
-const DEFINITIVE_CREATE_REJECTION_STATUSES = new Set([
+const DEFINITIVE_MUTATION_REJECTION_STATUSES = new Set([
   400, 401, 403, 404, 405, 413, 415, 422,
 ]);
 
@@ -793,7 +802,9 @@ async function runManagementCommand(params) {
       });
       if (rawResponse.ok) {
         creationState = "accepted";
-      } else if (DEFINITIVE_CREATE_REJECTION_STATUSES.has(rawResponse.status)) {
+      } else if (
+        DEFINITIVE_MUTATION_REJECTION_STATUSES.has(rawResponse.status)
+      ) {
         creationState = "definitive-rejection";
       }
       const responseBody = await parseResponse(rawResponse);
@@ -966,6 +977,16 @@ async function runManagementCommand(params) {
         "Update response must be an object",
       );
       webhook = validatedWebhookFromUnknown(response.webhook, params.baseUrl);
+      const expectedEnabled = params.command === "enable";
+      if (
+        webhook.id !== webhookId ||
+        typeof webhook.enabled !== "boolean" ||
+        webhook.enabled !== expectedEnabled
+      ) {
+        throw new Error(
+          "Update response does not match the requested webhook state",
+        );
+      }
     } catch {
       printJson({
         accepted: true,
@@ -1014,6 +1035,9 @@ async function runManagementCommand(params) {
         "Rotate response must be an object",
       );
       webhook = validatedWebhookFromUnknown(response.webhook, params.baseUrl);
+      if (webhook.id !== webhookId) {
+        throw new Error("Rotate response does not match the requested webhook");
+      }
     } catch {
       printJson({
         accepted: true,
