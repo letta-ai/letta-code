@@ -560,7 +560,7 @@ describe("managing-agent-webhooks endpoint safety", () => {
         request.url?.includes("webhook-agent-oversized")
       ) {
         deleteRequests += 1;
-        response.writeHead(200);
+        response.writeHead(deleteRequests === 5 ? 202 : 200);
         response.end(
           JSON.stringify(
             deleteRequests === 1
@@ -591,6 +591,12 @@ describe("managing-agent-webhooks endpoint safety", () => {
         throw new Error("Expected server address");
       }
       const baseUrl = `http://127.0.0.1:${address.port}`;
+      const deleteArgs = [
+        "delete",
+        "--webhook-id",
+        "webhook-agent-oversized",
+        "--confirm",
+      ];
       const tested = await runHelper(baseUrl, [
         "test",
         "--webhook-id",
@@ -608,12 +614,7 @@ describe("managing-agent-webhooks endpoint safety", () => {
       });
       expect(ingressRequests).toBe(1);
 
-      const deleted = await runHelper(baseUrl, [
-        "delete",
-        "--webhook-id",
-        "webhook-agent-oversized",
-        "--confirm",
-      ]);
+      const deleted = await runHelper(baseUrl, deleteArgs);
       expect(deleted).toMatchObject({ exitCode: 0, stderr: "" });
       expect(JSON.parse(deleted.stdout)).toMatchObject({
         accepted: true,
@@ -625,12 +626,7 @@ describe("managing-agent-webhooks endpoint safety", () => {
       });
       expect(deleteRequests).toBe(1);
 
-      const sanitizedDelete = await runHelper(baseUrl, [
-        "delete",
-        "--webhook-id",
-        "webhook-agent-oversized",
-        "--confirm",
-      ]);
+      const sanitizedDelete = await runHelper(baseUrl, deleteArgs);
       expect(sanitizedDelete).toMatchObject({ exitCode: 0, stderr: "" });
       const sanitizedBody = JSON.parse(sanitizedDelete.stdout) as Record<
         string,
@@ -648,12 +644,7 @@ describe("managing-agent-webhooks endpoint safety", () => {
       }
       expect(deleteRequests).toBe(2);
 
-      const contradictedDelete = await runHelper(baseUrl, [
-        "delete",
-        "--webhook-id",
-        "webhook-agent-oversized",
-        "--confirm",
-      ]);
+      const contradictedDelete = await runHelper(baseUrl, deleteArgs);
       expect(contradictedDelete).toMatchObject({ exitCode: 0, stderr: "" });
       expect(JSON.parse(contradictedDelete.stdout)).toMatchObject({
         accepted: true,
@@ -664,12 +655,7 @@ describe("managing-agent-webhooks endpoint safety", () => {
       expect(contradictedDelete.stdout).not.toContain('"deleted": true');
       expect(deleteRequests).toBe(3);
 
-      const confirmedDelete = await runHelper(baseUrl, [
-        "delete",
-        "--webhook-id",
-        "webhook-agent-oversized",
-        "--confirm",
-      ]);
+      const confirmedDelete = await runHelper(baseUrl, deleteArgs);
       expect(confirmedDelete).toMatchObject({ exitCode: 0, stderr: "" });
       expect(JSON.parse(confirmedDelete.stdout)).toEqual({
         deleted: true,
@@ -677,6 +663,17 @@ describe("managing-agent-webhooks endpoint safety", () => {
         webhook_id: "webhook-agent-oversized",
       });
       expect(deleteRequests).toBe(4);
+
+      const wrongStatusDelete = await runHelper(baseUrl, deleteArgs);
+      expect(wrongStatusDelete).toMatchObject({ exitCode: 0, stderr: "" });
+      expect(JSON.parse(wrongStatusDelete.stdout)).toMatchObject({
+        accepted: true,
+        deletion_confirmed: false,
+        operation: "delete",
+        status_code: 202,
+      });
+      expect(wrongStatusDelete.stdout).not.toContain('"deleted": true');
+      expect(deleteRequests).toBe(5);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await rm(root, { force: true, recursive: true });

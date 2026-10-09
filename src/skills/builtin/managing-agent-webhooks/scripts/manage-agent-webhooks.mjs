@@ -1125,7 +1125,7 @@ async function runManagementCommand(params) {
       { operation: "Webhook deletion" },
     );
     let deletionConfirmed = false;
-    if (!mutation.bodyReadFailed) {
+    if (!mutation.bodyReadFailed && mutation.response.status === 200) {
       try {
         const response = jsonObject(
           mutation.body,
